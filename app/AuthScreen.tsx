@@ -1,3 +1,4 @@
+import { useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -15,6 +16,8 @@ import {
 const { width } = Dimensions.get('window');
 
 export default function AuthScreen() {
+  const router = useRouter();
+
   const [mode, setMode] = useState<'login' | 'register' | 'verify'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -23,9 +26,22 @@ export default function AuthScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [resendTimer, setResendTimer] = useState(0);
+  const [checkingAuth, setCheckingAuth] = useState(true);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(width)).current;
+
+  useEffect(() => {
+    // Проверка токена при загрузке компонента
+    import('@react-native-async-storage/async-storage').then(async AsyncStorageModule => {
+      const token = await AsyncStorageModule.default.getItem('authToken');
+      if (token) {
+        router.replace('/tabs');
+      } else {
+        setCheckingAuth(false);
+      }
+    });
+  }, []);
 
   useEffect(() => {
     Animated.parallel([
@@ -64,14 +80,31 @@ export default function AuthScreen() {
     setLoading(true);
     setError('');
     try {
-      await import('../utils/auth').then(({ login }) => login(email, password));
-      // TODO: navigate to app main screen after successful login
+      const data = await import('../utils/auth').then(({ login }) => login(email, password));
+      if (data && data.accessToken) {
+        // Сохраняем токен в AsyncStorage
+        import('@react-native-async-storage/async-storage').then(async AsyncStorageModule => {
+          await AsyncStorageModule.default.setItem('authToken', data.accessToken);
+        });
+        // Переходим на главный экран
+        router.replace('/tabs');
+      } else {
+        setError('Не удалось получить токен авторизации');
+      }
     } catch (e: any) {
       setError(e.message || 'Ошибка при входе');
     } finally {
       setLoading(false);
     }
   };
+
+  if (checkingAuth) {
+    return (
+      <Animated.View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color="#5a67d8" />
+      </Animated.View>
+    );
+  }
 
   const renderLogin = () => (
     <Animated.View style={[styles.formContainer, { opacity: fadeAnim, transform: [{ translateX: slideAnim }] }]}>
@@ -183,8 +216,10 @@ export default function AuthScreen() {
     setLoading(true);
     setError('');
     try {
-      await import('../utils/auth').then(({ verify }) => verify(email, code));
-      // TODO: navigate to app main screen after successful verification
+      const data = await import('../utils/auth').then(({ verify }) => verify(email, code));
+      // Сохраняем токены, если verify возвращает их (уже реализовано в utils/auth)
+      // Переходим на главный экран после успешной авторизации
+      router.replace('/tabs');
     } catch (e: any) {
       setError(e.message || 'Ошибка при подтверждении');
     } finally {
