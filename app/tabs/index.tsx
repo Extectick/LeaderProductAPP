@@ -1,8 +1,6 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { useRouter } from 'expo-router';
-import React, { useState } from 'react';
-import { Modal, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React from 'react';
+import { StyleSheet, Text, View } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 
 const Tab = createBottomTabNavigator();
@@ -23,59 +21,13 @@ function TasksScreen() {
   );
 }
 
-function ProfileScreen() {
-  const router = useRouter();
-  const [modalVisible, setModalVisible] = useState(false);
+import ProfileScreen from '../ProfileScreen';
 
-  const handleLogout = async () => {
-    await AsyncStorage.removeItem('authToken');
-    setModalVisible(false);
-    router.replace('/AuthScreen');
-  };
-
-  return (
-    <View style={styles.screenContainer}>
-      <TouchableOpacity style={styles.logoutButton} onPress={() => setModalVisible(true)}>
-        <Text style={styles.logoutText}>Выйти из аккаунта</Text>
-      </TouchableOpacity>
-
-      <Modal
-        animationType="fade"
-        transparent={true}
-        visible={modalVisible}
-        onRequestClose={() => setModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          {Platform.OS === 'web' ? (
-            <View style={[styles.blurView, styles.webBlur]} />
-          ) : (
-            <View style={styles.blurView} />
-          )}
-          <View style={styles.modalContainer}>
-            <Text style={styles.modalTitle}>Выход</Text>
-            <Text style={styles.modalMessage}>Вы действительно хотите выйти из аккаунта?</Text>
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.cancelButton]}
-                onPress={() => setModalVisible(false)}
-              >
-                <Text style={styles.cancelButtonText}>Отмена</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.logoutConfirmButton]}
-                onPress={handleLogout}
-              >
-                <Text style={styles.logoutConfirmText}>Выйти</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-    </View>
-  );
+function ProfileScreenWrapper() {
+  return <ProfileScreen />;
 }
 
-export default function Tabs() {
+function TabsNavigator() {
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -101,10 +53,12 @@ export default function Tabs() {
     >
       <Tab.Screen name="Home" component={HomeScreen} />
       <Tab.Screen name="Tasks" component={TasksScreen} />
-      <Tab.Screen name="Profile" component={ProfileScreen} />
+      <Tab.Screen name="Profile" component={ProfileScreenWrapper} />
     </Tab.Navigator>
   );
 }
+
+export default TabsNavigator;
 
 const styles = StyleSheet.create({
   screenContainer: {

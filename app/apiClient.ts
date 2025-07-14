@@ -61,6 +61,21 @@ const apiClient = {
   refreshToken,
   logout,
   API_BASE_URL,
+  async getProfile(accessToken: string) {
+    const url = `${API_BASE_URL}/profile`;
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      const error = new Error(errorData.message || 'API request failed');
+      throw error;
+    }
+    return response.json();
+  },
 };
 
 export default apiClient;
