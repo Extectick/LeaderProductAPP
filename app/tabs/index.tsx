@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
-import { Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Modal, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 
 const Tab = createBottomTabNavigator();
@@ -46,6 +46,11 @@ function ProfileScreen() {
         onRequestClose={() => setModalVisible(false)}
       >
         <View style={styles.modalOverlay}>
+          {Platform.OS === 'web' ? (
+            <View style={[styles.blurView, styles.webBlur]} />
+          ) : (
+            <View style={styles.blurView} />
+          )}
           <View style={styles.modalContainer}>
             <Text style={styles.modalTitle}>Выход</Text>
             <Text style={styles.modalMessage}>Вы действительно хотите выйти из аккаунта?</Text>
@@ -135,9 +140,15 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  blurView: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  webBlur: {
+    backgroundColor: 'rgba(255, 255, 255, 0.7)',
+    backdropFilter: 'blur(10px)',
   },
   modalContainer: {
     width: 300,

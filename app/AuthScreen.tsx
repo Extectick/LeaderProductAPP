@@ -10,7 +10,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  TouchableOpacity
+  TouchableOpacity,
 } from 'react-native';
 
 const { width } = Dimensions.get('window');
@@ -30,6 +30,8 @@ export default function AuthScreen() {
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(width)).current;
+
+  const [formWidth, setFormWidth] = useState<number>(Platform.OS === 'web' ? Math.min(width * 0.8, 600) : width);
 
   useEffect(() => {
     // Проверка токена при загрузке компонента
@@ -67,8 +69,18 @@ export default function AuthScreen() {
     return () => clearTimeout(timer);
   }, [resendTimer]);
 
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      const handleResize = () => {
+        setFormWidth(Math.min(window.innerWidth * 0.8, 600));
+      };
+      window.addEventListener('resize', handleResize);
+      return () => window.removeEventListener('resize', handleResize);
+    }
+  }, []);
+
   const startResendTimer = () => {
-    setResendTimer(60);
+    setResendTimer(30);
   };
 
   const renderError = () => {
@@ -82,17 +94,64 @@ export default function AuthScreen() {
     try {
       const data = await import('../utils/auth').then(({ login }) => login(email, password));
       if (data && data.accessToken) {
-        // Сохраняем токен в AsyncStorage
         import('@react-native-async-storage/async-storage').then(async AsyncStorageModule => {
           await AsyncStorageModule.default.setItem('authToken', data.accessToken);
         });
-        // Переходим на главный экран
         router.replace('/tabs');
       } else {
         setError('Не удалось получить токен авторизации');
       }
     } catch (e: any) {
       setError(e.message || 'Ошибка при входе');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRegister = async () => {
+    setLoading(true);
+    setError('');
+    if (password !== passwordRepeat) {
+      setError('Пароли не совпадают');
+      setLoading(false);
+      return;
+    }
+    if (password.length < 6) {
+      setError('Пароль должен быть не менее 6 символов');
+      setLoading(false);
+      return;
+    }
+    try {
+      await import('../utils/auth').then(({ register }) => register(email, password));
+      setMode('verify');
+    } catch (e: any) {
+      setError(e.message || 'Ошибка при регистрации');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerify = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      await import('../utils/auth').then(({ verify }) => verify(email, code));
+      router.replace('/tabs');
+    } catch (e: any) {
+      setError(e.message || 'Ошибка при подтверждении');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResendCode = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      await import('../utils/auth').then(({ register }) => register(email, password));
+      startResendTimer();
+    } catch (e: any) {
+      setError(e.message || 'Ошибка при повторной отправке кода');
     } finally {
       setLoading(false);
     }
@@ -107,7 +166,7 @@ export default function AuthScreen() {
   }
 
   const renderLogin = () => (
-    <Animated.View style={[styles.formContainer, { opacity: fadeAnim, transform: [{ translateX: slideAnim }] }]}>
+    <Animated.View style={[styles.formContainer, { opacity: fadeAnim, transform: [{ translateX: slideAnim }], width: Platform.OS === 'web' ? formWidth : '100%' }]}>
       <Text style={styles.title}>Вход</Text>
       {renderError()}
       <TextInput
@@ -143,32 +202,9 @@ export default function AuthScreen() {
     </Animated.View>
   );
 
-  const handleRegister = async () => {
-    setLoading(true);
-    setError('');
-    if (password !== passwordRepeat) {
-      setError('Пароли не совпадают');
-      setLoading(false);
-      return;
-    }
-    if (password.length < 6) {
-      setError('Пароль должен быть не менее 6 символов');
-      setLoading(false);
-      return;
-    }
-    try {
-      await import('../utils/auth').then(({ register }) => register(email, password));
-      setMode('verify');
-    } catch (e: any) {
-      setError(e.message || 'Ошибка при регистрации');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const renderRegister = () => (
-    <Animated.View style={[styles.formContainer, { opacity: fadeAnim, transform: [{ translateX: slideAnim }] }]}>
-      <Text style={styles.title}>Регистрация</Text>
+    <Animated.View style={[styles.formContainer, { opacity: fadeAnim, transform: [{ translateX: slideAnim }], width: Platform.OS === 'web' ? formWidth : '100%' }]}>
+      <Text style={styles.title}>Регистрация</Text>       
       {renderError()}
       <TextInput
         style={styles.input}
@@ -212,36 +248,8 @@ export default function AuthScreen() {
     </Animated.View>
   );
 
-  const handleVerify = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const data = await import('../utils/auth').then(({ verify }) => verify(email, code));
-      // Сохраняем токены, если verify возвращает их (уже реализовано в utils/auth)
-      // Переходим на главный экран после успешной авторизации
-      router.replace('/tabs');
-    } catch (e: any) {
-      setError(e.message || 'Ошибка при подтверждении');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleResendCode = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      await import('../utils/auth').then(({ register }) => register(email, password));
-      // resend code by re-registering or call a dedicated resend endpoint if available
-    } catch (e: any) {
-      setError(e.message || 'Ошибка при повторной отправке кода');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const renderVerify = () => (
-    <Animated.View style={[styles.formContainer, { opacity: fadeAnim, transform: [{ translateX: slideAnim }] }]}>
+    <Animated.View style={[styles.formContainer, { opacity: fadeAnim, transform: [{ translateX: slideAnim }], width: formWidth }]}>
       <Text style={styles.title}>Подтверждение Email</Text>
       {renderError()}
       <Text style={styles.verifyText}>Введите код из 6 цифр, отправленный на {email}</Text>
@@ -263,7 +271,7 @@ export default function AuthScreen() {
       >
         {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Подтвердить</Text>}
       </TouchableOpacity>
-      <TouchableOpacity onPress={() => { if (resendTimer === 0) { handleResendCode(); startResendTimer(); } }} disabled={loading || resendTimer > 0}>
+      <TouchableOpacity onPress={() => { if (resendTimer === 0) { handleResendCode(); } }} disabled={loading || resendTimer > 0}>
         <Text style={[styles.switchText, resendTimer > 0 && styles.disabledText]}>
           {resendTimer > 0 ? `Отправить код повторно через ${resendTimer}с` : 'Отправить код повторно'}
         </Text>
@@ -273,7 +281,7 @@ export default function AuthScreen() {
 
   return (
     <KeyboardAvoidingView
-      style={styles.container}
+      style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}
       behavior={Platform.select({ ios: 'padding', android: undefined })}
     >
       {mode === 'login' && renderLogin()}
