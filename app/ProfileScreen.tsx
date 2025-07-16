@@ -1,7 +1,14 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { ensureAuth, logout } from '../utils/auth';
 import apiClient from './apiClient';
 
 export default function ProfileScreen() {
@@ -10,29 +17,32 @@ export default function ProfileScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    const fetchProfile = async () => {
-      setLoading(true);
-      setError('');
-      try {
-        const token = await AsyncStorage.getItem('authToken');
-        if (!token) {
-          router.replace('/AuthScreen');
-          return;
-        }
-        const data = await apiClient.getProfile(token);
-        setProfile(data);
-      } catch (e: any) {
-        setError(e.message || 'Ошибка при загрузке профиля');
-        if (e.message === 'API request failed') {
-          // Возможно, токен просрочен или неверен
-          await AsyncStorage.removeItem('authToken');
-          router.replace('/AuthScreen');
-        }
-      } finally {
-        setLoading(false);
+  const fetchProfile = async () => {
+    setLoading(true);
+    setError('');
+    
+    try {
+      const token = await ensureAuth();
+      if (!token) {
+        router.replace('/AuthScreen');
+        return;
       }
-    };
+      
+      const data = await apiClient.getProfile(token);
+      // console.log(data)
+      setProfile(data);
+    } catch (e: any) {
+      setError(e.message || 'Ошибка при загрузке профиля');
+      if (e.message === 'Unauthorized') {
+        await logout();
+        router.replace('/AuthScreen');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
     fetchProfile();
   }, []);
 
@@ -46,12 +56,32 @@ export default function ProfileScreen() {
           text: 'Выйти',
           style: 'destructive',
           onPress: async () => {
-            await AsyncStorage.removeItem('authToken');
-            router.replace('/AuthScreen');
+            try {
+              await logout();
+              router.replace('/AuthScreen');
+            } catch (e) {
+              console.error('Logout error:', e);
+              router.replace('/AuthScreen');
+            }
           },
         },
       ],
       { cancelable: true }
+    );
+  };
+
+  const renderProfileField = (label: string, value: any) => {
+    if (value === undefined || value === null) return null;
+    
+    return (
+      <View style={styles.infoRow}>
+        <Text style={styles.label}>{label}:</Text>
+        <Text style={styles.value}>
+          {typeof value === 'boolean' 
+            ? value ? 'Да' : 'Нет'
+            : value.toString()}
+        </Text>
+      </View>
     );
   };
 
@@ -67,7 +97,10 @@ export default function ProfileScreen() {
     return (
       <View style={styles.containerCentered}>
         <Text style={styles.error}>{error}</Text>
-        <TouchableOpacity style={styles.button} onPress={() => router.replace('/AuthScreen')}>
+        <TouchableOpacity 
+          style={styles.button} 
+          onPress={() => router.replace('/AuthScreen')}
+        >
           <Text style={styles.buttonText}>Войти заново</Text>
         </TouchableOpacity>
       </View>
@@ -81,39 +114,35 @@ export default function ProfileScreen() {
       </View>
     );
   }
+  
+  const { email, profileStatus, currentProfileType, createdAt, updatedAt, role, employeeProfile, phone } = profile.profile;
 
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Профиль пользователя</Text>
-      <View style={styles.infoRow}>
-        <Text style={styles.label}>Email:</Text>
-        <Text style={styles.value}>{profile.email}</Text>
-      </View>
-      <View style={styles.infoRow}>
-        <Text style={styles.label}>Статус активации:</Text>
-        <Text style={styles.value}>{profile.isActive ? 'Активирован' : 'Не активирован'}</Text>
-      </View>
-      <View style={styles.infoRow}>
-        <Text style={styles.label}>Дата создания:</Text>
-        <Text style={styles.value}>{new Date(profile.createdAt).toLocaleString()}</Text>
-      </View>
-      <View style={styles.infoRow}>
-        <Text style={styles.label}>Дата обновления:</Text>
-        <Text style={styles.value}>{new Date(profile.updatedAt).toLocaleString()}</Text>
-      </View>
-      <View style={styles.infoRow}>
-        <Text style={styles.label}>Роль:</Text>
-        <Text style={styles.value}>{profile.role}</Text>
-      </View>
-      <View style={styles.infoRow}>
-        <Text style={styles.label}>Отдел:</Text>
-        <Text style={styles.value}>{profile.department}</Text>
-      </View>
-      <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+      
+      {renderProfileField('Email', email)}
+      {renderProfileField('Статус', profileStatus)}
+      {renderProfileField('Тип профиля', currentProfileType)}
+      {renderProfileField('Дата создания', new Date(createdAt).toLocaleString())}
+      {renderProfileField('Дата обновления', new Date(updatedAt).toLocaleString())}
+      
+      {role && renderProfileField('Роль', role.name)}
+      
+      {employeeProfile?.department && 
+        renderProfileField('Отдел', employeeProfile.department.name)}
+      
+      {phone && renderProfileField('Телефон', phone)}
+      
+      <TouchableOpacity 
+        style={styles.logoutButton} 
+        onPress={handleLogout}
+      >
         <Text style={styles.logoutText}>Выйти из аккаунта</Text>
       </TouchableOpacity>
     </View>
   );
+
 }
 
 const styles = StyleSheet.create({

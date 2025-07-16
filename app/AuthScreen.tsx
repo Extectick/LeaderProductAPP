@@ -11,7 +11,9 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  View,
 } from 'react-native';
+import { ensureAuth } from '../utils/auth';
 
 const { width } = Dimensions.get('window');
 
@@ -33,16 +35,22 @@ export default function AuthScreen() {
 
   const [formWidth, setFormWidth] = useState<number>(Platform.OS === 'web' ? Math.min(width * 0.8, 600) : width);
 
+  // Проверка авторизации при загрузке
   useEffect(() => {
-    // Проверка токена при загрузке компонента
-    import('@react-native-async-storage/async-storage').then(async AsyncStorageModule => {
-      const token = await AsyncStorageModule.default.getItem('authToken');
-      if (token) {
-        router.replace('/tabs');
-      } else {
+    const checkAuth = async () => {
+      try {
+        const token = await ensureAuth();
+        if (token) {
+          router.replace('/tabs');
+        } else {
+          setCheckingAuth(false);
+        }
+      } catch (error) {
         setCheckingAuth(false);
       }
-    });
+    };
+
+    checkAuth();
   }, []);
 
   useEffect(() => {
@@ -66,7 +74,11 @@ export default function AuthScreen() {
     if (resendTimer > 0) {
       timer = setTimeout(() => setResendTimer(resendTimer - 1), 1000);
     }
-    return () => clearTimeout(timer);
+    return () => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    };
   }, [resendTimer]);
 
   useEffect(() => {
@@ -92,14 +104,15 @@ export default function AuthScreen() {
     setLoading(true);
     setError('');
     try {
-      const data = await import('../utils/auth').then(({ login }) => login(email, password));
-      if (data && data.accessToken) {
-        import('@react-native-async-storage/async-storage').then(async AsyncStorageModule => {
-          await AsyncStorageModule.default.setItem('authToken', data.accessToken);
-        });
+      const authModule = await import('../utils/auth');
+      const data = await authModule.login(email, password);
+      
+      // Дополнительная проверка после логина
+      const token = await authModule.ensureAuth();
+      if (token) {
         router.replace('/tabs');
       } else {
-        setError('Не удалось получить токен авторизации');
+        setError('Не удалось авторизоваться');
       }
     } catch (e: any) {
       setError(e.message || 'Ошибка при входе');
@@ -124,6 +137,7 @@ export default function AuthScreen() {
     try {
       await import('../utils/auth').then(({ register }) => register(email, password));
       setMode('verify');
+      startResendTimer();
     } catch (e: any) {
       setError(e.message || 'Ошибка при регистрации');
     } finally {
@@ -135,8 +149,16 @@ export default function AuthScreen() {
     setLoading(true);
     setError('');
     try {
-      await import('../utils/auth').then(({ verify }) => verify(email, code));
-      router.replace('/tabs');
+      const authModule = await import('../utils/auth');
+      await authModule.verify(email, code);
+      
+      // Проверка авторизации после верификации
+      const token = await authModule.ensureAuth();
+      if (token) {
+        router.replace('/tabs');
+      } else {
+        setError('Не удалось авторизоваться после подтверждения');
+      }
     } catch (e: any) {
       setError(e.message || 'Ошибка при подтверждении');
     } finally {
@@ -159,14 +181,18 @@ export default function AuthScreen() {
 
   if (checkingAuth) {
     return (
-      <Animated.View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+      <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#5a67d8" />
-      </Animated.View>
+      </View>
     );
   }
 
   const renderLogin = () => (
-    <Animated.View style={[styles.formContainer, { opacity: fadeAnim, transform: [{ translateX: slideAnim }], width: Platform.OS === 'web' ? formWidth : '100%' }]}>
+    <Animated.View style={[styles.formContainer, { 
+      opacity: fadeAnim, 
+      transform: [{ translateX: slideAnim }], 
+      width: Platform.OS === 'web' ? formWidth : '100%' 
+    }]}>
       <Text style={styles.title}>Вход</Text>
       {renderError()}
       <TextInput
@@ -196,14 +222,21 @@ export default function AuthScreen() {
       >
         {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Войти</Text>}
       </TouchableOpacity>
-      <TouchableOpacity onPress={() => { setError(''); setMode('register'); }} disabled={loading}>
+      <TouchableOpacity 
+        onPress={() => { setError(''); setMode('register'); }} 
+        disabled={loading}
+      >
         <Text style={styles.switchText}>Нет аккаунта? Зарегистрироваться</Text>
       </TouchableOpacity>
     </Animated.View>
   );
 
   const renderRegister = () => (
-    <Animated.View style={[styles.formContainer, { opacity: fadeAnim, transform: [{ translateX: slideAnim }], width: Platform.OS === 'web' ? formWidth : '100%' }]}>
+    <Animated.View style={[styles.formContainer, { 
+      opacity: fadeAnim, 
+      transform: [{ translateX: slideAnim }], 
+      width: Platform.OS === 'web' ? formWidth : '100%' 
+    }]}>
       <Text style={styles.title}>Регистрация</Text>       
       {renderError()}
       <TextInput
@@ -242,14 +275,21 @@ export default function AuthScreen() {
       >
         {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Зарегистрироваться</Text>}
       </TouchableOpacity>
-      <TouchableOpacity onPress={() => { setError(''); setMode('login'); }} disabled={loading}>
+      <TouchableOpacity 
+        onPress={() => { setError(''); setMode('login'); }} 
+        disabled={loading}
+      >
         <Text style={styles.switchText}>Уже есть аккаунт? Войти</Text>
       </TouchableOpacity>
     </Animated.View>
   );
 
   const renderVerify = () => (
-    <Animated.View style={[styles.formContainer, { opacity: fadeAnim, transform: [{ translateX: slideAnim }], width: formWidth }]}>
+    <Animated.View style={[styles.formContainer, { 
+      opacity: fadeAnim, 
+      transform: [{ translateX: slideAnim }], 
+      width: formWidth 
+    }]}>
       <Text style={styles.title}>Подтверждение Email</Text>
       {renderError()}
       <Text style={styles.verifyText}>Введите код из 6 цифр, отправленный на {email}</Text>
@@ -271,7 +311,10 @@ export default function AuthScreen() {
       >
         {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Подтвердить</Text>}
       </TouchableOpacity>
-      <TouchableOpacity onPress={() => { if (resendTimer === 0) { handleResendCode(); } }} disabled={loading || resendTimer > 0}>
+      <TouchableOpacity 
+        onPress={() => { if (resendTimer === 0) { handleResendCode(); } }} 
+        disabled={loading || resendTimer > 0}
+      >
         <Text style={[styles.switchText, resendTimer > 0 && styles.disabledText]}>
           {resendTimer > 0 ? `Отправить код повторно через ${resendTimer}с` : 'Отправить код повторно'}
         </Text>
@@ -281,8 +324,9 @@ export default function AuthScreen() {
 
   return (
     <KeyboardAvoidingView
-      style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}
+      style={styles.container}
       behavior={Platform.select({ ios: 'padding', android: undefined })}
+      keyboardVerticalOffset={Platform.select({ ios: 60, android: 0 })}
     >
       {mode === 'login' && renderLogin()}
       {mode === 'register' && renderRegister()}
@@ -297,6 +341,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#1e1e2f',
     padding: 20,
     justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#1e1e2f',
   },
   formContainer: {
     backgroundColor: '#2a2a3d',
@@ -378,5 +429,6 @@ const styles = StyleSheet.create({
     color: '#c0c0d0',
     fontSize: 16,
     textAlign: 'center',
+    marginBottom: 10,
   },
 });
