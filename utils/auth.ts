@@ -79,7 +79,7 @@ function isTokenExpired(expirationTime: number): boolean {
 }
 
 // Улучшенный middleware для проверки и обновления токена
-export async function ensureAuth(): Promise<string> {
+export async function ensureAuth(): Promise<string | null> {
   // 1. Пытаемся получить access token
   let accessToken = await getAccessToken();
   
@@ -103,7 +103,7 @@ export async function ensureAuth(): Promise<string> {
     const refreshToken = await getRefreshToken();
     
     if (!refreshToken) {
-      throw new Error('No refresh token available');
+      return null;
     }
 
     // 5. Проверяем refresh token перед использованием
