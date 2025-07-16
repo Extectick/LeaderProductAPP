@@ -4,6 +4,9 @@
     "slug": "extectick-app",
     "version": "1.0.0",
     "orientation": "portrait",
+    "extra": {
+      "API_BASE_URL": "http://192.168.30.54:3000"
+    },
     "icon": "./assets/images/icon.png",
     "scheme": "extectickapp",
     "userInterfaceStyle": "automatic",

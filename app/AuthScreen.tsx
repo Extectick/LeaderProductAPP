@@ -13,12 +13,13 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { ensureAuth } from '../utils/auth';
+import { useProfile } from '../context/ProfileContext';
 
 const { width } = Dimensions.get('window');
 
 export default function AuthScreen() {
   const router = useRouter();
+  const { profile } = useProfile();
 
   const [mode, setMode] = useState<'login' | 'register' | 'verify'>('login');
   const [email, setEmail] = useState('');
@@ -29,28 +30,33 @@ export default function AuthScreen() {
   const [error, setError] = useState('');
   const [resendTimer, setResendTimer] = useState(0);
   const [checkingAuth, setCheckingAuth] = useState(true);
+  const [checkingProfile, setCheckingProfile] = useState(false);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(width)).current;
 
   const [formWidth, setFormWidth] = useState<number>(Platform.OS === 'web' ? Math.min(width * 0.8, 600) : width);
 
-  // Проверка авторизации при загрузке
   useEffect(() => {
-    const checkAuth = async () => {
+    const checkAuthorization = async () => {
       try {
-        const token = await ensureAuth();
-        if (token) {
-          router.replace('/tabs');
-        } else {
-          setCheckingAuth(false);
+        const { isAuthenticated } = await import('../utils/auth').then(m => m.checkAuth());
+        if (isAuthenticated) {
+          
+          if (!profile || (!profile.clientProfile && !profile.supplierProfile && !profile.employeeProfile)) {
+            router.replace('/ProfileSelectionScreen');
+          } else {
+            router.replace('/');
+          }
         }
       } catch (error) {
+        console.error('Auth check error:', error);
+      } finally {
         setCheckingAuth(false);
       }
     };
 
-    checkAuth();
+    checkAuthorization();
   }, []);
 
   useEffect(() => {
@@ -105,15 +111,14 @@ export default function AuthScreen() {
     setError('');
     try {
       const authModule = await import('../utils/auth');
-      const data = await authModule.login(email, password);
-      
-      // Дополнительная проверка после логина
-      const token = await authModule.ensureAuth();
-      if (token) {
-        router.replace('/tabs');
+      await authModule.login(email, password);
+      setCheckingProfile(true);
+      if (!profile || (!profile.clientProfile && !profile.supplierProfile && !profile.employeeProfile)) {
+        router.replace('/ProfileSelectionScreen');
       } else {
-        setError('Не удалось авторизоваться');
+        router.replace('/');
       }
+      setCheckingProfile(false);
     } catch (e: any) {
       setError(e.message || 'Ошибка при входе');
     } finally {
@@ -151,14 +156,13 @@ export default function AuthScreen() {
     try {
       const authModule = await import('../utils/auth');
       await authModule.verify(email, code);
-      
-      // Проверка авторизации после верификации
-      const token = await authModule.ensureAuth();
-      if (token) {
-        router.replace('/tabs');
+      setCheckingProfile(true);
+      if (!profile || (!profile.clientProfile && !profile.supplierProfile && !profile.employeeProfile)) {
+        router.replace('/ProfileSelectionScreen');
       } else {
-        setError('Не удалось авторизоваться после подтверждения');
+        router.replace('/');
       }
+      setCheckingProfile(false);
     } catch (e: any) {
       setError(e.message || 'Ошибка при подтверждении');
     } finally {
@@ -179,7 +183,7 @@ export default function AuthScreen() {
     }
   };
 
-  if (checkingAuth) {
+  if (checkingAuth || checkingProfile) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#5a67d8" />

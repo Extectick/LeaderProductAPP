@@ -4,6 +4,7 @@ import * as apiClient from '../app/apiClient';
 
 const ACCESS_TOKEN_KEY = 'accessToken';
 const REFRESH_TOKEN_KEY = 'refreshToken';
+const PROFILE_KEY = 'userProfile';
 
 interface TokenPayload {
   userId: number;
@@ -20,13 +21,23 @@ export async function register(email: string, password: string) {
 export async function login(email: string, password: string) {
   const data = await apiClient.login(email, password);
   await saveTokens(data.accessToken, data.refreshToken);
-  return data;
+  
+  // Запрашиваем и сохраняем профиль
+  const profileData = await apiClient.getProfile(data.accessToken);
+  await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(profileData.profile));
+  
+  return { ...data, profile: profileData.profile };
 }
 
 export async function verify(email: string, code: string) {
   const data = await apiClient.verify(email, code);
   await saveTokens(data.accessToken, data.refreshToken);
-  return data;
+  
+  // Запрашиваем и сохраняем профиль
+  const profileData = await apiClient.getProfile(data.accessToken);
+  await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(profileData.profile));
+  
+  return { ...data, profile: profileData.profile };
 }
 
 export async function refreshToken() {
@@ -54,6 +65,7 @@ export async function logout() {
     await apiClient.logout(accessToken, refreshToken);
   } finally {
     await clearTokens();
+    await AsyncStorage.removeItem(PROFILE_KEY);
   }
 }
 
@@ -82,7 +94,6 @@ function isTokenExpired(expirationTime: number): boolean {
 export async function ensureAuth(): Promise<string | null> {
   // 1. Пытаемся получить access token
   let accessToken = await getAccessToken();
-  
   // 2. Если токен есть, проверяем его валидность
   if (accessToken) {
     try {
@@ -90,6 +101,13 @@ export async function ensureAuth(): Promise<string | null> {
       
       // 3. Проверяем срок действия токена
       if (!isTokenExpired(payload.exp)) {
+        // Проверяем наличие профиля
+        const profile = await AsyncStorage.getItem(PROFILE_KEY);
+        if (!profile) {
+          // Если профиля нет, запрашиваем его
+          const profileData = await apiClient.getProfile(accessToken);
+          await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(profileData.profile));
+        }
         return accessToken;
       }
     } catch (error) {
@@ -112,14 +130,18 @@ export async function ensureAuth(): Promise<string | null> {
       await clearTokens();
       throw new Error('Refresh token expired');
     }
-
+    
     // 6. Обновляем токены
     const newTokens = await apiClient.refreshToken(refreshToken);
     
     // 7. Сохраняем новые токены
     await saveTokens(newTokens.accessToken, newTokens.refreshToken);
     
-    // 8. Возвращаем новый access token
+    // 8. Запрашиваем и сохраняем профиль
+    const profileData = await apiClient.getProfile(newTokens.accessToken);
+    await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(profileData.profile));
+    console.log(profileData)
+    // 9. Возвращаем новый access token
     return newTokens.accessToken;
   } catch (error) {
     console.error('Token refresh failed:', error);
@@ -129,19 +151,10 @@ export async function ensureAuth(): Promise<string | null> {
 }
 
 // Дополнительная функция для проверки авторизации без автоматического обновления токена
-export async function checkAuth(): Promise<{ isAuthenticated: boolean; isTokenExpired?: boolean }> {
-  const accessToken = await getAccessToken();
-  
-  if (!accessToken) {
-    return { isAuthenticated: false };
-  }
-
+export async function checkAuth(): Promise<{ isAuthenticated: boolean }> {
   try {
-    const payload = jwtDecode<TokenPayload>(accessToken);
-    return {
-      isAuthenticated: true,
-      isTokenExpired: isTokenExpired(payload.exp)
-    };
+    const accessToken = await getAccessToken();
+    return { isAuthenticated: !!accessToken };
   } catch (error) {
     return { isAuthenticated: false };
   }
