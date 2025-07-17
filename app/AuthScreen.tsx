@@ -1,3 +1,4 @@
+// D:\Extectick\LeaderProductAPP\app\AuthScreen.tsx
 import { useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import {
@@ -14,6 +15,7 @@ import {
   View,
 } from 'react-native';
 import { useProfile } from '../context/ProfileContext';
+import * as authUtils from '../utils/auth';
 
 const { width } = Dimensions.get('window');
 
@@ -38,25 +40,42 @@ export default function AuthScreen() {
   const [formWidth, setFormWidth] = useState<number>(Platform.OS === 'web' ? Math.min(width * 0.8, 600) : width);
 
   useEffect(() => {
+    
     const checkAuthorization = async () => {
       try {
-        const { isAuthenticated } = await import('../utils/auth').then(m => m.checkAuth());
-        if (isAuthenticated) {
-          
-          if (!profile || (!profile.clientProfile && !profile.supplierProfile && !profile.employeeProfile)) {
+        setCheckingAuth(true);
+        const token = await authUtils.ensureAuth();
+        
+        if (token) {
+          try {
+            // Явная проверка профиля для валидации токена
+            const profileData = await authUtils.getProfile();
+            if (!profileData || (!profileData.clientProfile && !profileData.supplierProfile && !profileData.employeeProfile)) {
+              router.replace('/ProfileSelectionScreen');
+            } else {
+              router.replace('/');
+            }
+          } catch (profileError) {
+            console.error('Profile check failed:', profileError);
             router.replace('/ProfileSelectionScreen');
-          } else {
-            router.replace('/');
           }
         }
-      } catch (error) {
-        console.error('Auth check error:', error);
+      } catch (authError) {
+        console.error('Auth check error:', authError);
       } finally {
         setCheckingAuth(false);
       }
     };
 
     checkAuthorization();
+
+    // Фоновая проверка токена каждые 5 минут
+    const interval = setInterval(() => {
+      authUtils.ensureAuth().catch(console.error);
+    }, 5 * 60 * 1000);
+
+    return () => clearInterval(interval);
+
   }, []);
 
   useEffect(() => {
@@ -110,8 +129,8 @@ export default function AuthScreen() {
     setLoading(true);
     setError('');
     try {
-      const authModule = await import('../utils/auth');
-      await authModule.login(email, password);
+      
+      await authUtils.login(email, password);
       setCheckingProfile(true);
       if (!profile || (!profile.clientProfile && !profile.supplierProfile && !profile.employeeProfile)) {
         router.replace('/ProfileSelectionScreen');
@@ -140,7 +159,7 @@ export default function AuthScreen() {
       return;
     }
     try {
-      await import('../utils/auth').then(({ register }) => register(email, password));
+      await authUtils.register(email, password);
       setMode('verify');
       startResendTimer();
     } catch (e: any) {
@@ -154,8 +173,7 @@ export default function AuthScreen() {
     setLoading(true);
     setError('');
     try {
-      const authModule = await import('../utils/auth');
-      await authModule.verify(email, code);
+      await authUtils.verify(email, code);
       setCheckingProfile(true);
       if (!profile || (!profile.clientProfile && !profile.supplierProfile && !profile.employeeProfile)) {
         router.replace('/ProfileSelectionScreen');
@@ -174,7 +192,7 @@ export default function AuthScreen() {
     setLoading(true);
     setError('');
     try {
-      await import('../utils/auth').then(({ register }) => register(email, password));
+      await authUtils.register(email, password);
       startResendTimer();
     } catch (e: any) {
       setError(e.message || 'Ошибка при повторной отправке кода');

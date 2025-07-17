@@ -1,3 +1,4 @@
+// D:\Extectick\LeaderProductAPP\utils\auth.ts
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { jwtDecode } from 'jwt-decode';
 import * as apiClient from '../app/apiClient';
@@ -86,12 +87,34 @@ export async function getRefreshToken() {
   return AsyncStorage.getItem(REFRESH_TOKEN_KEY);
 }
 
+export async function getProfile() {
+  const profile = await AsyncStorage.getItem(PROFILE_KEY);
+  if (!profile) {
+    const accessToken = await getAccessToken();
+    if (!accessToken) throw new Error('Not authenticated');
+    
+    const profileData = await apiClient.getProfile(accessToken);
+    await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(profileData.profile));
+    return profileData.profile;
+  }
+  return JSON.parse(profile);
+}
+
 function isTokenExpired(expirationTime: number): boolean {
   return Date.now() >= expirationTime * 1000;
 }
 
 // Улучшенный middleware для проверки и обновления токена
+// Кэш для результатов проверки токена
+let authCache: { token: string | null, timestamp: number } | null = null;
+const CACHE_TTL = 30 * 1000; // 30 секунд
+
 export async function ensureAuth(): Promise<string | null> {
+  // Проверяем кэш
+  if (authCache && Date.now() - authCache.timestamp < CACHE_TTL) {
+    return authCache.token;
+  }
+
   // 1. Пытаемся получить access token
   let accessToken = await getAccessToken();
   // 2. Если токен есть, проверяем его валидность
@@ -106,8 +129,14 @@ export async function ensureAuth(): Promise<string | null> {
         if (!profile) {
           // Если профиля нет, запрашиваем его
           const profileData = await apiClient.getProfile(accessToken);
+          if (!profileData.profile) {
+            throw new Error('Profile required');
+          }
           await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(profileData.profile));
         }
+        
+        // Обновляем кэш
+        authCache = { token: accessToken, timestamp: Date.now() };
         return accessToken;
       }
     } catch (error) {
@@ -151,11 +180,31 @@ export async function ensureAuth(): Promise<string | null> {
 }
 
 // Дополнительная функция для проверки авторизации без автоматического обновления токена
-export async function checkAuth(): Promise<{ isAuthenticated: boolean }> {
+export async function checkAuth(): Promise<{ isAuthenticated: boolean, requiresRefresh?: boolean }> {
   try {
     const accessToken = await getAccessToken();
-    return { isAuthenticated: !!accessToken };
+    if (!accessToken) return { isAuthenticated: false };
+
+    // Проверяем срок действия токена
+    const payload = jwtDecode<TokenPayload>(accessToken);
+    if (isTokenExpired(payload.exp)) {
+      try {
+        // Пробуем обновить токен
+        const newToken = await refreshToken();
+        return { 
+          isAuthenticated: !!newToken,
+          requiresRefresh: true 
+        };
+      } catch (error) {
+        await clearTokens();
+        return { isAuthenticated: false };
+      }
+    }
+
+    // Токен валиден (проверен срок действия)
+    return { isAuthenticated: true };
   } catch (error) {
+    console.error('Auth check error:', error);
     return { isAuthenticated: false };
   }
 }
