@@ -33,6 +33,7 @@ interface ProfileContextType {
   loading: boolean;
   error: string | null;
   loadProfile: () => Promise<void>;
+  fetchProfile: (accessToken: string) => Promise<Profile>;
   clearProfile: () => Promise<void>;
   selectProfileType: (type: ProfileType) => Promise<void>;
 }
@@ -42,6 +43,7 @@ const ProfileContext = createContext<ProfileContextType>({
   loading: false,
   error: null,
   loadProfile: async () => {},
+  fetchProfile: async () => { throw new Error('Not implemented'); },
   clearProfile: async () => {},
   selectProfileType: async () => {},
 });
@@ -118,6 +120,7 @@ export const ProfileProvider: React.FC<{children: React.ReactNode}> = ({ childre
       loading, 
       error,
       loadProfile,
+      fetchProfile,
       clearProfile,
       selectProfileType
     }}>

@@ -57,7 +57,11 @@ const ThemeSwitcher = () => {
               key={t}
               style={[
                 styles.themeOption,
-                { backgroundColor: themes[t].button }
+                { 
+                  backgroundColor: themes[t].button,
+                  borderWidth: t === theme ? 2 : 0,
+                  borderColor: 'white'
+                }
               ]}
               onPress={() => handleThemeChange(t)}
             />
@@ -88,6 +92,8 @@ const styles = StyleSheet.create({
     height: 40,
     borderRadius: 20,
     elevation: 5,
+    borderWidth: 2,
+    borderColor: 'white',
   },
   dropdown: {
     position: 'absolute',

@@ -6,45 +6,54 @@ import {
   StyleSheet,
   Text,
   TouchableOpacity,
-  View,
+  View
 } from 'react-native';
-import { ensureAuth, logout } from '../utils/auth';
-import apiClient from './apiClient';
+import ThemeSwitcher from '../components/ThemeSwitcher';
+import { useThemeColor } from '../hooks/useThemeColor';
+import { logout } from '../utils/auth';
 
-export default function ProfileScreen() {
+interface ProfileScreenProps {
+  profile?: any;
+  loading: boolean;
+  error?: string;
+  onRefresh?: () => Promise<void>;
+}
+
+export default function ProfileScreen({
+  profile: propProfile,
+  loading: propLoading,
+  error: propError,
+  onRefresh
+}: ProfileScreenProps) {
   const router = useRouter();
-  const [profile, setProfile] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [profile, setProfile] = useState(propProfile);
+  const [loading, setLoading] = useState(propLoading);
+  const [error, setError] = useState(propError || '');
+  const [refreshing, setRefreshing] = useState(false);
 
-  const fetchProfile = async () => {
-    setLoading(true);
-    setError('');
-    
-    try {
-      const token = await ensureAuth();
-      if (!token) {
-        router.replace('/AuthScreen');
-        return;
-      }
-      
-      const data = await apiClient.getProfile(token);
-      // console.log(data)
-      setProfile(data);
-    } catch (e: any) {
-      setError(e.message || 'Ошибка при загрузке профиля');
-      if (e.message === 'Unauthorized') {
-        await logout();
-        router.replace('/AuthScreen');
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
+  const backgroundColor = useThemeColor({}, 'background');
+  const textColor = useThemeColor({}, 'text');
+  const buttonColor = useThemeColor({}, 'button');
+  const buttonTextColor = useThemeColor({}, 'buttonText');
+  const errorColor = useThemeColor({}, 'error');
+  const secondaryTextColor = useThemeColor({}, 'secondaryText');
 
   useEffect(() => {
-    fetchProfile();
-  }, []);
+    if (!propProfile && onRefresh) {
+      onRefresh();
+    }
+  }, [propProfile, onRefresh]);
+
+  const handleRefresh = async () => {
+    if (onRefresh) {
+      setRefreshing(true);
+      try {
+        await onRefresh();
+      } finally {
+        setRefreshing(false);
+      }
+    }
+  };
 
   const handleLogout = async () => {
     Alert.alert(
@@ -75,8 +84,8 @@ export default function ProfileScreen() {
     
     return (
       <View style={styles.infoRow}>
-        <Text style={styles.label}>{label}:</Text>
-        <Text style={styles.value}>
+        <Text style={[styles.label, { color: secondaryTextColor }]}>{label}:</Text>
+        <Text style={[styles.value, { color: textColor }]}>
           {typeof value === 'boolean' 
             ? value ? 'Да' : 'Нет'
             : value.toString()}
@@ -84,24 +93,24 @@ export default function ProfileScreen() {
       </View>
     );
   };
-
+  
   if (loading) {
     return (
-      <View style={styles.containerCentered}>
-        <ActivityIndicator size="large" color="#5a67d8" />
+      <View style={[styles.containerCentered, { backgroundColor }]}>
+        <ActivityIndicator size="large" color={buttonColor} />
       </View>
     );
   }
 
   if (error) {
     return (
-      <View style={styles.containerCentered}>
-        <Text style={styles.error}>{error}</Text>
+      <View style={[styles.containerCentered, { backgroundColor }]}>
+        <Text style={[styles.error, { color: errorColor }]}>{error}</Text>
         <TouchableOpacity 
-          style={styles.button} 
+          style={[styles.button, { backgroundColor: buttonColor }]} 
           onPress={() => router.replace('/AuthScreen')}
         >
-          <Text style={styles.buttonText}>Войти заново</Text>
+          <Text style={[styles.buttonText, { color: buttonTextColor }]}>Войти заново</Text>
         </TouchableOpacity>
       </View>
     );
@@ -109,8 +118,20 @@ export default function ProfileScreen() {
 
   if (!profile) {
     return (
-      <View style={styles.containerCentered}>
-        <Text style={styles.text}>Профиль не найден</Text>
+      <View style={[styles.containerCentered, { backgroundColor }]}>
+        <Text style={[styles.text, { color: textColor }]}>Профиль не найден</Text>
+        <TouchableOpacity 
+          style={[styles.button, { backgroundColor: buttonColor }]} 
+          onPress={() => router.push('/ProfileSelectionScreen')}
+        >
+          <Text style={[styles.buttonText, { color: buttonTextColor }]}>Создать профиль</Text>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={[styles.logoutButton, { backgroundColor: buttonColor }]} 
+          onPress={handleLogout}
+        >
+          <Text style={[styles.logoutText, { color: buttonTextColor }]}>Выйти из аккаунта</Text>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -118,9 +139,14 @@ export default function ProfileScreen() {
   const { email, profileStatus, currentProfileType, createdAt, updatedAt, role, employeeProfile, phone } = profile.profile;
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Профиль пользователя</Text>
-      
+    <View style={[styles.container, { backgroundColor }]}>
+      <ThemeSwitcher />
+      <Text style={[styles.title, { 
+        color: textColor,
+        marginBottom: 30,
+        textAlign: 'center'
+      }]}>Профиль пользователя</Text>
+    
       {renderProfileField('Email', email)}
       {renderProfileField('Статус', profileStatus)}
       {renderProfileField('Тип профиля', currentProfileType)}
@@ -135,25 +161,23 @@ export default function ProfileScreen() {
       {phone && renderProfileField('Телефон', phone)}
       
       <TouchableOpacity 
-        style={styles.logoutButton} 
+        style={[styles.logoutButton, { backgroundColor: buttonColor }]} 
         onPress={handleLogout}
       >
-        <Text style={styles.logoutText}>Выйти из аккаунта</Text>
+        <Text style={[styles.logoutText, { color: buttonTextColor }]}>Выйти из аккаунта</Text>
       </TouchableOpacity>
     </View>
   );
-
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#1e1e2f',
     padding: 20,
+    backgroundColor: 'transparent',
   },
   containerCentered: {
     flex: 1,
-    backgroundColor: '#1e1e2f',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
@@ -161,7 +185,6 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: '700',
-    color: '#f0f0f5',
     marginBottom: 30,
     textAlign: 'center',
   },
@@ -171,46 +194,41 @@ const styles = StyleSheet.create({
   },
   label: {
     flex: 1,
-    color: '#a0a0c0',
     fontSize: 16,
     fontWeight: '600',
   },
   value: {
     flex: 2,
-    color: '#f0f0f5',
     fontSize: 16,
   },
   text: {
-    color: '#f0f0f5',
     fontSize: 18,
   },
   error: {
-    color: '#ff6b6b',
     fontSize: 18,
     marginBottom: 20,
     textAlign: 'center',
   },
   logoutButton: {
     marginTop: 40,
-    backgroundColor: '#5a67d8',
     paddingVertical: 15,
+    paddingHorizontal: 15,
     borderRadius: 14,
     alignItems: 'center',
   },
   logoutText: {
-    color: '#f0f0f5',
     fontSize: 20,
     fontWeight: '700',
   },
   button: {
-    backgroundColor: '#5a67d8',
     paddingVertical: 15,
+    paddingHorizontal: 15,
     borderRadius: 14,
     alignItems: 'center',
-    marginTop: 10,
+    marginTop: 5,
+    
   },
   buttonText: {
-    color: '#f0f0f5',
     fontSize: 18,
     fontWeight: '700',
   },
