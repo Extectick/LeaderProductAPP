@@ -8,17 +8,18 @@ import {
   KeyboardAvoidingView,
   Platform,
   Text,
-  TextInput,
   TouchableOpacity,
   View
 } from 'react-native';
+import FormInput from '../components/FormInput';
 import * as authUtils from '../utils/auth';
-import styles from './AuthScreen.styles';
+import getStyles from './AuthScreen.styles';
 
 const { width } = Dimensions.get('window');
 
 export default function AuthScreen() {
   const router = useRouter();
+  const styles = getStyles();
 
   const [mode, setMode] = useState<'login' | 'register' | 'verify'>('login');
   const [email, setEmail] = useState('');
@@ -137,24 +138,36 @@ export default function AuthScreen() {
     }
   };
 
-  const renderError = () => error && <Text style={styles.error}>{error}</Text>;
-
   if (checkingAuth) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#5a67d8" />
+        <ActivityIndicator size="large" color={styles.buttonText.color} />
       </View>
     );
   }
+
+  const renderError = () => error && <Text style={styles.error}>{error}</Text>;
 
   const renderLogin = () => (
     <Animated.View style={[styles.formContainer, { opacity: fadeAnim, transform: [{ translateX: slideAnim }], width: formWidth }]}>
       <Text style={styles.title}>Вход</Text>
       {renderError()}
-      <TextInput style={styles.input} placeholder="Email" autoCapitalize="none" value={email} onChangeText={setEmail} />
-      <TextInput style={styles.input} placeholder="Пароль" secureTextEntry value={password} onChangeText={setPassword} />
+      <FormInput 
+        label="Email"
+        value={email}
+        onChangeText={setEmail}
+        placeholder="Email"
+        autoCapitalize="none"
+      />
+      <FormInput 
+        label="Пароль"
+        value={password}
+        onChangeText={setPassword}
+        placeholder="Пароль"
+        secureTextEntry
+      />
       <TouchableOpacity style={styles.button} onPress={handleLogin} disabled={loading}>
-        {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Войти</Text>}
+        {loading ? <ActivityIndicator color={styles.buttonText.color} /> : <Text style={styles.buttonText}>Войти</Text>}
       </TouchableOpacity>
       <TouchableOpacity onPress={() => { setError(''); setMode('register'); }}>
         <Text style={styles.switchText}>Нет аккаунта? Регистрация</Text>
@@ -166,11 +179,29 @@ export default function AuthScreen() {
     <Animated.View style={[styles.formContainer, { opacity: fadeAnim, transform: [{ translateX: slideAnim }], width: formWidth }]}>
       <Text style={styles.title}>Регистрация</Text>
       {renderError()}
-      <TextInput style={styles.input} placeholder="Email" autoCapitalize="none" value={email} onChangeText={setEmail} />
-      <TextInput style={styles.input} placeholder="Пароль" secureTextEntry value={password} onChangeText={setPassword} />
-      <TextInput style={styles.input} placeholder="Повторите пароль" secureTextEntry value={passwordRepeat} onChangeText={setPasswordRepeat} />
+      <FormInput 
+        label="Email"
+        value={email}
+        onChangeText={setEmail}
+        placeholder="Email"
+        autoCapitalize="none"
+      />
+      <FormInput 
+        label="Пароль"
+        value={password}
+        onChangeText={setPassword}
+        placeholder="Пароль"
+        secureTextEntry
+      />
+      <FormInput 
+        label="Повторите пароль"
+        value={passwordRepeat}
+        onChangeText={setPasswordRepeat}
+        placeholder="Повторите пароль"
+        secureTextEntry
+      />
       <TouchableOpacity style={styles.button} onPress={handleRegister} disabled={loading}>
-        {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Зарегистрироваться</Text>}
+        {loading ? <ActivityIndicator color={styles.buttonText.color} /> : <Text style={styles.buttonText}>Зарегистрироваться</Text>}
       </TouchableOpacity>
       <TouchableOpacity onPress={() => { setError(''); setMode('login'); }}>
         <Text style={styles.switchText}>Уже есть аккаунт? Войти</Text>
@@ -183,9 +214,16 @@ export default function AuthScreen() {
       <Text style={styles.title}>Подтверждение</Text>
       {renderError()}
       <Text style={styles.verifyText}>Код отправлен на {email}</Text>
-      <TextInput style={styles.codeInput} placeholder="Код" keyboardType="number-pad" maxLength={6} value={code} onChangeText={setCode} />
+      <FormInput 
+        label="Код подтверждения"
+        value={code}
+        onChangeText={setCode}
+        placeholder="Код"
+        keyboardType="number-pad"
+        maxLength={6}
+      />
       <TouchableOpacity style={styles.button} onPress={handleVerify} disabled={loading}>
-        {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Подтвердить</Text>}
+        {loading ? <ActivityIndicator color={styles.buttonText.color} /> : <Text style={styles.buttonText}>Подтвердить</Text>}
       </TouchableOpacity>
     </Animated.View>
   );
