@@ -86,13 +86,10 @@ export async function ensureAuth(): Promise<string | null> {
 }
 
 export async function getProfile() {
-  const profileStr = await AsyncStorage.getItem(PROFILE_KEY);
-  if (!profileStr) {
-    const accessToken = await getAccessToken();
-    if (!accessToken) throw new Error('Not authenticated');
-    return await fetchAndStoreProfile(accessToken);
-  }
-  return JSON.parse(profileStr);
+  const accessToken = await getAccessToken();
+  if (!accessToken) throw new Error('Not authenticated');
+
+  return await fetchAndStoreProfile(accessToken);
 }
 
 export async function logout() {

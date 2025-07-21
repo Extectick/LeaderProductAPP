@@ -1,3 +1,4 @@
+// D:\Extectick\LeaderProductAPP\app\tabs\index.tsx
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import React, { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
@@ -6,6 +7,7 @@ import ThemeSwitcher from '../../components/ThemeSwitcher';
 import { useProfile } from '../../context/ProfileContext';
 import { useThemeColor } from '../../hooks/useThemeColor';
 import { ensureAuth } from '../../utils/auth';
+import ProfileScreen from '../ProfileScreen';
 
 const Tab = createBottomTabNavigator();
 
@@ -33,7 +35,7 @@ function TasksScreen() {
   );
 }
 
-import ProfileScreen from '../ProfileScreen';
+
 
 function ProfileScreenWrapper() {
   const { profile, loading, error, fetchProfile } = useProfile();

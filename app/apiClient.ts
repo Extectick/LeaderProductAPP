@@ -163,6 +163,71 @@ export async function getProfile(accessToken: string) {
   return response.json();
 }
 
+export async function updateProfileType(type: 'CLIENT' | 'SUPPLIER' | 'EMPLOYEE') {
+  const token = await AsyncStorage.getItem('accessToken');
+  if (!token) throw new Error('No access token');
+
+  const url = `${API_BASE_URL}/users/profile/type`; // Убедись, что этот путь соответствует твоему API
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ currentProfileType: type }),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || 'Failed to update profile type');
+  }
+
+  return response.json(); // ожидается { profile: {...} }
+}
+
+export async function createClientProfile(accessToken: string) {
+  return request('/profiles/client', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({}),
+  });
+}
+
+export async function createSupplierProfile(accessToken: string) {
+  return request('/profiles/supplier', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({}),
+  });
+}
+
+export async function createEmployeeProfile(accessToken: string, { firstName, lastName, middleName, departmentId }: {
+  firstName: string;
+  lastName: string;
+  middleName: string | null;
+  departmentId: number;
+}) {
+  return request('/profiles/employee', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      firstName,
+      lastName,
+      middleName,
+      departmentId,
+    }),
+  });
+}
+
 const apiClient = {
   register,
   login,
@@ -170,6 +235,10 @@ const apiClient = {
   refreshToken,
   logout,
   getProfile,
+  updateProfileType,
+  createClientProfile,
+  createSupplierProfile,
+  createEmployeeProfile,
   API_BASE_URL,
 };
 
