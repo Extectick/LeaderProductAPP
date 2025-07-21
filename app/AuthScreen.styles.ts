@@ -9,6 +9,14 @@ const styles = StyleSheet.create({
     padding: 20,
     justifyContent: 'center',
   },
+
+  loadingContainer: { 
+    flex: 1, 
+    justifyContent: 'center', 
+    alignItems: 'center', 
+    backgroundColor: '#1e1e2f' 
+  },
+
   formContainer: {
     backgroundColor: '#2a2a3d',
     borderRadius: 16,
@@ -63,6 +71,7 @@ const styles = StyleSheet.create({
     shadowColor: '#5a67d8',
     shadowOpacity: 0.7,
     shadowRadius: 10,
+
     shadowOffset: { width: 0, height: 5 },
     maxWidth: Platform.OS === 'web' ? 300 : '100%',
     alignSelf: Platform.OS === 'web' ? 'center' : 'stretch',
