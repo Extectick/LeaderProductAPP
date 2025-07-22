@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import * as apiClient from '../app/apiClient';
+import * as apiClient from '../utils/apiClient';
 import { ensureAuth } from '../utils/auth';
 
 type ProfileType = 'CLIENT' | 'SUPPLIER' | 'EMPLOYEE' | null;

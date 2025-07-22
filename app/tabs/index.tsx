@@ -1,24 +1,21 @@
-// D:\Extectick\LeaderProductAPP\app\tabs\index.tsx
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import ThemeSwitcher from '../../components/ThemeSwitcher';
-import { useProfile } from '../../context/ProfileContext';
+
 import { useThemeColor } from '../../hooks/useThemeColor';
-import { ensureAuth } from '../../utils/auth';
-import ProfileScreen from '../ProfileScreen';
+import ProfileScreen from './ProfileScreen';
 
 const Tab = createBottomTabNavigator();
 
 function HomeScreen() {
   const backgroundColor = useThemeColor({}, 'background');
   const textColor = useThemeColor({}, 'text');
-  
+
   return (
     <View style={[styles.screenContainer, { backgroundColor }]}>
       <Text style={[styles.text, { color: textColor }]}>Главная</Text>
-      <ThemeSwitcher />
+      {/* <ThemeSwitcher /> */}
     </View>
   );
 }
@@ -26,49 +23,12 @@ function HomeScreen() {
 function TasksScreen() {
   const backgroundColor = useThemeColor({}, 'background');
   const textColor = useThemeColor({}, 'text');
-  
+
   return (
     <View style={[styles.screenContainer, { backgroundColor }]}>
       <Text style={[styles.text, { color: textColor }]}>Задания</Text>
-      <ThemeSwitcher />
+      {/* <ThemeSwitcher /> */}
     </View>
-  );
-}
-
-
-
-function ProfileScreenWrapper() {
-  const { profile, loading, error, fetchProfile } = useProfile();
-  const [refreshing, setRefreshing] = useState(false);
-
-  useEffect(() => {
-    async function loadInitialProfile() {
-      if (!profile && !loading) {
-        const token = await ensureAuth();
-        if (token) {
-          await fetchProfile(token);
-        }
-      }
-    }
-    loadInitialProfile();
-  }, [profile, loading]);
-
-  const handleRefresh = async () => {
-    setRefreshing(true);
-    const token = await ensureAuth();
-    if (token) {
-      await fetchProfile(token);
-    }
-    setRefreshing(false);
-  };
-
-  return (
-    <ProfileScreen 
-      profile={profile}
-      loading={loading || refreshing}
-      error={error ?? undefined}
-      onRefresh={handleRefresh}
-    />
   );
 }
 
@@ -111,7 +71,7 @@ function TabsNavigator() {
     >
       <Tab.Screen name="Home" component={HomeScreen} />
       <Tab.Screen name="Tasks" component={TasksScreen} />
-      <Tab.Screen name="Profile" component={ProfileScreenWrapper} />
+      <Tab.Screen name="Profile" component={ProfileScreen} />
     </Tab.Navigator>
   );
 }

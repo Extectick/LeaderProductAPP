@@ -8,7 +8,6 @@ import {
   TouchableOpacity,
   View
 } from 'react-native';
-import ThemeSwitcher from '../components/ThemeSwitcher';
 import { useProfile } from '../context/ProfileContext';
 import { useThemeColor } from '../hooks/useThemeColor';
 
@@ -36,7 +35,7 @@ export default function ProfileSelectionScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor }]}>
-      <ThemeSwitcher />
+      {/* <ThemeSwitcher /> */}
       <Text style={[styles.title, { color: textColor }]}>Выберите тип профиля</Text>
       <Text style={[styles.subtitle, { color: secondaryTextColor }]}>Это поможет нам настроить приложение под ваши нужды</Text>
 

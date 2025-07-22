@@ -1,7 +1,7 @@
 // D:\Extectick\LeaderProductAPP\utils\auth.ts
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { jwtDecode } from 'jwt-decode';
-import * as apiClient from '../app/apiClient';
+import * as apiClient from './apiClient';
 
 const ACCESS_TOKEN_KEY = 'accessToken';
 const REFRESH_TOKEN_KEY = 'refreshToken';
