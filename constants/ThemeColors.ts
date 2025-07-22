@@ -1,4 +1,6 @@
-type Theme = {
+// ThemeColors.ts
+
+export type Theme = {
   button: string;
   shadow: string;
   background: string;
@@ -7,7 +9,7 @@ type Theme = {
   inputBorder: string;
 };
 
-type ThemeColors = {
+export type ThemeColors = {
   light: Theme;
   dark: Theme;
   orange: Theme;

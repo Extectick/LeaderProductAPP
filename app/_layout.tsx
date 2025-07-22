@@ -1,15 +1,18 @@
 import { Stack } from 'expo-router';
 import React from 'react';
 import { ActivityIndicator, View } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import ThemeSwitcher from '../components/ThemeSwitcher';
 import { useProfile } from '../context/ProfileContext';
 import { ThemeProvider } from '../context/ThemeContext';
 
 function RootLayout() {
   return (
-    <ThemeProvider>
-      <RootLayoutContent />
-    </ThemeProvider>
+    <SafeAreaProvider>
+      <ThemeProvider>
+        <RootLayoutContent />
+      </ThemeProvider>
+    </SafeAreaProvider>
   );
 }
 
@@ -24,11 +27,11 @@ function RootLayoutContent() {
     );
   }
 
-  const initialRoute = !profile 
-    ? 'AuthScreen' 
+  const initialRoute = !profile
+    ? 'AuthScreen'
     : !profile.clientProfile && !profile.supplierProfile && !profile.employeeProfile
-      ? 'ProfileSelectionScreen'
-      : 'tabs/index';
+    ? 'ProfileSelectionScreen'
+    : 'tabs/index';
 
   return (
     <>
