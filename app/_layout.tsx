@@ -2,7 +2,6 @@ import { Stack } from 'expo-router';
 import React from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import ThemeSwitcher from '../components/ThemeSwitcher';
 import { useProfile } from '../context/ProfileContext';
 import { ThemeProvider } from '../context/ThemeContext';
 
@@ -45,7 +44,7 @@ function RootLayoutContent() {
         <Stack.Screen name="ProfileSelectionScreen" />
         <Stack.Screen name="tabs/index" />
       </Stack>
-      <ThemeSwitcher />
+      {/* <ThemeSwitcher /> */}
     </>
   );
 }

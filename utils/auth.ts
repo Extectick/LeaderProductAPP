@@ -20,8 +20,8 @@ export async function login(email: string, password: string) {
   await saveTokens(data.accessToken, data.refreshToken);
 
   // Профиль сохраняется при логине
-  const profileData = await fetchAndStoreProfile(data.accessToken);
-  return { ...data, profile: profileData };
+  // const profileData = await fetchAndStoreProfile(data.accessToken);
+  // return { ...data, profile: profileData };
 }
 export async function register(email: string, password: string) {
   return apiClient.register(email, password);
@@ -31,8 +31,8 @@ export async function verify(email: string, code: string) {
   const data = await apiClient.verify(email, code);
   await saveTokens(data.accessToken, data.refreshToken);
 
-  const profileData = await fetchAndStoreProfile(data.accessToken);
-  return { ...data, profile: profileData };
+  // const profileData = await fetchAndStoreProfile(data.accessToken);
+  // return { ...data, profile: profileData };
 }
 
 async function fetchAndStoreProfile(token: string) {

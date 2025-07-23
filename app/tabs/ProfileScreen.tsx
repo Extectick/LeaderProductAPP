@@ -1,15 +1,16 @@
+import CustomAlert from '@/components/CustomAlert'; // кастомный алерт
+import ThemeSwitcher from '@/components/ThemeSwitcher';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
-  View
+  View,
 } from 'react-native';
 import { useThemeColor } from '../../hooks/useThemeColor';
 import apiClient from '../../utils/apiClient';
@@ -20,6 +21,7 @@ export default function ProfileScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+  const [showLogoutAlert, setShowLogoutAlert] = useState(false);
 
   const backgroundColor = useThemeColor({}, 'background');
   const textColor = useThemeColor({}, 'text');
@@ -53,28 +55,19 @@ export default function ProfileScreen() {
     await fetchProfile();
   };
 
-  const handleLogout = async () => {
-    Alert.alert('Выход', 'Вы действительно хотите выйти?', [
-      { text: 'Отмена', style: 'cancel' },
-      {
-        text: 'Выйти',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            const accessToken = await AsyncStorage.getItem('accessToken');
-            const refreshToken = await AsyncStorage.getItem('refreshToken');
-            if (accessToken && refreshToken) {
-              await apiClient.logout(accessToken, refreshToken);
-            }
-          } catch (e) {
-            console.error('Logout failed', e);
-          } finally {
-            await AsyncStorage.clear();
-            router.replace('/AuthScreen');
-          }
-        }
+  const confirmLogout = async () => {
+    setShowLogoutAlert(false);
+    try {
+      const accessToken = await AsyncStorage.getItem('accessToken');
+      const refreshToken = await AsyncStorage.getItem('refreshToken');
+      if (accessToken && refreshToken) {
+        await apiClient.logout(accessToken, refreshToken);
       }
-    ]);
+    } catch {}
+    finally {
+      await AsyncStorage.clear();
+      router.replace('/AuthScreen');
+    }
   };
 
   const renderField = (label: string, value: any) => {
@@ -109,10 +102,20 @@ export default function ProfileScreen() {
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.logoutButton, { backgroundColor: buttonColor }]}
-          onPress={handleLogout}
+          onPress={() => setShowLogoutAlert(true)}
         >
           <Text style={[styles.logoutText, { color: buttonTextColor }]}>Выйти</Text>
         </TouchableOpacity>
+
+        <CustomAlert
+          visible={showLogoutAlert}
+          title="Выход"
+          message="Вы действительно хотите выйти?"
+          confirmText="Выйти"
+          cancelText="Отмена"
+          onConfirm={confirmLogout}
+          onCancel={() => setShowLogoutAlert(false)}
+        />
       </View>
     );
   }
@@ -133,7 +136,7 @@ export default function ProfileScreen() {
       style={[styles.container, { backgroundColor }]}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
     >
-      {/* <ThemeSwitcher /> */}
+      <ThemeSwitcher />
 
       <Text style={[styles.title, { color: textColor }]}>Профиль пользователя</Text>
 
@@ -148,10 +151,20 @@ export default function ProfileScreen() {
 
       <TouchableOpacity
         style={[styles.logoutButton, { backgroundColor: buttonColor }]}
-        onPress={handleLogout}
+        onPress={() => setShowLogoutAlert(true)}
       >
         <Text style={[styles.logoutText, { color: buttonTextColor }]}>Выйти из аккаунта</Text>
       </TouchableOpacity>
+
+      <CustomAlert
+        visible={showLogoutAlert}
+        title="Выход"
+        message="Вы действительно хотите выйти?"
+        confirmText="Выйти"
+        cancelText="Отмена"
+        onConfirm={confirmLogout}
+        onCancel={() => setShowLogoutAlert(false)}
+      />
     </ScrollView>
   );
 }

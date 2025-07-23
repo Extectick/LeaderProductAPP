@@ -1,3 +1,4 @@
+import ThemeSwitcher from '@/components/ThemeSwitcher';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import {
@@ -91,13 +92,14 @@ export default function AuthScreen() {
       try {
         const token = await authUtils.ensureAuth();
         if (token) {
-          const profile = await authUtils.getProfile();
-          const hasProfile = !!(
-            profile?.clientProfile ||
-            profile?.supplierProfile ||
-            profile?.employeeProfile
-          );
-          router.replace(hasProfile ? '/' : '/ProfileSelectionScreen');
+          // const profile = await authUtils.getProfile();
+          // const hasProfile = !!(
+          //   profile?.clientProfile ||
+          //   profile?.supplierProfile ||
+          //   profile?.employeeProfile
+          // );
+          router.replace('/');
+          //router.replace(hasProfile ? '/' : '/ProfileSelectionScreen');
         }
       } catch {
         // not authorized
@@ -163,13 +165,14 @@ export default function AuthScreen() {
     setError('');
     try {
       await authUtils.login(email, password);
-      const profile = await authUtils.getProfile();
-      const hasProfile = !!(
-        profile?.clientProfile ||
-        profile?.supplierProfile ||
-        profile?.employeeProfile
-      );
-      router.replace(hasProfile ? '/' : '/ProfileSelectionScreen');
+      // const profile = await authUtils.getProfile();
+      // const hasProfile = !!(
+      //   profile?.clientProfile ||
+      //   profile?.supplierProfile ||
+      //   profile?.employeeProfile
+      // );
+      router.replace('/');
+      // router.replace(hasProfile ? '/' : '/ProfileSelectionScreen');
     } catch (e: any) {
       setError(e.message || 'Ошибка при входе');
     } finally {
@@ -204,13 +207,14 @@ export default function AuthScreen() {
     setError('');
     try {
       await authUtils.verify(email, code);
-      const profile = await authUtils.getProfile();
-      const hasProfile = !!(
-        profile?.clientProfile ||
-        profile?.supplierProfile ||
-        profile?.employeeProfile
-      );
-      router.replace(hasProfile ? '/' : '/ProfileSelectionScreen');
+      // const profile = await authUtils.getProfile();
+      // const hasProfile = !!(
+      //   profile?.clientProfile ||
+      //   profile?.supplierProfile ||
+      //   profile?.employeeProfile
+      // );
+      router.replace('/');
+      //router.replace(hasProfile ? '/' : '/ProfileSelectionScreen');
     } catch (e: any) {
       setError(e.message || 'Ошибка подтверждения');
     } finally {
@@ -332,12 +336,12 @@ export default function AuthScreen() {
         value={passwordRepeat}
         onChangeText={setPasswordRepeat}
         placeholder="Повторите пароль"
-        secureTextEntry={!showPasswordRepeat}
+        secureTextEntry={!showPassword}
         autoComplete="password"
         returnKeyType="done"
         onSubmitEditing={handleRegister}
-        rightIcon={showPasswordRepeat ? 'eye-off' : 'eye'}
-        onIconPress={() => setShowPasswordRepeat((prev) => !prev)}
+        // rightIcon={showPasswordRepeat ? 'eye-off' : 'eye'}
+        // onIconPress={() => setShowPasswordRepeat((prev) => !prev)}
         editable={!loading}
       />
       <TouchableOpacity
@@ -434,11 +438,14 @@ export default function AuthScreen() {
           }}
           keyboardShouldPersistTaps="handled"
         >
+          
           {mode === 'login' && renderLogin()}
           {mode === 'register' && renderRegister()}
           {mode === 'verify' && renderVerify()}
+        <ThemeSwitcher />
         </ScrollView>
       </KeyboardAvoidingView>
+      
     </SafeAreaView>
   );
 }

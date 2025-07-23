@@ -1,7 +1,7 @@
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
-import { ensureAuth, getProfile } from '../utils/auth';
+import { ensureAuth } from '../utils/auth';
 
 export default function Index() {
   const router = useRouter();
@@ -16,15 +16,16 @@ export default function Index() {
           return;
         }
 
-        const profile = await getProfile();
-        if (!profile?.currentProfileType) {
-          router.replace('/ProfileSelectionScreen');
-        } else {
-          console.log(profile.currentProfileType)
-          router.replace('/tabs');
-        }
+        // const profile = await getProfile();
+        // if (!profile?.currentProfileType) {
+        //   router.replace('/ProfileSelectionScreen');
+        // } else {
+        //   console.log(profile.currentProfileType)
+        //   router.replace('/tabs');
+        // }
+        router.replace('/tabs');
       } catch (error) {
-        console.error('Ошибка при проверке авторизации и профиля:', error);
+        // console.error('Ошибка при проверке авторизации и профиля:', error);
         router.replace('/AuthScreen');
       } finally {
         setLoading(false);

@@ -1,9 +1,32 @@
 // Colors.ts
 
+export type ThemeKey = 'light' | 'dark' | 'orange' | 'leaderprod';
+
 const tintColorLight = '#007AFF';
 const tintColorDark = '#0A84FF';
 
-export const Colors = {
+export const Colors: Record<
+  ThemeKey,
+  {
+    text: string;
+    background: string;
+    tint: string;
+    icon: string;
+    tabIconDefault: string;
+    tabIconSelected: string;
+    inputBackground: string;
+    inputBorder: string;
+    button: string;
+    buttonText: string;
+    buttonDisabled: string;
+    secondaryText: string;
+    error: string;
+    disabledText: string;
+    cardBackground: string;
+    placeholder: string;
+    shadow: string;
+  }
+> = {
   light: {
     text: '#1C1C1E',
     background: '#F9FAFB',
@@ -21,7 +44,7 @@ export const Colors = {
     disabledText: '#AAB0B6',
     cardBackground: '#FFFFFF',
     placeholder: '#6B7280',
-    shadow: '#000000', // Добавил тень для light
+    shadow: '#000000',
   },
   dark: {
     text: '#F4F4F5',
@@ -40,7 +63,7 @@ export const Colors = {
     disabledText: '#5B5B60',
     cardBackground: '#16171A',
     placeholder: '#A0AEC0',
-    shadow: '#FFFFFF', // Добавил тень для dark
+    shadow: '#FFFFFF',
   },
   orange: {
     text: '#2D2D2D',
@@ -59,7 +82,7 @@ export const Colors = {
     disabledText: '#C49A6C',
     cardBackground: '#FFE8CC',
     placeholder: '#4B5563',
-    shadow: '#000000', // Добавил тень для orange
+    shadow: '#000000',
   },
   leaderprod: {
     text: '#1C1C1C',
@@ -78,6 +101,15 @@ export const Colors = {
     disabledText: '#B0B0B0',
     cardBackground: '#FFFFFF',
     placeholder: '#9CA3AF',
-    shadow: '#000000', // Добавил тень для leaderprod
+    shadow: '#000000',
   },
 };
+
+// Градиенты — массивы строго из двух цветов (кортежи)
+export const gradientColors: Record<ThemeKey, readonly string[]> = {
+  light: ['#FFFFFF', '#007AFF'],
+  dark: ['#000000', '#0A84FF'],
+  orange: ['#FFF4E6', '#FF6B00'],
+  leaderprod: ['#5EBF4D', '#FFA000', '#F9FAF8'], // Три цвета
+} as const;
+
