@@ -39,19 +39,20 @@ const getStyles = (colors: {
     formContainer: {
       backgroundColor: colors.cardBackground,
       borderRadius: 16,
-      padding: 30,
+      padding: Platform.OS === 'web' ? 20 : 30,
       shadowColor: '#000',
       shadowOpacity: 0.7,
       shadowRadius: 20,
       shadowOffset: { width: 0, height: 10 },
       elevation: 10,
-      maxWidth: 600,
+      maxWidth: Platform.OS === 'web' ? 500 : 600,
       width: '100%',
-      marginHorizontal: 20,
+      marginHorizontal: Platform.OS === 'web' ? 10 : 20,
       alignSelf: 'center',
     },
+    
     title: {
-      fontSize: 28,
+      fontSize: Platform.OS === 'web' ? 24 : 28,
       fontWeight: '700',
       marginBottom: 25,
       color: colors.text,
@@ -68,6 +69,12 @@ const getStyles = (colors: {
       fontSize: 18,
       color: colors.text,
       backgroundColor: colors.inputBackground,
+      ...Platform.select({
+        web: {
+          outlineWidth: 0,
+          boxShadow: 'none',
+        },
+      }),
     },
     codeInput: {
       height: 60,
@@ -84,7 +91,7 @@ const getStyles = (colors: {
     },
     button: {
       backgroundColor: colors.button,
-      paddingVertical: 15,
+      paddingVertical: Platform.OS === 'web' ? 12 : 15,
       borderRadius: 14,
       alignItems: 'center',
       marginBottom: 15,
@@ -92,15 +99,15 @@ const getStyles = (colors: {
       shadowOpacity: 0.7,
       shadowRadius: 10,
       shadowOffset: { width: 0, height: 5 },
-      maxWidth: Platform.OS === 'web' ? 300 : '100%',
-      alignSelf: Platform.OS === 'web' ? 'center' : 'stretch',
+      maxWidth: '100%',
+      alignSelf: 'stretch',
     },
     buttonDisabled: {
       backgroundColor: colors.buttonDisabled,
     },
     buttonText: {
       color: colors.buttonText,
-      fontSize: 20,
+      fontSize: Platform.OS === 'web' ? 18 : 20,
       fontWeight: '700',
     },
     switchText: {

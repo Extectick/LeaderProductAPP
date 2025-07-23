@@ -1,6 +1,7 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import React, { forwardRef } from 'react';
 import {
+  Platform,
   StyleSheet,
   Text,
   TextInput,
@@ -98,7 +99,14 @@ const FormInput = forwardRef<TextInput, FormInputProps>((props, ref) => {
       color: colors.text,
       textAlign: textAlign,
       paddingVertical: 8,
+      ...Platform.select({
+        web: {
+          outlineWidth: 0,
+          outlineColor: 'transparent',
+        },
+      }),
     },
+    
     errorText: {
       marginTop: 4,
       color: colors.error,
