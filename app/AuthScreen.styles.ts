@@ -45,7 +45,7 @@ const getStyles = (colors: {
       shadowRadius: 20,
       shadowOffset: { width: 0, height: 10 },
       elevation: 10,
-      maxWidth: Platform.OS === 'web' ? 500 : 600,
+      maxWidth: Platform.OS === 'web' ? 420 : 600,
       width: '100%',
       marginHorizontal: Platform.OS === 'web' ? 10 : 20,
       alignSelf: 'center',
