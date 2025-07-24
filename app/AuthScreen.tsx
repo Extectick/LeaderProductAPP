@@ -12,8 +12,7 @@ import {
   StatusBar,
   Text,
   TextInput,
-  TouchableOpacity,
-  View,
+  TouchableOpacity
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import FormInput from '../components/FormInput';
@@ -87,28 +86,30 @@ export default function AuthScreen() {
     default: 0,
   });
 
+  // Проверяем авторизацию при загрузке
   useEffect(() => {
-    const checkAuthorization = async () => {
+    let isMounted = true;
+    
+    const checkAuth = async () => {
       try {
         const token = await authUtils.ensureAuth();
-        if (token) {
-          // const profile = await authUtils.getProfile();
-          // const hasProfile = !!(
-          //   profile?.clientProfile ||
-          //   profile?.supplierProfile ||
-          //   profile?.employeeProfile
-          // );
+        if (token && isMounted) {
           router.replace('/');
-          //router.replace(hasProfile ? '/' : '/ProfileSelectionScreen');
         }
-      } catch {
-        // not authorized
+      } catch (e) {
+        console.log('Auth check error:', e);
       } finally {
-        setCheckingAuth(false);
+        if (isMounted) {
+          setCheckingAuth(false);
+        }
       }
     };
 
-    checkAuthorization();
+    checkAuth();
+    
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -164,16 +165,13 @@ export default function AuthScreen() {
     setLoading(true);
     setError('');
     try {
-      await authUtils.login(email, password);
-      // const profile = await authUtils.getProfile();
-      // const hasProfile = !!(
-      //   profile?.clientProfile ||
-      //   profile?.supplierProfile ||
-      //   profile?.employeeProfile
-      // );
+      const result = await authUtils.login(email, password);
+      console.log('Login result:', result);
+      setError('Вход выполнен успешно!');
+      // Временно убрали редирект для диагностики
       router.replace('/');
-      // router.replace(hasProfile ? '/' : '/ProfileSelectionScreen');
     } catch (e: any) {
+      console.error('Login error:', e);
       setError(e.message || 'Ошибка при входе');
     } finally {
       setLoading(false);
@@ -206,29 +204,20 @@ export default function AuthScreen() {
     setLoading(true);
     setError('');
     try {
-      await authUtils.verify(email, code);
-      // const profile = await authUtils.getProfile();
-      // const hasProfile = !!(
-      //   profile?.clientProfile ||
-      //   profile?.supplierProfile ||
-      //   profile?.employeeProfile
-      // );
+      const result = await authUtils.verify(email, code);
+      console.log('Verify result:', result);
+      setError('Аккаунт подтвержден успешно!');
+      // Временно убрали редирект для диагностики
       router.replace('/');
-      //router.replace(hasProfile ? '/' : '/ProfileSelectionScreen');
     } catch (e: any) {
+      console.error('Verify error:', e);
       setError(e.message || 'Ошибка подтверждения');
     } finally {
       setLoading(false);
     }
   };
 
-  if (checkingAuth) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={styles.buttonText.color} />
-      </View>
-    );
-  }
+  // Убрали проверку авторизации при загрузке
 
   const renderError = () => (errorMsg ? <Text style={styles.error}>{errorMsg}</Text> : null);
 

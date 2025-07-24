@@ -1,90 +1,75 @@
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
-import Ionicons from 'react-native-vector-icons/Ionicons';
-
+import React, { useEffect, useState } from 'react';
+import { Dimensions, Platform, View } from 'react-native';
+import WebSidebar from '../../components/WebSidebar';
 import { useThemeColor } from '../../hooks/useThemeColor';
-import ProfileScreen from './ProfileScreen';
+import tabScreens from './tabScreens';
 
 const Tab = createBottomTabNavigator();
 
-function HomeScreen() {
-  const backgroundColor = useThemeColor({}, 'background');
-  const textColor = useThemeColor({}, 'text');
+import ProtectedRoute from '../../components/ProtectedRoute';
 
+export default function Tabs() {
   return (
-    <View style={[styles.screenContainer, { backgroundColor }]}>
-      <Text style={[styles.text, { color: textColor }]}>Главная</Text>
-      {/* <ThemeSwitcher /> */}
-    </View>
+    <ProtectedRoute>
+      <TabsContent />
+    </ProtectedRoute>
   );
 }
 
-function TasksScreen() {
+function TabsContent() {
+  const [isWebSidebar, setIsWebSidebar] = useState(false);
   const backgroundColor = useThemeColor({}, 'background');
   const textColor = useThemeColor({}, 'text');
 
-  return (
-    <View style={[styles.screenContainer, { backgroundColor }]}>
-      <Text style={[styles.text, { color: textColor }]}>Задания</Text>
-      {/* <ThemeSwitcher /> */}
-    </View>
-  );
-}
+  useEffect(() => {
+    const updateLayout = () => {
+      const screenWidth = Dimensions.get('window').width;
+      setIsWebSidebar(Platform.OS === 'web' && screenWidth >= 768);
+    };
 
-function TabsNavigator() {
-  const tabBarBackground = useThemeColor({}, 'cardBackground');
-  const tabIconSelected = useThemeColor({}, 'tabIconSelected');
-  const tabIconDefault = useThemeColor({}, 'tabIconDefault');
+    updateLayout();
+    const subscription = Dimensions.addEventListener('change', updateLayout);
+    return () => subscription.remove();
+  }, []);
+
+  if (isWebSidebar) {
+    const sidebarItems = tabScreens.map((screen) => screen.sidebar);
+
+    return (
+      <View style={{ flexDirection: 'row', flex: 1 }}>
+        <WebSidebar items={sidebarItems} />
+        <View style={{ flex: 1 }} />
+      </View>
+    );
+  }
 
   return (
     <Tab.Navigator
+      initialRouteName={tabScreens[0].name}
       screenOptions={({ route }) => ({
-        tabBarShowLabel: false,
-        tabBarStyle: {
-          backgroundColor: tabBarBackground,
-          borderTopWidth: 0,
-          height: 60,
-          shadowColor: '#000',
-          shadowOpacity: 0.7,
-          shadowRadius: 10,
-          shadowOffset: { width: 0, height: -5 },
-          elevation: 10,
-        },
-        tabBarIcon: ({ focused, color, size }) => {
-          let iconName = 'home-outline';
-
-          if (route.name === 'Home') {
-            iconName = focused ? 'home' : 'home-outline';
-          } else if (route.name === 'Tasks') {
-            iconName = focused ? 'list' : 'list-outline';
-          } else if (route.name === 'Profile') {
-            iconName = focused ? 'person' : 'person-outline';
-          }
-
+        headerShown: false,
+        tabBarIcon: ({ color, size }) => {
+          const screen = tabScreens.find((s) => s.name === route.name);
+          const iconName = screen?.sidebar.icon ?? 'ellipse-outline';
           return <Ionicons name={iconName} size={size} color={color} />;
         },
-        tabBarActiveTintColor: tabIconSelected,
-        tabBarInactiveTintColor: tabIconDefault,
-        headerShown: false,
+        tabBarActiveTintColor: textColor,
+        tabBarInactiveTintColor: 'gray',
+        tabBarStyle: {
+          backgroundColor,
+        },
       })}
     >
-      <Tab.Screen name="Home" component={HomeScreen} />
-      <Tab.Screen name="Tasks" component={TasksScreen} />
-      <Tab.Screen name="Profile" component={ProfileScreen} />
+      {tabScreens.map((screen) => (
+        <Tab.Screen
+          key={screen.name}
+          name={screen.name}
+          component={screen.component}
+          options={screen.options}
+        />
+      ))}
     </Tab.Navigator>
   );
 }
-
-export default TabsNavigator;
-
-const styles = StyleSheet.create({
-  screenContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  text: {
-    fontSize: 18,
-  },
-});

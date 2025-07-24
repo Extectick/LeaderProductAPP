@@ -50,7 +50,6 @@ const getStyles = (colors: {
       marginHorizontal: Platform.OS === 'web' ? 10 : 20,
       alignSelf: 'center',
     },
-    
     title: {
       fontSize: Platform.OS === 'web' ? 24 : 28,
       fontWeight: '700',
