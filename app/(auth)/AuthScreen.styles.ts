@@ -46,10 +46,7 @@ const getStyles = (colors: {
       alignSelf: 'center',
       ...Platform.select({
         ios: {
-          shadowColor: '#000',
-          shadowOpacity: 0.7,
-          shadowRadius: 20,
-          shadowOffset: { width: 0, height: 10 },
+          boxShadow: '0 10px 20px 0 rgba(0,0,0,0.7)',
         },
         web: {
           boxShadow: '0px 10px 20px rgba(0, 0, 0, 0.25)',
@@ -104,10 +101,7 @@ const getStyles = (colors: {
       alignSelf: 'stretch',
       ...Platform.select({
         ios: {
-          shadowColor: colors.button,
-          shadowOpacity: 0.7,
-          shadowRadius: 10,
-          shadowOffset: { width: 0, height: 5 },
+          boxShadow: `0 5px 10px 0 ${colors.button.replace(/^#/, '')}b3`,
         },
         android: {
           elevation: 5,

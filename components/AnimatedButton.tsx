@@ -54,10 +54,7 @@ const styles = StyleSheet.create({
         boxShadow: '0px 8px 10px rgba(255, 111, 97, 0.3)',
       },
       ios: {
-        shadowColor: '#FF6F61',
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.3,
-        shadowRadius: 10,
+        boxShadow: '0 8px 10px 0 rgba(255,111,97,0.3)',
       },
       android: {
         elevation: 5,

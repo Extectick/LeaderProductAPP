@@ -118,10 +118,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 20,
     elevation: 8,
-    shadowColor: '#000',
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 5 },
+    boxShadow: '0 5px 10px 0 rgba(0,0,0,0.25)',
   },
   title: {
     fontSize: 20,
