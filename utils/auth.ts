@@ -1,130 +1,136 @@
-// D:\Extectick\LeaderProductAPP\utils\auth.ts
+import { Profile } from '@/types';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { jwtDecode } from 'jwt-decode';
-import * as apiClient from './apiClient';
+import Constants from 'expo-constants';
 
-const ACCESS_TOKEN_KEY = 'accessToken';
-const REFRESH_TOKEN_KEY = 'refreshToken';
-const PROFILE_KEY = 'userProfile';
+const API_BASE_URL = Constants.expoConfig?.extra?.API_BASE_URL || 'http://localhost:3000';
 
-interface TokenPayload {
-  userId: number;
-  role: string;
-  permissions: string[];
-  iat: number;
-  exp: number;
+const ACCESS_KEY = 'accessToken';
+const REFRESH_KEY = 'refreshToken';
+
+export interface LoginResponse {
+  accessToken: string;
+  refreshToken: string;
+  profile?: Profile;
+  // message?: string; // если хочешь добавить сюда, но лучше не надо
 }
 
-export async function login(email: string, password: string) {
-  const data = await apiClient.login(email, password);
-  await saveTokens(data.accessToken, data.refreshToken);
 
-  // Профиль сохраняется при логине
-  // const profileData = await fetchAndStoreProfile(data.accessToken);
-  // return { ...data, profile: profileData };
-}
-export async function register(email: string, password: string) {
-  return apiClient.register(email, password);
-}
+export const login = async (email: string, password: string): Promise<Profile | null> => {
+  const response = await fetch(`${API_BASE_URL}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
 
-export async function verify(email: string, code: string) {
-  const data = await apiClient.verify(email, code);
-  await saveTokens(data.accessToken, data.refreshToken);
+  const isJson = response.headers.get('Content-Type')?.includes('application/json');
+  const data = isJson ? await response.json() : {};
 
-  // const profileData = await fetchAndStoreProfile(data.accessToken);
-  // return { ...data, profile: profileData };
-}
-
-async function fetchAndStoreProfile(token: string) {
-  const profileData = await apiClient.getProfile(token);
-  await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(profileData.profile));
-  return profileData.profile;
-}
-
-export async function refreshToken() {
-  const refreshToken = await AsyncStorage.getItem(REFRESH_TOKEN_KEY);
-  if (!refreshToken) throw new Error('No refresh token');
-
-  const payload = jwtDecode<TokenPayload>(refreshToken);
-  if (isTokenExpired(payload.exp)) {
-    await clearTokens();
-    throw new Error('Refresh token expired');
+  if (!response.ok) {
+    throw new Error(data.message || 'Ошибка входа');
   }
 
-  const newTokens = await apiClient.refreshToken(refreshToken);
-  await saveTokens(newTokens.accessToken, newTokens.refreshToken);
-  await fetchAndStoreProfile(newTokens.accessToken);
-  return newTokens;
-}
+  const { accessToken, refreshToken, profile } = data as LoginResponse;
 
-export async function ensureAuth(): Promise<string | null> {
-  const accessToken = await getAccessToken();
-  if (!accessToken) return null;
+  await AsyncStorage.multiSet([
+    ['accessToken', accessToken],
+    ['refreshToken', refreshToken]
+  ]);
+
+  return profile || null;
+};
+
+
+
+export const register = async (email: string, password: string): Promise<void> => {
+  const response = await fetch(`${API_BASE_URL}/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.message || 'Ошибка регистрации');
+  }
+};
+
+export const verify = async (email: string, code: string): Promise<Profile | null> => {
+  const response = await fetch(`${API_BASE_URL}/auth/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, code }),
+  });
+
+  const isJson = response.headers.get('Content-Type')?.includes('application/json');
+  const data = isJson ? await response.json() : {};
+
+  if (!response.ok) {
+    throw new Error(data.message || 'Ошибка подтверждения');
+  }
+
+  const { accessToken, refreshToken, profile } = data as LoginResponse;
+
+  await AsyncStorage.multiSet([
+    ['accessToken', accessToken],
+    ['refreshToken', refreshToken],
+  ]);
+
+  return typeof profile !== 'undefined' ? profile : await getProfile(accessToken);
+};
+
+
+
+export const logout = async (): Promise<void> => {
+  await AsyncStorage.multiRemove([ACCESS_KEY, REFRESH_KEY]);
+};
+
+export const refreshToken = async (): Promise<string | null> => {
+  const storedRefreshToken = await AsyncStorage.getItem(REFRESH_KEY);
+  if (!storedRefreshToken) return null;
 
   try {
-    const payload = jwtDecode<TokenPayload>(accessToken);
-    if (!isTokenExpired(payload.exp)) {
-      // Проверка профиля при старте приложения
-      const profileStr = await AsyncStorage.getItem(PROFILE_KEY);
-      if (!profileStr) {
-        await fetchAndStoreProfile(accessToken);
-      }
-      return accessToken;
+    const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken: storedRefreshToken }),
+    });
+
+    const data = await response.json();
+    if (!response.ok || !data?.accessToken) {
+      throw new Error(data.message || 'Ошибка обновления токена');
     }
-  } catch (e) {
-    console.warn('Invalid access token, trying refresh...');
-  }
 
-  try {
-    const newTokens = await refreshToken();
-    return newTokens.accessToken;
-  } catch (e) {
-    console.error('Re-authentication failed');
-    await clearTokens();
+    await AsyncStorage.setItem(ACCESS_KEY, data.accessToken);
+    return data.accessToken;
+  } catch (err) {
+    console.warn('Ошибка при обновлении токена:', err);
+    await logout();
     return null;
   }
-}
+};
 
-export async function getProfile() {
-  const accessToken = await getAccessToken();
-  if (!accessToken) throw new Error('Not authenticated');
+export const getProfile = async (accessToken?: string): Promise<Profile> => {
+  const token = accessToken || (await AsyncStorage.getItem(ACCESS_KEY));
+  if (!token) throw new Error('Отсутствует accessToken');
 
-  return await fetchAndStoreProfile(accessToken);
-}
+  const response = await fetch(`${API_BASE_URL}/profiles/me`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
 
-export async function logout() {
-  const accessToken = await getAccessToken();
-  const refreshToken = await getRefreshToken();
-  if (accessToken && refreshToken) {
-    try {
-      await apiClient.logout(accessToken, refreshToken);
-    } catch (e) {
-      console.warn('Logout error', e);
-    }
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.message || 'Ошибка получения профиля');
   }
-  await clearTokens();
-  await AsyncStorage.removeItem(PROFILE_KEY);
-}
 
-function isTokenExpired(exp: number) {
-  return Date.now() >= exp * 1000;
-}
+  return data;
+};
 
-async function saveTokens(access: string, refresh: string) {
-  await AsyncStorage.multiSet([
-    [ACCESS_TOKEN_KEY, access],
-    [REFRESH_TOKEN_KEY, refresh],
-  ]);
-}
+export const ensureAuth = async (): Promise<string | null> => {
+  const token = await AsyncStorage.getItem(ACCESS_KEY);
+  if (token) return token;
 
-async function clearTokens() {
-  await AsyncStorage.multiRemove([ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY]);
-}
-
-export async function getAccessToken() {
-  return AsyncStorage.getItem(ACCESS_TOKEN_KEY);
-}
-
-export async function getRefreshToken() {
-  return AsyncStorage.getItem(REFRESH_TOKEN_KEY);
-}
+  const newToken = await refreshToken();
+  return newToken;
+};

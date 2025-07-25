@@ -1,6 +1,9 @@
 import ThemeSwitcher from '@/components/ThemeSwitcher';
+import { AuthContext } from '@/context/AuthContext';
+import { useTheme } from '@/context/ThemeContext';
+import { login, register, verify } from '@/utils/auth';
 import { useRouter } from 'expo-router';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useContext, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -15,9 +18,7 @@ import {
   TouchableOpacity
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import FormInput from '../components/FormInput';
-import { useThemeColor } from '../hooks/useThemeColor';
-import * as authUtils from '../utils/auth';
+import FormInput from '../../components/FormInput';
 import getStyles from './AuthScreen.styles';
 
 const { width } = Dimensions.get('window');
@@ -29,34 +30,11 @@ function validateEmail(email: string) {
 
 export default function AuthScreen() {
   const router = useRouter();
+  const { setAuthenticated, setProfile } = useContext(AuthContext) || {};
 
-  // Получаем все нужные цвета через хук useThemeColor
-  const background = useThemeColor({}, 'background');
-  const text = useThemeColor({}, 'text');
-  const inputBackground = useThemeColor({}, 'inputBackground');
-  const inputBorder = useThemeColor({}, 'inputBorder');
-  const button = useThemeColor({}, 'button');
-  const buttonText = useThemeColor({}, 'buttonText');
-  const secondaryText = useThemeColor({}, 'secondaryText');
-  const error = useThemeColor({}, 'error');
-  const placeholder = useThemeColor({}, 'placeholder');
-  const buttonDisabled = useThemeColor({}, 'buttonDisabled');
-  const cardBackground = useThemeColor({}, 'cardBackground');
-
-  // Получаем стили с текущими цветами
-  const styles = getStyles({
-    background,
-    text,
-    inputBackground,
-    inputBorder,
-    button,
-    buttonText,
-    secondaryText,
-    error,
-    placeholder,
-    buttonDisabled,
-    cardBackground,
-  });
+  const { theme, themes } = useTheme();
+  const colors = themes[theme];
+  const styles = getStyles(colors);
 
   const [mode, setMode] = useState<'login' | 'register' | 'verify'>('login');
   const [email, setEmail] = useState('');
@@ -86,30 +64,9 @@ export default function AuthScreen() {
     default: 0,
   });
 
-  // Проверяем авторизацию при загрузке
+  // Убрали проверку авторизации - она теперь в LayoutWithAuth
   useEffect(() => {
-    let isMounted = true;
-    
-    const checkAuth = async () => {
-      try {
-        const token = await authUtils.ensureAuth();
-        if (token && isMounted) {
-          router.replace('/');
-        }
-      } catch (e) {
-        console.log('Auth check error:', e);
-      } finally {
-        if (isMounted) {
-          setCheckingAuth(false);
-        }
-      }
-    };
-
-    checkAuth();
-    
-    return () => {
-      isMounted = false;
-    };
+    setCheckingAuth(false);
   }, []);
 
   useEffect(() => {
@@ -165,11 +122,18 @@ export default function AuthScreen() {
     setLoading(true);
     setError('');
     try {
-      const result = await authUtils.login(email, password);
-      console.log('Login result:', result);
-      setError('Вход выполнен успешно!');
-      // Временно убрали редирект для диагностики
-      router.replace('/');
+      const profile = await login(email, password);
+      console.log(profile)
+      if (setAuthenticated && setProfile) {
+        setAuthenticated(true);
+        setProfile(profile ?? null);
+      }
+
+      if (profile) {
+        router.replace('/(main)/HomeScreen');
+      } else {
+        router.replace('/(main)/ProfileSelectionScreen');
+      }
     } catch (e: any) {
       console.error('Login error:', e);
       setError(e.message || 'Ошибка при входе');
@@ -186,9 +150,10 @@ export default function AuthScreen() {
     setLoading(true);
     setError('');
     try {
-      await authUtils.register(email, password);
+      await register(email, password);
       setMode('verify');
       setResendTimer(30);
+      setError('Код подтверждения отправлен на email');
     } catch (e: any) {
       setError(e.message || 'Ошибка регистрации');
     } finally {
@@ -197,25 +162,35 @@ export default function AuthScreen() {
   };
 
   const handleVerify = async () => {
-    if (!code || code.length !== 6) {
-      return setError('Введите корректный код подтверждения');
+  if (!code || code.length !== 6) {
+    return setError('Введите корректный код подтверждения');
+  }
+
+  setLoading(true);
+  setError('');
+  try {
+    const profile = await verify(email, code);
+    // console.log('Профиль: ' + profile)
+    if (setAuthenticated) {
+      setAuthenticated(true);
+    }
+    if (setProfile) {
+      setProfile(profile ?? null);
     }
 
-    setLoading(true);
-    setError('');
-    try {
-      const result = await authUtils.verify(email, code);
-      console.log('Verify result:', result);
-      setError('Аккаунт подтвержден успешно!');
-      // Временно убрали редирект для диагностики
-      router.replace('/');
-    } catch (e: any) {
-      console.error('Verify error:', e);
-      setError(e.message || 'Ошибка подтверждения');
-    } finally {
-      setLoading(false);
+    if (profile) {
+      router.replace('/(main)/HomeScreen');
+    } else {
+      router.replace('/(main)/ProfileSelectionScreen');
     }
-  };
+  } catch (e: any) {
+    console.error('Verify error:', e);
+    setError(e.message || 'Ошибка подтверждения');
+  } finally {
+    setLoading(false);
+  }
+};
+
 
   // Убрали проверку авторизации при загрузке
 

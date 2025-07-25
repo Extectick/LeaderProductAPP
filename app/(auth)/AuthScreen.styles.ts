@@ -1,5 +1,4 @@
 // AuthScreen.styles.ts
-
 import { Dimensions, Platform, StyleSheet } from 'react-native';
 
 const { width } = Dimensions.get('window');
@@ -40,15 +39,22 @@ const getStyles = (colors: {
       backgroundColor: colors.cardBackground,
       borderRadius: 16,
       padding: Platform.OS === 'web' ? 20 : 30,
-      shadowColor: '#000',
-      shadowOpacity: 0.7,
-      shadowRadius: 20,
-      shadowOffset: { width: 0, height: 10 },
-      elevation: 10,
+      elevation: Platform.OS === 'android' ? 10 : 0,
       maxWidth: Platform.OS === 'web' ? 420 : 600,
       width: '100%',
       marginHorizontal: Platform.OS === 'web' ? 10 : 20,
       alignSelf: 'center',
+      ...Platform.select({
+        ios: {
+          shadowColor: '#000',
+          shadowOpacity: 0.7,
+          shadowRadius: 20,
+          shadowOffset: { width: 0, height: 10 },
+        },
+        web: {
+          boxShadow: '0px 10px 20px rgba(0, 0, 0, 0.25)',
+        },
+      }),
     },
     title: {
       fontSize: Platform.OS === 'web' ? 24 : 28,
@@ -94,12 +100,22 @@ const getStyles = (colors: {
       borderRadius: 14,
       alignItems: 'center',
       marginBottom: 15,
-      shadowColor: colors.button,
-      shadowOpacity: 0.7,
-      shadowRadius: 10,
-      shadowOffset: { width: 0, height: 5 },
       maxWidth: '100%',
       alignSelf: 'stretch',
+      ...Platform.select({
+        ios: {
+          shadowColor: colors.button,
+          shadowOpacity: 0.7,
+          shadowRadius: 10,
+          shadowOffset: { width: 0, height: 5 },
+        },
+        android: {
+          elevation: 5,
+        },
+        web: {
+          boxShadow: '0px 5px 10px rgba(0, 0, 0, 0.2)',
+        },
+      }),
     },
     buttonDisabled: {
       backgroundColor: colors.buttonDisabled,

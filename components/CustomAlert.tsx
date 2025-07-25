@@ -1,13 +1,13 @@
 import React, { useEffect, useRef } from 'react';
 import {
-    Animated,
-    Dimensions,
-    Modal,
-    Pressable,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  Animated,
+  Dimensions,
+  Modal,
+  Pressable,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { useThemeColor } from '../hooks/useThemeColor';
 

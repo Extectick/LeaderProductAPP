@@ -1,47 +1,28 @@
-import { useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { Redirect } from 'expo-router';
+import { useEffect, useState } from 'react';
 import { ensureAuth } from '../utils/auth';
 
 export default function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const [isAuthChecked, setIsAuthChecked] = useState(false);
-  const router = useRouter();
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
 
   useEffect(() => {
-    let isMounted = true;
-    
-    const checkAuth = async () => {
+    async function checkAuth() {
       try {
         const token = await ensureAuth();
-        if (!token && isMounted) {
-          router.replace('/AuthScreen');
-          return;
-        }
-      } catch (e) {
-        console.error('Auth check error:', e);
-        if (isMounted) {
-          router.replace('/AuthScreen');
-        }
-      } finally {
-        if (isMounted) {
-          setIsAuthChecked(true);
-        }
+        setIsAuthenticated(!!token);
+      } catch {
+        setIsAuthenticated(false);
       }
-    };
-
+    }
     checkAuth();
-    
-    return () => {
-      isMounted = false;
-    };
   }, []);
 
-  if (!isAuthChecked) {
-    return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator size="large" color="#5a67d8" />
-      </View>
-    );
+  if (isAuthenticated === null) {
+    return null; // Показываем пустой экран во время проверки
+  }
+
+  if (!isAuthenticated) {
+    return <Redirect href="/AuthScreen" />;
   }
 
   return <>{children}</>;

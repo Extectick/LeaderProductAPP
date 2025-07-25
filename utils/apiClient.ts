@@ -1,245 +1,89 @@
+import { Profile } from '@/types';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-
 import Constants from 'expo-constants';
+import { logout, refreshToken } from './auth';
 
-const API_BASE_URL = Constants.expoConfig?.extra?.API_BASE_URL || 'http://192.168.30.54:3000';
+const API_BASE_URL = Constants.expoConfig?.extra?.API_BASE_URL || 'http://localhost:3000';
 
-if (!Constants.expoConfig?.extra?.API_BASE_URL) {
-  console.warn('Using default API_BASE_URL. Please set API_BASE_URL in app.json');
-}
+async function request<T = any>(endpoint: string, options: RequestInit = {}, retry = true): Promise<T> {
+  // Получаем текущий accessToken из AsyncStorage
+  let token = await AsyncStorage.getItem('accessToken');
 
-async function getCSRFToken() {
-  const token = await AsyncStorage.getItem('csrfToken');
-  if (!token) {
-    const newToken = Math.random().toString(36).substring(2);
-    await AsyncStorage.setItem('csrfToken', newToken);
-    return newToken;
-  }
-  return token;
-}
+  const headers = new Headers({
+    'Content-Type': 'application/json',
+    ...(options.headers as Record<string, string> || {}),
+  });
 
-const RATE_LIMIT_KEY = 'rateLimit';
-const MAX_ATTEMPTS = 5;
-const LOCK_TIME = 1 * 60 * 1000; // 1 minute
-
-async function checkRateLimit() {
-  const rateLimitData = await AsyncStorage.getItem(RATE_LIMIT_KEY);
-  if (!rateLimitData) return;
-
-  const { attempts, lastAttempt, lockedUntil } = JSON.parse(rateLimitData);
-  
-  if (lockedUntil && Date.now() < lockedUntil) {
-    throw new Error(`Слишком много попыток. Попробуйте снова через ${Math.ceil((lockedUntil - Date.now()) / 60000)} минут`);
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
   }
 
-  return { attempts, lastAttempt };
-}
+  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+    ...options,
+    headers,
+  });
 
-async function updateRateLimit() {
-  const currentData = await checkRateLimit() || { attempts: 0 };
-  const newAttempts = currentData.attempts + 1;
-  
-  let lockedUntil = null;
-  if (newAttempts >= MAX_ATTEMPTS) {
-    lockedUntil = Date.now() + LOCK_TIME;
-  }
+  if (response.status === 401 && retry) {
+    // Попытка обновить токен
+    const newToken = await refreshToken();
+    if (newToken) {
+      // Обновим заголовок и повторим запрос один раз
+      token = newToken;
+      headers.set('Authorization', `Bearer ${token}`);
 
-  await AsyncStorage.setItem(RATE_LIMIT_KEY, JSON.stringify({
-    attempts: newAttempts,
-    lastAttempt: Date.now(),
-    lockedUntil
-  }));
-}
+      const retryResponse = await fetch(`${API_BASE_URL}${endpoint}`, {
+        ...options,
+        headers,
+      });
 
-async function resetRateLimit() {
-  await AsyncStorage.removeItem(RATE_LIMIT_KEY);
-}
-
-async function request(endpoint: string, options: RequestInit) {
-  // Проверяем rate limit для auth endpoints
-  if (['/login', '/register', '/verify'].includes(endpoint)) {
-    await checkRateLimit();
-  }
-
-  const url = `${API_BASE_URL}${endpoint}`;
-  const csrfToken = await getCSRFToken();
-  
-  const headers = {
-    ...options.headers,
-    'X-CSRF-Token': csrfToken,
-    'Content-Type': 'application/json'
-  };
-
-  try {
-    const response = await fetch(url, {
-      ...options,
-      headers,
-      credentials: 'include'
-    });
-    
-    if (!response.ok) {
-      // Обновляем счетчик неудачных попыток для auth endpoints
-      if (['/login', '/register', '/verify'].includes(endpoint)) {
-        await updateRateLimit();
+      if (!retryResponse.ok) {
+        const errorData = await retryResponse.json().catch(() => ({}));
+        if (retryResponse.status === 401) {
+          await logout();
+        }
+        throw new Error(errorData.message || 'Ошибка запроса после обновления токена');
       }
-      
-      const errorData = await response.json().catch(() => ({}));
-      const error = new Error(errorData.message || 'API request failed');
-      throw error;
-    }
 
-    // Сбрасываем счетчик при успешной авторизации
-    if (['/login', '/register', '/verify'].includes(endpoint)) {
-      await resetRateLimit();
+      return retryResponse.json();
+    } else {
+      await logout();
+      throw new Error('Unauthorized - токен не обновлен');
     }
-
-    return response.json();
-  } catch (error) {
-    // Обработка network errors
-    if (error instanceof TypeError && error.message.includes('Network request failed')) {
-      throw new Error('Ошибка сети. Проверьте подключение к интернету');
-    }
-    throw error;
   }
-}
 
-export async function register(email: string, password: string) {
-  return request('/register', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  });
-}
-
-export async function login(email: string, password: string) {
-  return request('/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  });
-}
-
-export async function verify(email: string, code: string) {
-  return request('/verify', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, code }),
-  });
-}
-
-export async function refreshToken(refreshToken: string) {
-  return request('/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ refreshToken }),
-  });
-}
-
-export async function logout(accessToken: string, refreshToken: string) {
-  return request('/logout', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify({ refreshToken }),
-  });
-}
-
-export async function getProfile(accessToken: string) {
-  const url = `${API_BASE_URL}/users/profile`;
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  });
-  
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
-    const error = new Error(errorData.message || 'API request failed');
-    throw error;
+    throw new Error(errorData.message || 'Ошибка запроса');
   }
+
   return response.json();
 }
 
-export async function updateProfileType(type: 'CLIENT' | 'SUPPLIER' | 'EMPLOYEE') {
-  const token = await AsyncStorage.getItem('accessToken');
-  if (!token) throw new Error('No access token');
+export const getProfile = async (accessToken?: string): Promise<Profile> => {
+  const token = accessToken || (await AsyncStorage.getItem('accessToken'));
+  if (!token) throw new Error('Токен доступа отсутствует');
 
-  const url = `${API_BASE_URL}/users/profile/type`; // Убедись, что этот путь соответствует твоему API
-  const response = await fetch(url, {
-    method: 'PATCH',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ currentProfileType: type }),
-  });
+  try {
+    const profile = await request<Profile>('/users/profile', {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}` },
+    });
 
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.message || 'Failed to update profile type');
+    if (!profile || !profile.status) {
+      throw new Error('Неверный формат профиля');
+    }
+    return profile;
+  } catch (error) {
+    console.error('Ошибка получения профиля:', error);
+    throw error;
   }
-
-  return response.json(); // ожидается { profile: {...} }
-}
-
-export async function createClientProfile(accessToken: string) {
-  return request('/profiles/client', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({}),
-  });
-}
-
-export async function createSupplierProfile(accessToken: string) {
-  return request('/profiles/supplier', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({}),
-  });
-}
-
-export async function createEmployeeProfile(accessToken: string, { firstName, lastName, middleName, departmentId }: {
-  firstName: string;
-  lastName: string;
-  middleName: string | null;
-  departmentId: number;
-}) {
-  return request('/profiles/employee', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      firstName,
-      lastName,
-      middleName,
-      departmentId,
-    }),
-  });
-}
-
-const apiClient = {
-  register,
-  login,
-  verify,
-  refreshToken,
-  logout,
-  getProfile,
-  updateProfileType,
-  createClientProfile,
-  createSupplierProfile,
-  createEmployeeProfile,
-  API_BASE_URL,
 };
 
-export default apiClient;
+export const apiClient = {
+  get: <T = any>(url: string, options?: RequestInit) => request<T>(url, { ...options, method: 'GET' }),
+  post: <T = any>(url: string, body?: any, options?: RequestInit) =>
+    request<T>(url, { ...options, method: 'POST', body: JSON.stringify(body) }),
+  put: <T = any>(url: string, body?: any, options?: RequestInit) =>
+    request<T>(url, { ...options, method: 'PUT', body: JSON.stringify(body) }),
+  delete: <T = any>(url: string, options?: RequestInit) => request<T>(url, { ...options, method: 'DELETE' }),
+};
