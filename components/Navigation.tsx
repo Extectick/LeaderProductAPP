@@ -1,92 +1,65 @@
-// components/Navigation.tsx
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { createDrawerNavigator } from '@react-navigation/drawer';
-import React from 'react';
-import { Platform } from 'react-native';
-import Ionicons from 'react-native-vector-icons/Ionicons';
-
-import HomeScreen from '../app/tabs/HomeScreen';
-import ProfileScreen from '../app/tabs/ProfileScreen';
-import TasksScreen from '../app/tabs/TasksScreen';
-
+import React, { useEffect, useState } from 'react';
+import { Dimensions, Platform, View } from 'react-native';
+import tabScreens from '../constants/tabScreens';
 import { useThemeColor } from '../hooks/useThemeColor';
+import WebSidebar from './WebSidebar';
 
 const Tab = createBottomTabNavigator();
-const Drawer = createDrawerNavigator();
 
-function MobileTabs() {
-  const tabBarBackground = useThemeColor({}, 'cardBackground');
-  const tabIconSelected = useThemeColor({}, 'tabIconSelected');
-  const tabIconDefault = useThemeColor({}, 'tabIconDefault');
+export default function Navigation() {
+  const [isWebSidebar, setIsWebSidebar] = useState(false);
+  const backgroundColor = useThemeColor({}, 'background');
+  const textColor = useThemeColor({}, 'text');
+
+  useEffect(() => {
+    const updateLayout = () => {
+      const screenWidth = Dimensions.get('window').width;
+      setIsWebSidebar(Platform.OS === 'web' && screenWidth >= 768);
+    };
+
+    updateLayout();
+    const subscription = Dimensions.addEventListener('change', updateLayout);
+    return () => subscription.remove();
+  }, []);
+
+  if (isWebSidebar) {
+    const sidebarItems = tabScreens.map((screen) => screen.sidebar);
+
+    return (
+      <View style={{ flexDirection: 'row', flex: 1 }}>
+        <WebSidebar items={sidebarItems} />
+        <View style={{ flex: 1 }} />
+      </View>
+    );
+  }
 
   return (
     <Tab.Navigator
+      initialRouteName={tabScreens[0].name}
       screenOptions={({ route }) => ({
-        tabBarShowLabel: false,
-        tabBarStyle: {
-          backgroundColor: tabBarBackground,
-          borderTopWidth: 0,
-          height: 60,
-          shadowColor: '#000',
-          shadowOpacity: 0.7,
-          shadowRadius: 10,
-          shadowOffset: { width: 0, height: -5 },
-          elevation: 10,
-        },
-        tabBarIcon: ({ focused, color, size }) => {
-          let iconName = 'home-outline';
-
-          if (route.name === 'Home') iconName = focused ? 'home' : 'home-outline';
-          else if (route.name === 'Tasks') iconName = focused ? 'list' : 'list-outline';
-          else if (route.name === 'Profile') iconName = focused ? 'person' : 'person-outline';
-
+        headerShown: false,
+        tabBarIcon: ({ color, size }) => {
+          const screen = tabScreens.find((s) => s.name === route.name);
+          const iconName = screen?.sidebar.icon ?? 'ellipse-outline';
           return <Ionicons name={iconName} size={size} color={color} />;
         },
-        tabBarActiveTintColor: tabIconSelected,
-        tabBarInactiveTintColor: tabIconDefault,
-        headerShown: false,
+        tabBarActiveTintColor: textColor,
+        tabBarInactiveTintColor: 'gray',
+        tabBarStyle: {
+          backgroundColor,
+        },
       })}
     >
-      <Tab.Screen name="Home" component={HomeScreen} />
-      <Tab.Screen name="Tasks" component={TasksScreen} />
-      <Tab.Screen name="Profile" component={ProfileScreen} />
+      {tabScreens.map((screen) => (
+        <Tab.Screen
+          key={screen.name}
+          name={screen.name}
+          component={screen.component}
+          options={screen.options}
+        />
+      ))}
     </Tab.Navigator>
   );
-}
-
-function WebDrawer() {
-  const drawerBackground = useThemeColor({}, 'cardBackground');
-  const drawerActiveTintColor = useThemeColor({}, 'tabIconSelected');
-  const drawerInactiveTintColor = useThemeColor({}, 'tabIconDefault');
-
-  return (
-    <Drawer.Navigator
-      screenOptions={({ route }) => ({
-        drawerStyle: {
-          backgroundColor: drawerBackground,
-          width: 240,
-        },
-        drawerActiveTintColor,
-        drawerInactiveTintColor,
-        drawerIcon: ({ focused, color, size }) => {
-          let iconName = 'home-outline';
-
-          if (route.name === 'Home') iconName = focused ? 'home' : 'home-outline';
-          else if (route.name === 'Tasks') iconName = focused ? 'list' : 'list-outline';
-          else if (route.name === 'Profile') iconName = focused ? 'person' : 'person-outline';
-
-          return <Ionicons name={iconName} size={size} color={color} />;
-        },
-        headerShown: false,
-      })}
-    >
-      <Drawer.Screen name="Home" component={HomeScreen} />
-      <Drawer.Screen name="Tasks" component={TasksScreen} />
-      <Drawer.Screen name="Profile" component={ProfileScreen} />
-    </Drawer.Navigator>
-  );
-}
-
-export default function Navigation() {
-  return Platform.OS === 'web' ? <WebDrawer /> : <MobileTabs />;
 }

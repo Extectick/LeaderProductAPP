@@ -1,7 +1,7 @@
-import { SidebarItem } from '../../components/WebSidebar';
-import HomeScreen from './HomeScreen';
-import ProfileScreen from './ProfileScreen';
-import TasksScreen from './TasksScreen';
+import HomeScreen from '../app/tabs/HomeScreen';
+import ProfileScreen from '../app/tabs/ProfileScreen';
+import TasksScreen from '../app/tabs/TasksScreen';
+import { SidebarItem } from '../components/WebSidebar';
 // импортируй новые экраны сюда
 // import NotificationsScreen from './NotificationsScreen';
 
