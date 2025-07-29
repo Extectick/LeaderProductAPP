@@ -1,5 +1,5 @@
 import { Profile } from '@/types';
-import { logout as logoutFn } from '@/utils/auth';
+import { logout as logoutFn } from '@/utils/authService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, ReactNode, useEffect, useState } from 'react';
 

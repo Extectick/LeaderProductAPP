@@ -1,7 +1,8 @@
 import ThemeSwitcher from '@/components/ThemeSwitcher';
 import { AuthContext } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
-import { login, register, verify } from '@/utils/auth';
+import { login, register, verify } from '@/utils/authService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import React, { useContext, useEffect, useRef, useState } from 'react';
 import {
@@ -122,17 +123,25 @@ export default function AuthScreen() {
     setLoading(true);
     setError('');
     try {
-      const profile = await login(email, password);
-      console.log(profile)
-      if (setAuthenticated && setProfile) {
+      const { accessToken, refreshToken, profile } = await login(email, password);
+      
+      // Сохраняем токены
+      await AsyncStorage.multiSet([
+        ['accessToken', accessToken],
+        ['refreshToken', refreshToken],
+      ]);
+
+      if (setAuthenticated) {
         setAuthenticated(true);
+      }
+      if (setProfile) {
         setProfile(profile ?? null);
       }
 
       if (profile) {
-        router.replace('/(main)/HomeScreen');
+        router.push('../(main)/HomeScreen');
       } else {
-        router.replace('/(main)/ProfileSelectionScreen');
+        router.push('../(main)/ProfileSelectionScreen');
       }
     } catch (e: any) {
       console.error('Login error:', e);
@@ -179,9 +188,9 @@ export default function AuthScreen() {
     }
 
     if (profile) {
-      router.replace('/(main)/HomeScreen');
+      router.replace('../(main)/HomeScreen' as const);
     } else {
-      router.replace('/(main)/ProfileSelectionScreen');
+      router.replace('../(main)/ProfileSelectionScreen' as const);
     }
   } catch (e: any) {
     console.error('Verify error:', e);

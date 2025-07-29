@@ -1,3 +1,8 @@
+export interface Department {
+  id: number;
+  name: string;
+}
+
 export interface Profile {
   id: string;
   name: string;
@@ -11,4 +16,10 @@ export interface Profile {
 export interface ApiResponse<T> {
   data?: T;
   error?: string;
+}
+
+export interface LoginResponse {
+  accessToken: string;
+  refreshToken: string;
+  profile?: Profile;
 }
