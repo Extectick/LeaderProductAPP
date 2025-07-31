@@ -140,9 +140,9 @@ export default function AuthScreen() {
       }
 
       if (profile) {
-        router.push('../(main)/HomeScreen');
+        router.replace('/HomeScreen');
       } else {
-        router.push('../(main)/ProfileSelectionScreen');
+        router.replace('/ProfileSelectionScreen');
       }
     } catch (e: any) {
       console.error('Login error:', e);

@@ -38,18 +38,28 @@ export default function ProfileSelectionScreen() {
   const [dropdownItems, setDropdownItems] = useState<{label: string, value: string}[]>([]);
 
   useEffect(() => {
-    const fetchDepartments = async () => {
-      try {
-        const deps = await getDepartments();
+  let isMounted = true;
+
+  const fetchDepartments = async () => {
+    try {
+      const deps = await getDepartments();
+      if (isMounted) {
+        console.log('Получены отделы');
         setDepartments(deps);
         setDropdownItems(deps.map(dep => ({ label: dep.name, value: dep.id.toString() })));
-      } catch (error) {
-        console.error('Ошибка загрузки отделов:', error);
       }
-    };
+    } catch (error) {
+      console.error('Ошибка загрузки отделов:', error);
+    }
+  };
 
-    fetchDepartments();
-  }, []);
+  fetchDepartments();
+
+  return () => {
+    isMounted = false;
+  };
+}, []);
+
 
   const onChange = (field: string, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));

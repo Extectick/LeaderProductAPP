@@ -6,7 +6,7 @@ import { router } from 'expo-router';
 const ACCESS_KEY = 'accessToken';
 const REFRESH_KEY = 'refreshToken';
 
-const API_BASE_URL = Constants.expoConfig?.extra?.API_BASE_URL || 'http://localhost:3000';
+const API_BASE_URL = Constants.expoConfig?.extra?.EXPO_PUBLIC_API_BASE_URL || 'http://192.168.30.54:3000';
 
 /**
  * Получить accessToken из AsyncStorage
@@ -39,7 +39,7 @@ export async function logout(): Promise<void> {
 export async function refreshToken(): Promise<string | null> {
   const storedRefreshToken = await AsyncStorage.getItem(REFRESH_KEY);
   if (!storedRefreshToken) return null;
-
+  // console.log(storedRefreshToken)
   try {
     const response = await fetch(`${API_BASE_URL}/auth/token`, {
       method: 'POST',
@@ -59,6 +59,7 @@ export async function refreshToken(): Promise<string | null> {
       throw new Error('Отсутствует accessToken в ответе обновления');
     }
 
+    await AsyncStorage.setItem(REFRESH_KEY, data.refreshToken);
     await AsyncStorage.setItem(ACCESS_KEY, data.accessToken);
     return data.accessToken;
   } catch (err) {
