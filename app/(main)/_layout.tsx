@@ -14,6 +14,7 @@ export default function LayoutWithAuth({ children }: { children: React.ReactNode
     if (!isLoading) {
       if (!isAuthenticated) {
         router.replace('/(auth)/AuthScreen');
+        
       } else if (isAuthenticated && !profile) {
         router.replace('/(auth)/ProfileSelectionScreen');
       }
@@ -28,6 +29,6 @@ export default function LayoutWithAuth({ children }: { children: React.ReactNode
     // Пока редирект идёт - не рендерим детей
     return null;
   }
-
+  console.log('Главная')
   return <>{children}</>;
 }

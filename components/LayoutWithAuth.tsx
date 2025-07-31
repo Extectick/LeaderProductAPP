@@ -1,10 +1,9 @@
 import AuthScreen from '@/app/(auth)/AuthScreen';
 import ProfileSelectionScreen from '@/app/(auth)/ProfileSelectionScreen';
 import { AuthContext } from '@/context/AuthContext';
-import { Text } from '@react-navigation/elements';
 import { useRouter } from 'expo-router';
 import React, { ReactNode, useContext, useState } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator } from 'react-native';
 
 interface LayoutWithAuthProps {
   children: ReactNode;
@@ -32,14 +31,14 @@ export default function LayoutWithAuth({ children }: LayoutWithAuthProps) {
     return <ProfileSelectionScreen />
   }
 
-  if (profile.status !== 'ACTIVE') {
-    return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
-        <Text>Ваш профиль не активен. Обратитесь к администратору.</Text>
-        {/* <Button title="Выйти" onPress={logout} /> */}
-      </View>
-    );
-  }
-
-  return <>{children}</>;
+  // if (profile.status !== 'ACTIVE') {
+  //   return (
+  //     <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+  //       <Text>Ваш профиль не активен. Обратитесь к администратору.</Text>
+  //       {/* <Button title="Выйти" onPress={logout} /> */}
+  //     </View>
+  //   );
+  // }
+  //return <HomeScreen />
+   return <>{children}</>;
 }

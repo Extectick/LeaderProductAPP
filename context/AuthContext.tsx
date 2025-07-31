@@ -1,5 +1,5 @@
 import { Profile } from '@/types';
-import { logout as logoutFn } from '@/utils/authService';
+import { getProfile, logout as logoutFn } from '@/utils/authService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, ReactNode, useEffect, useState } from 'react';
 
@@ -21,9 +21,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [isAuthenticated, setAuthenticated] = useState(false);
   const [profile, setProfileState] = useState<Profile | null>(null);
-
+   
   const setProfile = async (newProfile: Profile | null) => {
     // Избегаем лишних обновлений, если профиль не меняется
+    getProfile()
+    console.log(AsyncStorage.getItem('profile'))
     setProfileState((prev) => {
       if (JSON.stringify(prev) === JSON.stringify(newProfile)) return prev;
       return newProfile;
@@ -38,14 +40,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   useEffect(() => {
     let isMounted = true;
-
     const init = async () => {
       try {
         const token = await AsyncStorage.getItem('accessToken');
         const profileJson = await AsyncStorage.getItem('profile');
-
+        
         if (!isMounted) return;
-
+        
         if (token) {
           setAuthenticated(true);
 

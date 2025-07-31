@@ -41,7 +41,7 @@ export async function refreshToken(): Promise<string | null> {
   if (!storedRefreshToken) return null;
 
   try {
-    const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+    const response = await fetch(`${API_BASE_URL}/auth/token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refreshToken: storedRefreshToken }),

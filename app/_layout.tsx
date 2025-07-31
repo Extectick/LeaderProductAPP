@@ -4,6 +4,7 @@ import { ThemeProvider } from '@/context/ThemeContext';
 import { StatusBar } from 'react-native';
 
 export default function RootLayout() {
+  
   return (
     <ThemeProvider>
       <AuthProvider>
