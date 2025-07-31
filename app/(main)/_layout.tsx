@@ -15,7 +15,7 @@ export default function LayoutWithAuth({ children }: { children: React.ReactNode
       if (!isAuthenticated) {
         router.replace('/(auth)/AuthScreen');
       } else if (isAuthenticated && !profile) {
-        router.replace('/(main)/ProfileSelectionScreen');
+        router.replace('/(auth)/ProfileSelectionScreen');
       }
     }
   }, [isLoading, isAuthenticated, profile, router]);

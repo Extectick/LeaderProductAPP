@@ -1,7 +1,7 @@
+import { getProfile } from '@/utils/authService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import * as apiClient from '../utils/apiClient';
-import { ensureAuth } from '../utils/auth';
 
 type ProfileType = 'CLIENT' | 'SUPPLIER' | 'EMPLOYEE' | null;
 
@@ -55,10 +55,9 @@ export const ProfileProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [error, setError] = useState<string | null>(null);
 
   const fetchProfile = async (accessToken: string) => {
-    const profileData = await apiClient.getProfile(accessToken);
-    await AsyncStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profileData.profile));
-    setProfile(profileData.profile);
-    return profileData.profile;
+    const profileData = await getProfile();
+    await AsyncStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profileData));
+
   };
 
   const loadProfile = async () => {
