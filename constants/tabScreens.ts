@@ -1,9 +1,17 @@
-import HomeScreen from '../app/tabs/HomeScreen';
-import ProfileScreen from '../app/tabs/ProfileScreen';
-import TasksScreen from '../app/tabs/TasksScreen';
-import { SidebarItem } from '../components/WebSidebar';
-// импортируй новые экраны сюда
-// import NotificationsScreen from './NotificationsScreen';
+import HomeScreen from '../app/(main)/HomeScreen';
+import ProfileScreen from '../app/(main)/ProfileScreen';
+import TasksScreen from '../app/(main)/TasksScreen';
+
+export interface SidebarItem {
+  icon: string;
+  label: string;
+  path: SidebarPath;
+}
+
+export type SidebarPath = 
+  | '/HomeScreen' 
+  | '/TasksScreen' 
+  | '/ProfileScreen';
 
 const tabScreens: {
   name: string;
@@ -18,7 +26,7 @@ const tabScreens: {
     sidebar: {
       icon: 'home-outline',
       label: 'Главная',
-      path: '/tabs/HomeScreen',
+      path: '/HomeScreen',
     },
   },
   {
@@ -28,7 +36,7 @@ const tabScreens: {
     sidebar: {
       icon: 'list-outline',
       label: 'Задачи',
-      path: '/tabs/TasksScreen',
+      path: '/TasksScreen',
     },
   },
   {
@@ -38,20 +46,9 @@ const tabScreens: {
     sidebar: {
       icon: 'person-outline',
       label: 'Профиль',
-      path: '/tabs/ProfileScreen',
+      path: '/ProfileScreen',
     },
   },
-  // Добавь сюда новые экраны
-  // {
-  //   name: 'NotificationsScreen',
-  //   component: NotificationsScreen,
-  //   options: { title: 'Уведомления' },
-  //   sidebar: {
-  //     icon: 'notifications-outline',
-  //     label: 'Уведомления',
-  //     path: '/tabs/NotificationsScreen',
-  //   },
-  // },
 ];
 
 export default tabScreens;

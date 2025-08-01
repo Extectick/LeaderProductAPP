@@ -10,6 +10,8 @@ function InnerLayout() {
 }
 
 export default function RootLayout() {
+  console.log('Main screen')
+  
   return (
     <ThemeProvider>
       <AuthProvider>

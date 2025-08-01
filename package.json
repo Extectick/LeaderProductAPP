@@ -37,6 +37,7 @@
     "expo-system-ui": "~5.0.10",
     "expo-web-browser": "~14.2.0",
     "jwt-decode": "^4.0.0",
+    "lodash.isequal": "^4.5.0",
     "lucide-react-native": "^0.525.0",
     "react": "19.0.0",
     "react-dom": "19.0.0",
@@ -55,6 +56,7 @@
   "devDependencies": {
     "@babel/core": "^7.25.2",
     "@types/jwt-decode": "^2.2.1",
+    "@types/lodash.isequal": "^4.5.8",
     "@types/react": "~19.0.10",
     "@types/react-native": "^0.72.8",
     "@types/react-native-vector-icons": "^6.4.18",

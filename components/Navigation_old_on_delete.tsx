@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { Dimensions, Platform, View } from 'react-native';
 import tabScreens from '../constants/tabScreens';
 import { useThemeColor } from '../hooks/useThemeColor';
-import WebSidebar from './WebSidebar';
+import WebSidebar from './WebSidebar_old';
 
 const Tab = createBottomTabNavigator();
 

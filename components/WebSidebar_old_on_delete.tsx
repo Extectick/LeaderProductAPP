@@ -32,7 +32,7 @@ export default function WebSidebar({ items }: WebSidebarProps) {
         return (
           <TouchableOpacity
             key={item.path}
-            onPress={() => router.replace(item.path)}
+            // onPress={() => router.replace(item.path)}
             style={[
               styles.item,
               isActive && { backgroundColor: activeColor },
