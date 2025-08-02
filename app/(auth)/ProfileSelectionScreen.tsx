@@ -2,8 +2,9 @@
 import ThemeSwitcher from '@/components/ThemeSwitcher';
 import { useProfile } from '@/context/ProfileContext';
 import { useThemeColor } from '@/hooks/useThemeColor';
-import { Department } from '@/types';
+import { ClientProfile, Department, EmployeeProfile, SupplierProfile } from '@/types';
 import { getDepartments } from '@/utils/authService';
+import { createProfile } from '@/utils/userService';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
@@ -27,7 +28,7 @@ export default function ProfileSelectionScreen() {
   const [departments, setDepartments] = useState<Department[]>([]);
   const [selectedType, setSelectedType] = useState<'CLIENT' | 'SUPPLIER' | 'EMPLOYEE' | null>(null);
   const [form, setForm] = useState({
-    fullName: '',
+    firstName: '',
     phone: '',
     departmentId: '',
     surname: '',
@@ -73,13 +74,13 @@ export default function ProfileSelectionScreen() {
   const buttonTextColor = useThemeColor({}, 'buttonText');
   const secondaryTextColor = useThemeColor({}, 'secondaryText');
 
-  const handleProfileSubmit = () => {
-    if (selectedType === 'CLIENT' && !form.fullName.trim()) {
+  const handleProfileSubmit = async () => {
+    if (selectedType === 'CLIENT' && !form.firstName.trim()) {
       Alert.alert('Ошибка', 'Введите имя');
       return;
     }
 
-    if (selectedType === 'SUPPLIER' && !form.fullName.trim()) {
+    if (selectedType === 'SUPPLIER' && !form.firstName.trim()) {
       Alert.alert('Ошибка', 'Введите имя');
       return;
     }
@@ -89,7 +90,7 @@ export default function ProfileSelectionScreen() {
         Alert.alert('Ошибка', 'Введите фамилию');
         return;
       }
-      if (!form.fullName.trim()) {
+      if (!form.firstName.trim()) {
         Alert.alert('Ошибка', 'Введите имя');
         return;
       }
@@ -104,8 +105,42 @@ export default function ProfileSelectionScreen() {
       return;
     }
 
-    console.log('✅ Профиль выбран:', selectedType);
-    console.log('📦 Данные формы:', form);
+    try {
+      let profileData: ClientProfile | SupplierProfile | EmployeeProfile;
+
+      switch(selectedType) {
+        case 'CLIENT':
+          profileData = {
+            firstName: form.firstName,
+            // phone: form.phone
+          };
+          break;
+        case 'SUPPLIER':
+          profileData = {
+            firstName: form.firstName,
+            // phone: form.phone
+          };
+          break;
+        case 'EMPLOYEE':
+          profileData = {
+            surname: form.surname,
+            firstName: form.firstName,
+            patronymic: form.patronymic,
+            phone: form.phone,
+            departmentId: form.departmentId
+          };
+          break;
+        default:
+          throw new Error('Неизвестный тип профиля');
+      }
+
+      await createProfile(selectedType, profileData);
+      console.log('✅ Профиль успешно создан:', selectedType);
+      router.push('/(main)/HomeScreen');
+    } catch (error) {
+      console.error('❌ Ошибка создания профиля:', error);
+      Alert.alert('Ошибка', 'Не удалось создать профиль');
+    }
   };
 
   const animateForm = () => {
@@ -127,7 +162,7 @@ export default function ProfileSelectionScreen() {
             <Text style={styles.label}>Фамилия*</Text>
             <TextInput style={styles.input} value={form.surname} onChangeText={(text) => onChange('surname', text)} />
             <Text style={styles.label}>Имя*</Text>
-            <TextInput style={styles.input} value={form.fullName} onChangeText={(text) => onChange('fullName', text)} />
+            <TextInput style={styles.input} value={form.firstName} onChangeText={(text) => onChange('firstName', text)} />
             <Text style={styles.label}>Отчество <Text style={{ color: secondaryTextColor }}>(необязательно)</Text></Text>
             <TextInput style={styles.input} value={form.patronymic} onChangeText={(text) => onChange('patronymic', text)} />
             <Text style={styles.label}>Телефон*</Text>
@@ -146,7 +181,6 @@ export default function ProfileSelectionScreen() {
             <View style={{
               zIndex: 2000,
               elevation: Platform.OS === 'android' ? 10 : 0,
-              // marginBottom: dropdownOpen ? 200 : 20,
             }}>
               <DropDownPicker
                 open={dropdownOpen}
@@ -173,8 +207,8 @@ export default function ProfileSelectionScreen() {
             <Text style={styles.label}>Имя*</Text>
             <TextInput
               style={styles.input}
-              value={form.fullName}
-              onChangeText={(text) => onChange('fullName', text)}
+              value={form.firstName}
+              onChangeText={(text) => onChange('firstName', text)}
               placeholder="Введите имя"
             />
             <Text style={styles.label}>Телефон <Text style={{ color: secondaryTextColor }}>(необязательно)</Text></Text>
@@ -195,7 +229,7 @@ export default function ProfileSelectionScreen() {
         {selectedType === 'CLIENT' && (
           <>
             <Text style={styles.label}>Имя*</Text>
-            <TextInput style={styles.input} value={form.fullName} onChangeText={(text) => onChange('fullName', text)} />
+            <TextInput style={styles.input} value={form.firstName} onChangeText={(text) => onChange('firstName', text)} />
           </>
         )}
 

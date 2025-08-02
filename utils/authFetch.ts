@@ -6,7 +6,8 @@ const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:3
 
 interface AuthFetchOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
-  body?: Record<string, any>;
+  body?: Record<string, any> | string;
+  headers?: Record<string, string>;
   parseJson?: boolean; // если не нужно парсить JSON, например для logout
 }
 

@@ -23,3 +23,21 @@ export interface LoginResponse {
   refreshToken: string;
   profile?: Profile;
 }
+
+export interface ClientProfile {
+  firstName: string;
+  phone?: string;
+}
+
+export interface SupplierProfile {
+  firstName: string;
+  phone?: string;
+}
+
+export interface EmployeeProfile {
+  surname: string;
+  firstName: string;
+  patronymic?: string;
+  phone: string;
+  departmentId: string;
+}
