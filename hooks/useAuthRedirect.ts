@@ -10,7 +10,7 @@ export const useAuthRedirect = () => {
   if (!auth) throw new Error('AuthContext is required');
 
   const { isLoading, isAuthenticated, profile } = auth;
-
+  console.log(auth)
   useEffect(() => {
     if (isLoading) return;
 

@@ -5,8 +5,10 @@ import { jwtDecode } from 'jwt-decode';
 import isEqual from 'lodash.isequal';
 import React, { createContext, ReactNode, useEffect, useState } from 'react';
 
-import { Profile } from '@/types';
+import { Profile } from '@/types/userTypes';
 import { logout as logoutFn } from '@/utils/authService';
+import { refreshToken } from '@/utils/tokenService';
+import { getProfile } from '@/utils/userService';
 
 interface AuthContextType {
   isLoading: boolean;
@@ -32,7 +34,44 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [isAuthenticated, setAuthenticated] = useState(false);
   const [profileState, setProfileState] = useState<Profile | null>(null);
 
+  const isValidProfile = (profile: Profile | null): boolean => {
+    if (!profile) return false;
+    
+    // Проверяем статус основного профиля
+    if (profile.profileStatus !== "ACTIVE") return false;
+    
+    // Проверяем статус текущего подпрофиля
+    let currentSubProfileActive = false;
+    switch (profile.currentProfileType) {
+      case "CLIENT":
+        currentSubProfileActive = profile.clientProfile?.status === "ACTIVE";
+        break;
+      case "SUPPLIER":
+        currentSubProfileActive = profile.supplierProfile?.status === "ACTIVE";
+        break;
+      case "EMPLOYEE":
+        currentSubProfileActive = profile.employeeProfile?.status === "ACTIVE";
+        break;
+      default:
+        return false;
+    }
+    
+    // Проверяем наличие хотя бы одного активного подпрофиля
+    const hasActiveSubProfile = 
+      (profile.clientProfile?.status === "ACTIVE") ||
+      (profile.supplierProfile?.status === "ACTIVE") || 
+      (profile.employeeProfile?.status === "ACTIVE");
+      
+    return currentSubProfileActive && hasActiveSubProfile && profile.currentProfileType !== null;
+  };
+
   const setProfile = async (newProfile: Profile | null) => {
+    // if (newProfile && !isValidProfile(newProfile)) {
+    //   await logoutFn();
+    //   setAuthenticated(false);
+    //   newProfile = null;
+    // }
+
     setProfileState((prev) => {
       if (isEqual(prev, newProfile)) return prev;
       return newProfile;
@@ -50,33 +89,68 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
     const init = async () => {
       try {
-        const token = await AsyncStorage.getItem('accessToken');
+        let token = await AsyncStorage.getItem('accessToken');
         const profileJson = await AsyncStorage.getItem('profile');
 
         if (!isMounted) return;
+
+        // Если нет токена - попробовать обновить
+        if (!token) {
+          token = await refreshToken();
+        }
+
+        // Всегда проверяем профиль, даже если нет токена
+        if (profileJson) {
+          const parsedProfile = JSON.parse(profileJson);
+          if (!isValidProfile(parsedProfile)) {
+            await logoutFn();
+            setAuthenticated(false);
+            return;
+          }
+          await setProfile(parsedProfile);
+        }
 
         if (token) {
           const decoded: DecodedToken = jwtDecode(token);
           const now = Math.floor(Date.now() / 1000);
 
           if (decoded?.exp && decoded.exp < now) {
-            // Токен просрочен
-            await logoutFn();
-            setAuthenticated(false);
-            setProfileState(null);
-            return;
+            // Токен просрочен - попробовать обновить
+            const newToken = await refreshToken();
+            if (!newToken) {
+              // Не удалось обновить - делаем logout
+              await logoutFn();
+              setAuthenticated(false);
+              return;
+            }
+            // Токен обновлен - продолжаем с новым токеном
+            token = newToken;
           }
-
           setAuthenticated(true);
 
-          const parsedProfile = profileJson ? JSON.parse(profileJson) : null;
-          setProfileState((prev) => {
-            if (isEqual(prev, parsedProfile)) return prev;
-            return parsedProfile;
-          });
+          // Если нет профиля в AsyncStorage, но есть токен - получаем профиль
+          if (!profileJson) {
+            try {
+              await getProfile();
+              const profileJson = await AsyncStorage.getItem('profile')
+              if (profileJson) {
+                const parsedProfile = JSON.parse(profileJson);
+                if (!isValidProfile(parsedProfile)) {
+                  await logoutFn();
+                  setAuthenticated(false);
+                  return;
+                }
+                await setProfile(parsedProfile);
+              }
+              
+            } catch (e) {
+              console.warn('Ошибка получения профиля:', e);
+            }
+          }
         } else {
+          // Если нет токена - делаем logout
+          await logoutFn();
           setAuthenticated(false);
-          setProfileState(null);
         }
       } catch (e) {
         console.warn('Ошибка инициализации:', e);
@@ -91,7 +165,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     };
 
     init();
-
     return () => {
       isMounted = false;
     };

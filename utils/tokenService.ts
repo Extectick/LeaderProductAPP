@@ -1,7 +1,10 @@
 // utils/tokenService.ts
+// import { User } from '@/types/apiTypes';
+import { Profile } from '@/types/userTypes';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import { router } from 'expo-router';
+import { ErrorResponse } from './../types/apiResponseTypes';
 import { authFetch } from './authFetch';
 
 const ACCESS_KEY = 'accessToken';
@@ -19,11 +22,17 @@ export async function getAccessToken(): Promise<string | null> {
 /**
  * Сохранить accessToken и refreshToken в AsyncStorage
  */
-export async function saveTokens(accessToken: string, refreshToken: string): Promise<void> {
+export async function saveTokens(accessToken: string, refreshToken: string, profile?: Profile): Promise<void> {
   await AsyncStorage.multiSet([
     [ACCESS_KEY, accessToken],
     [REFRESH_KEY, refreshToken],
+    [PROFILE_KEY, profile ? JSON.stringify(profile) : ''],
   ]);
+}
+
+export async function getProfile(): Promise<Profile | null> {
+  const profileString = await AsyncStorage.getItem(PROFILE_KEY);
+  return profileString ? JSON.parse(profileString) : null;
 }
 
 /**
@@ -45,27 +54,27 @@ export async function refreshToken(): Promise<string | null> {
   };
   // console.log(storedRefreshToken)
   try {
-    const response = await authFetch(`${API_BASE_URL}/auth/token`, {
+    const response = await authFetch<{ refreshToken: string }, { accessToken: string; refreshToken: string }>('/auth/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: { refreshToken: storedRefreshToken },
+      body: JSON.stringify({ refreshToken: storedRefreshToken }),
     });
 
     if (!response.ok) {
-      // На всякий случай попробуем прочитать текст ошибки
-      const text = await response.text();
-      console.warn('refreshToken response not OK:', response.status, text);
-      throw new Error('Ошибка обновления токена');
+      const errorResponse = response as unknown as ErrorResponse;
+      console.warn('refreshToken error:', errorResponse);
+      throw new Error(errorResponse.message || 'Ошибка обновления токена');
     }
 
-    const data = await response.json();
-    if (!data.accessToken) {
+    const { data: { accessToken, refreshToken } } = response;
+
+    if (!accessToken) {
       throw new Error('Отсутствует accessToken в ответе обновления');
     }
 
-    await AsyncStorage.setItem(REFRESH_KEY, data.refreshToken);
-    await AsyncStorage.setItem(ACCESS_KEY, data.accessToken);
-    return data.accessToken;
+    await AsyncStorage.setItem(REFRESH_KEY, refreshToken);
+    await AsyncStorage.setItem(ACCESS_KEY, accessToken);
+    return accessToken;
   } catch (err) {
     console.warn('Ошибка при обновлении токена:', err);
     await logout();

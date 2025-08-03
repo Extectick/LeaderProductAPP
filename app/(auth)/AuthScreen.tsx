@@ -2,9 +2,9 @@ import ThemeSwitcher from '@/components/ThemeSwitcher';
 import { AuthContext } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { login, register, verify } from '@/utils/authService';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useContext, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -120,33 +120,27 @@ export default function AuthScreen() {
   const handleLogin = async () => {
     if (!validateEmail(email)) return setError('Введите корректный email');
     if (!password) return setError('Введите пароль');
+    if (!setAuthenticated || !setProfile) {
+      return setError('Ошибка аутентификации');
+    }
 
     setLoading(true);
     setError('');
     try {
-      const { accessToken, refreshToken, profile } = await login(email, password);
+      await login(email, password);
+      setAuthenticated(true);
       
-      // Сохраняем токены
-      await AsyncStorage.multiSet([
-        ['accessToken', accessToken],
-        ['refreshToken', refreshToken],
-      ]);
-
-      if (setAuthenticated) {
-        setAuthenticated(true);
-      }
-      if (setProfile) {
-        setProfile(profile ?? null);
-      }
-
-      if (profile) {
-        router.replace('/HomeScreen');
-      } else {
-        router.replace('/ProfileSelectionScreen');
+      const profileJson = await AsyncStorage.getItem('profile');
+      if (profileJson) {
+        const profile = JSON.parse(profileJson);
+        await setProfile(profile); // Явно обновляем профиль в контексте
+        // router.navigate('/(main)/HomeScreen');
+      // } else {
+      //   router.navigate('/(auth)/ProfileSelectionScreen');
       }
     } catch (e: any) {
-      console.error('Login error:', e);
       setError(e.message || 'Ошибка при входе');
+      // Можно добавить отправку ошибки в систему мониторинга
     } finally {
       setLoading(false);
     }
@@ -160,7 +154,7 @@ export default function AuthScreen() {
     setLoading(true);
     setError('');
     try {
-      await register(email, password);
+      await register(email, password, email.split('@')[0]);
       setMode('verify');
       setResendTimer(30);
       setError('Код подтверждения отправлен на email');
@@ -179,15 +173,12 @@ export default function AuthScreen() {
   setLoading(true);
   setError('');
   try {
-    const profile = await verify(email, code);
-    // console.log('Профиль: ' + profile)
+    await verify(email, code);
     if (setAuthenticated) {
       setAuthenticated(true);
     }
-    if (setProfile) {
-      setProfile(profile ?? null);
-    }
-
+    
+    const profile = await AsyncStorage.getItem('profile');
     if (profile) {
       router.replace('../(main)/HomeScreen' as const);
     } else {
@@ -564,4 +555,3 @@ const getStyles = (colors: {
       fontSize: 14,
     },
   });
-

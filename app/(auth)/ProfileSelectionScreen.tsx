@@ -2,12 +2,12 @@
 import ThemeSwitcher from '@/components/ThemeSwitcher';
 import { useProfile } from '@/context/ProfileContext';
 import { useThemeColor } from '@/hooks/useThemeColor';
-import {
+import type {
   CreateClientProfileDto,
   CreateEmployeeProfileDto,
   CreateSupplierProfileDto,
   Department
-} from '@/types';
+} from '@/utils/userService';
 import { createProfile, getDepartments } from '@/utils/userService';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
@@ -116,39 +116,42 @@ export default function ProfileSelectionScreen() {
       switch(selectedType) {
         case 'CLIENT':
           profileData = {
+            phone: form.phone,
+            status: 'ACTIVE',
             user: {
               firstName: form.firstName,
               lastName: form.lastName,
               middleName: form.patronymic
-            },
-            phone: form.phone
+            }
           };
           break;
         case 'SUPPLIER':
           profileData = {
+            phone: form.phone,
+            status: 'ACTIVE',
             user: {
               firstName: form.firstName,
               lastName: form.lastName,
               middleName: form.patronymic
-            },
-            phone: form.phone
+            }
           };
           break;
         case 'EMPLOYEE':
           profileData = {
+            phone: form.phone,
+            status: 'ACTIVE',
+            departmentId: form.departmentId,
             user: {
               firstName: form.firstName,
               lastName: form.lastName,
               middleName: form.patronymic
-            },
-            phone: form.phone,
-            departmentId: form.departmentId
+            }
           };
           break;
         default:
           throw new Error('Неизвестный тип профиля');
       }
-
+      console.log(profileData)
       await createProfile(selectedType, profileData);
       setApiMessage({text: 'Профиль успешно создан', isError: false});
       setTimeout(() => router.push('/(main)/HomeScreen'), 1500);

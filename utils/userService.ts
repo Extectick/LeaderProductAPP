@@ -1,42 +1,89 @@
-import {
-  CreateClientProfileDto,
-  CreateEmployeeProfileDto,
-  CreateSupplierProfileDto,
-  Department,
-  User
-} from '@/types';
+import { UserProfileResponse } from '@/types/apiTypes';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { ErrorResponse, SuccessResponse } from '../types/apiResponseTypes';
+import { Profile } from '../types/userTypes';
 import { authFetch } from './authFetch';
 
 const ACCESS_KEY = 'accessToken';
 const REFRESH_KEY = 'refreshToken';
 const PROFILE_KEY = 'profile';
 
+interface UserProfile {
+  id: number;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+  phone: string | null;
+  clientProfile?: {
+    phone: string | null;
+    status: string;
+    address?: {
+      street: string;
+      city: string;
+      country: string;
+    };
+    user?: {
+      firstName: string;
+      lastName: string;
+      middleName?: string;
+    };
+  };
+  supplierProfile?: {
+    phone: string | null;
+    status: string;
+    address?: {
+      street: string;
+      city: string;
+      country: string;
+    };
+    user?: {
+      firstName: string;
+      lastName: string;
+      middleName?: string;
+    };
+  };
+  employeeProfile?: {
+    phone: string | null;
+    status: string;
+    departmentId?: number;
+    user?: {
+      firstName: string;
+      lastName: string;
+      middleName?: string;
+    };
+  };
+}
+
+export type CreateClientProfileDto = NonNullable<UserProfile['clientProfile']>;
+export type CreateSupplierProfileDto = NonNullable<UserProfile['supplierProfile']>;
+export type CreateEmployeeProfileDto = NonNullable<UserProfile['employeeProfile']>;
+export type Department = {
+  id: number;
+  name: string;
+};
+export type User = UserProfile;
+
 export const createProfile = async (
   selectedType: 'CLIENT' | 'SUPPLIER' | 'EMPLOYEE',
   profileData: CreateClientProfileDto | CreateSupplierProfileDto | CreateEmployeeProfileDto
 ): Promise<void> => {
-  const response = await authFetch(`/users/profiles/${selectedType.toLowerCase()}`, {
+  const response = await authFetch<
+    CreateClientProfileDto | CreateSupplierProfileDto | CreateEmployeeProfileDto, 
+    void
+  >(`/users/profiles/${selectedType.toLowerCase()}`, {
     method: 'POST',
-    body: profileData,
+    body: JSON.stringify(profileData),
     headers: {
       'Content-Type': 'application/json'
     }
   });
-  console.log(response)
-  if (!response) {
-    const errorData = await response.message;
-    let errorMessage = 'Не удалось создать профиль';
-    
-    if (response.status === 400) {
-      errorMessage = errorData.message || 'Некорректные данные профиля';
-    } else if (response.status === 409) {
-      errorMessage = errorData.message || 'Профиль уже существует';
-    }
 
+  if (!response.ok) {
+    const errorResponse = response as unknown as ErrorResponse;
     throw new Error(JSON.stringify({
-      message: errorMessage,
-      status: response.status
+      message: errorResponse.message,
+      code: errorResponse.error.code,
+      details: errorResponse.error.details
     }));
   }
 
@@ -44,15 +91,27 @@ export const createProfile = async (
   await getProfile();
 };
 
-// Получить список отделов
 export const getDepartments = async (): Promise<Department[]> => {
-  return await authFetch<Department[]>('/users/departments');
+  const response = await authFetch<void, Department[]>('/users/departments');
+  if (!response.ok) {
+    const errorResponse = response as ErrorResponse;
+    throw new Error(errorResponse.message);
+  }
+  return response.data;
 };
 
-// Получить профиль пользователя
-export const getProfile = async (): Promise<User | null> => {
+export const getProfile = async (): Promise<Profile | null> => {
   try {
-    const profile = await authFetch<User>('/users/profile');
+    const response = await authFetch<void, UserProfileResponse>('/users/profile');
+    if (!response.ok) {
+      const errorResponse = response as ErrorResponse;
+      throw new Error(errorResponse.message);
+    }
+    const responseData = (response as unknown as SuccessResponse<{ profile: Profile }>).data;
+    const profile = responseData.profile;
+    console.log("Профиль пользователя:", profile);
+    
+
     await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
     return profile;
   } catch (error: any) {

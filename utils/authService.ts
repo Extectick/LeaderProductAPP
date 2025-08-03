@@ -1,74 +1,86 @@
 // utils/authService.ts
-import { LoginResponse, User } from '@/types';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  ErrorResponse
+} from './../types/apiResponseTypes';
+import type {
+  AuthLoginRequest,
+  AuthLoginResponseData,
+  AuthRegisterRequest,
+  AuthVerifyRequest,
+  AuthVerifyResponseData
+} from './../types/apiTypes';
+import { API_ENDPOINTS } from './apiEndpoints';
 import { authFetch } from './authFetch';
 import { logout as logoutTokensOnly, saveTokens } from './tokenService';
 
-const ACCESS_KEY = 'accessToken';
-const REFRESH_KEY = 'refreshToken';
-const PROFILE_KEY = 'profile';
-
-
-
-// Логин (сохраняет токены, возвращает ответ)
-export const login = async (email: string, password: string): Promise<LoginResponse> => {
-  console.log(JSON.stringify({ email, password }))
-  const data = await authFetch<LoginResponse>('/auth/login', {
-    method: 'POST',
-    body: { email, password },
-    headers: {
-      'Content-Type': 'application/json'
-    }
-  });
-  
-  const { accessToken, refreshToken } = data;
-  await saveTokens(accessToken, refreshToken);
-
-  return data;
-};
-
-// Регистрация
-export const register = async (email: string, password: string): Promise<void> => {
-  await authFetch('/auth/register', {
-    method: 'POST',
-    body: { email, password },
-    headers: {
-      'Content-Type': 'application/json'
-    }
-  });
-};
-
-// Верификация (например, email+код)
-export const verify = async (email: string, code: string): Promise<User | null> => {
-  try {
-    const { accessToken, refreshToken, user } = await authFetch<LoginResponse>('/auth/verify', {
+export const login = async (email: string, password: string) => {
+  const response = await authFetch<AuthLoginRequest, AuthLoginResponseData>(
+    API_ENDPOINTS.AUTH.LOGIN,
+    {
       method: 'POST',
-      body: { email, code },
-    });
-
-    await saveTokens(accessToken, refreshToken);
-
-    if (user) {
-      await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(user));
-      return user;
+      body: JSON.stringify({ email, password }),
+      headers: {
+        'Content-Type': 'application/json'
+      }
     }
+  );
 
-    return null;
-  } catch (error: any) {
-    throw new Error(error.message || 'Ошибка подтверждения');
+  if (!response.ok) {
+    const errorResponse = response as ErrorResponse;
+    throw new Error(errorResponse.message);
+  }
+
+  const { data: { accessToken, refreshToken, profile } } = response;
+  
+  await saveTokens(accessToken, refreshToken, profile);
+  console.log('Устанавливаются данные в AsyncStorage после авторизации')
+};
+
+export const register = async (email: string, password: string, name: string) => {
+  const response = await authFetch<AuthRegisterRequest, void>(
+    API_ENDPOINTS.AUTH.REGISTER,
+    {
+      method: 'POST',
+      body: JSON.stringify({ email, password, name }),
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    }
+  );
+
+  if (!response.ok) {
+    const errorResponse = response as ErrorResponse;
+    throw new Error(errorResponse.message);
   }
 };
 
-// Выход: очищает токены и делает POST /auth/logout
-export const logout = async (): Promise<void> => {
-  try {
-    await authFetch('/auth/logout', {
+export const verify = async (email: string, code: string) => {
+  const response = await authFetch<AuthVerifyRequest, AuthVerifyResponseData>(
+    API_ENDPOINTS.AUTH.VERIFY,
+    {
       method: 'POST',
-      parseJson: false, // не обязательно получать JSON-ответ
-    });
+      body: JSON.stringify({ email, code }),
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    }
+  );
+
+  if (!response.ok) {
+    const errorResponse = response as ErrorResponse;
+    throw new Error(errorResponse.message);
+  }
+
+  const { data: { accessToken, refreshToken} } = response;
+
+  await saveTokens(accessToken, refreshToken);
+};
+
+export const logout = async () => {
+  try {
+    await authFetch(API_ENDPOINTS.AUTH.LOGOUT, { method: 'POST' });
   } catch (e) {
-    // Игнорируем ошибку (например, если токен уже невалиден)
-    // console.warn('Ошибка при logout:', e);
+    // Ignore errors
   } finally {
     await logoutTokensOnly();
   }

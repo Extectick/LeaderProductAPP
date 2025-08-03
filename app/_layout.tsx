@@ -6,6 +6,8 @@ import { StatusBar } from 'react-native';
 
 function InnerLayout() {
   useAuthRedirect(); // теперь это ВНУТРИ AuthProvider
+
+
   return <Slot />;
 }
 
