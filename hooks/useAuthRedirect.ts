@@ -25,14 +25,9 @@ export const useAuthRedirect = () => {
 
     if (!isAuthenticated) {
       router.replace('/AuthScreen');
-    } else if (isAuthenticated && !profile) {
+    } else if (isAuthenticated && (!isValidProfile(profile))) {
       router.replace('/ProfileSelectionScreen');
-    } else if (isAuthenticated && profile && !isValidProfile(profile)) {
-      router.replace({
-        pathname: '/access-denied',
-        params: { reason: 'profile_blocked' }
-      });
-    } else if (isAuthenticated && profile) {
+    } else if (isAuthenticated && isValidProfile(profile)) {
       router.replace('/HomeScreen');
     }
   }, [isLoading, isAuthenticated, profile]);

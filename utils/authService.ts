@@ -1,6 +1,7 @@
 // utils/authService.ts
 import {
-  ErrorResponse
+  ErrorResponse,
+  SuccessResponse
 } from './../types/apiResponseTypes';
 import type {
   AuthLoginRequest,
@@ -14,26 +15,30 @@ import { authFetch } from './authFetch';
 import { logout as logoutTokensOnly, saveTokens } from './tokenService';
 
 export const login = async (email: string, password: string) => {
-  const response = await authFetch<AuthLoginRequest, AuthLoginResponseData>(
-    API_ENDPOINTS.AUTH.LOGIN,
-    {
-      method: 'POST',
-      body: JSON.stringify({ email, password }),
-      headers: {
-        'Content-Type': 'application/json'
+  try {
+    const response = await authFetch<AuthLoginRequest, AuthLoginResponseData>(
+      API_ENDPOINTS.AUTH.LOGIN,
+      {
+        method: 'POST',
+        body: JSON.stringify({ email, password }),
+        headers: {
+          'Content-Type': 'application/json'
+        }
       }
+    );
+
+    if (!response.ok) {
+      const errorResponse = response as ErrorResponse;
+      throw new Error(errorResponse.message);
     }
-  );
 
-  if (!response.ok) {
-    const errorResponse = response as ErrorResponse;
-    throw new Error(errorResponse.message);
+    const successResponse = response as SuccessResponse<AuthLoginResponseData>;
+    const { accessToken, refreshToken, profile } = successResponse.data;
+    await saveTokens(accessToken, refreshToken, profile);
+    console.log('Устанавливаются данные в AsyncStorage после авторизации');
+  } catch (e: any) {
+    throw new Error(e.message || 'Ошибка авторизации');
   }
-
-  const { data: { accessToken, refreshToken, profile } } = response;
-  
-  await saveTokens(accessToken, refreshToken, profile);
-  console.log('Устанавливаются данные в AsyncStorage после авторизации')
 };
 
 export const register = async (email: string, password: string, name: string) => {

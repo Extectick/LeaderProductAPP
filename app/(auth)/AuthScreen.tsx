@@ -1,5 +1,5 @@
 import ThemeSwitcher from '@/components/ThemeSwitcher';
-import { AuthContext } from '@/context/AuthContext';
+import { AuthContext, isValidProfile } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { login, register, verify } from '@/utils/authService';
 import { useRouter } from 'expo-router';
@@ -128,19 +128,33 @@ export default function AuthScreen() {
     try {
       await login(email, password);
       setAuthenticated(true);
-      console.log('Прошла авторизация')
+      console.log('Прошла авторизация');
+      
       const profileJson = await AsyncStorage.getItem('profile');
-      if (profileJson) {
-        const profile = JSON.parse(profileJson);
-        await setProfile(profile); // Явно обновляем профиль в контексте
-        router.navigate('/(main)/HomeScreen');
+      if (!profileJson) {
+        throw new Error('Профиль не найден');
+      }
+
+      const profile = JSON.parse(profileJson);
+      await setProfile(profile);
+      
+      if (isValidProfile(profile)) {
+        router.replace('/HomeScreen');
       } else {
-        router.navigate('/(auth)/ProfileSelectionScreen');
+        // router.replace({
+        //   pathname: '/access-denied',
+        //   params: { reason: 'profile_blocked' }
+        // });
+        router.replace('/ProfileSelectionScreen');
       }
     } catch (e: any) {
-      setError(e.message || 'Ошибка при входе');
-      console.log('Не смог авторизоваться')
-      // Можно добавить отправку ошибки в систему мониторинга
+      const errorMsg = e.message.includes('Не удалось обновить токен') 
+        ? 'Неверный email или пароль'
+        : e.message || 'Ошибка при входе';
+      
+      setError(errorMsg);
+      console.error('Ошибка авторизации:', e);
+      return;
     } finally {
       setLoading(false);
     }
@@ -178,12 +192,8 @@ export default function AuthScreen() {
       setAuthenticated(true);
     }
     
-    const profile = await AsyncStorage.getItem('profile');
-    if (profile) {
-      router.replace('../(main)/HomeScreen' as const);
-    } else {
-      router.replace('../(main)/ProfileSelectionScreen' as const);
-    }
+    router.replace('/ProfileSelectionScreen');
+
   } catch (e: any) {
     console.error('Verify error:', e);
     setError(e.message || 'Ошибка подтверждения');

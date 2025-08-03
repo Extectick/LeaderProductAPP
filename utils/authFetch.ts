@@ -33,6 +33,15 @@ export async function authFetch<TRequest = unknown, TResponse = unknown>(
 
   let response = await fetch(`${API_BASE_URL}${url}`, fetchOptions);
 
+  // Пропускаем обновление токена для запросов авторизации
+  if (url.includes('/auth/login') || url.includes('/auth/register')) {
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.message || 'Ошибка авторизации');
+    }
+    return data;
+  }
+
   // Если accessToken протух — попробуем обновить
   if (response.status === 401 || response.status === 403) {
     const newToken = await refreshToken();

@@ -281,12 +281,23 @@ export default function ProfileSelectionScreen() {
             {['CLIENT', 'SUPPLIER', 'EMPLOYEE'].map((type) => (
               <TouchableOpacity
                 key={type}
-                style={[styles.button, { backgroundColor: buttonColor }]}
-                onPress={() => setSelectedType(type as any)}
+                style={[
+                  styles.button, 
+                  { 
+                    backgroundColor: ['CLIENT', 'SUPPLIER'].includes(type) ? '#cccccc' : buttonColor,
+                    opacity: ['CLIENT', 'SUPPLIER'].includes(type) ? 0.6 : 1
+                  }
+                ]}
+                onPress={() => {
+                  if (!['CLIENT', 'SUPPLIER'].includes(type)) {
+                    setSelectedType(type as any);
+                  }
+                }}
+                disabled={['CLIENT', 'SUPPLIER'].includes(type)}
               >
                 <Text style={[styles.buttonText, { color: buttonTextColor }]}>{{
-                  CLIENT: 'Клиент',
-                  SUPPLIER: 'Поставщик',
+                  CLIENT: 'Клиент (временно недоступен)',
+                  SUPPLIER: 'Поставщик (временно недоступен)',
                   EMPLOYEE: 'Сотрудник',
                 }[type]}</Text>
               </TouchableOpacity>

@@ -35,7 +35,7 @@ export const AnimatedButton: React.FC<AnimatedButtonProps> = ({ title, onPress, 
         styles.button,
         style,
         pressed && styles.pressed,
-        { transform: [{ scale }] },
+        { transform: [{ scale: 1 }] },
       ]}
     >
       <Animated.Text style={styles.text}>{title}</Animated.Text>
