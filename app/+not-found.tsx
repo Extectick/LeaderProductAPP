@@ -3,17 +3,17 @@ import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { IconSymbol } from '@/components/ui/IconSymbol';
 import { Colors } from '@/constants/Colors';
-import { useNavigation } from '@react-navigation/native';
+import { useRouter } from 'expo-router';
 import { StyleSheet, View } from 'react-native';
 
 export default function NotFoundScreen() {
-  const navigation = useNavigation();
+  const router = useRouter();
 
   return (
     <ThemedView style={styles.container}>
       <View style={styles.content}>
         <IconSymbol 
-          name="house.fill" 
+          name="questionmark.circle" 
           size={64} 
           color={Colors.light.tint}
           style={styles.icon} 
@@ -22,10 +22,15 @@ export default function NotFoundScreen() {
           Страница не найдена
         </ThemedText>
         <ThemedText style={styles.text}>
-          Запрашиваемая страница не существует
+          Запрошенная страница не существует
         </ThemedText>
         <AnimatedButton 
-          onPress={() => navigation.goBack()}
+          onPress={() => router.replace('/HomeScreen')}
+          style={styles.button}
+          title="На главную"
+        />
+        <AnimatedButton 
+          onPress={() => router.back()}
           style={styles.button}
           title="Назад"
         />

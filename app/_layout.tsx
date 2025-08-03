@@ -1,12 +1,16 @@
 import { AuthProvider } from '@/context/AuthContext';
 import { ThemeProvider } from '@/context/ThemeContext';
-import { useAuthRedirect } from '@/hooks/useAuthRedirect';
-import { Slot } from 'expo-router';
+import { Redirect, Slot, usePathname } from 'expo-router';
 import { StatusBar } from 'react-native';
 
 function InnerLayout() {
-  useAuthRedirect(); // теперь это ВНУТРИ AuthProvider
+  // useAuthRedirect(); // теперь это ВНУТРИ AuthProvider
 
+  const pathname = usePathname();
+
+  if (pathname === '/' || pathname === '') {
+    return <Redirect href="/HomeScreen" />;
+  }
 
   return <Slot />;
 }

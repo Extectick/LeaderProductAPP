@@ -66,10 +66,9 @@ export default function AuthScreen() {
     default: 0,
   });
 
-  // Убрали проверку авторизации - она теперь в LayoutWithAuth
-  useEffect(() => {
-    setCheckingAuth(false);
-  }, []);
+  // useEffect(() => {
+  //   setCheckingAuth(false);
+  // }, []);
 
   useEffect(() => {
     fadeAnim.setValue(0);
@@ -129,17 +128,18 @@ export default function AuthScreen() {
     try {
       await login(email, password);
       setAuthenticated(true);
-      
+      console.log('Прошла авторизация')
       const profileJson = await AsyncStorage.getItem('profile');
       if (profileJson) {
         const profile = JSON.parse(profileJson);
         await setProfile(profile); // Явно обновляем профиль в контексте
-        // router.navigate('/(main)/HomeScreen');
-      // } else {
-      //   router.navigate('/(auth)/ProfileSelectionScreen');
+        router.navigate('/(main)/HomeScreen');
+      } else {
+        router.navigate('/(auth)/ProfileSelectionScreen');
       }
     } catch (e: any) {
       setError(e.message || 'Ошибка при входе');
+      console.log('Не смог авторизоваться')
       // Можно добавить отправку ошибки в систему мониторинга
     } finally {
       setLoading(false);

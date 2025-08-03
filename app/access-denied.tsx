@@ -5,11 +5,23 @@ import { IconSymbol } from '@/components/ui/IconSymbol';
 import { Colors } from '@/constants/Colors';
 import { logout } from '@/utils/authService';
 import { useNavigation } from '@react-navigation/native';
-import { router } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { StyleSheet, View } from 'react-native';
+
+const errorMessages = {
+  profile_blocked: 'Ваш профиль заблокирован',
+  no_permission: 'Недостаточно прав доступа',
+  default: 'Доступ к этой странице ограничен'
+};
 
 export default function AccessDeniedScreen() {
   const navigation = useNavigation();
+  const router = useRouter();
+  const { reason } = useLocalSearchParams<{ reason?: keyof typeof errorMessages }>();
+
+  const message = reason && errorMessages[reason] 
+    ? errorMessages[reason] 
+    : errorMessages.default;
 
   return (
     <ThemedView style={styles.container}>
@@ -24,10 +36,10 @@ export default function AccessDeniedScreen() {
           Доступ запрещен
         </ThemedText>
         <ThemedText style={styles.text}>
-          У вас нет прав для просмотра этой страницы
+          {message}
         </ThemedText>
         <AnimatedButton 
-          onPress={() => router.reload}
+          onPress={() => router.replace('/HomeScreen')}
           style={styles.button}
           title="Обновить"
         />
