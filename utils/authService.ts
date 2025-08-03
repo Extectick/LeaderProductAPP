@@ -1,5 +1,5 @@
 // utils/authService.ts
-import { Department, LoginResponse, Profile } from '@/types';
+import { LoginResponse, User } from '@/types';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { authFetch } from './authFetch';
 import { logout as logoutTokensOnly, saveTokens } from './tokenService';
@@ -8,28 +8,17 @@ const ACCESS_KEY = 'accessToken';
 const REFRESH_KEY = 'refreshToken';
 const PROFILE_KEY = 'profile';
 
-// Получить профиль пользователя
-export const getProfile = async (): Promise<Profile | null> => {
-  try {
-    const profile = await authFetch<Profile>('/users/profile');
-    await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
-    return profile;
-  } catch (error: any) {
-    console.error('Ошибка получения профиля:', error);
-    return null;
-  }
-};
 
-// Получить список отделов
-export const getDepartments = async (): Promise<Department[]> => {
-  return await authFetch<Department[]>('/users/departments');
-};
 
 // Логин (сохраняет токены, возвращает ответ)
 export const login = async (email: string, password: string): Promise<LoginResponse> => {
+  console.log(JSON.stringify({ email, password }))
   const data = await authFetch<LoginResponse>('/auth/login', {
     method: 'POST',
     body: { email, password },
+    headers: {
+      'Content-Type': 'application/json'
+    }
   });
   
   const { accessToken, refreshToken } = data;
@@ -43,22 +32,25 @@ export const register = async (email: string, password: string): Promise<void> =
   await authFetch('/auth/register', {
     method: 'POST',
     body: { email, password },
+    headers: {
+      'Content-Type': 'application/json'
+    }
   });
 };
 
 // Верификация (например, email+код)
-export const verify = async (email: string, code: string): Promise<Profile | null> => {
+export const verify = async (email: string, code: string): Promise<User | null> => {
   try {
-    const { accessToken, refreshToken, profile } = await authFetch<LoginResponse>('/auth/verify', {
+    const { accessToken, refreshToken, user } = await authFetch<LoginResponse>('/auth/verify', {
       method: 'POST',
       body: { email, code },
     });
 
     await saveTokens(accessToken, refreshToken);
 
-    if (profile) {
-      await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
-      return profile;
+    if (user) {
+      await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(user));
+      return user;
     }
 
     return null;
@@ -76,7 +68,7 @@ export const logout = async (): Promise<void> => {
     });
   } catch (e) {
     // Игнорируем ошибку (например, если токен уже невалиден)
-    console.warn('Ошибка при logout:', e);
+    // console.warn('Ошибка при logout:', e);
   } finally {
     await logoutTokensOnly();
   }

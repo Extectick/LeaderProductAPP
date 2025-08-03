@@ -2,10 +2,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import { router } from 'expo-router';
+import { authFetch } from './authFetch';
 
 const ACCESS_KEY = 'accessToken';
 const REFRESH_KEY = 'refreshToken';
-
+const PROFILE_KEY = 'profile';
 const API_BASE_URL = Constants.expoConfig?.extra?.EXPO_PUBLIC_API_BASE_URL || 'http://192.168.30.54:3000';
 
 /**
@@ -29,8 +30,8 @@ export async function saveTokens(accessToken: string, refreshToken: string): Pro
  * Очистить токены и перенаправить на экран авторизации
  */
 export async function logout(): Promise<void> {
-  await AsyncStorage.multiRemove([ACCESS_KEY, REFRESH_KEY]);
-  router.replace('/(auth)/AuthScreen');
+  await AsyncStorage.multiRemove([ACCESS_KEY, REFRESH_KEY, PROFILE_KEY]);
+  router.replace('/AuthScreen');
 }
 
 /**
@@ -38,13 +39,16 @@ export async function logout(): Promise<void> {
  */
 export async function refreshToken(): Promise<string | null> {
   const storedRefreshToken = await AsyncStorage.getItem(REFRESH_KEY);
-  if (!storedRefreshToken) return null;
+  if (!storedRefreshToken) {
+    logout();
+    return null
+  };
   // console.log(storedRefreshToken)
   try {
-    const response = await fetch(`${API_BASE_URL}/auth/token`, {
+    const response = await authFetch(`${API_BASE_URL}/auth/token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken: storedRefreshToken }),
+      body: { refreshToken: storedRefreshToken },
     });
 
     if (!response.ok) {

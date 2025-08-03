@@ -2,9 +2,13 @@
 import ThemeSwitcher from '@/components/ThemeSwitcher';
 import { useProfile } from '@/context/ProfileContext';
 import { useThemeColor } from '@/hooks/useThemeColor';
-import { ClientProfile, Department, EmployeeProfile, SupplierProfile } from '@/types';
-import { getDepartments } from '@/utils/authService';
-import { createProfile } from '@/utils/userService';
+import {
+  CreateClientProfileDto,
+  CreateEmployeeProfileDto,
+  CreateSupplierProfileDto,
+  Department
+} from '@/types';
+import { createProfile, getDepartments } from '@/utils/userService';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
@@ -29,14 +33,15 @@ export default function ProfileSelectionScreen() {
   const [selectedType, setSelectedType] = useState<'CLIENT' | 'SUPPLIER' | 'EMPLOYEE' | null>(null);
   const [form, setForm] = useState({
     firstName: '',
+    lastName: '', 
     phone: '',
-    departmentId: '',
-    surname: '',
+    departmentId: 0,
     patronymic: '',
   });
   const [fadeAnim] = useState(new Animated.Value(0));
   const [dropdownOpen, setDropdownOpen] = useState(false);
-  const [dropdownItems, setDropdownItems] = useState<{label: string, value: string}[]>([]);
+  const [dropdownItems, setDropdownItems] = useState<{label: string, value: number}[]>([]);
+  const [apiMessage, setApiMessage] = useState<{text: string, isError: boolean} | null>(null);
 
   useEffect(() => {
   let isMounted = true;
@@ -47,7 +52,7 @@ export default function ProfileSelectionScreen() {
       if (isMounted) {
         console.log('Получены отделы');
         setDepartments(deps);
-        setDropdownItems(deps.map(dep => ({ label: dep.name, value: dep.id.toString() })));
+        setDropdownItems(deps.map(dep => ({ label: dep.name, value: dep.id })));
       }
     } catch (error) {
       console.error('Ошибка загрузки отделов:', error);
@@ -62,7 +67,7 @@ export default function ProfileSelectionScreen() {
 }, []);
 
 
-  const onChange = (field: string, value: string) => {
+  const onChange = (field: string, value: string | number) => {
     setForm((prev) => ({ ...prev, [field]: value }));
   };
 
@@ -86,7 +91,7 @@ export default function ProfileSelectionScreen() {
     }
 
     if (selectedType === 'EMPLOYEE') {
-      if (!form.surname.trim()) {
+      if (!form.lastName.trim()) {
         Alert.alert('Ошибка', 'Введите фамилию');
         return;
       }
@@ -106,26 +111,36 @@ export default function ProfileSelectionScreen() {
     }
 
     try {
-      let profileData: ClientProfile | SupplierProfile | EmployeeProfile;
+      let profileData: CreateClientProfileDto | CreateSupplierProfileDto | CreateEmployeeProfileDto;
 
       switch(selectedType) {
         case 'CLIENT':
           profileData = {
-            firstName: form.firstName,
-            // phone: form.phone
+            user: {
+              firstName: form.firstName,
+              lastName: form.lastName,
+              middleName: form.patronymic
+            },
+            phone: form.phone
           };
           break;
         case 'SUPPLIER':
           profileData = {
-            firstName: form.firstName,
-            // phone: form.phone
+            user: {
+              firstName: form.firstName,
+              lastName: form.lastName,
+              middleName: form.patronymic
+            },
+            phone: form.phone
           };
           break;
         case 'EMPLOYEE':
           profileData = {
-            surname: form.surname,
-            firstName: form.firstName,
-            patronymic: form.patronymic,
+            user: {
+              firstName: form.firstName,
+              lastName: form.lastName,
+              middleName: form.patronymic
+            },
             phone: form.phone,
             departmentId: form.departmentId
           };
@@ -135,11 +150,19 @@ export default function ProfileSelectionScreen() {
       }
 
       await createProfile(selectedType, profileData);
-      console.log('✅ Профиль успешно создан:', selectedType);
-      router.push('/(main)/HomeScreen');
+      setApiMessage({text: 'Профиль успешно создан', isError: false});
+      setTimeout(() => router.push('/(main)/HomeScreen'), 1500);
     } catch (error) {
-      console.error('❌ Ошибка создания профиля:', error);
-      Alert.alert('Ошибка', 'Не удалось создать профиль');
+      let message = 'Не удалось создать профиль';
+      if (error instanceof Error) {
+        try {
+          const errorData = JSON.parse(error.message);
+          message = errorData.message || error.message;
+        } catch {
+          message = error.message;
+        }
+      }
+      setApiMessage({text: message, isError: true});
     }
   };
 
@@ -160,7 +183,7 @@ export default function ProfileSelectionScreen() {
         {selectedType === 'EMPLOYEE' && (
           <>
             <Text style={styles.label}>Фамилия*</Text>
-            <TextInput style={styles.input} value={form.surname} onChangeText={(text) => onChange('surname', text)} />
+            <TextInput style={styles.input} value={form.lastName} onChangeText={(text) => onChange('lastName', text)} />
             <Text style={styles.label}>Имя*</Text>
             <TextInput style={styles.input} value={form.firstName} onChangeText={(text) => onChange('firstName', text)} />
             <Text style={styles.label}>Отчество <Text style={{ color: secondaryTextColor }}>(необязательно)</Text></Text>
@@ -187,7 +210,7 @@ export default function ProfileSelectionScreen() {
                 value={form.departmentId}
                 items={dropdownItems}
                 setOpen={setDropdownOpen}
-                setValue={(cb) => onChange('departmentId', cb(null))}
+                setValue={(cb) => onChange('departmentId', cb(null) ? Number(cb(null)) : 0)}
                 setItems={setDropdownItems}
                 containerStyle={{ width: '100%' }}
                 dropDownContainerStyle={{ width: '100%' }}
@@ -268,10 +291,20 @@ export default function ProfileSelectionScreen() {
           </View>
         ) : (
           <View style={styles.centeredBlock}>
-            <TouchableOpacity onPress={() => setSelectedType(null)} style={{ marginBottom: 12 }}>
-              <Text style={{ color: textColor }}>{'← Назад к выбору'}</Text>
-            </TouchableOpacity>
-            {renderForm()}
+        <TouchableOpacity onPress={() => setSelectedType(null)} style={{ marginBottom: 12 }}>
+          <Text style={{ color: textColor }}>{'← Назад к выбору'}</Text>
+        </TouchableOpacity>
+        
+        {apiMessage && (
+          <Text style={[
+            styles.message, 
+            {color: apiMessage.isError ? 'red' : 'green'}
+          ]}>
+            {apiMessage.text}
+          </Text>
+        )}
+        
+        {renderForm()}
           </View>
         )}
       </KeyboardAwareScrollView>
@@ -322,6 +355,11 @@ const styles = StyleSheet.create({
   },
   buttonText: {
     fontWeight: '600',
+    fontSize: 16,
+  },
+  message: {
+    marginBottom: 16,
+    textAlign: 'center',
     fontSize: 16,
   },
 });
