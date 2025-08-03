@@ -3,31 +3,38 @@ import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { IconSymbol } from '@/components/ui/IconSymbol';
 import { Colors } from '@/constants/Colors';
+import { logout } from '@/utils/authService';
 import { useNavigation } from '@react-navigation/native';
+import { router } from 'expo-router';
 import { StyleSheet, View } from 'react-native';
 
-export default function NotFoundScreen() {
+export default function AccessDeniedScreen() {
   const navigation = useNavigation();
 
   return (
     <ThemedView style={styles.container}>
       <View style={styles.content}>
         <IconSymbol 
-          name="house.fill" 
+          name="lock.display" 
           size={64} 
           color={Colors.light.tint}
           style={styles.icon} 
         />
         <ThemedText type="title" style={styles.title}>
-          Страница не найдена
+          Доступ запрещен
         </ThemedText>
         <ThemedText style={styles.text}>
-          Запрашиваемая страница не существует
+          У вас нет прав для просмотра этой страницы
         </ThemedText>
         <AnimatedButton 
-          onPress={() => navigation.goBack()}
+          onPress={() => router.reload}
           style={styles.button}
-          title="Назад"
+          title="Обновить"
+        />
+        <AnimatedButton 
+          onPress={() => logout()}
+          style={styles.button}
+          title="Выход"
         />
       </View>
     </ThemedView>

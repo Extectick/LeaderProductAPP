@@ -29,12 +29,7 @@ interface DecodedToken {
   [key: string]: any;
 }
 
-export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
-  const [isLoading, setIsLoading] = useState(true);
-  const [isAuthenticated, setAuthenticated] = useState(false);
-  const [profileState, setProfileState] = useState<Profile | null>(null);
-
-  const isValidProfile = (profile: Profile | null): boolean => {
+export const isValidProfile = (profile: Profile | null): boolean => {
     if (!profile) return false;
     
     // Проверяем статус основного профиля
@@ -63,7 +58,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       (profile.employeeProfile?.status === "ACTIVE");
       
     return currentSubProfileActive && hasActiveSubProfile && profile.currentProfileType !== null;
-  };
+};
+
+export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
+  const [isLoading, setIsLoading] = useState(true);
+  const [isAuthenticated, setAuthenticated] = useState(false);
+  const [profileState, setProfileState] = useState<Profile | null>(null);
 
   const setProfile = async (newProfile: Profile | null) => {
     // if (newProfile && !isValidProfile(newProfile)) {
@@ -102,11 +102,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         // Всегда проверяем профиль, даже если нет токена
         if (profileJson) {
           const parsedProfile = JSON.parse(profileJson);
-          if (!isValidProfile(parsedProfile)) {
-            await logoutFn();
-            setAuthenticated(false);
-            return;
-          }
+          // if (!isValidProfile(parsedProfile)) {
+          //   await logoutFn();
+          //   setAuthenticated(false);
+          //   return;
+          // }
           await setProfile(parsedProfile);
         }
 
@@ -135,11 +135,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               const profileJson = await AsyncStorage.getItem('profile')
               if (profileJson) {
                 const parsedProfile = JSON.parse(profileJson);
-                if (!isValidProfile(parsedProfile)) {
-                  await logoutFn();
-                  setAuthenticated(false);
-                  return;
-                }
+                // if (!isValidProfile(parsedProfile)) {
+                //     await logoutFn();
+                //     setAuthenticated(false);
+                //     return;
+                // }
                 await setProfile(parsedProfile);
               }
               
