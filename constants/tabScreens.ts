@@ -1,6 +1,6 @@
 import HomeScreen from '../app/(main)/HomeScreen';
 import ProfileScreen from '../app/(main)/ProfileScreen';
-import ServicesScreen from '../app/(main)/services/ServicesScreen';
+import ServicesScreen from '../app/(main)/services';
 import TasksScreen from '../app/(main)/TasksScreen';
 
 export interface SidebarItem {

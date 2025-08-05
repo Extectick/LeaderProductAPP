@@ -17,29 +17,29 @@ type ServiceItem = {
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
-const services = [
+const services: ServiceItem[] = [
   {
     id: 'qrcode',
     title: 'QR генератор',
-    icon: 'qr-code-outline' as const,
+    icon: 'qr-code-outline',
     color: '#FF9AA2'
   },
-  { 
+  {
     id: 'documents',
     title: 'Документы',
-    icon: 'document-text' as const,
+    icon: 'document-text',
     color: '#FFB7B2'
   },
   {
     id: 'chat',
     title: 'Чат',
-    icon: 'chatbubbles' as const,
+    icon: 'chatbubbles',
     color: '#B5EAD7'
   },
   {
     id: 'settings',
     title: 'Настройки',
-    icon: 'settings' as const,
+    icon: 'settings',
     color: '#C7CEEA'
   }
 ];
@@ -49,12 +49,10 @@ export default function ServicesScreen() {
 
   const ServiceCard = ({ item }: { item: ServiceItem }) => {
     const scale = useSharedValue(1);
-    
-    const animatedStyle = useAnimatedStyle(() => {
-      return {
-        transform: [{ scale: scale.value }]
-      };
-    });
+
+    const animatedStyle = useAnimatedStyle(() => ({
+      transform: [{ scale: scale.value }]
+    }));
 
     const handlePressIn = () => {
       scale.value = withSpring(0.95);
@@ -64,7 +62,7 @@ export default function ServicesScreen() {
       scale.value = withSpring(1);
       setTimeout(() => {
         if (item.id === 'documents') {
-          router.push('/services/documents/index');
+          router.push('/services/documents');
         }
       }, 150);
     };

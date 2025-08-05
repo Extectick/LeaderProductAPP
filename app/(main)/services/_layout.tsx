@@ -10,6 +10,12 @@ export default function ServicesLayout() {
           headerShown: false 
         }} 
       />
+      <Stack.Screen
+        name="documents/index"
+        options={{
+          title: 'Документы',
+        }}
+      />
     </Stack>
   );
 }
