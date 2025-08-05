@@ -4,10 +4,16 @@ import { Profile } from '@/types/userTypes';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import { router } from 'expo-router';
-import { ErrorResponse } from './../types/apiResponseTypes';
-import { authFetch } from './authFetch';
 
 const ACCESS_KEY = 'accessToken';
+const MAX_REFRESH_ATTEMPTS = 3;
+let refreshAttempts = 0;
+
+async function fetch<T>(url: string, options: RequestInit): Promise<T> {
+  const response = await window.fetch(`${API_BASE_URL}${url}`, options);
+  if (!response.ok) throw new Error(`HTTP error ${response.status}`);
+  return response.json();
+}
 const REFRESH_KEY = 'refreshToken';
 const PROFILE_KEY = 'profile';
 const API_BASE_URL = Constants.expoConfig?.extra?.EXPO_PUBLIC_API_BASE_URL || 'http://192.168.30.54:3000';
@@ -47,37 +53,42 @@ export async function logout(): Promise<void> {
  * Попытаться обновить accessToken по refreshToken
  */
 export async function refreshToken(): Promise<string | null> {
+  if (refreshAttempts >= MAX_REFRESH_ATTEMPTS) {
+    await logout();
+    return null;
+  }
+
+  refreshAttempts++;
+
   const storedRefreshToken = await AsyncStorage.getItem(REFRESH_KEY);
   if (!storedRefreshToken) {
-    logout();
-    return null
-  };
-  // console.log(storedRefreshToken)
+    await logout();
+    return null;
+  }
+
   try {
-    const response = await authFetch<{ refreshToken: string }, { accessToken: string; refreshToken: string }>('/auth/token', {
+    const response = await fetch<{
+      accessToken: string;
+      refreshToken: string;
+    }>('/auth/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refreshToken: storedRefreshToken }),
     });
 
-    if (!response.ok) {
-      const errorResponse = response as unknown as ErrorResponse;
-      console.warn('refreshToken error:', errorResponse);
-      throw new Error(errorResponse.message || 'Ошибка обновления токена');
-    }
-
-    const { data: { accessToken, refreshToken } } = response;
-
-    if (!accessToken) {
+    if (!response.accessToken) {
       throw new Error('Отсутствует accessToken в ответе обновления');
     }
 
-    await AsyncStorage.setItem(REFRESH_KEY, refreshToken);
-    await AsyncStorage.setItem(ACCESS_KEY, accessToken);
-    return accessToken;
+    refreshAttempts = 0; // Сброс счетчика при успехе
+    await AsyncStorage.setItem(REFRESH_KEY, response.refreshToken);
+    await AsyncStorage.setItem(ACCESS_KEY, response.accessToken);
+    return response.accessToken;
   } catch (err) {
     console.warn('Ошибка при обновлении токена:', err);
-    await logout();
+    if (err instanceof Error && err.message.includes('403')) {
+      await logout();
+    }
     return null;
   }
 }

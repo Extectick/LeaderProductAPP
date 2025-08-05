@@ -1,7 +1,6 @@
-import { getProfile } from '@/utils/authService';
+import { getProfile } from '@/utils/userService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import * as apiClient from '../utils/apiClient';
+import React, { createContext, useContext, useState } from 'react';
 
 type ProfileType = 'CLIENT' | 'SUPPLIER' | 'EMPLOYEE' | null;
 
@@ -60,71 +59,72 @@ export const ProfileProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   };
 
-  const loadProfile = async () => {
-    setLoading(true);
-    try {
-      const token = await ensureAuth();
-      if (token) {
-        await fetchProfile(token);
-      }
-    } catch (err) {
-      setError('Failed to load profile');
-    } finally {
-      setLoading(false);
-    }
-  };
+  // const loadProfile = async () => {
+  //   setLoading(true);
+  //   try {
+  //     const token = await ensureAuth();
+  //     if (token) {
+  //       await fetchProfile(token);
+  //     }
+  //   } catch (err) {
+  //     setError('Failed to load profile');
+  //   } finally {
+  //     setLoading(false);
+  //   }
+  // };
 
-  const clearProfile = async () => {
-    await AsyncStorage.removeItem(PROFILE_STORAGE_KEY);
-    setProfile(null);
-  };
+  // const clearProfile = async () => {
+  //   await AsyncStorage.removeItem(PROFILE_STORAGE_KEY);
+  //   setProfile(null);
+  // };
 
-  const selectProfileType = async (type: ProfileType) => {
-    const token = await ensureAuth();
-    if (!token) throw new Error('Not authenticated');
+  // const selectProfileType = async (type: ProfileType) => {
+  //   const token = await ensureAuth();
+  //   if (!token) throw new Error('Not authenticated');
 
-    setLoading(true);
-    try {
-      let createdProfile;
-      switch (type) {
-        case 'CLIENT':
-          createdProfile = await apiClient.createClientProfile(token);
-          break;
-        case 'SUPPLIER':
-          createdProfile = await apiClient.createSupplierProfile(token);
-          break;
-        case 'EMPLOYEE':
-          // TODO: Можно добавить departmentId в будущем
-          createdProfile = await apiClient.createEmployeeProfile(token, {
-            firstName: 'Имя',
-            lastName: 'Фамилия',
-            middleName: null,
-            departmentId: 1,
-          });
-          break;
-        default:
-          throw new Error('Invalid profile type');
-      }
+  //   setLoading(true);
+  //   try {
+  //     let createdProfile;
+  //     switch (type) {
+  //       case 'CLIENT':
+  //         createdProfile = await apiClient.createClientProfile(token);
+  //         break;
+  //       case 'SUPPLIER':
+  //         createdProfile = await apiClient.createSupplierProfile(token);
+  //         break;
+  //       case 'EMPLOYEE':
+  //         // TODO: Можно добавить departmentId в будущем
+  //         createdProfile = await apiClient.createEmployeeProfile(token, {
+  //           firstName: 'Имя',
+  //           lastName: 'Фамилия',
+  //           middleName: null,
+  //           departmentId: 1,
+  //         });
+  //         break;
+  //       default:
+  //         throw new Error('Invalid profile type');
+  //     }
 
-      // Обновляем данные профиля
-      await fetchProfile(token);
-    } catch (err) {
-      setError('Failed to select profile type');
-      throw err;
-    } finally {
-      setLoading(false);
-    }
-  };
+  //     // Обновляем данные профиля
+  //     await fetchProfile(token);
+  //   } catch (err) {
+  //     setError('Failed to select profile type');
+  //     throw err;
+  //   } finally {
+  //     setLoading(false);
+  //   }
+  // };
 
-  useEffect(() => {
-    loadProfile();
-  }, []);
+  // useEffect(() => {
+  //   loadProfile();
+  // }, []);
 
-  return (
-    <ProfileContext.Provider value={{ profile, loading, error, loadProfile, fetchProfile, clearProfile, selectProfileType }}>
-      {children}
-    </ProfileContext.Provider>
-  );
+  // return (
+  //   <ProfileContext.Provider value={{ profile, loading, error, loadProfile, fetchProfile, clearProfile, selectProfileType }}>
+  //     {children}
+  //   </ProfileContext.Provider>
+  // );
+  return null
 };
 
 export const useProfile = () => useContext(ProfileContext);

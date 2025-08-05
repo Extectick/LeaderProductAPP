@@ -1,5 +1,6 @@
 import HomeScreen from '../app/(main)/HomeScreen';
 import ProfileScreen from '../app/(main)/ProfileScreen';
+import ServicesScreen from '../app/(main)/services/ServicesScreen';
 import TasksScreen from '../app/(main)/TasksScreen';
 
 export interface SidebarItem {
@@ -11,7 +12,11 @@ export interface SidebarItem {
 export type SidebarPath = 
   | '/HomeScreen' 
   | '/TasksScreen' 
-  | '/ProfileScreen';
+  | '/ProfileScreen'
+  | '/services'
+  | `/services/${string}`
+  | `/services/documents/${string}`
+  ;
 
 const tabScreens: {
   name: string;
@@ -40,6 +45,16 @@ const tabScreens: {
     },
   },
   {
+    name: 'ServicesScreen',
+    component: ServicesScreen,
+    options: { title: 'Сервисы' },
+    sidebar: {
+      icon: 'apps',
+      label: 'Сервисы',
+    path: '/services',
+    },
+  },
+  {
     name: 'ProfileScreen',
     component: ProfileScreen,
     options: { title: 'Профиль' },
@@ -49,6 +64,7 @@ const tabScreens: {
       path: '/ProfileScreen',
     },
   },
+
 ];
 
 export default tabScreens;

@@ -4,7 +4,7 @@ import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useThemeColor } from '../hooks/useThemeColor';
 
-type SidebarPath = '/tabs/HomeScreen' | '/tabs/TasksScreen' | '/tabs/ProfileScreen';
+type SidebarPath = '/tabs/HomeScreen' | '/tabs/TasksScreen' | '/tabs/ProfileScreen' | '/tabs/ServicesScreen';
 type IconName = keyof typeof Ionicons.glyphMap;
 
 export type SidebarItem = {

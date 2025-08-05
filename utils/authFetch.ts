@@ -1,7 +1,7 @@
 // utils/authFetch.ts
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ErrorCodes, ErrorResponse, SuccessResponse } from './../types/apiResponseTypes';
-import { logout as clearTokens, refreshToken } from './tokenService';
+import { logout as clearTokens } from './tokenService';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:3000';
 
@@ -33,8 +33,8 @@ export async function authFetch<TRequest = unknown, TResponse = unknown>(
 
   let response = await fetch(`${API_BASE_URL}${url}`, fetchOptions);
 
-  // Пропускаем обновление токена для запросов авторизации
-  if (url.includes('/auth/login') || url.includes('/auth/register')) {
+  // Пропускаем обновление токена для запросов авторизации и обновления токена
+  if (url.includes('/auth/login') || url.includes('/auth/register') || url.includes('/auth/token')) {
     const data = await response.json();
     if (!response.ok) {
       throw new Error(data.message || 'Ошибка авторизации');
@@ -44,7 +44,27 @@ export async function authFetch<TRequest = unknown, TResponse = unknown>(
 
   // Если accessToken протух — попробуем обновить
   if (response.status === 401 || response.status === 403) {
-    const newToken = await refreshToken();
+    const refreshToken = await AsyncStorage.getItem('refreshToken');
+    if (!refreshToken) {
+      await clearTokens();
+      throw new Error('Не удалось обновить токен. Авторизуйтесь снова.');
+    }
+
+    let newToken: string | null = null;
+    try {
+      const tokenResponse = await window.fetch(`${API_BASE_URL}/auth/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken })
+      });
+      
+      if (tokenResponse.ok) {
+        const tokenData = await tokenResponse.json();
+        newToken = tokenData.accessToken;
+      }
+    } catch (error) {
+      console.error('Ошибка при обновлении токена:', error);
+    }
 
     if (!newToken) {
       await clearTokens();

@@ -1,7 +1,7 @@
 import tabScreens from '@/constants/tabScreens';
 import { useThemeColor } from '@/hooks/useThemeColor';
 import { Ionicons } from '@expo/vector-icons';
-import { usePathname, useRouter } from 'expo-router';
+import { usePathname, useRouter, type RelativePathString } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Pressable, StyleSheet } from 'react-native';
 
@@ -46,7 +46,7 @@ export default function WebSidebar() {
         return (
           <Pressable
             key={sidebar.path}
-            onPress={() => router.push(sidebar.path)}
+            onPress={() => router.push(sidebar.path as RelativePathString)}
             style={({ pressed, hovered }) => [
               styles.item,
               {

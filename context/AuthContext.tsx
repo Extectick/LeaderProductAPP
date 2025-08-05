@@ -6,8 +6,7 @@ import isEqual from 'lodash.isequal';
 import React, { createContext, ReactNode, useEffect, useState } from 'react';
 
 import { Profile } from '@/types/userTypes';
-import { logout as logoutFn } from '@/utils/authService';
-import { refreshToken } from '@/utils/tokenService';
+import { logout, refreshToken } from '@/utils/tokenService';
 import { getProfile } from '@/utils/userService';
 
 interface AuthContextType {
@@ -131,7 +130,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             const newToken = await refreshToken();
             if (!newToken) {
               // Не удалось обновить - делаем logout
-              await logoutFn();
+              await logout();
               setAuthenticated(false);
               return;
             }
@@ -161,12 +160,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           }
         } else {
           // Если нет токена - делаем logout
-          await logoutFn();
+          await logout();
           setAuthenticated(false);
         }
       } catch (e) {
         console.warn('Ошибка инициализации:', e);
-        await logoutFn();
+        await logout();
         if (!isMounted) return;
         setAuthenticated(false);
         setProfileState(null);
