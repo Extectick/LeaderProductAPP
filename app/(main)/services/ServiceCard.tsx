@@ -1,7 +1,7 @@
 import { useThemeColor } from '@/hooks/useThemeColor';
 import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
-import { Pressable, StyleSheet, Text, TextStyle, ViewStyle } from 'react-native';
+import { Pressable, StyleSheet, Text, TextStyle, View, ViewStyle } from 'react-native';
 
 
 import { LinearGradient } from 'expo-linear-gradient';
@@ -24,6 +24,7 @@ interface Props {
   disableScaleOnPress?: boolean;  // Отключить анимацию масштаба при нажатии (по умолчанию false)
   containerStyle?: ViewStyle;     // Доп. стили для контейнера
   textStyle?: TextStyle;          // Доп. стили для текста
+  disabled?: boolean;             // Отключить карточку (по умолчанию false)
 }
 
 export default function ServiceCard({
@@ -39,6 +40,7 @@ export default function ServiceCard({
   disableScaleOnPress = false,
   containerStyle,
   textStyle,
+  disabled = false,
 }: Props) {
   const scale = useSharedValue(1);
   const themeBackground = useThemeColor({}, 'cardBackground');
@@ -54,21 +56,32 @@ export default function ServiceCard({
   const Content = (
     <>
       <Ionicons name={icon as any} size={iconSize} color={txtColor} />
-      <Text
-        style={[
-          {
-            marginTop: 8,
-            color: txtColor,
-            fontWeight: '500',
-            fontSize: 14,
-            textAlign: 'center',
-          },
-          textStyle,
-        ]}
-        numberOfLines={2}
-      >
-        {name}
-      </Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <Text
+          style={[
+            {
+              marginTop: 8,
+              color: txtColor,
+              fontWeight: '500',
+              fontSize: 14,
+              textAlign: 'center',
+              textDecorationLine: disabled ? 'line-through' : undefined,
+            },
+            textStyle,
+          ]}
+          numberOfLines={2}
+        >
+          {name}
+        </Text>
+        {disabled && (
+          <Ionicons 
+            name="lock-closed" 
+            size={14} 
+            color="#ff3b30"
+            style={{ marginLeft: 4, marginTop: 8 }}
+          />
+        )}
+      </View>
     </>
   );
 
@@ -77,41 +90,48 @@ export default function ServiceCard({
   return (
     <AnimatedPressable
       onPressIn={() => {
-        if (!disableScaleOnPress) scale.value = withSpring(0.95);
+        if (!disabled && !disableScaleOnPress) scale.value = withSpring(0.95);
       }}
       onPressOut={() => {
-        if (!disableScaleOnPress) scale.value = withSpring(1);
+        if (!disabled && !disableScaleOnPress) scale.value = withSpring(1);
       }}
       onPress={() => {
+        if (disabled) return;
         console.log('Pressable pressed');
         onPress();
       }}
       onLongPress={() => {
+        if (disabled) return;
         console.log('Long press - fallback');
         onPress();
       }}
+      disabled={disabled}
+      // @ts-ignore - web only prop
+      title={disabled ? 'Сервис временно недоступен' : undefined}
     >
-      <Animated.View
-        style={[
-          {
-            width: size,
-            height: size,
-            borderRadius: 16,
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 12,
-            // Тень
-            shadowColor: disableShadow ? undefined : '#000',
-            shadowOffset: disableShadow ? undefined : { width: 0, height: 2 },
-            shadowOpacity: disableShadow ? undefined : 0.1,
-            shadowRadius: disableShadow ? undefined : 4,
-            elevation: disableShadow ? 0 : 4,
-            overflow: 'hidden', // чтобы градиент не вылазил за углы
-          },
-          animatedStyle,
-          containerStyle,
-        ]}
-      >
+          <Animated.View
+            style={[
+              {
+                width: size,
+                height: size,
+                borderRadius: 16,
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: 12,
+                // Тень
+                shadowColor: disableShadow ? undefined : '#000',
+                shadowOffset: disableShadow ? undefined : { width: 0, height: 2 },
+                shadowOpacity: disableShadow ? undefined : 0.1,
+                shadowRadius: disableShadow ? undefined : 4,
+                elevation: disableShadow ? 0 : 4,
+                overflow: 'hidden', // чтобы градиент не вылазил за углы
+                opacity: disabled ? 0.5 : 1,
+                backgroundColor: disabled ? 'rgba(0,0,0,0.1)' : undefined,
+              },
+              animatedStyle,
+              containerStyle,
+            ]}
+          >
         {gradient ? (
           <LinearGradient
             colors={gradient}

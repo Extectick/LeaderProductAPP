@@ -11,43 +11,42 @@ export interface Service {
   icon: string;
   route: Route;
   gradient?: [string, string];
+  disable?: boolean;
 }
 
 export const services: Service[] = [
   {
-    name: 'QR генератор',
+    name: 'QR генератор и аналитика',
     icon: 'cube-outline',
     route: '/services/qrcodes',
     gradient: ['#e0e0e0', '#ffffff'],  // светлый градиент
   },
-  // {
-  //   name: 'Склад',
-  //   icon: 'cube-outline',
-  //   route: '/warehouse',
-  //   gradient: ['#a8d5ba', '#4caf50'],  // мягкий зеленый градиент
-  // },
+  {
+    name: 'Обращения',
+    icon: 'documents',
+    route: '/warehouse' as any,
+    gradient: ['#a8d5ba', '#4cad50'],  // мягкий зеленый градиент
+    disable: true
+  },
   {
     name: 'Задачи',
     icon: 'list-outline',
     route: '/tasks',
     gradient: ['#90caf9', '#2196f3'],  // нежно-синий градиент
+    disable: true
   },
   {
-    name: 'Профиль',
-    icon: 'person-outline',
-    route: '/profile',
-    gradient: ['#ffcc80', '#ff9800'],  // мягкий оранжевый градиент
+    name: 'Отчёты',
+    icon: 'stats-chart-outline',
+    route: '/reports' as any,
+    gradient: ['#ce93d8', '#9c27b0'],  // легкий фиолетовый градиент
+    disable: true
   },
-  // {
-  //   name: 'Отчёты',
-  //   icon: 'stats-chart-outline',
-  //   route: '/reports',
-  //   gradient: ['#ce93d8', '#9c27b0'],  // легкий фиолетовый градиент
-  // },
-  // {
-  //   name: 'Клиенты',
-  //   icon: 'people-outline',
-  //   route: '/clients',
-  //   gradient: ['#ef9a9a', '#f44336'],  // нежно-красный градиент
-  // },
+  {
+    name: 'Клиенты',
+    icon: 'people-outline',
+    route: '/clients' as any,
+    gradient: ['#ef9a9a', '#f44336'],  // нежно-красный градиент
+    disable: true
+  },
 ];

@@ -4,16 +4,18 @@ import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Platform,
   StyleSheet,
   Text,
   useWindowDimensions,
-  View,
+  View
 } from 'react-native';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import ServiceCard from './ServiceCard';
 
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { useRouter } from 'expo-router';
 
 type ServicesStackParamList = {
   ServicesMain: undefined;
@@ -28,12 +30,15 @@ export default function ServicesScreen() {
   const [loading, setLoading] = useState(true);
 
   const navigation = useNavigation<ServicesScreenNavigationProp>();
+  const router = useRouter();
   const { width } = useWindowDimensions();
 
   const isMobile = width < 600;
-  const numColumns = isMobile ? 2 : 4;
-  const spacing = 12;
-  const itemSize = width / numColumns - spacing * 2;
+  const numColumns = isMobile ? 2 : 3;
+  const spacing = isMobile ? 12 : 24;
+  const itemSize = isMobile ? 
+    width / numColumns - spacing * 2 : 
+    Math.min(200, width / numColumns - spacing * 2);
 
   useEffect(() => {
     const fetchServices = async () => {
@@ -82,17 +87,21 @@ export default function ServicesScreen() {
               name={item.name}
               size={itemSize}
               onPress={() => {
-                console.log('Navigating to:', item.route);
-                if (item.route === '/services/qrcodes') {
-                  navigation.navigate('QrCodes');
+                if (isMobile) {
+                  if (item.route === '/services/qrcodes') {
+                    navigation.navigate('QrCodes');
+                  } else {
+                    console.warn('Навигация для маршрута', item.route, 'не реализована');
+                  }
                 } else {
-                  console.warn('Навигация для маршрута', item.route, 'не реализована');
+                  router.push(item.route as any);
                 }
               }}
               gradient={item.gradient}
               iconSize={40}
               disableShadow={false}
               disableScaleOnPress={false}
+              disabled={item.disable}
             />
           </Animated.View>
         )}
@@ -109,6 +118,14 @@ export default function ServicesScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    ...Platform.select({
+      web: {
+        maxWidth: 1200,
+        marginHorizontal: 'auto',
+        paddingHorizontal: 24,
+        justifyContent: 'center',
+      },
+    }),
   },
   centered: {
     flex: 1,
