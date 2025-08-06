@@ -1,6 +1,5 @@
 import { services as staticServices } from '@/constants/servicesRoutes';
 import { useThemeColor } from '@/hooks/useThemeColor';
-import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -13,24 +12,32 @@ import {
 import Animated, { FadeIn } from 'react-native-reanimated';
 import ServiceCard from './ServiceCard';
 
-const spacing = 12;
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+
+type ServicesStackParamList = {
+  ServicesMain: undefined;
+  QrCodes: undefined;
+};
+
+type ServicesScreenNavigationProp = NativeStackNavigationProp<ServicesStackParamList, 'ServicesMain'>;
 
 export default function ServicesScreen() {
   const [services, setServices] = useState<typeof staticServices | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const router = useRouter();
+  const navigation = useNavigation<ServicesScreenNavigationProp>();
   const { width } = useWindowDimensions();
 
   const isMobile = width < 600;
   const numColumns = isMobile ? 2 : 4;
+  const spacing = 12;
   const itemSize = width / numColumns - spacing * 2;
 
   useEffect(() => {
     const fetchServices = async () => {
       try {
-        // Имитация загрузки, замените на реальный API вызов
         await new Promise((res) => setTimeout(res, 1000));
         setServices(staticServices);
       } catch (e) {
@@ -76,15 +83,13 @@ export default function ServicesScreen() {
               size={itemSize}
               onPress={() => {
                 console.log('Navigating to:', item.route);
-                try {
-                  // Явно приводим к типу Route
-                  const route = item.route as import('@/constants/servicesRoutes').Route;
-                  router.push(route);
-                } catch (error) {
-                  console.error('Navigation failed:', error);
+                if (item.route === '/services/qrcodes') {
+                  navigation.navigate('QrCodes');
+                } else {
+                  console.warn('Навигация для маршрута', item.route, 'не реализована');
                 }
               }}
-              gradient={item.gradient}// допустим, в данных есть поле color для кастомного цвета
+              gradient={item.gradient}
               iconSize={40}
               disableShadow={false}
               disableScaleOnPress={false}

@@ -1,13 +1,12 @@
 import HomeScreen from "@/app/(main)/home";
 import ProfileScreen from "@/app/(main)/profile";
-import ServicesScreen from "@/app/(main)/services";
 import TasksScreen from "@/app/(main)/tasks";
-
+import ServicesStack from '@/stacks/ServicesStack';
 export type SidebarPath = 
   | '/home' 
   | '/tasks' 
   | '/profile'
-  | '/services';
+  | '/services/index';
 
 export const tabScreens = [
   {
@@ -32,7 +31,7 @@ export const tabScreens = [
   },
   {
     name: 'services',
-    component: ServicesScreen,
+    component: ServicesStack,
     options: { title: 'Сервисы' },
     sidebar: {
       icon: 'apps',
