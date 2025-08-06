@@ -1,8 +1,8 @@
 import React, { ComponentType } from 'react';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import HomeScreen from '../app/(main)/HomeScreen';
-import ProfileScreen from '../app/(main)/ProfileScreen';
-import TasksScreen from '../app/(main)/TasksScreen';
+import HomeScreen from '../app/(main)/home';
+import ProfileScreen from '../app/(main)/profile';
+import TasksScreen from '../app/(main)/tasks';
 
 // Разрешённые названия иконок
 type IconName = 'home' | 'list' | 'person';

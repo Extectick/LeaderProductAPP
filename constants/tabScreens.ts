@@ -1,70 +1,53 @@
-import HomeScreen from '../app/(main)/HomeScreen';
-import ProfileScreen from '../app/(main)/ProfileScreen';
-import ServicesScreen from '../app/(main)/services';
-import TasksScreen from '../app/(main)/TasksScreen';
-
-export interface SidebarItem {
-  icon: string;
-  label: string;
-  path: SidebarPath;
-}
+import HomeScreen from "@/app/(main)/home";
+import ProfileScreen from "@/app/(main)/profile";
+import ServicesScreen from "@/app/(main)/services";
+import TasksScreen from "@/app/(main)/tasks";
 
 export type SidebarPath = 
-  | '/HomeScreen' 
-  | '/TasksScreen' 
-  | '/ProfileScreen'
-  | '/services'
-  | `/services/${string}`
-  | `/services/documents/${string}`
-  ;
+  | '/home' 
+  | '/tasks' 
+  | '/profile'
+  | '/services';
 
-const tabScreens: {
-  name: string;
-  component: React.ComponentType<any>;
-  options: { title: string };
-  sidebar: SidebarItem;
-}[] = [
+export const tabScreens = [
   {
-    name: 'HomeScreen',
+    name: 'home',
     component: HomeScreen,
     options: { title: 'Главная' },
     sidebar: {
       icon: 'home-outline',
       label: 'Главная',
-      path: '/HomeScreen',
+      path: '/home',
     },
   },
   {
-    name: 'TasksScreen',
+    name: 'tasks',
     component: TasksScreen,
     options: { title: 'Задачи' },
     sidebar: {
       icon: 'list-outline',
       label: 'Задачи',
-      path: '/TasksScreen',
+      path: '/tasks',
     },
   },
   {
-    name: 'ServicesScreen',
+    name: 'services',
     component: ServicesScreen,
     options: { title: 'Сервисы' },
     sidebar: {
       icon: 'apps',
       label: 'Сервисы',
-    path: '/services',
+      path: '/services',
     },
   },
   {
-    name: 'ProfileScreen',
+    name: 'profile',
     component: ProfileScreen,
     options: { title: 'Профиль' },
     sidebar: {
       icon: 'person-outline',
       label: 'Профиль',
-      path: '/ProfileScreen',
+      path: '/profile',
     },
-  },
-
+  }
 ];
-
-export default tabScreens;

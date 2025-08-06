@@ -1,93 +1,101 @@
-import { Ionicons } from '@expo/vector-icons';
+import { services as staticServices } from '@/constants/servicesRoutes';
+import { useThemeColor } from '@/hooks/useThemeColor';
 import { useRouter } from 'expo-router';
-import React from 'react';
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring
-} from 'react-native-reanimated';
+import React, { useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  FlatList,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from 'react-native';
+import Animated, { FadeIn } from 'react-native-reanimated';
+import ServiceCard from './ServiceCard';
 
-type ServiceItem = {
-  id: string;
-  title: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  color: string;
-};
-
-const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
-
-const services: ServiceItem[] = [
-  {
-    id: 'qrcode',
-    title: 'QR генератор',
-    icon: 'qr-code-outline',
-    color: '#FF9AA2'
-  },
-  {
-    id: 'documents',
-    title: 'Документы',
-    icon: 'document-text',
-    color: '#FFB7B2'
-  },
-  {
-    id: 'chat',
-    title: 'Чат',
-    icon: 'chatbubbles',
-    color: '#B5EAD7'
-  },
-  {
-    id: 'settings',
-    title: 'Настройки',
-    icon: 'settings',
-    color: '#C7CEEA'
-  }
-];
+const spacing = 12;
 
 export default function ServicesScreen() {
+  const [services, setServices] = useState<typeof staticServices | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
   const router = useRouter();
+  const { width } = useWindowDimensions();
 
-  const ServiceCard = ({ item }: { item: ServiceItem }) => {
-    const scale = useSharedValue(1);
+  const isMobile = width < 600;
+  const numColumns = isMobile ? 2 : 4;
+  const itemSize = width / numColumns - spacing * 2;
 
-    const animatedStyle = useAnimatedStyle(() => ({
-      transform: [{ scale: scale.value }]
-    }));
-
-    const handlePressIn = () => {
-      scale.value = withSpring(0.95);
+  useEffect(() => {
+    const fetchServices = async () => {
+      try {
+        // Имитация загрузки, замените на реальный API вызов
+        await new Promise((res) => setTimeout(res, 1000));
+        setServices(staticServices);
+      } catch (e) {
+        setError('Не удалось загрузить сервисы');
+      } finally {
+        setLoading(false);
+      }
     };
 
-    const handlePressOut = () => {
-      scale.value = withSpring(1);
-      setTimeout(() => {
-        if (item.id === 'documents') {
-          router.push('/services/documents');
-        }
-      }, 150);
-    };
+    fetchServices();
+  }, []);
 
+  const background = useThemeColor({}, 'cardBackground');
+  const textColor = useThemeColor({}, 'text');
+
+  if (loading) {
     return (
-      <AnimatedPressable
-        onPressIn={handlePressIn}
-        onPressOut={handlePressOut}
-        style={[styles.card, animatedStyle, { backgroundColor: item.color }]}
-      >
-        <Ionicons name={item.icon} size={48} color="white" />
-        <Text style={styles.title}>{item.title}</Text>
-      </AnimatedPressable>
+      <View style={[styles.centered, { backgroundColor: background }]}>
+        <ActivityIndicator size="large" color={textColor} />
+      </View>
     );
-  };
+  }
+
+  if (error || !services) {
+    return (
+      <View style={[styles.centered, { backgroundColor: background }]}>
+        <Text style={{ color: textColor, fontSize: 16 }}>
+          {error ?? 'Ошибка'}
+        </Text>
+      </View>
+    );
+  }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: background }]}>
       <FlatList
         data={services}
-        renderItem={({ item }) => <ServiceCard item={item} />}
-        keyExtractor={item => item.id}
-        numColumns={2}
-        contentContainerStyle={styles.list}
-        columnWrapperStyle={styles.columnWrapper}
+        renderItem={({ item, index }) => (
+          <Animated.View entering={FadeIn.delay(index * 100)}>
+            <ServiceCard
+              icon={item.icon}
+              name={item.name}
+              size={itemSize}
+              onPress={() => {
+                console.log('Navigating to:', item.route);
+                try {
+                  // Явно приводим к типу Route
+                  const route = item.route as import('@/constants/servicesRoutes').Route;
+                  router.push(route);
+                } catch (error) {
+                  console.error('Navigation failed:', error);
+                }
+              }}
+              gradient={item.gradient}// допустим, в данных есть поле color для кастомного цвета
+              iconSize={40}
+              disableShadow={false}
+              disableScaleOnPress={false}
+            />
+          </Animated.View>
+        )}
+        keyExtractor={(item) => item.name}
+        numColumns={numColumns}
+        columnWrapperStyle={{ gap: spacing, marginBottom: spacing }}
+        contentContainerStyle={{ padding: spacing }}
+        showsVerticalScrollIndicator={false}
       />
     </View>
   );
@@ -96,32 +104,10 @@ export default function ServicesScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 16,
-    backgroundColor: '#f8f9fa'
   },
-  list: {
-    justifyContent: 'center'
-  },
-  columnWrapper: {
-    justifyContent: 'space-between',
-    marginBottom: 16
-  },
-  card: {
-    width: '48%',
-    aspectRatio: 1,
-    borderRadius: 12,
+  centered: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 4
   },
-  title: {
-    marginTop: 8,
-    fontSize: 16,
-    fontWeight: '600',
-    color: 'white'
-  }
 });

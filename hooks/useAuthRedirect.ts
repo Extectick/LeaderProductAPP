@@ -1,6 +1,6 @@
 import { AuthContext, isValidProfile } from '@/context/AuthContext';
 import { logAccessAttempt } from '@/utils/logger';
-import { useRouter } from 'expo-router';
+import { RelativePathString, useRouter } from 'expo-router';
 import { useContext, useEffect } from 'react';
 
 export const useAuthRedirect = () => {
@@ -28,7 +28,7 @@ export const useAuthRedirect = () => {
     } else if (isAuthenticated && (!isValidProfile(profile))) {
       router.replace('/ProfileSelectionScreen');
     } else if (isAuthenticated && isValidProfile(profile)) {
-      router.replace('/HomeScreen');
+      router.replace('/home' as RelativePathString);
     }
   }, [isLoading, isAuthenticated, profile]);
 };

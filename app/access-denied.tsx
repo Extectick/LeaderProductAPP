@@ -5,7 +5,7 @@ import { IconSymbol } from '@/components/ui/IconSymbol';
 import { Colors } from '@/constants/Colors';
 import { logout } from '@/utils/authService';
 import { useNavigation } from '@react-navigation/native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { RelativePathString, useLocalSearchParams, useRouter } from 'expo-router';
 import { StyleSheet, View } from 'react-native';
 
 const errorMessages = {
@@ -39,7 +39,7 @@ export default function AccessDeniedScreen() {
           {message}
         </ThemedText>
         <AnimatedButton 
-          onPress={() => router.replace('/HomeScreen')}
+          onPress={() => router.replace('/home' as RelativePathString)}
           style={styles.button}
           title="Обновить"
         />

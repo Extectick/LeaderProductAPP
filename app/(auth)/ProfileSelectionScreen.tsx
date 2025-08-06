@@ -9,7 +9,7 @@ import type {
   Department
 } from '@/utils/userService';
 import { createProfile, getDepartments } from '@/utils/userService';
-import { useRouter } from 'expo-router';
+import { RelativePathString, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
   Alert,
@@ -154,7 +154,7 @@ export default function ProfileSelectionScreen() {
       console.log(profileData)
       await createProfile(selectedType, profileData);
       setApiMessage({text: 'Профиль успешно создан', isError: false});
-      setTimeout(() => router.push('/(main)/HomeScreen'), 1500);
+      setTimeout(() => router.push('/home' as RelativePathString), 1500);
     } catch (error) {
       let message = 'Не удалось создать профиль';
       if (error instanceof Error) {

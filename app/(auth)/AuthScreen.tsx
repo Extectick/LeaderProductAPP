@@ -2,7 +2,7 @@ import ThemeSwitcher from '@/components/ThemeSwitcher';
 import { AuthContext, isValidProfile } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { login, register, verify } from '@/utils/authService';
-import { useRouter } from 'expo-router';
+import { RelativePathString, useRouter } from 'expo-router';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useContext, useEffect, useRef, useState } from 'react';
@@ -139,7 +139,7 @@ export default function AuthScreen() {
       await setProfile(profile);
       
       if (isValidProfile(profile)) {
-        router.replace('/HomeScreen');
+        router.replace('/home' as RelativePathString);
       } else {
         // router.replace({
         //   pathname: '/access-denied',

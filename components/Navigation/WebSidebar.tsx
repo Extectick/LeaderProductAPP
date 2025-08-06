@@ -1,4 +1,4 @@
-import tabScreens from '@/constants/tabScreens';
+import { tabScreens } from '@/constants/tabScreens';
 import { useThemeColor } from '@/hooks/useThemeColor';
 import { Ionicons } from '@expo/vector-icons';
 import { usePathname, useRouter, type RelativePathString } from 'expo-router';
@@ -47,6 +47,8 @@ export default function WebSidebar() {
           <Pressable
             key={sidebar.path}
             onPress={() => router.push(sidebar.path as RelativePathString)}
+            accessibilityRole="button"
+            accessibilityState={{ selected: isActive }}
             style={({ pressed, hovered }) => [
               styles.item,
               {
@@ -81,6 +83,7 @@ export default function WebSidebar() {
               {sidebar.label}
             </Animated.Text>
           </Pressable>
+
         );
       })}
     </Animated.View>

@@ -1,4 +1,4 @@
-import tabScreens from '@/constants/tabScreens';
+import { tabScreens } from '@/constants/tabScreens';
 import { useThemeColor } from '@/hooks/useThemeColor';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';

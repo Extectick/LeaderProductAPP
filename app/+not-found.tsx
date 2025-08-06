@@ -25,7 +25,7 @@ export default function NotFoundScreen() {
           Запрошенная страница не существует
         </ThemedText>
         <AnimatedButton 
-          onPress={() => router.replace('/HomeScreen')}
+          onPress={() => router.replace('/home' as RelativePathString)}
           style={styles.button}
           title="На главную"
         />

@@ -1,23 +1,20 @@
+// app/_layout.tsx
 import { AuthProvider } from '@/context/AuthContext';
 import { ThemeProvider } from '@/context/ThemeContext';
 import { useAuthRedirect } from '@/hooks/useAuthRedirect';
-import { Redirect, Slot, usePathname } from 'expo-router';
+import { Slot } from 'expo-router';
 import { StatusBar } from 'react-native';
+import 'react-native-gesture-handler';
+import { enableScreens } from 'react-native-screens';
+
+enableScreens();
 
 function InnerLayout() {
-  useAuthRedirect(); // теперь это ВНУТРИ AuthProvider
-
-  const pathname = usePathname();
-
-  if (pathname === '/' || pathname === '') {
-    return <Redirect href="/HomeScreen" />;
-  }
-
-  return <Slot />;
+  useAuthRedirect(); // проверка авторизации и профиля
+  return <Slot />;   // рендер вложенных маршрутов
 }
 
 export default function RootLayout() {
-  
   return (
     <ThemeProvider>
       <AuthProvider>
