@@ -1,5 +1,5 @@
 import ActionSheet from '@/components/ActionSheet';
-import { getQRCodesList } from '@/utils/qrService';
+import { getQRCodeById, getQRCodesList } from '@/utils/qrService';
 import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
@@ -12,14 +12,17 @@ type QRType = 'PHONE'|'LINK'|'EMAIL'|'TEXT'|'WHATSAPP'|'TELEGRAM'|'CONTACT';
 interface QRCode {
   id: string;
   qrData: string;
+  qrType: 'PHONE'|'LINK'|'EMAIL'|'TEXT'|'WHATSAPP'|'TELEGRAM'|'CONTACT';
   description: string | null;
   status: 'ACTIVE'|'INACTIVE';
   createdAt: string;
   createdBy: {
     id: number;
     email: string;
+    firstName: string;
+    lastName: string;
   };
-  image?: string; // Добавляем опциональное поле для локального использования
+  qrImage: string;
 }
 
 export default function QRCodesScreen() {
@@ -29,6 +32,7 @@ export default function QRCodesScreen() {
   const [showForm, setShowForm] = useState(false);
   const [selectedQR, setSelectedQR] = useState<QRCode | null>(null);
   const [loading, setLoading] = useState(true);
+  const [qrLoading, setQrLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [pagination, setPagination] = useState({
@@ -85,49 +89,63 @@ export default function QRCodesScreen() {
   };
 
   const handleDownloadQR = async (qr: QRCode) => {
-    if (!qr.image) {
-      Alert.alert('Ошибка', 'Нет изображения QR кода для скачивания');
-      return;
-    }
-
-    if (Platform.OS === 'web') {
-      // Для веба
-      const link = document.createElement('a');
-      link.href = qr.image;
-      link.download = `qr-code-${qr.id}.png`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      Alert.alert('Успешно', 'QR код скачан');
-    } else {
-      try {
-        let fileUri = `${FileSystem.cacheDirectory}qr-code-${qr.id}.png`;
-
-        if (qr.image?.startsWith('data:')) {
-          // Обработка base64 изображения
-          const base64Data = qr.image.split(',')[1];
-          await FileSystem.writeAsStringAsync(fileUri, base64Data, {
-            encoding: FileSystem.EncodingType.Base64
-          });
-        } else {
-          // Обработка http/https URL
-          await FileSystem.downloadAsync(qr.image, fileUri);
-        }
-
-        // Для всех платформ используем MediaLibrary
-        const { status } = await MediaLibrary.requestPermissionsAsync();
-        if (status !== 'granted') {
-          Alert.alert('Ошибка', 'Необходимо разрешение для сохранения в галерею');
-          return;
-        }
-        
-        const asset = await MediaLibrary.createAssetAsync(fileUri);
-        await MediaLibrary.createAlbumAsync('QR Codes', asset, false);
-        Alert.alert('Успешно', 'QR код сохранён в галерею');
-      } catch (error) {
-        console.error('Ошибка сохранения QR кода:', error);
-        Alert.alert('Ошибка', 'Не удалось сохранить QR код');
+    try {
+      setQrLoading(true);
+      // Загружаем полные данные QR кода, включая изображение
+      const fullQR = await getQRCodeById(qr.id);
+      
+      if (!fullQR.qrImage) {
+        Alert.alert('Ошибка', 'Нет изображения QR кода для скачивания');
+        return;
       }
+
+      // Не обновляем данные в списке, чтобы не показывать изображение
+      // Просто скачиваем изображение
+
+      if (Platform.OS === 'web') {
+        // Для веба
+        const link = document.createElement('a');
+        link.href = fullQR.qrImage;
+        link.download = `qr-code-${qr.id}.png`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        Alert.alert('Успешно', 'QR код скачан');
+      } else {
+        try {
+          let fileUri = `${FileSystem.cacheDirectory}qr-code-${qr.id}.png`;
+
+          if (fullQR.qrImage.startsWith('data:')) {
+            // Обработка base64 изображения
+            const base64Data = fullQR.qrImage.split(',')[1];
+            await FileSystem.writeAsStringAsync(fileUri, base64Data, {
+              encoding: FileSystem.EncodingType.Base64
+            });
+          } else {
+            // Обработка http/https URL
+            await FileSystem.downloadAsync(fullQR.qrImage, fileUri);
+          }
+
+          // Для всех платформ используем MediaLibrary
+          const { status } = await MediaLibrary.requestPermissionsAsync();
+          if (status !== 'granted') {
+            Alert.alert('Ошибка', 'Необходимо разрешение для сохранения в галерею');
+            return;
+          }
+          
+          const asset = await MediaLibrary.createAssetAsync(fileUri);
+          await MediaLibrary.createAlbumAsync('QR Codes', asset, false);
+          Alert.alert('Успешно', 'QR код сохранён в галерею');
+        } catch (error) {
+          console.error('Ошибка сохранения QR кода:', error);
+          Alert.alert('Ошибка', 'Не удалось сохранить QR код');
+        } finally {
+          setQrLoading(false);
+        }
+      }
+    } catch (error) {
+      console.error('Ошибка загрузки QR кода:', error);
+      Alert.alert('Ошибка', 'Не удалось загрузить QR код');
     }
   };
 
@@ -157,9 +175,9 @@ export default function QRCodesScreen() {
         renderItem={({ item }) => (
           <View style={[styles.qrItem, isWeb && styles.webQrItem]}>
             <View style={styles.qrPreview}>
-              {item.image ? (
+              {item.qrImage ? (
                 <Image 
-                  source={{ uri: item.image }} 
+                  source={{ uri: item.qrImage }} 
                   style={styles.qrImage}
                   resizeMode="contain"
                 />
@@ -171,17 +189,43 @@ export default function QRCodesScreen() {
             
             {Platform.OS === 'web' ? (
               <View style={styles.qrActions}>
-                <Pressable onPress={() => setShowForm(true)}>
+                <Pressable 
+                  style={styles.actionButton}
+                  onPress={() => setShowForm(true)}
+                >
                   <Ionicons name="pencil" size={20} color="#007AFF" />
+                  <Text style={styles.actionText}>Редактировать</Text>
                 </Pressable>
-                <Pressable onPress={() => setSelectedQR(item)}>
-                  <Ionicons name="eye" size={20} color="#34C759" />
-                </Pressable>
-                <Pressable onPress={() => handleDownloadQR(item)}>
+          <Pressable 
+            style={styles.actionButton}
+            onPress={async () => {
+              try {
+                setQrLoading(true);
+                const fullQR = await getQRCodeById(item.id);
+                setSelectedQR(fullQR);
+              } catch (error) {
+                Alert.alert('Ошибка', 'Не удалось загрузить QR код');
+              } finally {
+                setQrLoading(false);
+              }
+            }}
+          >
+            <Ionicons name="eye" size={20} color="#34C759" />
+            <Text style={styles.actionText}>Просмотреть</Text>
+          </Pressable>
+                <Pressable 
+                  style={styles.actionButton}
+                  onPress={() => handleDownloadQR(item)}
+                >
                   <Ionicons name="download" size={20} color="#5856D6" />
+                  <Text style={styles.actionText}>Скачать</Text>
                 </Pressable>
-                <Pressable onPress={() => handleDeleteQR(item.id)}>
+                <Pressable 
+                  style={styles.actionButton}
+                  onPress={() => handleDeleteQR(item.id)}
+                >
                   <Ionicons name="trash" size={20} color="#FF3B30" />
+                  <Text style={styles.actionText}>Удалить</Text>
                 </Pressable>
               </View>
             ) : (
@@ -205,9 +249,9 @@ export default function QRCodesScreen() {
       >
         <View style={styles.modalContainer}>
           <View style={[styles.modalContent, isWeb && styles.webModalContent]}>
-            {selectedQR?.image ? (
+            {selectedQR?.qrImage ? (
               <Image 
-                source={{ uri: selectedQR.image }} 
+                source={{ uri: selectedQR.qrImage }} 
                 style={styles.qrImage}
                 resizeMode="contain"
               />
@@ -236,7 +280,20 @@ export default function QRCodesScreen() {
           {
             title: 'Просмотреть',
             icon: 'eye',
-            onPress: () => selectedItem && setSelectedQR(selectedItem)
+            onPress: async () => {
+              if (selectedItem) {
+                try {
+                  setQrLoading(true);
+                  const fullQR = await getQRCodeById(selectedItem.id);
+                  setSelectedQR(fullQR);
+                } catch (error) {
+                  console.error('Ошибка загрузки QR кода:', error);
+                  Alert.alert('Ошибка', 'Не удалось загрузить QR код');
+                } finally {
+                  setQrLoading(false);
+                }
+              }
+            }
           },
           {
             title: 'Скачать',
@@ -309,6 +366,17 @@ const styles = StyleSheet.create({
   qrActions: {
     flexDirection: 'row',
     gap: 16,
+    alignItems: 'center',
+    minWidth: 200,
+  },
+  actionButton: {
+    padding: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionText: {
+    fontSize: 12,
+    marginTop: 4,
   },
   mobileActionsButton: {
     padding: 8,
