@@ -7,14 +7,17 @@ import {
   TouchableWithoutFeedback,
   View,
 } from 'react-native';
-import { ThemeKey, gradientColors } from '../constants/Colors';
+import { gradientColors, ThemeKey } from '../constants/Colors';
 import { useTheme } from '../context/ThemeContext';
 
 const ThemeSwitcher = () => {
   const [isOpen, setIsOpen] = useState(false);
   const { theme, themes, setTheme } = useTheme();
+  if (!theme || !themes) return null;
+  
   const themeTyped = theme as ThemeKey;
   const themeKeys = Object.keys(themes) as ThemeKey[];
+  if (!gradientColors[themeTyped]) return null;
   const scaleAnim = useRef(new Animated.Value(1)).current;
 
   const handlePress = () => {

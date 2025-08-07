@@ -1,109 +1,77 @@
-import ActionSheet from '@/components/ActionSheet';
-import { getQRCodeById, getQRCodesList } from '@/utils/qrService';
 import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import { useRouter } from 'expo-router';
-import React, { useState } from 'react';
-import { Alert, FlatList, Image, Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Alert, FlatList, Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
-type QRType = 'PHONE'|'LINK'|'EMAIL'|'TEXT'|'WHATSAPP'|'TELEGRAM'|'CONTACT';
-
-interface QRCode {
-  id: string;
-  qrData: string;
-  qrType: 'PHONE'|'LINK'|'EMAIL'|'TEXT'|'WHATSAPP'|'TELEGRAM'|'CONTACT';
-  description: string | null;
-  status: 'ACTIVE'|'INACTIVE';
-  createdAt: string;
-  createdBy: {
-    id: number;
-    email: string;
-    firstName: string;
-    lastName: string;
-  };
-  qrImage: string;
-}
+import ActionSheet from '@/components/ActionSheet';
+import QRCodeItem from '@/components/QRcodes/QRCodeItem';
+import { QRCodeItemType as QRCodeType } from '@/types/qrTypes'; // ваш тип QRCodeItem из types
+import { getQRCodeById, getQRCodesList } from '@/utils/qrService';
 
 export default function QRCodesScreen() {
   const router = useRouter();
-  const [selectedItem, setSelectedItem] = useState<QRCode | null>(null);
-  const [qrCodes, setQrCodes] = useState<QRCode[]>([]);
-  const [showForm, setShowForm] = useState(false);
-  const [selectedQR, setSelectedQR] = useState<QRCode | null>(null);
+
+  const [qrCodes, setQrCodes] = useState<QRCodeType[]>([]);
+  const [selectedItem, setSelectedItem] = useState<QRCodeType | null>(null);
+  const [selectedQR, setSelectedQR] = useState<QRCodeType | null>(null);
   const [loading, setLoading] = useState(true);
   const [qrLoading, setQrLoading] = useState(false);
+  const [showForm, setShowForm] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
-  const [pagination, setPagination] = useState({
-    limit: 10,
-    offset: 0,
-    total: 0
-  });
-  
-  const loadQRCodes = React.useCallback(async () => {
+
+  // Загрузка списка QR кодов
+  const loadQRCodes = useCallback(async () => {
+    setLoading(true);
     try {
-      setLoading(true);
-      const response = await getQRCodesList(pagination.limit, pagination.offset);
+      const response = await getQRCodesList(50, 0); // например, лимит 50, оффсет 0
       setQrCodes(response.data);
-      setPagination(prev => ({
-        ...prev,
-        total: response.meta.total
-      }));
-    } catch (err) {
+    } catch (e) {
       setError('Ошибка загрузки QR кодов');
-      console.error(err);
+      console.error(e);
     } finally {
       setLoading(false);
     }
-  }, [pagination.limit, pagination.offset]);
-
-  React.useEffect(() => {
-    loadQRCodes();
   }, []);
 
-  const handleCreateQR = () => setShowForm(true);
+  useEffect(() => {
+    loadQRCodes();
+  }, [loadQRCodes]);
 
-  const handleDeleteQR = async (id: string) => {
+  // Удаление QR кода
+  const handleDeleteQR = (id: string) => {
     Alert.alert(
       'Удаление QR кода',
       'Вы уверены, что хотите удалить этот QR код?',
       [
         { text: 'Отмена', style: 'cancel' },
-        { 
-          text: 'Удалить', 
+        {
+          text: 'Удалить',
           style: 'destructive',
-          onPress: async () => {
-            try {
-              // Здесь будет вызов API для удаления
-              setQrCodes(qrCodes.filter(qr => qr.id !== id));
-              Alert.alert('Успешно', 'QR код удален');
-            } catch (error) {
-              Alert.alert('Ошибка', 'Не удалось удалить QR код');
-              console.error(error);
-            }
+          onPress: () => {
+            setQrCodes(prev => prev.filter(qr => qr.id !== id));
+            Alert.alert('Успешно', 'QR код удален');
+            setSelectedItem(null);
           }
         }
       ]
     );
   };
 
-  const handleDownloadQR = async (qr: QRCode) => {
+  // Загрузка и сохранение QR кода (скачивание)
+  const handleDownloadQR = async (qr: QRCodeType) => {
+    // console.log('Попытка Скачивание..')
     try {
       setQrLoading(true);
-      // Загружаем полные данные QR кода, включая изображение
       const fullQR = await getQRCodeById(qr.id);
-      
+
       if (!fullQR.qrImage) {
-        Alert.alert('Ошибка', 'Нет изображения QR кода для скачивания');
+        Alert.alert('Ошибка', 'Изображение QR кода отсутствует');
         return;
       }
 
-      // Не обновляем данные в списке, чтобы не показывать изображение
-      // Просто скачиваем изображение
-
       if (Platform.OS === 'web') {
-        // Для веба
         const link = document.createElement('a');
         link.href = fullQR.qrImage;
         link.download = `qr-code-${qr.id}.png`;
@@ -112,162 +80,88 @@ export default function QRCodesScreen() {
         document.body.removeChild(link);
         Alert.alert('Успешно', 'QR код скачан');
       } else {
-        try {
-          let fileUri = `${FileSystem.cacheDirectory}qr-code-${qr.id}.png`;
+        const fileUri = `${FileSystem.cacheDirectory}qr-code-${qr.id}.png`;
 
-          if (fullQR.qrImage.startsWith('data:')) {
-            // Обработка base64 изображения
-            const base64Data = fullQR.qrImage.split(',')[1];
-            await FileSystem.writeAsStringAsync(fileUri, base64Data, {
-              encoding: FileSystem.EncodingType.Base64
-            });
-          } else {
-            // Обработка http/https URL
-            await FileSystem.downloadAsync(fullQR.qrImage, fileUri);
-          }
-
-          // Для всех платформ используем MediaLibrary
-          const { status } = await MediaLibrary.requestPermissionsAsync();
-          if (status !== 'granted') {
-            Alert.alert('Ошибка', 'Необходимо разрешение для сохранения в галерею');
-            return;
-          }
-          
-          const asset = await MediaLibrary.createAssetAsync(fileUri);
-          await MediaLibrary.createAlbumAsync('QR Codes', asset, false);
-          Alert.alert('Успешно', 'QR код сохранён в галерею');
-        } catch (error) {
-          console.error('Ошибка сохранения QR кода:', error);
-          Alert.alert('Ошибка', 'Не удалось сохранить QR код');
-        } finally {
-          setQrLoading(false);
+        if (fullQR.qrImage.startsWith('data:')) {
+          const base64Data = fullQR.qrImage.split(',')[1];
+          await FileSystem.writeAsStringAsync(fileUri, base64Data, { encoding: FileSystem.EncodingType.Base64 });
+        } else {
+          await FileSystem.downloadAsync(fullQR.qrImage, fileUri);
         }
+
+        const { status } = await MediaLibrary.requestPermissionsAsync();
+        if (status !== 'granted') {
+          Alert.alert('Ошибка', 'Нет разрешения на сохранение в галерею');
+          return;
+        }
+
+        const asset = await MediaLibrary.createAssetAsync(fileUri);
+        await MediaLibrary.createAlbumAsync('QR Codes', asset, false);
+        Alert.alert('Успешно', 'QR код сохранён в галерею');
       }
-    } catch (error) {
-      console.error('Ошибка загрузки QR кода:', error);
-      Alert.alert('Ошибка', 'Не удалось загрузить QR код');
+    } catch (e) {
+      console.error(e);
+      Alert.alert('Ошибка', 'Не удалось скачать QR код');
+    } finally {
+      setQrLoading(false);
     }
   };
 
-  if (showForm || qrCodes.length === 0) {
+  // Если открыта форма создания/редактирования — пока простой заглушка
+  if (showForm) {
     return (
       <View style={styles.container}>
-        <Text>Форма создания QR кода</Text>
-        <Pressable onPress={() => setShowForm(false)}>
-          <Text>Назад к списку</Text>
+        <Text>Форма создания QR кода (реализуйте по необходимости)</Text>
+        <Pressable onPress={() => setShowForm(false)} style={styles.backButton}>
+          <Text style={{color: '#007AFF'}}>Назад к списку</Text>
         </Pressable>
       </View>
     );
   }
 
-  const isWeb = Platform.OS === 'web';
-
   return (
-    <View style={[styles.container, isWeb && styles.webContainer]}>
-      <Pressable style={styles.createButton} onPress={handleCreateQR}>
+    <View style={styles.container}>
+      <Pressable style={styles.createButton} onPress={() => setShowForm(true)}>
         <Ionicons name="add" size={24} color="white" />
         <Text style={styles.createButtonText}>Создать QR код</Text>
       </Pressable>
 
+      {error && <Text style={{ color: 'red', marginBottom: 10 }}>{error}</Text>}
+
       <FlatList
         data={qrCodes}
-        keyExtractor={(item) => item.id}
+        keyExtractor={item => item.id}
         renderItem={({ item }) => (
-          <View style={[styles.qrItem, isWeb && styles.webQrItem]}>
-            <View style={styles.qrPreview}>
-              {item.qrImage ? (
-                <Image 
-                  source={{ uri: item.qrImage }} 
-                  style={styles.qrImage}
-                  resizeMode="contain"
-                />
-              ) : (
-                <Text>{item.qrData}</Text>
-              )}
-              {item.description && <Text>{item.description}</Text>}
-            </View>
-            
-            {Platform.OS === 'web' ? (
-              <View style={styles.qrActions}>
-                <Pressable 
-                  style={styles.actionButton}
-                  onPress={() => setShowForm(true)}
-                >
-                  <Ionicons name="pencil" size={20} color="#007AFF" />
-                  <Text style={styles.actionText}>Редактировать</Text>
-                </Pressable>
-          <Pressable 
-            style={styles.actionButton}
-            onPress={async () => {
-              try {
-                setQrLoading(true);
-                const fullQR = await getQRCodeById(item.id);
-                setSelectedQR(fullQR);
-              } catch (error) {
-                Alert.alert('Ошибка', 'Не удалось загрузить QR код');
-              } finally {
-                setQrLoading(false);
-              }
-            }}
-          >
-            <Ionicons name="eye" size={20} color="#34C759" />
-            <Text style={styles.actionText}>Просмотреть</Text>
-          </Pressable>
-                <Pressable 
-                  style={styles.actionButton}
-                  onPress={() => handleDownloadQR(item)}
-                >
-                  <Ionicons name="download" size={20} color="#5856D6" />
-                  <Text style={styles.actionText}>Скачать</Text>
-                </Pressable>
-                <Pressable 
-                  style={styles.actionButton}
-                  onPress={() => handleDeleteQR(item.id)}
-                >
-                  <Ionicons name="trash" size={20} color="#FF3B30" />
-                  <Text style={styles.actionText}>Удалить</Text>
-                </Pressable>
-              </View>
-            ) : (
-              <Pressable 
-                onPress={() => setSelectedItem(item)}
-                style={styles.mobileActionsButton}
-              >
-                <Ionicons name="ellipsis-horizontal" size={24} color="#8E8E93" />
-              </Pressable>
-            )}
-          </View>
+          <QRCodeItem
+            item={item}
+            loading={loading}
+            onPress={() => setSelectedItem(item)}
+            onLongPress={() => setSelectedItem(item)}
+          />
         )}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={{ paddingBottom: 16 }}
       />
 
-      <Modal
-        visible={!!selectedQR}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setSelectedQR(null)}
-      >
+      {/* Модальное окно для просмотра выбранного QR кода */}
+      <Modal visible={!!selectedQR} transparent animationType="fade" onRequestClose={() => setSelectedQR(null)}>
         <View style={styles.modalContainer}>
-          <View style={[styles.modalContent, isWeb && styles.webModalContent]}>
+          <View style={styles.modalContent}>
             {selectedQR?.qrImage ? (
-              <Image 
-                source={{ uri: selectedQR.qrImage }} 
-                style={styles.qrImage}
-                resizeMode="contain"
-              />
+              <View style={{ alignItems: 'center' }}>
+                <Ionicons name="qr-code" size={120} color="#000" />
+                <Text style={{ marginVertical: 8, fontWeight: '600' }}>{selectedQR.description || 'Без описания'}</Text>
+              </View>
             ) : (
-              <Text>{selectedQR?.qrData || 'QR код не сгенерирован'}</Text>
+              <Text>{selectedQR?.description || 'Без описания'}</Text>
             )}
-            <Pressable 
-              style={styles.closeButton}
-              onPress={() => setSelectedQR(null)}
-            >
+            <Pressable onPress={() => setSelectedQR(null)} style={styles.closeButton}>
               <Ionicons name="close" size={24} color="white" />
             </Pressable>
           </View>
         </View>
       </Modal>
 
+      {/* ActionSheet для мобильных (и web) */}
       <ActionSheet
         visible={!!selectedItem}
         onClose={() => setSelectedItem(null)}
@@ -275,37 +169,37 @@ export default function QRCodesScreen() {
           {
             title: 'Редактировать',
             icon: 'pencil',
-            onPress: () => setShowForm(true)
+            onPress: () => setShowForm(true),
           },
           {
             title: 'Просмотреть',
             icon: 'eye',
             onPress: async () => {
-              if (selectedItem) {
-                try {
-                  setQrLoading(true);
-                  const fullQR = await getQRCodeById(selectedItem.id);
-                  setSelectedQR(fullQR);
-                } catch (error) {
-                  console.error('Ошибка загрузки QR кода:', error);
-                  Alert.alert('Ошибка', 'Не удалось загрузить QR код');
-                } finally {
-                  setQrLoading(false);
-                }
+              if (!selectedItem) return;
+              setQrLoading(true);
+              try {
+                const fullQR = await getQRCodeById(selectedItem.id);
+                console.log(fullQR)
+                setSelectedQR(fullQR);
+              } catch (e) {
+                Alert.alert('Ошибка', 'Не удалось загрузить QR код');
+              } finally {
+                setQrLoading(false);
+                setSelectedItem(null);
               }
             }
           },
           {
             title: 'Скачать',
             icon: 'download',
-            onPress: () => selectedItem && handleDownloadQR(selectedItem)
+            onPress: () => selectedItem && handleDownloadQR(selectedItem),
           },
           {
             title: 'Удалить',
             icon: 'trash',
             destructive: true,
-            onPress: () => selectedItem && handleDeleteQR(selectedItem.id)
-          }
+            onPress: () => selectedItem && handleDeleteQR(selectedItem.id),
+          },
         ]}
       />
     </View>
@@ -313,15 +207,7 @@ export default function QRCodesScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    padding: 16,
-  },
-  webContainer: {
-    maxWidth: 1200,
-    width: '100%',
-    marginHorizontal: 'auto',
-  },
+  container: { flex: 1, padding: 16 },
   createButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -335,51 +221,8 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     fontWeight: '500',
   },
-  listContent: {
-    paddingBottom: 16,
-  },
-  qrItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: 'white',
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  webQrItem: {
-    padding: 24,
-  },
-  qrPreview: {
-    flex: 1,
-  },
-  qrImage: {
-    width: 100,
-    height: 100,
-    marginRight: 16,
-  },
-  qrActions: {
-    flexDirection: 'row',
-    gap: 16,
-    alignItems: 'center',
-    minWidth: 200,
-  },
-  actionButton: {
-    padding: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  actionText: {
-    fontSize: 12,
-    marginTop: 4,
-  },
-  mobileActionsButton: {
-    padding: 8,
+  backButton: {
+    marginTop: 12,
   },
   modalContainer: {
     flex: 1,
@@ -388,15 +231,11 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.7)',
   },
   modalContent: {
-    width: '80%',
     backgroundColor: 'white',
     borderRadius: 16,
     padding: 20,
+    width: '80%',
     alignItems: 'center',
-  },
-  webModalContent: {
-    maxWidth: 600,
-    padding: 32,
   },
   closeButton: {
     position: 'absolute',

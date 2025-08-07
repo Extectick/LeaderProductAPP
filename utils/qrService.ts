@@ -10,6 +10,8 @@ export const getQRCodesList = async (
   offset: number = 0,
   forceRefresh: boolean = false
 ): Promise<QRCodeListResponse> => {
+  // Добавляем scanCount: 0 по умолчанию
+  const defaultScanCount = 0;
   // Проверка кэша
   if (!forceRefresh) {
     const cached = await getCachedQRCodes(limit, offset);
@@ -20,11 +22,21 @@ export const getQRCodesList = async (
   if (!response.ok) {
     throw new Error(response.message || 'Ошибка загрузки QR кодов');
   }
+
+  // Добавляем scanCount: 0 если его нет
+  const responseData = response.data as QRCodeListResponse;
+  const data: QRCodeListResponse = {
+    ...responseData,
+    data: responseData.data.map((item: QRCodeItem) => ({
+      ...item,
+      scanCount: item.scanCount || 0
+    }))
+  };
   
   // Сохранение в кэш
-  await cacheQRCodes(response.data as QRCodeListResponse, limit, offset);
+  await cacheQRCodes(data, limit, offset);
   
-  return response.data as QRCodeListResponse;
+  return data;
 };
 
 async function getCachedQRCodes(limit: number, offset: number): Promise<QRCodeListResponse | null> {

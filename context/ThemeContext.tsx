@@ -13,7 +13,7 @@ interface ThemeContextType {
 
 const ThemeContext = createContext<ThemeContextType>({
   theme: 'light',
-  themes: {},
+  themes: Colors,
   setTheme: async () => {},
   addTheme: () => {}
 });
