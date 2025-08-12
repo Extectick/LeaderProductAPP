@@ -123,13 +123,19 @@ export default function QRCodesScreen() {
   };
 
   const handleCreate = () => {
-    // router.push('/(main)/services/qrcodes/form?id=new');
-    navigation.navigate('QRCodeForm', { id: 'new' });
+    if (Platform.OS === 'web') {
+      router.push('/(main)/services/qrcodes/form?id=new');
+    } else {
+      navigation.navigate('QRCodeForm', { id: 'new' });
+    }
   };
 
   const handleEdit = (id: string) => {
-    // router.push(`/(main)/services/qrcodes/form?id=${id}`);
-    navigation.navigate('QRCodeForm', { id });
+    if (Platform.OS === 'web') {
+      router.push(`/(main)/services/qrcodes/form?id=${id}`);
+    } else {
+      navigation.navigate('QRCodeForm', { id });
+    }
   };
 
   if (loading) {
