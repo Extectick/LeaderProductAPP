@@ -32,6 +32,41 @@ export type Profile = {
     employeeProfile?: employeeProfile | null;
 }
 
+// В userService.ts (или отдельном файле, например userCreateTypes.ts)
+
+export type AddressDto = {
+  street: string;
+  city: string;
+  state?: string | null;
+  postalCode?: string | null;
+  country: string;
+};
+
+export type UserNameDto = {
+  firstName: string;
+  lastName?: string | null;
+  middleName?: string | null;
+};
+
+export type CreateClientProfileDto = {
+  user: UserNameDto;
+  phone?: string | null;
+  address?: AddressDto | null;
+};
+
+export type CreateSupplierProfileDto = {
+  user: UserNameDto;
+  phone?: string | null;
+  address?: AddressDto | null;
+};
+
+export type CreateEmployeeProfileDto = {
+  user: UserNameDto;
+  phone?: string | null;
+  departmentId: number;
+};
+
+
 export type DepartmentRole = {
     department: {
     id: number;

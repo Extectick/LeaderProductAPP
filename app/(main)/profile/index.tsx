@@ -3,7 +3,7 @@ import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { Colors } from '@/constants/Colors';
 import { Profile, ProfileType } from '@/types/userTypes';
-import { logout } from '@/utils/authService';
+import { logoutUser } from '@/utils/authService';
 import { getProfile } from '@/utils/userService';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Image, Platform, StyleSheet } from 'react-native';
@@ -103,7 +103,7 @@ export default function ProfileScreen() {
 
       <AnimatedButton
         title="Выход"
-        onPress={logout}
+        onPress={logoutUser}
         style={styles.logoutButton}
       />
     </ThemedView>

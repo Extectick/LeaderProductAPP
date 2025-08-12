@@ -5,10 +5,9 @@ import { useThemeColor } from '@/hooks/useThemeColor';
 import type {
   CreateClientProfileDto,
   CreateEmployeeProfileDto,
-  CreateSupplierProfileDto,
-  Department
-} from '@/utils/userService';
-import { createProfile, getDepartments } from '@/utils/userService';
+  CreateSupplierProfileDto
+} from '@/types/userTypes';
+import { createProfile, Department, getDepartments } from '@/utils/userService';
 import { RelativePathString, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
@@ -117,7 +116,7 @@ export default function ProfileSelectionScreen() {
         case 'CLIENT':
           profileData = {
             phone: form.phone,
-            status: 'ACTIVE',
+
             user: {
               firstName: form.firstName,
               lastName: form.lastName,
@@ -128,7 +127,7 @@ export default function ProfileSelectionScreen() {
         case 'SUPPLIER':
           profileData = {
             phone: form.phone,
-            status: 'ACTIVE',
+
             user: {
               firstName: form.firstName,
               lastName: form.lastName,
@@ -139,7 +138,6 @@ export default function ProfileSelectionScreen() {
         case 'EMPLOYEE':
           profileData = {
             phone: form.phone,
-            status: 'ACTIVE',
             departmentId: form.departmentId,
             user: {
               firstName: form.firstName,

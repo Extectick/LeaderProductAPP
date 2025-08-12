@@ -1,94 +1,78 @@
 // utils/tokenService.ts
-// import { User } from '@/types/apiTypes';
-import { Profile } from '@/types/userTypes';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import Constants from 'expo-constants';
 import { router } from 'expo-router';
+import { apiClient } from './apiClient';
 
 const ACCESS_KEY = 'accessToken';
+const REFRESH_KEY = 'refreshToken';
+const PROFILE_KEY = 'profile';
+
 const MAX_REFRESH_ATTEMPTS = 3;
 let refreshAttempts = 0;
 
-async function fetch<T>(url: string, options: RequestInit): Promise<T> {
-  const response = await window.fetch(`${API_BASE_URL}${url}`, options);
-  if (!response.ok) throw new Error(`HTTP error ${response.status}`);
-  return response.json();
-}
-const REFRESH_KEY = 'refreshToken';
-const PROFILE_KEY = 'profile';
-const API_BASE_URL = Constants.expoConfig?.extra?.EXPO_PUBLIC_API_BASE_URL || 'http://192.168.30.54:3000';
-
-/**
- * Получить accessToken из AsyncStorage
- */
 export async function getAccessToken(): Promise<string | null> {
   return AsyncStorage.getItem(ACCESS_KEY);
 }
 
-/**
- * Сохранить accessToken и refreshToken в AsyncStorage
- */
-export async function saveTokens(accessToken: string, refreshToken: string, profile?: Profile): Promise<void> {
-  await AsyncStorage.multiSet([
+export async function getRefreshToken(): Promise<string | null> {
+  return AsyncStorage.getItem(REFRESH_KEY);
+}
+
+export async function saveTokens(accessToken: string, refreshToken: string, profile?: any): Promise<void> {
+  const items: [string, string][] = [
     [ACCESS_KEY, accessToken],
     [REFRESH_KEY, refreshToken],
-    [PROFILE_KEY, profile ? JSON.stringify(profile) : ''],
-  ]);
+  ];
+  if (profile) items.push([PROFILE_KEY, JSON.stringify(profile)]);
+  await AsyncStorage.multiSet(items);
+
+  console.log('Сохранён профиль:', profile);
+  refreshAttempts = 0; // сброс попыток при новом токене
 }
 
-export async function getProfile(): Promise<Profile | null> {
-  const profileString = await AsyncStorage.getItem(PROFILE_KEY);
-  return profileString ? JSON.parse(profileString) : null;
-}
-
-/**
- * Очистить токены и перенаправить на экран авторизации
- */
 export async function logout(): Promise<void> {
   await AsyncStorage.multiRemove([ACCESS_KEY, REFRESH_KEY, PROFILE_KEY]);
   router.replace('/AuthScreen');
 }
 
-/**
- * Попытаться обновить accessToken по refreshToken
- */
 export async function refreshToken(): Promise<string | null> {
   if (refreshAttempts >= MAX_REFRESH_ATTEMPTS) {
+    console.warn('Достигнут максимум попыток обновления токена');
     await logout();
     return null;
   }
-
   refreshAttempts++;
 
-  const storedRefreshToken = await AsyncStorage.getItem(REFRESH_KEY);
+  const storedRefreshToken = await getRefreshToken();
   if (!storedRefreshToken) {
     await logout();
     return null;
   }
 
   try {
-    const response = await fetch<{
-      accessToken: string;
-      refreshToken: string;
-    }>('/auth/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken: storedRefreshToken }),
-    });
+    const response = await apiClient<{ refreshToken: string }, { accessToken: string; refreshToken: string }>(
+      '/auth/token',
+      {
+        method: 'POST',
+        body: { refreshToken: storedRefreshToken },
+        skipAuth: true,
+      }
+    );
 
-    if (!response.accessToken) {
-      throw new Error('Отсутствует accessToken в ответе обновления');
+    if (!response.ok) {
+      throw new Error(response.message || 'Ошибка обновления токена');
     }
 
-    refreshAttempts = 0; // Сброс счетчика при успехе
-    await AsyncStorage.setItem(REFRESH_KEY, response.refreshToken);
-    await AsyncStorage.setItem(ACCESS_KEY, response.accessToken);
-    return response.accessToken;
-  } catch (err) {
-    console.warn('Ошибка при обновлении токена:', err);
-    if (err instanceof Error && err.message.includes('403')) {
-      await logout();
+    if (!response.data?.accessToken) {
+      throw new Error('Отсутствует accessToken в ответе');
     }
+
+    await saveTokens(response.data.accessToken, response.data.refreshToken);
+    refreshAttempts = 0;
+    return response.data.accessToken;
+  } catch (error) {
+    console.error('Ошибка при обновлении токена:', error);
+    await logout();
     return null;
   }
 }

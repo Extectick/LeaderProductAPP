@@ -1,113 +1,133 @@
 // utils/authFetch.ts
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ErrorCodes, ErrorResponse, SuccessResponse } from './../types/apiResponseTypes';
-import { logout as clearTokens } from './tokenService';
+import axios, { AxiosError, AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
+import Constants from 'expo-constants';
+import { router } from 'expo-router';
 
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:3000';
+const API_BASE_URL = Constants.expoConfig?.extra?.EXPO_PUBLIC_API_BASE_URL || 'http://192.168.30.54:3000'; // URL вашего API
 
-interface AuthFetchOptions<TRequest = unknown> {
-  method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
-  body?: TRequest | string;
-  headers?: Record<string, string>;
-  parseJson?: boolean;
-}
+let isRefreshing = false;
+let refreshSubscribers: ((token: string) => void)[] = [];
+
+const subscribeTokenRefresh = (cb: (token: string) => void) => {
+  refreshSubscribers.push(cb);
+};
+
+const onRefreshed = (token: string) => {
+  refreshSubscribers.forEach(cb => cb(token));
+  refreshSubscribers = [];
+};
+
+const apiClient: AxiosInstance = axios.create({
+  baseURL: API_BASE_URL,
+  timeout: 10000,
+});
+
+// Добавляем токен в заголовки
+apiClient.interceptors.request.use(async (config) => {
+  const token = await AsyncStorage.getItem('accessToken');
+  if (token && config.headers) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// Обработка ошибок и автоматическое обновление токена
+apiClient.interceptors.response.use(
+  (response) => response,
+  async (error: AxiosError) => {
+    const originalRequest = error.config as AxiosRequestConfig & { _retry?: boolean };
+
+    if (error.response?.status === 403 && !originalRequest._retry) {
+      if (isRefreshing) {
+        // Ждем, пока токен обновится
+        return new Promise((resolve) => {
+          subscribeTokenRefresh((token: string) => {
+            if (originalRequest.headers) {
+              originalRequest.headers.Authorization = `Bearer ${token}`;
+            }
+            resolve(apiClient(originalRequest));
+          });
+        });
+      }
+
+      originalRequest._retry = true;
+      isRefreshing = true;
+
+      try {
+        const refreshToken = await AsyncStorage.getItem('refreshToken');
+        if (!refreshToken) throw new Error('Refresh token is missing');
+
+        // Запрос обновления токена (замените URL на ваш)
+        const { data } = await axios.post(`${API_BASE_URL}/auth/token`, { refreshToken });
+
+        if (!data.accessToken) throw new Error('No access token in response');
+
+        await AsyncStorage.setItem('accessToken', data.accessToken);
+        await AsyncStorage.setItem('refreshToken', data.refreshToken);
+
+        apiClient.defaults.headers.common['Authorization'] = `Bearer ${data.accessToken}`;
+        onRefreshed(data.accessToken);
+
+        return apiClient(originalRequest);
+      } catch (refreshError) {
+        await AsyncStorage.removeItem('accessToken');
+        await AsyncStorage.removeItem('refreshToken');
+        router.replace('/(auth)/AuthScreen');
+        return Promise.reject(refreshError);
+      } finally {
+        isRefreshing = false;
+      }
+    }
+
+    return Promise.reject(error);
+  }
+);
 
 /**
- * Универсальный fetch с авторизацией и автообновлением токена
+ * Универсальная функция для выполнения запросов с типизацией
+ * @param url - путь API
+ * @param config - конфигурация запроса (method, body и т.п.)
  */
-export async function authFetch<TRequest = unknown, TResponse = unknown>(
+export async function authFetch<Req = any, Res = any>(
   url: string,
-  options: AuthFetchOptions<TRequest> = {}
-): Promise<SuccessResponse<TResponse> | ErrorResponse> {
-  const { method = 'GET', body, parseJson = true } = options;
-
-  let token = await AsyncStorage.getItem('accessToken');
-  const fetchOptions: RequestInit = {
-    method,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    ...(body ? { body: typeof body === 'string' ? body : JSON.stringify(body) } : {}),
-  };
-
-  let response = await fetch(`${API_BASE_URL}${url}`, fetchOptions);
-
-  // Пропускаем обновление токена для запросов авторизации и обновления токена
-  if (url.includes('/auth/login') || url.includes('/auth/register') || url.includes('/auth/token')) {
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.message || 'Ошибка авторизации');
-    }
-    return data;
-  }
-
-  // Если accessToken протух — попробуем обновить
-  if (response.status === 401 || response.status === 403) {
-    const refreshToken = await AsyncStorage.getItem('refreshToken');
-    if (!refreshToken) {
-      await clearTokens();
-      throw new Error('Не удалось обновить токен. Авторизуйтесь снова.');
-    }
-
-    let newToken: string | null = null;
-    try {
-      const tokenResponse = await window.fetch(`${API_BASE_URL}/auth/token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken })
-      });
-      
-      if (tokenResponse.ok) {
-        const tokenData = await tokenResponse.json();
-        newToken = tokenData.accessToken;
-      }
-    } catch (error) {
-      console.error('Ошибка при обновлении токена:', error);
-    }
-
-    if (!newToken) {
-      await clearTokens();
-      throw new Error('Не удалось обновить токен. Авторизуйтесь снова.');
-    }
-
-    token = newToken;
-
-    // Повторяем запрос с новым токеном
-    response = await fetch(`${API_BASE_URL}${url}`, {
-      ...fetchOptions,
+  config?: Omit<AxiosRequestConfig, 'url' | 'data'> & { body?: Req }
+): Promise<{ ok: boolean; data?: Res; message?: string }> {
+  try {
+    const axiosConfig: AxiosRequestConfig = {
+      url,
+      method: config?.method || 'GET',
       headers: {
-        ...fetchOptions.headers,
-        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        ...config?.headers,
       },
-    });
-  }
+      data: config?.body ? JSON.stringify(config.body) : undefined,
+      timeout: 10000,
+    };
 
-  if (!parseJson) {
+    const response: AxiosResponse<any> = await apiClient.request(axiosConfig);
+
+    // Раскрываем вложенность data, если она есть
+    const payload = response.data;
+
     return {
       ok: true,
-      message: 'Success',
-      data: {} as TResponse
+      data: payload?.data ?? payload,
     };
-  }
+  } catch (error) {
+    let message = 'Unknown error';
 
-  const data = await response.json();
-  
-  if (!response.ok) {
+    if (axios.isAxiosError(error)) {
+      message = error.response?.data?.message || error.message;
+    } else if (error instanceof Error) {
+      message = error.message;
+    }
+
     return {
       ok: false,
-      message: data.message || 'Ошибка запроса',
-      error: {
-        code: data.code || ErrorCodes.INTERNAL_ERROR,
-        details: data.details
-      }
+      message,
     };
   }
-
-  return {
-    ok: true,
-    message: data.message || 'Success',
-    data: data.data,
-    meta: data.meta
-  };
 }
+
+export default apiClient;
