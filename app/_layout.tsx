@@ -3,6 +3,7 @@ import { AuthProvider } from '@/context/AuthContext';
 import { ThemeProvider } from '@/context/ThemeContext';
 import { useAuthRedirect } from '@/hooks/useAuthRedirect';
 import { Slot } from 'expo-router';
+import React from 'react';
 import { StatusBar } from 'react-native';
 import 'react-native-gesture-handler';
 import { enableScreens } from 'react-native-screens';

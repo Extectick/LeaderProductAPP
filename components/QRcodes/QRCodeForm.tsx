@@ -1,16 +1,17 @@
+// QRCodeForm.tsx
 import { useThemeColor } from '@/hooks/useThemeColor';
 import { createQRCode, updateQRCode } from '@/utils/qrService';
 import { Picker } from '@react-native-picker/picker';
 import React, { useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Button,
-    Platform,
-    ScrollView,
-    Text,
-    TextInput,
-    View,
+  ActivityIndicator,
+  Alert,
+  Button,
+  Platform,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
 } from 'react-native';
 
 const qrTypes = ['PHONE', 'EMAIL', 'URL', 'TEXT', 'CONTACT', 'WIFI', 'WHATSAPP', 'TELEGRAM'];
@@ -20,7 +21,7 @@ type Props = {
   initialData?: {
     id: string;
     qrType: string;
-    description?: string;
+    description?: string | null;  // Добавить null сюда
     qrData?: string | Record<string, string> | null;
   } | null;
   onSuccess?: () => void;
@@ -39,8 +40,8 @@ export const QRCodeForm: React.FC<Props> = ({ mode, initialData, onSuccess }) =>
   useEffect(() => {
     if (initialData) {
       setQrType(initialData.qrType);
-      setDescription(initialData.description || '');
-
+      setDescription(initialData.description ?? ''); // null или undefined -> ''
+      
       try {
         const parsed = typeof initialData.qrData === 'string' ? JSON.parse(initialData.qrData) : initialData.qrData;
         setQrData(parsed);
