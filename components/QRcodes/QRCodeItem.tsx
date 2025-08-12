@@ -19,8 +19,6 @@ import Animated, {
   withSpring,
 } from 'react-native-reanimated';
 
-
-
 type Props = {
   item: QRCodeItemType;
   onPress?: (item: QRCodeItemType) => void;
@@ -28,13 +26,13 @@ type Props = {
   loading?: boolean;
 };
 
-
 export default function QRCodeItem({ item, onPress, onLongPress, loading }: Props) {
   const scale = useSharedValue(1);
   const { iconName, color } = useQRCodeTypeIcon(item.qrType);
   const { theme } = useTheme();
   const colors = Colors[theme as ThemeKey];
   const pointerStyle = Platform.OS === 'web' ? { cursor: 'pointer' as const } : {};
+
   const handlePressIn = () => {
     scale.value = withSpring(0.97);
   };
@@ -61,10 +59,17 @@ export default function QRCodeItem({ item, onPress, onLongPress, loading }: Prop
     expired: colors.error,
   }[item.status.toLowerCase() as 'active' | 'inactive' | 'expired' || 'inactive'];
 
+  // Функция форматирования количества сканирований
+  function formatScanCount(count: number) {
+    if (count < 1000) return count.toString();
+    const formatted = count / 1000;
+    return `${formatted.toFixed(1)}к`;
+  }
+
   if (loading) {
     return (
       <View style={[styles.container, { backgroundColor: colors.cardBackground }]}>
-        <Skeleton height={40} width={40}/>
+        <Skeleton height={40} width={40} />
         <View style={styles.textContainer}>
           <Skeleton height={14} width="60%" />
           <Skeleton height={10} width="40%" style={{ marginTop: 4 }} />
@@ -75,38 +80,38 @@ export default function QRCodeItem({ item, onPress, onLongPress, loading }: Prop
 
   return (
     <Animated.View style={[styles.wrapper, animatedStyle]}>
-    <Pressable
-      onPressIn={handlePressIn}
-      onPressOut={handlePressOut}
-      onLongPress={handleLongPress}
-      onPress={handlePress}
-      android_ripple={{ color: colors.inputBorder }}
-      style={({ pressed }) => [
-        styles.container,
-        {
-          backgroundColor: colors.cardBackground,
-          opacity: pressed ? 0.9 : 1,
-          ...pointerStyle,
-        },
-      ]}
-    >
-      <View style={[styles.iconCircle, { backgroundColor: statusColor }]}>
-        <Ionicons name={iconName} size={20} color={"white"} />
-      </View>
+      <Pressable
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
+        onLongPress={handleLongPress}
+        onPress={handlePress}
+        android_ripple={{ color: colors.inputBorder }}
+        style={({ pressed }) => [
+          styles.container,
+          {
+            backgroundColor: colors.cardBackground,
+            opacity: pressed ? 0.9 : 1,
+            ...pointerStyle,
+          },
+        ]}
+      >
+        <View style={[styles.iconCircle, { backgroundColor: statusColor }]}>
+          <Ionicons name={iconName} size={20} color={"white"} />
+        </View>
 
-      <View style={styles.textContainer}>
-        <Text numberOfLines={1} style={[styles.title, { color: colors.text }]}>
-          {item.description || 'Без названия'}
-        </Text>
-        <Text numberOfLines={1} style={[styles.subtitle, { color: colors.secondaryText }]}>
-          {item.qrData.length > 32 ? item.qrData.slice(0, 32) + '...' : item.qrData}
-        </Text>
-      </View>
+        <View style={styles.textContainer}>
+          <Text numberOfLines={1} style={[styles.title, { color: colors.text }]}>
+            {item.description || 'Без названия'}
+          </Text>
+          <Text numberOfLines={1} style={[styles.subtitle, { color: colors.secondaryText }]}>
+            {item.qrData.length > 32 ? item.qrData.slice(0, 32) + '...' : item.qrData}
+          </Text>
+        </View>
 
-      <Text style={[styles.scanCount, { color: colors.secondaryText }]}>
-        {item.scanCount ?? 0}
-      </Text>
-    </Pressable>
+        <Text style={[styles.scanCount, { color: colors.secondaryText }]}>
+          {formatScanCount(item.scanCount ?? 0)}
+        </Text>
+      </Pressable>
     </Animated.View>
   );
 }

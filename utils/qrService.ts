@@ -13,10 +13,10 @@ export const getQRCodesList = async (
   // Добавляем scanCount: 0 по умолчанию
   const defaultScanCount = 0;
   // Проверка кэша
-  if (!forceRefresh) {
-    const cached = await getCachedQRCodes(limit, offset);
-    if (cached) return cached;
-  }
+  // if (!forceRefresh) {
+  //   const cached = await getCachedQRCodes(limit, offset);
+  //   if (cached) return cached;
+  // }
 
   const response = await authFetch<QRCodeListResponse>(`/qr?limit=${limit}&offset=${offset}`);
   if (!response.ok) {
@@ -33,8 +33,8 @@ export const getQRCodesList = async (
     }))
   };
   
-  // Сохранение в кэш
-  await cacheQRCodes(data, limit, offset);
+  // Сохранение в кэш (временно убрано)
+  // await cacheQRCodes(data, limit, offset);
   
   return data;
 };
@@ -90,10 +90,10 @@ const SINGLE_QR_CACHE_TTL = 5 * 60 * 1000; // 5 минут кэша
 
 export const getQRCodeById = async (id: string, forceRefresh: boolean = false): Promise<QRCodeItem> => {
   // Проверка кэша
-  if (!forceRefresh) {
-    const cached = await getCachedQRCode(id);
-    if (cached) return cached;
-  }
+  // if (!forceRefresh) {
+  //   const cached = await getCachedQRCode(id);
+  //   if (cached) return cached;
+  // }
 
   const response = await authFetch<QRCodeItem>(`/qr/${id}`);
   
@@ -108,7 +108,7 @@ export const getQRCodeById = async (id: string, forceRefresh: boolean = false): 
   const qrCode = response.data as QRCodeItem;
   
   // Сохранение в кэш
-  await cacheQRCode(qrCode);
+  // await cacheQRCode(qrCode);
   
   return qrCode;
 };
@@ -143,3 +143,52 @@ async function cacheQRCode(data: QRCodeItem): Promise<void> {
     console.error('Ошибка сохранения QR кода в кэш:', error);
   }
 }
+
+export const createQRCode = async (
+  qrType: string,
+  qrData: string | Record<string, any>,
+  description?: string
+): Promise<QRCodeItem> => {
+  const body = {
+    qrType,
+    qrData,
+    description,
+  };
+  console.log(body)
+  const response = await authFetch<undefined, QRCodeItem>('/qr', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    throw new Error(response.message || 'Ошибка создания QR кода');
+  }
+
+  return response.data;
+};
+
+export const updateQRCode = async (
+  id: string,
+  qrType: string,
+  qrData: string | Record<string, any>,
+  description?: string
+): Promise<QRCodeItem> => {
+  const body = {
+    qrType,
+    qrData,
+    description,
+  };
+
+  const response = await authFetch<undefined, QRCodeItem>(`/qr/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    throw new Error(response.message || 'Ошибка обновления QR кода');
+  }
+
+  return response.data;
+};
+
+

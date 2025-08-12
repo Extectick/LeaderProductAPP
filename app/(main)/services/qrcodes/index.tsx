@@ -1,14 +1,23 @@
+import ActionSheet from '@/components/ActionSheet';
+import { QRCodeForm } from '@/components/QRcodes/QRCodeForm';
+import QRCodeItem from '@/components/QRcodes/QRCodeItem';
+import { QRCodeItemType as QRCodeType } from '@/types/qrTypes';
+import { getQRCodeById, getQRCodesList } from '@/utils/qrService';
 import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, FlatList, Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-
-import ActionSheet from '@/components/ActionSheet';
-import QRCodeItem from '@/components/QRcodes/QRCodeItem';
-import { QRCodeItemType as QRCodeType } from '@/types/qrTypes'; // ваш тип QRCodeItem из types
-import { getQRCodeById, getQRCodesList } from '@/utils/qrService';
+import {
+  Alert,
+  FlatList,
+  Image,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View
+} from 'react-native';
 
 export default function QRCodesScreen() {
   const router = useRouter();
@@ -18,14 +27,14 @@ export default function QRCodesScreen() {
   const [selectedQR, setSelectedQR] = useState<QRCodeType | null>(null);
   const [loading, setLoading] = useState(true);
   const [qrLoading, setQrLoading] = useState(false);
-  const [showForm, setShowForm] = useState(false);
+  const [showForm, setShowForm] = useState<QRCodeType | null | false>(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Загрузка списка QR кодов
+  // Загрузка QR-кодов
   const loadQRCodes = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await getQRCodesList(50, 0); // например, лимит 50, оффсет 0
+      const response = await getQRCodesList(50, 0);
       setQrCodes(response.data);
     } catch (e) {
       setError('Ошибка загрузки QR кодов');
@@ -53,15 +62,15 @@ export default function QRCodesScreen() {
             setQrCodes(prev => prev.filter(qr => qr.id !== id));
             Alert.alert('Успешно', 'QR код удален');
             setSelectedItem(null);
-          }
-        }
+            setSelectedQR(null); // очистить при удалении, если он выбран
+          },
+        },
       ]
     );
   };
 
   // Загрузка и сохранение QR кода (скачивание)
   const handleDownloadQR = async (qr: QRCodeType) => {
-    // console.log('Попытка Скачивание..')
     try {
       setQrLoading(true);
       const fullQR = await getQRCodeById(qr.id);
@@ -84,7 +93,9 @@ export default function QRCodesScreen() {
 
         if (fullQR.qrImage.startsWith('data:')) {
           const base64Data = fullQR.qrImage.split(',')[1];
-          await FileSystem.writeAsStringAsync(fileUri, base64Data, { encoding: FileSystem.EncodingType.Base64 });
+          await FileSystem.writeAsStringAsync(fileUri, base64Data, {
+            encoding: FileSystem.EncodingType.Base64,
+          });
         } else {
           await FileSystem.downloadAsync(fullQR.qrImage, fileUri);
         }
@@ -107,21 +118,39 @@ export default function QRCodesScreen() {
     }
   };
 
-  // Если открыта форма создания/редактирования — пока простой заглушка
-  if (showForm) {
-    return (
+  // Если открыта форма создания/редактирования
+    {showForm !== false && (
       <View style={styles.container}>
-        <Text>Форма создания QR кода (реализуйте по необходимости)</Text>
-        <Pressable onPress={() => setShowForm(false)} style={styles.backButton}>
-          <Text style={{color: '#007AFF'}}>Назад к списку</Text>
+        <QRCodeForm
+          mode={showForm ? 'edit' : 'create'}
+          initialData={showForm || undefined as any}
+          onSuccess={() => {
+            setShowForm(false);
+            setSelectedItem(null);
+            loadQRCodes();
+          }}
+        />
+        <Pressable
+          onPress={() => {
+            setShowForm(false);
+            setSelectedItem(null);
+          }}
+          style={styles.backButton}
+        >
+          <Text style={{ color: '#007AFF' }}>Назад к списку</Text>
         </Pressable>
       </View>
-    );
-  }
-
+    )}
+  
   return (
     <View style={styles.container}>
-      <Pressable style={styles.createButton} onPress={() => setShowForm(true)}>
+      <Pressable
+        style={styles.createButton}
+        onPress={() => {
+          setSelectedItem(null); // сброс редактирования
+          setShowForm(null);     // открытие формы
+        }}
+      >
         <Ionicons name="add" size={24} color="white" />
         <Text style={styles.createButtonText}>Создать QR код</Text>
       </Pressable>
@@ -142,25 +171,36 @@ export default function QRCodesScreen() {
         contentContainerStyle={{ paddingBottom: 16 }}
       />
 
-      {/* Модальное окно для просмотра выбранного QR кода */}
-      <Modal visible={!!selectedQR} transparent animationType="fade" onRequestClose={() => setSelectedQR(null)}>
-        <View style={styles.modalContainer}>
-          <View style={styles.modalContent}>
-            {selectedQR?.qrImage ? (
-              <View style={{ alignItems: 'center' }}>
-                <Ionicons name="qr-code" size={120} color="#000" />
-                <Text style={{ marginVertical: 8, fontWeight: '600' }}>{selectedQR.description || 'Без описания'}</Text>
-              </View>
-            ) : (
-              <Text>{selectedQR?.description || 'Без описания'}</Text>
-            )}
-            <Pressable onPress={() => setSelectedQR(null)} style={styles.closeButton}>
-              <Ionicons name="close" size={24} color="white" />
-            </Pressable>
-          </View>
-        </View>
-      </Modal>
+      {/* Блок просмотра выбранного QR-кода (вместо модального окна) */}
+      {selectedQR && (
+        <View style={styles.detailContainer}>
+          <Pressable
+            style={styles.closeButton}
+            onPress={() => setSelectedQR(null)}
+          >
+            <Ionicons name="close" size={24} color="white" />
+          </Pressable>
 
+          {selectedQR.qrImage ? (
+            <Image
+              source={{ uri: selectedQR.qrImage }}
+              style={styles.detailImage}
+            />
+          ) : (
+            <Text>QR изображение не найдено</Text>
+          )}
+
+          <Text
+            style={styles.detailDescription}
+            numberOfLines={3}
+            ellipsizeMode="tail"
+          >
+            {selectedQR.description || 'Без описания'}
+            
+          </Text>
+        </View>
+      )}
+      
       {/* ActionSheet для мобильных (и web) */}
       <ActionSheet
         visible={!!selectedItem}
@@ -169,7 +209,17 @@ export default function QRCodesScreen() {
           {
             title: 'Редактировать',
             icon: 'pencil',
-            onPress: () => setShowForm(true),
+            
+            onPress: () => {
+              if (!selectedItem) {
+                // console.log('НЕТ ДАННЫХ QR код')
+                return;
+              }
+              console.log('ID qr кода:   ' + selectedItem.id)
+              
+              setSelectedItem(selectedItem);
+              setShowForm(selectedItem)
+            }
           },
           {
             title: 'Просмотреть',
@@ -179,7 +229,6 @@ export default function QRCodesScreen() {
               setQrLoading(true);
               try {
                 const fullQR = await getQRCodeById(selectedItem.id);
-                console.log(fullQR)
                 setSelectedQR(fullQR);
               } catch (e) {
                 Alert.alert('Ошибка', 'Не удалось загрузить QR код');
@@ -187,7 +236,7 @@ export default function QRCodesScreen() {
                 setQrLoading(false);
                 setSelectedItem(null);
               }
-            }
+            },
           },
           {
             title: 'Скачать',
@@ -224,28 +273,44 @@ const styles = StyleSheet.create({
   backButton: {
     marginTop: 12,
   },
-  modalContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.7)',
-  },
-  modalContent: {
+
+  detailContainer: {
+    marginTop: 16,
     backgroundColor: 'white',
     borderRadius: 16,
     padding: 20,
-    width: '80%',
     alignItems: 'center',
+    position: 'relative',
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
   },
+
   closeButton: {
     position: 'absolute',
-    top: 10,
-    right: 10,
-    backgroundColor: '#FF3B30',
+    top: 12,
+    right: 12,
+    backgroundColor: 'red',
     borderRadius: 20,
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
+    padding: 6,
+    zIndex: 10,
+  },
+
+  detailImage: {
+    width: 200,
+    height: 200,
+    resizeMode: 'contain',
+    marginBottom: 16,
+  },
+
+  detailDescription: {
+    fontSize: 10,          // чуть меньше, чем обычно
+    textAlign: 'center',
+    marginHorizontal: 12,  // отступы слева и справа
+    marginTop: 12,
+    color: 'black',        // или используйте цвет из темы
+    lineHeight: 18,        // чтобы строки были не слишком плотными
   },
 });
