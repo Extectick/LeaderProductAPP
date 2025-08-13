@@ -1,43 +1,40 @@
-import { tabScreens } from '@/constants/tabScreens';
 import { useThemeColor } from '@/hooks/useThemeColor';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { Tabs } from 'expo-router';
 import React from 'react';
-
-
-const Tab = createBottomTabNavigator();
 
 export default function MobileTabs() {
   const backgroundColor = useThemeColor({}, 'background');
   const textColor = useThemeColor({}, 'text');
 
   return (
-    <Tab.Navigator
-      initialRouteName={tabScreens[0].name}
+    <Tabs
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarIcon: ({ color, size }) => {
-          const screen = tabScreens.find((s) => s.name === route.name);
-          const iconName = screen?.sidebar.icon as any;
-          return <Ionicons name={iconName} size={size} color={color} />;
+          const icons: Record<string, keyof typeof Ionicons.glyphMap> = {
+            "home/index": "home-outline",
+            "tasks/index": "list-outline",
+            "services" : "apps",
+            "profile" : "person-outline",
+          };
+          return (
+            <Ionicons name={icons[route.name]} size={size} color={color} />
+          );
         },
         tabBarActiveTintColor: textColor,
-        tabBarInactiveTintColor: 'gray',
+        tabBarInactiveTintColor: "gray",
         tabBarStyle: {
           backgroundColor,
           borderTopWidth: 0,
-          elevation: 0
+          elevation: 0,
         },
       })}
     >
-      {tabScreens.map((screen) => (
-        <Tab.Screen
-          key={screen.name}
-          name={screen.name}
-          component={screen.component}
-          options={screen.options}
-        />
-      ))}
-    </Tab.Navigator>
+      <Tabs.Screen name="home/index" options={{ title: "Главная" }} />
+      <Tabs.Screen name="tasks/index" options={{ title: "Задачи" }} />
+      <Tabs.Screen name="services" options={{ title: "Сервисы" }} />
+      <Tabs.Screen name="profile" options={{ title: "Профиль" }} />
+    </Tabs>
   );
 }

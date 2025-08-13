@@ -1,12 +1,7 @@
-// // app/(main)/services/qrcodes/_layout.tsx
-// import { Slot } from 'expo-router';
-// import React from 'react';
-// import { View } from 'react-native';
+import { Stack } from "expo-router";
 
-// export default function QRCodesLayout() {
-//   return (
-//     <View>
-//       <Slot />
-//     </View>
-//   );
-// }
+export default function QrCodesLayout() {
+  return (
+    <Stack screenOptions={{ headerShown: false }} />
+  );
+}

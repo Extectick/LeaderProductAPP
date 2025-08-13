@@ -3,8 +3,6 @@ import QRCodeItem from '@/components/QRcodes/QRCodeItem';
 import type { QRCodeItemType } from '@/types/qrTypes';
 import { getQRCodeById, getQRCodesList } from '@/utils/qrService';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import { useRouter } from 'expo-router';
@@ -23,16 +21,9 @@ import {
 } from 'react-native';
 import Animated, { FadeIn } from 'react-native-reanimated';
 
-type ServicesStackParamList = {
-  ServicesMain: undefined;
-  QrCodes: undefined;
-  QRCodeForm: { id?: string };
-};
-
 export default function QRCodesScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
-  const navigation = useNavigation<NativeStackNavigationProp<ServicesStackParamList>>();
   const [qrCodes, setQrCodes] = useState<QRCodeItemType[]>([]);
   const [selectedItem, setSelectedItem] = useState<QRCodeItemType | null>(null);
   const [selectedQR, setSelectedQR] = useState<QRCodeItemType | null>(null);
@@ -123,19 +114,11 @@ export default function QRCodesScreen() {
   };
 
   const handleCreate = () => {
-    if (Platform.OS === 'web') {
-      router.push('/(main)/services/qrcodes/form?id=new');
-    } else {
-      navigation.navigate('QRCodeForm', { id: 'new' });
-    }
+    router.push('/(main)/services/qrcodes/form?id=new');
   };
 
   const handleEdit = (id: string) => {
-    if (Platform.OS === 'web') {
-      router.push(`/(main)/services/qrcodes/form?id=${id}`);
-    } else {
-      navigation.navigate('QRCodeForm', { id });
-    }
+    router.push(`/(main)/services/qrcodes/form?id=${id}`);
   };
 
   if (loading) {
@@ -263,9 +246,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     padding: 16,
-    maxWidth: 1200,
-    marginHorizontal: 'auto',
-    paddingHorizontal: 24,
+    maxWidth: 1000,
   },
   createButton: {
     flexDirection: 'row',

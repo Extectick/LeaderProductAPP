@@ -97,12 +97,12 @@ export default function ServiceCard({
       }}
       onPress={() => {
         if (disabled) return;
-        console.log('Pressable pressed');
+        // console.log('Pressable pressed');
         onPress();
       }}
       onLongPress={() => {
         if (disabled) return;
-        console.log('Long press - fallback');
+        // console.log('Long press - fallback');
         onPress();
       }}
       disabled={disabled}

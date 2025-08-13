@@ -13,23 +13,13 @@ import {
 import Animated, { FadeIn } from 'react-native-reanimated';
 import ServiceCard from './ServiceCard';
 
-import { useNavigation } from '@react-navigation/native';
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useRouter } from 'expo-router';
-
-type ServicesStackParamList = {
-  ServicesMain: undefined;
-  QrCodes: undefined;
-};
-
-type ServicesScreenNavigationProp = NativeStackNavigationProp<ServicesStackParamList, 'ServicesMain'>;
 
 export default function ServicesScreen() {
   const [services, setServices] = useState<typeof staticServices | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const navigation = useNavigation<ServicesScreenNavigationProp>();
   const router = useRouter();
   const { width } = useWindowDimensions();
 
@@ -87,12 +77,8 @@ export default function ServicesScreen() {
               name={item.name}
               size={itemSize}
               onPress={() => {
-                if (isMobile) {
-                  if (item.route === '/services/qrcodes') {
-                    navigation.navigate('QrCodes');
-                  } else {
-                    console.warn('Навигация для маршрута', item.route, 'не реализована');
-                  }
+                if (item.route === '/services/qrcodes') {
+                  router.push('/services/qrcodes');
                 } else {
                   router.push(item.route as any);
                 }

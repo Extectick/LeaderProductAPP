@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import React, { useEffect, useRef } from 'react';
 import {
   Animated,
+  Easing,
   Platform,
   Pressable,
   StyleSheet,
@@ -10,7 +11,6 @@ import {
   View
 } from 'react-native';
 import { ActionSheetProps } from './types';
-
 
 const ActionSheet: React.FC<ActionSheetProps> = ({ visible, buttons, onClose }) => {
   const slideAnim = useRef(new Animated.Value(0)).current;
@@ -24,9 +24,10 @@ const ActionSheet: React.FC<ActionSheetProps> = ({ visible, buttons, onClose }) 
           duration: 200,
           useNativeDriver: true,
         }),
-        Animated.timing(slideAnim, {
+        Animated.spring(slideAnim, {
           toValue: 1,
-          duration: 300,
+          bounciness: 6,
+          speed: 12,
           useNativeDriver: true,
         })
       ]).start();
@@ -34,12 +35,13 @@ const ActionSheet: React.FC<ActionSheetProps> = ({ visible, buttons, onClose }) 
       Animated.parallel([
         Animated.timing(fadeAnim, {
           toValue: 0,
-          duration: 200,
+          duration: 150,
           useNativeDriver: true,
         }),
         Animated.timing(slideAnim, {
           toValue: 0,
-          duration: 300,
+          duration: 200,
+          easing: Easing.out(Easing.ease),
           useNativeDriver: true,
         })
       ]).start();
@@ -57,57 +59,95 @@ const ActionSheet: React.FC<ActionSheetProps> = ({ visible, buttons, onClose }) 
     <TouchableWithoutFeedback onPress={onClose}>
       <View style={styles.overlay}>
         <Animated.View style={[styles.background, { opacity: fadeAnim }]} />
-        
+
         <TouchableWithoutFeedback>
-          <Animated.View 
+          <Animated.View
             style={[
               styles.container,
               { transform: [{ translateY }] }
             ]}
           >
             {buttons.map((button, index) => (
-              <Pressable
+              <AnimatedButton
                 key={index}
-                style={({ pressed }) => [
-                  styles.button,
-                  button.destructive && styles.destructiveButton,
-                  pressed && styles.pressedButton
-                ]}
+                title={button.title}
+                icon={button.icon}
+                destructive={button.destructive}
                 onPress={() => {
                   button.onPress();
                   onClose();
                 }}
-              >
-                {button.icon && (
-                  <Ionicons 
-                    name={button.icon} 
-                    size={24} 
-                    color={button.destructive ? '#FF3B30' : '#007AFF'} 
-                    style={styles.icon}
-                  />
-                )}
-                <Text style={[
-                  styles.buttonText,
-                  button.destructive && styles.destructiveText
-                ]}>
-                  {button.title}
-                </Text>
-              </Pressable>
+              />
             ))}
 
-            <Pressable
-              style={({ pressed }) => [
-                styles.cancelButton,
-                pressed && styles.pressedButton
-              ]}
+            <AnimatedButton
+              title="Отмена"
               onPress={onClose}
-            >
-              <Text style={styles.cancelText}>Отмена</Text>
-            </Pressable>
+              cancel
+            />
           </Animated.View>
         </TouchableWithoutFeedback>
       </View>
     </TouchableWithoutFeedback>
+  );
+};
+
+// Отдельный компонент кнопки с анимацией при нажатии
+const AnimatedButton = ({ title, icon, destructive, cancel, onPress }: any) => {
+  const scale = useRef(new Animated.Value(1)).current;
+
+  const handlePressIn = () => {
+    Animated.spring(scale, {
+      toValue: 0.97,
+      useNativeDriver: true,
+      speed: 40,
+      bounciness: 0
+    }).start();
+  };
+
+  const handlePressOut = () => {
+    Animated.spring(scale, {
+      toValue: 1,
+      useNativeDriver: true,
+      speed: 40,
+      bounciness: 4
+    }).start();
+  };
+
+  return (
+    <Animated.View style={{ transform: [{ scale }], marginTop: cancel ? 8 : 0 }}>
+      <Pressable
+        style={({ pressed }) => [
+          styles.button,
+          destructive && styles.destructiveButton,
+          cancel && styles.cancelButton,
+          pressed && styles.pressedButton
+        ]}
+        onPress={onPress}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
+      >
+        {icon && !cancel && (
+          <Ionicons
+            name={icon}
+            size={24}
+            color={destructive ? '#FF3B30' : '#007AFF'}
+            style={styles.icon}
+          />
+        )}
+        <Text
+          style={[
+            styles.buttonText,
+            destructive && styles.destructiveText,
+            cancel && styles.cancelText
+          ]}
+          numberOfLines={1}
+          ellipsizeMode="tail"
+        >
+          {title}
+        </Text>
+      </Pressable>
+    </Animated.View>
   );
 };
 
@@ -122,12 +162,10 @@ const styles = StyleSheet.create({
   },
   background: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(0,0,0,0.4)',
   },
   container: {
-    backgroundColor: 'white',
-    borderTopLeftRadius: 12,
-    borderTopRightRadius: 12,
+    backgroundColor: 'transparent',
     padding: 16,
     paddingBottom: Platform.select({ ios: 32, android: 16 }),
     marginBottom: Platform.select({ ios: 0, android: 8 }),
@@ -135,36 +173,43 @@ const styles = StyleSheet.create({
   button: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    backgroundColor: 'white',
+    marginBottom: 8,
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 4,
+    elevation: 2,
   },
   pressedButton: {
-    opacity: 0.7,
+    backgroundColor: '#f7f7f7',
   },
   destructiveButton: {
-    borderBottomWidth: 0,
+    backgroundColor: '#fff5f5',
   },
   buttonText: {
-    fontSize: 18,
+    fontSize: 17,
     color: '#000',
+    flex: 1,
+    flexShrink: 1,
   },
   destructiveText: {
     color: '#FF3B30',
+    fontWeight: '600',
   },
   icon: {
     marginRight: 12,
   },
   cancelButton: {
-    marginTop: 8,
-    padding: 16,
     backgroundColor: '#f0f0f0',
-    borderRadius: 12,
-    alignItems: 'center',
   },
   cancelText: {
-    fontSize: 18,
     fontWeight: '600',
+    fontSize: 17,
+    color: '#007AFF',
   },
 });
 
