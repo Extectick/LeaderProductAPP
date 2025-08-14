@@ -1,3 +1,4 @@
+// ===== File: app/(main)/services/qrcodes/index.tsx =====
 import ActionSheet from '@/components/ActionSheet';
 import QRCodeItem from '@/components/QRcodes/QRCodeItem';
 import type { QRCodeItemType } from '@/types/qrTypes';
@@ -6,33 +7,32 @@ import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import { useRouter } from 'expo-router';
+import { Skeleton } from 'moti/skeleton';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   FlatList,
   Image,
   Platform,
   Pressable,
+  RefreshControl,
   StyleSheet,
   Text,
   View,
-  useWindowDimensions,
 } from 'react-native';
-import Animated, { FadeIn } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeInDown, FadeOut, Layout } from 'react-native-reanimated';
 
 export default function QRCodesScreen() {
   const router = useRouter();
-  const { width } = useWindowDimensions();
   const [qrCodes, setQrCodes] = useState<QRCodeItemType[]>([]);
   const [selectedItem, setSelectedItem] = useState<QRCodeItemType | null>(null);
   const [selectedQR, setSelectedQR] = useState<QRCodeItemType | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [qrLoading, setQrLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const loadQRCodes = useCallback(async () => {
-    setLoading(true);
     try {
       const response = await getQRCodesList(50, 0);
       setQrCodes(response.data);
@@ -42,11 +42,20 @@ export default function QRCodesScreen() {
       console.error(e);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
   useEffect(() => {
-    loadQRCodes();
+    // Стартовая загрузка с небольшим отложенным skeleton
+    setLoading(true);
+    const t = setTimeout(loadQRCodes, 120);
+    return () => clearTimeout(t);
+  }, [loadQRCodes]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadQRCodes();
   }, [loadQRCodes]);
 
   const handleDeleteQR = (id: string) => {
@@ -113,18 +122,42 @@ export default function QRCodesScreen() {
     }
   };
 
-  const handleCreate = () => {
+  const handleCreate = useCallback(() => {
+    // Иногда элементы «не кликаются» из‑за перекрытия бэкдропом чужого компонента.
+    // Рендерим ActionSheet только когда он реально нужен (см. ниже) и гарантируем, что
+    // у кнопки высокий zIndex.
     router.push('/(main)/services/qrcodes/form?id=new');
-  };
+  }, [router]);
 
-  const handleEdit = (id: string) => {
+  const handleEdit = useCallback((id: string) => {
     router.push(`/(main)/services/qrcodes/form?id=${id}`);
-  };
+  }, [router]);
 
   if (loading) {
     return (
-      <View style={[styles.centered, { backgroundColor: '#fff' }]}>
-        <ActivityIndicator size="large" color="#000" />
+      <View style={[styles.container, { backgroundColor: '#fff' }]}>
+        <Animated.View entering={FadeInDown.duration(250)} style={{ marginBottom: 16 }}>
+          <View style={[styles.createButton, { backgroundColor: '#007AFF' }]}
+          >
+            <Ionicons name="add" size={24} color="#fff" />
+            <Text style={styles.createButtonText}>Создать QR код</Text>
+          </View>
+        </Animated.View>
+        {/* Скелеты карточек */}
+        <View>
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Animated.View key={i} entering={FadeInDown.delay(i * 60)} style={[styles.skeletonCard]}
+            >
+              <Skeleton height={40} width={40} radius={20} colorMode="light" />
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Skeleton height={14} width={'60%'} colorMode="light" />
+                <View style={{ height: 6 }} />
+                <Skeleton height={10} width={"40%"} colorMode="light" />
+              </View>
+              <Skeleton height={12} width={28} colorMode="light" />
+            </Animated.View>
+          ))}
+        </View>
       </View>
     );
   }
@@ -132,87 +165,99 @@ export default function QRCodesScreen() {
   if (error) {
     return (
       <View style={[styles.centered, { backgroundColor: '#fff' }]}>
-        <Text style={{ color: '#000', fontSize: 16 }}>{error}</Text>
+        <Text style={{ color: '#000', fontSize: 16, marginBottom: 12 }}>{error}</Text>
+        <Pressable onPress={loadQRCodes} style={[styles.retryBtn]}>
+          <Text style={{ color: '#fff', fontWeight: '600' }}>Повторить</Text>
+        </Pressable>
       </View>
     );
   }
 
   return (
     <View style={[styles.container, { backgroundColor: '#fff' }]}>
-      <Pressable style={styles.createButton} onPress={handleCreate}>
-        <Ionicons name="add" size={24} color="white" />
-        <Text style={styles.createButtonText}>Создать QR код</Text>
-      </Pressable>
+      <Animated.View entering={FadeInDown.duration(250)} style={{ marginBottom: 16, zIndex: 1 }}>
+        <Pressable style={styles.createButton} onPress={handleCreate}>
+          <Ionicons name="add" size={24} color="white" />
+          <Text style={styles.createButtonText}>Создать QR код</Text>
+        </Pressable>
+      </Animated.View>
 
-      <FlatList
-        data={qrCodes}
-        keyExtractor={item => item.id}
-        contentContainerStyle={{ paddingBottom: 16 }}
-        renderItem={({ item, index }) => (
-          <Animated.View entering={FadeIn.delay(index * 50)}>
-            <QRCodeItem
-              item={item}
-              loading={loading}
-              onPress={() => setSelectedItem(item)}
-              onLongPress={() => setSelectedItem(item)}
-            />
-          </Animated.View>
-        )}
-      />
+      <Animated.View style={{ flex: 1 }} entering={FadeIn} exiting={FadeOut}>
+        <FlatList
+          data={qrCodes}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={{ paddingBottom: 16 }}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          renderItem={({ item, index }) => (
+            <Animated.View entering={FadeInDown.delay(index * 50)} layout={Layout.springify()}
+            >
+              <QRCodeItem
+                item={item}
+                loading={false}
+                onPress={() => setSelectedItem(item)}
+                onLongPress={() => setSelectedItem(item)}
+              />
+            </Animated.View>
+          )}
+        />
+      </Animated.View>
 
-      <ActionSheet
-        visible={!!selectedItem}
-        onClose={() => setSelectedItem(null)}
-        buttons={[
-          {
-            title: 'Редактировать',
-            icon: 'pencil',
-            onPress: () => {
-              if (selectedItem) {
-                handleEdit(selectedItem.id);
-                setSelectedItem(null);
-              }
+      {/* Рендерим ActionSheet только при наличии selectedItem, чтобы исключить перекрытие кликов */}
+      {selectedItem && (
+        <ActionSheet
+          visible={!!selectedItem}
+          onClose={() => setSelectedItem(null)}
+          buttons={[
+            {
+              title: 'Редактировать',
+              icon: 'pencil',
+              onPress: () => {
+                if (selectedItem) {
+                  handleEdit(selectedItem.id);
+                  setSelectedItem(null);
+                }
+              },
             },
-          },
-          {
-            title: 'Просмотреть',
-            icon: 'eye',
-            onPress: async () => {
-              if (!selectedItem) return;
-              setQrLoading(true);
-              try {
-                const fullQR = await getQRCodeById(selectedItem.id);
-                setSelectedQR(fullQR);
-              } catch {
-                Alert.alert('Ошибка', 'Не удалось загрузить QR код');
-              } finally {
-                setQrLoading(false);
-                setSelectedItem(null);
-              }
+            {
+              title: 'Просмотреть',
+              icon: 'eye',
+              onPress: async () => {
+                if (!selectedItem) return;
+                setQrLoading(true);
+                try {
+                  const fullQR = await getQRCodeById(selectedItem.id);
+                  setSelectedQR(fullQR);
+                } catch {
+                  Alert.alert('Ошибка', 'Не удалось загрузить QR код');
+                } finally {
+                  setQrLoading(false);
+                  setSelectedItem(null);
+                }
+              },
             },
-          },
-          {
-            title: 'Скачать',
-            icon: 'download',
-            onPress: () => {
-              if (selectedItem) {
-                handleDownloadQR(selectedItem);
-                setSelectedItem(null);
-              }
+            {
+              title: 'Скачать',
+              icon: 'download',
+              onPress: () => {
+                if (selectedItem) {
+                  handleDownloadQR(selectedItem);
+                  setSelectedItem(null);
+                }
+              },
             },
-          },
-          {
-            title: 'Удалить',
-            icon: 'trash',
-            destructive: true,
-            onPress: () => {
-              if (selectedItem) {
-                handleDeleteQR(selectedItem.id);
-              }
+            {
+              title: 'Удалить',
+              icon: 'trash',
+              destructive: true,
+              onPress: () => {
+                if (selectedItem) {
+                  handleDeleteQR(selectedItem.id);
+                }
+              },
             },
-          },
-        ]}
-      />
+          ]}
+        />
+      )}
 
       {selectedQR && (
         <View style={styles.detailContainer}>
@@ -252,14 +297,30 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#007AFF',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 999,
+    shadowColor: '#000',
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 3,
   },
   createButtonText: {
     color: 'white',
     marginLeft: 8,
-    fontWeight: '500',
+    fontWeight: '700',
+  },
+  skeletonCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#f1f1f1',
   },
   detailContainer: {
     marginTop: 16,
@@ -301,5 +362,12 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: '#fff',
+  },
+  retryBtn: {
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
   },
 });
