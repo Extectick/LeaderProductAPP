@@ -1,6 +1,6 @@
 import { GestureResponderEvent } from "react-native";
 
-export type QRType = 'PHONE' | 'LINK' | 'EMAIL' | 'TEXT' | 'WHATSAPP' | 'TELEGRAM' | 'CONTACT';
+export type QRType = "PHONE" | "LINK" | "EMAIL" | "TEXT" | "WHATSAPP" | "TELEGRAM" | "CONTACT" | "WIFI" | "SMS" | "GEO" | "BITCOIN";
 
 export interface QRCodeItemType {
   id: string;

@@ -35,6 +35,8 @@ export const Colors: Record<
     placeholder: string;
     shadow: string;
     expired: string;       // Добавлено для просроченных
+    card: string;
+    border: string;
   }
 > = {
   light: {
@@ -60,6 +62,8 @@ export const Colors: Record<
     placeholder: '#6B7280',
     shadow: '#000000',
     expired: '#FF3B30',
+    card: '#F9FAFB',
+    border: tintColorLight
   },
   dark: {
     text: '#F4F4F5',
@@ -84,6 +88,8 @@ export const Colors: Record<
     placeholder: '#A0AEC0',
     shadow: '#FFFFFF',
     expired: '#FF3B30',
+    card: '#0F0F11',
+    border: '#4F9CFF'
   },
   orange: {
     text: '#2D2D2D',
@@ -108,6 +114,8 @@ export const Colors: Record<
     placeholder: '#4B5563',
     shadow: '#000000',
     expired: '#FF3B30',
+    card: '#FFF4E6',
+    border: '#FF6B00'
   },
   leaderprod: {
     text: '#1C1C1C',
@@ -132,5 +140,7 @@ export const Colors: Record<
     placeholder: '#9CA3AF',
     shadow: '#000000',
     expired: '#FF3B30',
+    card: '#F9FAF8',
+    border: '#FFA000'
   },
 };

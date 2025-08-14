@@ -6,13 +6,13 @@ import {
   Alert,
   Animated,
   Easing,
-  findNodeHandle,
+  KeyboardAvoidingView,
   Platform,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
-  UIManager,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
@@ -36,7 +36,7 @@ type Props = {
     id: string;
     qrType: string;
     description?: string | null;
-    qrData?: string | Record<string, string> | null;
+    qrData?: any | null;
   } | null;
   onSuccess?: () => void;
 };
@@ -47,21 +47,20 @@ export const QRCodeForm: React.FC<Props> = ({ mode, initialData, onSuccess }) =>
   const borderColor = useThemeColor({}, 'inputBorder');
   const primaryColor = '#4A90E2';
 
-  const [qrType, setQrType] = useState('PHONE');
-  const [description, setDescription] = useState('');
+  const { width: windowWidth } = useWindowDimensions();
+
+  const [qrType, setQrType] = useState<string>('PHONE');
+  const [description, setDescription] = useState<string>('');
   const [qrData, setQrData] = useState<any>('');
   const [loading, setLoading] = useState<boolean>(mode === 'edit' && !initialData);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState('');
-
+  const [submitting, setSubmitting] = useState<boolean>(false);
+  const [error, setError] = useState<string>('');
   const [formDataByType, setFormDataByType] = useState<Record<string, any>>({});
 
-  const fadeAnim = useRef(new Animated.Value(1)).current;
+  // анимируем только поля (кнопка — отдельно)
+  const fieldsFade = useRef(new Animated.Value(1)).current;
 
-  // Реф для KeyboardAwareScrollView
   const scrollViewRef = useRef<KeyboardAwareScrollView | null>(null);
-
-  // Рефы для инпутов (для навигации и скролла)
   const inputRefs = useRef<(TextInput | null)[]>([]);
 
   useEffect(() => {
@@ -70,18 +69,11 @@ export const QRCodeForm: React.FC<Props> = ({ mode, initialData, onSuccess }) =>
       setDescription(initialData.description ?? '');
       let parsedData;
       try {
-        parsedData =
-          typeof initialData.qrData === 'string'
-            ? JSON.parse(initialData.qrData)
-            : initialData.qrData;
+        parsedData = typeof initialData.qrData === 'string' ? JSON.parse(initialData.qrData) : initialData.qrData;
       } catch {
         parsedData = initialData.qrData;
       }
-
-      setFormDataByType(prev => ({
-        ...prev,
-        [initialData.qrType]: parsedData,
-      }));
+      setFormDataByType(prev => ({ ...prev, [initialData.qrType]: parsedData }));
       setQrData(parsedData || '');
       setLoading(false);
     }
@@ -89,25 +81,20 @@ export const QRCodeForm: React.FC<Props> = ({ mode, initialData, onSuccess }) =>
 
   const onQrTypeChange = (newType: string) => {
     Animated.sequence([
-      Animated.timing(fadeAnim, {
+      Animated.timing(fieldsFade, {
         toValue: 0,
-        duration: 200,
+        duration: 160,
         easing: Easing.out(Easing.ease),
         useNativeDriver: true,
       }),
     ]).start(() => {
-      setFormDataByType(prev => ({
-        ...prev,
-        [qrType]: qrData,
-      }));
-
+      setFormDataByType(prev => ({ ...prev, [qrType]: qrData }));
       setQrType(newType);
       setQrData(formDataByType[newType] || (newType === 'CONTACT' || newType === 'WIFI' ? {} : ''));
       setError('');
-
-      Animated.timing(fadeAnim, {
+      Animated.timing(fieldsFade, {
         toValue: 1,
-        duration: 250,
+        duration: 200,
         easing: Easing.out(Easing.ease),
         useNativeDriver: true,
       }).start();
@@ -115,7 +102,7 @@ export const QRCodeForm: React.FC<Props> = ({ mode, initialData, onSuccess }) =>
   };
 
   const validate = (): string => {
-    let value = typeof qrData === 'string' ? qrData : qrData.value;
+    let value = typeof qrData === 'string' ? qrData : qrData?.value;
     switch (qrType) {
       case 'PHONE':
       case 'WHATSAPP':
@@ -132,10 +119,10 @@ export const QRCodeForm: React.FC<Props> = ({ mode, initialData, onSuccess }) =>
         if (!value || value.length < 1) return 'Текст не может быть пустым';
         break;
       case 'CONTACT':
-        if (!qrData.name || !qrData.phone) return 'Имя и телефон обязательны';
+        if (!qrData?.name || !qrData?.phone) return 'Имя и телефон обязательны';
         break;
       case 'WIFI':
-        if (!qrData.ssid || !qrData.password) return 'SSID и пароль обязательны';
+        if (!qrData?.ssid || !qrData?.password) return 'SSID и пароль обязательны';
         break;
       case 'TELEGRAM':
         if (!/^@?[a-zA-Z0-9_]{5,}$/.test(value)) return 'Некорректный Telegram username';
@@ -151,21 +138,11 @@ export const QRCodeForm: React.FC<Props> = ({ mode, initialData, onSuccess }) =>
       setError(validationError);
       return;
     }
-
     setSubmitting(true);
-
-    let payload = {
-      qrType,
-      description,
-      qrData,
-    };
-
-    if (
-      ['PHONE', 'EMAIL', 'URL', 'TEXT', 'WHATSAPP', 'TELEGRAM', 'WIFI'].includes(qrType)
-    ) {
-      payload.qrData = typeof qrData === 'string' ? qrData : qrData.value;
+    let payload: any = { qrType, description, qrData };
+    if (['PHONE', 'EMAIL', 'URL', 'TEXT', 'WHATSAPP', 'TELEGRAM', 'WIFI'].includes(qrType)) {
+      payload.qrData = typeof qrData === 'string' ? qrData : qrData?.value;
     }
-
     try {
       if (mode === 'edit' && initialData?.id) {
         await updateQRCode(initialData.id, payload.qrType, payload.qrData, payload.description);
@@ -174,64 +151,32 @@ export const QRCodeForm: React.FC<Props> = ({ mode, initialData, onSuccess }) =>
         await createQRCode(payload.qrType, payload.qrData, payload.description);
         Alert.alert('Успешно', 'QR-код создан');
       }
-
       onSuccess?.();
-    } catch (e) {
+    } catch {
       Alert.alert('Ошибка', 'Не удалось сохранить QR-код');
     } finally {
       setSubmitting(false);
     }
   };
 
-  // Обработка маски для телефона и WhatsApp
   const handlePhoneChange = (masked: string, raw: string) => {
-    if (raw.length <= 11) {
-      setQrData(masked);
-    }
+    if (raw.length <= 11) setQrData(masked);
   };
-
-  // Обработка изменения телефона в CONTACT
   const handleContactPhoneChange = (masked: string, raw: string) => {
-    if (raw.length <= 11) {
-      setQrData((prev: any) => ({ ...prev, phone: masked }));
-    }
+    if (raw.length <= 11) setQrData((prev: any) => ({ ...prev, phone: masked }));
   };
-
-  // Обработка изменения telegram с добавлением @ по умолчанию
   const handleTelegramChange = (text: string) => {
-    if (!text.startsWith('@')) {
-      text = '@' + text;
-    }
+    if (!text.startsWith('@')) text = '@' + text;
     setQrData(text);
   };
 
-  // Фокус на следующий инпут при нажатии Enter
   const focusNextInput = (index: number) => {
-    if (inputRefs.current[index + 1]) {
-      inputRefs.current[index + 1]?.focus();
-    }
+    inputRefs.current[index + 1]?.focus?.();
   };
 
-  // Скролл к активному инпуту при фокусе (через KeyboardAwareScrollView)
   const scrollToInput = (index: number) => {
-    if (!inputRefs.current[index] || !scrollViewRef.current) return;
-    const input = inputRefs.current[index];
-    const scrollView = scrollViewRef.current;
-
-    const node = findNodeHandle(input);
-    if (!node) return;
-
-    const scrollViewNode = findNodeHandle(scrollView);
-    if (scrollViewNode !== null) {
-      UIManager.measureLayout(
-        node,
-        scrollViewNode,
-        () => {},
-        (x, y, width, height) => {
-          scrollView.scrollToPosition(0, y - 20, true);
-        }
-      );
-    }
+    // KeyboardAwareScrollView сам смещает, подталкиваем позицию слегка
+    setTimeout(() => scrollViewRef.current?.scrollToPosition(0, Math.max(0, index * 56 - 24), true), 80);
   };
 
   const renderFields = () => {
@@ -244,55 +189,49 @@ export const QRCodeForm: React.FC<Props> = ({ mode, initialData, onSuccess }) =>
         company: 'Компания',
         note: 'Примечание',
       };
-
       const fields = ['name', 'phone', 'email', 'url', 'company', 'note'];
-
       return (
         <>
-          {fields.map((field, idx) => {
-            if (field === 'phone') {
-              return (
-                <View key={field} style={[styles.inputWrapper, { borderColor }]}>
-                  <MaskedTextInput
-                    ref={el => {
-                      inputRefs.current[idx] = el;
-                    }}
-                    mask="+7(999) 999-99-99"
-                    onChangeText={handleContactPhoneChange}
-                    value={qrData.phone || ''}
-                    keyboardType="phone-pad"
-                    placeholder={placeholders.phone}
-                    style={[styles.input, { color: textColor }]}
-                    placeholderTextColor={textColor + '99'}
-                    maxLength={17}
-                    autoCapitalize="none"
-                    returnKeyType={idx === fields.length - 1 ? 'done' : 'next'}
-                    onSubmitEditing={() => focusNextInput(idx)}
-                    onFocus={() => scrollToInput(idx)}
-                  />
-                </View>
-              );
-            }
-            return (
-              <View key={field} style={[styles.inputWrapper, { borderColor }]}>
-                <TextInput
-                  ref={el => {
-                    inputRefs.current[idx] = el;
-                  }}
-                  placeholder={placeholders[field]}
-                  value={qrData[field] || ''}
-                  onChangeText={text => setQrData((prev: any) => ({ ...prev, [field]: text }))}
-                  style={[styles.input, { color: textColor }]}
-                  placeholderTextColor={textColor + '99'}
-                  keyboardType={field === 'email' ? 'email-address' : 'default'}
-                  autoCapitalize="none"
-                  returnKeyType={idx === fields.length - 1 ? 'done' : 'next'}
-                  onSubmitEditing={() => focusNextInput(idx)}
-                  onFocus={() => scrollToInput(idx)}
-                />
-              </View>
-            );
-          })}
+          {fields.map((field, idx) =>
+            field === 'phone' ? (
+              <MaskedTextInput
+                key={field}
+                ref={el => {
+                  // @ts-ignore lib types
+                  inputRefs.current[idx] = el as any;
+                }}
+                mask="+7(999) 999-99-99"
+                onChangeText={handleContactPhoneChange}
+                value={qrData?.phone || ''}
+                keyboardType="phone-pad"
+                placeholder={placeholders.phone}
+                style={[styles.input, { color: textColor, borderColor }]}
+                placeholderTextColor={textColor + '99'}
+                maxLength={17}
+                autoCapitalize="none"
+                returnKeyType={idx === fields.length - 1 ? 'done' : 'next'}
+                onSubmitEditing={() => focusNextInput(idx)}
+                onFocus={() => scrollToInput(idx)}
+              />
+            ) : (
+              <TextInput
+                key={field}
+                ref={el => {
+                  inputRefs.current[idx] = el;
+                }}
+                placeholder={placeholders[field]}
+                value={qrData?.[field] || ''}
+                onChangeText={txt => setQrData((prev: any) => ({ ...prev, [field]: txt }))}
+                style={[styles.input, { color: textColor, borderColor }]}
+                placeholderTextColor={textColor + '99'}
+                keyboardType={field === 'email' ? 'email-address' : 'default'}
+                autoCapitalize="none"
+                returnKeyType={idx === fields.length - 1 ? 'done' : 'next'}
+                onSubmitEditing={() => focusNextInput(idx)}
+                onFocus={() => scrollToInput(idx)}
+              />
+            )
+          )}
         </>
       );
     }
@@ -300,254 +239,275 @@ export const QRCodeForm: React.FC<Props> = ({ mode, initialData, onSuccess }) =>
     if (qrType === 'WIFI') {
       return (
         <>
-          <View style={[styles.inputWrapper, { borderColor }]}>
-            <TextInput
-              placeholder="SSID"
-              value={qrData.ssid || ''}
-              onChangeText={text => setQrData((prev: any) => ({ ...prev, ssid: text }))}
-              style={[styles.input, { color: textColor }]}
-              placeholderTextColor={textColor + '99'}
-              autoCapitalize="none"
-              onFocus={() => scrollToInput(0)}
-            />
-          </View>
-          <View style={[styles.inputWrapper, { borderColor }]}>
-            <TextInput
-              placeholder="Пароль"
-              value={qrData.password || ''}
-              onChangeText={text => setQrData((prev: any) => ({ ...prev, password: text }))}
-              style={[styles.input, { color: textColor }]}
-              placeholderTextColor={textColor + '99'}
-              secureTextEntry
-              autoCapitalize="none"
-              onFocus={() => scrollToInput(1)}
-            />
-          </View>
+          <TextInput
+            ref={el => {
+              inputRefs.current[0] = el;
+            }}
+            placeholder="SSID"
+            value={qrData?.ssid || ''}
+            onChangeText={txt => setQrData((prev: any) => ({ ...prev, ssid: txt }))}
+            style={[styles.input, { color: textColor, borderColor }]}
+            placeholderTextColor={textColor + '99'}
+            autoCapitalize="none"
+            onFocus={() => scrollToInput(0)}
+          />
+          <TextInput
+            ref={el => {
+              inputRefs.current[1] = el;
+            }}
+            placeholder="Пароль"
+            value={qrData?.password || ''}
+            onChangeText={txt => setQrData((prev: any) => ({ ...prev, password: txt }))}
+            style={[styles.input, { color: textColor, borderColor }]}
+            placeholderTextColor={textColor + '99'}
+            secureTextEntry
+            autoCapitalize="none"
+            onFocus={() => scrollToInput(1)}
+          />
         </>
       );
     }
 
     if (qrType === 'PHONE' || qrType === 'WHATSAPP') {
       return (
-        <View style={[styles.inputWrapper, { borderColor }]}>
-          <MaskedTextInput
-            mask="+7(999) 999-99-99"
-            onChangeText={handlePhoneChange}
-            value={qrData}
-            keyboardType="phone-pad"
-            placeholder={qrTypes.find(t => t.key === qrType)?.placeholder || 'Введите номер'}
-            style={[styles.input, { color: textColor }]}
-            placeholderTextColor={textColor + '99'}
-            maxLength={17}
-            autoCapitalize="none"
-            returnKeyType="done"
-            onSubmitEditing={() => {}}
-            onFocus={() => scrollToInput(0)}
-            ref={el => {
-              inputRefs.current[0] = el;
-            }}
-          />
-        </View>
+        <MaskedTextInput
+          ref={el => {
+            // @ts-ignore
+            inputRefs.current[0] = el as any;
+          }}
+          mask="+7(999) 999-99-99"
+          onChangeText={handlePhoneChange}
+          value={qrData || ''}
+          keyboardType="phone-pad"
+          placeholder={qrTypes.find(t => t.key === qrType)?.placeholder || 'Введите номер'}
+          style={[styles.input, { color: textColor, borderColor }]}
+          placeholderTextColor={textColor + '99'}
+          maxLength={17}
+          autoCapitalize="none"
+          returnKeyType="done"
+          onSubmitEditing={() => {}}
+          onFocus={() => scrollToInput(0)}
+        />
       );
     }
 
     if (qrType === 'TELEGRAM') {
       return (
-        <View style={[styles.inputWrapper, { borderColor }]}>
-          <TextInput
-            placeholder={qrTypes.find(t => t.key === qrType)?.placeholder || '@username'}
-            value={typeof qrData === 'string' ? qrData : ''}
-            onChangeText={handleTelegramChange}
-            style={[styles.input, { color: textColor }]}
-            placeholderTextColor={textColor + '99'}
-            autoCapitalize="none"
-            returnKeyType="done"
-            onSubmitEditing={() => {}}
-            onFocus={() => scrollToInput(0)}
-            ref={el => {
-              inputRefs.current[0] = el;
-            }}
-          />
-        </View>
-      );
-    }
-
-    return (
-      <View style={[styles.inputWrapper, { borderColor }]}>
         <TextInput
-          placeholder={qrTypes.find(t => t.key === qrType)?.placeholder || 'Введите данные'}
-          value={typeof qrData === 'string' ? qrData : qrData.value || ''}
-          onChangeText={text => setQrData(typeof qrData === 'string' ? text : { value: text })}
-          style={[styles.input, { color: textColor }]}
+          ref={el => {
+            inputRefs.current[0] = el;
+          }}
+          placeholder={qrTypes.find(t => t.key === qrType)?.placeholder || '@username'}
+          value={typeof qrData === 'string' ? qrData : ''}
+          onChangeText={handleTelegramChange}
+          style={[styles.input, { color: textColor, borderColor }]}
           placeholderTextColor={textColor + '99'}
           autoCapitalize="none"
           returnKeyType="done"
           onSubmitEditing={() => {}}
           onFocus={() => scrollToInput(0)}
-          ref={el => {
-            inputRefs.current[0] = el;
-          }}
         />
-      </View>
+      );
+    }
+
+    return (
+      <TextInput
+        ref={el => {
+          inputRefs.current[0] = el;
+        }}
+        placeholder={qrTypes.find(t => t.key === qrType)?.placeholder || 'Введите данные'}
+        value={typeof qrData === 'string' ? qrData : qrData?.value || ''}
+        onChangeText={txt => setQrData(typeof qrData === 'string' ? txt : { value: txt })}
+        style={[styles.input, { color: textColor, borderColor }]}
+        placeholderTextColor={textColor + '99'}
+        autoCapitalize="none"
+        returnKeyType="done"
+        onSubmitEditing={() => {}}
+        onFocus={() => scrollToInput(0)}
+      />
     );
   };
 
-  if (loading) {
-    return (
-      <View style={[styles.loading, { backgroundColor: bgColor }]}>
-        <ActivityIndicator size="large" color={primaryColor} />
-        <Text style={[styles.loadingText, { color: textColor }]}>
-          {mode === 'edit' ? 'Загрузка данных...' : 'Загрузка формы...'}
-        </Text>
-      </View>
-    );
-  }
-
   return (
-    <View style={{ flex: 1, backgroundColor: 'rgba(255,255,255,0.05)' }}>
-      <KeyboardAwareScrollView
-        ref={scrollViewRef}
-        enableOnAndroid={true}
-        keyboardShouldPersistTaps="handled"
-        extraScrollHeight={Platform.OS === 'ios' ? 20 : 120}
-        contentContainerStyle={{ paddingBottom: 40, paddingHorizontal: 16 }}
-      >
-        <Text style={[styles.label, { color: textColor }]}>Тип QR-кода</Text>
-        <View style={styles.typeSelectorWrapper}>
-          {qrTypes.map(({ key, label, color }) => {
-            const isSelected = qrType === key;
-            return (
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 0}
+    >
+      <View style={[styles.container, { backgroundColor: bgColor }]}>
+        {/* Статус сверху */}
+        <View style={[styles.modeBadge, { borderColor, backgroundColor: primaryColor + '1A' }]}>
+          <View style={[styles.modeDot, { backgroundColor: mode === 'edit' ? '#E67E22' : '#2ECC71' }]} />
+          <Text style={[styles.modeText, { color: textColor }]}>
+            {mode === 'edit' ? 'Редактирование QR-кода' : 'Создание QR-кода'}
+          </Text>
+        </View>
+
+        {/* Короткий заголовок */}
+        <Text style={[styles.title, { color: textColor }]}>Параметры QR-кода</Text>
+
+        {/* Описание */}
+        <TextInput
+          placeholder="Описание (необязательно)"
+          value={description}
+          onChangeText={setDescription}
+          style={[styles.input, { color: textColor, borderColor }]}
+          placeholderTextColor={textColor + '99'}
+        />
+
+        {/* Выбор типа QR (компактные чипсы, не растягиваются по высоте) */}
+        <View style={styles.typeRow}>
+          <KeyboardAwareScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.typeSelector}
+            enableOnAndroid
+            extraScrollHeight={0}
+          >
+            {qrTypes.map(t => (
               <TouchableOpacity
-                key={key}
+                key={t.key}
                 style={[
                   styles.typeButton,
                   {
-                    backgroundColor: isSelected ? color : '#ddd',
-                    borderColor: isSelected ? '#666' : '#ccc',
+                    backgroundColor: qrType === t.key ? primaryColor : t.color,
+                    borderColor: qrType === t.key ? primaryColor : borderColor,
                   },
                 ]}
-                onPress={() => onQrTypeChange(key)}
-                activeOpacity={0.7}
+                onPress={() => onQrTypeChange(t.key)}
+                activeOpacity={0.85}
               >
-                <Animated.Text
+                <Text
                   style={[
-                    styles.typeButtonText,
-                    { color: isSelected ? '#222' : '#666' },
-                    {
-                      opacity: fadeAnim,
-                      transform: [
-                        {
-                          scale: fadeAnim.interpolate({
-                            inputRange: [0, 1],
-                            outputRange: [0.95, 1],
-                          }),
-                        },
-                      ],
-                    },
+                    styles.typeButtonLabel,
+                    { color: qrType === t.key ? '#fff' : textColor },
                   ]}
                 >
-                  {label}
-                </Animated.Text>
+                  {t.label}
+                </Text>
               </TouchableOpacity>
-            );
-          })}
+            ))}
+          </KeyboardAwareScrollView>
         </View>
 
-        <Text style={[styles.label, { color: textColor }]}>Описание</Text>
-        <View style={[styles.inputWrapper, { borderColor }]}>
-          <TextInput
-            placeholder="Описание"
-            value={description}
-            onChangeText={setDescription}
-            style={[styles.input, { color: textColor }]}
-            placeholderTextColor={textColor + '99'}
-            onFocus={() => scrollToInput(1000)} // Можно убрать или оставить — не критично
-          />
-        </View>
+        {/* Поля (только они исчезают/появляются) */}
+        <Animated.View style={{ opacity: fieldsFade, flexGrow: 1 }}>
+          <KeyboardAwareScrollView
+            ref={scrollViewRef}
+            enableAutomaticScroll
+            extraScrollHeight={96}
+            enableOnAndroid
+            keyboardOpeningTime={100}
+            contentContainerStyle={{ paddingBottom: 12 }}
+          >
+            {renderFields()}
+          </KeyboardAwareScrollView>
 
-        <Text style={[styles.label, { color: textColor }]}>Данные QR-кода</Text>
-        <Animated.View style={{ opacity: fadeAnim }}>{renderFields()}</Animated.View>
+          {error ? <Text style={[styles.error, { color: '#E74C3C' }]}>{error}</Text> : null}
+        </Animated.View>
 
-        {!!error && <Text style={styles.errorText}>{error}</Text>}
-
+        {/* Кнопка — вне анимированного блока */}
         <TouchableOpacity
-          activeOpacity={0.8}
-          style={[styles.submitButton, { backgroundColor: primaryColor }]}
+          style={[
+            styles.submitButton,
+            { backgroundColor: submitting ? borderColor : primaryColor },
+          ]}
           onPress={handleSubmit}
           disabled={submitting}
         >
           {submitting ? (
             <ActivityIndicator color="#fff" />
           ) : (
-            <Text style={styles.submitButtonText}>{mode === 'edit' ? 'Обновить QR' : 'Создать QR'}</Text>
+            <Text style={styles.submitButtonLabel}>
+              {mode === 'edit' ? 'Сохранить' : 'Создать'}
+            </Text>
           )}
         </TouchableOpacity>
-      </KeyboardAwareScrollView>
-    </View>
+      </View>
+    </KeyboardAvoidingView>
   );
 };
 
 const styles = StyleSheet.create({
-  label: {
-    fontSize: 16,
-    marginBottom: 8,
+  container: {
+    flex: 1,
+    paddingTop: 12,
+    paddingHorizontal: 16,
+    gap: 8,
+  },
+
+  // Статус
+  modeBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1,
+    marginBottom: 4,
+  },
+  modeDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 8,
+  },
+  modeText: {
+    fontSize: 13,
     fontWeight: '600',
   },
-  typeSelectorWrapper: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginBottom: 20,
-    justifyContent: 'space-between',
+
+  title: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+
+  // Ряд чипсов
+  typeRow: {
+    height: 44,               // фиксированная компактная высота ряда
+    marginBottom: 6,
+  },
+  typeSelector: {
+    paddingHorizontal: 2,
+    alignItems: 'center',
   },
   typeButton: {
-    paddingVertical: 8,
+    height: 32,               // компактная высота чипса
     paddingHorizontal: 12,
-    borderRadius: 10,
-    marginBottom: 10,
+    borderRadius: 16,
+    marginRight: 8,
     borderWidth: 1,
-    minWidth: 100,
-    alignItems: 'center',
+    justifyContent: 'center',
   },
-  typeButtonText: {
+  typeButtonLabel: {
+    fontSize: 13,
     fontWeight: '600',
   },
-  inputWrapper: {
-    borderWidth: 1,
-    borderRadius: 10,
-    marginBottom: 15,
-    paddingHorizontal: 12,
-    paddingVertical: Platform.OS === 'ios' ? 12 : 8,
-  },
+
   input: {
-    fontSize: 16,
-    padding: 0,
-    margin: 0,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 10,
+    fontSize: 14,
   },
-  errorText: {
-    color: 'red',
-    fontWeight: '600',
-    marginBottom: 15,
-    textAlign: 'center',
+  error: {
+    marginTop: 6,
+    marginBottom: 2,
   },
   submitButton: {
-    borderRadius: 10,
+    marginTop: 8,
     paddingVertical: 14,
-    marginTop: 10,
-    marginBottom: 40,
+    borderRadius: 20,
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  submitButtonText: {
+  submitButtonLabel: {
+    color: '#fff',
     fontSize: 16,
     fontWeight: '700',
-    color: '#fff',
-  },
-  loading: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    marginTop: 15,
-    fontSize: 16,
   },
 });

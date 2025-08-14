@@ -22,21 +22,30 @@ export default function QRCodeFormScreen() {
 
   const isNew = !id || id === 'new';
 
-  // Для анимации
+  // Анимации появления
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const translateAnim = useRef(new Animated.Value(20)).current;
 
   useEffect(() => {
+    let isMounted = true;
     if (!isNew && id) {
       setLoading(true);
       getQRCodeById(id as string)
-        .then((data) => setInitialData(data))
-        .catch(() => {
-          Alert.alert('Ошибка', 'Не удалось загрузить данные QR-кода');
-          router.back();
+        .then((data) => {
+          if (isMounted) setInitialData(data);
         })
-        .finally(() => setLoading(false));
+        .catch(() => {
+          Alert.alert('Ошибка', 'Не удалось загрузить данные QR-кода', [
+            { text: 'OK', onPress: () => router.back() },
+          ]);
+        })
+        .finally(() => {
+          if (isMounted) setLoading(false);
+        });
     }
+    return () => {
+      isMounted = false;
+    };
   }, [id]);
 
   useEffect(() => {
@@ -44,7 +53,7 @@ export default function QRCodeFormScreen() {
       Animated.parallel([
         Animated.timing(fadeAnim, {
           toValue: 1,
-          duration: 400,
+          duration: 350,
           easing: Easing.out(Easing.ease),
           useNativeDriver: true,
         }),
@@ -59,8 +68,9 @@ export default function QRCodeFormScreen() {
   }, [loading]);
 
   const handleSuccess = () => {
-    Alert.alert('Успешно', isNew ? 'QR код создан' : 'QR код обновлён');
-    router.back();
+    Alert.alert('Успешно', isNew ? 'QR код создан' : 'QR код обновлён', [
+      { text: 'OK', onPress: () => router.back() },
+    ]);
   };
 
   if (loading) {
@@ -68,7 +78,7 @@ export default function QRCodeFormScreen() {
       <View style={styles.loading}>
         <ActivityIndicator size="large" color="#4A90E2" />
         <Text style={styles.loadingText}>
-          {isNew ? 'Загружаем форму...' : 'Загружаем данные QR-кода...'}
+          {isNew ? 'Подготавливаем форму...' : 'Загружаем QR-код...'}
         </Text>
       </View>
     );
@@ -78,13 +88,13 @@ export default function QRCodeFormScreen() {
     <View style={styles.screen}>
       <Animated.View
         style={[
-          styles.container,
+          styles.card,
           { opacity: fadeAnim, transform: [{ translateY: translateAnim }] },
         ]}
       >
         <QRCodeForm
           mode={isNew ? 'create' : 'edit'}
-          initialData={isNew ? undefined : initialData ?? undefined}
+          initialData={!isNew && initialData ? initialData : undefined}
           onSuccess={handleSuccess}
         />
       </Animated.View>
@@ -95,18 +105,18 @@ export default function QRCodeFormScreen() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: '#F9FAFB',
+    backgroundColor: '#F3F4F6',
     paddingHorizontal: 16,
     paddingVertical: 12,
   },
-  container: {
+  card: {
     flex: 1,
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    borderRadius: 20,
     padding: 16,
     shadowColor: '#000',
     shadowOpacity: 0.08,
-    shadowRadius: 8,
+    shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
     elevation: 4,
   },
@@ -114,11 +124,12 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#F9FAFB',
+    backgroundColor: '#F3F4F6',
   },
   loadingText: {
     marginTop: 12,
     fontSize: 16,
+    fontWeight: '500',
     color: '#6B7280',
   },
 });
