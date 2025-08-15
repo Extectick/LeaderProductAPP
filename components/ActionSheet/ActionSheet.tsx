@@ -1,216 +1,224 @@
 import { Ionicons } from '@expo/vector-icons';
-import React, { useEffect, useRef } from 'react';
+import React, { useCallback, useEffect } from 'react';
 import {
-  Animated,
-  Easing,
+  BackHandler,
   Platform,
   Pressable,
   StyleSheet,
   Text,
-  TouchableWithoutFeedback,
-  View
+  View,
 } from 'react-native';
-import { ActionSheetProps } from './types';
+import Animated, {
+  FadeInDown,
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import type { ActionSheetProps } from './types';
+
+// ⚠️ НЕ импортируем RNGH здесь (ломает web).
+// Динамически подключим его только на native:
+const isWeb = Platform.OS === 'web';
+let GestureDetector: React.ComponentType<any> = ({ children }: any) => <>{children}</>;
+let createPan: any = null;
+
+if (!isWeb) {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const RNGH = require('react-native-gesture-handler');
+  GestureDetector = RNGH.GestureDetector;
+  createPan = () => RNGH.Gesture.Pan();
+}
+
+const SPRING = { mass: 0.5, damping: 18, stiffness: 220 };
+const BACKDROP_IN = 220;
+const BACKDROP_OUT = 160;
 
 const ActionSheet: React.FC<ActionSheetProps> = ({ visible, buttons, onClose }) => {
-  const slideAnim = useRef(new Animated.Value(0)).current;
-  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const insets = useSafeAreaInsets();
+  const progress = useSharedValue(0);
+  const translateY = useSharedValue(0);
+  const sheetHeight = useSharedValue(420);
 
   useEffect(() => {
     if (visible) {
-      Animated.parallel([
-        Animated.timing(fadeAnim, {
-          toValue: 1,
-          duration: 200,
-          useNativeDriver: true,
-        }),
-        Animated.spring(slideAnim, {
-          toValue: 1,
-          bounciness: 6,
-          speed: 12,
-          useNativeDriver: true,
-        })
-      ]).start();
+      translateY.value = sheetHeight.value;
+      progress.value = withTiming(1, { duration: BACKDROP_IN });
+      translateY.value = withSpring(0, SPRING);
     } else {
-      Animated.parallel([
-        Animated.timing(fadeAnim, {
-          toValue: 0,
-          duration: 150,
-          useNativeDriver: true,
-        }),
-        Animated.timing(slideAnim, {
-          toValue: 0,
-          duration: 200,
-          easing: Easing.out(Easing.ease),
-          useNativeDriver: true,
-        })
-      ]).start();
+      progress.value = withTiming(0, { duration: BACKDROP_OUT });
+      translateY.value = withTiming(sheetHeight.value, { duration: 220 });
     }
   }, [visible]);
 
-  const translateY = slideAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [300, 0]
-  });
+  const closeSheet = useCallback(() => onClose?.(), [onClose]);
+
+  // Пан-жест только на native
+  const pan = !isWeb
+    ? createPan()
+        .onUpdate((e: any) => {
+          'worklet';
+          translateY.value = Math.max(0, e.translationY);
+        })
+        .onEnd((e: any) => {
+          'worklet';
+          const shouldClose =
+            e.velocityY > 900 || translateY.value > sheetHeight.value * 0.25;
+          if (shouldClose) {
+            translateY.value = withTiming(
+              sheetHeight.value,
+              { duration: 200 },
+              (finished) => {
+                if (finished) {
+                  runOnJS(closeSheet)();
+                }
+              }
+            );
+            progress.value = withTiming(0, { duration: BACKDROP_OUT });
+          } else {
+            translateY.value = withSpring(0, SPRING);
+          }
+        })
+    : undefined;
+
+  useEffect(() => {
+    if (!visible || isWeb) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      closeSheet();
+      return true;
+    });
+    return () => sub.remove();
+  }, [visible, closeSheet]);
+
+  const backdropStyle = useAnimatedStyle(() => ({
+    opacity: withTiming(progress.value, { duration: visible ? BACKDROP_IN : BACKDROP_OUT }),
+  }));
+  const sheetStyle = useAnimatedStyle(() => ({ transform: [{ translateY: translateY.value }] }));
+
+  const ButtonItem = ({
+    title, icon, destructive, cancel, onPress,
+  }: { title: string; icon?: string; destructive?: boolean; cancel?: boolean; onPress?: () => void }) => {
+    const s = useSharedValue(1);
+    const st = useAnimatedStyle(() => ({ transform: [{ scale: s.value }] }));
+    const onIn = () => { s.value = withTiming(0.97, { duration: 80 }); };
+    const onOut = () => { s.value = withTiming(1, { duration: 120 }); };
+    const press = () => { onPress?.(); closeSheet(); };
+
+    return (
+      <Animated.View style={[st, { marginTop: cancel ? 8 : 0 }]}>
+        <Pressable
+          onPressIn={onIn}
+          onPressOut={onOut}
+          onPress={press}
+          android_ripple={{ color: '#e5e5e5' }}
+          style={[
+            styles.button,
+            cancel && styles.cancelButton,
+            destructive && styles.destructiveButton,
+          ]}
+        >
+          {!!icon && !cancel && (
+            <Ionicons name={icon as any} size={20} color={destructive ? '#FF3B30' : '#007AFF'} style={styles.icon} />
+          )}
+          <Text
+            style={[
+              styles.buttonText,
+              cancel && styles.cancelText,
+              destructive && styles.destructiveText,
+            ]}
+            ellipsizeMode="clip"
+            allowFontScaling={false}
+            {...(Platform.OS === 'android'
+              ? { includeFontPadding: true as any, textBreakStrategy: 'simple' as any }
+              : {})}
+          >
+            {title}<Text style={{ opacity: 0 }}> </Text>
+          </Text>
+        </Pressable>
+      </Animated.View>
+    );
+  };
 
   if (!visible) return null;
 
-  return (
-    <TouchableWithoutFeedback onPress={onClose}>
-      <View style={styles.overlay}>
-        <Animated.View style={[styles.background, { opacity: fadeAnim }]} />
-
-        <TouchableWithoutFeedback>
-          <Animated.View
-            style={[
-              styles.container,
-              { transform: [{ translateY }] }
-            ]}
-          >
-            {buttons.map((button, index) => (
-              <AnimatedButton
-                key={index}
-                title={button.title}
-                icon={button.icon}
-                destructive={button.destructive}
-                onPress={() => {
-                  button.onPress();
-                  onClose();
-                }}
-              />
-            ))}
-
-            <AnimatedButton
-              title="Отмена"
-              onPress={onClose}
-              cancel
-            />
-          </Animated.View>
-        </TouchableWithoutFeedback>
-      </View>
-    </TouchableWithoutFeedback>
-  );
-};
-
-// Отдельный компонент кнопки с анимацией при нажатии
-const AnimatedButton = ({ title, icon, destructive, cancel, onPress }: any) => {
-  const scale = useRef(new Animated.Value(1)).current;
-
-  const handlePressIn = () => {
-    Animated.spring(scale, {
-      toValue: 0.97,
-      useNativeDriver: true,
-      speed: 40,
-      bounciness: 0
-    }).start();
-  };
-
-  const handlePressOut = () => {
-    Animated.spring(scale, {
-      toValue: 1,
-      useNativeDriver: true,
-      speed: 40,
-      bounciness: 4
-    }).start();
-  };
+  const SheetBody = ({ children }: any) =>
+    isWeb ? <View>{children}</View> : <GestureDetector gesture={pan}>{children}</GestureDetector>;
 
   return (
-    <Animated.View style={{ transform: [{ scale }], marginTop: cancel ? 8 : 0 }}>
-      <Pressable
-        style={({ pressed }) => [
-          styles.button,
-          destructive && styles.destructiveButton,
-          cancel && styles.cancelButton,
-          pressed && styles.pressedButton
-        ]}
-        onPress={onPress}
-        onPressIn={handlePressIn}
-        onPressOut={handlePressOut}
-      >
-        {icon && !cancel && (
-          <Ionicons
-            name={icon}
-            size={24}
-            color={destructive ? '#FF3B30' : '#007AFF'}
-            style={styles.icon}
-          />
-        )}
-        <Text
-          style={[
-            styles.buttonText,
-            destructive && styles.destructiveText,
-            cancel && styles.cancelText
-          ]}
-          numberOfLines={1}
-          ellipsizeMode="tail"
-        >
-          {title}
-        </Text>
+    <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+      <Pressable style={styles.overlay} onPress={closeSheet}>
+        <Animated.View style={[styles.backdrop, backdropStyle]} />
       </Pressable>
-    </Animated.View>
+
+      <SheetBody>
+        <Animated.View
+          style={[
+            styles.sheetWrap,
+            { paddingBottom: Math.max(insets.bottom, 12) },
+            sheetStyle,
+          ]}
+          onLayout={(e) => {
+            const h = e.nativeEvent.layout.height;
+            sheetHeight.value = h + 24;
+            if (progress.value === 0) {
+              translateY.value = h + 24;
+              progress.value = withTiming(1, { duration: BACKDROP_IN });
+              translateY.value = withSpring(0, SPRING);
+            }
+          }}
+        >
+          <View style={styles.grabberWrap}><View style={styles.grabber} /></View>
+
+          {buttons.map((b, i) => (
+            <Animated.View key={`${b.title}-${i}`} entering={FadeInDown.delay(40 + i * 30)}>
+              <ButtonItem title={b.title} icon={b.icon} destructive={b.destructive} onPress={b.onPress} />
+            </Animated.View>
+          ))}
+
+          <Animated.View entering={FadeInDown.delay(40 + buttons.length * 30)}>
+            <ButtonItem title="Отмена" cancel onPress={closeSheet} />
+          </Animated.View>
+        </Animated.View>
+      </SheetBody>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
-  overlay: {
+  overlay: { ...StyleSheet.absoluteFillObject },
+  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
+
+  sheetWrap: {
     position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    justifyContent: 'flex-end',
-  },
-  background: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-  },
-  container: {
+    left: 0, right: 0, bottom: 0,
     backgroundColor: 'transparent',
-    padding: 16,
-    paddingBottom: Platform.select({ ios: 32, android: 16 }),
-    marginBottom: Platform.select({ ios: 0, android: 8 }),
+    paddingHorizontal: 16,
   },
+  grabberWrap: { alignItems: 'center', marginBottom: 10 },
+  grabber: { width: 40, height: 5, borderRadius: 999, backgroundColor: '#E5E7EB' },
+
   button: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 14,
     paddingHorizontal: 16,
-    borderRadius: 12,
-    backgroundColor: 'white',
-    marginBottom: 8,
+    borderRadius: 14,
+    backgroundColor: '#fff',
+    marginBottom: 10,
     shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowOffset: { width: 0, height: 2 },
-    shadowRadius: 4,
-    elevation: 2,
+    shadowOpacity: 0.08,
+    shadowOffset: { width: 0, height: 6 },
+    shadowRadius: 12,
+    elevation: 3,
   },
-  pressedButton: {
-    backgroundColor: '#f7f7f7',
-  },
-  destructiveButton: {
-    backgroundColor: '#fff5f5',
-  },
-  buttonText: {
-    fontSize: 17,
-    color: '#000',
-    flex: 1,
-    flexShrink: 1,
-  },
-  destructiveText: {
-    color: '#FF3B30',
-    fontWeight: '600',
-  },
-  icon: {
-    marginRight: 12,
-  },
-  cancelButton: {
-    backgroundColor: '#f0f0f0',
-  },
-  cancelText: {
-    fontWeight: '600',
-    fontSize: 17,
-    color: '#007AFF',
-  },
+  icon: { marginRight: 10 },
+  cancelButton: { backgroundColor: '#F3F4F6' },
+  destructiveButton: { backgroundColor: '#FFF5F5' },
+  buttonText: { fontSize: 16, color: '#111827', fontWeight: '600', flex: 1 },
+  cancelText: { color: '#007AFF' },
+  destructiveText: { color: '#FF3B30' },
 });
 
 export default ActionSheet;

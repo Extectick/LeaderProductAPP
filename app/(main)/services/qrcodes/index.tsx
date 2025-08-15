@@ -2,11 +2,11 @@
 import ActionSheet from '@/components/ActionSheet';
 import QRCodeItem from '@/components/QRcodes/QRCodeItem';
 import type { QRCodeItemType } from '@/types/qrTypes';
-import { getQRCodeById, getQRCodesList } from '@/utils/qrService';
+import { deleteQRCode, getQRCodeById, getQRCodesList } from '@/utils/qrService';
 import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router'; // ← добавили useFocusEffect
 import { Skeleton } from 'moti/skeleton';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
@@ -58,6 +58,17 @@ export default function QRCodesScreen() {
     await loadQRCodes();
   }, [loadQRCodes]);
 
+  // ← ключевое: обновляем список при возврате на экран из формы
+  useFocusEffect(
+    React.useCallback(() => {
+      if (!loading) {
+        // «тихий» рефреш без скелетона (покажется только pull-to-refresh спиннер при потягивании)
+        onRefresh();
+      }
+      return () => {};
+    }, [loading, onRefresh])
+  );
+
   const handleDeleteQR = (id: string) => {
     Alert.alert('Удаление QR кода', 'Вы уверены, что хотите удалить этот QR код?', [
       { text: 'Отмена', style: 'cancel' },
@@ -66,7 +77,8 @@ export default function QRCodesScreen() {
         style: 'destructive',
         onPress: () => {
           setQrCodes(prev => prev.filter(qr => qr.id !== id));
-          Alert.alert('Успешно', 'QR код удален');
+          deleteQRCode(id);
+          // Alert.alert('Успешно', 'QR код удален');
           setSelectedItem(null);
           setSelectedQR(null);
         },
@@ -123,9 +135,6 @@ export default function QRCodesScreen() {
   };
 
   const handleCreate = useCallback(() => {
-    // Иногда элементы «не кликаются» из‑за перекрытия бэкдропом чужого компонента.
-    // Рендерим ActionSheet только когда он реально нужен (см. ниже) и гарантируем, что
-    // у кнопки высокий zIndex.
     router.push('/(main)/services/qrcodes/form?id=new');
   }, [router]);
 
@@ -137,22 +146,19 @@ export default function QRCodesScreen() {
     return (
       <View style={[styles.container, { backgroundColor: '#fff' }]}>
         <Animated.View entering={FadeInDown.duration(250)} style={{ marginBottom: 16 }}>
-          <View style={[styles.createButton, { backgroundColor: '#007AFF' }]}
-          >
+          <View style={[styles.createButton, { backgroundColor: '#007AFF' }]}>
             <Ionicons name="add" size={24} color="#fff" />
             <Text style={styles.createButtonText}>Создать QR код</Text>
           </View>
         </Animated.View>
-        {/* Скелеты карточек */}
         <View>
           {Array.from({ length: 6 }).map((_, i) => (
-            <Animated.View key={i} entering={FadeInDown.delay(i * 60)} style={[styles.skeletonCard]}
-            >
+            <Animated.View key={i} entering={FadeInDown.delay(i * 60)} style={[styles.skeletonCard]}>
               <Skeleton height={40} width={40} radius={20} colorMode="light" />
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Skeleton height={14} width={'60%'} colorMode="light" />
                 <View style={{ height: 6 }} />
-                <Skeleton height={10} width={"40%"} colorMode="light" />
+                <Skeleton height={10} width={'40%'} colorMode="light" />
               </View>
               <Skeleton height={12} width={28} colorMode="light" />
             </Animated.View>
@@ -189,8 +195,7 @@ export default function QRCodesScreen() {
           contentContainerStyle={{ paddingBottom: 16 }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           renderItem={({ item, index }) => (
-            <Animated.View entering={FadeInDown.delay(index * 50)} layout={Layout.springify()}
-            >
+            <Animated.View entering={FadeInDown.delay(index * 50)} layout={Layout.springify()}>
               <QRCodeItem
                 item={item}
                 loading={false}
@@ -202,7 +207,6 @@ export default function QRCodesScreen() {
         />
       </Animated.View>
 
-      {/* Рендерим ActionSheet только при наличии selectedItem, чтобы исключить перекрытие кликов */}
       {selectedItem && (
         <ActionSheet
           visible={!!selectedItem}
@@ -261,10 +265,7 @@ export default function QRCodesScreen() {
 
       {selectedQR && (
         <View style={styles.detailContainer}>
-          <Pressable
-            style={styles.closeButton}
-            onPress={() => setSelectedQR(null)}
-          >
+          <Pressable style={styles.closeButton} onPress={() => setSelectedQR(null)}>
             <Ionicons name="close" size={24} color="white" />
           </Pressable>
 
@@ -274,11 +275,7 @@ export default function QRCodesScreen() {
             <Text>QR изображение не найдено</Text>
           )}
 
-          <Text
-            style={styles.detailDescription}
-            numberOfLines={3}
-            ellipsizeMode="tail"
-          >
+          <Text style={styles.detailDescription} numberOfLines={3} ellipsizeMode="tail">
             {selectedQR.description || 'Без описания'}
           </Text>
         </View>
@@ -288,86 +285,26 @@ export default function QRCodesScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    padding: 16,
-    maxWidth: 1000,
-  },
+  container: { flex: 1, padding: 16, maxWidth: 1000 },
   createButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#007AFF',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 999,
-    shadowColor: '#000',
-    shadowOpacity: 0.18,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 3,
+    flexDirection: 'row', alignItems: 'center', backgroundColor: '#007AFF',
+    paddingVertical: 12, paddingHorizontal: 16, borderRadius: 999,
+    shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 }, elevation: 3,
   },
-  createButtonText: {
-    color: 'white',
-    marginLeft: 8,
-    fontWeight: '700',
-  },
+  createButtonText: { color: 'white', marginLeft: 8, fontWeight: '700' },
   skeletonCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: '#f1f1f1',
+    flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#fff',
+    borderRadius: 12, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: '#f1f1f1',
   },
   detailContainer: {
-    marginTop: 16,
-    backgroundColor: 'white',
-    borderRadius: 16,
-    padding: 20,
-    alignItems: 'center',
-    position: 'relative',
-    elevation: 5,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
+    marginTop: 16, backgroundColor: 'white', borderRadius: 16, padding: 20, alignItems: 'center',
+    position: 'relative', elevation: 5, shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3, shadowRadius: 4,
   },
-  closeButton: {
-    position: 'absolute',
-    top: 12,
-    right: 12,
-    backgroundColor: 'red',
-    borderRadius: 20,
-    padding: 6,
-    zIndex: 10,
-  },
-  detailImage: {
-    width: 200,
-    height: 200,
-    resizeMode: 'contain',
-    marginBottom: 16,
-  },
-  detailDescription: {
-    fontSize: 10,
-    textAlign: 'center',
-    marginHorizontal: 12,
-    marginTop: 12,
-    color: 'black',
-    lineHeight: 18,
-  },
-  centered: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-  },
-  retryBtn: {
-    backgroundColor: '#007AFF',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 12,
-  },
+  closeButton: { position: 'absolute', top: 12, right: 12, backgroundColor: 'red', borderRadius: 20, padding: 6, zIndex: 10 },
+  detailImage: { width: 200, height: 200, resizeMode: 'contain', marginBottom: 16 },
+  detailDescription: { fontSize: 10, textAlign: 'center', marginHorizontal: 12, marginTop: 12, color: 'black', lineHeight: 18 },
+  centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff' },
+  retryBtn: { backgroundColor: '#007AFF', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12 },
 });

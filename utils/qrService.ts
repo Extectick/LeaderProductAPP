@@ -1,8 +1,12 @@
 // utils/qrService.ts
+import { ErrorResponse, SuccessResponse } from '@/types';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { QRCodeCache, QRCodeItem, QRCodeListResponse } from '../types/apiTypes';
 import { QRCodeItemType } from '../types/qrTypes';
 import { apiClient } from './apiClient';
+
+export type ApiResponse<T> = SuccessResponse<T> | ErrorResponse;
+// -----------------------------------------------
 
 const CACHE_KEY = 'qrCodesCache';
 const CACHE_TTL = 5 * 60 * 1000; // 5 минут
@@ -10,25 +14,43 @@ const CACHE_TTL = 5 * 60 * 1000; // 5 минут
 const SINGLE_QR_CACHE_KEY = 'singleQRCache';
 const SINGLE_QR_CACHE_TTL = 5 * 60 * 1000; // 5 минут
 
+type QRStatus = 'ACTIVE' | 'PAUSED' | 'DELETED';
+type QRType = "PHONE" | "LINK" | "EMAIL" | "TEXT" | "WHATSAPP" | "TELEGRAM" | "CONTACT" | "WIFI" | "SMS" | "GEO" | "BITCOIN"
+
+type QRPatchPayload = Partial<{
+  qrType: QRType;
+  qrData: string | Record<string, any>;
+  description: string | null;
+  status: QRStatus;
+}>;
+
 export const getQRCodesList = async (
   limit = 10,
   offset = 0,
+  status: QRStatus = 'ACTIVE',
   forceRefresh = false
 ): Promise<QRCodeListResponse> => {
-  if (!forceRefresh) {
-    const cached = await getCachedQRCodes(limit, offset);
-    if (cached) return cached;
-  }
+  // if (!forceRefresh) {
+  //   const cached = await getCachedQRCodes(limit, offset);
+  //   if (cached) return cached;
+  // }
 
-  const response = await apiClient<undefined, QRCodeListResponse>(`/qr?limit=${limit}&offset=${offset}`, {
-    method: 'GET',
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+    status,                    // ← ПЕРЕДАЁМ ЧЕРЕЗ QUERY
   });
+
+  const response = (await apiClient<undefined, QRCodeListResponse>(
+    `/qr?${params.toString()}`,
+    { method: 'GET' }          // ← БЕЗ body
+  )) as ApiResponse<QRCodeListResponse>;
 
   if (!response.ok) {
     throw new Error(response.message || 'Ошибка загрузки QR кодов');
   }
 
-  const responseData = response.data!;
+  const responseData = response.data;
   const data: QRCodeListResponse = {
     ...responseData,
     data: responseData.data.map((item: QRCodeItem) => ({
@@ -37,6 +59,7 @@ export const getQRCodesList = async (
     })),
   };
 
+  // сохраняем в кэш
   // await cacheQRCodes(data, limit, offset);
 
   return data;
@@ -86,18 +109,18 @@ async function cacheQRCodes(data: QRCodeListResponse, limit: number, offset: num
 }
 
 export const refreshQRCodes = async (limit = 10, offset = 0): Promise<QRCodeListResponse> => {
-  return getQRCodesList(limit, offset, true);
+  return getQRCodesList(limit, offset, 'ACTIVE', true);
 };
 
 export const getQRCodeById = async (id: string, forceRefresh = false): Promise<QRCodeItemType> => {
-  if (!forceRefresh) {
-    const cached = await getCachedQRCode(id);
-    if (cached) return cached;
-  }
+  // if (!forceRefresh) {
+  //   const cached = await getCachedQRCode(id);
+  //   if (cached) return cached;
+  // }
 
-  const response = await apiClient<undefined, QRCodeItemType>(`/qr/${id}`, {
+  const response = (await apiClient<undefined, QRCodeItemType>(`/qr/${id}`, {
     method: 'GET',
-  });
+  })) as ApiResponse<QRCodeItemType>;
 
   if (!response.ok) {
     throw new Error(response.message || 'Ошибка загрузки QR кода');
@@ -107,6 +130,7 @@ export const getQRCodeById = async (id: string, forceRefresh = false): Promise<Q
     throw new Error('Не удалось получить данные QR кода');
   }
 
+  // кэшируем одиночный QR
   // await cacheQRCode(response.data);
 
   return response.data;
@@ -124,7 +148,7 @@ async function getCachedQRCode(id: string): Promise<QRCodeItemType | null> {
       return null;
     }
 
-    return parsedCache.data;
+    return parsedCache.data as QRCodeItemType;
   } catch (error) {
     console.error('Ошибка чтения кэша QR кода:', error);
     return null;
@@ -143,41 +167,87 @@ async function cacheQRCode(data: QRCodeItemType): Promise<void> {
   }
 }
 
+async function invalidateCaches(id?: string) {
+  try {
+    await AsyncStorage.removeItem(CACHE_KEY);
+    if (id) {
+      await AsyncStorage.removeItem(`${SINGLE_QR_CACHE_KEY}_${id}`);
+    }
+  } catch (e) {
+    console.warn('Не удалось инвалидировать кэш', e);
+  }
+}
+
+// --- CREATE ---
 export const createQRCode = async (
-  qrType: string,
+  qrType: QRType,
   qrData: string | Record<string, any>,
   description?: string
 ): Promise<QRCodeItemType> => {
   const body = { qrType, qrData, description };
 
-  const response = await apiClient<typeof body, QRCodeItemType>('/qr', {
+  const response = (await apiClient<typeof body, QRCodeItemType>('/qr', {
     method: 'POST',
     body, // передаем объект, не JSON.stringify
-  });
+  })) as ApiResponse<QRCodeItemType>;
 
   if (!response.ok) {
     throw new Error(response.message || 'Ошибка создания QR кода');
   }
 
-  return response.data!;
+  const item = response.data;
+  // инвалидируем список + кэшируем одиночный элемент
+  await invalidateCaches(item.id);
+  // await cacheQRCode(item);
+
+  return item;
 };
 
+// --- UPDATE (partial PATCH) ---
 export const updateQRCode = async (
   id: string,
-  qrType: string,
-  qrData: string | Record<string, any>,
-  description?: string
+  patch: QRPatchPayload
 ): Promise<QRCodeItemType> => {
-  const body = { qrType, qrData, description };
+  if (
+    patch.qrType === undefined &&
+    patch.qrData === undefined &&
+    patch.description === undefined &&
+    patch.status === undefined
+  ) {
+    throw new Error('Нет полей для обновления');
+  }
 
-  const response = await apiClient<typeof body, QRCodeItemType>(`/qr/${id}`, {
-    method: 'PUT',
-    body, // передаем объект, не JSON.stringify
-  });
+  const response = (await apiClient<QRPatchPayload, QRCodeItemType>(`/qr/${id}`, {
+    method: 'PATCH',
+    body: patch, // частичный объект
+  })) as ApiResponse<QRCodeItemType>;
 
   if (!response.ok) {
     throw new Error(response.message || 'Ошибка обновления QR кода');
   }
 
-  return response.data!;
+  const item = response.data;
+  // инвалидируем список и обновляем кэш одиночного
+  await invalidateCaches(id);
+  // await cacheQRCode(item);
+
+  return item;
 };
+
+// --- sugar-хелперы для частичных обновлений ---
+export const setQRStatus = (id: string, status: QRStatus) =>
+  updateQRCode(id, { status });
+
+export const setQRDescription = (id: string, description: string | null) =>
+  updateQRCode(id, { description });
+
+export const setQRType = (id: string, qrType: QRType) =>
+  // сервер при смене типа сам пере-нормализует текущие данные
+  updateQRCode(id, { qrType });
+
+export const setQRData = (id: string, qrData: string | Record<string, any>) =>
+  updateQRCode(id, { qrData });
+
+export const deleteQRCode = (id: string) =>
+  // мягкое удаление (как на бэке): статус DELETED
+  setQRStatus(id, 'DELETED');

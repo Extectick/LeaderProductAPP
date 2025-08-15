@@ -24,7 +24,7 @@ const RU_LABELS: Record<QRType, string> = {
   WHATSAPP: 'WhatsApp',
   TELEGRAM: 'Telegram',
   CONTACT: 'Контакт',
-  WIFI: 'Wi-Fi', // обычный дефис, чтобы не было проблем с шириной глифа
+  WIFI: 'Wi-Fi',
   SMS: 'SMS',
   GEO: 'Геолокация',
   BITCOIN: 'Bitcoin',
@@ -58,10 +58,8 @@ const TYPE_COLORS: Record<QRType, string> = {
   BITCOIN: '#F7931A',
 };
 
-// отключаемые типы (будут как «скоро»)
 const DISABLED_TYPES: QRType[] = ['BITCOIN', 'SMS', 'WIFI', 'GEO', 'EMAIL'];
 
-// ======= Плейсхолдеры =======
 const PLACEHOLDERS: Partial<Record<QRType, Record<string, string>>> = {
   PHONE: { phone: '+79991234567' },
   LINK: { url: 'https://example.com' },
@@ -96,7 +94,9 @@ export type QRFormValues = {
 export interface QRCodeFormProps {
   mode: 'create' | 'edit';
   initialItem?: QRCodeItemType;
-  onSubmit: (values: QRFormValues & { qrData: string }) => Promise<boolean>;
+  onCreate?: (payload: { qrType: QRType; qrData: string | Record<string, any>; description?: string }) => Promise<void>;
+  onUpdate?: (id: string, patch: Partial<{ qrType: QRType; qrData: string | Record<string, any>; description: string | null }>) => Promise<void>;
+  onSuccess?: () => void; // <-- вот это
 }
 
 // ======= Утилиты парсинга =======
@@ -129,9 +129,7 @@ function buildVCard(v: QRFormValues) {
   const ORG = v.org ? `ORG:${v.org}` : '';
   const ADR = v.contactAddress ? `ADR;TYPE=HOME:${v.contactAddress}` : '';
   const NOTE = v.note ? `NOTE:${v.note}` : '';
-  return [
-    'BEGIN:VCARD', 'VERSION:3.0', `N:${N}`, `FN:${FN}`, ORG, TEL, EMAIL, URL, ADR, NOTE, 'END:VCARD'
-  ].filter(Boolean).join('\n');
+  return ['BEGIN:VCARD','VERSION:3.0',`N:${N}`,`FN:${FN}`,ORG,TEL,EMAIL,URL,ADR,NOTE,'END:VCARD'].filter(Boolean).join('\n');
 }
 
 function parseByType(item?: QRCodeItemType): Partial<QRFormValues> {
@@ -139,88 +137,66 @@ function parseByType(item?: QRCodeItemType): Partial<QRFormValues> {
   const t = item.qrType;
   const data = item.qrData ?? '';
   switch (t) {
-    case 'PHONE': {
-      const m = data.match(/tel:(\+?\d+)/i);
-      return { phone: m?.[1] ?? data.replace(/\D/g, '') };
-    }
+    case 'PHONE': return { phone: data.replace(/[^\d+]/g, '') };
     case 'LINK': return { url: data };
-    case 'EMAIL': {
-      const email = data.startsWith('mailto:') ? data.slice(7).split('?')[0] : '';
-      let subject = '', body = '';
-      try { const u = new URL(data); subject = u.searchParams.get('subject') ?? ''; body = u.searchParams.get('body') ?? ''; } catch {}
-      return { email, subject, body };
-    }
+    case 'EMAIL': return { email: /^mailto:/i.test(data) ? data.slice(7).split('?')[0] : data };
     case 'TEXT': return { text: data };
-    case 'WHATSAPP': {
-      let phone = data.replace(/^https?:\/\/wa\.me\//, '').split('?')[0];
-      phone = phone.replace(/\D/g, '');
-      let message = '';
-      try { const u = new URL(data); message = u.searchParams.get('text') ?? ''; } catch {}
-      return { phone, message };
-    }
-    case 'TELEGRAM': {
-      const m = data.match(/t\.me\/([^/?]+)/i);
-      return { username: m?.[1] ?? '' };
-    }
+    case 'WHATSAPP': return { phone: data.replace(/[^\d+]/g, '') };
+    case 'TELEGRAM': return { username: data.replace(/^@+/, '') };
     case 'CONTACT': return parseVCard(data);
-    case 'WIFI': {
-      const o: any = {};
-      data.replace(/^WIFI:/, '').split(';').forEach(s => {
-        const [k, v] = s.split(':');
-        if (!k || !v) return;
-        if (k === 'T') o.encryption = v; if (k === 'S') o.ssid = v; if (k === 'P') o.password = v; if (k === 'H') o.hidden = v === 'true';
-      });
-      return o;
-    }
-    case 'SMS': {
-      const m = data.match(/^SMSTO:([^:]+):?(.*)$/i);
-      return { phone: m?.[1]?.replace(/\D/g, ''), message: m?.[2] ?? '' };
-    }
-    case 'GEO': {
-      const m = data.match(/^geo:([+-]?\d+(\.\d+)?),([+-]?\d+(\.\d+)?)/i);
-      return { lat: m?.[1], lng: m?.[3] };
-    }
-    case 'BITCOIN': {
-      const raw = data.replace(/^bitcoin:/i, '');
-      const [address, qs] = raw.split('?');
-      const sp = new URLSearchParams(qs ?? '');
-      return { address, amount: sp.get('amount') ?? undefined, label: sp.get('label') ?? undefined, message: sp.get('message') ?? undefined };
-    }
+    case 'WIFI':
+    case 'SMS':
+    case 'GEO':
+    case 'BITCOIN':
+    default: return {};
   }
 }
 
-function buildQRData(t: QRType, v: QRFormValues) {
+// ======= Построение данных для БЭКа =======
+const normPhone = (val?: string) =>
+  (val ?? '').replace(/[^\d+]/g, '').replace(/\s+/g, '').replace(/(?!^)\+/g, '');
+
+function buildBackendQRData(t: QRType, v: QRFormValues): string | Record<string, any> {
   switch (t) {
-    case 'PHONE': return `tel:${v.phone?.startsWith('+') ? v.phone : `+${v.phone}`}`;
-    case 'LINK': return v.url || '';
-    case 'EMAIL': {
-      const sp = new URLSearchParams(); if (v.subject) sp.set('subject', v.subject); if (v.body) sp.set('body', v.body);
-      return `mailto:${v.email}${sp.toString() ? `?${sp.toString()}` : ''}`;
-    }
-    case 'TEXT': return v.text || '';
-    case 'WHATSAPP': {
-      const sp = new URLSearchParams(); if (v.message) sp.set('text', v.message);
-      return `https://wa.me/${v.phone}${sp.toString() ? `?${sp.toString()}` : ''}`;
-    }
-    case 'TELEGRAM': return `https://t.me/${v.username}`;
-    case 'CONTACT': return buildVCard(v);
-    case 'WIFI': return `WIFI:T:${v.encryption ?? 'WPA'};S:${v.ssid};P:${v.password ?? ''};${v.hidden ? 'H:true;' : ''};`;
-    case 'SMS': return `SMSTO:${v.phone}:${v.message ?? ''}`;
-    case 'GEO': return `geo:${v.lat},${v.lng}`;
-    case 'BITCOIN': {
-      const sp = new URLSearchParams(); if (v.amount) sp.set('amount', v.amount); if (v.label) sp.set('label', v.label); if (v.message) sp.set('message', v.message);
-      return `bitcoin:${v.address}${sp.toString() ? `?${sp.toString()}` : ''}`;
-    }
+    case 'PHONE':
+    case 'WHATSAPP':
+      return normPhone(v.phone);
+    case 'TELEGRAM':
+      return (v.username ?? '').replace(/^@+/, '');
+    case 'LINK':
+      return v.url || '';
+    case 'EMAIL':
+      return v.email || '';
+    case 'TEXT':
+      return v.text || '';
+    case 'CONTACT':
+      return {
+        firstName: v.firstname ?? '',
+        lastName: v.lastname ?? '',
+        org: v.org ?? '',
+        phone: normPhone(v.phone),
+        email: v.email ?? '',
+        url: v.website ?? '',
+        contactAddress: v.contactAddress ?? '',
+        note: v.note ?? '',
+      };
+    default:
+      return v.text || '';
   }
 }
 
-export default function QRCodeForm({ mode, initialItem, onSubmit }: QRCodeFormProps) {
-  const defaultType: QRType = initialItem?.qrType ?? 'LINK';
+function buildBackendPayload(v: QRFormValues) {
+  const t = v.qrType as QRType;
+  const qrData = buildBackendQRData(t, v);
+  const description = v.description?.trim() ? v.description : undefined;
+  return { qrType: t, qrData, description };
+}
 
-  // изолированные значения по типам (не переносятся между типами)
+export default function QRCodeForm({ mode, initialItem, onCreate, onUpdate, onSuccess }: QRCodeFormProps) {
+  const defaultType: QRType = initialItem?.qrType ?? 'LINK';
   const [perTypeValues, setPerTypeValues] = useState<Record<QRType, Partial<QRFormValues>>>({} as any);
 
-  const { control, handleSubmit, setValue, getValues, reset, watch } = useForm<QRFormValues>({
+  const { control, handleSubmit, getValues, reset, watch } = useForm<QRFormValues>({
     defaultValues: {
       description: initialItem?.description ?? '',
       qrType: defaultType,
@@ -238,16 +214,13 @@ export default function QRCodeForm({ mode, initialItem, onSubmit }: QRCodeFormPr
     }
   }, [mode, initialItem]);
 
-  // Слайдер-переход форм при смене типа
   const slideKey = useRef(0);
   useEffect(() => { slideKey.current++; }, [currentType]);
 
-  // Анимация кнопки (круглая волна)
   const [submitting, setSubmitting] = useState(false);
   const ripple = useSharedValue(0);
   const rippleStyle = useAnimatedStyle(() => ({ transform: [{ scale: ripple.value }] }));
 
-  // Смена типа: кэш текущего и загрузка сохранённого
   const onChangeType = (t: QRType) => {
     const fromType = getValues('qrType') as QRType;
     const snapshot = getValues();
@@ -257,20 +230,52 @@ export default function QRCodeForm({ mode, initialItem, onSubmit }: QRCodeFormPr
     reset({ ...base, ...(next as any) });
   };
 
-  // Сабмит
   const submit = handleSubmit(async () => {
     try {
       setSubmitting(true);
       ripple.value = 0;
       ripple.value = withTiming(1, { duration: 450 });
-      const t = getValues('qrType') as QRType;
-      const v = getValues();
-      const qrData = buildQRData(t, v);
-      const ok = await onSubmit({ ...v, qrData });
-      if (ok) Alert.alert('Успешно', mode === 'edit' ? 'QR обновлён' : 'QR создан');
-      else Alert.alert('Ошибка', 'Не удалось сохранить');
-    } catch {
-      Alert.alert('Ошибка', 'Не удалось сохранить');
+
+      const values = getValues();
+      const payload = buildBackendPayload(values);
+
+      if (mode === 'create') {
+        if (!onCreate) throw new Error('onCreate не передан');
+        await onCreate(payload);
+        onSuccess?.(); // закрыть форму после успеха
+        return;
+      }
+
+      // edit
+      if (!initialItem) throw new Error('Нет initialItem для режима edit');
+      if (!onUpdate) throw new Error('onUpdate не передан');
+
+      const patch: Partial<{ qrType: QRType; qrData: string | Record<string, any>; description: string | null }> = {};
+
+      if (payload.qrType !== initialItem.qrType) patch.qrType = payload.qrType;
+
+      const initialDesc = initialItem.description ?? '';
+      const nextDesc = values.description?.trim() ?? '';
+      if (nextDesc !== initialDesc) patch.description = nextDesc.length ? nextDesc : null;
+
+      const currentData = payload.qrData;
+      const sameData =
+        typeof currentData === 'string'
+          ? currentData === initialItem.qrData
+          : false; // CONTACT: сервер хранит VCARD, шлём всегда объект
+
+      if (!sameData) patch.qrData = currentData;
+
+      if (Object.keys(patch).length === 0) {
+        // нечего сохранять — просто закрываем
+        onSuccess?.();
+        return;
+      }
+
+      await onUpdate(initialItem.id, patch);
+      onSuccess?.(); // закрыть форму после успеха
+    } catch (e: any) {
+      Alert.alert('Ошибка', e?.message ?? 'Не удалось сохранить');
     } finally {
       setSubmitting(false);
       ripple.value = withTiming(0, { duration: 200 });
@@ -375,7 +380,7 @@ export default function QRCodeForm({ mode, initialItem, onSubmit }: QRCodeFormPr
           )}
         </Animated.View>
 
-        {/* Выбор типа (иконка+текст) */}
+        {/* Выбор типа */}
         <Animated.View entering={FadeInDown.delay(60)} style={styles.typesWrap}>
           {TYPES.map(t => {
             const disabled = DISABLED_TYPES.includes(t);
@@ -385,13 +390,12 @@ export default function QRCodeForm({ mode, initialItem, onSubmit }: QRCodeFormPr
                 onPress={() => disabled ? Alert.alert('Скоро', `${RU_LABELS[t]} будет доступен позднее`) : onChangeType(t)}
                 style={[styles.typeChip, { borderColor: TYPE_COLORS[t] },
                   currentType === t && { backgroundColor: TYPE_COLORS[t] + '22' },
-                  disabled && { opacity: 0.45 }]
-                }
+                  disabled && { opacity: 0.45 }]}
               >
                 <Ionicons name={TYPE_ICONS[t]} size={14} color={currentType === t ? TYPE_COLORS[t] : '#111'} style={{ marginRight: 3 }} />
-              <TypeLabel color={currentType === t ? TYPE_COLORS[t] : '#111'}>
-                {RU_LABELS[t] + '\u00A0'}{disabled ? ' · скоро' : ''}
-              </TypeLabel>
+                <TypeLabel color={currentType === t ? TYPE_COLORS[t] : '#111'}>
+                  {RU_LABELS[t] + '\u00A0'}{disabled ? ' · скоро' : ''}
+                </TypeLabel>
               </Pressable>
             );
           })}
@@ -402,7 +406,7 @@ export default function QRCodeForm({ mode, initialItem, onSubmit }: QRCodeFormPr
           <LabeledInput name="description" control={control} placeholder="Наименование QR" color={color} />
         </Animated.View>
 
-        {/* Слайдер полей */}
+        {/* Поля */}
         <Animated.View key={slideKey.current} entering={SlideInLeft.springify().stiffness(120)} exiting={SlideOutRight.duration(180)} style={styles.block}>
           {renderFieldsByType(currentType)}
         </Animated.View>
@@ -420,7 +424,6 @@ export default function QRCodeForm({ mode, initialItem, onSubmit }: QRCodeFormPr
                 <View style={styles.loaderDot} /><View style={[styles.loaderDot, { opacity: 0.6 }]} /><View style={[styles.loaderDot, { opacity: 0.3 }]} />
               </View>
             )}
-            {/* круглая волна */}
             <Animated.View pointerEvents="none" style={[styles.ripple, rippleStyle]} />
           </Pressable>
         </Animated.View>
@@ -458,29 +461,19 @@ function LabeledInput({ name, control, placeholder, color, error, keyboardType, 
   );
 }
 
-function TypeLabel({
-  children,
-  color,
-}: {
-  children: React.ReactNode;
-  color: string;
-}) {
+function TypeLabel({ children, color }: { children: React.ReactNode; color: string; }) {
   return (
     <Text
       style={[styles.typeChipText, { color }]}
       ellipsizeMode="clip"
       allowFontScaling={false}
-      {...(Platform.OS === 'android'
-        ? { includeFontPadding: true as any, textBreakStrategy: 'simple' as any }
-        : {})}
+      {...(Platform.OS === 'android' ? { includeFontPadding: true as any, textBreakStrategy: 'simple' as any } : {})}
     >
       {children}
-      {/* «Сторожевой» невидимый символ предотвращает срезание последнего глифа */}
       <Text style={{ opacity: 0 }}> </Text>
     </Text>
   );
 }
-
 
 const styles = StyleSheet.create({
   header: { marginBottom: 12 },
@@ -488,20 +481,8 @@ const styles = StyleSheet.create({
   badgeText: { color: '#fff', fontWeight: '600' },
   shadowId: { opacity: 0.35, fontSize: 10, marginTop: 6 },
   typesWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
-  typeChip: {
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    borderRadius: 999,
-    borderWidth: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    minWidth: 0, // увеличена минимальная ширина
-  },
-  typeChipText: {
-    color: '#111',
-    fontSize: 12,
-    flexShrink: 1,
-  },
+  typeChip: { paddingHorizontal: 8, paddingVertical: 6, borderRadius: 999, borderWidth: 1, flexDirection: 'row', alignItems: 'center', minWidth: 0 },
+  typeChipText: { color: '#111', fontSize: 12, flexShrink: 1 },
   block: { backgroundColor: '#fafafa', borderRadius: 16, padding: 12, marginBottom: 16, borderWidth: 1, borderColor: '#eee' },
   label: { fontSize: 12, marginBottom: 6, fontWeight: '600' },
   input: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: Platform.select({ ios: 12, android: 8, web: 10 }), fontSize: 16, backgroundColor: '#fff' },
