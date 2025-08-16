@@ -2,7 +2,7 @@
 import { ErrorResponse, SuccessResponse } from '@/types';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { QRCodeCache, QRCodeItem, QRCodeListResponse } from '../types/apiTypes';
-import { QRCodeItemType } from '../types/qrTypes';
+import { AnalyticsPayload, QRCodeItemType, ScansEnvelope } from '../types/qrTypes';
 import { apiClient } from './apiClient';
 
 export type ApiResponse<T> = SuccessResponse<T> | ErrorResponse;
@@ -251,3 +251,37 @@ export const setQRData = (id: string, qrData: string | Record<string, any>) =>
 export const deleteQRCode = (id: string) =>
   // мягкое удаление (как на бэке): статус DELETED
   setQRStatus(id, 'DELETED');
+
+
+// ---------------------- Вспомогательные вызовы API через apiClient ----------------------
+export async function getAnalytics(paramsObj: Record<string, any>): Promise<AnalyticsPayload> {
+  const params = new URLSearchParams();
+  Object.entries(paramsObj).forEach(([k, v]) => {
+    if (v === undefined || v === null) return;
+    params.set(k, String(v));
+  });
+
+  const resp = (await apiClient<undefined, AnalyticsPayload>(`/qr/analytics?${params.toString()}`, {
+    method: 'GET',
+  })) as ApiResponse<AnalyticsPayload>;
+
+  if (!resp.ok) throw new Error(resp.message || 'Ошибка получения аналитики');
+  if (!resp.data) throw new Error('Пустой ответ аналитики');
+  return resp.data;
+}
+
+export async function getScans(paramsObj: Record<string, any>): Promise<ScansEnvelope> {
+  const params = new URLSearchParams();
+  Object.entries(paramsObj).forEach(([k, v]) => {
+    if (v === undefined || v === null) return;
+    params.set(k, String(v));
+  });
+
+  const resp = (await apiClient<undefined, ScansEnvelope>(`/qr/analytics/scans?${params.toString()}`, {
+    method: 'GET',
+  })) as ApiResponse<ScansEnvelope>;
+
+  if (!resp.ok) throw new Error(resp.message || 'Ошибка получения ленты сканов');
+  if (!resp.data) throw new Error('Пустой ответ ленты сканов');
+  return resp.data;
+}

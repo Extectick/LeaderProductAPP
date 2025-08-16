@@ -5,8 +5,9 @@ import type { QRCodeItemType } from '@/types/qrTypes';
 import { deleteQRCode, getQRCodeById, getQRCodesList } from '@/utils/qrService';
 import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as MediaLibrary from 'expo-media-library';
-import { useFocusEffect, useRouter } from 'expo-router'; // ← добавили useFocusEffect
+import { useFocusEffect, useRouter } from 'expo-router';
 import { Skeleton } from 'moti/skeleton';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
@@ -21,6 +22,57 @@ import {
   View,
 } from 'react-native';
 import Animated, { FadeIn, FadeInDown, FadeOut, Layout } from 'react-native-reanimated';
+
+const Header = ({
+  onCreate,
+  onAnalytics,
+  count,
+}: {
+  onCreate: () => void;
+  onAnalytics: () => void;
+  count: number;
+}) => {
+  return (
+    <Animated.View entering={FadeInDown.duration(250)} style={{ marginBottom: 16, zIndex: 1 }}>
+      <LinearGradient
+        colors={['#0EA5E9', '#7C3AED']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.headerCard}
+      >
+        <View style={styles.headerTextBlock}>
+          <Text style={styles.headerTitle}>QR-коды</Text>
+          <Text style={styles.headerSubtitle}>Создавайте, управляйте и смотрите метрики</Text>
+        </View>
+
+        <View style={styles.headerButtonsRow}>
+          <Pressable
+            onPress={onCreate}
+            accessibilityRole="button"
+            style={({ pressed }) => [styles.primaryBtn, pressed && styles.pressed]}
+            android_ripple={{ color: 'rgba(0,0,0,0.07)' }}
+          >
+            <Ionicons name="add" size={18} color="#0B1220" />
+            <Text style={styles.primaryBtnText}>Создать</Text>
+          </Pressable>
+
+          <Pressable
+            onPress={onAnalytics}
+            accessibilityRole="button"
+            style={({ pressed }) => [styles.secondaryBtn, pressed && styles.pressed]}
+            android_ripple={{ color: 'rgba(255,255,255,0.25)' }}
+          >
+            <Ionicons name="analytics" size={18} color="#fff" />
+            <Text style={styles.secondaryBtnText}>Аналитика</Text>
+            <View style={styles.countBadge}>
+              <Text style={styles.countBadgeText}>{Number.isFinite(count) ? count : 0}</Text>
+            </View>
+          </Pressable>
+        </View>
+      </LinearGradient>
+    </Animated.View>
+  );
+};
 
 export default function QRCodesScreen() {
   const router = useRouter();
@@ -47,7 +99,6 @@ export default function QRCodesScreen() {
   }, []);
 
   useEffect(() => {
-    // Стартовая загрузка с небольшим отложенным skeleton
     setLoading(true);
     const t = setTimeout(loadQRCodes, 120);
     return () => clearTimeout(t);
@@ -58,11 +109,9 @@ export default function QRCodesScreen() {
     await loadQRCodes();
   }, [loadQRCodes]);
 
-  // ← ключевое: обновляем список при возврате на экран из формы
   useFocusEffect(
     React.useCallback(() => {
       if (!loading) {
-        // «тихий» рефреш без скелетона (покажется только pull-to-refresh спиннер при потягивании)
         onRefresh();
       }
       return () => {};
@@ -78,7 +127,6 @@ export default function QRCodesScreen() {
         onPress: () => {
           setQrCodes(prev => prev.filter(qr => qr.id !== id));
           deleteQRCode(id);
-          // Alert.alert('Успешно', 'QR код удален');
           setSelectedItem(null);
           setSelectedQR(null);
         },
@@ -138,19 +186,34 @@ export default function QRCodesScreen() {
     router.push('/(main)/services/qrcodes/form?id=new');
   }, [router]);
 
-  const handleEdit = useCallback((id: string) => {
-    router.push(`/(main)/services/qrcodes/form?id=${id}`);
+  const handleAnalytics = useCallback(() => {
+    router.push('/(main)/services/qrcodes/analytics');
   }, [router]);
+
+  const handleEdit = useCallback(
+    (id: string) => {
+      router.push(`/(main)/services/qrcodes/form?id=${id}`);
+    },
+    [router]
+  );
 
   if (loading) {
     return (
       <View style={[styles.container, { backgroundColor: '#fff' }]}>
+        {/* Скелетон шапки */}
         <Animated.View entering={FadeInDown.duration(250)} style={{ marginBottom: 16 }}>
-          <View style={[styles.createButton, { backgroundColor: '#007AFF' }]}>
-            <Ionicons name="add" size={24} color="#fff" />
-            <Text style={styles.createButtonText}>Создать QR код</Text>
+          <View style={styles.headerCardSkeleton}>
+            <Skeleton height={20} width={'45%'} radius={6} colorMode="light" />
+            <View style={{ height: 6 }} />
+            <Skeleton height={12} width={'70%'} radius={6} colorMode="light" />
+            <View style={styles.headerSkeletonButtonsRow}>
+              <Skeleton height={36} width={120} radius={999} colorMode="light" />
+              <Skeleton height={36} width={140} radius={999} colorMode="light" />
+            </View>
           </View>
         </Animated.View>
+
+        {/* Список скелетонов */}
         <View>
           {Array.from({ length: 6 }).map((_, i) => (
             <Animated.View key={i} entering={FadeInDown.delay(i * 60)} style={[styles.skeletonCard]}>
@@ -181,12 +244,7 @@ export default function QRCodesScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: '#fff' }]}>
-      <Animated.View entering={FadeInDown.duration(250)} style={{ marginBottom: 16, zIndex: 1 }}>
-        <Pressable style={styles.createButton} onPress={handleCreate}>
-          <Ionicons name="add" size={24} color="white" />
-          <Text style={styles.createButtonText}>Создать QR код</Text>
-        </Pressable>
-      </Animated.View>
+      <Header onCreate={handleCreate} onAnalytics={handleAnalytics} count={qrCodes.length} />
 
       <Animated.View style={{ flex: 1 }} entering={FadeIn} exiting={FadeOut}>
         <FlatList
@@ -286,25 +344,160 @@ export default function QRCodesScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 16, maxWidth: 1000 },
+
+  // ----- HEADER -----
+  headerCard: {
+    borderRadius: 20,
+    padding: 16,
+    overflow: 'hidden',
+    // Тени
+    shadowColor: '#7C3AED',
+    shadowOpacity: 0.22,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 5,
+  },
+  headerTextBlock: {
+    marginBottom: 12,
+  },
+  headerTitle: {
+    color: '#fff',
+    fontWeight: '800',
+    fontSize: 20,
+    letterSpacing: 0.2,
+  },
+  headerSubtitle: {
+    color: 'rgba(255,255,255,0.95)',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  headerButtonsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  primaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+  },
+  primaryBtnText: {
+    color: '#0B1220',
+    fontWeight: '800',
+    marginLeft: 6,
+  },
+  secondaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.75)',
+  },
+  secondaryBtnText: {
+    color: '#fff',
+    fontWeight: '700',
+    marginLeft: 6,
+    marginRight: 6,
+  },
+  countBadge: {
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    borderRadius: 9,
+    backgroundColor: '#22C55E',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  countBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  pressed: { transform: [{ scale: 0.98 }], opacity: 0.96 },
+
+  // ----- HEADER SKELETON -----
+  headerCardSkeleton: {
+    borderRadius: 20,
+    padding: 16,
+    backgroundColor: '#F4F6FA',
+    borderWidth: 1,
+    borderColor: '#EEF2FF',
+  },
+  headerSkeletonButtonsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 12,
+  },
+
+  // ----- OLD BUTTONS (оставляем для совместимости в скелетах и т.п.) -----
   createButton: {
-    flexDirection: 'row', alignItems: 'center', backgroundColor: '#007AFF',
-    paddingVertical: 12, paddingHorizontal: 16, borderRadius: 999,
-    shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 }, elevation: 3,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#007AFF',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 999,
+    shadowColor: '#000',
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 3,
   },
   createButtonText: { color: 'white', marginLeft: 8, fontWeight: '700' },
+
+  // ----- LIST SKELETON -----
   skeletonCard: {
-    flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#fff',
-    borderRadius: 12, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: '#f1f1f1',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#f1f1f1',
   },
+
+  // ----- DETAIL -----
   detailContainer: {
-    marginTop: 16, backgroundColor: 'white', borderRadius: 16, padding: 20, alignItems: 'center',
-    position: 'relative', elevation: 5, shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3, shadowRadius: 4,
+    marginTop: 16,
+    backgroundColor: 'white',
+    borderRadius: 16,
+    padding: 20,
+    alignItems: 'center',
+    position: 'relative',
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
   },
-  closeButton: { position: 'absolute', top: 12, right: 12, backgroundColor: 'red', borderRadius: 20, padding: 6, zIndex: 10 },
+  closeButton: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    backgroundColor: 'red',
+    borderRadius: 20,
+    padding: 6,
+    zIndex: 10,
+  },
   detailImage: { width: 200, height: 200, resizeMode: 'contain', marginBottom: 16 },
-  detailDescription: { fontSize: 10, textAlign: 'center', marginHorizontal: 12, marginTop: 12, color: 'black', lineHeight: 18 },
+  detailDescription: {
+    fontSize: 10,
+    textAlign: 'center',
+    marginHorizontal: 12,
+    marginTop: 12,
+    color: 'black',
+    lineHeight: 18,
+  },
+
+  // ----- MISC -----
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff' },
   retryBtn: { backgroundColor: '#007AFF', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12 },
 });
