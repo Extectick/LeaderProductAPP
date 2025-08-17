@@ -1,9 +1,8 @@
-// D:\Extectick\LeaderProductAPP\components\QRcodes\Analytics\AnalyticsHeader.tsx
 import { useTheme } from '@/context/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import React from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useRef } from 'react';
+import { Animated, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 type Props = {
   onOpenFilter: () => void;
@@ -11,6 +10,28 @@ type Props = {
   onOpenPresets: () => void;
   selectedCount: number;
   periodLabel: string;
+};
+
+/** Небольшая «пружинка» для кнопок */
+const PressableScale: React.FC<{
+  onPress?: () => void;
+  style?: any;
+  children: React.ReactNode;
+}> = ({ onPress, style, children }) => {
+  const scale = useRef(new Animated.Value(1)).current;
+  return (
+    <Pressable
+      onPressIn={() =>
+        Animated.timing(scale, { toValue: 0.96, duration: 80, useNativeDriver: true }).start()
+      }
+      onPressOut={() =>
+        Animated.timing(scale, { toValue: 1, duration: 110, useNativeDriver: true }).start()
+      }
+      onPress={onPress}
+    >
+      <Animated.View style={[style, { transform: [{ scale }] }]}>{children}</Animated.View>
+    </Pressable>
+  );
 };
 
 export default function AnalyticsHeader({
@@ -40,23 +61,11 @@ export default function AnalyticsHeader({
           </View>
 
           <View style={styles.iconsRight}>
-            {/* Пресеты (иконка) */}
-            <Pressable
-              onPress={onOpenPresets}
-              accessibilityRole="button"
-              style={styles.iconBtn}
-              android_ripple={{ color: 'rgba(255,255,255,0.25)' }}
-            >
+            <PressableScale style={styles.iconBtn} onPress={onOpenPresets}>
               <Ionicons name="albums" size={18} color="#fff" />
-            </Pressable>
+            </PressableScale>
 
-            {/* Фильтр (иконка + бэйдж количества) */}
-            <Pressable
-              onPress={onOpenFilter}
-              accessibilityRole="button"
-              style={styles.iconBtn}
-              android_ripple={{ color: 'rgba(255,255,255,0.25)' }}
-            >
+            <PressableScale style={styles.iconBtn} onPress={onOpenFilter}>
               <Ionicons name="funnel" size={18} color="#fff" />
               {selectedCount > 0 && (
                 <View style={styles.countBadge}>
@@ -65,18 +74,27 @@ export default function AnalyticsHeader({
                   </Text>
                 </View>
               )}
-            </Pressable>
+            </PressableScale>
           </View>
         </View>
 
-        {/* Нижняя строка: выбор периода (пилюля с текстом периода) */}
+        {/* Нижняя строка: кнопка периода */}
         <View style={styles.periodRow}>
-          <Pressable onPress={onOpenPeriod} style={styles.periodBtn}>
+          {/*
+            Главные изменения:
+            - alignSelf: 'flex-start' — кнопка занимает столько ширины, сколько нужно.
+            - разрешаем перенос текста (убран numberOfLines), включён flexWrap.
+            - сняты жёсткие maxWidth, текст больше не обрезается на узких экранах.
+          */}
+          <PressableScale onPress={onOpenPeriod} style={styles.periodBtn}>
             <Ionicons name="calendar" size={18} color="#fff" />
-            <Text style={styles.periodBtnText} numberOfLines={1} ellipsizeMode="tail">
+            <Text
+              style={styles.periodBtnText}
+              // НЕ ставим numberOfLines — пусть переносится на 2 строки при необходимости
+            >
               {periodLabel || 'Период'}
             </Text>
-          </Pressable>
+          </PressableScale>
         </View>
       </LinearGradient>
     </View>
@@ -108,10 +126,15 @@ const getStyles = () =>
 
     headerTextBlock: {
       flex: 1,
-      paddingRight: 56, // небольшой запас, чтобы текст не упирался в иконки
+      paddingRight: 56, // чтобы заголовок/подзаголовок не упирались в иконки
     },
     headerTitle: { color: '#fff', fontWeight: '800', fontSize: 20, letterSpacing: 0.2 },
-    headerSubtitle: { color: 'rgba(255,255,255,0.95)', fontSize: 12, marginTop: 4, flexWrap: 'wrap' },
+    headerSubtitle: {
+      color: 'rgba(255,255,255,0.95)',
+      fontSize: 12,
+      marginTop: 4,
+      flexWrap: 'wrap',
+    },
 
     iconsRight: {
       flexDirection: 'row',
@@ -153,9 +176,11 @@ const getStyles = () =>
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'flex-start',
+      flexWrap: 'wrap',
     },
 
     periodBtn: {
+      alignSelf: 'flex-start',
       flexDirection: 'row',
       alignItems: 'center',
       paddingVertical: 10,
@@ -164,13 +189,15 @@ const getStyles = () =>
       backgroundColor: 'rgba(255,255,255,0.15)',
       borderWidth: 1,
       borderColor: 'rgba(255,255,255,0.75)',
-      maxWidth: '100%',
-      gap: 6,
+      // НИЧЕГО не ограничиваем по ширине — кнопка подстраивается под содержание
+      gap: 8,
     },
     periodBtnText: {
       color: '#fff',
       fontWeight: '700',
-      flexShrink: 1,
-      maxWidth: '92%', // чтобы длинная подпись не ломала вёрстку
+      flexShrink: 1,   // можно сжимать текстовый блок
+      flexWrap: 'wrap',// и переносить на следующую строку
+      lineHeight: 18,
+      // без numberOfLines -> не будет троеточий
     },
   });
