@@ -1,7 +1,7 @@
 import { useTheme } from '@/context/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -37,7 +37,7 @@ export default function QRAnalyticsScreen() {
   const insets = useSafeAreaInsets();
   const tabBarHeight = useBottomTabBarHeight();
 
-  // часовой пояс устройства
+  // часовой пояс устройства (для запросов)
   const deviceTZ = useMemo(
     () => (Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'),
     []
@@ -58,13 +58,15 @@ export default function QRAnalyticsScreen() {
     limit: 50,
     offset: 0,
   });
-  
+
   // Heatmap (дневная активность)
   const [heatmapData, setHeatmapData] = useState<Array<{ date: string | Date; value: number }>>([]);
   const [heatmapLoading, setHeatmapLoading] = useState(true);
-
-  // Текущий месяц календаря
   const [calendarMonth, setCalendarMonth] = useState<Date>(new Date());
+
+  // Zoom графика + «предыдущий» период для быстрого сброса
+  const [chartZoom, setChartZoom] = useState<{ from: Date; to: Date } | null>(null);
+  const prevPeriodRef = useRef<{ key: PeriodKey; from: Date | null; to: Date | null } | null>(null);
 
   // UI
   const [loading, setLoading] = useState(true);
@@ -139,7 +141,7 @@ export default function QRAnalyticsScreen() {
     setError('');
     try {
       const payload = await getAnalytics({
-        tz: deviceTZ,                     // <— важный фикс
+        tz: deviceTZ,
         bucket: computedRange.bucket,
         include: 'totals,series,breakdown',
         groupBy: 'qrId,device,browser',
@@ -157,12 +159,12 @@ export default function QRAnalyticsScreen() {
     }
   }, [selectedIds, computedRange, deviceTZ]);
 
-  // отдельная загрузка для Heatmap — ВСЕГДА с bucket: 'day' (дневная активность)
+  // отдельная загрузка для Heatmap — всегда bucket: 'day'
   const loadHeatmap = useCallback(async () => {
     setHeatmapLoading(true);
     try {
       const payload = await getAnalytics({
-        tz: deviceTZ,                     // <— важный фикс
+        tz: deviceTZ,
         bucket: 'day',
         include: 'series',
         ids: selectedIds.length ? selectedIds.join(',') : undefined,
@@ -184,7 +186,7 @@ export default function QRAnalyticsScreen() {
     setScansLoading(true);
     try {
       const data = await getScans({
-        tz: deviceTZ,                     // <— важный фикс
+        tz: deviceTZ,
         ids: selectedIds.length ? selectedIds.join(',') : undefined,
         from: computedRange.fromISO,
         to: computedRange.toISO,
@@ -209,7 +211,7 @@ export default function QRAnalyticsScreen() {
     try {
       const nextOffset = scansMeta.offset + scansMeta.limit;
       const data = await getScans({
-        tz: deviceTZ,                     // <— важный фикс
+        tz: deviceTZ,
         ids: selectedIds.length ? selectedIds.join(',') : undefined,
         from: computedRange.fromISO,
         to: computedRange.toISO,
@@ -252,7 +254,7 @@ export default function QRAnalyticsScreen() {
     setPeriodVisible(false);
   };
 
-  // ——— Header блока списка
+  // ——— Header списка
   const ListHeader = (
     <View>
       <AnalyticsHeader
@@ -273,13 +275,69 @@ export default function QRAnalyticsScreen() {
         <ChartSkeleton />
       ) : (
         <>
-          <MetricsRow totals={analytics?.totals} colors={colors} />
+          <MetricsRow
+            colors={colors}
+            totals={analytics?.totals}
+            // prev не передаём, если его нет в payload
+            // покажем только мини-спарклайн по сканам (берём последние 14 значений)
+            mini={{
+              scans: (analytics?.series || []).map(s => s.scans).slice(-14),
+            }}
+          />
+
+          {/* Чип активного зума (если есть) */}
+          {chartZoom && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+              <View style={{
+                paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999,
+                borderWidth: 1, borderColor: '#E5E7EB', backgroundColor: '#FFFFFF'
+              }}>
+                <Text style={{ color: colors.text, fontWeight: '700' }}>
+                  Период: {fmtDate(chartZoom.from)} — {fmtDate(chartZoom.to)}
+                </Text>
+              </View>
+              <View style={{ width: 8 }} />
+              <View
+                style={{
+                  height: 32, width: 32, borderRadius: 10, borderWidth: 1, borderColor: '#E5E7EB',
+                  alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF',
+                }}
+              >
+                <Ionicons
+                  name="close"
+                  size={16}
+                  color={colors.text}
+                  onPress={() => {
+                    const prev = prevPeriodRef.current;
+                    setChartZoom(null);
+                    if (prev) {
+                      setPeriodKey(prev.key);
+                      setCustomFrom(prev.from);
+                      setCustomTo(prev.to);
+                    } else {
+                      setPeriodKey('30d');
+                      setCustomFrom(null);
+                      setCustomTo(null);
+                    }
+                  }}
+                />
+              </View>
+            </View>
+          )}
 
           <LineChart
             colors={colors}
             range={{ from: computedRange.from, to: computedRange.to, bucket: computedRange.bucket }}
             series={(analytics?.series || []).map((p) => ({ ts: p.ts, value: p.scans }))}
-            onPointPress={(pt) => console.log('point', pt)}
+            
+            onZoomRequest={({ from, to }) => {
+              // запоминаем предыдущий период для «сброса»
+              prevPeriodRef.current = { key: periodKey, from: customFrom, to: customTo };
+              setChartZoom({ from, to });
+              setPeriodKey('custom');
+              setCustomFrom(from);
+              setCustomTo(to);
+            }}
           />
 
           {/* Календарь месяца */}
