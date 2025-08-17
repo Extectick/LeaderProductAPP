@@ -5,7 +5,11 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "extra": {
-      "API_BASE_URL": "http://192.168.30.54:3000"
+      "API_BASE_URL": "https://leader-product.ru.tuna.am",
+      "router": {},
+      "eas": {
+        "projectId": "86a71cd7-6ac2-4ebd-800f-2313d11bcb77"
+      }
     },
     "icon": "./assets/images/icon.png",
     "scheme": "extectickapp",
@@ -17,12 +21,16 @@
       "infoPlist": {
         "CFBundleURLTypes": [
           {
-            "CFBundleURLSchemes": ["extectickapp"]
+            "CFBundleURLSchemes": [
+              "extectickapp"
+            ]
           }
         ]
       }
     },
     "android": {
+      "package": "com.extectick.app",
+      "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
@@ -37,7 +45,10 @@
               "host": "*"
             }
           ],
-          "category": ["BROWSABLE", "DEFAULT"]
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
         }
       ]
     },
