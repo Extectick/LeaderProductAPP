@@ -1,34 +1,22 @@
+// hooks/useAuthRedirect.ts
 import { AuthContext, isValidProfile } from '@/context/AuthContext';
-import { logAccessAttempt } from '@/utils/logger';
-import { RelativePathString, useRouter } from 'expo-router';
-import { useContext, useEffect } from 'react';
+import { useContext, useMemo } from 'react';
 
-export const useAuthRedirect = () => {
+export type Gate = 'guest' | 'needsProfile' | 'ready';
+
+export const useAuthGate = () => {
   const auth = useContext(AuthContext);
-  const router = useRouter();
-
   if (!auth) throw new Error('AuthContext is required');
 
   const { isLoading, isAuthenticated, profile } = auth;
 
-  useEffect(() => {
-    if (isLoading) return;
+  const hasValidProfile = useMemo(() => isValidProfile(profile), [profile]);
 
-    const currentRoute = router.canGoBack() ? 'unknown' : 'initial';
-    
-    logAccessAttempt({
-      isAuthenticated,
-      hasProfile: !!profile,
-      profileStatus: profile?.profileStatus,
-      route: currentRoute
-    });
+  const gate: Gate = !isAuthenticated
+    ? 'guest'
+    : hasValidProfile
+    ? 'ready'
+    : 'needsProfile';
 
-    if (!isAuthenticated) {
-      router.replace('/AuthScreen');
-    } else if (isAuthenticated && (!isValidProfile(profile))) {
-      router.replace('/ProfileSelectionScreen');
-    } else if (isAuthenticated && isValidProfile(profile)) {
-      router.replace('/home' as RelativePathString);
-    }
-  }, [isLoading, isAuthenticated, profile]);
+  return { isLoading, gate, isAuthenticated, hasValidProfile, profile };
 };

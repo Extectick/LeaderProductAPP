@@ -1,154 +1,144 @@
+// components/FormInput.tsx
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import React, { forwardRef } from 'react';
+import React, { forwardRef, useMemo, useState } from 'react';
 import {
+  NativeSyntheticEvent,
   Platform,
+  StyleProp,
   StyleSheet,
   Text,
   TextInput,
+  TextInputFocusEventData,
   TextInputProps,
+  TextStyle,
   TouchableOpacity,
   View,
+  ViewStyle,
 } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 
-type AutoCompleteType =
-  | 'name'
-  | 'username'
-  | 'email'
-  | 'password'
-  | 'tel'
-  | 'street-address'
-  | 'postal-code'
-  | 'cc-number'
-  | 'cc-exp'
-  | 'cc-csc'
-  | 'cc-type'
-  | 'organization'
-  | 'country'
-  | 'off';
-
-type FormInputProps = {
-  label: string;
-  value: string;
-  onChangeText: (text: string) => void;
-  placeholder?: string;
-  secureTextEntry?: boolean;
-  keyboardType?: TextInputProps['keyboardType'];
+export type FormInputProps = TextInputProps & {
+  label?: string;
   error?: string | null;
-  editable?: boolean;
-  autoCapitalize?: TextInputProps['autoCapitalize'];
-  maxLength?: number;
-  autoComplete?: AutoCompleteType;
-  textAlign?: TextInputProps['textAlign'];
   rightIcon?: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
   onIconPress?: () => void;
-  returnKeyType?: TextInputProps['returnKeyType'];
-  onSubmitEditing?: () => void;
-  blurOnSubmit?: boolean;
+  containerStyle?: StyleProp<ViewStyle>;
+  inputStyle?: StyleProp<TextStyle>;
+  /** Управляет высотой/отступами */
+  size?: 'xs' | 'sm' | 'md' | 'lg';
+  /** Убрать внешний нижний отступ контейнера */
+  noMargin?: boolean;
 };
 
-// Используем forwardRef чтобы можно было фокус ставить из родителя
+const SIZES = {
+  xs: { h: 40, fs: 14, px: 10, pv: 8, r: 10, mb: 8, lf: 13 },
+  sm: { h: 44, fs: 15, px: 12, pv: 10, r: 12, mb: 10, lf: 14 },
+  md: { h: 50, fs: 16, px: 14, pv: 12, r: 12, mb: 14, lf: 16 },
+  lg: { h: 56, fs: 17, px: 16, pv: 14, r: 14, mb: 16, lf: 16 },
+} as const;
+
 const FormInput = forwardRef<TextInput, FormInputProps>((props, ref) => {
   const {
     label,
-    value,
-    onChangeText,
-    placeholder,
-    secureTextEntry,
-    keyboardType = 'default',
     error,
-    editable = true,
-    autoCapitalize = 'none',
-    maxLength,
-    autoComplete,
-    textAlign = 'left',
     rightIcon,
     onIconPress,
-    returnKeyType,
-    onSubmitEditing,
-    blurOnSubmit,
+    containerStyle,
+    inputStyle,
+    style,
+    size = 'sm',
+    noMargin,
+    onFocus,
+    onBlur,
+    textAlign = 'left',
+    editable = true,
+    ...inputProps
   } = props;
 
   const { theme, themes } = useTheme();
   const colors = themes[theme];
 
-  const styles = StyleSheet.create({
-    container: {
-      marginBottom: 22, // увеличен отступ между полями
-      width: '100%',
-    },
-    label: {
-      fontSize: 16, // увеличен шрифт заголовка
-      marginBottom: 8, // увеличен отступ между лейблом и инпутом
-      fontWeight: '600',
-      color: colors.text,
-    },
-    inputWrapper: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      borderWidth: 1,
-      borderRadius: 6,
-      borderColor: error ? colors.error : colors.inputBorder,
-      backgroundColor: colors.inputBackground,
-      paddingHorizontal: 12,
-      height: 48, // увеличена высота поля
-    },
-    input: {
-      flex: 1,
-      fontSize: 18, // увеличен шрифт ввода
-      color: colors.text,
-      textAlign: textAlign,
-      paddingVertical: 8,
-      ...Platform.select({
-        web: {
-          outlineWidth: 0,
-          outlineColor: 'transparent',
+  const [focused, setFocused] = useState(false);
+  const cfg = SIZES[size];
+
+  const styles = useMemo(
+    () =>
+      StyleSheet.create({
+        container: {
+          width: '100%',
+          alignSelf: 'stretch',
+          marginBottom: noMargin ? 0 : cfg.mb,
         },
+        label: {
+          fontSize: cfg.lf,
+          marginBottom: 6,
+          fontWeight: '600',
+          color: colors.text,
+        },
+        inputWrapper: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          borderWidth: 1,
+          borderRadius: cfg.r,
+          backgroundColor: colors.inputBackground,
+          paddingHorizontal: cfg.px,
+          height: cfg.h,
+        },
+        input: {
+          flex: 1,
+          width: '100%',
+          fontSize: cfg.fs,
+          color: colors.text,
+          textAlign,
+          paddingVertical: cfg.pv,
+          ...Platform.select({
+            web: { outlineWidth: 0, outlineColor: 'transparent' },
+          }),
+        },
+        iconButton: { marginLeft: 8, padding: 6 },
+        errorText: { marginTop: 6, color: colors.error, fontSize: 13 },
       }),
-    },
-    
-    errorText: {
-      marginTop: 4,
-      color: colors.error,
-      fontSize: 13,
-    },
-    iconButton: {
-      marginLeft: 10,
-    },
-  });
+    [colors, cfg, noMargin, textAlign]
+  );
+
+  const borderColor = error
+    ? colors.error
+    : focused
+    ? colors.border || colors.tint
+    : colors.inputBorder;
+
+  const handleFocus = (e: NativeSyntheticEvent<TextInputFocusEventData>) => {
+    setFocused(true);
+    onFocus?.(e);
+  };
+  const handleBlur = (e: NativeSyntheticEvent<TextInputFocusEventData>) => {
+    setFocused(false);
+    onBlur?.(e);
+  };
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.label}>{label}</Text>
-      <View style={styles.inputWrapper}>
+    <View style={[styles.container, containerStyle]}>
+      {label ? <Text style={styles.label}>{label}</Text> : null}
+
+      <View style={[styles.inputWrapper, { borderColor, opacity: editable ? 1 : 0.6 }]}>
         <TextInput
           ref={ref}
-          style={styles.input}
-          value={value}
-          onChangeText={onChangeText}
-          placeholder={placeholder}
+          style={[styles.input, inputStyle as any, style as any]}
           placeholderTextColor={colors.placeholder}
-          secureTextEntry={secureTextEntry}
-          keyboardType={keyboardType}
+          selectionColor={colors.tint}
           editable={editable}
-          autoCapitalize={autoCapitalize}
-          maxLength={maxLength}
-          autoComplete={autoComplete}
-          textAlign={textAlign}
-          returnKeyType={returnKeyType}
-          onSubmitEditing={onSubmitEditing}
-          blurOnSubmit={blurOnSubmit}
+          onFocus={handleFocus}
+          onBlur={handleBlur}
+          {...inputProps}
         />
+
         {rightIcon && onIconPress && (
-          <TouchableOpacity
-            onPress={onIconPress}
-            style={styles.iconButton}
-            activeOpacity={0.7}
-          >
-            <MaterialCommunityIcons name={rightIcon} size={24} color={colors.text} />
+          <TouchableOpacity onPress={onIconPress} style={styles.iconButton} activeOpacity={0.7} hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+            <MaterialCommunityIcons name={rightIcon} size={20} color={colors.text} />
           </TouchableOpacity>
         )}
       </View>
+
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
     </View>
   );
