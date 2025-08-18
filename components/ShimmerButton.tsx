@@ -1,20 +1,40 @@
 // components/ShimmerButton.tsx
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
-import React, { useEffect, useRef } from 'react';
-import { ActivityIndicator, Animated, Easing, Pressable, PressableProps, StyleSheet, Text, ViewStyle } from 'react-native';
+import React, { useEffect } from 'react';
+import {
+  ActivityIndicator,
+  LayoutChangeEvent,
+  Pressable,
+  PressableProps,
+  StyleProp,
+  StyleSheet,
+  Text,
+  TextStyle,
+  ViewStyle,
+} from 'react-native';
+import Animated, {
+  Easing,
+  Extrapolation,
+  interpolate,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
 
 type Props = Omit<PressableProps, 'style'> & {
   title: string;
   loading?: boolean;
   fullWidth?: boolean;
   gradientColors?: readonly [string, string];
-  textStyle?: any;
+  textStyle?: StyleProp<TextStyle>;
   style?: ViewStyle;
-  haptics?: boolean; // лёгкий тик при нажатии
+  haptics?: boolean;
 };
 
-const DEFAULT_GRADIENT: readonly [string, string] = ['#56AB2F', '#A8E063']; // логотипные зелёные
+const DEFAULT_GRADIENT: readonly [string, string] = ['#56AB2F', '#A8E063'];
 
 export default function ShimmerButton({
   title,
@@ -28,18 +48,76 @@ export default function ShimmerButton({
   haptics = false,
   ...rest
 }: Props) {
-  const shimmer = useRef(new Animated.Value(0)).current;
-  const scale = useRef(new Animated.Value(1)).current;
+  // ширина кнопки — в shared value
+  const width = useSharedValue(300);
+  const progress = useSharedValue(0); // 0..1
+  const scale = useSharedValue(1);
 
+  const onLayout = (e: LayoutChangeEvent) => {
+    const w = e.nativeEvent.layout.width || 300;
+    width.value = w;
+  };
+
+  // бесшовный цикл: едем от 0 до -w; при сбросе кадр не меняется
   useEffect(() => {
-    const loop = Animated.loop(
-      Animated.timing(shimmer, { toValue: 1, duration: 2200, easing: Easing.linear, useNativeDriver: true })
+    progress.value = 0;
+    progress.value = withRepeat(
+      withTiming(1, { duration: 2600, easing: Easing.linear }),
+      -1,
+      false
     );
-    loop.start();
-    return () => loop.stop();
-  }, [shimmer]);
+  }, [progress]);
 
-  const translateX = shimmer.interpolate({ inputRange: [0, 1], outputRange: [-150, 150] });
+  const onPressIn = () => (scale.value = withSpring(0.98, { stiffness: 300, damping: 20 }));
+  const onPressOut = () => (scale.value = withSpring(1, { stiffness: 300, damping: 20 }));
+
+  const innerStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
+
+  // Вся волновая «плитка» шириной 2w, двигается по X
+  const overlayStyle = useAnimatedStyle(() => {
+    const w = width.value;
+    const shift = -interpolate(progress.value, [0, 1], [0, w], Extrapolation.CLAMP);
+    return {
+      width: w * 2,
+      opacity: 0.22,
+      transform: [{ translateX: shift }],
+    };
+  });
+
+  // Общая анимационная фаза (0..1) -> 0..2π
+  const crestPhase = (mult = 1, add = 0) =>
+    useAnimatedStyle(() => {
+      const w = width.value;
+      const t = (progress.value * Math.PI * 2) * mult + add;
+
+      // ширина гребня (в пикселях) с «дыханием»
+      const base = 0.32;   // доля от w
+      const ampW = 0.14;   // амплитуда
+      const cw = w * (base + ampW * Math.sin(t));
+
+      // лёгкое «плавание» по Y
+      const y = 4 * Math.sin(t * 0.8);
+
+      // прозрачность в волне
+      const op = 0.4 + 0.25 * Math.sin(t + Math.PI / 3);
+
+      // центрируем гребень в пределах плитки w
+      const left = (w - cw) / 2;
+
+      return {
+        width: cw,
+        left,
+        opacity: op,
+        transform: [{ translateY: y }],
+      };
+    });
+
+  // Гребень A (наклон вправо)
+  const crestAStyle = crestPhase(1, 0);
+  // Гребень B (в противофазе, тоньше; наклон влево)
+  const crestBStyle = crestPhase(1, Math.PI);
 
   return (
     <Pressable
@@ -48,35 +126,74 @@ export default function ShimmerButton({
         if (haptics) Haptics.selectionAsync();
         onPress?.(e);
       }}
-      onPressIn={() => Animated.spring(scale, { toValue: 0.98, useNativeDriver: true, stiffness: 300 }).start()}
-      onPressOut={() => Animated.spring(scale, { toValue: 1, useNativeDriver: true, stiffness: 300 }).start()}
+      onPressIn={onPressIn}
+      onPressOut={onPressOut}
       disabled={disabled || loading}
-      style={({ pressed }) => [
+      style={[
         styles.wrapper,
         fullWidth && { alignSelf: 'stretch' },
         (disabled || loading) && { opacity: 0.65 },
         style,
-        pressed && { transform: [{ scale: 0.98 }] },
       ]}
     >
-      <Animated.View style={[styles.inner, { transform: [{ scale }] }]}>
+      <Animated.View style={[styles.inner, innerStyle]} onLayout={onLayout}>
+        {/* фоновый градиент кнопки */}
         <LinearGradient
           colors={[...gradientColors] as [string, string]}
           start={{ x: 0, y: 0.5 }}
           end={{ x: 1, y: 0.5 }}
           style={StyleSheet.absoluteFillObject as any}
         />
-        <Animated.View
-          pointerEvents="none"
-          style={[StyleSheet.absoluteFill, { opacity: 0.22, transform: [{ translateX }] }]}
-        >
-          <LinearGradient
-            colors={['transparent', '#ffffff', 'transparent']}
-            start={{ x: 0, y: 0.5 }}
-            end={{ x: 1, y: 0.5 }}
-            style={StyleSheet.absoluteFillObject as any}
-          />
+
+        {/* ВОЛНА — плитка 2×w, внутри два одинаковых «тайла» шириной w */}
+        <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, overlayStyle]}>
+          {/* tile #1 (левая половина) */}
+          <Animated.View style={styles.tile}>
+            {/* crest A */}
+            <Animated.View style={[styles.crestWrap, { transform: [{ rotateZ: '12deg' }] }, crestAStyle]}>
+              <LinearGradient
+                colors={['transparent', '#ffffff', 'transparent']}
+                locations={[0, 0.5, 1]}
+                start={{ x: 0, y: 0.5 }}
+                end={{ x: 1, y: 0.5 }}
+                style={StyleSheet.absoluteFillObject as any}
+              />
+            </Animated.View>
+            {/* crest B */}
+            <Animated.View style={[styles.crestWrap, { transform: [{ rotateZ: '-12deg' }] }, crestBStyle]}>
+              <LinearGradient
+                colors={['transparent', '#ffffff', 'transparent']}
+                locations={[0.2, 0.5, 0.8]}
+                start={{ x: 0, y: 0.5 }}
+                end={{ x: 1, y: 0.5 }}
+                style={StyleSheet.absoluteFillObject as any}
+              />
+            </Animated.View>
+          </Animated.View>
+
+          {/* tile #2 (правая половина, идентичная) */}
+          <Animated.View style={[styles.tile, { left: '50%' }]}>
+            <Animated.View style={[styles.crestWrap, { transform: [{ rotateZ: '12deg' }] }, crestAStyle]}>
+              <LinearGradient
+                colors={['transparent', '#ffffff', 'transparent']}
+                locations={[0, 0.5, 1]}
+                start={{ x: 0, y: 0.5 }}
+                end={{ x: 1, y: 0.5 }}
+                style={StyleSheet.absoluteFillObject as any}
+              />
+            </Animated.View>
+            <Animated.View style={[styles.crestWrap, { transform: [{ rotateZ: '-12deg' }] }, crestBStyle]}>
+              <LinearGradient
+                colors={['transparent', '#ffffff', 'transparent']}
+                locations={[0.2, 0.5, 0.8]}
+                start={{ x: 0, y: 0.5 }}
+                end={{ x: 1, y: 0.5 }}
+                style={StyleSheet.absoluteFillObject as any}
+              />
+            </Animated.View>
+          </Animated.View>
         </Animated.View>
+
         {loading ? (
           <ActivityIndicator color="#fff" />
         ) : (
@@ -109,5 +226,21 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     fontSize: 18,
     letterSpacing: 0.3,
+  },
+  // половина «плитки»: ширина = 50% от overlay (то есть ровно w), высота — вся
+  tile: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    width: '50%',
+    overflow: 'visible',
+  },
+  // одиночный гребень волны — делаем его выше контейнера, чтобы при повороте не резался
+  crestWrap: {
+    position: 'absolute',
+    top: '-50%',
+    height: '200%',
+    borderRadius: 999,
   },
 });

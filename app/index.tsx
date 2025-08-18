@@ -4,7 +4,7 @@ import { useAuthGate } from '@/hooks/useAuthRedirect';
 import { Redirect, type Href } from 'expo-router';
 import React from 'react';
 import { ActivityIndicator, View } from 'react-native';
-
+import 'react-native-reanimated';
 const ROUTES = {
   AUTH: '/(auth)/AuthScreen',
   PROFILE: '/ProfileSelectionScreen', // поменяй, если он в группе

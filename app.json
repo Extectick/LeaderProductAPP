@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "extectick-app",
-    "slug": "extectick-app",
+    "name": "Лидер Продукт",
+    "slug": "лидер-продукт",
     "version": "1.0.0",
     "orientation": "portrait",
     "extra": {
@@ -12,24 +12,24 @@
       }
     },
     "icon": "./assets/images/icon.png",
-    "scheme": "extectickapp",
+    "scheme": "leaderproduct",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.extectick.app",
+      "bundleIdentifier": "com.leaderproduct.app",
       "infoPlist": {
         "CFBundleURLTypes": [
           {
             "CFBundleURLSchemes": [
-              "extectickapp"
+              "leaderproduct"
             ]
           }
         ]
       }
     },
     "android": {
-      "package": "com.extectick.app",
+      "package": "com.leaderproduct.app",
       "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
@@ -41,7 +41,7 @@
           "action": "VIEW",
           "data": [
             {
-              "scheme": "extectickapp",
+              "scheme": "leaderproduct",
               "host": "*"
             }
           ],
@@ -55,17 +55,17 @@
     "web": {
       "bundler": "metro",
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/favicon.ico"
     },
     "plugins": [
       "expo-router",
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
+          "image": "./assets/images/splash.png",
           "imageWidth": 200,
-          "resizeMode": "contain",
-          "backgroundColor": "#ffffff"
+          "resizeMode": "contain"
+          
         }
       ]
     ],

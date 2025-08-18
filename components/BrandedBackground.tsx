@@ -1,242 +1,117 @@
-// components/BrandedBackground.tsx
-import { gradientColors } from '@/constants/Colors';
-import { useTheme } from '@/context/ThemeContext';
-import { useThemeColor } from '@/hooks/useThemeColor';
-import {
-    Canvas,
-    Group,
-    Paint,
-    RadialGradient,
-    Rect,
-    vec,
-} from '@shopify/react-native-skia';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-    GestureResponderEvent,
-    LayoutChangeEvent,
-    StyleSheet,
-    View,
-    ViewProps,
-} from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import React, { PropsWithChildren, useEffect } from 'react';
+import type { StyleProp, ViewStyle } from 'react-native';
+import { StyleSheet, useWindowDimensions, View } from 'react-native';
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withTiming,
+} from 'react-native-reanimated';
+// Для bare RN вместо строки выше:
+// import LinearGradient from 'react-native-linear-gradient';
+import type { SharedValue } from 'react-native-reanimated';
 
-type Props = ViewProps & {
-  /** Переопределение палитры (≥2 цвета). По умолчанию — палитра текущей темы */
-  palette?: readonly string[];
-  /** Яркость/контраст эффекта (0..1) */
-  intensity?: number;
-  /** Период полного цикла (мс) */
-  periodMs?: number;
-  /** Кол-во «узлов» меша */
-  nodes?: number;
-  /** Реакция на касание: отталкивание/притяжение/нет */
-  reactToTouch?: 'push' | 'pull' | 'none';
-  /** Включить еле заметную техно-сетку поверх */
-  showGrid?: boolean;
-};
+const AnimatedLG = Animated.createAnimatedComponent(LinearGradient);
 
-function withAlpha(hex: string, alpha: number) {
-  const a = Math.max(0, Math.min(1, alpha));
-  const n = Math.round(a * 255).toString(16).padStart(2, '0').toUpperCase();
-  if (/^#([0-9a-f]{3})$/i.test(hex)) {
-    const [, rgb] = hex.match(/^#([0-9a-f]{3})$/i)!;
-    const r = rgb[0] + rgb[0];
-    const g = rgb[1] + rgb[1];
-    const b = rgb[2] + rgb[2];
-    return `#${r}${g}${b}${n}`;
-  }
-  return `${hex}${n}`;
+export interface AuroraBackgroundProps extends PropsWithChildren {
+  /** Ускорение/замедление анимации, 1 — по умолчанию */
+  speed?: number;
+  /** Доп. стили корневого контейнера */
+  style?: StyleProp<ViewStyle>;
 }
 
+/**
+ * Светлый «aurora»-фон (без тёмных цветов).
+ * Использование: <BrandedBackground><YourContent /></BrandedBackground>
+ */
 export default function BrandedBackground({
-  style,
   children,
-  palette,
-  intensity = 1,
-  periodMs = 16000,
-  nodes = 6,
-  reactToTouch = 'push',
-  showGrid = false,
-  ...rest
-}: Props) {
-  const { theme } = useTheme();
+  style,
+  speed = 1,
+}: AuroraBackgroundProps) {
+  const { width, height } = useWindowDimensions();
+  const base = Math.max(width, height);
+  const size = base * 1.8; // запас, чтобы при повороте не было пустых краёв
 
-  // Базовые цвета темы
-  const baseBg  = useThemeColor({}, 'background');
-  const baseCard = useThemeColor({}, 'cardBackground');
+  // три независимых «пятна» градиента
+  const t1 = useSharedValue<number>(0);
+  const t2 = useSharedValue<number>(0);
+  const t3 = useSharedValue<number>(0);
 
-  // Палитра для «пятен» (многокрасочная)
-  const themeGrad = gradientColors[theme as keyof typeof gradientColors] ?? gradientColors.light;
-  const colors = (palette?.length ? palette : themeGrad) as string[];
-
-  // Геометрия
-  const [w, setW] = useState(0);
-  const [h, setH] = useState(0);
-  const onLayout = (e: LayoutChangeEvent) => {
-    const { width, height } = e.nativeEvent.layout;
-    setW(width);
-    setH(height);
-  };
-
-  // Простая анимация: RAF → обновляем «тик», чтобы пересчитать позиции узлов
-  const frameRef = useRef<number | null>(null);
-  const startRef = useRef<number>(Date.now());
-  const [, setTick] = useState(0);
-  const loop = useCallback(() => {
-    setTick(Date.now());
-    frameRef.current = requestAnimationFrame(loop);
-  }, []);
   useEffect(() => {
-    frameRef.current = requestAnimationFrame(loop);
-    return () => {
-      if (frameRef.current) cancelAnimationFrame(frameRef.current);
-      frameRef.current = null;
-    };
-  }, [loop]);
+    const common = (durationMs: number) =>
+      withRepeat(
+        withTiming(1, {
+          duration: durationMs / Math.max(0.25, speed),
+          easing: Easing.inOut(Easing.quad),
+        }),
+        -1,
+        true
+      );
 
-  // Касание: точка, время, состояние
-  const [touchPos, setTouchPos] = useState<{ x: number; y: number } | null>(null);
-  const [lastTouch, setLastTouch] = useState<number>(-1);
-  const [pressed, setPressed] = useState(false);
+    t1.value = common(16000);
+    t2.value = common(20000);
+    t3.value = common(24000);
+  }, [speed, t1, t2, t3]);
 
-  const onTouchStart = (e: GestureResponderEvent) => {
-    const { locationX, locationY } = e.nativeEvent;
-    setTouchPos({ x: locationX, y: locationY });
-    setLastTouch(Date.now());
-    setPressed(true);
-  };
-  const onTouchMove = (e: GestureResponderEvent) => {
-    const { locationX, locationY } = e.nativeEvent;
-    setTouchPos({ x: locationX, y: locationY });
-  };
-  const onTouchEnd = () => setPressed(false);
-
-  // Константы движения
-  const nodesConfig = useMemo(() => {
-    // Кратные множители дают идеальную «зацикленность» за periodMs
-    const mults = [1, 2, 3] as const;
-    return Array.from({ length: nodes }, (_, i) => {
-      const kx = mults[i % mults.length];
-      const ky = mults[(i + 1) % mults.length];
-      const phase = (i / nodes) * Math.PI * 2;
-      const rFrac = 0.35 + ((i * 37) % 30) / 100; // 0.35..0.65
-      const col = colors[i % colors.length];
-      return { kx, ky, phase, rFrac, col };
+  // «дыхание»: медленное смещение/поворот/скейл и мерцание
+  const makeLayerStyle = (t: SharedValue<number>, amp: number) =>
+    useAnimatedStyle(() => {
+      const twoPi = Math.PI * 2;
+      const x = Math.sin(t.value * twoPi) * base * amp;
+      const y = Math.cos(t.value * twoPi) * base * amp;
+      const rot = `${t.value * 360}deg`;
+      const scale = 1.1 + 0.15 * Math.cos(t.value * twoPi);
+      const opacity = 0.35 + 0.35 * Math.sin(t.value * twoPi);
+      return {
+        opacity,
+        transform: [{ translateX: x }, { translateY: y }, { rotate: rot }, { scale }],
+      };
     });
-  }, [nodes, colors]);
 
-  // Пересчёт «пятен» на каждый кадр
-  const blobs = useMemo(() => {
-    if (!w || !h) return [] as Array<{ cx: number; cy: number; r: number; colors: string[] }>;
-    const now = Date.now();
-    const elapsed = now - startRef.current;
-    const theta = ((elapsed % periodMs) / periodMs) * Math.PI * 2; // 0..2π
+  const layer1 = makeLayerStyle(t1, 0.08);
+  const layer2 = makeLayerStyle(t2, 0.12);
+  const layer3 = makeLayerStyle(t3, 0.10);
 
-    const minDim = Math.min(w, h);
-    const cx = w / 2;
-    const cy = h / 2;
-
-    const ampBase = minDim * 0.18;
-
-    // Пульс от касания (экспоненциальное затухание)
-    const dt = lastTouch < 0 ? 1e9 : Math.max(0, now - lastTouch);
-    const pulse = Math.exp(-dt / 900); // 0..1
-    const ampPulse = ampBase * 0.4 * pulse * (pressed ? 1.0 : 0.6);
-
-    // Влияние касания на позицию узлов
-    const pullCoeff = pulse * 0.15;     // притяжение
-    const pushCoeff = pulse * 0.15;     // отталкивание
-    const tp = touchPos ?? { x: cx, y: cy };
-
-    return nodesConfig.map((cfg, idx) => {
-      const { kx, ky, phase, rFrac, col } = cfg;
-
-      // База — лиссажу
-      const x0 = cx + ampBase * Math.cos(theta * kx + phase);
-      const y0 = cy + ampBase * Math.sin(theta * ky + phase + Math.PI / 3);
-
-      // «дыхание»
-      const x1 = x0 + ampPulse * Math.cos(theta * (2 + (idx % 2)) + phase);
-      const y1 = y0 + ampPulse * Math.sin(theta * (3 + (idx % 3)) + phase / 2);
-
-      // Касание
-      let x2 = x1;
-      let y2 = y1;
-      if (reactToTouch !== 'none' && pulse > 0.01) {
-        const dx = tp.x - x1;
-        const dy = tp.y - y1;
-        if (reactToTouch === 'pull') {
-          // тянем к точке
-          x2 = x1 + dx * pullCoeff;
-          y2 = y1 + dy * pullCoeff;
-        } else {
-          // отталкиваем от точки
-          x2 = x1 - dx * pushCoeff;
-          y2 = y1 - dy * pushCoeff;
-        }
-      }
-
-      const r = minDim * rFrac * 0.6;
-      const inner = withAlpha(col, Math.min(0.9, 0.65 * intensity));
-      const outer = withAlpha(col, 0);
-
-      return { cx: x2, cy: y2, r, colors: [inner, outer] };
-    });
-  }, [w, h, periodMs, nodesConfig, intensity, lastTouch, pressed, reactToTouch, touchPos]);
-
-  // Сетка поверх (опционально)
-  const gridRects = useMemo(() => {
-    if (!showGrid || !w || !h) return [] as { x: number; y: number; w: number; h: number }[];
-    const lines: { x: number; y: number; w: number; h: number }[] = [];
-    const step = Math.max(32, Math.min(w, h) / 18);
-    for (let x = step; x < w; x += step) lines.push({ x, y: 0, w: 1, h });
-    for (let y = step; y < h; y += step) lines.push({ x: 0, y, w, h: 1 });
-    return lines;
-  }, [w, h, showGrid]);
+  const centeredFrame: ViewStyle = {
+    width: size,
+    height: size,
+    left: (width - size) / 2,
+    top: (height - size) / 2,
+    borderRadius: size / 2,
+    position: 'absolute',
+  };
 
   return (
-    <View
-      {...rest}
-      style={[styles.container, style]}
-      onLayout={onLayout}
-      onTouchStart={onTouchStart}
-      onTouchMove={onTouchMove}
-      onTouchEnd={onTouchEnd}
-    >
-      {/* === ФОН: канвас снизу, не перехватывает события === */}
-      <Canvas style={StyleSheet.absoluteFill} pointerEvents="none">
-        {/* База: мягкий радиальный градиент из цветов темы */}
-        <Rect x={0} y={0} width={w} height={h}>
-          <Paint>
-            <RadialGradient
-              c={vec(w * 0.25, h * 0.3)}
-              r={Math.max(w, h) * 0.9}
-              colors={[withAlpha(baseBg, 1), withAlpha(baseCard, 1)]}
-            />
-          </Paint>
-        </Rect>
+    <View style={[styles.container, style]}>
+      {/* слой 1 — светло-холодные тона */}
+      <AnimatedLG
+        pointerEvents="none"
+        colors={['#bfdbfe', '#a5f3fc', '#ddd6fe']} // blue-200, cyan-200, violet-200
+        start={{ x: 0.1, y: 0.1 }}
+        end={{ x: 0.9, y: 0.9 }}
+        style={[styles.gradient, centeredFrame, layer1]}
+      />
+      {/* слой 2 — светлые тёплые */}
+      <AnimatedLG
+        pointerEvents="none"
+        colors={['#fbcfe8', '#fde68a', '#e9d5ff']} // pink-200, amber-200, purple-200
+        start={{ x: 0.2, y: 0.8 }}
+        end={{ x: 0.8, y: 0.2 }}
+        style={[styles.gradient, centeredFrame, layer2]}
+      />
+      {/* слой 3 — мягкие зелёные акценты */}
+      <AnimatedLG
+        pointerEvents="none"
+        colors={['#bbf7d0', '#a7f3d0', '#d9f99d']} // green-200, emerald-200, lime-200
+        start={{ x: 0, y: 0.5 }}
+        end={{ x: 1, y: 0.5 }}
+        style={[styles.gradient, centeredFrame, layer3]}
+      />
 
-        {/* Mesh-пятна со смешиванием Screen */}
-        <Group blendMode="screen">
-          {blobs.map((b, i) => (
-            <Rect key={i} x={0} y={0} width={w} height={h}>
-              <Paint>
-                <RadialGradient c={vec(b.cx, b.cy)} r={b.r} colors={b.colors} positions={[0, 1]} />
-              </Paint>
-            </Rect>
-          ))}
-        </Group>
-
-        {/* Опциональная техно-сетка */}
-        {showGrid && (
-          <Group blendMode="overlay">
-            {gridRects.map((ln, i) => (
-              <Rect key={`g${i}`} x={ln.x} y={ln.y} width={ln.w} height={ln.h} color={withAlpha('#FFFFFF', 0.035)} />
-            ))}
-          </Group>
-        )}
-      </Canvas>
-
-      {/* Контент поверх — принимает все интеракции */}
+      {/* ваш контент всегда сверху */}
       <View style={styles.content} pointerEvents="box-none">
         {children}
       </View>
@@ -245,6 +120,12 @@ export default function BrandedBackground({
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, position: 'relative', overflow: 'hidden' },
-  content: { flex: 1 },
+  // светлая подложка вместо #050816
+  container: { flex: 1, backgroundColor: '#f8fafc', overflow: 'hidden' }, // slate-50
+  gradient: {
+    // opacity управляется анимированным стилем; это поле можно оставить пустым
+  },
+  content: {
+    ...StyleSheet.absoluteFillObject,
+  },
 });
