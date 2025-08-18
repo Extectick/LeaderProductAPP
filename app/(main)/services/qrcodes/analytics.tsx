@@ -1,3 +1,4 @@
+// app/(main)/services/qrcodes/analytics.tsx
 import { useTheme } from '@/context/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
@@ -5,6 +6,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   FlatList,
+  Platform,
   RefreshControl,
   StyleSheet,
   Text,
@@ -35,7 +37,10 @@ export default function QRAnalyticsScreen() {
   const styles = getStyles(colors);
 
   const insets = useSafeAreaInsets();
-  const tabBarHeight = useBottomTabBarHeight();
+
+  // ВАЖНО: безопасная высота таббара — на web возвращаем 0 (иначе хук кинет ошибку).
+  // На нативе хук вызывать можно только если экран действительно лежит в Bottom Tabs.
+  const tabBarHeight = Platform.OS === 'web' ? 0 : useBottomTabBarHeight();
 
   // часовой пояс устройства (для запросов)
   const deviceTZ = useMemo(
@@ -278,11 +283,7 @@ export default function QRAnalyticsScreen() {
           <MetricsRow
             colors={colors}
             totals={analytics?.totals}
-            // prev не передаём, если его нет в payload
-            // покажем только мини-спарклайн по сканам (берём последние 14 значений)
-            mini={{
-              scans: (analytics?.series || []).map(s => s.scans).slice(-14),
-            }}
+            mini={{ scans: (analytics?.series || []).map(s => s.scans).slice(-14) }}
           />
 
           {/* Чип активного зума (если есть) */}
@@ -329,9 +330,7 @@ export default function QRAnalyticsScreen() {
             colors={colors}
             range={{ from: computedRange.from, to: computedRange.to, bucket: computedRange.bucket }}
             series={(analytics?.series || []).map((p) => ({ ts: p.ts, value: p.scans }))}
-            
             onZoomRequest={({ from, to }) => {
-              // запоминаем предыдущий период для «сброса»
               prevPeriodRef.current = { key: periodKey, from: customFrom, to: customTo };
               setChartZoom({ from, to });
               setPeriodKey('custom');
@@ -349,7 +348,7 @@ export default function QRAnalyticsScreen() {
               month={calendarMonth}
               data={heatmapData}
               events={(scans || []).map(s => ({
-                ts: s.createdAt, // строка с бэка — в компоненте конвертируется единообразно
+                ts: s.createdAt,
                 city: s.location ?? undefined,
                 title: `${s.device || ''} • ${s.browser || ''}`.trim(),
               }))}
@@ -423,7 +422,8 @@ export default function QRAnalyticsScreen() {
         }
         contentContainerStyle={{
           padding: 16,
-          paddingBottom: 24 + insets.bottom + tabBarHeight,
+          // безопасное дно: на web 0, в табах — реальная высота
+          paddingBottom: 24 + insets.bottom + (tabBarHeight || 0),
         }}
       />
 
