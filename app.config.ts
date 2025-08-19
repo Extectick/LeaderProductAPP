@@ -1,8 +1,15 @@
-// app.config.ts
+import * as dotenv from 'dotenv';
 import { ConfigContext, ExpoConfig } from 'expo/config';
+import path from 'path';
+
+// Определяем какой env файл грузить
+const envFile = process.env.NODE_ENV === 'production' ? '.env.production' : '.env';
+
+// Загружаем переменные окружения
+dotenv.config({ path: path.resolve(__dirname, envFile) });
 
 export default ({ config }: ConfigContext): ExpoConfig => ({
-  owner: "extectick", // ← добавь сюда
+  owner: 'extectick',
   name: 'Лидер Продукт',
   slug: 'leader-product',
   version: '1.0.0',
@@ -12,7 +19,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   scheme: 'leaderproduct',
   icon: './assets/images/icon.png',
   extra: {
-    API_BASE_URL: 'https://leader-product-bot.ru',
+    // ⚡️ Берём из .env или .env.production
+    EXPO_PUBLIC_API_URL_DEV:
+      process.env.EXPO_PUBLIC_API_URL_DEV,
     router: {},
     eas: {
       projectId: '7c6d0fa1-6e18-4bf2-a6f4-b877e0b662e2',

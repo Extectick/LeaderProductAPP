@@ -1,10 +1,8 @@
 // utils/apiClient.ts
-import Constants from 'expo-constants';
 import { getAccessToken, logout, refreshToken as refreshTokens } from './tokenService';
 
-const API_BASE_URL = Constants.expoConfig?.extra?.EXPO_PUBLIC_API_BASE_URL || 
-Constants.expoConfig?.extra?.API_BASE_URL || "https://leader-product-bot.ru";
-
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL_DEV!;
+console.log('API адрес --- ' + API_BASE_URL)
 export interface ApiResponse<T> {
   ok: boolean;
   data?: T;

@@ -5,10 +5,9 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "extra": {
-      "API_BASE_URL": "https://leader-product-bot.ru",
       "router": {},
       "eas": {
-        "projectId": "7c6d0fa1-6e18-4bf2-a6f4-b877e0b662e2"
+        
       }
     },
     "icon": "./assets/images/icon.png",
