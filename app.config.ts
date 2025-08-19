@@ -6,7 +6,7 @@ export default (): ExpoConfig => ({
   slug: 'leader-product',
   splash: {
     image: './assets/images/splash.png',
-    backgroundColor: '#ffffff', // цвет фона под картинкой
-    resizeMode: 'contain',      // или 'cover'
+    // backgroundColor: '#ffffff', // цвет фона под картинкой
+    // resizeMode: 'contain',      // или 'cover'
   },
 });

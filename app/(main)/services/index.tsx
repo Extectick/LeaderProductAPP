@@ -1,6 +1,7 @@
 import { services as staticServices } from '@/constants/servicesRoutes';
 import { useThemeColor } from '@/hooks/useThemeColor';
-import React, { useEffect, useState } from 'react';
+import { useRouter } from 'expo-router';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -8,12 +9,10 @@ import {
   StyleSheet,
   Text,
   useWindowDimensions,
-  View
+  View,
 } from 'react-native';
-import Animated, { FadeIn } from 'react-native-reanimated';
+import Animated, { FadeInDown, Layout } from 'react-native-reanimated';
 import ServiceCard from './ServiceCard';
-
-import { useRouter } from 'expo-router';
 
 export default function ServicesScreen() {
   const [services, setServices] = useState<typeof staticServices | null>(null);
@@ -23,29 +22,38 @@ export default function ServicesScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
 
-  const isMobile = width < 600;
-  const numColumns = isMobile ? 2 : 3;
-  const spacing = isMobile ? 12 : 24;
-  const itemSize = isMobile ? 
-    width / numColumns - spacing * 2 : 
-    Math.min(200, width / numColumns - spacing * 2);
+  // брейкпоинты под мобильные/планшеты
+  const numColumns = useMemo(() => {
+    if (width < 360) return 2;       // маленькие телефоны
+    if (width < 768) return 2;       // телефоны
+    return 3;                        // планшеты
+  }, [width]);
+
+  const spacing = 14;
+  const cardSize = useMemo(() => {
+    // обеспечим фиксированный отступ между плитками
+    const innerWidth = width - spacing * 2 - (numColumns - 1) * spacing;
+    const side = Math.floor(innerWidth / numColumns);
+    // ограничим «чтобы дышало»
+    return Math.min(200, Math.max(120, side));
+  }, [width, numColumns]);
 
   useEffect(() => {
     const fetchServices = async () => {
       try {
-        await new Promise((res) => setTimeout(res, 1000));
+        await new Promise((res) => setTimeout(res, 600));
         setServices(staticServices);
-      } catch (e) {
+      } catch {
         setError('Не удалось загрузить сервисы');
       } finally {
         setLoading(false);
       }
     };
-
     fetchServices();
   }, []);
 
-  const background = useThemeColor({}, 'cardBackground');
+  const background = useThemeColor({}, 'background');
+  const cardBackground = useThemeColor({}, 'cardBackground');
   const textColor = useThemeColor({}, 'text');
 
   if (loading) {
@@ -59,43 +67,50 @@ export default function ServicesScreen() {
   if (error || !services) {
     return (
       <View style={[styles.centered, { backgroundColor: background }]}>
-        <Text style={{ color: textColor, fontSize: 16 }}>
-          {error ?? 'Ошибка'}
-        </Text>
+        <Text style={{ color: textColor, fontSize: 16 }}>{error ?? 'Ошибка'}</Text>
       </View>
     );
   }
 
   return (
     <View style={[styles.container, { backgroundColor: background }]}>
+      <Animated.Text
+        entering={FadeInDown.springify().damping(14)}
+        style={[styles.title, { color: textColor }]}
+      >
+        Сервисы
+      </Animated.Text>
+
       <FlatList
         data={services}
+        keyExtractor={(item) => item.name}
+        numColumns={numColumns}
+        columnWrapperStyle={{ gap: spacing, marginBottom: spacing }}
+        contentContainerStyle={{ padding: spacing, paddingTop: 0 }}
+        showsVerticalScrollIndicator={false}
         renderItem={({ item, index }) => (
-          <Animated.View entering={FadeIn.delay(index * 100)}>
+          <Animated.View
+            entering={FadeInDown.delay(index * 70).springify().damping(16)}
+            layout={Layout.springify()}
+          >
             <ServiceCard
               icon={item.icon}
               name={item.name}
-              size={itemSize}
+              size={cardSize}
               onPress={() => {
-                if (item.route === '/services/qrcodes') {
-                  router.push('/services/qrcodes');
-                } else {
-                  router.push(item.route as any);
-                }
+                router.push(item.route as any);
               }}
               gradient={item.gradient}
               iconSize={40}
               disableShadow={false}
               disableScaleOnPress={false}
               disabled={item.disable}
+              containerStyle={{
+                backgroundColor: cardBackground,
+              }}
             />
           </Animated.View>
         )}
-        keyExtractor={(item) => item.name}
-        numColumns={numColumns}
-        columnWrapperStyle={{ gap: spacing, marginBottom: spacing }}
-        contentContainerStyle={{ padding: spacing }}
-        showsVerticalScrollIndicator={false}
       />
     </View>
   );
@@ -105,17 +120,17 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     ...Platform.select({
-      web: {
-        maxWidth: 1200,
-        marginHorizontal: 'auto',
-        paddingHorizontal: 24,
-        justifyContent: 'center',
-      },
+      web: { maxWidth: 1200, marginHorizontal: 'auto', paddingHorizontal: 24 },
+      default: {},
     }),
   },
-  centered: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
+  centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  title: {
+    fontSize: 22,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 8,
   },
 });
