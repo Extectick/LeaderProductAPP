@@ -4,7 +4,8 @@ import axios, { AxiosError, AxiosInstance, AxiosRequestConfig, AxiosResponse } f
 import Constants from 'expo-constants';
 import { router } from 'expo-router';
 
-const API_BASE_URL = Constants.expoConfig?.extra?.EXPO_PUBLIC_API_BASE_URL || 'http://192.168.30.54:3000'; // URL вашего API
+const API_BASE_URL = Constants.expoConfig?.extra?.EXPO_PUBLIC_API_BASE_URL || 
+Constants.expoConfig?.extra?.API_BASE_URL || "https://leader-product-bot.ru";
 
 let isRefreshing = false;
 let refreshSubscribers: ((token: string) => void)[] = [];

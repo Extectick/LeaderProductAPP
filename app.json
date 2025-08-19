@@ -1,14 +1,14 @@
 {
   "expo": {
     "name": "Лидер Продукт",
-    "slug": "лидер-продукт",
+    "slug": "leader-product",
     "version": "1.0.0",
     "orientation": "portrait",
     "extra": {
-      "API_BASE_URL": "https://leader-product.ru.tuna.am",
+      "API_BASE_URL": "https://leader-product-bot.ru",
       "router": {},
       "eas": {
-        "projectId": "86a71cd7-6ac2-4ebd-800f-2313d11bcb77"
+        "projectId": "7c6d0fa1-6e18-4bf2-a6f4-b877e0b662e2"
       }
     },
     "icon": "./assets/images/icon.png",
@@ -30,7 +30,7 @@
     },
     "android": {
       "package": "com.leaderproduct.app",
-      "versionCode": 1,
+      "versionCode": 2,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
@@ -65,7 +65,6 @@
           "image": "./assets/images/splash.png",
           "imageWidth": 200,
           "resizeMode": "contain"
-          
         }
       ]
     ],

@@ -2,7 +2,8 @@
 import Constants from 'expo-constants';
 import { getAccessToken, logout, refreshToken as refreshTokens } from './tokenService';
 
-const API_BASE_URL = Constants.expoConfig?.extra?.EXPO_PUBLIC_API_BASE_URL || 'http://192.168.30.54:3000';
+const API_BASE_URL = Constants.expoConfig?.extra?.EXPO_PUBLIC_API_BASE_URL || 
+Constants.expoConfig?.extra?.API_BASE_URL || "https://leader-product-bot.ru";
 
 export interface ApiResponse<T> {
   ok: boolean;
