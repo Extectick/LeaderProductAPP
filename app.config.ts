@@ -1,15 +1,11 @@
+// app.config.ts
 import * as dotenv from "dotenv";
 import { ConfigContext, ExpoConfig } from "expo/config";
 import path from "path";
 
-// Определяем какой env файл грузить
-const envFile = process.env.NODE_ENV === "production" ? ".env.production" : ".env";
-
-// Загружаем переменные окружения
-dotenv.config({ path: path.resolve(__dirname, envFile) });
+dotenv.config({ path: path.resolve(__dirname, process.env.NODE_ENV === "production" ? ".env.production" : ".env") });
 
 export default ({ config }: ConfigContext): ExpoConfig => ({
-  owner: "extectick",
   name: "Лидер Продукт",
   slug: "leader-product",
   version: "1.0.0",
@@ -17,49 +13,17 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   userInterfaceStyle: "automatic",
   newArchEnabled: true,
   scheme: "leaderproduct",
-
-  // 🔹 Основная иконка (должна быть квадратная 1024x1024)
   icon: "./assets/images/icon.png",
 
-  extra: {
-    // ⚡️ Берём из .env или .env.production
-    EXPO_PUBLIC_API_URL_DEV: process.env.EXPO_PUBLIC_API_URL_DEV,
-    router: {},
-    eas: {
-      projectId: "7c6d0fa1-6e18-4bf2-a6f4-b877e0b662e2",
-    },
-  },
-
-  ios: {
-    supportsTablet: true,
-    bundleIdentifier: "com.leaderproduct.app",
-    infoPlist: {
-      CFBundleURLTypes: [{ CFBundleURLSchemes: ["leaderproduct"] }],
-    },
-    buildNumber: "2", // увеличивай при каждом билде
-  },
-
+  ios: { bundleIdentifier: "com.leaderproduct.app", buildNumber: "2" },
   android: {
     package: "com.leaderproduct.app",
-    versionCode: 2, // увеличивай при каждом билде
-    adaptiveIcon: {
-      foregroundImage: "./assets/images/icon.png",
-      backgroundColor: "#ffffff",
-    },
+    versionCode: 2,
     edgeToEdgeEnabled: true,
-    intentFilters: [
-      {
-        action: "VIEW",
-        data: [{ scheme: "leaderproduct", host: "*" }],
-        category: ["BROWSABLE", "DEFAULT"],
-      },
-    ],
-  },
-
-  web: {
-    bundler: "metro",
-    output: "static",
-    favicon: "./assets/images/favicon.ico",
+    adaptiveIcon: {
+      foregroundImage: "./assets/images/adaptive-foreground.png",
+      backgroundImage: "./assets/images/adaptive-background.png",
+    },
   },
 
   plugins: [
@@ -70,11 +34,14 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         image: "./assets/images/splash.png",
         imageWidth: 200,
         resizeMode: "contain",
+        backgroundColor: "#ffffff",
       },
     ],
+    // 👇 указываем модуль плагина как строку пути + опции
+    ["./plugins/with-cpp-flags", {
+      createCMakeIfMissing: true,
+      extraCppFlags: ["-Wno-dollar-in-identifier-extension"],
+      mode: "both",
+    }],
   ],
-
-  experiments: {
-    typedRoutes: true,
-  },
 });
