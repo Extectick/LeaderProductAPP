@@ -8,6 +8,7 @@ import { enableScreens } from 'react-native-screens';
 
 import { AuthProvider } from '@/context/AuthContext';
 import { ThemeProvider } from '@/context/ThemeContext';
+import { KeyboardProvider } from 'react-native-keyboard-controller';
 
 // Сплэш контролируем вручную на native
 if (Platform.OS !== 'web') {
@@ -64,15 +65,17 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <Root style={{ flex: 1 }} onLayout={onLayoutRootView}>
-      <SafeAreaProvider>
-        <ThemeProvider>
-          <AuthProvider>
-            <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
-            <Slot />
-          </AuthProvider>
-        </ThemeProvider>
-      </SafeAreaProvider>
-    </Root>
+<Root style={{ flex: 1 }} onLayout={onLayoutRootView}>
+  <KeyboardProvider>
+    <SafeAreaProvider>
+      <ThemeProvider>
+        <AuthProvider>
+          <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
+          <Slot />
+        </AuthProvider>
+      </ThemeProvider>
+    </SafeAreaProvider>
+  </KeyboardProvider>
+</Root>
   );
 }

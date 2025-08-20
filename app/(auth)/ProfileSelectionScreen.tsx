@@ -21,8 +21,8 @@ import {
   View
 } from 'react-native';
 import DropDownPicker from 'react-native-dropdown-picker';
-import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
-import { TextInputMask } from 'react-native-masked-text';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
+import { MaskedTextInput } from 'react-native-mask-text';
 
 export default function ProfileSelectionScreen() {
   const router = useRouter();
@@ -32,39 +32,38 @@ export default function ProfileSelectionScreen() {
   const [selectedType, setSelectedType] = useState<'CLIENT' | 'SUPPLIER' | 'EMPLOYEE' | null>(null);
   const [form, setForm] = useState({
     firstName: '',
-    lastName: '', 
+    lastName: '',
     phone: '',
     departmentId: 0,
     patronymic: '',
   });
   const [fadeAnim] = useState(new Animated.Value(0));
   const [dropdownOpen, setDropdownOpen] = useState(false);
-  const [dropdownItems, setDropdownItems] = useState<{label: string, value: number}[]>([]);
-  const [apiMessage, setApiMessage] = useState<{text: string, isError: boolean} | null>(null);
+  const [dropdownItems, setDropdownItems] = useState<{ label: string, value: number }[]>([]);
+  const [apiMessage, setApiMessage] = useState<{ text: string, isError: boolean } | null>(null);
 
   useEffect(() => {
-  let isMounted = true;
+    let isMounted = true;
 
-  const fetchDepartments = async () => {
-    try {
-      const deps = await getDepartments();
-      if (isMounted) {
-        console.log('Получены отделы');
-        setDepartments(deps);
-        setDropdownItems(deps.map(dep => ({ label: dep.name, value: dep.id })));
+    const fetchDepartments = async () => {
+      try {
+        const deps = await getDepartments();
+        if (isMounted) {
+          console.log('Получены отделы');
+          setDepartments(deps);
+          setDropdownItems(deps.map(dep => ({ label: dep.name, value: dep.id })));
+        }
+      } catch (error) {
+        console.error('Ошибка загрузки отделов:', error);
       }
-    } catch (error) {
-      console.error('Ошибка загрузки отделов:', error);
-    }
-  };
+    };
 
-  fetchDepartments();
+    fetchDepartments();
 
-  return () => {
-    isMounted = false;
-  };
-}, []);
-
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const onChange = (field: string, value: string | number) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -112,11 +111,10 @@ export default function ProfileSelectionScreen() {
     try {
       let profileData: CreateClientProfileDto | CreateSupplierProfileDto | CreateEmployeeProfileDto;
 
-      switch(selectedType) {
+      switch (selectedType) {
         case 'CLIENT':
           profileData = {
             phone: form.phone,
-
             user: {
               firstName: form.firstName,
               lastName: form.lastName,
@@ -127,7 +125,6 @@ export default function ProfileSelectionScreen() {
         case 'SUPPLIER':
           profileData = {
             phone: form.phone,
-
             user: {
               firstName: form.firstName,
               lastName: form.lastName,
@@ -151,7 +148,7 @@ export default function ProfileSelectionScreen() {
       }
       console.log(profileData)
       await createProfile(selectedType, profileData);
-      setApiMessage({text: 'Профиль успешно создан', isError: false});
+      setApiMessage({ text: 'Профиль успешно создан', isError: false });
       setTimeout(() => router.push('/home' as RelativePathString), 1500);
     } catch (error) {
       let message = 'Не удалось создать профиль';
@@ -163,7 +160,7 @@ export default function ProfileSelectionScreen() {
           message = error.message;
         }
       }
-      setApiMessage({text: message, isError: true});
+      setApiMessage({ text: message, isError: true });
     }
   };
 
@@ -190,13 +187,10 @@ export default function ProfileSelectionScreen() {
             <Text style={styles.label}>Отчество <Text style={{ color: secondaryTextColor }}>(необязательно)</Text></Text>
             <TextInput style={styles.input} value={form.patronymic} onChangeText={(text) => onChange('patronymic', text)} />
             <Text style={styles.label}>Телефон*</Text>
-            <TextInputMask
-              type={'custom'}
-              options={{
-                mask: '+7 (999) 999-99-99',
-              }}
+            <MaskedTextInput
               value={form.phone}
-              onChangeText={(text) => onChange('phone', text)}
+              onChangeText={(masked, unmasked) => onChange('phone', masked)}
+              mask={"+7 (999) 999-99-99"}
               style={styles.input}
               keyboardType="phone-pad"
               placeholder="+7 (___) ___-__-__"
@@ -236,13 +230,10 @@ export default function ProfileSelectionScreen() {
               placeholder="Введите имя"
             />
             <Text style={styles.label}>Телефон <Text style={{ color: secondaryTextColor }}>(необязательно)</Text></Text>
-            <TextInputMask
-              type={'custom'}
-              options={{
-                mask: '+7 (999) 999-99-99',
-              }}
+            <MaskedTextInput
               value={form.phone}
-              onChangeText={(text) => onChange('phone', text)}
+              onChangeText={(masked, unmasked) => onChange('phone', masked)}
+              mask={"+7 (999) 999-99-99"}
               style={styles.input}
               keyboardType="phone-pad"
               placeholder="+7 (___) ___-__-__"
@@ -268,9 +259,8 @@ export default function ProfileSelectionScreen() {
     <View style={[styles.fullScreen, { backgroundColor }]}>
       <KeyboardAwareScrollView
         contentContainerStyle={styles.centeredContainer}
-        enableOnAndroid
         keyboardShouldPersistTaps="handled"
-        extraScrollHeight={100}
+        extraKeyboardSpace={100}
       >
         <ThemeSwitcher />
         {!selectedType ? (
@@ -280,8 +270,8 @@ export default function ProfileSelectionScreen() {
               <TouchableOpacity
                 key={type}
                 style={[
-                  styles.button, 
-                  { 
+                  styles.button,
+                  {
                     backgroundColor: ['CLIENT', 'SUPPLIER'].includes(type) ? '#cccccc' : buttonColor,
                     opacity: ['CLIENT', 'SUPPLIER'].includes(type) ? 0.6 : 1
                   }
@@ -303,20 +293,20 @@ export default function ProfileSelectionScreen() {
           </View>
         ) : (
           <View style={styles.centeredBlock}>
-        <TouchableOpacity onPress={() => setSelectedType(null)} style={{ marginBottom: 12 }}>
-          <Text style={{ color: textColor }}>{'← Назад к выбору'}</Text>
-        </TouchableOpacity>
-        
-        {apiMessage && (
-          <Text style={[
-            styles.message, 
-            {color: apiMessage.isError ? 'red' : 'green'}
-          ]}>
-            {apiMessage.text}
-          </Text>
-        )}
-        
-        {renderForm()}
+            <TouchableOpacity onPress={() => setSelectedType(null)} style={{ marginBottom: 12 }}>
+              <Text style={{ color: textColor }}>{'← Назад к выбору'}</Text>
+            </TouchableOpacity>
+
+            {apiMessage && (
+              <Text style={[
+                styles.message,
+                { color: apiMessage.isError ? 'red' : 'green' }
+              ]}>
+                {apiMessage.text}
+              </Text>
+            )}
+
+            {renderForm()}
           </View>
         )}
       </KeyboardAwareScrollView>

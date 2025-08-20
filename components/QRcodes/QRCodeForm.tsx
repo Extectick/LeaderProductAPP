@@ -12,7 +12,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import Animated, { FadeInDown, SlideInLeft, SlideOutRight, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 
 // ======= Русские названия типов + иконки =======
@@ -362,13 +362,12 @@ export default function QRCodeForm({ mode, initialItem, onCreate, onUpdate, onSu
 
   return (
     <View style={{ flex: 1 }}>
-      <KeyboardAwareScrollView
-        enableOnAndroid
-        extraScrollHeight={24}
-        keyboardOpeningTime={0}
-        contentContainerStyle={{ paddingBottom: 32 }}
-        keyboardShouldPersistTaps="handled"
-      >
+        <KeyboardAwareScrollView
+          contentContainerStyle={{ paddingBottom: 32 }}
+          keyboardShouldPersistTaps="handled"
+          extraKeyboardSpace={24}  // вместо extraScrollHeight
+          keyboardDismissMode="interactive" // аналог keyboardOpeningTime={0}
+        >
         {/* Шапка + режим + ID */}
         <Animated.View entering={FadeInDown.springify().damping(16)} style={styles.header}>
           <View style={[styles.badge, { backgroundColor: color }]}>
