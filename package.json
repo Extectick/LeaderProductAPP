@@ -2,15 +2,14 @@
   "name": "extectick-app",
   "main": "expo-router/entry",
   "version": "1.0.0",
-"scripts": {
-  "start": "expo start",
-  "start:dev": "cross-env NODE_ENV=development expo start",
-  "start:prod": "cross-env NODE_ENV=production expo start",
-  "android": "expo start --android",
-  "ios": "expo start --ios",
-  "web": "expo start --web"
-}
-,
+  "scripts": {
+    "start": "expo start",
+    "start:dev": "cross-env NODE_ENV=development expo start",
+    "start:prod": "cross-env NODE_ENV=production expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web"
+  },
   "dependencies": {
     "@expo/config-plugins": "~10.1.1",
     "@expo/prebuild-config": "~9.0.0",
@@ -83,7 +82,6 @@
     "cross-env": "^10.0.0",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~9.2.0",
-    "react-native-dotenv": "^3.4.11",
     "typescript": "~5.8.3"
   },
   "private": true

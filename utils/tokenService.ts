@@ -1,7 +1,7 @@
 // utils/tokenService.ts
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
-import { apiClient } from './apiClient';
+import { API_BASE_URL } from './config';
 
 const ACCESS_KEY = 'accessToken';
 const REFRESH_KEY = 'refreshToken';
@@ -9,6 +9,9 @@ const PROFILE_KEY = 'profile';
 
 const MAX_REFRESH_ATTEMPTS = 3;
 let refreshAttempts = 0;
+
+// prevent concurrent refreshes
+let refreshInFlight: Promise<string | null> | null = null;
 
 export async function getAccessToken(): Promise<string | null> {
   return AsyncStorage.getItem(ACCESS_KEY);
@@ -25,9 +28,8 @@ export async function saveTokens(accessToken: string, refreshToken: string, prof
   ];
   if (profile) items.push([PROFILE_KEY, JSON.stringify(profile)]);
   await AsyncStorage.multiSet(items);
-
   console.log('Сохранён профиль:', profile);
-  refreshAttempts = 0; // сброс попыток при новом токене
+  refreshAttempts = 0;
 }
 
 export async function logout(): Promise<void> {
@@ -36,6 +38,9 @@ export async function logout(): Promise<void> {
 }
 
 export async function refreshToken(): Promise<string | null> {
+  // de-dupe concurrent calls
+  if (refreshInFlight) return refreshInFlight;
+
   if (refreshAttempts >= MAX_REFRESH_ATTEMPTS) {
     console.warn('Достигнут максимум попыток обновления токена');
     await logout();
@@ -43,36 +48,46 @@ export async function refreshToken(): Promise<string | null> {
   }
   refreshAttempts++;
 
-  const storedRefreshToken = await getRefreshToken();
-  if (!storedRefreshToken) {
-    await logout();
-    return null;
-  }
+  refreshInFlight = (async () => {
+    const storedRefreshToken = await getRefreshToken();
+    if (!storedRefreshToken) {
+      await logout();
+      return null;
+    }
 
-  try {
-    const response = await apiClient<{ refreshToken: string }, { accessToken: string; refreshToken: string }>(
-      '/auth/token',
-      {
+    try {
+      const res = await fetch(`${API_BASE_URL}/auth/token`, {
         method: 'POST',
-        body: { refreshToken: storedRefreshToken },
-        skipAuth: true,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken: storedRefreshToken }),
+      });
+
+      const json = await res.json().catch(() => ({} as any));
+      if (!res.ok) {
+        throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
       }
-    );
 
-    if (!response.ok) {
-      throw new Error(response.message || 'Ошибка обновления токена');
+      // support both {data:{...}} and flat body
+      const payload = json?.data ?? json;
+      const accessToken: string | undefined = payload?.accessToken;
+      const newRefreshToken: string | undefined = payload?.refreshToken;
+      const profile = payload?.profile;
+
+      if (!accessToken) {
+        throw new Error('Отсутствует accessToken в ответе');
+      }
+
+      await saveTokens(accessToken, newRefreshToken ?? storedRefreshToken, profile);
+      refreshAttempts = 0;
+      return accessToken;
+    } catch (error) {
+      console.error('Ошибка при обновлении токена:', error);
+      await logout();
+      return null;
+    } finally {
+      refreshInFlight = null;
     }
+  })();
 
-    if (!response.data?.accessToken) {
-      throw new Error('Отсутствует accessToken в ответе');
-    }
-
-    await saveTokens(response.data.accessToken, response.data.refreshToken);
-    refreshAttempts = 0;
-    return response.data.accessToken;
-  } catch (error) {
-    console.error('Ошибка при обновлении токена:', error);
-    await logout();
-    return null;
-  }
+  return refreshInFlight;
 }

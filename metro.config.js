@@ -1,23 +1,30 @@
-// const { getDefaultConfig } = require('expo/metro-config');
-
-// const config = getDefaultConfig(__dirname);
-
-// config.resolver.alias = {
-//   '@': __dirname + '/app',
-// };
-
-// module.exports = config;
-
 const { getDefaultConfig } = require('expo/metro-config');
 const path = require('path');
 
 const config = getDefaultConfig(__dirname);
 
-// alias: заставим все импорты 'tslib' отдавать наш shim
-config.resolver = config.resolver || {};
-config.resolver.alias = {
-  ...(config.resolver.alias || {}),
-  tslib: path.resolve(__dirname, 'tslib-default-shim.js'),
+// Путь к нашему шиму
+const shimPath = path.resolve(__dirname, 'tslib-default-shim.js');
+
+// Сохраняем дефолтный резолвер (если есть)
+const defaultResolveRequest = config.resolver.resolveRequest;
+
+config.resolver.resolveRequest = (context, moduleName, platform) => {
+  // Любые обращения к tslib (включая её внутренние относительные импорты)
+  if (
+    moduleName === 'tslib' ||
+    moduleName === 'tslib/tslib.js' ||
+    moduleName === '../tslib.js' ||               // то самое из modules/index.js
+    moduleName.startsWith('tslib/modules')        // на всякий случай
+  ) {
+    return context.resolveRequest(context, shimPath, platform);
+  }
+
+  // Фолбэк
+  if (typeof defaultResolveRequest === 'function') {
+    return defaultResolveRequest(context, moduleName, platform);
+  }
+  return context.resolveRequest(context, moduleName, platform);
 };
 
 module.exports = config;

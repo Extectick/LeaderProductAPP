@@ -1,4 +1,7 @@
 // tslib-default-shim.js
-const tslib = require('tslib');
-// вернём всё как есть + подложим default
-module.exports = Object.assign({}, tslib, { default: tslib });
+// Берём ESM-версию, где корректные именованные экспорты.
+const all = require('tslib/tslib.es6.js');
+
+// Экспортируем и именованные, и default:
+module.exports = all;
+module.exports.default = all;
