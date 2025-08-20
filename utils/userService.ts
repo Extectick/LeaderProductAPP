@@ -45,3 +45,32 @@ export async function getProfile(): Promise<Profile | null> {
   }
   return profile;
 }
+
+/**
+ * Универсальная загрузка профиля.
+ * - userId не указан -> текущий профиль (/users/profile)
+ * - userId указан    -> профиль по id (/users/:userId/profile)
+ */
+export async function getProfileById(userId?: number | null): Promise<Profile | null> {
+  const url =
+    userId == null
+      ? API_ENDPOINTS.USERS.PROFILE
+      : API_ENDPOINTS.USERS.PROFILE_BY_ID(Number(userId)); // /users/:userId/profile
+
+  const res = await apiClient<void, { profile: Profile }>(url);
+  if (!res.ok) {
+    console.error('Ошибка получения профиля:', res.message);
+    return null;
+  }
+
+  const profile = res.data?.profile ?? null;
+
+  // Кэшируем только свой профиль (как делал прежний getProfile)
+  if (profile && userId == null) {
+    try {
+      await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+    } catch {}
+  }
+
+  return profile;
+}

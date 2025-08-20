@@ -38,10 +38,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       },
     ],
     // 👇 указываем модуль плагина как строку пути + опции
-    ["./plugins/with-cpp-flags", {
-      createCMakeIfMissing: true,
-      extraCppFlags: ["-Wno-dollar-in-identifier-extension"],
-      mode: "both",
-    }],
+    // ["./plugins/with-cpp-flags", {
+    //   createCMakeIfMissing: true,
+    //   extraCppFlags: ["-Wno-dollar-in-identifier-extension"],
+    //   mode: "both",
+    // }],
   ],
 });

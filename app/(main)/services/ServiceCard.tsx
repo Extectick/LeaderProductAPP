@@ -5,6 +5,7 @@ import React, { useMemo } from 'react';
 import {
   Platform,
   Pressable,
+  StyleProp,
   StyleSheet,
   Text,
   TextStyle,
@@ -25,23 +26,41 @@ interface Props {
   size: number;
   onPress: () => void;
 
+  /** Градиент акцентного бейджа/фона */
   gradient?: [string, string];
+
+  /** Явный фон карточки (иначе из темы или из containerStyle.backgroundColor) */
   backgroundColor?: string;
+
+  /** Цвет текста (иначе из темы) */
   textColor?: string;
+
+  /** Размер иконки в бейдже */
   iconSize?: number;
 
+  /** Отключить тень */
   disableShadow?: boolean;
+
+  /** Отключить пружинку на нажатие */
   disableScaleOnPress?: boolean;
 
+  /** Внешние стили (используются только маргины/радиус/фон) */
   containerStyle?: ViewStyle;
+
+  /** Доп. стили текста */
   textStyle?: TextStyle;
+
+  /** Заблокирована */
   disabled?: boolean;
 }
 
 /**
- * Адаптивная карточка сервиса
- * - Мобильные: press scale (легкий подпрыг)
- * - Web: hover-tilt (3D наклон), мягкая подсветка рамки, парящий блик
+ * Новый дизайн ServiceCard:
+ * - стеклянная карточка с мягким светом и градиентными «каплями»
+ * - крупный круглый бейдж под иконку
+ * - hover (web): лёгкий подъем и усиление свечения
+ * - press (native): пружинка + ripple
+ * - disabled: замок, понижение контраста, блокировка нажатий
  */
 export default function ServiceCard({
   icon,
@@ -61,47 +80,33 @@ export default function ServiceCard({
   textStyle,
   disabled = false,
 }: Props) {
-  const themeBackground = useThemeColor({}, 'cardBackground');
-  const themeTextColor = useThemeColor({}, 'text');
+  const themeCardBg = useThemeColor({}, 'cardBackground');
+  const themeText = useThemeColor({}, 'text');
 
-  const bgColor = backgroundColor ?? themeBackground;
-  const txtColor = textColor ?? themeTextColor;
+  // Позволяем переопределять фон через props или containerStyle.backgroundColor
+  const containerBg = (containerStyle as ViewStyle | undefined)?.backgroundColor;
+  const cardBg = backgroundColor ?? containerBg ?? themeCardBg;
+  const txtColor = textColor ?? themeText;
+
   const isWeb = Platform.OS === 'web';
 
-  // animation state
+  // --- Animation state ---
   const scale = useSharedValue(1);
   const hover = useSharedValue(0); // 0..1
-  const rx = useSharedValue(0);    // rotateX deg
-  const ry = useSharedValue(0);    // rotateY deg
-  const glow = useSharedValue(0);  // glow intensity 0..1
 
   const onHoverIn = () => {
     if (!isWeb || disabled) return;
     hover.value = withTiming(1, { duration: 180, easing: Easing.out(Easing.quad) });
-    glow.value = withTiming(1, { duration: 320 });
-    scale.value = withTiming(1.02, { duration: 160 });
+    if (!disableScaleOnPress) {
+      scale.value = withTiming(1.015, { duration: 160 });
+    }
   };
   const onHoverOut = () => {
     if (!isWeb) return;
     hover.value = withTiming(0, { duration: 220 });
-    glow.value = withTiming(0, { duration: 260 });
-    rx.value = withTiming(0, { duration: 220 });
-    ry.value = withTiming(0, { duration: 220 });
-    scale.value = withTiming(1, { duration: 200 });
-  };
-
-  const onMove = (e: any) => {
-    if (!isWeb) return;
-    const rect = e.currentTarget?.getBoundingClientRect?.();
-    if (!rect) return;
-    const px = (e.nativeEvent?.pageX ?? e.pageX) - rect.left;
-    const py = (e.nativeEvent?.pageY ?? e.pageY) - rect.top;
-    const nx = (px / rect.width) * 2 - 1;  // -1..1
-    const ny = (py / rect.height) * 2 - 1; // -1..1
-
-    const maxTilt = 8; // deg
-    ry.value = withTiming(nx * maxTilt, { duration: 70 });
-    rx.value = withTiming(-ny * maxTilt, { duration: 70 });
+    if (!disableScaleOnPress) {
+      scale.value = withTiming(1, { duration: 180 });
+    }
   };
 
   const onPressIn = () => {
@@ -113,142 +118,216 @@ export default function ServiceCard({
     scale.value = withSpring(1, { damping: 18, stiffness: 260 });
   };
 
-  const animated = useAnimatedStyle(() => {
+  // --- Animated styles ---
+  const aOuter = useAnimatedStyle(() => {
+    const raise = hover.value * 4; // подъем на web
     return {
-      transform: [
-        { perspective: 800 },
-        { rotateX: `${rx.value}deg` },
-        { rotateY: `${ry.value}deg` },
-        { scale: scale.value },
-      ],
-      shadowOpacity: disableShadow ? 0 : 0.14 + glow.value * 0.08,
-      shadowRadius: disableShadow ? 0 : 8 + glow.value * 10,
-      elevation: disableShadow ? 0 : 5 + glow.value * 3,
+      transform: [{ scale: scale.value }, { translateY: -raise }],
+      shadowOpacity: disableShadow ? 0 : 0.12 + hover.value * 0.10,
+      shadowRadius: disableShadow ? 0 : 6 + hover.value * 10,
+      elevation: disableShadow ? 0 : 3 + hover.value * 3,
     };
   });
 
-  const gloss = useAnimatedStyle(() => {
-    return {
-      opacity: 0.1 + hover.value * 0.2,
-      transform: [
-        { translateX: withTiming(hover.value ? 30 : -30, { duration: 400 }) },
-        { rotate: '-20deg' },
-      ],
-    };
-  });
+  const aGlow = useAnimatedStyle(() => ({
+    opacity: 0.14 + hover.value * 0.2,
+    transform: [{ scale: 1 + hover.value * 0.04 }],
+  }));
 
-  const ringColors = useMemo<[string, string, string]>(() => {
-    const c1 = gradient?.[0] ?? '#6EE7F9';
-    const c2 = gradient?.[1] ?? '#A78BFA';
-    return [c1, c2, c1];
+  // Акцентные цвета для бейджа/капель
+  const [c1, c2] = useMemo<[string, string]>(() => {
+    if (gradient?.length === 2) return gradient;
+    return ['#7C3AED', '#4F46E5']; // фиолетово-индиговый по умолчанию
   }, [gradient]);
 
-  const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+  // Разбор внешних стилей: чтобы не дублировать фон/бордер
+  const flat = StyleSheet.flatten(containerStyle) as ViewStyle | undefined;
+  const {
+    margin, marginTop, marginRight, marginBottom, marginLeft, marginHorizontal, marginVertical,
+    borderRadius,
+  } = flat || {};
+  const outerStyle: ViewStyle = {
+    margin, marginTop, marginRight, marginBottom, marginLeft, marginHorizontal, marginVertical,
+    borderRadius: borderRadius ?? 20,
+    overflow: 'hidden', // для ripple
+  };
+
+  // Пропорции
+  const radius = (outerStyle.borderRadius as number) || 20;
+  const badge = Math.max(52, Math.floor(size * 0.32)); // круг под иконку
 
   return (
-    <AnimatedPressable
-      onPress={() => !disabled && onPress()}
-      onPressIn={onPressIn}
-      onPressOut={onPressOut}
-      // web-only hover
-      {...(isWeb ? { onHoverIn, onHoverOut, onMouseMove: onMove } : {})}
-      disabled={disabled}
-      // @ts-ignore title (web)
-      title={disabled ? 'Сервис временно недоступен' : undefined}
-      accessibilityRole="button"
-      accessibilityLabel={name}
-    >
-      {/* Градиентная рамка с padding */}
-      <View style={[{ width: size, height: size, borderRadius: 18 }, containerStyle]}>
-        <LinearGradient
-          colors={ringColors}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={StyleSheet.absoluteFill}
-        />
-        <Animated.View
-          style={[
-            styles.inner,
-            {
-              borderRadius: 16,
-              backgroundColor: disabled ? `${bgColor}AA` : bgColor,
-              shadowColor: '#000',
-            },
-            animated,
-          ]}
-        >
-          {/* фон-градиент или плоский фон */}
-          {gradient ? (
-            <LinearGradient
-              colors={gradient}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={[StyleSheet.absoluteFill, { borderRadius: 16 }]}
-            />
-          ) : null}
-
-          {/* лёгкий блик, активнее при hover */}
+    <Animated.View style={[{ width: size, height: size }, outerStyle, aOuter]}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={name}
+        disabled={disabled}
+        onPress={() => !disabled && onPress()}
+        onPressIn={onPressIn}
+        onPressOut={onPressOut}
+        // web hover
+        {...(isWeb ? { onHoverIn, onHoverOut } : {})}
+        android_ripple={{ color: '#E5E7EB' }}
+        style={({ pressed }) => [
+          styles.cardBase,
+          {
+            borderRadius: radius,
+            backgroundColor: cardBg,
+            borderColor: '#E5E7EB',
+            opacity: disabled ? 0.6 : 1,
+          },
+          pressed && Platform.OS === 'ios' ? { opacity: 0.9 } : null,
+        ]}
+      >
+        {/* Декоративные капли/свечения */}
+        <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+          {/* верхний правый градиентный овал */}
+          <LinearGradient
+            pointerEvents="none"
+            colors={[c1 + '33', c2 + '22']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={[
+              styles.blob,
+              { top: -size * 0.18, right: -size * 0.12, width: size * 0.8, height: size * 0.6 },
+            ]}
+          />
+          {/* нижний левый мягкий свет */}
+          <LinearGradient
+            pointerEvents="none"
+            colors={[c2 + '22', c1 + '11']}
+            start={{ x: 0, y: 1 }}
+            end={{ x: 1, y: 0 }}
+            style={[
+              styles.blob,
+              { bottom: -size * 0.2, left: -size * 0.2, width: size * 0.9, height: size * 0.7 },
+            ]}
+          />
+          {/* скользящий блик */}
           <Animated.View
             pointerEvents="none"
             style={[
-              {
-                position: 'absolute',
-                top: -20,
-                left: -40,
-                width: size * 0.7,
-                height: size * 1.2,
-                borderRadius: 24,
-                backgroundColor: '#fff',
-              },
-              gloss,
+              styles.gloss,
+              { borderRadius: radius },
+              aGlow,
             ]}
           />
+        </View>
 
-          {/* контент */}
-          <View style={styles.content}>
-            <Ionicons name={icon as any} size={iconSize} color={txtColor} />
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Text
-                numberOfLines={2}
-                style={[
-                  styles.title,
-                  {
-                    color: txtColor,
-                    textDecorationLine: disabled ? 'line-through' : undefined,
-                  },
-                  textStyle,
-                ]}
-              >
-                {name}
-              </Text>
-              {disabled && (
-                <Ionicons name="lock-closed" size={14} color="#ff3b30" style={{ marginLeft: 4, marginTop: 8 }} />
-              )}
+        {/* Контент */}
+        <View style={styles.content}>
+          {/* Бейдж под иконку */}
+          <LinearGradient
+            colors={[c1, c2]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={[
+              styles.badge,
+              {
+                width: badge,
+                height: badge,
+                borderRadius: badge / 2,
+                shadowColor: c1,
+              },
+            ]}
+          >
+            <Ionicons name={icon as any} size={iconSize} color="#fff" />
+          </LinearGradient>
+
+          <Text
+            numberOfLines={2}
+            style={[
+              styles.title,
+              { color: txtColor },
+              textStyle,
+            ]}
+          >
+            {name}
+          </Text>
+
+          {disabled && (
+            <View style={styles.lockWrap}>
+              <Ionicons name="lock-closed" size={14} color="#EF4444" />
+              <Text style={styles.lockTxt}>Недоступно</Text>
             </View>
-          </View>
-        </Animated.View>
-      </View>
-    </AnimatedPressable>
+          )}
+        </View>
+      </Pressable>
+    </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
-  inner: {
+  cardBase: {
     flex: 1,
-    margin: 2, // толщина «рамки»
-    overflow: 'hidden',
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 12,
+
+    // тень (iOS) — часть усиливается анимацией aOuter
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    // Android тень настраивается elevation в aOuter
   },
+
   content: {
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 10,
   },
+
+  badge: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 4,
+  },
+
   title: {
-    marginTop: 8,
-    fontWeight: '600',
     fontSize: 14,
+    fontWeight: '700',
     textAlign: 'center',
+    letterSpacing: 0.2,
+  },
+
+  lockWrap: {
+    marginTop: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: '#FEE2E2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+  },
+  lockTxt: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#B91C1C',
+  },
+
+  // декоративные элементы
+  blob: {
+    position: 'absolute',
+    borderRadius: 999,
+    filter: Platform.OS === 'web' ? 'blur(12px)' as any : undefined,
+  },
+  gloss: {
+    position: 'absolute',
+    left: -40,
+    right: -40,
+    top: -10,
+    height: 90,
+    backgroundColor: '#FFFFFF',
+    opacity: 0.12,
+    transform: [{ rotate: '-12deg' }],
   },
 });

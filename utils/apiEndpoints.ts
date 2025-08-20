@@ -8,6 +8,8 @@ export const API_ENDPOINTS = {
   },
   USERS: {
     PROFILE: '/users/profile',
+    // ✅ функция, формирующая корректный путь /users/:userId/profile
+    PROFILE_BY_ID: (userId: number) => `/users/${userId}/profile`,
     DEPARTMENTS: '/users/departments',
     PROFILES: {
       CLIENT: '/users/profiles/client',
