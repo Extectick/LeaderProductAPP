@@ -66,7 +66,7 @@ export default function RootLayout() {
 
   return (
 <Root style={{ flex: 1 }} onLayout={onLayoutRootView}>
-  <KeyboardProvider>
+
     <SafeAreaProvider>
       <ThemeProvider>
         <AuthProvider>
@@ -75,7 +75,7 @@ export default function RootLayout() {
         </AuthProvider>
       </ThemeProvider>
     </SafeAreaProvider>
-  </KeyboardProvider>
+
 </Root>
   );
 }

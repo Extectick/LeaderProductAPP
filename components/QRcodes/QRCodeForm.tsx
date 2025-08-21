@@ -362,12 +362,12 @@ export default function QRCodeForm({ mode, initialItem, onCreate, onUpdate, onSu
 
   return (
     <View style={{ flex: 1 }}>
-        <KeyboardAwareScrollView
+        {/* <KeyboardAwareScrollView
           contentContainerStyle={{ paddingBottom: 32 }}
           keyboardShouldPersistTaps="handled"
           extraKeyboardSpace={24}  // вместо extraScrollHeight
           keyboardDismissMode="interactive" // аналог keyboardOpeningTime={0}
-        >
+        > */}
         {/* Шапка + режим + ID */}
         <Animated.View entering={FadeInDown.springify().damping(16)} style={styles.header}>
           <View style={[styles.badge, { backgroundColor: color }]}>
@@ -426,7 +426,7 @@ export default function QRCodeForm({ mode, initialItem, onCreate, onUpdate, onSu
             <Animated.View pointerEvents="none" style={[styles.ripple, rippleStyle]} />
           </Pressable>
         </Animated.View>
-      </KeyboardAwareScrollView>
+      {/* </KeyboardAwareScrollView> */}
     </View>
   );
 }

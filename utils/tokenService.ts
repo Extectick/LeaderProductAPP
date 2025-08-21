@@ -34,60 +34,53 @@ export async function saveTokens(accessToken: string, refreshToken: string, prof
 
 export async function logout(): Promise<void> {
   await AsyncStorage.multiRemove([ACCESS_KEY, REFRESH_KEY, PROFILE_KEY]);
-  router.replace('/AuthScreen');
+  router.replace('/(auth)/AuthScreen');
 }
 
 export async function refreshToken(): Promise<string | null> {
   // de-dupe concurrent calls
   if (refreshInFlight) return refreshInFlight;
-
   if (refreshAttempts >= MAX_REFRESH_ATTEMPTS) {
     console.warn('Достигнут максимум попыток обновления токена');
-    await logout();
+    // Do not call logout here to preserve tokens; caller will handle unauth state
     return null;
   }
   refreshAttempts++;
-
   refreshInFlight = (async () => {
     const storedRefreshToken = await getRefreshToken();
     if (!storedRefreshToken) {
+      // If refresh token missing, consider user unauthenticated
       await logout();
       return null;
     }
-
     try {
       const res = await fetch(`${API_BASE_URL}/auth/token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refreshToken: storedRefreshToken }),
       });
-
       const json = await res.json().catch(() => ({} as any));
       if (!res.ok) {
         throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
       }
-
       // support both {data:{...}} and flat body
       const payload = json?.data ?? json;
       const accessToken: string | undefined = payload?.accessToken;
       const newRefreshToken: string | undefined = payload?.refreshToken;
       const profile = payload?.profile;
-
       if (!accessToken) {
         throw new Error('Отсутствует accessToken в ответе');
       }
-
       await saveTokens(accessToken, newRefreshToken ?? storedRefreshToken, profile);
       refreshAttempts = 0;
       return accessToken;
     } catch (error) {
       console.error('Ошибка при обновлении токена:', error);
-      await logout();
+      // Do not call logout on network errors; return null and let caller decide
       return null;
     } finally {
       refreshInFlight = null;
     }
   })();
-
   return refreshInFlight;
 }
