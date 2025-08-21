@@ -1,12 +1,9 @@
 // context/AuthContext.tsx
-
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { jwtDecode } from 'jwt-decode';
 import isEqual from 'lodash.isequal';
 import React, { createContext, ReactNode, useEffect, useState } from 'react';
 
 import { Profile } from '@/types/userTypes';
-import { refreshToken } from '@/utils/tokenService';
 import { getProfile } from '@/utils/userService';
 
 interface AuthContextType {
@@ -19,23 +16,7 @@ interface AuthContextType {
 
 export const AuthContext = createContext<AuthContextType | null>(null);
 
-interface AuthProviderProps {
-  children: ReactNode;
-}
-
-interface DecodedToken {
-  exp?: number;
-  [key: string]: any;
-}
-
-export const isValidProfile = (profile: Profile | null): boolean => {
-    if (!profile) return false;
-    const hasProfile = !!profile.clientProfile || !!profile.supplierProfile || !!profile.employeeProfile;
-    if (!hasProfile) return false;
-    return true;
-};
-
-export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
+export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [isAuthenticated, setAuthenticated] = useState(false);
   const [profileState, setProfileState] = useState<Profile | null>(null);
@@ -56,59 +37,24 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     let isMounted = true;
     const init = async () => {
       try {
-        let token = await AsyncStorage.getItem('accessToken');
+        const token = await AsyncStorage.getItem('accessToken');
         const profileJson = await AsyncStorage.getItem('profile');
         if (!isMounted) return;
-        if (!token) {
-          token = await refreshToken();
-        }
+        if (token) setAuthenticated(true);
         if (profileJson) {
-          const parsedProfile: Profile = JSON.parse(profileJson);
-          await setProfile(parsedProfile);
-        }
-        if (token) {
-          let decoded: DecodedToken | null = null;
+          const parsed: Profile = JSON.parse(profileJson);
+          await setProfile(parsed);
+        } else if (token) {
           try {
-            decoded = jwtDecode<DecodedToken>(token);
-          } catch (err) {
-            const newToken = await refreshToken();
-            if (newToken) {
-              token = newToken;
-              try {
-                decoded = jwtDecode<DecodedToken>(token);
-              } catch {
-                setAuthenticated(false);
-                return;
-              }
-            } else {
-              setAuthenticated(false);
-              return;
+            await getProfile();
+            const newProfileJson = await AsyncStorage.getItem('profile');
+            if (newProfileJson) {
+              const parsed: Profile = JSON.parse(newProfileJson);
+              await setProfile(parsed);
             }
+          } catch (e) {
+            console.warn('Ошибка получения профиля:', e);
           }
-          const now = Math.floor(Date.now() / 1000);
-          if (decoded?.exp && decoded.exp < now) {
-            const newToken = await refreshToken();
-            if (!newToken) {
-              setAuthenticated(false);
-              return;
-            }
-            token = newToken;
-          }
-          setAuthenticated(true);
-          if (!profileJson) {
-            try {
-              await getProfile();
-              const newProfileJson = await AsyncStorage.getItem('profile');
-              if (newProfileJson) {
-                const parsedProfile: Profile = JSON.parse(newProfileJson);
-                await setProfile(parsedProfile);
-              }
-            } catch (e) {
-              console.warn('Ошибка получения профиля:', e);
-            }
-          }
-        } else {
-          setAuthenticated(false);
         }
       } catch (e) {
         console.warn('Ошибка инициализации:', e);

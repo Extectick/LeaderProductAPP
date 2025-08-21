@@ -257,11 +257,11 @@ export default function ProfileSelectionScreen() {
 
   return (
     <View style={[styles.fullScreen, { backgroundColor }]}>
-      <KeyboardAwareScrollView
+      {/* <KeyboardAwareScrollView
         contentContainerStyle={styles.centeredContainer}
         keyboardShouldPersistTaps="handled"
         extraKeyboardSpace={100}
-      >
+      > */}
         <ThemeSwitcher />
         {!selectedType ? (
           <View style={styles.centeredBlock}>
@@ -309,7 +309,7 @@ export default function ProfileSelectionScreen() {
             {renderForm()}
           </View>
         )}
-      </KeyboardAwareScrollView>
+      {/* </KeyboardAwareScrollView> */}
     </View>
   );
 }

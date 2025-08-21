@@ -34,7 +34,7 @@ export async function saveTokens(accessToken: string, refreshToken: string, prof
 
 export async function logout(): Promise<void> {
   await AsyncStorage.multiRemove([ACCESS_KEY, REFRESH_KEY, PROFILE_KEY]);
-  router.replace('/AuthScreen');
+  router.replace('/(auth)/AuthScreen');
 }
 
 export async function refreshToken(): Promise<string | null> {
