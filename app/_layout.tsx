@@ -1,5 +1,5 @@
 // app/_layout.tsx
-import { Slot } from 'expo-router';
+import { Slot, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Platform, StatusBar, View } from 'react-native';
@@ -9,23 +9,20 @@ import { enableScreens } from 'react-native-screens';
 import { AuthProvider } from '@/context/AuthContext';
 import { ThemeProvider } from '@/context/ThemeContext';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
+import { useAuthRedirect } from '@/hooks/useAuthRedirect';
 
-// Сплэш контролируем вручную на native
 if (Platform.OS !== 'web') {
   void SplashScreen.preventAutoHideAsync().catch(() => {});
 }
 
-// GestureHandlerRootView — только на native
 let GestureHandlerRootView: React.ComponentType<any> | null = null;
 if (Platform.OS !== 'web') {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
   const RNGH = require('react-native-gesture-handler');
   GestureHandlerRootView = RNGH.GestureHandlerRootView;
 }
 
 enableScreens();
 
-// --- Глобальный перехват JS-ошибок: попадут в ReactNativeJS в logcat ---
 try {
   // @ts-ignore
   const defaultHandler = global.ErrorUtils?.getGlobalHandler?.();
@@ -36,6 +33,12 @@ try {
   });
 } catch {}
 
+function InnerLayout() {
+  const { isChecking } = useAuthRedirect();
+  if (isChecking) return null; // Splash останется видимым
+  return <Slot />;
+}
+
 export default function RootLayout() {
   const Root = GestureHandlerRootView ?? View;
 
@@ -45,7 +48,7 @@ export default function RootLayout() {
   useEffect(() => {
     (async () => {
       try {
-        // TODO: preload (шрифты/ресурсы/сессия)
+        // preload...
       } catch (e) {
         console.warn('App init error:', e);
       } finally {
@@ -65,17 +68,16 @@ export default function RootLayout() {
   }, []);
 
   return (
-<Root style={{ flex: 1 }} onLayout={onLayoutRootView}>
-
-    <SafeAreaProvider>
-      <ThemeProvider>
-        <AuthProvider>
-          <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
-          <Slot />
-        </AuthProvider>
-      </ThemeProvider>
-    </SafeAreaProvider>
-
-</Root>
+    <Root style={{ flex: 1 }} onLayout={onLayoutRootView}>
+      <SafeAreaProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
+            {/* ⬇️ ВАЖНО: используем наш гейт вместо <Slot /> */}
+            <InnerLayout />
+          </AuthProvider>
+        </ThemeProvider>
+      </SafeAreaProvider>
+    </Root>
   );
 }

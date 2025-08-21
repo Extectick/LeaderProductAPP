@@ -1,35 +1,47 @@
-// hooks/useAuthRedirect.ts
-// Simplified version that no longer relies on `isValidProfile` exported from AuthContext.
-// Instead, define a local helper to determine if a user has a valid profile.
-import { useContext, useMemo } from 'react';
+import { useContext, useEffect, useMemo } from 'react';
+import { useRouter, type Href } from 'expo-router';
 import { AuthContext } from '@/context/AuthContext';
-import { Profile } from '@/types/userTypes';
+import type { Profile } from '@/types/userTypes';
 
-export type Gate = 'guest' | 'needsProfile' | 'ready';
+const ROUTES = {
+  AUTH: '/(auth)/AuthScreen',
+  PROFILE: '/ProfileSelectionScreen',
+  HOME: '/home',
+} as const;
 
-/**
- * Local helper to check whether the profile has at least one of the expected
- * sub-profiles. The original implementation lived in AuthContext but may no
- * longer be exported, so the check is reproduced here to avoid undefined imports.
- */
-function isValidProfile(profile: Profile | null): boolean {
-  if (!profile) return false;
-  return !!(profile.clientProfile || profile.supplierProfile || profile.employeeProfile);
+function hasValidProfile(p: Profile | null): boolean {
+  return !!(p && (p.clientProfile || p.supplierProfile || p.employeeProfile));
 }
 
-export const useAuthGate = () => {
+type Gate = 'guest' | 'needsProfile' | 'ready';
+
+export function useAuthRedirect() {
+  const router = useRouter();
   const auth = useContext(AuthContext);
   if (!auth) throw new Error('AuthContext is required');
 
   const { isLoading, isAuthenticated, profile } = auth;
 
-  const hasValidProfile = useMemo(() => isValidProfile(profile), [profile]);
+  // Это хук и он всегда вызывается – порядок стабилен
+  const gate: Gate = useMemo(() => {
+    if (!isAuthenticated) return 'guest';
+    return hasValidProfile(profile) ? 'ready' : 'needsProfile';
+  }, [isAuthenticated, profile]);
 
-  const gate: Gate = !isAuthenticated
-    ? 'guest'
-    : hasValidProfile
-    ? 'ready'
-    : 'needsProfile';
+  // Тоже хук – всегда вызывается; логика внутри условия
+  useEffect(() => {
+    if (isLoading) return;
 
-  return { isLoading, gate, isAuthenticated, hasValidProfile, profile };
-};
+    const href: Href =
+      gate === 'guest'
+        ? (ROUTES.AUTH as Href)
+        : gate === 'needsProfile'
+        ? (ROUTES.PROFILE as Href)
+        : (ROUTES.HOME as Href);
+
+    router.replace(href);
+  }, [isLoading, gate, router]);
+
+  // Показываем, можно ли уже рендерить детей
+  return { isChecking: isLoading };
+}

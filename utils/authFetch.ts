@@ -1,10 +1,10 @@
 // utils/authFetch.ts
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios, { AxiosError, AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
+import Constants from 'expo-constants';
 import { router } from 'expo-router';
 
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL_DEV!;
-
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL_DEV!
 let isRefreshing = false;
 let refreshSubscribers: ((token: string) => void)[] = [];
 

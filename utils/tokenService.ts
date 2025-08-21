@@ -1,6 +1,7 @@
 // utils/tokenService.ts
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
+import { apiClient } from './apiClient';
 import { API_BASE_URL } from './config';
 
 const ACCESS_KEY = 'accessToken';
@@ -9,9 +10,8 @@ const PROFILE_KEY = 'profile';
 
 const MAX_REFRESH_ATTEMPTS = 3;
 let refreshAttempts = 0;
-
-// prevent concurrent refreshes
 let refreshInFlight: Promise<string | null> | null = null;
+let lastWarnTs = 0;
 
 export async function getAccessToken(): Promise<string | null> {
   return AsyncStorage.getItem(ACCESS_KEY);
@@ -28,31 +28,47 @@ export async function saveTokens(accessToken: string, refreshToken: string, prof
   ];
   if (profile) items.push([PROFILE_KEY, JSON.stringify(profile)]);
   await AsyncStorage.multiSet(items);
+
   console.log('Сохранён профиль:', profile);
-  refreshAttempts = 0;
+  refreshAttempts = 0; // сброс попыток при новом токене
 }
 
 export async function logout(): Promise<void> {
   await AsyncStorage.multiRemove([ACCESS_KEY, REFRESH_KEY, PROFILE_KEY]);
-  router.replace('/(auth)/AuthScreen');
+  // Сбрасываем бэкофф, чтобы не было дальнейшего спама предупреждений
+  refreshAttempts = 0;
+  lastWarnTs = 0;
+  // router.replace('/(auth)/AuthScreen');
+}
+
+export function resetRefreshBackoff() {
+  refreshAttempts = 0;
+  lastWarnTs = 0;
 }
 
 export async function refreshToken(): Promise<string | null> {
-  // de-dupe concurrent calls
   if (refreshInFlight) return refreshInFlight;
-  if (refreshAttempts >= MAX_REFRESH_ATTEMPTS) {
-    console.warn('Достигнут максимум попыток обновления токена');
-    // Do not call logout here to preserve tokens; caller will handle unauth state
+
+  // ⬇️ СНАЧАЛА проверяем, есть ли refreshToken в хранилище
+  const storedRefreshToken = await getRefreshToken();
+  if (!storedRefreshToken) {
+    // Нечего обновлять — не увеличиваем попытки, не логируем
+    refreshAttempts = 0; // на всякий случай сбросим бэкофф
     return null;
   }
-  refreshAttempts++;
-  refreshInFlight = (async () => {
-    const storedRefreshToken = await getRefreshToken();
-    if (!storedRefreshToken) {
-      // If refresh token missing, consider user unauthenticated
-      await logout();
-      return null;
+
+  if (refreshAttempts >= MAX_REFRESH_ATTEMPTS) {
+    const now = Date.now();
+    if (now - lastWarnTs > 10_000) { // не чаще раза в 10с
+      console.warn('Достигнут максимум попыток обновления токена');
+      lastWarnTs = now;
     }
+    return null;
+  }
+
+  refreshAttempts++;
+
+  refreshInFlight = (async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/auth/token`, {
         method: 'POST',
@@ -63,24 +79,24 @@ export async function refreshToken(): Promise<string | null> {
       if (!res.ok) {
         throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
       }
-      // support both {data:{...}} and flat body
       const payload = json?.data ?? json;
       const accessToken: string | undefined = payload?.accessToken;
       const newRefreshToken: string | undefined = payload?.refreshToken;
       const profile = payload?.profile;
-      if (!accessToken) {
-        throw new Error('Отсутствует accessToken в ответе');
-      }
+
+      if (!accessToken) throw new Error('Отсутствует accessToken в ответе');
+
       await saveTokens(accessToken, newRefreshToken ?? storedRefreshToken, profile);
       refreshAttempts = 0;
+      lastWarnTs = 0;
       return accessToken;
-    } catch (error) {
-      console.error('Ошибка при обновлении токена:', error);
-      // Do not call logout on network errors; return null and let caller decide
+    } catch (e) {
+      console.error('Ошибка при обновлении токена:', e);
       return null;
     } finally {
       refreshInFlight = null;
     }
   })();
+
   return refreshInFlight;
 }

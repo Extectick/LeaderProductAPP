@@ -28,19 +28,9 @@ import OTP6Input from '@/components/OTP6Input';
 import ShimmerButton from '@/components/ShimmerButton';
 import ThemedLoader from '@/components/ui/ThemedLoader';
 import { gradientColors } from '@/constants/Colors';
-import { AuthContext } from '@/context/AuthContext';
+import { AuthContext, isValidProfile } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { login, register, verify } from '@/utils/authService';
-
-/**
- * Локальная функция проверки профиля. Возвращает true, если у пользователя
- * есть хотя бы один из профилей: clientProfile, supplierProfile или employeeProfile.
- * В прежней версии этот метод экспортировался из AuthContext.
- */
-function isValidProfile(profile: any): boolean {
-  if (!profile) return false;
-  return !!(profile.clientProfile || profile.supplierProfile || profile.employeeProfile);
-}
 
 /** ─── Module-level cache to defeat StrictMode remounts in dev ─── */
 const __authInitCache: {
@@ -91,27 +81,10 @@ const ROUTES = {
 /* ───── screen ───── */
 export default function AuthScreen() {
   const router = useRouter();
-  const { setAuthenticated, setProfile, isAuthenticated, isLoading, profile } =
-    useContext(AuthContext) || {};
-
-  /**
-   * Редирект авторизованного пользователя на главную страницу после проверки
-   * того, что состояние контекста (isAuthenticated) истинно и токен реально
-   * существует в AsyncStorage. Это предотвращает ложный редирект после выхода,
-   * когда `isAuthenticated` может оставаться true до перезагрузки контекста.
-   */
-  useEffect(() => {
-    const maybeRedirect = async () => {
-      if (!isLoading && isAuthenticated) {
-        const tokenInStorage = await AsyncStorage.getItem('accessToken');
-        if (tokenInStorage) router.replace(ROUTES.HOME);
-      }
-    };
-    maybeRedirect();
-  }, [isAuthenticated, isLoading]);
+  const { setAuthenticated, setProfile } = useContext(AuthContext) || {};
 
   // равняем вертикаль кнопок между табами
-  const [minTopHeight, setMinTopHeight] = useState(__authInitCache.minTopHeight);
+  const [minTopHeight, setMinTopHeight] = useState<number | null>(__authInitCache.minTopHeight);
   const measureRef = useRef({
     login: 0,
     reg: 0,
@@ -151,8 +124,8 @@ export default function AuthScreen() {
   const viewportW = pageW;
 
   /* refs */
-  const passRef = useRef<TextInput | null>(null);
-  const passRepeatRef = useRef<TextInput | null>(null);
+  const passRef = useRef<TextInput>(null);
+  const passRepeatRef = useRef<TextInput>(null);
 
   /* anim */
   const sceneX = useRef(new Animated.Value(0)).current;
@@ -168,6 +141,7 @@ export default function AuthScreen() {
       easing: Easing.out(Easing.quad),
       useNativeDriver: true,
     }).start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // таб-капсула
@@ -182,7 +156,21 @@ export default function AuthScreen() {
     setModeVerify(false);
     setBannerError('');
     Haptics.selectionAsync();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
+
+  // шейк-баннер при ошибке
+  useEffect(() => {
+    if (!bannerError) return;
+    errorShake.setValue(0);
+    Animated.sequence([
+      Animated.timing(errorShake, { toValue: 1, duration: 70, useNativeDriver: true }),
+      Animated.timing(errorShake, { toValue: -1, duration: 70, useNativeDriver: true }),
+      Animated.timing(errorShake, { toValue: 1, duration: 70, useNativeDriver: true }),
+      Animated.timing(errorShake, { toValue: 0, duration: 60, useNativeDriver: true }),
+    ]).start();
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+  }, [bannerError]);
 
   // preload remember — делаем строго один раз, с кэшем
   const [preloadReady, setPreloadReady] = useState(__authInitCache.initialized);
@@ -190,6 +178,7 @@ export default function AuthScreen() {
     let cancelled = false;
     (async () => {
       if (__authInitCache.initialized) {
+        // уже инициализировано — ничего не грузим, только убеждаемся что state синхронизирован
         if (!cancelled) setPreloadReady(true);
         return;
       }
@@ -199,6 +188,7 @@ export default function AuthScreen() {
         if (cancelled) return;
         setRemember(remembered);
         setEmail(savedEmail || '');
+        // в кэш тоже
         __authInitCache.remember = remembered;
         __authInitCache.email = savedEmail || '';
       } finally {
@@ -226,6 +216,7 @@ export default function AuthScreen() {
       easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
     }).start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preloadReady, tab]);
 
   // таймер «отправить повторно»
@@ -246,6 +237,7 @@ export default function AuthScreen() {
     }
   };
 
+  /* validators (по вводу) */
   const onEmailChange = (v: string) => {
     setEmail(v);
     if (!v.trim()) setEmailErr('Укажите email');
@@ -273,8 +265,7 @@ export default function AuthScreen() {
   };
 
   const canLogin = !emailErr && !passErr && !!email.trim() && !!password;
-  const canRegister =
-    !emailErr && !passErr && !passRepeatErr && !!email.trim() && !!password && !!passwordRepeat;
+  const canRegister = !emailErr && !passErr && !passRepeatErr && !!email.trim() && !!password && !!passwordRepeat;
 
   /* actions */
   const handleLogin = async () => {
@@ -304,17 +295,14 @@ export default function AuthScreen() {
 
       const profileJson = await AsyncStorage.getItem('profile');
       if (!profileJson) throw new Error('Профиль не найден');
-      const parsedProfile = JSON.parse(profileJson);
-      await setProfile(parsedProfile);
+      const profile = JSON.parse(profileJson);
+      await setProfile(profile);
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      // Используем локальную функцию isValidProfile для определения редиректа
-      isValidProfile(parsedProfile) ? router.replace(ROUTES.HOME) : router.replace(ROUTES.PROFILE);
+      isValidProfile(profile) ? router.replace(ROUTES.HOME) : router.replace(ROUTES.PROFILE);
     } catch (e: any) {
       setBannerError(
-        e?.message?.includes('Не удалось обновить токен')
-          ? 'Неверный email или пароль'
-          : e?.message || 'Ошибка при входе'
+        e?.message?.includes('Не удалось обновить токен') ? 'Неверный email или пароль' : e?.message || 'Ошибка при входе'
       );
     } finally {
       setLoading(false);
@@ -391,14 +379,365 @@ export default function AuthScreen() {
   const pillWidth = Math.min(420, winW - 40) / 2 - 6;
   const pillTranslate = tabPill.interpolate({ inputRange: [0, 1], outputRange: [4, 8 + pillWidth] });
 
-  // далее следует JSX-верстка экранов входа, регистрации и верификации.
-  // Она осталась неизменной по отношению к оригиналу и включает разнообразные
-  // анимации, поля ввода, переключатели и кнопки. При необходимости можно взять
-  // разметку из оригинального репозитория и вставить сюда без изменений.
+  // маленькая анимируемая кнопка для Verify
+  const MiniButton: React.FC<{
+    title: string;
+    onPress: () => void;
+    variant?: 'filled' | 'outline';
+    disabled?: boolean;
+  }> = ({ title, onPress, variant = 'filled', disabled }) => {
+    const scale = useRef(new Animated.Value(1)).current;
+    const pressIn = () => Animated.spring(scale, { toValue: 0.97, useNativeDriver: true, friction: 5 }).start();
+    const pressOut = () => Animated.spring(scale, { toValue: 1, useNativeDriver: true, friction: 5 }).start();
+    return (
+      <Animated.View style={{ transform: [{ scale }], flexGrow: 1 }}>
+        <TouchableOpacity
+          activeOpacity={0.9}
+          onPressIn={pressIn}
+          onPressOut={pressOut}
+          onPress={onPress}
+          disabled={disabled}
+          style={[
+            {
+              height: 44,
+              borderRadius: 12,
+              alignItems: 'center',
+              justifyContent: 'center',
+              paddingHorizontal: 14,
+              marginVertical: 4,
+            },
+            variant === 'filled'
+              ? { backgroundColor: colors.tint }
+              : { borderWidth: 1, borderColor: colors.border, backgroundColor: 'transparent' },
+          ]}
+        >
+          <Text style={{ color: variant === 'filled' ? colors.buttonText : colors.text, fontWeight: '700' }}>{title}</Text>
+        </TouchableOpacity>
+      </Animated.View>
+    );
+  };
 
+  // РЕНДЕР
   return (
-    // … оригинальная разметка здесь …
-    <></>
+    <BrandedBackground speed={1.5}>
+      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
+      <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={insets.top}
+        >
+          {/* Оверлей-лоадер: только пока идёт preload из AsyncStorage ПЕРВЫЙ раз */}
+          {!preloadReady && (
+            <View
+              pointerEvents="none"
+              style={[StyleSheet.absoluteFillObject, { alignItems: 'center', justifyContent: 'center', zIndex: 10 }]}
+            >
+              <ThemedLoader size={72} stroke={3} />
+            </View>
+          )}
+
+          {/* Форма всегда монтируется */}
+          <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+            {/* Header */}
+            <Animated.View style={[styles.header, { opacity: fadeIn }]}>
+              {/* { Позже сюда добавить header и лого} */}
+              <Text style={styles.brand}></Text>
+            </Animated.View>
+
+            {/* Tabs */}
+            {!modeVerify && (
+              <View style={styles.segmentWrapper}>
+                <View style={styles.segment}>
+                  <Animated.View
+                    style={[styles.segmentPill, { width: pillWidth, transform: [{ translateX: pillTranslate }] }]}
+                  />
+                  <TouchableOpacity style={styles.segmentBtn} activeOpacity={0.85} onPress={() => setTab(0)}>
+                    <Text style={[styles.segmentText, tab === 0 && styles.segmentTextActive]}>Вход</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.segmentBtn} activeOpacity={0.85} onPress={() => setTab(1)}>
+                    <Text style={[styles.segmentText, tab === 1 && styles.segmentTextActive]}>Регистрация</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+
+            {/* Error banner */}
+            {!!bannerError && (
+              <Animated.View
+                style={[
+                  styles.errorWrap,
+                  {
+                    transform: [
+                      { translateX: errorShake.interpolate({ inputRange: [-1, 0, 1], outputRange: [-8, 0, 8] }) },
+                    ],
+                  },
+                ]}
+              >
+                <Text style={styles.errorText}>{bannerError}</Text>
+              </Animated.View>
+            )}
+
+            {/* Card */}
+            <Animated.View
+              style={[
+                styles.card,
+                {
+                  width: '100%',
+                  maxWidth: 420,
+                  opacity: fadeIn,
+                  transform: [{ translateY: fadeIn.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }],
+                },
+              ]}
+            >
+              {!modeVerify ? (
+                // ---- viewport с жёстким клипом по внутренней ширине карточки ----
+                <View style={{ width: viewportW, alignSelf: 'center', overflow: 'hidden' }}>
+                  <Animated.View
+                    style={{
+                      width: viewportW * 2,
+                      flexDirection: 'row',
+                      transform: [{ translateX: sceneX }],
+                    }}
+                  >
+                    {/* LOGIN */}
+                    <View style={[styles.slide, { width: viewportW }]}>
+                      <Text style={styles.title}>Вход</Text>
+
+                      {/* фиксированная minHeight только для выравнивания кнопок между табами */}
+                      <View style={[styles.topBlock, { minHeight: minTopHeight ?? undefined }]}>
+                        <View
+                          onLayout={(e) => {
+                            if (measureRef.current.locked) return;
+                            measureRef.current.login = Math.round(e.nativeEvent.layout.height);
+                            tryLockMinHeight();
+                          }}
+                        >
+                          <View style={styles.fieldCompact}>
+                            <FormInput
+                              size="xs"
+                              noMargin
+                              label="Email"
+                              value={email}
+                              onChangeText={onEmailChange}
+                              onBlur={() => setEmail((prev) => normalizeEmail(prev))}
+                              placeholder="your@email.com"
+                              autoCapitalize="none"
+                              autoCorrect={false}
+                              keyboardType="email-address"
+                              textContentType="emailAddress"
+                              autoComplete="email"
+                              returnKeyType="next"
+                              onSubmitEditing={() => passRef.current?.focus()}
+                              editable={!loading}
+                              error={emailErr || undefined}
+                            />
+                          </View>
+
+                          <View style={styles.fieldCompact}>
+                            <FormInput
+                              size="xs"
+                              noMargin
+                              label="Пароль"
+                              ref={passRef}
+                              value={password}
+                              onChangeText={onPassChange}
+                              placeholder="••••••••"
+                              secureTextEntry={!showPassword}
+                              autoCapitalize="none"
+                              autoCorrect={false}
+                              textContentType="password"
+                              autoComplete="password"
+                              returnKeyType="done"
+                              onSubmitEditing={handleLogin}
+                              rightIcon={showPassword ? 'eye-off' : 'eye'}
+                              onIconPress={() => setShowPassword((p) => !p)}
+                              editable={!loading}
+                              error={passErr || undefined}
+                            />
+                          </View>
+
+                          <View style={styles.rowBetween}>
+                            <TouchableOpacity activeOpacity={0.7} style={styles.forgotLink}>
+                              <Text style={[styles.linkText, { color: grad[0] }]}>Забыли пароль?</Text>
+                            </TouchableOpacity>
+                            <View style={styles.rememberRight}>
+                              <Switch
+                                value={remember}
+                                onValueChange={async (v) => {
+                                  setRemember(v);
+                                  Haptics.selectionAsync();
+                                  if (v) {
+                                    await AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_FLAG, '1');
+                                    await AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_EMAIL, normalizeEmail(email));
+                                  } else {
+                                    await AsyncStorage.multiRemove([STORAGE_KEYS.REMEMBER_FLAG, STORAGE_KEYS.REMEMBER_EMAIL]);
+                                  }
+                                }}
+                              />
+                              <Text style={styles.rememberText}>Запомнить</Text>
+                            </View>
+                          </View>
+                        </View>
+                      </View>
+
+                      <View style={styles.buttonWrap}>
+                        <ShimmerButton
+                          title="Войти"
+                          onPress={handleLogin}
+                          loading={loading}
+                          haptics
+                          gradientColors={btnGradient}
+                          style={{ height: BTN_HEIGHT }}
+                        />
+                      </View>
+                    </View>
+
+                    {/* REGISTER */}
+                    <View style={[styles.slide, { width: viewportW }]}>
+                      <Text style={styles.title}>Создать аккаунт ✨</Text>
+
+                      <View style={[styles.topBlock, { minHeight: minTopHeight ?? undefined }]}>
+                        <View
+                          onLayout={(e) => {
+                            if (measureRef.current.locked) return;
+                            measureRef.current.reg = Math.round(e.nativeEvent.layout.height);
+                            tryLockMinHeight();
+                          }}
+                        >
+                          <View style={styles.fieldCompact}>
+                            <FormInput
+                              size="xs"
+                              noMargin
+                              label="Email"
+                              value={email}
+                              onChangeText={onEmailChange}
+                              onBlur={() => setEmail((prev) => normalizeEmail(prev))}
+                              placeholder="you@domain.com"
+                              autoCapitalize="none"
+                              autoCorrect={false}
+                              keyboardType="email-address"
+                              textContentType="emailAddress"
+                              autoComplete="email"
+                              returnKeyType="next"
+                              onSubmitEditing={() => passRef.current?.focus()}
+                              editable={!loading}
+                              error={emailErr || undefined}
+                            />
+                          </View>
+
+                          <View style={styles.fieldCompact}>
+                            <FormInput
+                              size="xs"
+                              noMargin
+                              label="Пароль"
+                              ref={passRef}
+                              value={password}
+                              onChangeText={onPassChange}
+                              placeholder="Минимум 6 символов"
+                              secureTextEntry={!showPassword}
+                              autoCapitalize="none"
+                              autoCorrect={false}
+                              textContentType="newPassword"
+                              autoComplete="password-new"
+                              returnKeyType="next"
+                              onSubmitEditing={() => passRepeatRef.current?.focus()}
+                              rightIcon={showPassword ? 'eye-off' : 'eye'}
+                              onIconPress={() => setShowPassword((p) => !p)}
+                              editable={!loading}
+                              error={passErr || undefined}
+                            />
+                          </View>
+
+                          {!!password && (
+                            <View style={styles.strengthRow}>
+                              <View style={styles.strengthBg}>
+                                <View
+                                  style={[
+                                    styles.strengthFill,
+                                    { width: `${(ps / 4) * 100}%`, backgroundColor: grad[0] },
+                                  ]}
+                                />
+                              </View>
+                              <Text style={[styles.secondary, { marginLeft: 8 }]}>
+                                {['Очень слабый', 'Слабый', 'Средний', 'Хороший', 'Сильный'][ps]}
+                              </Text>
+                            </View>
+                          )}
+
+                          <View style={styles.fieldCompact}>
+                            <FormInput
+                              size="xs"
+                              noMargin
+                              label="Повторите пароль"
+                              ref={passRepeatRef}
+                              value={passwordRepeat}
+                              onChangeText={onPassRepeatChange}
+                              placeholder="Повторите пароль"
+                              secureTextEntry={!showPassword}
+                              autoCapitalize="none"
+                              autoCorrect={false}
+                              textContentType="password"
+                              autoComplete="password"
+                              returnKeyType="done"
+                              onSubmitEditing={handleRegister}
+                              editable={!loading}
+                              error={passRepeatErr || undefined}
+                            />
+                          </View>
+                        </View>
+                      </View>
+
+                      <View style={styles.buttonWrap}>
+                        <ShimmerButton
+                          title="Зарегистрироваться"
+                          onPress={handleRegister}
+                          loading={loading}
+                          haptics
+                          gradientColors={btnGradient}
+                          style={{ height: BTN_HEIGHT }}
+                        />
+                      </View>
+                    </View>
+                  </Animated.View>
+                </View>
+              ) : (
+                /* VERIFY */
+                <View style={{ width: '100%' }}>
+                  <Text style={styles.title}>Подтверждение 📩</Text>
+                  <Text style={[styles.secondary, { textAlign: 'center', marginBottom: 12 }]}>
+                    Введите 6-значный код, отправленный на {email}
+                  </Text>
+
+                  {/* Адаптивный OTP-ввод */}
+                  <OTP6Input
+                    value={code}
+                    onChange={(v) => setCode(v)}
+                    onFilled={(v) => handleVerifyWith(v)}   // авто-отправка при 6 цифрах
+                    disabled={loading}
+                    error={!!codeErr}
+                    secure={false}
+                  />
+
+                  {/* Кнопки действий */}
+                  <View style={styles.otpActionsRow}>
+                    <MiniButton title="Вставить" onPress={handlePasteOTP} variant="filled" />
+                    {resendTimer > 0 ? (
+                      <View style={styles.timerPill}>
+                        <Text style={{ color: colors.text, fontWeight: '700' }}>{`Повторно через ${resendTimer} c`}</Text>
+                      </View>
+                    ) : (
+                      <MiniButton title="Отправить повторно" onPress={handleResendCode} variant="outline" />
+                    )}
+                    <MiniButton title="Назад" onPress={() => setModeVerify(false)} variant="outline" />
+                  </View>
+                </View>
+              )}
+            </Animated.View>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </BrandedBackground>
   );
 }
 
@@ -556,4 +895,3 @@ const getStyles = (colors: {
       flexGrow: 1,
     },
   });
-

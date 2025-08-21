@@ -46,11 +46,6 @@ export async function getProfile(): Promise<Profile | null> {
   return profile;
 }
 
-/**
- * Универсальная загрузка профиля.
- * - userId не указан -> текущий профиль (/users/profile)
- * - userId указан    -> профиль по id (/users/:userId/profile)
- */
 export async function getProfileById(userId?: number | null): Promise<Profile | null> {
   const url =
     userId == null
