@@ -5,20 +5,24 @@ export default function ServicesLayout() {
     <Stack
       screenOptions={({ route }) => {
         let title = "Сервисы";
-        
         switch (route.name) {
           case "index":
             title = "Главная сервисов";
             break;
           case "qrcodes":
             title = "QR генератор";
+            break;              
+          case "qrcodes/index":
+              title = "Список QR кодов";
+              break;
+          case "qrcodes/form":
+              title = "Форма QR кода";
+              break;
+          case "appeals":
+            title = "Обращения";
             break;
-              
-        case "qrcodes/index":
-            title = "Список QR кодов";
-            break;
-        case "qrcodes/form":
-            title = "Форма QR кода";
+          case "appeals/index":
+            title = "Обращения";
             break;
           
         default:

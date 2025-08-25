@@ -3,8 +3,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios, { AxiosError, AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
 import Constants from 'expo-constants';
 import { router } from 'expo-router';
+import { API_BASE_URL } from './config';
 
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL_DEV!
 let isRefreshing = false;
 let refreshSubscribers: ((token: string) => void)[] = [];
 
