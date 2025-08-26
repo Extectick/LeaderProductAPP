@@ -14,7 +14,7 @@ import {
   AppealStatus,
   Scope,
 } from '@/types/appealsTypes';
-import AppealCard from './AppealCard';
+import AppealListItemForm from './AppealListItemForm';
 import EmptyState from '@/components/ui/EmptyState';
 
 type AppealsListProps = {
@@ -148,7 +148,7 @@ export default function AppealsList({
         data={items}
         keyExtractor={(it) => String(it.id)}
         renderItem={({ item }) =>
-          renderItem ? renderItem(item) : <AppealCard item={item} />
+          renderItem ? renderItem(item) : <AppealListItemForm item={item} />
         }
         ListHeaderComponent={ListHeaderComponent}
         ListEmptyComponent={
