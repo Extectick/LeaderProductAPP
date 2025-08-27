@@ -16,8 +16,12 @@ import {
   LayoutRectangle,
   ScrollView,
   Platform,
+  Dimensions,
+  Animated,
 } from 'react-native';
-import Animated, { FadeInDown, FadeOut } from 'react-native-reanimated';
+import AnimatedRe, { FadeInDown, FadeOut } from 'react-native-reanimated';
+
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 import { Ionicons } from '@expo/vector-icons';
 
 export type DropdownItem<T extends string | number> = {
@@ -33,6 +37,10 @@ type DropdownProps<T extends string | number> = {
   onChange: (value: T) => void;
   placeholder?: string;
   style?: StyleProp<ViewStyle>;
+  /** Стиль для кнопки-триггера */
+  buttonStyle?: StyleProp<ViewStyle>;
+  /** Кастомный рендер содержимого кнопки */
+  renderTrigger?: (selectedLabel?: string, open?: boolean) => React.ReactNode;
   errorText?: string;
   menuMaxHeight?: number;
 };
@@ -43,12 +51,15 @@ export default function Dropdown<T extends string | number>({
   onChange,
   placeholder = 'Выберите значение',
   style,
+  buttonStyle,
+  renderTrigger,
   errorText,
   menuMaxHeight = 300,
 }: DropdownProps<T>) {
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState<LayoutRectangle | null>(null);
   const anchorWrapRef = useRef<View | null>(null);
+  const scale = useRef(new Animated.Value(1)).current;
 
   const selectedLabel = useMemo(() => items.find((i) => i.value === value)?.label, [items, value]);
   const visibleItems = useMemo(() => items.filter((i) => i.visible !== false), [items]);
@@ -60,23 +71,50 @@ export default function Dropdown<T extends string | number>({
     });
   };
 
+  const { width: winWidth } = Dimensions.get('window');
+  const menuWidth = anchor?.width ? Math.max(anchor.width, 220) : 260;
+  const left = Math.min(Math.max(anchor?.x ?? 16, 16), winWidth - menuWidth - 16);
+
   return (
     <View style={[styles.wrap, style]}>
       {/* Обёртка нужна, чтобы корректно измерить координаты */}
       <View ref={anchorWrapRef} collapsable={false}>
-        <Pressable
+        <AnimatedPressable
           onPress={measureAndOpen}
-          style={({ pressed }) => [styles.button, pressed && styles.pressed, errorText && styles.errorBorder]}
+          onPressIn={() =>
+            Animated.timing(scale, { toValue: 0.96, duration: 80, useNativeDriver: true }).start()
+          }
+          onPressOut={() =>
+            Animated.timing(scale, { toValue: 1, duration: 110, useNativeDriver: true }).start()
+          }
+          style={({ pressed }) => [
+            styles.button,
+            buttonStyle,
+            { transform: [{ scale }] },
+            pressed && styles.pressed,
+            errorText && styles.errorBorder,
+          ]}
           android_ripple={{ color: 'rgba(0,0,0,0.06)' }}
           accessibilityRole="button"
           accessibilityLabel="Открыть список"
         >
-          <Ionicons name="list" size={16} color="#111827" style={{ marginRight: 8 }} />
-          <Text style={[styles.buttonText, !selectedLabel && { color: '#9CA3AF' }]} numberOfLines={1}>
-            {selectedLabel ?? placeholder}
-          </Text>
-          <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={16} color="#6B7280" style={{ marginLeft: 'auto' }} />
-        </Pressable>
+          {renderTrigger ? (
+            renderTrigger(selectedLabel, open)
+          ) : (
+            <>
+              <Ionicons name="list" size={16} color="#111827" style={{ marginRight: 8 }} />
+              <Text style={[styles.buttonText, !selectedLabel && { color: '#9CA3AF' }]} numberOfLines={1}>
+                {selectedLabel ?? placeholder}
+              </Text>
+              <Ionicons
+                name={open ? 'chevron-up' : 'chevron-down'}
+                size={16}
+                color="#6B7280"
+                style={{ marginLeft: 'auto' }}
+              />
+            </>
+          )}
+        </AnimatedPressable>
       </View>
       {!!errorText && <Text style={styles.errorText}>{errorText}</Text>}
 
@@ -86,15 +124,15 @@ export default function Dropdown<T extends string | number>({
         <Pressable style={styles.backdrop} onPress={() => setOpen(false)} />
 
         {/* Меню, привязанное к координатам кнопки */}
-        <Animated.View
+        <AnimatedRe.View
           entering={FadeInDown.duration(160)}
           exiting={FadeOut.duration(120)}
           style={[
             styles.menu,
             {
               top: (anchor?.y ?? 0) + (anchor?.height ?? 0) + 4,
-              left: anchor?.x ?? 16,
-              width: anchor?.width ? Math.max(anchor.width, 220) : 260,
+              left,
+              width: menuWidth,
             },
           ]}
         >
@@ -129,7 +167,7 @@ export default function Dropdown<T extends string | number>({
               })}
             </ScrollView>
           )}
-        </Animated.View>
+          </AnimatedRe.View>
       </Modal>
     </View>
   );
@@ -148,7 +186,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   buttonText: { color: '#111827', fontSize: 14, fontWeight: '600', flex: 1 },
-  pressed: { opacity: 0.96 },
+  pressed: { backgroundColor: 'rgba(0,0,0,0.04)' },
   errorBorder: { borderColor: '#EF4444' },
 
   // Modal layers
