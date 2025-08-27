@@ -22,7 +22,7 @@ export default function MessagesList({
       data={messages}
       keyExtractor={(item) => String(item.id)}
       renderItem={({ item }) => (
-        <MessageBubble message={item} own={item.sender.id === currentUserId} />
+        <MessageBubble message={item} own={item.sender?.id === currentUserId} />
       )}
       contentContainerStyle={styles.container}
     />

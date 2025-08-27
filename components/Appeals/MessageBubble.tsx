@@ -3,6 +3,10 @@ import { AppealMessage } from '@/types/appealsTypes';
 import { MotiView } from 'moti';
 
 export default function MessageBubble({ message, own }: { message: AppealMessage; own: boolean }) {
+  const attachments = Array.isArray(message.attachments)
+    ? message.attachments.filter((a): a is NonNullable<typeof a> => !!a)
+    : [];
+
   return (
     <MotiView
       from={{ opacity: 0, translateY: 10 }}
@@ -10,15 +14,19 @@ export default function MessageBubble({ message, own }: { message: AppealMessage
       style={[styles.bubble, own ? styles.own : styles.other]}
     >
       {message.text ? <Text style={styles.text}>{message.text}</Text> : null}
-      {message.attachments?.map((a) => (
-        a.fileType === 'IMAGE' ? (
-          <Image key={a.fileUrl} source={{ uri: a.fileUrl }} style={styles.image} />
-        ) : (
-          <Text key={a.fileUrl} style={styles.file}>
-            {a.fileName}
-          </Text>
-        )
-      ))}
+      {attachments.map((a, idx) => {
+        if (a.fileType === 'IMAGE' && a.fileUrl) {
+          return <Image key={`${a.fileUrl}-${idx}`} source={{ uri: a.fileUrl }} style={styles.image} />;
+        }
+        if (a.fileName) {
+          return (
+            <Text key={`${a.fileUrl || a.fileName}-${idx}`} style={styles.file}>
+              {a.fileName}
+            </Text>
+          );
+        }
+        return null;
+      })}
       <Text style={styles.time}>{new Date(message.createdAt).toLocaleString()}</Text>
     </MotiView>
   );

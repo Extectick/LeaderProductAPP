@@ -51,7 +51,7 @@ export default function AppealDetailScreen() {
         onWatch={() => updateAppealWatchers(appealId, []).then(() => load(true))}
       />
 
-      <MessagesList messages={data.messages} currentUserId={auth?.profile?.id} />
+      <MessagesList messages={data.messages || []} currentUserId={auth?.profile?.id} />
 
       <AppealChatInput
         onSend={async ({ text, files }) => {
