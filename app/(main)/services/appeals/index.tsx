@@ -7,6 +7,7 @@ import { exportAppealsCSV } from '@/utils/appealsService';
 import { AppealPriority, AppealStatus, Scope } from '@/types/appealsTypes';
 import * as FileSystem from 'expo-file-system';
 import { OverflowMenuItem } from '@/components/ui/OverflowMenu';
+import { useAppealUpdates } from '@/hooks/useAppealUpdates';
 // import * as Sharing from 'expo-sharing';
 
 export default function AppealsIndex() {
@@ -15,6 +16,7 @@ export default function AppealsIndex() {
   const [status, setStatus] = useState<AppealStatus | undefined>();
   const [priority, setPriority] = useState<AppealPriority | undefined>();
   const [count, setCount] = useState(0);
+  const [wsTick, setWsTick] = useState(0);
   const menuItems: OverflowMenuItem[] = [
     { key: 'export', title: 'Экспорт', icon: 'download', onPress: handleExport },
     // добавляй/убирай пункты здесь
@@ -32,7 +34,13 @@ export default function AppealsIndex() {
     }
   }
 
-  const refreshKey = useMemo(() => `${scope}-${status ?? ''}-${priority ?? ''}`, [scope, status, priority]);
+  // Когда приходят события по любому обращению — обновляем список
+  useAppealUpdates(undefined, () => setWsTick((t) => t + 1));
+
+  const refreshKey = useMemo(
+    () => `${scope}-${status ?? ''}-${priority ?? ''}-${wsTick}`,
+    [scope, status, priority, wsTick],
+  );
 
   return (
     <View style={{ flex: 1, backgroundColor: '#fff', padding: 16, maxWidth: 1000 }}>
