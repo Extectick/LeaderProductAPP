@@ -5,9 +5,6 @@ import { AppealDetail } from '@/types/appealsTypes';
 
 type Props = {
   data: AppealDetail;
-  watchersCount: number;
-  assigneesCount: number;
-  attachmentsCount: number;
   onChangeStatus?: () => void;
   onAssign?: () => void;
   onWatch?: () => void;
@@ -16,14 +13,18 @@ type Props = {
 
 export default function AppealHeader({
   data,
-  watchersCount,
-  assigneesCount,
-  attachmentsCount,
   onChangeStatus,
   onAssign,
   onWatch,
   onAttachments,
 }: Props) {
+  const watchersCount = data.watchers.length;
+  const assigneesCount = data.assignees.length;
+  const attachmentsCount = data.messages.reduce(
+    (sum, m) => sum + m.attachments.length,
+    0,
+  );
+
   return (
     <View style={styles.container}>
       <View style={styles.row}>
