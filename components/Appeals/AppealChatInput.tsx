@@ -90,7 +90,7 @@ export default function AppealChatInput({
 }
 
 const styles = StyleSheet.create({
-  wrapper: { padding: 8, backgroundColor: '#F9FAFB', borderTopWidth: 1, borderColor: '#E5E7EB' },
+  wrapper: { padding: 6, marginBottom: 1, backgroundColor: '#F9FAFB', borderTopWidth: 1, borderColor: '#E5E7EB' },
   chipsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
   fileChip: {
     flexDirection: 'row', alignItems: 'center', gap: 6,

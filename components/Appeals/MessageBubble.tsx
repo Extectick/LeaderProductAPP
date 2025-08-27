@@ -37,7 +37,7 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     maxWidth: '85%',
     padding: 10,
-    marginHorizontal: 8,
+    marginHorizontal: 12,
     marginVertical: 4,
     borderRadius: 10,
   },
