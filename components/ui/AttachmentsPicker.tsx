@@ -1,6 +1,6 @@
 // components/ui/AttachmentsPicker.tsx
 import React, { useCallback } from 'react';
-import { Alert, Pressable, StyleProp, StyleSheet, Text, View, ViewStyle } from 'react-native';
+import { Alert, Pressable, StyleProp, StyleSheet, Text, View, ViewStyle, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 
@@ -17,6 +17,8 @@ type Props = {
 
   style?: StyleProp<ViewStyle>;
   showChips?: boolean;
+  horizontal?: boolean;
+  showAddButton?: boolean;
 };
 
 export default function AttachmentsPicker({
@@ -28,6 +30,8 @@ export default function AttachmentsPicker({
   maxFiles,
   style,
   showChips = true,
+  horizontal = false,
+  showAddButton = true,
 }: Props) {
   const handlePick = useCallback(async () => {
     try {
@@ -52,7 +56,10 @@ export default function AttachmentsPicker({
           type: a.mimeType || a.type || 'application/octet-stream',
         }));
 
-      let next = [...value, ...mapped];
+      let next = [...value];
+      mapped.forEach((m) => {
+        if (!next.some((f) => f.uri === m.uri)) next.push(m);
+      });
       if (typeof maxFiles === 'number') next = next.slice(0, maxFiles);
       onChange(next);
     } catch (e: any) {
@@ -77,6 +84,34 @@ export default function AttachmentsPicker({
     [onChange, value]
   );
 
+  if (horizontal) {
+    return (
+      <ScrollView horizontal style={style} contentContainerStyle={styles.rowWrap} showsHorizontalScrollIndicator={false}>
+        {showChips &&
+          value.map((f, idx) => (
+            <View key={`${f.uri}-${idx}`} style={styles.fileChip}>
+              <Ionicons name="document" size={14} color="#2563EB" />
+              <Text style={styles.fileChipText} numberOfLines={1}>
+                {f.name}
+              </Text>
+              <Pressable onPress={() => removeAt(idx)} hitSlop={8}>
+                <Ionicons name="close" size={14} color="#6B7280" />
+              </Pressable>
+            </View>
+          ))}
+
+        {showAddButton && (!maxFiles || value.length < maxFiles) && (
+          <Pressable
+            style={({ pressed }) => [styles.attachBtnSmall, pressed && { opacity: 0.9 }]}
+            onPress={handlePick}
+          >
+            <Ionicons name="attach" size={16} color="#0B1220" />
+          </Pressable>
+        )}
+      </ScrollView>
+    );
+  }
+
   return (
     <View style={style}>
       {showChips && value.length > 0 && (
@@ -93,15 +128,21 @@ export default function AttachmentsPicker({
         </View>
       )}
 
-      <Pressable style={({ pressed }) => [styles.attachBtn, pressed && { opacity: 0.9 }]} onPress={handlePick}>
-        <Ionicons name="attach" size={16} color="#0B1220" />
-        <Text style={styles.attachBtnText}>{addLabel}</Text>
-        {typeof maxFiles === 'number' && (
-          <Text style={styles.counterText}>
-            {value.length}/{maxFiles}
-          </Text>
-        )}
-      </Pressable>
+      {showAddButton && (
+        <Pressable
+          style={({ pressed }) => [styles.attachBtn, pressed && { opacity: 0.9 }]}
+          onPress={handlePick}
+          disabled={typeof maxFiles === 'number' && value.length >= maxFiles}
+        >
+          <Ionicons name="attach" size={16} color="#0B1220" />
+          <Text style={styles.attachBtnText}>{addLabel}</Text>
+          {typeof maxFiles === 'number' && (
+            <Text style={styles.counterText}>
+              {value.length}/{maxFiles}
+            </Text>
+          )}
+        </Pressable>
+      )}
     </View>
   );
 }
@@ -121,4 +162,14 @@ const styles = StyleSheet.create({
   },
   attachBtnText: { color: '#0B1220', fontWeight: '700' },
   counterText: { marginLeft: 6, color: '#6B7280', fontSize: 12 },
+  rowWrap: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  attachBtnSmall: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 999,
+    padding: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
 });

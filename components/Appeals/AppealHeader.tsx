@@ -185,12 +185,20 @@ export default function AppealHeader({
 
         <View style={styles.infoRow}>
           <Text style={styles.number}>#{data.number}</Text>
-          <View style={[styles.badge, { backgroundColor: statusColor(data.status) }]}>
+          <PressableScale
+            onPress={() => setStatusMenuVisible(true)}
+            style={[styles.badge, { backgroundColor: statusColor(data.status) }]}
+            pressedStyle={{ opacity: 0.85 }}
+          >
             <Text style={styles.badgeText}>{statusLabels[data.status]}</Text>
-          </View>
-          <View style={[styles.badge, { backgroundColor: priorityColor(data.priority) }]}>
+          </PressableScale>
+          <PressableScale
+            onPress={() => {}}
+            style={[styles.badge, { backgroundColor: priorityColor(data.priority) }]}
+            pressedStyle={{ opacity: 0.85 }}
+          >
             <Text style={styles.badgeText}>{priorityLabels[data.priority]}</Text>
-          </View>
+          </PressableScale>
         </View>
       </LinearGradient>
 

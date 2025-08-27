@@ -1,15 +1,18 @@
 // components/Appeals/AppealChatInput.tsx
-import React, { useState, useRef, useEffect } from 'react';
-import { View, TextInput, Pressable, StyleSheet, Text, Animated } from 'react-native';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { View, TextInput, Pressable, StyleSheet, Text, Animated, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
 import { MotiView } from 'moti';
 import AttachmentsPicker, { AttachmentFile } from '@/components/ui/AttachmentsPicker';
+import * as DocumentPicker from 'expo-document-picker';
 
 export default function AppealChatInput({
   onSend,
+  bottomInset = 0,
 }: {
   onSend: (payload: { text?: string; files?: AttachmentFile[] }) => Promise<void> | void;
+  bottomInset?: number;
 }) {
   const [text, setText] = useState('');
   const [files, setFiles] = useState<AttachmentFile[]>([]);
@@ -18,6 +21,7 @@ export default function AppealChatInput({
   const [recordedUri, setRecordedUri] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
+  const MAX_FILES = 10;
 
   const sendScale = useRef(new Animated.Value(1)).current;
   const recordingRef = useRef<Audio.Recording | null>(null);
@@ -99,6 +103,43 @@ export default function AppealChatInput({
     void Audio.setAudioModeAsync({ allowsRecordingIOS: false, playThroughEarpieceAndroid: false });
   }
 
+  const pickFiles = useCallback(async () => {
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        multiple: true,
+        copyToCacheDirectory: true,
+        type: '*/*',
+      });
+
+      const anyRes: any = res as any;
+      const canceled = anyRes.canceled === true || anyRes.type === 'cancel';
+      if (canceled) return;
+
+      const assets: any[] = anyRes.assets ?? (anyRes.type === 'success' || anyRes.uri ? [anyRes] : []);
+      if (!assets?.length) return;
+
+      let next = [...files];
+      assets.forEach((a) => {
+        if (a && a.uri && !next.some((f) => f.uri === a.uri)) {
+          next.push({ uri: a.uri, name: a.name || 'file', type: a.mimeType || a.type || 'application/octet-stream' });
+        }
+      });
+      next = next.slice(0, MAX_FILES);
+      setFiles(next);
+    } catch (e: any) {
+      if (!DocumentPicker || typeof (DocumentPicker as any).getDocumentAsync !== 'function') {
+        Alert.alert(
+          'Модуль не доступен',
+          'Похоже, expo-document-picker не установлен или приложение нужно пересобрать.\n' +
+            'Выполните: npx expo install expo-document-picker, затем перезапустите с очисткой кэша.'
+        );
+        return;
+      }
+      console.error(e);
+      Alert.alert('Ошибка', 'Не удалось выбрать файлы');
+    }
+  }, [files]);
+
 
   async function handleSend() {
     if (sending || (!text.trim() && files.length === 0)) return;
@@ -129,17 +170,38 @@ export default function AppealChatInput({
   }
 
   const canSend = text.trim().length > 0 || files.length > 0;
+  const actionIcon = recordedUri || canSend ? 'send' : 'mic';
+  const actionBg = recordedUri || canSend ? '#2563EB' : '#E5E7EB';
+  const actionColor = recordedUri || canSend ? '#fff' : '#2563EB';
+
+  const handleActionPress = recordedUri
+    ? handleSendVoice
+    : canSend
+    ? handleSend
+    : undefined;
+
+  const handleActionLongPress = !recordedUri && !canSend ? startRecording : undefined;
+  const handleActionPressOut = () => {
+    animateOut(sendScale);
+    if (isRecording) stopRecording();
+  };
 
   return (
-    <View style={styles.wrapper}>
-      <AttachmentsPicker
-        value={files}
-        onChange={setFiles}
-        addLabel=""
-        maxFiles={10}
-        style={{ marginBottom: files.length > 0 ? 8 : 0 }}
-      />
+    <View style={[styles.wrapper, { paddingBottom: bottomInset }]}>
+      {files.length > 0 && (
+        <AttachmentsPicker
+          value={files}
+          onChange={setFiles}
+          horizontal
+          showAddButton={false}
+          style={styles.attachments}
+          maxFiles={MAX_FILES}
+        />
+      )}
       <View style={styles.inputRow}>
+        <Pressable onPress={pickFiles} style={styles.attachBtn} hitSlop={8} disabled={sending}>
+          <Ionicons name="attach" size={20} color="#0B1220" />
+        </Pressable>
         {isRecording ? (
           <View style={styles.recordingBox}>
             <MotiView
@@ -168,50 +230,20 @@ export default function AppealChatInput({
             onChangeText={setText}
           />
         )}
-
-        {recordedUri ? (
-          <Pressable
-            onPress={handleSendVoice}
-            disabled={sending}
-            onPressIn={() => animateIn(sendScale)}
-            onPressOut={() => animateOut(sendScale)}
-            style={[styles.sendBtn, sending && { opacity: 0.5 }]}
-            hitSlop={8}
-          >
-            <Animated.View style={{ transform: [{ scale: sendScale }] }}>
-              <Ionicons name="send" size={20} color="#fff" />
-            </Animated.View>
-          </Pressable>
-        ) : canSend ? (
-          <Pressable
-            onPress={handleSend}
-            disabled={sending}
-            onPressIn={() => animateIn(sendScale)}
-            onPressOut={() => animateOut(sendScale)}
-            style={[styles.sendBtn, (sending) && { opacity: 0.5 }]}
-            hitSlop={8}
-          >
-            <Animated.View style={{ transform: [{ scale: sendScale }] }}>
-              <Ionicons name="send" size={20} color="#fff" />
-            </Animated.View>
-          </Pressable>
-        ) : (
-          <Pressable
-            onLongPress={startRecording}
-            onPressIn={() => animateIn(sendScale)}
-            onPressOut={() => {
-              animateOut(sendScale);
-              if (isRecording) stopRecording();
-            }}
-            delayLongPress={200}
-            style={styles.micBtn}
-            hitSlop={8}
-          >
-            <Animated.View style={{ transform: [{ scale: sendScale }] }}>
-              <Ionicons name="mic" size={22} color="#2563EB" />
-            </Animated.View>
-          </Pressable>
-        )}
+        <Pressable
+          onPress={handleActionPress}
+          onLongPress={handleActionLongPress}
+          onPressIn={() => animateIn(sendScale)}
+          onPressOut={handleActionPressOut}
+          delayLongPress={200}
+          disabled={sending}
+          style={[styles.actionBtn, { backgroundColor: actionBg }, sending && { opacity: 0.5 }]}
+          hitSlop={8}
+        >
+          <Animated.View style={{ transform: [{ scale: sendScale }] }}>
+            <Ionicons name={actionIcon} size={20} color={actionColor} />
+          </Animated.View>
+        </Pressable>
       </View>
     </View>
   );
@@ -219,8 +251,24 @@ export default function AppealChatInput({
 
 const styles = StyleSheet.create({
   wrapper: { padding: 8, backgroundColor: '#F9FAFB', borderTopWidth: 1, borderColor: '#E5E7EB' },
+  attachments: { marginBottom: 8 },
   inputRow: { flexDirection: 'row', alignItems: 'flex-end' },
-  micBtn: { padding: 6, justifyContent: 'center' },
+  attachBtn: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 20,
+    padding: 8,
+    marginRight: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  actionBtn: {
+    borderRadius: 20,
+    padding: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   input: {
     flex: 1,
     maxHeight: 120,
@@ -233,7 +281,7 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     paddingBottom: 8,
     color: '#111827',
-    marginHorizontal: 8,
+    marginRight: 8,
   },
   recordingBox: {
     flex: 1,
@@ -245,7 +293,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    marginHorizontal: 8,
+    marginRight: 8,
   },
   wave: {
     width: 20,
@@ -265,15 +313,8 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     paddingVertical: 8,
     paddingHorizontal: 12,
-    marginHorizontal: 8,
+    marginRight: 8,
     position: 'relative',
   },
   cancelVoice: { position: 'absolute', right: 6, top: 6 },
-  sendBtn: {
-    backgroundColor: '#2563EB',
-    borderRadius: 20,
-    padding: 10,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
 });
