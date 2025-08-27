@@ -1,7 +1,7 @@
 // V:\lp\app\(main)\services\appeals\[id].tsx
 import { useLocalSearchParams } from 'expo-router';
-import { useEffect, useState, useCallback } from 'react';
-import { View, ScrollView } from 'react-native';
+import { useEffect, useState, useCallback, useContext } from 'react';
+import { View } from 'react-native';
 import {
   addAppealMessage,
   getAppealById,
@@ -10,13 +10,16 @@ import {
   updateAppealWatchers,
 } from '@/utils/appealsService';
 import { AppealDetail, AppealStatus } from '@/types/appealsTypes';
-import MessageBubble from '@/components/Appeals/MessageBubble';
 import AppealHeader from '@/components/Appeals/AppealHeader'; // <-- исправлено имя файла
+import MessagesList from '@/components/Appeals/MessagesList';
+import AppealChatInput from '@/components/Appeals/AppealChatInput';
+import { AuthContext } from '@/context/AuthContext';
 
 export default function AppealDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const appealId = Number(id);
   const [data, setData] = useState<AppealDetail | null>(null);
+  const auth = useContext(AuthContext);
 
   const load = useCallback(async (force = false) => {
     const d = await getAppealById(appealId, force);
@@ -48,19 +51,14 @@ export default function AppealDetailScreen() {
         onWatch={() => updateAppealWatchers(appealId, []).then(() => load(true))}
       />
 
-      <ScrollView style={{ flex: 1 }}>
-        {data.messages.map(m => (
-          <MessageBubble
-            key={m.id}
-            message={m}
-            own={false /* сравни с текущим userId */}
-          />
-        ))}
-      </ScrollView>
+      <MessagesList messages={data.messages} currentUserId={auth?.profile?.id} />
 
-      {/* input + attachments:
-          onSend = async (text, files) => { await addAppealMessage(appealId, { text, files }); await load(true); }
-      */}
+      <AppealChatInput
+        onSend={async ({ text, files }) => {
+          await addAppealMessage(appealId, { text, files });
+          await load(true);
+        }}
+      />
     </View>
   );
 }
