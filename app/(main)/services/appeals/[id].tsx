@@ -2,6 +2,7 @@
 import { useLocalSearchParams } from 'expo-router';
 import { useEffect, useState, useCallback, useContext } from 'react';
 import { View } from 'react-native';
+import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import {
   addAppealMessage,
   getAppealById,
@@ -9,7 +10,7 @@ import {
   assignAppeal,
   updateAppealWatchers,
 } from '@/utils/appealsService';
-import { AppealDetail, AppealStatus } from '@/types/appealsTypes';
+import { AppealDetail, AppealStatus, AttachmentType, AppealMessage } from '@/types/appealsTypes';
 import AppealHeader from '@/components/Appeals/AppealHeader'; // <-- исправлено имя файла
 import MessagesList from '@/components/Appeals/MessagesList';
 import AppealChatInput from '@/components/Appeals/AppealChatInput';
@@ -21,6 +22,7 @@ export default function AppealDetailScreen() {
   const appealId = Number(id);
   const [data, setData] = useState<AppealDetail | null>(null);
   const auth = useContext(AuthContext);
+  const tabBarHeight = useBottomTabBarHeight();
 
   const load = useCallback(async (force = false) => {
     const d = await getAppealById(appealId, force);
@@ -55,12 +57,38 @@ export default function AppealDetailScreen() {
         onWatch={() => updateAppealWatchers(appealId, []).then(() => load(true))}
       />
 
-      <MessagesList messages={data.messages || []} currentUserId={auth?.profile?.id} />
+      <MessagesList
+        messages={data.messages || []}
+        currentUserId={auth?.profile?.id}
+        bottomInset={tabBarHeight + 80}
+      />
 
       <AppealChatInput
+        bottomInset={tabBarHeight}
         onSend={async ({ text, files }) => {
-          await addAppealMessage(appealId, { text, files });
-          await load(true);
+          const res = await addAppealMessage(appealId, { text, files });
+          const guessType = (mime: string): AttachmentType => {
+            if (mime.startsWith('image/')) return 'IMAGE';
+            if (mime.startsWith('audio/')) return 'AUDIO';
+            return 'FILE';
+          };
+          const newMsg: AppealMessage = {
+            id: res.id,
+            text: text,
+            createdAt: res.createdAt,
+            sender: auth?.profile
+              ? { id: auth.profile.id, email: auth.profile.email || '' }
+              : { id: 0, email: '' },
+            attachments: (files || []).map((f) => ({
+              fileUrl: f.uri,
+              fileName: f.name,
+              fileType: guessType(f.type),
+            })),
+          };
+          setData((prev) =>
+            prev ? { ...prev, messages: [...(prev.messages || []), newMsg] } : prev,
+          );
+          void load(true);
         }}
       />
     </View>
