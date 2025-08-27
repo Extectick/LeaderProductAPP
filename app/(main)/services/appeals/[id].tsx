@@ -14,6 +14,7 @@ import AppealHeader from '@/components/Appeals/AppealHeader'; // <-- испра�
 import MessagesList from '@/components/Appeals/MessagesList';
 import AppealChatInput from '@/components/Appeals/AppealChatInput';
 import { AuthContext } from '@/context/AuthContext';
+import { useAppealUpdates } from '@/hooks/useAppealUpdates';
 
 export default function AppealDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -27,6 +28,9 @@ export default function AppealDetailScreen() {
   }, [appealId]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Подписка на события конкретного обращения: новые сообщения, смена статуса и т.д.
+  useAppealUpdates(appealId, () => load(true));
 
   if (!data) return null;
 
