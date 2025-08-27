@@ -1,5 +1,5 @@
 import { Text, Image, StyleSheet, View, Pressable } from 'react-native';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Audio } from 'expo-av';
 import { Ionicons } from '@expo/vector-icons';
 import { AppealMessage } from '@/types/appealsTypes';
@@ -16,23 +16,38 @@ export default function MessageBubble({ message, own }: { message: AppealMessage
 
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [playing, setPlaying] = useState(false);
+  const [currentUri, setCurrentUri] = useState<string | null>(null);
+
+  useEffect(() => {
+    return () => {
+      sound?.unloadAsync();
+    };
+  }, [sound]);
 
   async function playAudio(uri: string) {
     try {
-      if (playing) {
-        await sound?.stopAsync();
-        setPlaying(false);
-        return;
+      if (sound) {
+        await sound.stopAsync();
+        await sound.unloadAsync();
+        setSound(null);
+        if (currentUri === uri) {
+          setCurrentUri(null);
+          setPlaying(false);
+          return;
+        }
       }
       const { sound: s } = await Audio.Sound.createAsync({ uri });
       setSound(s);
+      setCurrentUri(uri);
       setPlaying(true);
       await s.playAsync();
       s.setOnPlaybackStatusUpdate((status) => {
         if (!('didJustFinish' in status)) return;
         if (status.didJustFinish) {
           setPlaying(false);
+          setCurrentUri(null);
           s.unloadAsync();
+          setSound(null);
         }
       });
     } catch (e) {
