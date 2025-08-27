@@ -20,6 +20,7 @@ export default function AppealChatInput({
   const [recordingTime, setRecordingTime] = useState(0);
 
   const sendScale = useRef(new Animated.Value(1)).current;
+  const recordingRef = useRef<Audio.Recording | null>(null);
 
   useEffect(() => {
     let timer: NodeJS.Timeout;
@@ -30,6 +31,16 @@ export default function AppealChatInput({
       if (timer) clearInterval(timer);
     };
   }, [isRecording]);
+
+  useEffect(() => {
+    return () => {
+      const rec = recordingRef.current;
+      if (rec) {
+        rec.stopAndUnloadAsync().catch(() => {});
+        Audio.setAudioModeAsync({ allowsRecordingIOS: false, playThroughEarpieceAndroid: false }).catch(() => {});
+      }
+    };
+  }, []);
 
   function animateIn(val: Animated.Value) {
     Animated.spring(val, { toValue: 0.9, useNativeDriver: true }).start();
@@ -56,6 +67,7 @@ export default function AppealChatInput({
       await rec.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
       await rec.startAsync();
       setRecording(rec);
+      recordingRef.current = rec;
       setIsRecording(true);
       setRecordingTime(0);
     } catch (e) {
@@ -75,12 +87,16 @@ export default function AppealChatInput({
     } finally {
       setIsRecording(false);
       setRecording(null);
+      recordingRef.current = null;
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playThroughEarpieceAndroid: false });
     }
   }
 
   function cancelVoice() {
     setRecordedUri(null);
     setRecordingTime(0);
+    recordingRef.current = null;
+    void Audio.setAudioModeAsync({ allowsRecordingIOS: false, playThroughEarpieceAndroid: false });
   }
 
 
