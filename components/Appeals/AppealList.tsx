@@ -75,7 +75,7 @@ export default function AppealsList({
     return offset + limit < total;
   }, [meta, pageSize]);
 
-  async function load(initial = false) {
+  async function load(initial = false, retry = true) {
     if (initial) setLoading(true);
     try {
       const res = await getAppealsList(scope, pageSize, initial ? 0 : meta.offset, {
@@ -94,7 +94,11 @@ export default function AppealsList({
 
       onLoadedMeta?.(normMeta);
       onItemsChange?.(initial ? res.data : [...items, ...res.data]);
-    } catch (e) {
+    } catch (e: any) {
+      const msg = e?.message || '';
+      if (retry && /Unauthorized/i.test(msg)) {
+        return load(initial, false);
+      }
       if (initial) onLoadError?.(e);
       else onLoadMoreError?.(e);
       // можно также повесить тост

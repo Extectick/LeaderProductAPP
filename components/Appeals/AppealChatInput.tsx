@@ -8,8 +8,10 @@ import AttachmentsPicker, { AttachmentFile } from '@/components/ui/AttachmentsPi
 
 export default function AppealChatInput({
   onSend,
+  bottomInset = 0,
 }: {
   onSend: (payload: { text?: string; files?: AttachmentFile[] }) => Promise<void> | void;
+  bottomInset?: number;
 }) {
   const [text, setText] = useState('');
   const [files, setFiles] = useState<AttachmentFile[]>([]);
@@ -129,17 +131,33 @@ export default function AppealChatInput({
   }
 
   const canSend = text.trim().length > 0 || files.length > 0;
+  const actionIcon = recordedUri || canSend ? 'send' : 'mic';
+  const actionBg = recordedUri || canSend ? '#2563EB' : '#E5E7EB';
+  const actionColor = recordedUri || canSend ? '#fff' : '#2563EB';
+
+  const handleActionPress = recordedUri
+    ? handleSendVoice
+    : canSend
+    ? handleSend
+    : undefined;
+
+  const handleActionLongPress = !recordedUri && !canSend ? startRecording : undefined;
+  const handleActionPressOut = () => {
+    animateOut(sendScale);
+    if (isRecording) stopRecording();
+  };
 
   return (
-    <View style={styles.wrapper}>
-      <AttachmentsPicker
-        value={files}
-        onChange={setFiles}
-        addLabel=""
-        maxFiles={10}
-        style={{ marginBottom: files.length > 0 ? 8 : 0 }}
-      />
+    <View style={[styles.wrapper, { marginBottom: bottomInset }]}>
       <View style={styles.inputRow}>
+        <AttachmentsPicker
+          value={files}
+          onChange={setFiles}
+          addLabel=""
+          maxFiles={10}
+          horizontal
+          style={{ marginRight: 8 }}
+        />
         {isRecording ? (
           <View style={styles.recordingBox}>
             <MotiView
@@ -169,49 +187,20 @@ export default function AppealChatInput({
           />
         )}
 
-        {recordedUri ? (
-          <Pressable
-            onPress={handleSendVoice}
-            disabled={sending}
-            onPressIn={() => animateIn(sendScale)}
-            onPressOut={() => animateOut(sendScale)}
-            style={[styles.sendBtn, sending && { opacity: 0.5 }]}
-            hitSlop={8}
-          >
-            <Animated.View style={{ transform: [{ scale: sendScale }] }}>
-              <Ionicons name="send" size={20} color="#fff" />
-            </Animated.View>
-          </Pressable>
-        ) : canSend ? (
-          <Pressable
-            onPress={handleSend}
-            disabled={sending}
-            onPressIn={() => animateIn(sendScale)}
-            onPressOut={() => animateOut(sendScale)}
-            style={[styles.sendBtn, (sending) && { opacity: 0.5 }]}
-            hitSlop={8}
-          >
-            <Animated.View style={{ transform: [{ scale: sendScale }] }}>
-              <Ionicons name="send" size={20} color="#fff" />
-            </Animated.View>
-          </Pressable>
-        ) : (
-          <Pressable
-            onLongPress={startRecording}
-            onPressIn={() => animateIn(sendScale)}
-            onPressOut={() => {
-              animateOut(sendScale);
-              if (isRecording) stopRecording();
-            }}
-            delayLongPress={200}
-            style={styles.micBtn}
-            hitSlop={8}
-          >
-            <Animated.View style={{ transform: [{ scale: sendScale }] }}>
-              <Ionicons name="mic" size={22} color="#2563EB" />
-            </Animated.View>
-          </Pressable>
-        )}
+        <Pressable
+          onPress={handleActionPress}
+          onLongPress={handleActionLongPress}
+          onPressIn={() => animateIn(sendScale)}
+          onPressOut={handleActionPressOut}
+          delayLongPress={200}
+          disabled={sending}
+          style={[styles.actionBtn, { backgroundColor: actionBg }, sending && { opacity: 0.5 }]}
+          hitSlop={8}
+        >
+          <Animated.View style={{ transform: [{ scale: sendScale }] }}>
+            <Ionicons name={actionIcon} size={20} color={actionColor} />
+          </Animated.View>
+        </Pressable>
       </View>
     </View>
   );
@@ -220,7 +209,12 @@ export default function AppealChatInput({
 const styles = StyleSheet.create({
   wrapper: { padding: 8, backgroundColor: '#F9FAFB', borderTopWidth: 1, borderColor: '#E5E7EB' },
   inputRow: { flexDirection: 'row', alignItems: 'flex-end' },
-  micBtn: { padding: 6, justifyContent: 'center' },
+  actionBtn: {
+    borderRadius: 20,
+    padding: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   input: {
     flex: 1,
     maxHeight: 120,
@@ -233,7 +227,7 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     paddingBottom: 8,
     color: '#111827',
-    marginHorizontal: 8,
+    marginRight: 8,
   },
   recordingBox: {
     flex: 1,
@@ -269,11 +263,4 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   cancelVoice: { position: 'absolute', right: 6, top: 6 },
-  sendBtn: {
-    backgroundColor: '#2563EB',
-    borderRadius: 20,
-    padding: 10,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
 });
