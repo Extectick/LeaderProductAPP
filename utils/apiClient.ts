@@ -52,14 +52,15 @@ async function parseResponse<Res>(response: Response): Promise<{ data: Res | und
     return { data: blob as unknown as Res };
   }
 
-  // Попробуем JSON
+  // Попробуем распарсить как JSON; если не выйдет, вернём текст
   try {
-    const json = await response.json();
+    // Используем clone, чтобы не "прочитать" основной поток тела
+    const json = await response.clone().json();
     const data = (json && typeof json === 'object' && 'data' in json) ? (json.data as Res) : (json as Res);
     const message = (json && (json.message || json.error)) as string | undefined;
     return { data, message };
   } catch {
-    // Не JSON — отдадим текст
+    // Тело не JSON — читаем оригинальный response как текст
     const text = await response.text();
     return { data: undefined, message: text || undefined };
   }
