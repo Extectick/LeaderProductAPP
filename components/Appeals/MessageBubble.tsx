@@ -7,7 +7,10 @@ import { MotiView } from 'moti';
 
 export default function MessageBubble({ message, own }: { message: AppealMessage; own: boolean }) {
   const attachments = Array.isArray(message.attachments)
-    ? message.attachments.filter((a): a is NonNullable<typeof a> => !!a)
+    ? message.attachments.filter(
+        (a): a is NonNullable<typeof a> =>
+          !!a && (a.fileType !== 'IMAGE' || !!a.fileUrl)
+      )
     : [];
 
   const dt = new Date(message.createdAt);
