@@ -2,10 +2,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { View, TextInput, Pressable, StyleSheet, Text, Animated } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import * as DocumentPicker from 'expo-document-picker';
 import { Audio } from 'expo-av';
 import { MotiView } from 'moti';
-import { AttachmentFile } from '@/components/ui/AttachmentsPicker';
+import AttachmentsPicker, { AttachmentFile } from '@/components/ui/AttachmentsPicker';
 
 export default function AppealChatInput({
   onSend,
@@ -20,7 +19,6 @@ export default function AppealChatInput({
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
 
-  const attachScale = useRef(new Animated.Value(1)).current;
   const sendScale = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
@@ -85,26 +83,6 @@ export default function AppealChatInput({
     setRecordingTime(0);
   }
 
-  async function pickFiles() {
-    try {
-      const res = await DocumentPicker.getDocumentAsync({ multiple: true, copyToCacheDirectory: true });
-      const anyRes: any = res as any;
-      const canceled = anyRes.canceled === true || anyRes.type === 'cancel';
-      if (canceled) return;
-      const assets: any[] = anyRes.assets ?? (anyRes.type === 'success' || anyRes.uri ? [anyRes] : []);
-      if (!assets?.length) return;
-      const mapped: AttachmentFile[] = assets
-        .filter((a) => a && a.uri)
-        .map((a) => ({ uri: a.uri, name: a.name || 'file', type: a.mimeType || a.type || 'application/octet-stream' }));
-      setFiles((prev) => [...prev, ...mapped]);
-    } catch (e) {
-      console.error(e);
-    }
-  }
-
-  function removeFile(idx: number) {
-    setFiles((prev) => prev.filter((_, i) => i !== idx));
-  }
 
   async function handleSend() {
     if (sending || (!text.trim() && files.length === 0)) return;
@@ -138,33 +116,14 @@ export default function AppealChatInput({
 
   return (
     <View style={styles.wrapper}>
-      {files.length > 0 && (
-        <View style={styles.chipsWrap}>
-          {files.map((f, idx) => (
-            <View key={`${f.uri}-${idx}`} style={styles.fileChip}>
-              <Ionicons name="document" size={14} color="#2563EB" />
-              <Text style={styles.fileChipText} numberOfLines={1}>{f.name}</Text>
-              <Pressable onPress={() => removeFile(idx)} hitSlop={8}>
-                <Ionicons name="close" size={14} color="#6B7280" />
-              </Pressable>
-            </View>
-          ))}
-        </View>
-      )}
+      <AttachmentsPicker
+        value={files}
+        onChange={setFiles}
+        addLabel=""
+        maxFiles={10}
+        style={{ marginBottom: files.length > 0 ? 8 : 0 }}
+      />
       <View style={styles.inputRow}>
-        <Pressable
-          onPress={pickFiles}
-          style={styles.attachBtn}
-          hitSlop={8}
-          onPressIn={() => animateIn(attachScale)}
-          onPressOut={() => animateOut(attachScale)}
-          disabled={isRecording}
-        >
-          <Animated.View style={{ transform: [{ scale: attachScale }] }}>
-            <Ionicons name="attach" size={22} color="#2563EB" />
-          </Animated.View>
-        </Pressable>
-
         {isRecording ? (
           <View style={styles.recordingBox}>
             <MotiView
@@ -244,15 +203,7 @@ export default function AppealChatInput({
 
 const styles = StyleSheet.create({
   wrapper: { padding: 8, backgroundColor: '#F9FAFB', borderTopWidth: 1, borderColor: '#E5E7EB' },
-  chipsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
-  fileChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    borderWidth: 1, borderColor: '#E5E7EB', backgroundColor: '#fff',
-    borderRadius: 999, paddingVertical: 6, paddingHorizontal: 10, maxWidth: '100%',
-  },
-  fileChipText: { maxWidth: 160, color: '#111827', fontSize: 12 },
   inputRow: { flexDirection: 'row', alignItems: 'flex-end' },
-  attachBtn: { padding: 6, justifyContent: 'center' },
   micBtn: { padding: 6, justifyContent: 'center' },
   input: {
     flex: 1,
