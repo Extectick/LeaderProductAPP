@@ -12,13 +12,11 @@ import {
 import { AppealDetail, AppealStatus } from '@/types/appealsTypes';
 import MessageBubble from '@/components/Appeals/MessageBubble';
 import AppealHeader from '@/components/Appeals/AppealHeader'; // <-- исправлено имя файла
-import AppealStatusMenu from '@/components/Appeals/AppealStatusMenu';
 
 export default function AppealDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const appealId = Number(id);
   const [data, setData] = useState<AppealDetail | null>(null);
-  const [statusMenu, setStatusMenu] = useState(false);
 
   const load = useCallback(async (force = false) => {
     const d = await getAppealById(appealId, force);
@@ -30,19 +28,14 @@ export default function AppealDetailScreen() {
   if (!data) return null;
 
   async function handleChangeStatus(next: AppealStatus) {
-    if (!data || next === data.status) { 
-      setStatusMenu(false); 
-      return; 
-    }
+    if (!data || next === data.status) return;
     try {
-      setData(prev => prev ? { ...prev, status: next } : prev); // ✅
+      setData(prev => (prev ? { ...prev, status: next } : prev));
       await updateAppealStatus(appealId, next);
       await load(true);
     } catch (e) {
       await load(true);
       console.warn('Ошибка смены статуса:', e);
-    } finally {
-      setStatusMenu(false);
     }
   }
 
@@ -50,7 +43,7 @@ export default function AppealDetailScreen() {
     <View style={{ flex: 1 }}>
       <AppealHeader
         data={data}
-        onChangeStatus={() => setStatusMenu(true)}
+        onChangeStatus={(s) => handleChangeStatus(s)}
         onAssign={() => assignAppeal(appealId, []).then(() => load(true))}
         onWatch={() => updateAppealWatchers(appealId, []).then(() => load(true))}
       />
@@ -64,13 +57,6 @@ export default function AppealDetailScreen() {
           />
         ))}
       </ScrollView>
-
-      <AppealStatusMenu
-        visible={statusMenu}
-        current={data.status}
-        onClose={() => setStatusMenu(false)}
-        onSelect={(s) => handleChangeStatus(s)}
-      />
 
       {/* input + attachments:
           onSend = async (text, files) => { await addAppealMessage(appealId, { text, files }); await load(true); }

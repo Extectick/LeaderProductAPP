@@ -33,6 +33,10 @@ type DropdownProps<T extends string | number> = {
   onChange: (value: T) => void;
   placeholder?: string;
   style?: StyleProp<ViewStyle>;
+  /** Стиль для кнопки-триггера */
+  buttonStyle?: StyleProp<ViewStyle>;
+  /** Кастомный рендер содержимого кнопки */
+  renderTrigger?: (selectedLabel?: string, open?: boolean) => React.ReactNode;
   errorText?: string;
   menuMaxHeight?: number;
 };
@@ -43,6 +47,8 @@ export default function Dropdown<T extends string | number>({
   onChange,
   placeholder = 'Выберите значение',
   style,
+  buttonStyle,
+  renderTrigger,
   errorText,
   menuMaxHeight = 300,
 }: DropdownProps<T>) {
@@ -66,16 +72,27 @@ export default function Dropdown<T extends string | number>({
       <View ref={anchorWrapRef} collapsable={false}>
         <Pressable
           onPress={measureAndOpen}
-          style={({ pressed }) => [styles.button, pressed && styles.pressed, errorText && styles.errorBorder]}
+          style={({ pressed }) => [styles.button, buttonStyle, pressed && styles.pressed, errorText && styles.errorBorder]}
           android_ripple={{ color: 'rgba(0,0,0,0.06)' }}
           accessibilityRole="button"
           accessibilityLabel="Открыть список"
         >
-          <Ionicons name="list" size={16} color="#111827" style={{ marginRight: 8 }} />
-          <Text style={[styles.buttonText, !selectedLabel && { color: '#9CA3AF' }]} numberOfLines={1}>
-            {selectedLabel ?? placeholder}
-          </Text>
-          <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={16} color="#6B7280" style={{ marginLeft: 'auto' }} />
+          {renderTrigger ? (
+            renderTrigger(selectedLabel, open)
+          ) : (
+            <>
+              <Ionicons name="list" size={16} color="#111827" style={{ marginRight: 8 }} />
+              <Text style={[styles.buttonText, !selectedLabel && { color: '#9CA3AF' }]} numberOfLines={1}>
+                {selectedLabel ?? placeholder}
+              </Text>
+              <Ionicons
+                name={open ? 'chevron-up' : 'chevron-down'}
+                size={16}
+                color="#6B7280"
+                style={{ marginLeft: 'auto' }}
+              />
+            </>
+          )}
         </Pressable>
       </View>
       {!!errorText && <Text style={styles.errorText}>{errorText}</Text>}
