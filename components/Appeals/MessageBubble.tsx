@@ -11,8 +11,9 @@ export default function MessageBubble({ message, own }: { message: AppealMessage
     : [];
 
   const dt = new Date(message.createdAt);
-  const timeStr = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(dt);
-  const dateStr = new Intl.DateTimeFormat(undefined, { day: '2-digit', month: '2-digit', year: '2-digit' }).format(dt);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const timeStr = `${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+  const dateStr = `${pad(dt.getDate())}.${pad(dt.getMonth() + 1)}.${String(dt.getFullYear()).slice(-2)}`;
 
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [playing, setPlaying] = useState(false);
