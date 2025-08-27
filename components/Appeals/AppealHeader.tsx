@@ -1,6 +1,8 @@
 // V:\lp\components\Appeals\AppealHeader.tsx
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import { AppealDetail } from '@/types/appealsTypes';
 
 type Props = {
@@ -12,29 +14,36 @@ type Props = {
 
 export default function AppealHeader({ data, onChangeStatus, onAssign, onWatch }: Props) {
   return (
-    <View style={styles.container}>
-      <View style={styles.row}>
-        <Text style={styles.number}>#{data.number}</Text>
-        <View style={[styles.badge, { backgroundColor: statusColor(data.status) }]}>
-          <Text style={styles.badgeText}>{data.status}</Text>
+    <Animated.View entering={FadeInDown.duration(250)}>
+      <LinearGradient
+        colors={['#0EA5E9', '#7C3AED']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.container}
+      >
+        <View style={styles.row}>
+          <Text style={styles.number}>#{data.number}</Text>
+          <View style={[styles.badge, { backgroundColor: statusColor(data.status) }]}>
+            <Text style={styles.badgeText}>{data.status}</Text>
+          </View>
+          <View style={[styles.badge, { backgroundColor: priorityColor(data.priority) }]}>
+            <Text style={styles.badgeText}>{data.priority}</Text>
+          </View>
         </View>
-        <View style={[styles.badge, { backgroundColor: priorityColor(data.priority) }]}>
-          <Text style={styles.badgeText}>{data.priority}</Text>
+        {data.title ? <Text style={styles.title}>{data.title}</Text> : null}
+        <View style={styles.actions}>
+          <TouchableOpacity style={styles.actionBtn} onPress={onChangeStatus}>
+            <Text style={styles.actionText}>Статус</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.actionBtn} onPress={onAssign}>
+            <Text style={styles.actionText}>Назначить</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.actionBtn} onPress={onWatch}>
+            <Text style={styles.actionText}>Наблюдать</Text>
+          </TouchableOpacity>
         </View>
-      </View>
-      {data.title ? <Text style={styles.title}>{data.title}</Text> : null}
-      <View style={styles.actions}>
-        <TouchableOpacity style={styles.actionBtn} onPress={onChangeStatus}>
-          <Text style={styles.actionText}>Статус</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.actionBtn} onPress={onAssign}>
-          <Text style={styles.actionText}>Назначить</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.actionBtn} onPress={onWatch}>
-          <Text style={styles.actionText}>Наблюдать</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
+      </LinearGradient>
+    </Animated.View>
   );
 }
 
@@ -59,13 +68,17 @@ function priorityColor(priority: string) {
 }
 
 const styles = StyleSheet.create({
-  container: { padding: 16, borderBottomWidth: 1, borderColor: '#eee', backgroundColor: '#fff' },
+  container: {
+    padding: 16,
+    borderRadius: 20,
+    overflow: 'hidden',
+  },
   row: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
-  number: { fontSize: 18, fontWeight: 'bold', marginRight: 8 },
+  number: { fontSize: 18, fontWeight: 'bold', marginRight: 8, color: '#fff' },
   badge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, marginRight: 6 },
   badgeText: { color: '#fff', fontSize: 12 },
-  title: { fontSize: 16, marginBottom: 8, color: '#333' },
+  title: { fontSize: 16, marginBottom: 8, color: '#fff' },
   actions: { flexDirection: 'row' },
   actionBtn: { marginRight: 12 },
-  actionText: { color: '#007AFF', fontSize: 14 },
+  actionText: { color: '#fff', fontSize: 14 },
 });
