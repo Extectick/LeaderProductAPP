@@ -29,6 +29,11 @@ export default function AppealDetailScreen() {
 
   if (!data) return null;
 
+  const attachmentsCount = data.messages.reduce(
+    (sum, m) => sum + m.attachments.length,
+    0,
+  );
+
   async function handleChangeStatus(next: AppealStatus) {
     if (!data || next === data.status) { 
       setStatusMenu(false); 
@@ -50,9 +55,13 @@ export default function AppealDetailScreen() {
     <View style={{ flex: 1 }}>
       <AppealHeader
         data={data}
+        watchersCount={data.watchers.length}
+        assigneesCount={data.assignees.length}
+        attachmentsCount={attachmentsCount}
         onChangeStatus={() => setStatusMenu(true)}
         onAssign={() => assignAppeal(appealId, []).then(() => load(true))}
         onWatch={() => updateAppealWatchers(appealId, []).then(() => load(true))}
+        onAttachments={() => {}}
       />
 
       <ScrollView style={{ flex: 1 }}>

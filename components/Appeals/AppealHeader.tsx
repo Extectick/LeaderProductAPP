@@ -5,12 +5,25 @@ import { AppealDetail } from '@/types/appealsTypes';
 
 type Props = {
   data: AppealDetail;
+  watchersCount: number;
+  assigneesCount: number;
+  attachmentsCount: number;
   onChangeStatus?: () => void;
   onAssign?: () => void;
   onWatch?: () => void;
+  onAttachments?: () => void;
 };
 
-export default function AppealHeader({ data, onChangeStatus, onAssign, onWatch }: Props) {
+export default function AppealHeader({
+  data,
+  watchersCount,
+  assigneesCount,
+  attachmentsCount,
+  onChangeStatus,
+  onAssign,
+  onWatch,
+  onAttachments,
+}: Props) {
   return (
     <View style={styles.container}>
       <View style={styles.row}>
@@ -20,6 +33,20 @@ export default function AppealHeader({ data, onChangeStatus, onAssign, onWatch }
         </View>
         <View style={[styles.badge, { backgroundColor: priorityColor(data.priority) }]}>
           <Text style={styles.badgeText}>{data.priority}</Text>
+        </View>
+        <View style={styles.counters}>
+          <TouchableOpacity style={styles.counter} onPress={onWatch}>
+            <Text style={styles.icon}>👁️</Text>
+            <Text style={styles.count}>{watchersCount}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.counter} onPress={onAssign}>
+            <Text style={styles.icon}>👤</Text>
+            <Text style={styles.count}>{assigneesCount}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.counter} onPress={onAttachments}>
+            <Text style={styles.icon}>📎</Text>
+            <Text style={styles.count}>{attachmentsCount}</Text>
+          </TouchableOpacity>
         </View>
       </View>
       {data.title ? <Text style={styles.title}>{data.title}</Text> : null}
@@ -68,4 +95,8 @@ const styles = StyleSheet.create({
   actions: { flexDirection: 'row' },
   actionBtn: { marginRight: 12 },
   actionText: { color: '#007AFF', fontSize: 14 },
+  counters: { flexDirection: 'row', marginLeft: 'auto' },
+  counter: { flexDirection: 'row', alignItems: 'center', marginLeft: 12 },
+  icon: { fontSize: 16, marginRight: 4 },
+  count: { fontSize: 14, color: '#333' },
 });
