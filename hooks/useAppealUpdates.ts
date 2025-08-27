@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { io, Socket } from 'socket.io-client';
 import { API_BASE_URL } from '@/utils/config';
 import { getAccessToken } from '@/utils/tokenService';
 
@@ -17,40 +18,36 @@ export function useAppealUpdates(
   onEvent: (event: AppealEvent) => void,
 ) {
   useEffect(() => {
-    let ws: WebSocket | null = null;
-    let isActive = true;
+    let socket: Socket | null = null;
+    let active = true;
 
     async function connect() {
       const token = await getAccessToken();
-      if (!isActive) return;
+      if (!active) return;
 
-      const base = API_BASE_URL.replace(/^http/, 'ws');
-      const path = appealId ? `/ws/appeals/${appealId}` : '/ws/appeals';
-      const url = `${base}${path}${token ? `?token=${token}` : ''}`;
+      socket = io(API_BASE_URL, {
+        transports: ['websocket'],
+        auth: token ? { token } : undefined,
+      });
 
-      ws = new WebSocket(url);
-
-      ws.onmessage = (e) => {
-        try {
-          const payload = JSON.parse(e.data);
-          onEvent(payload);
-        } catch {
-          onEvent({ type: 'unknown' });
-        }
+      const joinRoom = () => {
+        if (appealId) socket?.emit('join', `appeal:${appealId}`);
       };
 
-      ws.onclose = () => {
-        if (isActive) {
-          setTimeout(connect, 5000);
-        }
-      };
+      socket.on('connect', joinRoom);
+      joinRoom();
+
+      socket.onAny((event, payload) => {
+        onEvent({ type: event, ...(payload || {}) });
+      });
     }
 
-    connect();
+    void connect();
 
     return () => {
-      isActive = false;
-      if (ws) ws.close();
+      active = false;
+      if (appealId) socket?.emit('leave', `appeal:${appealId}`);
+      socket?.disconnect();
     };
   }, [appealId, onEvent]);
 }

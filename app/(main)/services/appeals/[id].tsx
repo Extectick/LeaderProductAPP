@@ -32,7 +32,25 @@ export default function AppealDetailScreen() {
   useEffect(() => { load(); }, [load]);
 
   // Подписка на события конкретного обращения: новые сообщения, смена статуса и т.д.
-  useAppealUpdates(appealId, () => load(true));
+  useAppealUpdates(appealId, (evt) => {
+    if (evt.type === 'messageAdded' && evt.appealId === appealId) {
+      setData((prev) => {
+        if (prev?.messages?.some((m) => m.id === evt.messageId)) return prev;
+        const newMsg: AppealMessage = {
+          id: evt.messageId,
+          text: evt.text || '',
+          createdAt: evt.createdAt,
+          sender: { id: evt.senderId, email: '' },
+          attachments: [],
+        };
+        const next = prev ? { ...prev, messages: [...(prev.messages || []), newMsg] } : prev;
+        return next as typeof prev;
+      });
+      void load(true);
+    } else {
+      void load(true);
+    }
+  });
 
   if (!data) return null;
 
