@@ -1,8 +1,6 @@
 // =============================
-// File: V:\\lp\\components\\ui\\Dropdown.tsx (UPDATED)
-// - фикс прозрачности меню: теперь через Modal с полноэкранным backdrop
-// - выделение выбранного пункта цветом + галочка
-// - якорение меню к кнопке по координатам
+// File: V:\lp\components\ui\Dropdown.tsx
+// Fix: убран AnimatedPressable; scale-анимация перенесена на внутренний Animated.View
 // =============================
 import React, { useMemo, useRef, useState } from 'react';
 import {
@@ -15,9 +13,10 @@ import {
   ViewStyle,
   LayoutRectangle,
   ScrollView,
-  Platform,
+  Dimensions,
+  Animated,
 } from 'react-native';
-import Animated, { FadeInDown, FadeOut } from 'react-native-reanimated';
+import AnimatedRe, { FadeInDown, FadeOut } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 
 export type DropdownItem<T extends string | number> = {
@@ -33,9 +32,7 @@ type DropdownProps<T extends string | number> = {
   onChange: (value: T) => void;
   placeholder?: string;
   style?: StyleProp<ViewStyle>;
-  /** Стиль для кнопки-триггера */
   buttonStyle?: StyleProp<ViewStyle>;
-  /** Кастомный рендер содержимого кнопки */
   renderTrigger?: (selectedLabel?: string, open?: boolean) => React.ReactNode;
   errorText?: string;
   menuMaxHeight?: number;
@@ -55,9 +52,16 @@ export default function Dropdown<T extends string | number>({
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState<LayoutRectangle | null>(null);
   const anchorWrapRef = useRef<View | null>(null);
+  const scale = useRef(new Animated.Value(1)).current;
 
-  const selectedLabel = useMemo(() => items.find((i) => i.value === value)?.label, [items, value]);
-  const visibleItems = useMemo(() => items.filter((i) => i.visible !== false), [items]);
+  const selectedLabel = useMemo(
+    () => items.find((i) => i.value === value)?.label,
+    [items, value]
+  );
+  const visibleItems = useMemo(
+    () => items.filter((i) => i.visible !== false),
+    [items]
+  );
 
   const measureAndOpen = () => {
     anchorWrapRef.current?.measureInWindow((x, y, width, height) => {
@@ -66,23 +70,47 @@ export default function Dropdown<T extends string | number>({
     });
   };
 
+  const { width: winWidth } = Dimensions.get('window');
+  const menuWidth = anchor?.width ? Math.max(anchor.width, 220) : 260;
+  const left = Math.min(Math.max(anchor?.x ?? 16, 16), winWidth - menuWidth - 16);
+
   return (
     <View style={[styles.wrap, style]}>
-      {/* Обёртка нужна, чтобы корректно измерить координаты */}
       <View ref={anchorWrapRef} collapsable={false}>
-        <Pressable
-          onPress={measureAndOpen}
-          style={({ pressed }) => [styles.button, buttonStyle, pressed && styles.pressed, errorText && styles.errorBorder]}
-          android_ripple={{ color: 'rgba(0,0,0,0.06)' }}
-          accessibilityRole="button"
-          accessibilityLabel="Открыть список"
+      <Pressable
+        onPress={measureAndOpen}
+        onPressIn={() =>
+          Animated.timing(scale, { toValue: 0.96, duration: 80, useNativeDriver: true }).start()
+        }
+        onPressOut={() =>
+          Animated.timing(scale, { toValue: 1, duration: 110, useNativeDriver: true }).start()
+        }
+        style={({ pressed }) => [
+          styles.button,
+          buttonStyle,
+          pressed && styles.pressed,
+          !!errorText && styles.errorBorder,
+        ]}
+        android_ripple={{ color: 'rgba(0,0,0,0.06)' }}
+      >
+        <Animated.View
+          style={{
+            transform: [{ scale }],
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center', // ✅ добавляем центровку
+            flex: 1,
+          }}
         >
           {renderTrigger ? (
             renderTrigger(selectedLabel, open)
           ) : (
             <>
               <Ionicons name="list" size={16} color="#111827" style={{ marginRight: 8 }} />
-              <Text style={[styles.buttonText, !selectedLabel && { color: '#9CA3AF' }]} numberOfLines={1}>
+              <Text
+                style={[styles.buttonText, !selectedLabel && { color: '#9CA3AF' }]}
+                numberOfLines={1}
+              >
                 {selectedLabel ?? placeholder}
               </Text>
               <Ionicons
@@ -93,30 +121,30 @@ export default function Dropdown<T extends string | number>({
               />
             </>
           )}
-        </Pressable>
+        </Animated.View>
+      </Pressable>
       </View>
+
       {!!errorText && <Text style={styles.errorText}>{errorText}</Text>}
 
-      {/* Полноэкранный слой через Modal — избавляет от проблем с прозрачностью/перекрытиями */}
       <Modal transparent visible={open} onRequestClose={() => setOpen(false)}>
-        {/* Backdrop */}
         <Pressable style={styles.backdrop} onPress={() => setOpen(false)} />
-
-        {/* Меню, привязанное к координатам кнопки */}
-        <Animated.View
+        <AnimatedRe.View
           entering={FadeInDown.duration(160)}
           exiting={FadeOut.duration(120)}
           style={[
             styles.menu,
             {
               top: (anchor?.y ?? 0) + (anchor?.height ?? 0) + 4,
-              left: anchor?.x ?? 16,
-              width: anchor?.width ? Math.max(anchor.width, 220) : 260,
+              left,
+              width: menuWidth,
             },
           ]}
         >
           {visibleItems.length === 0 ? (
-            <View style={styles.emptyWrap}><Text style={styles.emptyText}>Нет вариантов</Text></View>
+            <View style={styles.emptyWrap}>
+              <Text style={styles.emptyText}>Нет вариантов</Text>
+            </View>
           ) : (
             <ScrollView style={{ maxHeight: menuMaxHeight }} nestedScrollEnabled>
               {visibleItems.map((it) => {
@@ -125,7 +153,10 @@ export default function Dropdown<T extends string | number>({
                   <Pressable
                     key={String(it.value)}
                     disabled={it.disabled}
-                    onPress={() => { onChange(it.value); setOpen(false); }}
+                    onPress={() => {
+                      onChange(it.value);
+                      setOpen(false);
+                    }}
                     style={({ pressed }) => [
                       styles.item,
                       selected && styles.itemSelected,
@@ -136,7 +167,11 @@ export default function Dropdown<T extends string | number>({
                   >
                     <Text
                       numberOfLines={1}
-                      style={[styles.itemText, selected && styles.itemTextSelected, it.disabled && styles.itemTextDisabled]}
+                      style={[
+                        styles.itemText,
+                        selected && styles.itemTextSelected,
+                        it.disabled && styles.itemTextDisabled,
+                      ]}
                     >
                       {it.label}
                     </Text>
@@ -146,7 +181,7 @@ export default function Dropdown<T extends string | number>({
               })}
             </ScrollView>
           )}
-        </Animated.View>
+        </AnimatedRe.View>
       </Modal>
     </View>
   );
@@ -165,10 +200,8 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   buttonText: { color: '#111827', fontSize: 14, fontWeight: '600', flex: 1 },
-  pressed: { opacity: 0.96 },
+  pressed: { backgroundColor: 'rgba(0,0,0,0.04)' },
   errorBorder: { borderColor: '#EF4444' },
-
-  // Modal layers
   backdrop: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.12)',
@@ -199,7 +232,6 @@ const styles = StyleSheet.create({
   itemText: { color: '#111827', fontSize: 14 },
   itemTextSelected: { color: '#2563EB', fontWeight: '700' },
   itemTextDisabled: { color: '#9CA3AF' },
-
   emptyWrap: { paddingVertical: 10, paddingHorizontal: 12 },
   emptyText: { color: '#6B7280', fontSize: 12 },
   errorText: { color: '#EF4444', fontSize: 12, marginTop: 6 },
