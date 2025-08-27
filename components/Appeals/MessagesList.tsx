@@ -7,9 +7,11 @@ import MessageBubble from './MessageBubble';
 export default function MessagesList({
   messages,
   currentUserId,
+  bottomInset = 0,
 }: {
   messages: AppealMessage[];
   currentUserId?: number;
+  bottomInset?: number;
 }) {
   const listRef = useRef<FlatList<AppealMessage>>(null);
   useEffect(() => {
@@ -24,7 +26,7 @@ export default function MessagesList({
       renderItem={({ item }) => (
         <MessageBubble message={item} own={item.sender?.id === currentUserId} />
       )}
-      contentContainerStyle={styles.container}
+      contentContainerStyle={[styles.container, { paddingBottom: bottomInset }]}
     />
   );
 }
