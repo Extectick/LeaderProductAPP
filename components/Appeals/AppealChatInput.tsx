@@ -1,6 +1,14 @@
 // components/Appeals/AppealChatInput.tsx
 import React, { useState, useRef, useEffect } from 'react';
-import { View, TextInput, Pressable, StyleSheet, Text, Animated } from 'react-native';
+import {
+  View,
+  TextInput,
+  Pressable,
+  StyleSheet,
+  Text,
+  Animated,
+  LayoutChangeEvent,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
 import { MotiView } from 'moti';
@@ -9,12 +17,15 @@ import AttachmentsPicker, { AttachmentFile } from '@/components/ui/AttachmentsPi
 export default function AppealChatInput({
   onSend,
   bottomInset = 0,
+  onHeightChange,
 }: {
   onSend: (payload: { text?: string; files?: AttachmentFile[] }) => Promise<void> | void;
   bottomInset?: number;
+  onHeightChange?: (h: number) => void;
 }) {
   const [text, setText] = useState('');
   const [files, setFiles] = useState<AttachmentFile[]>([]);
+  const [inputHeight, setInputHeight] = useState(40);
   const [sending, setSending] = useState(false);
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [recordedUri, setRecordedUri] = useState<string | null>(null);
@@ -25,7 +36,7 @@ export default function AppealChatInput({
   const recordingRef = useRef<Audio.Recording | null>(null);
 
   useEffect(() => {
-    let timer: NodeJS.Timeout;
+    let timer: ReturnType<typeof setInterval>;
     if (isRecording) {
       timer = setInterval(() => setRecordingTime((t) => t + 1), 1000);
     }
@@ -147,17 +158,22 @@ export default function AppealChatInput({
     if (isRecording) stopRecording();
   };
 
+  function handleLayout(e: LayoutChangeEvent) {
+    onHeightChange?.(e.nativeEvent.layout.height);
+  }
+
   return (
-    <View style={[styles.wrapper, { marginBottom: bottomInset }]}>
+    <View style={[styles.wrapper, { marginBottom: bottomInset }]} onLayout={handleLayout}>
+      <AttachmentsPicker
+        value={files}
+        onChange={setFiles}
+        addLabel=""
+        maxFiles={10}
+        horizontal
+        style={styles.attachmentsRow}
+      />
+
       <View style={styles.inputRow}>
-        <AttachmentsPicker
-          value={files}
-          onChange={setFiles}
-          addLabel=""
-          maxFiles={10}
-          horizontal
-          style={{ marginRight: 8 }}
-        />
         {isRecording ? (
           <View style={styles.recordingBox}>
             <MotiView
@@ -178,12 +194,17 @@ export default function AppealChatInput({
           </View>
         ) : (
           <TextInput
-            style={styles.input}
+            style={[styles.input, { height: inputHeight }]}
             multiline
             placeholder="Сообщение"
             placeholderTextColor="#9CA3AF"
             value={text}
             onChangeText={setText}
+            onContentSizeChange={(e) => {
+              const h = e.nativeEvent.contentSize.height;
+              setInputHeight(Math.max(40, Math.min(h, 120)));
+            }}
+            scrollEnabled={inputHeight >= 120}
           />
         )}
 
@@ -207,8 +228,15 @@ export default function AppealChatInput({
 }
 
 const styles = StyleSheet.create({
-  wrapper: { padding: 8, backgroundColor: '#F9FAFB', borderTopWidth: 1, borderColor: '#E5E7EB' },
-  inputRow: { flexDirection: 'row', alignItems: 'flex-end' },
+  wrapper: {
+    padding: 8,
+    backgroundColor: '#F9FAFB',
+    borderTopWidth: 1,
+    borderColor: '#E5E7EB',
+    width: '100%',
+  },
+  attachmentsRow: { marginBottom: 8, width: '100%' },
+  inputRow: { flexDirection: 'row', alignItems: 'flex-end', width: '100%' },
   actionBtn: {
     borderRadius: 20,
     padding: 10,
@@ -217,8 +245,8 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    maxHeight: 120,
     minHeight: 40,
+    maxHeight: 120,
     backgroundColor: '#fff',
     borderWidth: 1,
     borderColor: '#E5E7EB',
@@ -228,6 +256,7 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
     color: '#111827',
     marginRight: 8,
+    textAlignVertical: 'top',
   },
   recordingBox: {
     flex: 1,

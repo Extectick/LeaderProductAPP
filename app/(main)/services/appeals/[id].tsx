@@ -1,7 +1,7 @@
 // V:\lp\app\(main)\services\appeals\[id].tsx
 import { useLocalSearchParams } from 'expo-router';
 import { useEffect, useState, useCallback, useContext } from 'react';
-import { View } from 'react-native';
+import { View, Keyboard } from 'react-native';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import {
   addAppealMessage,
@@ -10,7 +10,7 @@ import {
   assignAppeal,
   updateAppealWatchers,
 } from '@/utils/appealsService';
-import { AppealDetail, AppealStatus, AttachmentType, AppealMessage } from '@/types/appealsTypes';
+import { AppealDetail, AppealStatus, AppealMessage } from '@/types/appealsTypes';
 import AppealHeader from '@/components/Appeals/AppealHeader'; // <-- исправлено имя файла
 import MessagesList from '@/components/Appeals/MessagesList';
 import AppealChatInput from '@/components/Appeals/AppealChatInput';
@@ -23,6 +23,8 @@ export default function AppealDetailScreen() {
   const [data, setData] = useState<AppealDetail | null>(null);
   const auth = useContext(AuthContext);
   const tabBarHeight = useBottomTabBarHeight();
+  const [inputHeight, setInputHeight] = useState(0);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   const load = useCallback(async (force = false) => {
     const d = await getAppealById(appealId, force);
@@ -30,6 +32,19 @@ export default function AppealDetailScreen() {
   }, [appealId]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    const showSub = Keyboard.addListener('keyboardDidShow', (e) => {
+      setKeyboardHeight(e.endCoordinates.height);
+    });
+    const hideSub = Keyboard.addListener('keyboardDidHide', () => {
+      setKeyboardHeight(0);
+    });
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   // Подписка на события конкретного обращения: новые сообщения, смена статуса и т.д.
   useAppealUpdates(appealId, (evt) => {
@@ -78,35 +93,14 @@ export default function AppealDetailScreen() {
       <MessagesList
         messages={data.messages || []}
         currentUserId={auth?.profile?.id}
-        bottomInset={tabBarHeight + 80}
+        bottomInset={inputHeight + keyboardHeight + tabBarHeight}
       />
 
       <AppealChatInput
-        bottomInset={tabBarHeight}
+        bottomInset={keyboardHeight + tabBarHeight}
+        onHeightChange={setInputHeight}
         onSend={async ({ text, files }) => {
-          const res = await addAppealMessage(appealId, { text, files });
-          const guessType = (mime: string): AttachmentType => {
-            if (mime.startsWith('image/')) return 'IMAGE';
-            if (mime.startsWith('audio/')) return 'AUDIO';
-            return 'FILE';
-          };
-          const newMsg: AppealMessage = {
-            id: res.id,
-            text: text,
-            createdAt: res.createdAt,
-            sender: auth?.profile
-              ? { id: auth.profile.id, email: auth.profile.email || '' }
-              : { id: 0, email: '' },
-            attachments: (files || []).map((f) => ({
-              fileUrl: f.uri,
-              fileName: f.name,
-              fileType: guessType(f.type),
-            })),
-          };
-          setData((prev) =>
-            prev ? { ...prev, messages: [...(prev.messages || []), newMsg] } : prev,
-          );
-          void load(true);
+          await addAppealMessage(appealId, { text, files });
         }}
       />
     </View>
