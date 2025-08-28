@@ -14,9 +14,16 @@ export default function MessagesList({
   bottomInset?: number;
 }) {
   const listRef = useRef<FlatList<AppealMessage>>(null);
+  const tempId = useRef(-1);
   const uniqueMessages = useMemo(() => {
     const map = new Map<number, AppealMessage>();
-    messages.forEach((m) => map.set(m.id, m));
+    messages.forEach((m) => {
+      let id = Number((m as any).id);
+      if (!Number.isFinite(id)) {
+        id = tempId.current--;
+      }
+      map.set(id, { ...m, id });
+    });
     return Array.from(map.values());
   }, [messages]);
 

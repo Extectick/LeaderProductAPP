@@ -2,7 +2,6 @@
 import { useLocalSearchParams } from 'expo-router';
 import { useEffect, useState, useCallback, useContext } from 'react';
 import { View, Keyboard } from 'react-native';
-import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import {
   addAppealMessage,
   getAppealById,
@@ -22,7 +21,6 @@ export default function AppealDetailScreen() {
   const appealId = Number(id);
   const [data, setData] = useState<AppealDetail | null>(null);
   const auth = useContext(AuthContext);
-  const tabBarHeight = useBottomTabBarHeight();
   const [inputHeight, setInputHeight] = useState(0);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
 
@@ -49,18 +47,6 @@ export default function AppealDetailScreen() {
   // Подписка на события конкретного обращения: новые сообщения, смена статуса и т.д.
   useAppealUpdates(appealId, (evt) => {
     if (evt.type === 'messageAdded' && evt.appealId === appealId) {
-      setData((prev) => {
-        if (prev?.messages?.some((m) => m.id === evt.messageId)) return prev;
-        const newMsg: AppealMessage = {
-          id: evt.messageId,
-          text: evt.text || '',
-          createdAt: evt.createdAt,
-          sender: { id: evt.senderId, email: '' },
-          attachments: [],
-        };
-        const next = prev ? { ...prev, messages: [...(prev.messages || []), newMsg] } : prev;
-        return next as typeof prev;
-      });
       void load(true);
     } else {
       void load(true);
@@ -93,14 +79,25 @@ export default function AppealDetailScreen() {
       <MessagesList
         messages={data.messages || []}
         currentUserId={auth?.profile?.id}
-        bottomInset={inputHeight + keyboardHeight + tabBarHeight}
+        bottomInset={inputHeight + keyboardHeight}
       />
 
       <AppealChatInput
-        bottomInset={keyboardHeight + tabBarHeight}
+        bottomInset={keyboardHeight}
         onHeightChange={setInputHeight}
         onSend={async ({ text, files }) => {
-          await addAppealMessage(appealId, { text, files });
+          const res = await addAppealMessage(appealId, { text, files });
+          setData((prev) => {
+            if (!prev) return prev;
+            const newMsg: AppealMessage = {
+              id: res.id,
+              text: text || '',
+              createdAt: res.createdAt,
+              sender: { id: auth?.profile?.id ?? 0, email: auth?.profile?.email || '' },
+              attachments: [],
+            };
+            return { ...prev, messages: [...(prev.messages || []), newMsg] };
+          });
         }}
       />
     </View>
