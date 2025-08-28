@@ -18,6 +18,7 @@ export default function MessagesList({
   const uniqueMessages = useMemo(() => {
     const map = new Map<number, AppealMessage>();
     messages.forEach((m) => {
+      if (!m) return;
       let id = Number((m as any).id);
       if (!Number.isFinite(id)) {
         id = tempId.current--;

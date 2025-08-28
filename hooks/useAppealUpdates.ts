@@ -37,8 +37,8 @@ export function useAppealUpdates(
       socket.on('connect', joinRoom);
       joinRoom();
 
-      socket.onAny((event, payload) => {
-        onEvent({ type: event, ...(payload || {}) });
+      socket.onAny((event: string, payload?: Record<string, unknown>) => {
+        onEvent({ type: event, ...(payload ?? {}) });
       });
     }
 
