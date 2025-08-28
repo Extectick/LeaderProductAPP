@@ -1,6 +1,6 @@
 // components/Appeals/AppealChatInput.tsx
 import React, { useState, useRef, useEffect } from 'react';
-import { View, TextInput, Pressable, StyleSheet, Text, Animated } from 'react-native';
+import { View, TextInput, Pressable, StyleSheet, Text, Animated, LayoutChangeEvent } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
 import { MotiView } from 'moti';
@@ -9,9 +9,11 @@ import AttachmentsPicker, { AttachmentFile } from '@/components/ui/AttachmentsPi
 export default function AppealChatInput({
   onSend,
   bottomInset = 0,
+  onHeightChange,
 }: {
   onSend: (payload: { text?: string; files?: AttachmentFile[] }) => Promise<void> | void;
   bottomInset?: number;
+  onHeightChange?: (h: number) => void;
 }) {
   const [text, setText] = useState('');
   const [files, setFiles] = useState<AttachmentFile[]>([]);
@@ -147,8 +149,12 @@ export default function AppealChatInput({
     if (isRecording) stopRecording();
   };
 
+  function handleLayout(e: LayoutChangeEvent) {
+    onHeightChange?.(e.nativeEvent.layout.height);
+  }
+
   return (
-    <View style={[styles.wrapper, { marginBottom: bottomInset }]}>
+    <View style={[styles.wrapper, { paddingBottom: bottomInset }]} onLayout={handleLayout}>
       <View style={styles.inputRow}>
         <AttachmentsPicker
           value={files}
@@ -207,7 +213,13 @@ export default function AppealChatInput({
 }
 
 const styles = StyleSheet.create({
-  wrapper: { padding: 8, backgroundColor: '#F9FAFB', borderTopWidth: 1, borderColor: '#E5E7EB' },
+  wrapper: {
+    padding: 8,
+    backgroundColor: '#F9FAFB',
+    borderTopWidth: 1,
+    borderColor: '#E5E7EB',
+    width: '100%',
+  },
   inputRow: { flexDirection: 'row', alignItems: 'flex-end' },
   actionBtn: {
     borderRadius: 20,

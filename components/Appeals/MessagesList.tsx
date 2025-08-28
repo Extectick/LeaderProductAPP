@@ -1,5 +1,5 @@
 // components/Appeals/MessagesList.tsx
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useMemo } from 'react';
 import { FlatList, StyleSheet } from 'react-native';
 import { AppealMessage } from '@/types/appealsTypes';
 import MessageBubble from './MessageBubble';
@@ -14,14 +14,20 @@ export default function MessagesList({
   bottomInset?: number;
 }) {
   const listRef = useRef<FlatList<AppealMessage>>(null);
+  const uniqueMessages = useMemo(() => {
+    const map = new Map<number, AppealMessage>();
+    messages.forEach((m) => map.set(m.id, m));
+    return Array.from(map.values());
+  }, [messages]);
+
   useEffect(() => {
     listRef.current?.scrollToEnd({ animated: true });
-  }, [messages]);
+  }, [uniqueMessages]);
 
   return (
     <FlatList
       ref={listRef}
-      data={messages}
+      data={uniqueMessages}
       keyExtractor={(item) => String(item.id)}
       renderItem={({ item }) => (
         <MessageBubble message={item} own={item.sender?.id === currentUserId} />
