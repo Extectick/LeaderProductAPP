@@ -1,9 +1,17 @@
 // components/Appeals/AppealChatInput.tsx
 import React, { useState, useRef, useEffect } from 'react';
-import { View, TextInput, Pressable, StyleSheet, Text, Animated, LayoutChangeEvent } from 'react-native';
+import {
+  View,
+  TextInput,
+  Pressable,
+  StyleSheet,
+  Text,
+  Animated,
+  LayoutChangeEvent,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
-import { MotiView } from 'moti';
+import { MotiView, AnimatePresence } from 'moti';
 import AttachmentsPicker, { AttachmentFile } from '@/components/ui/AttachmentsPicker';
 
 export default function AppealChatInput({
@@ -22,12 +30,14 @@ export default function AppealChatInput({
   const [recordedUri, setRecordedUri] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
+  const [showEmoji, setShowEmoji] = useState(false);
+  const emojis = ['😀', '😂', '😍', '😎', '👍', '🙏'];
 
   const sendScale = useRef(new Animated.Value(1)).current;
   const recordingRef = useRef<Audio.Recording | null>(null);
 
   useEffect(() => {
-    let timer: NodeJS.Timeout;
+    let timer: ReturnType<typeof setInterval>;
     if (isRecording) {
       timer = setInterval(() => setRecordingTime((t) => t + 1), 1000);
     }
@@ -101,6 +111,11 @@ export default function AppealChatInput({
     setRecordingTime(0);
     recordingRef.current = null;
     void Audio.setAudioModeAsync({ allowsRecordingIOS: false, playThroughEarpieceAndroid: false });
+  }
+
+  function handleEmojiSelect(e: string) {
+    setText((prev) => prev + e);
+    setShowEmoji(false);
   }
 
 
@@ -183,14 +198,24 @@ export default function AppealChatInput({
             </Pressable>
           </View>
         ) : (
-          <TextInput
-            style={styles.input}
-            multiline
-            placeholder="Сообщение"
-            placeholderTextColor="#9CA3AF"
-            value={text}
-            onChangeText={setText}
-          />
+          <View style={styles.textWrapper}>
+            <TextInput
+              style={styles.input}
+              multiline
+              placeholder="Сообщение"
+              placeholderTextColor="#9CA3AF"
+              value={text}
+              onChangeText={setText}
+              onFocus={() => setShowEmoji(false)}
+            />
+            <Pressable
+              onPress={() => setShowEmoji((v) => !v)}
+              style={styles.emojiBtn}
+              hitSlop={8}
+            >
+              <Ionicons name="happy-outline" size={20} color="#6B7280" />
+            </Pressable>
+          </View>
         )}
 
         <Pressable
@@ -204,10 +229,34 @@ export default function AppealChatInput({
           hitSlop={8}
         >
           <Animated.View style={{ transform: [{ scale: sendScale }] }}>
-            <Ionicons name={actionIcon} size={20} color={actionColor} />
+            <AnimatePresence exitBeforeEnter>
+              <MotiView
+                key={actionIcon}
+                from={{ opacity: 0, scale: 0.6 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.6 }}
+                transition={{ type: 'timing', duration: 150 }}
+              >
+                <Ionicons name={actionIcon} size={20} color={actionColor} />
+              </MotiView>
+            </AnimatePresence>
           </Animated.View>
         </Pressable>
       </View>
+      {showEmoji && (
+        <MotiView
+          from={{ opacity: 0, translateY: 10 }}
+          animate={{ opacity: 1, translateY: 0 }}
+          exit={{ opacity: 0, translateY: 10 }}
+          style={styles.emojiPicker}
+        >
+          {emojis.map((e) => (
+            <Pressable key={e} onPress={() => handleEmojiSelect(e)} style={styles.emojiItem}>
+              <Text style={styles.emojiText}>{e}</Text>
+            </Pressable>
+          ))}
+        </MotiView>
+      )}
     </View>
   );
 }
@@ -227,20 +276,26 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  input: {
+  textWrapper: {
     flex: 1,
-    maxHeight: 120,
-    minHeight: 40,
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: '#fff',
     borderWidth: 1,
     borderColor: '#E5E7EB',
     borderRadius: 20,
     paddingHorizontal: 12,
-    paddingTop: 8,
-    paddingBottom: 8,
-    color: '#111827',
+    paddingVertical: 8,
     marginRight: 8,
   },
+  input: {
+    flex: 1,
+    maxHeight: 120,
+    minHeight: 24,
+    padding: 0,
+    color: '#111827',
+  },
+  emojiBtn: { marginLeft: 4 },
   recordingBox: {
     flex: 1,
     flexDirection: 'row',
@@ -275,4 +330,15 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   cancelVoice: { position: 'absolute', right: 6, top: 6 },
+  emojiPicker: {
+    flexDirection: 'row',
+    backgroundColor: '#fff',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    marginTop: 6,
+    alignSelf: 'flex-start',
+  },
+  emojiItem: { marginHorizontal: 4 },
+  emojiText: { fontSize: 24 },
 });
