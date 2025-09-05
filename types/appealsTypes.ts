@@ -17,11 +17,13 @@ export interface AppealAttachment {
 
 export interface AppealMessage {
   id: number;
+  tempId?: string;
   text?: string|null;
   createdAt: string;
   editedAt?: string|null;
   sender: UserMini;
   attachments: AppealAttachment[];
+  status?: 'sending' | 'sent' | 'failed';
 }
 
 export interface StatusHistoryItem {

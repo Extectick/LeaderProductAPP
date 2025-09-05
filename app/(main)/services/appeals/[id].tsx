@@ -1,6 +1,6 @@
 // V:\lp\app\(main)\services\appeals\[id].tsx
 import { useLocalSearchParams } from 'expo-router';
-import { useEffect, useState, useCallback, useContext } from 'react';
+import { useEffect, useState, useCallback, useContext, useRef } from 'react';
 import { View } from 'react-native';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import {
@@ -11,6 +11,7 @@ import {
   updateAppealWatchers,
 } from '@/utils/appealsService';
 import { AppealDetail, AppealStatus, AppealMessage } from '@/types/appealsTypes';
+import { FileLike } from '@/utils/appealsService';
 import AppealHeader from '@/components/Appeals/AppealHeader'; // <-- исправлено имя файла
 import MessagesList from '@/components/Appeals/MessagesList';
 import AppealChatInput from '@/components/Appeals/AppealChatInput';
@@ -24,6 +25,7 @@ export default function AppealDetailScreen() {
   const auth = useContext(AuthContext);
   const tabBarHeight = useBottomTabBarHeight();
   const [inputHeight, setInputHeight] = useState(0);
+  const pendingMessages = useRef<Map<string, { text?: string; files?: FileLike[] }>>(new Map());
 
   const load = useCallback(async (force = false) => {
     const d = await getAppealById(appealId, force);
@@ -67,6 +69,55 @@ export default function AppealDetailScreen() {
     }
   }
 
+  async function handleRetry(message: AppealMessage) {
+    const payload = pendingMessages.current.get(message.tempId || '');
+    if (!payload) return;
+    setData((prev) =>
+      prev
+        ? {
+            ...prev,
+            messages: prev.messages.map((m) =>
+              m.tempId === message.tempId ? { ...m, status: 'sending' } : m
+            ),
+          }
+        : prev
+    );
+    try {
+      const res = await addAppealMessage(appealId, payload);
+      setData((prev) =>
+        prev
+          ? {
+              ...prev,
+              messages: prev.messages.map((m) =>
+                m.tempId === message.tempId
+                  ? {
+                      ...m,
+                      id: res.id,
+                      createdAt: res.createdAt,
+                      status: 'sent',
+                      tempId: undefined,
+                    }
+                  : m
+              ),
+            }
+          : prev
+      );
+      pendingMessages.current.delete(message.tempId || '');
+      void load(true);
+    } catch (e) {
+      setData((prev) =>
+        prev
+          ? {
+              ...prev,
+              messages: prev.messages.map((m) =>
+                m.tempId === message.tempId ? { ...m, status: 'failed' } : m
+              ),
+            }
+          : prev
+      );
+    }
+  }
+
   return (
     <View style={{ flex: 1 }}>
       <AppealHeader
@@ -80,13 +131,73 @@ export default function AppealDetailScreen() {
         messages={data.messages || []}
         currentUserId={auth?.profile?.id}
         bottomInset={inputHeight}
+        onRetry={(m) => handleRetry(m)}
       />
 
       <AppealChatInput
         bottomInset={tabBarHeight}
         onHeightChange={setInputHeight}
         onSend={async ({ text, files }) => {
-          await addAppealMessage(appealId, { text, files });
+          const tempId = `tmp-${Date.now()}`;
+          const tempMessage: AppealMessage = {
+            id: Date.now(),
+            tempId,
+            text: text || '',
+            createdAt: new Date().toISOString(),
+            sender: { id: auth?.profile?.id || 0, email: auth?.profile?.email || '' },
+            attachments: (files || []).map((f) => ({
+              fileUrl: f.uri,
+              fileName: f.name,
+              fileType: f.type.startsWith('image')
+                ? 'IMAGE'
+                : f.type.startsWith('audio')
+                ? 'AUDIO'
+                : 'FILE',
+            })),
+            status: 'sending',
+          };
+
+          pendingMessages.current.set(tempId, { text, files });
+          setData((prev) =>
+            prev
+              ? { ...prev, messages: [...(prev.messages || []), tempMessage] }
+              : prev
+          );
+
+          try {
+            const res = await addAppealMessage(appealId, { text, files });
+            setData((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    messages: prev.messages.map((m) =>
+                      m.tempId === tempId
+                        ? {
+                            ...m,
+                            id: res.id,
+                            createdAt: res.createdAt,
+                            status: 'sent',
+                            tempId: undefined,
+                          }
+                        : m
+                    ),
+                  }
+                : prev
+            );
+            pendingMessages.current.delete(tempId);
+            void load(true);
+          } catch (e) {
+            setData((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    messages: prev.messages.map((m) =>
+                      m.tempId === tempId ? { ...m, status: 'failed' } : m
+                    ),
+                  }
+                : prev
+            );
+          }
         }}
       />
     </View>

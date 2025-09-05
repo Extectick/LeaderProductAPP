@@ -1,11 +1,19 @@
-import { Text, Image, StyleSheet, View, Pressable } from 'react-native';
+import { Text, Image, StyleSheet, View, Pressable, ActivityIndicator } from 'react-native';
 import { useState, useEffect } from 'react';
 import { Audio } from 'expo-av';
 import { Ionicons } from '@expo/vector-icons';
 import { AppealMessage } from '@/types/appealsTypes';
 import { MotiView } from 'moti';
 
-export default function MessageBubble({ message, own }: { message: AppealMessage; own: boolean }) {
+export default function MessageBubble({
+  message,
+  own,
+  onRetry,
+}: {
+  message: AppealMessage;
+  own: boolean;
+  onRetry?: () => void;
+}) {
   const attachments = Array.isArray(message.attachments)
     ? message.attachments.filter(
         (a): a is NonNullable<typeof a> =>
@@ -92,7 +100,22 @@ export default function MessageBubble({ message, own }: { message: AppealMessage
         return null;
       })}
       <View style={styles.meta}>
-        <Text style={styles.time}>{timeStr}</Text>
+        <View style={styles.timeRow}>
+          <Text style={styles.time}>{timeStr}</Text>
+          {message.status === 'sending' ? (
+            <ActivityIndicator size="small" color="#666" style={styles.statusIcon} />
+          ) : null}
+          {message.status === 'failed' ? (
+            <View style={styles.failedRow}>
+              <Ionicons name="warning" size={14} color="#DC2626" />
+              {onRetry ? (
+                <Pressable onPress={onRetry}>
+                  <Text style={styles.retry}>Повторить</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          ) : null}
+        </View>
         <Text style={styles.date}>{dateStr}</Text>
       </View>
     </MotiView>
@@ -125,6 +148,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginTop: 4,
   },
+  timeRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   time: { fontSize: 12, color: '#666' },
   date: { fontSize: 12, color: '#666' },
+  statusIcon: { marginLeft: 4 },
+  failedRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  retry: { color: '#DC2626', marginLeft: 4, fontSize: 12 },
 });
