@@ -195,7 +195,8 @@ const styles = StyleSheet.create({
   },
   avatarText: { color: '#111827', fontWeight: '600' },
   bubble: {
-    maxWidth: '80%',
+    maxWidth: '90%',
+    minWidth: 80,
     padding: 10,
     borderRadius: 16,
     position: 'relative',

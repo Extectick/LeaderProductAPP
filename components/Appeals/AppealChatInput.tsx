@@ -225,7 +225,7 @@ export default function AppealChatInput({
           maxFiles={10}
           horizontal
           showChips={false}
-          style={{ marginRight: 8 }}
+          style={{ marginRight: 6 }}
         />
         {isRecording ? (
           <View style={styles.recordingBox}>
@@ -317,16 +317,16 @@ export default function AppealChatInput({
 const styles = StyleSheet.create({
   wrapper: {
     paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingVertical: 2,
     backgroundColor: '#F9FAFB',
     borderTopWidth: 1,
     borderColor: '#E5E7EB',
     width: '100%',
   },
-  inputRow: { flexDirection: 'row', alignItems: 'center' },
+  inputRow: { flexDirection: 'row', alignItems: 'center', width: '100%' },
   actionBtn: {
     borderRadius: 20,
-    padding: 10,
+    padding: 8,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -339,8 +339,8 @@ const styles = StyleSheet.create({
     borderColor: '#E5E7EB',
     borderRadius: 20,
     paddingHorizontal: 12,
-    paddingVertical: 4,
-    marginRight: 8,
+    paddingVertical: 2,
+    marginRight: 6,
   },
   input: {
     flex: 1,
