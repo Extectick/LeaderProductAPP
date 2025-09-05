@@ -78,6 +78,7 @@ export default function MessagesList({
         <MessageBubble
           message={item.message}
           own={item.message.sender?.id === currentUserId}
+          simultaneousHandlers={listRef}
         />
       );
     },

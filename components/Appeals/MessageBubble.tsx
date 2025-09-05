@@ -12,8 +12,17 @@ import Animated, {
   runOnJS,
 } from 'react-native-reanimated';
 import { PanGestureHandler } from 'react-native-gesture-handler';
+import { LinearGradient } from 'expo-linear-gradient';
 
-export default function MessageBubble({ message, own }: { message: AppealMessage; own: boolean }) {
+export default function MessageBubble({
+  message,
+  own,
+  simultaneousHandlers,
+}: {
+  message: AppealMessage;
+  own: boolean;
+  simultaneousHandlers?: any;
+}) {
   const attachments = Array.isArray(message.attachments)
     ? message.attachments.filter(
         (a): a is NonNullable<typeof a> =>
@@ -24,7 +33,6 @@ export default function MessageBubble({ message, own }: { message: AppealMessage
   const dt = new Date(message.createdAt);
   const pad = (n: number) => String(n).padStart(2, '0');
   const timeStr = `${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
-  const dateStr = `${pad(dt.getDate())}.${pad(dt.getMonth() + 1)}.${String(dt.getFullYear()).slice(-2)}`;
 
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -119,6 +127,7 @@ export default function MessageBubble({ message, own }: { message: AppealMessage
       onGestureEvent={gesture}
       activeOffsetX={[-30, 30]}
       failOffsetY={[-10, 10]}
+      simultaneousHandlers={simultaneousHandlers}
     >
       <Animated.View style={[styles.row, own && styles.rowOwn, rStyle]}>
         <Pressable onLongPress={handleLongPress} style={{ flexShrink: 1 }}>
@@ -128,6 +137,14 @@ export default function MessageBubble({ message, own }: { message: AppealMessage
             exit={{ opacity: 0, translateY: -10 }}
             style={[styles.bubble, own ? styles.own : styles.other]}
           >
+            {own && (
+              <LinearGradient
+                colors={["#4f46e5", "#9333ea"]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={StyleSheet.absoluteFill}
+              />
+            )}
             {message.text ? <Text style={styles.text}>{message.text}</Text> : null}
             {attachments.map((a, idx) => {
               if (a.fileType === 'IMAGE' && a.fileUrl) {
@@ -217,10 +234,10 @@ const styles = StyleSheet.create({
     padding: 8,
     borderRadius: 18,
     position: 'relative',
+    overflow: 'hidden',
   },
   own: {
     alignSelf: 'flex-end',
-    backgroundColor: '#7A3EF0',
     borderBottomRightRadius: 4,
   },
   other: {
@@ -276,7 +293,7 @@ const styles = StyleSheet.create({
     borderLeftWidth: 6,
     borderLeftColor: 'transparent',
     borderTopWidth: 6,
-    borderTopColor: '#7A3EF0',
+    borderTopColor: '#4f46e5',
   },
   tailOther: {
     left: -6,

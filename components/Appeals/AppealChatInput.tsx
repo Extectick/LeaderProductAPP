@@ -196,7 +196,7 @@ export default function AppealChatInput({
 
   return (
     <View
-      style={[styles.wrapper, { paddingBottom: bottomInset + 56 }]}
+      style={[styles.wrapper, { paddingBottom: bottomInset + 8 }]}
       onLayout={handleLayout}
     >
       {files.length > 0 && (
@@ -320,7 +320,7 @@ export default function AppealChatInput({
 const styles = StyleSheet.create({
   wrapper: {
     paddingHorizontal: 8,
-    paddingVertical: 6,
+    paddingVertical: 4,
     backgroundColor: '#1C1C22',
     borderTopWidth: 1,
     borderColor: '#2F2F37',
