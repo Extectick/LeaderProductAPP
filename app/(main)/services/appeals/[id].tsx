@@ -12,7 +12,7 @@ import {
 } from '@/utils/appealsService';
 import { AppealDetail, AppealStatus, AppealMessage } from '@/types/appealsTypes';
 import { FileLike } from '@/utils/appealsService';
-import AppealHeader from '@/components/Appeals/AppealHeader'; // <-- исправлено имя файла
+import AppealHeader from '@/components/Appeals/AppealHeader';
 import MessagesList from '@/components/Appeals/MessagesList';
 import AppealChatInput from '@/components/Appeals/AppealChatInput';
 import { AuthContext } from '@/context/AuthContext';
