@@ -29,6 +29,9 @@ export default function MessageBubble({ message, own }: { message: AppealMessage
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [playing, setPlaying] = useState(false);
   const [currentUri, setCurrentUri] = useState<string | null>(null);
+  const [position, setPosition] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [progress, setProgress] = useState(0);
   const [showReactions, setShowReactions] = useState(false);
   const [reaction, setReaction] = useState<string | null>(null);
   const reactionEmojis = ['👍', '❤️', '😂', '😮'];
@@ -38,6 +41,13 @@ export default function MessageBubble({ message, own }: { message: AppealMessage
       sound?.unloadAsync();
     };
   }, [sound]);
+
+  function formatTime(ms: number) {
+    const total = Math.floor(ms / 1000);
+    const m = Math.floor(total / 60).toString().padStart(2, '0');
+    const s = (total % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
+  }
 
   async function playAudio(uri: string) {
     try {
@@ -51,18 +61,29 @@ export default function MessageBubble({ message, own }: { message: AppealMessage
           return;
         }
       }
-      const { sound: s } = await Audio.Sound.createAsync({ uri });
+      const { sound: s, status } = await Audio.Sound.createAsync({ uri });
       setSound(s);
       setCurrentUri(uri);
       setPlaying(true);
+      setDuration(status.durationMillis || 0);
+      setPosition(0);
+      setProgress(0);
       await s.playAsync();
-      s.setOnPlaybackStatusUpdate((status) => {
-        if (!('didJustFinish' in status)) return;
-        if (status.didJustFinish) {
+      s.setOnPlaybackStatusUpdate((st) => {
+        if (!st.isLoaded) return;
+        if (st.didJustFinish) {
           setPlaying(false);
           setCurrentUri(null);
+          setProgress(0);
+          setPosition(0);
           s.unloadAsync();
           setSound(null);
+          return;
+        }
+        setPosition(st.positionMillis || 0);
+        if (st.durationMillis) {
+          setProgress((st.positionMillis || 0) / st.durationMillis);
+          setDuration(st.durationMillis);
         }
       });
     } catch (e) {
@@ -93,16 +114,13 @@ export default function MessageBubble({ message, own }: { message: AppealMessage
   });
   const rStyle = useAnimatedStyle(() => ({ transform: [{ translateX: translateX.value }] }));
 
-  const initials = (message.sender?.firstName?.[0] || message.sender?.email?.[0] || '?').toUpperCase();
-
   return (
-    <PanGestureHandler onGestureEvent={gesture}>
+    <PanGestureHandler
+      onGestureEvent={gesture}
+      activeOffsetX={[-30, 30]}
+      failOffsetY={[-10, 10]}
+    >
       <Animated.View style={[styles.row, own && styles.rowOwn, rStyle]}>
-        {!own && (
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{initials}</Text>
-          </View>
-        )}
         <Pressable onLongPress={handleLongPress} style={{ flexShrink: 1 }}>
           <MotiView
             from={{ opacity: 0, translateY: 10 }}
@@ -118,15 +136,29 @@ export default function MessageBubble({ message, own }: { message: AppealMessage
                 );
               }
               if (a.fileType === 'AUDIO' && a.fileUrl) {
+                const isCurrent = currentUri === a.fileUrl;
                 return (
-                  <Pressable
-                    key={`${a.fileUrl}-${idx}`}
-                    style={styles.audio}
-                    onPress={() => playAudio(a.fileUrl)}
-                  >
-                    <Ionicons name={playing ? 'pause' : 'play'} size={16} color="#2563EB" />
-                    <Text style={styles.audioText}>{a.fileName || 'Voice message'}</Text>
-                  </Pressable>
+                  <View key={`${a.fileUrl}-${idx}`} style={styles.audio}>
+                    <Pressable
+                      onPress={() => playAudio(a.fileUrl)}
+                      style={styles.play}
+                      hitSlop={8}
+                    >
+                      <Ionicons
+                        name={playing && isCurrent ? 'pause' : 'play'}
+                        size={16}
+                        color="#fff"
+                      />
+                    </Pressable>
+                    <View style={styles.bar}>
+                      <View
+                        style={[styles.barFill, { width: `${isCurrent ? progress * 100 : 0}%` }]}
+                      />
+                    </View>
+                    <Text style={styles.audioTime}>
+                      {formatTime(isCurrent ? position : duration)}
+                    </Text>
+                  </View>
                 );
               }
               if (a.fileName) {
@@ -150,11 +182,6 @@ export default function MessageBubble({ message, own }: { message: AppealMessage
             )}
           </MotiView>
         </Pressable>
-        {own && (
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{initials}</Text>
-          </View>
-        )}
         <AnimatePresence>
           {showReactions && (
             <MotiView
@@ -180,39 +207,56 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    marginVertical: 2,
-    paddingHorizontal: 4,
+    marginVertical: 4,
+    paddingHorizontal: 8,
   },
   rowOwn: { justifyContent: 'flex-end' },
-  avatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#E5E7EB',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginHorizontal: 4,
-  },
-  avatarText: { color: '#111827', fontWeight: '600' },
   bubble: {
     maxWidth: '90%',
     minWidth: 80,
-    padding: 10,
-    borderRadius: 16,
+    padding: 8,
+    borderRadius: 18,
     position: 'relative',
   },
-  own: { alignSelf: 'flex-end', backgroundColor: '#DCF7C5', borderBottomRightRadius: 2 },
-  other: { backgroundColor: '#F1F1F1', borderBottomLeftRadius: 2 },
-  text: { color: '#111827' },
+  own: {
+    alignSelf: 'flex-end',
+    backgroundColor: '#7A3EF0',
+    borderBottomRightRadius: 4,
+  },
+  other: {
+    backgroundColor: '#2F2F37',
+    borderBottomLeftRadius: 4,
+  },
+  text: { color: '#fff' },
   image: { width: 200, height: 120, marginTop: 6, borderRadius: 8 },
-  file: { marginTop: 6, textDecorationLine: 'underline', color: '#2563EB' },
+  file: { marginTop: 6, textDecorationLine: 'underline', color: '#9CA3AF' },
   audio: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
     marginTop: 6,
   },
-  audioText: { color: '#2563EB', textDecorationLine: 'underline' },
+  play: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  bar: {
+    flex: 1,
+    height: 2,
+    backgroundColor: 'rgba(255,255,255,0.3)',
+    marginRight: 8,
+    borderRadius: 1,
+    overflow: 'hidden',
+  },
+  barFill: {
+    height: 2,
+    backgroundColor: '#fff',
+  },
+  audioTime: { color: '#fff', fontSize: 12 },
   meta: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
@@ -220,7 +264,7 @@ const styles = StyleSheet.create({
     gap: 4,
     marginTop: 4,
   },
-  time: { fontSize: 12, color: '#666' },
+  time: { fontSize: 12, color: '#C4C4C4' },
   tail: {
     position: 'absolute',
     bottom: 0,
@@ -232,20 +276,20 @@ const styles = StyleSheet.create({
     borderLeftWidth: 6,
     borderLeftColor: 'transparent',
     borderTopWidth: 6,
-    borderTopColor: '#DCF7C5',
+    borderTopColor: '#7A3EF0',
   },
   tailOther: {
     left: -6,
     borderRightWidth: 6,
     borderRightColor: 'transparent',
     borderTopWidth: 6,
-    borderTopColor: '#F1F1F1',
+    borderTopColor: '#2F2F37',
   },
   reactionPicker: {
     position: 'absolute',
     bottom: 40,
     flexDirection: 'row',
-    backgroundColor: '#fff',
+    backgroundColor: '#1F2937',
     padding: 6,
     borderRadius: 20,
     shadowColor: '#000',
@@ -257,7 +301,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: -16,
     bottom: -8,
-    backgroundColor: '#fff',
+    backgroundColor: '#1F2937',
     borderRadius: 12,
     paddingHorizontal: 4,
   },

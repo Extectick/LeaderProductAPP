@@ -101,11 +101,11 @@ const styles = StyleSheet.create({
   container: { paddingVertical: 8 },
   dateWrap: {
     alignSelf: 'center',
-    backgroundColor: '#E5E7EB',
+    backgroundColor: '#2F2F37',
     paddingHorizontal: 12,
     paddingVertical: 4,
     borderRadius: 10,
     marginVertical: 8,
   },
-  dateText: { color: '#374151', fontSize: 12 },
+  dateText: { color: '#fff', fontSize: 12 },
 });

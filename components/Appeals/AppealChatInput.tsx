@@ -163,8 +163,8 @@ export default function AppealChatInput({
 
   const canSend = text.trim().length > 0 || files.length > 0;
   const actionIcon = recordedUri || canSend ? 'send' : 'mic';
-  const actionBg = recordedUri || canSend ? '#2563EB' : '#E5E7EB';
-  const actionColor = recordedUri || canSend ? '#fff' : '#2563EB';
+  const actionBg = recordedUri || canSend ? '#7A3EF0' : '#3F3F46';
+  const actionColor = '#fff';
 
   const handleActionPress = recordedUri
     ? handleSendVoice
@@ -195,7 +195,10 @@ export default function AppealChatInput({
   }
 
   return (
-    <View style={[styles.wrapper, { paddingBottom: bottomInset }]} onLayout={handleLayout}>
+    <View
+      style={[styles.wrapper, { paddingBottom: bottomInset + 56 }]}
+      onLayout={handleLayout}
+    >
       {files.length > 0 && (
         <ScrollView
           horizontal
@@ -208,7 +211,7 @@ export default function AppealChatInput({
               {f.type.startsWith('image/') ? (
                 <Image source={{ uri: f.uri }} style={styles.previewImage} />
               ) : (
-                <Ionicons name="document" size={32} color="#6B7280" />
+                <Ionicons name="document" size={32} color="#9CA3AF" />
               )}
               <Pressable onPress={() => removeFile(idx)} style={styles.removePreview} hitSlop={8}>
                 <Ionicons name="close" size={14} color="#fff" />
@@ -240,7 +243,7 @@ export default function AppealChatInput({
           </View>
         ) : recordedUri ? (
           <View style={styles.voicePreview}>
-            <Ionicons name="mic" size={20} color="#2563EB" />
+            <Ionicons name="mic" size={20} color="#7A3EF0" />
             <Text style={styles.recordingTime}>{formatTime(recordingTime)}</Text>
             <Pressable onPress={cancelVoice} hitSlop={8} style={styles.cancelVoice}>
               <Ionicons name="close" size={16} color="#6B7280" />
@@ -262,7 +265,7 @@ export default function AppealChatInput({
               style={styles.emojiBtn}
               hitSlop={8}
             >
-              <Ionicons name="happy-outline" size={20} color="#6B7280" />
+              <Ionicons name="happy-outline" size={20} color="#9CA3AF" />
             </Pressable>
           </View>
         )}
@@ -317,16 +320,16 @@ export default function AppealChatInput({
 const styles = StyleSheet.create({
   wrapper: {
     paddingHorizontal: 8,
-    paddingVertical: 2,
-    backgroundColor: '#F9FAFB',
+    paddingVertical: 6,
+    backgroundColor: '#1C1C22',
     borderTopWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: '#2F2F37',
     width: '100%',
   },
   inputRow: { flexDirection: 'row', alignItems: 'center', width: '100%' },
   actionBtn: {
     borderRadius: 20,
-    padding: 8,
+    padding: 10,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -334,12 +337,10 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
+    backgroundColor: '#2F2F37',
     borderRadius: 20,
     paddingHorizontal: 12,
-    paddingVertical: 2,
+    paddingVertical: 4,
     marginRight: 6,
   },
   input: {
@@ -347,16 +348,14 @@ const styles = StyleSheet.create({
     maxHeight: 120,
     minHeight: 24,
     padding: 0,
-    color: '#111827',
+    color: '#fff',
   },
   emojiBtn: { marginLeft: 4 },
   recordingBox: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
+    backgroundColor: '#2F2F37',
     borderRadius: 20,
     paddingHorizontal: 12,
     paddingVertical: 4,
@@ -366,18 +365,16 @@ const styles = StyleSheet.create({
     width: 20,
     height: 20,
     marginRight: 8,
-    backgroundColor: '#2563EB',
+    backgroundColor: '#7A3EF0',
     borderRadius: 10,
   },
-  recordingTime: { color: '#111827' },
-  swipeHint: { marginLeft: 8, color: '#6B7280', fontSize: 12 },
+  recordingTime: { color: '#fff' },
+  swipeHint: { marginLeft: 8, color: '#9CA3AF', fontSize: 12 },
   voicePreview: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
+    backgroundColor: '#2F2F37',
     borderRadius: 20,
     paddingVertical: 4,
     paddingHorizontal: 12,
@@ -387,7 +384,7 @@ const styles = StyleSheet.create({
   cancelVoice: { position: 'absolute', right: 6, top: 6 },
   emojiPicker: {
     flexDirection: 'row',
-    backgroundColor: '#fff',
+    backgroundColor: '#2F2F37',
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 20,
@@ -402,7 +399,7 @@ const styles = StyleSheet.create({
     height: 56,
     borderRadius: 10,
     marginRight: 8,
-    backgroundColor: '#E5E7EB',
+    backgroundColor: '#2F2F37',
     justifyContent: 'center',
     alignItems: 'center',
     position: 'relative',
