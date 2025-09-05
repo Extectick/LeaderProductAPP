@@ -38,10 +38,19 @@ export default function MessagesList({
     let lastDay = '';
     arr.forEach((m) => {
       const d = new Date(m.createdAt);
-      const dayStr = d.toDateString();
-      if (dayStr !== lastDay) {
-        result.push({ type: 'date', id: dayStr, date: dayStr });
-        lastDay = dayStr;
+      const dayKey = d.toDateString();
+      if (dayKey !== lastDay) {
+        const date = d
+          .toLocaleDateString('ru-RU', {
+            weekday: 'short',
+            day: '2-digit',
+            month: 'short',
+            year: 'numeric',
+          })
+          .replaceAll('.', '')
+          .replace(',', '');
+        result.push({ type: 'date', id: dayKey, date });
+        lastDay = dayKey;
       }
       result.push({ type: 'msg', id: m.id, message: m });
     });
@@ -81,12 +90,14 @@ export default function MessagesList({
       data={items}
       keyExtractor={(item) => `${item.type}-${item.id}`}
       renderItem={renderItem}
+      style={styles.list}
       contentContainerStyle={[styles.container, { paddingBottom: bottomInset }]}
     />
   );
 }
 
 const styles = StyleSheet.create({
+  list: { flex: 1, width: '100%' },
   container: { paddingVertical: 8 },
   dateWrap: {
     alignSelf: 'center',
