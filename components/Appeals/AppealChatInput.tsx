@@ -263,7 +263,8 @@ export default function AppealChatInput({
 
 const styles = StyleSheet.create({
   wrapper: {
-    padding: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
     backgroundColor: '#F9FAFB',
     borderTopWidth: 1,
     borderColor: '#E5E7EB',
@@ -285,14 +286,16 @@ const styles = StyleSheet.create({
     borderColor: '#E5E7EB',
     borderRadius: 20,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 4,
     marginRight: 8,
   },
   input: {
     flex: 1,
     maxHeight: 120,
-    minHeight: 24,
-    padding: 0,
+    minHeight: 36,
+    height: 36,
+    paddingHorizontal: 0,
+    paddingVertical: 0,
     color: '#111827',
   },
   emojiBtn: { marginLeft: 4 },
