@@ -4,13 +4,13 @@ import { useEffect, useState, useCallback, useContext } from 'react';
 import { View } from 'react-native';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import {
-  addAppealMessage,
   getAppealById,
   updateAppealStatus,
   assignAppeal,
   updateAppealWatchers,
 } from '@/utils/appealsService';
 import { AppealDetail, AppealStatus, AppealMessage } from '@/types/appealsTypes';
+import AppealChatStore from '@/context/AppealChatStore';
 import AppealHeader from '@/components/Appeals/AppealHeader'; // <-- исправлено имя файла
 import MessagesList from '@/components/Appeals/MessagesList';
 import AppealChatInput from '@/components/Appeals/AppealChatInput';
@@ -21,6 +21,7 @@ export default function AppealDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const appealId = Number(id);
   const [data, setData] = useState<AppealDetail | null>(null);
+  const [messages, setMessages] = useState<AppealMessage[]>([]);
   const auth = useContext(AuthContext);
   const tabBarHeight = useBottomTabBarHeight();
   const [inputHeight, setInputHeight] = useState(0);
@@ -28,6 +29,12 @@ export default function AppealDetailScreen() {
   const load = useCallback(async (force = false) => {
     const d = await getAppealById(appealId, force);
     setData(d);
+    AppealChatStore.setMessages(appealId, d.messages || []);
+  }, [appealId]);
+
+  useEffect(() => {
+    AppealChatStore.init().then(() => AppealChatStore.retryQueue());
+    return AppealChatStore.subscribe(appealId, setMessages);
   }, [appealId]);
 
   useEffect(() => { load(); }, [load]);
@@ -35,19 +42,25 @@ export default function AppealDetailScreen() {
   // Подписка на события конкретного обращения: новые сообщения, смена статуса и т.д.
   useAppealUpdates(appealId, (evt) => {
     if (evt.type === 'messageAdded' && evt.appealId === appealId) {
-      setData((prev) => {
-        if (prev?.messages?.some((m) => m.id === evt.messageId)) return prev;
-        const newMsg: AppealMessage = {
-          id: evt.messageId,
-          text: evt.text || '',
-          createdAt: evt.createdAt,
-          sender: { id: evt.senderId, email: '' },
-          attachments: [],
-        };
-        const next = prev ? { ...prev, messages: [...(prev.messages || []), newMsg] } : prev;
-        return next as typeof prev;
+      const newMsg: AppealMessage = {
+        id: evt.messageId,
+        text: evt.text || '',
+        createdAt: evt.createdAt,
+        sender: { id: evt.senderId, email: '' },
+        attachments: [],
+        status: 'sent',
+      };
+      AppealChatStore.syncIncomingMessage(appealId, newMsg);
+    } else if (evt.type === 'messageDelivered') {
+      AppealChatStore.updateMessage(appealId, evt.messageId, {
+        status: 'delivered',
+        deliveredAt: evt.deliveredAt,
       });
-      void load(true);
+    } else if (evt.type === 'messageRead') {
+      AppealChatStore.updateMessage(appealId, evt.messageId, {
+        status: 'read',
+        readAt: evt.readAt,
+      });
     } else {
       void load(true);
     }
@@ -77,7 +90,7 @@ export default function AppealDetailScreen() {
       />
 
       <MessagesList
-        messages={data.messages || []}
+        messages={messages}
         currentUserId={auth?.profile?.id}
         bottomInset={inputHeight}
       />
@@ -86,7 +99,13 @@ export default function AppealDetailScreen() {
         bottomInset={tabBarHeight}
         onHeightChange={setInputHeight}
         onSend={async ({ text, files }) => {
-          await addAppealMessage(appealId, { text, files });
+          await AppealChatStore.sendMessage(
+            appealId,
+            { text, files },
+            auth?.profile
+              ? { id: auth.profile.id, email: auth.profile.email || '' }
+              : undefined,
+          );
         }}
       />
     </View>
