@@ -3,6 +3,8 @@ export type AppealStatus = 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED';
 export type AppealPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 export type AttachmentType = 'IMAGE' | 'AUDIO' | 'FILE';
 
+export type MessageStatus = 'SENT' | 'DELIVERED' | 'READ';
+
 export type Scope = 'my' | 'department' | 'assigned';
 
 export interface DepartmentMini { id: number; name: string }
@@ -22,6 +24,7 @@ export interface AppealMessage {
   editedAt?: string|null;
   sender: UserMini;
   attachments: AppealAttachment[];
+  status?: MessageStatus;
 }
 
 export interface StatusHistoryItem {
@@ -76,13 +79,16 @@ export interface AppealCreateResult {
 export interface AddMessageResult {
   id: number;
   createdAt: string;
+  status: MessageStatus;
 }
 
 export interface EditMessageResult {
   id: number;
   editedAt: string;
+  status: MessageStatus;
 }
 
 export interface DeleteMessageResult {
   id: number;
+  status: MessageStatus;
 }

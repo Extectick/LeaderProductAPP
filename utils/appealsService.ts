@@ -1,6 +1,9 @@
 // utils/appealsService.ts
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { io, Socket } from 'socket.io-client';
 import { apiClient } from './apiClient';
+import { API_BASE_URL } from './config';
+import { getAccessToken } from './tokenService';
 import { ErrorResponse, SuccessResponse } from '@/types';
 import {
   AppealDetail,
@@ -11,6 +14,8 @@ import {
   AppealCreateResult,
   DeleteMessageResult,
   EditMessageResult,
+  AppealMessage,
+  MessageStatus,
   Scope,
 } from '@/types/appealsTypes';
 
@@ -116,6 +121,41 @@ function buildQuery(params: Record<string, string | number | undefined>) {
     search.set(k, String(v));
   });
   return search.toString();
+}
+
+// -------------------- WebSocket --------------------
+export type MessageStatusUpdate = { messageId: number; status: MessageStatus };
+
+export type AppealSocketEvent =
+  | { type: 'message'; message: AppealMessage }
+  | { type: 'status'; update: MessageStatusUpdate }
+  | { type: 'typing'; userId: number }
+  | { type: 'edit'; message: AppealMessage };
+
+let appealSocket: Socket | null = null;
+
+export async function connectAppealSocket(
+  appealId: number,
+  onEvent: (evt: AppealSocketEvent) => void,
+) {
+  const token = await getAccessToken();
+  appealSocket = io(API_BASE_URL, {
+    transports: ['websocket'],
+    auth: token ? { token } : undefined,
+  });
+
+  appealSocket.emit('join', `appeal:${appealId}`);
+
+  appealSocket.on('message:new', (m: AppealMessage) => onEvent({ type: 'message', message: m }));
+  appealSocket.on('message:status', (u: MessageStatusUpdate) => onEvent({ type: 'status', update: u }));
+  appealSocket.on('message:typing', (u: { userId: number }) => onEvent({ type: 'typing', userId: u.userId }));
+  appealSocket.on('message:edit', (m: AppealMessage) => onEvent({ type: 'edit', message: m }));
+
+  return () => {
+    appealSocket?.emit('leave', `appeal:${appealId}`);
+    appealSocket?.disconnect();
+    appealSocket = null;
+  };
 }
 
 // -------------------- Список --------------------
@@ -240,7 +280,7 @@ export async function updateAppealWatchers(id: number, watcherIds: number[]) {
 // -------------------- Сообщения --------------------
 export async function addAppealMessage(
   id: number,
-  opts: { text?: string; files?: FileLike[] }
+  opts: { text?: string; files?: FileLike[]; onProgress?: (p: number) => void; tempId?: string }
 ): Promise<AddMessageResult> {
   const hasText = !!ensureNonEmpty(opts.text);
   const hasFiles = !!opts.files?.length;
@@ -255,36 +295,120 @@ export async function addAppealMessage(
     );
   });
 
+  opts.onProgress?.(0);
   const resp = (await apiClient<FormData, AddMessageResult>(`/appeals/${id}/messages`, {
     method: 'POST',
     body: fd,
   })) as ApiResponse<AddMessageResult>;
+  opts.onProgress?.(100);
 
   if (!resp.ok) throw new Error(resp.message || 'Ошибка отправки сообщения');
   await invalidateDetailCache(id);
   return resp.data;
 }
 
-export async function editAppealMessage(messageId: number, text: string): Promise<EditMessageResult> {
-  const body = { text: text.trim() };
-  if (!body.text) throw new Error('Текст сообщения не может быть пустым');
+export async function editAppealMessage(
+  messageId: number,
+  opts: { text?: string; files?: FileLike[]; onProgress?: (p: number) => void }
+): Promise<EditMessageResult> {
+  const hasText = !!ensureNonEmpty(opts.text);
+  const hasFiles = !!opts.files?.length;
+  if (!hasText && !hasFiles) throw new Error('Нужно указать текст и/или приложить файлы');
 
-  const resp = (await apiClient<{ text: string }, EditMessageResult>(`/appeals/messages/${messageId}`, {
+  const fd = new FormData();
+  if (hasText) fd.append('text', opts.text!.trim());
+  (opts.files || []).forEach((f) => {
+    fd.append(
+      'attachments',
+      { uri: f.uri, name: ensureExt(f.name, f.type), type: f.type } as any
+    );
+  });
+
+  opts.onProgress?.(0);
+  const resp = (await apiClient<FormData, EditMessageResult>(`/appeals/messages/${messageId}`, {
     method: 'PUT',
-    body,
+    body: fd,
   })) as ApiResponse<EditMessageResult>;
+  opts.onProgress?.(100);
 
   if (!resp.ok) throw new Error(resp.message || 'Ошибка редактирования сообщения');
   return resp.data;
 }
 
-export async function deleteAppealMessage(messageId: number): Promise<DeleteMessageResult> {
+export async function deleteAppealMessage(
+  messageId: number,
+  opts?: { onProgress?: (p: number) => void }
+): Promise<DeleteMessageResult> {
+  opts?.onProgress?.(0);
   const resp = (await apiClient<undefined, DeleteMessageResult>(`/appeals/messages/${messageId}`, {
     method: 'DELETE',
   })) as ApiResponse<DeleteMessageResult>;
+  opts?.onProgress?.(100);
 
   if (!resp.ok) throw new Error(resp.message || 'Ошибка удаления сообщения');
   return resp.data;
+}
+
+// -------------------- Синхронизация истории --------------------
+const OFFLINE_MSG_KEY = (id: number) => `appealOffline:${id}`;
+
+export async function getAppealMessages(
+  id: number,
+  limit = 20,
+  offset = 0,
+): Promise<AppealMessage[]> {
+  const qs = buildQuery({ limit, offset });
+  const resp = (await apiClient<undefined, { messages: AppealMessage[] }>(
+    `/appeals/${id}/messages?${qs}`,
+    { method: 'GET' },
+  )) as ApiResponse<{ messages: AppealMessage[] }>;
+  if (!resp.ok) throw new Error(resp.message || 'Ошибка загрузки сообщений');
+  return resp.data.messages;
+}
+
+export async function savePendingMessage(id: number, msg: AppealMessage) {
+  const key = OFFLINE_MSG_KEY(id);
+  try {
+    const raw = await AsyncStorage.getItem(key);
+    const arr: AppealMessage[] = raw ? JSON.parse(raw) : [];
+    arr.push(msg);
+    await AsyncStorage.setItem(key, JSON.stringify(arr));
+  } catch {}
+}
+
+function mergeMessages(remote: AppealMessage[], local: AppealMessage[]) {
+  const map = new Map<number, AppealMessage>();
+  remote.forEach((m) => map.set(m.id, m));
+  local.forEach((m) => { if (!map.has(m.id)) map.set(m.id, m); });
+  return Array.from(map.values()).sort(
+    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+  );
+}
+
+export async function syncAppealHistory(id: number): Promise<AppealMessage[]> {
+  const key = OFFLINE_MSG_KEY(id);
+  const raw = await AsyncStorage.getItem(key);
+  const local: AppealMessage[] = raw ? JSON.parse(raw) : [];
+  const remote = await getAppealMessages(id, 50, 0);
+  const merged = mergeMessages(remote, local);
+  await AsyncStorage.removeItem(key);
+  return merged;
+}
+
+export async function bulkUpdateMessageStatus(
+  appealId: number,
+  messageIds: number[],
+  status: MessageStatus,
+) {
+  const resp = (await apiClient<
+    { messageIds: number[]; status: MessageStatus },
+    { updates: MessageStatusUpdate[] }
+  >(`/appeals/${appealId}/messages/status`, {
+    method: 'PUT',
+    body: { messageIds, status },
+  })) as ApiResponse<{ updates: MessageStatusUpdate[] }>;
+  if (!resp.ok) throw new Error(resp.message || 'Ошибка обновления статусов сообщений');
+  return resp.data.updates;
 }
 
 // -------------------- Экспорт CSV --------------------
