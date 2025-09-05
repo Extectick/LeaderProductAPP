@@ -32,11 +32,16 @@ export default function MessagesList({
       renderItem={({ item }) => (
         <MessageBubble message={item} own={item.sender?.id === currentUserId} />
       )}
-      contentContainerStyle={[styles.container, { paddingBottom: bottomInset }]}
+      style={styles.list}
+      contentContainerStyle={[
+        styles.container,
+        { paddingBottom: bottomInset, flexGrow: 1 },
+      ]}
     />
   );
 }
 
 const styles = StyleSheet.create({
+  list: { flex: 1, width: '100%' },
   container: { paddingVertical: 8 },
 });

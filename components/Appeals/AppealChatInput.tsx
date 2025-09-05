@@ -177,7 +177,7 @@ export default function AppealChatInput({
           addLabel=""
           maxFiles={10}
           horizontal
-          style={{ marginRight: 8 }}
+          style={{ marginRight: 8, flexGrow: 0, flexShrink: 0 }}
         />
         {isRecording ? (
           <View style={styles.recordingBox}>
@@ -263,16 +263,17 @@ export default function AppealChatInput({
 
 const styles = StyleSheet.create({
   wrapper: {
-    padding: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
     backgroundColor: '#F9FAFB',
     borderTopWidth: 1,
     borderColor: '#E5E7EB',
     width: '100%',
   },
-  inputRow: { flexDirection: 'row', alignItems: 'flex-end' },
+  inputRow: { flexDirection: 'row', alignItems: 'center' },
   actionBtn: {
     borderRadius: 20,
-    padding: 10,
+    padding: 8,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -285,7 +286,7 @@ const styles = StyleSheet.create({
     borderColor: '#E5E7EB',
     borderRadius: 20,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 4,
     marginRight: 8,
   },
   input: {
@@ -305,7 +306,7 @@ const styles = StyleSheet.create({
     borderColor: '#E5E7EB',
     borderRadius: 20,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 4,
     marginHorizontal: 8,
   },
   wave: {
@@ -324,7 +325,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E5E7EB',
     borderRadius: 20,
-    paddingVertical: 8,
+    paddingVertical: 4,
     paddingHorizontal: 12,
     marginHorizontal: 8,
     position: 'relative',
