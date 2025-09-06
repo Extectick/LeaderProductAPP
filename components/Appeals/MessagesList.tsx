@@ -38,10 +38,19 @@ export default function MessagesList({
     let lastDay = '';
     arr.forEach((m) => {
       const d = new Date(m.createdAt);
-      const dayStr = d.toDateString();
-      if (dayStr !== lastDay) {
-        result.push({ type: 'date', id: dayStr, date: dayStr });
-        lastDay = dayStr;
+      const dayKey = d.toDateString();
+      if (dayKey !== lastDay) {
+        const date = d
+          .toLocaleDateString('ru-RU', {
+            weekday: 'short',
+            day: '2-digit',
+            month: 'short',
+            year: 'numeric',
+          })
+          .replaceAll('.', '')
+          .replace(',', '');
+        result.push({ type: 'date', id: dayKey, date });
+        lastDay = dayKey;
       }
       result.push({ type: 'msg', id: m.id, message: m });
     });
@@ -69,6 +78,7 @@ export default function MessagesList({
         <MessageBubble
           message={item.message}
           own={item.message.sender?.id === currentUserId}
+          simultaneousHandlers={listRef}
         />
       );
     },
@@ -81,20 +91,22 @@ export default function MessagesList({
       data={items}
       keyExtractor={(item) => `${item.type}-${item.id}`}
       renderItem={renderItem}
+      style={styles.list}
       contentContainerStyle={[styles.container, { paddingBottom: bottomInset }]}
     />
   );
 }
 
 const styles = StyleSheet.create({
+  list: { flex: 1, width: '100%' },
   container: { paddingVertical: 8 },
   dateWrap: {
     alignSelf: 'center',
-    backgroundColor: '#E5E7EB',
+    backgroundColor: '#2F2F37',
     paddingHorizontal: 12,
     paddingVertical: 4,
     borderRadius: 10,
     marginVertical: 8,
   },
-  dateText: { color: '#374151', fontSize: 12 },
+  dateText: { color: '#fff', fontSize: 12 },
 });
