@@ -2,14 +2,20 @@ import { tabScreens } from '@/constants/tabScreens';
 import { useThemeColor } from '@/hooks/useThemeColor';
 import { Ionicons } from '@expo/vector-icons';
 import { usePathname, useRouter, type RelativePathString } from 'expo-router';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useContext, useMemo } from 'react';
 import { Animated, Pressable, StyleSheet } from 'react-native';
+import { AuthContext } from '@/context/AuthContext';
 
 export default function WebSidebar() {
   const [expanded, setExpanded] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
   const widthAnim = useRef(new Animated.Value(60)).current;
+  const auth = useContext(AuthContext);
+  const isAdmin = useMemo(
+    () => auth?.profile?.role?.name === 'admin' || auth?.profile?.role?.name === 'administrator',
+    [auth?.profile?.role?.name]
+  );
 
   const bgColor = useThemeColor({}, 'background');
   const textColor = useThemeColor({}, 'text');
@@ -41,7 +47,9 @@ export default function WebSidebar() {
       onPointerEnter={() => setExpanded(true)}
       onPointerLeave={() => setExpanded(false)}
     >
-      {tabScreens.map(({ sidebar }) => {
+      {tabScreens
+        .filter(({ sidebar }) => (sidebar.path === '/admin' ? isAdmin : true))
+        .map(({ sidebar }) => {
         const isActive = pathname === sidebar.path;
         return (
           <Pressable
@@ -49,13 +57,13 @@ export default function WebSidebar() {
             onPress={() => router.push(sidebar.path as RelativePathString)}
             accessibilityRole="button"
             accessibilityState={{ selected: isActive }}
-            style={({ pressed, hovered }) => [
+            style={({ pressed }) => [
               styles.item,
               {
                 backgroundColor: isActive
                   ? activeBgColor
-                  : hovered
-                  ? 'rgba(255, 255, 255, 0.1)'
+                  : pressed
+                  ? 'rgba(255, 255, 255, 0.08)'
                   : 'transparent',
                 transform: [{ scale: pressed ? 0.95 : 1 }],
               },

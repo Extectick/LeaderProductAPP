@@ -8,14 +8,24 @@ export const API_ENDPOINTS = {
   },
   USERS: {
     PROFILE: '/users/profile',
-    // ✅ функция, формирующая корректный путь /users/:userId/profile
+    // ? функция, формирующая корректный путь /users/:userId/profile
     PROFILE_BY_ID: (userId: number) => `/users/${userId}/profile`,
     DEPARTMENTS: '/users/departments',
+    DEPARTMENT_BY_ID: (id: number) => `/users/departments/${id}`,
     PROFILES: {
       CLIENT: '/users/profiles/client',
       SUPPLIER: '/users/profiles/supplier',
       EMPLOYEE: '/users/profiles/employee'
-    }
+    },
+    PERMISSIONS: '/users/permissions',
+    ROLES: '/users/roles',
+    ROLE_BY_ID: (roleId: number) => `/users/roles/${roleId}`,
+    ROLE_PERMISSIONS: (roleId: number) => `/users/roles/${roleId}/permissions`,
+    USER_ROLE: (userId: number) => `/users/${userId}/role`,
+    USERS: (search?: string) => `/users${search ? `?search=${encodeURIComponent(search)}` : ''}`,
+    USER_ADMIN_UPDATE: (userId: number) => `/users/${userId}`,
+    USER_ADMIN_PASSWORD: (userId: number) => `/users/${userId}/password`,
+    DEPARTMENT_USERS: (departmentId: number) => `/users/departments/${departmentId}/users`,
   },
   QR: {
     CREATE: '/qr',

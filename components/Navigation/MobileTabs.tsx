@@ -1,4 +1,6 @@
 import { useThemeColor } from '@/hooks/useThemeColor';
+import { useContext } from 'react';
+import { AuthContext } from '@/context/AuthContext';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { Tabs } from 'expo-router';
 import React from 'react';
@@ -6,6 +8,8 @@ import React from 'react';
 export default function MobileTabs() {
   const backgroundColor = useThemeColor({}, 'background');
   const textColor = useThemeColor({}, 'text');
+  const auth = useContext(AuthContext);
+  const isAdmin = auth?.profile?.role?.name === 'admin' || auth?.profile?.role?.name === 'administrator';
 
   return (
     <Tabs
@@ -17,6 +21,7 @@ export default function MobileTabs() {
             "tasks/index": "list-outline",
             "services" : "apps",
             "profile" : "person-outline",
+            "admin" : "shield-checkmark-outline",
           };
           return (
             <Ionicons name={icons[route.name]} size={size} color={color} />
@@ -35,6 +40,7 @@ export default function MobileTabs() {
       <Tabs.Screen name="tasks/index" options={{ title: "Задачи" }} />
       <Tabs.Screen name="services" options={{ title: "Сервисы" }} />
       <Tabs.Screen name="profile" options={{ title: "Профиль" }} />
+      {isAdmin && <Tabs.Screen name="admin" options={{ title: "Админ" }} />}
     </Tabs>
   );
 }

@@ -2,11 +2,13 @@ import HomeScreen from "@/app/(main)/home";
 import ProfileScreen from "@/app/(main)/profile";
 import TasksScreen from "@/app/(main)/tasks";
 import ServicesStack from '@/stacks/ServicesStack';
+import AdminScreen from "@/app/(main)/admin";
 export type SidebarPath = 
   | '/home' 
   | '/tasks' 
   | '/profile'
-  | '/services/index';
+  | '/services/index'
+  | '/admin';
 
 export const tabScreens = [
   {
@@ -47,6 +49,16 @@ export const tabScreens = [
       icon: 'person-outline',
       label: 'Профиль',
       path: '/profile',
+    },
+  },
+  {
+    name: 'admin',
+    component: AdminScreen,
+    options: { title: 'Админ' },
+    sidebar: {
+      icon: 'shield-checkmark-outline',
+      label: 'Админ',
+      path: '/admin',
     },
   }
 ];
