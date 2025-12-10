@@ -21,7 +21,7 @@ import {
   View
 } from 'react-native';
 import DropDownPicker from 'react-native-dropdown-picker';
-import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
+// import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { MaskedTextInput } from 'react-native-mask-text';
 
 export default function ProfileSelectionScreen() {

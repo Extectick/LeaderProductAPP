@@ -1,5 +1,5 @@
 // app/_layout.tsx
-import { Slot, useRouter } from 'expo-router';
+import { Slot } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Platform, StatusBar, View } from 'react-native';
@@ -8,8 +8,8 @@ import { enableScreens } from 'react-native-screens';
 
 import { AuthProvider } from '@/context/AuthContext';
 import { ThemeProvider } from '@/context/ThemeContext';
-import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { useAuthRedirect } from '@/hooks/useAuthRedirect';
+import { TrackingProvider } from '@/context/TrackingContext';
 
 if (Platform.OS !== 'web') {
   void SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -28,14 +28,18 @@ try {
   const defaultHandler = global.ErrorUtils?.getGlobalHandler?.();
   // @ts-ignore
   global.ErrorUtils?.setGlobalHandler?.((error: any, isFatal?: boolean) => {
-    console.error('[GlobalError] JS', isFatal ? 'Fatal' : 'Non-fatal', error?.stack || String(error));
+    console.error(
+      '[GlobalError] JS',
+      isFatal ? 'Fatal' : 'Non-fatal',
+      error?.stack || String(error)
+    );
     defaultHandler && defaultHandler(error, isFatal);
   });
 } catch {}
 
 function InnerLayout() {
   const { isChecking } = useAuthRedirect();
-  if (isChecking) return null; // Splash останется видимым
+  if (isChecking) return null;
   return <Slot />;
 }
 
@@ -72,9 +76,10 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <ThemeProvider>
           <AuthProvider>
-            <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
-            {/* ⬇️ ВАЖНО: используем наш гейт вместо <Slot /> */}
-            <InnerLayout />
+            <TrackingProvider>
+              <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
+              <InnerLayout />
+            </TrackingProvider>
           </AuthProvider>
         </ThemeProvider>
       </SafeAreaProvider>

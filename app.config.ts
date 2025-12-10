@@ -24,6 +24,16 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       foregroundImage: "./assets/images/adaptive-foreground.png",
       backgroundColor: "#ffffff",
     },
+    permissions: [
+      "ACCESS_COARSE_LOCATION",
+      "ACCESS_FINE_LOCATION",
+      "ACCESS_BACKGROUND_LOCATION"
+    ],
+    foregroundService: {
+      notificationTitle: "Отслеживание маршрута",
+      notificationBody: "Приложение собирает геоданные в фоне.",
+      notificationColor: "#FF5722"
+    }
   },
 
   plugins: [
