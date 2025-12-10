@@ -26,10 +26,16 @@ export async function saveTokens(accessToken: string, refreshToken: string, prof
     [ACCESS_KEY, accessToken],
     [REFRESH_KEY, refreshToken],
   ];
-  if (profile) items.push([PROFILE_KEY, JSON.stringify(profile)]);
-  await AsyncStorage.multiSet(items);
 
-  console.log('Сохранён профиль:', profile);
+  if (profile) {
+    items.push([PROFILE_KEY, JSON.stringify(profile)]);
+    await AsyncStorage.multiSet(items);
+  } else {
+    // Нет профиля в ответе — убираем возможный устаревший профиль
+    await AsyncStorage.multiSet(items);
+    await AsyncStorage.removeItem(PROFILE_KEY);
+  }
+
   refreshAttempts = 0; // сброс попыток при новом токене
 }
 

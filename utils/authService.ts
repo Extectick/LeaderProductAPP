@@ -44,7 +44,8 @@ export async function verify(email: string, code: string) {
     skipAuth: true,
   });
   const data = throwIfError(res);
-  await saveTokens(data.accessToken, data.refreshToken);
+  await saveTokens(data.accessToken, data.refreshToken, data.profile);
+  return data.profile ?? null;
 }
 
 export async function logoutUser() {

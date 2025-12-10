@@ -30,46 +30,9 @@ interface DecodedToken {
 }
 
 export const isValidProfile = (profile: Profile | null): boolean => {
-    if (!profile) return false;
-    
-    // Проверяем наличие хотя бы одного подпрофиля
-    const hasProfile = 
-      !!profile.clientProfile || 
-      !!profile.supplierProfile || 
-      !!profile.employeeProfile;
-
-    if (!hasProfile) {
-      return false;
-    }
-
-    return true;
-    
-    // Проверяем статус основного профиля
-    // if (profile.profileStatus !== "ACTIVE") return false;
-    
-    // Проверяем статус текущего подпрофиля
-    // let currentSubProfileActive = false;
-    // switch (profile.currentProfileType) {
-    //   case "CLIENT":
-    //     currentSubProfileActive = profile.clientProfile?.status === "ACTIVE";
-    //     break;
-    //   case "SUPPLIER":
-    //     currentSubProfileActive = profile.supplierProfile?.status === "ACTIVE";
-    //     break;
-    //   case "EMPLOYEE":
-    //     currentSubProfileActive = profile.employeeProfile?.status === "ACTIVE";
-    //     break;
-    //   default:
-    //     return false;
-    // }
-    
-    // Проверяем наличие хотя бы одного активного подпрофиля
-    // const hasActiveSubProfile = 
-    //   (profile.clientProfile?.status === "ACTIVE") ||
-    //   (profile.supplierProfile?.status === "ACTIVE") || 
-    //   (profile.employeeProfile?.status === "ACTIVE");
-    //return currentSubProfileActive && hasActiveSubProfile && profile.currentProfileType !== null;  
-    
+  if (!profile) return false;
+  // В текущей логике доступ в приложение дает только наличие профиля сотрудника
+  return !!profile.employeeProfile;
 };
 
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {

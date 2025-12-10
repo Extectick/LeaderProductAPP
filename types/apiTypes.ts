@@ -77,6 +77,7 @@ export type AuthVerifyRequest = {
 export type AuthVerifyResponseData = {
   accessToken: string;
   refreshToken: string;
+  profile: Profile | null;
   message: string;
 };
 
@@ -89,6 +90,7 @@ export type AuthTokenRequest = {
 export type AuthTokenResponse = SuccessResponse<{
   accessToken: string;
   refreshToken: string;
+  profile: Profile | null;
 }> | ErrorResponse;
 
 export type AuthLogoutRequest = {

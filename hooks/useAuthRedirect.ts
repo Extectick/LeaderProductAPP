@@ -1,17 +1,12 @@
 import { useContext, useEffect, useMemo } from 'react';
 import { useRouter, type Href } from 'expo-router';
-import { AuthContext } from '@/context/AuthContext';
-import type { Profile } from '@/types/userTypes';
+import { AuthContext, isValidProfile } from '@/context/AuthContext';
 
 const ROUTES = {
   AUTH: '/(auth)/AuthScreen',
   PROFILE: '/ProfileSelectionScreen',
   HOME: '/home',
 } as const;
-
-function hasValidProfile(p: Profile | null): boolean {
-  return !!(p && (p.clientProfile || p.supplierProfile || p.employeeProfile));
-}
 
 type Gate = 'guest' | 'needsProfile' | 'ready';
 
@@ -25,7 +20,7 @@ export function useAuthRedirect() {
   // Это хук и он всегда вызывается – порядок стабилен
   const gate: Gate = useMemo(() => {
     if (!isAuthenticated) return 'guest';
-    return hasValidProfile(profile) ? 'ready' : 'needsProfile';
+    return isValidProfile(profile) ? 'ready' : 'needsProfile';
   }, [isAuthenticated, profile]);
 
   // Тоже хук – всегда вызывается; логика внутри условия

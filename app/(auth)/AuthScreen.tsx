@@ -294,12 +294,18 @@ export default function AuthScreen() {
       }
 
       const profileJson = await AsyncStorage.getItem('profile');
-      if (!profileJson) throw new Error('Профиль не найден');
-      const profile = JSON.parse(profileJson);
-      await setProfile(profile);
+      if (profileJson) {
+        const profile = JSON.parse(profileJson);
+        await setProfile(profile);
+        isValidProfile(profile) ? router.replace(ROUTES.HOME) : router.replace(ROUTES.PROFILE);
+      } else {
+        // Профиль не пришел в ответе — очищаем и отправляем на создание
+        await AsyncStorage.removeItem('profile');
+        await setProfile(null);
+        router.replace(ROUTES.PROFILE);
+      }
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      isValidProfile(profile) ? router.replace(ROUTES.HOME) : router.replace(ROUTES.PROFILE);
     } catch (e: any) {
       setBannerError(
         e?.message?.includes('Не удалось обновить токен') ? 'Неверный email или пароль' : e?.message || 'Ошибка при входе'
@@ -340,8 +346,9 @@ export default function AuthScreen() {
     setLoading(true);
     setBannerError('');
     try {
-      await verify(email, otp);
+      const verifiedProfile = await verify(email, otp);
       if (setAuthenticated) setAuthenticated(true);
+      if (setProfile) await setProfile(verifiedProfile ?? null);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       router.replace(ROUTES.PROFILE);
     } catch (e: any) {
