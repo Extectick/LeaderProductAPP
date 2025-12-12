@@ -6,13 +6,23 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  Animated,
+  Animated as RNAnimated,
   LayoutChangeEvent,
+  ScrollView,
+  Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
 import { MotiView, AnimatePresence } from 'moti';
 import AttachmentsPicker, { AttachmentFile } from '@/components/ui/AttachmentsPicker';
+import { PanGestureHandler } from 'react-native-gesture-handler';
+import Animated, {
+  useSharedValue,
+  useAnimatedGestureHandler,
+  useAnimatedStyle,
+  withTiming,
+  runOnJS,
+} from 'react-native-reanimated';
 
 export default function AppealChatInput({
   onSend,
@@ -33,7 +43,7 @@ export default function AppealChatInput({
   const [showEmoji, setShowEmoji] = useState(false);
   const emojis = ['😀', '😂', '😍', '😎', '👍', '🙏'];
 
-  const sendScale = useRef(new Animated.Value(1)).current;
+  const sendScale = useRef(new RNAnimated.Value(1)).current;
   const recordingRef = useRef<Audio.Recording | null>(null);
 
   useEffect(() => {
@@ -56,12 +66,12 @@ export default function AppealChatInput({
     };
   }, []);
 
-  function animateIn(val: Animated.Value) {
-    Animated.spring(val, { toValue: 0.9, useNativeDriver: true }).start();
+  function animateIn(val: RNAnimated.Value) {
+    RNAnimated.spring(val, { toValue: 0.9, useNativeDriver: true }).start();
   }
 
-  function animateOut(val: Animated.Value) {
-    Animated.spring(val, { toValue: 1, useNativeDriver: true }).start();
+  function animateOut(val: RNAnimated.Value) {
+    RNAnimated.spring(val, { toValue: 1, useNativeDriver: true }).start();
   }
 
   function formatTime(sec: number) {
@@ -109,6 +119,7 @@ export default function AppealChatInput({
   function cancelVoice() {
     setRecordedUri(null);
     setRecordingTime(0);
+    setIsRecording(false);
     recordingRef.current = null;
     void Audio.setAudioModeAsync({ allowsRecordingIOS: false, playThroughEarpieceAndroid: false });
   }
@@ -118,6 +129,9 @@ export default function AppealChatInput({
     setShowEmoji(false);
   }
 
+  const removeFile = (idx: number) => {
+    setFiles((prev) => prev.filter((_, i) => i !== idx));
+  };
 
   async function handleSend() {
     if (sending || (!text.trim() && files.length === 0)) return;
@@ -164,12 +178,45 @@ export default function AppealChatInput({
     if (isRecording) stopRecording();
   };
 
+  const panX = useSharedValue(0);
+  const panGesture = useAnimatedGestureHandler({
+    onActive: (e: any) => {
+      if (isRecording) panX.value = e.translationX;
+    },
+    onEnd: (e: any) => {
+      if (isRecording && e.translationX < -80) runOnJS(cancelVoice)();
+      panX.value = withTiming(0);
+    },
+  });
+  const panStyle = useAnimatedStyle(() => ({ transform: [{ translateX: panX.value }] }));
+
   function handleLayout(e: LayoutChangeEvent) {
     onHeightChange?.(e.nativeEvent.layout.height);
   }
 
   return (
     <View style={[styles.wrapper, { paddingBottom: bottomInset }]} onLayout={handleLayout}>
+      {files.length > 0 && (
+        <ScrollView
+          horizontal
+          style={styles.previewRow}
+          contentContainerStyle={{ alignItems: 'center' }}
+          showsHorizontalScrollIndicator={false}
+        >
+          {files.map((f, idx) => (
+            <View key={`${f.uri}-${idx}`} style={styles.previewItem}>
+              {f.type.startsWith('image/') ? (
+                <Image source={{ uri: f.uri }} style={styles.previewImage} />
+              ) : (
+                <Ionicons name="document" size={32} color="#6B7280" />
+              )}
+              <Pressable onPress={() => removeFile(idx)} style={styles.removePreview} hitSlop={8}>
+                <Ionicons name="close" size={14} color="#fff" />
+              </Pressable>
+            </View>
+          ))}
+        </ScrollView>
+      )}
       <View style={styles.inputRow}>
         <AttachmentsPicker
           value={files}
@@ -177,6 +224,7 @@ export default function AppealChatInput({
           addLabel=""
           maxFiles={10}
           horizontal
+          showChips={false}
           style={{ marginRight: 8 }}
         />
         {isRecording ? (
@@ -188,6 +236,7 @@ export default function AppealChatInput({
               transition={{ type: 'timing', duration: 500, loop: true }}
             />
             <Text style={styles.recordingTime}>{formatTime(recordingTime)}</Text>
+            <Text style={styles.swipeHint}>Свайп для отмены</Text>
           </View>
         ) : recordedUri ? (
           <View style={styles.voicePreview}>
@@ -218,30 +267,34 @@ export default function AppealChatInput({
           </View>
         )}
 
-        <Pressable
-          onPress={handleActionPress}
-          onLongPress={handleActionLongPress}
-          onPressIn={() => animateIn(sendScale)}
-          onPressOut={handleActionPressOut}
-          delayLongPress={200}
-          disabled={sending}
-          style={[styles.actionBtn, { backgroundColor: actionBg }, sending && { opacity: 0.5 }]}
-          hitSlop={8}
-        >
-          <Animated.View style={{ transform: [{ scale: sendScale }] }}>
-            <AnimatePresence exitBeforeEnter>
-              <MotiView
-                key={actionIcon}
-                from={{ opacity: 0, scale: 0.6 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.6 }}
-                transition={{ type: 'timing', duration: 150 }}
-              >
-                <Ionicons name={actionIcon} size={20} color={actionColor} />
-              </MotiView>
-            </AnimatePresence>
+        <PanGestureHandler onGestureEvent={panGesture}>
+          <Animated.View style={panStyle}>
+            <Pressable
+              onPress={handleActionPress}
+              onLongPress={handleActionLongPress}
+              onPressIn={() => animateIn(sendScale)}
+              onPressOut={handleActionPressOut}
+              delayLongPress={200}
+              disabled={sending}
+              style={[styles.actionBtn, { backgroundColor: actionBg }, sending && { opacity: 0.5 }]}
+              hitSlop={8}
+            >
+              <RNAnimated.View style={{ transform: [{ scale: sendScale }] }}>
+                <AnimatePresence exitBeforeEnter>
+                  <MotiView
+                    key={actionIcon}
+                    from={{ opacity: 0, scale: 0.6 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.6 }}
+                    transition={{ type: 'timing', duration: 150 }}
+                  >
+                    <Ionicons name={actionIcon} size={20} color={actionColor} />
+                  </MotiView>
+                </AnimatePresence>
+              </RNAnimated.View>
+            </Pressable>
           </Animated.View>
-        </Pressable>
+        </PanGestureHandler>
       </View>
       {showEmoji && (
         <MotiView
@@ -316,6 +369,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   recordingTime: { color: '#111827' },
+  swipeHint: { marginLeft: 8, color: '#6B7280', fontSize: 12 },
   voicePreview: {
     flex: 1,
     flexDirection: 'row',
@@ -341,4 +395,24 @@ const styles = StyleSheet.create({
   },
   emojiItem: { marginHorizontal: 4 },
   emojiText: { fontSize: 24 },
+  previewRow: { flexDirection: 'row', marginBottom: 6 },
+  previewItem: {
+    width: 56,
+    height: 56,
+    borderRadius: 10,
+    marginRight: 8,
+    backgroundColor: '#E5E7EB',
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative',
+  },
+  previewImage: { width: '100%', height: '100%', borderRadius: 10 },
+  removePreview: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    backgroundColor: '#6B7280',
+    borderRadius: 12,
+    padding: 2,
+  },
 });
