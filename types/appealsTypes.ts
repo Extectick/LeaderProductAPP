@@ -3,6 +3,8 @@ export type AppealStatus = 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED';
 export type AppealPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 export type AttachmentType = 'IMAGE' | 'AUDIO' | 'FILE';
 
+export type MessageStatus = 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
+
 export type Scope = 'my' | 'department' | 'assigned';
 
 export interface DepartmentMini { id: number; name: string }
@@ -17,9 +19,14 @@ export interface AppealAttachment {
 
 export interface AppealMessage {
   id: number;
-  text?: string|null;
+  tempId?: string;
+  text?: string | null;
   createdAt: string;
-  editedAt?: string|null;
+  editedAt?: string | null;
+  deliveredAt?: string | null;
+  readAt?: string | null;
+  status?: MessageStatus;
+  uploadProgress?: number;
   sender: UserMini;
   attachments: AppealAttachment[];
 }
