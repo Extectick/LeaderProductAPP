@@ -4,7 +4,8 @@ export type Route =
   | "/profile"
   // | "/reports"
   | "/services/appeals"
-  | "/services/qrcodes";  // добавил сюда /qrcodes, так как он в services есть
+  | "/services/qrcodes"
+  | "/services/tracking";  // добавил сюда /qrcodes, так как он в services есть
 
 export interface Service {
   name: string;
@@ -26,6 +27,12 @@ export const services: Service[] = [
     icon: 'documents',
     route: '/services/appeals' as any,
     gradient: ['#a8d5ba', '#4cad50'],  // мягкий зеленый градиент
+  },
+  {
+    name: 'Геомаршруты',
+    icon: 'navigate-outline',
+    route: '/services/tracking',
+    gradient: ['#ffd89b', '#19547b'],  // теплый → прохладный градиент
   },
   {
     name: 'Задачи',

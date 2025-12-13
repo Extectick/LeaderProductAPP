@@ -34,5 +34,13 @@ export const API_ENDPOINTS = {
     UPDATE: (id: string) => `/qr/${id}`,
     ANALYTICS: (id: string) => `/qr/${id}/analytics`,
     STATS: '/qr/stats'
+  },
+  TRACKING: {
+    SAVE_POINTS: '/tracking/points',
+    USER_ROUTES: (userId: number) => `/tracking/users/${userId}/routes`,
+    ROUTE_POINTS: (routeId: number) => `/tracking/routes/${routeId}/points`,
+    DAILY_STATS: '/tracking/stats/daily',
+    ADMIN_USER_ROUTES_WITH_POINTS: (userId: number) =>
+      `/tracking/admin/users/${userId}/routes-with-points`,
   }
 };

@@ -47,7 +47,6 @@ export default function RootLayout() {
   const Root = GestureHandlerRootView ?? View;
 
   const [appIsReady, setAppIsReady] = useState(false);
-  const [hasLayout, setHasLayout] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -61,18 +60,15 @@ export default function RootLayout() {
     })();
   }, []);
 
+  // Надёжно прячем splash как только инициализация завершена
   useEffect(() => {
-    if (appIsReady && hasLayout && Platform.OS !== 'web') {
+    if (Platform.OS !== 'web' && appIsReady) {
       SplashScreen.hideAsync().catch(() => {});
     }
-  }, [appIsReady, hasLayout]);
-
-  const onLayoutRootView = useCallback(() => {
-    setHasLayout(true);
-  }, []);
+  }, [appIsReady]);
 
   return (
-    <Root style={{ flex: 1 }} onLayout={onLayoutRootView}>
+    <Root style={{ flex: 1 }}>
       <SafeAreaProvider>
         <ThemeProvider>
           <AuthProvider>

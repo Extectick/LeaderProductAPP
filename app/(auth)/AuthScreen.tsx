@@ -2,6 +2,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
+import Constants from 'expo-constants';
 import { useRouter, type Href } from 'expo-router';
 import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -30,6 +31,7 @@ import ThemedLoader from '@/components/ui/ThemedLoader';
 import { gradientColors } from '@/constants/Colors';
 import { AuthContext, isValidProfile } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
+import { API_BASE_URL } from '@/utils/config';
 import { login, register, verify } from '@/utils/authService';
 
 /** ─── Module-level cache to defeat StrictMode remounts in dev ─── */
@@ -385,6 +387,7 @@ export default function AuthScreen() {
   const ps = passwordScore(password);
   const pillWidth = Math.min(420, winW - 40) / 2 - 6;
   const pillTranslate = tabPill.interpolate({ inputRange: [0, 1], outputRange: [4, 8 + pillWidth] });
+  const versionLabel = Constants.expoConfig?.version ?? 'unknown';
 
   // маленькая анимируемая кнопка для Verify
   const MiniButton: React.FC<{
@@ -741,6 +744,11 @@ export default function AuthScreen() {
                 </View>
               )}
             </Animated.View>
+
+            <View style={styles.buildInfo}>
+              <Text style={styles.buildInfoText}>API: {API_BASE_URL || 'не задан'}</Text>
+              <Text style={styles.buildInfoText}>Версия приложения: v{versionLabel}</Text>
+            </View>
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
@@ -901,4 +909,12 @@ const getStyles = (colors: {
       backgroundColor: 'transparent',
       flexGrow: 1,
     },
+    buildInfo: {
+      marginTop: 12,
+      marginBottom: 10,
+      width: '100%',
+      alignItems: 'center',
+      gap: 2,
+    },
+    buildInfoText: { fontSize: 12, color: colors.secondaryText, opacity: 0.8, textAlign: 'center' },
   });

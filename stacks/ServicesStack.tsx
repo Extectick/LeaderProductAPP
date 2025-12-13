@@ -5,6 +5,7 @@ import React from 'react';
 import ServicesScreen from '@/app/(main)/services/index';
 import QRCodeFormScreen from '@/app/(main)/services/qrcodes/form';
 import QRCodesScreen from '@/app/(main)/services/qrcodes/index';
+import TrackingServiceScreen from '@/app/(main)/services/tracking';
 
 const Stack = createNativeStackNavigator();
 
@@ -25,6 +26,11 @@ export default function ServicesStack() {
         name="QRCodeForm"
         component={QRCodeFormScreen}
         options={{ title: 'Форма QR Кода' }}
+      />
+      <Stack.Screen
+        name="Tracking"
+        component={TrackingServiceScreen}
+        options={{ title: 'Геомаршруты' }}
       />
     </Stack.Navigator>
   );

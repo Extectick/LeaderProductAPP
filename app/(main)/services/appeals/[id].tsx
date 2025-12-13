@@ -1,7 +1,7 @@
 // V:\lp\app\(main)\services\appeals\[id].tsx
 import { useLocalSearchParams } from 'expo-router';
 import { useEffect, useState, useCallback, useContext } from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import {
   addAppealMessage,
@@ -17,12 +17,22 @@ import AppealChatInput from '@/components/Appeals/AppealChatInput';
 import { AuthContext } from '@/context/AuthContext';
 import { useAppealUpdates } from '@/hooks/useAppealUpdates';
 
+const useSafeBottomTabBarHeight = () => {
+  if (Platform.OS === 'web') return 0;
+  try {
+    return useBottomTabBarHeight();
+  } catch (e) {
+    console.warn('BottomTabBarHeight unavailable, falling back to 0 on this screen.', e);
+    return 0;
+  }
+};
+
 export default function AppealDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const appealId = Number(id);
   const [data, setData] = useState<AppealDetail | null>(null);
   const auth = useContext(AuthContext);
-  const tabBarHeight = useBottomTabBarHeight();
+  const tabBarHeight = useSafeBottomTabBarHeight();
   const [inputHeight, setInputHeight] = useState(0);
 
   const load = useCallback(async (force = false) => {

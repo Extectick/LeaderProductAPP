@@ -8,6 +8,7 @@ dotenv.config({ path: path.resolve(__dirname, process.env.NODE_ENV === "producti
 export default ({ config }: ConfigContext): ExpoConfig => ({
   name: "Лидер Продукт",
   slug: "leader-product",
+  owner: "extectick",
   version: "1.0.0",
   orientation: "portrait",
   userInterfaceStyle: "automatic",
@@ -54,4 +55,12 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     //   mode: "both",
     // }],
   ],
+
+  extra: {
+    ...(config.extra || {}),
+    eas: {
+      projectId: "7c6d0fa1-6e18-4bf2-a6f4-b877e0b662e2",
+      ...(config.extra as any)?.eas,
+    },
+  },
 });

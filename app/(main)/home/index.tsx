@@ -19,7 +19,6 @@ import { LinearGradient } from "expo-linear-gradient";
 import Animated, {
   FadeInDown,
   FadeInUp,
-  ZoomIn,
   useSharedValue,
   withSpring,
   useAnimatedStyle,
@@ -28,26 +27,30 @@ import Animated, {
   Easing,
 } from "react-native-reanimated";
 
-/** ---------- Экран ---------- */
+const updates = [
+  { title: "Новый трекинг", desc: "Отслеживайте перемещения сотрудников и точки на карте.", icon: "map-outline", color: "#2563EB" },
+  { title: "Задачи и обращения", desc: "Быстрый доступ к актуальным задачам и переписке с клиентами.", icon: "chatbox-ellipses-outline", color: "#10B981" },
+  { title: "Обновление каталога", desc: "Товары и цены синхронизированы, доступны свежие данные из 1С.", icon: "cloud-download-outline", color: "#F59E0B" },
+];
+
+const stats = [
+  { label: "Открытых задач", value: "12" },
+  { label: "Новых обращений", value: "7" },
+  { label: "Сканов QR за сутки", value: "128" },
+];
+
+const links = [
+  { label: "Сервисы", href: "/services" },
+  { label: "Трекинг перемещений", href: "/services/tracking" },
+  { label: "Обращения", href: "/services/appeals" },
+  { label: "Профиль", href: "/profile" },
+];
+
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const router = useRouter();
-
-  // отступ под web-сайдбар
-  const rightSidebarWidth = Platform.OS === "web" ? 280 : 0;
-
-  const actions: Array<{
-    label: string;
-    icon: keyof typeof Ionicons.glyphMap;
-    href: string;
-    color: string;
-  }> = [
-    { label: "Каталог",      icon: "grid-outline",    href: "/services",             color: "#2563EB" },
-    { label: "QR-сервисы",   icon: "qr-code-outline", href: "/services/qrcodes",     color: "#7C3AED" },
-    { label: "Задачи",       icon: "list-outline",    href: "/tasks",                color: "#059669" },
-    { label: "Профиль",      icon: "person-outline",  href: "/profile",              color: "#0EA5E9" },
-  ];
+  const isWide = Platform.OS === "web" && width >= 960;
 
   return (
     <SafeAreaView
@@ -56,77 +59,73 @@ export default function HomeScreen() {
         {
           paddingTop: insets.top + 8,
           paddingBottom: insets.bottom + 8,
-          paddingRight: rightSidebarWidth ? rightSidebarWidth + 16 : 16,
         },
       ]}
     >
       <ScrollView
-        contentContainerStyle={[styles.scrollContent, { paddingHorizontal: 16 }]}
+        contentContainerStyle={[styles.scrollContent, { paddingHorizontal: 16, maxWidth: 1200, alignSelf: "center" }]}
         keyboardShouldPersistTaps="handled"
       >
-        {/* HERO c обновлённой стилистикой */}
         <HeroFancy
           title={"Добро пожаловать в\nЛидер Продукт"}
-          subtitle="Управляйте сервисами, задачами и аналитикой — всё в одном месте."
+          subtitle="Работайте с сервисами, задачами и аналитикой — всё в одном месте."
           onPressCTA={() => router.push("/services")}
         />
 
-        {/* Быстрые действия */}
-        <Animated.Text
-          entering={FadeInUp.delay(120).duration(600)}
-          style={styles.sectionTitle}
-        >
-          Быстрые действия
-        </Animated.Text>
-
-        <View style={[styles.grid, { gap: 12 }]}>
-          {actions.map((a, i) => (
-            <Animated.View
-              key={a.label}
-              entering={ZoomIn.delay(160 + i * 80).duration(420)}
-              style={{ flexBasis: "48%", maxWidth: "48%" }}
-            >
-              <SpringButton
-                onPress={() => router.push(a.href)}
-                style={[styles.card, { borderColor: "#E5E7EB" }]}
-                androidRippleColor="#E5E7EB"
-              >
-                <View style={[styles.iconBadge, { backgroundColor: a.color }]}>
-                  <Ionicons name={a.icon} size={20} color="#fff" />
+        <View style={[styles.responsiveRow, { flexDirection: isWide ? "row" : "column" }]}>
+          <Animated.View entering={FadeInUp.delay(120).duration(600)} style={[styles.column, isWide && { flex: 2 }]}>
+            <Text style={styles.sectionTitle}>Что нового</Text>
+            <View style={styles.card}>
+              {updates.map((item, idx) => (
+                <View key={item.title} style={[styles.updateItem, idx < updates.length - 1 && styles.updateDivider]}>
+                  <View style={[styles.iconBadge, { backgroundColor: item.color }]}>
+                    <Ionicons name={item.icon as any} size={18} color="#fff" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.updateTitle}>{item.title}</Text>
+                    <Text style={styles.updateText}>{item.desc}</Text>
+                  </View>
                 </View>
-                <Text style={styles.cardTitle} numberOfLines={1}>
-                  {a.label}
-                </Text>
-              </SpringButton>
-            </Animated.View>
-          ))}
+              ))}
+            </View>
+          </Animated.View>
+
+          <View style={isWide ? { width: 16 } : { height: 16 }} />
+
+          <Animated.View entering={FadeInUp.delay(200).duration(600)} style={[styles.column, isWide && { flex: 1 }]}>
+            <Text style={styles.sectionTitle}>Краткие показатели</Text>
+            <View style={[styles.statsGrid, { flexDirection: isWide ? "column" : "row" }]}>
+              {stats.map((item) => (
+                <View key={item.label} style={styles.statCard}>
+                  <Text style={styles.statValue}>{item.value}</Text>
+                  <Text style={styles.statLabel}>{item.label}</Text>
+                </View>
+              ))}
+            </View>
+
+            <Text style={[styles.sectionTitle, { marginTop: 18 }]}>Полезные ссылки</Text>
+            <View style={styles.card}>
+              {links.map((link) => (
+                <SpringButton
+                  key={link.label}
+                  onPress={() => router.push(link.href)}
+                  style={[styles.linkRow, { borderColor: "#E5E7EB" }]}
+                  androidRippleColor="#E5E7EB"
+                >
+                  <Text style={styles.linkLabel}>{link.label}</Text>
+                  <Ionicons name="arrow-forward" size={16} color="#6B7280" />
+                </SpringButton>
+              ))}
+            </View>
+          </Animated.View>
         </View>
 
-        {/* Сводка */}
-        <Animated.Text
-          entering={FadeInUp.delay(220).duration(600)}
-          style={[styles.sectionTitle, { marginTop: 20 }]}
-        >
-          Сводка
-        </Animated.Text>
-
-        <Animated.View entering={FadeInDown.delay(260).duration(600)} style={styles.summaryCard}>
-          <View style={{ gap: 4 }}>
-            <Text style={styles.summaryTitle}>Сегодня</Text>
-            <Text style={styles.summaryText}>Сканов QR: 128 • Новых задач: 5</Text>
-          </View>
-        </Animated.View>
-
-        {/* нижний отступ под таб-бар */}
         <View style={{ height: 16 }} />
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-/** ---------- Компоненты ---------- */
-
-/** Красивый хиро-блок с увеличенным логотипом и анимацией */
 function HeroFancy({
   title,
   subtitle,
@@ -136,7 +135,6 @@ function HeroFancy({
   subtitle: string;
   onPressCTA: () => void;
 }) {
-  // «покачивание» логотипа
   const float = useSharedValue(0);
   React.useEffect(() => {
     float.value = withRepeat(
@@ -147,7 +145,6 @@ function HeroFancy({
   }, []);
 
   const logoStyle = useAnimatedStyle(() => {
-    // -6..+6 по Y и небольшая «дыхалка» по scale
     const translateY = (float.value - 0.5) * 12;
     const scale = 1 + (float.value - 0.5) * 0.04;
     return { transform: [{ translateY }, { scale }] };
@@ -155,7 +152,6 @@ function HeroFancy({
 
   return (
     <Animated.View entering={FadeInDown.duration(700)} style={fancy.heroWrap}>
-      {/* Декоративные градиентные «блики» */}
       <LinearGradient
         colors={["#C7D2FE", "#E9D5FF"]}
         start={{ x: 0.15, y: 0.1 }}
@@ -169,7 +165,6 @@ function HeroFancy({
         style={fancy.gloss}
       />
 
-      {/* Контент */}
       <View style={fancy.inner}>
         <Animated.View style={[fancy.logoBadge, logoStyle]}>
           <Image
@@ -183,11 +178,7 @@ function HeroFancy({
         <Text style={fancy.title}>{title}</Text>
         <Text style={fancy.subtitle}>{subtitle}</Text>
 
-        <SpringButton
-          onPress={onPressCTA}
-          style={fancy.ctaBtn}
-          androidRippleColor="#5B21B6"
-        >
+        <SpringButton onPress={onPressCTA} style={fancy.ctaBtn} androidRippleColor="#5B21B6">
           <Ionicons name="rocket-outline" size={18} color="#fff" />
           <Text style={fancy.ctaText}>Перейти к сервисам</Text>
         </SpringButton>
@@ -196,7 +187,6 @@ function HeroFancy({
   );
 }
 
-/** Пружинящая кнопка без «двойного контейнера» */
 function SpringButton({
   onPress,
   children,
@@ -244,22 +234,15 @@ function SpringButton({
         onPressIn={() => (scale.value = withSpring(0.97, { damping: 18, stiffness: 300 }))}
         onPressOut={() => (scale.value = withSpring(1, { damping: 18, stiffness: 300 }))}
         android_ripple={
-          Platform.OS === "android" && androidRippleColor
-            ? { color: androidRippleColor }
-            : undefined
+          Platform.OS === "android" && androidRippleColor ? { color: androidRippleColor } : undefined
         }
-        style={({ pressed }) => [
-          innerRest,
-          pressed && Platform.OS === "ios" ? { opacity: 0.9 } : null,
-        ]}
+        style={({ pressed }) => [innerRest, pressed && Platform.OS === "ios" ? { opacity: 0.9 } : null]}
       >
         {children}
       </Pressable>
     </Animated.View>
   );
 }
-
-/** ---------- Стили ---------- */
 
 const styles = StyleSheet.create({
   safe: {
@@ -268,31 +251,21 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingBottom: 24,
+    width: "100%",
   },
-
   sectionTitle: {
     fontSize: 16,
     fontWeight: "700",
     color: "#111827",
     marginBottom: 10,
   },
-
-  grid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-  },
-
-  // Плитки действий (иконка сверху, подпись снизу)
   card: {
     backgroundColor: "#fff",
     borderRadius: 14,
     borderWidth: 1,
-    paddingVertical: 14,
-    paddingHorizontal: 10,
+    padding: 14,
     marginBottom: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
+    gap: 12,
   },
   iconBadge: {
     width: 36,
@@ -301,27 +274,50 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  cardTitle: {
-    color: "#111827",
-    fontWeight: "700",
-    fontSize: 13,
-    textAlign: "center",
+  responsiveRow: {
+    width: "100%",
+    gap: 8,
   },
-
-  // Сводка
-  summaryCard: {
+  column: {
+    flex: 1,
+  },
+  updateItem: {
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "flex-start",
+    paddingVertical: 8,
+  },
+  updateDivider: {
+    borderBottomWidth: 1,
+    borderBottomColor: "#E5E7EB",
+  },
+  updateTitle: { fontWeight: "700", color: "#111827" },
+  updateText: { color: "#4B5563" },
+  statsGrid: {
+    gap: 10,
+    flexWrap: "wrap",
+  },
+  statCard: {
     backgroundColor: "#F9FAFB",
-    borderRadius: 16,
-    padding: 16,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: "#E5E7EB",
+    padding: 12,
+    marginBottom: 8,
+  },
+  statValue: { fontSize: 18, fontWeight: "800", color: "#111827" },
+  statLabel: { color: "#4B5563", marginTop: 4 },
+  linkRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    borderWidth: 1,
+    borderRadius: 12,
+    marginBottom: 8,
   },
-  summaryTitle: { fontWeight: "700", color: "#111827" },
-  summaryText: { color: "#374151" },
+  linkLabel: { color: "#111827", fontWeight: "700" },
 });
 
 const fancy = StyleSheet.create({
@@ -331,7 +327,6 @@ const fancy = StyleSheet.create({
     marginBottom: 16,
     borderWidth: 1,
     borderColor: "#E0E7FF",
-    // лёгкая тень
     shadowColor: "#000",
     shadowOpacity: 0.08,
     shadowRadius: 6,
@@ -353,7 +348,6 @@ const fancy = StyleSheet.create({
   inner: {
     padding: 18,
   },
-
   logoBadge: {
     alignSelf: "flex-start",
     width: 68,
@@ -363,7 +357,6 @@ const fancy = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 10,
-    // тонкий «стекло»-эффект
     borderWidth: 1,
     borderColor: "#EEF2FF",
   },
@@ -372,7 +365,6 @@ const fancy = StyleSheet.create({
     height: 56,
     borderRadius: 14,
   },
-
   title: {
     fontSize: 24,
     fontWeight: "800",
@@ -383,12 +375,11 @@ const fancy = StyleSheet.create({
     marginTop: 8,
     color: "#334155",
   },
-
   ctaBtn: {
     marginTop: 16,
     minHeight: 48,
     borderRadius: 999,
-    backgroundColor: "#6366F1", // indigo-500
+    backgroundColor: "#6366F1",
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",

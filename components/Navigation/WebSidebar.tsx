@@ -12,10 +12,15 @@ export default function WebSidebar() {
   const pathname = usePathname();
   const widthAnim = useRef(new Animated.Value(60)).current;
   const auth = useContext(AuthContext);
-  const isAdmin = useMemo(
-    () => auth?.profile?.role?.name === 'admin' || auth?.profile?.role?.name === 'administrator',
-    [auth?.profile?.role?.name]
-  );
+  const isAdmin = useMemo(() => {
+    const roleName = (auth?.profile?.role?.name || '').toLowerCase();
+    if (roleName.includes('admin')) return true;
+    const deptHasAdmin =
+      auth?.profile?.departmentRoles?.some((dr) => (dr.role?.name || '').toLowerCase().includes('admin')) ?? false;
+    const perms = (auth?.profile as any)?.permissions as string[] | undefined;
+    const permAdmin = Array.isArray(perms) && perms.some((p) => p?.toLowerCase?.().includes('admin'));
+    return deptHasAdmin || permAdmin;
+  }, [auth?.profile]);
 
   const bgColor = useThemeColor({}, 'background');
   const textColor = useThemeColor({}, 'text');

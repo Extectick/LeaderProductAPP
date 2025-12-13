@@ -24,6 +24,12 @@ export default function ServicesLayout() {
           case "appeals/index":
             title = "Обращения";
             break;
+          case "tracking":
+            title = "Геомаршруты";
+            break;
+          case "tracking/index":
+            title = "Геомаршруты";
+            break;
           
         default:
             title = "Сервисы";

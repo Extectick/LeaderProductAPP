@@ -9,7 +9,15 @@ export default function MobileTabs() {
   const backgroundColor = useThemeColor({}, 'background');
   const textColor = useThemeColor({}, 'text');
   const auth = useContext(AuthContext);
-  const isAdmin = auth?.profile?.role?.name === 'admin' || auth?.profile?.role?.name === 'administrator';
+  const isAdmin = (() => {
+    const roleName = (auth?.profile?.role?.name || '').toLowerCase();
+    if (roleName.includes('admin')) return true;
+    const deptHasAdmin =
+      auth?.profile?.departmentRoles?.some((dr) => (dr.role?.name || '').toLowerCase().includes('admin')) ?? false;
+    const perms = (auth?.profile as any)?.permissions as string[] | undefined;
+    const permAdmin = Array.isArray(perms) && perms.some((p) => p?.toLowerCase?.().includes('admin'));
+    return deptHasAdmin || permAdmin;
+  })();
 
   return (
     <Tabs
