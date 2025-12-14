@@ -29,9 +29,8 @@ let periodicTimer: ReturnType<typeof setInterval> | null = null;
 let sendPromise: Promise<void> | null = null;
 let sendingStartedAt: number | null = null;
 
-function log(prefix: string, message: string, extra?: any) {
-  if (extra !== undefined) console.log(`${prefix} ${message}`, extra);
-  else console.log(`${prefix} ${message}`);
+function log(_prefix: string, _message: string, _extra?: any) {
+  // silence info logs in production
 }
 
 function warn(prefix: string, message: string, extra?: any) {
@@ -102,11 +101,6 @@ function scheduleRetry(logPrefix: string) {
 }
 
 async function sendOnceAxios(token: string, payload: SaveTrackingPointsRequest, logPrefix: string): Promise<SendResult> {
-  log(logPrefix, 'sendOnce start', {
-    routeId: payload.routeId,
-    points: payload.points.length,
-    tokenPreview: token ? `${token.slice(0, 8)}...${token.slice(-6)}` : 'empty',
-  });
   try {
     const resp = await axios.post<SaveTrackingPointsResponse>(
       `${API_BASE_URL}/tracking/points`,
@@ -120,13 +114,11 @@ async function sendOnceAxios(token: string, payload: SaveTrackingPointsRequest, 
       }
     );
     const result: SendResult = { ok: true, status: resp.status, data: resp.data };
-    log(logPrefix, 'sendOnce done', { status: result.status, ok: result.ok });
     return result;
   } catch (e: any) {
     const status: number | undefined = e?.response?.status;
     const message: string | undefined = e?.response?.data?.message || e?.message;
     const result: SendResult = { ok: false, status: status ?? 0, message };
-    log(logPrefix, 'sendOnce error', { status: result.status, message: result.message });
     return result;
   }
 }
@@ -136,7 +128,6 @@ async function sendWithRefresh(payload: SaveTrackingPointsRequest, logPrefix: st
   if (!token) token = await refreshToken();
   if (!token) return { ok: false, status: 401, message: 'Нет accessToken' };
 
-  log(logPrefix, 'sendWithRefresh start', { hasToken: !!token, routeId: payload.routeId, points: payload.points.length });
   const first = await sendOnceAxios(token, payload, `${logPrefix} [try-1]`);
   if (first.ok || first.status !== 401) return first;
 

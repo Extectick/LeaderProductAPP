@@ -79,7 +79,6 @@ export async function refreshToken(): Promise<string | null> {
 
   refreshInFlight = (async () => {
     try {
-      console.log('[token] refreshing...');
       const res = await axios.post(
         `${API_BASE_URL}/auth/token`,
         { refreshToken: storedRefreshToken },
@@ -96,7 +95,6 @@ export async function refreshToken(): Promise<string | null> {
       await saveTokens(accessToken, refreshToStore, profile);
       refreshAttempts = 0;
       lastWarnTs = 0;
-      console.log('[token] refresh success');
       return accessToken;
     } catch (e: any) {
       const status = e?.response?.status;

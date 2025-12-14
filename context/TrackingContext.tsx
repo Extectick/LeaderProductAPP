@@ -40,7 +40,6 @@ const locationOptions: Location.LocationTaskOptions = {
 };
 
 TaskManager.defineTask(BACKGROUND_TASK_NAME, async ({ data, error }) => {
-  console.log('[tracking-bg] task fired', { hasError: !!error, ts: new Date().toISOString() });
   if (error) {
     console.error('Location task error:', error);
     return;
@@ -48,7 +47,6 @@ TaskManager.defineTask(BACKGROUND_TASK_NAME, async ({ data, error }) => {
 
   const { locations } = data as Location.LocationTaskOptions & { locations: Location.LocationObject[] };
   if (!locations || locations.length === 0) return;
-  console.log('[tracking-bg] locations received', { count: locations.length, ts: new Date().toISOString() });
 
   const points: TrackingPointInput[] = locations.map((loc) => ({
     latitude: loc.coords.latitude,
@@ -103,7 +101,6 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   );
 
   useEffect(() => {
-    console.log('[tracking] provider mounted');
     (async () => {
       const [enabledRaw, storedRouteId] = await Promise.all([
         AsyncStorage.getItem(STORAGE_KEYS.enabled),
@@ -117,7 +114,6 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }
 
       if (enabledRaw === 'true') {
-        console.log('[tracking] auto-start after relaunch');
         await ensureLocationTaskRunning('[tracking-auto]');
         // пробуем выгрузить очередь, если что-то накопилось, используя сериализованную отправку
         await flushAndSync('[tracking]');
@@ -126,7 +122,6 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [flushAndSync, ensureLocationTaskRunning]);
 
   const startTracking = useCallback(async () => {
-    console.log('[tracking] startTracking called');
     const { status: fgStatus } = await Location.requestForegroundPermissionsAsync();
     if (fgStatus !== Location.PermissionStatus.GRANTED) {
       throw new Error('Разрешение на доступ к геолокации не выдано');
@@ -139,7 +134,6 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     try {
       await Location.startLocationUpdatesAsync(BACKGROUND_TASK_NAME, locationOptions);
-      console.log('[tracking] location updates started (manual)');
     } catch (e) {
       console.error('[tracking] failed to start location updates (manual)', e);
       throw e;
@@ -184,7 +178,6 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [trackingEnabled, ensureLocationTaskRunning]);
 
   const stopTracking = useCallback(async () => {
-    console.log('[tracking] stopTracking called');
     const hasStarted = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_TASK_NAME);
     if (hasStarted) {
       await Location.stopLocationUpdatesAsync(BACKGROUND_TASK_NAME);
@@ -202,7 +195,8 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       if (state === 'active') {
         void (async () => {
           const dbg = await getQueueDebug();
-          console.log('[tracking-debug] queue', dbg);
+          // оставляем возможность быстро проверить очередь в отладке
+          // console.log('[tracking-debug] queue', dbg);
         })();
       }
     });
