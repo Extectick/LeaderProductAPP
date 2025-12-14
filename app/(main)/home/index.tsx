@@ -40,10 +40,34 @@ const stats = [
 ];
 
 const links = [
-  { label: "Сервисы", href: "/services" },
-  { label: "Трекинг перемещений", href: "/services/tracking" },
-  { label: "Обращения", href: "/services/appeals" },
-  { label: "Профиль", href: "/profile" },
+  {
+    label: "Сервисы",
+    desc: "Все инструменты и разделы компании",
+    href: "/services",
+    icon: "apps-outline",
+    gradient: ["#6366F1", "#8B5CF6"],
+  },
+  {
+    label: "Задачи",
+    desc: "Актуальные поручения команды",
+    href: "/tasks",
+    icon: "list-outline",
+    gradient: ["#22C55E", "#16A34A"],
+  },
+  {
+    label: "Обращения",
+    desc: "Коммуникация с клиентами и партнёрами",
+    href: "/services/appeals",
+    icon: "chatbubbles-outline",
+    gradient: ["#FB923C", "#F97316"],
+  },
+  {
+    label: "Трекинг",
+    desc: "Маршруты и точки на карте",
+    href: "/services/tracking",
+    icon: "navigate-outline",
+    gradient: ["#0EA5E9", "#2563EB"],
+  },
 ];
 
 export default function HomeScreen() {
@@ -104,17 +128,33 @@ export default function HomeScreen() {
             </View>
 
             <Text style={[styles.sectionTitle, { marginTop: 18 }]}>Полезные ссылки</Text>
-            <View style={styles.card}>
+            <View style={styles.linksGrid}>
               {links.map((link) => (
-                <SpringButton
+                <Pressable
                   key={link.label}
                   onPress={() => router.push(link.href)}
-                  style={[styles.linkRow, { borderColor: "#E5E7EB" }]}
-                  androidRippleColor="#E5E7EB"
+                  style={({ pressed }) => [
+                    styles.linkCard,
+                    { transform: [{ scale: pressed ? 0.98 : 1 }] },
+                  ]}
                 >
-                  <Text style={styles.linkLabel}>{link.label}</Text>
-                  <Ionicons name="arrow-forward" size={16} color="#6B7280" />
-                </SpringButton>
+                  <LinearGradient
+                    colors={link.gradient}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.linkGradient}
+                  />
+                  <View style={{ gap: 8, flex: 1 }}>
+                    <View style={styles.linkIconWrap}>
+                      <Ionicons name={link.icon as any} size={18} color="#fff" />
+                    </View>
+                    <Text style={styles.linkTitle}>{link.label}</Text>
+                    <Text style={styles.linkDesc}>{link.desc}</Text>
+                  </View>
+                  <View style={styles.linkArrow}>
+                    <Ionicons name="arrow-forward" size={16} color="#111827" />
+                  </View>
+                </Pressable>
               ))}
             </View>
           </Animated.View>
@@ -307,17 +347,52 @@ const styles = StyleSheet.create({
   },
   statValue: { fontSize: 18, fontWeight: "800", color: "#111827" },
   statLabel: { color: "#4B5563", marginTop: 4 },
-  linkRow: {
+  linksGrid: {
     flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 10,
-    paddingHorizontal: 4,
-    borderWidth: 1,
-    borderRadius: 12,
-    marginBottom: 8,
+    flexWrap: "wrap",
+    gap: 12,
   },
-  linkLabel: { color: "#111827", fontWeight: "700" },
+  linkCard: {
+    flex: 1,
+    minWidth: 0,
+    flexBasis: "48%",
+    padding: 14,
+    borderRadius: 14,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    backgroundColor: "#FFFFFF",
+    shadowColor: "#000",
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
+  },
+  linkGradient: {
+    ...StyleSheet.absoluteFillObject,
+    opacity: 0.12,
+  },
+  linkIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#111827",
+  },
+  linkTitle: { fontSize: 16, fontWeight: "800", color: "#0F172A" },
+  linkDesc: { color: "#4B5563", fontSize: 13, lineHeight: 18 },
+  linkArrow: {
+    position: "absolute",
+    right: 12,
+    bottom: 12,
+    width: 28,
+    height: 28,
+    borderRadius: 9,
+    backgroundColor: "#F3F4F6",
+    alignItems: "center",
+    justifyContent: "center",
+  },
 });
 
 const fancy = StyleSheet.create({

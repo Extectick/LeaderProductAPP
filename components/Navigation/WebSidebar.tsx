@@ -1,26 +1,17 @@
 import { tabScreens } from '@/constants/tabScreens';
 import { useThemeColor } from '@/hooks/useThemeColor';
+import { useIsAdmin } from '@/hooks/useIsAdmin';
 import { Ionicons } from '@expo/vector-icons';
 import { usePathname, useRouter, type RelativePathString } from 'expo-router';
-import React, { useEffect, useRef, useState, useContext, useMemo } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Pressable, StyleSheet } from 'react-native';
-import { AuthContext } from '@/context/AuthContext';
 
 export default function WebSidebar() {
   const [expanded, setExpanded] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
   const widthAnim = useRef(new Animated.Value(60)).current;
-  const auth = useContext(AuthContext);
-  const isAdmin = useMemo(() => {
-    const roleName = (auth?.profile?.role?.name || '').toLowerCase();
-    if (roleName.includes('admin')) return true;
-    const deptHasAdmin =
-      auth?.profile?.departmentRoles?.some((dr) => (dr.role?.name || '').toLowerCase().includes('admin')) ?? false;
-    const perms = (auth?.profile as any)?.permissions as string[] | undefined;
-    const permAdmin = Array.isArray(perms) && perms.some((p) => p?.toLowerCase?.().includes('admin'));
-    return deptHasAdmin || permAdmin;
-  }, [auth?.profile]);
+  const { isAdmin } = useIsAdmin();
 
   const bgColor = useThemeColor({}, 'background');
   const textColor = useThemeColor({}, 'text');

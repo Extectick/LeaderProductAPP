@@ -25,6 +25,7 @@ interface Props {
   name: string;
   size: number;
   onPress: () => void;
+  description?: string;
 
   /** Градиент акцентного бейджа/фона */
   gradient?: [string, string];
@@ -68,6 +69,7 @@ export default function ServiceCard({
   size,
   onPress,
 
+  description,
   gradient,
   backgroundColor,
   textColor,
@@ -82,6 +84,8 @@ export default function ServiceCard({
 }: Props) {
   const themeCardBg = useThemeColor({}, 'cardBackground');
   const themeText = useThemeColor({}, 'text');
+  const themeBorder = useThemeColor({}, 'inputBorder' as any);
+  const themeSecondary = useThemeColor({}, 'secondaryText' as any);
 
   // Позволяем переопределять фон через props или containerStyle.backgroundColor
   const containerBg = (containerStyle as ViewStyle | undefined)?.backgroundColor;
@@ -153,11 +157,11 @@ export default function ServiceCard({
   };
 
   // Пропорции
-  const radius = (outerStyle.borderRadius as number) || 20;
-  const badge = Math.max(52, Math.floor(size * 0.32)); // круг под иконку
+  const radius = (outerStyle.borderRadius as number) || 18;
+  const badge = Math.max(48, Math.floor(size * 0.32)); // круг под иконку
 
   return (
-    <Animated.View style={[{ width: size, height: size }, outerStyle, aOuter]}>
+    <Animated.View style={[{ width: size, minHeight: size * 0.9 }, outerStyle, aOuter]}>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={name}
@@ -173,7 +177,7 @@ export default function ServiceCard({
           {
             borderRadius: radius,
             backgroundColor: cardBg,
-            borderColor: '#E5E7EB',
+            borderColor: themeBorder,
             opacity: disabled ? 0.6 : 1,
           },
           pressed && Platform.OS === 'ios' ? { opacity: 0.9 } : null,
@@ -234,21 +238,38 @@ export default function ServiceCard({
             <Ionicons name={icon as any} size={iconSize} color="#fff" />
           </LinearGradient>
 
-          <Text
-            numberOfLines={2}
-            style={[
-              styles.title,
-              { color: txtColor },
-              textStyle,
-            ]}
-          >
-            {name}
-          </Text>
+          <View style={{ gap: 4, width: '100%' }}>
+            <Text
+              numberOfLines={2}
+              style={[
+                styles.title,
+                { color: txtColor },
+                textStyle,
+              ]}
+            >
+              {name}
+            </Text>
+            {description ? (
+              <Text numberOfLines={3} style={styles.desc}>
+                {description}
+              </Text>
+            ) : null}
+          </View>
 
           {disabled && (
             <View style={styles.lockWrap}>
               <Ionicons name="lock-closed" size={14} color="#EF4444" />
               <Text style={styles.lockTxt}>Недоступно</Text>
+            </View>
+          )}
+
+          {!disabled && (
+            <View style={styles.ctaRow}>
+              <Ionicons name="sparkles-outline" size={14} color={c1} />
+              <Text style={[styles.ctaText, { color: themeSecondary }]} numberOfLines={1}>
+                Открыть
+              </Text>
+              <Ionicons name="arrow-forward" size={14} color={c1} />
             </View>
           )}
         </View>
@@ -275,7 +296,7 @@ const styles = StyleSheet.create({
   },
 
   content: {
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'center',
     gap: 10,
   },
@@ -292,8 +313,13 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 14,
     fontWeight: '700',
-    textAlign: 'center',
+    textAlign: 'left',
     letterSpacing: 0.2,
+  },
+  desc: {
+    fontSize: 12,
+    color: '#4B5563',
+    lineHeight: 16,
   },
 
   lockWrap: {
@@ -312,6 +338,21 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: '#B91C1C',
+  },
+  ctaRow: {
+    marginTop: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: '#EEF2FF',
+    borderRadius: 999,
+  },
+  ctaText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#312E81',
   },
 
   // декоративные элементы

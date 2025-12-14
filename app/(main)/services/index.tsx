@@ -11,7 +11,6 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
-import Animated, { FadeInDown, Layout } from 'react-native-reanimated';
 import ServiceCard from './ServiceCard';
 
 export default function ServicesScreen() {
@@ -74,12 +73,7 @@ export default function ServicesScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: background }]}>
-      <Animated.Text
-        entering={FadeInDown.springify().damping(14)}
-        style={[styles.title, { color: textColor }]}
-      >
-        Сервисы
-      </Animated.Text>
+      <Text style={[styles.title, { color: textColor }]}>Сервисы</Text>
 
       <FlatList
         data={services}
@@ -88,14 +82,12 @@ export default function ServicesScreen() {
         columnWrapperStyle={{ gap: spacing, marginBottom: spacing }}
         contentContainerStyle={{ padding: spacing, paddingTop: 0 }}
         showsVerticalScrollIndicator={false}
-        renderItem={({ item, index }) => (
-          <Animated.View
-            entering={FadeInDown.delay(index * 70).springify().damping(16)}
-            layout={Layout.springify()}
-          >
+        renderItem={({ item }) => (
+          <View>
             <ServiceCard
               icon={item.icon}
               name={item.name}
+              description={item.description}
               size={cardSize}
               onPress={() => {
                 router.push(item.route as any);
@@ -109,7 +101,7 @@ export default function ServicesScreen() {
                 backgroundColor: cardBackground,
               }}
             />
-          </Animated.View>
+          </View>
         )}
       />
     </View>

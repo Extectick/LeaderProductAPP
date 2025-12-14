@@ -10,7 +10,6 @@ import {
     useWindowDimensions,
     View,
 } from 'react-native';
-import Animated, { FadeIn, FadeInDown, Layout } from 'react-native-reanimated';
 import ServiceCard from './ServiceCard';
 
 export default function ServicesWebPage() {
@@ -75,28 +74,15 @@ export default function ServicesWebPage() {
       style={{ flex: 1, backgroundColor: background }}
       contentContainerStyle={[styles.page, { maxWidth: 1320 }]}
     >
-      <Animated.Text
-        entering={FadeInDown.duration(280)}
-        style={[styles.heading, { color: textColor }]}
-      >
-        Сервисы
-      </Animated.Text>
+      <Text style={[styles.heading, { color: textColor }]}>Сервисы</Text>
 
-      <Animated.View
-        entering={FadeIn.duration(240)}
-        layout={Layout.springify()}
-        style={[styles.grid, { gap }]}
-      >
+      <View style={[styles.grid, { gap }]}>
         {services.map((s, idx) => (
-          <Animated.View
-            key={s.name}
-            entering={FadeInDown.delay(idx * 40)}
-            layout={Layout.springify()}
-            style={{ width: cardSize }}
-          >
+          <View key={s.name} style={{ width: cardSize }}>
             <ServiceCard
               icon={s.icon}
               name={s.name}
+              description={s.description}
               size={cardSize}
               onPress={() => router.push(s.route as any)}
               gradient={s.gradient}
@@ -104,9 +90,9 @@ export default function ServicesWebPage() {
               containerStyle={{ backgroundColor: cardBackground }}
               disabled={s.disable}
             />
-          </Animated.View>
+          </View>
         ))}
-      </Animated.View>
+      </View>
     </ScrollView>
   );
 }

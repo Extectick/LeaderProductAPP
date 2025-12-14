@@ -164,10 +164,18 @@ export default function TrackingServiceScreen() {
   const [selectedPointIndex, setSelectedPointIndex] = useState<number | null>(null);
   const [controlledRegion, setControlledRegion] = useState<Region | null>(null);
   const mapRef = useRef<any>(null);
+  const [mapInteracting, setMapInteracting] = useState(false);
+  const handleMapTouchStart = useCallback(() => setMapInteracting(true), []);
+  const handleMapTouchEnd = useCallback(() => setMapInteracting(false), []);
+  useEffect(() => {
+    if (!mapInteracting) return;
+    const t = setTimeout(() => setMapInteracting(false), 1200);
+    return () => clearTimeout(t);
+  }, [mapInteracting]);
   const isWeb = Platform.OS === 'web';
   const screenH = Dimensions.get('window').height;
   const modalMapHeight = useMemo(
-    () => Math.min(isWeb ? screenH * 0.8 : screenH * 0.6, isWeb ? 900 : 520),
+    () => (isWeb ? Math.min(screenH * 0.82, 900) : screenH * 0.6),
     [isWeb, screenH]
   );
 
@@ -245,26 +253,37 @@ export default function TrackingServiceScreen() {
   }, [selectedUser, loadRoutes]);
 
   const activeRoute = useMemo(() => routes[0] || null, [routes]);
-  const points = activeRoute?.points ?? [];
+
+  const points = useMemo(() => {
+    const pts = activeRoute?.points ?? [];
+    return [...pts].sort((a, b) => {
+      const ta = new Date(a.recordedAt || 0).getTime();
+      const tb = new Date(b.recordedAt || 0).getTime();
+      return tb - ta; // новые сверху
+    });
+  }, [activeRoute]);
+
+  const maxDisplay = 20;
+  const limitedPoints = useMemo(() => points.slice(0, maxDisplay), [points]);
 
   const baseRegion: Region | null = useMemo(() => {
-    if (!points.length) return null;
-    const first = points[0];
+    if (!limitedPoints.length) return null;
+    const first = limitedPoints[0];
     return {
       latitude: first.latitude,
       longitude: first.longitude,
       latitudeDelta: 0.05,
       longitudeDelta: 0.05,
     };
-  }, [points]);
+  }, [limitedPoints]);
 
   const polylineCoords = useMemo(
     () =>
-      points.map((p) => ({
+      limitedPoints.map((p) => ({
         latitude: p.latitude,
         longitude: p.longitude,
       })),
-    [points]
+    [limitedPoints]
   );
 
   const hasPolyline = polylineCoords.length > 0;
@@ -272,12 +291,12 @@ export default function TrackingServiceScreen() {
 
   const pointLabels = useMemo(
     () =>
-      points.map((p, idx) => ({
+      limitedPoints.map((p, idx) => ({
         latitude: p.latitude,
         longitude: p.longitude,
         label: `${idx + 1}. ${formatDateTime(p.recordedAt)}`,
       })),
-    [points]
+    [limitedPoints]
   );
 
   useEffect(() => {
@@ -289,11 +308,15 @@ export default function TrackingServiceScreen() {
     setSelectedPointIndex(null);
   }, [baseRegion]);
 
+  useEffect(() => {
+    if (!mapModalVisible) setMapInteracting(false);
+  }, [mapModalVisible]);
+
   const focusPoint = useCallback(
     (idx: number) => {
-      if (!points[idx]) return;
+      if (!limitedPoints[idx]) return;
       setSelectedPointIndex(idx);
-      const p = points[idx];
+      const p = limitedPoints[idx];
       const region: Region = {
         latitude: p.latitude,
         longitude: p.longitude,
@@ -359,6 +382,7 @@ export default function TrackingServiceScreen() {
     <View style={{ flex: 1, backgroundColor: background }}>
       <ScrollView
         contentContainerStyle={[styles.scrollContent, isWeb && styles.webContentContainer]}
+        scrollEnabled={!mapInteracting}
         refreshControl={<RefreshControl refreshing={loadingRoutes} onRefresh={onRefresh} />}
       >
         <Text style={[styles.title, { color: textColor }]}>История перемещений</Text>
@@ -425,7 +449,7 @@ export default function TrackingServiceScreen() {
 
           <View style={[styles.filterRow, { marginTop: 8 }]}>
             <View style={{ flex: 1 }}>
-              <Text style={[styles.label, { color: mutedText }]}>Max accuracy (м)</Text>
+              <Text style={[styles.label, { color: mutedText }]}>Макс. точность (м)</Text>
               <TextInput
                 value={filters.maxAccuracy}
                 onChangeText={(v) => setFilters((prev) => ({ ...prev, maxAccuracy: v }))}
@@ -437,7 +461,7 @@ export default function TrackingServiceScreen() {
             </View>
             <View style={{ width: 12 }} />
             <View style={{ flex: 1 }}>
-              <Text style={[styles.label, { color: mutedText }]}>Max points</Text>
+              <Text style={[styles.label, { color: mutedText }]}>Макс. точек</Text>
               <TextInput
                 value={filters.maxPoints}
                 onChangeText={(v) => setFilters((prev) => ({ ...prev, maxPoints: v }))}
@@ -483,37 +507,55 @@ export default function TrackingServiceScreen() {
             >
               <Text style={styles.secondaryBtnText}>Открыть карту</Text>
             </Pressable>
-          </View>
+        </View>
           {nativeMapAvailable ? (
-            <MapView
-              ref={(ref: any) => (mapRef.current = ref)}
-              style={styles.map}
-              region={controlledRegion || baseRegion || undefined}
-              showsUserLocation={false}
-              showsMyLocationButton={false}
+            <View
+              onStartShouldSetResponderCapture={() => {
+                handleMapTouchStart();
+                return false;
+              }}
+              onResponderRelease={handleMapTouchEnd}
+              onResponderTerminate={handleMapTouchEnd}
             >
-              {polylineCoords.length > 1 && (
-                <Polyline coordinates={polylineCoords} strokeColor="#2563eb" strokeWidth={4} />
-              )}
-              {polylineCoords[0] && <Marker coordinate={polylineCoords[0]} pinColor="green" title="Старт" />}
-              {polylineCoords[polylineCoords.length - 1] && (
-                <Marker
-                  coordinate={polylineCoords[polylineCoords.length - 1]}
-                  pinColor="red"
-                  title="Финиш"
-                />
-              )}
-              {pointLabels.map((p, idx) => (
-                <Marker
-                  key={`pt-${idx}-${p.latitude}-${p.longitude}`}
-                  coordinate={{ latitude: p.latitude, longitude: p.longitude }}
-                  title={p.label}
-                  pinColor={selectedPointIndex === idx ? '#ef4444' : undefined}
-                />
-              ))}
-            </MapView>
+              <MapView
+                ref={(ref: any) => (mapRef.current = ref)}
+                style={styles.map}
+                region={controlledRegion || baseRegion || undefined}
+                showsUserLocation={false}
+                showsMyLocationButton={false}
+              >
+                {polylineCoords.length > 1 && (
+                  <Polyline coordinates={polylineCoords} strokeColor="#2563eb" strokeWidth={4} />
+                )}
+                {polylineCoords[0] && <Marker coordinate={polylineCoords[0]} pinColor="green" title="Старт" />}
+                {polylineCoords[polylineCoords.length - 1] && (
+                  <Marker
+                    coordinate={polylineCoords[polylineCoords.length - 1]}
+                    pinColor="red"
+                    title="Финиш"
+                  />
+                )}
+                {pointLabels.map((p, idx) => (
+                  <Marker
+                    key={`pt-${idx}-${p.latitude}-${p.longitude}`}
+                    coordinate={{ latitude: p.latitude, longitude: p.longitude }}
+                    title={p.label}
+                    pinColor={selectedPointIndex === idx ? '#ef4444' : undefined}
+                  />
+                ))}
+              </MapView>
+            </View>
           ) : hasPolyline ? (
-            <LeafletMap points={pointLabels} selectedIndex={selectedPointIndex} />
+            <View
+              onStartShouldSetResponderCapture={() => {
+                handleMapTouchStart();
+                return false;
+              }}
+              onResponderRelease={handleMapTouchEnd}
+              onResponderTerminate={handleMapTouchEnd}
+            >
+              <LeafletMap points={pointLabels} selectedIndex={selectedPointIndex} />
+            </View>
           ) : (
             <Text style={{ color: mutedText }}>
               Карта недоступна или нет точек для отображения. Проверьте трек.
@@ -529,7 +571,7 @@ export default function TrackingServiceScreen() {
             <Text style={{ color: mutedText }}>Нет точек за выбранный период.</Text>
           ) : (
             <View style={{ gap: 8 }}>
-              {points.map((p, idx) => (
+              {limitedPoints.map((p, idx) => (
                 <Pressable
                   key={p.id}
                   onPress={() => focusPoint(idx)}
@@ -545,12 +587,12 @@ export default function TrackingServiceScreen() {
                     <Text style={[styles.pointTime, { color: textColor }]}>
                       {formatDateTime(p.recordedAt)}
                     </Text>
-                    <Text style={{ color: mutedText, fontSize: 12 }}>
+                    <Text style={{ color: mutedText, fontSize: 12, flexWrap: 'wrap' }}>
                       {p.latitude.toFixed(5)}, {p.longitude.toFixed(5)}
                     </Text>
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={{ color: mutedText, fontSize: 12 }}>
+                    <Text style={{ color: mutedText, fontSize: 12, flexWrap: 'wrap', maxWidth: 100 }}>
                       {p.eventType === 'STOP' ? 'стоп' : 'движение'}
                     </Text>
                     {p.accuracy != null && (
@@ -559,6 +601,11 @@ export default function TrackingServiceScreen() {
                   </View>
                 </Pressable>
               ))}
+              {points.length > limitedPoints.length && (
+                <Text style={{ color: mutedText, fontSize: 12 }}>
+                  Показаны первые {limitedPoints.length} точек из {points.length}.
+                </Text>
+              )}
             </View>
           )}
         </View>
@@ -748,7 +795,15 @@ export default function TrackingServiceScreen() {
         animationType="none"
         onRequestClose={() => setMapModalVisible(false)}
       >
-        <View style={[styles.modalBackdrop, { padding: isWeb ? 14 : 10 }]}>
+        <View
+          style={[
+            styles.modalBackdrop,
+            {
+              padding: isWeb ? 8 : 12,
+              justifyContent: isWeb ? 'flex-end' : 'center',
+            },
+          ]}
+        >
           <View
             style={[
               styles.fullscreenModal,
@@ -770,51 +825,111 @@ export default function TrackingServiceScreen() {
                 isWeb ? styles.fullscreenContentWeb : styles.fullscreenContentMobile,
               ]}
             >
-              <View style={[styles.fullscreenMap, { minHeight: modalMapHeight }]}>
-                {nativeMapAvailable ? (
-                  <MapView
-                    ref={(ref) => (mapRef.current = ref)}
-                    style={StyleSheet.absoluteFill}
-                    region={controlledRegion || baseRegion || undefined}
-                    showsUserLocation={false}
-                    showsMyLocationButton={false}
+              <View style={styles.modalMapColumn}>
+                <View
+                  style={[
+                    styles.fullscreenMap,
+                    {
+                      minHeight: modalMapHeight,
+                      height: isWeb ? undefined : modalMapHeight,
+                    },
+                  ]}
+                  onStartShouldSetResponderCapture={() => {
+                    handleMapTouchStart();
+                    return false;
+                  }}
+                  onResponderRelease={handleMapTouchEnd}
+                  onResponderTerminate={handleMapTouchEnd}
+                >
+                  {nativeMapAvailable ? (
+                    <MapView
+                      ref={(ref) => (mapRef.current = ref)}
+                      style={StyleSheet.absoluteFill}
+                      region={controlledRegion || baseRegion || undefined}
+                      showsUserLocation={false}
+                      showsMyLocationButton={false}
+                    >
+                      {polylineCoords.length > 1 && (
+                        <Polyline coordinates={polylineCoords} strokeColor="#2563eb" strokeWidth={4} />
+                      )}
+                      {polylineCoords[0] && (
+                        <Marker coordinate={polylineCoords[0]} pinColor="green" title="Старт" />
+                      )}
+                      {polylineCoords[polylineCoords.length - 1] && (
+                        <Marker
+                          coordinate={polylineCoords[polylineCoords.length - 1]}
+                          pinColor="red"
+                          title="Финиш"
+                        />
+                      )}
+                      {pointLabels.map((p, idx) => (
+                        <Marker
+                          key={`pt-modal-${idx}-${p.latitude}-${p.longitude}`}
+                          coordinate={{ latitude: p.latitude, longitude: p.longitude }}
+                          title={p.label}
+                          pinColor={selectedPointIndex === idx ? '#ef4444' : undefined}
+                        />
+                      ))}
+                    </MapView>
+                  ) : hasPolyline ? (
+                    <LeafletMap
+                      points={pointLabels}
+                      selectedIndex={selectedPointIndex}
+                      height={modalMapHeight}
+                    />
+                  ) : (
+                    <Text style={{ color: mutedText }}>Нет точек для отображения</Text>
+                  )}
+                </View>
+
+                {!isWeb && (
+                  <View
+                    style={[
+                      styles.mobilePointsPanel,
+                      { borderColor: mutedText, backgroundColor: cardBackground },
+                    ]}
                   >
-                    {polylineCoords.length > 1 && (
-                      <Polyline coordinates={polylineCoords} strokeColor="#2563eb" strokeWidth={4} />
-                    )}
-                    {polylineCoords[0] && (
-                      <Marker coordinate={polylineCoords[0]} pinColor="green" title="Старт" />
-                    )}
-                    {polylineCoords[polylineCoords.length - 1] && (
-                      <Marker
-                        coordinate={polylineCoords[polylineCoords.length - 1]}
-                        pinColor="red"
-                        title="Финиш"
-                      />
-                    )}
-                    {pointLabels.map((p, idx) => (
-                      <Marker
-                        key={`pt-modal-${idx}-${p.latitude}-${p.longitude}`}
-                        coordinate={{ latitude: p.latitude, longitude: p.longitude }}
-                        title={p.label}
-                        pinColor={selectedPointIndex === idx ? '#ef4444' : undefined}
-                      />
-                    ))}
-                  </MapView>
-                ) : hasPolyline ? (
-                  <LeafletMap
-                    points={pointLabels}
-                    selectedIndex={selectedPointIndex}
-                    height={modalMapHeight}
-                  />
-                ) : (
-                  <Text style={{ color: mutedText }}>Нет точек для отображения</Text>
+                    <Text style={[styles.blockTitle, { color: textColor, marginBottom: 6 }]}>
+                      Точки ({limitedPoints.length})
+                    </Text>
+                    <ScrollView
+                      contentContainerStyle={{ gap: 8, paddingBottom: 16, paddingHorizontal: 2 }}
+                      style={{
+                        maxHeight: Math.min(screenH * 0.5, 480),
+                        backgroundColor: cardBackground,
+                      }}
+                    >
+                      {limitedPoints.map((p, idx) => (
+                        <Pressable
+                          key={`sidebar-m-${p.id}`}
+                          onPress={() => focusPoint(idx)}
+                          style={[
+                            styles.pointItem,
+                            {
+                              borderColor:
+                                selectedPointIndex === idx ? '#2563eb' : 'rgba(0,0,0,0.05)',
+                            },
+                          ]}
+                        >
+                          <Text style={[styles.pointTime, { color: textColor }]}>
+                            {formatDateTime(p.recordedAt)}
+                          </Text>
+                          <Text style={{ color: mutedText, fontSize: 12, flexWrap: 'wrap' }}>
+                            {p.latitude.toFixed(5)}, {p.longitude.toFixed(5)}
+                          </Text>
+                          <Text style={{ color: mutedText, fontSize: 12, flexWrap: 'wrap' }}>
+                            {p.eventType === 'STOP' ? 'стоп' : 'движение'}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </ScrollView>
+                  </View>
                 )}
               </View>
-              {isWeb ? (
+              {isWeb && (
                 <View style={[styles.fullscreenSidebar, { borderColor: mutedText }]}>
                   <ScrollView contentContainerStyle={{ padding: 10, gap: 8 }}>
-                    {points.map((p, idx) => (
+                    {limitedPoints.map((p, idx) => (
                       <Pressable
                         key={`sidebar-${p.id}`}
                         onPress={() => focusPoint(idx)}
@@ -829,41 +944,10 @@ export default function TrackingServiceScreen() {
                         <Text style={[styles.pointTime, { color: textColor }]}>
                           {formatDateTime(p.recordedAt)}
                         </Text>
-                        <Text style={{ color: mutedText, fontSize: 12 }}>
+                        <Text style={{ color: mutedText, fontSize: 12, flexWrap: 'wrap' }}>
                           {p.latitude.toFixed(5)}, {p.longitude.toFixed(5)}
                         </Text>
-                        <Text style={{ color: mutedText, fontSize: 12 }}>
-                          {p.eventType === 'STOP' ? 'стоп' : 'движение'}
-                        </Text>
-                      </Pressable>
-                    ))}
-                  </ScrollView>
-                </View>
-              ) : (
-                <View style={[styles.mobilePointsPanel, { borderColor: mutedText }]}>
-                  <Text style={[styles.blockTitle, { color: textColor, marginBottom: 6 }]}>
-                    Точки ({points.length})
-                  </Text>
-                  <ScrollView contentContainerStyle={{ gap: 8 }}>
-                    {points.map((p, idx) => (
-                      <Pressable
-                        key={`sidebar-m-${p.id}`}
-                        onPress={() => focusPoint(idx)}
-                        style={[
-                          styles.pointItem,
-                          {
-                            borderColor:
-                              selectedPointIndex === idx ? '#2563eb' : 'rgba(0,0,0,0.05)',
-                          },
-                        ]}
-                      >
-                        <Text style={[styles.pointTime, { color: textColor }]}>
-                          {formatDateTime(p.recordedAt)}
-                        </Text>
-                        <Text style={{ color: mutedText, fontSize: 12 }}>
-                          {p.latitude.toFixed(5)}, {p.longitude.toFixed(5)}
-                        </Text>
-                        <Text style={{ color: mutedText, fontSize: 12 }}>
+                        <Text style={{ color: mutedText, fontSize: 12, flexWrap: 'wrap' }}>
                           {p.eventType === 'STOP' ? 'стоп' : 'движение'}
                         </Text>
                       </Pressable>
@@ -996,6 +1080,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 12,
     minHeight: 400,
+    overflow: 'hidden',
   },
   webFullscreenModal: {
     width: '100%',
@@ -1004,8 +1089,11 @@ const styles = StyleSheet.create({
     maxHeight: '92%',
   },
   mobileFullscreenModal: {
-    width: '100%',
-    maxHeight: '95%',
+    width: '94%',
+    height: '97%',
+    alignSelf: 'center',
+    maxWidth: 720,
+    paddingHorizontal: 10,
   },
   fullscreenContent: {
     gap: 12,
@@ -1017,6 +1105,7 @@ const styles = StyleSheet.create({
   },
   fullscreenContentMobile: {
     flexDirection: 'column',
+    flex: 1,
   },
   fullscreenMap: {
     flex: 1,
@@ -1031,5 +1120,7 @@ const styles = StyleSheet.create({
     marginTop: 12,
     borderTopWidth: StyleSheet.hairlineWidth,
     paddingTop: 8,
+    paddingBottom: 6,
   },
+  modalMapColumn: { flex: 1 },
 });

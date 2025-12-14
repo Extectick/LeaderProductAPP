@@ -1,4 +1,4 @@
-import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -17,12 +17,12 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { Redirect } from 'expo-router';
 
-import BrandedBackground from '@/components/BrandedBackground';
 import ShimmerButton from '@/components/ShimmerButton';
-import { AuthContext } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { gradientColors, ThemeKey } from '@/constants/Colors';
+import { useIsAdmin } from '@/hooks/useIsAdmin';
 import {
   getDepartments,
   getRoles,
@@ -79,7 +79,7 @@ type FormState = {
 const STATUS_OPTIONS: ProfileStatus[] = ['ACTIVE', 'PENDING', 'BLOCKED'];
 
 export default function AdminScreen() {
-  const auth = useContext(AuthContext);
+  const { isAdmin, isCheckingAdmin } = useIsAdmin();
   const { theme, themes } = useTheme();
   const colors = themes[theme];
   const grad = gradientColors[theme as ThemeKey] || gradientColors.leaderprod;
@@ -123,16 +123,6 @@ export default function AdminScreen() {
   const [initialForm, setInitialForm] = useState<FormState | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const isAdmin = useMemo(() => {
-    const roleName = (auth?.profile?.role?.name || '').toLowerCase();
-    if (roleName.includes('admin')) return true;
-    const deptHasAdmin =
-      auth?.profile?.departmentRoles?.some((dr) => (dr.role?.name || '').toLowerCase().includes('admin')) ?? false;
-    const perms = (auth?.profile as any)?.permissions as string[] | undefined;
-    const permAdmin = Array.isArray(perms) && perms.some((p) => p?.toLowerCase?.().includes('admin'));
-    return deptHasAdmin || permAdmin;
-  }, [auth?.profile]);
 
   const loadRefs = useCallback(async () => {
     try {
@@ -197,11 +187,13 @@ export default function AdminScreen() {
   );
 
   useEffect(() => {
+    if (!isAdmin) return;
     void loadRefs();
     void loadUsers('');
-  }, [loadRefs, loadUsers]);
+  }, [isAdmin, loadRefs, loadUsers]);
 
   useEffect(() => {
+    if (!isAdmin) return;
     if (searchTimer.current) clearTimeout(searchTimer.current);
     searchTimer.current = setTimeout(() => {
       void loadUsers(search.trim());
@@ -209,7 +201,7 @@ export default function AdminScreen() {
     return () => {
       if (searchTimer.current) clearTimeout(searchTimer.current);
     };
-  }, [search, loadUsers]);
+  }, [search, loadUsers, isAdmin]);
 
   const isDirty = useMemo(() => {
     if (!initialForm) return false;
@@ -448,16 +440,16 @@ export default function AdminScreen() {
       .finally(() => setDeptUsersLoading(false));
   }, [deptUsersModal]);
 
+  if (isCheckingAdmin) {
+    return null;
+  }
+
   if (!isAdmin) {
-    return (
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-        <Text style={{ fontSize: 18 }}>Недостаточно прав</Text>
-      </View>
-    );
+    return <Redirect href={{ pathname: '/access-denied', params: { reason: 'no_permission' } }} />;
   }
 
   return (
-    <BrandedBackground speed={1.1} style={{ flex: 1 }}>
+    <View style={[styles.screen, { backgroundColor: colors.background }]}>
       <View style={styles.container}>
         <Text style={styles.title}>Администрирование</Text>
         <View style={styles.card}>
@@ -974,13 +966,23 @@ export default function AdminScreen() {
           </View>
         </View>
       </Modal>
-    </BrandedBackground>
+    </View>
   );
 }
 
 const getStyles = (colors: any) =>
   StyleSheet.create({
-    container: { flex: 1, padding: 12 },
+    screen: { flex: 1 },
+    container: {
+      flex: 1,
+      padding: 16,
+      gap: 10,
+      width: '100%',
+      ...Platform.select({
+        web: { maxWidth: 1080, alignSelf: 'center', width: '100%' },
+        default: {},
+      }),
+    },
     title: { fontSize: 22, fontWeight: '800', color: colors.text, marginBottom: 10 },
     tabsRow: { flexDirection: 'row', gap: 8 },
     tabBtn: {

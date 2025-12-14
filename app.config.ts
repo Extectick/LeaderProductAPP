@@ -28,7 +28,26 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     permissions: [
       "ACCESS_COARSE_LOCATION",
       "ACCESS_FINE_LOCATION",
-      "ACCESS_BACKGROUND_LOCATION"
+      "ACCESS_BACKGROUND_LOCATION",
+      // foreground service для фонового трекинга (Android 10+ / SDK 34)
+      "FOREGROUND_SERVICE",
+      "FOREGROUND_SERVICE_LOCATION",
+      // нотификация обязательна для foreground service
+      "POST_NOTIFICATIONS",
+      // мультимедиа
+      "CAMERA",
+      "READ_MEDIA_IMAGES",
+      "READ_MEDIA_VIDEO",
+      "READ_MEDIA_AUDIO",
+      "READ_EXTERNAL_STORAGE",
+      // аудио/микрофон
+      "RECORD_AUDIO",
+      // bluetooth на будущее (скан/коннект)
+      "BLUETOOTH_SCAN",
+      "BLUETOOTH_CONNECT",
+      // удобства
+      "VIBRATE",
+      "WAKE_LOCK"
     ],
     foregroundService: {
       notificationTitle: "Отслеживание маршрута",

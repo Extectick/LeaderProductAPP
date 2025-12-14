@@ -28,6 +28,12 @@ TaskManager.defineTask(BACKGROUND_TASK_NAME, async ({ data, error }) => {
   const { locations } = data as Location.LocationTaskOptions & { locations: Location.LocationObject[] };
   if (!locations || locations.length === 0) return;
 
+  const token = await AsyncStorage.getItem('accessToken');
+  if (!token) {
+    console.warn('Skip sending tracking points: no access token');
+    return;
+  }
+
   const points: TrackingPointInput[] = locations.map((loc) => ({
     latitude: loc.coords.latitude,
     longitude: loc.coords.longitude,
@@ -143,4 +149,3 @@ export function useTracking(): TrackingContextValue {
   }
   return ctx;
 }
-

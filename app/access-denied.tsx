@@ -3,7 +3,6 @@ import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { IconSymbol } from '@/components/ui/IconSymbol';
 import { Colors } from '@/constants/Colors';
-import { logout } from '@/utils/authService';
 import { useNavigation } from '@react-navigation/native';
 import { RelativePathString, useLocalSearchParams, useRouter } from 'expo-router';
 import { StyleSheet, View } from 'react-native';
@@ -42,11 +41,6 @@ export default function AccessDeniedScreen() {
           onPress={() => router.replace('/home' as RelativePathString)}
           style={styles.button}
           title="Обновить"
-        />
-        <AnimatedButton 
-          onPress={() => logout()}
-          style={styles.button}
-          title="Выход"
         />
       </View>
     </ThemedView>

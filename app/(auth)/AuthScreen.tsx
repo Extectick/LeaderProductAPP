@@ -14,11 +14,13 @@ import {
   ScrollView,
   StatusBar,
   StyleSheet,
+  StyleProp,
   Switch,
   Text,
   TextInput,
   TouchableOpacity,
   View,
+  ViewStyle,
 } from 'react-native';
 import 'react-native-reanimated';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -33,6 +35,7 @@ import { AuthContext, isValidProfile } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { API_BASE_URL } from '@/utils/config';
 import { login, register, verify } from '@/utils/authService';
+import { applyWebAutofillFix } from '@/utils/webAutofillFix';
 
 /** ─── Module-level cache to defeat StrictMode remounts in dev ─── */
 const __authInitCache: {
@@ -80,6 +83,14 @@ const ROUTES = {
   PROFILE: '/ProfileSelectionScreen' as Href,
 } as const;
 
+function normalizeError(err: any): string {
+  const raw = err?.message || (typeof err === 'string' ? err : '');
+  if (/network request failed|failed to fetch|network error/i.test(raw)) {
+    return 'Нет соединения с сервером';
+  }
+  return raw || 'Произошла ошибка. Попробуйте снова.';
+}
+
 /* ───── screen ───── */
 export default function AuthScreen() {
   const router = useRouter();
@@ -98,8 +109,14 @@ export default function AuthScreen() {
   const colors = themes[theme];
   const grad = gradientColors[theme as keyof typeof gradientColors] || gradientColors.light;
   const btnGradient = useMemo(() => [grad[0], grad[1]] as [string, string], [grad]);
-  const styles = getStyles(colors);
+  const styles = useMemo(() => getStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
+
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      applyWebAutofillFix(colors.inputBackground, colors.text);
+    }
+  }, [colors.inputBackground, colors.text]);
 
   /* state */
   const [tab, setTab] = useState<0 | 1>(0); // 0=login, 1=register
@@ -274,6 +291,7 @@ export default function AuthScreen() {
     if (!canLogin) {
       if (!email.trim()) setEmailErr('Укажите email');
       if (!password) setPassErr('Введите пароль');
+      setBannerError('Проверьте обязательные поля');
       return;
     }
     const em = normalizeEmail(email);
@@ -309,8 +327,9 @@ export default function AuthScreen() {
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e: any) {
+      const msg = normalizeError(e);
       setBannerError(
-        e?.message?.includes('Не удалось обновить токен') ? 'Неверный email или пароль' : e?.message || 'Ошибка при входе'
+        msg.includes('обновить токен') ? 'Неверный email или пароль' : msg
       );
     } finally {
       setLoading(false);
@@ -322,6 +341,7 @@ export default function AuthScreen() {
       if (!email.trim()) setEmailErr('Укажите email');
       if (!password) setPassErr('Введите пароль');
       if (!passwordRepeat) setPassRepeatErr('Повторите пароль');
+      setBannerError('Проверьте обязательные поля');
       return;
     }
     const em = normalizeEmail(email);
@@ -337,7 +357,7 @@ export default function AuthScreen() {
         await AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_FLAG, '1');
       }
     } catch (e: any) {
-      setBannerError(e?.message || 'Ошибка регистрации');
+      setBannerError(normalizeError(e));
     } finally {
       setLoading(false);
     }
@@ -354,7 +374,7 @@ export default function AuthScreen() {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       router.replace(ROUTES.PROFILE);
     } catch (e: any) {
-      setBannerError(e?.message || 'Ошибка подтверждения');
+      setBannerError(normalizeError(e));
     } finally {
       setLoading(false);
     }
@@ -367,7 +387,7 @@ export default function AuthScreen() {
       await Haptics.selectionAsync();
       // TODO: вызовите ваш API: await resendVerification(email)
     } catch {
-      setBannerError('Не удалось отправить код. Попробуйте позже.');
+      setBannerError('Не удалось отправить код. Проверьте подключение и попробуйте позже.');
     }
   };
 
@@ -423,6 +443,34 @@ export default function AuthScreen() {
         >
           <Text style={{ color: variant === 'filled' ? colors.buttonText : colors.text, fontWeight: '700' }}>{title}</Text>
         </TouchableOpacity>
+      </Animated.View>
+    );
+  };
+
+  const BounceButton: React.FC<{
+    title: string;
+    onPress: () => void;
+    loading?: boolean;
+    gradientColors: [string, string];
+    style?: StyleProp<ViewStyle>;
+  }> = ({ title, onPress, loading, gradientColors, style }) => {
+    const scale = useRef(new Animated.Value(1)).current;
+    const pressIn = () =>
+      Animated.spring(scale, { toValue: 0.97, useNativeDriver: true, friction: 6, tension: 120 }).start();
+    const pressOut = () =>
+      Animated.spring(scale, { toValue: 1, useNativeDriver: true, friction: 6, tension: 120 }).start();
+    return (
+      <Animated.View style={{ transform: [{ scale }] }}>
+        <ShimmerButton
+          title={title}
+          onPress={onPress}
+          loading={loading}
+          haptics
+          gradientColors={gradientColors}
+          style={style}
+          onPressIn={pressIn}
+          onPressOut={pressOut}
+        />
       </Animated.View>
     );
   };
@@ -592,11 +640,10 @@ export default function AuthScreen() {
                       </View>
 
                       <View style={styles.buttonWrap}>
-                        <ShimmerButton
+                        <BounceButton
                           title="Войти"
                           onPress={handleLogin}
                           loading={loading}
-                          haptics
                           gradientColors={btnGradient}
                           style={{ height: BTN_HEIGHT }}
                         />
@@ -699,11 +746,10 @@ export default function AuthScreen() {
                       </View>
 
                       <View style={styles.buttonWrap}>
-                        <ShimmerButton
+                        <BounceButton
                           title="Зарегистрироваться"
                           onPress={handleRegister}
                           loading={loading}
-                          haptics
                           gradientColors={btnGradient}
                           style={{ height: BTN_HEIGHT }}
                         />
