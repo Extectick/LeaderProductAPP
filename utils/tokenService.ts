@@ -3,15 +3,18 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import { apiClient } from './apiClient';
 import { API_BASE_URL } from './config';
+import axios from 'axios';
 
 const ACCESS_KEY = 'accessToken';
 const REFRESH_KEY = 'refreshToken';
 const PROFILE_KEY = 'profile';
 
-const MAX_REFRESH_ATTEMPTS = 3;
+const MAX_REFRESH_ATTEMPTS = 10;
 let refreshAttempts = 0;
 let refreshInFlight: Promise<string | null> | null = null;
 let lastWarnTs = 0;
+
+const REFRESH_TIMEOUT_MS = 15000;
 
 export async function getAccessToken(): Promise<string | null> {
   return AsyncStorage.getItem(ACCESS_KEY);
@@ -55,10 +58,10 @@ export function resetRefreshBackoff() {
 export async function refreshToken(): Promise<string | null> {
   if (refreshInFlight) return refreshInFlight;
 
-  // ⬇️ СНАЧАЛА проверяем, есть ли refreshToken в хранилище
+  // СНАЧАЛА проверяем, есть ли refreshToken в хранилище
   const storedRefreshToken = await getRefreshToken();
   if (!storedRefreshToken) {
-    // Нечего обновлять — не увеличиваем попытки, не логируем
+    console.warn('[token] refresh skipped: no refresh token');
     refreshAttempts = 0; // на всякий случай сбросим бэкофф
     return null;
   }
@@ -76,28 +79,29 @@ export async function refreshToken(): Promise<string | null> {
 
   refreshInFlight = (async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/auth/token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken: storedRefreshToken }),
-      });
-      const json = await res.json().catch(() => ({} as any));
-      if (!res.ok) {
-        throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
-      }
-      const payload = json?.data ?? json;
+      console.log('[token] refreshing...');
+      const res = await axios.post(
+        `${API_BASE_URL}/auth/token`,
+        { refreshToken: storedRefreshToken },
+        { timeout: REFRESH_TIMEOUT_MS, headers: { 'Content-Type': 'application/json' } }
+      );
+      const payload = res.data?.data ?? res.data;
       const accessToken: string | undefined = payload?.accessToken;
       const newRefreshToken: string | undefined = payload?.refreshToken;
       const profile = payload?.profile;
 
       if (!accessToken) throw new Error('Отсутствует accessToken в ответе');
 
-      await saveTokens(accessToken, newRefreshToken ?? storedRefreshToken, profile);
+      const refreshToStore = newRefreshToken ?? storedRefreshToken;
+      await saveTokens(accessToken, refreshToStore, profile);
       refreshAttempts = 0;
       lastWarnTs = 0;
+      console.log('[token] refresh success');
       return accessToken;
-    } catch (e) {
-      console.error('Ошибка при обновлении токена:', e);
+    } catch (e: any) {
+      const status = e?.response?.status;
+      const msg = e?.response?.data?.message || e?.message || 'Refresh error';
+      console.error('[token] refresh error', { status, msg });
       return null;
     } finally {
       refreshInFlight = null;

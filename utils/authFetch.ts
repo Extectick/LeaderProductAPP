@@ -4,6 +4,7 @@ import axios, { AxiosError, AxiosInstance, AxiosRequestConfig, AxiosResponse } f
 import Constants from 'expo-constants';
 import { router } from 'expo-router';
 import { API_BASE_URL } from './config';
+import { refreshToken as refreshTokenService, saveTokens } from './tokenService';
 
 let isRefreshing = false;
 let refreshSubscribers: ((token: string) => void)[] = [];
@@ -54,25 +55,23 @@ apiClient.interceptors.response.use(
       isRefreshing = true;
 
       try {
-        const refreshToken = await AsyncStorage.getItem('refreshToken');
-        if (!refreshToken) throw new Error('Refresh token is missing');
+        const newAccess = await refreshTokenService();
+        if (!newAccess) {
+          throw new Error('Refresh failed');
+        }
 
-        // Запрос обновления токена (замените URL на ваш)
-        const { data } = await axios.post(`${API_BASE_URL}/auth/token`, { refreshToken });
-
-        if (!data.accessToken) throw new Error('No access token in response');
-
-        await AsyncStorage.setItem('accessToken', data.accessToken);
-        await AsyncStorage.setItem('refreshToken', data.refreshToken);
-
-        apiClient.defaults.headers.common['Authorization'] = `Bearer ${data.accessToken}`;
-        onRefreshed(data.accessToken);
+        // Подстрахуемся: если tokenService сохранил новый refresh, он уже в AsyncStorage
+        // Убедимся, что клиент пойдёт с новым access
+        // Обновляем дефолтные заголовки и сам оригинальный запрос
+        apiClient.defaults.headers.common['Authorization'] = `Bearer ${newAccess}`;
+        if (originalRequest.headers) {
+          originalRequest.headers.Authorization = `Bearer ${newAccess}`;
+        }
+        onRefreshed(newAccess);
 
         return apiClient(originalRequest);
       } catch (refreshError) {
-        await AsyncStorage.removeItem('accessToken');
-        await AsyncStorage.removeItem('refreshToken');
-        router.replace('/(auth)/AuthScreen');
+        // Не выпиливаем токены в фоне, чтобы не дропать сессию при временных сбоях
         return Promise.reject(refreshError);
       } finally {
         isRefreshing = false;
@@ -91,7 +90,7 @@ apiClient.interceptors.response.use(
 export async function authFetch<Req = any, Res = any>(
   url: string,
   config?: Omit<AxiosRequestConfig, 'url' | 'data'> & { body?: Req }
-): Promise<{ ok: boolean; data?: Res; message?: string }> {
+): Promise<{ ok: boolean; data?: Res; message?: string; status?: number }> {
   try {
     const axiosConfig: AxiosRequestConfig = {
       url,
@@ -112,11 +111,14 @@ export async function authFetch<Req = any, Res = any>(
     return {
       ok: true,
       data: payload?.data ?? payload,
+      status: response.status,
     };
   } catch (error) {
     let message = 'Unknown error';
+    let status: number | undefined = undefined;
 
     if (axios.isAxiosError(error)) {
+      status = error.response?.status;
       message = error.response?.data?.message || error.message;
     } else if (error instanceof Error) {
       message = error.message;
@@ -125,6 +127,7 @@ export async function authFetch<Req = any, Res = any>(
     return {
       ok: false,
       message,
+      status,
     };
   }
 }

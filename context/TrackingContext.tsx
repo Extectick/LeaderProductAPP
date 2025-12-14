@@ -1,13 +1,21 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
-import { sendTrackingPoints, TrackingPointInput } from '../utils/trackingApi';
+import { AppState } from 'react-native';
+
+import { TrackingPointInput } from '@/utils/trackingApi';
+import {
+  clearRouteIdIfIdle,
+  enqueueTrackingPoints,
+  flushTrackingQueue,
+  getQueueDebug,
+  getTrackingRouteId,
+} from '@/utils/trackingUploader';
 
 const BACKGROUND_TASK_NAME = 'BACKGROUND_LOCATION_TRACKING';
 const STORAGE_KEYS = {
   enabled: 'tracking:enabled',
-  routeId: 'tracking:routeId',
 };
 
 type TrackingContextValue = {
@@ -19,7 +27,20 @@ type TrackingContextValue = {
 
 const TrackingContext = createContext<TrackingContextValue | undefined>(undefined);
 
+const locationOptions: Location.LocationTaskOptions = {
+  accuracy: Location.Accuracy.High,
+  timeInterval: 15000,
+  distanceInterval: 0, // форсим таймер даже без движения
+  showsBackgroundLocationIndicator: false,
+  pausesUpdatesAutomatically: false,
+  foregroundService: {
+    notificationTitle: 'Отслеживание маршрута',
+    notificationBody: 'Приложение собирает геоданные в фоне.',
+  },
+};
+
 TaskManager.defineTask(BACKGROUND_TASK_NAME, async ({ data, error }) => {
+  console.log('[tracking-bg] task fired', { hasError: !!error, ts: new Date().toISOString() });
   if (error) {
     console.error('Location task error:', error);
     return;
@@ -27,12 +48,7 @@ TaskManager.defineTask(BACKGROUND_TASK_NAME, async ({ data, error }) => {
 
   const { locations } = data as Location.LocationTaskOptions & { locations: Location.LocationObject[] };
   if (!locations || locations.length === 0) return;
-
-  const token = await AsyncStorage.getItem('accessToken');
-  if (!token) {
-    console.warn('Skip sending tracking points: no access token');
-    return;
-  }
+  console.log('[tracking-bg] locations received', { count: locations.length, ts: new Date().toISOString() });
 
   const points: TrackingPointInput[] = locations.map((loc) => ({
     latitude: loc.coords.latitude,
@@ -45,50 +61,72 @@ TaskManager.defineTask(BACKGROUND_TASK_NAME, async ({ data, error }) => {
   }));
 
   try {
-    // Простая отправка без буфера: один батч, старт/продолжение маршрута на сервере
-    await sendTrackingPoints({
-      startNewRoute: true,
-      points,
-    });
+    // Добавляем точки в очередь и ждём завершения отправки, чтобы не зависать без логов
+    await enqueueTrackingPoints(points, '[tracking-bg]');
   } catch (e) {
-    console.error('Failed to send tracking points from background:', e);
+    console.warn('[tracking-bg] enqueue/send failed', e);
   }
 });
 
 export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [trackingEnabled, setTrackingEnabled] = useState(false);
   const [routeId, setRouteId] = useState<number | undefined>(undefined);
+  const keepAliveTimer = useRef<NodeJS.Timeout | null>(null);
+
+  const syncRouteId = useCallback(async () => {
+    const stored = await getTrackingRouteId();
+    setRouteId(stored);
+  }, []);
+
+  const flushAndSync = useCallback(
+    async (logPrefix: string) => {
+      await flushTrackingQueue(logPrefix);
+      await syncRouteId();
+    },
+    [syncRouteId]
+  );
+
+  const ensureLocationTaskRunning = useCallback(
+    async (logPrefix: string) => {
+      if (!trackingEnabled) return;
+      try {
+        const hasStarted = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_TASK_NAME);
+        if (!hasStarted) {
+          console.log(`${logPrefix} restarting location updates`);
+          await Location.startLocationUpdatesAsync(BACKGROUND_TASK_NAME, locationOptions);
+        }
+      } catch (e) {
+        console.warn(`${logPrefix} ensureLocationTaskRunning failed`, e);
+      }
+    },
+    [trackingEnabled]
+  );
 
   useEffect(() => {
+    console.log('[tracking] provider mounted');
     (async () => {
-      const [enabledRaw, routeIdRaw] = await Promise.all([
+      const [enabledRaw, storedRouteId] = await Promise.all([
         AsyncStorage.getItem(STORAGE_KEYS.enabled),
-        AsyncStorage.getItem(STORAGE_KEYS.routeId),
+        getTrackingRouteId(),
       ]);
       if (enabledRaw === 'true') {
         setTrackingEnabled(true);
       }
-      if (routeIdRaw) {
-        const parsed = Number(routeIdRaw);
-        if (!Number.isNaN(parsed)) setRouteId(parsed);
+      if (storedRouteId !== undefined) {
+        setRouteId(storedRouteId);
       }
 
       if (enabledRaw === 'true') {
-        const hasStarted = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_TASK_NAME);
-        if (!hasStarted) {
-          await Location.startLocationUpdatesAsync(BACKGROUND_TASK_NAME, {
-            accuracy: Location.Accuracy.High,
-            timeInterval: 30000,
-            distanceInterval: 20,
-            showsBackgroundLocationIndicator: false,
-            pausesUpdatesAutomatically: false,
-          });
-        }
+        console.log('[tracking] auto-start after relaunch');
+        await ensureLocationTaskRunning('[tracking-auto]');
+        // пробуем выгрузить очередь, если что-то накопилось, используя сериализованную отправку
+        await flushAndSync('[tracking]');
       }
     })();
-  }, []);
+  }, [flushAndSync, ensureLocationTaskRunning]);
 
   const startTracking = useCallback(async () => {
+    console.log('[tracking] startTracking called');
     const { status: fgStatus } = await Location.requestForegroundPermissionsAsync();
     if (fgStatus !== Location.PermissionStatus.GRANTED) {
       throw new Error('Разрешение на доступ к геолокации не выдано');
@@ -99,33 +137,76 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       throw new Error('Разрешение на фоновую геолокацию не выдано');
     }
 
-    await Location.startLocationUpdatesAsync(BACKGROUND_TASK_NAME, {
-      accuracy: Location.Accuracy.High,
-      timeInterval: 30000,
-      distanceInterval: 20,
-      showsBackgroundLocationIndicator: false,
-      pausesUpdatesAutomatically: false,
-      foregroundService: {
-        notificationTitle: 'Отслеживание маршрута',
-        notificationBody: 'Приложение собирает геоданные в фоне.',
-      },
-    });
+    try {
+      await Location.startLocationUpdatesAsync(BACKGROUND_TASK_NAME, locationOptions);
+      console.log('[tracking] location updates started (manual)');
+    } catch (e) {
+      console.error('[tracking] failed to start location updates (manual)', e);
+      throw e;
+    }
 
     setTrackingEnabled(true);
     await AsyncStorage.setItem(STORAGE_KEYS.enabled, 'true');
-  }, []);
+    // сразу пробуем отправить накопившуюся очередь
+    await flushAndSync('[tracking]');
+    await ensureLocationTaskRunning('[tracking-start]');
+  }, [flushAndSync, ensureLocationTaskRunning]);
+
+  // Дополнительный триггер флуша при смене состояния приложения (активно/фон)
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active' || state === 'background') {
+        flushAndSync('[tracking-appstate]');
+        void ensureLocationTaskRunning('[tracking-appstate]');
+      }
+    });
+    return () => sub.remove();
+  }, [flushAndSync, ensureLocationTaskRunning]);
+
+  // Переодический keep-alive для фонового таска
+  useEffect(() => {
+    if (!trackingEnabled) {
+      if (keepAliveTimer.current) {
+        clearInterval(keepAliveTimer.current);
+        keepAliveTimer.current = null;
+      }
+      return;
+    }
+    keepAliveTimer.current = setInterval(() => {
+      void ensureLocationTaskRunning('[tracking-keepalive]');
+    }, 60_000);
+    return () => {
+      if (keepAliveTimer.current) {
+        clearInterval(keepAliveTimer.current);
+        keepAliveTimer.current = null;
+      }
+    };
+  }, [trackingEnabled, ensureLocationTaskRunning]);
 
   const stopTracking = useCallback(async () => {
+    console.log('[tracking] stopTracking called');
     const hasStarted = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_TASK_NAME);
     if (hasStarted) {
       await Location.stopLocationUpdatesAsync(BACKGROUND_TASK_NAME);
     }
     setTrackingEnabled(false);
-    setRouteId(undefined);
-    await Promise.all([
-      AsyncStorage.removeItem(STORAGE_KEYS.enabled),
-      AsyncStorage.removeItem(STORAGE_KEYS.routeId),
-    ]);
+    await AsyncStorage.removeItem(STORAGE_KEYS.enabled);
+    await flushAndSync('[tracking-stop]');
+    await clearRouteIdIfIdle('[tracking-stop]');
+    await syncRouteId();
+  }, [flushAndSync, syncRouteId]);
+
+  // Диагностика очереди при фокусе
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        void (async () => {
+          const dbg = await getQueueDebug();
+          console.log('[tracking-debug] queue', dbg);
+        })();
+      }
+    });
+    return () => sub.remove();
   }, []);
 
   return (

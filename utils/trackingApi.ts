@@ -27,7 +27,7 @@ export type SaveTrackingPointsResponse = {
 
 export async function sendTrackingPoints(
   body: SaveTrackingPointsRequest
-): Promise<{ ok: boolean; data?: SaveTrackingPointsResponse; message?: string }> {
+): Promise<{ ok: boolean; data?: SaveTrackingPointsResponse; message?: string; status?: number }> {
   return authFetch<SaveTrackingPointsRequest, SaveTrackingPointsResponse>(
     `${API_BASE_URL}/tracking/points`,
     {
@@ -36,4 +36,3 @@ export async function sendTrackingPoints(
     }
   );
 }
-
