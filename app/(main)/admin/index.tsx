@@ -45,6 +45,7 @@ import {
   updateRolePermissions,
 } from '@/utils/userService';
 import { Profile, ProfileStatus } from '@/types/userTypes';
+import { MaskedTextInput } from 'react-native-mask-text';
 
 const formatPhone = (input: string) => {
   const digits = input.replace(/\D/g, '').slice(0, 11);
@@ -63,6 +64,15 @@ const formatPhone = (input: string) => {
     num.slice(9, 11),
   ];
   return parts.join('').replace(/\s+-/g, ' ').trim();
+};
+
+const normalizePhoneE164 = (val: string) => {
+  const digits = val.replace(/\D/g, '').slice(0, 15);
+  if (!digits) return '';
+  let num = digits;
+  if (num.startsWith('8')) num = '7' + num.slice(1);
+  if (!num.startsWith('7')) num = '7' + num;
+  return `+${num}`;
 };
 
 type FormState = {
@@ -156,7 +166,7 @@ export default function AdminScreen() {
       lastName: profile.lastName || '',
       middleName: profile.middleName || '',
       email: profile.email || '',
-      phone: profile.phone || profile.employeeProfile?.phone || '',
+      phone: formatPhone(profile.phone || profile.employeeProfile?.phone || ''),
       status: profile.profileStatus || 'PENDING',
       departmentId: profile.employeeProfile?.department?.id ?? null,
       roleId: profile.role?.id ?? null,
@@ -268,7 +278,7 @@ export default function AdminScreen() {
     if (form.lastName.trim() !== initialForm.lastName.trim()) payload.lastName = form.lastName.trim();
     if (form.middleName.trim() !== initialForm.middleName.trim()) payload.middleName = form.middleName.trim();
     if (form.email.trim() !== initialForm.email.trim()) payload.email = form.email.trim();
-    if (form.phone.trim() !== initialForm.phone.trim()) payload.phone = form.phone.trim();
+    if (form.phone.trim() !== initialForm.phone.trim()) payload.phone = normalizePhoneE164(form.phone);
     if (form.status !== initialForm.status) payload.profileStatus = form.status;
     if (form.departmentId !== initialForm.departmentId) payload.departmentId = form.departmentId;
 
@@ -740,6 +750,11 @@ export default function AdminScreen() {
                       icon="call-outline"
                       label="Телефон"
                       value={form.phone}
+                      mask="+7 (999) 999-99-99"
+                      onMaskedChange={(masked, raw) => {
+                        const normalizedMasked = formatPhone(masked || raw || '');
+                        setForm((prev) => ({ ...prev, phone: normalizedMasked }));
+                      }}
                       onChangeText={(text) => setForm((prev) => ({ ...prev, phone: formatPhone(text) }))}
                       placeholder="+7 ..."
                       keyboardType="phone-pad"
@@ -1328,6 +1343,8 @@ function EditableCard({
   placeholder,
   keyboardType,
   secureTextEntry,
+  mask,
+  onMaskedChange,
 }: {
   styles: ReturnType<typeof getStyles>;
   icon: React.ComponentProps<typeof Ionicons>['name'];
@@ -1337,6 +1354,8 @@ function EditableCard({
   placeholder?: string;
   keyboardType?: 'default' | 'email-address' | 'numeric' | 'phone-pad';
   secureTextEntry?: boolean;
+  mask?: any;
+  onMaskedChange?: (masked: string, raw: string) => void;
 }) {
   return (
     <View style={styles.infoCard}>
@@ -1345,14 +1364,31 @@ function EditableCard({
       </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.infoLabel}>{label}</Text>
-        <TextInput
-          value={value}
-          onChangeText={onChangeText}
-          placeholder={placeholder}
-          style={styles.infoInput}
-          keyboardType={keyboardType}
-          secureTextEntry={secureTextEntry}
-        />
+        {mask ? (
+          <MaskedTextInput
+            mask={mask}
+            value={value}
+            onChangeText={(masked, raw) => {
+              if (onMaskedChange) {
+                onMaskedChange(masked, raw);
+              } else {
+                onChangeText(masked);
+              }
+            }}
+            placeholder={placeholder}
+            style={styles.infoInput}
+            keyboardType={keyboardType}
+          />
+        ) : (
+          <TextInput
+            value={value}
+            onChangeText={onChangeText}
+            placeholder={placeholder}
+            style={styles.infoInput}
+            keyboardType={keyboardType}
+            secureTextEntry={secureTextEntry}
+          />
+        )}
       </View>
     </View>
   );

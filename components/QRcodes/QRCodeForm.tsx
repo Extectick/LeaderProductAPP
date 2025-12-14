@@ -10,10 +10,12 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  ScrollView,
   View,
 } from 'react-native';
 // import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
-import Animated, { FadeInDown, SlideInLeft, SlideOutRight, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, { FadeInDown, FadeOutUp, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import { MaskedTextInput } from 'react-native-mask-text';
 
 // ======= Русские названия типов + иконки =======
 const RU_LABELS: Record<QRType, string> = {
@@ -155,6 +157,7 @@ function parseByType(item?: QRCodeItemType): Partial<QRFormValues> {
 // ======= Построение данных для БЭКа =======
 const normPhone = (val?: string) =>
   (val ?? '').replace(/[^\d+]/g, '').replace(/\s+/g, '').replace(/(?!^)\+/g, '');
+const phoneMask = '+7 (999) 999-99-99';
 
 function buildBackendQRData(t: QRType, v: QRFormValues): string | Record<string, any> {
   switch (t) {
@@ -195,6 +198,8 @@ function buildBackendPayload(v: QRFormValues) {
 export default function QRCodeForm({ mode, initialItem, onCreate, onUpdate, onSuccess }: QRCodeFormProps) {
   const defaultType: QRType = initialItem?.qrType ?? 'LINK';
   const [perTypeValues, setPerTypeValues] = useState<Record<QRType, Partial<QRFormValues>>>({} as any);
+  const [hoveredType, setHoveredType] = useState<QRType | null>(null);
+  const [hoverSubmit, setHoverSubmit] = useState(false);
 
   const { control, handleSubmit, getValues, reset, watch } = useForm<QRFormValues>({
     defaultValues: {
@@ -291,7 +296,16 @@ export default function QRCodeForm({ mode, initialItem, onCreate, onUpdate, onSu
       case 'SMS':
         return (
           <>
-            <LabeledInput name="phone" control={control} placeholder={PLACEHOLDERS.PHONE?.phone} color={color} keyboardType="phone-pad" onNormalize={normalizePhone} />
+            <LabeledInput
+              name="phone"
+              control={control}
+              placeholder={PLACEHOLDERS.PHONE?.phone}
+              color={color}
+              keyboardType="phone-pad"
+              mask={phoneMask}
+              onMaskValue={(raw) => normPhone(raw)}
+              onNormalize={normalizePhone}
+            />
             {t !== 'PHONE' && (
               <LabeledInput name="message" control={control} placeholder={PLACEHOLDERS.WHATSAPP?.message} color={color} multiline />
             )}
@@ -319,7 +333,16 @@ export default function QRCodeForm({ mode, initialItem, onCreate, onUpdate, onSu
             <LabeledInput name="firstname" control={control} placeholder={PLACEHOLDERS.CONTACT?.firstname} color={color} />
             <LabeledInput name="lastname" control={control} placeholder={PLACEHOLDERS.CONTACT?.lastname} color={color} />
             <LabeledInput name="org" control={control} placeholder={PLACEHOLDERS.CONTACT?.org} color={color} />
-            <LabeledInput name="phone" control={control} placeholder={PLACEHOLDERS.CONTACT?.phone} color={color} keyboardType="phone-pad" onNormalize={normalizePhone} />
+            <LabeledInput
+              name="phone"
+              control={control}
+              placeholder={PLACEHOLDERS.CONTACT?.phone}
+              color={color}
+              keyboardType="phone-pad"
+              mask={phoneMask}
+              onMaskValue={(raw) => normPhone(raw)}
+              onNormalize={normalizePhone}
+            />
             <LabeledInput name="email" control={control} placeholder={PLACEHOLDERS.CONTACT?.email} color={color} keyboardType="email-address" autoCapitalize="none" />
             <LabeledInput name="website" control={control} placeholder={PLACEHOLDERS.CONTACT?.website} color={color} autoCapitalize="none" />
             <LabeledInput name="contactAddress" control={control} placeholder={PLACEHOLDERS.CONTACT?.contactAddress} color={color} />
@@ -359,15 +382,24 @@ export default function QRCodeForm({ mode, initialItem, onCreate, onUpdate, onSu
   };
 
   const TYPES: QRType[] = ['PHONE','LINK','EMAIL','TEXT','WHATSAPP','TELEGRAM','CONTACT','WIFI','SMS','GEO','BITCOIN'];
+  const phoneRules = {
+    required: 'Введите номер телефона',
+    validate: (v: string) => {
+      const clean = normPhone(v || '');
+      return /^(\+?\d{10,15})$/.test(clean) || 'Формат номера: +79991234567';
+    },
+  };
 
   return (
-    <View style={{ flex: 1 }}>
-        {/* <KeyboardAwareScrollView
-          contentContainerStyle={{ paddingBottom: 32 }}
-          keyboardShouldPersistTaps="handled"
-          extraKeyboardSpace={24}  // вместо extraScrollHeight
-          keyboardDismissMode="interactive" // аналог keyboardOpeningTime={0}
-        > */}
+    <Animated.View
+      style={[styles.card, Platform.OS !== 'web' && { maxHeight: '90%' }]}
+      entering={FadeInDown.springify().damping(16)}
+    >
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 20, gap: 8 }}
+        keyboardShouldPersistTaps="handled"
+      >
         {/* Шапка + режим + ID */}
         <Animated.View entering={FadeInDown.springify().damping(16)} style={styles.header}>
           <View style={[styles.badge, { backgroundColor: color }]}>
@@ -387,9 +419,16 @@ export default function QRCodeForm({ mode, initialItem, onCreate, onUpdate, onSu
               <Pressable
                 key={t}
                 onPress={() => disabled ? Alert.alert('Скоро', `${RU_LABELS[t]} будет доступен позднее`) : onChangeType(t)}
-                style={[styles.typeChip, { borderColor: TYPE_COLORS[t] },
-                  currentType === t && { backgroundColor: TYPE_COLORS[t] + '22' },
-                  disabled && { opacity: 0.45 }]}
+                style={({ pressed }) => [
+                  styles.typeChip,
+                  { borderColor: TYPE_COLORS[t], backgroundColor: '#fff' },
+                  currentType === t && { backgroundColor: TYPE_COLORS[t] + '15', borderColor: TYPE_COLORS[t], shadowOpacity: 0.12 },
+                  pressed && { transform: [{ scale: 0.98 }], opacity: 0.9 },
+                  hoveredType === t && { transform: [{ scale: 1.02 }], shadowOpacity: 0.16 },
+                  disabled && { opacity: 0.45 },
+                ]}
+                onHoverIn={() => setHoveredType(t)}
+                onHoverOut={() => setHoveredType((prev) => (prev === t ? null : prev))}
               >
                 <Ionicons name={TYPE_ICONS[t]} size={14} color={currentType === t ? TYPE_COLORS[t] : '#111'} style={{ marginRight: 3 }} />
                 <TypeLabel color={currentType === t ? TYPE_COLORS[t] : '#111'}>
@@ -406,13 +445,29 @@ export default function QRCodeForm({ mode, initialItem, onCreate, onUpdate, onSu
         </Animated.View>
 
         {/* Поля */}
-        <Animated.View key={slideKey.current} entering={SlideInLeft.springify().stiffness(120)} exiting={SlideOutRight.duration(180)} style={styles.block}>
+        <Animated.View
+          key={slideKey.current}
+          entering={FadeInDown.springify().damping(18)}
+          exiting={FadeOutUp.duration(140)}
+          style={styles.block}
+        >
           {renderFieldsByType(currentType)}
         </Animated.View>
 
         {/* Кнопка */}
         <Animated.View entering={FadeInDown.delay(240)}>
-          <Pressable onPress={submit} disabled={submitting} style={[styles.submitBtn, { backgroundColor: color }, submitting && { opacity: 0.8 }]}>
+          <Pressable
+            onPress={submit}
+            disabled={submitting}
+            onHoverIn={() => setHoverSubmit(true)}
+            onHoverOut={() => setHoverSubmit(false)}
+            style={[
+              styles.submitBtn,
+              { backgroundColor: color },
+              submitting && { opacity: 0.8 },
+              hoverSubmit && { transform: [{ scale: 1.01 }], shadowOpacity: 0.45 },
+            ]}
+          >
             {!submitting ? (
               <>
                 <Ionicons name={mode === 'edit' ? 'save-outline' : 'sparkles-outline'} size={18} color="#fff" />
@@ -426,34 +481,74 @@ export default function QRCodeForm({ mode, initialItem, onCreate, onUpdate, onSu
             <Animated.View pointerEvents="none" style={[styles.ripple, rippleStyle]} />
           </Pressable>
         </Animated.View>
-      {/* </KeyboardAwareScrollView> */}
-    </View>
+      </ScrollView>
+    </Animated.View>
   );
 }
 
-function LabeledInput({ name, control, placeholder, color, error, keyboardType, secureTextEntry, autoCapitalize, multiline, numberOfLines, onNormalize }: any) {
+function LabeledInput({
+  name,
+  control,
+  placeholder,
+  color,
+  error,
+  keyboardType,
+  secureTextEntry,
+  autoCapitalize,
+  multiline,
+  numberOfLines,
+  onNormalize,
+  mask,
+  onMaskValue,
+}: any) {
   return (
     <Controller
       name={name}
       control={control}
-      render={({ field: { onChange, onBlur, value } }) => (
+      rules={
+        name === 'phone'
+          ? {
+              required: 'Введите номер телефона',
+              validate: (v: string) => {
+                const clean = normPhone(v || '');
+                return /^(\+?\d{10,15})$/.test(clean) || 'Формат номера: +79991234567';
+              },
+            }
+          : undefined
+      }
+      render={({ field: { onChange, onBlur, value }, fieldState: { error: fieldError } }) => (
         <View style={{ marginBottom: 14 }}>
           <Text style={[styles.label, { color }]}>{placeholder ? placeholder.split('\n')[0] : String(name)}</Text>
-          <TextInput
-            value={value ?? ''}
-            onChangeText={(t) => onChange(onNormalize ? onNormalize(t) : t)}
-            onBlur={onBlur}
-            placeholder={placeholder}
-            placeholderTextColor={color + '88'}
-            style={[styles.input, { borderColor: color }]}
-            keyboardType={keyboardType}
-            secureTextEntry={secureTextEntry}
-            autoCapitalize={autoCapitalize}
-            multiline={multiline}
-            numberOfLines={numberOfLines}
-            inputMode={keyboardType === 'decimal-pad' ? 'decimal' : undefined}
-          />
-          {!!error && <Text style={styles.error}>{error}</Text>}
+          {mask ? (
+            <MaskedTextInput
+              mask={mask}
+              value={value ?? ''}
+              onChangeText={(masked, raw) => {
+                const normalized = onMaskValue ? onMaskValue(raw || masked || '') : masked;
+                onChange(onNormalize ? onNormalize(normalized) : normalized);
+              }}
+              onBlur={onBlur}
+              placeholder={placeholder}
+              style={[styles.input, { borderColor: color }]}
+              keyboardType={keyboardType}
+            />
+          ) : (
+            <TextInput
+              value={value ?? ''}
+              onChangeText={(t) => onChange(onNormalize ? onNormalize(t) : t)}
+              onBlur={onBlur}
+              placeholder={placeholder}
+              placeholderTextColor={color + '88'}
+              style={[styles.input, { borderColor: color }]}
+              keyboardType={keyboardType}
+              secureTextEntry={secureTextEntry}
+              autoCapitalize={autoCapitalize}
+              multiline={multiline}
+              numberOfLines={numberOfLines}
+              inputMode={keyboardType === 'decimal-pad' ? 'decimal' : undefined}
+            />
+          )}
+          {!!(fieldError || error) && <Text style={styles.error}>{fieldError?.message || error}</Text>}
         </View>
       )}
     />
@@ -475,19 +570,71 @@ function TypeLabel({ children, color }: { children: React.ReactNode; color: stri
 }
 
 const styles = StyleSheet.create({
-  header: { marginBottom: 12 },
+  card: {
+    flex: 1,
+    gap: 12,
+    padding: 14,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    ...Platform.select({
+      web: { boxShadow: '0 18px 36px rgba(0,0,0,0.12)' },
+      ios: { shadowColor: '#000', shadowOpacity: 0.16, shadowRadius: 14, shadowOffset: { width: 0, height: 8 } },
+      android: { elevation: 8 },
+    }),
+    width: '100%',
+    maxWidth: Platform.OS === 'web' ? 720 : undefined,
+    alignSelf: 'center',
+  },
+  header: { marginBottom: 4 },
   badge: { alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, flexDirection: 'row', alignItems: 'center', gap: 6 },
   badgeText: { color: '#fff', fontWeight: '600' },
   shadowId: { opacity: 0.35, fontSize: 10, marginTop: 6 },
-  typesWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
-  typeChip: { paddingHorizontal: 8, paddingVertical: 6, borderRadius: 999, borderWidth: 1, flexDirection: 'row', alignItems: 'center', minWidth: 0 },
-  typeChipText: { color: '#111', fontSize: 12, flexShrink: 1 },
-  block: { backgroundColor: '#fafafa', borderRadius: 16, padding: 12, marginBottom: 16, borderWidth: 1, borderColor: '#eee' },
+  typesWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
+  typeChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 14,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    minWidth: 0,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 8,
+    shadowOpacity: 0.08,
+  },
+  typeChipText: { color: '#111', fontSize: 12, flexShrink: 1, fontWeight: '700' },
+  block: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#EEF2F7',
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+  },
   label: { fontSize: 12, marginBottom: 6, fontWeight: '600' },
   input: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: Platform.select({ ios: 12, android: 8, web: 10 }), fontSize: 16, backgroundColor: '#fff' },
   error: { color: '#EF4444', fontSize: 12, marginTop: 6 },
-  submitBtn: { height: 48, borderRadius: 999, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8, overflow: 'hidden' },
-  submitText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+  submitBtn: {
+    height: 52,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    overflow: 'hidden',
+    shadowColor: '#2563EB',
+    shadowOpacity: 0.35,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+  },
+  submitText: { color: '#fff', fontWeight: '800', fontSize: 16, letterSpacing: 0.2 },
   loaderDotRow: { flexDirection: 'row', gap: 6, alignItems: 'center' },
   loaderDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff' },
   ripple: { position: 'absolute', width: 500, height: 500, borderRadius: 250, backgroundColor: 'rgba(255,255,255,0.2)' },

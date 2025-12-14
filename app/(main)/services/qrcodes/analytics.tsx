@@ -3,10 +3,11 @@
 import { useTheme } from '@/context/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Pressable,
   RefreshControl,
   StyleSheet,
   Text,
@@ -18,7 +19,6 @@ import AnalyticsHeader from '@/components/QRcodes/Analytics/AnalyticsHeader';
 import ChartSkeleton from '@/components/QRcodes/Analytics/ChartSkeleton';
 import LineChart from '@/components/QRcodes/Analytics/LineChart';
 import MetricsRow from '@/components/QRcodes/Analytics/MetricsRow';
-import MonthHeatmap from '@/components/QRcodes/Analytics/MonthHeatmap';
 
 import FilterModal from '@/components/QRcodes/Analytics/FilterModal';
 import PeriodModal from '@/components/QRcodes/Analytics/PeriodModal';
@@ -67,6 +67,17 @@ export default function QRAnalyticsMobileScreen() {
   const { theme, themes } = useTheme();
   const colors = (themes && themes[theme]) || (themes && (themes as any).light) || {};
   const styles = useMemo(() => getStyles(colors), [colors]);
+  const buildMonthGrid = useCallback((month: Date, startOfWeek: 0 | 1 = 1) => {
+    const d0 = new Date(month.getFullYear(), month.getMonth(), 1);
+    const shift = (d0.getDay() - startOfWeek + 7) % 7;
+    const start = new Date(d0);
+    start.setDate(d0.getDate() - shift);
+    return Array.from({ length: 42 }, (_, i) => {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      return d;
+    });
+  }, []);
 
   const insets = useSafeAreaInsets();
 
@@ -106,6 +117,84 @@ export default function QRAnalyticsMobileScreen() {
     city: s?.location ?? undefined,
     title: `${s?.device || ''} • ${s?.browser || ''}`.trim(),
   }));
+  const scansPerDay = useMemo(() => {
+    const map = new Map<string, number>();
+    (ctrl as any)?.scans?.forEach((s: any) => {
+      const d = new Date(s.createdAt);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      map.set(key, (map.get(key) || 0) + 1);
+    });
+    return map;
+  }, [ctrl]);
+  const calendarMonth = (ctrl as any)?.calendarMonth || new Date();
+  const calendarMonthLabel = useMemo(
+    () => calendarMonth.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' }),
+    [calendarMonth]
+  );
+  const calendarGrid = useMemo(() => buildMonthGrid(calendarMonth, 1), [calendarMonth, buildMonthGrid]);
+  const calendarWeeks = useMemo(
+    () => Array.from({ length: 6 }, (_, i) => calendarGrid.slice(i * 7, i * 7 + 7)),
+    [calendarGrid]
+  );
+  const [rangeStart, setRangeStart] = useState<Date | null>(null);
+  const [rangeEnd, setRangeEnd] = useState<Date | null>(null);
+  const lastAppliedRange = useRef<string | null>(null);
+  const isManualPick = useRef(false);
+
+  const shiftMonth = (delta: number) => {
+    const d = new Date(calendarMonth);
+    d.setMonth(d.getMonth() + delta);
+    (ctrl as any)?.setCalendarMonth?.(d);
+  };
+
+  const handleDaySelect = (date: Date) => {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    if (!rangeStart || (rangeStart && rangeEnd)) {
+      setRangeStart(d);
+      setRangeEnd(null);
+      lastAppliedRange.current = null;
+      isManualPick.current = true;
+      return;
+    }
+    if (d.getTime() < rangeStart.getTime()) {
+      setRangeEnd(rangeStart);
+      setRangeStart(d);
+    } else {
+      setRangeEnd(d);
+    }
+  };
+
+  React.useEffect(() => {
+    if (rangeStart && rangeEnd) {
+      const from = new Date(rangeStart); from.setHours(0, 0, 0, 0);
+      const to = new Date(rangeEnd); to.setHours(23, 59, 59, 999);
+      const key = `${from.toISOString()}_${to.toISOString()}`;
+      if (lastAppliedRange.current !== key) {
+        lastAppliedRange.current = key;
+        // принудительно ставим "произвольно", чтобы фильтр отображал кастомный период
+        (ctrl as any)?.setPeriodKey?.('custom');
+        (ctrl as any)?.applyPeriod?.('custom', from, to);
+      }
+      isManualPick.current = false;
+    }
+  }, [rangeStart, rangeEnd, ctrl]);
+
+  // синхронизируем выделение при смене периода через фильтр/пресет, избегая бесконечных перерендеров
+  const computedFrom = (ctrl as any)?.computedRange?.from;
+  const computedTo = (ctrl as any)?.computedRange?.to;
+  React.useEffect(() => {
+    if (isManualPick.current) return; // пользователь сейчас выбирает вручную
+    if (!computedFrom || !computedTo) return;
+    const f = new Date(computedFrom); f.setHours(0,0,0,0);
+    const t = new Date(computedTo); t.setHours(23,59,59,999);
+    const key = `${f.toISOString()}_${t.toISOString()}`;
+    if (lastAppliedRange.current === key) return;
+    lastAppliedRange.current = key;
+    setRangeStart(f);
+    setRangeEnd(t);
+    (ctrl as any)?.setCalendarMonth?.(f);
+  }, [computedFrom, computedTo, ctrl]);
 
   const renderItem = useCallback(
     ({ item, index }: { item: any; index: number }) => {
@@ -219,17 +308,73 @@ export default function QRAnalyticsMobileScreen() {
 
           <Text style={[styles.sectionTitle, { marginTop: 16 }]}>Активность (календарь)</Text>
           {(ctrl as any)?.heatmapLoading ? (
-            <ChartSkeleton />
+            <View style={styles.cardSection}>
+              <ChartSkeleton />
+            </View>
           ) : (
-            <MonthHeatmap
-              month={(ctrl as any)?.calendarMonth}
-              data={heatmapData}
-              events={events}
-              startOfWeek={1}
-              palette="blue"
-              highlightWeekends
-              onChangeMonth={(ctrl as any)?.setCalendarMonth}
-            />
+            <View style={styles.cardSection}>
+              <View style={styles.calendarHeader}>
+                <Pressable onPress={() => shiftMonth(-1)} style={styles.navBtn}>
+                  <Ionicons name="chevron-back" size={16} color={(colors as any).text} />
+                </Pressable>
+                <Text style={styles.sectionTitle}>{calendarMonthLabel}</Text>
+                <Pressable onPress={() => shiftMonth(1)} style={styles.navBtn}>
+                  <Ionicons name="chevron-forward" size={16} color={(colors as any).text} />
+                </Pressable>
+              </View>
+              <View style={styles.weekdaysRow}>
+                {['Пн','Вт','Ср','Чт','Пт','Сб','Вс'].map((w) => (
+                  <Text key={w} style={styles.weekdayLabel}>{w}</Text>
+                ))}
+              </View>
+              <View style={styles.weeksContainer}>
+                {calendarWeeks.map((week, wi) => (
+                  <View key={wi} style={styles.weekRow}>
+                    {week.map((d, di) => {
+                      const dayKey = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+                      const key = `${dayKey}-${wi}-${di}`;
+                      const inMonth = d.getMonth() === calendarMonth.getMonth();
+                      const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+                      const scans = scansPerDay.get(dayKey) || 0;
+                      const ts = d.getTime();
+                      const startTs = rangeStart?.getTime();
+                      const endTs = rangeEnd?.getTime();
+                      const rangeLo = startTs && endTs ? Math.min(startTs, endTs) : startTs;
+                      const rangeHi = startTs && endTs ? Math.max(startTs, endTs) : endTs;
+                      const inRange = rangeLo != null && rangeHi != null && ts >= rangeLo && ts <= rangeHi;
+                      const isStart = startTs != null && ts === startTs;
+                      const isEnd = endTs != null && ts === endTs;
+                      return (
+                        <Pressable
+                          key={key}
+                          onPress={() => handleDaySelect(d)}
+                          style={({ pressed }) => [
+                            styles.dayCell,
+                            !inMonth && styles.dayCellMuted,
+                            scans > 0 && styles.dayCellActive,
+                            inRange && styles.dayCellRange,
+                            isStart && styles.dayCellStart,
+                            isEnd && styles.dayCellEnd,
+                            pressed && styles.dayCellPressed,
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.dayNum,
+                              isWeekend && inMonth ? styles.dayWeekend : null,
+                              !inMonth ? styles.dayMutedText : null,
+                            ]}
+                          >
+                            {d.getDate()}
+                          </Text>
+                          {scans > 0 && <View style={styles.dot} />}
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                ))}
+              </View>
+            </View>
           )}
         </>
       )}
@@ -335,6 +480,67 @@ const getStyles = (colors: any) =>
   StyleSheet.create({
     sectionTitle: { color: colors.text, fontSize: 16, fontWeight: '700', marginBottom: 8 },
     errorBox: { backgroundColor: '#fee2e2', borderRadius: 8, padding: 10, marginTop: 8 },
+    cardSection: {
+      marginTop: 8,
+      padding: 12,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: '#E5E7EB',
+      backgroundColor: colors.cardBackground,
+      gap: 8,
+    },
+    calendarHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 12,
+    },
+    navBtn: {
+      height: 30, width: 30, borderRadius: 8, borderWidth: 1, borderColor: '#E5E7EB',
+      alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF',
+    },
+    weeksContainer: {
+      gap: 4,
+      marginTop: 4,
+      width: 7 * 40 + 6 * 6,
+      alignSelf: 'center',
+    },
+    weekRow: { flexDirection: 'row', gap: 6 },
+    weekdaysRow: {
+      flexDirection: 'row',
+      gap: 6,
+      marginTop: 4,
+      marginBottom: 2,
+      width: 7 * 40 + 6 * 6,
+      alignSelf: 'center',
+    },
+    weekdayLabel: { width: 40, textAlign: 'center', color: colors.secondaryText, fontWeight: '700', fontSize: 11 },
+    dayCell: {
+      width: 40,
+      height: 40,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: '#E5E7EB',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.cardBackground,
+    },
+    dayCellMuted: { opacity: 0.45 },
+    dayCellActive: { borderColor: colors.tint },
+    dayCellRange: { backgroundColor: colors.tint + '12' },
+    dayCellStart: { borderColor: colors.tint, backgroundColor: colors.tint + '22' },
+    dayCellEnd: { borderColor: colors.tint, backgroundColor: colors.tint + '22' },
+    dayCellPressed: { transform: [{ scale: 0.97 }], opacity: 0.9 },
+    dayNum: { fontSize: 11, fontWeight: '800', color: colors.text },
+    dayWeekend: { color: '#DC2626' },
+    dayMutedText: { color: colors.secondaryText },
+    dot: {
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+      backgroundColor: '#3B82F6',
+      marginTop: 2,
+    },
     scanCard: {
       paddingVertical: 10,
       paddingHorizontal: 12,

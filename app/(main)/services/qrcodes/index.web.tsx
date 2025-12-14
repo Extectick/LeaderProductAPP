@@ -1,7 +1,16 @@
 // app/(main)/services/qrcodes/index.web.tsx
 import { Ionicons } from '@expo/vector-icons';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+  useWindowDimensions,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useTheme } from '@/context/ThemeContext';
@@ -17,15 +26,29 @@ import ChartSkeleton from '@/components/QRcodes/Analytics/ChartSkeleton';
 import FilterModal from '@/components/QRcodes/Analytics/FilterModal';
 import LineChart from '@/components/QRcodes/Analytics/LineChart';
 import MetricsRow from '@/components/QRcodes/Analytics/MetricsRow';
-import MonthHeatmap from '@/components/QRcodes/Analytics/MonthHeatmap';
 import PeriodModal from '@/components/QRcodes/Analytics/PeriodModal';
 import PresetsModal from '@/components/QRcodes/Analytics/PresetsModal';
+
+// helpers
+const buildMonthGrid = (month: Date, startOfWeek: 0 | 1 = 1) => {
+  const d0 = new Date(month.getFullYear(), month.getMonth(), 1);
+  const shift = (d0.getDay() - startOfWeek + 7) % 7;
+  const start = new Date(d0);
+  start.setDate(d0.getDate() - shift);
+  return Array.from({ length: 42 }, (_, i) => {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    return d;
+  });
+};
 
 export default function QRHubWeb() {
   const { theme, themes } = useTheme();
   const colors = themes[theme];
   const insets = useSafeAreaInsets();
   const styles = getStyles(colors);
+  const { width } = useWindowDimensions();
+  const isStack = width < 1200;
 
   // правая панель — аналитика
   const ctrl = useAnalyticsController();
@@ -85,16 +108,106 @@ export default function QRHubWeb() {
   const periodLabel = useMemo(() => {
     const fmt = (d: Date) => `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`;
     if (ctrl.periodKey === 'custom' && ctrl.computedRange.from && ctrl.computedRange.to) {
-      return `${fmt(ctrl.computedRange.from)} — ${fmt(ctrl.computedRange.to)}`;
+      return `${fmt(ctrl.computedRange.from)} - ${fmt(ctrl.computedRange.to)}`;
     }
     return ctrl.periodLabel;
   }, [ctrl.periodKey, ctrl.computedRange, ctrl.periodLabel]);
 
-  return (
+  // компактный календарь (только веб)
+  const calendarMonth = ctrl.calendarMonth || new Date();
+  const calendarMonthLabel = useMemo(
+    () => calendarMonth.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' }),
+    [calendarMonth]
+  );
+  const calendarGrid = useMemo(() => buildMonthGrid(calendarMonth, 1), [calendarMonth]);
+  const calendarWeeks = useMemo(
+    () => Array.from({ length: 6 }, (_, i) => calendarGrid.slice(i * 7, i * 7 + 7)),
+    [calendarGrid]
+  );
+  const [rangeStart, setRangeStart] = useState<Date | null>(null);
+  const [rangeEnd, setRangeEnd] = useState<Date | null>(null);
+  const [hoverDay, setHoverDay] = useState<Date | null>(null);
+  const lastAppliedRange = React.useRef<string | null>(null);
+
+  useEffect(() => {
+    if (rangeStart && rangeEnd) {
+      const from = new Date(rangeStart);
+      const to = new Date(rangeEnd);
+      from.setHours(0, 0, 0, 0);
+      to.setHours(23, 59, 59, 999);
+      const key = `${from.toISOString()}_${to.toISOString()}`;
+      if (lastAppliedRange.current !== key) {
+        lastAppliedRange.current = key;
+        ctrl.applyPeriod('custom', from, to);
+      }
+    }
+  }, [rangeStart, rangeEnd, ctrl]);
+
+  const handleDaySelect = (date: Date) => {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    if (!rangeStart || (rangeStart && rangeEnd)) {
+      setRangeStart(d);
+      setRangeEnd(null);
+      setHoverDay(null);
+      lastAppliedRange.current = null;
+      return;
+    }
+    // есть начало, ставим конец
+    if (d.getTime() < rangeStart.getTime()) {
+      setRangeEnd(rangeStart);
+      setRangeStart(d);
+    } else {
+      setRangeEnd(d);
+    }
+    setHoverDay(null);
+  };
+
+  const renderSkeletonPage = () => (
     <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-      <View style={styles.splitRow}>
+      <View style={[styles.splitRow, styles.splitColumn, { gap: 16, paddingVertical: 12 }]}>
+        <View style={[styles.leftPane, styles.fullPane, { gap: 12 }]}>
+          <View style={[styles.skeletonBox, { height: 46 }]} />
+          <View style={[styles.skeletonBox, { height: 48 }]} />
+          <View style={[styles.skeletonBox, { height: 180 }]} />
+        </View>
+        <View style={[styles.rightPane, styles.fullPane, { gap: 12 }]}>
+          <View style={[styles.skeletonBox, { height: 90 }]} />
+          <View style={[styles.skeletonBox, { height: 80 }]} />
+          <ChartSkeleton />
+          <View style={[styles.skeletonBox, { height: 180 }]} />
+          <View style={[styles.skeletonBox, { height: 120 }]} />
+        </View>
+      </View>
+    </View>
+  );
+  const scansPerDay = useMemo(() => {
+    const map = new Map<string, number>();
+    (ctrl.scans || []).forEach((s) => {
+      const d = new Date(s.createdAt);
+      const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      map.set(key, (map.get(key) || 0) + 1);
+    });
+    return map;
+  }, [ctrl.scans]);
+  const shiftMonth = (delta: number) => {
+    const d = new Date(calendarMonth);
+    d.setMonth(d.getMonth() + delta);
+    ctrl.setCalendarMonth(d);
+  };
+
+  if ((listLoading && qrList.length === 0) || (ctrl.loading && !ctrl.analytics)) {
+    return renderSkeletonPage();
+  }
+
+  return (
+    <ScrollView
+      style={[styles.root]}
+      contentContainerStyle={{ paddingTop: insets.top, paddingBottom: insets.bottom, minHeight: '100%' }}
+    >
+      <View style={[styles.splitRow, isStack && styles.splitColumn]}>
         {/* LEFT: LIST */}
-        <View style={styles.leftPane}>
+        <View style={[styles.leftPane, isStack && styles.fullPane]}>
           <QRListPanel
             items={qrList}
             loading={listLoading}
@@ -113,34 +226,10 @@ export default function QRHubWeb() {
               />
             }
           />
-
-          {/* Оверлей-форма (используем QRCodeForm) */}
-          {formOpen && (
-            <View style={styles.leftOverlay} pointerEvents="box-none">
-              {/* кликабельная подложка */}
-              <Pressable style={styles.backdrop} onPress={() => setFormOpen(false)} />
-              {/* карточка с формой */}
-              <View style={styles.formCard}>
-                <QRCodeForm
-                  mode={editingItem ? 'edit' : 'create'}
-                  initialItem={editingItem ?? undefined}
-                  onCreate={async (payload) => {
-                    const item = await createQRCode(payload.qrType, payload.qrData, payload.description);
-                    onSaved(item);
-                  }}
-                  onUpdate={async (id, patch) => {
-                    const item = await updateQRCode(id, patch);
-                    onSaved(item);
-                  }}
-                  onSuccess={() => setFormOpen(false)}
-                />
-              </View>
-            </View>
-          )}
         </View>
 
         {/* RIGHT: ANALYTICS */}
-        <View style={styles.rightPane}>
+        <View style={[styles.rightPane, isStack && styles.fullPane]}>
           <View style={styles.header}>
             <AnalyticsHeader
               selectedCount={ctrl.selectedIds.length}
@@ -157,7 +246,7 @@ export default function QRHubWeb() {
             </View>
           )}
 
-          <View style={{ padding: 12, paddingTop: 0, flex: 1 }}>
+          <View style={styles.analyticsCard}>
             {ctrl.loading ? (
               <ChartSkeleton />
             ) : (
@@ -198,27 +287,77 @@ export default function QRHubWeb() {
                   onZoomRequest={ctrl.requestZoom}
                 />
 
-                <Text style={[styles.sectionTitle, { marginTop: 16 }]}>Активность (календарь)</Text>
-                {ctrl.heatmapLoading ? (
-                  <ChartSkeleton />
-                ) : (
-                  <MonthHeatmap
-                    month={ctrl.calendarMonth}
-                    data={ctrl.heatmapData}
-                    events={(ctrl.scans || []).map(s => ({
-                      ts: s.createdAt,
-                      city: s.location ?? undefined,
-                      title: `${s.device || ''} • ${s.browser || ''}`.trim(),
-                    }))}
-                    startOfWeek={1}
-                    palette="blue"
-                    highlightWeekends
-                    onChangeMonth={ctrl.setCalendarMonth}
-                  />
-                )}
+                <View style={styles.cardSection}>
+                  <View style={styles.calendarHeader}>
+                    <Pressable onPress={() => shiftMonth(-1)} style={styles.navBtn}>
+                      <Ionicons name="chevron-back" size={16} color={colors.text} />
+                    </Pressable>
+                    <Text style={styles.sectionTitle}>{calendarMonthLabel}</Text>
+                    <Pressable onPress={() => shiftMonth(1)} style={styles.navBtn}>
+                      <Ionicons name="chevron-forward" size={16} color={colors.text} />
+                    </Pressable>
+                  </View>
+                  <View style={styles.weekdaysRow}>
+                    {['Пн','Вт','Ср','Чт','Пт','Сб','Вс'].map((w) => (
+                      <Text key={w} style={styles.weekdayLabel}>{w}</Text>
+                    ))}
+                  </View>
+                  <View style={styles.weeksContainer}>
+                    {calendarWeeks.map((week, wi) => (
+                      <View key={wi} style={styles.weekRow}>
+                        {week.map((d, di) => {
+                          const dayKey = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+                          const key = `${dayKey}-${wi}-${di}`;
+                          const inMonth = d.getMonth() === calendarMonth.getMonth();
+                          const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+                          const scans = scansPerDay.get(dayKey) || 0;
+                          const ts = d.getTime();
+                          const startTs = rangeStart?.getTime();
+                          const endTs = rangeEnd?.getTime();
+                          const hoverTs = hoverDay?.getTime();
+                          const rangeHi = endTs ?? (startTs && hoverTs ? Math.max(startTs, hoverTs) : undefined);
+                          const rangeLo = startTs && hoverTs && !endTs ? Math.min(startTs, hoverTs) : startTs;
+                          const inRange = startTs != null && rangeLo != null && rangeHi != null && ts >= rangeLo && ts <= rangeHi;
+                          const isStart = startTs != null && ts === startTs;
+                          const isEnd = (endTs != null && ts === endTs) || (endTs == null && hoverTs != null && ts === hoverTs && startTs !== hoverTs);
 
-                <Text style={[styles.sectionTitle, { marginTop: 16 }]}>Последние сканы</Text>
-                <View style={{ flex: 1 }}>
+                          return (
+                            <Pressable
+                              key={key}
+                              onPress={() => handleDaySelect(d)}
+                              onHoverIn={() => setHoverDay(d)}
+                              onHoverOut={() => setHoverDay(null)}
+                              style={({ pressed }) => [
+                                styles.dayCell,
+                                !inMonth && styles.dayCellMuted,
+                                scans > 0 && styles.dayCellActive,
+                                inRange && styles.dayCellRange,
+                                isStart && styles.dayCellStart,
+                                isEnd && styles.dayCellEnd,
+                                pressed && styles.dayCellPressed,
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.dayNum,
+                                  isWeekend && inMonth ? styles.dayWeekend : null,
+                                  !inMonth ? styles.dayMutedText : null,
+                                ]}
+                              >
+                                {d.getDate()}
+                              </Text>
+                              {scans > 0 && <View style={styles.dot} />}
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+                    ))}
+                  </View>
+                </View>
+
+                <View style={styles.cardSection}>
+                  <Text style={styles.sectionTitle}>Последние сканы</Text>
+                  <View style={{ flex: 1 }}>
                   {ctrl.scansLoading ? (
                     <View style={{ paddingVertical: 20, alignItems: 'center' }}>
                       <ActivityIndicator />
@@ -255,12 +394,35 @@ export default function QRHubWeb() {
                       </View>
                     </View>
                   )}
+                  </View>
                 </View>
               </>
             )}
           </View>
         </View>
       </View>
+
+      {/* Глобальный оверлей формы (поверх всей страницы) */}
+      {formOpen && (
+        <View style={styles.leftOverlay} pointerEvents="box-none">
+          <Pressable style={styles.backdrop} onPress={() => setFormOpen(false)} />
+          <View style={styles.formModalWrap}>
+            <QRCodeForm
+              mode={editingItem ? 'edit' : 'create'}
+              initialItem={editingItem ?? undefined}
+              onCreate={async (payload) => {
+                const item = await createQRCode(payload.qrType, payload.qrData, payload.description);
+                onSaved(item);
+              }}
+              onUpdate={async (id, patch) => {
+                const item = await updateQRCode(id, patch);
+                onSaved(item);
+              }}
+              onSuccess={() => setFormOpen(false)}
+            />
+          </View>
+        </View>
+      )}
 
       {/* модалки правой панели */}
       <FilterModal
@@ -283,6 +445,14 @@ export default function QRHubWeb() {
         currentTo={ctrl.customTo}
         onApply={(key, from, to) => {
           ctrl.applyPeriod(key, from, to);
+          if (key === 'custom') {
+            setRangeStart(from ? new Date(from) : null);
+            setRangeEnd(to ? new Date(to) : null);
+            if (from) ctrl.setCalendarMonth(new Date(from));
+          } else {
+            setRangeStart(null);
+            setRangeEnd(null);
+          }
           setPeriodVisible(false);
         }}
       />
@@ -305,7 +475,7 @@ export default function QRHubWeb() {
         }}
         onDeletePreset={(name) => console.log('delete preset', name)}
       />
-    </View>
+    </ScrollView>
   );
 }
 
@@ -315,41 +485,135 @@ const fmt = (d: Date) =>
 const getStyles = (colors: any) =>
   StyleSheet.create({
     root: { flex: 1, backgroundColor: colors.background },
-    splitRow: { flex: 1, flexDirection: 'row' },
+    splitRow: { flex: 1, flexDirection: 'row', gap: 12, paddingHorizontal: 12, alignItems: 'flex-start' },
+    splitColumn: { flexDirection: 'column' },
     leftPane: {
       flex: 1,
-      minWidth: 420,
-      maxWidth: '50%',
+      minWidth: 320,
+      maxWidth: '45%',
       borderRightWidth: 1,
       borderRightColor: '#eef2ff',
       position: 'relative', // для позиционирования оверлея
+      maxHeight: '100%',
     },
-    rightPane: { flex: 1, maxWidth: '50%' },
+    rightPane: { flex: 1, maxWidth: '55%', maxHeight: '100%' },
+    fullPane: { maxWidth: '100%', minWidth: '100%', borderRightWidth: 0, maxHeight: undefined },
     header: { padding: 12, paddingBottom: 8 },
+    analyticsCard: {
+      padding: 12,
+      paddingTop: 4,
+      flex: 1,
+      backgroundColor: colors.cardBackground,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: '#E5E7EB',
+      shadowColor: '#000',
+      shadowOpacity: 0.05,
+      shadowRadius: 10,
+      shadowOffset: { width: 0, height: 4 },
+      maxHeight: '100%',
+      overflow: 'hidden',
+    },
 
     // оверлей формы
     leftOverlay: {
-      ...StyleSheet.absoluteFillObject,
-      zIndex: 20,
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      zIndex: 120,
       justifyContent: 'center',
       alignItems: 'center',
-    },
+      padding: 16,
+      pointerEvents: 'box-none',
+    } as any,
     backdrop: {
       ...StyleSheet.absoluteFillObject,
-      backgroundColor: 'rgba(0,0,0,0.25)',
-    },
-    formCard: {
-      width: '88%',
-      maxWidth: 560,
-      borderRadius: 14,
+      backgroundColor: 'rgba(0,0,0,0.45)',
+      transitionDuration: '200ms',
+      opacity: 1,
+    } as any,
+    formModalWrap: {
+      width: '90%',
+      maxWidth: 640,
+      borderRadius: 16,
       padding: 14,
       backgroundColor: colors.cardBackground,
       borderWidth: 1,
       borderColor: colors.border,
-      zIndex: 21,
-    },
+      zIndex: 31,
+      boxShadow: '0 18px 40px rgba(0,0,0,0.18)',
+    } as any,
 
     sectionTitle: { color: colors.text, fontSize: 16, fontWeight: '700', marginBottom: 8 },
+    cardSection: {
+      marginTop: 16,
+      padding: 12,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: '#E5E7EB',
+      backgroundColor: colors.cardBackground,
+      gap: 8,
+    },
+    calendarHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 12,
+    },
+    navBtn: {
+      height: 30, width: 30, borderRadius: 8, borderWidth: 1, borderColor: '#E5E7EB',
+      alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF',
+    },
+    weeksContainer: {
+      gap: 4,
+      marginTop: 4,
+      width: 7 * 40 + 6 * 6, // ширина по количеству клеток
+      alignSelf: 'center',
+    },
+    weekRow: { flexDirection: 'row', gap: 6 },
+    weekdaysRow: {
+      flexDirection: 'row',
+      gap: 6,
+      marginTop: 4,
+      marginBottom: 2,
+      width: 7 * 40 + 6 * 6,
+      alignSelf: 'center',
+    },
+    weekdayLabel: { width: 40, textAlign: 'center', color: colors.secondaryText, fontWeight: '700', fontSize: 11 },
+    dayCell: {
+      width: 40,
+      height: 40,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: '#E5E7EB',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.cardBackground,
+    },
+    dayCellMuted: { opacity: 0.45 },
+    dayCellActive: { borderColor: colors.tint },
+    dayCellRange: { backgroundColor: colors.tint + '12' },
+    dayCellStart: { borderColor: colors.tint, backgroundColor: colors.tint + '22' },
+    dayCellEnd: { borderColor: colors.tint, backgroundColor: colors.tint + '22' },
+    dayCellPressed: { transform: [{ scale: 0.97 }], opacity: 0.9 },
+    dayNum: { fontSize: 11, fontWeight: '800', color: colors.text },
+    dayWeekend: { color: '#DC2626' },
+    dayMutedText: { color: colors.secondaryText },
+    dot: {
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+      backgroundColor: '#3B82F6',
+      marginTop: 2,
+    },
+    skeletonBox: {
+      backgroundColor: '#F3F4F6',
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: '#E5E7EB',
+    },
     errorBox: { backgroundColor: '#fee2e2', borderRadius: 8, padding: 10, marginHorizontal: 12 },
 
     scanCard: {

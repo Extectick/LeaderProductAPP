@@ -4,12 +4,13 @@ import QRCodeItem from '@/components/QRcodes/QRCodeItem';
 import type { QRCodeItemType } from '@/types/qrTypes';
 import { deleteQRCode, getQRCodeById, getQRCodesList } from '@/utils/qrService';
 import { Ionicons } from '@expo/vector-icons';
-import * as FileSystem from 'expo-file-system';
+// legacy API для кэш-директории/кодировок
+import * as FileSystem from 'expo-file-system/legacy';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as MediaLibrary from 'expo-media-library';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Skeleton } from 'moti/skeleton';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   FlatList,
@@ -20,8 +21,10 @@ import {
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import Animated, { FadeIn, FadeInDown, FadeOut, Layout } from 'react-native-reanimated';
+import { useThemeColor } from '@/hooks/useThemeColor';
 
 const Header = ({
   onCreate,
@@ -76,6 +79,10 @@ const Header = ({
 
 export default function QRCodesScreen() {
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const background = useThemeColor({}, 'background');
+  const cardBackground = useThemeColor({}, 'cardBackground');
+  const textColor = useThemeColor({}, 'text');
   const [qrCodes, setQrCodes] = useState<QRCodeItemType[]>([]);
   const [selectedItem, setSelectedItem] = useState<QRCodeItemType | null>(null);
   const [selectedQR, setSelectedQR] = useState<QRCodeItemType | null>(null);
@@ -197,9 +204,15 @@ export default function QRCodesScreen() {
     [router]
   );
 
+  const numColumns = useMemo(() => {
+    if (width >= 1280) return 3;
+    if (width >= 900) return 2;
+    return 1;
+  }, [width]);
+
   if (loading) {
     return (
-      <View style={[styles.container, { backgroundColor: '#fff' }]}>
+      <View style={[styles.container, { backgroundColor: background }]}>
         {/* Скелетон шапки */}
         <Animated.View entering={FadeInDown.duration(250)} style={{ marginBottom: 16 }}>
           <View style={styles.headerCardSkeleton}>
@@ -233,8 +246,8 @@ export default function QRCodesScreen() {
 
   if (error) {
     return (
-      <View style={[styles.centered, { backgroundColor: '#fff' }]}>
-        <Text style={{ color: '#000', fontSize: 16, marginBottom: 12 }}>{error}</Text>
+      <View style={[styles.centered, { backgroundColor: background }]}>
+        <Text style={{ color: textColor, fontSize: 16, marginBottom: 12 }}>{error}</Text>
         <Pressable onPress={loadQRCodes} style={[styles.retryBtn]}>
           <Text style={{ color: '#fff', fontWeight: '600' }}>Повторить</Text>
         </Pressable>
@@ -243,17 +256,27 @@ export default function QRCodesScreen() {
   }
 
   return (
-    <View style={[styles.container, { backgroundColor: '#fff' }]}>
+    <View style={[styles.container, { backgroundColor: background }]}>
       <Header onCreate={handleCreate} onAnalytics={handleAnalytics} count={qrCodes.length} />
 
       <Animated.View style={{ flex: 1 }} entering={FadeIn} exiting={FadeOut}>
         <FlatList
           data={qrCodes}
           keyExtractor={(item) => item.id}
-          contentContainerStyle={{ paddingBottom: 16 }}
+          numColumns={numColumns}
+          columnWrapperStyle={numColumns > 1 ? { gap: 12 } : undefined}
+          contentContainerStyle={{ paddingBottom: 16, gap: 12, paddingHorizontal: numColumns > 1 ? 4 : 0 }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           renderItem={({ item, index }) => (
-            <Animated.View entering={FadeInDown.delay(index * 50)} layout={Layout.springify()}>
+            <Animated.View
+              entering={FadeInDown.delay(index * 40)}
+              layout={Layout.springify()}
+              style={[
+                styles.qrCardWrapper,
+                { backgroundColor: cardBackground, borderColor: '#E5E7EB' },
+                numColumns > 1 ? { flex: 1 } : null,
+              ]}
+            >
               <QRCodeItem
                 item={item}
                 loading={false}
@@ -262,6 +285,19 @@ export default function QRCodesScreen() {
               />
             </Animated.View>
           )}
+          ListEmptyComponent={
+            <View style={[styles.emptyCard, { backgroundColor: cardBackground }]}>
+              <Ionicons name="qr-code-outline" size={32} color="#9CA3AF" />
+              <Text style={{ color: textColor, fontWeight: '700', marginTop: 8 }}>Пока нет QR-кодов</Text>
+              <Text style={{ color: '#6B7280', fontSize: 12, textAlign: 'center', marginTop: 4 }}>
+                Создайте первый, чтобы начать отслеживать печать и сканы.
+              </Text>
+              <Pressable onPress={handleCreate} style={[styles.primaryBtn, { marginTop: 12 }]}>
+                <Ionicons name="add" size={18} color="#0B1220" />
+                <Text style={styles.primaryBtnText}>Создать</Text>
+              </Pressable>
+            </View>
+          }
         />
       </Animated.View>
 
@@ -343,7 +379,13 @@ export default function QRCodesScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 16, maxWidth: 1000 },
+  container: {
+    flex: 1,
+    padding: 16,
+    width: '100%',
+    maxWidth: 1200,
+    alignSelf: 'center',
+  },
 
   // ----- HEADER -----
   headerCard: {
@@ -368,13 +410,14 @@ const styles = StyleSheet.create({
   },
   headerSubtitle: {
     color: 'rgba(255,255,255,0.95)',
-    fontSize: 12,
+    fontSize: 13,
     marginTop: 4,
   },
   headerButtonsRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+    flexWrap: 'wrap',
   },
   primaryBtn: {
     flexDirection: 'row',
@@ -462,6 +505,21 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     borderWidth: 1,
     borderColor: '#f1f1f1',
+  },
+  qrCardWrapper: {
+    borderRadius: 14,
+    padding: 10,
+    borderWidth: 1,
+  },
+  emptyCard: {
+    padding: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    marginTop: 16,
   },
 
   // ----- DETAIL -----

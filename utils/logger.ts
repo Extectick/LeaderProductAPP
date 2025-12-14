@@ -1,6 +1,7 @@
 
 // utils/logger.ts (fixed: no 'append' option; batched flush)
-import * as FileSystem from 'expo-file-system';
+// NOTE: using legacy API to silence deprecation warnings in SDK 54+
+import * as FileSystem from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 type Level = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR' | 'FATAL';

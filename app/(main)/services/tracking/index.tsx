@@ -81,6 +81,16 @@ const isoToDate = (iso?: string | null) => {
   return isNaN(d.getTime()) ? null : d;
 };
 
+const formatDateOnly = (d?: Date | null) => {
+  if (!d) return '';
+  try {
+    return d.toLocaleDateString('ru-RU', { year: 'numeric', month: '2-digit', day: '2-digit' });
+  } catch {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+};
+
 const formatTime = (d?: Date | null) => {
   if (!d) return '';
   const pad = (n: number) => n.toString().padStart(2, '0');
@@ -739,18 +749,23 @@ export default function TrackingServiceScreen() {
                   }}
                 />
               </View>
-            ) : (
-              <Pressable
-                onPress={openNativePicker}
-                style={({ pressed }) => [
-                  styles.secondaryBtn,
-                  { marginTop: 12 },
-                  pressed && { opacity: 0.9 },
-                ]}
-              >
-                <Text style={styles.secondaryBtnText}>Открыть календарь</Text>
-              </Pressable>
-            )}
+            ) : null}
+
+            <Text style={{ color: mutedText, marginTop: 12 }}>Дата</Text>
+            <Pressable
+              onPress={openNativePicker}
+              disabled={Platform.OS === 'web'}
+              style={({ pressed }) => [
+                styles.dateInputShell,
+                pressed && { opacity: 0.9 },
+                Platform.OS === 'web' && { cursor: 'default' as any },
+              ]}
+            >
+              <Ionicons name="calendar-outline" size={18} color={mutedText} />
+              <Text style={{ color: calendarDate ? textColor : mutedText, fontWeight: '700' }}>
+                {formatDateOnly(calendarDate || isoToDate(filtersRef.current[pickerField || 'from']) || new Date())}
+              </Text>
+            </Pressable>
 
             <Text style={{ color: mutedText, marginTop: 12 }}>Время (чч:мм)</Text>
             <TextInput
@@ -762,7 +777,15 @@ export default function TrackingServiceScreen() {
               keyboardType="numeric"
               placeholder="00:00"
               placeholderTextColor={mutedText}
-              style={[styles.input, { color: textColor, borderColor: mutedText }]}
+              style={[
+                styles.input,
+                {
+                  color: textColor,
+                  borderColor: mutedText,
+                  backgroundColor: cardBackground,
+                  borderRadius: 12,
+                },
+              ]}
             />
             {dateError ? (
               <Text style={{ color: '#dc2626', marginTop: 6 }}>{dateError}</Text>
@@ -999,11 +1022,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 10,
     fontSize: 14,
+    backgroundColor: '#f9fafb',
   },
   dateInput: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+  },
+  dateInputShell: {
+    marginTop: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#f9fafb',
+    borderColor: '#e5e7eb',
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
   filterRow: {
     flexDirection: 'row',

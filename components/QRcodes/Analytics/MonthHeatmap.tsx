@@ -164,11 +164,12 @@ export default function MonthHeatmap({
   }, [events, selStart, selEnd, selectedDayStart, asc]);
 
   // размеры
-  const gap = 8;
-  const headerH = 44;
-  const weekdayH = 20;
+  const gap = 4;
+  const headerH = 32;
+  const weekdayH = 14;
   const contentW = Math.max(0, gridW);
-  const cellSize = contentW > 0 ? Math.floor((contentW - gap * 6) / 7) : 0;
+  const rawSize = contentW > 0 ? Math.floor((contentW - gap * 6) / 7) : 0;
+  const cellSize = Math.max(40, Math.min(60, rawSize));
 
   // модалка выбора месяца/года
   const [pickVisible, setPickVisible] = useState(false);
@@ -431,9 +432,9 @@ export default function MonthHeatmap({
 
 const styles = StyleSheet.create({
   card: { borderRadius: 16, borderWidth: 1, padding: 12 },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
   iconBtn: {
-    height: 36, width: 36, borderRadius: 10, borderWidth: 1, borderColor: '#E5E7EB',
+    height: 30, width: 30, borderRadius: 8, borderWidth: 1, borderColor: '#E5E7EB',
     alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF',
   },
   monthBtn: {
@@ -444,8 +445,8 @@ const styles = StyleSheet.create({
   monthTitle: { fontWeight: '800' },
   weekdays: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
   gridContainer: { width: '100%', marginTop: 2, marginBottom: 8 },
-  cell: { borderRadius: 10, alignItems: 'flex-start', justifyContent: 'flex-start', padding: 6 },
-  dayNum: { fontSize: 11, fontWeight: '700' },
+  cell: { borderRadius: 8, alignItems: 'flex-start', justifyContent: 'flex-start', padding: 4 },
+  dayNum: { fontSize: 10, fontWeight: '700' },
   legendRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginTop: 4, marginBottom: 6 },
   infoBar: { paddingVertical: 8, borderTopWidth: 1, borderTopColor: '#EFF2F6', borderBottomWidth: 1, borderBottomColor: '#EFF2F6' },
   eventsHeader: { marginTop: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },

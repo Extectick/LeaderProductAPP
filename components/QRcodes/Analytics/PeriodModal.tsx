@@ -86,16 +86,16 @@ export default function PeriodModal({
       value={value}
       onChange={(e) => onChange((e.target as HTMLInputElement).value)}
       style={{
-        height: 38,
-        borderWidth: 1,
-        borderStyle: 'solid',
-        borderColor: '#E5E7EB',
-        borderRadius: 10,
-        padding: '0 10px',
+        height: 32,
+        border: 'none',
+        borderRadius: 8,
+        padding: '0 4px',
         width: '100%',
-        background: colors.background,
-        color: colors.text,
+        background: 'transparent',
+        color: colors.text as string,
         outline: 'none',
+        fontWeight: 700,
+        fontSize: 14,
       }}
     />;
   };
@@ -154,52 +154,63 @@ export default function PeriodModal({
           {/* Произвольный диапазон */}
           {localKey === 'custom' && (
             <View style={styles.customBox}>
-              <Text style={{ color: colors.text, fontWeight: '700', marginBottom: 8 }}>
-                Произвольный диапазон
-              </Text>
+              <View style={styles.customHeader}>
+                <Text style={{ color: colors.text, fontWeight: '800', fontSize: 15 }}>
+                  Произвольный диапазон
+                </Text>
+                {!canApply && (
+                  <Text style={{ color: '#F97316', fontWeight: '700', fontSize: 12 }}>Заполните даты</Text>
+                )}
+              </View>
 
               <View style={styles.inputRow}>
-                <View style={{ flex: 1, marginRight: 8 }}>
+                <View style={styles.rangeField}>
                   <Text style={styles.inputLabel}>С</Text>
-
-                  {Platform.OS === 'web' ? (
-                    renderWebDateInput(fromStr, setFromStr)
-                  ) : DateTimePicker ? (
-                    renderNativeDateButton('from', fromStr, () => setShowFromPicker(true))
-                  ) : (
-                    <TextInput
-                      value={fromStr}
-                      onChangeText={setFromStr}
-                      placeholder="YYYY-MM-DD"
-                      placeholderTextColor={colors.secondaryText}
-                      style={styles.input}
-                    />
-                  )}
+                  <View style={styles.inputShell}>
+                    <View style={{ flex: 1 }}>
+                      {Platform.OS === 'web' ? (
+                        renderWebDateInput(fromStr, setFromStr)
+                      ) : DateTimePicker ? (
+                        renderNativeDateButton('from', fromStr, () => setShowFromPicker(true))
+                      ) : (
+                        <TextInput
+                          value={fromStr}
+                          onChangeText={setFromStr}
+                          placeholder="YYYY-MM-DD"
+                          placeholderTextColor={colors.secondaryText}
+                          style={styles.input}
+                        />
+                      )}
+                    </View>
+                  </View>
                 </View>
 
-                <View style={{ flex: 1 }}>
+                <View style={styles.rangeField}>
                   <Text style={styles.inputLabel}>По</Text>
-
-                  {Platform.OS === 'web' ? (
-                    renderWebDateInput(toStr, setToStr)
-                  ) : DateTimePicker ? (
-                    renderNativeDateButton('to', toStr, () => setShowToPicker(true))
-                  ) : (
-                    <TextInput
-                      value={toStr}
-                      onChangeText={setToStr}
-                      placeholder="YYYY-MM-DD"
-                      placeholderTextColor={colors.secondaryText}
-                      style={styles.input}
-                    />
-                  )}
+                  <View style={styles.inputShell}>
+                    <View style={{ flex: 1 }}>
+                      {Platform.OS === 'web' ? (
+                        renderWebDateInput(toStr, setToStr)
+                      ) : DateTimePicker ? (
+                        renderNativeDateButton('to', toStr, () => setShowToPicker(true))
+                      ) : (
+                        <TextInput
+                          value={toStr}
+                          onChangeText={setToStr}
+                          placeholder="YYYY-MM-DD"
+                          placeholderTextColor={colors.secondaryText}
+                          style={styles.input}
+                        />
+                      )}
+                    </View>
+                  </View>
                 </View>
               </View>
 
-              <Text style={{ color: colors.secondaryText, fontSize: 12, marginTop: 6 }}>
+              <Text style={{ color: colors.secondaryText, fontSize: 12, marginTop: 10 }}>
                 {fromStr && toStr
                   ? `С ${fromStr} по ${toStr}`
-                  : 'Введите даты в формате YYYY-MM-DD'}
+                  : 'Введите обе даты, затем нажмите «Применить». Диапазон включителен.'}
               </Text>
             </View>
           )}
@@ -229,7 +240,7 @@ export default function PeriodModal({
         {DateTimePicker && showFromPicker && (
           <View style={styles.pickerSheet}>
             <View style={styles.pickerCard}>
-              <Text style={styles.pickerTitle}>Дата «С»</Text>
+              <Text style={styles.pickerTitle}>Дата (С)</Text>
               <DateTimePicker
                 mode="date"
                 value={parsedFrom || new Date()}
@@ -260,7 +271,7 @@ export default function PeriodModal({
         {DateTimePicker && showToPicker && (
           <View style={styles.pickerSheet}>
             <View style={styles.pickerCard}>
-              <Text style={styles.pickerTitle}>Дата «По»</Text>
+              <Text style={styles.pickerTitle}>Дата (По)</Text>
               <DateTimePicker
                 mode="date"
                 value={parsedTo || new Date()}
@@ -351,17 +362,42 @@ const getStyles = (colors: any) =>
       borderRadius: 12,
       padding: 12,
       marginTop: 12,
+      backgroundColor: colors.background,
+      gap: 10,
     },
-    inputRow: { flexDirection: 'row', alignItems: 'flex-start' },
+    customHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    inputRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 10,
+      flexWrap: Platform.OS === 'web' ? 'nowrap' as any : 'wrap' as any,
+    },
+    rangeField: { flex: 1, minWidth: Platform.OS === 'web' ? 0 : '100%', gap: 6 },
     inputLabel: { color: colors.secondaryText, fontSize: 12, marginBottom: 6 },
-    input: {
-      height: 38,
+    inputShell: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 0,
       borderWidth: 1,
       borderColor: '#E5E7EB',
-      borderRadius: 10,
-      paddingHorizontal: 10,
+      borderRadius: 12,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      backgroundColor: '#fff',
+      width: '100%',
+    },
+    input: {
+      height: 36,
+      borderWidth: 0,
+      borderColor: '#E5E7EB',
+      borderRadius: 8,
+      paddingHorizontal: 8,
       color: colors.text,
-      backgroundColor: colors.background,
+      backgroundColor: 'transparent',
     },
 
     footer: {
