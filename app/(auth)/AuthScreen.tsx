@@ -467,7 +467,7 @@ export default function AuthScreen() {
           loading={loading}
           haptics
           gradientColors={gradientColors}
-          style={style}
+          style={style ? StyleSheet.flatten(style) : undefined}
           onPressIn={pressIn}
           onPressOut={pressOut}
         />

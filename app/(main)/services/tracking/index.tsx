@@ -60,7 +60,7 @@ const MIN_POINT_DISTANCE_METERS = 12;
 const defaultFilters: Filters = {
   from: '',
   to: '',
-  maxAccuracy: '50',
+  maxAccuracy: '5',
   maxPoints: DEFAULT_POINTS_LIMIT.toString(),
 };
 
@@ -254,9 +254,10 @@ export default function TrackingServiceScreen() {
       setSelectedUser({
         id: profile.id,
         email: profile.email,
-        firstName: profile.firstName || undefined,
-        lastName: profile.lastName || undefined,
-        middleName: profile.middleName || undefined,
+        firstName: profile.firstName ?? null,
+        lastName: profile.lastName ?? null,
+        middleName: profile.middleName ?? null,
+        phone: profile.phone ?? null,
       });
     }
   }, [profile]);
@@ -444,9 +445,9 @@ export default function TrackingServiceScreen() {
       const initial = isoToDate(filtersRef.current[pickerField]) || new Date();
       DateTimePickerAndroid.open({
         value: initial,
-        mode: 'datetime',
+        mode: 'date',
         is24Hour: true,
-        onChange: (event, date) => {
+        onChange: (event, date?: Date) => {
           if (!date || (event && event.type === 'dismissed')) return;
           setCalendarDate(date);
           setTimeInput(formatTime(date));
@@ -826,7 +827,7 @@ export default function TrackingServiceScreen() {
                   value={calendarDate || new Date()}
                   mode="datetime"
                   display="inline"
-                  onChange={(_, date) => {
+                  onChange={(_: any, date?: Date) => {
                     if (!date) return;
                     setCalendarDate(date);
                     setTimeInput(formatTime(date));
@@ -969,7 +970,7 @@ export default function TrackingServiceScreen() {
                 >
                   {nativeMapAvailable ? (
                     <MapView
-                      ref={(ref) => (mapRef.current = ref)}
+                      ref={(ref: any) => (mapRef.current = ref)}
                       style={StyleSheet.absoluteFill}
                       region={controlledRegion || baseRegion || undefined}
                       showsUserLocation={false}

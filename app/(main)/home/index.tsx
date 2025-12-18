@@ -45,28 +45,28 @@ const links = [
     desc: "Все инструменты и разделы компании",
     href: "/services",
     icon: "apps-outline",
-    gradient: ["#6366F1", "#8B5CF6"],
+    gradient: ["#6366F1", "#8B5CF6"] as const,
   },
   {
     label: "Задачи",
     desc: "Актуальные поручения команды",
     href: "/tasks",
     icon: "list-outline",
-    gradient: ["#22C55E", "#16A34A"],
+    gradient: ["#22C55E", "#16A34A"] as const,
   },
   {
     label: "Обращения",
     desc: "Коммуникация с клиентами и партнёрами",
     href: "/services/appeals",
     icon: "chatbubbles-outline",
-    gradient: ["#FB923C", "#F97316"],
+    gradient: ["#FB923C", "#F97316"] as const,
   },
   {
     label: "Трекинг",
     desc: "Маршруты и точки на карте",
     href: "/services/tracking",
     icon: "navigate-outline",
-    gradient: ["#0EA5E9", "#2563EB"],
+    gradient: ["#0EA5E9", "#2563EB"] as const,
   },
 ];
 

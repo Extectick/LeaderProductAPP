@@ -8,13 +8,22 @@ export default function ServicesLayout() {
   const map = {
     index: { title: "Главная сервисов", icon: "apps-outline", showBack: false, subtitle: "Все доступные сервисы" },
     qrcodes: { title: "QR генератор", icon: "qr-code-outline", showBack: true, parent: "/services", subtitle: "Создание и аналитика QR" },
-    "qrcodes/index": { title: "Список QR кодов", icon: "qr-code-outline", showBack: true, parent: "/services/qrcodes" },
-    "qrcodes/form": { title: "Форма QR кода", icon: "qr-code-outline", showBack: true, parent: "/services/qrcodes" },
-    appeals: { title: "Обращения", icon: "chatbubbles-outline", showBack: true, parent: "/services" },
-    "appeals/index": { title: "Обращения", icon: "chatbubbles-outline", showBack: true, parent: "/services" },
+    "qrcodes/index": { title: "Список QR кодов", icon: "qr-code-outline", showBack: true, parent: "/services/qrcodes", subtitle: "Все ваши QR-коды" },
+    "qrcodes/form": { title: "Форма QR кода", icon: "qr-code-outline", showBack: true, parent: "/services/qrcodes", subtitle: "Создание и правка" },
+    appeals: { title: "Обращения", icon: "chatbubbles-outline", showBack: true, parent: "/services", subtitle: "Центр общения" },
+    "appeals/index": { title: "Обращения", icon: "chatbubbles-outline", showBack: true, parent: "/services", subtitle: "Центр общения" },
     tracking: { title: "Геомаршруты", icon: "map-outline", showBack: true, parent: "/services", subtitle: "Маршруты и точки на карте" },
     "tracking/index": { title: "Геомаршруты", icon: "map-outline", showBack: true, parent: "/services", subtitle: "Маршруты и точки на карте" },
-  } as const;
+  } satisfies Record<
+    string,
+    {
+      title: string;
+      icon: string;
+      showBack: boolean;
+      parent?: string;
+      subtitle?: string;
+    }
+  >;
 
   return (
     <Stack

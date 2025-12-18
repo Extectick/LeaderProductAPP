@@ -26,8 +26,12 @@ export default function AppealsIndex() {
       const blob: any = await exportAppealsCSV({ scope, status, priority });
       // Преобразуй blob в base64 если нужно — зависит от твоего apiClient
       const base64 = typeof blob === 'string' ? blob : ''; // подставь свою util-ку
-      const path = FileSystem.documentDirectory + `appeals-${Date.now()}.csv`;
-      await FileSystem.writeAsStringAsync(path, base64, { encoding: FileSystem.EncodingType.Base64 });
+      const baseDir =
+        (FileSystem as any).cacheDirectory ||
+        (FileSystem as any).documentDirectory ||
+        '';
+      const path = `${baseDir}appeals-${Date.now()}.csv`;
+      await FileSystem.writeAsStringAsync(path, base64, { encoding: 'base64' as const });
       // await Sharing.shareAsync(path);
     } catch (e) {
       Alert.alert('Ошибка', 'Не удалось экспортировать CSV');

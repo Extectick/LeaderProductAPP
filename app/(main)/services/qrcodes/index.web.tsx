@@ -244,7 +244,10 @@ export default function QRHubWeb() {
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => (
             <Pressable
-              onPress={() => setFormOpen(true) || setEditingItem(item)}
+              onPress={() => {
+                setEditingItem(item);
+                setFormOpen(true);
+              }}
               style={({ pressed }) => [
                 stylesMobile.card,
                 { backgroundColor: colors.cardBackground, borderColor: '#E5E7EB' },

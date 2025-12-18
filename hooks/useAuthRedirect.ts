@@ -1,5 +1,5 @@
 import { useContext, useEffect, useMemo } from 'react';
-import { useRouter, type Href } from 'expo-router';
+import { usePathname, useRouter, type Href } from 'expo-router';
 import { AuthContext, isValidProfile } from '@/context/AuthContext';
 
 const ROUTES = {
@@ -12,6 +12,7 @@ type Gate = 'guest' | 'needsProfile' | 'ready';
 
 export function useAuthRedirect() {
   const router = useRouter();
+  const pathname = usePathname();
   const auth = useContext(AuthContext);
   if (!auth) throw new Error('AuthContext is required');
 
@@ -27,15 +28,24 @@ export function useAuthRedirect() {
   useEffect(() => {
     if (isLoading) return;
 
-    const href: Href =
-      gate === 'guest'
-        ? (ROUTES.AUTH as Href)
-        : gate === 'needsProfile'
-        ? (ROUTES.PROFILE as Href)
-        : (ROUTES.HOME as Href);
+    // Если пользователь не авторизован, держим его в auth-стеке
+    if (gate === 'guest') {
+      if (!pathname || !pathname.startsWith('/(auth)')) {
+        router.replace(ROUTES.AUTH as Href);
+      }
+      return;
+    }
 
-    router.replace(href);
-  }, [isLoading, gate, router]);
+    // Если нужен профиль — отправляем только на экран профиля
+    if (gate === 'needsProfile') {
+      if (pathname !== ROUTES.PROFILE) {
+        router.replace(ROUTES.PROFILE as Href);
+      }
+      return;
+    }
+
+    // gate === 'ready' — не трогаем текущий маршрут (сохраняем страницу при перезагрузке)
+  }, [isLoading, gate, router, pathname]);
 
   // Показываем, можно ли уже рендерить детей
   return { isChecking: isLoading };
