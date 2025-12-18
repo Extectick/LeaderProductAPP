@@ -3,6 +3,7 @@ import { Ionicons } from '@expo/vector-icons';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  FlatList,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -12,6 +13,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 
 import { useTheme } from '@/context/ThemeContext';
 import { useAnalyticsController } from '@/hooks/useAnalyticsController';
@@ -46,11 +48,13 @@ export default function QRHubWeb() {
   const { theme, themes } = useTheme();
   const colors = themes[theme];
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const styles = getStyles(colors);
   const { width } = useWindowDimensions();
+  const isMobileLike = width <= 820;
   const isStack = width < 1200;
 
-  // правая панель — аналитика
+  // правая панель - аналитика
   const ctrl = useAnalyticsController();
 
   // левая панель — список QR
@@ -93,6 +97,9 @@ export default function QRHubWeb() {
 
   const openCreate = () => { setEditingItem(null); setFormOpen(true); };
   const openEdit = (item: QRCodeItemType) => { setEditingItem(item); setFormOpen(true); };
+  const handleAnalytics = useCallback(() => {
+    router.push('/(main)/services/qrcodes/analytics' as any);
+  }, [router]);
 
   const onSaved = (saved: QRCodeItemType) => {
     setQrList(prev => {
@@ -197,7 +204,104 @@ export default function QRHubWeb() {
   };
 
   if ((listLoading && qrList.length === 0) || (ctrl.loading && !ctrl.analytics)) {
-    return renderSkeletonPage();
+    return isMobileLike ? (
+      <View style={[stylesMobile.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+        <ActivityIndicator color={colors.text} />
+      </View>
+    ) : (
+      renderSkeletonPage()
+    );
+  }
+
+  if (isMobileLike) {
+    return (
+      <View style={[stylesMobile.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+        <View style={stylesMobile.header}>
+          <Text style={[stylesMobile.title, { color: colors.text }]}>QR-коды</Text>
+          <View style={stylesMobile.headerButtonsRow}>
+            <Pressable onPress={openCreate} style={[stylesMobile.primaryBtn]} accessibilityRole="button">
+              <Ionicons name="add" size={18} color="#0B1220" />
+              <Text style={stylesMobile.primaryBtnText}>Создать</Text>
+            </Pressable>
+            <Pressable onPress={handleAnalytics} style={[stylesMobile.secondaryBtn]} accessibilityRole="button">
+              <Ionicons name="analytics" size={18} color={colors.text} />
+              <Text style={[stylesMobile.secondaryBtnText, { color: colors.text }]}>Аналитика</Text>
+            </Pressable>
+          </View>
+        </View>
+
+        {listError ? (
+          <View style={stylesMobile.errorBox}>
+            <Text style={{ color: '#B91C1C' }}>{listError}</Text>
+            <Pressable onPress={loadList} style={stylesMobile.retryBtn}>
+              <Text style={{ color: '#fff', fontWeight: '700' }}>Повторить</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
+        <FlatList
+          data={qrList}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item }) => (
+            <Pressable
+              onPress={() => setFormOpen(true) || setEditingItem(item)}
+              style={({ pressed }) => [
+                stylesMobile.card,
+                { backgroundColor: colors.cardBackground, borderColor: '#E5E7EB' },
+                pressed && { opacity: 0.94 },
+              ]}
+            >
+              <Text style={[stylesMobile.cardTitle, { color: colors.text }]} numberOfLines={1}>
+                {item.description || item.qrData || 'QR'}
+              </Text>
+              <Text style={{ color: colors.secondaryText, fontSize: 12 }} numberOfLines={2}>
+                {item.qrData}
+              </Text>
+            </Pressable>
+          )}
+          ListEmptyComponent={
+            <View style={[stylesMobile.emptyCard, { backgroundColor: colors.cardBackground }]}>
+              <Ionicons name="qr-code-outline" size={36} color="#9CA3AF" />
+              <Text style={{ color: colors.text, fontWeight: '700', marginTop: 8 }}>Пока нет QR-кодов</Text>
+            </View>
+          }
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={colors.text}
+              colors={[colors.text]}
+            />
+          }
+          contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: insets.bottom + 12, gap: 10 }}
+          showsVerticalScrollIndicator={false}
+        />
+
+        {/* форма поверх списка */}
+        {formOpen && (
+          <View style={stylesMobile.overlay}>
+            <Pressable style={stylesMobile.backdrop} onPress={() => setFormOpen(false)} />
+            <View style={[stylesMobile.formCard, { backgroundColor: colors.cardBackground, borderColor: colors.border }]}>
+              <QRCodeForm
+                mode={editingItem ? 'edit' : 'create'}
+                initialItem={editingItem ?? undefined}
+                onCreate={async (payload) => {
+                  const item = await createQRCode(payload.qrType, payload.qrData, payload.description);
+                  onSaved(item);
+                  setFormOpen(false);
+                }}
+                onUpdate={async (id, patch) => {
+                  const item = await updateQRCode(id, patch);
+                  onSaved(item);
+                  setFormOpen(false);
+                }}
+                onSuccess={() => setFormOpen(false)}
+              />
+            </View>
+          </View>
+        )}
+      </View>
+    );
   }
 
   return (
@@ -484,6 +588,7 @@ const fmt = (d: Date) =>
 
 const getStyles = (colors: any) =>
   StyleSheet.create({
+    // десктоп
     root: { flex: 1, backgroundColor: colors.background },
     splitRow: { flex: 1, flexDirection: 'row', gap: 12, paddingHorizontal: 12, alignItems: 'flex-start' },
     splitColumn: { flexDirection: 'column' },
@@ -630,3 +735,75 @@ const getStyles = (colors: any) =>
     scanTitle: { color: colors.text, fontSize: 14, fontWeight: '700' },
     scanSub: { color: colors.secondaryText, fontSize: 12, marginTop: 2 },
   });
+
+const stylesMobile = StyleSheet.create({
+  container: { flex: 1 },
+  header: { paddingHorizontal: 12, paddingTop: 8, paddingBottom: 6, gap: 8 },
+  title: { fontSize: 22, fontWeight: '800', letterSpacing: 0.2 },
+  headerButtonsRow: { flexDirection: 'row', gap: 8 },
+  primaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+  },
+  primaryBtnText: { color: '#0B1220', fontWeight: '800', marginLeft: 6 },
+  secondaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  secondaryBtnText: { fontWeight: '700', marginLeft: 6 },
+  errorBox: {
+    marginHorizontal: 12,
+    padding: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#fee2e2',
+    backgroundColor: '#fff1f2',
+  },
+  retryBtn: {
+    marginTop: 8,
+    backgroundColor: '#0EA5E9',
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  card: {
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 12,
+  },
+  cardTitle: { fontSize: 15, fontWeight: '700' },
+  emptyCard: {
+    padding: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    marginTop: 16,
+  },
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 14,
+  },
+  backdrop: { ...StyleSheet.absoluteFillObject },
+  formCard: {
+    width: '100%',
+    maxWidth: 520,
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+  },
+});

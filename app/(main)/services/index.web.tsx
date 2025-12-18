@@ -3,12 +3,13 @@ import { useThemeColor } from '@/hooks/useThemeColor';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-    ActivityIndicator,
-    ScrollView,
-    StyleSheet,
-    Text,
-    useWindowDimensions,
-    View,
+  ActivityIndicator,
+  FlatList,
+  ScrollView,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
 } from 'react-native';
 import ServiceCard from './ServiceCard';
 
@@ -19,9 +20,10 @@ export default function ServicesWebPage() {
 
   const { width } = useWindowDimensions();
   const router = useRouter();
+  const isMobileWidth = width <= 820;
 
   // более плотная сетка и брейкпоинты для десктопа
-  const numColumns = useMemo(() => {
+  const desktopColumns = useMemo(() => {
     if (width < 640) return 2;
     if (width < 960) return 3;
     if (width < 1280) return 4;
@@ -30,10 +32,22 @@ export default function ServicesWebPage() {
   }, [width]);
 
   const gap = 16;
-  const cardSize = useMemo(() => {
-    const inner = Math.min(1280, width) - gap * 2 - (numColumns - 1) * gap;
-    return Math.max(140, Math.floor(inner / numColumns));
-  }, [width, numColumns]);
+  const desktopCardSize = useMemo(() => {
+    const inner = Math.min(1280, width) - gap * 2 - (desktopColumns - 1) * gap;
+    return Math.max(140, Math.floor(inner / desktopColumns));
+  }, [width, desktopColumns]);
+
+  // мобильный/узкий layout
+  const mobileColumns = useMemo(() => {
+    if (width < 360) return 2;
+    if (width < 768) return 2;
+    return 3;
+  }, [width]);
+  const mobileGap = 14;
+  const mobileCardSize = useMemo(() => {
+    const inner = width - mobileGap * 2 - (mobileColumns - 1) * mobileGap;
+    return Math.min(200, Math.max(120, Math.floor(inner / mobileColumns)));
+  }, [width, mobileColumns]);
 
   useEffect(() => {
     const load = async () => {
@@ -69,6 +83,35 @@ export default function ServicesWebPage() {
     );
   }
 
+  if (isMobileWidth) {
+    return (
+      <View style={{ flex: 1, backgroundColor: background }}>
+        <Text style={[styles.headingMobile, { color: textColor }]}>Сервисы</Text>
+        <FlatList
+          data={services}
+          keyExtractor={(item) => item.name}
+          numColumns={mobileColumns}
+          columnWrapperStyle={{ gap: mobileGap, marginBottom: mobileGap }}
+          contentContainerStyle={{ padding: mobileGap, paddingTop: 0 }}
+          renderItem={({ item }) => (
+            <ServiceCard
+              icon={item.icon}
+              name={item.name}
+              description={item.description}
+              size={mobileCardSize}
+              onPress={() => router.push(item.route as any)}
+              gradient={item.gradient}
+              iconSize={40}
+              containerStyle={{ backgroundColor: cardBackground }}
+              disabled={item.disable}
+            />
+          )}
+          showsVerticalScrollIndicator={false}
+        />
+      </View>
+    );
+  }
+
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: background }}
@@ -77,13 +120,13 @@ export default function ServicesWebPage() {
       <Text style={[styles.heading, { color: textColor }]}>Сервисы</Text>
 
       <View style={[styles.grid, { gap }]}>
-        {services.map((s, idx) => (
-          <View key={s.name} style={{ width: cardSize }}>
+        {services.map((s) => (
+          <View key={s.name} style={{ width: desktopCardSize }}>
             <ServiceCard
               icon={s.icon}
               name={s.name}
               description={s.description}
-              size={cardSize}
+              size={desktopCardSize}
               onPress={() => router.push(s.route as any)}
               gradient={s.gradient}
               iconSize={44}
@@ -109,6 +152,14 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     letterSpacing: 0.2,
     marginBottom: 12,
+  },
+  headingMobile: {
+    fontSize: 22,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 8,
   },
   grid: {
     flexDirection: 'row',
