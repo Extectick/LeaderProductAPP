@@ -6,7 +6,7 @@ import isEqual from 'lodash.isequal';
 import React, { createContext, ReactNode, useEffect, useState } from 'react';
 
 import { Profile } from '@/types/userTypes';
-import { logout, refreshToken } from '@/utils/tokenService';
+import { handleBackendUnavailable, logout, refreshToken } from '@/utils/tokenService';
 import { getProfile } from '@/utils/userService';
 
 interface AuthContextType {
@@ -78,6 +78,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         // Если нет токена - попробовать обновить
         if (!token) {
           token = await refreshToken();
+          if (!token) {
+            await handleBackendUnavailable('Не удалось получить новый токен (сервер недоступен)');
+          }
         }
 
         // Всегда проверяем профиль, даже если нет токена
@@ -99,8 +102,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             // Токен просрочен - попробовать обновить
             const newToken = await refreshToken();
             if (!newToken) {
-              // Не удалось обновить - делаем logout
-              await logout();
+              await handleBackendUnavailable('Не удалось обновить токен доступа');
               setAuthenticated(false);
               return;
             }
@@ -129,13 +131,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             }
           }
         } else {
-          // Если нет токена - делаем logout
-          await logout();
+          // Если нет токена - проверим refreshToken и покажем алерт при недоступности бэка
+          await handleBackendUnavailable('Требуется подключение к серверу');
           setAuthenticated(false);
         }
       } catch (e) {
         console.warn('Ошибка инициализации:', e);
-        await logout();
+        await handleBackendUnavailable((e as any)?.message || 'Ошибка инициализации');
         if (!isMounted) return;
         setAuthenticated(false);
         setProfileState(null);

@@ -3,6 +3,7 @@ import { AuthContext } from '@/context/AuthContext';
 import { AdminUserItem, getUsers } from '@/utils/userService';
 import {
   fetchUserRoutesWithPoints,
+  RoutePointDto,
   RouteWithPoints,
 } from '@/utils/trackingService';
 import { Ionicons } from '@expo/vector-icons';
@@ -27,6 +28,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import RangeCalendarModal from '@/components/RangeCalendarModal';
 import LeafletMap from './LeafletMap';
 // react-native-maps временно отключаем, чтобы не ломать веб-сборку
 const MapView: any = null;
@@ -52,11 +54,14 @@ type Filters = {
   maxPoints: string;
 };
 
+const DEFAULT_POINTS_LIMIT = 100;
+const MIN_POINT_DISTANCE_METERS = 12;
+
 const defaultFilters: Filters = {
   from: '',
   to: '',
   maxAccuracy: '50',
-  maxPoints: '500',
+  maxPoints: DEFAULT_POINTS_LIMIT.toString(),
 };
 
 const formatDateTime = (value?: string | null) => {
@@ -104,6 +109,55 @@ const parseTime = (value: string) => {
   const minutes = parseInt(match[2] || '0', 10);
   if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
   return { hours, minutes };
+};
+
+const toRad = (deg: number) => (deg * Math.PI) / 180;
+const calcDistanceMeters = (
+  a: { latitude: number; longitude: number },
+  b: { latitude: number; longitude: number }
+) => {
+  const dLat = toRad(b.latitude - a.latitude);
+  const dLon = toRad(b.longitude - a.longitude);
+  const lat1 = toRad(a.latitude);
+  const lat2 = toRad(b.latitude);
+  const sinLat = Math.sin(dLat / 2);
+  const sinLon = Math.sin(dLon / 2);
+  const h =
+    sinLat * sinLat +
+    Math.cos(lat1) * Math.cos(lat2) * sinLon * sinLon;
+  const c = 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+  return 6371000 * c;
+};
+
+const filterNearbyPoints = (
+  pts: RoutePointDto[],
+  minDistanceMeters = MIN_POINT_DISTANCE_METERS
+) => {
+  if (pts.length < 2) return pts;
+  const result: RoutePointDto[] = [];
+  for (const p of pts) {
+    const tooClose = result.some(
+      (keep) => calcDistanceMeters(keep, p) < minDistanceMeters
+    );
+    if (!tooClose) {
+      result.push(p);
+    }
+  }
+  return result;
+};
+
+const parseLimitValue = (
+  value?: string | number | null,
+  fallback = DEFAULT_POINTS_LIMIT
+) => {
+  const parsed =
+    typeof value === 'number'
+      ? value
+      : parseInt(String(value ?? '').trim(), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.min(parsed, 2000);
 };
 
 const Calendar =
@@ -170,6 +224,7 @@ export default function TrackingServiceScreen() {
   const [calendarDate, setCalendarDate] = useState<Date | null>(null);
   const [timeInput, setTimeInput] = useState('');
   const [dateError, setDateError] = useState<string | null>(null);
+  const [periodCalendarVisible, setPeriodCalendarVisible] = useState(false);
   const [mapModalVisible, setMapModalVisible] = useState(false);
   const [selectedPointIndex, setSelectedPointIndex] = useState<number | null>(null);
   const [controlledRegion, setControlledRegion] = useState<Region | null>(null);
@@ -273,8 +328,20 @@ export default function TrackingServiceScreen() {
     });
   }, [activeRoute]);
 
-  const maxDisplay = 20;
-  const limitedPoints = useMemo(() => points.slice(0, maxDisplay), [points]);
+  const spacedPoints = useMemo(
+    () => filterNearbyPoints(points),
+    [points]
+  );
+
+  const displayLimit = useMemo(
+    () => parseLimitValue(filters.maxPoints, DEFAULT_POINTS_LIMIT),
+    [filters.maxPoints]
+  );
+
+  const limitedPoints = useMemo(
+    () => spacedPoints.slice(0, displayLimit),
+    [spacedPoints, displayLimit]
+  );
 
   const baseRegion: Region | null = useMemo(() => {
     if (!limitedPoints.length) return null;
@@ -338,7 +405,7 @@ export default function TrackingServiceScreen() {
         mapRef.current.animateToRegion(region, 350);
       }
     },
-    [points]
+    [limitedPoints]
   );
 
   const openDatePicker = (field: 'from' | 'to') => {
@@ -365,6 +432,10 @@ export default function TrackingServiceScreen() {
     filtersRef.current = { ...filtersRef.current, [pickerField]: iso };
     setDateModalVisible(false);
     setPickerField(null);
+  };
+
+  const openPeriodCalendar = () => {
+    setPeriodCalendarVisible(true);
   };
 
   const openNativePicker = () => {
@@ -428,7 +499,20 @@ export default function TrackingServiceScreen() {
         </View>
 
         <View style={[styles.card, { backgroundColor: cardBackground }]}>
-          <Text style={[styles.blockTitle, { color: textColor }]}>Период</Text>
+          <View style={styles.periodHeader}>
+            <Text style={[styles.blockTitle, { color: textColor, flex: 1 }]}>Период</Text>
+            <Pressable
+              onPress={openPeriodCalendar}
+              style={({ pressed }) => [
+                styles.secondaryBtn,
+                styles.inlineBtn,
+                pressed && { opacity: 0.9 },
+              ]}
+            >
+              <Ionicons name="calendar" size={16} color="#0B1220" style={{ marginRight: 6 }} />
+              <Text style={styles.secondaryBtnText}>Календарь</Text>
+            </Pressable>
+          </View>
           <View style={styles.filterRow}>
             <View style={{ flex: 1 }}>
               <Text style={[styles.label, { color: mutedText }]}>От</Text>
@@ -464,7 +548,7 @@ export default function TrackingServiceScreen() {
                 value={filters.maxAccuracy}
                 onChangeText={(v) => setFilters((prev) => ({ ...prev, maxAccuracy: v }))}
                 keyboardType="numeric"
-                placeholder="50"
+                placeholder="5"
                 placeholderTextColor={mutedText}
                 style={[styles.input, { color: textColor, borderColor: mutedText }]}
               />
@@ -476,7 +560,7 @@ export default function TrackingServiceScreen() {
                 value={filters.maxPoints}
                 onChangeText={(v) => setFilters((prev) => ({ ...prev, maxPoints: v }))}
                 keyboardType="numeric"
-                placeholder="500"
+                placeholder={DEFAULT_POINTS_LIMIT.toString()}
                 placeholderTextColor={mutedText}
                 style={[styles.input, { color: textColor, borderColor: mutedText }]}
               />
@@ -575,9 +659,10 @@ export default function TrackingServiceScreen() {
 
         <View style={[styles.card, { backgroundColor: cardBackground }]}>
           <Text style={[styles.blockTitle, { color: textColor, marginBottom: 8 }]}>
-            Точки трека ({points.length})
+            Точки трека ({limitedPoints.length}
+            {spacedPoints.length > limitedPoints.length ? ` из ${spacedPoints.length}` : ''})
           </Text>
-          {points.length === 0 ? (
+          {spacedPoints.length === 0 ? (
             <Text style={{ color: mutedText }}>Нет точек за выбранный период.</Text>
           ) : (
             <View style={{ gap: 8 }}>
@@ -611,9 +696,9 @@ export default function TrackingServiceScreen() {
                   </View>
                 </Pressable>
               ))}
-              {points.length > limitedPoints.length && (
+              {spacedPoints.length > limitedPoints.length && (
                 <Text style={{ color: mutedText, fontSize: 12 }}>
-                  Показаны первые {limitedPoints.length} точек из {points.length}.
+                  Показаны первые {limitedPoints.length} точек из {spacedPoints.length} после фильтра дублей и ограничений.
                 </Text>
               )}
             </View>
@@ -812,6 +897,24 @@ export default function TrackingServiceScreen() {
         </View>
       </Modal>
 
+      <RangeCalendarModal
+        visible={periodCalendarVisible}
+        onClose={() => setPeriodCalendarVisible(false)}
+        initialFrom={filtersRef.current.from || null}
+        initialTo={filtersRef.current.to || null}
+        onApply={(from, to) => {
+          const next = { ...filtersRef.current, from: from.toISOString(), to: to.toISOString() };
+          filtersRef.current = next;
+          setFilters(next);
+        }}
+        onReset={() => {
+          const next = { ...filtersRef.current, from: '', to: '' };
+          filtersRef.current = next;
+          setFilters(next);
+        }}
+        colors={{ cardBackground, text: textColor, muted: mutedText }}
+      />
+
       <Modal
         visible={mapModalVisible}
         transparent
@@ -913,7 +1016,8 @@ export default function TrackingServiceScreen() {
                     ]}
                   >
                     <Text style={[styles.blockTitle, { color: textColor, marginBottom: 6 }]}>
-                      Точки ({limitedPoints.length})
+                      Точки ({limitedPoints.length}
+                      {spacedPoints.length > limitedPoints.length ? ` из ${spacedPoints.length}` : ''})
                     </Text>
                     <ScrollView
                       contentContainerStyle={{ gap: 8, paddingBottom: 16, paddingHorizontal: 2 }}
@@ -1007,6 +1111,12 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(0,0,0,0.05)',
   },
+  periodHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 8,
+  },
   blockTitle: {
     fontSize: 16,
     fontWeight: '700',
@@ -1064,6 +1174,20 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     alignItems: 'center',
   },
+  inlineBtn: {
+    flex: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: '#f4f5f7',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    minWidth: 130,
+  },
   secondaryBtnText: {
     fontWeight: '700',
     fontSize: 15,
@@ -1087,6 +1211,12 @@ const styles = StyleSheet.create({
   modalCard: {
     borderRadius: 14,
     padding: 16,
+  },
+  periodCard: {
+    width: '100%',
+    maxWidth: 600,
+    alignSelf: 'center',
+    gap: 8,
   },
   webModalCard: {
     maxWidth: 520,

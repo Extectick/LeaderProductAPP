@@ -10,6 +10,7 @@ import { AuthProvider } from '@/context/AuthContext';
 import { ThemeProvider } from '@/context/ThemeContext';
 import { useAuthRedirect } from '@/hooks/useAuthRedirect';
 import { TrackingProvider } from '@/context/TrackingContext';
+import { NotificationHost } from '@/components/NotificationHost';
 
 if (Platform.OS !== 'web') {
   void SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -73,8 +74,10 @@ export default function RootLayout() {
         <ThemeProvider>
           <AuthProvider>
             <TrackingProvider>
-              <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
-              <InnerLayout />
+              <NotificationHost>
+                <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
+                <InnerLayout />
+              </NotificationHost>
             </TrackingProvider>
           </AuthProvider>
         </ThemeProvider>

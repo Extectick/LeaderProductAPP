@@ -1,5 +1,10 @@
 // utils/apiClient.ts
-import { getAccessToken, logout, refreshToken as refreshTokens } from './tokenService';
+import {
+  getAccessToken,
+  handleBackendUnavailable,
+  logout,
+  refreshToken as refreshTokens,
+} from './tokenService';
 import { API_BASE_URL } from './config';
 
 export interface ApiResponse<T> {
@@ -129,6 +134,7 @@ export async function apiClient<Req = undefined, Res = any>(
     return { ok: true, status, data };
   } catch (error: any) {
     console.error('apiClient fetch error:', error);
+    await handleBackendUnavailable(error?.message || 'Network error');
     return {
       ok: false,
       status: 0,

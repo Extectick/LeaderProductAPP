@@ -1,9 +1,11 @@
 // utils/tokenService.ts
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { router } from 'expo-router';
-import { apiClient } from './apiClient';
-import { API_BASE_URL } from './config';
 import axios from 'axios';
+import { router } from 'expo-router';
+import { jwtDecode } from 'jwt-decode';
+
+import { API_BASE_URL } from './config';
+import { pushNotification } from './notificationStore';
 
 const ACCESS_KEY = 'accessToken';
 const REFRESH_KEY = 'refreshToken';
@@ -15,6 +17,7 @@ let refreshInFlight: Promise<string | null> | null = null;
 let lastWarnTs = 0;
 
 const REFRESH_TIMEOUT_MS = 15000;
+const NETWORK_NOTICE_COOLDOWN_MS = 8000;
 
 export async function getAccessToken(): Promise<string | null> {
   return AsyncStorage.getItem(ACCESS_KEY);
@@ -53,6 +56,45 @@ export async function logout(): Promise<void> {
 export function resetRefreshBackoff() {
   refreshAttempts = 0;
   lastWarnTs = 0;
+}
+
+function decodeExp(token?: string | null): number | null {
+  if (!token) return null;
+  try {
+    const decoded: any = jwtDecode(token);
+    if (!decoded || typeof decoded.exp !== 'number') return null;
+    return decoded.exp;
+  } catch {
+    return null;
+  }
+}
+
+export async function isRefreshTokenExpired(): Promise<boolean> {
+  const rt = await getRefreshToken();
+  const exp = decodeExp(rt);
+  if (!rt) return true;
+  if (!exp) return false; // если не удалось распарсить, считаем валидным
+  const now = Math.floor(Date.now() / 1000);
+  return exp <= now;
+}
+
+export async function handleBackendUnavailable(reason?: string) {
+  const expired = await isRefreshTokenExpired();
+  if (expired) {
+    await logout();
+    return;
+  }
+
+  const now = Date.now();
+  if (now - lastWarnTs < NETWORK_NOTICE_COOLDOWN_MS) return;
+  lastWarnTs = now;
+
+  pushNotification({
+    title: 'Сервер недоступен',
+    message: reason || 'Не удалось связаться с сервером. Попробуйте позже.',
+    type: 'warning',
+    durationMs: 6000,
+  });
 }
 
 export async function refreshToken(): Promise<string | null> {
@@ -100,6 +142,9 @@ export async function refreshToken(): Promise<string | null> {
       const status = e?.response?.status;
       const msg = e?.response?.data?.message || e?.message || 'Refresh error';
       console.error('[token] refresh error', { status, msg });
+      if (!status) {
+        await handleBackendUnavailable(msg);
+      }
       return null;
     } finally {
       refreshInFlight = null;
