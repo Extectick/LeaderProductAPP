@@ -1,5 +1,5 @@
 // types/appealsTypes.ts
-export type AppealStatus = 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED';
+export type AppealStatus = 'OPEN' | 'IN_PROGRESS' | 'COMPLETED' | 'DECLINED' | 'RESOLVED' | 'CLOSED';
 export type AppealPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 export type AttachmentType = 'IMAGE' | 'AUDIO' | 'FILE';
 
@@ -10,8 +10,8 @@ export interface UserMini { id: number; email: string; firstName?: string|null; 
 
 export interface AppealAttachment {
   id?: number;
-  fileUrl: string;
-  fileName: string;
+  fileUrl?: string;
+  fileName?: string;
   fileType: AttachmentType;
 }
 
@@ -22,6 +22,8 @@ export interface AppealMessage {
   editedAt?: string|null;
   sender: UserMini;
   attachments: AppealAttachment[];
+  readBy?: { userId: number; readAt: string }[];
+  isRead?: boolean;
 }
 
 export interface StatusHistoryItem {
@@ -38,9 +40,13 @@ export interface AppealListItem {
   priority: AppealPriority;
   title?: string|null;
   createdAt: string;
+  deadline?: string|null;
+  createdById?: number;
   fromDepartment?: DepartmentMini|null;
   toDepartment: DepartmentMini;
   assignees: { user: UserMini }[];
+  lastMessage?: AppealMessage | null;
+  unreadCount?: number;
 }
 
 export interface AppealListResponse {

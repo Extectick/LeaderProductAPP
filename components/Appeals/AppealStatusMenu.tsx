@@ -22,6 +22,8 @@ const ALL: AppealStatus[] = ['OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED'];
 const labels: Record<AppealStatus, string> = {
   OPEN: 'Открыто',
   IN_PROGRESS: 'В работе',
+  COMPLETED: 'Выполнено',
+  DECLINED: 'Отклонено',
   RESOLVED: 'Решено',
   CLOSED: 'Закрыто',
 };

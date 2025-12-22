@@ -1,7 +1,6 @@
-import { Stack } from "expo-router";
+import { Slot } from "expo-router";
 
 export default function AppealsLayout() {
-  return (
-    <Stack screenOptions={{ headerShown: false }} />
-  );
+  // Используем родительский header из services/_layout
+  return <Slot />;
 }

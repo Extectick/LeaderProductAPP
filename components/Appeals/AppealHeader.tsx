@@ -26,6 +26,8 @@ type Props = {
 const statusLabels: Record<AppealStatus, string> = {
   OPEN: 'Открыто',
   IN_PROGRESS: 'В работе',
+  COMPLETED: 'Выполнено',
+  DECLINED: 'Отклонено',
   RESOLVED: 'Решено',
   CLOSED: 'Закрыто',
 };

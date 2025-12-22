@@ -12,6 +12,11 @@ export default function ServicesLayout() {
     "qrcodes/form": { title: "Форма QR кода", icon: "qr-code-outline", showBack: true, parent: "/services/qrcodes", subtitle: "Создание и правка" },
     appeals: { title: "Обращения", icon: "chatbubbles-outline", showBack: true, parent: "/services", subtitle: "Центр общения" },
     "appeals/index": { title: "Обращения", icon: "chatbubbles-outline", showBack: true, parent: "/services", subtitle: "Центр общения" },
+    "appeals/index.web": { title: "Обращения", icon: "chatbubbles-outline", showBack: true, parent: "/services", subtitle: "Центр общения" },
+    "appeals/[id]": { title: "Обращения", icon: "chatbubbles-outline", showBack: true, parent: "/services/appeals", subtitle: "Центр общения" },
+    "appeals/[id].web": { title: "Обращения", icon: "chatbubbles-outline", showBack: true, parent: "/services/appeals", subtitle: "Центр общения" },
+    "appeals/new": { title: "Новое обращение", icon: "chatbubbles-outline", showBack: true, parent: "/services/appeals", subtitle: "Создать обращение" },
+    "appeals/new.web": { title: "Новое обращение", icon: "chatbubbles-outline", showBack: true, parent: "/services/appeals", subtitle: "Создать обращение" },
     tracking: { title: "Геомаршруты", icon: "map-outline", showBack: true, parent: "/services", subtitle: "Маршруты и точки на карте" },
     "tracking/index": { title: "Геомаршруты", icon: "map-outline", showBack: true, parent: "/services", subtitle: "Маршруты и точки на карте" },
   } satisfies Record<
@@ -28,11 +33,35 @@ export default function ServicesLayout() {
   return (
     <Stack
       screenOptions={({ route, navigation }) => {
-        const meta = map[route.name as keyof typeof map] || { title: "Сервисы", icon: "apps-outline", showBack: true, parent: "/services" };
+        const name = (route as any)?.routeName || (route.name as string);
+        let meta = map[name as keyof typeof map];
+
+        const isAppeals = name?.includes("appeals");
+
+        if (!meta && isAppeals) {
+          meta = {
+            title: "Обращения",
+            icon: "chatbubbles-outline",
+            showBack: !isAppealsList,
+            parent: "/services/appeals",
+            subtitle: "Центр общения",
+          };
+        }
+
+        if (!meta) meta = { title: "Сервисы", icon: "apps-outline", showBack: true, parent: "/services" };
+
+        // Для обращений: используем showBack из карты, иначе стандарт
+        // Показываем стрелку строго по настройке в карте meta,
+        // чтобы на главной сервисов стрелки не было.
+        const shouldShowBack = meta.showBack;
         const onBack = () => {
+          const target = isAppeals ? "/services" : (meta as any).parent;
+          if (target) {
+            router.replace(target as any);
+            return;
+          }
           if (navigation.canGoBack()) navigation.goBack();
-          else if ((meta as any).parent) router.replace((meta as any).parent as any);
-          else router.back();
+          else router.replace("/services");
         };
         return {
           header: () => (
@@ -40,8 +69,8 @@ export default function ServicesLayout() {
               title={meta.title}
               subtitle={meta.subtitle}
               icon={meta.icon}
-              showBack={meta.showBack}
-              onBack={meta.showBack ? onBack : undefined}
+              showBack={shouldShowBack}
+              onBack={shouldShowBack ? onBack : undefined}
             />
           ),
           animation: "ios_from_left",

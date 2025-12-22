@@ -16,6 +16,12 @@ import {
 } from '@/types/appealsTypes';
 import AppealListItemForm from './AppealListItemForm';
 import EmptyState from '@/components/ui/EmptyState';
+import {
+  appendListPage,
+  getListSnapshot,
+  setListPage,
+  subscribe as subscribeStore,
+} from '@/utils/appealsStore';
 
 type AppealsListProps = {
   scope?: Scope;                         // 'my' | 'department' | 'assigned'
@@ -31,8 +37,13 @@ type AppealsListProps = {
   onLoadedMeta?: (meta: { total: number; limit: number; offset: number }) => void; // коллбэк с метаданными
   onItemsChange?: (items: AppealListItem[]) => void; // коллбэк при изменении данных
   renderItem?: (item: AppealListItem) => React.ReactElement | null; // кастомный рендер; по умолчанию AppealCard
-  refreshKey?: string | number | boolean; // при изменении — принудительный refresh с нуля
+  refreshKey?: string | number | boolean; // при изменении - принудительный refresh с нуля
   endReachedThreshold?: number;          // порог срабатывания onEndReached
+  filterItems?: (items: AppealListItem[]) => AppealListItem[]; // пост-фильтрация на клиенте
+  currentUserId?: number;
+  incomingMessage?: { appealId: number; id: number; senderId?: number; createdAt: string; text?: string };
+  initialItems?: AppealListItem[];
+  listKey?: string; // уникальный ключ списка для локального стора
 };
 
 const toNum = (v: any, fallback = 0) => {
@@ -56,13 +67,25 @@ export default function AppealsList({
   renderItem,
   refreshKey,
   endReachedThreshold = 0.2,
+  filterItems,
+  currentUserId,
+  incomingMessage,
+  initialItems,
+  listKey,
 }: AppealsListProps) {
+  const cacheKey = useMemo(
+    () =>
+      listKey ??
+      `scope:${scope}-status:${status || 'any'}-priority:${priority || 'any'}`,
+    [listKey, priority, scope, status]
+  );
   const [items, setItems] = useState<AppealListItem[]>([]);
   const [meta, setMeta] = useState<{ total: number; limit: number; offset: number }>({
     total: 0,
     limit: pageSize,
     offset: 0,
   });
+  const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
 
@@ -89,11 +112,20 @@ export default function AppealsList({
         offset: toNum(res.meta?.offset, initial ? 0 : meta.offset),
       };
 
-      setItems((prev) => (initial ? res.data : [...prev, ...res.data]));
-      setMeta(normMeta);
+      const nextData = filterItems ? filterItems(res.data) : res.data;
+      await setListPage(cacheKey, nextData, normMeta, initial);
+      const snap = getListSnapshot(cacheKey);
+      setItems(snap.items);
+      setMeta({
+        total: toNum(snap.meta?.total, normMeta.total),
+        limit: toNum(snap.meta?.limit, normMeta.limit),
+        offset: toNum(snap.meta?.offset, normMeta.offset),
+      });
+      // debug: показать сколько элементов пришло
+      console.log('[AppealsList] loaded', nextData.length, 'items; scope=', scope);
 
       onLoadedMeta?.(normMeta);
-      onItemsChange?.(initial ? res.data : [...items, ...res.data]);
+      onItemsChange?.(snap.items);
     } catch (e: any) {
       const msg = e?.message || '';
       if (retry && /Unauthorized/i.test(msg)) {
@@ -111,12 +143,60 @@ export default function AppealsList({
 
   // первичная загрузка и реакции на изменения параметров
   useEffect(() => {
-    // сбрасываем оффсет и данные при смене параметров
+    if (initialItems && initialItems.length > 0) {
+      setItems(initialItems);
+      setMeta((m) => ({ ...m, limit: pageSize, offset: 0 }));
+    }
+    setReady(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialItems]);
+
+  useEffect(() => {
+    if (!ready) return;
+    // сбрасываем оффсет и данные при смене параметров и делаем загрузку
     setMeta((m) => ({ ...m, limit: pageSize, offset: 0 }));
-    setItems([]);
     load(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope, status, priority, pageSize, refreshKey]);
+  }, [scope, status, priority, pageSize, refreshKey, ready]);
+
+  // Подписка на локальный стор — обновляем список при любом изменении (новые сообщения, локальный кэш и т.п.)
+  useEffect(() => {
+    // первичный слепок
+    const snap = getListSnapshot(cacheKey);
+    if (snap.items.length) {
+      setItems(snap.items);
+      setMeta((m) => ({
+        total: toNum(snap.meta?.total, m.total),
+        limit: toNum(snap.meta?.limit, pageSize),
+        offset: toNum(snap.meta?.offset, m.offset),
+      }));
+    }
+
+    const unsub = subscribeStore(() => {
+      const next = getListSnapshot(cacheKey);
+      setItems(next.items);
+      setMeta((m) => ({
+        total: toNum(next.meta?.total, m.total),
+        limit: toNum(next.meta?.limit, pageSize),
+        offset: toNum(next.meta?.offset, m.offset),
+      }));
+      onItemsChange?.(next.items);
+    });
+    return () => unsub();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cacheKey]);
+
+  // Если пришло событие по сокету — просто берём актуальный слепок из стора (его обновляет upsertMessage)
+  useEffect(() => {
+    if (!incomingMessage) return;
+    const snap = getListSnapshot(cacheKey);
+    setItems(snap.items);
+    setMeta((m) => ({
+      total: toNum(snap.meta?.total, m.total),
+      limit: toNum(snap.meta?.limit, m.limit),
+      offset: toNum(snap.meta?.offset, m.offset),
+    }));
+  }, [incomingMessage, cacheKey]);
 
   function handleEndReached() {
     if (!hasMore || loadingMore || loading) return;
@@ -134,10 +214,19 @@ export default function AppealsList({
           limit: toNum(res.meta?.limit, pageSize),
           offset: toNum(res.meta?.offset, nextOffset),
         };
-        setItems((prev) => [...prev, ...res.data]);
-        setMeta(normMeta);
-        onLoadedMeta?.(normMeta);
-        onItemsChange?.([...items, ...res.data]);
+        const nextData = filterItems ? filterItems(res.data) : res.data;
+        appendListPage(cacheKey, nextData, normMeta).then(() => {
+          const snap = getListSnapshot(cacheKey);
+          setItems(snap.items);
+          setMeta((m) => ({
+            total: toNum(snap.meta?.total, normMeta.total),
+            limit: toNum(snap.meta?.limit, normMeta.limit),
+            offset: toNum(snap.meta?.offset, normMeta.offset),
+          }));
+          console.log('[AppealsList] load more', nextData.length, 'items; scope=', scope);
+          onLoadedMeta?.(normMeta);
+          onItemsChange?.(snap.items);
+        });
       })
       .catch((e) => {
         onLoadMoreError?.(e);
@@ -149,18 +238,24 @@ export default function AppealsList({
   return (
     <View style={[{ flex: 1 }, style]}>
       <FlatList
+        style={{ flex: 1 }}
         data={items}
         keyExtractor={(it) => String(it.id)}
         renderItem={({ item }) =>
-          renderItem ? renderItem(item) : <AppealListItemForm item={item} />
+          renderItem ? renderItem(item) : <AppealListItemForm item={item} currentUserId={currentUserId} />
         }
         ListHeaderComponent={ListHeaderComponent}
         ListEmptyComponent={
           !loading
-            ? ListEmptyComponent ?? <EmptyState text="Обращения не найдены" />
+            ? ListEmptyComponent ?? (
+                <EmptyState text="Обращения не найдены" />
+              )
             : null
         }
-        contentContainerStyle={contentContainerStyle}
+        contentContainerStyle={[
+          { paddingBottom: 12, flexGrow: 1 },
+          contentContainerStyle as any,
+        ]}
         onEndReached={handleEndReached}
         onEndReachedThreshold={endReachedThreshold}
         refreshControl={

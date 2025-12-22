@@ -74,8 +74,9 @@ export default function AppealNew() {
   }
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: '#fff' }} contentContainerStyle={{ padding: 16, gap: 14 }}>
-      <Text style={styles.title}>Новое обращение</Text>
+    <ScrollView style={{ flex: 1, backgroundColor: '#fff' }} contentContainerStyle={{ paddingVertical: 16 }}>
+      <View style={{ width: '100%', maxWidth: 900, alignSelf: 'center', paddingHorizontal: 16, gap: 14 }}>
+        <Text style={styles.title}>Новое обращение</Text>
 
       <View style={styles.fieldBlock}>
         <Text style={styles.label}>Отдел *</Text>
@@ -145,6 +146,7 @@ export default function AppealNew() {
           </>
         )}
       </Pressable>
+      </View>
     </ScrollView>
   );
 }

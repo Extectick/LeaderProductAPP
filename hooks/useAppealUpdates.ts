@@ -16,10 +16,17 @@ interface AppealEvent {
 export function useAppealUpdates(
   appealId: number | undefined,
   onEvent: (event: AppealEvent) => void,
+  userId?: number,
+  departmentIds?: number | number[],
 ) {
   useEffect(() => {
     let socket: Socket | null = null;
     let active = true;
+    const deptList = Array.isArray(departmentIds)
+      ? departmentIds.filter(Boolean) as number[]
+      : departmentIds
+        ? [departmentIds]
+        : [];
 
     async function connect() {
       const token = await getAccessToken();
@@ -32,6 +39,8 @@ export function useAppealUpdates(
 
       const joinRoom = () => {
         if (appealId) socket?.emit('join', `appeal:${appealId}`);
+        if (userId) socket?.emit('join', `user:${userId}`);
+        deptList.forEach((id) => socket?.emit('join', `department:${id}`));
       };
 
       socket.on('connect', joinRoom);
@@ -47,8 +56,9 @@ export function useAppealUpdates(
     return () => {
       active = false;
       if (appealId) socket?.emit('leave', `appeal:${appealId}`);
+      if (userId) socket?.emit('leave', `user:${userId}`);
+      deptList.forEach((id) => socket?.emit('leave', `department:${id}`));
       socket?.disconnect();
     };
-  }, [appealId, onEvent]);
+  }, [appealId, onEvent, userId, departmentIds]);
 }
-

@@ -1,5 +1,6 @@
 // utils/appealsService.ts
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
 import { apiClient } from './apiClient';
 import { ErrorResponse, SuccessResponse } from '@/types';
 import {
@@ -12,6 +13,7 @@ import {
   DeleteMessageResult,
   EditMessageResult,
   Scope,
+  AppealMessage,
 } from '@/types/appealsTypes';
 
 export type ApiResponse<T> = SuccessResponse<T> | ErrorResponse;
@@ -126,12 +128,14 @@ export async function getAppealsList(
   opts?: { status?: AppealStatus; priority?: AppealPriority; forceRefresh?: boolean }
 ): Promise<AppealListResponse> {
   const key = listKey(scope, limit, offset, opts?.status, opts?.priority);
-  if (!opts?.forceRefresh) {
+  const skipCache = opts?.forceRefresh === true;
+  if (!skipCache) {
     const cached = await readListCache(key);
     if (cached) return cached;
   }
 
-  const qs = buildQuery({ scope, limit, offset, status: opts?.status, priority: opts?.priority });
+  // Добавляем _ts для обхода ответов 304/ETag на некоторых платформах
+  const qs = buildQuery({ scope, limit, offset, status: opts?.status, priority: opts?.priority, _ts: Date.now() });
 
   const resp = (await apiClient<undefined, AppealListResponse>(`/appeals?${qs}`, { method: 'GET' })) as ApiResponse<AppealListResponse>;
   if (!resp.ok) throw new Error(resp.message || 'Ошибка загрузки обращений');
@@ -224,6 +228,20 @@ export async function assignAppeal(id: number, assigneeIds: number[]) {
   if (!resp.ok) throw new Error(resp.message || 'Ошибка назначения исполнителей');
   await invalidateDetailCache(id);
   return resp.data;
+}
+
+export async function markAppealMessageRead(
+  appealId: number,
+  messageId: number
+): Promise<{ readAt: string }> {
+  const resp = (await apiClient<undefined, { appealId: number; messageId: number; readAt: string }>(
+    `/appeals/${appealId}/messages/${messageId}/read`,
+    { method: 'POST' }
+  )) as ApiResponse<{ appealId: number; messageId: number; readAt: string }>;
+
+  if (!resp.ok) throw new Error(resp.message || 'Ошибка отметки прочитанного');
+  await invalidateDetailCache(appealId);
+  return { readAt: resp.data.readAt };
 }
 
 export async function updateAppealWatchers(id: number, watcherIds: number[]) {
