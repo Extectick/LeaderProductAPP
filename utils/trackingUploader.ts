@@ -10,7 +10,6 @@ const STORAGE_KEYS = {
 };
 
 const MAX_QUEUE_LENGTH = 1000;
-const BATCH_SIZE = 40;
 const REQUEST_TIMEOUT_MS = 20_000;
 const RETRY_DELAY_MS = 30_000;
 const PERIODIC_FLUSH_MS = 60_000;
@@ -156,32 +155,30 @@ async function processQueue(logPrefix: string) {
 
   log(logPrefix, 'flush start', { size: queue.length, routeId: activeRouteId });
 
-  while (queue.length) {
-    const batch = queue.slice(0, BATCH_SIZE);
-    const payload: SaveTrackingPointsRequest = {
-      points: batch,
-      routeId: activeRouteId,
-      startNewRoute: !activeRouteId,
-    };
+  const batch = queue.slice();
+  const payload: SaveTrackingPointsRequest = {
+    points: batch,
+    routeId: activeRouteId,
+    startNewRoute: !activeRouteId,
+  };
 
-    const result = await sendWithRefresh(payload, logPrefix);
+  const result = await sendWithRefresh(payload, logPrefix);
 
-    if (!result.ok) {
-      warn(logPrefix, 'batch failed, will retry later', { status: result.status, message: result.message });
-      scheduleRetry(logPrefix);
-      return;
-    }
-
-    queue = queue.slice(batch.length);
-    await persistQueue();
-
-    if (result.data?.routeId) {
-      activeRouteId = result.data.routeId;
-      await persistRouteId();
-    }
-
-    log(logPrefix, 'batch sent', { left: queue.length, routeId: activeRouteId });
+  if (!result.ok) {
+    warn(logPrefix, 'batch failed, will retry later', { status: result.status, message: result.message });
+    scheduleRetry(logPrefix);
+    return;
   }
+
+  queue = queue.slice(batch.length);
+  await persistQueue();
+
+  if (result.data?.routeId) {
+    activeRouteId = result.data.routeId;
+    await persistRouteId();
+  }
+
+  log(logPrefix, 'batch sent', { left: queue.length, routeId: activeRouteId });
 
   log(logPrefix, 'flush success', { routeId: activeRouteId });
 }
