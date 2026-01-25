@@ -1,17 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import {
-  ActivityIndicator,
-  Linking,
-  Platform,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-  Image,
-  ViewStyle,
-} from 'react-native';
+import { Linking, Platform, Pressable, StyleSheet, Text, View, Image, ViewStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Skeleton } from 'moti/skeleton';
 import Animated, {
   FadeInDown,
   FadeInUp,
@@ -32,9 +23,12 @@ type Tone = 'green' | 'violet' | 'gray' | 'red' | 'blue';
 type Chip = { icon: IoniconName; label: string; tone?: Tone };
 
 export type ProfileViewProps = {
-  /** Если указан — показываем чужой профиль, иначе — текущий */
+  /** Если указан - показываем чужой профиль, иначе - текущий */
   userId?: number;
   style?: ViewStyle;
+  profileOverride?: Profile | null;
+  loadingOverride?: boolean;
+  errorOverride?: string | null;
 };
 
 /* ---------- helpers ---------- */
@@ -47,14 +41,22 @@ const profStatusTone = (s?: ProfileStatus): Tone =>
 
 /* ---------- main component ---------- */
 
-export function ProfileView({ userId, style }: ProfileViewProps) {
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
+export function ProfileView({
+  userId,
+  style,
+  profileOverride,
+  loadingOverride,
+  errorOverride,
+}: ProfileViewProps) {
+  const usingOverride = profileOverride !== undefined;
+  const [profile, setProfile] = useState<Profile | null>(profileOverride ?? null);
+  const [loading, setLoading] = useState(usingOverride ? Boolean(loadingOverride) : true);
+  const [err, setErr] = useState<string | null>(errorOverride ?? null);
 
   const isSelf = userId == null; // нет userId => это мой профиль (скрываем действия)
 
   useEffect(() => {
+    if (usingOverride) return;
     (async () => {
       try {
         setLoading(true);
@@ -71,12 +73,19 @@ export function ProfileView({ userId, style }: ProfileViewProps) {
         setLoading(false);
       }
     })();
-  }, [userId]);
+  }, [userId, usingOverride]);
 
-  if (loading) {
+  useEffect(() => {
+    if (!usingOverride) return;
+    setProfile(profileOverride ?? null);
+    setLoading(Boolean(loadingOverride));
+    setErr(errorOverride ?? null);
+  }, [errorOverride, loadingOverride, profileOverride, usingOverride]);
+
+  if (loading && !profile) {
     return (
-      <View style={[styles.center, style]}>
-        <ActivityIndicator size="large" color={Colors.leaderprod.tint} />
+      <View style={style}>
+        <ProfileSkeleton showActions={!isSelf} />
       </View>
     );
   }
@@ -374,6 +383,66 @@ function ActionButton({
   );
 }
 
+function ProfileSkeleton({ showActions }: { showActions?: boolean }) {
+  return (
+    <View>
+      <View style={styles.heroWrap}>
+        <View style={[styles.heroInner, { gap: 10 }]}>
+          <Skeleton height={96} width={96} radius={28} colorMode="light" />
+          <Skeleton height={20} width="60%" radius={6} colorMode="light" />
+          <Skeleton height={12} width="40%" radius={6} colorMode="light" />
+          <View style={styles.skeletonChipsRow}>
+            <Skeleton height={24} width={90} radius={999} colorMode="light" />
+            <Skeleton height={24} width={80} radius={999} colorMode="light" />
+            <Skeleton height={24} width={110} radius={999} colorMode="light" />
+          </View>
+        </View>
+      </View>
+
+      {showActions ? (
+        <View style={styles.actionsRow}>
+          <View style={{ flex: 1 }}>
+            <Skeleton height={44} radius={12} colorMode="light" width="100%" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Skeleton height={44} radius={12} colorMode="light" width="100%" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Skeleton height={44} radius={12} colorMode="light" width="100%" />
+          </View>
+        </View>
+      ) : null}
+
+      <View style={styles.cardsWrap}>
+        {[0, 1, 2, 3, 4].map((idx) => (
+          <View key={`skeleton-card-${idx}`} style={styles.skeletonCard}>
+            <Skeleton height={34} width={34} radius={10} colorMode="light" />
+            <View style={{ flex: 1, gap: 6 }}>
+              <Skeleton height={12} width="35%" radius={6} colorMode="light" />
+              <Skeleton height={14} width="70%" radius={6} colorMode="light" />
+            </View>
+          </View>
+        ))}
+      </View>
+
+      <View style={{ marginTop: 16 }}>
+        <Skeleton height={16} width={140} radius={6} colorMode="light" />
+        <View style={{ gap: 10, marginTop: 8 }}>
+          {[0, 1].map((idx) => (
+            <View key={`skeleton-role-${idx}`} style={styles.skeletonCard}>
+              <Skeleton height={34} width={34} radius={10} colorMode="light" />
+              <View style={{ flex: 1, gap: 6 }}>
+                <Skeleton height={12} width="55%" radius={6} colorMode="light" />
+                <Skeleton height={12} width="45%" radius={6} colorMode="light" />
+              </View>
+            </View>
+          ))}
+        </View>
+      </View>
+    </View>
+  );
+}
+
 /* ---------- styles ---------- */
 
 const styles = StyleSheet.create({
@@ -462,6 +531,17 @@ const styles = StyleSheet.create({
   },
   infoLabel: { color: '#6B7280', fontSize: 12, fontWeight: '700' },
   infoValue: { color: '#111827', fontSize: 14, fontWeight: '700' },
+  skeletonChipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
+  skeletonCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    padding: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
 
   sectionTitle: {
     marginTop: 16,

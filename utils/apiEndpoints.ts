@@ -42,5 +42,8 @@ export const API_ENDPOINTS = {
     DAILY_STATS: '/tracking/stats/daily',
     ADMIN_USER_ROUTES_WITH_POINTS: (userId: number) =>
       `/tracking/admin/users/${userId}/routes-with-points`,
-  }
+  },
+  UPDATES: {
+    CHECK: '/updates/check',
+  },
 };

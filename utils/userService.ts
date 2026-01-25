@@ -189,6 +189,27 @@ export async function getProfileById(userId?: number | null): Promise<Profile | 
   return profile;
 }
 
+export type UpdateMyProfilePayload = {
+  firstName?: string | null;
+  lastName?: string | null;
+  middleName?: string | null;
+  email?: string;
+  phone?: string | null;
+};
+
+export async function updateMyProfile(payload: UpdateMyProfilePayload): Promise<Profile | null> {
+  const res = await apiClient<UpdateMyProfilePayload, { profile: Profile }>(API_ENDPOINTS.USERS.PROFILE, {
+    method: 'PATCH',
+    body: payload,
+  });
+  if (!res.ok) throw new Error(res.message || 'Не удалось обновить профиль');
+  const profile = res.data?.profile || null;
+  if (profile) {
+    await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+  }
+  return profile;
+}
+
 export async function getUserProfileById(userId: number): Promise<Profile | null> {
   return getProfileById(userId);
 }

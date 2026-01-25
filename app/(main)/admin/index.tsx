@@ -9,16 +9,21 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   TouchableOpacity,
   TouchableWithoutFeedback,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as DocumentPicker from 'expo-document-picker';
+import Constants from 'expo-constants';
 import { Ionicons } from '@expo/vector-icons';
 import { Redirect } from 'expo-router';
 
+import InfoModal from '@/components/InfoModal';
 import ShimmerButton from '@/components/ShimmerButton';
 import { useTheme } from '@/context/ThemeContext';
 import { gradientColors, ThemeKey } from '@/constants/Colors';
@@ -44,6 +49,15 @@ import {
   getPermissions,
   updateRolePermissions,
 } from '@/utils/userService';
+import {
+  cleanupUpdates,
+  createUpdate,
+  deleteUpdate,
+  getUpdatesList,
+  UpdateItem,
+  updateUpdate,
+  uploadUpdate,
+} from '@/utils/updateAdminService';
 import { Profile, ProfileStatus } from '@/types/userTypes';
 import { MaskedTextInput } from 'react-native-mask-text';
 
@@ -88,13 +102,108 @@ type FormState = {
 
 const STATUS_OPTIONS: ProfileStatus[] = ['ACTIVE', 'PENDING', 'BLOCKED'];
 
+const HELP_TEXT = {
+  platform: {
+    title: 'Платформа',
+    message:
+      'Выберите платформу для обновления. Для Android можно загрузить APK, для iOS используется ссылка на App Store/TestFlight.',
+  },
+  channel: {
+    title: 'Канал',
+    message:
+      'Канал обновлений. prod — основная ветка, dev — тестовая. Клиент берёт канал из EXPO_PUBLIC_UPDATE_CHANNEL.',
+  },
+  versionCode: {
+    title: 'Код версии (versionCode)',
+    message:
+      'Целочисленный код сборки для сравнения версий (Android versionCode / iOS buildNumber). Должен быть больше текущего.',
+  },
+  versionName: {
+    title: 'Имя версии (versionName)',
+    message: 'Человекочитаемая версия, например 1.2.3.',
+  },
+  minSupportedVersionCode: {
+    title: 'Минимальная поддерживаемая версия',
+    message:
+      'Если версия пользователя ниже этого значения, обновление считается обязательным.',
+  },
+  rolloutPercent: {
+    title: 'Процент раскатки',
+    message:
+      'Сколько устройств получат обновление. 100 — всем, 10 — примерно 10% (по deviceId).',
+  },
+  mandatory: {
+    title: 'Обязательное обновление',
+    message:
+      'Если включено, пользователь не сможет продолжить работу без обновления.',
+  },
+  active: {
+    title: 'Активное обновление',
+    message:
+      'Только активные записи участвуют в проверке обновлений. Неактивные игнорируются.',
+  },
+  storeUrl: {
+    title: 'Store URL',
+    message:
+      'Ссылка на App Store/TestFlight или Google Play. Для iOS обязательна, если нет APK.',
+  },
+  releaseNotes: {
+    title: 'Release notes',
+    message: 'Короткое описание изменений, показывается пользователю.',
+  },
+  apk: {
+    title: 'APK файл',
+    message: 'Файл APK для Android. Для iOS загрузка APK не используется.',
+  },
+  cleanupKeepLatest: {
+    title: 'Оставить последних',
+    message:
+      'Сколько последних версий оставить (по платформе и каналу). Остальные будут удалены.',
+  },
+  cleanupPurge: {
+    title: 'Удалять APK',
+    message:
+      'Если включено, файл APK будет удалён из хранилища вместе с записью.',
+  },
+};
+
 export default function AdminScreen() {
   const { isAdmin, isCheckingAdmin } = useIsAdmin();
   const { theme, themes } = useTheme();
   const colors = themes[theme];
+  const { width } = useWindowDimensions();
+  const isWide = width >= 980;
   const grad = gradientColors[theme as ThemeKey] || gradientColors.leaderprod;
   const btnGradient = useMemo(() => [grad[0], grad[1]] as [string, string], [grad]);
   const styles = useMemo(() => getStyles(colors), [colors]);
+  const androidVersionCode = Number(Constants.expoConfig?.android?.versionCode ?? 0);
+  const iosVersionCode = Number(Constants.expoConfig?.ios?.buildNumber ?? 0);
+  const appVersionName = Constants.expoConfig?.version ?? '';
+
+  const getCurrentVersionCode = useCallback(
+    (platform: 'android' | 'ios') => (platform === 'ios' ? iosVersionCode : androidVersionCode),
+    [androidVersionCode, iosVersionCode]
+  );
+
+  const buildDefaultUpdateForm = useCallback(
+    (platform: 'android' | 'ios') => {
+      const currentCode = getCurrentVersionCode(platform);
+      const nextCode = currentCode ? currentCode + 1 : 0;
+      return {
+        platform,
+        channel: 'prod',
+        versionCode: nextCode ? String(nextCode) : '',
+        versionName: '',
+        minSupportedVersionCode: currentCode ? String(currentCode) : '',
+        rolloutPercent: '100',
+        isMandatory: false,
+        isActive: true,
+        releaseNotes: '',
+        storeUrl: '',
+      };
+    },
+    [getCurrentVersionCode]
+  );
 
   const [users, setUsers] = useState<AdminUserItem[]>([]);
   const [roles, setRoles] = useState<RoleItem[]>([]);
@@ -102,7 +211,7 @@ export default function AdminScreen() {
   const [permissions, setPermissions] = useState<string[]>([]);
   const [search, setSearch] = useState('');
   const [loadingUsers, setLoadingUsers] = useState(false);
-  const [activeTab, setActiveTab] = useState<'users' | 'departments' | 'roles'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'departments' | 'roles' | 'updates'>('users');
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [selectedProfile, setSelectedProfile] = useState<Profile | null>(null);
@@ -120,6 +229,22 @@ export default function AdminScreen() {
   const [deptUsersLoading, setDeptUsersLoading] = useState(false);
   const [rolePermModal, setRolePermModal] = useState<RoleItem | null>(null);
   const [rolePermsDraft, setRolePermsDraft] = useState<string[]>([]);
+  const [updates, setUpdates] = useState<UpdateItem[]>([]);
+  const [updatesLoading, setUpdatesLoading] = useState(false);
+  const [updateSaving, setUpdateSaving] = useState(false);
+  const [selectedUpdateId, setSelectedUpdateId] = useState<number | null>(null);
+  const [updateFile, setUpdateFile] = useState<{
+    uri: string;
+    name: string;
+    size?: number;
+    mimeType?: string;
+  } | null>(null);
+  const [updateForm, setUpdateForm] = useState(() => buildDefaultUpdateForm('android'));
+  const [versionCodeTouched, setVersionCodeTouched] = useState(false);
+  const [minSupportedTouched, setMinSupportedTouched] = useState(false);
+  const [infoModal, setInfoModal] = useState<{ title: string; message: string } | null>(null);
+  const [cleanupKeepLatest, setCleanupKeepLatest] = useState('1');
+  const [cleanupPurgeFile, setCleanupPurgeFile] = useState(true);
   const [form, setForm] = useState<FormState>({
     firstName: '',
     lastName: '',
@@ -159,6 +284,225 @@ export default function AdminScreen() {
     },
     []
   );
+
+  const resetUpdateForm = useCallback(() => {
+    setSelectedUpdateId(null);
+    setUpdateFile(null);
+    setVersionCodeTouched(false);
+    setMinSupportedTouched(false);
+    setUpdateForm(buildDefaultUpdateForm('android'));
+  }, [buildDefaultUpdateForm]);
+
+  const openInfo = useCallback((title: string, message: string) => {
+    setInfoModal({ title, message });
+  }, []);
+
+  const closeInfo = useCallback(() => setInfoModal(null), []);
+
+  const handlePlatformChange = useCallback(
+    (platform: 'android' | 'ios') => {
+      setUpdateFile(null);
+      setUpdateForm((prev) => {
+        if (prev.platform === platform) return prev;
+        const next = { ...prev, platform };
+        if (!selectedUpdateId) {
+          const defaults = buildDefaultUpdateForm(platform);
+          if (!versionCodeTouched || !prev.versionCode) {
+            next.versionCode = defaults.versionCode;
+          }
+          if (!minSupportedTouched || !prev.minSupportedVersionCode) {
+            next.minSupportedVersionCode = defaults.minSupportedVersionCode;
+          }
+        }
+        return next;
+      });
+      if (!selectedUpdateId && !versionCodeTouched) setVersionCodeTouched(false);
+      if (!selectedUpdateId && !minSupportedTouched) setMinSupportedTouched(false);
+    },
+    [
+      buildDefaultUpdateForm,
+      minSupportedTouched,
+      selectedUpdateId,
+      versionCodeTouched,
+    ]
+  );
+
+  const loadUpdates = useCallback(async () => {
+    setUpdatesLoading(true);
+    try {
+      const data = await getUpdatesList({ limit: 100 });
+      setUpdates(data.data);
+    } catch (e: any) {
+      Alert.alert('Ошибка', e?.message || 'Не удалось загрузить обновления');
+    } finally {
+      setUpdatesLoading(false);
+    }
+  }, []);
+
+  const handlePickApk = useCallback(async () => {
+    if (selectedUpdateId) {
+      Alert.alert('Новая версия', 'Чтобы загрузить новый APK, сбросьте форму и создайте новую запись.');
+      return;
+    }
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        type: ['application/vnd.android.package-archive'],
+        copyToCacheDirectory: true,
+      });
+      if (res.canceled || !res.assets?.length) return;
+      const asset = res.assets[0];
+      setUpdateFile({
+        uri: asset.uri,
+        name: asset.name || 'app.apk',
+        size: asset.size,
+        mimeType: asset.mimeType || 'application/vnd.android.package-archive',
+      });
+    } catch (e: any) {
+      Alert.alert('Ошибка', e?.message || 'Не удалось выбрать файл');
+    }
+  }, [selectedUpdateId]);
+
+  const handleSubmitUpdate = useCallback(async () => {
+    const versionCode = Number(updateForm.versionCode);
+    const minSupportedVersionCode = Number(updateForm.minSupportedVersionCode);
+    const rolloutPercent = Number(updateForm.rolloutPercent || '100');
+
+    if (!updateForm.versionName.trim() || !Number.isFinite(versionCode)) {
+      Alert.alert('Ошибка', 'Введите корректные versionCode и versionName');
+      return;
+    }
+    if (!Number.isFinite(minSupportedVersionCode)) {
+      Alert.alert('Ошибка', 'Введите корректный minSupportedVersionCode');
+      return;
+    }
+    if (minSupportedVersionCode > versionCode) {
+      Alert.alert('Ошибка', 'minSupportedVersionCode не должен быть больше versionCode');
+      return;
+    }
+
+    setUpdateSaving(true);
+    try {
+      if (updateFile) {
+        const form = new FormData();
+        form.append('apk', {
+          uri: updateFile.uri,
+          name: updateFile.name,
+          type: updateFile.mimeType || 'application/vnd.android.package-archive',
+        } as any);
+        form.append('platform', updateForm.platform);
+        form.append('channel', updateForm.channel || 'prod');
+        form.append('versionCode', String(versionCode));
+        form.append('versionName', updateForm.versionName.trim());
+        form.append('minSupportedVersionCode', String(minSupportedVersionCode));
+        form.append('isMandatory', String(updateForm.isMandatory));
+        form.append('rolloutPercent', String(rolloutPercent));
+        form.append('isActive', String(updateForm.isActive));
+        if (updateForm.releaseNotes.trim()) form.append('releaseNotes', updateForm.releaseNotes.trim());
+        if (updateForm.storeUrl.trim()) form.append('storeUrl', updateForm.storeUrl.trim());
+
+        await uploadUpdate(form);
+      } else if (selectedUpdateId) {
+        await updateUpdate(selectedUpdateId, {
+          platform: updateForm.platform,
+          channel: updateForm.channel || 'prod',
+          versionCode,
+          versionName: updateForm.versionName.trim(),
+          minSupportedVersionCode,
+          isMandatory: updateForm.isMandatory,
+          rolloutPercent,
+          isActive: updateForm.isActive,
+          releaseNotes: updateForm.releaseNotes.trim() || null,
+          storeUrl: updateForm.storeUrl.trim() || null,
+        });
+      } else {
+        await createUpdate({
+          platform: updateForm.platform,
+          channel: updateForm.channel || 'prod',
+          versionCode,
+          versionName: updateForm.versionName.trim(),
+          minSupportedVersionCode,
+          isMandatory: updateForm.isMandatory,
+          rolloutPercent,
+          isActive: updateForm.isActive,
+          releaseNotes: updateForm.releaseNotes.trim() || null,
+          storeUrl: updateForm.storeUrl.trim() || null,
+        });
+      }
+      await loadUpdates();
+      resetUpdateForm();
+      Alert.alert('Успех', 'Обновление сохранено');
+    } catch (e: any) {
+      Alert.alert('Ошибка', e?.message || 'Не удалось сохранить обновление');
+    } finally {
+      setUpdateSaving(false);
+    }
+  }, [loadUpdates, resetUpdateForm, selectedUpdateId, updateFile, updateForm]);
+
+  const handleEditUpdate = useCallback((item: UpdateItem) => {
+    setSelectedUpdateId(item.id);
+    setUpdateFile(null);
+    setVersionCodeTouched(false);
+    setMinSupportedTouched(false);
+    setUpdateForm({
+      platform: item.platform === 'IOS' ? 'ios' : 'android',
+      channel: item.channel?.toLowerCase() === 'dev' ? 'dev' : 'prod',
+      versionCode: String(item.versionCode),
+      versionName: item.versionName || '',
+      minSupportedVersionCode: String(item.minSupportedVersionCode),
+      rolloutPercent: String(item.rolloutPercent ?? 100),
+      isMandatory: Boolean(item.isMandatory),
+      isActive: Boolean(item.isActive),
+      releaseNotes: item.releaseNotes || '',
+      storeUrl: item.storeUrl || '',
+    });
+  }, []);
+
+  const handleDeleteUpdate = useCallback(
+    async (item: UpdateItem) => {
+      Alert.alert('Удалить обновление?', 'Запись будет удалена', [
+        { text: 'Отмена', style: 'cancel' },
+        {
+          text: 'Удалить',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteUpdate(item.id, true);
+              await loadUpdates();
+            } catch (e: any) {
+              Alert.alert('Ошибка', e?.message || 'Не удалось удалить');
+            }
+          },
+        },
+      ]);
+    },
+    [loadUpdates]
+  );
+
+  const handleToggleActive = useCallback(
+    async (item: UpdateItem) => {
+      try {
+        await updateUpdate(item.id, { isActive: !item.isActive });
+        await loadUpdates();
+      } catch (e: any) {
+        Alert.alert('Ошибка', e?.message || 'Не удалось обновить запись');
+      }
+    },
+    [loadUpdates]
+  );
+
+  const handleCleanup = useCallback(async () => {
+    const keepLatest = Math.max(parseInt(cleanupKeepLatest || '1', 10) || 1, 1);
+    try {
+      const result = await cleanupUpdates({
+        keepLatest,
+        purgeFile: cleanupPurgeFile,
+      });
+      Alert.alert('Готово', `Удалено: ${result.deletedCount}`);
+      await loadUpdates();
+    } catch (e: any) {
+      Alert.alert('Ошибка', e?.message || 'Не удалось выполнить очистку');
+    }
+  }, [cleanupKeepLatest, cleanupPurgeFile, loadUpdates]);
 
   const syncForm = useCallback((profile: Profile) => {
     const next: FormState = {
@@ -213,6 +557,12 @@ export default function AdminScreen() {
     };
   }, [search, loadUsers, isAdmin]);
 
+  useEffect(() => {
+    if (!isAdmin) return;
+    if (activeTab !== 'updates') return;
+    void loadUpdates();
+  }, [activeTab, isAdmin, loadUpdates]);
+
   const isDirty = useMemo(() => {
     if (!initialForm) return false;
     return (
@@ -241,6 +591,10 @@ export default function AdminScreen() {
     () => [{ value: null, label: 'Без отдела' }, ...departments.map((d) => ({ value: d.id, label: d.name }))],
     [departments]
   );
+  const currentVersionCode = getCurrentVersionCode(updateForm.platform);
+  const currentVersionCodeLabel = currentVersionCode ? String(currentVersionCode) : 'неизвестно';
+  const currentVersionNameLabel = appVersionName || 'неизвестно';
+  const isAndroid = updateForm.platform === 'android';
 
   const [deptModalToRestore, setDeptModalToRestore] = useState<{ id: number; name: string } | null>(null);
 
@@ -463,7 +817,12 @@ export default function AdminScreen() {
       <View style={styles.container}>
         <Text style={styles.title}>Администрирование</Text>
         <View style={styles.card}>
-          <View style={styles.tabsRow}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.tabsContent}
+            style={styles.tabsScroll}
+          >
             <Pressable onPress={() => setActiveTab('users')} style={[styles.tabBtn, activeTab === 'users' && styles.tabBtnActive]}>
               <Text style={[styles.tabText, activeTab === 'users' && styles.tabTextActive]}>Пользователи</Text>
             </Pressable>
@@ -473,7 +832,10 @@ export default function AdminScreen() {
             <Pressable onPress={() => setActiveTab('roles')} style={[styles.tabBtn, activeTab === 'roles' && styles.tabBtnActive]}>
               <Text style={[styles.tabText, activeTab === 'roles' && styles.tabTextActive]}>Роли</Text>
             </Pressable>
-          </View>
+            <Pressable onPress={() => setActiveTab('updates')} style={[styles.tabBtn, activeTab === 'updates' && styles.tabBtnActive]}>
+              <Text style={[styles.tabText, activeTab === 'updates' && styles.tabTextActive]}>Обновления</Text>
+            </Pressable>
+          </ScrollView>
 
           {activeTab === 'users' && (
             <>
@@ -640,8 +1002,467 @@ export default function AdminScreen() {
               })}
             </ScrollView>
           )}
+
+          {activeTab === 'updates' && (
+            <ScrollView style={{ flex: 1 }} contentContainerStyle={{ gap: 12 }}>
+              <View style={[styles.updateGrid, isWide && styles.updateGridWide]}>
+                <View style={styles.updateColumn}>
+                  <View style={styles.updateCard}>
+                    <View style={styles.updateHeaderRow}>
+                      <Text style={styles.sectionTitle}>
+                        {selectedUpdateId ? `Редактирование #${selectedUpdateId}` : 'Новая версия'}
+                      </Text>
+                      {selectedUpdateId ? (
+                        <Pressable onPress={resetUpdateForm} style={styles.linkBtn}>
+                          <Text style={styles.linkBtnText}>Новая запись</Text>
+                        </Pressable>
+                      ) : null}
+                    </View>
+
+                    <View style={styles.fieldRow}>
+                      <View style={[styles.fieldBlock, { minWidth: 200 }]}>
+                        <View style={styles.labelRow}>
+                          <Text style={styles.labelText}>Платформа</Text>
+                          <Pressable
+                            onPress={() => openInfo(HELP_TEXT.platform.title, HELP_TEXT.platform.message)}
+                            style={styles.helpBtn}
+                            hitSlop={8}
+                          >
+                            <Ionicons name="help-circle-outline" size={16} color={colors.secondaryText} />
+                          </Pressable>
+                        </View>
+                        <View style={styles.segmentGroup}>
+                          <Pressable
+                            onPress={() => handlePlatformChange('android')}
+                            style={[styles.segment, updateForm.platform === 'android' && styles.segmentActive]}
+                          >
+                            <Text
+                              style={[
+                                styles.segmentText,
+                                updateForm.platform === 'android' && styles.segmentTextActive,
+                              ]}
+                            >
+                              Android
+                            </Text>
+                          </Pressable>
+                          <Pressable
+                            onPress={() => handlePlatformChange('ios')}
+                            style={[styles.segment, updateForm.platform === 'ios' && styles.segmentActive]}
+                          >
+                            <Text
+                              style={[
+                                styles.segmentText,
+                                updateForm.platform === 'ios' && styles.segmentTextActive,
+                              ]}
+                            >
+                              iOS
+                            </Text>
+                          </Pressable>
+                        </View>
+                      </View>
+
+                      <View style={[styles.fieldBlock, { minWidth: 200 }]}>
+                        <View style={styles.labelRow}>
+                          <Text style={styles.labelText}>Канал (prod/dev)</Text>
+                          <Pressable
+                            onPress={() => openInfo(HELP_TEXT.channel.title, HELP_TEXT.channel.message)}
+                            style={styles.helpBtn}
+                            hitSlop={8}
+                          >
+                            <Ionicons name="help-circle-outline" size={16} color={colors.secondaryText} />
+                          </Pressable>
+                        </View>
+                        <View style={styles.segmentGroup}>
+                          <Pressable
+                            onPress={() => setUpdateForm((prev) => ({ ...prev, channel: 'prod' }))}
+                            style={[styles.segment, updateForm.channel === 'prod' && styles.segmentActive]}
+                          >
+                            <Text
+                              style={[
+                                styles.segmentText,
+                                updateForm.channel === 'prod' && styles.segmentTextActive,
+                              ]}
+                            >
+                              prod
+                            </Text>
+                          </Pressable>
+                          <Pressable
+                            onPress={() => setUpdateForm((prev) => ({ ...prev, channel: 'dev' }))}
+                            style={[styles.segment, updateForm.channel === 'dev' && styles.segmentActive]}
+                          >
+                            <Text
+                              style={[
+                                styles.segmentText,
+                                updateForm.channel === 'dev' && styles.segmentTextActive,
+                              ]}
+                            >
+                              dev
+                            </Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    </View>
+
+                    <View style={styles.fieldRow}>
+                      <View style={[styles.fieldBlock, { minWidth: 180 }]}>
+                        <View style={styles.labelRow}>
+                          <Text style={styles.labelText}>Код версии (versionCode)</Text>
+                          <Pressable
+                            onPress={() => openInfo(HELP_TEXT.versionCode.title, HELP_TEXT.versionCode.message)}
+                            style={styles.helpBtn}
+                            hitSlop={8}
+                          >
+                            <Ionicons name="help-circle-outline" size={16} color={colors.secondaryText} />
+                          </Pressable>
+                        </View>
+                        <Text style={styles.labelHint}>Текущий: {currentVersionCodeLabel}</Text>
+                        <TextInput
+                          placeholder="например 101"
+                          value={updateForm.versionCode}
+                          onChangeText={(val) => {
+                            setVersionCodeTouched(true);
+                            setUpdateForm((prev) => ({ ...prev, versionCode: val }));
+                          }}
+                          style={styles.input}
+                          keyboardType="numeric"
+                        />
+                      </View>
+                      <View style={[styles.fieldBlock, { minWidth: 180 }]}>
+                        <View style={styles.labelRow}>
+                          <Text style={styles.labelText}>Имя версии (versionName)</Text>
+                          <Pressable
+                            onPress={() => openInfo(HELP_TEXT.versionName.title, HELP_TEXT.versionName.message)}
+                            style={styles.helpBtn}
+                            hitSlop={8}
+                          >
+                            <Ionicons name="help-circle-outline" size={16} color={colors.secondaryText} />
+                          </Pressable>
+                        </View>
+                        <Text style={styles.labelHint}>Текущая: {currentVersionNameLabel}</Text>
+                        <TextInput
+                          placeholder="например 1.2.3"
+                          value={updateForm.versionName}
+                          onChangeText={(val) => setUpdateForm((prev) => ({ ...prev, versionName: val }))}
+                          style={styles.input}
+                        />
+                      </View>
+                    </View>
+
+                    <View style={styles.fieldRow}>
+                      <View style={[styles.fieldBlock, { minWidth: 200 }]}>
+                        <View style={styles.labelRow}>
+                          <Text style={styles.labelText}>
+                            Минимальная версия (minSupportedVersionCode)
+                          </Text>
+                          <Pressable
+                            onPress={() =>
+                              openInfo(
+                                HELP_TEXT.minSupportedVersionCode.title,
+                                HELP_TEXT.minSupportedVersionCode.message
+                              )
+                            }
+                            style={styles.helpBtn}
+                            hitSlop={8}
+                          >
+                            <Ionicons name="help-circle-outline" size={16} color={colors.secondaryText} />
+                          </Pressable>
+                        </View>
+                        <Text style={styles.labelHint}>Рекомендуем: {currentVersionCodeLabel}</Text>
+                        <TextInput
+                          placeholder="например 100"
+                          value={updateForm.minSupportedVersionCode}
+                          onChangeText={(val) => {
+                            setMinSupportedTouched(true);
+                            setUpdateForm((prev) => ({ ...prev, minSupportedVersionCode: val }));
+                          }}
+                          style={styles.input}
+                          keyboardType="numeric"
+                        />
+                      </View>
+                      <View style={[styles.fieldBlock, { minWidth: 140, flex: 0.6 }]}>
+                        <View style={styles.labelRow}>
+                          <Text style={styles.labelText}>Процент раскатки</Text>
+                          <Pressable
+                            onPress={() =>
+                              openInfo(HELP_TEXT.rolloutPercent.title, HELP_TEXT.rolloutPercent.message)
+                            }
+                            style={styles.helpBtn}
+                            hitSlop={8}
+                          >
+                            <Ionicons name="help-circle-outline" size={16} color={colors.secondaryText} />
+                          </Pressable>
+                        </View>
+                        <TextInput
+                          placeholder="1-100"
+                          value={updateForm.rolloutPercent}
+                          onChangeText={(val) => setUpdateForm((prev) => ({ ...prev, rolloutPercent: val }))}
+                          style={styles.input}
+                          keyboardType="numeric"
+                        />
+                      </View>
+                    </View>
+
+                    <View style={styles.toggleRow}>
+                      <View style={styles.labelRow}>
+                        <Text style={styles.toggleLabel}>Обязательное</Text>
+                        <Pressable
+                          onPress={() => openInfo(HELP_TEXT.mandatory.title, HELP_TEXT.mandatory.message)}
+                          style={styles.helpBtn}
+                          hitSlop={8}
+                        >
+                          <Ionicons name="help-circle-outline" size={16} color={colors.secondaryText} />
+                        </Pressable>
+                      </View>
+                      <Switch
+                        value={updateForm.isMandatory}
+                        onValueChange={(val) => setUpdateForm((prev) => ({ ...prev, isMandatory: val }))}
+                        trackColor={{ false: '#CBD5F5', true: colors.tint }}
+                        thumbColor="#FFFFFF"
+                      />
+                    </View>
+                    <View style={styles.toggleRow}>
+                      <View style={styles.labelRow}>
+                        <Text style={styles.toggleLabel}>Активное обновление</Text>
+                        <Pressable
+                          onPress={() => openInfo(HELP_TEXT.active.title, HELP_TEXT.active.message)}
+                          style={styles.helpBtn}
+                          hitSlop={8}
+                        >
+                          <Ionicons name="help-circle-outline" size={16} color={colors.secondaryText} />
+                        </Pressable>
+                      </View>
+                      <Switch
+                        value={updateForm.isActive}
+                        onValueChange={(val) => setUpdateForm((prev) => ({ ...prev, isActive: val }))}
+                        trackColor={{ false: '#CBD5F5', true: colors.tint }}
+                        thumbColor="#FFFFFF"
+                      />
+                    </View>
+
+                    <View style={styles.fieldBlock}>
+                      <View style={styles.labelRow}>
+                        <Text style={styles.labelText}>Store URL</Text>
+                        <Pressable
+                          onPress={() => openInfo(HELP_TEXT.storeUrl.title, HELP_TEXT.storeUrl.message)}
+                          style={styles.helpBtn}
+                          hitSlop={8}
+                        >
+                          <Ionicons name="help-circle-outline" size={16} color={colors.secondaryText} />
+                        </Pressable>
+                      </View>
+                      <TextInput
+                        placeholder="https://..."
+                        value={updateForm.storeUrl}
+                        onChangeText={(val) => setUpdateForm((prev) => ({ ...prev, storeUrl: val }))}
+                        style={styles.input}
+                        autoCapitalize="none"
+                      />
+                    </View>
+
+                    <View style={styles.fieldBlock}>
+                      <View style={styles.labelRow}>
+                        <Text style={styles.labelText}>Описание релиза</Text>
+                        <Pressable
+                          onPress={() => openInfo(HELP_TEXT.releaseNotes.title, HELP_TEXT.releaseNotes.message)}
+                          style={styles.helpBtn}
+                          hitSlop={8}
+                        >
+                          <Ionicons name="help-circle-outline" size={16} color={colors.secondaryText} />
+                        </Pressable>
+                      </View>
+                      <TextInput
+                        placeholder="Что нового в версии"
+                        value={updateForm.releaseNotes}
+                        onChangeText={(val) => setUpdateForm((prev) => ({ ...prev, releaseNotes: val }))}
+                        style={[styles.input, { minHeight: 90, textAlignVertical: 'top' }]}
+                        multiline
+                      />
+                    </View>
+
+                    {isAndroid ? (
+                      <View style={styles.fieldBlock}>
+                        <View style={styles.labelRow}>
+                          <Text style={styles.labelText}>APK файл</Text>
+                          <Pressable
+                            onPress={() => openInfo(HELP_TEXT.apk.title, HELP_TEXT.apk.message)}
+                            style={styles.helpBtn}
+                            hitSlop={8}
+                          >
+                            <Ionicons name="help-circle-outline" size={16} color={colors.secondaryText} />
+                          </Pressable>
+                        </View>
+                        <View style={styles.updateRow}>
+                          <TouchableOpacity
+                            style={[styles.smallBtn, { backgroundColor: colors.tint }]}
+                            onPress={handlePickApk}
+                            disabled={updateSaving || selectedUpdateId !== null}
+                          >
+                            <Text style={{ color: '#fff', fontWeight: '700' }}>Выбрать APK</Text>
+                          </TouchableOpacity>
+                          <Text style={[styles.subtitle, { flex: 1 }]} numberOfLines={1}>
+                            {updateFile?.name ||
+                              (selectedUpdateId ? 'Файл не меняется (редактирование)' : 'Файл не выбран')}
+                          </Text>
+                          {updateFile ? (
+                            <TouchableOpacity
+                              style={styles.iconBtn}
+                              onPress={() => setUpdateFile(null)}
+                              disabled={updateSaving}
+                            >
+                              <Ionicons name="close-outline" size={18} color={colors.text} />
+                            </TouchableOpacity>
+                          ) : null}
+                        </View>
+                      </View>
+                    ) : null}
+
+                    <View style={styles.updateRow}>
+                      <TouchableOpacity
+                        style={[styles.smallBtn, { backgroundColor: colors.tint, flex: 1 }]}
+                        onPress={handleSubmitUpdate}
+                        disabled={updateSaving}
+                      >
+                        <Text style={{ color: '#fff', fontWeight: '700' }}>
+                          {updateSaving ? 'Сохранение...' : updateFile ? 'Загрузить APK' : 'Сохранить'}
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.smallBtn, { backgroundColor: colors.inputBackground, flex: 0.6 }]}
+                        onPress={resetUpdateForm}
+                        disabled={updateSaving}
+                      >
+                        <Text style={{ color: colors.text, fontWeight: '700' }}>Сбросить</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+
+                <View style={[styles.updateColumn, !isWide && styles.updateColumnStack]}>
+                  <View style={styles.updateCard}>
+                    <Text style={styles.sectionTitle}>Очистка старых версий</Text>
+                    <View style={styles.fieldRow}>
+                      <View style={[styles.fieldBlock, { minWidth: 160 }]}>
+                        <View style={styles.labelRow}>
+                          <Text style={styles.labelText}>Оставить последних</Text>
+                          <Pressable
+                            onPress={() =>
+                              openInfo(HELP_TEXT.cleanupKeepLatest.title, HELP_TEXT.cleanupKeepLatest.message)
+                            }
+                            style={styles.helpBtn}
+                            hitSlop={8}
+                          >
+                            <Ionicons name="help-circle-outline" size={16} color={colors.secondaryText} />
+                          </Pressable>
+                        </View>
+                        <TextInput
+                          placeholder="например 1"
+                          value={cleanupKeepLatest}
+                          onChangeText={setCleanupKeepLatest}
+                          style={styles.input}
+                          keyboardType="numeric"
+                        />
+                      </View>
+                      <View style={[styles.fieldBlock, { minWidth: 140, flex: 0.6 }]}>
+                        <View style={styles.labelRow}>
+                          <Text style={styles.labelText}>Удалять APK</Text>
+                          <Pressable
+                            onPress={() => openInfo(HELP_TEXT.cleanupPurge.title, HELP_TEXT.cleanupPurge.message)}
+                            style={styles.helpBtn}
+                            hitSlop={8}
+                          >
+                            <Ionicons name="help-circle-outline" size={16} color={colors.secondaryText} />
+                          </Pressable>
+                        </View>
+                        <Switch
+                          value={cleanupPurgeFile}
+                          onValueChange={setCleanupPurgeFile}
+                          trackColor={{ false: '#CBD5F5', true: colors.tint }}
+                          thumbColor="#FFFFFF"
+                        />
+                      </View>
+                      <View style={[styles.fieldBlock, { minWidth: 120, flex: 0, gap: 0, justifyContent: 'flex-end' }]}>
+                        <TouchableOpacity
+                          style={[styles.smallBtn, { backgroundColor: colors.tint }]}
+                          onPress={handleCleanup}
+                        >
+                          <Text style={{ color: '#fff', fontWeight: '700' }}>Очистить</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </View>
+
+                  <View style={styles.updateCard}>
+                    <View style={styles.updateHeaderRow}>
+                      <Text style={styles.sectionTitle}>Список обновлений</Text>
+                      <Pressable onPress={loadUpdates} style={styles.linkBtn}>
+                        <Text style={styles.linkBtnText}>Обновить список</Text>
+                      </Pressable>
+                    </View>
+                    {updatesLoading ? (
+                      <ActivityIndicator />
+                    ) : (
+                      updates.map((u) => {
+                        const meta = [
+                          u.platform,
+                          u.channel || 'prod',
+                          `v${u.versionName} (${u.versionCode})`,
+                          `min ${u.minSupportedVersionCode}`,
+                          `rollout ${u.rolloutPercent}%`,
+                          u.isMandatory ? 'обязательное' : 'опциональное',
+                        ].join(' · ');
+                        return (
+                          <View key={u.id} style={styles.updateItemRow}>
+                            <View style={{ flex: 1 }}>
+                              <Text style={styles.nameText} numberOfLines={1}>
+                                #{u.id} · {u.versionName}
+                              </Text>
+                              <Text style={styles.subtitle} numberOfLines={2}>
+                                {meta}
+                              </Text>
+                              {u.storeUrl ? (
+                                <Text style={styles.subtitle} numberOfLines={1}>
+                                  Store: {u.storeUrl}
+                                </Text>
+                              ) : null}
+                            </View>
+                            <View style={styles.updateActions}>
+                              <View style={styles.toggleRowInline}>
+                                <Text style={styles.toggleLabelSmall}>Активно</Text>
+                                <Switch
+                                  value={u.isActive}
+                                  onValueChange={() => handleToggleActive(u)}
+                                  trackColor={{ false: '#CBD5F5', true: colors.tint }}
+                                  thumbColor="#FFFFFF"
+                                />
+                              </View>
+                              <TouchableOpacity style={styles.iconBtn} onPress={() => handleEditUpdate(u)}>
+                                <Ionicons name="create-outline" size={18} color={colors.text} />
+                              </TouchableOpacity>
+                              <TouchableOpacity style={styles.iconBtnDanger} onPress={() => handleDeleteUpdate(u)}>
+                                <Ionicons name="trash-outline" size={18} color="#DC2626" />
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+                        );
+                      })
+                    )}
+                    {!updatesLoading && !updates.length && (
+                      <Text style={styles.subtitle}>Пока нет обновлений</Text>
+                    )}
+                  </View>
+                </View>
+              </View>
+            </ScrollView>
+          )}
         </View>
       </View>
+
+      <InfoModal
+        visible={!!infoModal}
+        title={infoModal?.title || ''}
+        message={infoModal?.message || ''}
+        onClose={closeInfo}
+      />
 
       <Modal
         visible={modalVisible}
@@ -999,7 +1820,8 @@ const getStyles = (colors: any) =>
       }),
     },
     title: { fontSize: 22, fontWeight: '800', color: colors.text, marginBottom: 10 },
-    tabsRow: { flexDirection: 'row', gap: 8 },
+    tabsScroll: { flexGrow: 0 },
+    tabsContent: { flexDirection: 'row', gap: 8, paddingBottom: 6 },
     tabBtn: {
       paddingVertical: 8,
       paddingHorizontal: 12,
@@ -1027,6 +1849,75 @@ const getStyles = (colors: any) =>
       flex: 1,
     },
     sectionTitle: { fontSize: 16, fontWeight: '800', color: colors.text },
+    updateGrid: { gap: 12, width: '100%' },
+    updateGridWide: { flexDirection: 'row', alignItems: 'flex-start' },
+    updateColumn: { flex: 1, gap: 12, width: '100%' },
+    updateColumnStack: { marginTop: 12 },
+    updateCard: {
+      borderRadius: 16,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: colors.inputBorder,
+      backgroundColor: colors.inputBackground,
+      gap: 10,
+      width: '100%',
+    },
+    updateHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 8,
+    },
+    segmentGroup: { flexDirection: 'row', gap: 8, alignItems: 'center', flexWrap: 'wrap' },
+    fieldRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, alignItems: 'flex-start' },
+    fieldBlock: { flex: 1, minWidth: 160, gap: 6 },
+    labelRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+    labelText: { fontWeight: '700', color: colors.text },
+    labelHint: { color: colors.secondaryText, fontSize: 12 },
+    helpBtn: { padding: 2 },
+    updateRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center' },
+    segment: {
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: colors.inputBorder,
+      backgroundColor: colors.cardBackground,
+    },
+    segmentActive: {
+      borderColor: colors.tint,
+      backgroundColor: colors.tint + '12',
+    },
+    segmentText: { fontWeight: '700', color: colors.secondaryText },
+    segmentTextActive: { color: colors.tint },
+    toggleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingVertical: 4,
+    },
+    toggleRowInline: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    toggleLabel: { fontWeight: '700', color: colors.text },
+    toggleLabelSmall: { fontSize: 12, fontWeight: '700', color: colors.secondaryText },
+    linkBtn: { paddingHorizontal: 8, paddingVertical: 6 },
+    linkBtnText: { color: colors.tint, fontWeight: '700' },
+    updateItemRow: {
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: colors.inputBorder,
+      backgroundColor: colors.cardBackground,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      marginBottom: 8,
+    },
+    updateActions: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
     searchRow: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -1458,3 +2349,4 @@ function SelectorCard({
     </View>
   );
 }
+
