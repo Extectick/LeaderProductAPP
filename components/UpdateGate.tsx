@@ -47,9 +47,14 @@ export default function UpdateGate({ children }: Props) {
   const [optionalVisible, setOptionalVisible] = useState(false);
   const [busy, setBusy] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [progress, setProgress] = useState(0);
+  const [stage, setStage] = useState<
+    'idle' | 'downloading' | 'verifying' | 'opening' | 'done' | 'error'
+  >('idle');
   const checkingRef = useRef(false);
   const lastCheckAtRef = useRef(0);
   const promptLoggedForRef = useRef<number | null>(null);
+  const downloadRef = useRef<FileSystem.DownloadResumable | null>(null);
 
   const versionName = Constants.expoConfig?.version ?? '0.0.0';
   const androidVersionCode = Number(Constants.expoConfig?.android?.versionCode ?? 0);
@@ -60,6 +65,10 @@ export default function UpdateGate({ children }: Props) {
 
   const getEtagKey = useCallback(() => {
     return `${STORAGE_KEYS.etag}:${Platform.OS}:${UPDATE_CHANNEL}`;
+  }, []);
+
+  const getDismissKey = useCallback(() => {
+    return `${STORAGE_KEYS.dismissedVersionCode}:${Platform.OS}:${UPDATE_CHANNEL}`;
   }, []);
 
   const runCheck = useCallback(
@@ -87,13 +96,14 @@ export default function UpdateGate({ children }: Props) {
         }
 
         if (result.notModified) {
+          lastCheckAtRef.current = Date.now();
           return;
         }
 
         if (!result.ok || !result.data) return;
 
         const data = result.data;
-        const dismissedRaw = await AsyncStorage.getItem(STORAGE_KEYS.dismissedVersionCode);
+        const dismissedRaw = await AsyncStorage.getItem(getDismissKey());
         const dismissedCode = dismissedRaw ? Number(dismissedRaw) : undefined;
 
         const updateAvailable = Boolean(data.updateAvailable);
@@ -128,7 +138,7 @@ export default function UpdateGate({ children }: Props) {
         checkingRef.current = false;
       }
     },
-    [getEtagKey, shouldCheck, versionCode, versionName]
+    [getDismissKey, getEtagKey, shouldCheck, versionCode, versionName]
   );
 
   useEffect(() => {
@@ -177,27 +187,87 @@ export default function UpdateGate({ children }: Props) {
     }
 
     setBusy(true);
+    setProgress(0);
     try {
       const deviceId = await getInstallId();
 
       if (Platform.OS === 'android' && updateInfo.downloadUrl && updateInfo.checksumMd5) {
-        const baseDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
+        const baseDir = FileSystem.documentDirectory || FileSystem.cacheDirectory;
         if (!baseDir) {
           setErrorMessage('Не удалось подготовить файл для обновления.');
+          setStage('error');
           return;
         }
-        const fileUri = `${baseDir}update_${updateInfo.latestVersionCode || Date.now()}.apk`;
-        const result = await FileSystem.downloadAsync(updateInfo.downloadUrl, fileUri, { md5: true });
+        const folder = `${baseDir}updates/`;
+        const versionTag = updateInfo.latestVersionCode || Date.now();
+        const fileUri = `${folder}update_${versionTag}.apk`;
+
+        try {
+          await FileSystem.makeDirectoryAsync(folder, { intermediates: true });
+        } catch {}
+
+        const cached = await FileSystem.getInfoAsync(fileUri, { md5: true });
+        if (cached.exists && cached.md5 && cached.md5.toLowerCase() === updateInfo.checksumMd5.toLowerCase()) {
+          setProgress(100);
+          setStage('opening');
+          try {
+            const contentUri = await FileSystem.getContentUriAsync(fileUri);
+            await Linking.openURL(contentUri);
+          } catch (e) {
+            await Linking.openURL(updateInfo.downloadUrl);
+          }
+          setProgress(100);
+          setStage('done');
+          await logUpdateEvent({
+            eventType: 'UPDATE_CLICK',
+            platform: Platform.OS as 'android' | 'ios',
+            versionCode,
+            versionName,
+            deviceId,
+            updateId: updateInfo.latestId,
+            channel: UPDATE_CHANNEL,
+          });
+          return;
+        }
+
+        if (cached.exists) {
+          try {
+            await FileSystem.deleteAsync(fileUri, { idempotent: true });
+          } catch {}
+        }
+
+        setStage('downloading');
+        downloadRef.current = FileSystem.createDownloadResumable(
+          updateInfo.downloadUrl,
+          fileUri,
+          { md5: true },
+          (evt) => {
+            if (!evt.totalBytesExpectedToWrite) return;
+            const percent = Math.min(
+              100,
+              Math.round((evt.totalBytesWritten / evt.totalBytesExpectedToWrite) * 100)
+            );
+            setProgress(percent);
+          }
+        );
+        const result = await downloadRef.current.downloadAsync();
+        downloadRef.current = null;
+        setStage('verifying');
         if (result.md5 && updateInfo.checksumMd5 && result.md5.toLowerCase() !== updateInfo.checksumMd5.toLowerCase()) {
           setErrorMessage('Контрольная сумма файла не совпадает. Повторите загрузку.');
+          setStage('error');
           return;
         }
         try {
+          setStage('opening');
           const contentUri = await FileSystem.getContentUriAsync(result.uri);
           await Linking.openURL(contentUri);
         } catch (e) {
+          setStage('opening');
           await Linking.openURL(updateInfo.downloadUrl);
         }
+        setProgress(100);
+        setStage('done');
 
         await logUpdateEvent({
           eventType: 'UPDATE_CLICK',
@@ -211,7 +281,10 @@ export default function UpdateGate({ children }: Props) {
         return;
       }
 
+      setStage('opening');
       await Linking.openURL(url);
+      setProgress(100);
+      setStage('done');
       await logUpdateEvent({
         eventType: 'UPDATE_CLICK',
         platform: Platform.OS as 'android' | 'ios',
@@ -223,16 +296,42 @@ export default function UpdateGate({ children }: Props) {
       });
     } catch (e) {
       console.warn('[update] openURL failed', e);
-      setErrorMessage('Не удалось открыть ссылку для обновления.');
+      const msg = (e as any)?.message || 'Не удалось выполнить обновление.';
+      setErrorMessage(msg);
+      setStage('error');
     } finally {
       setBusy(false);
     }
   }, [updateInfo, versionCode, versionName]);
 
+  const handleClose = useCallback(async () => {
+    if (downloadRef.current) {
+      try {
+        await downloadRef.current.pauseAsync();
+      } catch {}
+      downloadRef.current = null;
+    }
+    const deviceId = await getInstallId();
+    await logUpdateEvent({
+      eventType: 'DISMISS',
+      platform: Platform.OS as 'android' | 'ios',
+      versionCode,
+      versionName,
+      deviceId,
+      updateId: updateInfo?.latestId,
+      channel: UPDATE_CHANNEL,
+    });
+    setMandatoryVisible(false);
+    setOptionalVisible(false);
+    setStage('idle');
+    setProgress(0);
+    setErrorMessage(null);
+  }, [updateInfo, versionCode, versionName]);
+
   const handleLater = useCallback(async () => {
-    if (updateInfo?.latestVersionCode) {
+    if (!mandatoryVisible && updateInfo?.latestVersionCode) {
       await AsyncStorage.setItem(
-        STORAGE_KEYS.dismissedVersionCode,
+        getDismissKey(),
         String(updateInfo.latestVersionCode)
       );
     }
@@ -248,11 +347,31 @@ export default function UpdateGate({ children }: Props) {
       channel: UPDATE_CHANNEL,
     });
 
-    setOptionalVisible(false);
-  }, [updateInfo, versionCode, versionName]);
+    if (mandatoryVisible) {
+      setMandatoryVisible(false);
+    } else {
+      setOptionalVisible(false);
+    }
+    setStage('idle');
+    setProgress(0);
+  }, [getDismissKey, mandatoryVisible, updateInfo, versionCode, versionName]);
 
   const modalVisible = mandatoryVisible || optionalVisible;
   const isMandatory = mandatoryVisible;
+  const showProgress = stage !== 'idle';
+
+  const progressLabel = useMemo(() => {
+    if (stage === 'downloading') return `Загрузка ${progress}%`;
+    if (stage === 'verifying') return 'Проверка файла...';
+    if (stage === 'opening') {
+      return Platform.OS === 'android'
+        ? 'Открываем установщик. Завершите установку в системе.'
+        : 'Открываем магазин приложений.';
+    }
+    if (stage === 'done') return 'Готово';
+    if (stage === 'error') return 'Ошибка';
+    return '';
+  }, [progress, stage]);
 
   const description = useMemo(() => {
     if (!updateInfo) return '';
@@ -272,18 +391,23 @@ export default function UpdateGate({ children }: Props) {
         transparent
         animationType="fade"
         onRequestClose={() => {
-          if (!isMandatory) setOptionalVisible(false);
+          void handleClose();
         }}
       >
         <View style={styles.overlay}>
           <Pressable
             style={StyleSheet.absoluteFill}
             onPress={() => {
-              if (!isMandatory) setOptionalVisible(false);
+              void handleClose();
             }}
           />
           <View style={styles.card}>
-            <Text style={styles.title}>Обновление приложения</Text>
+            <View style={styles.headerRow}>
+              <Text style={styles.title}>Обновление приложения</Text>
+              <Pressable onPress={handleClose} style={styles.closeBtn} hitSlop={10}>
+                <Text style={styles.closeBtnText}>✕</Text>
+              </Pressable>
+            </View>
             <Text style={styles.subtitle}>{description}</Text>
             {updateInfo?.latestVersionName ? (
               <Text style={styles.version}>Версия: v{updateInfo.latestVersionName}</Text>
@@ -295,14 +419,21 @@ export default function UpdateGate({ children }: Props) {
               <Text style={styles.notes}>{updateInfo.releaseNotes}</Text>
             ) : null}
 
+            {showProgress ? (
+              <View style={styles.progressWrap}>
+                <View style={styles.progressBar}>
+                  <View style={[styles.progressFill, { width: `${progress}%` }]} />
+                </View>
+                <Text style={styles.progressText}>{progressLabel}</Text>
+              </View>
+            ) : null}
+
             {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
 
             <View style={styles.actions}>
-              {!isMandatory ? (
-                <Pressable style={[styles.button, styles.secondary]} onPress={handleLater} disabled={busy}>
-                  <Text style={styles.secondaryText}>Позже</Text>
-                </Pressable>
-              ) : null}
+              <Pressable style={[styles.button, styles.secondary]} onPress={handleLater} disabled={busy}>
+                <Text style={styles.secondaryText}>Закрыть</Text>
+              </Pressable>
               <Pressable
                 style={[styles.button, styles.primary, busy && styles.primaryDisabled]}
                 onPress={handleUpdate}
@@ -311,7 +442,7 @@ export default function UpdateGate({ children }: Props) {
                 {busy ? (
                   <View style={styles.inlineBusy}>
                     <ActivityIndicator size="small" color="#ffffff" />
-                    <Text style={styles.primaryText}>Подготовка...</Text>
+                    <Text style={styles.primaryText}>В процессе...</Text>
                   </View>
                 ) : (
                   <Text style={styles.primaryText}>Обновить</Text>
@@ -348,6 +479,25 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 8 },
     elevation: 6,
   },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  closeBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#e2e8f0',
+  },
+  closeBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
   title: {
     fontSize: 18,
     fontWeight: '700',
@@ -367,6 +517,25 @@ const styles = StyleSheet.create({
     marginTop: 12,
     fontSize: 13,
     color: '#475569',
+  },
+  progressWrap: {
+    marginTop: 12,
+    gap: 6,
+  },
+  progressBar: {
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: '#e2e8f0',
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: '#0ea5e9',
+  },
+  progressText: {
+    fontSize: 12,
+    color: '#334155',
+    fontWeight: '600',
   },
   error: {
     marginTop: 12,

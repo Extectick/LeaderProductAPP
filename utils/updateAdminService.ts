@@ -1,4 +1,11 @@
+import axios from 'axios';
+import { Platform } from 'react-native';
+
 import { apiClient } from './apiClient';
+import { API_BASE_URL } from './config';
+import { getAccessToken, refreshToken as refreshAccessToken } from './tokenService';
+
+const UPDATE_UPLOAD_TIMEOUT_MS = 10 * 60 * 1000;
 
 export type UpdateItem = {
   id: number;
@@ -79,6 +86,96 @@ export async function uploadUpdate(form: FormData) {
   });
   if (!resp.ok) throw new Error(resp.message || 'Не удалось загрузить обновление');
   return resp.data!;
+}
+
+export async function uploadUpdateWithProgress(
+  form: FormData,
+  onProgress?: (percent: number) => void
+) {
+  if (!API_BASE_URL) {
+    throw new Error('API_BASE_URL is missing');
+  }
+
+  const sendWithAxios = async (token?: string | null) => {
+    const headers: Record<string, string> = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+
+    const response = await axios.post(`${API_BASE_URL}/updates/upload`, form, {
+      headers,
+      timeout: UPDATE_UPLOAD_TIMEOUT_MS,
+      onUploadProgress: (evt) => {
+        if (!evt.total) return;
+        const percent = Math.min(100, Math.round((evt.loaded / evt.total) * 100));
+        if (onProgress) onProgress(percent);
+      },
+    });
+
+    const payload = response.data?.data ?? response.data;
+    return payload as UpdateItem;
+  };
+
+  const sendWithXHR = async (token?: string | null) => {
+    return await new Promise<UpdateItem>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${API_BASE_URL}/updates/upload`);
+      xhr.timeout = UPDATE_UPLOAD_TIMEOUT_MS;
+      if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+
+      if (xhr.upload && onProgress) {
+        xhr.upload.onprogress = (evt) => {
+          if (!evt.lengthComputable) return;
+          const percent = Math.min(100, Math.round((evt.loaded / evt.total) * 100));
+          onProgress(percent);
+        };
+      }
+
+      xhr.onload = () => {
+        const status = xhr.status || 0;
+        const text = xhr.responseText || '';
+        let data: any;
+        try {
+          data = xhr.responseType === 'json' ? xhr.response : JSON.parse(text);
+        } catch {
+          data = undefined;
+        }
+        const payload = data?.data ?? data;
+        if (status >= 200 && status < 300) {
+          resolve(payload as UpdateItem);
+          return;
+        }
+        const message =
+          data?.message || data?.error || text || `HTTP error ${status}`;
+        reject({ status, message });
+      };
+
+      xhr.onerror = () => reject({ status: 0, message: 'Network error' });
+      xhr.ontimeout = () => reject({ status: 0, message: 'Upload timeout' });
+
+      xhr.send(form);
+    });
+  };
+
+  const token = await getAccessToken();
+  try {
+    if (Platform.OS === 'web') {
+      return await sendWithAxios(token);
+    }
+    return await sendWithXHR(token);
+  } catch (e: any) {
+    const status = e?.status ?? e?.response?.status;
+    if (status === 401) {
+      const refreshed = await refreshAccessToken();
+      if (refreshed) {
+        if (Platform.OS === 'web') {
+          return await sendWithAxios(refreshed);
+        }
+        return await sendWithXHR(refreshed);
+      }
+    }
+    const message =
+      e?.response?.data?.message || e?.message || 'Не удалось загрузить обновление';
+    throw new Error(message);
+  }
 }
 
 export async function updateUpdate(id: number, patch: Partial<UpdatePayload>) {
