@@ -10,6 +10,7 @@ import { handleBackendUnavailable, logout, refreshToken } from '@/utils/tokenSer
 import { getProfile } from '@/utils/userService';
 import { getProfileGate } from '@/utils/profileGate';
 import { syncPushToken, unregisterPushToken } from '@/utils/pushNotifications';
+import { usePresenceHeartbeat } from '@/hooks/usePresenceHeartbeat';
 
 interface AuthContextType {
   isLoading: boolean;
@@ -194,6 +195,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       cancelled = true;
     };
   }, [isAuthenticated]);
+
+  usePresenceHeartbeat(isAuthenticated);
 
   return (
     <AuthContext.Provider

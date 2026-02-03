@@ -26,6 +26,7 @@ import Animated, {
   withTiming,
   Easing,
 } from "react-native-reanimated";
+import { shadeColor, tintColor } from "@/utils/color";
 
 const updates = [
   { title: "Новый трекинг", desc: "Отслеживайте перемещения сотрудников и точки на карте.", icon: "map-outline", color: "#2563EB" },
@@ -133,9 +134,10 @@ export default function HomeScreen() {
                 <Pressable
                   key={link.label}
                   onPress={() => router.push(link.href)}
-                  style={({ pressed }) => [
+                  style={({ pressed, hovered }) => [
                     styles.linkCard,
-                    { transform: [{ scale: pressed ? 0.98 : 1 }] },
+                    { transform: [{ scale: pressed ? 0.98 : hovered ? 1.02 : 1 }] },
+                    hovered ? styles.linkCardHover : null,
                   ]}
                 >
                   <LinearGradient
@@ -254,6 +256,10 @@ function SpringButton({
     ...innerRest
   } = flat || {};
 
+  const baseBg = (innerRest.backgroundColor as string) || "transparent";
+  const hoverBg = baseBg !== "transparent" ? tintColor(baseBg, 0.12) : baseBg;
+  const pressBg = baseBg !== "transparent" ? shadeColor(baseBg, 0.12) : baseBg;
+
   const outerStyle: ViewStyle = {
     margin,
     marginTop,
@@ -273,10 +279,17 @@ function SpringButton({
         onPress={onPress}
         onPressIn={() => (scale.value = withSpring(0.97, { damping: 18, stiffness: 300 }))}
         onPressOut={() => (scale.value = withSpring(1, { damping: 18, stiffness: 300 }))}
+        onHoverIn={() => (scale.value = withSpring(1.03, { damping: 18, stiffness: 300 }))}
+        onHoverOut={() => (scale.value = withSpring(1, { damping: 18, stiffness: 300 }))}
         android_ripple={
           Platform.OS === "android" && androidRippleColor ? { color: androidRippleColor } : undefined
         }
-        style={({ pressed }) => [innerRest, pressed && Platform.OS === "ios" ? { opacity: 0.9 } : null]}
+        style={({ pressed, hovered }) => [
+          innerRest,
+          hovered && !pressed ? { backgroundColor: hoverBg } : null,
+          pressed ? { backgroundColor: pressBg } : null,
+          pressed && Platform.OS === "ios" ? { opacity: 0.9 } : null,
+        ]}
       >
         {children}
       </Pressable>
@@ -367,6 +380,12 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     shadowOffset: { width: 0, height: 3 },
     elevation: 2,
+  },
+  linkCardHover: {
+    shadowOpacity: 0.14,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
   },
   linkGradient: {
     ...StyleSheet.absoluteFillObject,

@@ -5,8 +5,19 @@ import { Ionicons } from '@expo/vector-icons';
 import { AppealMessage } from '@/types/appealsTypes';
 import { MotiView } from 'moti';
 import * as FileSystem from 'expo-file-system';
+import { formatDistanceToNow } from 'date-fns';
+import { ru } from 'date-fns/locale';
+import type { PresenceInfo } from '@/utils/presenceService';
 
-export default function MessageBubble({ message, own }: { message: AppealMessage; own: boolean }) {
+export default function MessageBubble({
+  message,
+  own,
+  presence,
+}: {
+  message: AppealMessage;
+  own: boolean;
+  presence?: PresenceInfo;
+}) {
   const attachments = Array.isArray(message.attachments)
     ? message.attachments.filter(
         (a): a is NonNullable<typeof a> =>
@@ -18,6 +29,17 @@ export default function MessageBubble({ message, own }: { message: AppealMessage
   const pad = (n: number) => String(n).padStart(2, '0');
   const timeStr = `${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
   const dateStr = `${pad(dt.getDate())}.${pad(dt.getMonth() + 1)}.${String(dt.getFullYear()).slice(-2)}`;
+  const senderName =
+    [message.sender?.firstName, message.sender?.lastName].filter(Boolean).join(' ') ||
+    message.sender?.email ||
+    'Пользователь';
+  const presenceLabel = presence
+    ? presence.isOnline
+      ? 'онлайн'
+      : presence.lastSeenAt
+      ? `был(а) ${formatDistanceToNow(new Date(presence.lastSeenAt), { addSuffix: true, locale: ru })}`
+      : 'не в сети'
+    : null;
 
   const [currentUri, setCurrentUri] = useState<string | null>(null);
   const [previewUri, setPreviewUri] = useState<string | null>(null);
@@ -95,6 +117,18 @@ export default function MessageBubble({ message, own }: { message: AppealMessage
         animate={{ opacity: 1, translateY: 0 }}
         style={[styles.bubble, own ? styles.own : styles.other]}
       >
+        {!own && presenceLabel ? (
+          <View style={styles.senderRow}>
+            <Text style={styles.senderName}>{senderName}</Text>
+            <View
+              style={[
+                styles.presenceDot,
+                { backgroundColor: presence?.isOnline ? '#22c55e' : '#94a3b8' },
+              ]}
+            />
+            <Text style={styles.presenceText}>{presenceLabel}</Text>
+          </View>
+        ) : null}
         {message.text ? <Text style={styles.text}>{message.text}</Text> : null}
         {attachments.map((a, idx) => {
           if (a.fileType === 'IMAGE' && a.fileUrl) {
@@ -239,6 +273,10 @@ const styles = StyleSheet.create({
     marginTop: 4,
     alignItems: 'center',
   },
+  senderRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
+  senderName: { fontSize: 12, fontWeight: '700', color: '#111827' },
+  presenceDot: { width: 6, height: 6, borderRadius: 3 },
+  presenceText: { fontSize: 11, color: '#6b7280' },
   time: { fontSize: 12, color: '#666' },
   date: { fontSize: 12, color: '#666' },
   readMark: { marginLeft: 6 },

@@ -1,5 +1,16 @@
-import React, { useEffect, useState } from 'react';
-import { Linking, Platform, Pressable, StyleSheet, Text, View, Image, ViewStyle } from 'react-native';
+import React, { useContext, useEffect, useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  Image,
+  Linking,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  ViewStyle,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Skeleton } from 'moti/skeleton';
@@ -16,11 +27,19 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Colors } from '@/constants/Colors';
 import { Profile, ProfileType, ProfileStatus } from '@/types/userTypes';
-import { getProfileById } from '@/utils/userService';
+import { getProfileById, uploadProfileAvatar } from '@/utils/userService';
+import AvatarCropperModal from '@/components/ui/AvatarCropperModal';
+import { AuthContext } from '@/context/AuthContext';
+import { usePresence } from '@/hooks/usePresence';
+import { formatDistanceToNow } from 'date-fns';
+import { ru } from 'date-fns/locale';
+import * as ImagePicker from 'expo-image-picker';
+import { shadeColor, tintColor } from '@/utils/color';
 
 type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
 type Tone = 'green' | 'violet' | 'gray' | 'red' | 'blue';
 type Chip = { icon: IoniconName; label: string; tone?: Tone };
+type CropImage = { uri: string; width: number; height: number };
 
 export type ProfileViewProps = {
   /** Если указан - показываем чужой профиль, иначе - текущий */
@@ -48,12 +67,26 @@ export function ProfileView({
   loadingOverride,
   errorOverride,
 }: ProfileViewProps) {
+  const auth = useContext(AuthContext);
   const usingOverride = profileOverride !== undefined;
   const [profile, setProfile] = useState<Profile | null>(profileOverride ?? null);
   const [loading, setLoading] = useState(usingOverride ? Boolean(loadingOverride) : true);
   const [err, setErr] = useState<string | null>(errorOverride ?? null);
+  const [cropImage, setCropImage] = useState<CropImage | null>(null);
+  const [cropVisible, setCropVisible] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
   const isSelf = userId == null; // нет userId => это мой профиль (скрываем действия)
+  const presenceMap = usePresence(!isSelf && profile ? [profile.id] : []);
+  const presence = !isSelf && profile ? presenceMap[profile.id] : undefined;
+  const presenceLabel = useMemo(() => {
+    if (!presence) return null;
+    if (presence.isOnline) return 'В сети';
+    if (presence.lastSeenAt) {
+      return `Был(а) ${formatDistanceToNow(new Date(presence.lastSeenAt), { addSuffix: true, locale: ru })}`;
+    }
+    return 'Не в сети';
+  }, [presence]);
 
   useEffect(() => {
     if (usingOverride) return;
@@ -81,6 +114,64 @@ export function ProfileView({
     setLoading(Boolean(loadingOverride));
     setErr(errorOverride ?? null);
   }, [errorOverride, loadingOverride, profileOverride, usingOverride]);
+
+  const resolveImageSize = async (uri: string, width?: number, height?: number): Promise<CropImage> => {
+    if (width && height) return { uri, width, height };
+    return new Promise((resolve, reject) => {
+      Image.getSize(
+        uri,
+        (w, h) => resolve({ uri, width: w, height: h }),
+        (err) => reject(err)
+      );
+    });
+  };
+
+  const handlePickAvatar = async () => {
+    if (!profile) return;
+    if (!profile.currentProfileType) {
+      Alert.alert('Профиль не выбран', 'Сначала выберите тип профиля.');
+      return;
+    }
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Нет доступа', 'Нужен доступ к галерее.');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: false,
+      quality: 1,
+    });
+    if (result.canceled || !result.assets?.length) return;
+    const asset = result.assets[0];
+    try {
+      const resolved = await resolveImageSize(asset.uri, asset.width ?? undefined, asset.height ?? undefined);
+      setCropImage(resolved);
+      setCropVisible(true);
+    } catch (e) {
+      Alert.alert('Ошибка', 'Не удалось обработать изображение');
+    }
+  };
+
+  const handleConfirmCrop = async (img: CropImage) => {
+    if (!profile?.currentProfileType) return;
+    setCropVisible(false);
+    setUploadingAvatar(true);
+    try {
+      const updated = await uploadProfileAvatar(profile.currentProfileType, { uri: img.uri });
+      if (updated) {
+        setProfile(updated);
+        if (isSelf && auth?.setProfile) {
+          await auth.setProfile(updated);
+        }
+      }
+    } catch (e: any) {
+      Alert.alert('Ошибка', e?.message || 'Не удалось обновить аватар');
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
 
   if (loading && !profile) {
     return (
@@ -149,6 +240,11 @@ export function ProfileView({
         title={fullName || 'Профиль'}
         subtitle={deptName ? `${profTypeName(currentProfileType)} • ${deptName}` : profTypeName(currentProfileType)}
         chips={chips}
+        presenceLabel={!isSelf ? presenceLabel : null}
+        presenceOnline={presence?.isOnline}
+        avatarEditable={isSelf}
+        avatarBusy={uploadingAvatar}
+        onEditAvatar={handlePickAvatar}
       />
 
       {/* Действия — не показываем для своего профиля */}
@@ -205,7 +301,13 @@ export function ProfileView({
             ))}
           </View>
         </Animated.View>
-      ) : null}
+        ) : null}
+      <AvatarCropperModal
+        visible={cropVisible}
+        image={cropImage}
+        onCancel={() => setCropVisible(false)}
+        onConfirm={handleConfirmCrop}
+      />
     </View>
   );
 }
@@ -218,12 +320,22 @@ function Hero({
   title,
   subtitle,
   chips,
+  presenceLabel,
+  presenceOnline,
+  avatarEditable,
+  avatarBusy,
+  onEditAvatar,
 }: {
   avatarUrl?: string;
   initials: string;
   title: string;
   subtitle?: string;
   chips: Chip[];
+  presenceLabel?: string | null;
+  presenceOnline?: boolean;
+  avatarEditable?: boolean;
+  avatarBusy?: boolean;
+  onEditAvatar?: () => void;
 }) {
   const float = useSharedValue(0);
   useEffect(() => {
@@ -244,18 +356,44 @@ function Hero({
         style={styles.heroBg}
       />
       <View style={styles.heroInner}>
-        <Animated.View style={[styles.avatarOuter, avatarAnim]}>
-          {avatarUrl ? (
-            <Image source={{ uri: avatarUrl }} style={styles.avatar} />
-          ) : (
-            <View style={[styles.avatar, styles.avatarFallback]}>
-              <Text style={styles.avatarInitials}>{initials}</Text>
-            </View>
-          )}
-        </Animated.View>
+        <Pressable
+          onPress={avatarEditable ? onEditAvatar : undefined}
+          disabled={!avatarEditable || avatarBusy}
+          style={{ alignSelf: 'flex-start' }}
+        >
+          <Animated.View style={[styles.avatarOuter, avatarAnim]}>
+            {avatarUrl ? (
+              <Image source={{ uri: avatarUrl }} style={styles.avatar} />
+            ) : (
+              <View style={[styles.avatar, styles.avatarFallback]}>
+                <Text style={styles.avatarInitials}>{initials}</Text>
+              </View>
+            )}
+            {avatarEditable ? (
+              <View style={styles.avatarEditBadge}>
+                {avatarBusy ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Ionicons name="camera" size={16} color="#fff" />
+                )}
+              </View>
+            ) : null}
+          </Animated.View>
+        </Pressable>
 
         <Text style={styles.heroTitle}>{title}</Text>
         {subtitle ? <Text style={styles.heroSubtitle}>{subtitle}</Text> : null}
+        {presenceLabel ? (
+          <View style={styles.presenceRow}>
+            <View
+              style={[
+                styles.presenceDot,
+                { backgroundColor: presenceOnline ? '#22c55e' : '#94a3b8' },
+              ]}
+            />
+            <Text style={styles.presenceText}>{presenceLabel}</Text>
+          </View>
+        ) : null}
 
         <View style={styles.chipsRow}>
           {chips.map((c, idx) => (
@@ -359,8 +497,22 @@ function ActionButton({
 }) {
   const scale = useSharedValue(1);
   const aStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+  const [hovered, setHovered] = useState(false);
   const onIn = () => (scale.value = withSpring(0.97, { damping: 18, stiffness: 260 }));
-  const onOut = () => (scale.value = withSpring(1, { damping: 18, stiffness: 260 }));
+  const onOut = () => (scale.value = withSpring(hovered ? 1.03 : 1, { damping: 18, stiffness: 260 }));
+  const onHoverIn = () => {
+    if (disabled) return;
+    setHovered(true);
+    scale.value = withSpring(1.03, { damping: 18, stiffness: 260 });
+  };
+  const onHoverOut = () => {
+    if (disabled) return;
+    setHovered(false);
+    scale.value = withSpring(1, { damping: 18, stiffness: 260 });
+  };
+  const baseBg = '#FFFFFF';
+  const hoverBg = tintColor(baseBg, 0.06);
+  const pressBg = shadeColor(baseBg, 0.08);
 
   return (
     <Animated.View style={[styles.actionBtn, aStyle]}>
@@ -368,12 +520,15 @@ function ActionButton({
         disabled={disabled}
         onPressIn={onIn}
         onPressOut={onOut}
+        onHoverIn={onHoverIn}
+        onHoverOut={onHoverOut}
         onPress={onPress}
         android_ripple={{ color: '#E5E7EB' }}
         style={({ pressed }) => [
           styles.actionPressable,
           disabled && { opacity: 0.5 },
-          pressed && Platform.OS === 'ios' ? { opacity: 0.9 } : null,
+          hovered && !pressed && !disabled ? { backgroundColor: hoverBg } : null,
+          pressed && !disabled ? { backgroundColor: pressBg } : null,
         ]}
       >
         <Ionicons name={icon} size={18} color="#111827" />
@@ -477,8 +632,24 @@ const styles = StyleSheet.create({
   avatar: { width: 88, height: 88, borderRadius: 24 },
   avatarFallback: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#EEF2FF' },
   avatarInitials: { fontSize: 28, fontWeight: '800', color: '#0F172A' },
+  avatarEditBadge: {
+    position: 'absolute',
+    right: -6,
+    bottom: -6,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#0ea5e9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
   heroTitle: { fontSize: 22, fontWeight: '800', color: '#0F172A' },
   heroSubtitle: { marginTop: 6, color: '#334155' },
+  presenceRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 },
+  presenceDot: { width: 8, height: 8, borderRadius: 4 },
+  presenceText: { color: '#334155', fontSize: 12, fontWeight: '600' },
   chipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
 
   chip: {

@@ -10,6 +10,7 @@ import {
   Easing,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -34,6 +35,7 @@ import { gradientColors } from '@/constants/Colors';
 import { AuthContext } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { API_BASE_URL } from '@/utils/config';
+import { shadeColor, tintColor } from '@/utils/color';
 import {
   changePassword,
   login,
@@ -759,31 +761,56 @@ export default function AuthScreen() {
     disabled?: boolean;
   }> = ({ title, onPress, variant = 'filled', disabled }) => {
     const scale = useRef(new Animated.Value(1)).current;
+    const [hovered, setHovered] = useState(false);
+    const hoveredRef = useRef(false);
     const pressIn = () => {
       if (disabled) return;
       Animated.spring(scale, { toValue: 0.97, useNativeDriver: true, friction: 5 }).start();
     };
     const pressOut = () => {
       if (disabled) return;
+      const to = hoveredRef.current ? 1.03 : 1;
+      Animated.spring(scale, { toValue: to, useNativeDriver: true, friction: 5 }).start();
+    };
+    const hoverIn = () => {
+      if (disabled) return;
+      hoveredRef.current = true;
+      setHovered(true);
+      Animated.spring(scale, { toValue: 1.03, useNativeDriver: true, friction: 5 }).start();
+    };
+    const hoverOut = () => {
+      if (disabled) return;
+      hoveredRef.current = false;
+      setHovered(false);
       Animated.spring(scale, { toValue: 1, useNativeDriver: true, friction: 5 }).start();
     };
     const baseText = variant === 'filled' ? colors.buttonText : colors.text;
     const textColor = disabled ? colors.disabledText : baseText;
     const disabledBg = colors.disabledBackground;
     const disabledBorder = colors.disabledBackground || colors.border;
+    const baseBg = variant === 'filled' ? colors.tint : 'transparent';
+    const hoverBg =
+      variant === 'filled'
+        ? tintColor(colors.tint, 0.12)
+        : colors.inputBackground || colors.cardBackground;
+    const pressBg =
+      variant === 'filled'
+        ? shadeColor(colors.tint, 0.12)
+        : tintColor(colors.inputBackground || colors.cardBackground, 0.08);
     const renderTitle =
       typeof title === 'string' || typeof title === 'number'
         ? <Text style={{ color: textColor, fontWeight: '700' }}>{title}</Text>
         : title;
     return (
       <Animated.View style={{ transform: [{ scale }], flexGrow: 1 }}>
-        <TouchableOpacity
-          activeOpacity={0.9}
+        <Pressable
           onPressIn={pressIn}
           onPressOut={pressOut}
+          onHoverIn={hoverIn}
+          onHoverOut={hoverOut}
           onPress={onPress}
           disabled={disabled}
-          style={[
+          style={({ pressed }) => [
             {
               height: 44,
               borderRadius: 12,
@@ -791,16 +818,19 @@ export default function AuthScreen() {
               justifyContent: 'center',
               paddingHorizontal: 14,
               marginVertical: 4,
+              backgroundColor: baseBg,
             },
             disabled
               ? { backgroundColor: disabledBg, borderWidth: 1, borderColor: disabledBorder }
               : variant === 'filled'
-              ? { backgroundColor: colors.tint }
+              ? null
               : { borderWidth: 1, borderColor: colors.border, backgroundColor: 'transparent' },
+            hovered && !pressed && !disabled ? { backgroundColor: hoverBg } : null,
+            pressed && !disabled ? { backgroundColor: pressBg } : null,
           ]}
         >
           {renderTitle}
-        </TouchableOpacity>
+        </Pressable>
       </Animated.View>
     );
   };
@@ -812,24 +842,15 @@ export default function AuthScreen() {
     gradientColors: [string, string];
     style?: StyleProp<ViewStyle>;
   }> = ({ title, onPress, loading, gradientColors, style }) => {
-    const scale = useRef(new Animated.Value(1)).current;
-    const pressIn = () =>
-      Animated.spring(scale, { toValue: 0.97, useNativeDriver: true, friction: 6, tension: 120 }).start();
-    const pressOut = () =>
-      Animated.spring(scale, { toValue: 1, useNativeDriver: true, friction: 6, tension: 120 }).start();
     return (
-      <Animated.View style={{ transform: [{ scale }] }}>
-        <ShimmerButton
-          title={title}
-          onPress={onPress}
-          loading={loading}
-          haptics
-          gradientColors={gradientColors}
-          style={style ? StyleSheet.flatten(style) : undefined}
-          onPressIn={pressIn}
-          onPressOut={pressOut}
-        />
-      </Animated.View>
+      <ShimmerButton
+        title={title}
+        onPress={onPress}
+        loading={loading}
+        haptics
+        gradientColors={gradientColors}
+        style={style ? StyleSheet.flatten(style) : undefined}
+      />
     );
   };
 

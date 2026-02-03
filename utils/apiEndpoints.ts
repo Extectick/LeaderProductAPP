@@ -16,6 +16,10 @@ export const API_ENDPOINTS = {
     PROFILE: '/users/profile',
     CURRENT_PROFILE: '/users/me/current-profile',
     DEVICE_TOKENS: '/users/device-tokens',
+    PRESENCE_PING: '/users/me/presence/ping',
+    PRESENCE: (ids: number[]) => `/users/presence?ids=${ids.join(',')}`,
+    PROFILE_AVATAR: (type: 'client' | 'supplier' | 'employee') =>
+      `/users/me/profiles/${type}/avatar`,
     // ? функция, формирующая корректный путь /users/:userId/profile
     PROFILE_BY_ID: (userId: number) => `/users/${userId}/profile`,
     DEPARTMENTS: '/users/departments',

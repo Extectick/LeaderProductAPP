@@ -1,7 +1,7 @@
 // components/ShimmerButton.tsx
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
   ActivityIndicator,
   LayoutChangeEvent,
@@ -17,6 +17,7 @@ import Animated, {
   Easing,
   Extrapolation,
   interpolate,
+  interpolateColor,
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
@@ -52,6 +53,8 @@ export default function ShimmerButton({
   const width = useSharedValue(300);
   const progress = useSharedValue(0); // 0..1
   const scale = useSharedValue(1);
+  const interaction = useSharedValue(0); // 0 idle, 1 hover, 2 press
+  const hoveredRef = useRef(false);
 
   const onLayout = (e: LayoutChangeEvent) => {
     const w = e.nativeEvent.layout.width || 300;
@@ -68,8 +71,26 @@ export default function ShimmerButton({
     );
   }, [progress]);
 
-  const onPressIn = () => (scale.value = withSpring(0.98, { stiffness: 300, damping: 20 }));
-  const onPressOut = () => (scale.value = withSpring(1, { stiffness: 300, damping: 20 }));
+  const onPressIn = () => {
+    interaction.value = withTiming(2, { duration: 120 });
+    scale.value = withSpring(0.97, { stiffness: 320, damping: 20 });
+  };
+  const onPressOut = () => {
+    interaction.value = withTiming(hoveredRef.current ? 1 : 0, { duration: 140 });
+    scale.value = withSpring(hoveredRef.current ? 1.03 : 1, { stiffness: 320, damping: 20 });
+  };
+  const onHoverIn = () => {
+    if (disabled || loading) return;
+    hoveredRef.current = true;
+    interaction.value = withTiming(1, { duration: 140 });
+    scale.value = withSpring(1.03, { stiffness: 300, damping: 18 });
+  };
+  const onHoverOut = () => {
+    hoveredRef.current = false;
+    if (disabled || loading) return;
+    interaction.value = withTiming(0, { duration: 160 });
+    scale.value = withSpring(1, { stiffness: 300, damping: 18 });
+  };
 
   const innerStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
@@ -85,6 +106,14 @@ export default function ShimmerButton({
       transform: [{ translateX: shift }],
     };
   });
+
+  const interactionOverlayStyle = useAnimatedStyle(() => ({
+    backgroundColor: interpolateColor(
+      interaction.value,
+      [0, 1, 2],
+      ['rgba(255,255,255,0)', 'rgba(255,255,255,0.12)', 'rgba(0,0,0,0.12)']
+    ),
+  }));
 
   // Общая анимационная фаза (0..1) -> 0..2π
   const crestPhase = (mult = 1, add = 0) =>
@@ -128,6 +157,8 @@ export default function ShimmerButton({
       }}
       onPressIn={onPressIn}
       onPressOut={onPressOut}
+      onHoverIn={onHoverIn}
+      onHoverOut={onHoverOut}
       disabled={disabled || loading}
       style={[
         styles.wrapper,
@@ -144,6 +175,7 @@ export default function ShimmerButton({
           end={{ x: 1, y: 0.5 }}
           style={StyleSheet.absoluteFillObject as any}
         />
+        <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFillObject, interactionOverlayStyle]} />
 
         {/* ВОЛНА — плитка 2×w, внутри два одинаковых «тайла» шириной w */}
         <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, overlayStyle]}>

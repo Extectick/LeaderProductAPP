@@ -45,7 +45,12 @@ export default function AppealsListHeader({
             accessibilityRole="button"
             accessibilityLabel="Открыть меню действий"
             onPress={toggleMenu}
-            style={({ pressed }) => [styles.menuButton, pressed && styles.pressed]}
+            style={({ pressed, hovered }) => [
+              styles.menuButton,
+              hovered && !pressed ? { backgroundColor: '#F3F4F6' } : null,
+              pressed ? { backgroundColor: '#E5E7EB' } : null,
+              { transform: [{ scale: pressed ? 0.98 : hovered ? 1.03 : 1 }] },
+            ]}
             android_ripple={{ color: 'rgba(0,0,0,0.08)', borderless: false, radius: 28 }}
           >
             <Ionicons name="ellipsis-vertical" size={18} color="#0B1220" />
@@ -62,7 +67,12 @@ export default function AppealsListHeader({
           <Pressable
             onPress={onCreate}
             accessibilityRole="button"
-            style={({ pressed }) => [styles.primaryBtn, pressed && styles.pressed]}
+            style={({ pressed, hovered }) => [
+              styles.primaryBtn,
+              hovered && !pressed ? { backgroundColor: '#F3F4F6' } : null,
+              pressed ? { backgroundColor: '#E5E7EB' } : null,
+              { transform: [{ scale: pressed ? 0.98 : hovered ? 1.03 : 1 }] },
+            ]}
             android_ripple={{ color: 'rgba(0,0,0,0.07)' }}
           >
             <Ionicons name="add" size={18} color="#0B1220" />

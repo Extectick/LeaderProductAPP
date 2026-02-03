@@ -6,8 +6,8 @@ import { useTheme } from '@/context/ThemeContext';
 import { getProfileGate, resolveActiveProfile } from '@/utils/profileGate';
 import { getProfile } from '@/utils/userService';
 import { useRouter, type RelativePathString } from 'expo-router';
-import React, { useContext, useMemo, useState } from 'react';
-import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import CustomAlert from '@/components/CustomAlert';
@@ -28,22 +28,51 @@ export default function ProfilePendingScreen() {
   const [confirmVisible, setConfirmVisible] = useState(false);
   const gate = getProfileGate(profile);
   const activeInfo = resolveActiveProfile(profile);
+  const checkingRef = useRef(false);
 
-  const handleRefresh = async () => {
-    setChecking(true);
-    try {
-      const fresh = await getProfile();
-      if (fresh) await setProfile(fresh);
-      const nextGate = getProfileGate(fresh);
-      if (nextGate === 'active') {
-        router.replace('/home' as RelativePathString);
-      }
-    } catch (e: any) {
-      Alert.alert('Ошибка', e?.message || 'Не удалось обновить статус');
-    } finally {
-      setChecking(false);
+  useEffect(() => {
+    if (gate === 'active') {
+      router.replace('/home' as RelativePathString);
     }
-  };
+  }, [gate, router]);
+
+  const handleRefresh = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (checkingRef.current) return;
+      checkingRef.current = true;
+      if (!opts?.silent) setChecking(true);
+      try {
+        const fresh = await getProfile();
+        if (fresh) await setProfile(fresh);
+        const nextGate = getProfileGate(fresh);
+        if (nextGate === 'active') {
+          router.replace('/home' as RelativePathString);
+        }
+      } catch (e: any) {
+        if (!opts?.silent) {
+          Alert.alert('Ошибка', e?.message || 'Не удалось обновить статус');
+        }
+      } finally {
+        checkingRef.current = false;
+        if (!opts?.silent) setChecking(false);
+      }
+    },
+    [router, setProfile]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      if (cancelled) return;
+      await handleRefresh({ silent: true });
+    };
+    run();
+    const interval = setInterval(run, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [handleRefresh]);
 
   const handleLogout = async () => {
     await signOut();

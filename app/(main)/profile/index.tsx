@@ -27,6 +27,7 @@ import type { Profile } from '@/types/userTypes';
 import { useTracking } from '@/context/TrackingContext';
 import { Skeleton } from 'moti/skeleton';
 import { mask, MaskedTextInput, unMask } from 'react-native-mask-text';
+import { shadeColor, tintColor } from '@/utils/color';
 
 const PROFILE_CACHE_KEY = 'profile';
 const PHONE_MASK = '+7 (999) 999-99-99';
@@ -146,8 +147,10 @@ function ProfileEditor({
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<ProfileForm>(() => buildProfileForm(profile));
+  const toggleScale = useSharedValue(1);
   const saveScale = useSharedValue(1);
   const cancelScale = useSharedValue(1);
+  const toggleStyle = useAnimatedStyle(() => ({ transform: [{ scale: toggleScale.value }] }));
   const saveStyle = useAnimatedStyle(() => ({ transform: [{ scale: saveScale.value }] }));
   const cancelStyle = useAnimatedStyle(() => ({ transform: [{ scale: cancelScale.value }] }));
 
@@ -267,17 +270,27 @@ function ProfileEditor({
             {refreshing ? 'Синхронизация...' : 'Измените телефон, почту и ФИО'}
           </Text>
         </View>
-        <Pressable
-          onPress={() => {
-            LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-            setEditing((prev) => !prev);
-          }}
-          style={({ pressed }) => [styles.editToggle, pressed && styles.editTogglePressed]}
-          android_ripple={{ color: '#E0E7FF' }}
-        >
-          <Ionicons name={editing ? 'close-outline' : 'create-outline'} size={16} color={Colors.leaderprod.tint} />
-          <Text style={styles.editToggleText}>{editing ? 'Отмена' : 'Изменить'}</Text>
-        </Pressable>
+        <Animated.View style={toggleStyle}>
+          <Pressable
+            onPress={() => {
+              LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+              setEditing((prev) => !prev);
+            }}
+            onPressIn={() => (toggleScale.value = withSpring(0.97, { damping: 18, stiffness: 260 }))}
+            onPressOut={() => (toggleScale.value = withSpring(1, { damping: 18, stiffness: 260 }))}
+            onHoverIn={() => (toggleScale.value = withSpring(1.03, { damping: 18, stiffness: 260 }))}
+            onHoverOut={() => (toggleScale.value = withSpring(1, { damping: 18, stiffness: 260 }))}
+            style={({ pressed, hovered }) => [
+              styles.editToggle,
+              hovered && !pressed ? { backgroundColor: tintColor('#FFF7E6', 0.08) } : null,
+              pressed ? styles.editTogglePressed : null,
+            ]}
+            android_ripple={{ color: '#E0E7FF' }}
+          >
+            <Ionicons name={editing ? 'close-outline' : 'create-outline'} size={16} color={Colors.leaderprod.tint} />
+            <Text style={styles.editToggleText}>{editing ? 'Отмена' : 'Изменить'}</Text>
+          </Pressable>
+        </Animated.View>
       </View>
 
       {!profile ? (
@@ -361,12 +374,19 @@ function ProfileEditor({
               <Pressable
                 onPressIn={() => (saveScale.value = withSpring(0.97, { damping: 18, stiffness: 260 }))}
                 onPressOut={() => (saveScale.value = withSpring(1, { damping: 18, stiffness: 260 }))}
+                onHoverIn={() => (saveScale.value = withSpring(1.03, { damping: 18, stiffness: 260 }))}
+                onHoverOut={() => (saveScale.value = withSpring(1, { damping: 18, stiffness: 260 }))}
                 onPress={handleSave}
                 disabled={saving || !dirty || !emailValid || !phoneValid}
                 android_ripple={{ color: '#FCD34D' }}
-                style={({ pressed }) => [
+                style={({ pressed, hovered }) => [
                   styles.saveBtn,
                   (!dirty || saving || !emailValid || !phoneValid) && styles.saveBtnDisabled,
+                  hovered && !pressed && !(dirty && !saving && emailValid && phoneValid)
+                    ? null
+                    : hovered && !pressed
+                    ? { backgroundColor: tintColor(String(Colors.leaderprod.button), 0.12) }
+                    : null,
                   pressed && styles.saveBtnPressed,
                 ]}
               >
@@ -378,12 +398,15 @@ function ProfileEditor({
               <Pressable
                 onPressIn={() => (cancelScale.value = withSpring(0.97, { damping: 18, stiffness: 260 }))}
                 onPressOut={() => (cancelScale.value = withSpring(1, { damping: 18, stiffness: 260 }))}
+                onHoverIn={() => (cancelScale.value = withSpring(1.03, { damping: 18, stiffness: 260 }))}
+                onHoverOut={() => (cancelScale.value = withSpring(1, { damping: 18, stiffness: 260 }))}
                 onPress={handleCancel}
                 disabled={saving}
                 android_ripple={{ color: '#E5E7EB' }}
-                style={({ pressed }) => [
+                style={({ pressed, hovered }) => [
                   styles.cancelBtn,
                   saving && styles.cancelBtnDisabled,
+                  hovered && !pressed ? { backgroundColor: tintColor('#F3F4F6', 0.06) } : null,
                   pressed && styles.cancelBtnPressed,
                 ]}
               >
@@ -458,6 +481,7 @@ function LogoutSkeleton() {
 function RefreshButton({ onPress, loading }: { onPress: () => void; loading: boolean }) {
   const scale = useSharedValue(1);
   const aStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+  const baseBg = String(Colors.leaderprod.button);
 
   return (
     <Animated.View
@@ -466,11 +490,15 @@ function RefreshButton({ onPress, loading }: { onPress: () => void; loading: boo
       <Pressable
         onPressIn={() => (scale.value = withSpring(0.97, { damping: 18, stiffness: 260 }))}
         onPressOut={() => (scale.value = withSpring(1, { damping: 18, stiffness: 260 }))}
+        onHoverIn={() => (scale.value = withSpring(1.03, { damping: 18, stiffness: 260 }))}
+        onHoverOut={() => (scale.value = withSpring(1, { damping: 18, stiffness: 260 }))}
         onPress={onPress}
         disabled={loading}
         android_ripple={{ color: '#FCD34D' }}
-        style={({ pressed }) => [
+        style={({ pressed, hovered }) => [
           styles.refreshBtn,
+          hovered && !pressed && !loading ? { backgroundColor: tintColor(baseBg, 0.12) } : null,
+          pressed && !loading ? { backgroundColor: shadeColor(baseBg, 0.12) } : null,
           pressed && Platform.OS === 'ios' ? { opacity: 0.9 } : null,
           loading && styles.refreshBtnDisabled,
         ]}
@@ -491,6 +519,7 @@ function LogoutButton() {
   const scale = useSharedValue(1);
   const aStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
   const router = useRouter();
+  const baseBg = '#6366F1';
 
   const signOut = useCallback(async () => {
     try {
@@ -512,9 +541,15 @@ function LogoutButton() {
         <Pressable
           onPressIn={() => (scale.value = withSpring(0.97, { damping: 18, stiffness: 260 }))}
           onPressOut={() => (scale.value = withSpring(1, { damping: 18, stiffness: 260 }))}
+          onHoverIn={() => (scale.value = withSpring(1.03, { damping: 18, stiffness: 260 }))}
+          onHoverOut={() => (scale.value = withSpring(1, { damping: 18, stiffness: 260 }))}
           onPress={openConfirm}
           android_ripple={{ color: '#5B21B6' }}
-          style={styles.logoutBtn}
+          style={({ pressed, hovered }) => [
+            styles.logoutBtn,
+            hovered && !pressed ? { backgroundColor: tintColor(baseBg, 0.12) } : null,
+            pressed ? { backgroundColor: shadeColor(baseBg, 0.12) } : null,
+          ]}
         >
           <Ionicons name="log-out-outline" size={18} color="#fff" />
           <Text style={styles.logoutText}>Выйти из аккаунта</Text>

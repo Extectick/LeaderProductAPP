@@ -10,6 +10,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Profile } from '../types/userTypes';
 import { apiClient } from './apiClient';
 import { API_ENDPOINTS } from './apiEndpoints';
+import { Platform } from 'react-native';
 const PROFILE_KEY = 'profile';
 
 export type Department = { id: number; name: string };
@@ -145,7 +146,13 @@ export type AdminUserItem = {
   lastName: string | null;
   middleName?: string | null;
   phone: string | null;
+  avatarUrl?: string | null;
+  profileStatus?: ProfileStatus;
+  currentProfileType?: ProfileType | null;
+  departmentName?: string | null;
   role: { id: number; name: string } | null;
+  lastSeenAt?: string | null;
+  isOnline?: boolean;
 };
 
 export async function getUsers(search?: string): Promise<AdminUserItem[]> {
@@ -157,6 +164,17 @@ export async function getUsers(search?: string): Promise<AdminUserItem[]> {
 export async function getProfile(): Promise<Profile | null> {
   const res = await apiClient<void, { profile: Profile }>(API_ENDPOINTS.USERS.PROFILE);
   if (!res.ok) {
+    if (res.status === 403) {
+      try {
+        const cached = await AsyncStorage.getItem(PROFILE_KEY);
+        if (cached) {
+          const parsed = JSON.parse(cached) as Profile;
+          const blocked = { ...parsed, profileStatus: 'BLOCKED' as ProfileStatus };
+          await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(blocked));
+          return blocked;
+        }
+      } catch {}
+    }
     console.error('Ошибка получения профиля:', res.message);
     return null;
   }
@@ -282,4 +300,46 @@ export async function adminUpdatePassword(userId: number, password: string) {
   );
   if (!res.ok) throw new Error(res.message);
   return res.data;
+}
+
+const guessExt = (uri: string) => {
+  const clean = uri.split('?')[0] || '';
+  const ext = clean.split('.').pop() || 'jpg';
+  return ext.toLowerCase();
+};
+
+const guessMime = (ext: string) => {
+  if (ext === 'png') return 'image/png';
+  if (ext === 'webp') return 'image/webp';
+  if (ext === 'heic' || ext === 'heif') return 'image/heic';
+  return 'image/jpeg';
+};
+
+export async function uploadProfileAvatar(type: ProfileType, file: { uri: string; name?: string; type?: string }) {
+  const typeKey = String(type || '').toLowerCase() as 'client' | 'supplier' | 'employee';
+  if (!['client', 'supplier', 'employee'].includes(typeKey)) {
+    throw new Error('Недопустимый тип профиля');
+  }
+
+  const ext = guessExt(file.uri);
+  const mime = file.type || guessMime(ext);
+  const name = file.name || `avatar.${ext}`;
+
+  const form = new FormData();
+  if (Platform.OS === 'web') {
+    const blob = await (await fetch(file.uri)).blob();
+    form.append('avatar', blob, name);
+  } else {
+    form.append('avatar', { uri: file.uri, name, type: mime } as any);
+  }
+
+  const res = await apiClient<FormData, { profile: Profile }>(
+    API_ENDPOINTS.USERS.PROFILE_AVATAR(typeKey),
+    {
+      method: 'POST',
+      body: form,
+    }
+  );
+  if (!res.ok) throw new Error(res.message || 'Не удалось загрузить аватар');
+  return res.data?.profile ?? null;
 }

@@ -1,8 +1,14 @@
 // V:\lp\components\CustomAlert.tsx
-import React from 'react';
-import { Platform, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useCallback, useMemo, useRef } from 'react';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import RNModal from 'react-native-modal';
 import { useThemeColor } from '@/hooks/useThemeColor';
+import Animated, {
+  interpolateColor,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 
 interface Props {
   visible: boolean;
@@ -29,6 +35,10 @@ export default function CustomAlert({
   const cancel  = useThemeColor({}, 'buttonDisabled');
   const confirm = useThemeColor({}, 'button');
 
+  const cancelColor = useMemo(() => String(cancel), [cancel]);
+  const confirmColor = useMemo(() => String(confirm), [confirm]);
+  const textColor = useMemo(() => String(btnText), [btnText]);
+
   return (
     <RNModal
       isVisible={visible}
@@ -41,41 +51,35 @@ export default function CustomAlert({
       // Анимации
       useNativeDriver
       useNativeDriverForBackdrop
-      backdropOpacity={0}         // сам нарисуем подложку, чтобы не было конфликтов слоёв
+      backdropOpacity={0.35}
       animationIn="zoomIn"
       animationOut="zoomOut"
+      backdropTransitionInTiming={180}
       backdropTransitionOutTiming={0}
       statusBarTranslucent
       avoidKeyboard={false}
     >
-      {/* Наш собственный фулл-скрин слой — не зависит от флекса RNModal */}
-      <View style={styles.root} pointerEvents="box-none">
-        {/* Подложка */}
-        <Pressable style={styles.backdrop} onPress={onCancel} />
+      <View style={styles.center}>
+        <View style={[styles.card, { backgroundColor: bg }]}>
+          <Text style={[styles.title,   { color: text }]}>{title}</Text>
+          <Text style={[styles.message, { color: text }]}>{message}</Text>
 
-        {/* Центрирующая обёртка */}
-        <View style={styles.center}>
-          <View style={[styles.card, { backgroundColor: bg }]}>
-            <Text style={[styles.title,   { color: text }]}>{title}</Text>
-            <Text style={[styles.message, { color: text }]}>{message}</Text>
+          <View style={styles.buttonsRow}>
+            <AnimatedActionButton
+              label={cancelText}
+              onPress={onCancel}
+              baseColor={cancelColor}
+              textColor={textColor}
+              style={styles.buttonLeft}
+            />
 
-            <View style={styles.buttonsRow}>
-              <TouchableOpacity
-                style={[styles.button, styles.buttonLeft,  { backgroundColor: cancel }]}
-                onPress={onCancel}
-                activeOpacity={0.85}
-              >
-                <Text style={[styles.buttonText, { color: btnText }]}>{cancelText}</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.button, styles.buttonRight, { backgroundColor: confirm }]}
-                onPress={onConfirm}
-                activeOpacity={0.85}
-              >
-                <Text style={[styles.buttonText, { color: btnText }]}>{confirmText}</Text>
-              </TouchableOpacity>
-            </View>
+            <AnimatedActionButton
+              label={confirmText}
+              onPress={onConfirm}
+              baseColor={confirmColor}
+              textColor={textColor}
+              style={styles.buttonRight}
+            />
           </View>
         </View>
       </View>
@@ -83,20 +87,100 @@ export default function CustomAlert({
   );
 }
 
+function hexToRgb(hex: string) {
+  const cleaned = hex.trim().replace('#', '');
+  if (cleaned.length !== 3 && cleaned.length !== 6) return null;
+  const full = cleaned.length === 3
+    ? cleaned.split('').map((c) => c + c).join('')
+    : cleaned;
+  const num = Number.parseInt(full, 16);
+  if (Number.isNaN(num)) return null;
+  return { r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 };
+}
+
+function mixHex(base: string, mixWith: string, amount: number) {
+  const b = hexToRgb(base);
+  const m = hexToRgb(mixWith);
+  if (!b || !m) return base;
+  const r = Math.round(b.r + (m.r - b.r) * amount);
+  const g = Math.round(b.g + (m.g - b.g) * amount);
+  const b2 = Math.round(b.b + (m.b - b.b) * amount);
+  return `rgb(${r}, ${g}, ${b2})`;
+}
+
+function AnimatedActionButton({
+  label,
+  onPress,
+  baseColor,
+  textColor,
+  style,
+}: {
+  label: string;
+  onPress: () => void;
+  baseColor: string;
+  textColor: string;
+  style?: any;
+}) {
+  const hoverColor = useMemo(() => mixHex(baseColor, '#ffffff', 0.12), [baseColor]);
+  const pressColor = useMemo(() => mixHex(baseColor, '#000000', 0.12), [baseColor]);
+
+  const scale = useSharedValue(1);
+  const bg = useSharedValue(0);
+  const hoveredRef = useRef(false);
+  const pressedRef = useRef(false);
+
+  const animateTo = useCallback((state: 'idle' | 'hover' | 'press') => {
+    if (state === 'press') {
+      scale.value = withTiming(0.96, { duration: 120 });
+      bg.value = withTiming(2, { duration: 120 });
+      return;
+    }
+    if (state === 'hover') {
+      scale.value = withTiming(1.03, { duration: 140 });
+      bg.value = withTiming(1, { duration: 140 });
+      return;
+    }
+    scale.value = withTiming(1, { duration: 160 });
+    bg.value = withTiming(0, { duration: 160 });
+  }, [bg, scale]);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+    backgroundColor: interpolateColor(bg.value, [0, 1, 2], [baseColor, hoverColor, pressColor]),
+  }));
+
+  return (
+    <Pressable
+      onPress={onPress}
+      onPressIn={() => {
+        pressedRef.current = true;
+        animateTo('press');
+      }}
+      onPressOut={() => {
+        pressedRef.current = false;
+        animateTo(hoveredRef.current ? 'hover' : 'idle');
+      }}
+      onHoverIn={() => {
+        hoveredRef.current = true;
+        if (!pressedRef.current) animateTo('hover');
+      }}
+      onHoverOut={() => {
+        hoveredRef.current = false;
+        if (!pressedRef.current) animateTo('idle');
+      }}
+      style={{ flex: 1 }}
+    >
+      <Animated.View style={[styles.button, animatedStyle, style]}>
+        <Text style={[styles.buttonText, { color: textColor }]}>{label}</Text>
+      </Animated.View>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   // Контейнер RNModal: убираем отступы и не используем его флекс-центрирование вовсе
   modal: {
     margin: 0,
-  },
-  // Наш фулл-скрин слой
-  root: {
-    ...StyleSheet.absoluteFillObject, // всегда во весь экран на iOS/Android
-    // Для web (на всякий): зафиксировать окно
-    ...Platform.select({ web: { position: 'fixed' as any, inset: 0 } }),
-  },
-  backdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.35)',
   },
   // Отдельный слой-центрер, чтобы карточка точно оказалась в центре
   center: {
