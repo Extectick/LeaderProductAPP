@@ -501,21 +501,7 @@ function LogoutButton() {
   }, [router]);
 
   const openConfirm = () => {
-    if (Platform.OS === 'web') {
-      // web — показываем кастомное модальное окно
-      setConfirmVisible(true);
-    } else {
-      // iOS/Android — используем системный Alert (всегда поверх и без роутов)
-      Alert.alert(
-        'Выйти из аккаунта?',
-        'Вы действительно хотите выйти из аккаунта?',
-        [
-          { text: 'Отмена', style: 'cancel' },
-          { text: 'Выйти', style: 'destructive', onPress: () => void signOut() },
-        ],
-        { cancelable: true }
-      );
-    }
+    setConfirmVisible(true);
   };
 
   return (
@@ -536,20 +522,18 @@ function LogoutButton() {
       </Animated.View>
 
       {/* Кастомная модалка нужна только для web */}
-      {Platform.OS === 'web' && (
-        <CustomAlert
-          visible={confirmVisible}
-          title="Выйти из аккаунта?"
-          message="Вы действительно хотите выйти из аккаунта?"
-          cancelText="Отмена"
-          confirmText="Выйти"
-          onCancel={() => setConfirmVisible(false)}
-          onConfirm={() => {
-            setConfirmVisible(false);
-            void signOut();
-          }}
-        />
-      )}
+      <CustomAlert
+        visible={confirmVisible}
+        title="Выйти из аккаунта?"
+        message="Вы действительно хотите выйти из аккаунта?"
+        cancelText="Отмена"
+        confirmText="Выйти"
+        onCancel={() => setConfirmVisible(false)}
+        onConfirm={() => {
+          setConfirmVisible(false);
+          void signOut();
+        }}
+      />
     </>
   );
 }

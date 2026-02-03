@@ -2,7 +2,9 @@
 import type {
   CreateClientProfileDto,
   CreateEmployeeProfileDto,
-  CreateSupplierProfileDto
+  CreateSupplierProfileDto,
+  ProfileStatus,
+  ProfileType
 } from '@/types/userTypes';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Profile } from '../types/userTypes';
@@ -189,6 +191,19 @@ export async function getProfileById(userId?: number | null): Promise<Profile | 
   return profile;
 }
 
+export async function setCurrentProfileType(type: ProfileType | null): Promise<Profile | null> {
+  const res = await apiClient<{ type: ProfileType | null }, { profile: Profile }>(API_ENDPOINTS.USERS.CURRENT_PROFILE, {
+    method: 'PATCH',
+    body: { type },
+  });
+  if (!res.ok) throw new Error(res.message || 'Не удалось выбрать профиль');
+  const profile = res.data?.profile || null;
+  if (profile) {
+    await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+  }
+  return profile;
+}
+
 export type UpdateMyProfilePayload = {
   firstName?: string | null;
   lastName?: string | null;
@@ -231,6 +246,32 @@ export async function adminUpdateUser(
     body: payload,
   });
   if (!res.ok) throw new Error(res.message);
+  return res.data?.profile || null;
+}
+
+export type AdminProfileUpdatePayload = {
+  status?: ProfileStatus;
+  phone?: string | null;
+  departmentId?: number | null;
+  address?: {
+    street: string;
+    city: string;
+    state?: string | null;
+    postalCode?: string | null;
+    country: string;
+  } | null;
+};
+
+export async function adminUpdateUserProfile(
+  userId: number,
+  type: 'client' | 'supplier' | 'employee',
+  payload: AdminProfileUpdatePayload
+): Promise<Profile | null> {
+  const res = await apiClient<AdminProfileUpdatePayload, { profile: Profile }>(
+    API_ENDPOINTS.USERS.USER_PROFILE_UPDATE(userId, type),
+    { method: 'PATCH', body: payload }
+  );
+  if (!res.ok) throw new Error(res.message || 'Не удалось обновить профиль');
   return res.data?.profile || null;
 }
 

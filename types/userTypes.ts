@@ -28,7 +28,7 @@ export type Profile = {
         };
     }>;
     clientProfile?: clientProfile | null;
-    supplierProfile?: clientProfile | null;
+    supplierProfile?: supplierProfile | null;
     employeeProfile?: employeeProfile | null;
 }
 

@@ -3,11 +3,13 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { jwtDecode } from 'jwt-decode';
 import isEqual from 'lodash.isequal';
-import React, { createContext, ReactNode, useEffect, useState } from 'react';
+import React, { createContext, ReactNode, useCallback, useEffect, useState } from 'react';
 
 import { Profile } from '@/types/userTypes';
 import { handleBackendUnavailable, logout, refreshToken } from '@/utils/tokenService';
 import { getProfile } from '@/utils/userService';
+import { getProfileGate } from '@/utils/profileGate';
+import { syncPushToken, unregisterPushToken } from '@/utils/pushNotifications';
 
 interface AuthContextType {
   isLoading: boolean;
@@ -31,22 +33,15 @@ interface DecodedToken {
 
 export const isValidProfile = (profile: Profile | null): boolean => {
   if (!profile) return false;
-  // В текущей логике доступ в приложение дает только наличие профиля сотрудника
-  return !!profile.employeeProfile;
+  return getProfileGate(profile) === 'active';
 };
 
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [isAuthenticated, setAuthenticated] = useState(false);
   const [profileState, setProfileState] = useState<Profile | null>(null);
-  
-  
-  const signOut = async () => {
-    await logout();            // чистим токены/профиль в AsyncStorage
-    setAuthenticated(false);   // контекст -> guest
-    await setProfile(null);    // чистим профиль в контексте
-  };
-  const setProfile = async (newProfile: Profile | null) => {
+
+  const setProfile = useCallback(async (newProfile: Profile | null) => {
     // if (newProfile && !isValidProfile(newProfile)) {
     //   await logoutFn();
     //   setAuthenticated(false);
@@ -63,6 +58,17 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     } else {
       await AsyncStorage.removeItem('profile');
     }
+  }, []);
+
+  const signOut = async () => {
+    try {
+      await unregisterPushToken();
+      await logout(); // чистим токены/профиль в AsyncStorage
+    } catch (e) {
+      console.warn('Logout failed, continuing local sign out:', e);
+    }
+    setAuthenticated(false); // контекст -> guest
+    await setProfile(null);  // чистим профиль в контексте
   };
 
   useEffect(() => {
@@ -153,6 +159,41 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       isMounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const freshProfile = await getProfile();
+        if (!cancelled && freshProfile) {
+          await setProfile(freshProfile);
+        }
+      } catch {}
+    };
+
+    const interval = setInterval(refresh, 25000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [isAuthenticated, setProfile]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await syncPushToken();
+        if (!token || cancelled) return;
+      } catch (e) {
+        console.warn('Push token sync failed:', e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated]);
 
   return (
     <AuthContext.Provider

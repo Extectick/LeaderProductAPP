@@ -2,8 +2,9 @@ import { useRouter } from 'expo-router';
 import React, { useEffect } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 
-import { AuthContext, isValidProfile } from '@/context/AuthContext';
+import { AuthContext } from '@/context/AuthContext';
 import { useThemeColor } from '@/hooks/useThemeColor';
+import { getProfileGate } from '@/utils/profileGate';
 
 export default function RootRedirect() {
   const router = useRouter();
@@ -15,10 +16,15 @@ export default function RootRedirect() {
     if (!auth) return;
     if (auth.isLoading) return;
 
+    const gateState = getProfileGate(auth.profile);
     const gate = !auth.isAuthenticated
       ? '/(auth)/AuthScreen'
-      : isValidProfile(auth.profile)
+      : gateState === 'active'
       ? '/home'
+      : gateState === 'pending'
+      ? '/(auth)/ProfilePendingScreen'
+      : gateState === 'blocked'
+      ? '/(auth)/ProfileBlockedScreen'
       : '/ProfileSelectionScreen';
 
     router.replace(gate as any);

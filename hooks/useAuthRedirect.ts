@@ -1,14 +1,17 @@
 import { useContext, useEffect, useMemo } from 'react';
 import { usePathname, useRouter, type Href } from 'expo-router';
-import { AuthContext, isValidProfile } from '@/context/AuthContext';
+import { AuthContext } from '@/context/AuthContext';
+import { getProfileGate } from '@/utils/profileGate';
 
 const ROUTES = {
   AUTH: '/(auth)/AuthScreen',
   PROFILE: '/ProfileSelectionScreen',
+  PENDING: '/(auth)/ProfilePendingScreen',
+  BLOCKED: '/(auth)/ProfileBlockedScreen',
   HOME: '/home',
 } as const;
 
-type Gate = 'guest' | 'needsProfile' | 'ready';
+type Gate = 'guest' | 'needsProfile' | 'pending' | 'blocked' | 'ready';
 
 export function useAuthRedirect() {
   const router = useRouter();
@@ -21,7 +24,11 @@ export function useAuthRedirect() {
   // Это хук и он всегда вызывается – порядок стабилен
   const gate: Gate = useMemo(() => {
     if (!isAuthenticated) return 'guest';
-    return isValidProfile(profile) ? 'ready' : 'needsProfile';
+    const state = getProfileGate(profile);
+    if (state === 'pending') return 'pending';
+    if (state === 'blocked') return 'blocked';
+    if (state === 'none') return 'needsProfile';
+    return 'ready';
   }, [isAuthenticated, profile]);
 
   // Тоже хук – всегда вызывается; логика внутри условия
@@ -40,6 +47,20 @@ export function useAuthRedirect() {
     if (gate === 'needsProfile') {
       if (pathname !== ROUTES.PROFILE) {
         router.replace(ROUTES.PROFILE as Href);
+      }
+      return;
+    }
+
+    if (gate === 'pending') {
+      if (pathname !== ROUTES.PENDING) {
+        router.replace(ROUTES.PENDING as Href);
+      }
+      return;
+    }
+
+    if (gate === 'blocked') {
+      if (pathname !== ROUTES.BLOCKED) {
+        router.replace(ROUTES.BLOCKED as Href);
       }
       return;
     }

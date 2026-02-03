@@ -5,6 +5,8 @@ import type {
   AuthRegisterRequest,
   AuthVerifyRequest,
   AuthVerifyResponseData,
+  PasswordResetRequestRequest,
+  PasswordResetSubmitRequest,
 } from '../types/apiTypes';
 import { apiClient } from './apiClient';
 import { API_ENDPOINTS } from './apiEndpoints';
@@ -46,6 +48,43 @@ export async function verify(email: string, code: string) {
   const data = throwIfError(res);
   await saveTokens(data.accessToken, data.refreshToken, data.profile);
   return data.profile ?? null;
+}
+
+export async function resendVerification(email: string) {
+  const res = await apiClient<{ email: string }, void>(API_ENDPOINTS.AUTH.RESEND, {
+    method: 'POST',
+    body: { email },
+    skipAuth: true,
+  });
+  if (!res.ok) throw new Error(res.message || 'Ошибка отправки кода');
+}
+
+export async function requestPasswordReset(email: string) {
+  const res = await apiClient<PasswordResetRequestRequest, void>(API_ENDPOINTS.PASSWORD_RESET.REQUEST, {
+    method: 'POST',
+    body: { email },
+    skipAuth: true,
+  });
+  if (!res.ok) throw new Error(res.message || 'Ошибка запроса сброса пароля');
+}
+
+export async function verifyPasswordReset(email: string, code: string) {
+  const res = await apiClient<{ email: string; code: string }, void>(API_ENDPOINTS.PASSWORD_RESET.VERIFY, {
+    method: 'POST',
+    body: { email, code },
+    skipAuth: true,
+  });
+  if (!res.ok) throw new Error(res.message || 'Ошибка проверки кода');
+}
+
+export async function changePassword(email: string, code: string, newPassword: string) {
+  const res = await apiClient<PasswordResetSubmitRequest, { message: string }>(API_ENDPOINTS.PASSWORD_RESET.CHANGE, {
+    method: 'POST',
+    body: { email, code, newPassword },
+    skipAuth: true,
+  });
+  if (!res.ok) throw new Error(res.message || 'Ошибка изменения пароля');
+  return res.data?.message;
 }
 
 export async function logoutUser() {

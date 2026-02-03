@@ -7,7 +7,6 @@ import { useRouter, type Href } from 'expo-router';
 import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
-  Dimensions,
   Easing,
   KeyboardAvoidingView,
   Platform,
@@ -21,6 +20,7 @@ import {
   TouchableOpacity,
   View,
   ViewStyle,
+  useWindowDimensions,
 } from 'react-native';
 import 'react-native-reanimated';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -31,10 +31,19 @@ import OTP6Input from '@/components/OTP6Input';
 import ShimmerButton from '@/components/ShimmerButton';
 import ThemedLoader from '@/components/ui/ThemedLoader';
 import { gradientColors } from '@/constants/Colors';
-import { AuthContext, isValidProfile } from '@/context/AuthContext';
+import { AuthContext } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { API_BASE_URL } from '@/utils/config';
-import { login, register, verify } from '@/utils/authService';
+import {
+  changePassword,
+  login,
+  register,
+  resendVerification,
+  requestPasswordReset,
+  verify,
+  verifyPasswordReset,
+} from '@/utils/authService';
+import { getProfileGate } from '@/utils/profileGate';
 import { applyWebAutofillFix } from '@/utils/webAutofillFix';
 
 /** ─── Module-level cache to defeat StrictMode remounts in dev ─── */
@@ -42,23 +51,25 @@ const __authInitCache: {
   initialized: boolean;
   remember: boolean;
   email: string;
+  password: string;
   minTopHeight: number | null;
 } = (globalThis as any).__authInitCache ?? {
   initialized: false,
   remember: true,
   email: '',
+  password: '',
   minTopHeight: null,
 };
 (Object.assign(globalThis as any, { __authInitCache }));
 
 /** Горизонтальный паддинг карточки (должен совпадать со styles.card.padding) */
 const CARD_PAD_H = Platform.OS === 'web' ? 20 : 22;
-const { width: winW } = Dimensions.get('window');
 
 /* ───── utils ───── */
 const STORAGE_KEYS = {
   REMEMBER_FLAG: '@remember_me',
   REMEMBER_EMAIL: '@remember_email',
+  REMEMBER_PASSWORD: '@remember_password',
 } as const;
 
 function validateEmail(email: string) {
@@ -81,6 +92,8 @@ function passwordScore(pw: string) {
 const ROUTES = {
   HOME: '/home' as Href,
   PROFILE: '/ProfileSelectionScreen' as Href,
+  PENDING: '/(auth)/ProfilePendingScreen' as Href,
+  BLOCKED: '/(auth)/ProfileBlockedScreen' as Href,
 } as const;
 
 function normalizeError(err: any): string {
@@ -111,6 +124,7 @@ export default function AuthScreen() {
   const btnGradient = useMemo(() => [grad[0], grad[1]] as [string, string], [grad]);
   const styles = useMemo(() => getStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
+  const { width: winW } = useWindowDimensions();
 
   useEffect(() => {
     if (Platform.OS === 'web') {
@@ -121,30 +135,48 @@ export default function AuthScreen() {
   /* state */
   const [tab, setTab] = useState<0 | 1>(0); // 0=login, 1=register
   const [email, setEmail] = useState(__authInitCache.email);
-  const [password, setPassword] = useState('');
+  const [password, setPassword] = useState(__authInitCache.password);
   const [passwordRepeat, setPasswordRepeat] = useState('');
   const [code, setCode] = useState('');
   const [modeVerify, setModeVerify] = useState(false);
+  const [modeReset, setModeReset] = useState(false);
+  const [resetStep, setResetStep] = useState<0 | 1 | 2>(0);
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetCode, setResetCode] = useState('');
+  const [resetPassword, setResetPassword] = useState('');
+  const [resetPasswordRepeat, setResetPasswordRepeat] = useState('');
+  const [showResetPassword, setShowResetPassword] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [remember, setRemember] = useState(__authInitCache.remember);
   const [loading, setLoading] = useState(false);
   const [bannerError, setBannerError] = useState('');
+  const [bannerNotice, setBannerNotice] = useState('');
+  const [bannerNoticeTone, setBannerNoticeTone] = useState<'success' | 'info'>('success');
   const [resendTimer, setResendTimer] = useState(0);
+  const [resetResendTimer, setResetResendTimer] = useState(0);
 
   // field-level errors (онлайн-валидация)
   const [emailErr, setEmailErr] = useState('');
   const [passErr, setPassErr] = useState('');
   const [passRepeatErr, setPassRepeatErr] = useState('');
   const [codeErr, setCodeErr] = useState('');
+  const [resetEmailErr, setResetEmailErr] = useState('');
+  const [resetCodeErr, setResetCodeErr] = useState('');
+  const [resetPassErr, setResetPassErr] = useState('');
+  const [resetPassRepeatErr, setResetPassRepeatErr] = useState('');
 
   // ширина стабильна — НЕ меряем её onLayout
-  const outerW = Math.min(420, winW - 40);
+  const outerW = Math.max(0, Math.min(420, winW - 40));
   const pageW = Math.max(0, Math.floor(outerW - CARD_PAD_H * 2));
   const viewportW = pageW;
 
   /* refs */
   const passRef = useRef<TextInput>(null);
   const passRepeatRef = useRef<TextInput>(null);
+  const verifyInFlight = useRef(false);
+  const lastVerifyCode = useRef('');
+  const resetVerifyInFlight = useRef(false);
+  const lastResetVerifyCode = useRef('');
 
   /* anim */
   const sceneX = useRef(new Animated.Value(0)).current;
@@ -173,7 +205,12 @@ export default function AuthScreen() {
     }).start();
 
     setModeVerify(false);
+    setModeReset(false);
+    setResetStep(0);
+    setResetCode('');
+    setResetResendTimer(0);
     setBannerError('');
+    setBannerNotice('');
     Haptics.selectionAsync();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
@@ -181,6 +218,7 @@ export default function AuthScreen() {
   // шейк-баннер при ошибке
   useEffect(() => {
     if (!bannerError) return;
+    setBannerNotice('');
     errorShake.setValue(0);
     Animated.sequence([
       Animated.timing(errorShake, { toValue: 1, duration: 70, useNativeDriver: true }),
@@ -204,12 +242,15 @@ export default function AuthScreen() {
       try {
         const remembered = (await AsyncStorage.getItem(STORAGE_KEYS.REMEMBER_FLAG)) === '1';
         const savedEmail = remembered ? await AsyncStorage.getItem(STORAGE_KEYS.REMEMBER_EMAIL) : '';
+        const savedPassword = remembered ? await AsyncStorage.getItem(STORAGE_KEYS.REMEMBER_PASSWORD) : '';
         if (cancelled) return;
         setRemember(remembered);
         setEmail(savedEmail || '');
+        setPassword(savedPassword || '');
         // в кэш тоже
         __authInitCache.remember = remembered;
         __authInitCache.email = savedEmail || '';
+        __authInitCache.password = savedPassword || '';
       } finally {
         if (!cancelled) {
           __authInitCache.initialized = true;
@@ -223,8 +264,18 @@ export default function AuthScreen() {
   }, []);
 
   useEffect(() => {
-    if (remember) AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_EMAIL, email);
+    if (remember) {
+      AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_EMAIL, email);
+      __authInitCache.email = email;
+    }
   }, [email, remember]);
+
+  useEffect(() => {
+    if (remember) {
+      AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_PASSWORD, password);
+      __authInitCache.password = password;
+    }
+  }, [password, remember]);
 
   // запуск анимации ленты, когда preload готов и при смене таба
   useEffect(() => {
@@ -236,7 +287,7 @@ export default function AuthScreen() {
       useNativeDriver: true,
     }).start();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [preloadReady, tab]);
+  }, [preloadReady, tab, pageW]);
 
   // таймер «отправить повторно»
   useEffect(() => {
@@ -244,6 +295,34 @@ export default function AuthScreen() {
     const t = setTimeout(() => setResendTimer((s) => s - 1), 1000);
     return () => clearTimeout(t);
   }, [resendTimer]);
+
+  useEffect(() => {
+    if (resetResendTimer <= 0) return;
+    const t = setTimeout(() => setResetResendTimer((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resetResendTimer]);
+
+  useEffect(() => {
+    if (code.length < 6) lastVerifyCode.current = '';
+  }, [code]);
+
+  useEffect(() => {
+    if (resetCode.length < 6) lastResetVerifyCode.current = '';
+  }, [resetCode]);
+
+  useEffect(() => {
+    if (!modeVerify) {
+      lastVerifyCode.current = '';
+      verifyInFlight.current = false;
+    }
+  }, [modeVerify]);
+
+  useEffect(() => {
+    if (!modeReset) {
+      lastResetVerifyCode.current = '';
+      resetVerifyInFlight.current = false;
+    }
+  }, [modeReset]);
 
   // измерение верхних блоков — один раз, без влияния на лоадер
   const tryLockMinHeight = () => {
@@ -279,8 +358,34 @@ export default function AuthScreen() {
   const onCodeChange = (v: string) => {
     const only = v.replace(/[^\d]/g, '').slice(0, 6);
     setCode(only);
-    if (only.length !== 6) setCodeErr('Код из 6 цифр');
+    if (only.length && only.length !== 6) setCodeErr('Код из 6 цифр');
     else setCodeErr('');
+  };
+
+  const onResetEmailChange = (v: string) => {
+    setResetEmail(v);
+    if (!v.trim()) setResetEmailErr('Укажите email');
+    else if (!validateEmail(v.trim())) setResetEmailErr('Некорректный email');
+    else setResetEmailErr('');
+  };
+  const onResetCodeChange = (v: string) => {
+    const only = v.replace(/[^\d]/g, '').slice(0, 6);
+    setResetCode(only);
+    if (only.length && only.length !== 6) setResetCodeErr('Код из 6 цифр');
+    else setResetCodeErr('');
+  };
+  const onResetPassChange = (v: string) => {
+    setResetPassword(v);
+    if (!v) setResetPassErr('Введите пароль');
+    else if (v.length < 6) setResetPassErr('Минимум 6 символов');
+    else setResetPassErr('');
+    if (resetPasswordRepeat) setResetPassRepeatErr(v === resetPasswordRepeat ? '' : 'Пароли не совпадают');
+  };
+  const onResetPassRepeatChange = (v: string) => {
+    setResetPasswordRepeat(v);
+    if (!v) setResetPassRepeatErr('Повторите пароль');
+    else if (v !== resetPassword) setResetPassRepeatErr('Пароли не совпадают');
+    else setResetPassRepeatErr('');
   };
 
   const canLogin = !emailErr && !passErr && !!email.trim() && !!password;
@@ -305,19 +410,34 @@ export default function AuthScreen() {
       setAuthenticated(true);
 
       if (remember) {
+        __authInitCache.remember = true;
+        __authInitCache.email = em;
+        __authInitCache.password = password;
         await AsyncStorage.multiSet([
           [STORAGE_KEYS.REMEMBER_FLAG, '1'],
           [STORAGE_KEYS.REMEMBER_EMAIL, em],
+          [STORAGE_KEYS.REMEMBER_PASSWORD, password],
         ]);
       } else {
-        await AsyncStorage.multiRemove([STORAGE_KEYS.REMEMBER_FLAG, STORAGE_KEYS.REMEMBER_EMAIL]);
+        __authInitCache.remember = false;
+        __authInitCache.email = '';
+        __authInitCache.password = '';
+        await AsyncStorage.multiRemove([
+          STORAGE_KEYS.REMEMBER_FLAG,
+          STORAGE_KEYS.REMEMBER_EMAIL,
+          STORAGE_KEYS.REMEMBER_PASSWORD,
+        ]);
       }
 
       const profileJson = await AsyncStorage.getItem('profile');
       if (profileJson) {
         const profile = JSON.parse(profileJson);
         await setProfile(profile);
-        isValidProfile(profile) ? router.replace(ROUTES.HOME) : router.replace(ROUTES.PROFILE);
+        const gate = getProfileGate(profile);
+        if (gate === 'active') router.replace(ROUTES.HOME);
+        else if (gate === 'pending') router.replace(ROUTES.PENDING);
+        else if (gate === 'blocked') router.replace(ROUTES.BLOCKED);
+        else router.replace(ROUTES.PROFILE);
       } else {
         // Профиль не пришел в ответе — очищаем и отправляем на создание
         await AsyncStorage.removeItem('profile');
@@ -350,7 +470,12 @@ export default function AuthScreen() {
     setBannerError('');
     try {
       await register(em, password, em.split('@')[0]);
+      setEmail(em);
+      setCode('');
+      setCodeErr('');
+      setModeReset(false);
       setModeVerify(true);
+      setResendTimer(30);
       Haptics.selectionAsync();
       if (remember) {
         await AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_EMAIL, em);
@@ -364,30 +489,63 @@ export default function AuthScreen() {
   };
 
   const handleVerifyWith = async (otp: string) => {
-    if (!otp || otp.length !== 6) return;
-    setLoading(true);
-    setBannerError('');
+    const trimmed = String(otp || '').trim();
     try {
-      const verifiedProfile = await verify(email, otp);
+      if (trimmed.length !== 6) return;
+      const em = normalizeEmail(email);
+      if (!validateEmail(em)) {
+        setBannerError('Некорректный email');
+        return;
+      }
+      if (verifyInFlight.current) return;
+      if (lastVerifyCode.current === trimmed) return;
+
+      verifyInFlight.current = true;
+      lastVerifyCode.current = trimmed;
+      setLoading(true);
+      setBannerError('');
+      setEmail(em);
+      const verifiedProfile = await verify(em, trimmed);
+      setCodeErr('');
       if (setAuthenticated) setAuthenticated(true);
       if (setProfile) await setProfile(verifiedProfile ?? null);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      router.replace(ROUTES.PROFILE);
+      const gate = getProfileGate(verifiedProfile ?? null);
+      if (gate === 'active') router.replace(ROUTES.HOME);
+      else if (gate === 'pending') router.replace(ROUTES.PENDING);
+      else if (gate === 'blocked') router.replace(ROUTES.BLOCKED);
+      else router.replace(ROUTES.PROFILE);
     } catch (e: any) {
-      setBannerError(normalizeError(e));
+      const msg = normalizeError(e);
+      setBannerError(msg);
+      if (trimmed.length === 6) {
+        setCodeErr(/код|code/i.test(msg) ? msg : 'Неверный код подтверждения');
+      }
     } finally {
+      verifyInFlight.current = false;
       setLoading(false);
     }
   };
 
   const handleResendCode = async () => {
     setBannerError('');
-    setResendTimer(30); // старт нового отсчёта
+    setBannerNotice('');
     try {
+      const em = normalizeEmail(email);
+      if (!validateEmail(em)) {
+        setBannerError('Некорректный email');
+        return;
+      }
+      setEmail(em);
       await Haptics.selectionAsync();
-      // TODO: вызовите ваш API: await resendVerification(email)
-    } catch {
-      setBannerError('Не удалось отправить код. Проверьте подключение и попробуйте позже.');
+      await resendVerification(em);
+      setCode('');
+      setCodeErr('');
+      setResendTimer(30); // старт нового отсчёта
+      setBannerNoticeTone('success');
+      setBannerNotice('Код подтверждения отправлен повторно.');
+    } catch (e: any) {
+      setBannerError(normalizeError(e));
     }
   };
 
@@ -397,6 +555,186 @@ export default function AuthScreen() {
       const only = (str || '').replace(/\D/g, '').slice(0, 6);
       if (!only) return;
       setCode(only); // OTP6Input получит value и сам вызовет onFilled
+      setCodeErr(only.length === 6 ? '' : 'Код из 6 цифр');
+      Haptics.selectionAsync();
+    } catch {
+      setBannerError('Не удалось получить текст из буфера');
+    }
+  };
+
+  const openResetFlow = () => {
+    setModeVerify(false);
+    setModeReset(true);
+    setResetStep(0);
+    setBannerError('');
+    setBannerNotice('');
+    const em = email.trim() ? normalizeEmail(email) : '';
+    setResetEmail(em);
+    setResetEmailErr(em && validateEmail(em) ? '' : em ? 'Некорректный email' : '');
+    setResetCode('');
+    setResetCodeErr('');
+    setResetPassword('');
+    setResetPasswordRepeat('');
+    setShowResetPassword(false);
+    setResetPassErr('');
+    setResetPassRepeatErr('');
+    setResetResendTimer(0);
+  };
+
+  const handleResetRequest = async () => {
+    const em = normalizeEmail(resetEmail || '');
+    if (!em) {
+      setResetEmailErr('Укажите email');
+      return;
+    }
+    if (!validateEmail(em)) {
+      setResetEmailErr('Некорректный email');
+      return;
+    }
+    setResetEmailErr('');
+    setLoading(true);
+    setBannerError('');
+    try {
+      setResetEmail(em);
+      await requestPasswordReset(em);
+      setResetCode('');
+      setResetCodeErr('');
+      setResetStep(1);
+      setResetResendTimer(30);
+      await Haptics.selectionAsync();
+    } catch (e: any) {
+      setBannerError(normalizeError(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResetVerifyWith = async (otp: string) => {
+    const trimmed = String(otp || '').trim();
+    try {
+      if (trimmed.length !== 6) {
+        setResetCodeErr('Код из 6 цифр');
+        return;
+      }
+      const em = normalizeEmail(resetEmail || '');
+      if (!validateEmail(em)) {
+        setResetEmailErr('Некорректный email');
+        return;
+      }
+      if (resetVerifyInFlight.current) return;
+      if (lastResetVerifyCode.current === trimmed) return;
+
+      resetVerifyInFlight.current = true;
+      lastResetVerifyCode.current = trimmed;
+      setResetEmailErr('');
+      setResetCodeErr('');
+      setLoading(true);
+      setBannerError('');
+      setResetEmail(em);
+      await verifyPasswordReset(em, trimmed);
+      setResetCode(otp);
+      setResetCodeErr('');
+      setResetStep(2);
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e: any) {
+      const msg = normalizeError(e);
+      setBannerError(msg);
+      if (trimmed.length === 6) {
+        setResetCodeErr(/код|code/i.test(msg) ? msg : 'Неверный код');
+      }
+    } finally {
+      resetVerifyInFlight.current = false;
+      setLoading(false);
+    }
+  };
+
+  const handleResetResendCode = async () => {
+    const em = normalizeEmail(resetEmail || '');
+    if (!validateEmail(em)) {
+      setResetEmailErr('Некорректный email');
+      return;
+    }
+    setResetEmailErr('');
+    setBannerError('');
+    setBannerNotice('');
+    try {
+      setResetEmail(em);
+      await requestPasswordReset(em);
+      setResetCode('');
+      setResetCodeErr('');
+      setResetResendTimer(30);
+      await Haptics.selectionAsync();
+      setBannerNoticeTone('success');
+      setBannerNotice('Код для сброса пароля отправлен повторно.');
+    } catch (e: any) {
+      setBannerError(normalizeError(e));
+    }
+  };
+
+  const handleResetChange = async () => {
+    if (!resetCode || resetCode.length !== 6) {
+      setResetCodeErr('Код из 6 цифр');
+      setResetStep(1);
+      return;
+    }
+    if (!resetPassword) {
+      setResetPassErr('Введите пароль');
+      return;
+    }
+    if (resetPassword.length < 6) {
+      setResetPassErr('Минимум 6 символов');
+      return;
+    }
+    if (!resetPasswordRepeat) {
+      setResetPassRepeatErr('Повторите пароль');
+      return;
+    }
+    if (resetPasswordRepeat !== resetPassword) {
+      setResetPassRepeatErr('Пароли не совпадают');
+      return;
+    }
+
+    const em = normalizeEmail(resetEmail || '');
+    if (!validateEmail(em)) {
+      setResetEmailErr('Некорректный email');
+      return;
+    }
+
+    setLoading(true);
+    setBannerError('');
+    try {
+      setResetEmail(em);
+      await changePassword(em, resetCode, resetPassword);
+      setModeReset(false);
+      setResetStep(0);
+      setResetEmail('');
+      setResetCode('');
+      setResetPassword('');
+      setResetPasswordRepeat('');
+      setShowResetPassword(false);
+      setResetPassErr('');
+      setResetPassRepeatErr('');
+      setResetCodeErr('');
+      setResetResendTimer(0);
+      setTab(0);
+      setPassword('');
+      setPasswordRepeat('');
+      setShowPassword(false);
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e: any) {
+      setBannerError(normalizeError(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePasteResetOTP = async () => {
+    try {
+      const str = await Clipboard.getStringAsync();
+      const only = (str || '').replace(/\D/g, '').slice(0, 6);
+      if (!only) return;
+      setResetCode(only);
+      setResetCodeErr(only.length === 6 ? '' : 'Код из 6 цифр');
       Haptics.selectionAsync();
     } catch {
       setBannerError('Не удалось получить текст из буфера');
@@ -405,20 +743,38 @@ export default function AuthScreen() {
 
   /* derived */
   const ps = passwordScore(password);
-  const pillWidth = Math.min(420, winW - 40) / 2 - 6;
+  const pillWidth = Math.max(0, outerW / 2 - 6);
   const pillTranslate = tabPill.interpolate({ inputRange: [0, 1], outputRange: [4, 8 + pillWidth] });
   const versionLabel = Constants.expoConfig?.version ?? 'unknown';
+  const noticePalette =
+    bannerNoticeTone === 'success'
+      ? { bg: `${colors.success}22`, border: colors.success, text: colors.success }
+      : { bg: `${colors.info}22`, border: colors.info, text: colors.info };
 
   // маленькая анимируемая кнопка для Verify
   const MiniButton: React.FC<{
-    title: string;
+    title: React.ReactNode;
     onPress: () => void;
     variant?: 'filled' | 'outline';
     disabled?: boolean;
   }> = ({ title, onPress, variant = 'filled', disabled }) => {
     const scale = useRef(new Animated.Value(1)).current;
-    const pressIn = () => Animated.spring(scale, { toValue: 0.97, useNativeDriver: true, friction: 5 }).start();
-    const pressOut = () => Animated.spring(scale, { toValue: 1, useNativeDriver: true, friction: 5 }).start();
+    const pressIn = () => {
+      if (disabled) return;
+      Animated.spring(scale, { toValue: 0.97, useNativeDriver: true, friction: 5 }).start();
+    };
+    const pressOut = () => {
+      if (disabled) return;
+      Animated.spring(scale, { toValue: 1, useNativeDriver: true, friction: 5 }).start();
+    };
+    const baseText = variant === 'filled' ? colors.buttonText : colors.text;
+    const textColor = disabled ? colors.disabledText : baseText;
+    const disabledBg = colors.disabledBackground;
+    const disabledBorder = colors.disabledBackground || colors.border;
+    const renderTitle =
+      typeof title === 'string' || typeof title === 'number'
+        ? <Text style={{ color: textColor, fontWeight: '700' }}>{title}</Text>
+        : title;
     return (
       <Animated.View style={{ transform: [{ scale }], flexGrow: 1 }}>
         <TouchableOpacity
@@ -436,12 +792,14 @@ export default function AuthScreen() {
               paddingHorizontal: 14,
               marginVertical: 4,
             },
-            variant === 'filled'
+            disabled
+              ? { backgroundColor: disabledBg, borderWidth: 1, borderColor: disabledBorder }
+              : variant === 'filled'
               ? { backgroundColor: colors.tint }
               : { borderWidth: 1, borderColor: colors.border, backgroundColor: 'transparent' },
           ]}
         >
-          <Text style={{ color: variant === 'filled' ? colors.buttonText : colors.text, fontWeight: '700' }}>{title}</Text>
+          {renderTitle}
         </TouchableOpacity>
       </Animated.View>
     );
@@ -504,7 +862,7 @@ export default function AuthScreen() {
             </Animated.View>
 
             {/* Tabs */}
-            {!modeVerify && (
+            {!modeVerify && !modeReset && (
               <View style={styles.segmentWrapper}>
                 <View style={styles.segment}>
                   <Animated.View
@@ -536,6 +894,12 @@ export default function AuthScreen() {
               </Animated.View>
             )}
 
+            {!!bannerNotice && (
+              <View style={[styles.noticeWrap, { backgroundColor: noticePalette.bg, borderColor: noticePalette.border }]}>
+                <Text style={[styles.noticeText, { color: noticePalette.text }]}>{bannerNotice}</Text>
+              </View>
+            )}
+
             {/* Card */}
             <Animated.View
               style={[
@@ -548,7 +912,171 @@ export default function AuthScreen() {
                 },
               ]}
             >
-              {!modeVerify ? (
+              {modeReset ? (
+                <View style={{ width: '100%' }}>
+                  <Text style={styles.title}>Восстановление пароля</Text>
+
+                  {resetStep === 0 && (
+                    <View>
+                      <Text style={[styles.secondary, { textAlign: 'center', marginBottom: 12 }]}>
+                        Введите email, мы отправим код для сброса пароля
+                      </Text>
+                      <View style={styles.fieldCompact}>
+                        <FormInput
+                          size="xs"
+                          noMargin
+                          label="Email"
+                          value={resetEmail}
+                          onChangeText={onResetEmailChange}
+                          onBlur={() => setResetEmail((prev) => normalizeEmail(prev))}
+                          placeholder="you@domain.com"
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                          keyboardType="email-address"
+                          textContentType="emailAddress"
+                          autoComplete="email"
+                          returnKeyType="done"
+                          onSubmitEditing={handleResetRequest}
+                          editable={!loading}
+                          error={resetEmailErr || undefined}
+                        />
+                      </View>
+
+                      <View style={styles.buttonWrap}>
+                        <BounceButton
+                          title="Отправить код"
+                          onPress={handleResetRequest}
+                          loading={loading}
+                          gradientColors={btnGradient}
+                          style={{ height: BTN_HEIGHT }}
+                        />
+                      </View>
+
+                      <View style={styles.otpActionsRow}>
+                        <MiniButton
+                          title="Назад"
+                          onPress={() => {
+                            setModeReset(false);
+                            setResetResendTimer(0);
+                            setResetCode('');
+                            setResetCodeErr('');
+                            setBannerNotice('');
+                          }}
+                          variant="outline"
+                        />
+                      </View>
+                    </View>
+                  )}
+
+                  {resetStep === 1 && (
+                    <View>
+                      <Text style={[styles.secondary, { textAlign: 'center', marginBottom: 12 }]}>
+                        Введите 6-значный код, отправленный на {resetEmail}
+                      </Text>
+
+                      <OTP6Input
+                        value={resetCode}
+                        onChange={onResetCodeChange}
+                        onFilled={(v) => handleResetVerifyWith(v)}
+                        disabled={loading}
+                        error={!!resetCodeErr}
+                        secure={false}
+                        autoFocus
+                      />
+
+                      <View style={styles.otpActionsRow}>
+                        <MiniButton title="Вставить" onPress={handlePasteResetOTP} variant="filled" />
+                        <MiniButton
+                          title={
+                            resetResendTimer > 0 ? (
+                              <Text style={{ color: colors.disabledText, fontWeight: '700' }}>
+                                Повторно через{' '}
+                                <Text style={{ color: colors.error, fontWeight: '800' }}>{resetResendTimer}</Text> с
+                              </Text>
+                            ) : (
+                              'Отправить повторно'
+                            )
+                          }
+                          onPress={handleResetResendCode}
+                          variant="outline"
+                          disabled={resetResendTimer > 0}
+                        />
+                        <MiniButton
+                          title="Назад"
+                          onPress={() => {
+                            setResetStep(0);
+                            setBannerNotice('');
+                          }}
+                          variant="outline"
+                        />
+                      </View>
+                    </View>
+                  )}
+
+                  {resetStep === 2 && (
+                    <View>
+                      <Text style={[styles.secondary, { textAlign: 'center', marginBottom: 12 }]}>
+                        Придумайте новый пароль для {resetEmail}
+                      </Text>
+
+                      <View style={styles.fieldCompact}>
+                        <FormInput
+                          size="xs"
+                          noMargin
+                          label="Новый пароль"
+                          value={resetPassword}
+                          onChangeText={onResetPassChange}
+                          placeholder="Минимум 6 символов"
+                          secureTextEntry={!showResetPassword}
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                          textContentType="newPassword"
+                          autoComplete="password-new"
+                          returnKeyType="next"
+                          rightIcon={showResetPassword ? 'eye-off' : 'eye'}
+                          onIconPress={() => setShowResetPassword((p) => !p)}
+                          editable={!loading}
+                          error={resetPassErr || undefined}
+                        />
+                      </View>
+
+                      <View style={styles.fieldCompact}>
+                        <FormInput
+                          size="xs"
+                          noMargin
+                          label="Повторите пароль"
+                          value={resetPasswordRepeat}
+                          onChangeText={onResetPassRepeatChange}
+                          placeholder="Повторите пароль"
+                          secureTextEntry={!showResetPassword}
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                          textContentType="password"
+                          autoComplete="password"
+                          returnKeyType="done"
+                          onSubmitEditing={handleResetChange}
+                          editable={!loading}
+                          error={resetPassRepeatErr || undefined}
+                        />
+                      </View>
+
+                      <View style={styles.buttonWrap}>
+                        <BounceButton
+                          title="Сохранить пароль"
+                          onPress={handleResetChange}
+                          loading={loading}
+                          gradientColors={btnGradient}
+                          style={{ height: BTN_HEIGHT }}
+                        />
+                      </View>
+
+                      <View style={styles.otpActionsRow}>
+                        <MiniButton title="Назад" onPress={() => setResetStep(1)} variant="outline" />
+                      </View>
+                    </View>
+                  )}
+                </View>
+              ) : !modeVerify ? (
                 // ---- viewport с жёстким клипом по внутренней ширине карточки ----
                 <View style={{ width: viewportW, alignSelf: 'center', overflow: 'hidden' }}>
                   <Animated.View
@@ -616,7 +1144,7 @@ export default function AuthScreen() {
                           </View>
 
                           <View style={styles.rowBetween}>
-                            <TouchableOpacity activeOpacity={0.7} style={styles.forgotLink}>
+                            <TouchableOpacity activeOpacity={0.7} style={styles.forgotLink} onPress={openResetFlow}>
                               <Text style={[styles.linkText, { color: grad[0] }]}>Забыли пароль?</Text>
                             </TouchableOpacity>
                             <View style={styles.rememberRight}>
@@ -626,10 +1154,19 @@ export default function AuthScreen() {
                                   setRemember(v);
                                   Haptics.selectionAsync();
                                   if (v) {
+                                    __authInitCache.remember = true;
                                     await AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_FLAG, '1');
                                     await AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_EMAIL, normalizeEmail(email));
+                                    await AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_PASSWORD, password);
                                   } else {
-                                    await AsyncStorage.multiRemove([STORAGE_KEYS.REMEMBER_FLAG, STORAGE_KEYS.REMEMBER_EMAIL]);
+                                    __authInitCache.remember = false;
+                                    __authInitCache.email = '';
+                                    __authInitCache.password = '';
+                                    await AsyncStorage.multiRemove([
+                                      STORAGE_KEYS.REMEMBER_FLAG,
+                                      STORAGE_KEYS.REMEMBER_EMAIL,
+                                      STORAGE_KEYS.REMEMBER_PASSWORD,
+                                    ]);
                                   }
                                 }}
                               />
@@ -768,24 +1305,43 @@ export default function AuthScreen() {
                   {/* Адаптивный OTP-ввод */}
                   <OTP6Input
                     value={code}
-                    onChange={(v) => setCode(v)}
+                    onChange={onCodeChange}
                     onFilled={(v) => handleVerifyWith(v)}   // авто-отправка при 6 цифрах
                     disabled={loading}
                     error={!!codeErr}
                     secure={false}
+                    autoFocus
                   />
 
                   {/* Кнопки действий */}
                   <View style={styles.otpActionsRow}>
                     <MiniButton title="Вставить" onPress={handlePasteOTP} variant="filled" />
-                    {resendTimer > 0 ? (
-                      <View style={styles.timerPill}>
-                        <Text style={{ color: colors.text, fontWeight: '700' }}>{`Повторно через ${resendTimer} c`}</Text>
-                      </View>
-                    ) : (
-                      <MiniButton title="Отправить повторно" onPress={handleResendCode} variant="outline" />
-                    )}
-                    <MiniButton title="Назад" onPress={() => setModeVerify(false)} variant="outline" />
+                    <MiniButton
+                      title={
+                        resendTimer > 0 ? (
+                          <Text style={{ color: colors.disabledText, fontWeight: '700' }}>
+                            Повторно через{' '}
+                            <Text style={{ color: colors.error, fontWeight: '800' }}>{resendTimer}</Text> с
+                          </Text>
+                        ) : (
+                          'Отправить повторно'
+                        )
+                      }
+                      onPress={handleResendCode}
+                      variant="outline"
+                      disabled={resendTimer > 0}
+                    />
+                    <MiniButton
+                      title="Назад"
+                      onPress={() => {
+                        setModeVerify(false);
+                        setCode('');
+                        setCodeErr('');
+                        setResendTimer(0);
+                        setBannerNotice('');
+                      }}
+                      variant="outline"
+                    />
                   </View>
                 </View>
               )}
@@ -875,6 +1431,16 @@ const getStyles = (colors: {
       marginBottom: 10,
     },
     errorText: { color: colors.error, textAlign: 'center', fontWeight: '700' },
+    noticeWrap: {
+      maxWidth: 420,
+      width: '100%',
+      borderWidth: 1,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      borderRadius: 12,
+      marginBottom: 10,
+    },
+    noticeText: { textAlign: 'center', fontWeight: '700' },
 
     topBlock: {
       justifyContent: 'flex-start',
@@ -908,11 +1474,12 @@ const getStyles = (colors: {
       justifyContent: 'space-between',
       marginTop: 6,
       marginBottom: 10,
+      flexWrap: 'wrap',
     },
-    forgotLink: { flex: 1 },
+    forgotLink: { flexGrow: 1, flexShrink: 1, paddingRight: 8 },
 
-    rememberRight: { flexDirection: 'row', alignItems: 'center' },
-    rememberText: { marginLeft: 8, color: colors.secondaryText, fontSize: 14 },
+    rememberRight: { flexDirection: 'row', alignItems: 'center', flexShrink: 0, marginTop: 4 },
+    rememberText: { marginLeft: 8, color: colors.secondaryText, fontSize: 14, flexShrink: 0 },
 
     buttonWrap: {
       width: '100%',
@@ -943,17 +1510,6 @@ const getStyles = (colors: {
       justifyContent: 'space-between',
       gap: 10,
       flexWrap: 'wrap',
-    },
-    timerPill: {
-      height: 44,
-      borderRadius: 12,
-      alignItems: 'center',
-      justifyContent: 'center',
-      paddingHorizontal: 14,
-      borderWidth: 1,
-      borderColor: colors.border,
-      backgroundColor: 'transparent',
-      flexGrow: 1,
     },
     buildInfo: {
       marginTop: 12,

@@ -3,11 +3,19 @@ export const API_ENDPOINTS = {
     LOGIN: '/auth/login',
     REGISTER: '/auth/register',
     VERIFY: '/auth/verify',
+    RESEND: '/auth/resend',
     TOKEN: '/auth/token',
     LOGOUT: '/auth/logout'
   },
+  PASSWORD_RESET: {
+    REQUEST: '/password-reset/request',
+    VERIFY: '/password-reset/verify',
+    CHANGE: '/password-reset/change',
+  },
   USERS: {
     PROFILE: '/users/profile',
+    CURRENT_PROFILE: '/users/me/current-profile',
+    DEVICE_TOKENS: '/users/device-tokens',
     // ? функция, формирующая корректный путь /users/:userId/profile
     PROFILE_BY_ID: (userId: number) => `/users/${userId}/profile`,
     DEPARTMENTS: '/users/departments',
@@ -24,6 +32,8 @@ export const API_ENDPOINTS = {
     USER_ROLE: (userId: number) => `/users/${userId}/role`,
     USERS: (search?: string) => `/users${search ? `?search=${encodeURIComponent(search)}` : ''}`,
     USER_ADMIN_UPDATE: (userId: number) => `/users/${userId}`,
+    USER_PROFILE_UPDATE: (userId: number, type: 'client' | 'supplier' | 'employee') =>
+      `/users/${userId}/profiles/${type}`,
     USER_ADMIN_PASSWORD: (userId: number) => `/users/${userId}/password`,
     DEPARTMENT_USERS: (departmentId: number) => `/users/departments/${departmentId}/users`,
   },

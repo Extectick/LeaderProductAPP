@@ -31,6 +31,8 @@ const UPDATE_CHANNEL = process.env.EXPO_PUBLIC_UPDATE_CHANNEL || 'prod';
 
 type Props = {
   children: React.ReactNode;
+  onStartupDone?: () => void;
+  showCheckingOverlay?: boolean;
 };
 
 function formatBytes(bytes?: number | null) {
@@ -41,7 +43,9 @@ function formatBytes(bytes?: number | null) {
   return `${Math.max(1, Math.round(kb))} КБ`;
 }
 
-export default function UpdateGate({ children }: Props) {
+const STARTUP_MAX_WAIT_MS = 12000;
+
+export default function UpdateGate({ children, onStartupDone, showCheckingOverlay = false }: Props) {
   const [updateInfo, setUpdateInfo] = useState<UpdateCheckResult | null>(null);
   const [mandatoryVisible, setMandatoryVisible] = useState(false);
   const [optionalVisible, setOptionalVisible] = useState(false);
@@ -56,6 +60,13 @@ export default function UpdateGate({ children }: Props) {
   const lastCheckAtRef = useRef(0);
   const promptLoggedForRef = useRef<number | null>(null);
   const downloadRef = useRef<FileSystem.DownloadResumable | null>(null);
+  const startupDoneRef = useRef(false);
+
+  const completeStartup = useCallback(() => {
+    if (startupDoneRef.current) return;
+    startupDoneRef.current = true;
+    onStartupDone?.();
+  }, [onStartupDone]);
 
   const versionName = Constants.expoConfig?.version ?? '0.0.0';
   const androidVersionCode = Number(Constants.expoConfig?.android?.versionCode ?? 0);
@@ -141,14 +152,28 @@ export default function UpdateGate({ children }: Props) {
       } finally {
         checkingRef.current = false;
         setCheckingVisible(false);
+        if (source === 'startup') {
+          completeStartup();
+        }
       }
     },
-    [getDismissKey, getEtagKey, shouldCheck, versionCode, versionName]
+    [completeStartup, getDismissKey, getEtagKey, shouldCheck, versionCode, versionName]
   );
 
   useEffect(() => {
+    if (!shouldCheck || !versionCode) {
+      completeStartup();
+      return;
+    }
     void runCheck('startup');
   }, [runCheck]);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      completeStartup();
+    }, STARTUP_MAX_WAIT_MS);
+    return () => clearTimeout(t);
+  }, [completeStartup]);
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
@@ -362,7 +387,7 @@ export default function UpdateGate({ children }: Props) {
   }, [getDismissKey, mandatoryVisible, updateInfo, versionCode, versionName]);
 
   const modalVisible = mandatoryVisible || optionalVisible;
-  const showChecking = checkingVisible && !modalVisible;
+  const showChecking = showCheckingOverlay && checkingVisible && !modalVisible;
   const isMandatory = mandatoryVisible;
   const showProgress = stage !== 'idle';
 

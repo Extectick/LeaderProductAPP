@@ -77,12 +77,17 @@ const FormInput = forwardRef<TextInput, FormInputProps>((props, ref) => {
 
   const focusSV = useSharedValue(0);
 
-  const textStr = typeof value === 'string' ? value : '';
+  const textStr = value == null ? '' : String(value);
   const hasText = textStr.length > 0;
   const showError = !!error && hasText; // ошибка только когда есть текст
 
+  const textSV = useSharedValue(hasText ? 1 : 0);
+  useEffect(() => {
+    textSV.value = hasText ? 1 : 0;
+  }, [hasText, textSV]);
+
   const activeDV = useDerivedValue(() =>
-    withTiming(focusSV.value || hasText ? 1 : 0, { duration: 180, easing: Easing.out(Easing.cubic) })
+    withTiming(focusSV.value || textSV.value ? 1 : 0, { duration: 180, easing: Easing.out(Easing.cubic) })
   );
 
   // слот ошибки управляем высотой анимацией
@@ -111,13 +116,26 @@ const FormInput = forwardRef<TextInput, FormInputProps>((props, ref) => {
           position: 'relative',
           flexDirection: 'row',
           alignItems: 'center',
-          borderWidth: 1,
           borderRadius: cfg.r,
-          backgroundColor: colors.inputBackground,
+          backgroundColor: 'transparent',
           paddingHorizontal: cfg.px,
           height: cfg.h,
           // важно: позволяем лейблу выходить выше, иначе он обрежется
           overflow: 'visible',
+        },
+        inputBg: {
+          ...StyleSheet.absoluteFillObject,
+          borderRadius: cfg.r,
+          backgroundColor: colors.inputBackground,
+          zIndex: 0,
+        },
+        borderOverlay: {
+          ...StyleSheet.absoluteFillObject,
+          borderRadius: cfg.r,
+          borderWidth: 1,
+          borderStyle: 'solid',
+          pointerEvents: 'none',
+          zIndex: 4,
         },
         input: {
           flex: 1,
@@ -126,16 +144,19 @@ const FormInput = forwardRef<TextInput, FormInputProps>((props, ref) => {
           color: colors.text,
           textAlign,
           paddingVertical: cfg.pv,
+          backgroundColor: 'transparent',
+          borderWidth: 0,
+          zIndex: 1,
           ...Platform.select({
             web: { outlineWidth: 0, outlineColor: 'transparent' },
           }),
         },
-        iconButton: { marginLeft: 8, padding: 6 },
+        iconButton: { marginLeft: 8, padding: 6, zIndex: 2 },
         floatingLabel: {
           position: 'absolute',
           left: cfg.px,
           fontWeight: '600',
-          zIndex: 1,
+          zIndex: 3,
         },
         errorUnderline: {
           position: 'absolute',
@@ -145,6 +166,7 @@ const FormInput = forwardRef<TextInput, FormInputProps>((props, ref) => {
           height: 2,
           borderRadius: 5,
           backgroundColor: colors.error,
+          zIndex: 5,
         },
         errorPill: {
           marginTop: 6,
@@ -229,7 +251,8 @@ const FormInput = forwardRef<TextInput, FormInputProps>((props, ref) => {
           {label ? <Text style={styles.label}>{label}</Text> : null}
       */}
 
-      <Animated.View style={[styles.inputWrapper, borderAnimStyle, { opacity: editable ? 1 : 0.6 }]}>
+      <Animated.View style={[styles.inputWrapper, { opacity: editable ? 1 : 0.6 }]}>
+        <View pointerEvents="none" style={styles.inputBg} />
         {/* Плавающий placeholder/лейбл */}
         {(placeholder || label) ? (
           <Animated.Text
@@ -265,6 +288,8 @@ const FormInput = forwardRef<TextInput, FormInputProps>((props, ref) => {
             <MaterialCommunityIcons name={rightIcon} size={20} color={colors.text} />
           </TouchableOpacity>
         )}
+
+        <Animated.View style={[styles.borderOverlay, borderAnimStyle]} />
 
         {/* Нижняя линия ошибки */}
         <Animated.View style={[styles.errorUnderline, underlineAnimStyle]} />

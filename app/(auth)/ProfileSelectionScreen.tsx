@@ -1,37 +1,40 @@
 // app/(auth)/ProfileSelectionScreen.tsx
 import BrandedBackground from '@/components/BrandedBackground';
 import ShimmerButton from '@/components/ShimmerButton';
-import ThemeSwitcher from '@/components/ThemeSwitcher';
 import { gradientColors, ThemeKey } from '@/constants/Colors';
 import { AuthContext } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
-import type { CreateEmployeeProfileDto } from '@/types/userTypes';
-import { createProfile, Department, getDepartments, getProfile } from '@/utils/userService';
+import type { CreateEmployeeProfileDto, ProfileStatus, ProfileType } from '@/types/userTypes';
+import { createProfile, Department, getDepartments, getProfile, setCurrentProfileType } from '@/utils/userService';
+import { getProfileGate, resolveActiveProfile } from '@/utils/profileGate';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { RelativePathString, useRouter } from 'expo-router';
 import React, { useContext, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Animated,
-  ActivityIndicator,
   KeyboardAvoidingView,
   Modal,
   Platform,
+  Pressable,
   ScrollView,
   StatusBar,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { MaskedTextInput } from 'react-native-mask-text';
+import { mask, MaskedTextInput } from 'react-native-mask-text';
+import CustomAlert from '@/components/CustomAlert';
 
 export default function ProfileSelectionScreen() {
   const router = useRouter();
   const auth = useContext(AuthContext);
   if (!auth) throw new Error('AuthContext is required');
-  const { setProfile, profile } = auth;
+  const { setProfile, profile, signOut } = auth;
 
   const { theme, themes } = useTheme();
   const colors = themes[theme];
@@ -39,6 +42,8 @@ export default function ProfileSelectionScreen() {
   const buttonGradient: [string, string] = [grad[0], grad[1]];
   const styles = useMemo(() => getStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
+  const { height: winH } = useWindowDimensions();
+  const isWeb = Platform.OS === 'web';
 
   const [form, setForm] = useState({
     firstName: '',
@@ -51,8 +56,45 @@ export default function ProfileSelectionScreen() {
   const [dropdownItems, setDropdownItems] = useState<{ label: string, value: number }[]>([]);
   const [apiMessage, setApiMessage] = useState<{ text: string, isError: boolean } | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [switchingProfile, setSwitchingProfile] = useState(false);
+  const [confirmVisible, setConfirmVisible] = useState(false);
   const [checkingProfile, setCheckingProfile] = useState(true);
   const [departmentModalVisible, setDepartmentModalVisible] = useState(false);
+  const [hoveredDepartmentId, setHoveredDepartmentId] = useState<number | null>(null);
+  const [modalFade] = useState(new Animated.Value(0));
+  const [depsLoaded, setDepsLoaded] = useState(false);
+  const skeletonPulse = useMemo(() => new Animated.Value(0.6), []);
+
+  const PHONE_MASK = '+7 (999) 999-99-99';
+  const activeInfo = resolveActiveProfile(profile);
+
+  const profileCards = useMemo(() => {
+    return [
+      {
+        type: 'CLIENT' as ProfileType,
+        title: 'Клиент',
+        exists: !!profile?.clientProfile,
+        status: profile?.clientProfile?.status ?? null,
+        subtitle: 'Профиль клиента',
+      },
+      {
+        type: 'SUPPLIER' as ProfileType,
+        title: 'Поставщик',
+        exists: !!profile?.supplierProfile,
+        status: profile?.supplierProfile?.status ?? null,
+        subtitle: 'Профиль поставщика',
+      },
+      {
+        type: 'EMPLOYEE' as ProfileType,
+        title: 'Сотрудник',
+        exists: !!profile?.employeeProfile,
+        status: profile?.employeeProfile?.status ?? null,
+        subtitle: profile?.employeeProfile?.department?.name
+          ? `Отдел: ${profile?.employeeProfile?.department?.name}`
+          : 'Без отдела',
+      },
+    ];
+  }, [profile]);
 
   useEffect(() => {
     let isMounted = true;
@@ -65,6 +107,8 @@ export default function ProfileSelectionScreen() {
         }
       } catch (error) {
         console.error('Ошибка загрузки отделов:', error);
+      } finally {
+        if (isMounted) setDepsLoaded(true);
       }
     };
 
@@ -79,15 +123,9 @@ export default function ProfileSelectionScreen() {
     let cancelled = false;
     const ensureProfile = async () => {
       try {
-        if (profile?.employeeProfile) {
-          router.replace('/home' as RelativePathString);
-          return;
-        }
         const freshProfile = await getProfile();
-        if (freshProfile?.employeeProfile) {
+        if (freshProfile) {
           await setProfile(freshProfile);
-          if (!cancelled) router.replace('/home' as RelativePathString);
-          return;
         }
       } catch (error) {
         console.warn('Не удалось получить профиль сотрудника', error);
@@ -109,6 +147,17 @@ export default function ProfileSelectionScreen() {
     }).start();
   }, [fadeAnim]);
 
+  useEffect(() => {
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(skeletonPulse, { toValue: 1, duration: 650, useNativeDriver: true }),
+        Animated.timing(skeletonPulse, { toValue: 0.6, duration: 650, useNativeDriver: true }),
+      ])
+    );
+    anim.start();
+    return () => anim.stop();
+  }, [skeletonPulse]);
+
   const onChange = (field: string, value: string | number) => {
     setForm((prev) => ({ ...prev, [field]: value }));
   };
@@ -127,7 +176,9 @@ export default function ProfileSelectionScreen() {
       return;
     }
 
-    if (form.phone && form.phone.length < 18) {
+    const phoneDigits = form.phone.trim();
+    const phoneValid = phoneDigits.length === 0 || (phoneDigits.length === 11 && phoneDigits.startsWith('7'));
+    if (!phoneValid) {
       Alert.alert('Ошибка', 'Неверный номер телефона');
       return;
     }
@@ -137,7 +188,7 @@ export default function ProfileSelectionScreen() {
 
     try {
       const profileData: CreateEmployeeProfileDto = {
-        phone: form.phone,
+        phone: phoneDigits ? mask(phoneDigits, PHONE_MASK) : null,
         departmentId: form.departmentId,
         user: {
           firstName: form.firstName,
@@ -153,7 +204,14 @@ export default function ProfileSelectionScreen() {
 
       await setProfile(createdProfile);
       setApiMessage({ text: 'Профиль сотрудника успешно создан', isError: false });
-      router.replace('/home' as RelativePathString);
+      const gate = getProfileGate(createdProfile);
+      if (gate === 'active') {
+        router.replace('/home' as RelativePathString);
+      } else if (gate === 'pending') {
+        router.replace('/(auth)/ProfilePendingScreen' as RelativePathString);
+      } else if (gate === 'blocked') {
+        router.replace('/(auth)/ProfileBlockedScreen' as RelativePathString);
+      }
     } catch (error) {
       const fallbackMessage = 'Не удалось создать профиль';
       let message = fallbackMessage;
@@ -170,10 +228,21 @@ export default function ProfileSelectionScreen() {
       if (message.toLowerCase().includes('существует')) {
         try {
           const fresh = await getProfile();
-          if (fresh?.employeeProfile) {
+          if (fresh) {
             await setProfile(fresh);
-            router.replace('/home' as RelativePathString);
-            return;
+            const gate = getProfileGate(fresh);
+            if (gate === 'active') {
+              router.replace('/home' as RelativePathString);
+              return;
+            }
+            if (gate === 'pending') {
+              router.replace('/(auth)/ProfilePendingScreen' as RelativePathString);
+              return;
+            }
+            if (gate === 'blocked') {
+              router.replace('/(auth)/ProfileBlockedScreen' as RelativePathString);
+              return;
+            }
           }
         } catch (e) {
           console.warn('Не удалось обновить профиль после конфликта', e);
@@ -186,10 +255,71 @@ export default function ProfileSelectionScreen() {
     }
   };
 
+  const statusMeta = (status: ProfileStatus | null) => {
+    if (status === 'ACTIVE') return { label: 'Активен', color: colors.success, bg: `${colors.success}1A` };
+    if (status === 'BLOCKED') return { label: 'Заблокирован', color: colors.error, bg: `${colors.error}1A` };
+    if (status === 'PENDING') return { label: 'На проверке', color: colors.warning, bg: `${colors.warning}1A` };
+    return { label: 'Не задан', color: colors.secondaryText, bg: `${colors.secondaryText}1A` };
+  };
+
+  const handleSelectProfile = async (type: ProfileType) => {
+    setSwitchingProfile(true);
+    setApiMessage(null);
+    try {
+      const updated = await setCurrentProfileType(type);
+      if (updated) {
+        await setProfile(updated);
+        const gate = getProfileGate(updated);
+        if (gate === 'active') {
+          router.replace('/home' as RelativePathString);
+        } else if (gate === 'pending') {
+          router.replace('/(auth)/ProfilePendingScreen' as RelativePathString);
+        } else if (gate === 'blocked') {
+          router.replace('/(auth)/ProfileBlockedScreen' as RelativePathString);
+        }
+      }
+    } catch (error) {
+      const fallbackMessage = 'Не удалось выбрать профиль';
+      let message = fallbackMessage;
+      if (error instanceof Error) {
+        try {
+          const errorData = JSON.parse(error.message);
+          message = errorData.message || error.message || fallbackMessage;
+        } catch {
+          message = error.message || fallbackMessage;
+        }
+      }
+      setApiMessage({ text: message, isError: true });
+    } finally {
+      setSwitchingProfile(false);
+    }
+  };
+
   const handleDepartmentChange = (value: number | null) => {
     onChange('departmentId', value ?? 0);
-    setDepartmentModalVisible(false);
+    closeDepartmentModal();
   };
+
+  const openDepartmentModal = () => {
+    setHoveredDepartmentId(null);
+    setDepartmentModalVisible(true);
+    modalFade.setValue(0);
+    Animated.timing(modalFade, { toValue: 1, duration: 180, useNativeDriver: true }).start();
+  };
+
+  const closeDepartmentModal = () => {
+    Animated.timing(modalFade, { toValue: 0, duration: 140, useNativeDriver: true }).start(() => {
+      setDepartmentModalVisible(false);
+      setHoveredDepartmentId(null);
+    });
+  };
+
+  const handleLogout = async () => {
+    await signOut();
+    router.replace('/(auth)/AuthScreen' as RelativePathString);
+  };
+
+  const openConfirm = () => setConfirmVisible(true);
 
   const cardAnimatedStyle = {
     opacity: fadeAnim,
@@ -202,6 +332,7 @@ export default function ProfileSelectionScreen() {
       },
     ],
   };
+  const isInitialLoading = checkingProfile || !depsLoaded;
 
   return (
     <BrandedBackground speed={1.3}>
@@ -214,159 +345,296 @@ export default function ProfileSelectionScreen() {
         >
           <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
             <View style={styles.headerRow}>
-              <ThemeSwitcher />
+              <View style={styles.headerRowInner}>
+                <TouchableOpacity
+                  onPress={openConfirm}
+                  style={[styles.logoutPill, { borderColor: colors.error }]}
+                  activeOpacity={0.85}
+                >
+                    <MaterialCommunityIcons name="logout-variant" size={18} color={colors.error} />
+                    <Text style={[styles.logoutText, { color: colors.error }]}>Выйти</Text>
+                  </TouchableOpacity>
+              </View>
             </View>
 
             <Animated.View style={[styles.card, cardAnimatedStyle]}>
-              <Text style={styles.title}>Создание профиля сотрудника</Text>
-              <Text style={styles.subtitle}>
-                Заполните данные, чтобы продолжить работу в приложении
-              </Text>
-
-              {apiMessage && (
-                <Text
-                  style={[
-                    styles.message,
-                    { color: apiMessage.isError ? colors.error : colors.success },
-                  ]}
-                >
-                  {apiMessage.text}
-                </Text>
-              )}
-
-              {checkingProfile && (
-                <View style={styles.checkRow}>
-                  <ActivityIndicator color={colors.tint} />
-                  <Text style={[styles.secondary, { color: colors.secondaryText }]}>
-                    Проверяем ваш профиль...
+              {isInitialLoading ? (
+                <Animated.View style={{ opacity: skeletonPulse }}>
+                  <View style={[styles.skeletonBlock, styles.skeletonTitle]} />
+                  <View style={[styles.skeletonBlock, styles.skeletonSubtitle]} />
+                  <View style={styles.skeletonGroup}>
+                    {Array.from({ length: 5 }).map((_, idx) => (
+                      <View key={idx} style={{ width: '100%' }}>
+                        <View style={[styles.skeletonBlock, styles.skeletonLabel]} />
+                        <View style={[styles.skeletonBlock, styles.skeletonInput]} />
+                      </View>
+                    ))}
+                  </View>
+                  <View style={[styles.skeletonBlock, styles.skeletonButton]} />
+                </Animated.View>
+              ) : (
+                <>
+                  <Text style={styles.title}>Создание профиля сотрудника</Text>
+                  <Text style={styles.subtitle}>
+                    Заполните данные, чтобы продолжить работу в приложении
                   </Text>
-                </View>
-              )}
 
-              <View style={styles.form}>
-                <View style={styles.field}>
-                  <Text style={styles.label}>Фамилия*</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={form.lastName}
-                    onChangeText={(text) => onChange('lastName', text)}
-                    placeholder="Иванов"
-                    placeholderTextColor={colors.placeholder}
-                  />
-                </View>
+                  <View style={styles.profileSection}>
+                    <Text style={styles.sectionTitle}>Ваши профили</Text>
+                    {profileCards.filter((item) => item.exists).length ? (
+                      <View style={styles.profileList}>
+                        {profileCards
+                          .filter((item) => item.exists)
+                          .map((item) => {
+                            const isActive = activeInfo.type === item.type;
+                            const meta = statusMeta(item.status);
+                            return (
+                              <View
+                                key={item.type}
+                                style={[
+                                  styles.profileCard,
+                                  isActive && styles.profileCardActive,
+                                  { borderColor: isActive ? colors.tint : colors.inputBorder },
+                                ]}
+                              >
+                                <View style={styles.profileCardRow}>
+                                  <Text style={styles.profileCardTitle}>{item.title}</Text>
+                                  <View style={[styles.statusPill, { backgroundColor: meta.bg, borderColor: meta.color }]}>
+                                    <Text style={[styles.statusText, { color: meta.color }]}>{meta.label}</Text>
+                                  </View>
+                                </View>
+                                <Text style={styles.profileCardSubtitle}>{item.subtitle}</Text>
+                                <TouchableOpacity
+                                  style={[
+                                    styles.profileAction,
+                                    isActive && styles.profileActionActive,
+                                    (switchingProfile || isActive) && styles.profileActionDisabled,
+                                  ]}
+                                  onPress={() => handleSelectProfile(item.type)}
+                                  disabled={switchingProfile || isActive}
+                                  activeOpacity={0.8}
+                                >
+                                  <Text
+                                    style={[
+                                      styles.profileActionText,
+                                      isActive && { color: colors.tint },
+                                      (switchingProfile || isActive) && { color: colors.secondaryText },
+                                    ]}
+                                  >
+                                    {isActive ? 'Активный' : switchingProfile ? 'Выбираем...' : 'Выбрать профиль'}
+                                  </Text>
+                                </TouchableOpacity>
+                              </View>
+                            );
+                          })}
+                      </View>
+                    ) : (
+                      <Text style={styles.profileEmptyText}>Профили ещё не созданы</Text>
+                    )}
+                  </View>
 
-                <View style={styles.field}>
-                  <Text style={styles.label}>Имя*</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={form.firstName}
-                    onChangeText={(text) => onChange('firstName', text)}
-                    placeholder="Иван"
-                    placeholderTextColor={colors.placeholder}
-                  />
-                </View>
-
-                <View style={styles.field}>
-                  <Text style={styles.label}>
-                    Отчество <Text style={{ color: colors.secondaryText }}>(необязательно)</Text>
-                  </Text>
-                  <TextInput
-                    style={styles.input}
-                    value={form.patronymic}
-                    onChangeText={(text) => onChange('patronymic', text)}
-                    placeholder="Иванович"
-                    placeholderTextColor={colors.placeholder}
-                  />
-                </View>
-
-                <View style={styles.field}>
-                  <Text style={styles.label}>Телефон*</Text>
-                  <MaskedTextInput
-                    value={form.phone}
-                    onChangeText={(masked) => onChange('phone', masked)}
-                    mask={'+7 (999) 999-99-99'}
-                    style={styles.input}
-                    keyboardType="phone-pad"
-                    placeholder="+7 (___) ___-__-__"
-                    placeholderTextColor={colors.placeholder}
-                  />
-                </View>
-
-                <View style={[styles.field]}>
-                  <Text style={styles.label}>Отдел*</Text>
-                  <TouchableOpacity
-                    style={styles.selector}
-                    onPress={() => setDepartmentModalVisible(true)}
-                    activeOpacity={0.8}
-                  >
+                  {apiMessage && (
                     <Text
                       style={[
-                        styles.selectorText,
-                        { color: form.departmentId ? colors.text : colors.placeholder },
+                        styles.message,
+                        { color: apiMessage.isError ? colors.error : colors.success },
                       ]}
                     >
-                      {form.departmentId
-                        ? dropdownItems.find((i) => i.value === form.departmentId)?.label || 'Отдел'
-                        : 'Выберите отдел'}
+                      {apiMessage.text}
                     </Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
+                  )}
 
-              <View style={styles.buttonWrap}>
-                <ShimmerButton
-                  title={submitting ? 'Сохранение...' : 'Продолжить'}
-                  onPress={handleProfileSubmit}
-                  loading={submitting}
-                  haptics
-                  gradientColors={buttonGradient}
-                />
-              </View>
+                  <View style={styles.form}>
+                    <View style={styles.field}>
+                      <Text style={styles.label}>Фамилия*</Text>
+                      <TextInput
+                        style={styles.input}
+                        value={form.lastName}
+                        onChangeText={(text) => onChange('lastName', text)}
+                        placeholder="Иванов"
+                        placeholderTextColor={colors.placeholder}
+                      />
+                    </View>
+
+                    <View style={styles.field}>
+                      <Text style={styles.label}>Имя*</Text>
+                      <TextInput
+                        style={styles.input}
+                        value={form.firstName}
+                        onChangeText={(text) => onChange('firstName', text)}
+                        placeholder="Иван"
+                        placeholderTextColor={colors.placeholder}
+                      />
+                    </View>
+
+                    <View style={styles.field}>
+                      <Text style={styles.label}>
+                        Отчество <Text style={{ color: colors.secondaryText }}>(необязательно)</Text>
+                      </Text>
+                      <TextInput
+                        style={styles.input}
+                        value={form.patronymic}
+                        onChangeText={(text) => onChange('patronymic', text)}
+                        placeholder="Иванович"
+                        placeholderTextColor={colors.placeholder}
+                      />
+                    </View>
+
+                    <View style={styles.field}>
+                      <Text style={styles.label}>Телефон*</Text>
+                      {isWeb ? (
+                        <TextInput
+                          value={form.phone ? mask(form.phone, PHONE_MASK) : ''}
+                          onChangeText={(text) =>
+                            setForm((prev) => {
+                              const next = text.replace(/\D/g, '');
+                              return prev.phone === next ? prev : { ...prev, phone: next };
+                            })
+                          }
+                          style={styles.input}
+                          keyboardType="phone-pad"
+                          placeholder="+7 (___) ___-__-__"
+                          placeholderTextColor={colors.placeholder}
+                          autoCorrect={false}
+                          autoComplete="tel"
+                          // @ts-ignore
+                          inputMode="tel"
+                        />
+                      ) : (
+                        <MaskedTextInput
+                          value={form.phone}
+                          onChangeText={(_, raw) =>
+                            setForm((prev) => {
+                              const next = raw ?? '';
+                              return prev.phone === next ? prev : { ...prev, phone: next };
+                            })
+                          }
+                          mask={PHONE_MASK}
+                          style={styles.input}
+                          keyboardType="phone-pad"
+                          placeholder="+7 (___) ___-__-__"
+                          placeholderTextColor={colors.placeholder}
+                          autoCorrect={false}
+                        />
+                      )}
+                    </View>
+
+                    <View style={[styles.field]}>
+                      <Text style={styles.label}>Отдел*</Text>
+                      <TouchableOpacity
+                        style={styles.selector}
+                        onPress={openDepartmentModal}
+                        activeOpacity={0.8}
+                      >
+                        <Text
+                          style={[
+                            styles.selectorText,
+                            { color: form.departmentId ? colors.text : colors.placeholder },
+                          ]}
+                        >
+                          {form.departmentId
+                            ? dropdownItems.find((i) => i.value === form.departmentId)?.label || 'Отдел'
+                            : 'Выберите отдел'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+
+                  <View style={styles.buttonWrap}>
+                    <ShimmerButton
+                      title={submitting ? 'Сохранение...' : 'Продолжить'}
+                      onPress={handleProfileSubmit}
+                      loading={submitting}
+                      haptics
+                      gradientColors={buttonGradient}
+                    />
+                  </View>
+                </>
+              )}
             </Animated.View>
           </ScrollView>
 
           <Modal
             visible={departmentModalVisible}
-            animationType="slide"
+            animationType="none"
             transparent
-            onRequestClose={() => setDepartmentModalVisible(false)}
+            onRequestClose={closeDepartmentModal}
           >
-            <View style={styles.modalOverlay}>
-              <View style={[styles.modalContent, { backgroundColor: colors.cardBackground }]}>
-                <Text style={styles.modalTitle}>Выберите отдел</Text>
-                <ScrollView style={{ maxHeight: 400 }}>
-                  {dropdownItems.map((item) => (
-                    <TouchableOpacity
+            <Animated.View style={[styles.modalOverlay, { opacity: modalFade }]}>
+              <Pressable style={styles.modalOverlayPress} onPress={closeDepartmentModal} />
+            </Animated.View>
+            <View style={styles.modalCenter} pointerEvents="box-none">
+              <Pressable style={[styles.modalContent, { backgroundColor: colors.cardBackground }]} onPress={() => {}}>
+                <View style={styles.modalHeader}>
+                  <Text style={styles.modalTitle}>Выберите отдел</Text>
+                  <TouchableOpacity onPress={closeDepartmentModal} style={styles.modalCloseIcon} activeOpacity={0.8}>
+                    <MaterialCommunityIcons name="close" size={20} color={colors.text} />
+                  </TouchableOpacity>
+                </View>
+                <ScrollView
+                  style={{ maxHeight: Math.min(420, Math.max(260, winH * 0.55)) }}
+                  contentContainerStyle={styles.modalList}
+                >
+                  {dropdownItems.map((item) => {
+                    const selected = form.departmentId === item.value;
+                    const hovered = hoveredDepartmentId === item.value;
+                    return (
+                    <Pressable
                       key={item.value}
-                      style={styles.modalItem}
+                      style={[
+                        styles.modalItem,
+                        selected && styles.modalItemSelected,
+                        hovered && styles.modalItemHover,
+                        selected && hovered && styles.modalItemSelectedHover
+                      ]}
                       onPress={() => handleDepartmentChange(item.value)}
+                      onHoverIn={Platform.OS === 'web' ? () => setHoveredDepartmentId(item.value) : undefined}
+                      onHoverOut={Platform.OS === 'web' ? () => setHoveredDepartmentId(null) : undefined}
                     >
-                      <Text
-                        style={[
-                          styles.modalItemText,
-                          form.departmentId === item.value && { color: colors.tint, fontWeight: '800' },
-                        ]}
-                      >
-                        {item.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
+                      <View style={styles.modalItemRow}>
+                        <Text
+                          style={[
+                            styles.modalItemText,
+                            selected && { color: colors.tint, fontWeight: '800' },
+                          ]}
+                        >
+                          {item.label}
+                        </Text>
+                        {selected && (
+                          <MaterialCommunityIcons name="check-circle" size={18} color={colors.tint} />
+                        )}
+                      </View>
+                    </Pressable>
+                  )})}
                   {!dropdownItems.length && (
-                    <Text style={[styles.modalItemText, { color: colors.secondaryText }]}>
+                    <Text style={[styles.modalEmpty, { color: colors.secondaryText }]}>
                       Нет доступных отделов
                     </Text>
                   )}
                 </ScrollView>
                 <TouchableOpacity
                   style={[styles.modalClose, { borderColor: colors.inputBorder }]}
-                  onPress={() => setDepartmentModalVisible(false)}
+                  onPress={closeDepartmentModal}
                   activeOpacity={0.8}
                 >
                   <Text style={[styles.modalCloseText, { color: colors.text }]}>Закрыть</Text>
                 </TouchableOpacity>
-              </View>
+              </Pressable>
             </View>
           </Modal>
+
+          <CustomAlert
+            visible={confirmVisible}
+            title="Выйти из аккаунта?"
+            message="Вы действительно хотите выйти из аккаунта?"
+            cancelText="Отмена"
+            confirmText="Выйти"
+            onCancel={() => setConfirmVisible(false)}
+            onConfirm={() => {
+              setConfirmVisible(false);
+              void handleLogout();
+            }}
+          />
         </KeyboardAvoidingView>
       </SafeAreaView>
     </BrandedBackground>
@@ -414,6 +682,34 @@ const getStyles = (colors: {
       alignItems: 'flex-end',
       marginBottom: 12,
     },
+    headerRowInner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    logoutPill: {
+      height: 36,
+      paddingHorizontal: 12,
+      borderRadius: 18,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      borderWidth: 1,
+      backgroundColor: `${colors.error}10`,
+      ...Platform.select({
+        ios: {
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.12,
+          shadowRadius: 8,
+        },
+        android: { elevation: 4 },
+      }),
+    },
+    logoutText: {
+      fontSize: 14,
+      fontWeight: '800',
+    },
     card: {
       width: '100%',
       maxWidth: 500,
@@ -446,6 +742,81 @@ const getStyles = (colors: {
       textAlign: 'center',
       marginBottom: 12,
       fontSize: 14,
+    },
+    profileSection: {
+      width: '100%',
+      marginBottom: 12,
+      gap: 8,
+    },
+    sectionTitle: {
+      fontSize: 16,
+      fontWeight: '800',
+      color: colors.text,
+    },
+    profileList: {
+      width: '100%',
+      gap: 10,
+    },
+    profileCard: {
+      width: '100%',
+      borderWidth: 1,
+      borderRadius: 14,
+      padding: 12,
+      backgroundColor: colors.inputBackground,
+    },
+    profileCardActive: {
+      backgroundColor: `${colors.tint}12`,
+    },
+    profileCardRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 8,
+    },
+    profileCardTitle: {
+      fontSize: 16,
+      fontWeight: '800',
+      color: colors.text,
+    },
+    profileCardSubtitle: {
+      marginTop: 4,
+      fontSize: 13,
+      color: colors.secondaryText,
+    },
+    statusPill: {
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: 999,
+      borderWidth: 1,
+    },
+    statusText: {
+      fontSize: 12,
+      fontWeight: '700',
+    },
+    profileAction: {
+      marginTop: 10,
+      paddingVertical: 10,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: colors.inputBorder,
+      alignItems: 'center',
+      backgroundColor: colors.cardBackground,
+    },
+    profileActionActive: {
+      borderColor: colors.tint,
+      backgroundColor: `${colors.tint}12`,
+    },
+    profileActionDisabled: {
+      opacity: 0.7,
+    },
+    profileActionText: {
+      fontSize: 14,
+      fontWeight: '700',
+      color: colors.text,
+    },
+    profileEmptyText: {
+      fontSize: 13,
+      color: colors.secondaryText,
     },
     form: {
       width: '100%',
@@ -484,12 +855,6 @@ const getStyles = (colors: {
       fontSize: 15,
       fontWeight: '700',
     },
-    checkRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      marginBottom: 10,
-      gap: 8,
-    },
     selector: {
       width: '100%',
       backgroundColor: colors.inputBackground,
@@ -511,11 +876,20 @@ const getStyles = (colors: {
       justifyContent: 'center',
       padding: 20,
     },
+    modalOverlayPress: {
+      ...StyleSheet.absoluteFillObject,
+    },
+    modalCenter: {
+      ...StyleSheet.absoluteFillObject,
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: 20,
+    },
     modalContent: {
       width: '100%',
       maxWidth: 420,
-      borderRadius: 16,
-      padding: 16,
+      borderRadius: 18,
+      padding: 18,
       ...Platform.select({
         ios: {
           shadowColor: '#000',
@@ -526,21 +900,64 @@ const getStyles = (colors: {
         android: { elevation: 8 },
       }),
     },
+    modalHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 10,
+    },
     modalTitle: {
       fontSize: 18,
       fontWeight: '800',
       color: colors.text,
-      marginBottom: 12,
-      textAlign: 'center',
+    },
+    modalCloseIcon: {
+      width: 34,
+      height: 34,
+      borderRadius: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: colors.inputBorder,
+      backgroundColor: colors.inputBackground,
+    },
+    modalList: {
+      paddingVertical: 4,
+      gap: 8,
     },
     modalItem: {
       paddingVertical: 12,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: colors.inputBorder,
+      paddingHorizontal: 12,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: colors.inputBorder,
+      backgroundColor: colors.inputBackground,
+    },
+    modalItemRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+    },
+    modalItemSelected: {
+      backgroundColor: `${colors.tint}12`,
+      borderColor: colors.tint,
+    },
+    modalItemHover: {
+      backgroundColor: `${colors.tint}0D`,
+      borderColor: `${colors.tint}55`,
+    },
+    modalItemSelectedHover: {
+      backgroundColor: `${colors.tint}22`,
     },
     modalItemText: {
       fontSize: 16,
       color: colors.text,
+    },
+    modalEmpty: {
+      textAlign: 'center',
+      fontSize: 14,
+      paddingVertical: 16,
     },
     modalClose: {
       marginTop: 12,
@@ -552,5 +969,42 @@ const getStyles = (colors: {
     modalCloseText: {
       fontSize: 16,
       fontWeight: '700',
+    },
+    skeletonGroup: {
+      width: '100%',
+      gap: 10,
+      marginTop: 6,
+    },
+    skeletonBlock: {
+      backgroundColor: colors.inputBorder,
+      borderRadius: 12,
+    },
+    skeletonTitle: {
+      height: 26,
+      width: '70%',
+      alignSelf: 'center',
+      marginBottom: 10,
+    },
+    skeletonSubtitle: {
+      height: 12,
+      width: '86%',
+      alignSelf: 'center',
+      marginBottom: 18,
+    },
+    skeletonLabel: {
+      height: 10,
+      width: '35%',
+      marginBottom: 6,
+    },
+    skeletonInput: {
+      height: 46,
+      width: '100%',
+      borderRadius: 14,
+    },
+    skeletonButton: {
+      height: 48,
+      width: '100%',
+      borderRadius: 16,
+      marginTop: 16,
     },
   });

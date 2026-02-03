@@ -22,6 +22,7 @@ import {
   assignUserRole,
   adminUpdatePassword,
   adminUpdateUser,
+  adminUpdateUserProfile,
   AdminUserItem,
   getDepartments,
   getProfileById,
@@ -76,6 +77,27 @@ type FormState = {
 
 const STATUS_OPTIONS: ProfileStatus[] = ['ACTIVE', 'PENDING', 'BLOCKED'];
 
+type AddressForm = {
+  street: string;
+  city: string;
+  state: string;
+  postalCode: string;
+  country: string;
+};
+
+type ProfileFormState = {
+  status: ProfileStatus;
+  phone: string;
+  departmentId?: number | null;
+  address?: AddressForm;
+};
+
+type ProfilesFormState = {
+  client: ProfileFormState | null;
+  supplier: ProfileFormState | null;
+  employee: ProfileFormState | null;
+};
+
 type UsersTabProps = {
   active: boolean;
   styles: AdminStyles;
@@ -114,6 +136,12 @@ export default function UsersTab({
     departmentId: null,
     roleId: null,
   });
+  const [profileForms, setProfileForms] = useState<ProfilesFormState>({
+    client: null,
+    supplier: null,
+    employee: null,
+  });
+  const [initialProfileForms, setInitialProfileForms] = useState<ProfilesFormState | null>(null);
   const [initialForm, setInitialForm] = useState<FormState | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -143,6 +171,43 @@ export default function UsersTab({
     []
   );
 
+  const buildAddressForm = useCallback(
+    (address?: { street?: string; city?: string; state?: string | null; postalCode?: string | null; country?: string } | null): AddressForm => ({
+      street: address?.street || '',
+      city: address?.city || '',
+      state: address?.state || '',
+      postalCode: address?.postalCode || '',
+      country: address?.country || '',
+    }),
+    []
+  );
+
+  const buildProfileForms = useCallback((profile: Profile): ProfilesFormState => {
+    return {
+      client: profile.clientProfile
+        ? {
+            status: profile.clientProfile.status || 'PENDING',
+            phone: formatPhone(profile.clientProfile.phone || ''),
+            address: buildAddressForm(profile.clientProfile.address),
+          }
+        : null,
+      supplier: profile.supplierProfile
+        ? {
+            status: profile.supplierProfile.status || 'PENDING',
+            phone: formatPhone(profile.supplierProfile.phone || ''),
+            address: buildAddressForm(profile.supplierProfile.address),
+          }
+        : null,
+      employee: profile.employeeProfile
+        ? {
+            status: profile.employeeProfile.status || 'PENDING',
+            phone: formatPhone(profile.employeeProfile.phone || ''),
+            departmentId: profile.employeeProfile.department?.id ?? null,
+          }
+        : null,
+    };
+  }, [buildAddressForm]);
+
   const syncForm = useCallback((profile: Profile) => {
     const next: FormState = {
       firstName: profile.firstName || '',
@@ -157,7 +222,10 @@ export default function UsersTab({
     setForm(next);
     setInitialForm(next);
     setNewPassword('');
-  }, []);
+    const profilesState = buildProfileForms(profile);
+    setProfileForms(profilesState);
+    setInitialProfileForms(profilesState);
+  }, [buildProfileForms]);
 
   const loadProfile = useCallback(
     async (userId?: number | null) => {
@@ -206,6 +274,9 @@ export default function UsersTab({
 
   const isDirty = useMemo(() => {
     if (!initialForm) return false;
+    const profileDirty = initialProfileForms
+      ? JSON.stringify(profileForms) !== JSON.stringify(initialProfileForms)
+      : false;
     return (
       form.firstName.trim() !== initialForm.firstName.trim() ||
       form.lastName.trim() !== initialForm.lastName.trim() ||
@@ -215,9 +286,10 @@ export default function UsersTab({
       form.status !== initialForm.status ||
       form.departmentId !== initialForm.departmentId ||
       form.roleId !== initialForm.roleId ||
-      newPassword.trim().length > 0
+      newPassword.trim().length > 0 ||
+      profileDirty
     );
-  }, [form, initialForm, newPassword]);
+  }, [form, initialForm, newPassword, profileForms, initialProfileForms]);
 
   const selectedRole = useMemo(
     () => (form.roleId ? roles.find((r) => r.id === form.roleId) || null : null),
@@ -282,6 +354,70 @@ export default function UsersTab({
       if (newPassword.trim()) {
         await adminUpdatePassword(selectedUserId, newPassword.trim());
       }
+
+      if (initialProfileForms) {
+        const updateProfile = async (
+          type: 'client' | 'supplier' | 'employee',
+          current: ProfileFormState | null,
+          initial: ProfileFormState | null
+        ) => {
+          if (!current || !initial) return;
+          const profilePayload: any = {};
+
+          if (current.status !== initial.status) profilePayload.status = current.status;
+          if (current.phone.trim() !== initial.phone.trim()) {
+            profilePayload.phone = normalizePhoneE164(current.phone);
+          }
+
+          if (type === 'employee') {
+            if (current.departmentId !== initial.departmentId) {
+              profilePayload.departmentId = current.departmentId ?? null;
+            }
+          } else {
+            const curAddress = current.address || {
+              street: '',
+              city: '',
+              state: '',
+              postalCode: '',
+              country: '',
+            };
+            const initAddress = initial.address || {
+              street: '',
+              city: '',
+              state: '',
+              postalCode: '',
+              country: '',
+            };
+            const addressChanged = JSON.stringify(curAddress) !== JSON.stringify(initAddress);
+            if (addressChanged) {
+              const hasAny = Object.values(curAddress).some((v) => String(v || '').trim().length > 0);
+              if (!hasAny) {
+                profilePayload.address = null;
+              } else {
+                if (!curAddress.street.trim() || !curAddress.city.trim() || !curAddress.country.trim()) {
+                  throw new Error('Для адреса обязательны улица, город и страна');
+                }
+                profilePayload.address = {
+                  street: curAddress.street.trim(),
+                  city: curAddress.city.trim(),
+                  state: curAddress.state.trim() || null,
+                  postalCode: curAddress.postalCode.trim() || null,
+                  country: curAddress.country.trim(),
+                };
+              }
+            }
+          }
+
+          if (Object.keys(profilePayload).length) {
+            await adminUpdateUserProfile(selectedUserId, type, profilePayload);
+          }
+        };
+
+        await updateProfile('employee', profileForms.employee, initialProfileForms.employee);
+        await updateProfile('client', profileForms.client, initialProfileForms.client);
+        await updateProfile('supplier', profileForms.supplier, initialProfileForms.supplier);
+      }
+
       await loadProfile(selectedUserId);
       setUsers((prev) =>
         prev.map((u) =>
@@ -489,6 +625,321 @@ export default function UsersTab({
                       placeholder="Оставьте пустым чтобы не менять"
                       secureTextEntry
                     />
+
+                    <View style={{ gap: 8 }}>
+                      <Text style={styles.sectionTitle}>Профиль сотрудника</Text>
+                      {profileForms.employee ? (
+                        <>
+                          <SelectorCard
+                            styles={styles}
+                            icon="shield-checkmark-outline"
+                            label="Статус профиля"
+                            options={STATUS_OPTIONS.map((s) => ({ value: s, label: s }))}
+                            selected={profileForms.employee.status}
+                            onSelect={(v) =>
+                              setProfileForms((prev) => ({
+                                ...prev,
+                                employee: prev.employee ? { ...prev.employee, status: v as ProfileStatus } : prev.employee,
+                              }))
+                            }
+                          />
+                          <EditableCard
+                            styles={styles}
+                            icon="call-outline"
+                            label="Телефон (сотрудник)"
+                            value={profileForms.employee.phone}
+                            mask="+7 (999) 999-99-99"
+                            onMaskedChange={(masked) =>
+                              setProfileForms((prev) => ({
+                                ...prev,
+                                employee: prev.employee ? { ...prev.employee, phone: formatPhone(masked || '') } : prev.employee,
+                              }))
+                            }
+                            onChangeText={(text) =>
+                              setProfileForms((prev) => ({
+                                ...prev,
+                                employee: prev.employee ? { ...prev.employee, phone: formatPhone(text) } : prev.employee,
+                              }))
+                            }
+                            placeholder="+7 ..."
+                            keyboardType="phone-pad"
+                          />
+                        </>
+                      ) : (
+                        <StaticCard styles={styles} icon="alert-circle-outline" label="Профиль сотрудника" value="Не создан" />
+                      )}
+                    </View>
+
+                    <View style={{ gap: 8 }}>
+                      <Text style={styles.sectionTitle}>Профиль клиента</Text>
+                      {profileForms.client ? (
+                        <>
+                          <SelectorCard
+                            styles={styles}
+                            icon="shield-checkmark-outline"
+                            label="Статус профиля"
+                            options={STATUS_OPTIONS.map((s) => ({ value: s, label: s }))}
+                            selected={profileForms.client.status}
+                            onSelect={(v) =>
+                              setProfileForms((prev) => ({
+                                ...prev,
+                                client: prev.client ? { ...prev.client, status: v as ProfileStatus } : prev.client,
+                              }))
+                            }
+                          />
+                          <EditableCard
+                            styles={styles}
+                            icon="call-outline"
+                            label="Телефон (клиент)"
+                            value={profileForms.client.phone}
+                            mask="+7 (999) 999-99-99"
+                            onMaskedChange={(masked) =>
+                              setProfileForms((prev) => ({
+                                ...prev,
+                                client: prev.client ? { ...prev.client, phone: formatPhone(masked || '') } : prev.client,
+                              }))
+                            }
+                            onChangeText={(text) =>
+                              setProfileForms((prev) => ({
+                                ...prev,
+                                client: prev.client ? { ...prev.client, phone: formatPhone(text) } : prev.client,
+                              }))
+                            }
+                            placeholder="+7 ..."
+                            keyboardType="phone-pad"
+                          />
+                          <EditableCard
+                            styles={styles}
+                            icon="location-outline"
+                            label="Улица"
+                            value={profileForms.client.address?.street || ''}
+                            onChangeText={(text) =>
+                              setProfileForms((prev) => ({
+                                ...prev,
+                                client: prev.client
+                                  ? {
+                                      ...prev.client,
+                                      address: { ...(prev.client.address || buildAddressForm(null)), street: text },
+                                    }
+                                  : prev.client,
+                              }))
+                            }
+                            placeholder="Улица"
+                          />
+                          <EditableCard
+                            styles={styles}
+                            icon="business-outline"
+                            label="Город"
+                            value={profileForms.client.address?.city || ''}
+                            onChangeText={(text) =>
+                              setProfileForms((prev) => ({
+                                ...prev,
+                                client: prev.client
+                                  ? {
+                                      ...prev.client,
+                                      address: { ...(prev.client.address || buildAddressForm(null)), city: text },
+                                    }
+                                  : prev.client,
+                              }))
+                            }
+                            placeholder="Город"
+                          />
+                          <EditableCard
+                            styles={styles}
+                            icon="map-outline"
+                            label="Регион"
+                            value={profileForms.client.address?.state || ''}
+                            onChangeText={(text) =>
+                              setProfileForms((prev) => ({
+                                ...prev,
+                                client: prev.client
+                                  ? {
+                                      ...prev.client,
+                                      address: { ...(prev.client.address || buildAddressForm(null)), state: text },
+                                    }
+                                  : prev.client,
+                              }))
+                            }
+                            placeholder="Регион"
+                          />
+                          <EditableCard
+                            styles={styles}
+                            icon="mail-outline"
+                            label="Индекс"
+                            value={profileForms.client.address?.postalCode || ''}
+                            onChangeText={(text) =>
+                              setProfileForms((prev) => ({
+                                ...prev,
+                                client: prev.client
+                                  ? {
+                                      ...prev.client,
+                                      address: { ...(prev.client.address || buildAddressForm(null)), postalCode: text },
+                                    }
+                                  : prev.client,
+                              }))
+                            }
+                            placeholder="Почтовый индекс"
+                            keyboardType="numeric"
+                          />
+                          <EditableCard
+                            styles={styles}
+                            icon="flag-outline"
+                            label="Страна"
+                            value={profileForms.client.address?.country || ''}
+                            onChangeText={(text) =>
+                              setProfileForms((prev) => ({
+                                ...prev,
+                                client: prev.client
+                                  ? {
+                                      ...prev.client,
+                                      address: { ...(prev.client.address || buildAddressForm(null)), country: text },
+                                    }
+                                  : prev.client,
+                              }))
+                            }
+                            placeholder="Страна"
+                          />
+                        </>
+                      ) : (
+                        <StaticCard styles={styles} icon="alert-circle-outline" label="Профиль клиента" value="Не создан" />
+                      )}
+                    </View>
+
+                    <View style={{ gap: 8 }}>
+                      <Text style={styles.sectionTitle}>Профиль поставщика</Text>
+                      {profileForms.supplier ? (
+                        <>
+                          <SelectorCard
+                            styles={styles}
+                            icon="shield-checkmark-outline"
+                            label="Статус профиля"
+                            options={STATUS_OPTIONS.map((s) => ({ value: s, label: s }))}
+                            selected={profileForms.supplier.status}
+                            onSelect={(v) =>
+                              setProfileForms((prev) => ({
+                                ...prev,
+                                supplier: prev.supplier ? { ...prev.supplier, status: v as ProfileStatus } : prev.supplier,
+                              }))
+                            }
+                          />
+                          <EditableCard
+                            styles={styles}
+                            icon="call-outline"
+                            label="Телефон (поставщик)"
+                            value={profileForms.supplier.phone}
+                            mask="+7 (999) 999-99-99"
+                            onMaskedChange={(masked) =>
+                              setProfileForms((prev) => ({
+                                ...prev,
+                                supplier: prev.supplier ? { ...prev.supplier, phone: formatPhone(masked || '') } : prev.supplier,
+                              }))
+                            }
+                            onChangeText={(text) =>
+                              setProfileForms((prev) => ({
+                                ...prev,
+                                supplier: prev.supplier ? { ...prev.supplier, phone: formatPhone(text) } : prev.supplier,
+                              }))
+                            }
+                            placeholder="+7 ..."
+                            keyboardType="phone-pad"
+                          />
+                          <EditableCard
+                            styles={styles}
+                            icon="location-outline"
+                            label="Улица"
+                            value={profileForms.supplier.address?.street || ''}
+                            onChangeText={(text) =>
+                              setProfileForms((prev) => ({
+                                ...prev,
+                                supplier: prev.supplier
+                                  ? {
+                                      ...prev.supplier,
+                                      address: { ...(prev.supplier.address || buildAddressForm(null)), street: text },
+                                    }
+                                  : prev.supplier,
+                              }))
+                            }
+                            placeholder="Улица"
+                          />
+                          <EditableCard
+                            styles={styles}
+                            icon="business-outline"
+                            label="Город"
+                            value={profileForms.supplier.address?.city || ''}
+                            onChangeText={(text) =>
+                              setProfileForms((prev) => ({
+                                ...prev,
+                                supplier: prev.supplier
+                                  ? {
+                                      ...prev.supplier,
+                                      address: { ...(prev.supplier.address || buildAddressForm(null)), city: text },
+                                    }
+                                  : prev.supplier,
+                              }))
+                            }
+                            placeholder="Город"
+                          />
+                          <EditableCard
+                            styles={styles}
+                            icon="map-outline"
+                            label="Регион"
+                            value={profileForms.supplier.address?.state || ''}
+                            onChangeText={(text) =>
+                              setProfileForms((prev) => ({
+                                ...prev,
+                                supplier: prev.supplier
+                                  ? {
+                                      ...prev.supplier,
+                                      address: { ...(prev.supplier.address || buildAddressForm(null)), state: text },
+                                    }
+                                  : prev.supplier,
+                              }))
+                            }
+                            placeholder="Регион"
+                          />
+                          <EditableCard
+                            styles={styles}
+                            icon="mail-outline"
+                            label="Индекс"
+                            value={profileForms.supplier.address?.postalCode || ''}
+                            onChangeText={(text) =>
+                              setProfileForms((prev) => ({
+                                ...prev,
+                                supplier: prev.supplier
+                                  ? {
+                                      ...prev.supplier,
+                                      address: { ...(prev.supplier.address || buildAddressForm(null)), postalCode: text },
+                                    }
+                                  : prev.supplier,
+                              }))
+                            }
+                            placeholder="Почтовый индекс"
+                            keyboardType="numeric"
+                          />
+                          <EditableCard
+                            styles={styles}
+                            icon="flag-outline"
+                            label="Страна"
+                            value={profileForms.supplier.address?.country || ''}
+                            onChangeText={(text) =>
+                              setProfileForms((prev) => ({
+                                ...prev,
+                                supplier: prev.supplier
+                                  ? {
+                                      ...prev.supplier,
+                                      address: { ...(prev.supplier.address || buildAddressForm(null)), country: text },
+                                    }
+                                  : prev.supplier,
+                              }))
+                            }
+                            placeholder="Страна"
+                          />
+                        </>
+                      ) : (
+                        <StaticCard styles={styles} icon="alert-circle-outline" label="Профиль поставщика" value="Не создан" />
+                      )}
+                    </View>
+
                     <StaticCard
                       styles={styles}
                       icon="barcode-outline"
