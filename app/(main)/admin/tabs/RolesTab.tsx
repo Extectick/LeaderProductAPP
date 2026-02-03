@@ -23,7 +23,7 @@ import {
   updateRolePermissions,
 } from '@/utils/userService';
 
-import { AdminStyles } from '../adminStyles';
+import { AdminStyles } from '@/components/admin/adminStyles';
 
 type RolesTabProps = {
   active: boolean;

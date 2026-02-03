@@ -32,8 +32,8 @@ import {
 } from '@/utils/userService';
 import { Profile, ProfileStatus } from '@/types/userTypes';
 
-import { AdminStyles } from '../adminStyles';
-import { EditableCard, SelectableChip, SelectorCard, StaticCard } from '../components/AdminCards';
+import { AdminStyles } from '@/components/admin/adminStyles';
+import { EditableCard, SelectableChip, SelectorCard, StaticCard } from '@/components/admin/AdminCards';
 
 const formatPhone = (input: string) => {
   const digits = input.replace(/\D/g, '').slice(0, 11);

@@ -1,6 +1,6 @@
 import { Text, Image, StyleSheet, View, Pressable, Modal, TouchableWithoutFeedback, Linking, Platform } from 'react-native';
 import { useState, useEffect } from 'react';
-import { Audio } from 'expo-av';
+import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { Ionicons } from '@expo/vector-icons';
 import { AppealMessage } from '@/types/appealsTypes';
 import { MotiView } from 'moti';
@@ -19,51 +19,38 @@ export default function MessageBubble({ message, own }: { message: AppealMessage
   const timeStr = `${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
   const dateStr = `${pad(dt.getDate())}.${pad(dt.getMonth() + 1)}.${String(dt.getFullYear()).slice(-2)}`;
 
-  const [sound, setSound] = useState<Audio.Sound | null>(null);
-  const [playing, setPlaying] = useState(false);
   const [currentUri, setCurrentUri] = useState<string | null>(null);
   const [previewUri, setPreviewUri] = useState<string | null>(null);
-  const [audioProgress, setAudioProgress] = useState<{ pos: number; dur: number }>({ pos: 0, dur: 0 });
   const [downloading, setDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
+  const player = useAudioPlayer(null, { updateInterval: 250 });
+  const status = useAudioPlayerStatus(player);
 
   useEffect(() => {
-    return () => {
-      sound?.unloadAsync();
-    };
-  }, [sound]);
+    if (!currentUri) return;
+    if (!status.didJustFinish) return;
+    setCurrentUri(null);
+    player.pause();
+    void player.seekTo(0);
+  }, [currentUri, player, status.didJustFinish]);
 
-  async function playAudio(uri: string) {
+  function playAudio(uri: string) {
     try {
-      if (sound) {
-        await sound.stopAsync();
-        await sound.unloadAsync();
-        setSound(null);
-        if (currentUri === uri) {
+      if (currentUri === uri) {
+        if (status.playing) {
+          player.pause();
+          void player.seekTo(0);
           setCurrentUri(null);
-          setPlaying(false);
-          return;
+        } else {
+          player.play();
+          setCurrentUri(uri);
         }
+        return;
       }
-      const { sound: s } = await Audio.Sound.createAsync(
-        { uri },
-        { shouldPlay: true },
-        (status) => {
-          if (!status.isLoaded) return;
-          setAudioProgress({ pos: status.positionMillis || 0, dur: status.durationMillis || 0 });
-          if (status.didJustFinish) {
-            setPlaying(false);
-            setCurrentUri(null);
-            s.unloadAsync();
-            setSound(null);
-            setAudioProgress({ pos: 0, dur: status.durationMillis || 0 });
-          }
-        }
-      );
-      setSound(s);
+      player.pause();
+      player.replace({ uri });
+      player.play();
       setCurrentUri(uri);
-      setPlaying(true);
-      await s.playAsync();
     } catch (e) {
       console.error(e);
     }
@@ -87,12 +74,12 @@ export default function MessageBubble({ message, own }: { message: AppealMessage
           const pct = progress.totalBytesExpectedToWrite
             ? progress.totalBytesWritten / progress.totalBytesExpectedToWrite
             : 0;
-            setDownloadProgress(Math.round(pct * 100));
-          }
-        );
-        await dl.downloadAsync();
-        setDownloadProgress(100);
-        await Linking.openURL(dest).catch(() => {});
+          setDownloadProgress(Math.round(pct * 100));
+        }
+      );
+      await dl.downloadAsync();
+      setDownloadProgress(100);
+      await Linking.openURL(dest).catch(() => {});
     } catch (e) {
       console.warn('download failed', e);
     } finally {
@@ -121,23 +108,24 @@ export default function MessageBubble({ message, own }: { message: AppealMessage
             );
           }
           if (a.fileType === 'AUDIO' && a.fileUrl) {
+            const isCurrent = currentUri === a.fileUrl;
+            const isPlaying = isCurrent && status.playing;
+            const showProgress = isCurrent && status.duration > 0;
+            const progressPct = showProgress
+              ? Math.min(100, (status.currentTime / status.duration) * 100)
+              : 0;
             return (
               <Pressable
                 key={`${a.fileUrl}-${idx}`}
                 style={styles.audio}
                 onPress={() => a.fileUrl && playAudio(a.fileUrl)}
               >
-                <Ionicons name={playing && currentUri === a.fileUrl ? 'pause' : 'play'} size={16} color="#2563EB" />
+                <Ionicons name={isPlaying ? 'pause' : 'play'} size={16} color="#2563EB" />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.audioText}>{a.fileName || 'Voice message'}</Text>
-          {currentUri === a.fileUrl && audioProgress.dur > 0 ? (
-            <View style={styles.progressBar}>
-              <View
-                style={[
-                  styles.progressFill,
-                  { width: `${Math.min(100, (audioProgress.pos / audioProgress.dur) * 100)}%` },
-                        ]}
-                      />
+                  {showProgress ? (
+                    <View style={styles.progressBar}>
+                      <View style={[styles.progressFill, { width: `${progressPct}%` }]} />
                     </View>
                   ) : null}
                 </View>

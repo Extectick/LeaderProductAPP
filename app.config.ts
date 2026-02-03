@@ -9,7 +9,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   name: "Лидер Продукт",
   slug: "leader-product",
   owner: "extectick",
-  version: "1.0.3",
+  version: "0.1.0",
   orientation: "portrait",
   userInterfaceStyle: "automatic",
   newArchEnabled: true,
@@ -58,6 +58,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
 
   plugins: [
     "expo-router",
+    "expo-audio",
     [
       "expo-splash-screen",
       {

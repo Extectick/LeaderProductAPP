@@ -26,7 +26,7 @@ import {
   uploadUpdateWithProgress,
 } from '@/utils/updateAdminService';
 
-import { AdminStyles } from '../adminStyles';
+import { AdminStyles } from '@/components/admin/adminStyles';
 
 type UpdatesTabProps = {
   active: boolean;
@@ -391,6 +391,21 @@ export default function UpdatesTab({ active, styles, colors, isWide }: UpdatesTa
 
   const handleDeleteUpdate = useCallback(
     async (item: UpdateItem) => {
+      if (Platform.OS === 'web') {
+        const confirmDelete =
+          typeof window !== 'undefined'
+            ? window.confirm('Удалить обновление?')
+            : true;
+        if (!confirmDelete) return;
+        try {
+          await deleteUpdate(item.id, true);
+          await loadUpdates();
+          notify('success', `Обновление #${item.id} удалено`);
+        } catch (e: any) {
+          notify('error', e?.message || 'Не удалось удалить');
+        }
+        return;
+      }
       Alert.alert('Удалить обновление?', 'Запись будет удалена', [
         { text: 'Отмена', style: 'cancel' },
         {

@@ -6,7 +6,7 @@ import { useTheme } from '@/context/ThemeContext';
 import { gradientColors, ThemeKey } from '@/constants/Colors';
 import { useIsAdmin } from '@/hooks/useIsAdmin';
 
-import { createAdminStyles } from './adminStyles';
+import { createAdminStyles } from '@/components/admin/adminStyles';
 import UsersTab from './tabs/UsersTab';
 import DepartmentsTab from './tabs/DepartmentsTab';
 import RolesTab from './tabs/RolesTab';

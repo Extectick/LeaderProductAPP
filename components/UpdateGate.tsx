@@ -45,6 +45,7 @@ export default function UpdateGate({ children }: Props) {
   const [updateInfo, setUpdateInfo] = useState<UpdateCheckResult | null>(null);
   const [mandatoryVisible, setMandatoryVisible] = useState(false);
   const [optionalVisible, setOptionalVisible] = useState(false);
+  const [checkingVisible, setCheckingVisible] = useState(false);
   const [busy, setBusy] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
@@ -76,6 +77,9 @@ export default function UpdateGate({ children }: Props) {
       if (!shouldCheck || checkingRef.current) return;
       if (!versionCode) return;
 
+      if (source === 'startup') {
+        setCheckingVisible(true);
+      }
       checkingRef.current = true;
       try {
         const deviceId = await getInstallId();
@@ -136,6 +140,7 @@ export default function UpdateGate({ children }: Props) {
         console.warn('[update] check failed', source, e);
       } finally {
         checkingRef.current = false;
+        setCheckingVisible(false);
       }
     },
     [getDismissKey, getEtagKey, shouldCheck, versionCode, versionName]
@@ -357,6 +362,7 @@ export default function UpdateGate({ children }: Props) {
   }, [getDismissKey, mandatoryVisible, updateInfo, versionCode, versionName]);
 
   const modalVisible = mandatoryVisible || optionalVisible;
+  const showChecking = checkingVisible && !modalVisible;
   const isMandatory = mandatoryVisible;
   const showProgress = stage !== 'idle';
 
@@ -452,6 +458,21 @@ export default function UpdateGate({ children }: Props) {
             {!updateInfo?.downloadUrl && !updateInfo?.storeUrl ? (
               <Text style={styles.hint}>Ссылка на обновление недоступна. Обратитесь к администратору.</Text>
             ) : null}
+          </View>
+        </View>
+      </Modal>
+      <Modal
+        visible={showChecking}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          setCheckingVisible(false);
+        }}
+      >
+        <View style={styles.overlay}>
+          <View style={styles.checkingCard}>
+            <ActivityIndicator size="large" color="#0ea5e9" />
+            <Text style={styles.checkingText}>Проверка наличия обновлений</Text>
           </View>
         </View>
       </Modal>
@@ -582,5 +603,26 @@ const styles = StyleSheet.create({
     marginTop: 12,
     fontSize: 12,
     color: '#94a3b8',
+  },
+  checkingCard: {
+    width: '100%',
+    maxWidth: 320,
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    paddingVertical: 20,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    gap: 12,
+    shadowColor: '#000',
+    shadowOpacity: 0.16,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 5,
+  },
+  checkingText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0f172a',
+    textAlign: 'center',
   },
 });

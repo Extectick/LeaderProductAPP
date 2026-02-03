@@ -1,4 +1,5 @@
 import axios from 'axios';
+import * as FileSystem from 'expo-file-system';
 import { Platform } from 'react-native';
 
 import { apiClient } from './apiClient';
@@ -24,6 +25,29 @@ export type UpdateItem = {
   checksum?: string | null;
   checksumMd5?: string | null;
   createdAt: string;
+};
+
+export type UpdateUploadUrlRequest = {
+  fileName: string;
+  contentType?: string;
+  fileSize?: number;
+};
+
+export type UpdateUploadUrlResponse = {
+  key: string;
+  url: string;
+  bucket: string;
+  expiresIn: number;
+  fileName?: string;
+  contentType?: string;
+};
+
+export type UpdateUploadFile = {
+  uri?: string;
+  name: string;
+  size?: number;
+  mimeType?: string;
+  file?: File;
 };
 
 export type UpdatesListResult = {
@@ -86,6 +110,70 @@ export async function uploadUpdate(form: FormData) {
   });
   if (!resp.ok) throw new Error(resp.message || 'Не удалось загрузить обновление');
   return resp.data!;
+}
+
+export async function requestUpdateUploadUrl(payload: UpdateUploadUrlRequest) {
+  const resp = await apiClient<UpdateUploadUrlRequest, UpdateUploadUrlResponse>('/updates/upload-url', {
+    method: 'POST',
+    body: payload,
+  });
+  if (!resp.ok) throw new Error(resp.message || 'Не удалось получить ссылку для загрузки');
+  return resp.data!;
+}
+
+export async function uploadToPresignedUrl(
+  url: string,
+  file: UpdateUploadFile,
+  onProgress?: (percent: number) => void
+) {
+  const contentType = file.mimeType || 'application/vnd.android.package-archive';
+
+  if (Platform.OS === 'web') {
+    let body: Blob | File;
+    if (file.file) {
+      body = file.file;
+    } else if (file.uri) {
+      const res = await fetch(file.uri);
+      body = await res.blob();
+    } else {
+      throw new Error('Файл не найден');
+    }
+
+    await axios.put(url, body, {
+      headers: { 'Content-Type': contentType },
+      onUploadProgress: (evt) => {
+        if (!evt.total) return;
+        const percent = Math.min(100, Math.round((evt.loaded / evt.total) * 100));
+        if (onProgress) onProgress(percent);
+      },
+    });
+    return;
+  }
+
+  if (!file.uri) {
+    throw new Error('Файл не найден');
+  }
+
+  const task = FileSystem.createUploadTask(
+    url,
+    file.uri,
+    {
+      httpMethod: 'PUT',
+      uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+      headers: { 'Content-Type': contentType },
+    },
+    (progress) => {
+      const total = progress.totalBytesExpectedToSend || 0;
+      if (!total) return;
+      const percent = Math.min(100, Math.round((progress.totalBytesSent / total) * 100));
+      if (onProgress) onProgress(percent);
+    }
+  );
+
+  const result = await task.uploadAsync();
+  if (result.status < 200 || result.status >= 300) {
+    throw new Error(`Upload failed (${result.status})`);
+  }
 }
 
 export async function uploadUpdateWithProgress(

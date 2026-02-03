@@ -1,4 +1,5 @@
 // app/_layout.tsx
+import '@/utils/logbox';
 import { Slot } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import React, { useCallback, useEffect, useState } from 'react';

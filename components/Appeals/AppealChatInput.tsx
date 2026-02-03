@@ -10,7 +10,12 @@ import {
   LayoutChangeEvent,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Audio } from 'expo-av';
+import {
+  RecordingPresets,
+  requestRecordingPermissionsAsync,
+  setAudioModeAsync,
+  useAudioRecorder,
+} from 'expo-audio';
 import { MotiView, AnimatePresence } from 'moti';
 import AttachmentsPicker, { AttachmentFile } from '@/components/ui/AttachmentsPicker';
 
@@ -26,7 +31,6 @@ export default function AppealChatInput({
   const [text, setText] = useState('');
   const [files, setFiles] = useState<AttachmentFile[]>([]);
   const [sending, setSending] = useState(false);
-  const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [recordedUri, setRecordedUri] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
@@ -34,7 +38,7 @@ export default function AppealChatInput({
   const emojis = ['😀', '😂', '😍', '😎', '👍', '🙏'];
 
   const sendScale = useRef(new Animated.Value(1)).current;
-  const recordingRef = useRef<Audio.Recording | null>(null);
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
   useEffect(() => {
     let timer: ReturnType<typeof setInterval>;
@@ -48,13 +52,12 @@ export default function AppealChatInput({
 
   useEffect(() => {
     return () => {
-      const rec = recordingRef.current;
-      if (rec) {
-        rec.stopAndUnloadAsync().catch(() => {});
-        Audio.setAudioModeAsync({ allowsRecordingIOS: false, playThroughEarpieceAndroid: false }).catch(() => {});
+      if (recorder.isRecording) {
+        recorder.stop().catch(() => {});
       }
+      setAudioModeAsync({ allowsRecording: false }).catch(() => {});
     };
-  }, []);
+  }, [recorder]);
 
   function animateIn(val: Animated.Value) {
     Animated.spring(val, { toValue: 0.9, useNativeDriver: true }).start();
@@ -74,14 +77,11 @@ export default function AppealChatInput({
 
   async function startRecording() {
     try {
-      const perm = await Audio.requestPermissionsAsync();
+      const perm = await requestRecordingPermissionsAsync();
       if (!perm.granted) return;
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-      const rec = new Audio.Recording();
-      await rec.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
-      await rec.startAsync();
-      setRecording(rec);
-      recordingRef.current = rec;
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      await recorder.prepareToRecordAsync();
+      recorder.record();
       setIsRecording(true);
       setRecordingTime(0);
     } catch (e) {
@@ -91,26 +91,23 @@ export default function AppealChatInput({
 
   async function stopRecording() {
     try {
-      const rec = recording;
-      if (!rec) return;
-      await rec.stopAndUnloadAsync();
-      const uri = rec.getURI();
-      setRecordedUri(uri || null);
+      if (!recorder.isRecording) return;
+      await recorder.stop();
+      setRecordedUri(recorder.uri || null);
     } catch (e) {
       console.error(e);
     } finally {
       setIsRecording(false);
-      setRecording(null);
-      recordingRef.current = null;
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playThroughEarpieceAndroid: false });
+      try {
+        await setAudioModeAsync({ allowsRecording: false });
+      } catch {}
     }
   }
 
   function cancelVoice() {
     setRecordedUri(null);
     setRecordingTime(0);
-    recordingRef.current = null;
-    void Audio.setAudioModeAsync({ allowsRecordingIOS: false, playThroughEarpieceAndroid: false });
+    void setAudioModeAsync({ allowsRecording: false });
   }
 
   function handleEmojiSelect(e: string) {

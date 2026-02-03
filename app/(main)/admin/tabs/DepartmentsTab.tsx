@@ -24,7 +24,7 @@ import {
   updateDepartment,
 } from '@/utils/userService';
 
-import { AdminStyles } from '../adminStyles';
+import { AdminStyles } from '@/components/admin/adminStyles';
 
 type DepartmentsTabProps = {
   active: boolean;

@@ -186,7 +186,12 @@ function ProfileEditor({
   }, [editing, profile]);
 
   useEffect(() => {
-    if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+    const isTurboModuleEnabled = Boolean((globalThis as any).__turboModuleProxy);
+    if (
+      Platform.OS === 'android' &&
+      !isTurboModuleEnabled &&
+      UIManager.setLayoutAnimationEnabledExperimental
+    ) {
       UIManager.setLayoutAnimationEnabledExperimental(true);
     }
   }, []);

@@ -3,7 +3,7 @@ import { Pressable, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { MaskedTextInput } from 'react-native-mask-text';
 
-import { AdminStyles } from '../adminStyles';
+import { AdminStyles } from './adminStyles';
 
 export type Tone = 'green' | 'violet' | 'gray' | 'red' | 'blue';
 
