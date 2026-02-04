@@ -173,8 +173,11 @@ async function processQueue(logPrefix: string) {
   queue = queue.slice(batch.length);
   await persistQueue();
 
-  if (result.data?.routeId) {
-    activeRouteId = result.data.routeId;
+  const nextRouteId =
+    (result.data as any)?.data?.routeId ??
+    (result.data as any)?.routeId;
+  if (nextRouteId) {
+    activeRouteId = nextRouteId;
     await persistRouteId();
   }
 

@@ -20,9 +20,17 @@ export type SaveTrackingPointsRequest = {
 };
 
 export type SaveTrackingPointsResponse = {
-  routeId: number;
-  createdPoints: number;
-  routeStatus: 'ACTIVE' | 'COMPLETED' | 'CANCELLED';
+  ok: boolean;
+  message?: string;
+  data?: {
+    routeId: number;
+    createdPoints: number;
+    routeStatus: 'ACTIVE' | 'COMPLETED' | 'CANCELLED';
+  };
+  error?: {
+    code?: string;
+    details?: any;
+  };
 };
 
 export async function sendTrackingPoints(

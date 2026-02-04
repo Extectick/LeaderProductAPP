@@ -1,8 +1,8 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+﻿import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
-import { AppState } from 'react-native';
+import { AppState, Platform } from 'react-native';
 
 import { TrackingPointInput } from '@/utils/trackingApi';
 import {
@@ -30,14 +30,42 @@ const TrackingContext = createContext<TrackingContextValue | undefined>(undefine
 const locationOptions: Location.LocationTaskOptions = {
   accuracy: Location.Accuracy.High,
   timeInterval: 15000,
-  distanceInterval: 0, // форсим таймер даже без движения
+  distanceInterval: 0, // С„РѕСЂСЃРёРј С‚Р°Р№РјРµСЂ РґР°Р¶Рµ Р±РµР· РґРІРёР¶РµРЅРёСЏ
   showsBackgroundLocationIndicator: false,
   pausesUpdatesAutomatically: false,
   foregroundService: {
-    notificationTitle: 'Отслеживание маршрута',
-    notificationBody: 'Приложение собирает геоданные в фоне.',
+    notificationTitle: 'РћС‚СЃР»РµР¶РёРІР°РЅРёРµ РјР°СЂС€СЂСѓС‚Р°',
+    notificationBody: 'РџСЂРёР»РѕР¶РµРЅРёРµ СЃРѕР±РёСЂР°РµС‚ РіРµРѕРґР°РЅРЅС‹Рµ РІ С„РѕРЅРµ.',
   },
 };
+
+const foregroundLocationOptions: Location.LocationOptions = {
+  accuracy: Location.Accuracy.High,
+  timeInterval: 15000,
+  distanceInterval: 0,
+};
+
+function mapLocationToPoint(loc: Location.LocationObject): TrackingPointInput {
+  return {
+    latitude: loc.coords.latitude,
+    longitude: loc.coords.longitude,
+    recordedAt: new Date(loc.timestamp).toISOString(),
+    accuracy: loc.coords.accuracy ?? undefined,
+    speed: loc.coords.speed ?? undefined,
+    heading: loc.coords.heading ?? undefined,
+    eventType: 'MOVE',
+  };
+}
+
+async function enqueueLocations(locations: Location.LocationObject[], logPrefix: string) {
+  if (!locations || locations.length === 0) return;
+  const points: TrackingPointInput[] = locations.map(mapLocationToPoint);
+  try {
+    await enqueueTrackingPoints(points, logPrefix);
+  } catch (e) {
+    console.warn(`${logPrefix} enqueue/send failed`, e);
+  }
+}
 
 TaskManager.defineTask(BACKGROUND_TASK_NAME, async ({ data, error }) => {
   if (error) {
@@ -47,29 +75,39 @@ TaskManager.defineTask(BACKGROUND_TASK_NAME, async ({ data, error }) => {
 
   const { locations } = data as Location.LocationTaskOptions & { locations: Location.LocationObject[] };
   if (!locations || locations.length === 0) return;
-
-  const points: TrackingPointInput[] = locations.map((loc) => ({
-    latitude: loc.coords.latitude,
-    longitude: loc.coords.longitude,
-    recordedAt: new Date(loc.timestamp).toISOString(),
-    accuracy: loc.coords.accuracy ?? undefined,
-    speed: loc.coords.speed ?? undefined,
-    heading: loc.coords.heading ?? undefined,
-    eventType: 'MOVE',
-  }));
-
-  try {
-    // Добавляем точки в очередь и ждём завершения отправки, чтобы не зависать без логов
-    await enqueueTrackingPoints(points, '[tracking-bg]');
-  } catch (e) {
-    console.warn('[tracking-bg] enqueue/send failed', e);
-  }
+  await enqueueLocations(locations, '[tracking-bg]');
 });
 
 export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [trackingEnabled, setTrackingEnabled] = useState(false);
   const [routeId, setRouteId] = useState<number | undefined>(undefined);
   const keepAliveTimer = useRef<NodeJS.Timeout | null>(null);
+  const foregroundSubscription = useRef<Location.LocationSubscription | null>(null);
+
+  const stopForegroundWatch = useCallback(() => {
+    if (foregroundSubscription.current) {
+      foregroundSubscription.current.remove();
+      foregroundSubscription.current = null;
+    }
+  }, []);
+
+  const startForegroundWatch = useCallback(
+    async (logPrefix: string) => {
+      if (Platform.OS === 'web') return;
+      if (foregroundSubscription.current) return;
+      try {
+        foregroundSubscription.current = await Location.watchPositionAsync(
+          foregroundLocationOptions,
+          (loc) => {
+            void enqueueLocations([loc], logPrefix);
+          }
+        );
+      } catch (e) {
+        console.warn(`${logPrefix} foreground watch failed`, e);
+      }
+    },
+    []
+  );
 
   const syncRouteId = useCallback(async () => {
     const stored = await getTrackingRouteId();
@@ -84,10 +122,37 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     [syncRouteId]
   );
 
+  const ensureBackgroundPermission = useCallback(async () => {
+    if (Platform.OS !== 'android') return true;
+    const { status } = await Location.getBackgroundPermissionsAsync();
+    return status === Location.PermissionStatus.GRANTED;
+  }, []);
+
+  const hardDisableTracking = useCallback(
+    async (logPrefix: string) => {
+      const hasStarted = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_TASK_NAME);
+      if (hasStarted) {
+        await Location.stopLocationUpdatesAsync(BACKGROUND_TASK_NAME);
+      }
+      stopForegroundWatch();
+      setTrackingEnabled(false);
+      await AsyncStorage.removeItem(STORAGE_KEYS.enabled);
+      await flushAndSync(logPrefix);
+      await clearRouteIdIfIdle(logPrefix);
+      await syncRouteId();
+    },
+    [flushAndSync, stopForegroundWatch, syncRouteId]
+  );
+
   const ensureLocationTaskRunning = useCallback(
     async (logPrefix: string) => {
       if (!trackingEnabled) return;
       try {
+        const bgOk = await ensureBackgroundPermission();
+        if (!bgOk) {
+          await hardDisableTracking(logPrefix);
+          return;
+        }
         const hasStarted = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_TASK_NAME);
         if (!hasStarted) {
           console.log(`${logPrefix} restarting location updates`);
@@ -97,7 +162,7 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         console.warn(`${logPrefix} ensureLocationTaskRunning failed`, e);
       }
     },
-    [trackingEnabled]
+    [trackingEnabled, ensureBackgroundPermission, hardDisableTracking]
   );
 
   useEffect(() => {
@@ -114,50 +179,95 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }
 
       if (enabledRaw === 'true') {
+        const bgOk = await ensureBackgroundPermission();
+        if (!bgOk) {
+          await hardDisableTracking('[tracking-auto]');
+          return;
+        }
         await ensureLocationTaskRunning('[tracking-auto]');
-        // пробуем выгрузить очередь, если что-то накопилось, используя сериализованную отправку
+        if (AppState.currentState === 'active') {
+          await startForegroundWatch('[tracking-fg]');
+        }
+        // РїСЂРѕР±СѓРµРј РІС‹РіСЂСѓР·РёС‚СЊ РѕС‡РµСЂРµРґСЊ, РµСЃР»Рё С‡С‚Рѕ-С‚Рѕ РЅР°РєРѕРїРёР»РѕСЃСЊ, РёСЃРїРѕР»СЊР·СѓСЏ СЃРµСЂРёР°Р»РёР·РѕРІР°РЅРЅСѓСЋ РѕС‚РїСЂР°РІРєСѓ
         await flushAndSync('[tracking]');
       }
     })();
-  }, [flushAndSync, ensureLocationTaskRunning]);
+  }, [
+    flushAndSync,
+    ensureLocationTaskRunning,
+    startForegroundWatch,
+    ensureBackgroundPermission,
+    hardDisableTracking,
+  ]);
 
   const startTracking = useCallback(async () => {
     const { status: fgStatus } = await Location.requestForegroundPermissionsAsync();
     if (fgStatus !== Location.PermissionStatus.GRANTED) {
-      throw new Error('Разрешение на доступ к геолокации не выдано');
+      await hardDisableTracking('[tracking-start]');
+      throw new Error('Р Р°Р·СЂРµС€РµРЅРёРµ РЅР° РґРѕСЃС‚СѓРї Рє РіРµРѕР»РѕРєР°С†РёРё РЅРµ РІС‹РґР°РЅРѕ');
     }
 
     const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
     if (bgStatus !== Location.PermissionStatus.GRANTED) {
-      throw new Error('Разрешение на фоновую геолокацию не выдано');
+      if (Platform.OS === 'android') {
+        await hardDisableTracking('[tracking-start]');
+        throw new Error('Нужно разрешение "Всегда". Включите его в настройках приложения.');
+      } else {
+        await hardDisableTracking('[tracking-start]');
+        throw new Error('Р Р°Р·СЂРµС€РµРЅРёРµ РЅР° С„РѕРЅРѕРІСѓСЋ РіРµРѕР»РѕРєР°С†РёСЋ РЅРµ РІС‹РґР°РЅРѕ');
+      }
     }
 
     try {
       await Location.startLocationUpdatesAsync(BACKGROUND_TASK_NAME, locationOptions);
     } catch (e) {
       console.error('[tracking] failed to start location updates (manual)', e);
+      await hardDisableTracking('[tracking-start]');
       throw e;
     }
 
     setTrackingEnabled(true);
     await AsyncStorage.setItem(STORAGE_KEYS.enabled, 'true');
-    // сразу пробуем отправить накопившуюся очередь
+    // СЃСЂР°Р·Сѓ РїСЂРѕР±СѓРµРј РѕС‚РїСЂР°РІРёС‚СЊ РЅР°РєРѕРїРёРІС€СѓСЋСЃСЏ РѕС‡РµСЂРµРґСЊ
     await flushAndSync('[tracking]');
     await ensureLocationTaskRunning('[tracking-start]');
-  }, [flushAndSync, ensureLocationTaskRunning]);
+    await startForegroundWatch('[tracking-start]');
+  }, [flushAndSync, ensureLocationTaskRunning, startForegroundWatch, hardDisableTracking]);
 
-  // Дополнительный триггер флуша при смене состояния приложения (активно/фон)
+  // Р”РѕРїРѕР»РЅРёС‚РµР»СЊРЅС‹Р№ С‚СЂРёРіРіРµСЂ С„Р»СѓС€Р° РїСЂРё СЃРјРµРЅРµ СЃРѕСЃС‚РѕСЏРЅРёСЏ РїСЂРёР»РѕР¶РµРЅРёСЏ (Р°РєС‚РёРІРЅРѕ/С„РѕРЅ)
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active' || state === 'background') {
         flushAndSync('[tracking-appstate]');
         void ensureLocationTaskRunning('[tracking-appstate]');
       }
+      if (state === 'active') {
+        if (trackingEnabled) {
+          void (async () => {
+            const bgOk = await ensureBackgroundPermission();
+            if (!bgOk) {
+              await hardDisableTracking('[tracking-appstate]');
+              return;
+            }
+            await startForegroundWatch('[tracking-fg]');
+          })();
+        }
+      } else {
+        stopForegroundWatch();
+      }
     });
     return () => sub.remove();
-  }, [flushAndSync, ensureLocationTaskRunning]);
+  }, [
+    flushAndSync,
+    ensureLocationTaskRunning,
+    startForegroundWatch,
+    stopForegroundWatch,
+    trackingEnabled,
+    ensureBackgroundPermission,
+    hardDisableTracking,
+  ]);
 
-  // Переодический keep-alive для фонового таска
+  // РџРµСЂРµРѕРґРёС‡РµСЃРєРёР№ keep-alive РґР»СЏ С„РѕРЅРѕРІРѕРіРѕ С‚Р°СЃРєР°
   useEffect(() => {
     if (!trackingEnabled) {
       if (keepAliveTimer.current) {
@@ -182,20 +292,21 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     if (hasStarted) {
       await Location.stopLocationUpdatesAsync(BACKGROUND_TASK_NAME);
     }
+    stopForegroundWatch();
     setTrackingEnabled(false);
     await AsyncStorage.removeItem(STORAGE_KEYS.enabled);
     await flushAndSync('[tracking-stop]');
     await clearRouteIdIfIdle('[tracking-stop]');
     await syncRouteId();
-  }, [flushAndSync, syncRouteId]);
+  }, [flushAndSync, syncRouteId, stopForegroundWatch]);
 
-  // Диагностика очереди при фокусе
+  // Р”РёР°РіРЅРѕСЃС‚РёРєР° РѕС‡РµСЂРµРґРё РїСЂРё С„РѕРєСѓСЃРµ
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
         void (async () => {
           const dbg = await getQueueDebug();
-          // оставляем возможность быстро проверить очередь в отладке
+          // РѕСЃС‚Р°РІР»СЏРµРј РІРѕР·РјРѕР¶РЅРѕСЃС‚СЊ Р±С‹СЃС‚СЂРѕ РїСЂРѕРІРµСЂРёС‚СЊ РѕС‡РµСЂРµРґСЊ РІ РѕС‚Р»Р°РґРєРµ
           // console.log('[tracking-debug] queue', dbg);
         })();
       }
@@ -224,3 +335,4 @@ export function useTracking(): TrackingContextValue {
   }
   return ctx;
 }
+

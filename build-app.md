@@ -1,11 +1,21 @@
 # Сборка APK для Expo / React Native
 
 
+// БИЛД gradlew на моем пк
 cd V:\GitProjects\LeaderProductAPP\android
 $env:JAVA_HOME="C:\Program Files\Eclipse Adoptium\jdk-21.0.3.9-hotspot"
 $env:Path="$env:JAVA_HOME\bin;$env:Path"
 Remove-Item -Recurse -Force "C:\Users\extec\.gradle\wrapper\dists\gradle-8.14.3-bin" -ErrorAction SilentlyContinue
 .\gradlew.bat :app:assembleRelease --refresh-dependencies
+
+
+// БИЛД gradlew на 206 сервере
+$env:JAVA_HOME="C:\Program Files\Android\Android Studio\jbr"
+$env:Path="$env:JAVA_HOME\bin;$env:Path"
+.\gradlew.bat --stop
+.\gradlew.bat :app:assembleRelease --refresh-dependencies
+
+
 
 
 ---
