@@ -1,5 +1,41 @@
 # Сборка APK для Expo / React Native
 
+
+cd V:\GitProjects\LeaderProductAPP\android
+$env:JAVA_HOME="C:\Program Files\Eclipse Adoptium\jdk-21.0.3.9-hotspot"
+$env:Path="$env:JAVA_HOME\bin;$env:Path"
+Remove-Item -Recurse -Force "C:\Users\extec\.gradle\wrapper\dists\gradle-8.14.3-bin" -ErrorAction SilentlyContinue
+.\gradlew.bat :app:assembleRelease --refresh-dependencies
+
+
+---
+
+# Web (Docker контейнер)
+
+## Быстрый запуск контейнера
+
+```bash
+cd V:\GitProjects\LeaderProductAPP
+docker build -f Dockerfile.web -t leader-product-web .
+docker run -d -p 8080:80 --name leader-product-web leader-product-web
+```
+
+Открыть: http://localhost:8080
+
+## Как это работает
+
+- `Dockerfile.web` внутри собирает `npm run build:web` (Expo export).
+- Затем Nginx раздаёт статику.
+- `nginx.conf` настроен на SPA-роутинг (`try_files ... /index.html`).
+
+
+
+
+
+
+
+
+
 ## (через EAS и без него)
 
 > Инструкция подходит для Expo (Managed) и для локальной сборки через Gradle/Android Studio.
