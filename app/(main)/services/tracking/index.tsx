@@ -55,12 +55,13 @@ type Filters = {
 };
 
 const DEFAULT_POINTS_LIMIT = 100;
+const DEFAULT_MAX_ACCURACY = 20;
 const MIN_POINT_DISTANCE_METERS = 12;
 
 const defaultFilters: Filters = {
   from: '',
   to: '',
-  maxAccuracy: '5',
+  maxAccuracy: DEFAULT_MAX_ACCURACY.toString(),
   maxPoints: DEFAULT_POINTS_LIMIT.toString(),
 };
 
@@ -549,7 +550,7 @@ export default function TrackingServiceScreen() {
                 value={filters.maxAccuracy}
                 onChangeText={(v) => setFilters((prev) => ({ ...prev, maxAccuracy: v }))}
                 keyboardType="numeric"
-                placeholder="5"
+                placeholder={DEFAULT_MAX_ACCURACY.toString()}
                 placeholderTextColor={mutedText}
                 style={[styles.input, { color: textColor, borderColor: mutedText }]}
               />

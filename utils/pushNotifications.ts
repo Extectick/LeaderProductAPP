@@ -1,6 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
-import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
 import { apiClient } from './apiClient';
@@ -9,16 +8,37 @@ import { API_ENDPOINTS } from './apiEndpoints';
 const PUSH_TOKEN_KEY = 'pushToken';
 const CHANNEL_ID = 'profile-status';
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
-});
+let notificationsModule: typeof import('expo-notifications') | null = null;
+let handlerInitialized = false;
+
+async function getNotificationsModule() {
+  if (Platform.OS === 'web') return null;
+  if (notificationsModule) return notificationsModule;
+  try {
+    const mod = await import('expo-notifications');
+    notificationsModule = mod;
+    return mod;
+  } catch (error) {
+    console.warn('[push] expo-notifications unavailable', error);
+    return null;
+  }
+}
 
 export async function initPushNotifications() {
-  if (Platform.OS === 'web') return;
+  const Notifications = await getNotificationsModule();
+  if (!Notifications) return;
+
+  if (!handlerInitialized) {
+    Notifications.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowAlert: true,
+        shouldPlaySound: true,
+        shouldSetBadge: false,
+      }),
+    });
+    handlerInitialized = true;
+  }
+
   if (Platform.OS === 'android') {
     await Notifications.setNotificationChannelAsync(CHANNEL_ID, {
       name: 'Статусы профиля',
@@ -32,6 +52,9 @@ export async function initPushNotifications() {
 }
 
 async function requestPermissions(): Promise<boolean> {
+  const Notifications = await getNotificationsModule();
+  if (!Notifications) return false;
+
   const { status: existingStatus } = await Notifications.getPermissionsAsync();
   let finalStatus = existingStatus;
   if (existingStatus !== 'granted') {
@@ -43,6 +66,9 @@ async function requestPermissions(): Promise<boolean> {
 
 export async function registerForPushNotificationsAsync(): Promise<string | null> {
   if (Platform.OS === 'web') return null;
+
+  const Notifications = await getNotificationsModule();
+  if (!Notifications) return null;
 
   const ok = await requestPermissions();
   if (!ok) return null;

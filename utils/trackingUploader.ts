@@ -10,6 +10,7 @@ const STORAGE_KEYS = {
 };
 
 const MAX_QUEUE_LENGTH = 1000;
+const MAX_BATCH_POINTS = 200;
 const REQUEST_TIMEOUT_MS = 20_000;
 const RETRY_DELAY_MS = 30_000;
 const PERIODIC_FLUSH_MS = 60_000;
@@ -155,7 +156,7 @@ async function processQueue(logPrefix: string) {
 
   log(logPrefix, 'flush start', { size: queue.length, routeId: activeRouteId });
 
-  const batch = queue.slice();
+  const batch = queue.slice(0, MAX_BATCH_POINTS);
   const payload: SaveTrackingPointsRequest = {
     points: batch,
     routeId: activeRouteId,
