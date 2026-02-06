@@ -19,8 +19,8 @@ import {
   View,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { formatDistanceToNow } from 'date-fns';
-import { ru } from 'date-fns/locale';
+import { Ionicons } from '@expo/vector-icons';
+import { MotiView } from 'moti';
 
 import ShimmerButton from '@/components/ShimmerButton';
 import {
@@ -41,6 +41,7 @@ import { Profile, ProfileStatus } from '@/types/userTypes';
 import { AdminStyles } from '@/components/admin/adminStyles';
 import { EditableCard, SelectableChip, SelectorCard, StaticCard } from '@/components/admin/AdminCards';
 import { usePresence } from '@/hooks/usePresence';
+import { useTabBarSpacerHeight } from '@/components/Navigation/TabBarSpacer';
 
 const formatPhone = (input: string) => {
   const digits = input.replace(/\D/g, '').slice(0, 11);
@@ -68,6 +69,23 @@ const normalizePhoneE164 = (val: string) => {
   if (num.startsWith('8')) num = '7' + num.slice(1);
   if (!num.startsWith('7')) num = '7' + num;
   return `+${num}`;
+};
+
+const withOpacity = (color: string, opacity: number) => {
+  if (!color.startsWith('#')) return color;
+  const hex = color.replace('#', '');
+  const normalized =
+    hex.length === 3
+      ? hex
+          .split('')
+          .map((c) => c + c)
+          .join('')
+      : hex;
+  const int = Number.parseInt(normalized, 16);
+  const r = (int >> 16) & 255;
+  const g = (int >> 8) & 255;
+  const b = int & 255;
+  return `rgba(${r}, ${g}, ${b}, ${opacity})`;
 };
 
 type FormState = {
@@ -197,13 +215,56 @@ function FilterChip({
   );
 }
 
+function SummaryChip({
+  styles,
+  label,
+  value,
+  color,
+  active,
+  onPress,
+}: {
+  styles: AdminStyles;
+  label: string;
+  value: number;
+  color: string;
+  active: boolean;
+  onPress: () => void;
+}) {
+  const bg = withOpacity(color, active ? 0.18 : 0.1);
+  const border = withOpacity(color, active ? 0.6 : 0.35);
+
+  return (
+    <Pressable onPress={onPress}>
+      {({ pressed, hovered }) => (
+        <MotiView
+          animate={{
+            scale: pressed ? 0.96 : hovered ? 1.02 : 1,
+            opacity: pressed ? 0.92 : 1,
+          }}
+          transition={{ type: 'timing', duration: 120 }}
+          style={[
+            styles.summaryCard,
+            { backgroundColor: bg, borderColor: border },
+            active && {
+              backgroundColor: withOpacity(color, 0.22),
+              borderColor: withOpacity(color, 0.75),
+            },
+          ]}
+        >
+          <Text style={[styles.summaryValue, { color }]}>{value}</Text>
+          <Text style={styles.summaryLabel}>{label}</Text>
+        </MotiView>
+      )}
+    </Pressable>
+  );
+}
+
 function UserListItem({
   styles,
   item,
   active,
   isWide,
   onPress,
-  presenceLabel,
   isOnline,
   statusMeta,
 }: {
@@ -212,7 +273,6 @@ function UserListItem({
   active: boolean;
   isWide: boolean;
   onPress: () => void;
-  presenceLabel: string;
   isOnline: boolean;
   statusMeta: { label: string; color: string; bg: string };
 }) {
@@ -243,7 +303,7 @@ function UserListItem({
         onPressOut={() => animateTo(1)}
         onHoverIn={() => {
           setHovered(true);
-          animateTo(1.02);
+          animateTo(Platform.OS === 'web' ? 1.01 : 1.02);
         }}
         onHoverOut={() => {
           setHovered(false);
@@ -272,42 +332,37 @@ function UserListItem({
             </View>
             <View style={styles.userInfo}>
               <View style={styles.userNameRow}>
-                <Text style={styles.userName} numberOfLines={1}>
+                <Text style={styles.userName} numberOfLines={2}>
                   {fullName}
                 </Text>
                 <View style={styles.userIdBadge}>
                   <Text style={styles.userIdText}>#{item.id}</Text>
                 </View>
               </View>
-              <Text style={styles.userMeta} numberOfLines={1}>
+              <Text style={styles.userMeta} numberOfLines={2}>
                 {item.email}
               </Text>
-              <View style={styles.userMetaRow}>
-                <Text style={styles.userMetaStrong}>Тел:</Text>
-                <Text style={styles.userMeta}>{phoneDisplay}</Text>
-              </View>
+              <Text style={styles.userMeta}>
+                <Text style={styles.userMetaStrong}>Тел:</Text> {phoneDisplay}
+              </Text>
               <View style={styles.userPillsRow}>
                 <View style={[styles.statusPill, { backgroundColor: statusMeta.bg, borderColor: statusMeta.color }]}>
                   <Text style={[styles.statusPillText, { color: statusMeta.color }]}>{statusMeta.label}</Text>
                 </View>
                 <View style={styles.rolePill}>
-                  <Text style={styles.rolePillText} numberOfLines={1}>
+                  <Text style={styles.rolePillText} numberOfLines={2}>
                     {item.role?.name || 'Без роли'}
                   </Text>
                 </View>
                 {departmentName ? (
                   <View style={styles.departmentPill}>
-                    <Text style={styles.departmentPillText} numberOfLines={1}>
+                    <Text style={styles.departmentPillText} numberOfLines={2}>
                       {departmentName}
                     </Text>
                   </View>
                 ) : null}
               </View>
             </View>
-          </View>
-          <View style={styles.userPresenceRow}>
-            <View style={[styles.userPresenceDotSmall, { backgroundColor: isOnline ? '#22c55e' : '#94a3b8' }]} />
-            <Text style={styles.userPresenceText}>{presenceLabel}</Text>
           </View>
         </Animated.View>
       </Pressable>
@@ -333,6 +388,7 @@ export default function UsersTab({
   const [selectedProfile, setSelectedProfile] = useState<Profile | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [employeeStatusMap, setEmployeeStatusMap] = useState<Record<number, ProfileStatus | null>>({});
   const [pickerType, setPickerType] = useState<'role' | 'department' | null>(null);
   const [statusFilter, setStatusFilter] = useState<UserStatusFilter>('all');
   const [onlineFilter, setOnlineFilter] = useState<OnlineFilter>('all');
@@ -360,9 +416,21 @@ export default function UsersTab({
   const [activeTab, setActiveTab] = useState<'user' | 'profiles'>('user');
   const [activeProfileTab, setActiveProfileTab] = useState<'employee' | 'client' | 'supplier'>('employee');
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
-  const isWide = windowWidth >= 900;
+  const columns = windowWidth >= 1600 ? 3 : windowWidth >= 1200 ? 2 : 1;
+  const isWide = columns > 1;
+  const showSideFilters = windowWidth >= 1200;
+  const showSummaryGrid = windowWidth >= 1100;
   const modalMaxHeight = Math.max(320, Math.min(windowHeight - 24, Platform.OS === 'web' ? 860 : windowHeight - 24));
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tabBarSpacer = useTabBarSpacerHeight();
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const activeFilterCount = [statusFilter !== 'all', onlineFilter !== 'all', sortKey !== 'recent'].filter(Boolean).length;
+
+  useEffect(() => {
+    if (showSideFilters) {
+      setFiltersOpen(false);
+    }
+  }, [showSideFilters]);
 
   const loadRefs = useCallback(async () => {
     try {
@@ -388,6 +456,42 @@ export default function UsersTab({
     },
     []
   );
+
+  const missingEmployeeStatusIds = useMemo(
+    () => users.map((u) => u.id).filter((id) => employeeStatusMap[id] === undefined),
+    [users, employeeStatusMap]
+  );
+
+  useEffect(() => {
+    if (!active || missingEmployeeStatusIds.length === 0) return;
+    let cancelled = false;
+    const ids = [...missingEmployeeStatusIds];
+    const concurrency = 4;
+
+    const worker = async () => {
+      while (!cancelled) {
+        const id = ids.shift();
+        if (id == null) return;
+        try {
+          const profile = await getProfileById(id);
+          const status = profile?.employeeProfile?.status ?? null;
+          if (!cancelled) {
+            setEmployeeStatusMap((prev) => ({ ...prev, [id]: status }));
+          }
+        } catch {
+          if (!cancelled) {
+            setEmployeeStatusMap((prev) => ({ ...prev, [id]: null }));
+          }
+        }
+      }
+    };
+
+    const workers = Array.from({ length: Math.min(concurrency, ids.length) }, () => worker());
+    void Promise.all(workers);
+    return () => {
+      cancelled = true;
+    };
+  }, [active, missingEmployeeStatusIds]);
 
   const buildAddressForm = useCallback(
     (address?: { street?: string; city?: string; state?: string | null; postalCode?: string | null; country?: string } | null): AddressForm => ({
@@ -518,10 +622,22 @@ export default function UsersTab({
     [departments, form.departmentId]
   );
 
+  const resolveEmployeeStatus = useCallback(
+    (u: AdminUserItem) => {
+      const cached = employeeStatusMap[u.id];
+      if (cached !== undefined) return cached;
+      return u.currentProfileType === 'EMPLOYEE' ? u.profileStatus ?? null : null;
+    },
+    [employeeStatusMap]
+  );
+
   const filteredUsers = useMemo(() => {
     let list = users;
     if (statusFilter !== 'all') {
-      list = list.filter((u) => (u.profileStatus || 'PENDING') === statusFilter);
+      list = list.filter((u) => {
+        const status = resolveEmployeeStatus(u);
+        return status === statusFilter;
+      });
     }
     if (onlineFilter !== 'all') {
       list = list.filter((u) => {
@@ -531,16 +647,20 @@ export default function UsersTab({
       });
     }
     return list;
-  }, [users, statusFilter, onlineFilter, presenceMap]);
+  }, [users, statusFilter, onlineFilter, presenceMap, resolveEmployeeStatus]);
 
   const statusCounts = useMemo(() => {
-    const counts: Record<UserStatusFilter, number> = { all: users.length, ACTIVE: 0, PENDING: 0, BLOCKED: 0 };
+    let total = 0;
+    const counts: Record<UserStatusFilter, number> = { all: 0, ACTIVE: 0, PENDING: 0, BLOCKED: 0 };
     users.forEach((u) => {
-      const st = (u.profileStatus || 'PENDING') as ProfileStatus;
+      const st = resolveEmployeeStatus(u);
+      if (!st) return;
+      total += 1;
       counts[st] = (counts[st] || 0) + 1;
     });
+    counts.all = total;
     return counts;
-  }, [users]);
+  }, [users, resolveEmployeeStatus]);
 
   const onlineCounts = useMemo(() => {
     let online = 0;
@@ -588,6 +708,49 @@ export default function UsersTab({
     });
     return list;
   }, [filteredUsers, sortKey, sortDir, presenceMap]);
+
+  const isSummaryActive = useCallback(
+    (key: string) => {
+      if (key === 'total') return statusFilter === 'all' && onlineFilter === 'all';
+      if (key === 'active') return statusFilter === 'ACTIVE';
+      if (key === 'pending') return statusFilter === 'PENDING';
+      if (key === 'blocked') return statusFilter === 'BLOCKED';
+      if (key === 'online') return onlineFilter === 'online';
+      return false;
+    },
+    [onlineFilter, statusFilter]
+  );
+
+  const applySummaryFilter = useCallback(
+    (key: string) => {
+      if (key === 'total') {
+        setStatusFilter('all');
+        setOnlineFilter('all');
+        return;
+      }
+      if (key === 'active' || key === 'pending' || key === 'blocked') {
+        setStatusFilter(key.toUpperCase() as ProfileStatus);
+        setOnlineFilter('all');
+        return;
+      }
+      if (key === 'online') {
+        setOnlineFilter('online');
+        setStatusFilter('all');
+      }
+    },
+    [setOnlineFilter, setStatusFilter]
+  );
+
+  const summaryItems = useMemo(
+    () => [
+      { key: 'total', label: 'Всего', value: sortedUsers.length, color: colors.tint },
+      { key: 'active', label: 'Активные', value: statusCounts.ACTIVE ?? 0, color: '#16A34A' },
+      { key: 'pending', label: 'Ожидают', value: statusCounts.PENDING ?? 0, color: '#2563EB' },
+      { key: 'blocked', label: 'Заблокированы', value: statusCounts.BLOCKED ?? 0, color: '#DC2626' },
+      { key: 'online', label: 'Онлайн', value: onlineCounts.online ?? 0, color: '#22C55E' },
+    ],
+    [colors.tint, onlineCounts, sortedUsers.length, statusCounts]
+  );
 
   const userInitials = useMemo(() => {
     const first = (form.firstName || selectedProfile?.firstName || '').trim()[0] || '';
@@ -783,124 +946,181 @@ export default function UsersTab({
     return <View style={{ display: 'none' }} />;
   }
 
+  const ChipsRow = ({ children }: { children: React.ReactNode }) =>
+    showSideFilters ? (
+      <View style={styles.filterChipsRow}>{children}</View>
+    ) : (
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterChipsRow}>
+        {children}
+      </ScrollView>
+    );
+
+  const filtersContent = (
+    <View style={[styles.filterGrid, (showSideFilters || isWide) && styles.filterGridWide]}>
+      <View style={[styles.filterGroup, showSideFilters && styles.filterGroupFull]}>
+        <View style={styles.filterGroupHeader}>
+          <Text style={styles.filterLabel}>Статус</Text>
+        </View>
+        <ChipsRow>
+          {STATUS_FILTERS.map((opt) => {
+            const active = statusFilter === opt.key;
+            const count = statusCounts[opt.key] ?? 0;
+            return (
+              <FilterChip
+                key={`status-${opt.key}`}
+                styles={styles}
+                active={active}
+                compact
+                onPress={() => setStatusFilter(opt.key)}
+                label={`${opt.label} · ${count}`}
+              />
+            );
+          })}
+        </ChipsRow>
+      </View>
+      <View style={[styles.filterGroup, showSideFilters && styles.filterGroupFull]}>
+        <View style={styles.filterGroupHeader}>
+          <Text style={styles.filterLabel}>Онлайн</Text>
+        </View>
+        <ChipsRow>
+          {ONLINE_FILTERS.map((opt) => {
+            const active = onlineFilter === opt.key;
+            const count = onlineCounts[opt.key] ?? 0;
+            return (
+              <FilterChip
+                key={`online-${opt.key}`}
+                styles={styles}
+                active={active}
+                compact
+                onPress={() => setOnlineFilter(opt.key)}
+                label={`${opt.label} · ${count}`}
+              />
+            );
+          })}
+        </ChipsRow>
+      </View>
+      <View style={[styles.filterGroup, showSideFilters && styles.filterGroupFull]}>
+        <View style={styles.filterGroupHeader}>
+          <Text style={styles.filterLabel}>Сортировка</Text>
+          <Pressable
+            onPress={() => setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
+            style={styles.sortDirBtn}
+          >
+            <Text style={styles.sortDirText}>{sortDir === 'asc' ? '↑ Возр.' : '↓ Убыв.'}</Text>
+          </Pressable>
+        </View>
+        <ChipsRow>
+          {SORT_OPTIONS.map((opt) => {
+            const active = sortKey === opt.key;
+            return (
+              <FilterChip
+                key={`sort-${opt.key}`}
+                styles={styles}
+                active={active}
+                compact
+                onPress={() => setSortKey(opt.key)}
+                label={opt.label}
+              />
+            );
+          })}
+        </ChipsRow>
+      </View>
+      <View style={styles.filterGroupCompactRow}>
+        <Pressable
+          onPress={() => {
+            setStatusFilter('all');
+            setOnlineFilter('all');
+            setSortKey('recent');
+            setSortDir('desc');
+          }}
+          style={styles.resetBtn}
+        >
+          <Text style={styles.resetBtnText}>Сбросить фильтры</Text>
+        </Pressable>
+        <Text style={styles.filterHint}>Найдено: {sortedUsers.length}</Text>
+      </View>
+    </View>
+  );
+
   return (
     <>
-      <View style={styles.searchRow}>
-        <TextInput
-          value={search}
-          onChangeText={setSearch}
-          placeholder="Поиск по имени, email или телефону"
-          style={styles.searchInput}
-        />
-        {loadingUsers && <ActivityIndicator size="small" />}
+      <View style={styles.summaryWrap}>
+        {showSummaryGrid ? (
+          <View style={styles.summaryRowWrap}>
+            {summaryItems.map((item) => (
+              <SummaryChip
+                key={item.key}
+                styles={styles}
+                label={item.label}
+                value={item.value}
+                color={item.color}
+                active={isSummaryActive(item.key)}
+                onPress={() => applySummaryFilter(item.key)}
+              />
+            ))}
+          </View>
+        ) : (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.summaryRow}>
+            {summaryItems.map((item) => (
+              <SummaryChip
+                key={item.key}
+                styles={styles}
+                label={item.label}
+                value={item.value}
+                color={item.color}
+                active={isSummaryActive(item.key)}
+                onPress={() => applySummaryFilter(item.key)}
+              />
+            ))}
+          </ScrollView>
+        )}
       </View>
-      <View style={styles.split}>
-        <View style={styles.userListWrap}>
-          <View style={styles.userFilters}>
-            <View style={[styles.filterGrid, isWide && styles.filterGridWide]}>
-              <View style={styles.filterGroup}>
-                <View style={styles.filterGroupHeader}>
-                  <Text style={styles.filterLabel}>Статус</Text>
-                </View>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterChipsRow}>
-                  {STATUS_FILTERS.map((opt) => {
-                    const active = statusFilter === opt.key;
-                    const count = statusCounts[opt.key] ?? 0;
-                    return (
-                      <FilterChip
-                        key={`status-${opt.key}`}
-                        styles={styles}
-                        active={active}
-                        compact
-                        onPress={() => setStatusFilter(opt.key)}
-                        label={`${opt.label} · ${count}`}
-                      />
-                    );
-                  })}
-                </ScrollView>
+      <View style={styles.toolbarRow}>
+        <View style={[styles.searchRow, styles.searchRowCompact, { flex: 1 }]}>
+          <TextInput
+            value={search}
+            onChangeText={setSearch}
+            placeholder="Поиск по имени, email или телефону"
+            style={[styles.searchInput, { paddingVertical: 0 }]}
+          />
+          {loadingUsers && <ActivityIndicator size="small" />}
+        </View>
+        {!showSideFilters ? (
+          <Pressable
+            onPress={() => setFiltersOpen(true)}
+            style={[styles.filterIconBtn, filtersOpen && styles.filterActionActive]}
+            accessibilityLabel="Фильтры"
+          >
+            <Ionicons name="filter-outline" size={18} color={colors.text} />
+            {activeFilterCount > 0 ? (
+              <View style={[styles.filterBadge, { position: 'absolute', top: -4, right: -4 }]}>
+                <Text style={styles.filterBadgeText}>{activeFilterCount}</Text>
               </View>
-              <View style={styles.filterGroup}>
-                <View style={styles.filterGroupHeader}>
-                  <Text style={styles.filterLabel}>Онлайн</Text>
-                </View>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterChipsRow}>
-                  {ONLINE_FILTERS.map((opt) => {
-                    const active = onlineFilter === opt.key;
-                    const count = onlineCounts[opt.key] ?? 0;
-                    return (
-                      <FilterChip
-                        key={`online-${opt.key}`}
-                        styles={styles}
-                        active={active}
-                        compact
-                        onPress={() => setOnlineFilter(opt.key)}
-                        label={`${opt.label} · ${count}`}
-                      />
-                    );
-                  })}
-                </ScrollView>
-              </View>
-              <View style={styles.filterGroup}>
-                <View style={styles.filterGroupHeader}>
-                  <Text style={styles.filterLabel}>Сортировка</Text>
-                  <Pressable
-                    onPress={() => setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
-                    style={styles.sortDirBtn}
-                  >
-                    <Text style={styles.sortDirText}>{sortDir === 'asc' ? '↑ Возр.' : '↓ Убыв.'}</Text>
-                  </Pressable>
-                </View>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterChipsRow}>
-                  {SORT_OPTIONS.map((opt) => {
-                    const active = sortKey === opt.key;
-                    return (
-                      <FilterChip
-                        key={`sort-${opt.key}`}
-                        styles={styles}
-                        active={active}
-                        compact
-                        onPress={() => setSortKey(opt.key)}
-                        label={opt.label}
-                      />
-                    );
-                  })}
-                </ScrollView>
-              </View>
-              <View style={styles.filterGroupCompactRow}>
-                <Pressable
-                  onPress={() => {
-                    setStatusFilter('all');
-                    setOnlineFilter('all');
-                    setSortKey('recent');
-                    setSortDir('desc');
-                  }}
-                  style={styles.resetBtn}
-                >
-                  <Text style={styles.resetBtnText}>Сбросить фильтры</Text>
-                </Pressable>
-                <Text style={styles.filterHint}>Найдено: {sortedUsers.length}</Text>
-              </View>
+            ) : null}
+          </Pressable>
+        ) : null}
+      </View>
+      {!showSideFilters ? <Text style={styles.filterHint}>Найдено: {sortedUsers.length}</Text> : null}
+      <View style={[styles.usersBody, showSideFilters && styles.usersBodyWide]}>
+        {showSideFilters ? (
+          <View style={styles.filtersColumn}>
+            <View style={styles.filtersCard}>
+              <Text style={styles.sectionTitle}>Фильтры</Text>
+              {filtersContent}
             </View>
           </View>
+        ) : null}
+        <View style={styles.userListWrap}>
           <FlatList
             data={sortedUsers}
-            numColumns={isWide ? 2 : 1}
-            key={`user-list-${isWide ? 2 : 1}`}
-            columnWrapperStyle={isWide ? styles.userColumnWrap : undefined}
+            numColumns={columns}
+            key={`user-list-${columns}`}
+            columnWrapperStyle={columns > 1 ? styles.userColumnWrap : undefined}
             keyExtractor={(item) => String(item.id)}
             renderItem={({ item }) => {
               const activeRow = item.id === selectedUserId;
               const presence = presenceMap[item.id];
               const isOnline = presence?.isOnline ?? item.isOnline ?? false;
-              const lastSeenAt = presence?.lastSeenAt ?? item.lastSeenAt;
-              const hasPresence = Boolean(presence || item.isOnline !== undefined || item.lastSeenAt);
-              const presenceLabel = hasPresence
-                ? isOnline
-                  ? 'Онлайн'
-                  : lastSeenAt
-                  ? `Был(а) ${formatDistanceToNow(new Date(lastSeenAt), { addSuffix: true, locale: ru })}`
-                  : 'Оффлайн'
-                : '—';
               return (
                 <UserListItem
                   styles={styles}
@@ -908,9 +1128,8 @@ export default function UsersTab({
                   active={activeRow}
                   isWide={isWide}
                   onPress={() => handleSelectUser(item)}
-                  presenceLabel={presenceLabel}
                   isOnline={isOnline}
-                  statusMeta={statusMeta(item.profileStatus || 'PENDING')}
+                  statusMeta={statusMeta(resolveEmployeeStatus(item) || item.profileStatus || 'PENDING')}
                 />
               );
             }}
@@ -920,10 +1139,37 @@ export default function UsersTab({
               </Text>
             }
             style={{ flex: 1 }}
-            contentContainerStyle={{ flexGrow: 1, paddingTop: 12, paddingBottom: 12 }}
+            contentContainerStyle={{
+              flexGrow: 1,
+              paddingTop: 6,
+              paddingBottom: tabBarSpacer + 12,
+              ...(Platform.OS === 'web' && showSideFilters ? { paddingHorizontal: 8 } : {}),
+            }}
           />
         </View>
       </View>
+
+      <Modal
+        visible={filtersOpen && !showSideFilters}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setFiltersOpen(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <TouchableWithoutFeedback onPress={() => setFiltersOpen(false)}>
+            <View style={StyleSheet.absoluteFill} />
+          </TouchableWithoutFeedback>
+          <View style={[styles.filtersModalCard, { backgroundColor: colors.cardBackground }]}>
+            <View style={styles.filtersModalHeader}>
+              <Text style={styles.filtersModalTitle}>Фильтры</Text>
+              <Pressable onPress={() => setFiltersOpen(false)} style={styles.filtersModalClose}>
+                <Text style={styles.filtersModalCloseText}>Закрыть</Text>
+              </Pressable>
+            </View>
+            <ScrollView contentContainerStyle={{ paddingBottom: 8 }}>{filtersContent}</ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       <Modal
         visible={active && modalVisible}

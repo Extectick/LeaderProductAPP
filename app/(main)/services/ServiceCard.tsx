@@ -266,7 +266,7 @@ export default function ServiceCard({
           {!disabled && (
             <View style={styles.ctaRow}>
               <Ionicons name="sparkles-outline" size={14} color={c1} />
-              <Text style={[styles.ctaText, { color: themeSecondary }]} numberOfLines={1}>
+              <Text style={[styles.ctaText, { color: themeSecondary }]}>
                 Открыть
               </Text>
               <Ionicons name="arrow-forward" size={14} color={c1} />

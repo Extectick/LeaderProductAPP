@@ -112,13 +112,14 @@ export default function AuthScreen() {
   const { setAuthenticated, setProfile } = useContext(AuthContext) || {};
 
   // равняем вертикаль кнопок между табами
-  const [minTopHeight, setMinTopHeight] = useState<number | null>(__authInitCache.minTopHeight);
+  const [minTopHeight, setMinTopHeight] = useState<number | null>(
+    Platform.OS === 'web' ? null : __authInitCache.minTopHeight
+  );
   const measureRef = useRef({
     login: 0,
     reg: 0,
-    locked: __authInitCache.minTopHeight !== null, // если есть кэш — не меряем повторно
+    locked: Platform.OS !== 'web' && __authInitCache.minTopHeight !== null, // web всегда меряем заново
   });
-  const BTN_HEIGHT = 52;
 
   const { theme, themes } = useTheme();
   const colors = themes[theme];
@@ -126,7 +127,27 @@ export default function AuthScreen() {
   const btnGradient = useMemo(() => [grad[0], grad[1]] as [string, string], [grad]);
   const styles = useMemo(() => getStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
-  const { width: winW } = useWindowDimensions();
+  const { width: winW, height: winH } = useWindowDimensions();
+  const isWeb = Platform.OS === 'web';
+  const isWebMobile = isWeb && winW < 768;
+  const isNativeMobile = !isWeb && winW < 700;
+  const isWebTablet = isWeb && winW >= 768 && winW < 1280;
+  const alignTopLayout = isWeb && !isWebMobile && winH < 820;
+  const fieldSize = isWeb ? (isWebMobile ? 'xs' : 'sm') : 'xs';
+  const BTN_HEIGHT = isWeb ? (isWebMobile ? 52 : 56) : 52;
+  const cardPadH = isWeb ? (isWebMobile ? 14 : isWebTablet ? 20 : 22) : CARD_PAD_H;
+  const cardPadV = isWeb ? (isWebMobile ? 14 : isWebTablet ? 18 : 20) : CARD_PAD_H;
+  const contentPadH = isWeb ? (isWebMobile ? 12 : isWebTablet ? 20 : 24) : 20;
+  const contentPadTop = isWeb ? (alignTopLayout ? 12 : 24) : 0;
+  const contentPadBottom = isWeb ? (isWebMobile ? 24 : 32) + insets.bottom : 0;
+  const ctaTextStyle = isWeb
+    ? { fontSize: isWebMobile ? 17 : 18, lineHeight: isWebMobile ? 21 : 24 }
+    : undefined;
+  const loginFooterSpacingStyle = isWebMobile
+    ? { marginTop: 4, marginBottom: 6, gap: 8 }
+    : isNativeMobile
+    ? { marginTop: 4, marginBottom: 4 }
+    : undefined;
 
   useEffect(() => {
     if (Platform.OS === 'web') {
@@ -168,8 +189,9 @@ export default function AuthScreen() {
   const [resetPassRepeatErr, setResetPassRepeatErr] = useState('');
 
   // ширина стабильна — НЕ меряем её onLayout
-  const outerW = Math.max(0, Math.min(420, winW - 40));
-  const pageW = Math.max(0, Math.floor(outerW - CARD_PAD_H * 2));
+  const maxFormWidth = isWeb ? (isWebMobile ? 520 : isWebTablet ? 700 : 470) : 420;
+  const outerW = Math.max(0, Math.min(maxFormWidth, winW - contentPadH * 2));
+  const pageW = Math.max(0, Math.floor(outerW - cardPadH * 2));
   const viewportW = pageW;
 
   /* refs */
@@ -333,7 +355,9 @@ export default function AuthScreen() {
       m.locked = true;
       const h = Math.max(m.login, m.reg);
       setMinTopHeight(h);
-      __authInitCache.minTopHeight = h; // кэшируем, чтобы dev-ремонты не меряли заново
+      if (!isWeb) {
+        __authInitCache.minTopHeight = h; // кэшируем только для натива
+      }
     }
   };
 
@@ -564,6 +588,26 @@ export default function AuthScreen() {
     }
   };
 
+  const handleRememberToggle = async (v: boolean) => {
+    setRemember(v);
+    Haptics.selectionAsync();
+    if (v) {
+      __authInitCache.remember = true;
+      await AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_FLAG, '1');
+      await AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_EMAIL, normalizeEmail(email));
+      await AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_PASSWORD, password);
+    } else {
+      __authInitCache.remember = false;
+      __authInitCache.email = '';
+      __authInitCache.password = '';
+      await AsyncStorage.multiRemove([
+        STORAGE_KEYS.REMEMBER_FLAG,
+        STORAGE_KEYS.REMEMBER_EMAIL,
+        STORAGE_KEYS.REMEMBER_PASSWORD,
+      ]);
+    }
+  };
+
   const openResetFlow = () => {
     setModeVerify(false);
     setModeReset(true);
@@ -747,7 +791,14 @@ export default function AuthScreen() {
   const ps = passwordScore(password);
   const pillWidth = Math.max(0, outerW / 2 - 6);
   const pillTranslate = tabPill.interpolate({ inputRange: [0, 1], outputRange: [4, 8 + pillWidth] });
-  const versionLabel = Constants.expoConfig?.version ?? 'unknown';
+  const versionLabel = (
+    Constants.expoConfig?.version ||
+    Constants.nativeAppVersion ||
+    'unknown'
+  )
+    .toString()
+    .trim() || 'unknown';
+  const apiDisplay = API_BASE_URL || 'не задан';
   const noticePalette =
     bannerNoticeTone === 'success'
       ? { bg: `${colors.success}22`, border: colors.success, text: colors.success }
@@ -849,6 +900,7 @@ export default function AuthScreen() {
         loading={loading}
         haptics
         gradientColors={gradientColors}
+        textStyle={ctaTextStyle}
         style={style ? StyleSheet.flatten(style) : undefined}
       />
     );
@@ -875,7 +927,18 @@ export default function AuthScreen() {
           )}
 
           {/* Форма всегда монтируется */}
-          <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+          <ScrollView
+            contentContainerStyle={[
+              styles.scrollContent,
+              {
+                paddingHorizontal: contentPadH,
+                paddingTop: contentPadTop,
+                paddingBottom: contentPadBottom,
+                justifyContent: alignTopLayout ? 'flex-start' : 'center',
+              },
+            ]}
+            keyboardShouldPersistTaps="handled"
+          >
             {/* Header */}
             <Animated.View style={[styles.header, { opacity: fadeIn }]}>
               {/* { Позже сюда добавить header и лого} */}
@@ -885,7 +948,7 @@ export default function AuthScreen() {
             {/* Tabs */}
             {!modeVerify && !modeReset && (
               <View style={styles.segmentWrapper}>
-                <View style={styles.segment}>
+                <View style={[styles.segment, { maxWidth: outerW }]}>
                   <Animated.View
                     style={[styles.segmentPill, { width: pillWidth, transform: [{ translateX: pillTranslate }] }]}
                   />
@@ -904,6 +967,7 @@ export default function AuthScreen() {
               <Animated.View
                 style={[
                   styles.errorWrap,
+                  { maxWidth: outerW },
                   {
                     transform: [
                       { translateX: errorShake.interpolate({ inputRange: [-1, 0, 1], outputRange: [-8, 0, 8] }) },
@@ -916,7 +980,12 @@ export default function AuthScreen() {
             )}
 
             {!!bannerNotice && (
-              <View style={[styles.noticeWrap, { backgroundColor: noticePalette.bg, borderColor: noticePalette.border }]}>
+              <View
+                style={[
+                  styles.noticeWrap,
+                  { maxWidth: outerW, backgroundColor: noticePalette.bg, borderColor: noticePalette.border },
+                ]}
+              >
                 <Text style={[styles.noticeText, { color: noticePalette.text }]}>{bannerNotice}</Text>
               </View>
             )}
@@ -927,7 +996,10 @@ export default function AuthScreen() {
                 styles.card,
                 {
                   width: '100%',
-                  maxWidth: 420,
+                  maxWidth: outerW,
+                  paddingHorizontal: cardPadH,
+                  paddingVertical: cardPadV,
+                  overflow: 'hidden',
                   opacity: fadeIn,
                   transform: [{ translateY: fadeIn.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }],
                 },
@@ -944,7 +1016,7 @@ export default function AuthScreen() {
                       </Text>
                       <View style={styles.fieldCompact}>
                         <FormInput
-                          size="xs"
+                          size={fieldSize}
                           noMargin
                           label="Email"
                           value={resetEmail}
@@ -1042,7 +1114,7 @@ export default function AuthScreen() {
 
                       <View style={styles.fieldCompact}>
                         <FormInput
-                          size="xs"
+                          size={fieldSize}
                           noMargin
                           label="Новый пароль"
                           value={resetPassword}
@@ -1063,7 +1135,7 @@ export default function AuthScreen() {
 
                       <View style={styles.fieldCompact}>
                         <FormInput
-                          size="xs"
+                          size={fieldSize}
                           noMargin
                           label="Повторите пароль"
                           value={resetPasswordRepeat}
@@ -1122,7 +1194,7 @@ export default function AuthScreen() {
                         >
                           <View style={styles.fieldCompact}>
                             <FormInput
-                              size="xs"
+                              size={fieldSize}
                               noMargin
                               label="Email"
                               value={email}
@@ -1141,9 +1213,9 @@ export default function AuthScreen() {
                             />
                           </View>
 
-                          <View style={styles.fieldCompact}>
+                          <View style={[styles.fieldCompact, styles.loginPasswordFieldCompact]}>
                             <FormInput
-                              size="xs"
+                              size={fieldSize}
                               noMargin
                               label="Пароль"
                               ref={passRef}
@@ -1164,39 +1236,41 @@ export default function AuthScreen() {
                             />
                           </View>
 
-                          <View style={styles.rowBetween}>
-                            <TouchableOpacity activeOpacity={0.7} style={styles.forgotLink} onPress={openResetFlow}>
-                              <Text style={[styles.linkText, { color: grad[0] }]}>Забыли пароль?</Text>
-                            </TouchableOpacity>
-                            <View style={styles.rememberRight}>
+                          <View style={[styles.loginFooterRow, loginFooterSpacingStyle]}>
+                            <Pressable
+                              onPress={() => {
+                                void handleRememberToggle(!remember);
+                              }}
+                              style={({ pressed }) => [
+                                styles.rememberInline,
+                                pressed && styles.rememberInlinePressed,
+                              ]}
+                            >
                               <Switch
                                 value={remember}
-                                onValueChange={async (v) => {
-                                  setRemember(v);
-                                  Haptics.selectionAsync();
-                                  if (v) {
-                                    __authInitCache.remember = true;
-                                    await AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_FLAG, '1');
-                                    await AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_EMAIL, normalizeEmail(email));
-                                    await AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_PASSWORD, password);
-                                  } else {
-                                    __authInitCache.remember = false;
-                                    __authInitCache.email = '';
-                                    __authInitCache.password = '';
-                                    await AsyncStorage.multiRemove([
-                                      STORAGE_KEYS.REMEMBER_FLAG,
-                                      STORAGE_KEYS.REMEMBER_EMAIL,
-                                      STORAGE_KEYS.REMEMBER_PASSWORD,
-                                    ]);
-                                  }
+                                onValueChange={(v) => {
+                                  void handleRememberToggle(v);
                                 }}
                               />
-                              <Text style={styles.rememberText}>Запомнить</Text>
-                            </View>
+                              <Text
+                                style={[styles.rememberInlineText, isWebMobile && { fontSize: 13, lineHeight: 18 }]}
+                              >
+                                Запомнить?
+                              </Text>
+                            </Pressable>
+
+                            <TouchableOpacity
+                              activeOpacity={0.7}
+                              style={[styles.forgotInlineLink, isWebMobile && { marginLeft: 'auto' }]}
+                              onPress={openResetFlow}
+                            >
+                              <Text style={[styles.linkText, { color: grad[0] }, isWebMobile && { fontSize: 13 }]}>
+                                Забыли пароль?
+                              </Text>
+                            </TouchableOpacity>
                           </View>
                         </View>
                       </View>
-
                       <View style={styles.buttonWrap}>
                         <BounceButton
                           title="Войти"
@@ -1222,7 +1296,7 @@ export default function AuthScreen() {
                         >
                           <View style={styles.fieldCompact}>
                             <FormInput
-                              size="xs"
+                              size={fieldSize}
                               noMargin
                               label="Email"
                               value={email}
@@ -1243,7 +1317,7 @@ export default function AuthScreen() {
 
                           <View style={styles.fieldCompact}>
                             <FormInput
-                              size="xs"
+                              size={fieldSize}
                               noMargin
                               label="Пароль"
                               ref={passRef}
@@ -1282,7 +1356,7 @@ export default function AuthScreen() {
 
                           <View style={styles.fieldCompact}>
                             <FormInput
-                              size="xs"
+                              size={fieldSize}
                               noMargin
                               label="Повторите пароль"
                               ref={passRepeatRef}
@@ -1368,9 +1442,23 @@ export default function AuthScreen() {
               )}
             </Animated.View>
 
-            <View style={styles.buildInfo}>
-              <Text style={styles.buildInfoText}>API: {API_BASE_URL || 'не задан'}</Text>
-              <Text style={styles.buildInfoText}>Версия приложения: v{versionLabel}</Text>
+            <View style={[styles.buildInfo, { maxWidth: outerW, marginTop: isWeb ? 14 : 12 }]}>
+              <Text
+                style={[
+                  styles.buildInfoText,
+                  isWeb && { fontSize: isWebMobile ? 12 : 14, lineHeight: isWebMobile ? 18 : 20 },
+                ]}
+              >
+                API: {apiDisplay}
+              </Text>
+              <Text
+                style={[
+                  styles.buildInfoText,
+                  isWeb && { fontSize: isWebMobile ? 12 : 14, lineHeight: isWebMobile ? 18 : 20 },
+                ]}
+              >
+                Версия приложения: v{versionLabel}
+              </Text>
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
@@ -1483,31 +1571,51 @@ const getStyles = (colors: {
       }),
     },
 
-    slide: { paddingBottom: 4, paddingHorizontal: 0 },
+    slide: { paddingBottom: Platform.OS === 'web' ? 8 : 4, paddingHorizontal: 0 },
 
     title: { fontSize: 26, fontWeight: '800', color: colors.text, textAlign: 'center', marginBottom: 14 },
 
     fieldCompact: { width: '100%', alignSelf: 'stretch', marginBottom: 10 },
+    loginPasswordFieldCompact: { marginBottom: 0 },
 
-    rowBetween: {
+    loginFooterRow: {
+      width: '100%',
+      marginTop: 20,
+      marginBottom: 0,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      marginTop: 6,
-      marginBottom: 10,
-      flexWrap: 'wrap',
+      gap: 6,
     },
-    forgotLink: { flexGrow: 1, flexShrink: 1, paddingRight: 8 },
-
-    rememberRight: { flexDirection: 'row', alignItems: 'center', flexShrink: 0, marginTop: 4 },
-    rememberText: { marginLeft: 8, color: colors.secondaryText, fontSize: 14, flexShrink: 0 },
+    rememberInline: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      minWidth: 0,
+      borderRadius: 12,
+      paddingHorizontal: 0,
+      paddingVertical: 2,
+    },
+    rememberInlinePressed: {
+      opacity: 0.9,
+    },
+    rememberInlineText: {
+      color: colors.secondaryText,
+      fontSize: 14,
+      lineHeight: 20,
+      fontWeight: '700',
+      flexShrink: 1,
+      marginLeft: 2,
+      includeFontPadding: true,
+    },
+    forgotInlineLink: { flexShrink: 1, alignItems: 'flex-end' },
 
     buttonWrap: {
       width: '100%',
       alignSelf: 'stretch',
       overflow: 'hidden',
       borderRadius: 16,
-      marginTop: 6,
+      marginTop: 0,
+      marginBottom: 0,
     },
     fill: { flex: 1 },
     linkText: {
@@ -1534,10 +1642,20 @@ const getStyles = (colors: {
     },
     buildInfo: {
       marginTop: 12,
-      marginBottom: 10,
+      marginBottom: 28,
       width: '100%',
+      maxWidth: 420,
       alignItems: 'center',
       gap: 2,
+      paddingHorizontal: 8,
     },
-    buildInfoText: { fontSize: 12, color: colors.secondaryText, opacity: 0.8, textAlign: 'center' },
+    buildInfoText: {
+      width: '100%',
+      fontSize: 12,
+      lineHeight: 17,
+      color: colors.secondaryText,
+      opacity: 0.8,
+      textAlign: 'center',
+      flexShrink: 1,
+    },
   });

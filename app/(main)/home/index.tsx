@@ -27,6 +27,7 @@ import Animated, {
   Easing,
 } from "react-native-reanimated";
 import { shadeColor, tintColor } from "@/utils/color";
+import TabBarSpacer from "@/components/Navigation/TabBarSpacer";
 
 const updates = [
   { title: "Новый трекинг", desc: "Отслеживайте перемещения сотрудников и точки на карте.", icon: "map-outline", color: "#2563EB" },
@@ -83,7 +84,6 @@ export default function HomeScreen() {
         styles.safe,
         {
           paddingTop: insets.top + 8,
-          paddingBottom: insets.bottom + 8,
         },
       ]}
     >
@@ -162,7 +162,7 @@ export default function HomeScreen() {
           </Animated.View>
         </View>
 
-        <View style={{ height: 16 }} />
+        <TabBarSpacer extra={8} />
       </ScrollView>
     </SafeAreaView>
   );
@@ -303,7 +303,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#F8FAFC",
   },
   scrollContent: {
-    paddingBottom: 24,
     width: "100%",
   },
   sectionTitle: {

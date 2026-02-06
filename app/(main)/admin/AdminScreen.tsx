@@ -1,12 +1,14 @@
 import React, { useMemo, useState } from 'react';
-import { Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native';
+import { useWindowDimensions, View } from 'react-native';
 import { Redirect } from 'expo-router';
 
 import { useTheme } from '@/context/ThemeContext';
 import { gradientColors, ThemeKey } from '@/constants/Colors';
 import { useIsAdmin } from '@/hooks/useIsAdmin';
+import { useTabBarSpacerHeight } from '@/components/Navigation/TabBarSpacer';
 
 import { createAdminStyles } from '@/components/admin/adminStyles';
+import AdminTabsBar from '@/components/admin/AdminTabsBar';
 import UsersTab from './tabs/UsersTab';
 import DepartmentsTab from './tabs/DepartmentsTab';
 import RolesTab from './tabs/RolesTab';
@@ -21,6 +23,7 @@ export default function AdminScreen() {
   const styles = useMemo(() => createAdminStyles(colors), [colors]);
   const { width } = useWindowDimensions();
   const isWide = width >= 980;
+  const tabBarSpacer = useTabBarSpacerHeight();
   const grad = gradientColors[theme as ThemeKey] || gradientColors.leaderprod;
   const btnGradient = useMemo(() => [grad[0], grad[1]] as [string, string], [grad]);
 
@@ -34,42 +37,20 @@ export default function AdminScreen() {
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
-      <View style={styles.container}>
-        <Text style={styles.title}>Администрирование</Text>
-        <Text style={styles.subtitle}>Управляйте пользователями, отделами, ролями и релизами приложения.</Text>
-        <View style={styles.card}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.tabsContent}
-            style={styles.tabsScroll}
-          >
-            <Pressable
-              onPress={() => setActiveTab('users')}
-              style={[styles.tabBtn, activeTab === 'users' && styles.tabBtnActive]}
-            >
-              <Text style={[styles.tabText, activeTab === 'users' && styles.tabTextActive]}>Пользователи</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => setActiveTab('departments')}
-              style={[styles.tabBtn, activeTab === 'departments' && styles.tabBtnActive]}
-            >
-              <Text style={[styles.tabText, activeTab === 'departments' && styles.tabTextActive]}>Отделы</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => setActiveTab('roles')}
-              style={[styles.tabBtn, activeTab === 'roles' && styles.tabBtnActive]}
-            >
-              <Text style={[styles.tabText, activeTab === 'roles' && styles.tabTextActive]}>Роли</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => setActiveTab('updates')}
-              style={[styles.tabBtn, activeTab === 'updates' && styles.tabBtnActive]}
-            >
-              <Text style={[styles.tabText, activeTab === 'updates' && styles.tabTextActive]}>Обновления</Text>
-            </Pressable>
-          </ScrollView>
+      <View style={[styles.container, { paddingBottom: tabBarSpacer + 16 }]}>
+        <AdminTabsBar
+          styles={styles}
+          activeKey={activeTab}
+          tabs={[
+            { key: 'users', label: 'Пользователи' },
+            { key: 'departments', label: 'Отделы' },
+            { key: 'roles', label: 'Роли' },
+            { key: 'updates', label: 'Обновления' },
+          ]}
+          onChange={(key) => setActiveTab(key as TabKey)}
+        />
 
+        <View style={styles.panel}>
           <UsersTab
             active={activeTab === 'users'}
             styles={styles}

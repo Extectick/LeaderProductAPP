@@ -24,6 +24,7 @@ import {
 } from '@/utils/userService';
 
 import { AdminStyles } from '@/components/admin/adminStyles';
+import { useTabBarSpacerHeight } from '@/components/Navigation/TabBarSpacer';
 
 type RolesTabProps = {
   active: boolean;
@@ -32,6 +33,7 @@ type RolesTabProps = {
 };
 
 export default function RolesTab({ active, styles, colors }: RolesTabProps) {
+  const tabBarSpacer = useTabBarSpacerHeight();
   const [roles, setRoles] = useState<RoleItem[]>([]);
   const [permissions, setPermissions] = useState<string[]>([]);
   const [newRoleName, setNewRoleName] = useState('');
@@ -113,27 +115,30 @@ export default function RolesTab({ active, styles, colors }: RolesTabProps) {
 
   return (
     <>
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ gap: 10 }}>
-        <View style={styles.row}>
-          <TextInput
-            placeholder="Новая роль"
-            value={newRoleName}
-            onChangeText={setNewRoleName}
-            style={[styles.input, { flex: 1 }]}
-          />
-          <TouchableOpacity style={[styles.smallBtn, { backgroundColor: colors.tint }]} onPress={handleCreateRole}>
-            <Text style={{ color: '#fff', fontWeight: '700' }}>Добавить</Text>
-          </TouchableOpacity>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ gap: 12, paddingBottom: tabBarSpacer + 12 }}>
+        <View style={styles.toolbarCard}>
+          <View style={styles.row}>
+            <TextInput
+              placeholder="Новая роль"
+              value={newRoleName}
+              onChangeText={setNewRoleName}
+              style={[styles.input, { flex: 1 }]}
+            />
+            <TouchableOpacity style={[styles.smallBtn, { backgroundColor: colors.tint }]} onPress={handleCreateRole}>
+              <Text style={{ color: '#fff', fontWeight: '700' }}>Добавить</Text>
+            </TouchableOpacity>
+          </View>
         </View>
-        {roles.map((r) => {
-          const isEditing = editRoleId === r.id;
-          return (
-            <View key={r.id} style={styles.itemRow}>
-              <TouchableOpacity
-                style={{ flex: 1 }}
-                activeOpacity={0.9}
-                onPress={() => {
-                  setRolePermModal(r);
+        <View style={{ gap: 10 }}>
+          {roles.map((r) => {
+            const isEditing = editRoleId === r.id;
+            return (
+              <View key={r.id} style={styles.itemRow}>
+                <TouchableOpacity
+                  style={{ flex: 1 }}
+                  activeOpacity={0.9}
+                  onPress={() => {
+                    setRolePermModal(r);
                   setRolePermsDraft(r.permissions || []);
                 }}
               >
@@ -146,7 +151,7 @@ export default function RolesTab({ active, styles, colors }: RolesTabProps) {
                     onSubmitEditing={handleUpdateRole}
                   />
                 ) : (
-                  <Text style={styles.nameText} numberOfLines={1}>
+                  <Text style={styles.nameText} numberOfLines={2}>
                     {r.name}
                   </Text>
                 )}
@@ -170,10 +175,11 @@ export default function RolesTab({ active, styles, colors }: RolesTabProps) {
                 <TouchableOpacity style={styles.iconBtnDanger} onPress={() => handleDeleteRole(r.id)}>
                   <Ionicons name="trash-outline" size={18} color="#DC2626" />
                 </TouchableOpacity>
+                </View>
               </View>
-            </View>
-          );
-        })}
+            );
+          })}
+        </View>
       </ScrollView>
 
       <Modal

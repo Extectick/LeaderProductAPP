@@ -244,10 +244,10 @@ export default function QRListPanel({
                   </View>
 
                   <View style={{ flex: 1 }}>
-                    <Text numberOfLines={1} style={styles.cardTitle}>
+                    <Text numberOfLines={2} style={styles.cardTitle}>
                       {item.description || (typeof item.qrData === 'string' ? item.qrData : 'QR')}
                     </Text>
-                    <Text numberOfLines={1} style={styles.cardSub}>
+                    <Text numberOfLines={2} style={styles.cardSub}>
                       {item.qrType}
                     </Text>
                   </View>

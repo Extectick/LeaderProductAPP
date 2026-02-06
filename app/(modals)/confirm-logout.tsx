@@ -1,16 +1,18 @@
 import React from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { MotiView } from 'moti';
 import { useRouter, type Href } from 'expo-router';
 import { logoutUser } from '@/utils/authService';
 import { useThemeColor } from '@/hooks/useThemeColor';
 
 export default function ConfirmLogoutModal() {
   const router = useRouter();
-  const bgCard     = useThemeColor({}, 'cardBackground');
-  const textColor  = useThemeColor({}, 'text');
-  const btnText    = useThemeColor({}, 'buttonText');
-  const cancelBg   = useThemeColor({}, 'buttonDisabled');
-  const confirmBg  = useThemeColor({}, 'button');
+  const bgCard = useThemeColor({}, 'cardBackground');
+  const textColor = useThemeColor({}, 'text');
+  const cancelBg = useThemeColor({}, 'buttonDisabled');
+  const confirmBg = useThemeColor({}, 'button');
+  const cancelText = textColor;
+  const confirmText = textColor;
 
   const onCancel = () => router.back();
   const onConfirm = async () => {
@@ -18,23 +20,35 @@ export default function ConfirmLogoutModal() {
   };
 
   return (
-    <View style={styles.root}>
-      <Pressable style={styles.backdrop} onPress={onCancel} />
-      <View style={[styles.card, { backgroundColor: bgCard }]}>
+    <View style={styles.root} pointerEvents="box-none">
+      <Pressable style={styles.backdropPress} onPress={onCancel}>
+        <MotiView
+          from={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ type: 'timing', duration: 160 }}
+          style={styles.backdrop}
+        />
+      </Pressable>
+      <MotiView
+        from={{ opacity: 0, scale: 0.96 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ type: 'timing', duration: 180 }}
+        style={[styles.card, { backgroundColor: bgCard }]}
+      >
         <Text style={[styles.title, { color: textColor }]}>Выйти из аккаунта?</Text>
         <Text style={[styles.msg,   { color: textColor }]}>
           Вы действительно хотите выйти из аккаунта?
         </Text>
 
         <View style={styles.row}>
-          <Pressable onPress={onCancel} style={[styles.btn, styles.left,  { backgroundColor: cancelBg }]}>
-            <Text style={[styles.btnText, { color: btnText }]}>Отмена</Text>
+          <Pressable onPress={onCancel} style={[styles.btn, { backgroundColor: cancelBg }]}>
+            <Text style={[styles.btnText, { color: cancelText }]}>Отмена</Text>
           </Pressable>
-          <Pressable onPress={onConfirm} style={[styles.btn, styles.right, { backgroundColor: confirmBg }]}>
-            <Text style={[styles.btnText, { color: btnText }]}>Выйти</Text>
+          <Pressable onPress={onConfirm} style={[styles.btn, { backgroundColor: confirmBg }]}>
+            <Text style={[styles.btnText, { color: confirmText }]}>Выйти</Text>
           </Pressable>
         </View>
-      </View>
+      </MotiView>
     </View>
   );
 }
@@ -47,6 +61,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     ...Platform.select({ web: { position: 'fixed' as any, inset: 0 } }),
   },
+  backdropPress: { ...StyleSheet.absoluteFillObject },
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.35)' },
   card: {
     width: '100%', maxWidth: 420, borderRadius: 16, padding: 20,
@@ -58,9 +73,7 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 20, fontWeight: '700', textAlign: 'center', marginBottom: 10 },
   msg:   { fontSize: 16, textAlign: 'center' },
-  row:   { flexDirection: 'row', justifyContent: 'center', marginTop: 20 },
-  btn:   { flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: 'center', minWidth: 100 },
-  left:  { marginRight: 8 },
-  right: { marginLeft: 8 },
-  btnText: { fontSize: 16, fontWeight: '600' },
+  row:   { flexDirection: 'row', justifyContent: 'center', marginTop: 20, gap: 10 },
+  btn:   { flex: 1, minHeight: 44, paddingVertical: 12, borderRadius: 12, alignItems: 'center', minWidth: 100 },
+  btnText: { fontSize: 16, fontWeight: '700', textAlign: 'center' },
 });

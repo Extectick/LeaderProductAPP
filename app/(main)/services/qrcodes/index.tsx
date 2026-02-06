@@ -25,6 +25,7 @@ import {
 } from 'react-native';
 import Animated, { FadeIn, FadeInDown, FadeOut, Layout } from 'react-native-reanimated';
 import { useThemeColor } from '@/hooks/useThemeColor';
+import TabBarSpacer from '@/components/Navigation/TabBarSpacer';
 
 const Header = ({
   onCreate,
@@ -298,6 +299,7 @@ export default function QRCodesScreen() {
               </Pressable>
             </View>
           }
+          ListFooterComponent={<TabBarSpacer />}
         />
       </Animated.View>
 

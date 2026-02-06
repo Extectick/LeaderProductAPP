@@ -109,7 +109,8 @@ export default function Dropdown<T extends string | number>({
               <Ionicons name="list" size={16} color="#111827" style={{ marginRight: 8 }} />
               <Text
                 style={[styles.buttonText, !selectedLabel && { color: '#9CA3AF' }]}
-                numberOfLines={1}
+                numberOfLines={2}
+                ellipsizeMode="tail"
               >
                 {selectedLabel ?? placeholder}
               </Text>
@@ -166,7 +167,8 @@ export default function Dropdown<T extends string | number>({
                     android_ripple={{ color: 'rgba(0,0,0,0.05)' }}
                   >
                     <Text
-                      numberOfLines={1}
+                      numberOfLines={2}
+                      ellipsizeMode="tail"
                       style={[
                         styles.itemText,
                         selected && styles.itemTextSelected,
@@ -221,7 +223,7 @@ const styles = StyleSheet.create({
   },
   item: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
     paddingVertical: 10,
     paddingHorizontal: 12,
@@ -229,7 +231,7 @@ const styles = StyleSheet.create({
   itemPressed: { backgroundColor: 'rgba(0,0,0,0.04)' },
   itemDisabled: { opacity: 0.5 },
   itemSelected: { backgroundColor: '#EEF2FF' },
-  itemText: { color: '#111827', fontSize: 14 },
+  itemText: { color: '#111827', fontSize: 14, flex: 1, flexShrink: 1, paddingRight: 8 },
   itemTextSelected: { color: '#2563EB', fontWeight: '700' },
   itemTextDisabled: { color: '#9CA3AF' },
   emptyWrap: { paddingVertical: 10, paddingHorizontal: 12 },

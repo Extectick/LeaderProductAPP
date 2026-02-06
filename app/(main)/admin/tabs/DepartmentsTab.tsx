@@ -25,6 +25,7 @@ import {
 } from '@/utils/userService';
 
 import { AdminStyles } from '@/components/admin/adminStyles';
+import { useTabBarSpacerHeight } from '@/components/Navigation/TabBarSpacer';
 
 type DepartmentsTabProps = {
   active: boolean;
@@ -34,6 +35,7 @@ type DepartmentsTabProps = {
 };
 
 export default function DepartmentsTab({ active, styles, colors, onOpenUser }: DepartmentsTabProps) {
+  const tabBarSpacer = useTabBarSpacerHeight();
   const [departments, setDepartments] = useState<Department[]>([]);
   const [newDeptName, setNewDeptName] = useState('');
   const [editDeptId, setEditDeptId] = useState<number | null>(null);
@@ -138,27 +140,30 @@ export default function DepartmentsTab({ active, styles, colors, onOpenUser }: D
 
   return (
     <>
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ gap: 10 }}>
-        <View style={styles.row}>
-          <TextInput
-            placeholder="Новый отдел"
-            value={newDeptName}
-            onChangeText={setNewDeptName}
-            style={[styles.input, { flex: 1 }]}
-          />
-          <TouchableOpacity style={[styles.smallBtn, { backgroundColor: colors.tint }]} onPress={handleCreateDepartment}>
-            <Text style={{ color: '#fff', fontWeight: '700' }}>Добавить</Text>
-          </TouchableOpacity>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ gap: 12, paddingBottom: tabBarSpacer + 12 }}>
+        <View style={styles.toolbarCard}>
+          <View style={styles.row}>
+            <TextInput
+              placeholder="Новый отдел"
+              value={newDeptName}
+              onChangeText={setNewDeptName}
+              style={[styles.input, { flex: 1 }]}
+            />
+            <TouchableOpacity style={[styles.smallBtn, { backgroundColor: colors.tint }]} onPress={handleCreateDepartment}>
+              <Text style={{ color: '#fff', fontWeight: '700' }}>Добавить</Text>
+            </TouchableOpacity>
+          </View>
         </View>
-        {departments.map((d) => {
-          const isEditing = editDeptId === d.id;
-          return (
-            <View key={d.id} style={styles.itemRow}>
-              <TouchableOpacity
-                style={{ flex: 1 }}
-                activeOpacity={0.9}
-                onPress={() => setDeptUsersModal({ id: d.id, name: d.name })}
-              >
+        <View style={{ gap: 10 }}>
+          {departments.map((d) => {
+            const isEditing = editDeptId === d.id;
+            return (
+              <View key={d.id} style={styles.itemRow}>
+                <TouchableOpacity
+                  style={{ flex: 1 }}
+                  activeOpacity={0.9}
+                  onPress={() => setDeptUsersModal({ id: d.id, name: d.name })}
+                >
                 {isEditing ? (
                   <TextInput
                     value={editDeptName}
@@ -168,7 +173,7 @@ export default function DepartmentsTab({ active, styles, colors, onOpenUser }: D
                     onSubmitEditing={handleUpdateDepartment}
                   />
                 ) : (
-                  <Text style={styles.nameText} numberOfLines={1}>
+                  <Text style={styles.nameText} numberOfLines={2}>
                     {d.name}
                   </Text>
                 )}
@@ -192,10 +197,11 @@ export default function DepartmentsTab({ active, styles, colors, onOpenUser }: D
                 <TouchableOpacity style={styles.iconBtnDanger} onPress={() => handleDeleteDepartment(d.id)}>
                   <Ionicons name="trash-outline" size={18} color="#DC2626" />
                 </TouchableOpacity>
+                </View>
               </View>
-            </View>
-          );
-        })}
+            );
+          })}
+        </View>
       </ScrollView>
 
       <Modal
@@ -231,7 +237,7 @@ export default function DepartmentsTab({ active, styles, colors, onOpenUser }: D
                       style={({ pressed }) => [styles.deptUserCard, pressed && styles.deptUserCardPressed]}
                     >
                       <View style={styles.deptUserHeader}>
-                        <Text style={styles.deptUserName} numberOfLines={1}>
+                        <Text style={styles.deptUserName} numberOfLines={2}>
                           #{u.id} · {fullName}
                         </Text>
                         <Text style={styles.deptUserRole}>{u.role?.name || '—'}</Text>

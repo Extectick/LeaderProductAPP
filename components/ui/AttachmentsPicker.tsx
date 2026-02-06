@@ -88,7 +88,7 @@ export default function AttachmentsPicker({
         {showChips && value.map((f, idx) => (
           <View key={`${f.uri}-${idx}`} style={styles.fileChip}>
             <Ionicons name="document" size={14} color="#2563EB" />
-            <Text style={styles.fileChipText} numberOfLines={1}>{f.name}</Text>
+            <Text style={styles.fileChipText}>{f.name}</Text>
             <Pressable onPress={() => removeAt(idx)} hitSlop={8}>
               <Ionicons name="close" size={14} color="#6B7280" />
             </Pressable>
@@ -111,7 +111,7 @@ export default function AttachmentsPicker({
           {value.map((f, idx) => (
             <View key={`${f.uri}-${idx}`} style={styles.fileChip}>
               <Ionicons name="document" size={14} color="#2563EB" />
-              <Text style={styles.fileChipText} numberOfLines={1}>{f.name}</Text>
+              <Text style={styles.fileChipText}>{f.name}</Text>
               <Pressable onPress={() => removeAt(idx)} hitSlop={8}>
                 <Ionicons name="close" size={14} color="#6B7280" />
               </Pressable>
@@ -140,7 +140,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: '#E5E7EB', backgroundColor: '#F9FAFB',
     borderRadius: 999, paddingVertical: 6, paddingHorizontal: 10, maxWidth: '100%',
   },
-  fileChipText: { maxWidth: 160, color: '#111827', fontSize: 12 },
+  fileChipText: { maxWidth: 220, color: '#111827', fontSize: 12, lineHeight: 16, flexShrink: 1 },
   attachBtn: {
     flexDirection: 'row', alignItems: 'center',
     backgroundColor: '#fff', borderWidth: 1, borderColor: '#E5E7EB',

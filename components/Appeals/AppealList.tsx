@@ -88,6 +88,7 @@ export default function AppealsList({
   const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const emptyText = scope === 'department' ? 'Задач отдела пока нет' : 'Обращений пока нет';
 
   const filters = useMemo(() => ({ status, priority }), [status, priority]);
 
@@ -248,7 +249,7 @@ export default function AppealsList({
         ListEmptyComponent={
           !loading
             ? ListEmptyComponent ?? (
-                <EmptyState text="Обращения не найдены" />
+                <EmptyState text={emptyText} />
               )
             : null
         }

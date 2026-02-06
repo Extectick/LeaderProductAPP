@@ -47,12 +47,12 @@ export function AppHeader({ title, subtitle, icon, showBack = true, onBack }: Pr
             <Ionicons name={icon as any} size={18} color="#fff" />
           </LinearGradient>
 
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.title, { color: textColor }]} numberOfLines={1}>
+          <View style={styles.textWrap}>
+            <Text style={[styles.title, { color: textColor }]} numberOfLines={2}>
               {title}
             </Text>
             {subtitle ? (
-              <Text style={[styles.subtitle, { color: secondary }]} numberOfLines={2}>
+              <Text style={[styles.subtitle, { color: secondary }]} numberOfLines={3}>
                 {subtitle}
               </Text>
             ) : null}
@@ -81,6 +81,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+  },
+  textWrap: {
+    flex: 1,
+    minWidth: 0,
   },
   backBtn: {
     width: 36,

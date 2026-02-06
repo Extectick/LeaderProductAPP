@@ -12,6 +12,7 @@ import {
   View,
 } from 'react-native';
 import ServiceCard from './ServiceCard';
+import TabBarSpacer from '@/components/Navigation/TabBarSpacer';
 
 export default function ServicesWebPage() {
   const [services, setServices] = useState<typeof staticServices | null>(null);
@@ -93,6 +94,7 @@ export default function ServicesWebPage() {
           numColumns={mobileColumns}
           columnWrapperStyle={{ gap: mobileGap, marginBottom: mobileGap }}
           contentContainerStyle={{ padding: mobileGap, paddingTop: 0 }}
+          ListFooterComponent={<TabBarSpacer />}
           renderItem={({ item }) => (
             <ServiceCard
               icon={item.icon}
@@ -136,6 +138,7 @@ export default function ServicesWebPage() {
           </View>
         ))}
       </View>
+      <TabBarSpacer />
     </ScrollView>
   );
 }

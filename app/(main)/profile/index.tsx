@@ -28,6 +28,7 @@ import { useTracking } from '@/context/TrackingContext';
 import { Skeleton } from 'moti/skeleton';
 import { mask, MaskedTextInput, unMask } from 'react-native-mask-text';
 import { shadeColor, tintColor } from '@/utils/color';
+import TabBarSpacer from '@/components/Navigation/TabBarSpacer';
 
 const PROFILE_CACHE_KEY = 'profile';
 const PHONE_MASK = '+7 (999) 999-99-99';
@@ -83,7 +84,7 @@ export default function ProfileScreen() {
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
         <RefreshButton onPress={refreshProfile} loading={refreshing} />
         <LogoutButton />
-        <View style={{ height: 24 }} />
+        <TabBarSpacer />
       </ScrollView>
     );
   }
@@ -106,7 +107,7 @@ export default function ProfileScreen() {
       )}
       {loading && !profile ? <TrackingSkeleton /> : <TrackingToggle />}
       {loading && !profile ? <LogoutSkeleton /> : <LogoutButton />}
-      <View style={{ height: 24 }} />
+      <TabBarSpacer />
     </ScrollView>
   );
 }

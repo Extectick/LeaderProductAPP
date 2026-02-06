@@ -76,8 +76,6 @@ export default function OverflowMenu({ visible, onClose, items, anchorPosition, 
                 />
               ) : null}
               <Text
-                numberOfLines={1}
-                ellipsizeMode="tail"
                 style={[styles.menuText, item.destructive && styles.destructiveText, item.disabled && styles.disabledText]}
               >
                 {item.title}
@@ -114,7 +112,7 @@ const styles = StyleSheet.create({
   },
   menuItem: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     paddingVertical: 10,
     paddingHorizontal: 10,
     borderRadius: 10,
@@ -130,6 +128,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     flex: 1,
+    flexShrink: 1,
   },
   destructiveText: { color: '#EF4444' },
   disabledText: { color: '#9CA3AF' },

@@ -27,6 +27,7 @@ import {
 } from '@/utils/updateAdminService';
 
 import { AdminStyles } from '@/components/admin/adminStyles';
+import { useTabBarSpacerHeight } from '@/components/Navigation/TabBarSpacer';
 
 type UpdatesTabProps = {
   active: boolean;
@@ -101,6 +102,7 @@ const HELP_TEXT = {
 };
 
 export default function UpdatesTab({ active, styles, colors, isWide }: UpdatesTabProps) {
+  const tabBarSpacer = useTabBarSpacerHeight();
   const androidVersionCode = Number(Constants.expoConfig?.android?.versionCode ?? 0);
   const iosVersionCode = Number(Constants.expoConfig?.ios?.buildNumber ?? 0);
   const appVersionName = Constants.expoConfig?.version ?? '';
@@ -481,7 +483,7 @@ export default function UpdatesTab({ active, styles, colors, isWide }: UpdatesTa
 
   return (
     <>
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ gap: 12 }}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ gap: 12, paddingBottom: tabBarSpacer + 12 }}>
         {notice ? (
           <View
             style={[

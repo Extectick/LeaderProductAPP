@@ -150,7 +150,7 @@ export function NotificationHost({ children }: Props) {
                       {item.message}
                     </Text>
                     {item.actionLabel ? (
-                      <Text style={[styles.link, { color: border }]} numberOfLines={1}>
+                      <Text style={[styles.link, { color: border }]} numberOfLines={2}>
                         {item.actionLabel}
                       </Text>
                     ) : null}
@@ -209,5 +209,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 13,
     textDecorationLine: 'underline',
+    flexShrink: 1,
   },
 });

@@ -1,14 +1,9 @@
 // V:\lp\components\CustomAlert.tsx
-import React, { useCallback, useMemo, useRef } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { MotiView } from 'moti';
 import RNModal from 'react-native-modal';
 import { useThemeColor } from '@/hooks/useThemeColor';
-import Animated, {
-  interpolateColor,
-  useAnimatedStyle,
-  useSharedValue,
-  withTiming,
-} from 'react-native-reanimated';
 
 interface Props {
   visible: boolean;
@@ -31,84 +26,96 @@ export default function CustomAlert({
 }: Props) {
   const bg      = useThemeColor({}, 'cardBackground');
   const text    = useThemeColor({}, 'text');
-  const btnText = useThemeColor({}, 'buttonText');
   const cancel  = useThemeColor({}, 'buttonDisabled');
   const confirm = useThemeColor({}, 'button');
 
   const cancelColor = useMemo(() => String(cancel), [cancel]);
   const confirmColor = useMemo(() => String(confirm), [confirm]);
-  const textColor = useMemo(() => String(btnText), [btnText]);
+  const readableText = useCallback((bg: string) => {
+    const rgb = parseColor(bg);
+    if (!rgb) return '#111827';
+    const luminance = (0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b) / 255;
+    return luminance > 0.6 ? '#111827' : '#FFFFFF';
+  }, []);
+
+  const cancelTextColor = useMemo(() => readableText(cancelColor), [cancelColor, readableText]);
+  const confirmTextColor = useMemo(() => readableText(confirmColor), [confirmColor, readableText]);
 
   return (
     <RNModal
       isVisible={visible}
-      // Критично: полное покрытие экрана без внешних отступов
       coverScreen
-      style={styles.modal}        // margin:0
-      // Закрытия
-      onBackdropPress={onCancel}
+      style={styles.modal}
       onBackButtonPress={onCancel}
-      // Анимации
-      useNativeDriver
-      useNativeDriverForBackdrop
-      backdropOpacity={0.35}
-      animationIn="zoomIn"
-      animationOut="zoomOut"
-      backdropTransitionInTiming={180}
-      backdropTransitionOutTiming={0}
+      useNativeDriver={false}
+      backdropOpacity={0}
+      backdropColor="transparent"
+      animationIn="fadeIn"
+      animationOut="fadeOut"
+      animationInTiming={160}
+      animationOutTiming={140}
       statusBarTranslucent
       avoidKeyboard={false}
     >
       <View style={styles.center}>
-        <View style={[styles.card, { backgroundColor: bg }]}>
+        <Pressable style={styles.backdropPress} onPress={onCancel}>
+          <MotiView
+            from={{ opacity: 0 }}
+            animate={{ opacity: visible ? 0.35 : 0 }}
+            transition={{ type: 'timing', duration: 180 }}
+            style={styles.backdrop}
+          />
+        </Pressable>
+        <MotiView
+          from={{ opacity: 0, scale: 0.92 }}
+          animate={{ opacity: visible ? 1 : 0, scale: visible ? 1 : 0.96 }}
+          transition={{ type: 'timing', duration: 200 }}
+          style={[styles.card, { backgroundColor: bg }]}
+        >
           <Text style={[styles.title,   { color: text }]}>{title}</Text>
           <Text style={[styles.message, { color: text }]}>{message}</Text>
 
           <View style={styles.buttonsRow}>
-            <AnimatedActionButton
+            <AlertButton
               label={cancelText}
               onPress={onCancel}
               baseColor={cancelColor}
-              textColor={textColor}
+              textColor={cancelTextColor}
               style={styles.buttonLeft}
             />
 
-            <AnimatedActionButton
+            <AlertButton
               label={confirmText}
               onPress={onConfirm}
               baseColor={confirmColor}
-              textColor={textColor}
+              textColor={confirmTextColor}
               style={styles.buttonRight}
             />
           </View>
-        </View>
+        </MotiView>
       </View>
     </RNModal>
   );
 }
 
-function hexToRgb(hex: string) {
-  const cleaned = hex.trim().replace('#', '');
-  if (cleaned.length !== 3 && cleaned.length !== 6) return null;
-  const full = cleaned.length === 3
-    ? cleaned.split('').map((c) => c + c).join('')
-    : cleaned;
-  const num = Number.parseInt(full, 16);
-  if (Number.isNaN(num)) return null;
-  return { r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 };
+function parseColor(value: string) {
+  const trimmed = value.trim();
+  const hexMatch = trimmed.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (hexMatch) {
+    const hex = hexMatch[1];
+    const full = hex.length === 3 ? hex.split('').map((c) => c + c).join('') : hex;
+    const num = Number.parseInt(full, 16);
+    if (Number.isNaN(num)) return null;
+    return { r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 };
+  }
+  const rgbMatch = trimmed.replace(/\s+/g, '').match(/^rgba?\((\d+),(\d+),(\d+)/i);
+  if (rgbMatch) {
+    return { r: Number(rgbMatch[1]), g: Number(rgbMatch[2]), b: Number(rgbMatch[3]) };
+  }
+  return null;
 }
 
-function mixHex(base: string, mixWith: string, amount: number) {
-  const b = hexToRgb(base);
-  const m = hexToRgb(mixWith);
-  if (!b || !m) return base;
-  const r = Math.round(b.r + (m.r - b.r) * amount);
-  const g = Math.round(b.g + (m.g - b.g) * amount);
-  const b2 = Math.round(b.b + (m.b - b.b) * amount);
-  return `rgb(${r}, ${g}, ${b2})`;
-}
-
-function AnimatedActionButton({
+function AlertButton({
   label,
   onPress,
   baseColor,
@@ -121,58 +128,15 @@ function AnimatedActionButton({
   textColor: string;
   style?: any;
 }) {
-  const hoverColor = useMemo(() => mixHex(baseColor, '#ffffff', 0.12), [baseColor]);
-  const pressColor = useMemo(() => mixHex(baseColor, '#000000', 0.12), [baseColor]);
-
-  const scale = useSharedValue(1);
-  const bg = useSharedValue(0);
-  const hoveredRef = useRef(false);
-  const pressedRef = useRef(false);
-
-  const animateTo = useCallback((state: 'idle' | 'hover' | 'press') => {
-    if (state === 'press') {
-      scale.value = withTiming(0.96, { duration: 120 });
-      bg.value = withTiming(2, { duration: 120 });
-      return;
-    }
-    if (state === 'hover') {
-      scale.value = withTiming(1.03, { duration: 140 });
-      bg.value = withTiming(1, { duration: 140 });
-      return;
-    }
-    scale.value = withTiming(1, { duration: 160 });
-    bg.value = withTiming(0, { duration: 160 });
-  }, [bg, scale]);
-
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
-    backgroundColor: interpolateColor(bg.value, [0, 1, 2], [baseColor, hoverColor, pressColor]),
-  }));
-
   return (
-    <Pressable
-      onPress={onPress}
-      onPressIn={() => {
-        pressedRef.current = true;
-        animateTo('press');
-      }}
-      onPressOut={() => {
-        pressedRef.current = false;
-        animateTo(hoveredRef.current ? 'hover' : 'idle');
-      }}
-      onHoverIn={() => {
-        hoveredRef.current = true;
-        if (!pressedRef.current) animateTo('hover');
-      }}
-      onHoverOut={() => {
-        hoveredRef.current = false;
-        if (!pressedRef.current) animateTo('idle');
-      }}
-      style={{ flex: 1 }}
-    >
-      <Animated.View style={[styles.button, animatedStyle, style]}>
+    <Pressable onPress={onPress} style={({ pressed }) => [
+      styles.button,
+      { backgroundColor: baseColor, opacity: pressed ? 0.9 : 1 },
+      style,
+    ]}>
+      <View style={styles.buttonContent}>
         <Text style={[styles.buttonText, { color: textColor }]}>{label}</Text>
-      </Animated.View>
+      </View>
     </Pressable>
   );
 }
@@ -188,6 +152,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 20,
+  },
+  backdropPress: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#000',
   },
   card: {
     width: '100%',
@@ -208,7 +179,8 @@ const styles = StyleSheet.create({
   title:   { fontSize: 20, fontWeight: '700', textAlign: 'center', marginBottom: 10 },
   message: { fontSize: 16, textAlign: 'center' },
   buttonsRow: { flexDirection: 'row', justifyContent: 'center', marginTop: 20 },
-  button: { flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: 'center', minWidth: 100 },
+  button: { flex: 1, paddingVertical: 12, borderRadius: 10, minWidth: 100 },
+  buttonContent: { alignItems: 'center', justifyContent: 'center', width: '100%' },
   buttonLeft:  { marginRight: 8 },
   buttonRight: { marginLeft: 8 },
   buttonText: { fontSize: 16, fontWeight: '600' },

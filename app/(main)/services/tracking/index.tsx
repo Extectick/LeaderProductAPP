@@ -488,7 +488,7 @@ export default function TrackingServiceScreen() {
               },
             ]}
           >
-            <Text style={{ color: textColor, flex: 1 }} numberOfLines={1}>
+            <Text style={{ color: textColor, flex: 1 }} numberOfLines={2} ellipsizeMode="tail">
               {humanName(selectedUser)}
             </Text>
             <Ionicons name="chevron-down" size={18} color={mutedText} />
@@ -522,7 +522,7 @@ export default function TrackingServiceScreen() {
                 onPress={() => openDatePicker('from')}
                 style={[styles.input, styles.dateInput, { borderColor: mutedText }]}
               >
-                <Text style={{ color: textColor, flex: 1 }} numberOfLines={1}>
+                <Text style={{ color: textColor, flex: 1 }} numberOfLines={2} ellipsizeMode="tail">
                   {filters.from ? formatDateTime(filters.from) : 'Выбрать дату'}
                 </Text>
                 <Ionicons name="calendar-outline" size={18} color={mutedText} />
@@ -535,7 +535,7 @@ export default function TrackingServiceScreen() {
                 onPress={() => openDatePicker('to')}
                 style={[styles.input, styles.dateInput, { borderColor: mutedText }]}
               >
-                <Text style={{ color: textColor, flex: 1 }} numberOfLines={1}>
+                <Text style={{ color: textColor, flex: 1 }} numberOfLines={2} ellipsizeMode="tail">
                   {filters.to ? formatDateTime(filters.to) : 'Выбрать дату'}
                 </Text>
                 <Ionicons name="calendar-outline" size={18} color={mutedText} />

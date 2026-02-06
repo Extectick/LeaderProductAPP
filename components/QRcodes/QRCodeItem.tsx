@@ -125,10 +125,10 @@ export default function QRCodeItem({ item, onPress, onLongPress, loading }: Prop
 
         {/* Текст: описание (основа) + урезанный qrData */}
         <View style={styles.textContainer}>
-          <Text numberOfLines={1} style={[styles.title]}>
+          <Text numberOfLines={2} style={[styles.title]}>
             {item.description || 'Без названия'}
           </Text>
-          <Text numberOfLines={1} style={[styles.subtitle]}>
+          <Text numberOfLines={2} style={[styles.subtitle]}>
             {item.qrData.length > 32 ? item.qrData.slice(0, 32) + '…' : item.qrData}
           </Text>
         </View>

@@ -22,6 +22,7 @@ import { createQRCode, getQRCodesList, updateQRCode } from '@/utils/qrService';
 
 import QRCodeForm from '@/components/QRcodes/QRCodeForm';
 import QRListPanel from '@/components/QRcodes/Web/QRListPanel';
+import TabBarSpacer from '@/components/Navigation/TabBarSpacer';
 
 import AnalyticsHeader from '@/components/QRcodes/Analytics/AnalyticsHeader';
 import ChartSkeleton from '@/components/QRcodes/Analytics/ChartSkeleton';
@@ -254,7 +255,7 @@ export default function QRHubWeb() {
                 pressed && { opacity: 0.94 },
               ]}
             >
-              <Text style={[stylesMobile.cardTitle, { color: colors.text }]} numberOfLines={1}>
+              <Text style={[stylesMobile.cardTitle, { color: colors.text }]} numberOfLines={2}>
                 {item.description || item.qrData || 'QR'}
               </Text>
               <Text style={{ color: colors.secondaryText, fontSize: 12 }} numberOfLines={2}>
@@ -276,7 +277,8 @@ export default function QRHubWeb() {
               colors={[colors.text]}
             />
           }
-          contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: insets.bottom + 12, gap: 10 }}
+          contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 12, gap: 10 }}
+          ListFooterComponent={<TabBarSpacer />}
           showsVerticalScrollIndicator={false}
         />
 
@@ -783,7 +785,7 @@ const stylesMobile = StyleSheet.create({
     borderWidth: 1,
     padding: 12,
   },
-  cardTitle: { fontSize: 15, fontWeight: '700' },
+  cardTitle: { fontSize: 15, fontWeight: '700', flexShrink: 1 },
   emptyCard: {
     padding: 16,
     borderRadius: 14,

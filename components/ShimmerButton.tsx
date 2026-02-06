@@ -5,6 +5,7 @@ import React, { useEffect, useRef } from 'react';
 import {
   ActivityIndicator,
   LayoutChangeEvent,
+  Platform,
   Pressable,
   PressableProps,
   StyleProp,
@@ -55,6 +56,14 @@ export default function ShimmerButton({
   const scale = useSharedValue(1);
   const interaction = useSharedValue(0); // 0 idle, 1 hover, 2 press
   const hoveredRef = useRef(false);
+  const hoverScale = Platform.OS === 'web' ? 1 : 1.03;
+  const flatStyle = StyleSheet.flatten(style) || {};
+  const explicitHeight =
+    typeof flatStyle.height === 'number'
+      ? flatStyle.height
+      : typeof flatStyle.minHeight === 'number'
+      ? flatStyle.minHeight
+      : undefined;
 
   const onLayout = (e: LayoutChangeEvent) => {
     const w = e.nativeEvent.layout.width || 300;
@@ -77,13 +86,13 @@ export default function ShimmerButton({
   };
   const onPressOut = () => {
     interaction.value = withTiming(hoveredRef.current ? 1 : 0, { duration: 140 });
-    scale.value = withSpring(hoveredRef.current ? 1.03 : 1, { stiffness: 320, damping: 20 });
+    scale.value = withSpring(hoveredRef.current ? hoverScale : 1, { stiffness: 320, damping: 20 });
   };
   const onHoverIn = () => {
     if (disabled || loading) return;
     hoveredRef.current = true;
     interaction.value = withTiming(1, { duration: 140 });
-    scale.value = withSpring(1.03, { stiffness: 300, damping: 18 });
+    scale.value = withSpring(hoverScale, { stiffness: 300, damping: 18 });
   };
   const onHoverOut = () => {
     hoveredRef.current = false;
@@ -116,7 +125,7 @@ export default function ShimmerButton({
   }));
 
   // Общая анимационная фаза (0..1) -> 0..2π
-  const crestPhase = (mult = 1, add = 0) =>
+  const useCrestPhase = (mult = 1, add = 0) =>
     useAnimatedStyle(() => {
       const w = width.value;
       const t = (progress.value * Math.PI * 2) * mult + add;
@@ -144,9 +153,9 @@ export default function ShimmerButton({
     });
 
   // Гребень A (наклон вправо)
-  const crestAStyle = crestPhase(1, 0);
+  const crestAStyle = useCrestPhase(1, 0);
   // Гребень B (в противофазе, тоньше; наклон влево)
-  const crestBStyle = crestPhase(1, Math.PI);
+  const crestBStyle = useCrestPhase(1, Math.PI);
 
   return (
     <Pressable
@@ -167,7 +176,14 @@ export default function ShimmerButton({
         style,
       ]}
     >
-      <Animated.View style={[styles.inner, innerStyle]} onLayout={onLayout}>
+      <Animated.View
+        style={[
+          styles.inner,
+          explicitHeight ? { height: explicitHeight, minHeight: explicitHeight } : null,
+          innerStyle,
+        ]}
+        onLayout={onLayout}
+      >
         {/* фоновый градиент кнопки */}
         <LinearGradient
           colors={[...gradientColors] as [string, string]}
@@ -240,11 +256,22 @@ const styles = StyleSheet.create({
   wrapper: {
     borderRadius: 16,
     overflow: 'hidden',
-    elevation: 6,
-    shadowColor: '#56AB2F',
-    shadowOpacity: 0.35,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 8 },
+    ...Platform.select({
+      web: {
+        elevation: 0,
+        shadowColor: '#000',
+        shadowOpacity: 0.12,
+        shadowRadius: 10,
+        shadowOffset: { width: 0, height: 4 },
+      },
+      default: {
+        elevation: 6,
+        shadowColor: '#56AB2F',
+        shadowOpacity: 0.35,
+        shadowRadius: 16,
+        shadowOffset: { width: 0, height: 8 },
+      },
+    }),
   },
   inner: {
     minHeight: 52,

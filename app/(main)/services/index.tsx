@@ -12,6 +12,7 @@ import {
   View,
 } from 'react-native';
 import ServiceCard from './ServiceCard';
+import TabBarSpacer from '@/components/Navigation/TabBarSpacer';
 
 export default function ServicesScreen() {
   const [services, setServices] = useState<typeof staticServices | null>(null);
@@ -81,6 +82,7 @@ export default function ServicesScreen() {
         numColumns={numColumns}
         columnWrapperStyle={{ gap: spacing, marginBottom: spacing }}
         contentContainerStyle={{ padding: spacing, paddingTop: 0 }}
+        ListFooterComponent={<TabBarSpacer />}
         showsVerticalScrollIndicator={false}
         renderItem={({ item }) => (
           <View>
