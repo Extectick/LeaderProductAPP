@@ -8,6 +8,7 @@ import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Easing,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -66,6 +67,7 @@ const __authInitCache: {
 
 /** Горизонтальный паддинг карточки (должен совпадать со styles.card.padding) */
 const CARD_PAD_H = Platform.OS === 'web' ? 20 : 22;
+const APP_LOGO = require('../../assets/images/icon.png');
 
 /* ───── utils ───── */
 const STORAGE_KEYS = {
@@ -193,6 +195,8 @@ export default function AuthScreen() {
   const outerW = Math.max(0, Math.min(maxFormWidth, winW - contentPadH * 2));
   const pageW = Math.max(0, Math.floor(outerW - cardPadH * 2));
   const viewportW = pageW;
+  const logoWrapSize = Math.round(Math.min(Math.max(outerW * 0.34, 104), isWeb ? 156 : 148));
+  const logoSize = Math.round(logoWrapSize * 0.78);
 
   /* refs */
   const passRef = useRef<TextInput>(null);
@@ -941,8 +945,18 @@ export default function AuthScreen() {
           >
             {/* Header */}
             <Animated.View style={[styles.header, { opacity: fadeIn }]}>
-              {/* { Позже сюда добавить header и лого} */}
-              <Text style={styles.brand}></Text>
+              <View
+                style={[
+                  styles.logoWrap,
+                  {
+                    width: logoWrapSize,
+                    height: logoWrapSize,
+                    borderRadius: Math.round(logoWrapSize * 0.24),
+                  },
+                ]}
+              >
+                <Image source={APP_LOGO} style={{ width: logoSize, height: logoSize }} resizeMode="contain" />
+              </View>
             </Animated.View>
 
             {/* Tabs */}
@@ -1505,12 +1519,20 @@ const getStyles = (colors: {
     header: {
       width: '100%',
       maxWidth: Platform.OS === 'web' ? 820 : 620,
-      flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: 16,
+      justifyContent: 'center',
+      marginBottom: 12,
     },
-    brand: { fontSize: 24, fontWeight: '800', letterSpacing: 0.5, color: colors.text },
+    logoWrap: {
+      backgroundColor: 'rgba(255,255,255,0.92)',
+      alignItems: 'center',
+      justifyContent: 'center',
+      shadowColor: '#000',
+      shadowOpacity: 0.14,
+      shadowRadius: 12,
+      shadowOffset: { width: 0, height: 6 },
+      elevation: 4,
+    },
 
     segmentWrapper: { width: '100%', alignItems: 'center', marginBottom: 10 },
     segment: {
