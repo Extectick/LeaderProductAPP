@@ -31,6 +31,7 @@ import LineChart from '@/components/QRcodes/Analytics/LineChart';
 import MetricsRow from '@/components/QRcodes/Analytics/MetricsRow';
 import PeriodModal from '@/components/QRcodes/Analytics/PeriodModal';
 import PresetsModal from '@/components/QRcodes/Analytics/PresetsModal';
+import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 
 // helpers
 const buildMonthGrid = (month: Date, startOfWeek: 0 | 1 = 1) => {
@@ -49,6 +50,7 @@ export default function QRHubWeb() {
   const { theme, themes } = useTheme();
   const colors = themes[theme];
   const insets = useSafeAreaInsets();
+  const headerTopInset = useHeaderContentTopInset({ hasSubtitle: true });
   const router = useRouter();
   const styles = getStyles(colors);
   const { width } = useWindowDimensions();
@@ -172,7 +174,7 @@ export default function QRHubWeb() {
   };
 
   const renderSkeletonPage = () => (
-    <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+    <View style={[styles.root, { paddingTop: headerTopInset, paddingBottom: insets.bottom }]}>
       <View style={[styles.splitRow, styles.splitColumn, { gap: 16, paddingVertical: 12 }]}>
         <View style={[styles.leftPane, styles.fullPane, { gap: 12 }]}>
           <View style={[styles.skeletonBox, { height: 46 }]} />
@@ -206,7 +208,7 @@ export default function QRHubWeb() {
 
   if ((listLoading && qrList.length === 0) || (ctrl.loading && !ctrl.analytics)) {
     return isMobileLike ? (
-      <View style={[stylesMobile.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+      <View style={[stylesMobile.container, { paddingTop: headerTopInset, paddingBottom: insets.bottom }]}>
         <ActivityIndicator color={colors.text} />
       </View>
     ) : (
@@ -216,7 +218,7 @@ export default function QRHubWeb() {
 
   if (isMobileLike) {
     return (
-      <View style={[stylesMobile.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+      <View style={[stylesMobile.container, { backgroundColor: colors.background, paddingTop: headerTopInset }]}>
         <View style={stylesMobile.header}>
           <Text style={[stylesMobile.title, { color: colors.text }]}>QR-коды</Text>
           <View style={stylesMobile.headerButtonsRow}>
@@ -312,7 +314,7 @@ export default function QRHubWeb() {
   return (
     <ScrollView
       style={[styles.root]}
-      contentContainerStyle={{ paddingTop: insets.top, paddingBottom: insets.bottom, minHeight: '100%' }}
+      contentContainerStyle={{ paddingTop: headerTopInset, paddingBottom: insets.bottom, minHeight: '100%' }}
     >
       <View style={[styles.splitRow, isStack && styles.splitColumn]}>
         {/* LEFT: LIST */}

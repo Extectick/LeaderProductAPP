@@ -29,11 +29,13 @@ import { Skeleton } from 'moti/skeleton';
 import { mask, MaskedTextInput, unMask } from 'react-native-mask-text';
 import { shadeColor, tintColor } from '@/utils/color';
 import TabBarSpacer from '@/components/Navigation/TabBarSpacer';
+import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 
 const PROFILE_CACHE_KEY = 'profile';
 const PHONE_MASK = '+7 (999) 999-99-99';
 
 export default function ProfileScreen() {
+  const headerTopInset = useHeaderContentTopInset();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -81,7 +83,7 @@ export default function ProfileScreen() {
 
   if (!loading && !profile) {
     return (
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+      <ScrollView style={styles.scroll} contentContainerStyle={[styles.scrollContent, { paddingTop: 16 + headerTopInset }]}>
         <RefreshButton onPress={refreshProfile} loading={refreshing} />
         <LogoutButton />
         <TabBarSpacer />
@@ -90,7 +92,7 @@ export default function ProfileScreen() {
   }
 
   return (
-    <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+    <ScrollView style={styles.scroll} contentContainerStyle={[styles.scrollContent, { paddingTop: 16 + headerTopInset }]}>
       <ProfileView profileOverride={profile} loadingOverride={loading} errorOverride={error} />
       {loading && !profile ? (
         <ProfileEditorSkeleton />

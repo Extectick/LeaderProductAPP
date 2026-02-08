@@ -6,6 +6,7 @@ import { useTheme } from '@/context/ThemeContext';
 import { gradientColors, ThemeKey } from '@/constants/Colors';
 import { useIsAdmin } from '@/hooks/useIsAdmin';
 import { useTabBarSpacerHeight } from '@/components/Navigation/TabBarSpacer';
+import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 
 import { createAdminStyles } from '@/components/admin/adminStyles';
 import AdminTabsBar from '@/components/admin/AdminTabsBar';
@@ -13,8 +14,9 @@ import UsersTab from './tabs/UsersTab';
 import DepartmentsTab from './tabs/DepartmentsTab';
 import RolesTab from './tabs/RolesTab';
 import UpdatesTab from './tabs/UpdatesTab';
+import ServicesTab from './tabs/ServicesTab';
 
-type TabKey = 'users' | 'departments' | 'roles' | 'updates';
+type TabKey = 'users' | 'departments' | 'roles' | 'services' | 'updates';
 
 export default function AdminScreen() {
   const { isAdmin, isCheckingAdmin } = useIsAdmin();
@@ -24,6 +26,7 @@ export default function AdminScreen() {
   const { width } = useWindowDimensions();
   const isWide = width >= 980;
   const tabBarSpacer = useTabBarSpacerHeight();
+  const headerTopInset = useHeaderContentTopInset();
   const grad = gradientColors[theme as ThemeKey] || gradientColors.leaderprod;
   const btnGradient = useMemo(() => [grad[0], grad[1]] as [string, string], [grad]);
 
@@ -37,7 +40,7 @@ export default function AdminScreen() {
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
-      <View style={[styles.container, { paddingBottom: tabBarSpacer + 16 }]}>
+      <View style={[styles.container, { paddingTop: headerTopInset, paddingBottom: tabBarSpacer + 16 }]}>
         <AdminTabsBar
           styles={styles}
           activeKey={activeTab}
@@ -45,6 +48,7 @@ export default function AdminScreen() {
             { key: 'users', label: 'Пользователи' },
             { key: 'departments', label: 'Отделы' },
             { key: 'roles', label: 'Роли' },
+            { key: 'services', label: 'Сервисы' },
             { key: 'updates', label: 'Обновления' },
           ]}
           onChange={(key) => setActiveTab(key as TabKey)}
@@ -70,6 +74,11 @@ export default function AdminScreen() {
           />
           <RolesTab
             active={activeTab === 'roles'}
+            styles={styles}
+            colors={colors}
+          />
+          <ServicesTab
+            active={activeTab === 'services'}
             styles={styles}
             colors={colors}
           />

@@ -25,6 +25,7 @@ import PeriodModal from '@/components/QRcodes/Analytics/PeriodModal';
 import PresetsModal from '@/components/QRcodes/Analytics/PresetsModal';
 import { useAnalyticsController } from '@/hooks/useAnalyticsController';
 import { logger } from '@/utils/logger';
+import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
 const fmtDate = (d: Date) => `${pad2(d.getDate())}.${pad2(d.getMonth() + 1)}.${d.getFullYear()}`;
@@ -80,6 +81,7 @@ export default function QRAnalyticsMobileScreen() {
   }, []);
 
   const insets = useSafeAreaInsets();
+  const headerTopInset = useHeaderContentTopInset({ hasSubtitle: true });
 
   let tabBarHeight = 0;
   try {
@@ -429,6 +431,7 @@ export default function QRAnalyticsMobileScreen() {
           }
           contentContainerStyle={{
             padding: 16,
+            paddingTop: 16 + headerTopInset,
             paddingBottom: 24 + insets.bottom + tabBarHeight,
           }}
           onScrollBeginDrag={() => logger.debug('Analytics: scroll begin')}

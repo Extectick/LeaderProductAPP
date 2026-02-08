@@ -1,5 +1,6 @@
 import { useTheme } from '@/context/ThemeContext';
 import { useThemeColor } from '@/hooks/useThemeColor';
+import { LiquidGlassSurface } from '@/components/ui/LiquidGlassSurface';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import {
   BottomTabBarHeightCallbackContext,
@@ -19,7 +20,6 @@ import {
   type ViewStyle,
 } from 'react-native';
 import type { BottomTabItem, TabAccent } from './bottomTabsConfig';
-import { BlurView } from 'expo-blur';
 import type { ThemeKey } from '@/constants/Colors';
 
 const BASE_SIDE_MARGIN = 10;
@@ -89,49 +89,6 @@ const resolveTabTint = (
 
 const getActiveBackground = (accent: string, isDark: boolean) =>
   withOpacity(accent, isDark ? 0.28 : 0.2);
-
-type GlassProps = {
-  tint: 'light' | 'dark';
-  overlayColor: string;
-  borderColor: string;
-  children: React.ReactNode;
-  onLayout?: (event: LayoutChangeEvent) => void;
-};
-
-function GlassSurface({
-  tint,
-  overlayColor,
-  borderColor,
-  children,
-  onLayout,
-}: GlassProps) {
-  return (
-    <View style={styles.shadowShell} onLayout={onLayout}>
-      <View style={[styles.glassShell, { borderColor }]}>
-        {Platform.OS === 'web' ? (
-          <View
-            pointerEvents="none"
-            style={[styles.webBlur, { backgroundColor: overlayColor }]}
-          />
-        ) : (
-          <>
-            <BlurView
-              tint={tint}
-              intensity={BLUR_INTENSITY}
-              style={StyleSheet.absoluteFill}
-              pointerEvents="none"
-            />
-            <View
-              pointerEvents="none"
-              style={[StyleSheet.absoluteFill, { backgroundColor: overlayColor }]}
-            />
-          </>
-        )}
-        {children}
-      </View>
-    </View>
-  );
-}
 
 type Props = BottomTabBarProps & {
   items: BottomTabItem[];
@@ -221,12 +178,15 @@ export default function FloatingTabBar({ items, state, navigation, insets }: Pro
           pointerEvents={keyboardVisible ? 'none' : 'auto'}
           style={styles.barWrap}
         >
-          <GlassSurface
-            tint={isDark ? 'dark' : 'light'}
-            overlayColor={surfaceColor}
-            borderColor={borderColor}
-            onLayout={handleLayout}
-          >
+          <View style={styles.shadowShell} onLayout={handleLayout}>
+            <LiquidGlassSurface
+              blurTint={isDark ? 'dark' : 'light'}
+              blurIntensity={BLUR_INTENSITY}
+              overlayColor={surfaceColor}
+              borderColor={borderColor}
+              webBackdropFilter="blur(22px) saturate(160%)"
+              style={styles.glassShell}
+            >
             <View style={styles.row} onLayout={handleRowLayout}>
               {pillWidth > 0 ? (
                 <MotiView
@@ -328,7 +288,8 @@ export default function FloatingTabBar({ items, state, navigation, insets }: Pro
                 );
               })}
             </View>
-          </GlassSurface>
+            </LiquidGlassSurface>
+          </View>
         </MotiView>
       </View>
     </View>
@@ -364,12 +325,6 @@ const styles = StyleSheet.create({
     paddingVertical: GLASS_PADDING,
     justifyContent: 'center',
   },
-  webBlur: {
-    ...StyleSheet.absoluteFillObject,
-    // Web-only backdrop blur. Needs a real background to blend with.
-    backdropFilter: 'blur(22px) saturate(160%)',
-    WebkitBackdropFilter: 'blur(22px) saturate(160%)',
-  } as ViewStyle,
   row: {
     flexDirection: 'row',
     alignItems: 'center',

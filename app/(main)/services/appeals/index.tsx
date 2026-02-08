@@ -17,9 +17,11 @@ import {
   setListPage,
 } from '@/utils/appealsStore';
 import { getAppealsList } from '@/utils/appealsService';
+import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 // import * as Sharing from 'expo-sharing';
 
 export default function AppealsIndex() {
+  const headerTopInset = useHeaderContentTopInset({ hasSubtitle: true });
   const router = useRouter();
   const auth = useContext(AuthContext);
   const [scope, setScope] = useState<Scope>('my');
@@ -147,7 +149,8 @@ export default function AppealsIndex() {
           maxWidth: 1100,
           alignSelf: 'center',
           paddingHorizontal: 16,
-          paddingVertical: 12,
+          paddingTop: 12 + headerTopInset,
+          paddingBottom: 12,
           flex: 1,
         }}
       >

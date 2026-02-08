@@ -6,9 +6,11 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Skeleton } from 'moti/skeleton';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, View } from 'react-native';
+import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 
 export default function QRFormScreen() {
   const router = useRouter();
+  const headerTopInset = useHeaderContentTopInset({ hasSubtitle: true });
   const { id } = useLocalSearchParams<{ id: string }>();
   const isEdit = id && id !== 'new';
   const [loading, setLoading] = useState<boolean>(!!isEdit);
@@ -47,7 +49,7 @@ export default function QRFormScreen() {
   };
 
   return (
-    <View style={{ flex: 1, padding: 16, backgroundColor: '#fff' }}>
+    <View style={{ flex: 1, padding: 16, paddingTop: 16 + headerTopInset, backgroundColor: '#fff' }}>
       {loading ? (
         <View style={{ gap: 12 }}>
           <Skeleton height={28} radius={8} />

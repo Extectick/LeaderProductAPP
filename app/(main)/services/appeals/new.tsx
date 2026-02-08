@@ -8,8 +8,10 @@ import { getDepartments, Department } from '@/utils/userService';
 import Dropdown, { DropdownItem } from '@/components/ui/Dropdown';
 import DateTimeInput from '@/components/ui/DateTimeInput';
 import AttachmentsPicker, { AttachmentFile } from '@/components/ui/AttachmentsPicker';
+import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 
 export default function AppealNew() {
+  const headerTopInset = useHeaderContentTopInset({ hasSubtitle: true });
   const router = useRouter();
 
   const [form, setForm] = useState<{
@@ -74,7 +76,10 @@ export default function AppealNew() {
   }
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: '#fff' }} contentContainerStyle={{ paddingVertical: 16 }}>
+    <ScrollView
+      style={{ flex: 1, backgroundColor: '#fff' }}
+      contentContainerStyle={{ paddingTop: 16 + headerTopInset, paddingBottom: 16 }}
+    >
       <View style={{ width: '100%', maxWidth: 900, alignSelf: 'center', paddingHorizontal: 16, gap: 14 }}>
         <Text style={styles.title}>Новое обращение</Text>
 

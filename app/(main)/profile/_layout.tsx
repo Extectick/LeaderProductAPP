@@ -6,6 +6,10 @@ export default function ProfileLayout() {
     <Stack
       screenOptions={{
         headerShown: true,
+        headerTransparent: true,
+        headerShadowVisible: false,
+        headerStatusBarHeight: 0,
+        headerStyle: { backgroundColor: 'transparent' },
         header: () => (
           <AppHeader title="Профиль" icon="person-outline" showBack={false} />
         ),

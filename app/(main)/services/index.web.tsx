@@ -1,5 +1,5 @@
-import { services as staticServices } from '@/constants/servicesRoutes';
 import { useThemeColor } from '@/hooks/useThemeColor';
+import { getServicesForUser, type ServiceAccessItem } from '@/utils/servicesService';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
@@ -13,15 +13,17 @@ import {
 } from 'react-native';
 import ServiceCard from './ServiceCard';
 import TabBarSpacer from '@/components/Navigation/TabBarSpacer';
+import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 
 export default function ServicesWebPage() {
-  const [services, setServices] = useState<typeof staticServices | null>(null);
+  const [services, setServices] = useState<ServiceAccessItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const { width } = useWindowDimensions();
   const router = useRouter();
   const isMobileWidth = width <= 820;
+  const headerTopInset = useHeaderContentTopInset({ hasSubtitle: true });
 
   // более плотная сетка и брейкпоинты для десктопа
   const desktopColumns = useMemo(() => {
@@ -53,10 +55,10 @@ export default function ServicesWebPage() {
   useEffect(() => {
     const load = async () => {
       try {
-        await new Promise((r) => setTimeout(r, 500));
-        setServices(staticServices);
-      } catch {
-        setError('Не удалось загрузить сервисы');
+        const data = await getServicesForUser();
+        setServices(data);
+      } catch (e: any) {
+        setError(e?.message || 'Не удалось загрузить сервисы');
       } finally {
         setLoading(false);
       }
@@ -86,26 +88,32 @@ export default function ServicesWebPage() {
 
   if (isMobileWidth) {
     return (
-      <View style={{ flex: 1, backgroundColor: background }}>
-        <Text style={[styles.headingMobile, { color: textColor }]}>Сервисы</Text>
+      <View style={{ flex: 1, backgroundColor: background, paddingTop: headerTopInset }}>
         <FlatList
-          data={services}
-          keyExtractor={(item) => item.name}
+          data={services.filter((item) => item.visible)}
+          keyExtractor={(item) => item.key}
           numColumns={mobileColumns}
           columnWrapperStyle={{ gap: mobileGap, marginBottom: mobileGap }}
           contentContainerStyle={{ padding: mobileGap, paddingTop: 0 }}
           ListFooterComponent={<TabBarSpacer />}
           renderItem={({ item }) => (
             <ServiceCard
-              icon={item.icon}
+              icon={item.icon || 'apps-outline'}
               name={item.name}
-              description={item.description}
+              description={item.description || undefined}
               size={mobileCardSize}
-              onPress={() => router.push(item.route as any)}
-              gradient={item.gradient}
+              onPress={() => {
+                if (!item.route || !item.enabled) return;
+                router.push(item.route as any);
+              }}
+              gradient={
+                item.gradientStart && item.gradientEnd
+                  ? ([item.gradientStart, item.gradientEnd] as [string, string])
+                  : undefined
+              }
               iconSize={40}
               containerStyle={{ backgroundColor: cardBackground }}
-              disabled={item.disable}
+              disabled={!item.enabled}
             />
           )}
           showsVerticalScrollIndicator={false}
@@ -117,23 +125,28 @@ export default function ServicesWebPage() {
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: background }}
-      contentContainerStyle={[styles.page, { maxWidth: 1320 }]}
+      contentContainerStyle={[styles.page, { maxWidth: 1320, paddingTop: 24 + headerTopInset }]}
     >
-      <Text style={[styles.heading, { color: textColor }]}>Сервисы</Text>
-
       <View style={[styles.grid, { gap }]}>
-        {services.map((s) => (
-          <View key={s.name} style={{ width: desktopCardSize }}>
+        {services.filter((item) => item.visible).map((s) => (
+          <View key={s.key} style={{ width: desktopCardSize }}>
             <ServiceCard
-              icon={s.icon}
+              icon={s.icon || 'apps-outline'}
               name={s.name}
-              description={s.description}
+              description={s.description || undefined}
               size={desktopCardSize}
-              onPress={() => router.push(s.route as any)}
-              gradient={s.gradient}
+              onPress={() => {
+                if (!s.route || !s.enabled) return;
+                router.push(s.route as any);
+              }}
+              gradient={
+                s.gradientStart && s.gradientEnd
+                  ? ([s.gradientStart, s.gradientEnd] as [string, string])
+                  : undefined
+              }
               iconSize={44}
               containerStyle={{ backgroundColor: cardBackground }}
-              disabled={s.disable}
+              disabled={!s.enabled}
             />
           </View>
         ))}
@@ -149,20 +162,6 @@ const styles = StyleSheet.create({
     marginHorizontal: 'auto',
     paddingHorizontal: 24,
     paddingVertical: 24,
-  },
-  heading: {
-    fontSize: 28,
-    fontWeight: '900',
-    letterSpacing: 0.2,
-    marginBottom: 12,
-  },
-  headingMobile: {
-    fontSize: 22,
-    fontWeight: '800',
-    letterSpacing: 0.2,
-    marginHorizontal: 16,
-    marginTop: 12,
-    marginBottom: 8,
   },
   grid: {
     flexDirection: 'row',

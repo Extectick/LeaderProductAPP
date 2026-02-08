@@ -60,4 +60,15 @@ export const API_ENDPOINTS = {
   UPDATES: {
     CHECK: '/updates/check',
   },
+  SERVICES: {
+    LIST: '/services',
+    ADMIN: '/services/admin',
+    SERVICE_BY_ID: (serviceId: number) => `/services/${serviceId}`,
+    ROLE_ACCESS: (serviceId: number) => `/services/${serviceId}/role-access`,
+    ROLE_ACCESS_BY_ROLE: (serviceId: number, roleId: number) =>
+      `/services/${serviceId}/role-access/${roleId}`,
+    DEPARTMENT_ACCESS: (serviceId: number) => `/services/${serviceId}/department-access`,
+    DEPARTMENT_ACCESS_BY_DEPARTMENT: (serviceId: number, departmentId: number) =>
+      `/services/${serviceId}/department-access/${departmentId}`,
+  },
 };

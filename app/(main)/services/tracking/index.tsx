@@ -30,6 +30,7 @@ import {
 } from 'react-native';
 import RangeCalendarModal from '@/components/RangeCalendarModal';
 import LeafletMap from './LeafletMap';
+import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 // react-native-maps временно отключаем, чтобы не ломать веб-сборку
 const MapView: any = null;
 const Polyline: any = null;
@@ -202,6 +203,7 @@ const DateTimePickerAndroid =
     : null;
 
 export default function TrackingServiceScreen() {
+  const headerTopInset = useHeaderContentTopInset({ hasSubtitle: true });
   const auth = useContext(AuthContext);
   const profile = auth?.profile;
   const canViewOthers = useMemo(() => {
@@ -464,7 +466,11 @@ export default function TrackingServiceScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: background }}>
       <ScrollView
-        contentContainerStyle={[styles.scrollContent, isWeb && styles.webContentContainer]}
+        contentContainerStyle={[
+          styles.scrollContent,
+          isWeb && styles.webContentContainer,
+          { paddingTop: 16 + headerTopInset },
+        ]}
         scrollEnabled={!mapInteracting}
         refreshControl={<RefreshControl refreshing={loadingRoutes} onRefresh={onRefresh} />}
       >

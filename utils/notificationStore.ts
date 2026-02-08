@@ -7,6 +7,7 @@ export type NotificationPayload = {
   title?: string;
   message: string;
   type?: NotificationType;
+  icon?: string;
   backgroundColor?: string;
   textColor?: string;
   borderColor?: string;
@@ -32,6 +33,7 @@ export function pushNotification(payload: NotificationPayload) {
     title: payload.title ?? '',
     message: payload.message,
     type: payload.type ?? 'info',
+    icon: payload.icon ?? '',
     backgroundColor: payload.backgroundColor ?? '',
     textColor: payload.textColor ?? '',
     borderColor: payload.borderColor ?? '',

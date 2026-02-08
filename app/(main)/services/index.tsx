@@ -1,5 +1,5 @@
-import { services as staticServices } from '@/constants/servicesRoutes';
 import { useThemeColor } from '@/hooks/useThemeColor';
+import { getServicesForUser, type ServiceAccessItem } from '@/utils/servicesService';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
@@ -13,14 +13,16 @@ import {
 } from 'react-native';
 import ServiceCard from './ServiceCard';
 import TabBarSpacer from '@/components/Navigation/TabBarSpacer';
+import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 
 export default function ServicesScreen() {
-  const [services, setServices] = useState<typeof staticServices | null>(null);
+  const [services, setServices] = useState<ServiceAccessItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const router = useRouter();
   const { width } = useWindowDimensions();
+  const headerTopInset = useHeaderContentTopInset({ hasSubtitle: true });
 
   // брейкпоинты под мобильные/планшеты
   const numColumns = useMemo(() => {
@@ -41,10 +43,10 @@ export default function ServicesScreen() {
   useEffect(() => {
     const fetchServices = async () => {
       try {
-        await new Promise((res) => setTimeout(res, 600));
-        setServices(staticServices);
-      } catch {
-        setError('Не удалось загрузить сервисы');
+        const data = await getServicesForUser();
+        setServices(data);
+      } catch (e: any) {
+        setError(e?.message || 'Не удалось загрузить сервисы');
       } finally {
         setLoading(false);
       }
@@ -74,31 +76,34 @@ export default function ServicesScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: background }]}>
-      <Text style={[styles.title, { color: textColor }]}>Сервисы</Text>
-
       <FlatList
-        data={services}
-        keyExtractor={(item) => item.name}
+        data={services.filter((item) => item.visible)}
+        keyExtractor={(item) => item.key}
         numColumns={numColumns}
         columnWrapperStyle={{ gap: spacing, marginBottom: spacing }}
-        contentContainerStyle={{ padding: spacing, paddingTop: 0 }}
+        contentContainerStyle={{ padding: spacing, paddingTop: headerTopInset + spacing }}
         ListFooterComponent={<TabBarSpacer />}
         showsVerticalScrollIndicator={false}
         renderItem={({ item }) => (
           <View>
             <ServiceCard
-              icon={item.icon}
+              icon={item.icon || 'apps-outline'}
               name={item.name}
-              description={item.description}
+              description={item.description || undefined}
               size={cardSize}
               onPress={() => {
+                if (!item.route || !item.enabled) return;
                 router.push(item.route as any);
               }}
-              gradient={item.gradient}
+              gradient={
+                item.gradientStart && item.gradientEnd
+                  ? ([item.gradientStart, item.gradientEnd] as [string, string])
+                  : undefined
+              }
               iconSize={40}
               disableShadow={false}
               disableScaleOnPress={false}
-              disabled={item.disable}
+              disabled={!item.enabled}
               containerStyle={{
                 backgroundColor: cardBackground,
               }}
@@ -119,12 +124,4 @@ const styles = StyleSheet.create({
     }),
   },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  title: {
-    fontSize: 22,
-    fontWeight: '800',
-    letterSpacing: 0.2,
-    marginHorizontal: 16,
-    marginTop: 12,
-    marginBottom: 8,
-  },
 });

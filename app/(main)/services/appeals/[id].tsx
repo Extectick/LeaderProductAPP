@@ -18,6 +18,7 @@ import AppealChatInput from '@/components/Appeals/AppealChatInput';
 import { AuthContext } from '@/context/AuthContext';
 import { useAppealUpdates } from '@/hooks/useAppealUpdates';
 import { getMessages, setMessages, setAppeals, upsertMessage, subscribe as subscribeAppeals } from '@/utils/appealsStore';
+import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 
 const useSafeBottomTabBarHeight = () => {
   if (Platform.OS === 'web') return 0;
@@ -30,6 +31,7 @@ const useSafeBottomTabBarHeight = () => {
 };
 
 export default function AppealDetailScreen() {
+  const headerTopInset = useHeaderContentTopInset({ hasSubtitle: true });
   const { id } = useLocalSearchParams<{ id: string }>();
   const appealId = Number(id);
   const router = useRouter();
@@ -142,7 +144,16 @@ export default function AppealDetailScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: '#fff' }}>
-      <View style={{ width: '100%', maxWidth: 1000, alignSelf: 'center', paddingHorizontal: 12, flex: 1 }}>
+      <View
+        style={{
+          width: '100%',
+          maxWidth: 1000,
+          alignSelf: 'center',
+          paddingHorizontal: 12,
+          paddingTop: headerTopInset,
+          flex: 1,
+        }}
+      >
         <AppealHeader
           data={data}
           onChangeStatus={(s) => handleChangeStatus(s)}

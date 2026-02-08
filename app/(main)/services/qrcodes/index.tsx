@@ -26,6 +26,7 @@ import {
 import Animated, { FadeIn, FadeInDown, FadeOut, Layout } from 'react-native-reanimated';
 import { useThemeColor } from '@/hooks/useThemeColor';
 import TabBarSpacer from '@/components/Navigation/TabBarSpacer';
+import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 
 const Header = ({
   onCreate,
@@ -81,6 +82,7 @@ const Header = ({
 export default function QRCodesScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
+  const headerTopInset = useHeaderContentTopInset({ hasSubtitle: true });
   const background = useThemeColor({}, 'background');
   const cardBackground = useThemeColor({}, 'cardBackground');
   const textColor = useThemeColor({}, 'text');
@@ -213,7 +215,7 @@ export default function QRCodesScreen() {
 
   if (loading) {
     return (
-      <View style={[styles.container, { backgroundColor: background }]}>
+      <View style={[styles.container, { backgroundColor: background, paddingTop: 16 + headerTopInset }]}>
         {/* Скелетон шапки */}
         <Animated.View entering={FadeInDown.duration(250)} style={{ marginBottom: 16 }}>
           <View style={styles.headerCardSkeleton}>
@@ -257,7 +259,7 @@ export default function QRCodesScreen() {
   }
 
   return (
-    <View style={[styles.container, { backgroundColor: background }]}>
+    <View style={[styles.container, { backgroundColor: background, paddingTop: 16 + headerTopInset }]}>
       <Header onCreate={handleCreate} onAnalytics={handleAnalytics} count={qrCodes.length} />
 
       <Animated.View style={{ flex: 1 }} entering={FadeIn} exiting={FadeOut}>
