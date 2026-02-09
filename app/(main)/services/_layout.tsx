@@ -87,6 +87,7 @@ export default function ServicesLayout() {
     qrcodes: { title: "QR генератор", icon: "qr-code-outline", showBack: true, parent: "/services", subtitle: "Создание и аналитика QR" },
     "qrcodes/index": { title: "Список QR кодов", icon: "qr-code-outline", showBack: true, parent: "/services/qrcodes", subtitle: "Все ваши QR-коды" },
     "qrcodes/form": { title: "Форма QR кода", icon: "qr-code-outline", showBack: true, parent: "/services/qrcodes", subtitle: "Создание и правка" },
+    "qrcodes/analytics": { title: "Аналитика QR", icon: "stats-chart-outline", showBack: true, parent: "/services/qrcodes", subtitle: "Просмотры и сканы" },
     appeals: { title: "Обращения", icon: "chatbubbles-outline", showBack: true, parent: "/services", subtitle: "Центр общения" },
     "appeals/index": { title: "Обращения", icon: "chatbubbles-outline", showBack: true, parent: "/services", subtitle: "Центр общения" },
     "appeals/index.web": { title: "Обращения", icon: "chatbubbles-outline", showBack: true, parent: "/services", subtitle: "Центр общения" },
@@ -124,6 +125,15 @@ export default function ServicesLayout() {
         // чтобы на главной сервисов стрелки не было.
         const shouldShowBack = meta.showBack;
         const onBack = () => {
+          const currentPath = String(pathname || "");
+          if (currentPath.startsWith("/services/qrcodes/")) {
+            router.replace("/services/qrcodes");
+            return;
+          }
+          if (currentPath === "/services/qrcodes") {
+            router.replace("/services");
+            return;
+          }
           const target = isAppeals ? "/services" : (meta as any).parent;
           if (target) {
             router.replace(target as any);

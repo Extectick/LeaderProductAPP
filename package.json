@@ -28,6 +28,7 @@
     "@react-navigation/native-stack": "^7.3.10",
     "@react-navigation/stack": "^7.4.2",
     "@shopify/react-native-skia": "2.2.12",
+    "@tma.js/sdk": "^3.1.6",
     "axios": "^1.11.0",
     "babel-preset-expo": "~54.0.10",
     "date-and-time": "^4.0.2",

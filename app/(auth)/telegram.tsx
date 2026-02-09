@@ -8,10 +8,10 @@ import { saveTokens } from '@/utils/tokenService';
 import { getProfile } from '@/utils/userService';
 import {
   getTelegramInitDataRaw,
-  isTelegramMiniApp,
   isTelegramMiniAppLaunch,
   prepareTelegramWebApp,
   requestTelegramContact,
+  telegramContact,
   telegramContactStatus,
   telegramInit,
   telegramLink,
@@ -104,12 +104,60 @@ export default function TelegramAuthScreen() {
     [finalizeSignIn]
   );
 
+  const checkContactStatusByToken = useCallback(
+    async (token: string) => {
+      if (!token) return;
+      const status = await telegramContactStatus(token);
+      await applyState(status.state, token, status.conflictUserHint ?? null);
+      return status;
+    },
+    [applyState]
+  );
+
+  const requestContactAndSync = useCallback(
+    async (
+      token: string,
+      source: 'auto' | 'manual',
+      manageBusy: boolean = true
+    ) => {
+      if (!token) return;
+      if (manageBusy) setBusy(true);
+      setError(null);
+      try {
+        const result = await requestTelegramContact();
+        let status: { state: 'AUTHORIZED' | 'NEED_PHONE' | 'NEED_LINK' | 'READY' } | undefined;
+
+        if (result.ok && result.phoneE164) {
+          const contactRes = await telegramContact(token, result.phoneE164);
+          await applyState(contactRes.state, token, contactRes.conflictUserHint ?? null);
+          status = { state: contactRes.state };
+        } else {
+          status = await checkContactStatusByToken(token);
+        }
+
+        if (!result.ok && source === 'manual') {
+          setNotice('Telegram не передал номер. Повторите запрос или откройте бота для ручной отправки контакта.');
+        }
+
+        if (!result.ok && source === 'auto' && status?.state === 'NEED_PHONE') {
+          setNotice('Автозапрос номера не сработал. Нажмите кнопку ниже и подтвердите доступ к контактным данным.');
+        }
+      } catch (e: any) {
+        setError(e?.message || 'Не удалось запросить контакт');
+      } finally {
+        if (manageBusy) setBusy(false);
+      }
+    },
+    [checkContactStatusByToken]
+  );
+
   const bootstrap = useCallback(async () => {
     if (initInFlight.current) return;
     initInFlight.current = true;
     setBusy(true);
     setError(null);
     setNotice(null);
+    setTgSessionToken('');
     try {
       prepareTelegramWebApp();
       if (!isTelegramMiniAppLaunch()) {
@@ -125,7 +173,13 @@ export default function TelegramAuthScreen() {
       }
       const initData = await telegramInit(initDataRaw);
       setTgSessionToken(initData.tgSessionToken);
-      await applyState(initData.state, initData.tgSessionToken, initData.conflictUserHint ?? null);
+
+      if (initData.state === 'NEED_PHONE') {
+        setFlowState('need_phone');
+        await requestContactAndSync(initData.tgSessionToken, 'auto', false);
+      } else {
+        await applyState(initData.state, initData.tgSessionToken, initData.conflictUserHint ?? null);
+      }
     } catch (e: any) {
       setFlowState('need_phone');
       setError(e?.message || 'Не удалось инициализировать вход через Telegram');
@@ -133,44 +187,17 @@ export default function TelegramAuthScreen() {
       setBusy(false);
       initInFlight.current = false;
     }
-  }, [applyState]);
+  }, [applyState, requestContactAndSync]);
 
   useEffect(() => {
     void bootstrap();
   }, [bootstrap]);
 
-  const checkContactStatus = useCallback(async () => {
-    if (!tgSessionToken) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const status = await telegramContactStatus(tgSessionToken);
-      await applyState(status.state, tgSessionToken, status.conflictUserHint ?? null);
-    } catch (e: any) {
-      setError(e?.message || 'Не удалось проверить статус контакта');
-    } finally {
-      setBusy(false);
-    }
-  }, [applyState, tgSessionToken]);
-
   const handleRequestContact = useCallback(async () => {
     if (!tgSessionToken) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const ok = await requestTelegramContact();
-      if (!ok) {
-        setNotice('Telegram не передал контакт автоматически. Можно отправить контакт через бота и нажать "Проверить снова".');
-      } else {
-        setNotice('Запрос контакта отправлен. Проверяем...');
-      }
-      await checkContactStatus();
-    } catch (e: any) {
-      setError(e?.message || 'Не удалось запросить контакт');
-    } finally {
-      setBusy(false);
-    }
-  }, [checkContactStatus, tgSessionToken]);
+    setNotice('Запрашиваем номер телефона в Telegram...');
+    await requestContactAndSync(tgSessionToken, 'manual', true);
+  }, [requestContactAndSync, tgSessionToken]);
 
   const openBot = useCallback(() => {
     if (!botUsername) return;
@@ -206,39 +233,44 @@ export default function TelegramAuthScreen() {
       <SafeAreaView style={styles.safe}>
         <ScrollView contentContainerStyle={styles.container}>
           <View style={styles.card}>
-            <Text style={styles.title}>Вход через Telegram</Text>
-            <Text style={styles.subtitle}>
-              Авторизация Mini App и синхронизация аккаунта
-            </Text>
+            <View style={styles.hero}>
+              <Text style={styles.heroBadge}>Telegram Mini App</Text>
+              <Text style={styles.title}>Вход через Telegram</Text>
+              <Text style={styles.subtitle}>Быстрая авторизация и синхронизация аккаунта</Text>
+              {busy ? (
+                <View style={styles.loaderRow}>
+                  <ActivityIndicator color={colors.tint} />
+                  <Text style={styles.loaderText}>Обрабатываем запрос...</Text>
+                </View>
+              ) : null}
+            </View>
 
-            {busy ? (
-              <View style={styles.loaderRow}>
-                <ActivityIndicator color={colors.tint} />
-                <Text style={styles.loaderText}>Проверяем данные...</Text>
+            {error ? (
+              <View style={styles.alertError}>
+                <Text style={styles.error}>{error}</Text>
+              </View>
+            ) : null}
+            {notice ? (
+              <View style={styles.alertInfo}>
+                <Text style={styles.notice}>{notice}</Text>
               </View>
             ) : null}
 
-            {error ? <Text style={styles.error}>{error}</Text> : null}
-            {notice ? <Text style={styles.notice}>{notice}</Text> : null}
-
             {flowState === 'need_phone' ? (
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Нужен номер телефона</Text>
+                <Text style={styles.sectionTitle}>Подтвердите номер телефона</Text>
                 <Text style={styles.sectionText}>
-                  Без номера нельзя продолжить регистрацию в приложении.
+                  Номер нужен для регистрации и связи с вашим аккаунтом в системе.
                 </Text>
                 <ShimmerButton
-                  title="Запросить номер в Telegram"
+                  title="Поделиться номером"
                   onPress={handleRequestContact}
                   loading={busy}
                   gradientColors={buttonGradient}
                 />
-                <Pressable style={styles.secondaryBtn} onPress={checkContactStatus}>
-                  <Text style={styles.secondaryBtnText}>Проверить снова</Text>
-                </Pressable>
                 {botUsername ? (
-                  <Pressable style={styles.secondaryBtn} onPress={openBot}>
-                    <Text style={styles.secondaryBtnText}>Открыть бота @{botUsername}</Text>
+                  <Pressable style={styles.linkBtn} onPress={openBot}>
+                    <Text style={styles.linkBtnText}>Не получается? Открыть @{botUsername}</Text>
                   </Pressable>
                 ) : null}
               </View>
@@ -251,9 +283,11 @@ export default function TelegramAuthScreen() {
                   Войдите по email/паролю, чтобы привязать Telegram.
                 </Text>
                 {maskedEmail || maskedPhone ? (
-                  <Text style={styles.hintText}>
-                    Совпадение: {maskedEmail || '—'} {maskedPhone ? ` / ${maskedPhone}` : ''}
-                  </Text>
+                  <View style={styles.hintWrap}>
+                    <Text style={styles.hintText}>
+                      Совпадение: {maskedEmail || '—'} {maskedPhone ? ` / ${maskedPhone}` : ''}
+                    </Text>
+                  </View>
                 ) : null}
                 <TextInput
                   value={email}
@@ -280,10 +314,6 @@ export default function TelegramAuthScreen() {
                 />
               </View>
             ) : null}
-
-            <Pressable style={styles.backBtn} onPress={() => router.replace('/(auth)/AuthScreen' as any)}>
-              <Text style={styles.backBtnText}>Вернуться к обычному входу</Text>
-            </Pressable>
           </View>
         </ScrollView>
       </SafeAreaView>
@@ -302,67 +332,115 @@ const getStyles = (colors: any) =>
     },
     card: {
       width: '100%',
-      maxWidth: 520,
+      maxWidth: 540,
       alignSelf: 'center',
-      borderRadius: 18,
-      padding: 18,
+      borderRadius: 22,
+      padding: 16,
       backgroundColor: Platform.OS === 'web' ? 'rgba(255,255,255,0.9)' : colors.cardBackground,
       borderWidth: 1,
       borderColor: colors.inputBorder,
-      gap: 10,
+      gap: 12,
+      shadowColor: '#000',
+      shadowOpacity: 0.12,
+      shadowRadius: 24,
+      shadowOffset: { width: 0, height: 10 },
+      elevation: 8,
+    },
+    hero: {
+      gap: 8,
+      borderRadius: 16,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: colors.inputBorder,
+      backgroundColor: Platform.OS === 'web' ? 'rgba(255,255,255,0.65)' : colors.inputBackground,
+    },
+    heroBadge: {
+      alignSelf: 'flex-start',
+      color: colors.text,
+      fontSize: 11,
+      fontWeight: '800',
+      textTransform: 'uppercase',
+      letterSpacing: 0.6,
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: 999,
+      overflow: 'hidden',
+      backgroundColor: Platform.OS === 'web' ? 'rgba(18,126,255,0.12)' : colors.cardBackground,
     },
     title: {
-      fontSize: 24,
+      fontSize: 30,
       fontWeight: '800',
       color: colors.text,
-      textAlign: 'center',
+      lineHeight: 34,
     },
     subtitle: {
       color: colors.secondaryText,
-      textAlign: 'center',
-      marginBottom: 4,
+      fontSize: 15,
+      lineHeight: 20,
     },
     loaderRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 8,
-      justifyContent: 'center',
+      gap: 10,
+      marginTop: 4,
     },
     loaderText: {
       color: colors.secondaryText,
       fontSize: 13,
+      fontWeight: '600',
+    },
+    alertError: {
+      borderWidth: 1,
+      borderColor: colors.error,
+      borderRadius: 12,
+      backgroundColor: Platform.OS === 'web' ? 'rgba(223, 60, 60, 0.08)' : colors.inputBackground,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+    },
+    alertInfo: {
+      borderWidth: 1,
+      borderColor: colors.info,
+      borderRadius: 12,
+      backgroundColor: Platform.OS === 'web' ? 'rgba(0, 154, 255, 0.08)' : colors.inputBackground,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
     },
     error: {
       color: colors.error,
-      textAlign: 'center',
       fontWeight: '700',
     },
     notice: {
       color: colors.info,
-      textAlign: 'center',
       fontWeight: '700',
     },
     section: {
-      marginTop: 8,
-      gap: 8,
-      padding: 12,
+      gap: 10,
+      padding: 14,
       borderWidth: 1,
       borderColor: colors.inputBorder,
-      borderRadius: 12,
+      borderRadius: 16,
       backgroundColor: colors.inputBackground,
     },
     sectionTitle: {
       color: colors.text,
-      fontSize: 16,
+      fontSize: 20,
       fontWeight: '800',
     },
     sectionText: {
       color: colors.secondaryText,
-      fontSize: 13,
+      fontSize: 14,
+      lineHeight: 20,
+    },
+    hintWrap: {
+      borderRadius: 10,
+      paddingVertical: 8,
+      paddingHorizontal: 10,
+      backgroundColor: Platform.OS === 'web' ? 'rgba(255,255,255,0.55)' : colors.cardBackground,
     },
     hintText: {
       color: colors.secondaryText,
       fontSize: 12,
+      fontWeight: '600',
     },
     input: {
       width: '100%',
@@ -373,27 +451,16 @@ const getStyles = (colors: any) =>
       paddingHorizontal: 12,
       paddingVertical: 10,
       color: colors.text,
+      fontSize: 15,
     },
-    secondaryBtn: {
-      borderWidth: 1,
-      borderColor: colors.inputBorder,
-      borderRadius: 10,
-      paddingVertical: 10,
-      paddingHorizontal: 12,
-      backgroundColor: colors.cardBackground,
+    linkBtn: {
+      marginTop: 2,
+      paddingVertical: 6,
     },
-    secondaryBtnText: {
-      color: colors.text,
-      textAlign: 'center',
-      fontWeight: '700',
-    },
-    backBtn: {
-      marginTop: 8,
-      paddingVertical: 8,
-    },
-    backBtnText: {
+    linkBtnText: {
       color: colors.secondaryText,
-      textAlign: 'center',
+      fontWeight: '700',
       textDecorationLine: 'underline',
+      fontSize: 13,
     },
   });

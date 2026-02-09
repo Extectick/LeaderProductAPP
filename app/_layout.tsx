@@ -10,6 +10,7 @@ import { enableScreens } from 'react-native-screens';
 import { AuthProvider } from '@/context/AuthContext';
 import { ThemeProvider } from '@/context/ThemeContext';
 import { useAuthRedirect } from '@/hooks/useAuthRedirect';
+import { useTelegramBackButton } from '@/hooks/useTelegramBackButton';
 import { TrackingProvider } from '@/context/TrackingContext';
 import { NotificationHost } from '@/components/NotificationHost';
 import UpdateGate from '@/components/UpdateGate';
@@ -44,6 +45,7 @@ try {
 
 function InnerLayout() {
   const { isChecking } = useAuthRedirect();
+  useTelegramBackButton();
   if (isChecking) return null;
   return <Slot />;
 }

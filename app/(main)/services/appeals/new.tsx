@@ -9,6 +9,7 @@ import Dropdown, { DropdownItem } from '@/components/ui/Dropdown';
 import DateTimeInput from '@/components/ui/DateTimeInput';
 import AttachmentsPicker, { AttachmentFile } from '@/components/ui/AttachmentsPicker';
 import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
+import TabBarSpacer from '@/components/Navigation/TabBarSpacer';
 
 export default function AppealNew() {
   const headerTopInset = useHeaderContentTopInset({ hasSubtitle: true });
@@ -154,6 +155,7 @@ export default function AppealNew() {
           </>
         )}
       </Pressable>
+      <TabBarSpacer extra={8} />
       </View>
     </ScrollView>
   );
