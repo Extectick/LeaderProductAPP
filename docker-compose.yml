@@ -1,0 +1,15 @@
+services:
+  app-web:
+    container_name: leader_product_app_web
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        EXPO_PUBLIC_API_URL_DEV: ${EXPO_PUBLIC_API_URL_DEV}
+        EXPO_PUBLIC_TELEGRAM_BOT_USERNAME: ${EXPO_PUBLIC_TELEGRAM_BOT_USERNAME}
+    image: leader-product-app-web:latest
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+    expose:
+      - "80"

@@ -5,10 +5,12 @@ node_modules/
 
 # Expo
 .expo/
+.expo-shared/
 dist/
 web-build/
 expo-env.d.ts
-android
+android/
+ios/
 
 # Native
 .kotlin/
@@ -26,14 +28,18 @@ android
 npm-debug.*
 yarn-debug.*
 yarn-error.*
+pnpm-debug.log*
+*.log
 
 # macOS
 .DS_Store
 *.pem
+Thumbs.db
 
 # local env files
-.env
-.env*.local
+# .env
+# .env.*
+# .env*.local
 
 # typescript
 *.tsbuildinfo
@@ -41,3 +47,23 @@ yarn-error.*
 .gradle
 gradle-cache
 app-example
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# caches / test artifacts
+.cache/
+.eslintcache
+coverage/
+.nyc_output/
+.turbo/
+
+# temp / misc
+tmp/
+temp/
+*.tmp
+*.bak

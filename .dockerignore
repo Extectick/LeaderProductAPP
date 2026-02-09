@@ -1,0 +1,11 @@
+.git
+.gitignore
+.vscode
+.expo
+node_modules
+dist
+web-build
+android
+gradle-cache
+*.log
+*.zip
