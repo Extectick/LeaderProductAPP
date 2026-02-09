@@ -27,7 +27,6 @@ import {
   View
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { mask, MaskedTextInput } from 'react-native-mask-text';
 import CustomAlert from '@/components/CustomAlert';
 
 export default function ProfileSelectionScreen() {
@@ -48,7 +47,6 @@ export default function ProfileSelectionScreen() {
   const [form, setForm] = useState({
     firstName: '',
     lastName: '',
-    phone: '',
     departmentId: 0,
     patronymic: '',
   });
@@ -65,7 +63,6 @@ export default function ProfileSelectionScreen() {
   const [depsLoaded, setDepsLoaded] = useState(false);
   const skeletonPulse = useMemo(() => new Animated.Value(0.6), []);
 
-  const PHONE_MASK = '+7 (999) 999-99-99';
   const activeInfo = resolveActiveProfile(profile);
 
   const profileCards = useMemo(() => {
@@ -176,19 +173,12 @@ export default function ProfileSelectionScreen() {
       return;
     }
 
-    const phoneDigits = form.phone.trim();
-    const phoneValid = phoneDigits.length === 0 || (phoneDigits.length === 11 && phoneDigits.startsWith('7'));
-    if (!phoneValid) {
-      Alert.alert('Ошибка', 'Неверный номер телефона');
-      return;
-    }
-
     setSubmitting(true);
     setApiMessage(null);
 
     try {
       const profileData: CreateEmployeeProfileDto = {
-        phone: phoneDigits ? mask(phoneDigits, PHONE_MASK) : null,
+        phone: null,
         departmentId: form.departmentId,
         user: {
           firstName: form.firstName,
@@ -481,42 +471,13 @@ export default function ProfileSelectionScreen() {
                     </View>
 
                     <View style={styles.field}>
-                      <Text style={styles.label}>Телефон*</Text>
-                      {isWeb ? (
-                        <TextInput
-                          value={form.phone ? mask(form.phone, PHONE_MASK) : ''}
-                          onChangeText={(text) =>
-                            setForm((prev) => {
-                              const next = text.replace(/\D/g, '');
-                              return prev.phone === next ? prev : { ...prev, phone: next };
-                            })
-                          }
-                          style={styles.input}
-                          keyboardType="phone-pad"
-                          placeholder="+7 (___) ___-__-__"
-                          placeholderTextColor={colors.placeholder}
-                          autoCorrect={false}
-                          autoComplete="tel"
-                          // @ts-ignore
-                          inputMode="tel"
-                        />
-                      ) : (
-                        <MaskedTextInput
-                          value={form.phone}
-                          onChangeText={(_, raw) =>
-                            setForm((prev) => {
-                              const next = raw ?? '';
-                              return prev.phone === next ? prev : { ...prev, phone: next };
-                            })
-                          }
-                          mask={PHONE_MASK}
-                          style={styles.input}
-                          keyboardType="phone-pad"
-                          placeholder="+7 (___) ___-__-__"
-                          placeholderTextColor={colors.placeholder}
-                          autoCorrect={false}
-                        />
-                      )}
+                      <Text style={styles.label}>Телефон из аккаунта</Text>
+                      <TextInput
+                        value={profile?.phone || 'Не указан'}
+                        style={[styles.input, { opacity: 0.75 }]}
+                        editable={false}
+                        placeholderTextColor={colors.placeholder}
+                      />
                     </View>
 
                     <View style={[styles.field]}>

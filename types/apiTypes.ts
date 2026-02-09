@@ -101,6 +101,30 @@ export type AuthLogoutResponse = SuccessResponse<{
   message: string;
 }> | ErrorResponse;
 
+export type TelegramState = 'AUTHORIZED' | 'NEED_PHONE' | 'NEED_LINK' | 'READY';
+
+export type TelegramConflictHint = {
+  maskedEmail: string | null;
+  maskedPhone: string | null;
+};
+
+export type TelegramInitResponseData = {
+  tgSessionToken: string;
+  telegramUser: {
+    id: string;
+    username: string | null;
+    firstName: string | null;
+    lastName: string | null;
+  };
+  state: TelegramState;
+  conflictUserHint?: TelegramConflictHint | null;
+};
+
+export type TelegramContactResponseData = {
+  state: TelegramState;
+  conflictUserHint?: TelegramConflictHint | null;
+};
+
 // User types
 export type UserGetAllResponse = SuccessResponse<Array<{
   id: string;

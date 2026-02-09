@@ -96,3 +96,11 @@ export async function logoutUser() {
     await logout();
   }
 }
+
+export async function addCredentials(email: string, password: string) {
+  const res = await apiClient<{ email: string; password: string }, void>(API_ENDPOINTS.AUTH.CREDENTIALS, {
+    method: 'POST',
+    body: { email, password },
+  });
+  if (!res.ok) throw new Error(res.message || 'Не удалось добавить email и пароль');
+}

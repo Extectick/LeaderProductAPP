@@ -37,6 +37,7 @@ import { AuthContext } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { API_BASE_URL } from '@/utils/config';
 import { shadeColor, tintColor } from '@/utils/color';
+import { isTelegramMiniAppLaunch, prepareTelegramWebApp } from '@/utils/telegramAuthService';
 import {
   changePassword,
   login,
@@ -112,6 +113,32 @@ function normalizeError(err: any): string {
 export default function AuthScreen() {
   const router = useRouter();
   const { setAuthenticated, setProfile } = useContext(AuthContext) || {};
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    let cancelled = false;
+    const tryRedirect = () => {
+      if (cancelled) return true;
+      if (!isTelegramMiniAppLaunch()) return false;
+      router.replace('/(auth)/telegram' as Href);
+      return true;
+    };
+
+    if (tryRedirect()) return () => void 0;
+
+    const stopAt = Date.now() + 5000;
+    const timer = setInterval(() => {
+      prepareTelegramWebApp();
+      if (tryRedirect() || Date.now() >= stopAt) {
+        clearInterval(timer);
+      }
+    }, 120);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [router]);
 
   // равняем вертикаль кнопок между табами
   const [minTopHeight, setMinTopHeight] = useState<number | null>(

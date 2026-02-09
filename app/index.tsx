@@ -5,6 +5,7 @@ import { ActivityIndicator, View } from 'react-native';
 import { AuthContext } from '@/context/AuthContext';
 import { useThemeColor } from '@/hooks/useThemeColor';
 import { getProfileGate } from '@/utils/profileGate';
+import { isTelegramMiniAppLaunch } from '@/utils/telegramAuthService';
 
 export default function RootRedirect() {
   const router = useRouter();
@@ -18,7 +19,9 @@ export default function RootRedirect() {
 
     const gateState = getProfileGate(auth.profile);
     const gate = !auth.isAuthenticated
-      ? '/(auth)/AuthScreen'
+      ? isTelegramMiniAppLaunch()
+        ? '/(auth)/telegram'
+        : '/(auth)/AuthScreen'
       : gateState === 'active'
       ? '/home'
       : gateState === 'pending'

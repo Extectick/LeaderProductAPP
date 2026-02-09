@@ -256,7 +256,7 @@ export default function TrackingServiceScreen() {
     if (profile) {
       setSelectedUser({
         id: profile.id,
-        email: profile.email,
+        email: profile.email || '',
         firstName: profile.firstName ?? null,
         lastName: profile.lastName ?? null,
         middleName: profile.middleName ?? null,

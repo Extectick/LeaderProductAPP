@@ -5,7 +5,13 @@ export const API_ENDPOINTS = {
     VERIFY: '/auth/verify',
     RESEND: '/auth/resend',
     TOKEN: '/auth/token',
-    LOGOUT: '/auth/logout'
+    LOGOUT: '/auth/logout',
+    CREDENTIALS: '/auth/credentials',
+    TELEGRAM_INIT: '/auth/telegram/init',
+    TELEGRAM_CONTACT: '/auth/telegram/contact',
+    TELEGRAM_CONTACT_STATUS: '/auth/telegram/contact-status',
+    TELEGRAM_SIGN_IN: '/auth/telegram/sign-in',
+    TELEGRAM_LINK: '/auth/telegram/link',
   },
   PASSWORD_RESET: {
     REQUEST: '/password-reset/request',

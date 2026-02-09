@@ -17,7 +17,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors } from '@/constants/Colors';
 import { ProfileView } from '@/components/Profile/ProfileView';
-import { logoutUser } from '@/utils/authService';
+import { addCredentials, logoutUser } from '@/utils/authService';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 import CustomAlert from '@/components/CustomAlert';
@@ -107,6 +107,12 @@ export default function ProfileScreen() {
           }}
         />
       )}
+      {loading && !profile ? null : (
+        <CredentialsSection
+          profile={profile}
+          onAdded={refreshProfile}
+        />
+      )}
       {loading && !profile ? <TrackingSkeleton /> : <TrackingToggle />}
       {loading && !profile ? <LogoutSkeleton /> : <LogoutButton />}
       <TabBarSpacer />
@@ -131,6 +137,82 @@ const buildProfileForm = (profile: Profile | null): ProfileForm => ({
   email: profile?.email || '',
   phone: normalizePhone(profile?.phone || profile?.employeeProfile?.phone || ''),
 });
+
+function CredentialsSection({
+  profile,
+  onAdded,
+}: {
+  profile: Profile | null;
+  onAdded: () => Promise<void>;
+}) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  if (!profile || profile.authProvider !== 'TELEGRAM') return null;
+
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+  const passwordValid = password.trim().length >= 6;
+
+  const onSubmit = async () => {
+    if (!emailValid || !passwordValid) {
+      Alert.alert('Ошибка', 'Укажите корректный email и пароль не менее 6 символов');
+      return;
+    }
+    setSaving(true);
+    setNotice(null);
+    try {
+      await addCredentials(email.trim(), password.trim());
+      setNotice('Данные сохранены. Подтвердите email кодом из письма.');
+      setEmail('');
+      setPassword('');
+      await onAdded();
+    } catch (e: any) {
+      Alert.alert('Ошибка', e?.message || 'Не удалось добавить email и пароль');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <View style={styles.credentialsCard}>
+      <Text style={styles.credentialsTitle}>Вход по email и паролю</Text>
+      <Text style={styles.credentialsSubtitle}>
+        Для этого Telegram-аккаунта можно добавить резервный способ входа.
+      </Text>
+      {notice ? <Text style={styles.credentialsNotice}>{notice}</Text> : null}
+      <TextInput
+        value={email}
+        onChangeText={setEmail}
+        style={styles.fieldInput}
+        placeholder="example@mail.com"
+        autoCapitalize="none"
+        keyboardType="email-address"
+      />
+      <TextInput
+        value={password}
+        onChangeText={setPassword}
+        style={styles.fieldInput}
+        placeholder="Пароль"
+        secureTextEntry
+      />
+      <Pressable
+        onPress={onSubmit}
+        disabled={saving}
+        style={({ pressed }) => [
+          styles.credentialsButton,
+          saving && styles.credentialsButtonDisabled,
+          pressed && !saving ? styles.credentialsButtonPressed : null,
+        ]}
+      >
+        <Text style={styles.credentialsButtonText}>
+          {saving ? 'Сохранение...' : 'Добавить email и пароль'}
+        </Text>
+      </Pressable>
+    </View>
+  );
+}
 
 function ProfileEditor({
   profile,
@@ -698,6 +780,36 @@ const styles = StyleSheet.create({
   saveBtnPressed: { backgroundColor: '#F59E0B' },
   saveBtnDisabled: { backgroundColor: Colors.leaderprod.buttonDisabled },
   saveBtnText: { color: '#fff', fontWeight: '800' },
+  credentialsCard: {
+    marginTop: 16,
+    padding: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#FFFFFF',
+    gap: 10,
+  },
+  credentialsTitle: { fontSize: 16, fontWeight: '800', color: '#0F172A' },
+  credentialsSubtitle: { fontSize: 12, color: '#64748B' },
+  credentialsNotice: { color: '#1D4ED8', fontWeight: '700', fontSize: 12 },
+  credentialsButton: {
+    marginTop: 4,
+    borderRadius: 10,
+    paddingVertical: 11,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    backgroundColor: Colors.leaderprod.button,
+  },
+  credentialsButtonPressed: {
+    backgroundColor: '#F59E0B',
+  },
+  credentialsButtonDisabled: {
+    backgroundColor: Colors.leaderprod.buttonDisabled,
+  },
+  credentialsButtonText: {
+    color: '#fff',
+    fontWeight: '800',
+  },
   cancelBtn: {
     backgroundColor: '#F3F4F6',
     paddingVertical: 12,

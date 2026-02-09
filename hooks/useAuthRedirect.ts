@@ -2,9 +2,11 @@ import { useContext, useEffect, useMemo } from 'react';
 import { usePathname, useRouter, type Href } from 'expo-router';
 import { AuthContext } from '@/context/AuthContext';
 import { getProfileGate } from '@/utils/profileGate';
+import { isTelegramMiniAppLaunch } from '@/utils/telegramAuthService';
 
 const ROUTES = {
   AUTH: '/(auth)/AuthScreen',
+  TELEGRAM: '/(auth)/telegram',
   PROFILE: '/ProfileSelectionScreen',
   PENDING: '/(auth)/ProfilePendingScreen',
   BLOCKED: '/(auth)/ProfileBlockedScreen',
@@ -37,8 +39,11 @@ export function useAuthRedirect() {
 
     // Если пользователь не авторизован, держим его в auth-стеке
     if (gate === 'guest') {
+      const guestTarget = isTelegramMiniAppLaunch() ? ROUTES.TELEGRAM : ROUTES.AUTH;
       if (!pathname || !pathname.startsWith('/(auth)')) {
-        router.replace(ROUTES.AUTH as Href);
+        router.replace(guestTarget as Href);
+      } else if (pathname === ROUTES.AUTH && guestTarget === ROUTES.TELEGRAM) {
+        router.replace(ROUTES.TELEGRAM as Href);
       }
       return;
     }

@@ -1,15 +1,19 @@
 
 export type ProfileStatus = "PENDING" | "ACTIVE" | "BLOCKED"
+export type AuthProvider = "LOCAL" | "TELEGRAM" | "HYBRID"
 
 export type ProfileType = "CLIENT" | "SUPPLIER" | "EMPLOYEE"
 
 export type Profile = {
     id: number;
-    email: string;
+    email: string | null;
     firstName: string | null;
     lastName: string | null;
     middleName: string | null;
     phone: string | null;
+    telegramId?: string | null;
+    telegramUsername?: string | null;
+    authProvider?: AuthProvider;
     avatarUrl: string | null;
     lastSeenAt?: string | null;
     isOnline?: boolean;

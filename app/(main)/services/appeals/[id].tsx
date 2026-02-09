@@ -703,7 +703,7 @@ export default function AppealDetailScreen() {
                     sender: auth?.profile
                       ? {
                           id: auth.profile.id,
-                          email: auth.profile.email,
+                          email: auth.profile.email || '',
                           firstName: auth.profile.firstName || undefined,
                           lastName: auth.profile.lastName || undefined,
                           avatarUrl,
