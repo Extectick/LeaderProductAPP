@@ -38,6 +38,9 @@ export function useAppealUpdates(
   }, [deptList]);
 
   useEffect(() => {
+    if (!appealId && !userId && !deptList.length) {
+      return;
+    }
     let socket: Socket | null = null;
     let active = true;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -91,7 +94,7 @@ export function useAppealUpdates(
       });
 
       socket.onAny((event, payload) => {
-        onEventRef.current({ type: event, ...(payload || {}) });
+        onEventRef.current({ event, eventType: event, ...(payload || {}) });
       });
     }
 

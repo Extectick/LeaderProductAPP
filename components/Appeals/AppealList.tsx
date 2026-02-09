@@ -246,7 +246,15 @@ export default function AppealsList({
         data={items}
         keyExtractor={(it) => String(it.id)}
         renderItem={({ item }) =>
-          renderItem ? renderItem(item) : <AppealListItemForm item={item} currentUserId={currentUserId} />
+          renderItem ? (
+            renderItem(item)
+          ) : (
+            <AppealListItemForm
+              item={item}
+              currentUserId={currentUserId}
+              listContext={scope}
+            />
+          )
         }
         ListHeaderComponent={ListHeaderComponent}
         ListEmptyComponent={

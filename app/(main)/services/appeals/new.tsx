@@ -108,6 +108,9 @@ export default function AppealNew() {
           onChangeText={(t) => update('title', t)}
           maxLength={120}
         />
+        <Text style={styles.hintText}>
+          Если оставить пустым, будет использован текст первого сообщения
+        </Text>
       </View>
 
       <View style={styles.fieldBlock}>
@@ -160,6 +163,7 @@ const styles = StyleSheet.create({
   title: { fontSize: 20, fontWeight: '800', color: '#0B1220', marginBottom: 2 },
   fieldBlock: { gap: 8 },
   label: { color: '#4B5563', fontSize: 12, fontWeight: '700', letterSpacing: 0.3 },
+  hintText: { color: '#6B7280', fontSize: 12 },
   errorText: { color: '#EF4444', fontSize: 12, marginTop: 2 },
   input: { borderWidth: 1, borderColor: '#E5E7EB', backgroundColor: '#fff', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 },
   inputText: { color: '#111827' },

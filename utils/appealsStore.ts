@@ -1,10 +1,18 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppealListItem, AppealMessage } from '@/types/appealsTypes';
 
+type MessagesMeta = {
+  hasMoreBefore: boolean;
+  prevCursor: string | null;
+  hasMoreAfter: boolean;
+  nextCursor: string | null;
+  anchorMessageId: number | null;
+};
+
 type StoreState = {
   appeals: Record<number, AppealListItem>;
   messages: Record<number, AppealMessage[]>;
-  messagesMeta: Record<number, { hasMore?: boolean; cursor?: any }>;
+  messagesMeta: Record<number, MessagesMeta>;
   lists: Record<
     string,
     {
@@ -27,6 +35,22 @@ const state: StoreState = {
 };
 
 const listeners: Listener[] = [];
+
+const defaultMessagesMeta = (): MessagesMeta => ({
+  hasMoreBefore: false,
+  prevCursor: null,
+  hasMoreAfter: false,
+  nextCursor: null,
+  anchorMessageId: null,
+});
+
+function mergeMessagesAsc(existing: AppealMessage[], incoming: AppealMessage[]) {
+  const map = new Map<number, AppealMessage>();
+  [...existing, ...incoming].forEach((m) => map.set(m.id, { ...map.get(m.id), ...m }));
+  return Array.from(map.values()).sort(
+    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+  );
+}
 
 function notify() {
   const snapshot = getState();
@@ -55,7 +79,19 @@ export async function initAppealsStore() {
       const parsed = JSON.parse(raw) as StoreState;
       state.appeals = parsed.appeals || {};
       state.messages = parsed.messages || {};
-      state.messagesMeta = parsed.messagesMeta || {};
+      state.messagesMeta = Object.fromEntries(
+        Object.entries(parsed.messagesMeta || {}).map(([appealId, meta]: any) => [
+          appealId,
+          {
+            ...defaultMessagesMeta(),
+            hasMoreBefore: meta?.hasMoreBefore ?? meta?.hasMore ?? false,
+            prevCursor: meta?.prevCursor ?? meta?.cursor ?? null,
+            hasMoreAfter: meta?.hasMoreAfter ?? false,
+            nextCursor: meta?.nextCursor ?? null,
+            anchorMessageId: meta?.anchorMessageId ?? null,
+          },
+        ])
+      ) as Record<number, MessagesMeta>;
       state.lists = parsed.lists || {};
     }
   } catch {}
@@ -94,14 +130,18 @@ function bumpAppealInLists(appealId: number) {
 
 export function getAppealsArray() {
   return Object.values(state.appeals).sort((a, b) => {
-    const aDate = a.lastMessage?.createdAt || a.createdAt;
-    const bDate = b.lastMessage?.createdAt || b.createdAt;
+    const aDate = a.lastMessage?.createdAt || (a as any).updatedAt || a.createdAt;
+    const bDate = b.lastMessage?.createdAt || (b as any).updatedAt || b.createdAt;
     return new Date(bDate).getTime() - new Date(aDate).getTime();
   });
 }
 
 export function getMessages(appealId: number) {
   return state.messages[appealId] || [];
+}
+
+export function getMessagesMeta(appealId: number) {
+  return state.messagesMeta[appealId] || defaultMessagesMeta();
 }
 
 export async function upsertMessage(
@@ -111,9 +151,15 @@ export async function upsertMessage(
 ) {
   const msgs = state.messages[appealId] ? [...state.messages[appealId]] : [];
   const exists = msgs.find((m) => m.id === message.id);
+  const isNew = !exists;
   if (!exists) {
     msgs.push(message);
-    state.messages[appealId] = msgs;
+    state.messages[appealId] = mergeMessagesAsc([], msgs);
+  } else {
+    state.messages[appealId] = mergeMessagesAsc(
+      [],
+      msgs.map((m) => (m.id === message.id ? { ...m, ...message } : m))
+    );
   }
 
   const appeal = state.appeals[appealId];
@@ -123,7 +169,7 @@ export async function upsertMessage(
     state.appeals[appealId] = {
       ...appeal,
       lastMessage: message,
-      unreadCount: isOwn ? unread : unread + 1,
+      unreadCount: isNew ? (isOwn ? unread : unread + 1) : unread,
     };
   } else {
     state.appeals[appealId] = {
@@ -156,10 +202,28 @@ export async function markAppealReadLocal(appealId: number) {
 export async function setMessages(
   appealId: number,
   messages: AppealMessage[],
-  meta?: { hasMore?: boolean; cursor?: any }
+  meta?: Partial<MessagesMeta>
 ) {
-  state.messages[appealId] = messages;
-  if (meta) state.messagesMeta[appealId] = meta;
+  state.messages[appealId] = mergeMessagesAsc([], messages);
+  state.messagesMeta[appealId] = {
+    ...(state.messagesMeta[appealId] || defaultMessagesMeta()),
+    ...(meta || {}),
+  };
+  notify();
+  await persist();
+}
+
+export async function prependMessages(
+  appealId: number,
+  messages: AppealMessage[],
+  meta?: Partial<MessagesMeta>
+) {
+  const existing = state.messages[appealId] || [];
+  state.messages[appealId] = mergeMessagesAsc(existing, messages);
+  state.messagesMeta[appealId] = {
+    ...(state.messagesMeta[appealId] || defaultMessagesMeta()),
+    ...(meta || {}),
+  };
   notify();
   await persist();
 }
@@ -167,11 +231,72 @@ export async function setMessages(
 export async function appendMessages(
   appealId: number,
   messages: AppealMessage[],
-  meta?: { hasMore?: boolean; cursor?: any }
+  meta?: Partial<MessagesMeta>
 ) {
   const existing = state.messages[appealId] || [];
-  state.messages[appealId] = [...messages, ...existing];
-  if (meta) state.messagesMeta[appealId] = meta;
+  state.messages[appealId] = mergeMessagesAsc(existing, messages);
+  state.messagesMeta[appealId] = {
+    ...(state.messagesMeta[appealId] || defaultMessagesMeta()),
+    ...(meta || {}),
+  };
+  notify();
+  await persist();
+}
+
+export async function updateMessage(
+  appealId: number,
+  messageId: number,
+  patch: Partial<AppealMessage>
+) {
+  const existing = state.messages[appealId] || [];
+  const next = existing.map((m) => (m.id === messageId ? { ...m, ...patch } : m));
+  state.messages[appealId] = next;
+  const appeal = state.appeals[appealId];
+  if (appeal?.lastMessage?.id === messageId) {
+    state.appeals[appealId] = { ...appeal, lastMessage: { ...appeal.lastMessage, ...patch } as any };
+  }
+  notify();
+  await persist();
+}
+
+export async function removeMessage(appealId: number, messageId: number) {
+  const existing = state.messages[appealId] || [];
+  const next = existing.filter((m) => m.id !== messageId);
+  state.messages[appealId] = next;
+  const appeal = state.appeals[appealId];
+  if (appeal?.lastMessage?.id === messageId) {
+    state.appeals[appealId] = { ...appeal, lastMessage: next[next.length - 1] ?? null } as any;
+  }
+  notify();
+  await persist();
+}
+
+export async function patchAppeal(appealId: number, patch: Partial<AppealListItem>) {
+  const existing = state.appeals[appealId];
+  if (!existing) return;
+  state.appeals[appealId] = { ...existing, ...patch };
+  bumpAppealInLists(appealId);
+  notify();
+  await persist();
+}
+
+export async function applyMessageReads(
+  appealId: number,
+  messageIds: number[],
+  userId: number,
+  readAt: string,
+  viewerId: number = userId
+) {
+  const idSet = new Set(messageIds);
+  const existing = state.messages[appealId] || [];
+  const next = existing.map((m) => {
+    if (!idSet.has(m.id)) return m;
+    const already = (m.readBy || []).some((r) => r.userId === userId);
+    const readBy = already ? (m.readBy || []) : [...(m.readBy || []), { userId, readAt }];
+    const isSelf = userId === viewerId;
+    return { ...m, isRead: isSelf ? true : m.isRead, readBy };
+  });
+  state.messages[appealId] = next;
   notify();
   await persist();
 }
@@ -183,8 +308,8 @@ export function getListSnapshot(listKey: string) {
     .map((id) => state.appeals[id])
     .filter(Boolean)
     .sort((a, b) => {
-      const aDate = a.lastMessage?.createdAt || a.createdAt;
-      const bDate = b.lastMessage?.createdAt || b.createdAt;
+      const aDate = a.lastMessage?.createdAt || (a as any).updatedAt || a.createdAt;
+      const bDate = b.lastMessage?.createdAt || (b as any).updatedAt || b.createdAt;
       return new Date(bDate).getTime() - new Date(aDate).getTime();
     });
 

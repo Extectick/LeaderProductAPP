@@ -6,10 +6,12 @@ import { apiClient } from './apiClient';
 import { API_ENDPOINTS } from './apiEndpoints';
 
 const PUSH_TOKEN_KEY = 'pushToken';
-const CHANNEL_ID = 'profile-status';
+const PROFILE_CHANNEL_ID = 'profile-status';
+const APPEAL_MESSAGE_CHANNEL_ID = 'appeal-message';
 
 let notificationsModule: typeof import('expo-notifications') | null = null;
 let handlerInitialized = false;
+let responseListener: { remove: () => void } | null = null;
 
 function isExpoGo() {
   const ownership = (Constants as any).appOwnership;
@@ -37,8 +39,10 @@ export async function initPushNotifications() {
 
   if (!handlerInitialized) {
     Notifications.setNotificationHandler({
-      handleNotification: async () => ({
-        shouldShowAlert: true,
+      handleNotification: async (notification) => ({
+        shouldShowAlert: notification.request.content.data?.type !== 'APPEAL_MESSAGE',
+        shouldShowBanner: notification.request.content.data?.type !== 'APPEAL_MESSAGE',
+        shouldShowList: notification.request.content.data?.type !== 'APPEAL_MESSAGE',
         shouldPlaySound: true,
         shouldSetBadge: false,
       }),
@@ -47,11 +51,19 @@ export async function initPushNotifications() {
   }
 
   if (Platform.OS === 'android') {
-    await Notifications.setNotificationChannelAsync(CHANNEL_ID, {
+    await Notifications.setNotificationChannelAsync(PROFILE_CHANNEL_ID, {
       name: 'Статусы профиля',
       importance: Notifications.AndroidImportance.MAX,
       vibrationPattern: [0, 250, 200, 250],
       lightColor: '#22C55E',
+      sound: 'default',
+      enableVibrate: true,
+    });
+    await Notifications.setNotificationChannelAsync(APPEAL_MESSAGE_CHANNEL_ID, {
+      name: 'Сообщения обращений',
+      importance: Notifications.AndroidImportance.HIGH,
+      vibrationPattern: [0, 250, 200, 250],
+      lightColor: '#2563EB',
       sound: 'default',
       enableVibrate: true,
     });
@@ -123,6 +135,81 @@ export async function unregisterPushToken() {
   await AsyncStorage.removeItem(PUSH_TOKEN_KEY);
 }
 
+function parseAppealId(value: any): number | null {
+  const id = Number(value);
+  return Number.isFinite(id) && id > 0 ? id : null;
+}
+
+function parseAppealIdFromData(data: any): number | null {
+  if (!data || data.type !== 'APPEAL_MESSAGE') return null;
+  return parseAppealId(data.appealId);
+}
+
+export async function bindPushNavigation(onOpenAppeal: (appealId: number) => void) {
+  const Notifications = await getNotificationsModule();
+  if (!Notifications) return () => {};
+
+  responseListener?.remove();
+  responseListener = Notifications.addNotificationResponseReceivedListener((response) => {
+    const appealId = parseAppealIdFromData(response.notification.request.content.data);
+    if (appealId) onOpenAppeal(appealId);
+  });
+
+  try {
+    const coldStart = await Notifications.getLastNotificationResponseAsync();
+    if (coldStart) {
+      const appealId = parseAppealIdFromData(coldStart.notification.request.content.data);
+      if (appealId) onOpenAppeal(appealId);
+      await Notifications.clearLastNotificationResponseAsync?.();
+    }
+  } catch (error) {
+    console.warn('[push] failed to parse cold start notification', error);
+  }
+
+  return () => {
+    responseListener?.remove();
+    responseListener = null;
+  };
+}
+
+export async function dismissAppealSystemNotifications(opts: {
+  appealId?: number;
+  messageIds?: number[];
+}) {
+  const Notifications = await getNotificationsModule();
+  if (!Notifications) return;
+
+  const appealId = parseAppealId(opts.appealId);
+  const messageIdSet = new Set(
+    (opts.messageIds || [])
+      .map((id) => Number(id))
+      .filter((id) => Number.isFinite(id) && id > 0)
+  );
+  if (!appealId && !messageIdSet.size) return;
+
+  try {
+    const presented = await Notifications.getPresentedNotificationsAsync();
+    await Promise.all(
+      presented.map(async (notification) => {
+        const data: any = notification.request.content.data || {};
+        if (data.type !== 'APPEAL_MESSAGE') return;
+        const sameAppeal = appealId ? parseAppealId(data.appealId) === appealId : false;
+        const sameMessage = messageIdSet.size
+          ? messageIdSet.has(Number(data.messageId))
+          : false;
+        if (!sameAppeal && !sameMessage) return;
+        await Notifications.dismissNotificationAsync(notification.request.identifier);
+      })
+    );
+  } catch (error) {
+    console.warn('[push] failed to dismiss system notifications', error);
+  }
+}
+
 export function getPushChannelId() {
-  return CHANNEL_ID;
+  return PROFILE_CHANNEL_ID;
+}
+
+export function getAppealPushChannelId() {
+  return APPEAL_MESSAGE_CHANNEL_ID;
 }

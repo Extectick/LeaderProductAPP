@@ -1,6 +1,6 @@
 import { useMemo, useState, useContext, useEffect, useRef, useCallback } from 'react';
 import { View, Alert, Pressable, Text, StyleSheet } from 'react-native';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useRouter } from 'expo-router';
 import AppealsListHeader from '@/components/Appeals/AppealsListHeader';
 import AppealsList from '@/components/Appeals/AppealList';
 import { exportAppealsCSV } from '@/utils/appealsService';
@@ -13,6 +13,9 @@ import {
   initAppealsStore,
   subscribe as subscribeAppeals,
   upsertMessage,
+  updateMessage,
+  removeMessage,
+  patchAppeal,
   getListSnapshot,
   setListPage,
 } from '@/utils/appealsStore';
@@ -58,10 +61,11 @@ export default function AppealsIndex() {
     }
   }
 
-  // Когда приходят события по любому обращению - точечно обновляем по messageAdded, иначе рефреш
+  // Когда приходят события по любому обращению - точечно обновляем без полного refetch
   const handleWsEvent = useCallback(
     (evt: any) => {
-      if (evt?.type === 'messageAdded') {
+      const eventName = evt?.event || evt?.eventType || evt?.type;
+      if (eventName === 'messageAdded') {
         lastWsMsg.current = evt;
         upsertMessage(
           evt.appealId,
@@ -69,6 +73,9 @@ export default function AppealsIndex() {
             id: evt.id || evt.messageId,
             appealId: evt.appealId,
             text: evt.text || '',
+            type: evt.type,
+            systemEvent: evt.systemEvent ?? null,
+            editedAt: evt.editedAt ?? null,
             createdAt: evt.createdAt || new Date().toISOString(),
             sender: evt.sender || { id: evt.senderId, email: '' },
             attachments: evt.attachments || [],
@@ -78,8 +85,41 @@ export default function AppealsIndex() {
           auth?.profile?.id
         ).then(() => {
           setCachedItems(getListSnapshot(listKey).items);
-          setWsTick((t) => t + 1); // гарантируем перерисовку списка
         });
+      } else if (eventName === 'messageEdited') {
+        if (evt?.appealId && evt?.messageId) {
+          updateMessage(evt.appealId, evt.messageId, { text: evt.text, editedAt: evt.editedAt }).catch(() => {});
+        }
+      } else if (eventName === 'messageDeleted') {
+        if (evt?.appealId && evt?.messageId) {
+          removeMessage(evt.appealId, evt.messageId).catch(() => {});
+        }
+      } else if (eventName === 'appealUpdated' && evt?.appealId) {
+        const existing = getListSnapshot(listKey).items.find((x) => x.id === evt.appealId);
+        const patch: any = {};
+        if (evt.status) patch.status = evt.status;
+        if (evt.priority) patch.priority = evt.priority;
+        if (evt.updatedAt) patch.updatedAt = evt.updatedAt;
+        if (Array.isArray(evt.assigneeIds)) {
+          patch.assignees = evt.assigneeIds.map((id: number) => ({ user: { id, email: '' } }));
+        }
+        if (evt.lastMessage) {
+          patch.lastMessage = evt.lastMessage;
+          lastWsMsg.current = evt.lastMessage;
+          upsertMessage(evt.appealId, evt.lastMessage, auth?.profile?.id).catch(() => {});
+        }
+        patchAppeal(evt.appealId, patch).catch(() => {});
+        if (existing?.toDepartment?.id && evt.toDepartmentId && existing.toDepartment.id !== evt.toDepartmentId) {
+          setWsTick((t) => t + 1);
+        }
+      } else if (
+        evt?.appealId &&
+        (eventName === 'statusUpdated' ||
+          eventName === 'assigneesUpdated' ||
+          eventName === 'departmentChanged')
+      ) {
+        // Для старых событий без агрегированного payload делаем мягкий fallback
+        setWsTick((t) => t + 1);
       } else {
         setWsTick((t) => t + 1);
       }
@@ -98,16 +138,6 @@ export default function AppealsIndex() {
   const refreshKey = useMemo(
     () => `${tab}-${scope}-${status ?? ''}-${priority ?? ''}-${wsTick}`,
     [tab, scope, status, priority, wsTick],
-  );
-
-  // При возвращении на экран форсируем обновление списка (например, после создания обращения)
-  useFocusEffect(
-    useMemo(
-      () => () => {
-        setWsTick((t) => t + 1);
-      },
-      []
-    )
   );
 
   // Инициализация локального кэша обращений и подписка

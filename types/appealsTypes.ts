@@ -5,6 +5,7 @@ export type AttachmentType = 'IMAGE' | 'AUDIO' | 'FILE';
 export type AppealMessageType = 'USER' | 'SYSTEM';
 
 export type Scope = 'my' | 'department' | 'assigned';
+export type AppealRoleBadge = 'OWN_APPEAL' | 'ASSIGNEE';
 
 export interface DepartmentMini { id: number; name: string }
 export interface UserMini {
@@ -27,6 +28,8 @@ export interface AppealAttachment {
 
 export interface AppealMessage {
   id: number;
+  appealId?: number;
+  appealNumber?: number;
   text?: string|null;
   type?: AppealMessageType;
   systemEvent?: { type: string; [key: string]: any } | null;
@@ -103,4 +106,34 @@ export interface EditMessageResult {
 
 export interface DeleteMessageResult {
   id: number;
+}
+
+export interface AppealMessagesResponse {
+  data: AppealMessage[];
+  meta: {
+    hasMore?: boolean;
+    nextCursor?: string | null;
+    hasMoreBefore: boolean;
+    prevCursor: string | null;
+    hasMoreAfter: boolean;
+    anchorMessageId: number | null;
+  };
+}
+
+export interface AppealUpdatedEvent {
+  appealId: number;
+  status: AppealStatus;
+  priority: AppealPriority;
+  toDepartmentId: number;
+  updatedAt: string;
+  assigneeIds?: number[];
+  lastMessage?: AppealMessage | null;
+}
+
+export interface AppealMessageAddedEvent extends AppealMessage {
+  messageId?: number;
+  senderId?: number;
+  appealNumber?: number;
+  senderName?: string;
+  senderAvatarUrl?: string | null;
 }

@@ -14,6 +14,7 @@ import {
   EditMessageResult,
   Scope,
   AppealMessage,
+  AppealMessagesResponse,
   UserMini,
 } from '@/types/appealsTypes';
 
@@ -302,6 +303,67 @@ export async function getDepartmentMembers(departmentId: number): Promise<UserMi
 }
 
 // -------------------- Сообщения --------------------
+export async function getAppealMessagesPage(
+  id: number,
+  opts?: { limit?: number; cursor?: string | null; direction?: 'before' | 'after' }
+): Promise<AppealMessagesResponse> {
+  const qs = buildQuery({
+    mode: 'page',
+    limit: opts?.limit ?? 30,
+    cursor: opts?.cursor || undefined,
+    direction: opts?.direction ?? 'before',
+  });
+  const resp = (await apiClient<undefined, AppealMessagesResponse>(
+    `/appeals/${id}/messages?${qs}`,
+    { method: 'GET' }
+  )) as ApiResponse<AppealMessagesResponse>;
+  if (!resp.ok) throw new Error(resp.message || 'Ошибка загрузки сообщений');
+  return resp.data;
+}
+
+export async function getAppealMessagesBootstrap(
+  id: number,
+  opts?: { limit?: number; before?: number; after?: number; anchor?: 'first_unread' | 'last_unread' }
+): Promise<AppealMessagesResponse> {
+  const qs = buildQuery({
+    mode: 'bootstrap',
+    limit: opts?.limit ?? 30,
+    anchor: opts?.anchor ?? 'last_unread',
+    before: opts?.before ?? 40,
+    after: opts?.after ?? 20,
+    direction: 'before',
+  });
+  const resp = (await apiClient<undefined, AppealMessagesResponse>(
+    `/appeals/${id}/messages?${qs}`,
+    { method: 'GET' }
+  )) as ApiResponse<AppealMessagesResponse>;
+  if (!resp.ok) throw new Error(resp.message || 'Ошибка загрузки сообщений');
+  return resp.data;
+}
+
+export async function getAppealMessages(
+  id: number,
+  opts?: { limit?: number; cursor?: string | null }
+): Promise<AppealMessagesResponse> {
+  return getAppealMessagesPage(id, {
+    limit: opts?.limit,
+    cursor: opts?.cursor,
+    direction: 'before',
+  });
+}
+
+export async function markAppealMessagesReadBulk(
+  id: number,
+  messageIds: number[]
+): Promise<{ messageIds: number[]; readAt: string }> {
+  const resp = (await apiClient<{ messageIds: number[] }, { messageIds: number[]; readAt: string }>(
+    `/appeals/${id}/messages/read-bulk`,
+    { method: 'POST', body: { messageIds } }
+  )) as ApiResponse<{ messageIds: number[]; readAt: string }>;
+  if (!resp.ok) throw new Error(resp.message || 'Ошибка отметки прочитанного');
+  return resp.data;
+}
+
 export async function addAppealMessage(
   id: number,
   opts: { text?: string; files?: FileLike[] }

@@ -1,16 +1,18 @@
 // V:\lp\app\(main)\services\appeals\[id].tsx
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { useEffect, useState, useCallback, useContext, useRef, useMemo } from 'react';
 import { Platform, View, Text, Pressable, StyleSheet, Modal, ScrollView, ActivityIndicator, Image, Keyboard, Dimensions } from 'react-native';
 import {
   addAppealMessage,
   getAppealById,
+  getAppealMessagesBootstrap,
+  getAppealMessagesPage,
   updateAppealStatus,
   assignAppeal,
   claimAppeal,
   changeAppealDepartment,
   updateAppealWatchers,
-  markAppealMessageRead,
+  markAppealMessagesReadBulk,
   getDepartmentMembers,
 } from '@/utils/appealsService';
 import { AppealDetail, AppealStatus, AppealMessage, UserMini } from '@/types/appealsTypes';
@@ -19,32 +21,56 @@ import MessagesList, { MessagesListHandle } from '@/components/Appeals/MessagesL
 import AppealChatInput from '@/components/Appeals/AppealChatInput';
 import { AuthContext } from '@/context/AuthContext';
 import { useAppealUpdates } from '@/hooks/useAppealUpdates';
-import { getMessages, setMessages, setAppeals, upsertMessage, subscribe as subscribeAppeals } from '@/utils/appealsStore';
+import {
+  getMessages,
+  getMessagesMeta,
+  setMessages,
+  prependMessages,
+  setAppeals,
+  upsertMessage,
+  updateMessage,
+  removeMessage,
+  applyMessageReads,
+  markAppealReadLocal,
+  subscribe as subscribeAppeals,
+} from '@/utils/appealsStore';
 import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 import { Ionicons } from '@expo/vector-icons';
 import { useIsAdmin } from '@/hooks/useIsAdmin';
 import { getDepartments, Department } from '@/utils/userService';
 import DepartmentPicker from '@/components/DepartmentPicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { dismissNotificationsByKeys } from '@/utils/notificationStore';
+import { dismissAppealSystemNotifications } from '@/utils/pushNotifications';
 
 export default function AppealDetailScreen() {
   const headerTopInset = useHeaderContentTopInset({ hasSubtitle: true });
   const { id } = useLocalSearchParams<{ id: string }>();
   const appealId = Number(id);
-  const router = useRouter();
   const [data, setData] = useState<AppealDetail | null>(null);
-  const [messages, setMessagesState] = useState<AppealMessage[]>(getMessages(appealId));
+  const [messages, setMessagesState] = useState<AppealMessage[]>([]);
+  const [messagesMeta, setMessagesMetaState] = useState(getMessagesMeta(appealId));
   const auth = useContext(AuthContext);
   const { isAdmin } = useIsAdmin();
   const [inputHeight, setInputHeight] = useState(0);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [isAtBottom, setIsAtBottom] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [initialAnchorMessageId, setInitialAnchorMessageId] = useState<number | null>(null);
   const insets = useSafeAreaInsets();
   const contentSidePadding = Platform.OS === 'web' ? 16 : 12;
   const listRef = useRef<MessagesListHandle>(null);
-  const markPending = useRef<Set<number>>(new Set());
-  const markTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const readQueueRef = useRef<Set<number>>(new Set());
+  const readTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const readArmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const readArmedRef = useRef(false);
+  const initialPositionReadyRef = useRef(false);
+  const userInteractedRef = useRef(false);
+  const latestVisibleIdsRef = useRef<number[]>([]);
+  const openSessionRef = useRef(0);
+  const storeSyncReadyRef = useRef(false);
+  const pageSize = 30;
   const [assignVisible, setAssignVisible] = useState(false);
   const [assignLoading, setAssignLoading] = useState(false);
   const [deptMembers, setDeptMembers] = useState<UserMini[]>([]);
@@ -54,86 +80,337 @@ export default function AppealDetailScreen() {
   const [departments, setDepartments] = useState<Department[]>([]);
   const [selectedDepartmentId, setSelectedDepartmentId] = useState<number | null>(null);
 
-  const load = useCallback(async (force = false) => {
+  const devLog = useCallback(
+    (stage: string, extra?: Record<string, any>) => {
+      if (!__DEV__) return;
+      console.log('[appeal-open]', { appealId, stage, ...(extra || {}) });
+    },
+    [appealId]
+  );
+
+  const dismissAppealNotifications = useCallback(
+    (messageIds?: number[]) => {
+      const keys = [`appeal:${appealId}`];
+      (messageIds || []).forEach((id) => keys.push(`appeal-message:${id}`));
+      dismissNotificationsByKeys(keys);
+      void dismissAppealSystemNotifications({
+        appealId,
+        messageIds: messageIds?.length ? messageIds : undefined,
+      });
+    },
+    [appealId]
+  );
+
+  const load = useCallback(async (force = false, _refreshMessages = false) => {
+    const sessionId = openSessionRef.current;
     const d = await getAppealById(appealId, force);
+    if (sessionId !== openSessionRef.current) return;
     setData(d);
-    if (d?.messages) {
-      await setMessages(appealId, d.messages);
-      await setAppeals([d as any]);
-      setMessagesState(getMessages(appealId));
-    }
+    await setAppeals([d as any]);
+    if (!storeSyncReadyRef.current) return;
+    setMessagesState(getMessages(appealId));
+    setMessagesMetaState(getMessagesMeta(appealId));
   }, [appealId]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    let active = true;
+    const readQueue = readQueueRef.current;
+    const sessionId = openSessionRef.current + 1;
+    openSessionRef.current = sessionId;
+    storeSyncReadyRef.current = false;
+    readArmedRef.current = false;
+    initialPositionReadyRef.current = false;
+    userInteractedRef.current = false;
+    latestVisibleIdsRef.current = [];
+    readQueue.clear();
+    if (readTimerRef.current) {
+      clearTimeout(readTimerRef.current);
+      readTimerRef.current = null;
+    }
+    if (readArmTimerRef.current) {
+      clearTimeout(readArmTimerRef.current);
+      readArmTimerRef.current = null;
+    }
+
+    setInitialLoading(true);
+    setInitialAnchorMessageId(null);
+    setMessagesState([]);
+    setMessagesMetaState({
+      hasMoreBefore: false,
+      prevCursor: null,
+      hasMoreAfter: false,
+      nextCursor: null,
+      anchorMessageId: null,
+    });
+    devLog('bootstrap requested');
+
+    (async () => {
+      try {
+        const [d, res] = await Promise.all([
+          getAppealById(appealId, false),
+          getAppealMessagesBootstrap(appealId, {
+            limit: pageSize,
+            before: 40,
+            after: 20,
+            anchor: 'first_unread',
+          }),
+        ]);
+        if (!active || sessionId !== openSessionRef.current) return;
+
+        setData(d);
+        await setAppeals([d as any]);
+        await setMessages(appealId, res.data, {
+          hasMoreBefore: res.meta?.hasMoreBefore ?? res.meta?.hasMore ?? false,
+          prevCursor: res.meta?.prevCursor ?? res.meta?.nextCursor ?? null,
+          hasMoreAfter: res.meta?.hasMoreAfter ?? false,
+          nextCursor: res.meta?.nextCursor ?? null,
+          anchorMessageId: res.meta?.anchorMessageId ?? null,
+        });
+        storeSyncReadyRef.current = true;
+        setInitialAnchorMessageId(res.meta?.anchorMessageId ?? null);
+        setMessagesState(getMessages(appealId));
+        setMessagesMetaState(getMessagesMeta(appealId));
+        devLog('bootstrap_received', {
+          messagesCount: res.data?.length ?? 0,
+          anchorMessageId: res.meta?.anchorMessageId ?? null,
+        });
+        devLog('anchor_resolved', { anchorMessageId: res.meta?.anchorMessageId ?? null });
+
+        if ((res.data?.length ?? 0) === 0) {
+          initialPositionReadyRef.current = true;
+          setInitialLoading(false);
+          devLog('position_ready', { reason: 'empty' });
+        }
+      } catch (e) {
+        console.warn('Ошибка загрузки обращения:', e);
+        if (!active || sessionId !== openSessionRef.current) return;
+        setInitialLoading(false);
+      }
+    })();
+
+    return () => {
+      active = false;
+      if (readTimerRef.current) {
+        clearTimeout(readTimerRef.current);
+        readTimerRef.current = null;
+      }
+      if (readArmTimerRef.current) {
+        clearTimeout(readArmTimerRef.current);
+        readArmTimerRef.current = null;
+      }
+      readArmedRef.current = false;
+      initialPositionReadyRef.current = false;
+      userInteractedRef.current = false;
+      latestVisibleIdsRef.current = [];
+      readQueue.clear();
+    };
+  }, [appealId, pageSize, devLog]);
+  useEffect(() => {
+    dismissAppealNotifications();
+  }, [dismissAppealNotifications]);
 
   // подписка на локальный стор сообщений/апеллов
   useEffect(() => {
     const unsub = subscribeAppeals(() => {
+      if (!storeSyncReadyRef.current) return;
       setMessagesState(getMessages(appealId));
+      setMessagesMetaState(getMessagesMeta(appealId));
     });
     return () => unsub();
   }, [appealId]);
 
-  // Помечаем непрочитанные сообщения как прочитанные для текущего пользователя
-  useEffect(() => {
+  const messagesById = useMemo(() => {
+    const map = new Map<number, AppealMessage>();
+    (messages || []).forEach((m) => map.set(m.id, m));
+    return map;
+  }, [messages]);
+
+  const flushReadQueue = useCallback(() => {
     const userId = auth?.profile?.id;
-    if (!data || !userId) return;
-    const unread = (messages || []).filter(
-      (m) => m.sender?.id !== userId && !m.isRead && !markPending.current.has(m.id)
-    );
-    if (unread.length === 0) return;
-    if (markTimer.current) clearTimeout(markTimer.current);
-    markTimer.current = setTimeout(() => {
-      const targets = unread.slice(0, 10); // батчим до 10 за проход
-      targets.forEach((m) => markPending.current.add(m.id));
-      Promise.all(
-        targets.map((m) =>
-          markAppealMessageRead(appealId, m.id).catch(() => {
-            markPending.current.delete(m.id);
-          })
-        )
-      ).finally(() => {
-        targets.forEach((m) => markPending.current.delete(m.id));
-      });
-    }, 250);
-  }, [messages, appealId, auth?.profile?.id]);
+    if (!userId) return;
+    const ids = Array.from(readQueueRef.current);
+    readQueueRef.current.clear();
+    if (!ids.length) return;
+    devLog('read_bulk_sent', { count: ids.length });
+    markAppealMessagesReadBulk(appealId, ids)
+      .then((res) => {
+        applyMessageReads(appealId, res.messageIds, userId, res.readAt);
+        markAppealReadLocal(appealId);
+        dismissAppealNotifications(res.messageIds);
+      })
+      .catch(() => {});
+  }, [appealId, auth?.profile?.id, dismissAppealNotifications, devLog]);
+
+  const enqueueReadIds = useCallback((ids: number[]) => {
+    if (!ids.length) return;
+    let added = false;
+    ids.forEach((id) => {
+      if (readQueueRef.current.has(id)) return;
+      readQueueRef.current.add(id);
+      added = true;
+    });
+    if (!added) return;
+    if (readTimerRef.current) clearTimeout(readTimerRef.current);
+    readTimerRef.current = setTimeout(() => {
+      readTimerRef.current = null;
+      flushReadQueue();
+    }, 300);
+  }, [flushReadQueue]);
+
+  const processVisibleMessageIds = useCallback((ids: number[]) => {
+    const userId = auth?.profile?.id;
+    if (!userId || !ids.length) return;
+    const eligibleIds: number[] = [];
+    ids.forEach((id) => {
+      const msg = messagesById.get(id);
+      if (!msg) return;
+      if (msg.sender?.id === userId) return;
+      const alreadyRead = msg.isRead || (msg.readBy || []).some((r) => r.userId === userId);
+      if (alreadyRead) return;
+      eligibleIds.push(id);
+    });
+    enqueueReadIds(eligibleIds);
+  }, [auth?.profile?.id, enqueueReadIds, messagesById]);
+
+  const armReads = useCallback((reason: string) => {
+    if (readArmedRef.current) return;
+    if (readArmTimerRef.current) {
+      clearTimeout(readArmTimerRef.current);
+      readArmTimerRef.current = null;
+    }
+    readArmTimerRef.current = setTimeout(() => {
+      readArmTimerRef.current = null;
+      if (!initialPositionReadyRef.current) return;
+      if (reason === 'user_interaction' && !userInteractedRef.current) return;
+      if ((reason === 'auto_bottom' || reason === 'incoming_at_bottom') && !isAtBottom) return;
+      readArmedRef.current = true;
+      devLog('read_armed', { reason });
+      if (latestVisibleIdsRef.current.length) {
+        processVisibleMessageIds(latestVisibleIdsRef.current);
+      }
+    }, 280);
+  }, [devLog, isAtBottom, processVisibleMessageIds]);
+
+  const tryArmReadsAfterInteraction = useCallback(() => {
+    if (!initialPositionReadyRef.current) return;
+    if (!userInteractedRef.current) return;
+    armReads('user_interaction');
+  }, [armReads]);
+
+  const handleUserInteraction = useCallback(() => {
+    if (!userInteractedRef.current) {
+      userInteractedRef.current = true;
+      devLog('user_interaction_detected');
+    }
+    tryArmReadsAfterInteraction();
+  }, [devLog, tryArmReadsAfterInteraction]);
+
+  const handleVisibleMessageIds = useCallback((ids: number[]) => {
+    latestVisibleIdsRef.current = ids;
+    if (!readArmedRef.current) return;
+    processVisibleMessageIds(ids);
+  }, [processVisibleMessageIds]);
+
+  useEffect(() => {
+    if (initialLoading) return;
+    if (!initialPositionReadyRef.current) return;
+    if (!isAtBottom) return;
+    armReads('auto_bottom');
+  }, [armReads, initialLoading, isAtBottom]);
+
+  useEffect(() => {
+    return () => {
+      if (readTimerRef.current) clearTimeout(readTimerRef.current);
+      if (readArmTimerRef.current) clearTimeout(readArmTimerRef.current);
+    };
+  }, []);
 
   // Подписка на события конкретного обращения: новые сообщения, смена статуса и т.д.
   useAppealUpdates(appealId, (evt) => {
-    if (evt.type === 'messageAdded' && evt.appealId === appealId) {
+    const eventName = evt.event || evt.eventType || evt.type;
+    if (eventName === 'messageAdded' && evt.appealId === appealId) {
+      const incomingMessageId = Number(evt.id || evt.messageId);
       const newMsg: AppealMessage = {
-        id: evt.id || evt.messageId,
+        id: incomingMessageId,
+        appealId: evt.appealId,
         text: evt.text || '',
+        type: evt.type === 'SYSTEM' ? 'SYSTEM' : 'USER',
+        systemEvent: evt.systemEvent ?? null,
         createdAt: evt.createdAt || new Date().toISOString(),
         sender: evt.sender || { id: evt.senderId, email: '' },
         attachments: evt.attachments || [],
         isRead: evt.isRead,
         readBy: evt.readBy || [],
       };
-      upsertMessage(appealId, newMsg, auth?.profile?.id)
-        .then(() => setMessagesState(getMessages(appealId)))
-        .catch(() => {});
-      // если сообщение не наше - сразу отмечаем прочитанным
-      if (evt.senderId !== auth?.profile?.id) {
-        void markAppealMessageRead(appealId, evt.id || evt.messageId).catch(() => {});
-        // Подстраховка: подтянуть свежие данные, если вдруг сокет потеряли часть сообщений
-        if (syncTimer.current) clearTimeout(syncTimer.current);
-        syncTimer.current = setTimeout(() => load(true).catch(() => {}), 400);
+      upsertMessage(appealId, newMsg, auth?.profile?.id).catch(() => {});
+      const senderId = evt.senderId ?? evt.sender?.id ?? newMsg.sender?.id;
+      const isIncoming = Number.isFinite(senderId) && senderId !== auth?.profile?.id;
+      if (isIncoming && Number.isFinite(incomingMessageId) && initialPositionReadyRef.current && isAtBottom) {
+        armReads('incoming_at_bottom');
+        enqueueReadIds([incomingMessageId]);
       }
-    } else if (evt.type === 'messageRead' && evt.appealId === appealId) {
-      setMessagesState((prev) =>
-        prev.map((m) =>
-          m.id === evt.messageId
-            ? {
-                ...m,
-                isRead: true,
-                readBy: [...(m.readBy || []), { userId: evt.userId, readAt: evt.readAt }],
-              }
-            : m
-        )
-      );
-    } else {
-      void load(true);
+    } else if (eventName === 'messageEdited' && evt.appealId === appealId) {
+      updateMessage(appealId, evt.messageId, { text: evt.text, editedAt: evt.editedAt }).catch(() => {});
+    } else if (eventName === 'messageDeleted' && evt.appealId === appealId) {
+      removeMessage(appealId, evt.messageId).catch(() => {});
+    } else if (eventName === 'messageRead' && evt.appealId === appealId) {
+      const ids = Array.isArray(evt.messageIds)
+        ? evt.messageIds
+        : evt.messageId
+        ? [evt.messageId]
+        : [];
+      if (ids.length && evt.userId && evt.readAt) {
+        applyMessageReads(
+          appealId,
+          ids,
+          evt.userId,
+          evt.readAt,
+          auth?.profile?.id ?? evt.userId
+        ).catch(() => {});
+      }
+    } else if (eventName === 'appealUpdated' && evt.appealId === appealId) {
+      if (evt.lastMessage?.id) {
+        upsertMessage(appealId, evt.lastMessage, auth?.profile?.id).catch(() => {});
+      }
+      if (!data) {
+        void load(true, false);
+        return;
+      }
+      setData((prev) => {
+        if (!prev) return prev;
+        const nextAssignees = Array.isArray(evt.assigneeIds)
+          ? evt.assigneeIds.map((id: number) => ({ user: { id, email: '' } }))
+          : prev.assignees;
+        return {
+          ...prev,
+          status: evt.status ?? prev.status,
+          priority: evt.priority ?? prev.priority,
+          assignees: nextAssignees as any,
+          toDepartment:
+            evt.toDepartmentId && prev.toDepartment?.id !== evt.toDepartmentId
+              ? {
+                  ...prev.toDepartment,
+                  id: evt.toDepartmentId,
+                }
+              : prev.toDepartment,
+        };
+      });
+      if (evt.toDepartmentId && data.toDepartment?.id !== evt.toDepartmentId) {
+        void load(true, false);
+      }
+    } else if (eventName === 'statusUpdated' && evt.appealId === appealId) {
+      if (!data || !evt.status) {
+        void load(true, false);
+        return;
+      }
+      setData((prev) => (prev ? { ...prev, status: evt.status } : prev));
+    } else if (
+      evt.appealId === appealId &&
+      (eventName === 'assigneesUpdated' ||
+        eventName === 'departmentChanged' ||
+        eventName === 'watchersUpdated')
+    ) {
+      void load(true, false);
     }
   }, auth?.profile?.id, auth?.profile?.departmentRoles?.map((d) => d.department.id) ||
     auth?.profile?.employeeProfile?.department?.id);
@@ -187,9 +464,9 @@ export default function AppealDetailScreen() {
     try {
       setData(prev => (prev ? { ...prev, status: next } : prev));
       await updateAppealStatus(appealId, next);
-      await load(true);
+      await load(true, false);
     } catch (e) {
-      await load(true);
+      await load(true, false);
       console.warn('Ошибка смены статуса:', e);
     }
   }
@@ -225,7 +502,7 @@ export default function AppealDetailScreen() {
     setAssignLoading(true);
     try {
       await assignAppeal(appealId, selectedAssignees);
-      await load(true);
+      await load(true, false);
       setAssignVisible(false);
     } catch (e) {
       console.warn('Ошибка назначения исполнителей:', e);
@@ -252,7 +529,7 @@ export default function AppealDetailScreen() {
     setTransferLoading(true);
     try {
       await changeAppealDepartment(appealId, selectedDepartmentId);
-      await load(true);
+      await load(true, false);
       setTransferVisible(false);
     } catch (e) {
       console.warn('Ошибка смены отдела:', e);
@@ -265,11 +542,42 @@ export default function AppealDetailScreen() {
     if (!data) return;
     try {
       await claimAppeal(appealId);
-      await load(true);
+      await load(true, false);
     } catch (e) {
       console.warn('Ошибка взятия обращения в работу:', e);
     }
   }
+
+  const loadOlder = useCallback(async () => {
+    if (isLoadingMore || !messagesMeta?.hasMoreBefore) return;
+    if (!messagesMeta?.prevCursor) return;
+    setIsLoadingMore(true);
+    try {
+      const res = await getAppealMessagesPage(appealId, {
+        limit: pageSize,
+        cursor: messagesMeta?.prevCursor ?? undefined,
+        direction: 'before',
+      });
+      await prependMessages(appealId, res.data, {
+        hasMoreBefore: res.meta?.hasMoreBefore ?? res.meta?.hasMore ?? false,
+        prevCursor: res.meta?.prevCursor ?? res.meta?.nextCursor ?? null,
+        hasMoreAfter: res.meta?.hasMoreAfter ?? messagesMeta?.hasMoreAfter ?? false,
+        nextCursor: res.meta?.nextCursor ?? messagesMeta?.nextCursor ?? null,
+        anchorMessageId: messagesMeta?.anchorMessageId ?? null,
+      });
+    } catch (e) {
+      console.warn('Ошибка загрузки сообщений:', e);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }, [appealId, isLoadingMore, messagesMeta?.hasMoreBefore, messagesMeta?.prevCursor, messagesMeta?.hasMoreAfter, messagesMeta?.nextCursor, messagesMeta?.anchorMessageId, pageSize]);
+
+  const handleInitialPositioned = useCallback(() => {
+    initialPositionReadyRef.current = true;
+    setInitialLoading(false);
+    devLog('position_ready', { anchorMessageId: initialAnchorMessageId ?? null });
+    tryArmReadsAfterInteraction();
+  }, [devLog, initialAnchorMessageId, tryArmReadsAfterInteraction]);
 
   const inputBottomMargin = 12;
   const baseBottomInset = inputBottomMargin + Math.max(insets.bottom, 0);
@@ -300,7 +608,7 @@ export default function AppealDetailScreen() {
     };
   }, []);
 
-  if (!data) return null;
+  const canRenderActions = !!data;
 
   return (
     <View style={{ flex: 1, backgroundColor: '#fff' }}>
@@ -315,19 +623,25 @@ export default function AppealDetailScreen() {
             flex: 1,
           }}
         >
-          <AppealHeader
-            data={data}
-            onChangeStatus={(s) => handleChangeStatus(s)}
-            onAssign={openAssignModal}
-            onTransfer={openTransferModal}
-            onClaim={handleClaim}
-            onWatch={() => updateAppealWatchers(appealId, []).then(() => load(true))}
-            allowedStatuses={allowedStatuses}
-            canAssign={canAssign}
-            canTransfer={canTransfer}
-            canClaim={canClaim}
-            canWatch
-          />
+          {data ? (
+            <AppealHeader
+              data={data}
+              onChangeStatus={(s) => handleChangeStatus(s)}
+              onAssign={openAssignModal}
+              onTransfer={openTransferModal}
+              onClaim={handleClaim}
+              onWatch={() => updateAppealWatchers(appealId, []).then(() => load(true, false))}
+              allowedStatuses={allowedStatuses}
+              canAssign={canAssign}
+              canTransfer={canTransfer}
+              canClaim={canClaim}
+              canWatch
+            />
+          ) : (
+            <View style={styles.pendingHeader}>
+              <ActivityIndicator size="small" color="#6B7280" />
+            </View>
+          )}
 
           <MessagesList
             ref={listRef}
@@ -335,54 +649,81 @@ export default function AppealDetailScreen() {
             currentUserId={auth?.profile?.id}
             bottomInset={listBottomInset}
             onAtBottomChange={setIsAtBottom}
+            hasMore={messagesMeta?.hasMoreBefore}
+            isLoadingMore={isLoadingMore}
+            onLoadMore={loadOlder}
+            onVisibleMessageIds={handleVisibleMessageIds}
+            enableVisibilityTracking={!initialLoading}
+            initialAnchorMessageId={initialAnchorMessageId}
+            isInitialLoading={initialLoading}
+            onInitialPositioned={handleInitialPositioned}
+            readActivationMode="after_user_interaction"
+            onUserInteraction={handleUserInteraction}
           />
         </View>
       </View>
 
-      <View
-        style={[
-          styles.inputDock,
-          {
-            bottom: dockBottom,
-            left: contentSidePadding,
-            right: contentSidePadding,
-          },
-        ]}
-      >
-        <View style={styles.inputWrap}>
-          <AppealChatInput
-            bottomInset={0}
-            onHeightChange={setInputHeight}
-            showScrollToBottom={!isAtBottom}
-            onScrollToBottom={() => listRef.current?.scrollToBottom(true)}
-            onSend={async ({ text, files }) => {
-              const res = await addAppealMessage(appealId, { text, files });
-              // Оптимистично добавляем своё сообщение в локальный стор, чтобы не ждать сокет
-              upsertMessage(
-                appealId,
-                {
-                  id: res.id,
+      {canRenderActions ? (
+        <View
+          style={[
+            styles.inputDock,
+            {
+              bottom: dockBottom,
+              left: contentSidePadding,
+              right: contentSidePadding,
+            },
+          ]}
+        >
+          <View style={styles.inputWrap}>
+            <AppealChatInput
+              bottomInset={0}
+              onHeightChange={setInputHeight}
+              showScrollToBottom={!isAtBottom}
+              onScrollToBottom={() => listRef.current?.scrollToBottom(true)}
+              onSend={async ({ text, files }) => {
+                const res = await addAppealMessage(appealId, { text, files });
+                // Оптимистично добавляем своё сообщение в локальный стор, чтобы не ждать сокет
+                const avatarUrl =
+                  auth?.profile?.avatarUrl ||
+                  auth?.profile?.employeeProfile?.avatarUrl ||
+                  auth?.profile?.clientProfile?.avatarUrl ||
+                  auth?.profile?.supplierProfile?.avatarUrl ||
+                  null;
+                const department = auth?.profile?.employeeProfile?.department || null;
+                const isDepartmentManager = (auth?.profile?.departmentRoles || []).some(
+                  (dr) => dr.role?.name === 'department_manager'
+                );
+                upsertMessage(
                   appealId,
-                  text: text || '',
-                  createdAt: res.createdAt || new Date().toISOString(),
-                  sender: auth?.profile
-                    ? {
-                        id: auth.profile.id,
-                        email: auth.profile.email,
-                        firstName: auth.profile.firstName || undefined,
-                        lastName: auth.profile.lastName || undefined,
-                      }
-                    : undefined,
-                  attachments: [],
-                  readBy: [],
-                  isRead: true,
-                },
-                auth?.profile?.id
-              ).then(() => setMessagesState(getMessages(appealId)));
-            }}
-          />
+                  {
+                    id: res.id,
+                    appealId,
+                    text: text || '',
+                    createdAt: res.createdAt || new Date().toISOString(),
+                    sender: auth?.profile
+                      ? {
+                          id: auth.profile.id,
+                          email: auth.profile.email,
+                          firstName: auth.profile.firstName || undefined,
+                          lastName: auth.profile.lastName || undefined,
+                          avatarUrl,
+                          department,
+                          isAdmin: auth.profile.role?.name === 'admin',
+                          isDepartmentManager,
+                        }
+                      : { id: 0, email: '' },
+                    attachments: [],
+                    readBy: [],
+                    isRead: true,
+                  },
+                  auth?.profile?.id
+                ).then(() => setMessagesState(getMessages(appealId)));
+              }}
+              onInputFocus={handleUserInteraction}
+            />
+          </View>
         </View>
-      </View>
+      ) : null}
 
       <Modal visible={assignVisible} transparent animationType="fade" onRequestClose={() => setAssignVisible(false)}>
         <View style={styles.modalBackdrop}>
@@ -483,6 +824,17 @@ export default function AppealDetailScreen() {
 }
 
 const styles = StyleSheet.create({
+  pendingHeader: {
+    marginHorizontal: 16,
+    marginBottom: 12,
+    marginTop: 8,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#EEF2F7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   inputDock: {
     position: 'absolute',
     alignItems: 'center',

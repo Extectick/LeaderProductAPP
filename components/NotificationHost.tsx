@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Easing,
+  Image,
   PanResponder,
   Platform,
   Pressable,
@@ -14,10 +15,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 
 import {
+  dismissNotification,
+  markNotificationClosed,
   NotificationPayload,
   NotificationType,
   openNotificationLink,
   pushNotification,
+  subscribeToNotificationDismiss,
   subscribeToNotifications,
 } from '@/utils/notificationStore';
 
@@ -65,6 +69,7 @@ export function NotificationHost({ children }: Props) {
     typeof window !== 'undefined' &&
     (typeof (window as any).ontouchstart !== 'undefined' ||
       (typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0));
+  const swipeEnabled = Platform.OS !== 'web' || isTouchWeb;
   const showClose = Platform.OS === 'web' && !isTouchWeb;
   const maxWidth = width >= 780 ? 520 : width >= 420 ? width - 28 : width - 18;
 
@@ -80,9 +85,13 @@ export function NotificationHost({ children }: Props) {
           duration: 180,
           easing: Easing.out(Easing.ease),
           useNativeDriver: true,
-        }).start(() => setItems((p) => p.filter((n) => n.id !== id)));
+        }).start(() => {
+          markNotificationClosed(id);
+          setItems((p) => p.filter((n) => n.id !== id));
+        });
         return prev;
       }
+      markNotificationClosed(id);
       return next;
     });
   };
@@ -109,7 +118,11 @@ export function NotificationHost({ children }: Props) {
 
   useEffect(() => {
     const unsub = subscribeToNotifications(add);
-    return () => unsub();
+    const unsubDismiss = subscribeToNotificationDismiss((id) => remove(id, true));
+    return () => {
+      unsub();
+      unsubDismiss();
+    };
   }, []);
 
   const containerStyle = useMemo(
@@ -142,21 +155,21 @@ export function NotificationHost({ children }: Props) {
             const scale = item.anim.interpolate({ inputRange: [0, 1], outputRange: [0.98, 1] });
             const panResponder = PanResponder.create({
               onMoveShouldSetPanResponder: (_evt, gesture) => {
-                if (!isTouchWeb) return false;
+                if (!swipeEnabled) return false;
                 const dy = gesture.dy;
                 const dx = gesture.dx;
                 return dy < -8 && Math.abs(dy) > Math.abs(dx);
               },
               onPanResponderMove: (_evt, gesture) => {
-                if (!isTouchWeb) return;
+                if (!swipeEnabled) return;
                 const next = Math.max(-80, Math.min(0, gesture.dy));
                 item.dragY.setValue(next);
               },
               onPanResponderRelease: (_evt, gesture) => {
-                if (!isTouchWeb) return;
+                if (!swipeEnabled) return;
                 const shouldDismiss = gesture.dy < -35 || gesture.vy < -0.6;
                 if (shouldDismiss) {
-                  remove(item.id);
+                  dismissNotification(item.id);
                 } else {
                   Animated.spring(item.dragY, {
                     toValue: 0,
@@ -184,13 +197,13 @@ export function NotificationHost({ children }: Props) {
                     marginTop: idx === 0 ? 0 : 8,
                   },
                 ]}
-                {...(isTouchWeb ? panResponder.panHandlers : {})}
+                {...(swipeEnabled ? panResponder.panHandlers : {})}
               >
                 <Pressable
                   onPress={() => {
                     if (item.onPress) item.onPress();
                     if (item.actionHref) openNotificationLink(item.actionHref);
-                    remove(item.id, true);
+                    dismissNotification(item.id);
                   }}
                   style={({ pressed }) => [
                     styles.inner,
@@ -198,9 +211,13 @@ export function NotificationHost({ children }: Props) {
                     { flexDirection: 'row', alignItems: 'flex-start' },
                   ]}
                 >
-                  <View style={[styles.iconWrap, { borderColor: border, backgroundColor: iconBg }]}>
-                    <Ionicons name={iconName as any} size={18} color={border} />
-                  </View>
+                  {item.avatarUrl ? (
+                    <Image source={{ uri: item.avatarUrl }} style={styles.avatar} />
+                  ) : (
+                    <View style={[styles.iconWrap, { borderColor: border, backgroundColor: iconBg }]}>
+                      <Ionicons name={iconName as any} size={18} color={border} />
+                    </View>
+                  )}
                   <View style={{ flex: 1, gap: 2 }}>
                     {item.title ? (
                       <Text style={[styles.title, { color: textColor }]} numberOfLines={2}>
@@ -222,7 +239,7 @@ export function NotificationHost({ children }: Props) {
                       accessibilityLabel="Закрыть уведомление"
                       onPress={(e) => {
                         (e as any)?.stopPropagation?.();
-                        remove(item.id, true);
+                        dismissNotification(item.id);
                       }}
                       style={({ pressed }) => [
                         styles.closeBtn,
@@ -233,7 +250,7 @@ export function NotificationHost({ children }: Props) {
                       <Ionicons name="close" size={14} color={border} />
                     </Pressable>
                   ) : null}
-                  {isTouchWeb ? (
+                  {swipeEnabled ? (
                     <Text style={[styles.swipeHint, { color: textColor }]} numberOfLines={1}>
                       свайп вверх
                     </Text>
@@ -281,6 +298,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 10,
+  },
+  avatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    marginRight: 10,
+    backgroundColor: '#E5E7EB',
   },
   title: {
     fontWeight: '800',

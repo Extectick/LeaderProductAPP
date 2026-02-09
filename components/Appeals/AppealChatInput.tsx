@@ -32,12 +32,14 @@ export default function AppealChatInput({
   onHeightChange,
   showScrollToBottom = false,
   onScrollToBottom,
+  onInputFocus,
 }: {
   onSend: (payload: { text?: string; files?: AttachmentFile[] }) => Promise<void> | void;
   bottomInset?: number;
   onHeightChange?: (h: number) => void;
   showScrollToBottom?: boolean;
   onScrollToBottom?: () => void;
+  onInputFocus?: () => void;
 }) {
   const [text, setText] = useState('');
   const [files, setFiles] = useState<AttachmentFile[]>([]);
@@ -59,7 +61,6 @@ export default function AppealChatInput({
   const mountedRef = useRef(true);
   const { theme } = useTheme();
   const isDark = theme === 'dark';
-  const backgroundColor = useThemeColor({}, 'background');
   const textColor = useThemeColor({}, 'text');
   const tintColor = useThemeColor({}, 'tint');
   const borderColor = withOpacity(textColor, isDark ? 0.12 : 0.18);
@@ -372,7 +373,10 @@ export default function AppealChatInput({
                 placeholderTextColor="#9CA3AF"
                 value={text}
                 onChangeText={handleTextChange}
-                onFocus={() => setShowEmoji(false)}
+                onFocus={() => {
+                  setShowEmoji(false);
+                  onInputFocus?.();
+                }}
                 onContentSizeChange={handleContentSizeChange}
               />
               <Pressable
@@ -521,7 +525,6 @@ const styles = StyleSheet.create({
     textAlignVertical: 'center',
   },
   inputWeb: {
-    outlineStyle: 'none',
     outlineWidth: 0,
   },
   emojiBtn: { marginLeft: 2 },
