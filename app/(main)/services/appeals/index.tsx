@@ -100,14 +100,6 @@ export default function AppealsIndex() {
     [tab, scope, status, priority, wsTick],
   );
 
-  // Меняем scope при смене таба
-  const filterTasks = (items: any[]) => {
-    if (tab !== 'tasks') return items;
-    const myId = auth?.profile?.id;
-    if (!myId) return items;
-    return items.filter((it) => it.createdById !== myId);
-  };
-
   // При возвращении на экран форсируем обновление списка (например, после создания обращения)
   useFocusEffect(
     useMemo(
@@ -181,7 +173,6 @@ export default function AppealsIndex() {
           pageSize={20}
           refreshKey={refreshKey}
           onLoadedMeta={(m) => setCount(m.total ?? 0)}
-          filterItems={filterTasks}
           currentUserId={auth?.profile?.id}
           incomingMessage={lastWsMsg.current as any}
           initialItems={cachedItems}

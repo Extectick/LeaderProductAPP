@@ -14,6 +14,7 @@ import {
   EditMessageResult,
   Scope,
   AppealMessage,
+  UserMini,
 } from '@/types/appealsTypes';
 
 export type ApiResponse<T> = SuccessResponse<T> | ErrorResponse;
@@ -104,7 +105,7 @@ async function invalidateDetailCache(id: number) {
 }
 
 // -------------------- Helpers --------------------
-export type FileLike = { uri: string; name: string; type: string };
+export type FileLike = { uri: string; name: string; type: string; file?: any };
 
 function ensureNonEmpty(str?: string | null): string | undefined {
   const s = typeof str === 'string' ? str.trim() : '';
@@ -188,12 +189,24 @@ export async function createAppeal(payload: {
   if (payload.priority !== undefined) fd.append('priority', String(payload.priority));
   if (ensureNonEmpty(payload.deadline)) fd.append('deadline', payload.deadline!.trim());
 
-  (payload.attachments || []).forEach((f) => {
+  for (const f of payload.attachments || []) {
+    if (Platform.OS === 'web') {
+      if (f.file) {
+        fd.append('attachments', f.file, ensureExt(f.name, f.type));
+        continue;
+      }
+      if (f.uri) {
+        const res = await fetch(f.uri);
+        const blob = await res.blob();
+        fd.append('attachments', blob, ensureExt(f.name, f.type));
+        continue;
+      }
+    }
     fd.append(
       'attachments',
       { uri: f.uri, name: ensureExt(f.name, f.type), type: f.type } as any
     );
-  });
+  }
 
   const resp = (await apiClient<FormData, AppealCreateResult>('/appeals', {
     method: 'POST',
@@ -213,6 +226,30 @@ export async function updateAppealStatus(id: number, status: AppealStatus) {
   })) as ApiResponse<{ id: number; status: AppealStatus }>;
 
   if (!resp.ok) throw new Error(resp.message || 'Ошибка обновления статуса');
+  await invalidateDetailCache(id);
+  await invalidateListCache();
+  return resp.data;
+}
+
+export async function claimAppeal(id: number) {
+  const resp = (await apiClient<undefined, { id: number; status: AppealStatus; assigneeIds: number[] }>(
+    `/appeals/${id}/claim`,
+    { method: 'POST' }
+  )) as ApiResponse<{ id: number; status: AppealStatus; assigneeIds: number[] }>;
+
+  if (!resp.ok) throw new Error(resp.message || 'Ошибка назначения исполнителя');
+  await invalidateDetailCache(id);
+  await invalidateListCache();
+  return resp.data;
+}
+
+export async function changeAppealDepartment(id: number, departmentId: number) {
+  const resp = (await apiClient<{ departmentId: number }, { id: number; status: AppealStatus; toDepartmentId: number }>(
+    `/appeals/${id}/department`,
+    { method: 'PUT', body: { departmentId } }
+  )) as ApiResponse<{ id: number; status: AppealStatus; toDepartmentId: number }>;
+
+  if (!resp.ok) throw new Error(resp.message || 'Ошибка смены отдела');
   await invalidateDetailCache(id);
   await invalidateListCache();
   return resp.data;
@@ -255,6 +292,15 @@ export async function updateAppealWatchers(id: number, watcherIds: number[]) {
   return resp.data;
 }
 
+export async function getDepartmentMembers(departmentId: number): Promise<UserMini[]> {
+  const resp = (await apiClient<undefined, UserMini[]>(
+    `/departments/${departmentId}/members`,
+    { method: 'GET' }
+  )) as ApiResponse<UserMini[]>;
+  if (!resp.ok) throw new Error(resp.message || 'Ошибка загрузки сотрудников отдела');
+  return resp.data || [];
+}
+
 // -------------------- Сообщения --------------------
 export async function addAppealMessage(
   id: number,
@@ -266,12 +312,24 @@ export async function addAppealMessage(
 
   const fd = new FormData();
   if (hasText) fd.append('text', opts.text!.trim());
-  (opts.files || []).forEach((f) => {
+  for (const f of opts.files || []) {
+    if (Platform.OS === 'web') {
+      if (f.file) {
+        fd.append('attachments', f.file, ensureExt(f.name, f.type));
+        continue;
+      }
+      if (f.uri) {
+        const res = await fetch(f.uri);
+        const blob = await res.blob();
+        fd.append('attachments', blob, ensureExt(f.name, f.type));
+        continue;
+      }
+    }
     fd.append(
       'attachments',
       { uri: f.uri, name: ensureExt(f.name, f.type), type: f.type } as any
     );
-  });
+  }
 
   const resp = (await apiClient<FormData, AddMessageResult>(`/appeals/${id}/messages`, {
     method: 'POST',

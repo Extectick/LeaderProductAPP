@@ -10,6 +10,7 @@ export default function AppealListItemForm({ item, currentUserId }: { item: Appe
   const unreadOther = unread; // бэкенд уже не считает свои сообщения, выводим как есть
   const snippet = last?.text || (last?.attachments?.length ? '[Вложение]' : '');
   const timeLabel = last?.createdAt ? new Date(last.createdAt).toLocaleTimeString() : '';
+  const isMine = !!currentUserId && item.createdById === currentUserId;
 
   // Прогресс по дедлайну
   const deadline = item.deadline ? dayjs(item.deadline) : null;
@@ -33,10 +34,9 @@ export default function AppealListItemForm({ item, currentUserId }: { item: Appe
   const statusLabel: Record<string, string> = {
     OPEN: 'Открыто',
     IN_PROGRESS: 'В работе',
-    COMPLETED: 'Выполнено',
+    COMPLETED: 'Завершено',
     DECLINED: 'Отклонено',
-    RESOLVED: 'Решено',
-    CLOSED: 'Закрыто',
+    RESOLVED: 'Ожидание подтверждения',
   };
   const statusColor = (() => {
     switch (item.status) {
@@ -45,7 +45,6 @@ export default function AppealListItemForm({ item, currentUserId }: { item: Appe
       case 'RESOLVED': return '#9C27B0';
       case 'COMPLETED': return '#2DD4BF';
       case 'DECLINED': return '#F97316';
-      case 'CLOSED': return '#9E9E9E';
       default: return '#6B7280';
     }
   })();
@@ -110,6 +109,11 @@ export default function AppealListItemForm({ item, currentUserId }: { item: Appe
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#F3F4F6', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}>
             <Text style={{ fontWeight: '600', color: '#111827', fontSize: 12 }}>{item.toDepartment.name}</Text>
           </View>
+          {isMine ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#EFF6FF', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}>
+              <Text style={{ fontWeight: '700', color: '#1D4ED8', fontSize: 12 }}>Моё</Text>
+            </View>
+          ) : null}
         </View>
         {last ? (
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>

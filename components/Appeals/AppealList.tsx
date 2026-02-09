@@ -6,7 +6,9 @@ import {
   ViewStyle,
   StyleProp,
   View,
+  StyleSheet,
 } from 'react-native';
+import { Skeleton } from 'moti/skeleton';
 import { getAppealsList } from '@/utils/appealsService';
 import {
   AppealListItem,
@@ -89,6 +91,7 @@ export default function AppealsList({
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const emptyText = scope === 'department' ? 'Задач отдела пока нет' : 'Обращений пока нет';
+  const showSkeleton = loading && items.length === 0;
 
   const filters = useMemo(() => ({ status, priority }), [status, priority]);
 
@@ -247,10 +250,10 @@ export default function AppealsList({
         }
         ListHeaderComponent={ListHeaderComponent}
         ListEmptyComponent={
-          !loading
-            ? ListEmptyComponent ?? (
-                <EmptyState text={emptyText} />
-              )
+          showSkeleton
+            ? <AppealsListSkeleton />
+            : !loading
+            ? ListEmptyComponent ?? <EmptyState text={emptyText} />
             : null
         }
         contentContainerStyle={[
@@ -269,3 +272,38 @@ export default function AppealsList({
     </View>
   );
 }
+
+function AppealsListSkeleton() {
+  const rows = Array.from({ length: 6 }, (_, i) => i);
+  return (
+    <View style={styles.skeletonWrapper}>
+      {rows.map((idx) => (
+        <View key={`appeal-skeleton-${idx}`} style={styles.skeletonCard}>
+          <Skeleton height={16} width="70%" radius={6} colorMode="light" />
+          <View style={styles.skeletonRow}>
+            <Skeleton height={18} width={90} radius={9} colorMode="light" />
+            <Skeleton height={18} width={80} radius={9} colorMode="light" />
+            <Skeleton height={18} width={120} radius={9} colorMode="light" />
+          </View>
+          <View style={styles.skeletonRow}>
+            <Skeleton height={12} width={60} radius={6} colorMode="light" />
+            <Skeleton height={12} width="65%" radius={6} colorMode="light" />
+          </View>
+          <Skeleton height={4} width="100%" radius={4} colorMode="light" />
+        </View>
+      ))}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  skeletonWrapper: { paddingVertical: 6 },
+  skeletonCard: {
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderColor: '#EEF2F7',
+    gap: 8,
+  },
+  skeletonRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+});

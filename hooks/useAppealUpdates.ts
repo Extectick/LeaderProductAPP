@@ -1,7 +1,7 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { API_BASE_URL } from '@/utils/config';
-import { getAccessToken } from '@/utils/tokenService';
+import { getAccessToken, refreshToken } from '@/utils/tokenService';
 
 interface AppealEvent {
   type: string;
@@ -19,35 +19,79 @@ export function useAppealUpdates(
   userId?: number,
   departmentIds?: number | number[],
 ) {
+  const onEventRef = useRef(onEvent);
+
+  useEffect(() => {
+    onEventRef.current = onEvent;
+  }, [onEvent]);
+
+  const deptList = useMemo(() => {
+    const ids = Array.isArray(departmentIds) ? departmentIds : departmentIds ? [departmentIds] : [];
+    return Array.from(new Set(ids.filter(Boolean) as number[])).sort((a, b) => a - b);
+  }, [departmentIds]);
+
+  const deptKey = deptList.join(',');
+  const deptListRef = useRef<number[]>(deptList);
+
+  useEffect(() => {
+    deptListRef.current = deptList;
+  }, [deptList]);
+
   useEffect(() => {
     let socket: Socket | null = null;
     let active = true;
-    const deptList = Array.isArray(departmentIds)
-      ? departmentIds.filter(Boolean) as number[]
-      : departmentIds
-        ? [departmentIds]
-        : [];
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let loggedError = false;
+    let authRetrying = false;
 
     async function connect() {
       const token = await getAccessToken();
       if (!active) return;
+      if (!token) {
+        if (retryTimer) clearTimeout(retryTimer);
+        retryTimer = setTimeout(connect, 1200);
+        return;
+      }
 
       socket = io(API_BASE_URL, {
-        transports: ['websocket'],
+        transports: ['websocket', 'polling'],
         auth: token ? { token } : undefined,
+        reconnection: true,
+        reconnectionDelay: 800,
+        reconnectionDelayMax: 5000,
+        timeout: 8000,
       });
 
       const joinRoom = () => {
+        const list = deptListRef.current;
         if (appealId) socket?.emit('join', `appeal:${appealId}`);
         if (userId) socket?.emit('join', `user:${userId}`);
-        deptList.forEach((id) => socket?.emit('join', `department:${id}`));
+        list.forEach((id) => socket?.emit('join', `department:${id}`));
       };
 
       socket.on('connect', joinRoom);
-      joinRoom();
+      socket.on('connect_error', async (err: any) => {
+        if (!loggedError) {
+          loggedError = true;
+          console.warn('[ws] connect_error', err?.message || err);
+        }
+        const msg = String(err?.message || '');
+        if (msg.toLowerCase().includes('unauthorized') && !authRetrying) {
+          authRetrying = true;
+          try {
+            await refreshToken();
+          } catch {}
+          if (socket) {
+            socket.disconnect();
+            socket = null;
+          }
+          if (retryTimer) clearTimeout(retryTimer);
+          retryTimer = setTimeout(connect, 1200);
+        }
+      });
 
       socket.onAny((event, payload) => {
-        onEvent({ type: event, ...(payload || {}) });
+        onEventRef.current({ type: event, ...(payload || {}) });
       });
     }
 
@@ -55,10 +99,14 @@ export function useAppealUpdates(
 
     return () => {
       active = false;
-      if (appealId) socket?.emit('leave', `appeal:${appealId}`);
-      if (userId) socket?.emit('leave', `user:${userId}`);
-      deptList.forEach((id) => socket?.emit('leave', `department:${id}`));
+      if (retryTimer) clearTimeout(retryTimer);
+      if (socket?.connected) {
+        const list = deptListRef.current;
+        if (appealId) socket.emit('leave', `appeal:${appealId}`);
+        if (userId) socket.emit('leave', `user:${userId}`);
+        list.forEach((id) => socket?.emit('leave', `department:${id}`));
+      }
       socket?.disconnect();
     };
-  }, [appealId, onEvent, userId, departmentIds]);
+  }, [appealId, userId, deptKey]);
 }

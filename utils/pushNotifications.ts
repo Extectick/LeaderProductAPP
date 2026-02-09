@@ -11,8 +11,15 @@ const CHANNEL_ID = 'profile-status';
 let notificationsModule: typeof import('expo-notifications') | null = null;
 let handlerInitialized = false;
 
+function isExpoGo() {
+  const ownership = (Constants as any).appOwnership;
+  const execution = (Constants as any).executionEnvironment;
+  return ownership === 'expo' || execution === 'storeClient';
+}
+
 async function getNotificationsModule() {
   if (Platform.OS === 'web') return null;
+  if (isExpoGo()) return null;
   if (notificationsModule) return notificationsModule;
   try {
     const mod = await import('expo-notifications');

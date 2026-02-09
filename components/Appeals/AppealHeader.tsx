@@ -21,15 +21,21 @@ type Props = {
   onChangeStatus?: (s: AppealStatus) => void;
   onAssign?: () => void;
   onWatch?: () => void;
+  onClaim?: () => void;
+  onTransfer?: () => void;
+  canAssign?: boolean;
+  canWatch?: boolean;
+  canClaim?: boolean;
+  canTransfer?: boolean;
+  allowedStatuses?: AppealStatus[];
 };
 
 const statusLabels: Record<AppealStatus, string> = {
   OPEN: 'Открыто',
   IN_PROGRESS: 'В работе',
-  COMPLETED: 'Выполнено',
+  COMPLETED: 'Завершено',
   DECLINED: 'Отклонено',
-  RESOLVED: 'Решено',
-  CLOSED: 'Закрыто',
+  RESOLVED: 'Ожидание подтверждения',
 };
 
 const priorityLabels: Record<AppealPriority, string> = {
@@ -71,6 +77,13 @@ export default function AppealHeader({
   onChangeStatus,
   onAssign,
   onWatch,
+  onClaim,
+  onTransfer,
+  canAssign,
+  canWatch,
+  canClaim,
+  canTransfer,
+  allowedStatuses,
 }: Props) {
   const displayTitle = title ?? data.title ?? data.messages[0]?.text ?? 'Без названия';
   const fromDept = data.fromDepartment?.name ?? '—';
@@ -103,13 +116,17 @@ export default function AppealHeader({
 
   const [statusMenuVisible, setStatusMenuVisible] = useState(false);
 
-  const actionItems: DropdownItem<'status' | 'assign' | 'watch'>[] = [
-    { label: 'Изменить статус', value: 'status' },
-    { label: 'Назначить', value: 'assign' },
-    { label: 'Наблюдать', value: 'watch' },
+  const actionItems: DropdownItem<'status' | 'assign' | 'watch' | 'claim' | 'transfer'>[] = [
+    ...(allowedStatuses && allowedStatuses.length && onChangeStatus
+      ? [{ label: 'Изменить статус', value: 'status' as const }]
+      : []),
+    ...(canClaim && onClaim ? [{ label: 'Взять в работу', value: 'claim' as const }] : []),
+    ...(canAssign && onAssign ? [{ label: 'Назначить', value: 'assign' as const }] : []),
+    ...(canTransfer && onTransfer ? [{ label: 'Передать в отдел', value: 'transfer' as const }] : []),
+    ...(canWatch && onWatch ? [{ label: 'Наблюдать', value: 'watch' as const }] : []),
   ];
 
-  const handleAction = (action: 'status' | 'assign' | 'watch') => {
+  const handleAction = (action: 'status' | 'assign' | 'watch' | 'claim' | 'transfer') => {
     switch (action) {
       case 'status':
         setStatusMenuVisible(true);
@@ -120,6 +137,12 @@ export default function AppealHeader({
       case 'watch':
         onWatch?.();
         break;
+      case 'claim':
+        onClaim?.();
+        break;
+      case 'transfer':
+        onTransfer?.();
+        break;
     }
   };
 
@@ -127,6 +150,7 @@ export default function AppealHeader({
     setStatusMenuVisible(false);
     onChangeStatus?.(s);
   };
+  const canOpenStatusMenu = !!(allowedStatuses && allowedStatuses.length && onChangeStatus);
 
   return (
     <AnimatedRe.View entering={FadeInDown.duration(250)} style={styles.wrapper}>
@@ -136,14 +160,16 @@ export default function AppealHeader({
         end={{ x: 1, y: 1 }}
         style={styles.card}
       >
-        <Dropdown
-          items={actionItems}
-          onChange={handleAction}
-          placeholder=""
-          style={styles.menuWrap}
-          buttonStyle={styles.iconBtn}
-          renderTrigger={() => <Ionicons name="ellipsis-horizontal" size={18} color="#fff" />}
-        />
+        {actionItems.length ? (
+          <Dropdown
+            items={actionItems}
+            onChange={handleAction}
+            placeholder=""
+            style={styles.menuWrap}
+            buttonStyle={styles.iconBtn}
+            renderTrigger={() => <Ionicons name="ellipsis-horizontal" size={18} color="#fff" />}
+          />
+        ) : null}
 
         <View style={styles.headerTextBlock}>
           <Text style={styles.title}>{displayTitle}</Text>
@@ -188,7 +214,7 @@ export default function AppealHeader({
         <View style={styles.infoRow}>
           <Text style={styles.number}>#{data.number}</Text>
           <PressableScale
-            onPress={() => setStatusMenuVisible(true)}
+            onPress={canOpenStatusMenu ? () => setStatusMenuVisible(true) : undefined}
             style={[styles.badge, { backgroundColor: statusColor(data.status) }]}
             pressedStyle={{ opacity: 0.85 }}
           >
@@ -207,6 +233,7 @@ export default function AppealHeader({
       <AppealStatusMenu
         visible={statusMenuVisible}
         current={data.status}
+        allowed={allowedStatuses}
         onSelect={handleSelectStatus}
         onClose={() => setStatusMenuVisible(false)}
       />
@@ -222,8 +249,10 @@ function statusColor(status: AppealStatus) {
       return '#2196F3';
     case 'RESOLVED':
       return '#9C27B0';
-    case 'CLOSED':
-      return '#9E9E9E';
+    case 'COMPLETED':
+      return '#2DD4BF';
+    case 'DECLINED':
+      return '#F97316';
     default:
       return '#607D8B';
   }

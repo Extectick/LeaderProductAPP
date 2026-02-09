@@ -14,18 +14,18 @@ import { AppealStatus } from '@/types/appealsTypes';
 type Props = {
   visible: boolean;
   current: AppealStatus;
+  allowed?: AppealStatus[];
   onSelect: (s: AppealStatus, e?: GestureResponderEvent) => void;
   onClose: () => void;
 };
 
-const ALL: AppealStatus[] = ['OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED'];
+const ALL: AppealStatus[] = ['OPEN', 'IN_PROGRESS', 'RESOLVED', 'COMPLETED', 'DECLINED'];
 const labels: Record<AppealStatus, string> = {
   OPEN: 'Открыто',
   IN_PROGRESS: 'В работе',
-  COMPLETED: 'Выполнено',
+  COMPLETED: 'Завершено',
   DECLINED: 'Отклонено',
-  RESOLVED: 'Решено',
-  CLOSED: 'Закрыто',
+  RESOLVED: 'Ожидание подтверждения',
 };
 
 function statusColor(status: AppealStatus) {
@@ -33,12 +33,16 @@ function statusColor(status: AppealStatus) {
     case 'OPEN': return '#4CAF50';
     case 'IN_PROGRESS': return '#2196F3';
     case 'RESOLVED': return '#9C27B0';
-    case 'CLOSED': return '#9E9E9E';
+    case 'COMPLETED': return '#2DD4BF';
+    case 'DECLINED': return '#F97316';
   }
 }
 
-export default function AppealStatusMenu({ visible, current, onSelect, onClose }: Props) {
-  const data = useMemo(() => ALL, []);
+export default function AppealStatusMenu({ visible, current, allowed, onSelect, onClose }: Props) {
+  const data = useMemo(
+    () => (allowed && allowed.length ? allowed : ALL),
+    [allowed]
+  );
 
   return (
     <Modal transparent animationType="fade" visible={visible} onRequestClose={onClose}>

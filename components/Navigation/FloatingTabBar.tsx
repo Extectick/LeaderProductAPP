@@ -9,7 +9,7 @@ import {
 import { usePathname, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { MotiView } from 'moti';
-import React, { useCallback, useContext, useMemo, useState } from 'react';
+import React, { useCallback, useContext, useMemo, useState, useEffect } from 'react';
 import {
   Keyboard,
   Platform,
@@ -100,6 +100,14 @@ export default function FloatingTabBar({ items, state, navigation, insets }: Pro
   const setTabBarHeight = useContext(BottomTabBarHeightCallbackContext);
   const [rowWidth, setRowWidth] = useState(0);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const isAppealChat = useMemo(() => {
+    const clean = normalizePath(pathname || '');
+    if (!clean.startsWith('/services/appeals/')) return false;
+    const parts = clean.split('/').filter(Boolean);
+    if (parts.length < 3) return false;
+    const tail = parts[2];
+    return tail !== 'new' && tail !== 'index';
+  }, [pathname]);
 
   const backgroundColor = useThemeColor({}, 'background');
   const textColor = useThemeColor({}, 'text');
@@ -162,6 +170,16 @@ export default function FloatingTabBar({ items, state, navigation, insets }: Pro
   const handleRowLayout = useCallback((event: LayoutChangeEvent) => {
     setRowWidth(event.nativeEvent.layout.width);
   }, []);
+
+  useEffect(() => {
+    if (isAppealChat) {
+      setTabBarHeight?.(0);
+    }
+  }, [isAppealChat, setTabBarHeight]);
+
+  if (isAppealChat) {
+    return null;
+  }
 
   return (
     <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>

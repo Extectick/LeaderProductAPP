@@ -1,12 +1,22 @@
 // types/appealsTypes.ts
-export type AppealStatus = 'OPEN' | 'IN_PROGRESS' | 'COMPLETED' | 'DECLINED' | 'RESOLVED' | 'CLOSED';
+export type AppealStatus = 'OPEN' | 'IN_PROGRESS' | 'COMPLETED' | 'DECLINED' | 'RESOLVED';
 export type AppealPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 export type AttachmentType = 'IMAGE' | 'AUDIO' | 'FILE';
+export type AppealMessageType = 'USER' | 'SYSTEM';
 
 export type Scope = 'my' | 'department' | 'assigned';
 
 export interface DepartmentMini { id: number; name: string }
-export interface UserMini { id: number; email: string; firstName?: string|null; lastName?: string|null }
+export interface UserMini {
+  id: number;
+  email: string;
+  firstName?: string | null;
+  lastName?: string | null;
+  avatarUrl?: string | null;
+  department?: DepartmentMini | null;
+  isAdmin?: boolean;
+  isDepartmentManager?: boolean;
+}
 
 export interface AppealAttachment {
   id?: number;
@@ -18,6 +28,8 @@ export interface AppealAttachment {
 export interface AppealMessage {
   id: number;
   text?: string|null;
+  type?: AppealMessageType;
+  systemEvent?: { type: string; [key: string]: any } | null;
   createdAt: string;
   editedAt?: string|null;
   sender: UserMini;

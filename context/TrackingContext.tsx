@@ -3,6 +3,7 @@ import React, { createContext, useCallback, useContext, useEffect, useRef, useSt
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import { AppState, Platform } from 'react-native';
+import Constants from 'expo-constants';
 
 import { TrackingPointInput } from '@/utils/trackingApi';
 import {
@@ -20,8 +21,15 @@ const STORAGE_KEYS = {
 
 let notificationsModule: typeof import('expo-notifications') | null = null;
 
+function isExpoGo() {
+  const ownership = (Constants as any).appOwnership;
+  const execution = (Constants as any).executionEnvironment;
+  return ownership === 'expo' || execution === 'storeClient';
+}
+
 async function getNotificationsModule(logPrefix: string) {
   if (Platform.OS === 'web') return null;
+  if (isExpoGo()) return null;
   if (notificationsModule) return notificationsModule;
   try {
     const mod = await import('expo-notifications');

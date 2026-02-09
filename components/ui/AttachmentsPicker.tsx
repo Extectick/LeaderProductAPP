@@ -4,7 +4,42 @@ import { Alert, Pressable, StyleProp, StyleSheet, Text, View, ViewStyle, ScrollV
 import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 
-export type AttachmentFile = { uri: string; name: string; type: string };
+export type AttachmentFile = {
+  uri: string;
+  name: string;
+  type: string;
+  file?: any;
+  size?: number;
+  lastModified?: number;
+};
+
+function normalizeNumber(value: unknown): number | undefined {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function fileSignature(file: AttachmentFile) {
+  const name = file.name || '';
+  const type = file.type || '';
+  const size = normalizeNumber(file.size ?? file.file?.size);
+  const lastModified = normalizeNumber(file.lastModified ?? file.file?.lastModified);
+  if (size !== undefined || lastModified !== undefined) {
+    return `${name}|${size ?? ''}|${lastModified ?? ''}|${type}`;
+  }
+  return `${name}|${type}|${file.uri}`;
+}
+
+function dedupeFiles(files: AttachmentFile[]) {
+  const seen = new Set<string>();
+  const next: AttachmentFile[] = [];
+  files.forEach((f) => {
+    const sig = fileSignature(f);
+    if (seen.has(sig)) return;
+    seen.add(sig);
+    next.push(f);
+  });
+  return next;
+}
 
 type Props = {
   value?: AttachmentFile[];
@@ -48,16 +83,21 @@ export default function AttachmentsPicker({
 
       const mapped: AttachmentFile[] = assets
         .filter((a) => a && a.uri)
-        .map((a) => ({
-          uri: a.uri,
-          name: a.name || 'file',
-          type: a.mimeType || a.type || 'application/octet-stream',
-        }));
+        .map((a) => {
+          const file = (a as any).file;
+          const size = normalizeNumber((a as any).size ?? file?.size);
+          const lastModified = normalizeNumber((a as any).lastModified ?? file?.lastModified);
+          return {
+            uri: a.uri,
+            name: a.name || file?.name || 'file',
+            type: a.mimeType || a.type || file?.type || 'application/octet-stream',
+            file,
+            size,
+            lastModified,
+          };
+        });
 
-      let next = [...value];
-      mapped.forEach((m) => {
-        if (!next.some((f) => f.uri === m.uri)) next.push(m);
-      });
+      let next = dedupeFiles([...value, ...mapped]);
       if (typeof maxFiles === 'number') next = next.slice(0, maxFiles);
       onChange(next);
     } catch (e: any) {
@@ -81,6 +121,14 @@ export default function AttachmentsPicker({
     },
     [onChange, value]
   );
+
+  if (horizontal && !showChips) {
+    return (
+      <Pressable style={({ pressed }) => [styles.attachBtnSmall, pressed && { opacity: 0.9 }, style]} onPress={handlePick}>
+        <Ionicons name="attach" size={16} color="#0B1220" />
+      </Pressable>
+    );
+  }
 
   if (horizontal) {
     return (
@@ -154,7 +202,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E5E7EB',
     borderRadius: 999,
-    padding: 8,
+    width: 34,
+    height: 34,
     justifyContent: 'center',
     alignItems: 'center',
   },
