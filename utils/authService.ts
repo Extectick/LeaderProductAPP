@@ -1,5 +1,6 @@
 // utils/authService.ts
 import type {
+  AuthMethodsResponseData,
   AuthLoginRequest,
   AuthLoginResponseData,
   AuthRegisterRequest,
@@ -103,4 +104,13 @@ export async function addCredentials(email: string, password: string) {
     body: { email, password },
   });
   if (!res.ok) throw new Error(res.message || 'Не удалось добавить email и пароль');
+}
+
+export async function getAuthMethods() {
+  const res = await apiClient<void, AuthMethodsResponseData>(API_ENDPOINTS.AUTH.METHODS, {
+    method: 'GET',
+    skipAuth: true,
+  });
+  if (!res.ok || !res.data) throw new Error(res.message || 'Не удалось получить способы входа');
+  return res.data.methods || [];
 }

@@ -72,13 +72,13 @@ export default function QRListPanel({
         styles.filterMenu,
         menuPos
           ? {
-              position: 'fixed',
+              position: 'absolute',
               top: menuPos.top,
               left: menuPos.left,
               minWidth: Math.max(180, menuPos.width),
               zIndex: 9999,
             }
-          : { position: 'fixed', zIndex: 9999 },
+          : { position: 'absolute', zIndex: 9999 },
       ]}
       onLayout={() => {
         if (filterBtnRef.current) {
@@ -311,7 +311,6 @@ const getStyles = (colors: any) =>
       flex: 1,
       color: colors.text,
       fontSize: 14,
-      outlineStyle: 'none',
       backgroundColor: 'transparent',
     },
     filterWrap: { position: 'relative', zIndex: 2000 },
@@ -359,12 +358,27 @@ const getStyles = (colors: any) =>
     filterText: { color: colors.text, fontWeight: '700', fontSize: 13 },
     filterTextActive: { color: colors.tint },
     filterOverlay: {
-      position: 'fixed',
+      position: 'absolute',
       top: 0,
       left: 0,
       right: 0,
       bottom: 0,
       zIndex: 9998,
+    },
+    chip: {
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 999,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.cardBackground,
+    },
+    chipText: {
+      color: colors.text,
+      fontWeight: '700',
+      fontSize: 12,
     },
 
     errorBox: { backgroundColor: '#fee2e2', borderRadius: 8, padding: 10, marginTop: 8 },

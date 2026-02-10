@@ -188,7 +188,6 @@ export interface CreateEmployeeProfileDto {
     lastName: string;
     middleName?: string;
   };
-  phone?: string;
   departmentId: number;
 }
 
@@ -198,7 +197,6 @@ export interface CreateClientProfileDto {
     lastName?: string;
     middleName?: string;
   };
-  phone?: string;
   address?: {
     street: string;
     city: string;
@@ -214,7 +212,6 @@ export interface CreateSupplierProfileDto {
     lastName?: string;
     middleName?: string;
   };
-  phone?: string;
   address?: {
     street: string;
     city: string;

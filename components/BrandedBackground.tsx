@@ -15,6 +15,21 @@ import type { SharedValue } from 'react-native-reanimated';
 
 const AnimatedLG = Animated.createAnimatedComponent(LinearGradient);
 
+function useLayerStyle(t: SharedValue<number>, base: number, amp: number) {
+  return useAnimatedStyle(() => {
+    const twoPi = Math.PI * 2;
+    const x = Math.sin(t.value * twoPi) * base * amp;
+    const y = Math.cos(t.value * twoPi) * base * amp;
+    const rot = `${t.value * 360}deg`;
+    const scale = 1.1 + 0.15 * Math.cos(t.value * twoPi);
+    const opacity = 0.35 + 0.35 * Math.sin(t.value * twoPi);
+    return {
+      opacity,
+      transform: [{ translateX: x }, { translateY: y }, { rotate: rot }, { scale }],
+    };
+  });
+}
+
 export interface AuroraBackgroundProps extends PropsWithChildren {
   /** Ускорение/замедление анимации, 1 — по умолчанию */
   speed?: number;
@@ -55,25 +70,9 @@ export default function BrandedBackground({
     t2.value = common(20000);
     t3.value = common(24000);
   }, [speed, t1, t2, t3]);
-
-  // «дыхание»: медленное смещение/поворот/скейл и мерцание
-  const makeLayerStyle = (t: SharedValue<number>, amp: number) =>
-    useAnimatedStyle(() => {
-      const twoPi = Math.PI * 2;
-      const x = Math.sin(t.value * twoPi) * base * amp;
-      const y = Math.cos(t.value * twoPi) * base * amp;
-      const rot = `${t.value * 360}deg`;
-      const scale = 1.1 + 0.15 * Math.cos(t.value * twoPi);
-      const opacity = 0.35 + 0.35 * Math.sin(t.value * twoPi);
-      return {
-        opacity,
-        transform: [{ translateX: x }, { translateY: y }, { rotate: rot }, { scale }],
-      };
-    });
-
-  const layer1 = makeLayerStyle(t1, 0.08);
-  const layer2 = makeLayerStyle(t2, 0.12);
-  const layer3 = makeLayerStyle(t3, 0.10);
+  const layer1 = useLayerStyle(t1, base, 0.08);
+  const layer2 = useLayerStyle(t2, base, 0.12);
+  const layer3 = useLayerStyle(t3, base, 0.10);
 
   const centeredFrame: ViewStyle = {
     width: size,

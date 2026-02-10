@@ -38,6 +38,7 @@ type AppealsListProps = {
   onLoadMoreError?: (e: unknown) => void;// ошибка догрузки
   onLoadedMeta?: (meta: { total: number; limit: number; offset: number }) => void; // коллбэк с метаданными
   onItemsChange?: (items: AppealListItem[]) => void; // коллбэк при изменении данных
+  onRefreshDone?: () => void;
   renderItem?: (item: AppealListItem) => React.ReactElement | null; // кастомный рендер; по умолчанию AppealCard
   refreshKey?: string | number | boolean; // при изменении - принудительный refresh с нуля
   endReachedThreshold?: number;          // порог срабатывания onEndReached
@@ -66,6 +67,7 @@ export default function AppealsList({
   onLoadMoreError,
   onLoadedMeta,
   onItemsChange,
+  onRefreshDone,
   renderItem,
   refreshKey,
   endReachedThreshold = 0.2,
@@ -142,6 +144,7 @@ export default function AppealsList({
     } finally {
       if (initial) setLoading(false);
       setLoadingMore(false);
+      if (initial) onRefreshDone?.();
     }
   }
 

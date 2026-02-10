@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import { Pressable, StyleSheet, Text, View, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -22,12 +22,6 @@ export default function AppealsListHeader({
 }: AppealsHeaderProps) {
   const [menuVisible, setMenuVisible] = useState(false);
 
-  // есть ли вообще видимые пункты
-  const hasVisibleItems = useMemo(
-    () => (menuItems?.some((i) => i.visible !== false) ?? false),
-    [menuItems]
-  );
-
   const toggleMenu = () => setMenuVisible((v) => !v);
   const closeMenu = () => setMenuVisible(false);
 
@@ -45,11 +39,10 @@ export default function AppealsListHeader({
             accessibilityRole="button"
             accessibilityLabel="Открыть меню действий"
             onPress={toggleMenu}
-            style={({ pressed, hovered }) => [
+            style={({ pressed }) => [
               styles.menuButton,
-              hovered && !pressed ? { backgroundColor: '#F3F4F6' } : null,
               pressed ? { backgroundColor: '#E5E7EB' } : null,
-              { transform: [{ scale: pressed ? 0.98 : hovered ? 1.03 : 1 }] },
+              { transform: [{ scale: pressed ? 0.98 : 1 }] },
             ]}
             android_ripple={{ color: 'rgba(0,0,0,0.08)', borderless: false, radius: 28 }}
           >
@@ -67,11 +60,10 @@ export default function AppealsListHeader({
           <Pressable
             onPress={onCreate}
             accessibilityRole="button"
-            style={({ pressed, hovered }) => [
+            style={({ pressed }) => [
               styles.primaryBtn,
-              hovered && !pressed ? { backgroundColor: '#F3F4F6' } : null,
               pressed ? { backgroundColor: '#E5E7EB' } : null,
-              { transform: [{ scale: pressed ? 0.98 : hovered ? 1.03 : 1 }] },
+              { transform: [{ scale: pressed ? 0.98 : 1 }] },
             ]}
             android_ripple={{ color: 'rgba(0,0,0,0.07)' }}
           >

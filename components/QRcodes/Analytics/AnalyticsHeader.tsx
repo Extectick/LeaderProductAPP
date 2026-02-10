@@ -1,4 +1,3 @@
-import { useTheme } from '@/context/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useRef } from 'react';
@@ -41,8 +40,6 @@ export default function AnalyticsHeader({
   selectedCount,
   periodLabel,
 }: Props) {
-  const { theme, themes } = useTheme();
-  const colors = themes[theme];
   const styles = getStyles();
 
   return (

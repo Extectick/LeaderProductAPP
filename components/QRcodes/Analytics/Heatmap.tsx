@@ -64,9 +64,6 @@ const getWeekdayIndex = (d: Date) => {
 const monthName = (m: number) =>
   ['январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь'][m];
 
-const shortMonth = (m: number) =>
-  ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'][m];
-
 const WDAYS = MON_FIRST
   ? ['Пн','Вт','Ср','Чт','Пт','Сб','Вс']
   : ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
@@ -140,8 +137,8 @@ export default function Heatmap({
   };
 
   // массив месяцев в пределах [from..to]
-  const months: Array<{ y: number; m: number; start: Date; end: Date }> = useMemo(() => {
-    const res: Array<{ y: number; m: number; start: Date; end: Date }> = [];
+  const months: { y: number; m: number; start: Date; end: Date }[] = useMemo(() => {
+    const res: { y: number; m: number; start: Date; end: Date }[] = [];
     let cursor = startOfMonth(from);
     const finalM = startOfMonth(to);
     while (cursor <= finalM) {
@@ -206,11 +203,10 @@ export default function Heatmap({
 
     // высчитываем ячейки (6 строк по 7 — классическая сетка календаря)
     const first = new Date(y, m, 1);
-    const last  = endOfMonth(first);
     const total = daysInMonth(y, m);
 
     const leadBlank = getWeekdayIndex(first); // сколько пустых ячеек в первой неделе
-    const cells: Array<{ d: Date | null; key: string }> = [];
+    const cells: { d: Date | null; key: string }[] = [];
 
     // 6 недель * 7 дней = 42
     const TOTAL_CELLS = 42;
@@ -226,7 +222,6 @@ export default function Heatmap({
 
     const rows = 6;
     const cellH = cellW; // квадраты
-    const gridH = rows*cellH + (rows-1)*cellGap;
 
     return (
       <View key={`month-${y}-${m}`} style={{ marginBottom: 12 }}>

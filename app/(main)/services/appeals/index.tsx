@@ -1,10 +1,11 @@
 import { useMemo, useState, useContext, useEffect, useRef, useCallback } from 'react';
 import { View, Alert, Pressable, Text, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import AppealsListHeader from '@/components/Appeals/AppealsListHeader';
 import AppealsList from '@/components/Appeals/AppealList';
-import { exportAppealsCSV } from '@/utils/appealsService';
-import { AppealPriority, AppealStatus, Scope } from '@/types/appealsTypes';
+import { exportAppealsCSV, getAppealsCounters, getAppealsList } from '@/utils/appealsService';
+import { AppealCounters, AppealPriority, AppealStatus, Scope } from '@/types/appealsTypes';
 import * as FileSystem from 'expo-file-system';
 import { OverflowMenuItem } from '@/components/ui/OverflowMenu';
 import { useAppealUpdates } from '@/hooks/useAppealUpdates';
@@ -19,7 +20,6 @@ import {
   getListSnapshot,
   setListPage,
 } from '@/utils/appealsStore';
-import { getAppealsList } from '@/utils/appealsService';
 import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 // import * as Sharing from 'expo-sharing';
 
@@ -27,13 +27,13 @@ export default function AppealsIndex() {
   const headerTopInset = useHeaderContentTopInset({ hasSubtitle: true });
   const router = useRouter();
   const auth = useContext(AuthContext);
-  const [scope, setScope] = useState<Scope>('my');
-  const [status, setStatus] = useState<AppealStatus | undefined>();
-  const [priority, setPriority] = useState<AppealPriority | undefined>();
-  const [count, setCount] = useState(0);
+  const [status] = useState<AppealStatus | undefined>();
+  const [priority] = useState<AppealPriority | undefined>();
   const [wsTick, setWsTick] = useState(0);
   const [tab, setTab] = useState<'mine' | 'tasks'>('mine');
+  const [counters, setCounters] = useState<AppealCounters | null>(null);
   const listScope: Scope = tab === 'mine' ? 'my' : 'department';
+  const countersRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const listKey = useMemo(
     () => `scope:${listScope}-status:${status ?? 'any'}-priority:${priority ?? 'any'}`,
     [listScope, priority, status]
@@ -44,9 +44,76 @@ export default function AppealsIndex() {
     { key: 'export', title: 'Экспорт', icon: 'download', onPress: handleExport },
     // добавляй/убирай пункты здесь
   ];
+
+  const loadCounters = useCallback(async () => {
+    try {
+      const data = await getAppealsCounters();
+      setCounters(data);
+    } catch (error) {
+      console.warn('[Appeals] counters load failed:', error);
+    }
+  }, []);
+
+  const scheduleCountersRefresh = useCallback(
+    (delayMs = 500) => {
+      if (countersRefreshTimerRef.current) {
+        clearTimeout(countersRefreshTimerRef.current);
+      }
+      countersRefreshTimerRef.current = setTimeout(() => {
+        void loadCounters();
+      }, delayMs);
+    },
+    [loadCounters]
+  );
+
+  const formatBadgeCount = useCallback((value: number) => (value > 99 ? '99+' : String(value)), []);
+
+  const renderTabBadges = useCallback(
+    (data?: { activeCount: number; unreadMessagesCount: number }) => {
+      if (!data) return null;
+      const activeCount = Math.max(0, data.activeCount || 0);
+      const unreadCount = Math.max(0, data.unreadMessagesCount || 0);
+      if (activeCount === 0 && unreadCount === 0) return null;
+      return (
+        <View style={styles.tabBadges}>
+          {activeCount > 0 ? (
+            <View style={styles.activeCountBadge}>
+              <Text style={styles.activeCountText}>{formatBadgeCount(activeCount)}</Text>
+            </View>
+          ) : null}
+          {unreadCount > 0 ? (
+            <View style={styles.unreadChip}>
+              <Ionicons name="chatbubble-ellipses-outline" size={12} color="#0F766E" />
+              <Text style={styles.unreadChipText}>{formatBadgeCount(unreadCount)}</Text>
+            </View>
+          ) : null}
+        </View>
+      );
+    },
+    [formatBadgeCount]
+  );
+
+  const departmentTabAvailable = counters?.department.available ?? true;
+
+  useEffect(() => {
+    void loadCounters();
+  }, [loadCounters]);
+
+  useEffect(() => {
+    if (!departmentTabAvailable && tab === 'tasks') {
+      setTab('mine');
+    }
+  }, [departmentTabAvailable, tab]);
+
+  useEffect(() => {
+    return () => {
+      if (countersRefreshTimerRef.current) clearTimeout(countersRefreshTimerRef.current);
+    };
+  }, []);
+
   async function handleExport() {
     try {
-      const blob: any = await exportAppealsCSV({ scope, status, priority });
+      const blob: any = await exportAppealsCSV({ scope: listScope, status, priority });
       // Преобразуй blob в base64 если нужно — зависит от твоего apiClient
       const base64 = typeof blob === 'string' ? blob : ''; // подставь свою util-ку
       const baseDir =
@@ -56,7 +123,7 @@ export default function AppealsIndex() {
       const path = `${baseDir}appeals-${Date.now()}.csv`;
       await FileSystem.writeAsStringAsync(path, base64, { encoding: 'base64' as const });
       // await Sharing.shareAsync(path);
-    } catch (e) {
+    } catch {
       Alert.alert('Ошибка', 'Не удалось экспортировать CSV');
     }
   }
@@ -67,6 +134,7 @@ export default function AppealsIndex() {
       const eventName = evt?.event || evt?.eventType || evt?.type;
       if (eventName === 'messageAdded') {
         lastWsMsg.current = evt;
+        scheduleCountersRefresh();
         upsertMessage(
           evt.appealId,
           {
@@ -91,10 +159,12 @@ export default function AppealsIndex() {
           updateMessage(evt.appealId, evt.messageId, { text: evt.text, editedAt: evt.editedAt }).catch(() => {});
         }
       } else if (eventName === 'messageDeleted') {
+        scheduleCountersRefresh();
         if (evt?.appealId && evt?.messageId) {
           removeMessage(evt.appealId, evt.messageId).catch(() => {});
         }
       } else if (eventName === 'appealUpdated' && evt?.appealId) {
+        scheduleCountersRefresh();
         const existing = getListSnapshot(listKey).items.find((x) => x.id === evt.appealId);
         const patch: any = {};
         if (evt.status) patch.status = evt.status;
@@ -118,13 +188,17 @@ export default function AppealsIndex() {
           eventName === 'assigneesUpdated' ||
           eventName === 'departmentChanged')
       ) {
+        scheduleCountersRefresh();
         // Для старых событий без агрегированного payload делаем мягкий fallback
         setWsTick((t) => t + 1);
       } else {
+        if (eventName === 'messageRead') {
+          scheduleCountersRefresh();
+        }
         setWsTick((t) => t + 1);
       }
     },
-    [auth?.profile?.id, listKey]
+    [auth?.profile?.id, listKey, scheduleCountersRefresh]
   );
 
   useAppealUpdates(
@@ -136,8 +210,8 @@ export default function AppealsIndex() {
   );
 
   const refreshKey = useMemo(
-    () => `${tab}-${scope}-${status ?? ''}-${priority ?? ''}-${wsTick}`,
-    [tab, scope, status, priority, wsTick],
+    () => `${tab}-${status ?? ''}-${priority ?? ''}-${wsTick}`,
+    [tab, status, priority, wsTick],
   );
 
   // Инициализация локального кэша обращений и подписка
@@ -183,17 +257,31 @@ export default function AppealsIndex() {
 
         <View style={styles.tabs}>
           <Pressable
-            onPress={() => { setTab('mine'); setScope('my'); }}
+            onPress={() => {
+              setTab('mine');
+            }}
             style={[styles.tab, tab === 'mine' && styles.tabActive]}
           >
-            <Text style={[styles.tabText, tab === 'mine' && styles.tabTextActive]}>Мои обращения</Text>
+            <View style={styles.tabInner}>
+              <Text style={[styles.tabText, tab === 'mine' && styles.tabTextActive]}>Мои обращения</Text>
+              {renderTabBadges(counters?.my)}
+            </View>
           </Pressable>
-          <Pressable
-            onPress={() => { setTab('tasks'); setScope('department'); }}
-            style={[styles.tab, tab === 'tasks' && styles.tabActive]}
-          >
-            <Text style={[styles.tabText, tab === 'tasks' && styles.tabTextActive]}>Задачи отдела</Text>
-          </Pressable>
+          {departmentTabAvailable ? (
+            <Pressable
+              onPress={() => {
+                setTab('tasks');
+              }}
+              style={[styles.tab, tab === 'tasks' && styles.tabActive]}
+            >
+              <View style={styles.tabInner}>
+                <Text style={[styles.tabText, tab === 'tasks' && styles.tabTextActive]}>
+                  Задачи отдела
+                </Text>
+                {renderTabBadges(counters?.department)}
+              </View>
+            </Pressable>
+          ) : null}
         </View>
 
         <AppealsList
@@ -202,12 +290,15 @@ export default function AppealsIndex() {
           priority={priority}
           pageSize={20}
           refreshKey={refreshKey}
-          onLoadedMeta={(m) => setCount(m.total ?? 0)}
+          onLoadedMeta={() => {}}
           currentUserId={auth?.profile?.id}
           incomingMessage={lastWsMsg.current as any}
           initialItems={cachedItems}
           listKey={listKey}
           onItemsChange={(items) => setCachedItems(items)}
+          onRefreshDone={() => {
+            void loadCounters();
+          }}
         />
       </View>
     </View>
@@ -233,10 +324,52 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  tabInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
   tabActive: {
     borderColor: '#2563EB',
     backgroundColor: '#EFF6FF',
   },
   tabText: { fontWeight: '700', color: '#4B5563', textAlign: 'center', flexShrink: 1 },
   tabTextActive: { color: '#1D4ED8' },
+  tabBadges: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  activeCountBadge: {
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#16A34A',
+  },
+  activeCountText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  unreadChip: {
+    height: 20,
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    backgroundColor: '#ECFEFF',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  unreadChipText: {
+    color: '#0F766E',
+    fontSize: 11,
+    fontWeight: '800',
+  },
 });

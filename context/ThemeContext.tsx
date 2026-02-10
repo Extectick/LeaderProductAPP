@@ -31,7 +31,7 @@ export const ThemeProvider: React.FC<{children: React.ReactNode}> = ({ children 
       }
     };
     loadTheme();
-  }, []);
+  }, [themes]);
 
   const setTheme = async (newTheme: string) => {
     if (themes[newTheme]) {

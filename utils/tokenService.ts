@@ -1,7 +1,6 @@
 // utils/tokenService.ts
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
-import { router } from 'expo-router';
 import { jwtDecode } from 'jwt-decode';
 
 import { API_BASE_URL } from './config';

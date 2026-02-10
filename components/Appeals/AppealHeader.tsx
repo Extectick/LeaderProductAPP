@@ -1,11 +1,4 @@
-// =============================
-// File: V:\lp\components\Appeals\AppealHeader.tsx
-// - улучшено меню действий (иконка на прозрачной кнопке)
-// - чипы подразделений с «нажатием» (PressableScale)
-// - прогресс + подписи дат под прогрессом
-// - аккуратные тени/отступы и анимация появления
-// =============================
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Animated, Pressable } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import AnimatedRe, { FadeInDown } from 'react-native-reanimated';
@@ -23,10 +16,12 @@ type Props = {
   onWatch?: () => void;
   onClaim?: () => void;
   onTransfer?: () => void;
+  onEditDeadline?: () => void;
   canAssign?: boolean;
   canWatch?: boolean;
   canClaim?: boolean;
   canTransfer?: boolean;
+  canEditDeadline?: boolean;
   allowedStatuses?: AppealStatus[];
 };
 
@@ -79,10 +74,12 @@ export default function AppealHeader({
   onWatch,
   onClaim,
   onTransfer,
+  onEditDeadline,
   canAssign,
   canWatch,
   canClaim,
   canTransfer,
+  canEditDeadline,
   allowedStatuses,
 }: Props) {
   const displayTitle = title ?? data.title ?? data.messages[0]?.text ?? 'Без названия';
@@ -98,38 +95,31 @@ export default function AppealHeader({
     const total = end.diff(start);
     if (total <= 0) return 1;
     const current = dayjs().diff(start);
-    return Math.min(current / total, 1);
+    return Math.max(0, Math.min(current / total, 1));
   }, [data.createdAt, data.deadline]);
 
   const isOverdue = progress !== null && progress >= 1;
 
-  const progressAnim = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    if (progress !== null) {
-      Animated.timing(progressAnim, {
-        toValue: progress,
-        duration: 500,
-        useNativeDriver: false,
-      }).start();
-    }
-  }, [progress, progressAnim]);
-
   const [statusMenuVisible, setStatusMenuVisible] = useState(false);
 
-  const actionItems: DropdownItem<'status' | 'assign' | 'watch' | 'claim' | 'transfer'>[] = [
+  const actionItems: DropdownItem<'status' | 'assign' | 'watch' | 'claim' | 'transfer' | 'deadline'>[] = [
     ...(allowedStatuses && allowedStatuses.length && onChangeStatus
       ? [{ label: 'Изменить статус', value: 'status' as const }]
       : []),
+    ...(canEditDeadline && onEditDeadline ? [{ label: 'Изменить дедлайн', value: 'deadline' as const }] : []),
     ...(canClaim && onClaim ? [{ label: 'Взять в работу', value: 'claim' as const }] : []),
     ...(canAssign && onAssign ? [{ label: 'Назначить', value: 'assign' as const }] : []),
     ...(canTransfer && onTransfer ? [{ label: 'Передать в отдел', value: 'transfer' as const }] : []),
     ...(canWatch && onWatch ? [{ label: 'Наблюдать', value: 'watch' as const }] : []),
   ];
 
-  const handleAction = (action: 'status' | 'assign' | 'watch' | 'claim' | 'transfer') => {
+  const handleAction = (action: 'status' | 'assign' | 'watch' | 'claim' | 'transfer' | 'deadline') => {
     switch (action) {
       case 'status':
         setStatusMenuVisible(true);
+        break;
+      case 'deadline':
+        onEditDeadline?.();
         break;
       case 'assign':
         onAssign?.();
@@ -155,7 +145,7 @@ export default function AppealHeader({
   return (
     <AnimatedRe.View entering={FadeInDown.duration(250)} style={styles.wrapper}>
       <LinearGradient
-        colors={['#0EA5E9', '#7C3AED']}
+        colors={['#2D8CFF', '#4F6EF7']}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={styles.card}
@@ -167,67 +157,61 @@ export default function AppealHeader({
             placeholder=""
             style={styles.menuWrap}
             buttonStyle={styles.iconBtn}
-            renderTrigger={() => <Ionicons name="ellipsis-horizontal" size={18} color="#fff" />}
+            renderTrigger={() => <Ionicons name="ellipsis-horizontal" size={16} color="#fff" />}
           />
         ) : null}
 
-        <View style={styles.headerTextBlock}>
-          <Text style={styles.title}>{displayTitle}</Text>
-          <View style={styles.deptRow}>
-            <PressableScale style={styles.deptChip} pressedStyle={styles.deptChipPressed}>
-              <Text style={styles.deptText}>{fromDept}</Text>
-            </PressableScale>
-            <Ionicons name="chevron-forward" size={14} color="#fff" style={{ marginHorizontal: 4 }} />
-            <PressableScale style={styles.deptChip} pressedStyle={styles.deptChipPressed}>
-              <Text style={styles.deptText}>{toDept}</Text>
-            </PressableScale>
-          </View>
+        <View style={styles.topRow}>
+          <Text numberOfLines={1} style={styles.title}>
+            #{data.number} {displayTitle}
+          </Text>
         </View>
 
-        {progress !== null && (
-          <View style={styles.deadlineWrap}>
-            <View style={styles.progressContainer}>
-              <Animated.View
-                style={[
-                  styles.progressBar,
-                  {
-                    width: progressAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: ['0%', '100%'],
-                    }),
-                    backgroundColor: isOverdue ? '#F43F5E' : '#fff',
-                  },
-                ]}
-              />
-            </View>
-            <View style={styles.deadlineDates}>
-              <Text style={styles.date}>{createdAt}</Text>
-              {formattedDeadline && (
-                <Text style={[styles.date, isOverdue && styles.deadlineOverdue]}>
-                  {formattedDeadline}
-                </Text>
-              )}
-            </View>
-          </View>
-        )}
-
-        <View style={styles.infoRow}>
-          <Text style={styles.number}>#{data.number}</Text>
+        <View style={styles.badgesRow}>
           <PressableScale
             onPress={canOpenStatusMenu ? () => setStatusMenuVisible(true) : undefined}
-            style={[styles.badge, { backgroundColor: statusColor(data.status) }]}
+            style={[styles.badge, styles.badgeCompact, { backgroundColor: statusColor(data.status) }]}
             pressedStyle={{ opacity: 0.85 }}
           >
             <Text style={styles.badgeText}>{statusLabels[data.status]}</Text>
           </PressableScale>
           <PressableScale
             onPress={() => {}}
-            style={[styles.badge, { backgroundColor: priorityColor(data.priority) }]}
+            style={[styles.badge, styles.badgeCompact, { backgroundColor: priorityColor(data.priority) }]}
             pressedStyle={{ opacity: 0.85 }}
           >
             <Text style={styles.badgeText}>{priorityLabels[data.priority]}</Text>
           </PressableScale>
         </View>
+
+        <View style={styles.metaRow}>
+          <View style={styles.deptRow}>
+            <PressableScale style={styles.deptChip} pressedStyle={styles.deptChipPressed}>
+              <Text style={styles.deptText}>{fromDept}</Text>
+            </PressableScale>
+            <Ionicons name="chevron-forward" size={12} color="#fff" style={{ marginHorizontal: 4 }} />
+            <PressableScale style={styles.deptChip} pressedStyle={styles.deptChipPressed}>
+              <Text style={styles.deptText}>{toDept}</Text>
+            </PressableScale>
+          </View>
+          <Text numberOfLines={1} style={[styles.date, isOverdue && styles.deadlineOverdue]}>
+            {formattedDeadline ? `Дедлайн: ${formattedDeadline}` : `Создано: ${createdAt}`}
+          </Text>
+        </View>
+
+        {progress !== null ? (
+          <View style={styles.progressTrack}>
+            <View
+              style={[
+                styles.progressFill,
+                {
+                  width: `${Math.round(progress * 100)}%`,
+                  backgroundColor: isOverdue ? '#F43F5E' : '#FFFFFF',
+                },
+              ]}
+            />
+          </View>
+        ) : null}
       </LinearGradient>
 
       <AppealStatusMenu
@@ -274,67 +258,77 @@ function priorityColor(priority: AppealPriority) {
 }
 
 const styles = StyleSheet.create({
-  wrapper: { marginBottom: 16, marginHorizontal: 16 },
+  wrapper: { marginBottom: 10, marginHorizontal: 16 },
   card: {
-    borderRadius: 20,
-    marginTop: 16,
-    padding: 16,
-    paddingTop: 10,
+    borderRadius: 16,
+    marginTop: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    paddingRight: 44,
     overflow: 'hidden',
     position: 'relative',
-    shadowColor: '#7C3AED',
-    shadowOpacity: 0.22,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 5,
+    shadowColor: '#2563EB',
+    shadowOpacity: 0.16,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
   },
-  menuWrap: { position: 'absolute', top: 10, right: 10, zIndex: 2 },
+  menuWrap: { position: 'absolute', top: 8, right: 8, zIndex: 2 },
   iconBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.15)',
+    width: 30,
+    height: 30,
+    borderRadius: 9,
+    backgroundColor: 'rgba(255,255,255,0.12)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.75)',
+    borderColor: 'rgba(255,255,255,0.55)',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 0,
     paddingVertical: 0,
   },
-  headerTextBlock: { marginBottom: 12, paddingRight: 56 },
-  title: { color: '#fff', fontWeight: '800', fontSize: 20, letterSpacing: 0.2 },
-  deptRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4 },
+  topRow: {
+    paddingRight: 8,
+  },
+  title: { color: '#fff', fontWeight: '700', fontSize: 15, letterSpacing: 0.05, paddingRight: 2 },
+  badgesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 6,
+  },
+  metaRow: {
+    marginTop: 6,
+    alignItems: 'flex-start',
+    gap: 6,
+  },
+  deptRow: { flexDirection: 'row', alignItems: 'center', flexShrink: 1, flexWrap: 'wrap' },
   deptChip: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-    backgroundColor: 'rgba(255,255,255,0.15)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 7,
+    backgroundColor: 'rgba(255,255,255,0.12)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.75)',
+    borderColor: 'rgba(255,255,255,0.6)',
   },
   deptChipPressed: { backgroundColor: 'rgba(255,255,255,0.25)' },
-  deptText: { color: '#fff', fontSize: 12, fontWeight: '600' },
-
-  deadlineWrap: { marginBottom: 12 },
-  progressContainer: {
-    height: 6,
-    backgroundColor: 'rgba(255,255,255,0.25)',
+  deptText: { color: '#fff', fontSize: 10, fontWeight: '600' },
+  date: { fontSize: 10, color: 'rgba(255,255,255,0.95)', flexShrink: 1, maxWidth: '100%' },
+  deadlineOverdue: { color: '#F43F5E' },
+  progressTrack: {
+    marginTop: 6,
+    height: 3,
     borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.28)',
     overflow: 'hidden',
   },
-  progressBar: { height: '100%' },
-  deadlineDates: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 4,
+  progressFill: {
+    height: '100%',
+    borderRadius: 999,
   },
-  date: { fontSize: 12, color: 'rgba(255,255,255,0.95)' },
-  deadlineOverdue: { color: '#F43F5E' },
-
-  infoRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8 },
-  number: { fontSize: 18, fontWeight: 'bold', color: '#fff', marginRight: 8 },
-  badge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, marginRight: 6 },
-  badgeText: { color: '#fff', fontSize: 12, fontWeight: '600' },
+  badge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
+  badgeCompact: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 7 },
+  badgeText: { color: '#fff', fontSize: 10, fontWeight: '700' },
 });
 
 export {};

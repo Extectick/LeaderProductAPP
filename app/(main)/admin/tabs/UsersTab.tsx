@@ -42,6 +42,7 @@ import { AdminStyles } from '@/components/admin/adminStyles';
 import { EditableCard, SelectableChip, SelectorCard, StaticCard } from '@/components/admin/AdminCards';
 import { usePresence } from '@/hooks/usePresence';
 import { useTabBarSpacerHeight } from '@/components/Navigation/TabBarSpacer';
+import { formatPhoneDisplay, toApiPhoneDigitsString } from '@/utils/phone';
 
 const formatPhone = (input: string) => {
   const digits = input.replace(/\D/g, '').slice(0, 11);
@@ -63,12 +64,7 @@ const formatPhone = (input: string) => {
 };
 
 const normalizePhoneE164 = (val: string) => {
-  const digits = val.replace(/\D/g, '').slice(0, 15);
-  if (!digits) return '';
-  let num = digits;
-  if (num.startsWith('8')) num = '7' + num.slice(1);
-  if (!num.startsWith('7')) num = '7' + num;
-  return `+${num}`;
+  return toApiPhoneDigitsString(val) || '';
 };
 
 const withOpacity = (color: string, opacity: number) => {
@@ -105,20 +101,20 @@ type OnlineFilter = 'all' | 'online' | 'offline';
 type SortKey = 'recent' | 'name' | 'role' | 'status';
 type SortDir = 'asc' | 'desc';
 
-const STATUS_FILTERS: Array<{ key: UserStatusFilter; label: string }> = [
+const STATUS_FILTERS: { key: UserStatusFilter; label: string }[] = [
   { key: 'all', label: 'Все' },
   { key: 'ACTIVE', label: 'Активные' },
   { key: 'PENDING', label: 'Ожидают' },
   { key: 'BLOCKED', label: 'Заблокированы' },
 ];
 
-const ONLINE_FILTERS: Array<{ key: OnlineFilter; label: string }> = [
+const ONLINE_FILTERS: { key: OnlineFilter; label: string }[] = [
   { key: 'all', label: 'Все' },
   { key: 'online', label: 'Онлайн' },
   { key: 'offline', label: 'Оффлайн' },
 ];
 
-const SORT_OPTIONS: Array<{ key: SortKey; label: string }> = [
+const SORT_OPTIONS: { key: SortKey; label: string }[] = [
   { key: 'recent', label: 'Активность' },
   { key: 'name', label: 'Имя' },
   { key: 'role', label: 'Роль' },
@@ -141,7 +137,6 @@ type AddressForm = {
 
 type ProfileFormState = {
   status: ProfileStatus;
-  phone: string;
   departmentId?: number | null;
   address?: AddressForm;
 };
@@ -235,10 +230,10 @@ function SummaryChip({
 
   return (
     <Pressable onPress={onPress}>
-      {({ pressed, hovered }) => (
+      {({ pressed }) => (
         <MotiView
           animate={{
-            scale: pressed ? 0.96 : hovered ? 1.02 : 1,
+            scale: pressed ? 0.96 : 1,
             opacity: pressed ? 0.92 : 1,
           }}
           transition={{ type: 'timing', duration: 120 }}
@@ -293,7 +288,7 @@ function UserListItem({
   const fullName =
     [item.lastName, item.firstName, item.middleName].filter(Boolean).join(' ') || item.email;
   const departmentName = item.departmentName || null;
-  const phoneDisplay = item.phone ? formatPhone(item.phone) : '—';
+  const phoneDisplay = item.phone ? formatPhoneDisplay(item.phone) : '—';
 
   return (
     <View style={[styles.userCardWrap, isWide && styles.userCardWrapWide]}>
@@ -509,21 +504,18 @@ export default function UsersTab({
       client: profile.clientProfile
         ? {
             status: profile.clientProfile.status || 'PENDING',
-            phone: formatPhone(profile.clientProfile.phone || ''),
             address: buildAddressForm(profile.clientProfile.address),
           }
         : null,
       supplier: profile.supplierProfile
         ? {
             status: profile.supplierProfile.status || 'PENDING',
-            phone: formatPhone(profile.supplierProfile.phone || ''),
             address: buildAddressForm(profile.supplierProfile.address),
           }
         : null,
       employee: profile.employeeProfile
         ? {
             status: profile.employeeProfile.status || 'PENDING',
-            phone: formatPhone(profile.employeeProfile.phone || ''),
             departmentId: profile.employeeProfile.department?.id ?? null,
           }
         : null,
@@ -536,7 +528,7 @@ export default function UsersTab({
       lastName: profile.lastName || '',
       middleName: profile.middleName || '',
       email: profile.email || '',
-      phone: formatPhone(profile.phone || profile.employeeProfile?.phone || ''),
+      phone: formatPhone(profile.phone || ''),
       status: profile.profileStatus || 'PENDING',
       departmentId: profile.employeeProfile?.department?.id ?? null,
       roleId: profile.role?.id ?? null,
@@ -788,7 +780,7 @@ export default function UsersTab({
   useEffect(() => {
     if (!selectedProfile) return;
     setActiveTab('user');
-  }, [selectedProfile?.id, modalVisible]);
+  }, [selectedProfile, modalVisible]);
 
   useEffect(() => {
     if (!selectedProfile) return;
@@ -864,9 +856,6 @@ export default function UsersTab({
           const profilePayload: any = {};
 
           if (current.status !== initial.status) profilePayload.status = current.status;
-          if (current.phone.trim() !== initial.phone.trim()) {
-            profilePayload.phone = normalizePhoneE164(current.phone);
-          }
 
           if (type === 'employee') {
             if (current.departmentId !== initial.departmentId) {
@@ -1392,27 +1381,6 @@ export default function UsersTab({
                                     }))
                                   }
                                 />
-                                <EditableCard
-                                  styles={styles}
-                                  icon="call-outline"
-                                  label="Телефон (сотрудник)"
-                                  value={profileForms.employee.phone}
-                                  mask="+7 (999) 999-99-99"
-                                  onMaskedChange={(masked) =>
-                                    setProfileForms((prev) => ({
-                                      ...prev,
-                                      employee: prev.employee ? { ...prev.employee, phone: formatPhone(masked || '') } : prev.employee,
-                                    }))
-                                  }
-                                  onChangeText={(text) =>
-                                    setProfileForms((prev) => ({
-                                      ...prev,
-                                      employee: prev.employee ? { ...prev.employee, phone: formatPhone(text) } : prev.employee,
-                                    }))
-                                  }
-                                  placeholder="+7 ..."
-                                  keyboardType="phone-pad"
-                                />
                               </>
                             ) : (
                               <StaticCard styles={styles} icon="alert-circle-outline" label="Профиль сотрудника" value="Не создан" />
@@ -1437,27 +1405,6 @@ export default function UsersTab({
                                       client: prev.client ? { ...prev.client, status: v as ProfileStatus } : prev.client,
                                     }))
                                   }
-                                />
-                                <EditableCard
-                                  styles={styles}
-                                  icon="call-outline"
-                                  label="Телефон (клиент)"
-                                  value={profileForms.client.phone}
-                                  mask="+7 (999) 999-99-99"
-                                  onMaskedChange={(masked) =>
-                                    setProfileForms((prev) => ({
-                                      ...prev,
-                                      client: prev.client ? { ...prev.client, phone: formatPhone(masked || '') } : prev.client,
-                                    }))
-                                  }
-                                  onChangeText={(text) =>
-                                    setProfileForms((prev) => ({
-                                      ...prev,
-                                      client: prev.client ? { ...prev.client, phone: formatPhone(text) } : prev.client,
-                                    }))
-                                  }
-                                  placeholder="+7 ..."
-                                  keyboardType="phone-pad"
                                 />
                                 <EditableCard
                                   styles={styles}
@@ -1574,27 +1521,6 @@ export default function UsersTab({
                                       supplier: prev.supplier ? { ...prev.supplier, status: v as ProfileStatus } : prev.supplier,
                                     }))
                                   }
-                                />
-                                <EditableCard
-                                  styles={styles}
-                                  icon="call-outline"
-                                  label="Телефон (поставщик)"
-                                  value={profileForms.supplier.phone}
-                                  mask="+7 (999) 999-99-99"
-                                  onMaskedChange={(masked) =>
-                                    setProfileForms((prev) => ({
-                                      ...prev,
-                                      supplier: prev.supplier ? { ...prev.supplier, phone: formatPhone(masked || '') } : prev.supplier,
-                                    }))
-                                  }
-                                  onChangeText={(text) =>
-                                    setProfileForms((prev) => ({
-                                      ...prev,
-                                      supplier: prev.supplier ? { ...prev.supplier, phone: formatPhone(text) } : prev.supplier,
-                                    }))
-                                  }
-                                  placeholder="+7 ..."
-                                  keyboardType="phone-pad"
                                 />
                                 <EditableCard
                                   styles={styles}

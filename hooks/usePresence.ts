@@ -14,6 +14,7 @@ export function usePresence(userIds: number[], opts?: { intervalMs?: number }) {
     () => Array.from(new Set(userIds.filter((id) => Number.isFinite(id)))),
     [userIds]
   );
+  const idsKey = useMemo(() => ids.join(','), [ids]);
   const [map, setMap] = useState<PresenceMap>({});
 
   useEffect(() => {
@@ -64,7 +65,7 @@ export function usePresence(userIds: number[], opts?: { intervalMs?: number }) {
       stop();
       sub.remove();
     };
-  }, [ids.join(','), intervalMs]);
+  }, [ids, idsKey, intervalMs]);
 
   useEffect(() => {
     if (!ids.length) return;
@@ -141,7 +142,7 @@ export function usePresence(userIds: number[], opts?: { intervalMs?: number }) {
       socket?.off('presenceChanged', handlePresenceChanged);
       socket?.disconnect();
     };
-  }, [ids.join(',')]);
+  }, [ids, idsKey]);
 
   return map;
 }

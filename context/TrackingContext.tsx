@@ -104,7 +104,7 @@ TaskManager.defineTask(BACKGROUND_TASK_NAME, async ({ data, error }) => {
 export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [trackingEnabled, setTrackingEnabled] = useState(false);
   const [routeId, setRouteId] = useState<number | undefined>(undefined);
-  const keepAliveTimer = useRef<NodeJS.Timeout | null>(null);
+  const keepAliveTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const foregroundSubscription = useRef<Location.LocationSubscription | null>(null);
 
   const stopForegroundWatch = useCallback(() => {
@@ -376,7 +376,7 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
         void (async () => {
-          const dbg = await getQueueDebug();
+          await getQueueDebug();
           // оставляем возможность быстро проверить очередь в отладке
           // console.log('[tracking-debug] queue', dbg);
         })();

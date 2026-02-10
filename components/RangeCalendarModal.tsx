@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Animated,
   Easing,
@@ -173,7 +173,7 @@ export default function RangeCalendarModal({
   const [rangeDirty, setRangeDirty] = useState(false);
   const [fade] = useState(new Animated.Value(0));
 
-  const syncInitial = () => {
+  const syncInitial = useCallback(() => {
     const from = initialFrom ? new Date(initialFrom) : null;
     const to = initialTo ? new Date(initialTo) : null;
     const start = from ? startOfDay(from) : null;
@@ -182,7 +182,7 @@ export default function RangeCalendarModal({
     setRangeEnd(end);
     setCalendarMonth(start || end || new Date());
     setRangeDirty(false);
-  };
+  }, [initialFrom, initialTo]);
 
   useEffect(() => {
     if (visible) {
@@ -195,7 +195,7 @@ export default function RangeCalendarModal({
         useNativeDriver: true,
       }).start();
     }
-  }, [visible]);
+  }, [fade, syncInitial, visible]);
 
   const calendarMonthLabel = useMemo(
     () => calendarMonth.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' }),

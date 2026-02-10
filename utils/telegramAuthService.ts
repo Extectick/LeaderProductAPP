@@ -3,6 +3,7 @@ import type {
   TelegramContactResponseData,
   TelegramInitResponseData,
 } from '@/types/apiTypes';
+import { normalizePhoneInputToDigits11 } from './phone';
 import {
   init as initTmaSdk,
   isTMA,
@@ -170,15 +171,7 @@ export function prepareTelegramWebApp() {
 }
 
 function normalizePhoneForApi(phoneRaw: string): string | null {
-  const digits = String(phoneRaw || '').replace(/\D/g, '');
-  if (!digits) return null;
-  let normalized = digits;
-  if (normalized.length === 10) normalized = `7${normalized}`;
-  if (normalized.length === 11 && normalized.startsWith('8')) {
-    normalized = `7${normalized.slice(1)}`;
-  }
-  if (normalized.length !== 11 || !normalized.startsWith('7')) return null;
-  return `+${normalized}`;
+  return normalizePhoneInputToDigits11(phoneRaw);
 }
 
 export type TelegramContactRequestResult = {

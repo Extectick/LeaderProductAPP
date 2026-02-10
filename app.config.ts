@@ -54,12 +54,13 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       notificationBody: "Приложение собирает геоданные в фоне.",
       notificationColor: "#FF5722"
     }
-  },
+  } as any,
 
   plugins: [
     "expo-router",
     "expo-audio",
     "expo-font",
+    "@react-native-community/datetimepicker",
     "expo-notifications",
     [
       "expo-splash-screen",

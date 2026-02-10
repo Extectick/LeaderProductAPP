@@ -76,7 +76,7 @@ async function flushToDisk() {
       });
     }
   } catch (e) {
-    // eslint-disable-next-line no-console
+     
     console.warn('[logger] flush error', e);
   } finally {
     pendingText = '';
@@ -92,7 +92,7 @@ function push(entry: LogEntry) {
   // Console output for adb logcat visibility
   switch (entry.level) {
     case 'DEBUG':
-      // eslint-disable-next-line no-console
+       
       console.debug(line);
       break;
     case 'INFO':

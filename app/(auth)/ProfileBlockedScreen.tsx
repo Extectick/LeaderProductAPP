@@ -7,7 +7,7 @@ import { getProfileGate } from '@/utils/profileGate';
 import { getProfile } from '@/utils/userService';
 import { useRouter, type RelativePathString } from 'expo-router';
 import React, { useContext, useMemo, useState } from 'react';
-import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import CustomAlert from '@/components/CustomAlert';

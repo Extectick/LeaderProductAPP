@@ -148,7 +148,7 @@ export default function TelegramAuthScreen() {
         if (manageBusy) setBusy(false);
       }
     },
-    [checkContactStatusByToken]
+    [applyState, checkContactStatusByToken]
   );
 
   const bootstrap = useCallback(async () => {

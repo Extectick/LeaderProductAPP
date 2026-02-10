@@ -159,7 +159,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [setProfile]);
 
   useEffect(() => {
     if (!isAuthenticated) return;

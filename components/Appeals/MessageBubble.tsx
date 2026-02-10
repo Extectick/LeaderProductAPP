@@ -47,10 +47,14 @@ export default function MessageBubble({
   const pad = (n: number) => String(n).padStart(2, '0');
   const timeStr = `${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
   const dateStr = `${pad(dt.getDate())}.${pad(dt.getMonth() + 1)}.${String(dt.getFullYear()).slice(-2)}`;
+  const senderFullName = [message.sender?.firstName, message.sender?.lastName]
+    .filter(Boolean)
+    .join(' ')
+    .trim();
   const senderName =
-    [message.sender?.firstName, message.sender?.lastName].filter(Boolean).join(' ') ||
+    senderFullName ||
     message.sender?.email ||
-    'Пользователь';
+    (message.sender?.id ? `Пользователь #${message.sender.id}` : 'Пользователь');
   const presenceLabel = presence
     ? presence.isOnline
       ? 'онлайн'
@@ -63,11 +67,12 @@ export default function MessageBubble({
   const isAdmin = !!message.sender?.isAdmin;
   const isManager = !!message.sender?.isDepartmentManager;
   const avatarUrl = message.sender?.avatarUrl || null;
-  const initials =
-    (message.sender?.firstName || message.sender?.lastName
-      ? `${message.sender?.firstName?.[0] || ''}${message.sender?.lastName?.[0] || ''}`
-      : (message.sender?.email || 'U')[0]
-    ).toUpperCase();
+  const initials = buildUserInitials({
+    firstName: message.sender?.firstName,
+    lastName: message.sender?.lastName,
+    email: message.sender?.email,
+    fallbackName: senderName,
+  });
 
   const [currentUri, setCurrentUri] = useState<string | null>(null);
   const [previewUri, setPreviewUri] = useState<string | null>(null);
@@ -492,6 +497,30 @@ function resolveFileType(ext: string): { icon: IoniconName; label: string } {
     return { icon: 'mic', label: 'Аудио' };
   }
   return { icon: 'document-attach', label: 'Файл' };
+}
+
+function buildUserInitials(params: {
+  firstName?: string | null;
+  lastName?: string | null;
+  email?: string | null;
+  fallbackName?: string | null;
+}) {
+  const first = (params.firstName || '').trim();
+  const last = (params.lastName || '').trim();
+  if (first || last) {
+    return `${first[0] || ''}${last[0] || first[1] || ''}`.toUpperCase();
+  }
+
+  const email = (params.email || '').trim();
+  if (email) {
+    const local = email.split('@')[0].replace(/[^a-zA-Zа-яА-Я0-9]/g, '');
+    if (local.length >= 2) return local.slice(0, 2).toUpperCase();
+    if (local.length === 1) return `${local[0]}${local[0]}`.toUpperCase();
+  }
+
+  const fallback = (params.fallbackName || '').trim().replace(/[^a-zA-Zа-яА-Я0-9]/g, '');
+  if (fallback.length >= 2) return fallback.slice(0, 2).toUpperCase();
+  return 'US';
 }
 
 const styles = StyleSheet.create({

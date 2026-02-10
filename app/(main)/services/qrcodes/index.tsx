@@ -91,7 +91,7 @@ export default function QRCodesScreen() {
   const [selectedQR, setSelectedQR] = useState<QRCodeItemType | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [qrLoading, setQrLoading] = useState(false);
+  const [, setQrLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const loadQRCodes = useCallback(async () => {

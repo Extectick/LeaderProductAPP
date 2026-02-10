@@ -69,6 +69,18 @@ export interface AppealListResponse {
   meta: { total: number; limit: number; offset: number };
 }
 
+export interface AppealScopeCounters {
+  activeCount: number;
+  unreadMessagesCount: number;
+}
+
+export interface AppealCounters {
+  my: AppealScopeCounters;
+  department: AppealScopeCounters & {
+    available: boolean;
+  };
+}
+
 export interface AppealDetail {
   id: number;
   number: number;

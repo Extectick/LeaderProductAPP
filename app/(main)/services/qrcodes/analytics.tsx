@@ -2,7 +2,7 @@
 // app/(main)/services/qrcodes/analytics.tsx (with crash logs) — FIXED duplicate onEndReached
 import { useTheme } from '@/context/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
-import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
+import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -66,7 +66,10 @@ class ScreenErrorBoundary extends React.Component<{ children: React.ReactNode },
 
 export default function QRAnalyticsMobileScreen() {
   const { theme, themes } = useTheme();
-  const colors = (themes && themes[theme]) || (themes && (themes as any).light) || {};
+  const colors = useMemo(
+    () => (themes && themes[theme]) || (themes && (themes as any).light) || {},
+    [theme, themes]
+  );
   const styles = useMemo(() => getStyles(colors), [colors]);
   const buildMonthGrid = useCallback((month: Date, startOfWeek: 0 | 1 = 1) => {
     const d0 = new Date(month.getFullYear(), month.getMonth(), 1);
@@ -82,14 +85,7 @@ export default function QRAnalyticsMobileScreen() {
 
   const insets = useSafeAreaInsets();
   const headerTopInset = useHeaderContentTopInset({ hasSubtitle: true });
-
-  let tabBarHeight = 0;
-  try {
-    tabBarHeight = useBottomTabBarHeight();
-  } catch (e) {
-    logger.warn('useBottomTabBarHeight failed (not in tabs?)');
-    tabBarHeight = 0;
-  }
+  const tabBarHeight = React.useContext(BottomTabBarHeightContext) ?? 0;
 
   const ctrl = useAnalyticsController();
 
@@ -112,13 +108,6 @@ export default function QRAnalyticsMobileScreen() {
     .map((s: any) => (Number.isFinite(s?.scans) ? s.scans : 0))
     .slice(-14);
 
-  const heatmapData = Array.isArray((ctrl as any)?.heatmapData) ? (ctrl as any).heatmapData : [];
-
-  const events = scans.map((s: any) => ({
-    ts: s?.createdAt,
-    city: s?.location ?? undefined,
-    title: `${s?.device || ''} • ${s?.browser || ''}`.trim(),
-  }));
   const scansPerDay = useMemo(() => {
     const map = new Map<string, number>();
     (ctrl as any)?.scans?.forEach((s: any) => {
@@ -128,7 +117,11 @@ export default function QRAnalyticsMobileScreen() {
     });
     return map;
   }, [ctrl]);
-  const calendarMonth = (ctrl as any)?.calendarMonth || new Date();
+  const calendarMonthValue = (ctrl as any)?.calendarMonth;
+  const calendarMonth = useMemo(
+    () => (calendarMonthValue instanceof Date ? calendarMonthValue : new Date()),
+    [calendarMonthValue]
+  );
   const calendarMonthLabel = useMemo(
     () => calendarMonth.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' }),
     [calendarMonth]

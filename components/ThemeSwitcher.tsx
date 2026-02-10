@@ -12,13 +12,13 @@ import { useTheme } from '../context/ThemeContext';
 
 const ThemeSwitcher = () => {
   const [isOpen, setIsOpen] = useState(false);
+  const scaleAnim = useRef(new Animated.Value(1)).current;
   const { theme, themes, setTheme } = useTheme();
   if (!theme || !themes) return null;
   
   const themeTyped = theme as ThemeKey;
   const themeKeys = Object.keys(themes) as ThemeKey[];
   if (!gradientColors[themeTyped]) return null;
-  const scaleAnim = useRef(new Animated.Value(1)).current;
 
   const handlePress = () => {
     Animated.spring(scaleAnim, { toValue: 0.9, useNativeDriver: true }).start(() => {

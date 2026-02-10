@@ -46,7 +46,16 @@ const defaultMessagesMeta = (): MessagesMeta => ({
 
 function mergeMessagesAsc(existing: AppealMessage[], incoming: AppealMessage[]) {
   const map = new Map<number, AppealMessage>();
-  [...existing, ...incoming].forEach((m) => map.set(m.id, { ...map.get(m.id), ...m }));
+  [...existing, ...incoming].forEach((m) => {
+    const prev = map.get(m.id);
+    const next: AppealMessage = { ...(prev || {} as AppealMessage), ...m };
+    // Keep already rendered attachments when a realtime event brings the same message without files.
+    const prevAttachments = prev?.attachments;
+    if (prevAttachments && prevAttachments.length > 0 && Array.isArray(m.attachments) && m.attachments.length === 0) {
+      next.attachments = prevAttachments;
+    }
+    map.set(m.id, next);
+  });
   return Array.from(map.values()).sort(
     (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
   );

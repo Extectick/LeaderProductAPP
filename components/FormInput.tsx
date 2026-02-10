@@ -1,14 +1,12 @@
 // components/FormInput.tsx
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import React, { forwardRef, useEffect, useMemo, useState } from 'react';
+import React, { forwardRef, useEffect, useMemo } from 'react';
 import {
-  NativeSyntheticEvent,
   Platform,
   StyleProp,
   StyleSheet,
   Text,
   TextInput,
-  TextInputFocusEventData,
   TextInputProps,
   TextStyle,
   TouchableOpacity,
@@ -72,7 +70,6 @@ const FormInput = forwardRef<TextInput, FormInputProps>((props, ref) => {
   const { theme, themes } = useTheme();
   const colors = themes[theme];
 
-  const [focused, setFocused] = useState(false);
   const cfg = SIZES[size];
 
   const focusSV = useSharedValue(0);
@@ -234,15 +231,13 @@ const FormInput = forwardRef<TextInput, FormInputProps>((props, ref) => {
     overflow: 'hidden',
   }));
 
-  const handleFocus = (e: NativeSyntheticEvent<TextInputFocusEventData>) => {
-    setFocused(true);
+  const handleFocus = (e: any) => {
     focusSV.value = withTiming(1, { duration: 120 });
-    onFocus?.(e);
+    onFocus?.(e as any);
   };
-  const handleBlur = (e: NativeSyntheticEvent<TextInputFocusEventData>) => {
-    setFocused(false);
+  const handleBlur = (e: any) => {
     focusSV.value = withTiming(0, { duration: 120 });
-    onBlur?.(e);
+    onBlur?.(e as any);
   };
 
   return (
@@ -313,5 +308,6 @@ const FormInput = forwardRef<TextInput, FormInputProps>((props, ref) => {
     </View>
   );
 });
+FormInput.displayName = 'FormInput';
 
 export default FormInput;

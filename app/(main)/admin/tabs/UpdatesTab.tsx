@@ -614,7 +614,7 @@ export default function UpdatesTab({ active, styles, colors, isWide }: UpdatesTa
                   {selectedUpdateId ? `Редактирование #${selectedUpdateId}` : 'Новая версия'}
                 </Text>
                 {selectedUpdateId ? (
-                  <Pressable onPress={resetUpdateForm} style={styles.linkBtn}>
+                  <Pressable onPress={() => resetUpdateForm()} style={styles.linkBtn}>
                     <Text style={styles.linkBtnText}>Сбросить форму</Text>
                   </Pressable>
                 ) : null}

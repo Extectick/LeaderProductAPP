@@ -366,6 +366,7 @@ export default function AppealChatInput({
                   styles.input,
                   { color: textPrimary, height: inputHeight },
                   Platform.OS === 'web' && styles.inputWeb,
+                  Platform.OS === 'web' && ({ outlineStyle: 'none', boxShadow: 'none' } as any),
                 ]}
                 multiline
                 scrollEnabled={inputScrollable || inputHeight >= maxInputHeight}
@@ -526,6 +527,8 @@ const styles = StyleSheet.create({
   },
   inputWeb: {
     outlineWidth: 0,
+    outlineColor: 'transparent',
+    borderWidth: 0,
   },
   emojiBtn: { marginLeft: 2 },
   recordingBox: {

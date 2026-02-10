@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import React, { useCallback, useEffect } from 'react';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import {
   BackHandler,
   Platform,
@@ -19,18 +20,7 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { ActionSheetProps } from './types';
 
-// ⚠️ НЕ импортируем RNGH здесь (ломает web).
-// Динамически подключим его только на native:
 const isWeb = Platform.OS === 'web';
-let GestureDetector: React.ComponentType<any> = ({ children }: any) => <>{children}</>;
-let createPan: any = null;
-
-if (!isWeb) {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const RNGH = require('react-native-gesture-handler');
-  GestureDetector = RNGH.GestureDetector;
-  createPan = () => RNGH.Gesture.Pan();
-}
 
 const SPRING = { mass: 0.5, damping: 18, stiffness: 220 };
 const BACKDROP_IN = 220;
@@ -51,13 +41,13 @@ const ActionSheet: React.FC<ActionSheetProps> = ({ visible, buttons, onClose }) 
       progress.value = withTiming(0, { duration: BACKDROP_OUT });
       translateY.value = withTiming(sheetHeight.value, { duration: 220 });
     }
-  }, [visible]);
+  }, [visible, progress, sheetHeight, translateY]);
 
   const closeSheet = useCallback(() => onClose?.(), [onClose]);
 
   // Пан-жест только на native
   const pan = !isWeb
-    ? createPan()
+    ? Gesture.Pan()
         .onUpdate((e: any) => {
           'worklet';
           translateY.value = Math.max(0, e.translationY);
@@ -144,7 +134,7 @@ const ActionSheet: React.FC<ActionSheetProps> = ({ visible, buttons, onClose }) 
   if (!visible) return null;
 
   const SheetBody = ({ children }: any) =>
-    isWeb ? <View>{children}</View> : <GestureDetector gesture={pan}>{children}</GestureDetector>;
+    isWeb ? <View>{children}</View> : <GestureDetector gesture={pan!}>{children}</GestureDetector>;
 
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="box-none">

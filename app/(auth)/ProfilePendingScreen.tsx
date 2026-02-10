@@ -108,7 +108,9 @@ export default function ProfilePendingScreen() {
               title={checking ? 'Проверяем...' : 'Проверить статус'}
               loading={checking}
               gradientColors={btnGradient}
-              onPress={handleRefresh}
+              onPress={() => {
+                void handleRefresh();
+              }}
             />
             <TouchableOpacity style={styles.logoutBtn} onPress={openConfirm} activeOpacity={0.85}>
               <Text style={styles.logoutText}>Выйти</Text>

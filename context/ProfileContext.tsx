@@ -53,78 +53,55 @@ export const ProfileProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchProfile = async (accessToken: string) => {
-    const profileData = await getProfile();
-    await AsyncStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profileData));
-
+  const fetchProfile = async (accessToken: string): Promise<Profile> => {
+    void accessToken;
+    setLoading(true);
+    setError(null);
+    try {
+      const profileData = (await getProfile()) as Profile;
+      await AsyncStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profileData));
+      setProfile(profileData);
+      return profileData;
+    } catch (err) {
+      setError('Failed to fetch profile');
+      throw err;
+    } finally {
+      setLoading(false);
+    }
   };
 
-  // const loadProfile = async () => {
-  //   setLoading(true);
-  //   try {
-  //     const token = await ensureAuth();
-  //     if (token) {
-  //       await fetchProfile(token);
-  //     }
-  //   } catch (err) {
-  //     setError('Failed to load profile');
-  //   } finally {
-  //     setLoading(false);
-  //   }
-  // };
+  const loadProfile = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const cached = await AsyncStorage.getItem(PROFILE_STORAGE_KEY);
+      if (cached) {
+        setProfile(JSON.parse(cached));
+        return;
+      }
+      await fetchProfile('');
+    } catch {
+      setError('Failed to load profile');
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  // const clearProfile = async () => {
-  //   await AsyncStorage.removeItem(PROFILE_STORAGE_KEY);
-  //   setProfile(null);
-  // };
+  const clearProfile = async () => {
+    await AsyncStorage.removeItem(PROFILE_STORAGE_KEY);
+    setProfile(null);
+  };
 
-  // const selectProfileType = async (type: ProfileType) => {
-  //   const token = await ensureAuth();
-  //   if (!token) throw new Error('Not authenticated');
+  const selectProfileType = async (type: ProfileType) => {
+    void type;
+    setError('Profile type switch is not implemented in ProfileContext');
+  };
 
-  //   setLoading(true);
-  //   try {
-  //     let createdProfile;
-  //     switch (type) {
-  //       case 'CLIENT':
-  //         createdProfile = await apiClient.createClientProfile(token);
-  //         break;
-  //       case 'SUPPLIER':
-  //         createdProfile = await apiClient.createSupplierProfile(token);
-  //         break;
-  //       case 'EMPLOYEE':
-  //         // TODO: Можно добавить departmentId в будущем
-  //         createdProfile = await apiClient.createEmployeeProfile(token, {
-  //           firstName: 'Имя',
-  //           lastName: 'Фамилия',
-  //           middleName: null,
-  //           departmentId: 1,
-  //         });
-  //         break;
-  //       default:
-  //         throw new Error('Invalid profile type');
-  //     }
-
-  //     // Обновляем данные профиля
-  //     await fetchProfile(token);
-  //   } catch (err) {
-  //     setError('Failed to select profile type');
-  //     throw err;
-  //   } finally {
-  //     setLoading(false);
-  //   }
-  // };
-
-  // useEffect(() => {
-  //   loadProfile();
-  // }, []);
-
-  // return (
-  //   <ProfileContext.Provider value={{ profile, loading, error, loadProfile, fetchProfile, clearProfile, selectProfileType }}>
-  //     {children}
-  //   </ProfileContext.Provider>
-  // );
-  return null
+  return (
+    <ProfileContext.Provider value={{ profile, loading, error, loadProfile, fetchProfile, clearProfile, selectProfileType }}>
+      {children}
+    </ProfileContext.Provider>
+  );
 };
 
 export const useProfile = () => useContext(ProfileContext);

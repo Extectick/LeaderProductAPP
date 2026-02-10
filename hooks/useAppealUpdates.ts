@@ -111,5 +111,5 @@ export function useAppealUpdates(
       }
       socket?.disconnect();
     };
-  }, [appealId, userId, deptKey]);
+  }, [appealId, userId, deptKey, deptList.length]);
 }

@@ -1,7 +1,8 @@
 import { useTheme } from '@/context/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import React, { useMemo, useState } from 'react';
-import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 export const PERIODS = [
   { key: '24h', label: 'За 24 часа', subtract: () => new Date(Date.now() - 24 * 60 * 60 * 1000) },
@@ -45,18 +46,6 @@ export default function PeriodModal({
   const [showFromPicker, setShowFromPicker] = useState(false);
   const [showToPicker, setShowToPicker] = useState(false);
 
-  // ленивая загрузка DateTimePicker, чтобы не падать, если пакета нет
-  const DateTimePicker = useMemo(() => {
-    if (Platform.OS === 'web') return null;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const mod = require('@react-native-community/datetimepicker');
-      return mod?.default || mod;
-    } catch {
-      return null;
-    }
-  }, []);
-
   // синхронизировать при открытии
   React.useEffect(() => {
     if (!visible) return;
@@ -80,7 +69,7 @@ export default function PeriodModal({
   // --- Вспом. компоненты даты ---
   const renderWebDateInput = (value: string, onChange: (s: string) => void) => {
     // RN-web допускает нативный input
-    // eslint-disable-next-line react/no-unknown-property
+     
     return <input
       type="date"
       value={value}
@@ -170,16 +159,8 @@ export default function PeriodModal({
                     <View style={{ flex: 1 }}>
                       {Platform.OS === 'web' ? (
                         renderWebDateInput(fromStr, setFromStr)
-                      ) : DateTimePicker ? (
-                        renderNativeDateButton('from', fromStr, () => setShowFromPicker(true))
                       ) : (
-                        <TextInput
-                          value={fromStr}
-                          onChangeText={setFromStr}
-                          placeholder="YYYY-MM-DD"
-                          placeholderTextColor={colors.secondaryText}
-                          style={styles.input}
-                        />
+                        renderNativeDateButton('from', fromStr, () => setShowFromPicker(true))
                       )}
                     </View>
                   </View>
@@ -191,16 +172,8 @@ export default function PeriodModal({
                     <View style={{ flex: 1 }}>
                       {Platform.OS === 'web' ? (
                         renderWebDateInput(toStr, setToStr)
-                      ) : DateTimePicker ? (
-                        renderNativeDateButton('to', toStr, () => setShowToPicker(true))
                       ) : (
-                        <TextInput
-                          value={toStr}
-                          onChangeText={setToStr}
-                          placeholder="YYYY-MM-DD"
-                          placeholderTextColor={colors.secondaryText}
-                          style={styles.input}
-                        />
+                        renderNativeDateButton('to', toStr, () => setShowToPicker(true))
                       )}
                     </View>
                   </View>
@@ -237,7 +210,7 @@ export default function PeriodModal({
         </View>
 
         {/* Нативные пикеры (Android/iOS) в оверлее */}
-        {DateTimePicker && showFromPicker && (
+        {showFromPicker && (
           <View style={styles.pickerSheet}>
             <View style={styles.pickerCard}>
               <Text style={styles.pickerTitle}>Дата (С)</Text>
@@ -268,7 +241,7 @@ export default function PeriodModal({
           </View>
         )}
 
-        {DateTimePicker && showToPicker && (
+        {showToPicker && (
           <View style={styles.pickerSheet}>
             <View style={styles.pickerCard}>
               <Text style={styles.pickerTitle}>Дата (По)</Text>

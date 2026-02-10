@@ -24,7 +24,7 @@ export function useAnalyticsController() {
   });
 
   // heatmap
-  const [heatmapData, setHeatmapData] = useState<Array<{ date: string | Date; value: number }>>([]);
+  const [heatmapData, setHeatmapData] = useState<{ date: string | Date; value: number }[]>([]);
   const [heatmapLoading, setHeatmapLoading] = useState(true);
   const [calendarMonth, setCalendarMonth] = useState<Date>(new Date());
 

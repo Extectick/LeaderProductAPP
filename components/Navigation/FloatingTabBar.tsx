@@ -269,11 +269,11 @@ export default function FloatingTabBar({ items, state, navigation, insets }: Pro
                       onLongPress={onLongPress}
                       style={[styles.item, { width: `${itemWidthPercent}%` }]}
                     >
-                      {({ pressed, hovered }) => (
+                      {({ pressed }) => (
                         <MotiView
                           style={styles.itemContent}
                           animate={{
-                            scale: pressed ? 0.94 : hovered ? 1.04 : 1,
+                            scale: pressed ? 0.94 : 1,
                             opacity: pressed ? 0.9 : 1,
                           }}
                           transition={{ type: 'timing', duration: 120 }}

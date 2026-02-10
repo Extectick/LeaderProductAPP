@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -166,7 +166,7 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
       return;
     }
     void runCheck('startup');
-  }, [runCheck]);
+  }, [completeStartup, runCheck, shouldCheck, versionCode]);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -243,7 +243,7 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
           try {
             const contentUri = await FileSystem.getContentUriAsync(fileUri);
             await Linking.openURL(contentUri);
-          } catch (e) {
+          } catch {
             await Linking.openURL(updateInfo.downloadUrl);
           }
           setProgress(100);
@@ -282,6 +282,11 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
         );
         const result = await downloadRef.current.downloadAsync();
         downloadRef.current = null;
+        if (!result?.uri) {
+          setErrorMessage('Не удалось загрузить файл обновления.');
+          setStage('error');
+          return;
+        }
         setStage('verifying');
         if (result.md5 && updateInfo.checksumMd5 && result.md5.toLowerCase() !== updateInfo.checksumMd5.toLowerCase()) {
           setErrorMessage('Контрольная сумма файла не совпадает. Повторите загрузку.');
@@ -292,7 +297,7 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
           setStage('opening');
           const contentUri = await FileSystem.getContentUriAsync(result.uri);
           await Linking.openURL(contentUri);
-        } catch (e) {
+        } catch {
           setStage('opening');
           await Linking.openURL(updateInfo.downloadUrl);
         }

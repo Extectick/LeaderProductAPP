@@ -133,7 +133,7 @@ export function SelectorCard({
   styles: AdminStyles;
   icon: React.ComponentProps<typeof Ionicons>['name'];
   label: string;
-  options: Array<{ value: any; label: string }>;
+  options: { value: any; label: string }[];
   selected: any;
   onSelect: (val: any) => void;
 }) {

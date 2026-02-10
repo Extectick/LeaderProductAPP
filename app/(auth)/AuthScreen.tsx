@@ -1,5 +1,6 @@
 // app/(auth)/AuthScreen.tsx
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import Constants from 'expo-constants';
@@ -186,9 +187,12 @@ export default function AuthScreen() {
 
   /* state */
   const [tab, setTab] = useState<0 | 1>(0); // 0=login, 1=register
-  const [email, setEmail] = useState(__authInitCache.email);
-  const [password, setPassword] = useState(__authInitCache.password);
-  const [passwordRepeat, setPasswordRepeat] = useState('');
+  const [loginEmail, setLoginEmail] = useState(__authInitCache.email);
+  const [loginPassword, setLoginPassword] = useState(__authInitCache.password);
+  const [registerEmail, setRegisterEmail] = useState('');
+  const [registerPassword, setRegisterPassword] = useState('');
+  const [registerPasswordRepeat, setRegisterPasswordRepeat] = useState('');
+  const [verifyEmail, setVerifyEmail] = useState('');
   const [code, setCode] = useState('');
   const [modeVerify, setModeVerify] = useState(false);
   const [modeReset, setModeReset] = useState(false);
@@ -208,9 +212,11 @@ export default function AuthScreen() {
   const [resetResendTimer, setResetResendTimer] = useState(0);
 
   // field-level errors (онлайн-валидация)
-  const [emailErr, setEmailErr] = useState('');
-  const [passErr, setPassErr] = useState('');
-  const [passRepeatErr, setPassRepeatErr] = useState('');
+  const [loginEmailErr, setLoginEmailErr] = useState('');
+  const [loginPassErr, setLoginPassErr] = useState('');
+  const [registerEmailErr, setRegisterEmailErr] = useState('');
+  const [registerPassErr, setRegisterPassErr] = useState('');
+  const [registerPassRepeatErr, setRegisterPassRepeatErr] = useState('');
   const [codeErr, setCodeErr] = useState('');
   const [resetEmailErr, setResetEmailErr] = useState('');
   const [resetCodeErr, setResetCodeErr] = useState('');
@@ -220,21 +226,19 @@ export default function AuthScreen() {
   // ширина стабильна — НЕ меряем её onLayout
   const maxFormWidth = isWeb ? (isWebMobile ? 520 : isWebTablet ? 700 : 470) : 420;
   const outerW = Math.max(0, Math.min(maxFormWidth, winW - contentPadH * 2));
-  const pageW = Math.max(0, Math.floor(outerW - cardPadH * 2));
-  const viewportW = pageW;
   const logoWrapSize = Math.round(Math.min(Math.max(outerW * 0.34, 104), isWeb ? 156 : 148));
   const logoSize = Math.round(logoWrapSize * 0.78);
 
   /* refs */
-  const passRef = useRef<TextInput>(null);
-  const passRepeatRef = useRef<TextInput>(null);
+  const loginPassRef = useRef<TextInput>(null);
+  const registerPassRef = useRef<TextInput>(null);
+  const registerPassRepeatRef = useRef<TextInput>(null);
   const verifyInFlight = useRef(false);
   const lastVerifyCode = useRef('');
   const resetVerifyInFlight = useRef(false);
   const lastResetVerifyCode = useRef('');
 
   /* anim */
-  const sceneX = useRef(new Animated.Value(0)).current;
   const fadeIn = useRef(new Animated.Value(0)).current;
   const errorShake = useRef(new Animated.Value(0)).current;
   const tabPill = useRef(new Animated.Value(0)).current;
@@ -266,6 +270,11 @@ export default function AuthScreen() {
     setResetResendTimer(0);
     setBannerError('');
     setBannerNotice('');
+    setLoginEmailErr('');
+    setLoginPassErr('');
+    setRegisterEmailErr('');
+    setRegisterPassErr('');
+    setRegisterPassRepeatErr('');
     Haptics.selectionAsync();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
@@ -282,7 +291,7 @@ export default function AuthScreen() {
       Animated.timing(errorShake, { toValue: 0, duration: 60, useNativeDriver: true }),
     ]).start();
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-  }, [bannerError]);
+  }, [bannerError, errorShake]);
 
   // preload remember — делаем строго один раз, с кэшем
   const [preloadReady, setPreloadReady] = useState(__authInitCache.initialized);
@@ -300,8 +309,8 @@ export default function AuthScreen() {
         const savedPassword = remembered ? await AsyncStorage.getItem(STORAGE_KEYS.REMEMBER_PASSWORD) : '';
         if (cancelled) return;
         setRemember(remembered);
-        setEmail(savedEmail || '');
-        setPassword(savedPassword || '');
+        setLoginEmail(savedEmail || '');
+        setLoginPassword(savedPassword || '');
         // в кэш тоже
         __authInitCache.remember = remembered;
         __authInitCache.email = savedEmail || '';
@@ -320,29 +329,17 @@ export default function AuthScreen() {
 
   useEffect(() => {
     if (remember) {
-      AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_EMAIL, email);
-      __authInitCache.email = email;
+      AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_EMAIL, loginEmail);
+      __authInitCache.email = loginEmail;
     }
-  }, [email, remember]);
+  }, [loginEmail, remember]);
 
   useEffect(() => {
     if (remember) {
-      AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_PASSWORD, password);
-      __authInitCache.password = password;
+      AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_PASSWORD, loginPassword);
+      __authInitCache.password = loginPassword;
     }
-  }, [password, remember]);
-
-  // запуск анимации ленты, когда preload готов и при смене таба
-  useEffect(() => {
-    if (!preloadReady) return;
-    Animated.timing(sceneX, {
-      toValue: -tab * pageW,
-      duration: 420,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [preloadReady, tab, pageW]);
+  }, [loginPassword, remember]);
 
   // таймер «отправить повторно»
   useEffect(() => {
@@ -393,24 +390,36 @@ export default function AuthScreen() {
   };
 
   /* validators (по вводу) */
-  const onEmailChange = (v: string) => {
-    setEmail(v);
-    if (!v.trim()) setEmailErr('Укажите email');
-    else if (!validateEmail(v.trim())) setEmailErr('Некорректный email');
-    else setEmailErr('');
+  const onLoginEmailChange = (v: string) => {
+    setLoginEmail(v);
+    if (!v.trim()) setLoginEmailErr('Укажите email');
+    else if (!validateEmail(v.trim())) setLoginEmailErr('Некорректный email');
+    else setLoginEmailErr('');
   };
-  const onPassChange = (v: string) => {
-    setPassword(v);
-    if (!v) setPassErr('Введите пароль');
-    else if (v.length < 6) setPassErr('Минимум 6 символов');
-    else setPassErr('');
-    if (passwordRepeat) setPassRepeatErr(v === passwordRepeat ? '' : 'Пароли не совпадают');
+  const onLoginPassChange = (v: string) => {
+    setLoginPassword(v);
+    if (!v) setLoginPassErr('Введите пароль');
+    else if (v.length < 6) setLoginPassErr('Минимум 6 символов');
+    else setLoginPassErr('');
   };
-  const onPassRepeatChange = (v: string) => {
-    setPasswordRepeat(v);
-    if (!v) setPassRepeatErr('Повторите пароль');
-    else if (v !== password) setPassRepeatErr('Пароли не совпадают');
-    else setPassRepeatErr('');
+  const onRegisterEmailChange = (v: string) => {
+    setRegisterEmail(v);
+    if (!v.trim()) setRegisterEmailErr('Укажите email');
+    else if (!validateEmail(v.trim())) setRegisterEmailErr('Некорректный email');
+    else setRegisterEmailErr('');
+  };
+  const onRegisterPassChange = (v: string) => {
+    setRegisterPassword(v);
+    if (!v) setRegisterPassErr('Введите пароль');
+    else if (v.length < 6) setRegisterPassErr('Минимум 6 символов');
+    else setRegisterPassErr('');
+    if (registerPasswordRepeat) setRegisterPassRepeatErr(v === registerPasswordRepeat ? '' : 'Пароли не совпадают');
+  };
+  const onRegisterPassRepeatChange = (v: string) => {
+    setRegisterPasswordRepeat(v);
+    if (!v) setRegisterPassRepeatErr('Повторите пароль');
+    else if (v !== registerPassword) setRegisterPassRepeatErr('Пароли не совпадают');
+    else setRegisterPassRepeatErr('');
   };
   const onCodeChange = (v: string) => {
     const only = v.replace(/[^\d]/g, '').slice(0, 6);
@@ -445,35 +454,41 @@ export default function AuthScreen() {
     else setResetPassRepeatErr('');
   };
 
-  const canLogin = !emailErr && !passErr && !!email.trim() && !!password;
-  const canRegister = !emailErr && !passErr && !passRepeatErr && !!email.trim() && !!password && !!passwordRepeat;
+  const canLogin = !loginEmailErr && !loginPassErr && !!loginEmail.trim() && !!loginPassword;
+  const canRegister =
+    !registerEmailErr &&
+    !registerPassErr &&
+    !registerPassRepeatErr &&
+    !!registerEmail.trim() &&
+    !!registerPassword &&
+    !!registerPasswordRepeat;
 
   /* actions */
   const handleLogin = async () => {
     if (!canLogin) {
-      if (!email.trim()) setEmailErr('Укажите email');
-      if (!password) setPassErr('Введите пароль');
+      if (!loginEmail.trim()) setLoginEmailErr('Укажите email');
+      if (!loginPassword) setLoginPassErr('Введите пароль');
       setBannerError('Проверьте обязательные поля');
       return;
     }
-    const em = normalizeEmail(email);
+    const em = normalizeEmail(loginEmail);
 
     if (!setAuthenticated || !setProfile) return setBannerError('Ошибка аутентификации');
 
     setLoading(true);
     setBannerError('');
     try {
-      await login(em, password);
+      await login(em, loginPassword);
       setAuthenticated(true);
 
       if (remember) {
         __authInitCache.remember = true;
         __authInitCache.email = em;
-        __authInitCache.password = password;
+        __authInitCache.password = loginPassword;
         await AsyncStorage.multiSet([
           [STORAGE_KEYS.REMEMBER_FLAG, '1'],
           [STORAGE_KEYS.REMEMBER_EMAIL, em],
-          [STORAGE_KEYS.REMEMBER_PASSWORD, password],
+          [STORAGE_KEYS.REMEMBER_PASSWORD, loginPassword],
         ]);
       } else {
         __authInitCache.remember = false;
@@ -505,9 +520,7 @@ export default function AuthScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e: any) {
       const msg = normalizeError(e);
-      setBannerError(
-        msg.includes('обновить токен') ? 'Неверный email или пароль' : msg
-      );
+      setBannerError(msg);
     } finally {
       setLoading(false);
     }
@@ -515,29 +528,25 @@ export default function AuthScreen() {
 
   const handleRegister = async () => {
     if (!canRegister) {
-      if (!email.trim()) setEmailErr('Укажите email');
-      if (!password) setPassErr('Введите пароль');
-      if (!passwordRepeat) setPassRepeatErr('Повторите пароль');
+      if (!registerEmail.trim()) setRegisterEmailErr('Укажите email');
+      if (!registerPassword) setRegisterPassErr('Введите пароль');
+      if (!registerPasswordRepeat) setRegisterPassRepeatErr('Повторите пароль');
       setBannerError('Проверьте обязательные поля');
       return;
     }
-    const em = normalizeEmail(email);
+    const em = normalizeEmail(registerEmail);
 
     setLoading(true);
     setBannerError('');
     try {
-      await register(em, password, em.split('@')[0]);
-      setEmail(em);
+      await register(em, registerPassword, em.split('@')[0]);
+      setVerifyEmail(em);
       setCode('');
       setCodeErr('');
       setModeReset(false);
       setModeVerify(true);
       setResendTimer(30);
       Haptics.selectionAsync();
-      if (remember) {
-        await AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_EMAIL, em);
-        await AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_FLAG, '1');
-      }
     } catch (e: any) {
       setBannerError(normalizeError(e));
     } finally {
@@ -549,7 +558,7 @@ export default function AuthScreen() {
     const trimmed = String(otp || '').trim();
     try {
       if (trimmed.length !== 6) return;
-      const em = normalizeEmail(email);
+      const em = normalizeEmail(verifyEmail || registerEmail);
       if (!validateEmail(em)) {
         setBannerError('Некорректный email');
         return;
@@ -561,7 +570,7 @@ export default function AuthScreen() {
       lastVerifyCode.current = trimmed;
       setLoading(true);
       setBannerError('');
-      setEmail(em);
+      setVerifyEmail(em);
       const verifiedProfile = await verify(em, trimmed);
       setCodeErr('');
       if (setAuthenticated) setAuthenticated(true);
@@ -588,12 +597,12 @@ export default function AuthScreen() {
     setBannerError('');
     setBannerNotice('');
     try {
-      const em = normalizeEmail(email);
+      const em = normalizeEmail(verifyEmail || registerEmail);
       if (!validateEmail(em)) {
         setBannerError('Некорректный email');
         return;
       }
-      setEmail(em);
+      setVerifyEmail(em);
       await Haptics.selectionAsync();
       await resendVerification(em);
       setCode('');
@@ -625,8 +634,8 @@ export default function AuthScreen() {
     if (v) {
       __authInitCache.remember = true;
       await AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_FLAG, '1');
-      await AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_EMAIL, normalizeEmail(email));
-      await AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_PASSWORD, password);
+      await AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_EMAIL, normalizeEmail(loginEmail));
+      await AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_PASSWORD, loginPassword);
     } else {
       __authInitCache.remember = false;
       __authInitCache.email = '';
@@ -645,7 +654,7 @@ export default function AuthScreen() {
     setResetStep(0);
     setBannerError('');
     setBannerNotice('');
-    const em = email.trim() ? normalizeEmail(email) : '';
+    const em = loginEmail.trim() ? normalizeEmail(loginEmail) : '';
     setResetEmail(em);
     setResetEmailErr(em && validateEmail(em) ? '' : em ? 'Некорректный email' : '');
     setResetCode('');
@@ -794,8 +803,9 @@ export default function AuthScreen() {
       setResetCodeErr('');
       setResetResendTimer(0);
       setTab(0);
-      setPassword('');
-      setPasswordRepeat('');
+      setLoginPassword('');
+      setRegisterPassword('');
+      setRegisterPasswordRepeat('');
       setShowPassword(false);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e: any) {
@@ -818,8 +828,17 @@ export default function AuthScreen() {
     }
   };
 
+  const handleWebEnter = (event: any, action: () => void) => {
+    if (Platform.OS !== 'web') return;
+    if (event?.nativeEvent?.key !== 'Enter') return;
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    if (loading || modeVerify || modeReset) return;
+    action();
+  };
+
   /* derived */
-  const ps = passwordScore(password);
+  const ps = passwordScore(registerPassword);
   const pillWidth = Math.max(0, outerW / 2 - 6);
   const pillTranslate = tabPill.interpolate({ inputRange: [0, 1], outputRange: [4, 8 + pillWidth] });
   const versionLabel = (
@@ -1211,231 +1230,222 @@ export default function AuthScreen() {
                   )}
                 </View>
               ) : !modeVerify ? (
-                // ---- viewport с жёстким клипом по внутренней ширине карточки ----
-                <View style={{ width: viewportW, alignSelf: 'center', overflow: 'hidden' }}>
-                  <Animated.View
-                    style={{
-                      width: viewportW * 2,
-                      flexDirection: 'row',
-                      transform: [{ translateX: sceneX }],
-                    }}
-                  >
-                    {/* LOGIN */}
-                    <View style={[styles.slide, { width: viewportW }]}>
-                      <Text style={styles.title}>Вход</Text>
+                tab === 0 ? (
+                  <View style={styles.slide}>
+                    <Text style={styles.title}>Вход</Text>
+                    <View style={[styles.topBlock, { minHeight: minTopHeight ?? undefined }]}>
+                      <View
+                        onLayout={(e) => {
+                          if (measureRef.current.locked) return;
+                          measureRef.current.login = Math.round(e.nativeEvent.layout.height);
+                          tryLockMinHeight();
+                        }}
+                      >
+                        <View style={styles.fieldCompact}>
+                          <FormInput
+                            size={fieldSize}
+                            noMargin
+                            label="Email"
+                            value={loginEmail}
+                            onChangeText={onLoginEmailChange}
+                            onBlur={() => setLoginEmail((prev) => normalizeEmail(prev))}
+                            placeholder="your@email.com"
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            keyboardType="email-address"
+                            textContentType="emailAddress"
+                            autoComplete="email"
+                            returnKeyType="next"
+                            onKeyPress={(e) => handleWebEnter(e, () => loginPassRef.current?.focus())}
+                            onSubmitEditing={() => loginPassRef.current?.focus()}
+                            editable={!loading}
+                            error={loginEmailErr || undefined}
+                          />
+                        </View>
 
-                      {/* фиксированная minHeight только для выравнивания кнопок между табами */}
-                      <View style={[styles.topBlock, { minHeight: minTopHeight ?? undefined }]}>
-                        <View
-                          onLayout={(e) => {
-                            if (measureRef.current.locked) return;
-                            measureRef.current.login = Math.round(e.nativeEvent.layout.height);
-                            tryLockMinHeight();
-                          }}
-                        >
-                          <View style={styles.fieldCompact}>
-                            <FormInput
-                              size={fieldSize}
-                              noMargin
-                              label="Email"
-                              value={email}
-                              onChangeText={onEmailChange}
-                              onBlur={() => setEmail((prev) => normalizeEmail(prev))}
-                              placeholder="your@email.com"
-                              autoCapitalize="none"
-                              autoCorrect={false}
-                              keyboardType="email-address"
-                              textContentType="emailAddress"
-                              autoComplete="email"
-                              returnKeyType="next"
-                              onSubmitEditing={() => passRef.current?.focus()}
-                              editable={!loading}
-                              error={emailErr || undefined}
-                            />
-                          </View>
+                        <View style={[styles.fieldCompact, styles.loginPasswordFieldCompact]}>
+                          <FormInput
+                            size={fieldSize}
+                            noMargin
+                            label="Пароль"
+                            ref={loginPassRef}
+                            value={loginPassword}
+                            onChangeText={onLoginPassChange}
+                            placeholder="••••••••"
+                            secureTextEntry={!showPassword}
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            textContentType="password"
+                            autoComplete="password"
+                            returnKeyType="done"
+                            onKeyPress={(e) => handleWebEnter(e, handleLogin)}
+                            onSubmitEditing={handleLogin}
+                            rightIcon={showPassword ? 'eye-off' : 'eye'}
+                            onIconPress={() => setShowPassword((p) => !p)}
+                            editable={!loading}
+                            error={loginPassErr || undefined}
+                          />
+                        </View>
 
-                          <View style={[styles.fieldCompact, styles.loginPasswordFieldCompact]}>
-                            <FormInput
-                              size={fieldSize}
-                              noMargin
-                              label="Пароль"
-                              ref={passRef}
-                              value={password}
-                              onChangeText={onPassChange}
-                              placeholder="••••••••"
-                              secureTextEntry={!showPassword}
-                              autoCapitalize="none"
-                              autoCorrect={false}
-                              textContentType="password"
-                              autoComplete="password"
-                              returnKeyType="done"
-                              onSubmitEditing={handleLogin}
-                              rightIcon={showPassword ? 'eye-off' : 'eye'}
-                              onIconPress={() => setShowPassword((p) => !p)}
-                              editable={!loading}
-                              error={passErr || undefined}
-                            />
-                          </View>
-
-                          <View style={[styles.loginFooterRow, loginFooterSpacingStyle]}>
-                            <Pressable
-                              onPress={() => {
-                                void handleRememberToggle(!remember);
+                        <View style={[styles.loginFooterRow, loginFooterSpacingStyle]}>
+                          <Pressable
+                            onPress={() => {
+                              void handleRememberToggle(!remember);
+                            }}
+                            style={({ pressed }) => [
+                              styles.rememberInline,
+                              pressed && styles.rememberInlinePressed,
+                            ]}
+                          >
+                            <Switch
+                              value={remember}
+                              onValueChange={(v) => {
+                                void handleRememberToggle(v);
                               }}
-                              style={({ pressed }) => [
-                                styles.rememberInline,
-                                pressed && styles.rememberInlinePressed,
-                              ]}
+                            />
+                            <Text
+                              style={[styles.rememberInlineText, isWebMobile && { fontSize: 13, lineHeight: 18 }]}
                             >
-                              <Switch
-                                value={remember}
-                                onValueChange={(v) => {
-                                  void handleRememberToggle(v);
-                                }}
+                              Запомнить?
+                            </Text>
+                          </Pressable>
+
+                          <TouchableOpacity
+                            activeOpacity={0.7}
+                            style={[styles.forgotInlineLink, isWebMobile && { marginLeft: 'auto' }]}
+                            onPress={openResetFlow}
+                          >
+                            <Text style={[styles.linkText, { color: grad[0] }, isWebMobile && { fontSize: 13 }]}>
+                              Забыли пароль?
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    </View>
+                    <View style={styles.buttonWrap}>
+                      <BounceButton
+                        title="Войти"
+                        onPress={handleLogin}
+                        loading={loading}
+                        gradientColors={btnGradient}
+                        style={{ height: BTN_HEIGHT }}
+                      />
+                    </View>
+                  </View>
+                ) : (
+                  <View style={styles.slide}>
+                    <Text style={styles.title}>Создать аккаунт ✨</Text>
+                    <View style={[styles.topBlock, { minHeight: minTopHeight ?? undefined }]}>
+                      <View
+                        onLayout={(e) => {
+                          if (measureRef.current.locked) return;
+                          measureRef.current.reg = Math.round(e.nativeEvent.layout.height);
+                          tryLockMinHeight();
+                        }}
+                      >
+                        <View style={styles.fieldCompact}>
+                          <FormInput
+                            size={fieldSize}
+                            noMargin
+                            label="Email"
+                            value={registerEmail}
+                            onChangeText={onRegisterEmailChange}
+                            onBlur={() => setRegisterEmail((prev) => normalizeEmail(prev))}
+                            placeholder="you@domain.com"
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            keyboardType="email-address"
+                            textContentType="emailAddress"
+                            autoComplete="email"
+                            returnKeyType="next"
+                            onKeyPress={(e) => handleWebEnter(e, () => registerPassRef.current?.focus())}
+                            onSubmitEditing={() => registerPassRef.current?.focus()}
+                            editable={!loading}
+                            error={registerEmailErr || undefined}
+                          />
+                        </View>
+
+                        <View style={styles.fieldCompact}>
+                          <FormInput
+                            size={fieldSize}
+                            noMargin
+                            label="Пароль"
+                            ref={registerPassRef}
+                            value={registerPassword}
+                            onChangeText={onRegisterPassChange}
+                            placeholder="Минимум 6 символов"
+                            secureTextEntry={!showPassword}
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            textContentType="newPassword"
+                            autoComplete="password-new"
+                            returnKeyType="next"
+                            onKeyPress={(e) => handleWebEnter(e, () => registerPassRepeatRef.current?.focus())}
+                            onSubmitEditing={() => registerPassRepeatRef.current?.focus()}
+                            rightIcon={showPassword ? 'eye-off' : 'eye'}
+                            onIconPress={() => setShowPassword((p) => !p)}
+                            editable={!loading}
+                            error={registerPassErr || undefined}
+                          />
+                        </View>
+
+                        {!!registerPassword && (
+                          <View style={styles.strengthRow}>
+                            <View style={styles.strengthBg}>
+                              <View
+                                style={[
+                                  styles.strengthFill,
+                                  { width: `${(ps / 4) * 100}%`, backgroundColor: grad[0] },
+                                ]}
                               />
-                              <Text
-                                style={[styles.rememberInlineText, isWebMobile && { fontSize: 13, lineHeight: 18 }]}
-                              >
-                                Запомнить?
-                              </Text>
-                            </Pressable>
-
-                            <TouchableOpacity
-                              activeOpacity={0.7}
-                              style={[styles.forgotInlineLink, isWebMobile && { marginLeft: 'auto' }]}
-                              onPress={openResetFlow}
-                            >
-                              <Text style={[styles.linkText, { color: grad[0] }, isWebMobile && { fontSize: 13 }]}>
-                                Забыли пароль?
-                              </Text>
-                            </TouchableOpacity>
-                          </View>
-                        </View>
-                      </View>
-                      <View style={styles.buttonWrap}>
-                        <BounceButton
-                          title="Войти"
-                          onPress={handleLogin}
-                          loading={loading}
-                          gradientColors={btnGradient}
-                          style={{ height: BTN_HEIGHT }}
-                        />
-                      </View>
-                    </View>
-
-                    {/* REGISTER */}
-                    <View style={[styles.slide, { width: viewportW }]}>
-                      <Text style={styles.title}>Создать аккаунт ✨</Text>
-
-                      <View style={[styles.topBlock, { minHeight: minTopHeight ?? undefined }]}>
-                        <View
-                          onLayout={(e) => {
-                            if (measureRef.current.locked) return;
-                            measureRef.current.reg = Math.round(e.nativeEvent.layout.height);
-                            tryLockMinHeight();
-                          }}
-                        >
-                          <View style={styles.fieldCompact}>
-                            <FormInput
-                              size={fieldSize}
-                              noMargin
-                              label="Email"
-                              value={email}
-                              onChangeText={onEmailChange}
-                              onBlur={() => setEmail((prev) => normalizeEmail(prev))}
-                              placeholder="you@domain.com"
-                              autoCapitalize="none"
-                              autoCorrect={false}
-                              keyboardType="email-address"
-                              textContentType="emailAddress"
-                              autoComplete="email"
-                              returnKeyType="next"
-                              onSubmitEditing={() => passRef.current?.focus()}
-                              editable={!loading}
-                              error={emailErr || undefined}
-                            />
-                          </View>
-
-                          <View style={styles.fieldCompact}>
-                            <FormInput
-                              size={fieldSize}
-                              noMargin
-                              label="Пароль"
-                              ref={passRef}
-                              value={password}
-                              onChangeText={onPassChange}
-                              placeholder="Минимум 6 символов"
-                              secureTextEntry={!showPassword}
-                              autoCapitalize="none"
-                              autoCorrect={false}
-                              textContentType="newPassword"
-                              autoComplete="password-new"
-                              returnKeyType="next"
-                              onSubmitEditing={() => passRepeatRef.current?.focus()}
-                              rightIcon={showPassword ? 'eye-off' : 'eye'}
-                              onIconPress={() => setShowPassword((p) => !p)}
-                              editable={!loading}
-                              error={passErr || undefined}
-                            />
-                          </View>
-
-                          {!!password && (
-                            <View style={styles.strengthRow}>
-                              <View style={styles.strengthBg}>
-                                <View
-                                  style={[
-                                    styles.strengthFill,
-                                    { width: `${(ps / 4) * 100}%`, backgroundColor: grad[0] },
-                                  ]}
-                                />
-                              </View>
-                              <Text style={[styles.secondary, { marginLeft: 8 }]}>
-                                {['Очень слабый', 'Слабый', 'Средний', 'Хороший', 'Сильный'][ps]}
-                              </Text>
                             </View>
-                          )}
-
-                          <View style={styles.fieldCompact}>
-                            <FormInput
-                              size={fieldSize}
-                              noMargin
-                              label="Повторите пароль"
-                              ref={passRepeatRef}
-                              value={passwordRepeat}
-                              onChangeText={onPassRepeatChange}
-                              placeholder="Повторите пароль"
-                              secureTextEntry={!showPassword}
-                              autoCapitalize="none"
-                              autoCorrect={false}
-                              textContentType="password"
-                              autoComplete="password"
-                              returnKeyType="done"
-                              onSubmitEditing={handleRegister}
-                              editable={!loading}
-                              error={passRepeatErr || undefined}
-                            />
+                            <Text style={[styles.secondary, { marginLeft: 8 }]}>
+                              {['Очень слабый', 'Слабый', 'Средний', 'Хороший', 'Сильный'][ps]}
+                            </Text>
                           </View>
+                        )}
+
+                        <View style={styles.fieldCompact}>
+                          <FormInput
+                            size={fieldSize}
+                            noMargin
+                            label="Повторите пароль"
+                            ref={registerPassRepeatRef}
+                            value={registerPasswordRepeat}
+                            onChangeText={onRegisterPassRepeatChange}
+                            placeholder="Повторите пароль"
+                            secureTextEntry={!showPassword}
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            textContentType="password"
+                            autoComplete="password"
+                            returnKeyType="done"
+                            onKeyPress={(e) => handleWebEnter(e, handleRegister)}
+                            onSubmitEditing={handleRegister}
+                            editable={!loading}
+                            error={registerPassRepeatErr || undefined}
+                          />
                         </View>
                       </View>
-
-                      <View style={styles.buttonWrap}>
-                        <BounceButton
-                          title="Зарегистрироваться"
-                          onPress={handleRegister}
-                          loading={loading}
-                          gradientColors={btnGradient}
-                          style={{ height: BTN_HEIGHT }}
-                        />
-                      </View>
                     </View>
-                  </Animated.View>
-                </View>
+
+                    <View style={styles.buttonWrap}>
+                      <BounceButton
+                        title="Зарегистрироваться"
+                        onPress={handleRegister}
+                        loading={loading}
+                        gradientColors={btnGradient}
+                        style={{ height: BTN_HEIGHT }}
+                      />
+                    </View>
+                  </View>
+                )
               ) : (
                 /* VERIFY */
                 <View style={{ width: '100%' }}>
                   <Text style={styles.title}>Подтверждение 📩</Text>
                   <Text style={[styles.secondary, { textAlign: 'center', marginBottom: 12 }]}>
-                    Введите 6-значный код, отправленный на {email}
+                    Введите 6-значный код, отправленный на {verifyEmail}
                   </Text>
 
                   {/* Адаптивный OTP-ввод */}
@@ -1503,6 +1513,15 @@ export default function AuthScreen() {
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel="Войти через Telegram"
+          activeOpacity={0.9}
+          onPress={() => router.replace('/(auth)/telegram' as Href)}
+          style={[styles.telegramFloatingBtn, { bottom: (Platform.OS === 'web' ? 14 : 10) + insets.bottom }]}
+        >
+          <Ionicons name="paper-plane" size={24} color="#FFFFFF" />
+        </TouchableOpacity>
       </SafeAreaView>
     </BrandedBackground>
   );
@@ -1688,6 +1707,22 @@ const getStyles = (colors: {
       justifyContent: 'space-between',
       gap: 10,
       flexWrap: 'wrap',
+    },
+    telegramFloatingBtn: {
+      position: 'absolute',
+      right: 14,
+      width: 54,
+      height: 54,
+      borderRadius: 27,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: '#229ED9',
+      shadowColor: '#0F172A',
+      shadowOpacity: 0.25,
+      shadowOffset: { width: 0, height: 8 },
+      shadowRadius: 16,
+      elevation: 8,
+      zIndex: 20,
     },
     buildInfo: {
       marginTop: 12,

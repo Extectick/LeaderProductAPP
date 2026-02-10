@@ -3,7 +3,6 @@ import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { IconSymbol } from '@/components/ui/IconSymbol';
 import { Colors } from '@/constants/Colors';
-import { useNavigation } from '@react-navigation/native';
 import { RelativePathString, useLocalSearchParams, useRouter } from 'expo-router';
 import { StyleSheet, View } from 'react-native';
 
@@ -14,7 +13,6 @@ const errorMessages = {
 };
 
 export default function AccessDeniedScreen() {
-  const navigation = useNavigation();
   const router = useRouter();
   const { reason } = useLocalSearchParams<{ reason?: keyof typeof errorMessages }>();
 

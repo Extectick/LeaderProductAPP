@@ -8,12 +8,12 @@ import {
   AppealListResponse,
   AppealPriority,
   AppealStatus,
+  AppealCounters,
   AddMessageResult,
   AppealCreateResult,
   DeleteMessageResult,
   EditMessageResult,
   Scope,
-  AppealMessage,
   AppealMessagesResponse,
   UserMini,
 } from '@/types/appealsTypes';
@@ -150,6 +150,15 @@ export async function refreshAppealsList(scope: Scope, limit = 20, offset = 0, s
   return getAppealsList(scope, limit, offset, { status, priority, forceRefresh: true });
 }
 
+export async function getAppealsCounters(): Promise<AppealCounters> {
+  const resp = (await apiClient<undefined, AppealCounters>('/appeals/counters', {
+    method: 'GET',
+  })) as ApiResponse<AppealCounters>;
+
+  if (!resp.ok) throw new Error(resp.message || 'Ошибка загрузки счетчиков обращений');
+  return resp.data;
+}
+
 // -------------------- Детали --------------------
 export async function getAppealById(id: number, forceRefresh = false): Promise<AppealDetail> {
   if (!forceRefresh) {
@@ -239,6 +248,18 @@ export async function claimAppeal(id: number) {
   )) as ApiResponse<{ id: number; status: AppealStatus; assigneeIds: number[] }>;
 
   if (!resp.ok) throw new Error(resp.message || 'Ошибка назначения исполнителя');
+  await invalidateDetailCache(id);
+  await invalidateListCache();
+  return resp.data;
+}
+
+export async function updateAppealDeadline(id: number, deadline: string | null) {
+  const resp = (await apiClient<{ deadline: string | null }, { id: number; deadline: string | null }>(`/appeals/${id}/deadline`, {
+    method: 'PUT',
+    body: { deadline },
+  })) as ApiResponse<{ id: number; deadline: string | null }>;
+
+  if (!resp.ok) throw new Error(resp.message || 'Ошибка обновления дедлайна');
   await invalidateDetailCache(id);
   await invalidateListCache();
   return resp.data;

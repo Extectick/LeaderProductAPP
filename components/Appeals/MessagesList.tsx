@@ -38,6 +38,22 @@ type ReadActivationMode = 'after_user_interaction' | 'immediate';
 
 const GROUP_GAP_MINUTES = 5;
 
+function getMessageSenderGroupKey(message: AppealMessage): string | null {
+  if (message.type === 'SYSTEM') return null;
+
+  const senderId = message.sender?.id;
+  if (Number.isFinite(senderId)) return `id:${senderId}`;
+
+  const email = (message.sender?.email || '').trim().toLowerCase();
+  if (email) return `email:${email}`;
+
+  const firstName = (message.sender?.firstName || '').trim().toLowerCase();
+  const lastName = (message.sender?.lastName || '').trim().toLowerCase();
+  if (firstName || lastName) return `name:${firstName}:${lastName}`;
+
+  return null;
+}
+
 export type MessagesListHandle = {
   scrollToBottom: (animated?: boolean) => void;
   scrollToIndex: (index: number, viewPosition?: number) => void;
@@ -204,7 +220,13 @@ const MessagesList = React.forwardRef<MessagesListHandle, MessagesListProps>(
         }
 
         const prevDate = prevMsg ? new Date(prevMsg.createdAt) : null;
-        const sameSender = !!prevMsg && prevMsg.sender?.id === msg.sender?.id;
+        const currentSenderKey = getMessageSenderGroupKey(msg);
+        const prevSenderKey = prevMsg ? getMessageSenderGroupKey(prevMsg) : null;
+        const sameSender =
+          !!prevMsg &&
+          !!currentSenderKey &&
+          !!prevSenderKey &&
+          currentSenderKey === prevSenderKey;
         const diffMinutes = prevDate
           ? Math.abs(msgDate.getTime() - prevDate.getTime()) / 60000
           : Infinity;

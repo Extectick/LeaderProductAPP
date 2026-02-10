@@ -8,6 +8,7 @@ import {
   getAppealMessagesBootstrap,
   getAppealMessagesPage,
   updateAppealStatus,
+  updateAppealDeadline,
   assignAppeal,
   claimAppeal,
   changeAppealDepartment,
@@ -15,10 +16,11 @@ import {
   markAppealMessagesReadBulk,
   getDepartmentMembers,
 } from '@/utils/appealsService';
-import { AppealDetail, AppealStatus, AppealMessage, UserMini } from '@/types/appealsTypes';
+import { AppealDetail, AppealStatus, AppealMessage, UserMini, AttachmentType } from '@/types/appealsTypes';
 import AppealHeader from '@/components/Appeals/AppealHeader'; // <-- исправлено имя файла
 import MessagesList, { MessagesListHandle } from '@/components/Appeals/MessagesList';
 import AppealChatInput from '@/components/Appeals/AppealChatInput';
+import DateTimeInput from '@/components/ui/DateTimeInput';
 import { AuthContext } from '@/context/AuthContext';
 import { useAppealUpdates } from '@/hooks/useAppealUpdates';
 import {
@@ -79,6 +81,9 @@ export default function AppealDetailScreen() {
   const [transferLoading, setTransferLoading] = useState(false);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [selectedDepartmentId, setSelectedDepartmentId] = useState<number | null>(null);
+  const [deadlineVisible, setDeadlineVisible] = useState(false);
+  const [deadlineSaving, setDeadlineSaving] = useState(false);
+  const [deadlineDraft, setDeadlineDraft] = useState<string | null>(null);
 
   const devLog = useCallback(
     (stage: string, extra?: Record<string, any>) => {
@@ -376,6 +381,7 @@ export default function AppealDetailScreen() {
         void load(true, false);
         return;
       }
+      const hasDeadline = Object.prototype.hasOwnProperty.call(evt, 'deadline');
       setData((prev) => {
         if (!prev) return prev;
         const nextAssignees = Array.isArray(evt.assigneeIds)
@@ -385,6 +391,7 @@ export default function AppealDetailScreen() {
           ...prev,
           status: evt.status ?? prev.status,
           priority: evt.priority ?? prev.priority,
+          deadline: hasDeadline ? (evt.deadline ?? null) : prev.deadline,
           assignees: nextAssignees as any,
           toDepartment:
             evt.toDepartmentId && prev.toDepartment?.id !== evt.toDepartmentId
@@ -438,6 +445,7 @@ export default function AppealDetailScreen() {
   const canAssign = !!data && (isAdmin || isDeptManager);
   const canTransfer = !!data && (isAdmin || isDeptManager);
   const canClaim = !!data && !isAssignee && isDeptMember;
+  const canEditDeadline = !!data && (isCreator || isAdmin);
 
   const allowedStatuses = useMemo(() => {
     if (!data) return [] as AppealStatus[];
@@ -548,6 +556,25 @@ export default function AppealDetailScreen() {
     }
   }
 
+  function openDeadlineModal() {
+    setDeadlineDraft(data?.deadline ?? null);
+    setDeadlineVisible(true);
+  }
+
+  async function handleSaveDeadline() {
+    if (!data || deadlineSaving) return;
+    setDeadlineSaving(true);
+    try {
+      await updateAppealDeadline(appealId, deadlineDraft);
+      await load(true, false);
+      setDeadlineVisible(false);
+    } catch (e: any) {
+      console.warn('Ошибка обновления дедлайна:', e);
+    } finally {
+      setDeadlineSaving(false);
+    }
+  }
+
   const loadOlder = useCallback(async () => {
     if (isLoadingMore || !messagesMeta?.hasMoreBefore) return;
     if (!messagesMeta?.prevCursor) return;
@@ -610,6 +637,13 @@ export default function AppealDetailScreen() {
 
   const canRenderActions = !!data;
 
+  function resolveAttachmentType(mimeType?: string | null): AttachmentType {
+    const value = String(mimeType || '').toLowerCase();
+    if (value.startsWith('image/')) return 'IMAGE';
+    if (value.startsWith('audio/')) return 'AUDIO';
+    return 'FILE';
+  }
+
   return (
     <View style={{ flex: 1, backgroundColor: '#fff' }}>
       <View style={{ flex: 1 }}>
@@ -631,11 +665,13 @@ export default function AppealDetailScreen() {
               onTransfer={openTransferModal}
               onClaim={handleClaim}
               onWatch={() => updateAppealWatchers(appealId, []).then(() => load(true, false))}
+              onEditDeadline={openDeadlineModal}
               allowedStatuses={allowedStatuses}
               canAssign={canAssign}
               canTransfer={canTransfer}
               canClaim={canClaim}
               canWatch
+              canEditDeadline={canEditDeadline}
             />
           ) : (
             <View style={styles.pendingHeader}>
@@ -682,6 +718,17 @@ export default function AppealDetailScreen() {
               onScrollToBottom={() => listRef.current?.scrollToBottom(true)}
               onSend={async ({ text, files }) => {
                 const res = await addAppealMessage(appealId, { text, files });
+                const optimisticAttachments = (files || [])
+                  .filter((file) => file?.uri)
+                  .map((file, index) => ({
+                    id: -(index + 1),
+                    fileUrl: file.uri,
+                    fileName: file.name || `attachment-${index + 1}`,
+                    fileType: resolveAttachmentType(file.type),
+                  }));
+                const responseAttachments = Array.isArray((res as any)?.attachments)
+                  ? (res as any).attachments
+                  : null;
                 // Оптимистично добавляем своё сообщение в локальный стор, чтобы не ждать сокет
                 const avatarUrl =
                   auth?.profile?.avatarUrl ||
@@ -712,7 +759,7 @@ export default function AppealDetailScreen() {
                           isDepartmentManager,
                         }
                       : { id: 0, email: '' },
-                    attachments: [],
+                    attachments: responseAttachments ?? optimisticAttachments,
                     readBy: [],
                     isRead: true,
                   },
@@ -724,6 +771,36 @@ export default function AppealDetailScreen() {
           </View>
         </View>
       ) : null}
+
+      <Modal visible={deadlineVisible} transparent animationType="fade" onRequestClose={() => setDeadlineVisible(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Изменить дедлайн</Text>
+            <DateTimeInput
+              value={deadlineDraft ?? undefined}
+              onChange={(iso) => setDeadlineDraft(iso)}
+              placeholder="ДД.ММ.ГГ ЧЧ:ММ"
+              includeTime
+              disabledPast
+              timePrecision="minute"
+              minuteStep={5}
+            />
+            <View style={styles.modalActions}>
+              <Pressable style={styles.modalBtn} onPress={() => setDeadlineVisible(false)} disabled={deadlineSaving}>
+                <Text style={styles.modalBtnText}>Отмена</Text>
+              </Pressable>
+              <Pressable style={styles.modalBtn} onPress={() => setDeadlineDraft(null)} disabled={deadlineSaving}>
+                <Text style={styles.modalBtnText}>Сбросить</Text>
+              </Pressable>
+              <Pressable style={[styles.modalBtn, styles.modalBtnPrimary]} onPress={handleSaveDeadline} disabled={deadlineSaving}>
+                <Text style={[styles.modalBtnText, styles.modalBtnTextPrimary]}>
+                  {deadlineSaving ? 'Сохранение...' : 'Сохранить'}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <Modal visible={assignVisible} transparent animationType="fade" onRequestClose={() => setAssignVisible(false)}>
         <View style={styles.modalBackdrop}>

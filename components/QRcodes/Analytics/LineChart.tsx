@@ -18,6 +18,7 @@ type Props = {
 type GridPoint = { x: number; y: number; ts: string; value: number };
 
 const MONTHS = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
+const CHART_PADDING = { left: 28, right: 10, top: 14, bottom: 24 } as const;
 
 function niceStep(raw: number) {
   const exp = Math.floor(Math.log10(raw));
@@ -42,9 +43,6 @@ export default function LineChart({
   const [svgW, setSvgW] = useState<number>(0);
   const chartWidth = Math.max(120, svgW || 120);
   const chartHeight = 240;
-
-  // ——— поля графика
-  const padding = { left: 28, right: 10, top: 14, bottom: 24 };
 
   const totalDays = Math.max(1, (range.to.getTime() - range.from.getTime()) / (24 * 3600 * 1000));
   const isLongRange = totalDays > 365;
@@ -72,14 +70,14 @@ export default function LineChart({
       sums.set(bucketStart, (sums.get(bucketStart) || 0) + p.value);
     }
 
-    const innerW = chartWidth - padding.left - padding.right;
-    const innerH = chartHeight - padding.top - padding.bottom;
+    const innerW = chartWidth - CHART_PADDING.left - CHART_PADDING.right;
+    const innerH = chartHeight - CHART_PADDING.top - CHART_PADDING.bottom;
     const maxVal = Math.max(1, ...Array.from(sums.values()), 0);
 
     const grid: GridPoint[] = slots.map((slot, i) => {
-      const x = padding.left + (i / Math.max(slots.length - 1, 1)) * innerW;
+      const x = CHART_PADDING.left + (i / Math.max(slots.length - 1, 1)) * innerW;
       const value = sums.get(slot) ?? 0;
-      const y = chartHeight - padding.bottom - (value / maxVal) * innerH;
+      const y = chartHeight - CHART_PADDING.bottom - (value / maxVal) * innerH;
       return { x, y, ts: new Date(slot).toISOString(), value };
     });
 
@@ -120,7 +118,7 @@ export default function LineChart({
       const years = [endYear - 4, endYear - 3, endYear - 2, endYear - 1, endYear];
       return years.map((y, i) => {
         const frac = years.length === 1 ? 0 : i / (years.length - 1);
-        const x = padding.left + frac * innerW;
+        const x = CHART_PADDING.left + frac * innerW;
         let anchor: 'start'|'middle'|'end' = 'middle';
         if (i === 0) anchor = 'start';
         if (i === years.length - 1) anchor = 'end';
@@ -154,7 +152,7 @@ export default function LineChart({
           const sum = yearSums.get(y) || 0;
           if (sum > 0) return null;
           const frac = years.length === 1 ? 0 : i / (years.length - 1);
-          const x = padding.left + frac * innerW;
+          const x = CHART_PADDING.left + frac * innerW;
           return { x };
         })
         .filter(Boolean) as { x: number }[];
@@ -259,11 +257,11 @@ export default function LineChart({
 
           {/* горизонтальные линии + подписи Y */}
           {yTicks.ticks.map((v, idx) => {
-            const y = (chartHeight - padding.bottom) - (v / yTicks.top) * innerH;
+            const y = (chartHeight - CHART_PADDING.bottom) - (v / yTicks.top) * innerH;
             return (
               <G key={`yt-${idx}`} pointerEvents="none">
-                <Line x1={padding.left} y1={y} x2={chartWidth - padding.right} y2={y} stroke="#e5e7eb" strokeWidth={1} />
-                <SvgText x={padding.left - 6} y={y + 3} fontSize={10} fill="#374151" textAnchor="end">
+                <Line x1={CHART_PADDING.left} y1={y} x2={chartWidth - CHART_PADDING.right} y2={y} stroke="#e5e7eb" strokeWidth={1} />
+                <SvgText x={CHART_PADDING.left - 6} y={y + 3} fontSize={10} fill="#374151" textAnchor="end">
                   {v}
                 </SvgText>
               </G>
@@ -271,19 +269,19 @@ export default function LineChart({
           })}
 
           {/* оси */}
-          <Line x1={padding.left} y1={padding.top} x2={padding.left} y2={chartHeight - padding.bottom} stroke="#e5e7eb" strokeWidth={1} pointerEvents="none" />
-          <Line x1={padding.left} y1={chartHeight - padding.bottom} x2={chartWidth - padding.right} y2={chartHeight - padding.bottom} stroke="#e5e7eb" strokeWidth={1} pointerEvents="none" />
+          <Line x1={CHART_PADDING.left} y1={CHART_PADDING.top} x2={CHART_PADDING.left} y2={chartHeight - CHART_PADDING.bottom} stroke="#e5e7eb" strokeWidth={1} pointerEvents="none" />
+          <Line x1={CHART_PADDING.left} y1={chartHeight - CHART_PADDING.bottom} x2={chartWidth - CHART_PADDING.right} y2={chartHeight - CHART_PADDING.bottom} stroke="#e5e7eb" strokeWidth={1} pointerEvents="none" />
 
           {/* точки по X для нулевых значений / пустых лет */}
           {bottomDots.map((p, i) => (
-            <Circle key={`x-bottom-${i}`} cx={p.x} cy={chartHeight - padding.bottom} r={3} fill="#2563EB" pointerEvents="none" />
+            <Circle key={`x-bottom-${i}`} cx={p.x} cy={chartHeight - CHART_PADDING.bottom} r={3} fill="#2563EB" pointerEvents="none" />
           ))}
 
           {/* линия */}
           {grid.length > 0 ? (
             <Path d={pathD} stroke="#2563EB" strokeWidth={isLongRange ? 1.5 : 2} strokeLinecap="round" strokeLinejoin="round" fill="none" pointerEvents="none" />
           ) : (
-            <Line x1={padding.left} x2={chartWidth - padding.right} y1={chartHeight - padding.bottom} y2={chartHeight - padding.bottom} stroke="#94A3B8" strokeWidth={1.5} pointerEvents="none" />
+            <Line x1={CHART_PADDING.left} x2={chartWidth - CHART_PADDING.right} y1={chartHeight - CHART_PADDING.bottom} y2={chartHeight - CHART_PADDING.bottom} stroke="#94A3B8" strokeWidth={1.5} pointerEvents="none" />
           )}
 
           {/* кликабельные точки */}
@@ -317,13 +315,13 @@ export default function LineChart({
           {/* маркер выбранной точки + bubble */}
           {selPoint && (
             <G pointerEvents="none">
-              <Line x1={selPoint.x} y1={padding.top} x2={selPoint.x} y2={chartHeight - padding.bottom} stroke="#2563EB33" strokeWidth={1} />
+              <Line x1={selPoint.x} y1={CHART_PADDING.top} x2={selPoint.x} y2={chartHeight - CHART_PADDING.bottom} stroke="#2563EB33" strokeWidth={1} />
               {(() => {
                 const text = String(selPoint.value);
                 const w = Math.max(36, 8 * text.length + 14);
                 const h = 20;
-                const x = Math.max(padding.left, Math.min(selPoint.x - w / 2, chartWidth - padding.right - w));
-                const y = Math.max(padding.top + 2, selPoint.y - 10 - h);
+                const x = Math.max(CHART_PADDING.left, Math.min(selPoint.x - w / 2, chartWidth - CHART_PADDING.right - w));
+                const y = Math.max(CHART_PADDING.top + 2, selPoint.y - 10 - h);
                 return (
                   <>
                     <Rect x={x} y={y} width={w} height={h} rx={6} fill="#FFFFFF" stroke="#2563EB" strokeWidth={1} />

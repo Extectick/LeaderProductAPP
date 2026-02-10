@@ -1,6 +1,11 @@
 
 export type ProfileStatus = "PENDING" | "ACTIVE" | "BLOCKED"
 export type AuthProvider = "LOCAL" | "TELEGRAM" | "HYBRID"
+export type AuthMethods = {
+    telegramLinked: boolean;
+    passwordLoginEnabled: boolean;
+    passwordLoginPendingVerification: boolean;
+}
 
 export type ProfileType = "CLIENT" | "SUPPLIER" | "EMPLOYEE"
 
@@ -11,9 +16,11 @@ export type Profile = {
     lastName: string | null;
     middleName: string | null;
     phone: string | null;
+    phoneVerifiedAt?: string | null;
     telegramId?: string | null;
     telegramUsername?: string | null;
     authProvider?: AuthProvider;
+    authMethods?: AuthMethods;
     avatarUrl: string | null;
     lastSeenAt?: string | null;
     isOnline?: boolean;
@@ -23,7 +30,7 @@ export type Profile = {
         id: number;
         name: string;
     };
-    departmentRoles: Array<{
+    departmentRoles: {
         department: {
         id: number;
         name: string;
@@ -32,7 +39,7 @@ export type Profile = {
         id: number;
         name: string;
         };
-    }>;
+    }[];
     clientProfile?: clientProfile | null;
     supplierProfile?: supplierProfile | null;
     employeeProfile?: employeeProfile | null;
@@ -56,19 +63,16 @@ export type UserNameDto = {
 
 export type CreateClientProfileDto = {
   user: UserNameDto;
-  phone?: string | null;
   address?: AddressDto | null;
 };
 
 export type CreateSupplierProfileDto = {
   user: UserNameDto;
-  phone?: string | null;
   address?: AddressDto | null;
 };
 
 export type CreateEmployeeProfileDto = {
   user: UserNameDto;
-  phone?: string | null;
   departmentId: number;
 };
 
@@ -86,7 +90,6 @@ export type DepartmentRole = {
 
 export type clientProfile = {
     id: number;
-    phone: string | null;
     avatarUrl?: string | null;
     lastSeenAt?: string | null;
     isOnline?: boolean;
@@ -103,7 +106,6 @@ export type clientProfile = {
 }
 export type supplierProfile = {
     id: number;
-    phone: string | null;
     avatarUrl?: string | null;
     lastSeenAt?: string | null;
     isOnline?: boolean;
@@ -120,7 +122,6 @@ export type supplierProfile = {
 }
 export type employeeProfile = {
     id: number;
-    phone: string | null;
     avatarUrl?: string | null;
     lastSeenAt?: string | null;
     isOnline?: boolean;
@@ -129,13 +130,13 @@ export type employeeProfile = {
     id: number;
     name: string;
     } | null;
-    departmentRoles: Array<{
+    departmentRoles: {
     id: number;
     role: {
         id: number;
         name: string;
     };
-    }>;
+    }[];
     createdAt: Date;
     updatedAt: Date;
 }

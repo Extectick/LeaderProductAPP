@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Animated,
   Easing,
@@ -73,7 +73,7 @@ export function NotificationHost({ children }: Props) {
   const showClose = Platform.OS === 'web' && !isTouchWeb;
   const maxWidth = width >= 780 ? 520 : width >= 420 ? width - 28 : width - 18;
 
-  const remove = (id: string, immediate = false) => {
+  const remove = useCallback((id: string, immediate = false) => {
     setItems((prev) => {
       const idx = prev.findIndex((n) => n.id === id);
       if (idx === -1) return prev;
@@ -94,9 +94,9 @@ export function NotificationHost({ children }: Props) {
       markNotificationClosed(id);
       return next;
     });
-  };
+  }, []);
 
-  const add = (n: Required<NotificationPayload>) => {
+  const add = useCallback((n: Required<NotificationPayload>) => {
     const anim = new Animated.Value(0);
     const dragY = new Animated.Value(0);
     const normalized: ActiveNotification = { ...n, anim, dragY };
@@ -114,7 +114,7 @@ export function NotificationHost({ children }: Props) {
     if (n.durationMs >= 0) {
       setTimeout(() => remove(n.id), n.durationMs || 5200);
     }
-  };
+  }, [remove]);
 
   useEffect(() => {
     const unsub = subscribeToNotifications(add);
@@ -123,7 +123,7 @@ export function NotificationHost({ children }: Props) {
       unsub();
       unsubDismiss();
     };
-  }, []);
+  }, [add, remove]);
 
   const containerStyle = useMemo(
     () => [

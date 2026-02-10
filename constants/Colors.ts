@@ -1,7 +1,6 @@
 export type ThemeKey = 'light' | 'dark' | 'orange' | 'leaderprod';
 
 const tintColorLight = '#007AFF';
-const tintColorDark = '#0A84FF';
 
 export const gradientColors: Record<ThemeKey, readonly string[]> = {
   light: ['#007AFF', '#34C759', '#FF9500', '#FF3B30'],

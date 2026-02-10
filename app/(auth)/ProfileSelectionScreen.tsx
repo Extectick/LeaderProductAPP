@@ -7,6 +7,7 @@ import { useTheme } from '@/context/ThemeContext';
 import type { CreateEmployeeProfileDto, ProfileStatus, ProfileType } from '@/types/userTypes';
 import { createProfile, Department, getDepartments, getProfile, setCurrentProfileType } from '@/utils/userService';
 import { getProfileGate, resolveActiveProfile } from '@/utils/profileGate';
+import { formatPhoneDisplay } from '@/utils/phone';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { RelativePathString, useRouter } from 'expo-router';
 import React, { useContext, useEffect, useMemo, useState } from 'react';
@@ -42,7 +43,6 @@ export default function ProfileSelectionScreen() {
   const styles = useMemo(() => getStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
   const { height: winH } = useWindowDimensions();
-  const isWeb = Platform.OS === 'web';
 
   const [form, setForm] = useState({
     firstName: '',
@@ -178,7 +178,6 @@ export default function ProfileSelectionScreen() {
 
     try {
       const profileData: CreateEmployeeProfileDto = {
-        phone: null,
         departmentId: form.departmentId,
         user: {
           firstName: form.firstName,
@@ -473,7 +472,7 @@ export default function ProfileSelectionScreen() {
                     <View style={styles.field}>
                       <Text style={styles.label}>Телефон из аккаунта</Text>
                       <TextInput
-                        value={profile?.phone || 'Не указан'}
+                        value={profile?.phone ? formatPhoneDisplay(profile.phone) : 'Не указан'}
                         style={[styles.input, { opacity: 0.75 }]}
                         editable={false}
                         placeholderTextColor={colors.placeholder}

@@ -4,6 +4,7 @@ import { Slot } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Platform, StatusBar, View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { enableScreens } from 'react-native-screens';
 
@@ -19,12 +20,6 @@ import { initPushNotifications } from '@/utils/pushNotifications';
 
 if (Platform.OS !== 'web') {
   void SplashScreen.preventAutoHideAsync().catch(() => {});
-}
-
-let GestureHandlerRootView: React.ComponentType<any> | null = null;
-if (Platform.OS !== 'web') {
-  const RNGH = require('react-native-gesture-handler');
-  GestureHandlerRootView = RNGH.GestureHandlerRootView;
 }
 
 enableScreens();
@@ -51,7 +46,7 @@ function InnerLayout() {
 }
 
 export default function RootLayout() {
-  const Root = GestureHandlerRootView ?? View;
+  const Root = Platform.OS === 'web' ? View : GestureHandlerRootView;
 
   const [preloadReady, setPreloadReady] = useState(false);
   const [updateReady, setUpdateReady] = useState(false);

@@ -7,6 +7,7 @@ import {
   RouteWithPoints,
 } from '@/utils/trackingService';
 import { Ionicons } from '@expo/vector-icons';
+import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import React, {
   useCallback,
   useContext,
@@ -162,46 +163,6 @@ const parseLimitValue = (
   return Math.min(parsed, 2000);
 };
 
-const Calendar =
-  Platform.OS === 'web'
-    ? (function loadCalendar() {
-        try {
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          require('react-calendar/dist/Calendar.css');
-          return require('react-calendar').default as any;
-        } catch (e) {
-          console.warn('react-calendar not available:', e);
-          return null;
-        }
-      })()
-    : null;
-
-// Динамически подключаем нативные компоненты, чтобы не падать на web
-const DateTimePicker =
-  Platform.OS === 'web'
-    ? null
-    : (function loadPicker() {
-        try {
-          return require('@react-native-community/datetimepicker').default;
-        } catch (e) {
-          console.warn('DateTimePicker not available:', e);
-          return null;
-        }
-      })();
-
-const DateTimePickerAndroid =
-  Platform.OS === 'android'
-    ? (() => {
-        try {
-          return require('@react-native-community/datetimepicker')
-            .DateTimePickerAndroid as typeof import('@react-native-community/datetimepicker').DateTimePickerAndroid;
-        } catch (e) {
-          console.warn('DateTimePickerAndroid not available:', e);
-          return null;
-        }
-      })()
-    : null;
-
 export default function TrackingServiceScreen() {
   const headerTopInset = useHeaderContentTopInset({ hasSubtitle: true });
   const auth = useContext(AuthContext);
@@ -225,6 +186,7 @@ export default function TrackingServiceScreen() {
   const [pickerField, setPickerField] = useState<'from' | 'to' | null>(null);
   const [dateModalVisible, setDateModalVisible] = useState(false);
   const [calendarDate, setCalendarDate] = useState<Date | null>(null);
+  const [CalendarComponent, setCalendarComponent] = useState<React.ComponentType<any> | null>(null);
   const [timeInput, setTimeInput] = useState('');
   const [dateError, setDateError] = useState<string | null>(null);
   const [periodCalendarVisible, setPeriodCalendarVisible] = useState(false);
@@ -264,6 +226,23 @@ export default function TrackingServiceScreen() {
       });
     }
   }, [profile]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    let mounted = true;
+    void import('react-calendar')
+      .then((mod) => {
+        if (!mounted) return;
+        setCalendarComponent(() => (mod.default as React.ComponentType<any>) ?? null);
+      })
+      .catch((e) => {
+        console.warn('react-calendar not available:', e);
+        if (mounted) setCalendarComponent(null);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const searchUsers = useCallback(async () => {
     if (!canViewOthers) return;
@@ -820,8 +799,8 @@ export default function TrackingServiceScreen() {
               </Pressable>
             </View>
 
-            {Platform.OS === 'web' && Calendar ? (
-              <Calendar
+            {Platform.OS === 'web' && CalendarComponent ? (
+              <CalendarComponent
                 value={calendarDate || new Date()}
                 onChange={(val: Date) => {
                   setCalendarDate(val);

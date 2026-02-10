@@ -9,7 +9,6 @@ export default function AdminLayout() {
         headerShown: true,
         headerTransparent: true,
         headerShadowVisible: false,
-        headerStatusBarHeight: 0,
         headerStyle: { backgroundColor: 'transparent' },
         header: () => (
           <AppHeader title="Администрирование" icon="shield-checkmark-outline" showBack={false} />

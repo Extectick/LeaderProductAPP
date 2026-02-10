@@ -6,6 +6,12 @@ import type {
   ProfileStatus,
   ProfileType
 } from '@/types/userTypes';
+import type {
+  EmailChangeSessionData,
+  EmailChangeStartResponseData,
+  PhoneVerificationSessionData,
+  PhoneVerificationStartResponseData,
+} from '@/types/apiTypes';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Profile } from '../types/userTypes';
 import { apiClient } from './apiClient';
@@ -241,6 +247,95 @@ export async function updateMyProfile(payload: UpdateMyProfilePayload): Promise<
     await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
   }
   return profile;
+}
+
+export async function startPhoneVerification(phone: string): Promise<PhoneVerificationStartResponseData> {
+  const res = await apiClient<{ phone: string }, PhoneVerificationStartResponseData>(
+    API_ENDPOINTS.USERS.PHONE_VERIFICATION_START,
+    {
+      method: 'POST',
+      body: { phone },
+    }
+  );
+  if (!res.ok || !res.data) throw new Error(res.message || 'Не удалось запустить верификацию телефона');
+  const deepLink = String(res.data.deepLinkUrl || '').trim();
+  if (!deepLink || !/^https:\/\/t\.me\/.+\?start=verify_phone_[A-Za-z0-9_-]+$/.test(deepLink)) {
+    throw new Error('Telegram ссылка не получена. Проверьте настройки сервера.');
+  }
+  return res.data;
+}
+
+export async function getPhoneVerificationStatus(sessionId: string): Promise<PhoneVerificationSessionData> {
+  const res = await apiClient<void, { session: PhoneVerificationSessionData }>(
+    API_ENDPOINTS.USERS.PHONE_VERIFICATION_STATUS(sessionId),
+    { method: 'GET' }
+  );
+  if (!res.ok || !res.data?.session) throw new Error(res.message || 'Не удалось получить статус верификации');
+  return res.data.session;
+}
+
+export async function cancelPhoneVerification(sessionId: string): Promise<boolean> {
+  const res = await apiClient<void, { cancelled: boolean }>(
+    API_ENDPOINTS.USERS.PHONE_VERIFICATION_CANCEL(sessionId),
+    { method: 'POST' }
+  );
+  if (!res.ok || !res.data) throw new Error(res.message || 'Не удалось отменить верификацию');
+  return Boolean(res.data.cancelled);
+}
+
+export async function startEmailChange(email: string): Promise<EmailChangeStartResponseData> {
+  const res = await apiClient<{ email: string }, EmailChangeStartResponseData>(
+    API_ENDPOINTS.USERS.EMAIL_CHANGE_START,
+    {
+      method: 'POST',
+      body: { email: String(email || '').trim() },
+    }
+  );
+  if (!res.ok || !res.data) throw new Error(res.message || 'Не удалось запустить смену email');
+  return res.data;
+}
+
+export async function getEmailChangeStatus(sessionId: string): Promise<EmailChangeSessionData> {
+  const res = await apiClient<void, { session: EmailChangeSessionData }>(
+    API_ENDPOINTS.USERS.EMAIL_CHANGE_STATUS(sessionId),
+    { method: 'GET' }
+  );
+  if (!res.ok || !res.data?.session) throw new Error(res.message || 'Не удалось получить статус смены email');
+  return res.data.session;
+}
+
+export async function resendEmailChangeCode(sessionId: string): Promise<boolean> {
+  const res = await apiClient<void, { resent: boolean }>(
+    API_ENDPOINTS.USERS.EMAIL_CHANGE_RESEND(sessionId),
+    { method: 'POST' }
+  );
+  if (!res.ok || !res.data) throw new Error(res.message || 'Не удалось отправить код повторно');
+  return Boolean(res.data.resent);
+}
+
+export async function verifyEmailChange(sessionId: string, code: string): Promise<Profile | null> {
+  const res = await apiClient<{ code: string }, { profile: Profile }>(
+    API_ENDPOINTS.USERS.EMAIL_CHANGE_VERIFY(sessionId),
+    {
+      method: 'POST',
+      body: { code: String(code || '').trim() },
+    }
+  );
+  if (!res.ok || !res.data) throw new Error(res.message || 'Не удалось подтвердить смену email');
+  const profile = res.data.profile || null;
+  if (profile) {
+    await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+  }
+  return profile;
+}
+
+export async function cancelEmailChange(sessionId: string): Promise<boolean> {
+  const res = await apiClient<void, { cancelled: boolean }>(
+    API_ENDPOINTS.USERS.EMAIL_CHANGE_CANCEL(sessionId),
+    { method: 'POST' }
+  );
+  if (!res.ok || !res.data) throw new Error(res.message || 'Не удалось отменить смену email');
+  return Boolean(res.data.cancelled);
 }
 
 export async function getUserProfileById(userId: number): Promise<Profile | null> {

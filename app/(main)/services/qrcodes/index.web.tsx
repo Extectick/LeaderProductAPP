@@ -124,7 +124,11 @@ export default function QRHubWeb() {
   }, [ctrl.periodKey, ctrl.computedRange, ctrl.periodLabel]);
 
   // компактный календарь (только веб)
-  const calendarMonth = ctrl.calendarMonth || new Date();
+  const calendarMonthValue = ctrl.calendarMonth;
+  const calendarMonth = useMemo(
+    () => (calendarMonthValue instanceof Date ? calendarMonthValue : new Date()),
+    [calendarMonthValue]
+  );
   const calendarMonthLabel = useMemo(
     () => calendarMonth.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' }),
     [calendarMonth]

@@ -5,7 +5,6 @@ import React, { useMemo } from 'react';
 import {
   Platform,
   Pressable,
-  StyleProp,
   StyleSheet,
   Text,
   TextStyle,

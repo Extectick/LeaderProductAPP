@@ -122,18 +122,6 @@ function parseVCard(vcard: string) {
   return out;
 }
 
-function buildVCard(v: QRFormValues) {
-  const N = `${v.lastname ?? ''};${v.firstname ?? ''};;;`;
-  const FN = `${[v.firstname, v.lastname].filter(Boolean).join(' ')}`;
-  const TEL = v.phone ? `TEL;TYPE=CELL:${v.phone}` : '';
-  const EMAIL = v.email ? `EMAIL:${v.email}` : '';
-  const URL = v.website ? `URL:${v.website}` : '';
-  const ORG = v.org ? `ORG:${v.org}` : '';
-  const ADR = v.contactAddress ? `ADR;TYPE=HOME:${v.contactAddress}` : '';
-  const NOTE = v.note ? `NOTE:${v.note}` : '';
-  return ['BEGIN:VCARD','VERSION:3.0',`N:${N}`,`FN:${FN}`,ORG,TEL,EMAIL,URL,ADR,NOTE,'END:VCARD'].filter(Boolean).join('\n');
-}
-
 function parseByType(item?: QRCodeItemType): Partial<QRFormValues> {
   if (!item) return {};
   const t = item.qrType;
@@ -303,7 +291,7 @@ export default function QRCodeForm({ mode, initialItem, onCreate, onUpdate, onSu
               color={color}
               keyboardType="phone-pad"
               mask={phoneMask}
-              onMaskValue={(raw) => normPhone(raw)}
+              onMaskValue={(raw: string) => normPhone(raw)}
               onNormalize={normalizePhone}
             />
             {t !== 'PHONE' && (
@@ -340,7 +328,7 @@ export default function QRCodeForm({ mode, initialItem, onCreate, onUpdate, onSu
               color={color}
               keyboardType="phone-pad"
               mask={phoneMask}
-              onMaskValue={(raw) => normPhone(raw)}
+              onMaskValue={(raw: string) => normPhone(raw)}
               onNormalize={normalizePhone}
             />
             <LabeledInput name="email" control={control} placeholder={PLACEHOLDERS.CONTACT?.email} color={color} keyboardType="email-address" autoCapitalize="none" />
@@ -382,13 +370,6 @@ export default function QRCodeForm({ mode, initialItem, onCreate, onUpdate, onSu
   };
 
   const TYPES: QRType[] = ['PHONE','LINK','EMAIL','TEXT','WHATSAPP','TELEGRAM','CONTACT','WIFI','SMS','GEO','BITCOIN'];
-  const phoneRules = {
-    required: 'Введите номер телефона',
-    validate: (v: string) => {
-      const clean = normPhone(v || '');
-      return /^(\+?\d{10,15})$/.test(clean) || 'Формат номера: +79991234567';
-    },
-  };
 
   return (
     <Animated.View

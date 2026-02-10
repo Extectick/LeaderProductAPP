@@ -4,7 +4,7 @@ import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, Text
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { createAppeal } from '@/utils/appealsService';
-import { getDepartments, Department } from '@/utils/userService';
+import { getDepartments } from '@/utils/userService';
 import Dropdown, { DropdownItem } from '@/components/ui/Dropdown';
 import DateTimeInput from '@/components/ui/DateTimeInput';
 import AttachmentsPicker, { AttachmentFile } from '@/components/ui/AttachmentsPicker';
@@ -129,7 +129,15 @@ export default function AppealNew() {
 
       <View style={styles.fieldBlock}>
         <Text style={styles.label}>Дедлайн (опционально)</Text>
-        <DateTimeInput placeholder="Выберите дату и время" value={form.deadline} onChange={(iso) => update('deadline', iso)} />
+        <DateTimeInput
+          placeholder="Выберите дату и время"
+          value={form.deadline}
+          onChange={(iso) => update('deadline', iso)}
+          includeTime
+          disabledPast
+          timePrecision="minute"
+          minuteStep={5}
+        />
       </View>
 
       <View style={styles.fieldBlock}>

@@ -125,13 +125,69 @@ export type TelegramContactResponseData = {
   conflictUserHint?: TelegramConflictHint | null;
 };
 
+export type AuthMethod = {
+  key: 'password' | 'telegram';
+  label: string;
+  enabled: boolean;
+  flow: 'credentials' | 'telegram';
+};
+
+export type AuthMethodsResponseData = {
+  methods: AuthMethod[];
+};
+
+export type PhoneVerificationSessionData = {
+  id: string;
+  status: 'PENDING' | 'VERIFIED' | 'FAILED' | 'EXPIRED' | 'CANCELLED';
+  requestedPhone: string | null;
+  expiresAt: string;
+  verifiedAt: string | null;
+  failureReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PhoneVerificationStartResponseData = {
+  sessionId: string;
+  deepLinkUrl: string;
+  qrPayload: string;
+  expiresAt: string;
+  pollIntervalSec: number;
+  requestedPhone: string | null;
+};
+
+export type EmailChangeSessionData = {
+  id: string;
+  status: 'PENDING' | 'VERIFIED' | 'EXPIRED' | 'CANCELLED' | 'FAILED';
+  currentEmail: string | null;
+  requestedEmail: string;
+  attemptsCount: number;
+  expiresAt: string;
+  verifiedAt: string | null;
+  lastSentAt: string | null;
+  failureReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type EmailChangeStartResponseData = {
+  sessionId: string;
+  requestedEmail: string;
+  expiresAt: string;
+  resendCooldownSec: number;
+};
+
+export type EmailChangeVerifyRequest = {
+  code: string;
+};
+
 // User types
-export type UserGetAllResponse = SuccessResponse<Array<{
+export type UserGetAllResponse = SuccessResponse<{
   id: string;
   email: string;
   name: string;
   role: string;
-}>> | ErrorResponse;
+}[]> | ErrorResponse;
 
 export type UserGetByIdResponse = SuccessResponse<{
   id: string;
@@ -164,10 +220,10 @@ export type UserProfileResponse = SuccessResponse<{
   profile: Profile;
 }> | ErrorResponse;
 
-export type DepartmentResponse = SuccessResponse<Array<{
+export type DepartmentResponse = SuccessResponse<{
   id: number;
   name: string;
-}>> | ErrorResponse;
+}[]> | ErrorResponse;
 
 // User department types
 export type UpdateUserDepartmentRequest = {
@@ -194,7 +250,6 @@ export type CreateClientProfileRequest = {
     lastName?: string;
     middleName?: string;
   };
-  phone?: string;
   address?: {
     street: string;
     city: string;
@@ -210,7 +265,6 @@ export type CreateSupplierProfileRequest = {
     lastName?: string;
     middleName?: string;
   };
-  phone?: string;
   address?: {
     street: string;
     city: string;
@@ -226,7 +280,6 @@ export type CreateEmployeeProfileRequest = {
     lastName: string;
     middleName?: string;
   };
-  phone?: string;
   departmentId: number;
 };
 
@@ -275,7 +328,7 @@ export type QRGetAllRequest = {
 };
 
 export type QRGetAllResponse = SuccessResponse<{
-  data: Array<{
+  data: {
     id: string;
     qrData: string;
     description: string | null;
@@ -285,7 +338,7 @@ export type QRGetAllResponse = SuccessResponse<{
       id: number;
       email: string;
     };
-  }>;
+  }[];
   meta: {
     total: number;
     limit: string;
@@ -318,12 +371,12 @@ export type QRGetByIdResponse = SuccessResponse<{
   qrImage?: string;
 }> | ErrorResponse | string; // Добавлен string для случая simple=true
 
-export type QRAnalyticsResponse = SuccessResponse<Array<{
+export type QRAnalyticsResponse = SuccessResponse<{
   device: string;
   browser: string;
   location: string;
   count: number;
-}>> | ErrorResponse;
+}[]> | ErrorResponse;
 
 export type QRStatsResponse = SuccessResponse<{
   totalQRCodes: number;

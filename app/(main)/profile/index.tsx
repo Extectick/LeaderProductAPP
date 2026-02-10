@@ -2,6 +2,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  AppState,
   Alert,
   LayoutAnimation,
   Platform,
@@ -12,27 +13,36 @@ import {
   Text,
   TextInput,
   UIManager,
+  useWindowDimensions,
   View,
 } from 'react-native';
+import * as Linking from 'expo-linking';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors } from '@/constants/Colors';
 import { ProfileView } from '@/components/Profile/ProfileView';
-import { addCredentials, logoutUser } from '@/utils/authService';
+import { addCredentials, logoutUser, resendVerification, verify } from '@/utils/authService';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 import CustomAlert from '@/components/CustomAlert';
 import { useRouter, type Href } from 'expo-router';
-import { getProfile, updateMyProfile, type UpdateMyProfilePayload } from '@/utils/userService';
+import {
+  cancelPhoneVerification,
+  getPhoneVerificationStatus,
+  getProfile,
+  startPhoneVerification,
+  updateMyProfile,
+  type UpdateMyProfilePayload,
+} from '@/utils/userService';
 import type { Profile } from '@/types/userTypes';
 import { useTracking } from '@/context/TrackingContext';
 import { Skeleton } from 'moti/skeleton';
-import { mask, MaskedTextInput, unMask } from 'react-native-mask-text';
-import { shadeColor, tintColor } from '@/utils/color';
+import { shadeColor } from '@/utils/color';
 import TabBarSpacer from '@/components/Navigation/TabBarSpacer';
 import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
+import QRCode from 'react-native-qrcode-svg';
+import { formatPhoneDisplay, formatPhoneInputMask, normalizePhoneInputToDigits11, toApiPhoneDigitsString } from '@/utils/phone';
 
 const PROFILE_CACHE_KEY = 'profile';
-const PHONE_MASK = '+7 (999) 999-99-99';
 
 export default function ProfileScreen() {
   const headerTopInset = useHeaderContentTopInset();
@@ -93,20 +103,15 @@ export default function ProfileScreen() {
 
   return (
     <ScrollView style={styles.scroll} contentContainerStyle={[styles.scrollContent, { paddingTop: 16 + headerTopInset }]}>
-      <ProfileView profileOverride={profile} loadingOverride={loading} errorOverride={error} />
-      {loading && !profile ? (
-        <ProfileEditorSkeleton />
-      ) : (
-        <ProfileEditor
-          profile={profile}
-          loading={loading}
-          refreshing={refreshing}
-          onProfileUpdated={(next) => {
-            setProfile(next);
-            setError(null);
-          }}
-        />
-      )}
+      <ProfileView
+        profileOverride={profile}
+        loadingOverride={loading}
+        errorOverride={error}
+        onProfileUpdated={(next) => {
+          setProfile(next);
+          setError(null);
+        }}
+      />
       {loading && !profile ? null : (
         <CredentialsSection
           profile={profile}
@@ -125,18 +130,68 @@ type ProfileForm = {
   lastName: string;
   middleName: string;
   email: string;
-  phone: string;
 };
 
-const normalizePhone = (value?: string | null) => (value ? unMask(value) : '');
+const normalizePhone = (value?: string | null) => normalizePhoneInputToDigits11(value || '') || '';
+const toMaskedPhone = (value?: string | null) => formatPhoneInputMask(value || '');
 
 const buildProfileForm = (profile: Profile | null): ProfileForm => ({
   firstName: profile?.firstName || '',
   lastName: profile?.lastName || '',
   middleName: profile?.middleName || '',
   email: profile?.email || '',
-  phone: normalizePhone(profile?.phone || profile?.employeeProfile?.phone || ''),
 });
+
+type CredentialsStep = 'credentials' | 'verify';
+
+type ResolvedAuthMethods = {
+  telegramLinked: boolean;
+  passwordLoginEnabled: boolean;
+  passwordLoginPendingVerification: boolean;
+};
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function resolveAuthMethods(profile: Profile | null): ResolvedAuthMethods {
+  const fromApi = profile?.authMethods;
+  if (fromApi) {
+    return {
+      telegramLinked: Boolean(fromApi.telegramLinked),
+      passwordLoginEnabled: Boolean(fromApi.passwordLoginEnabled),
+      passwordLoginPendingVerification: Boolean(fromApi.passwordLoginPendingVerification),
+    };
+  }
+
+  return {
+    telegramLinked: Boolean(profile?.telegramId),
+    passwordLoginEnabled: false,
+    passwordLoginPendingVerification: false,
+  };
+}
+
+function mapVerificationReason(reason?: string | null) {
+  if (!reason) return 'Не удалось подтвердить телефон';
+  if (reason === 'PHONE_MISMATCH') return 'Номер из Telegram не совпал с введённым номером';
+  if (reason === 'PHONE_ALREADY_USED') return 'Этот номер уже используется другим пользователем';
+  if (reason === 'TELEGRAM_ALREADY_USED') return 'Этот Telegram уже привязан к другому пользователю';
+  if (reason === 'SESSION_EXPIRED') return 'Сессия подтверждения истекла';
+  return 'Не удалось подтвердить телефон';
+}
+
+function isValidTelegramDeepLink(url: string) {
+  return /^https:\/\/t\.me\/.+\?start=verify_phone_[A-Za-z0-9_-]+$/.test(String(url || '').trim());
+}
+
+async function openTelegramDeepLink(url: string) {
+  if (!url) throw new Error('Telegram ссылка не получена. Проверьте настройки сервера.');
+  if (Platform.OS === 'web') {
+    if (typeof window !== 'undefined') {
+      window.open(url, '_blank', 'noopener,noreferrer');
+      return;
+    }
+  }
+  await Linking.openURL(url);
+}
 
 function CredentialsSection({
   profile,
@@ -145,33 +200,109 @@ function CredentialsSection({
   profile: Profile | null;
   onAdded: () => Promise<void>;
 }) {
+  const authMethods = resolveAuthMethods(profile);
+  const shouldShowSetup = authMethods.telegramLinked && !authMethods.passwordLoginEnabled;
+  const emailFromProfile = (profile?.email || '').trim().toLowerCase();
+
+  const [step, setStep] = useState<CredentialsStep>('credentials');
+  const [showCompletion, setShowCompletion] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [code, setCode] = useState('');
   const [saving, setSaving] = useState(false);
+  const [resending, setResending] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  if (!profile || profile.authProvider !== 'TELEGRAM') return null;
+  useEffect(() => {
+    if (!profile) return;
 
-  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+    if (authMethods.passwordLoginPendingVerification && emailFromProfile) {
+      setShowCompletion(false);
+      setStep('verify');
+      setEmail(emailFromProfile);
+      return;
+    }
+
+    setShowCompletion(false);
+    setStep('credentials');
+  }, [
+    profile,
+    emailFromProfile,
+    authMethods.passwordLoginEnabled,
+    authMethods.passwordLoginPendingVerification,
+  ]);
+
+  if (!profile || (!shouldShowSetup && !showCompletion)) return null;
+
+  const normalizedEmail = email.trim().toLowerCase();
+  const verificationEmail = emailFromProfile || normalizedEmail;
+  const emailValid = EMAIL_RE.test(normalizedEmail);
   const passwordValid = password.trim().length >= 6;
+  const codeValid = /^\d{6}$/.test(code.trim());
 
-  const onSubmit = async () => {
+  const onSubmitCredentials = async () => {
     if (!emailValid || !passwordValid) {
       Alert.alert('Ошибка', 'Укажите корректный email и пароль не менее 6 символов');
       return;
     }
     setSaving(true);
+    setError(null);
     setNotice(null);
     try {
-      await addCredentials(email.trim(), password.trim());
-      setNotice('Данные сохранены. Подтвердите email кодом из письма.');
-      setEmail('');
+      await addCredentials(normalizedEmail, password.trim());
+      setNotice('Email и пароль сохранены. Введите код из письма.');
+      setStep('verify');
+      setEmail(normalizedEmail);
       setPassword('');
       await onAdded();
     } catch (e: any) {
-      Alert.alert('Ошибка', e?.message || 'Не удалось добавить email и пароль');
+      setError(e?.message || 'Не удалось добавить email и пароль');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const onSubmitVerification = async () => {
+    if (!verificationEmail || !EMAIL_RE.test(verificationEmail)) {
+      setError('Не удалось определить email для подтверждения');
+      return;
+    }
+    if (!codeValid) {
+      setError('Введите 6-значный код из письма');
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await verify(verificationEmail, code.trim());
+      await onAdded();
+      setCode('');
+      setShowCompletion(true);
+      setNotice('Вход по email/паролю активирован.');
+    } catch (e: any) {
+      setError(e?.message || 'Не удалось подтвердить email');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const onResendCode = async () => {
+    if (!verificationEmail || !EMAIL_RE.test(verificationEmail)) {
+      setError('Не удалось определить email для повторной отправки');
+      return;
+    }
+    setResending(true);
+    setError(null);
+    try {
+      await resendVerification(verificationEmail);
+      setNotice('Код подтверждения отправлен повторно.');
+    } catch (e: any) {
+      setError(e?.message || 'Не удалось отправить код повторно');
+    } finally {
+      setResending(false);
     }
   };
 
@@ -181,35 +312,88 @@ function CredentialsSection({
       <Text style={styles.credentialsSubtitle}>
         Для этого Telegram-аккаунта можно добавить резервный способ входа.
       </Text>
+      {error ? <Text style={styles.credentialsError}>{error}</Text> : null}
       {notice ? <Text style={styles.credentialsNotice}>{notice}</Text> : null}
-      <TextInput
-        value={email}
-        onChangeText={setEmail}
-        style={styles.fieldInput}
-        placeholder="example@mail.com"
-        autoCapitalize="none"
-        keyboardType="email-address"
-      />
-      <TextInput
-        value={password}
-        onChangeText={setPassword}
-        style={styles.fieldInput}
-        placeholder="Пароль"
-        secureTextEntry
-      />
-      <Pressable
-        onPress={onSubmit}
-        disabled={saving}
-        style={({ pressed }) => [
-          styles.credentialsButton,
-          saving && styles.credentialsButtonDisabled,
-          pressed && !saving ? styles.credentialsButtonPressed : null,
-        ]}
-      >
-        <Text style={styles.credentialsButtonText}>
-          {saving ? 'Сохранение...' : 'Добавить email и пароль'}
-        </Text>
-      </Pressable>
+
+      {!showCompletion && shouldShowSetup && step === 'credentials' ? (
+        <>
+          <TextInput
+            value={email}
+            onChangeText={setEmail}
+            style={styles.fieldInput}
+            placeholder="example@mail.com"
+            autoCapitalize="none"
+            keyboardType="email-address"
+          />
+          <TextInput
+            value={password}
+            onChangeText={setPassword}
+            style={styles.fieldInput}
+            placeholder="Пароль"
+            secureTextEntry
+          />
+          <Pressable
+            onPress={onSubmitCredentials}
+            disabled={saving}
+            style={({ pressed }) => [
+              styles.credentialsButton,
+              saving && styles.credentialsButtonDisabled,
+              pressed && !saving ? styles.credentialsButtonPressed : null,
+            ]}
+          >
+            <Text style={styles.credentialsButtonText}>
+              {saving ? 'Сохранение...' : 'Добавить email и пароль'}
+            </Text>
+          </Pressable>
+        </>
+      ) : null}
+
+      {!showCompletion && shouldShowSetup && step === 'verify' ? (
+        <>
+          <Text style={styles.credentialsHint}>
+            Подтвердите email {verificationEmail || '—'} кодом из письма.
+          </Text>
+          <TextInput
+            value={code}
+            onChangeText={(value) => setCode(value.replace(/\D+/g, '').slice(0, 6))}
+            style={styles.fieldInput}
+            placeholder="Код из 6 цифр"
+            keyboardType="number-pad"
+          />
+          <Pressable
+            onPress={onSubmitVerification}
+            disabled={saving}
+            style={({ pressed }) => [
+              styles.credentialsButton,
+              saving && styles.credentialsButtonDisabled,
+              pressed && !saving ? styles.credentialsButtonPressed : null,
+            ]}
+          >
+            <Text style={styles.credentialsButtonText}>
+              {saving ? 'Проверка...' : 'Подтвердить email'}
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={onResendCode}
+            disabled={resending || saving}
+            style={({ pressed }) => [
+              styles.credentialsSecondaryButton,
+              (resending || saving) && styles.credentialsButtonDisabled,
+              pressed && !(resending || saving) ? styles.credentialsSecondaryButtonPressed : null,
+            ]}
+          >
+            <Text style={styles.credentialsSecondaryButtonText}>
+              {resending ? 'Отправка...' : 'Отправить код повторно'}
+            </Text>
+          </Pressable>
+        </>
+      ) : null}
+
+      {showCompletion ? (
+        <View style={styles.credentialsDoneWrap}>
+          <Text style={styles.credentialsDoneText}>Вход по email/паролю активирован.</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -218,20 +402,33 @@ function ProfileEditor({
   profile,
   loading,
   refreshing,
+  phoneActionNonce,
+  onRefreshProfile,
   onProfileUpdated,
 }: {
   profile: Profile | null;
   loading: boolean;
   refreshing: boolean;
+  phoneActionNonce: number;
+  onRefreshProfile: () => Promise<void>;
   onProfileUpdated: (next: Profile) => void;
 }) {
-  if (loading && !profile) {
-    return <ProfileEditorSkeleton />;
-  }
+  const { width } = useWindowDimensions();
+  const isDesktopWeb = Platform.OS === 'web' && width >= 768;
 
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<ProfileForm>(() => buildProfileForm(profile));
+  const [phoneMode, setPhoneMode] = useState<'collapsed' | 'editing' | 'pending'>('collapsed');
+  const [phoneInput, setPhoneInput] = useState(toMaskedPhone(profile?.phone || ''));
+  const [phoneSessionId, setPhoneSessionId] = useState<string | null>(null);
+  const [phoneDeepLinkUrl, setPhoneDeepLinkUrl] = useState('');
+  const [phoneQrPayload, setPhoneQrPayload] = useState('');
+  const [phoneBusy, setPhoneBusy] = useState(false);
+  const [phoneError, setPhoneError] = useState<string | null>(null);
+  const [phoneStatusText, setPhoneStatusText] = useState<string | null>(null);
+  const lastPhoneActionNonceRef = useRef(phoneActionNonce);
+
   const toggleScale = useSharedValue(1);
   const saveScale = useSharedValue(1);
   const cancelScale = useSharedValue(1);
@@ -239,13 +436,18 @@ function ProfileEditor({
   const saveStyle = useAnimatedStyle(() => ({ transform: [{ scale: saveScale.value }] }));
   const cancelStyle = useAnimatedStyle(() => ({ transform: [{ scale: cancelScale.value }] }));
 
+  const profilePhoneDigits = normalizePhone(profile?.phone || '');
+  const profilePhoneMasked = toMaskedPhone(profilePhoneDigits);
+  const phoneVerified = Boolean(profilePhoneDigits && profile?.phoneVerifiedAt);
+  const hasPhone = Boolean(profilePhoneDigits);
+  const displayedPhone = profilePhoneDigits ? formatPhoneDisplay(profilePhoneDigits) : '';
+
   const baseline = useMemo(
     () => ({
       firstName: profile?.firstName || '',
       lastName: profile?.lastName || '',
       middleName: profile?.middleName || '',
       email: profile?.email || '',
-      phone: normalizePhone(profile?.phone || profile?.employeeProfile?.phone || ''),
     }),
     [profile]
   );
@@ -256,22 +458,34 @@ function ProfileEditor({
       trim(form.firstName) !== trim(baseline.firstName) ||
       trim(form.lastName) !== trim(baseline.lastName) ||
       trim(form.middleName) !== trim(baseline.middleName) ||
-      trim(form.email) !== trim(baseline.email) ||
-      form.phone !== baseline.phone
+      trim(form.email) !== trim(baseline.email)
     );
   }, [baseline, form]);
 
-  const phoneDigits = form.phone;
-  const baselinePhoneDigits = baseline.phone;
-  const phoneValid = phoneDigits.length === 0 || (phoneDigits.length === 11 && phoneDigits.startsWith('7'));
   const emailValue = form.email.trim();
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailValue);
   const emailError = emailValue.length === 0 ? 'Email обязателен' : emailValid ? null : 'Некорректный email';
-  const phoneError = phoneDigits.length > 0 && !phoneValid ? 'Неверный номер телефона' : null;
+
+  const clearPhoneSessionState = useCallback(() => {
+    setPhoneSessionId(null);
+    setPhoneDeepLinkUrl('');
+    setPhoneQrPayload('');
+  }, []);
 
   useEffect(() => {
-    if (!editing) setForm(buildProfileForm(profile));
-  }, [editing, profile]);
+    if (!editing) {
+      setForm(buildProfileForm(profile));
+      setPhoneMode('collapsed');
+      setPhoneInput(profilePhoneMasked);
+      setPhoneError(null);
+      setPhoneStatusText(null);
+      clearPhoneSessionState();
+      return;
+    }
+    if (phoneMode !== 'pending') {
+      setPhoneInput(profilePhoneMasked);
+    }
+  }, [clearPhoneSessionState, editing, phoneMode, profile, profilePhoneMasked]);
 
   useEffect(() => {
     const isTurboModuleEnabled = Boolean((globalThis as any).__turboModuleProxy);
@@ -284,6 +498,101 @@ function ProfileEditor({
     }
   }, []);
 
+  useEffect(() => {
+    if (lastPhoneActionNonceRef.current === phoneActionNonce) return;
+    lastPhoneActionNonceRef.current = phoneActionNonce;
+    if (!profile || phoneMode === 'pending') return;
+
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setEditing(true);
+    setPhoneMode('editing');
+    setPhoneInput(profilePhoneMasked);
+    setPhoneError(null);
+    setPhoneStatusText(null);
+  }, [phoneActionNonce, phoneMode, profile, profilePhoneMasked]);
+
+  const checkPhoneSessionStatus = useCallback(
+    async (activeSessionId: string) => {
+      const session = await getPhoneVerificationStatus(activeSessionId);
+      if (session.status === 'PENDING') return;
+
+      if (session.status === 'VERIFIED') {
+        setPhoneStatusText(null);
+        clearPhoneSessionState();
+        setPhoneMode('collapsed');
+        await onRefreshProfile();
+        return;
+      }
+
+      clearPhoneSessionState();
+      setPhoneMode('editing');
+
+      if (session.status === 'FAILED') {
+        setPhoneError(mapVerificationReason(session.failureReason));
+        return;
+      }
+      if (session.status === 'EXPIRED') {
+        setPhoneError('Сессия подтверждения истекла. Запустите подтверждение снова.');
+        return;
+      }
+      if (session.status === 'CANCELLED') {
+        setPhoneStatusText('Привязка отменена');
+      }
+    },
+    [clearPhoneSessionState, onRefreshProfile]
+  );
+
+  useEffect(() => {
+    if (phoneMode !== 'pending' || !phoneSessionId) return;
+
+    const timer = setInterval(() => {
+      void checkPhoneSessionStatus(phoneSessionId).catch((e: any) => {
+        setPhoneError(e?.message || 'Не удалось проверить статус подтверждения');
+      });
+    }, 3000);
+
+    return () => clearInterval(timer);
+  }, [checkPhoneSessionStatus, phoneMode, phoneSessionId]);
+
+  useEffect(() => {
+    if (phoneMode !== 'pending' || !phoneSessionId) return;
+
+    const handleForeground = () => {
+      void checkPhoneSessionStatus(phoneSessionId).catch((e: any) => {
+        setPhoneError(e?.message || 'Не удалось проверить статус подтверждения');
+      });
+    };
+
+    if (Platform.OS === 'web') {
+      const onVisibility = () => {
+        if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+          handleForeground();
+        }
+      };
+      if (typeof window !== 'undefined') {
+        window.addEventListener('focus', handleForeground);
+      }
+      if (typeof document !== 'undefined') {
+        document.addEventListener('visibilitychange', onVisibility);
+      }
+      return () => {
+        if (typeof window !== 'undefined') {
+          window.removeEventListener('focus', handleForeground);
+        }
+        if (typeof document !== 'undefined') {
+          document.removeEventListener('visibilitychange', onVisibility);
+        }
+      };
+    }
+
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        handleForeground();
+      }
+    });
+    return () => subscription.remove();
+  }, [checkPhoneSessionStatus, phoneMode, phoneSessionId]);
+
   const handleSave = useCallback(async () => {
     if (!profile) return;
     const email = form.email.trim();
@@ -291,23 +600,15 @@ function ProfileEditor({
       Alert.alert('Ошибка', emailError || 'Введите корректный email');
       return;
     }
-    if (!phoneValid) {
-      Alert.alert('Ошибка', phoneError || 'Неверный номер телефона');
-      return;
-    }
-
     const payload: UpdateMyProfilePayload = {};
     const firstName = form.firstName.trim();
     const lastName = form.lastName.trim();
     const middleName = form.middleName.trim();
-    const phone = form.phone.trim();
 
     if (firstName !== baseline.firstName) payload.firstName = firstName || null;
     if (lastName !== baseline.lastName) payload.lastName = lastName || null;
     if (middleName !== baseline.middleName) payload.middleName = middleName || null;
     if (email !== baseline.email) payload.email = email;
-    if (phoneDigits !== baselinePhoneDigits) payload.phone = phone ? mask(phone, PHONE_MASK) : null;
-
     if (!Object.keys(payload).length) {
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
       setEditing(false);
@@ -329,22 +630,107 @@ function ProfileEditor({
     }
   }, [
     baseline,
-    baselinePhoneDigits,
     emailError,
     emailValid,
     form,
     onProfileUpdated,
-    phoneDigits,
-    phoneError,
-    phoneValid,
     profile,
   ]);
 
+  const handleStartPhoneFlow = useCallback(async () => {
+    const normalized = toApiPhoneDigitsString(phoneInput);
+    if (!normalized) {
+      setPhoneError('Введите корректный номер телефона');
+      setPhoneStatusText(null);
+      return;
+    }
+
+    setPhoneBusy(true);
+    setPhoneError(null);
+    setPhoneStatusText(null);
+
+    let createdSessionId: string | null = null;
+    try {
+      const started = await startPhoneVerification(normalized);
+      createdSessionId = started.sessionId;
+      const deepLink = String(started.deepLinkUrl || '').trim();
+      const qrPayload = String(started.qrPayload || '').trim();
+
+      if (!isValidTelegramDeepLink(deepLink)) {
+        if (createdSessionId) {
+          await cancelPhoneVerification(createdSessionId).catch(() => undefined);
+        }
+        throw new Error('Telegram ссылка не получена. Проверьте настройки сервера.');
+      }
+
+      setPhoneSessionId(createdSessionId);
+      setPhoneDeepLinkUrl(deepLink);
+      setPhoneQrPayload(qrPayload || deepLink);
+      setPhoneMode('pending');
+      setPhoneStatusText('Идет привязка телефона...');
+
+      if (!isDesktopWeb) {
+        try {
+          await openTelegramDeepLink(deepLink);
+        } catch {
+          setPhoneError('Не удалось открыть Telegram автоматически. Используйте кнопку "Открыть Telegram".');
+        }
+      }
+    } catch (e: any) {
+      setPhoneError(e?.message || 'Не удалось запустить подтверждение телефона');
+      setPhoneMode('editing');
+      clearPhoneSessionState();
+    } finally {
+      setPhoneBusy(false);
+    }
+  }, [clearPhoneSessionState, isDesktopWeb, phoneInput]);
+
+  const handleOpenTelegram = useCallback(async () => {
+    try {
+      if (!isValidTelegramDeepLink(phoneDeepLinkUrl)) {
+        throw new Error('Telegram ссылка не получена. Проверьте настройки сервера.');
+      }
+      await openTelegramDeepLink(phoneDeepLinkUrl);
+    } catch (e: any) {
+      setPhoneError(e?.message || 'Не удалось открыть Telegram ссылку');
+    }
+  }, [phoneDeepLinkUrl]);
+
+  const handleCancelPhoneFlow = useCallback(async () => {
+    if (!phoneSessionId) return;
+    setPhoneBusy(true);
+    try {
+      await cancelPhoneVerification(phoneSessionId);
+      clearPhoneSessionState();
+      setPhoneMode('editing');
+      setPhoneStatusText('Привязка отменена');
+    } catch (e: any) {
+      setPhoneError(e?.message || 'Не удалось отменить привязку');
+    } finally {
+      setPhoneBusy(false);
+    }
+  }, [clearPhoneSessionState, phoneSessionId]);
+
+  const handleEnterPhoneEditing = useCallback(() => {
+    setPhoneInput(profilePhoneMasked);
+    setPhoneMode('editing');
+    setPhoneError(null);
+    setPhoneStatusText(null);
+  }, [profilePhoneMasked]);
+
+  const handleCollapsePhone = useCallback(() => {
+    setPhoneMode('collapsed');
+    setPhoneError(null);
+    setPhoneStatusText(null);
+    setPhoneInput(profilePhoneMasked);
+  }, [profilePhoneMasked]);
+
   const handleCancel = useCallback(() => {
     setForm(buildProfileForm(profile));
+    handleCollapsePhone();
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setEditing(false);
-  }, [profile]);
+  }, [handleCollapsePhone, profile]);
 
   return (
     <View style={styles.editCard}>
@@ -352,22 +738,24 @@ function ProfileEditor({
         <View style={{ flex: 1 }}>
           <Text style={styles.editTitle}>Данные профиля</Text>
           <Text style={styles.editSubtitle}>
-            {refreshing ? 'Синхронизация...' : 'Измените телефон, почту и ФИО'}
+            {refreshing ? 'Синхронизация...' : 'Измените почту и ФИО'}
           </Text>
         </View>
         <Animated.View style={toggleStyle}>
           <Pressable
             onPress={() => {
+              if (phoneMode === 'pending') return;
               LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
               setEditing((prev) => !prev);
             }}
+            disabled={saving || phoneMode === 'pending'}
             onPressIn={() => (toggleScale.value = withSpring(0.97, { damping: 18, stiffness: 260 }))}
             onPressOut={() => (toggleScale.value = withSpring(1, { damping: 18, stiffness: 260 }))}
             onHoverIn={() => (toggleScale.value = withSpring(1.03, { damping: 18, stiffness: 260 }))}
             onHoverOut={() => (toggleScale.value = withSpring(1, { damping: 18, stiffness: 260 }))}
-            style={({ pressed, hovered }) => [
+            style={({ pressed }) => [
               styles.editToggle,
-              hovered && !pressed ? { backgroundColor: tintColor('#FFF7E6', 0.08) } : null,
+              (saving || phoneMode === 'pending') ? styles.verifyBtnDisabled : null,
               pressed ? styles.editTogglePressed : null,
             ]}
             android_ripple={{ color: '#E0E7FF' }}
@@ -436,20 +824,122 @@ function ProfileEditor({
             </View>
             <View style={styles.fieldBlock}>
               <Text style={styles.fieldLabel}>Телефон</Text>
-              <MaskedTextInput
-                value={form.phone}
-                onChangeText={(_, raw) =>
-                  setForm((prev) => {
-                    const next = raw ?? '';
-                    return prev.phone === next ? prev : { ...prev, phone: next };
-                  })
-                }
-                style={[styles.fieldInput, phoneError && styles.fieldInputError]}
-                placeholder="+7 (___) ___-__-__"
-                keyboardType="phone-pad"
-                autoCorrect={false}
-                mask={PHONE_MASK}
-              />
+              {phoneMode === 'editing' ? (
+                <>
+                  {phoneVerified ? (
+                    <Text style={styles.fieldHintText}>Текущий подтвержденный: {displayedPhone}</Text>
+                  ) : null}
+                  <View style={styles.phoneEditRow}>
+                    <TextInput
+                      value={phoneInput}
+                      onChangeText={(value) => {
+                        setPhoneInput(formatPhoneInputMask(value));
+                        setPhoneError(null);
+                      }}
+                      editable={!phoneBusy}
+                      style={[styles.fieldInput, styles.phoneEditInput, phoneError && styles.fieldInputError]}
+                      placeholder="+7 (___) ___-__-__"
+                      keyboardType="phone-pad"
+                      autoCorrect={false}
+                      maxLength={18}
+                    />
+                    <Pressable
+                      onPress={() => void handleStartPhoneFlow()}
+                      disabled={phoneBusy}
+                      style={({ pressed }) => [
+                        styles.phoneIconBtn,
+                        phoneBusy ? styles.verifyBtnDisabled : null,
+                        pressed && !phoneBusy ? styles.phoneIconBtnPressed : null,
+                      ]}
+                    >
+                      {phoneBusy ? (
+                        <ActivityIndicator color="#fff" size="small" />
+                      ) : (
+                        <Ionicons name="arrow-forward" size={18} color="#fff" />
+                      )}
+                    </Pressable>
+                  </View>
+                  <Pressable
+                    onPress={handleCollapsePhone}
+                    disabled={phoneBusy}
+                    style={({ pressed }) => [
+                      styles.phoneInlineAction,
+                      pressed && !phoneBusy ? styles.verifySecondaryBtnPressed : null,
+                    ]}
+                  >
+                    <Ionicons name="chevron-up-outline" size={16} color="#334155" />
+                    <Text style={styles.phoneInlineActionText}>Свернуть</Text>
+                  </Pressable>
+                </>
+              ) : phoneMode === 'pending' ? (
+                <>
+                  <View style={styles.phonePendingRow}>
+                    <ActivityIndicator size="small" color={Colors.leaderprod.button} />
+                    <Text style={styles.phonePendingText}>Идет привязка телефона...</Text>
+                    <Pressable
+                      onPress={() => void handleCancelPhoneFlow()}
+                      disabled={phoneBusy}
+                      style={({ pressed }) => [
+                        styles.phoneDangerIconBtn,
+                        (phoneBusy || !phoneSessionId) ? styles.verifyBtnDisabled : null,
+                        pressed && !phoneBusy ? styles.phoneDangerIconBtnPressed : null,
+                      ]}
+                    >
+                      <Ionicons name="close" size={16} color="#fff" />
+                    </Pressable>
+                  </View>
+                  {phoneDeepLinkUrl ? (
+                    <Pressable
+                      onPress={() => void handleOpenTelegram()}
+                      disabled={phoneBusy}
+                      style={({ pressed }) => [
+                        styles.verifySecondaryBtn,
+                        pressed && !phoneBusy ? styles.verifySecondaryBtnPressed : null,
+                      ]}
+                    >
+                      <Text style={styles.verifySecondaryBtnText}>Открыть Telegram</Text>
+                    </Pressable>
+                  ) : null}
+                  {isDesktopWeb && phoneQrPayload ? (
+                    <View style={styles.qrWrap}>
+                      <QRCode value={phoneQrPayload} size={180} />
+                      <Text style={styles.verifyHint}>Сканируйте QR в Telegram и отправьте контакт</Text>
+                    </View>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  {hasPhone ? (
+                    <View style={styles.phoneCollapsedTop}>
+                      <Text style={styles.phoneCollapsedValue}>{displayedPhone}</Text>
+                      <View style={[styles.phoneBadge, phoneVerified ? styles.phoneBadgeVerified : styles.phoneBadgeUnverified]}>
+                        <Ionicons
+                          name={phoneVerified ? 'checkmark-circle' : 'alert-circle'}
+                          size={14}
+                          color={phoneVerified ? '#15803D' : '#B45309'}
+                        />
+                        <Text style={[styles.phoneBadgeText, phoneVerified ? styles.phoneBadgeTextVerified : styles.phoneBadgeTextUnverified]}>
+                          {phoneVerified ? 'Подтвержден' : 'Не подтвержден'}
+                        </Text>
+                      </View>
+                    </View>
+                  ) : (
+                    <Text style={styles.fieldHintText}>Номер телефона не привязан</Text>
+                  )}
+                  <Pressable
+                    onPress={handleEnterPhoneEditing}
+                    style={({ pressed }) => [
+                      styles.phoneLinkBtn,
+                      pressed ? styles.phoneLinkBtnPressed : null,
+                    ]}
+                  >
+                    <Text style={styles.phoneLinkBtnText}>
+                      {!hasPhone ? 'Привязать телефон' : phoneVerified ? 'Изменить номер' : 'Подтвердить'}
+                    </Text>
+                  </Pressable>
+                </>
+              )}
+              {phoneStatusText ? <Text style={styles.verifyStatus}>{phoneStatusText}</Text> : null}
               {phoneError ? <Text style={styles.fieldErrorText}>{phoneError}</Text> : null}
             </View>
           </View>
@@ -462,16 +952,11 @@ function ProfileEditor({
                 onHoverIn={() => (saveScale.value = withSpring(1.03, { damping: 18, stiffness: 260 }))}
                 onHoverOut={() => (saveScale.value = withSpring(1, { damping: 18, stiffness: 260 }))}
                 onPress={handleSave}
-                disabled={saving || !dirty || !emailValid || !phoneValid}
+                disabled={saving || phoneMode === 'pending' || !dirty || !emailValid}
                 android_ripple={{ color: '#FCD34D' }}
-                style={({ pressed, hovered }) => [
+                style={({ pressed }) => [
                   styles.saveBtn,
-                  (!dirty || saving || !emailValid || !phoneValid) && styles.saveBtnDisabled,
-                  hovered && !pressed && !(dirty && !saving && emailValid && phoneValid)
-                    ? null
-                    : hovered && !pressed
-                    ? { backgroundColor: tintColor(String(Colors.leaderprod.button), 0.12) }
-                    : null,
+                  (!dirty || saving || phoneMode === 'pending' || !emailValid) && styles.saveBtnDisabled,
                   pressed && styles.saveBtnPressed,
                 ]}
               >
@@ -486,12 +971,11 @@ function ProfileEditor({
                 onHoverIn={() => (cancelScale.value = withSpring(1.03, { damping: 18, stiffness: 260 }))}
                 onHoverOut={() => (cancelScale.value = withSpring(1, { damping: 18, stiffness: 260 }))}
                 onPress={handleCancel}
-                disabled={saving}
+                disabled={saving || phoneMode === 'pending'}
                 android_ripple={{ color: '#E5E7EB' }}
-                style={({ pressed, hovered }) => [
+                style={({ pressed }) => [
                   styles.cancelBtn,
-                  saving && styles.cancelBtnDisabled,
-                  hovered && !pressed ? { backgroundColor: tintColor('#F3F4F6', 0.06) } : null,
+                  (saving || phoneMode === 'pending') && styles.cancelBtnDisabled,
                   pressed && styles.cancelBtnPressed,
                 ]}
               >
@@ -501,7 +985,7 @@ function ProfileEditor({
           </View>
         </View>
       ) : (
-        <Text style={styles.editHint}>Нажмите "Изменить", чтобы обновить профиль.</Text>
+        loading && !profile ? <ProfileEditorSkeleton /> : <Text style={styles.editHint}>Нажмите «Изменить», чтобы обновить профиль.</Text>
       )}
     </View>
   );
@@ -580,9 +1064,8 @@ function RefreshButton({ onPress, loading }: { onPress: () => void; loading: boo
         onPress={onPress}
         disabled={loading}
         android_ripple={{ color: '#FCD34D' }}
-        style={({ pressed, hovered }) => [
+        style={({ pressed }) => [
           styles.refreshBtn,
-          hovered && !pressed && !loading ? { backgroundColor: tintColor(baseBg, 0.12) } : null,
           pressed && !loading ? { backgroundColor: shadeColor(baseBg, 0.12) } : null,
           pressed && Platform.OS === 'ios' ? { opacity: 0.9 } : null,
           loading && styles.refreshBtnDisabled,
@@ -630,9 +1113,8 @@ function LogoutButton() {
           onHoverOut={() => (scale.value = withSpring(1, { damping: 18, stiffness: 260 }))}
           onPress={openConfirm}
           android_ripple={{ color: '#5B21B6' }}
-          style={({ pressed, hovered }) => [
+          style={({ pressed }) => [
             styles.logoutBtn,
-            hovered && !pressed ? { backgroundColor: tintColor(baseBg, 0.12) } : null,
             pressed ? { backgroundColor: shadeColor(baseBg, 0.12) } : null,
           ]}
         >
@@ -765,9 +1247,110 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     color: '#111827',
   },
+  fieldInputDisabled: {
+    backgroundColor: '#F3F4F6',
+    color: '#6B7280',
+  },
   fieldInputError: { borderColor: '#FCA5A5', backgroundColor: '#FEF2F2' },
   fieldErrorText: { color: '#DC2626', fontSize: 12, fontWeight: '600' },
+  fieldHintText: { color: '#64748B', fontSize: 12 },
+  phoneCollapsedTop: { gap: 8 },
+  phoneCollapsedValue: { color: '#0F172A', fontWeight: '700', fontSize: 14 },
+  phoneBadge: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  phoneBadgeVerified: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#86EFAC',
+  },
+  phoneBadgeUnverified: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FCD34D',
+  },
+  phoneBadgeText: { fontSize: 12, fontWeight: '700' },
+  phoneBadgeTextVerified: { color: '#15803D' },
+  phoneBadgeTextUnverified: { color: '#B45309' },
+  phoneLinkBtn: {
+    marginTop: 4,
+    alignSelf: 'flex-start',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#fff',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  phoneLinkBtnPressed: { backgroundColor: '#F8FAFC' },
+  phoneLinkBtnText: { color: '#1E293B', fontWeight: '700' },
+  phoneEditRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  phoneEditInput: { flex: 1 },
+  phoneIconBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.leaderprod.button,
+  },
+  phoneIconBtnPressed: { backgroundColor: '#F59E0B' },
+  phoneInlineAction: {
+    marginTop: 6,
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+  },
+  phoneInlineActionText: { color: '#334155', fontWeight: '600', fontSize: 12 },
+  phonePendingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  phonePendingText: { flex: 1, color: '#1E293B', fontWeight: '600', fontSize: 13 },
+  phoneDangerIconBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#DC2626',
+  },
+  phoneDangerIconBtnPressed: { backgroundColor: '#B91C1C' },
   editActions: { flexDirection: 'row', gap: 10, marginTop: 8 },
+  verifyStatus: { color: '#1D4ED8', fontWeight: '600', fontSize: 12 },
+  verifySecondaryBtn: {
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    backgroundColor: '#fff',
+  },
+  verifySecondaryBtnPressed: { backgroundColor: '#F8FAFC' },
+  verifySecondaryBtnText: { color: '#1E293B', fontWeight: '700' },
+  verifyBtnDisabled: { opacity: 0.65 },
+  qrWrap: {
+    marginTop: 6,
+    alignItems: 'center',
+    gap: 8,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#F8FAFC',
+  },
+  verifyHint: { fontSize: 12, color: '#64748B', textAlign: 'center' },
   saveBtn: {
     backgroundColor: Colors.leaderprod.button,
     paddingVertical: 12,
@@ -791,6 +1374,8 @@ const styles = StyleSheet.create({
   },
   credentialsTitle: { fontSize: 16, fontWeight: '800', color: '#0F172A' },
   credentialsSubtitle: { fontSize: 12, color: '#64748B' },
+  credentialsHint: { fontSize: 12, color: '#374151' },
+  credentialsError: { color: '#B91C1C', fontWeight: '700', fontSize: 12 },
   credentialsNotice: { color: '#1D4ED8', fontWeight: '700', fontSize: 12 },
   credentialsButton: {
     marginTop: 4,
@@ -809,6 +1394,34 @@ const styles = StyleSheet.create({
   credentialsButtonText: {
     color: '#fff',
     fontWeight: '800',
+  },
+  credentialsSecondaryButton: {
+    borderRadius: 10,
+    paddingVertical: 11,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    backgroundColor: '#EEF2FF',
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+  },
+  credentialsSecondaryButtonPressed: {
+    backgroundColor: '#E0E7FF',
+  },
+  credentialsSecondaryButtonText: {
+    color: '#3730A3',
+    fontWeight: '700',
+  },
+  credentialsDoneWrap: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+    backgroundColor: '#F0FDF4',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  credentialsDoneText: {
+    color: '#166534',
+    fontWeight: '700',
   },
   cancelBtn: {
     backgroundColor: '#F3F4F6',

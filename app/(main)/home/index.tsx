@@ -3,7 +3,6 @@ import {
   Platform,
   useWindowDimensions,
   Pressable,
-  PressableProps,
   ScrollView,
   View,
   Text,
@@ -26,7 +25,7 @@ import Animated, {
   withTiming,
   Easing,
 } from "react-native-reanimated";
-import { shadeColor, tintColor } from "@/utils/color";
+import { shadeColor } from "@/utils/color";
 import TabBarSpacer from "@/components/Navigation/TabBarSpacer";
 
 const updates = [
@@ -134,11 +133,10 @@ export default function HomeScreen() {
                 <Pressable
                   key={link.label}
                   onPress={() => router.push(link.href)}
-                  style={({ pressed, hovered }) => [
+                  style={({ pressed }) => [
                     styles.linkCard,
-                    { transform: [{ scale: pressed ? 0.98 : hovered ? 1.02 : 1 }] },
-                    hovered ? styles.linkCardHover : null,
-                  ]}
+                    { transform: [{ scale: pressed ? 0.98 : 1 }] },
+                    ]}
                 >
                   <LinearGradient
                     colors={link.gradient}
@@ -184,7 +182,7 @@ function HeroFancy({
       -1,
       true
     );
-  }, []);
+  }, [float]);
 
   const logoStyle = useAnimatedStyle(() => {
     const translateY = (float.value - 0.5) * 12;
@@ -257,7 +255,6 @@ function SpringButton({
   } = flat || {};
 
   const baseBg = (innerRest.backgroundColor as string) || "transparent";
-  const hoverBg = baseBg !== "transparent" ? tintColor(baseBg, 0.12) : baseBg;
   const pressBg = baseBg !== "transparent" ? shadeColor(baseBg, 0.12) : baseBg;
 
   const outerStyle: ViewStyle = {
@@ -284,9 +281,8 @@ function SpringButton({
         android_ripple={
           Platform.OS === "android" && androidRippleColor ? { color: androidRippleColor } : undefined
         }
-        style={({ pressed, hovered }) => [
+        style={({ pressed }) => [
           innerRest,
-          hovered && !pressed ? { backgroundColor: hoverBg } : null,
           pressed ? { backgroundColor: pressBg } : null,
           pressed && Platform.OS === "ios" ? { opacity: 0.9 } : null,
         ]}

@@ -1,10 +1,8 @@
 // utils/authFetch.ts
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import axios, { AxiosError, AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
-import Constants from 'expo-constants';
-import { router } from 'expo-router';
+import axios, { AxiosError, AxiosInstance, AxiosRequestConfig, AxiosResponse, isAxiosError } from 'axios';
 import { API_BASE_URL } from './config';
-import { refreshToken as refreshTokenService, saveTokens } from './tokenService';
+import { refreshToken as refreshTokenService } from './tokenService';
 
 let isRefreshing = false;
 let refreshSubscribers: ((token: string) => void)[] = [];
@@ -117,7 +115,7 @@ export async function authFetch<Req = any, Res = any>(
     let message = 'Unknown error';
     let status: number | undefined = undefined;
 
-    if (axios.isAxiosError(error)) {
+    if (isAxiosError(error)) {
       status = error.response?.status;
       message = error.response?.data?.message || error.message;
     } else if (error instanceof Error) {

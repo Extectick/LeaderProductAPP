@@ -1,5 +1,5 @@
 import axios from 'axios';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { Platform } from 'react-native';
 
 import { apiClient } from './apiClient';
@@ -171,6 +171,9 @@ export async function uploadToPresignedUrl(
   );
 
   const result = await task.uploadAsync();
+  if (!result) {
+    throw new Error('Upload failed (no response)');
+  }
   if (result.status < 200 || result.status >= 300) {
     throw new Error(`Upload failed (${result.status})`);
   }
