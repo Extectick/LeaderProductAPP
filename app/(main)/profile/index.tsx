@@ -35,6 +35,7 @@ import {
 } from '@/utils/userService';
 import type { Profile } from '@/types/userTypes';
 import { useTracking } from '@/context/TrackingContext';
+import { NotificationSettingsSection } from '@/components/Profile/NotificationSettingsSection';
 import { Skeleton } from 'moti/skeleton';
 import { shadeColor } from '@/utils/color';
 import TabBarSpacer from '@/components/Navigation/TabBarSpacer';
@@ -119,6 +120,7 @@ export default function ProfileScreen() {
         />
       )}
       {loading && !profile ? <TrackingSkeleton /> : <TrackingToggle />}
+      {loading && !profile ? null : <NotificationSettingsSection />}
       {loading && !profile ? <LogoutSkeleton /> : <LogoutButton />}
       <TabBarSpacer />
     </ScrollView>

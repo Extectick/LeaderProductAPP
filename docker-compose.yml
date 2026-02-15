@@ -7,7 +7,7 @@ services:
       args:
         EXPO_PUBLIC_API_URL_DEV: ${EXPO_PUBLIC_API_URL_DEV}
         EXPO_PUBLIC_TELEGRAM_BOT_USERNAME: ${EXPO_PUBLIC_TELEGRAM_BOT_USERNAME}
-    image: leader-product-app-web:latest
+    image: ghcr.io/extectick/leaderproductapp:${IMAGE_TAG:-latest}
     restart: unless-stopped
     ports:
       - "8081:80"

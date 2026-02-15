@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(claude mcp add obsidian --scope user -e OBSIDIAN_API_KEY=2bda06a6b346cd95db395ebb52553948d3443e97a2bf63062d3de923ebf539b7 -e OBSIDIAN_HOST=127.0.0.1 -e OBSIDIAN_PORT=27123 -- uvx mcp-obsidian)",
+      "Bash(curl:*)"
+    ]
+  }
+}

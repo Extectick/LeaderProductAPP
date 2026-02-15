@@ -158,6 +158,37 @@ export function isTelegramMiniAppLaunch() {
   );
 }
 
+export function getTelegramStartParam(): string {
+  ensureSdkInit();
+  const launchParams = safeCall(() => retrieveLaunchParams() as any, null as any);
+  const fromSdk = String(launchParams?.tgWebAppStartParam || '').trim();
+  if (fromSdk) return fromSdk;
+
+  const initialLaunch = getInitialLaunch();
+  const fromCurrent =
+    getSearchParam('startapp') ||
+    getHashParam('startapp') ||
+    getSearchParam('tgWebAppStartParam') ||
+    getHashParam('tgWebAppStartParam');
+  if (fromCurrent) return fromCurrent;
+
+  return (
+    getSearchParam('startapp', initialLaunch?.search) ||
+    getHashParam('startapp', initialLaunch?.hash) ||
+    getSearchParam('tgWebAppStartParam', initialLaunch?.search) ||
+    getHashParam('tgWebAppStartParam', initialLaunch?.hash)
+  );
+}
+
+export function getTelegramStartAppealId(): number | null {
+  const raw = getTelegramStartParam();
+  const match = raw.match(/^appeal_(\d+)$/i);
+  if (!match) return null;
+  const appealId = Number(match[1]);
+  if (!Number.isFinite(appealId) || appealId <= 0) return null;
+  return appealId;
+}
+
 export function prepareTelegramWebApp() {
   ensureTelegramWebAppScript();
   ensureSdkInit();

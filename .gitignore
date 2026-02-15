@@ -37,9 +37,9 @@ pnpm-debug.log*
 Thumbs.db
 
 # local env files
-# .env
-# .env.*
-# .env*.local
+.env
+.env.*
+!.env.example
 
 # typescript
 *.tsbuildinfo

@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Animated, Pressable } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import AnimatedRe, { FadeInDown } from 'react-native-reanimated';
@@ -7,6 +7,11 @@ import { Ionicons } from '@expo/vector-icons';
 import Dropdown, { DropdownItem } from '@/components/ui/Dropdown';
 import AppealStatusMenu from './AppealStatusMenu';
 import { AppealDetail, AppealStatus, AppealPriority } from '@/types/appealsTypes';
+import {
+  getAppealMuteStatus,
+  muteAppeal,
+  unmuteAppeal,
+} from '@/utils/notificationSettingsService';
 
 type Props = {
   data: AppealDetail;
@@ -101,6 +106,26 @@ export default function AppealHeader({
   const isOverdue = progress !== null && progress >= 1;
 
   const [statusMenuVisible, setStatusMenuVisible] = useState(false);
+  const [muted, setMuted]   = useState(false);
+  const [muteLoading, setMuteLoading] = useState(false);
+
+  useEffect(() => {
+    void getAppealMuteStatus(data.id).then(setMuted);
+  }, [data.id]);
+
+  const toggleMute = async () => {
+    if (muteLoading) return;
+    const next = !muted;
+    setMuted(next);
+    setMuteLoading(true);
+    try {
+      next ? await muteAppeal(data.id) : await unmuteAppeal(data.id);
+    } catch {
+      setMuted(!next);
+    } finally {
+      setMuteLoading(false);
+    }
+  };
 
   const actionItems: DropdownItem<'status' | 'assign' | 'watch' | 'claim' | 'transfer' | 'deadline'>[] = [
     ...(allowedStatuses && allowedStatuses.length && onChangeStatus
@@ -150,6 +175,15 @@ export default function AppealHeader({
         end={{ x: 1, y: 1 }}
         style={styles.card}
       >
+        {/* Кнопка mute/unmute уведомлений */}
+        <Pressable onPress={() => void toggleMute()} style={styles.muteBtn} disabled={muteLoading}>
+          <Ionicons
+            name={muted ? 'notifications-off-outline' : 'notifications-outline'}
+            size={16}
+            color={muted ? 'rgba(255,255,255,0.5)' : '#fff'}
+          />
+        </Pressable>
+
         {actionItems.length ? (
           <Dropdown
             items={actionItems}
@@ -258,13 +292,13 @@ function priorityColor(priority: AppealPriority) {
 }
 
 const styles = StyleSheet.create({
-  wrapper: { marginBottom: 10, marginHorizontal: 16 },
+  wrapper: { marginBottom: 10, marginHorizontal: 0 },
   card: {
     borderRadius: 16,
     marginTop: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    paddingRight: 44,
+    paddingRight: 80,
     overflow: 'hidden',
     position: 'relative',
     shadowColor: '#2563EB',
@@ -272,6 +306,20 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
     elevation: 3,
+  },
+  muteBtn: {
+    position: 'absolute',
+    top: 8,
+    right: 46,
+    zIndex: 2,
+    width: 30,
+    height: 30,
+    borderRadius: 9,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   menuWrap: { position: 'absolute', top: 8, right: 8, zIndex: 2 },
   iconBtn: {

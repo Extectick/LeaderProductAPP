@@ -1,7 +1,7 @@
 // V:\lp\app\(main)\services\appeals\[id].tsx
 import { useLocalSearchParams } from 'expo-router';
 import { useEffect, useState, useCallback, useContext, useRef, useMemo } from 'react';
-import { Platform, View, Text, Pressable, StyleSheet, Modal, ScrollView, ActivityIndicator, Image, Keyboard, Dimensions } from 'react-native';
+import { Platform, View, Text, Pressable, StyleSheet, Modal, ScrollView, ActivityIndicator, Image, Keyboard, Dimensions, LayoutChangeEvent } from 'react-native';
 import {
   addAppealMessage,
   getAppealById,
@@ -44,6 +44,11 @@ import DepartmentPicker from '@/components/DepartmentPicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { dismissNotificationsByKeys } from '@/utils/notificationStore';
 import { dismissAppealSystemNotifications } from '@/utils/pushNotifications';
+import CustomAlert from '@/components/CustomAlert';
+import { AnimatePresence, MotiView } from 'moti';
+
+type DockMode = 'chat' | 'claim' | 'creator_resolved' | 'closed';
+type PendingDockAction = 'claim' | 'complete' | 'reject';
 
 export default function AppealDetailScreen() {
   const headerTopInset = useHeaderContentTopInset({ hasSubtitle: true });
@@ -84,6 +89,11 @@ export default function AppealDetailScreen() {
   const [deadlineVisible, setDeadlineVisible] = useState(false);
   const [deadlineSaving, setDeadlineSaving] = useState(false);
   const [deadlineDraft, setDeadlineDraft] = useState<string | null>(null);
+  const [confirmVisible, setConfirmVisible] = useState(false);
+  const [pendingDockAction, setPendingDockAction] = useState<PendingDockAction | null>(null);
+  const [dockActionLoading, setDockActionLoading] = useState(false);
+  const [forceChatMode, setForceChatMode] = useState(false);
+  const forceChatTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const devLog = useCallback(
     (stage: string, extra?: Record<string, any>) => {
@@ -437,6 +447,7 @@ export default function AppealDetailScreen() {
 
   const isCreator = !!data && userId === data.createdBy?.id;
   const isAssignee = !!data && (data.assignees || []).some((a) => a.user?.id === userId);
+  const isClosedStatus = !!data && (data.status === 'COMPLETED' || data.status === 'DECLINED');
   const isDeptManager = !!toDepartmentId && (auth?.profile?.departmentRoles || []).some(
     (dr) => dr.department?.id === toDepartmentId && dr.role?.name === 'department_manager'
   );
@@ -444,7 +455,7 @@ export default function AppealDetailScreen() {
 
   const canAssign = !!data && (isAdmin || isDeptManager);
   const canTransfer = !!data && (isAdmin || isDeptManager);
-  const canClaim = !!data && !isAssignee && isDeptMember;
+  const canClaim = !!data && !isClosedStatus && !isAssignee && isDeptMember;
   const canEditDeadline = !!data && (isCreator || isAdmin);
 
   const allowedStatuses = useMemo(() => {
@@ -467,15 +478,17 @@ export default function AppealDetailScreen() {
     return Array.from(set);
   }, [data, isAdmin, isDeptManager, isCreator, isAssignee]);
 
-  async function handleChangeStatus(next: AppealStatus) {
-    if (!data || next === data.status) return;
+  async function handleChangeStatus(next: AppealStatus): Promise<boolean> {
+    if (!data || next === data.status) return false;
     try {
       setData(prev => (prev ? { ...prev, status: next } : prev));
       await updateAppealStatus(appealId, next);
       await load(true, false);
+      return true;
     } catch (e) {
       await load(true, false);
       console.warn('Ошибка смены статуса:', e);
+      return false;
     }
   }
 
@@ -546,13 +559,75 @@ export default function AppealDetailScreen() {
     }
   }
 
-  async function handleClaim() {
-    if (!data) return;
+  async function handleClaim(): Promise<boolean> {
+    if (!data) return false;
+    const currentUser = auth?.profile;
+    const currentUserId = currentUser?.id;
+    const fallbackAssignee =
+      currentUserId
+        ? {
+            user: {
+              id: currentUserId,
+              email: currentUser?.email || '',
+              firstName: currentUser?.firstName || undefined,
+              lastName: currentUser?.lastName || undefined,
+              avatarUrl:
+                currentUser?.avatarUrl ||
+                currentUser?.employeeProfile?.avatarUrl ||
+                currentUser?.clientProfile?.avatarUrl ||
+                currentUser?.supplierProfile?.avatarUrl ||
+                null,
+              department: currentUser?.employeeProfile?.department || null,
+              isAdmin: currentUser?.role?.name === 'admin',
+              isDepartmentManager: (currentUser?.departmentRoles || []).some(
+                (dr) => dr.role?.name === 'department_manager'
+              ),
+            },
+          }
+        : null;
+
+    // Мгновенно переводим UI в состояние "в работе", чтобы кнопка claim не возвращалась.
+    setData((prev) => {
+      if (!prev) return prev;
+      const alreadyAssigned =
+        !!currentUserId &&
+        (prev.assignees || []).some((a) => a.user?.id === currentUserId);
+      const nextAssignees =
+        !alreadyAssigned && fallbackAssignee ? [...(prev.assignees || []), fallbackAssignee] : prev.assignees;
+      return {
+        ...prev,
+        status: prev.status === 'IN_PROGRESS' ? prev.status : 'IN_PROGRESS',
+        assignees: nextAssignees,
+      };
+    });
+
     try {
-      await claimAppeal(appealId);
+      const result = await claimAppeal(appealId);
+      setData((prev) => {
+        if (!prev) return prev;
+        const assigneeIdSet = new Set<number>(result.assigneeIds || []);
+        const existingById = new Map<number, { user: UserMini }>();
+        (prev.assignees || []).forEach((a) => {
+          if (a.user?.id) existingById.set(a.user.id, { user: a.user });
+        });
+        const mergedAssignees = Array.from(assigneeIdSet).map((id) => {
+          const existing = existingById.get(id);
+          if (existing) return existing;
+          if (fallbackAssignee?.user?.id === id) return fallbackAssignee;
+          return { user: { id, email: '' } };
+        });
+        return {
+          ...prev,
+          status: result.status || prev.status,
+          assignees: mergedAssignees,
+        };
+      });
       await load(true, false);
+      return true;
     } catch (e) {
+      await load(true, false);
       console.warn('Ошибка взятия обращения в работу:', e);
+      return false;
     }
   }
 
@@ -636,6 +711,100 @@ export default function AppealDetailScreen() {
   }, []);
 
   const canRenderActions = !!data;
+  const isAppealClosed = !!data && (data.status === 'COMPLETED' || data.status === 'DECLINED');
+  const isCreatorResolved = !!data && isCreator && data.status === 'RESOLVED';
+  const computedDockMode: DockMode =
+    isAppealClosed ? 'closed' : isCreatorResolved ? 'creator_resolved' : canClaim ? 'claim' : 'chat';
+  const dockMode: DockMode = canRenderActions && forceChatMode && !isAppealClosed ? 'chat' : computedDockMode;
+
+  const dockConfirmContent = useMemo(() => {
+    if (pendingDockAction === 'claim') {
+      return {
+        title: 'Принять обращение?',
+        message: 'Вы будете назначены исполнителем обращения.',
+        confirmText: 'Принять',
+      };
+    }
+    if (pendingDockAction === 'complete') {
+      return {
+        title: 'Подтвердить выполнение?',
+        message: 'Обращение перейдет в статус «Завершено».',
+        confirmText: 'Подтвердить',
+      };
+    }
+    if (pendingDockAction === 'reject') {
+      return {
+        title: 'Отклонить выполнение?',
+        message: 'Обращение вернется в статус «В работе».',
+        confirmText: 'Отклонить',
+      };
+    }
+    return {
+      title: 'Подтвердить действие',
+      message: 'Вы уверены, что хотите продолжить?',
+      confirmText: 'Подтвердить',
+    };
+  }, [pendingDockAction]);
+
+  useEffect(() => {
+    return () => {
+      if (forceChatTimerRef.current) {
+        clearTimeout(forceChatTimerRef.current);
+        forceChatTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  function handleActionDockLayout(event: LayoutChangeEvent) {
+    const height = event.nativeEvent.layout.height;
+    if (height > 0) {
+      setInputHeight(height);
+    }
+  }
+
+  function openDockConfirm(action: PendingDockAction) {
+    if (dockActionLoading) return;
+    setPendingDockAction(action);
+    setConfirmVisible(true);
+  }
+
+  function closeDockConfirm() {
+    if (dockActionLoading) return;
+    setConfirmVisible(false);
+    setPendingDockAction(null);
+  }
+
+  async function runConfirmedDockAction() {
+    if (!pendingDockAction || dockActionLoading) return;
+
+    setDockActionLoading(true);
+    let success = false;
+    try {
+      if (pendingDockAction === 'claim') {
+        success = await handleClaim();
+      } else if (pendingDockAction === 'complete') {
+        success = await handleChangeStatus('COMPLETED');
+      } else if (pendingDockAction === 'reject') {
+        success = await handleChangeStatus('IN_PROGRESS');
+      }
+    } finally {
+      setDockActionLoading(false);
+    }
+
+    if (success) {
+      setForceChatMode(true);
+      if (forceChatTimerRef.current) {
+        clearTimeout(forceChatTimerRef.current);
+      }
+      forceChatTimerRef.current = setTimeout(() => {
+        setForceChatMode(false);
+        forceChatTimerRef.current = null;
+      }, 900);
+    }
+
+    setConfirmVisible(false);
+    setPendingDockAction(null);
+  }
 
   function resolveAttachmentType(mimeType?: string | null): AttachmentType {
     const value = String(mimeType || '').toLowerCase();
@@ -711,66 +880,173 @@ export default function AppealDetailScreen() {
           ]}
         >
           <View style={styles.inputWrap}>
-            <AppealChatInput
-              bottomInset={0}
-              onHeightChange={setInputHeight}
-              showScrollToBottom={!isAtBottom}
-              onScrollToBottom={() => listRef.current?.scrollToBottom(true)}
-              onSend={async ({ text, files }) => {
-                const res = await addAppealMessage(appealId, { text, files });
-                const optimisticAttachments = (files || [])
-                  .filter((file) => file?.uri)
-                  .map((file, index) => ({
-                    id: -(index + 1),
-                    fileUrl: file.uri,
-                    fileName: file.name || `attachment-${index + 1}`,
-                    fileType: resolveAttachmentType(file.type),
-                  }));
-                const responseAttachments = Array.isArray((res as any)?.attachments)
-                  ? (res as any).attachments
-                  : null;
-                // Оптимистично добавляем своё сообщение в локальный стор, чтобы не ждать сокет
-                const avatarUrl =
-                  auth?.profile?.avatarUrl ||
-                  auth?.profile?.employeeProfile?.avatarUrl ||
-                  auth?.profile?.clientProfile?.avatarUrl ||
-                  auth?.profile?.supplierProfile?.avatarUrl ||
-                  null;
-                const department = auth?.profile?.employeeProfile?.department || null;
-                const isDepartmentManager = (auth?.profile?.departmentRoles || []).some(
-                  (dr) => dr.role?.name === 'department_manager'
-                );
-                upsertMessage(
-                  appealId,
-                  {
-                    id: res.id,
-                    appealId,
-                    text: text || '',
-                    createdAt: res.createdAt || new Date().toISOString(),
-                    sender: auth?.profile
-                      ? {
-                          id: auth.profile.id,
-                          email: auth.profile.email || '',
-                          firstName: auth.profile.firstName || undefined,
-                          lastName: auth.profile.lastName || undefined,
-                          avatarUrl,
-                          department,
-                          isAdmin: auth.profile.role?.name === 'admin',
-                          isDepartmentManager,
-                        }
-                      : { id: 0, email: '' },
-                    attachments: responseAttachments ?? optimisticAttachments,
-                    readBy: [],
-                    isRead: true,
-                  },
-                  auth?.profile?.id
-                ).then(() => setMessagesState(getMessages(appealId)));
-              }}
-              onInputFocus={handleUserInteraction}
-            />
+            <AnimatePresence exitBeforeEnter>
+              {dockMode === 'chat' ? (
+                <MotiView
+                  key="dock-chat"
+                  from={{ opacity: 0, translateY: 8, scale: 0.98 }}
+                  animate={{ opacity: 1, translateY: 0, scale: 1 }}
+                  exit={{ opacity: 0, translateY: 6, scale: 0.98 }}
+                  transition={{ type: 'timing', duration: 210 }}
+                >
+                  <AppealChatInput
+                    bottomInset={0}
+                    onHeightChange={setInputHeight}
+                    showScrollToBottom={!isAtBottom}
+                    onScrollToBottom={() => listRef.current?.scrollToBottom(true)}
+                    onSend={async ({ text, files }) => {
+                      const res = await addAppealMessage(appealId, { text, files });
+                      const optimisticAttachments = (files || [])
+                        .filter((file) => file?.uri)
+                        .map((file, index) => ({
+                          id: -(index + 1),
+                          fileUrl: file.uri,
+                          fileName: file.name || `attachment-${index + 1}`,
+                          fileType: resolveAttachmentType(file.type),
+                        }));
+                      const responseAttachments = Array.isArray((res as any)?.attachments)
+                        ? (res as any).attachments
+                        : null;
+                      // Оптимистично добавляем своё сообщение в локальный стор, чтобы не ждать сокет
+                      const avatarUrl =
+                        auth?.profile?.avatarUrl ||
+                        auth?.profile?.employeeProfile?.avatarUrl ||
+                        auth?.profile?.clientProfile?.avatarUrl ||
+                        auth?.profile?.supplierProfile?.avatarUrl ||
+                        null;
+                      const department = auth?.profile?.employeeProfile?.department || null;
+                      const isDepartmentManager = (auth?.profile?.departmentRoles || []).some(
+                        (dr) => dr.role?.name === 'department_manager'
+                      );
+                      upsertMessage(
+                        appealId,
+                        {
+                          id: res.id,
+                          appealId,
+                          text: text || '',
+                          createdAt: res.createdAt || new Date().toISOString(),
+                          sender: auth?.profile
+                            ? {
+                                id: auth.profile.id,
+                                email: auth.profile.email || '',
+                                firstName: auth.profile.firstName || undefined,
+                                lastName: auth.profile.lastName || undefined,
+                                avatarUrl,
+                                department,
+                                isAdmin: auth.profile.role?.name === 'admin',
+                                isDepartmentManager,
+                              }
+                            : { id: 0, email: '' },
+                          attachments: responseAttachments ?? optimisticAttachments,
+                          readBy: [],
+                          isRead: true,
+                        },
+                        auth?.profile?.id
+                      ).then(() => setMessagesState(getMessages(appealId)));
+                    }}
+                    onInputFocus={handleUserInteraction}
+                  />
+                </MotiView>
+              ) : null}
+
+              {dockMode === 'closed' ? (
+                <MotiView
+                  key="dock-closed"
+                  onLayout={handleActionDockLayout}
+                  from={{ opacity: 0, translateY: 8, scale: 0.98 }}
+                  animate={{ opacity: 1, translateY: 0, scale: 1 }}
+                  exit={{ opacity: 0, translateY: 6, scale: 0.98 }}
+                  transition={{ type: 'timing', duration: 210 }}
+                >
+                  <View style={styles.actionCard}>
+                    <View style={styles.closedNoticeCard}>
+                      <Ionicons name="lock-closed-outline" size={16} color="#64748B" />
+                      <Text style={styles.closedNoticeText}>
+                        {data?.status === 'DECLINED' ? 'Обращение отклонено' : 'Обращение закрыто'}
+                      </Text>
+                    </View>
+                  </View>
+                </MotiView>
+              ) : null}
+
+              {dockMode === 'claim' ? (
+                <MotiView
+                  key="dock-claim"
+                  onLayout={handleActionDockLayout}
+                  from={{ opacity: 0, translateY: 8, scale: 0.98 }}
+                  animate={{ opacity: 1, translateY: 0, scale: 1 }}
+                  exit={{ opacity: 0, translateY: 6, scale: 0.98 }}
+                  transition={{ type: 'timing', duration: 210 }}
+                >
+                  <View style={styles.actionCard}>
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.actionBtnSingle,
+                        pressed && styles.actionBtnSinglePressed,
+                      ]}
+                      onPress={() => openDockConfirm('claim')}
+                      disabled={dockActionLoading}
+                    >
+                      <Text style={styles.actionBtnSingleText}>Принять обращение</Text>
+                    </Pressable>
+                  </View>
+                </MotiView>
+              ) : null}
+
+              {dockMode === 'creator_resolved' ? (
+                <MotiView
+                  key="dock-creator-resolved"
+                  onLayout={handleActionDockLayout}
+                  from={{ opacity: 0, translateY: 8, scale: 0.98 }}
+                  animate={{ opacity: 1, translateY: 0, scale: 1 }}
+                  exit={{ opacity: 0, translateY: 6, scale: 0.98 }}
+                  transition={{ type: 'timing', duration: 210 }}
+                >
+                  <View style={styles.actionCard}>
+                    <View style={styles.splitActionRow}>
+                      <Pressable
+                        style={({ pressed }) => [
+                          styles.splitActionBtn,
+                          styles.splitActionBtnApprove,
+                          pressed && styles.splitActionBtnPressed,
+                        ]}
+                        onPress={() => openDockConfirm('complete')}
+                        disabled={dockActionLoading}
+                      >
+                        <Text style={styles.splitActionBtnText}>Подтвердить</Text>
+                      </Pressable>
+                      <View style={styles.splitDivider} />
+                      <Pressable
+                        style={({ pressed }) => [
+                          styles.splitActionBtn,
+                          styles.splitActionBtnReject,
+                          pressed && styles.splitActionBtnPressed,
+                        ]}
+                        onPress={() => openDockConfirm('reject')}
+                        disabled={dockActionLoading}
+                      >
+                        <Text style={styles.splitActionBtnText}>Отклонить</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                </MotiView>
+              ) : null}
+            </AnimatePresence>
           </View>
         </View>
       ) : null}
+
+      <CustomAlert
+        visible={confirmVisible && !!pendingDockAction}
+        title={dockConfirmContent.title}
+        message={dockConfirmContent.message}
+        cancelText="Отмена"
+        confirmText={dockConfirmContent.confirmText}
+        onCancel={closeDockConfirm}
+        onConfirm={() => {
+          void runConfirmedDockAction();
+        }}
+      />
 
       <Modal visible={deadlineVisible} transparent animationType="fade" onRequestClose={() => setDeadlineVisible(false)}>
         <View style={styles.modalBackdrop}>
@@ -902,7 +1178,7 @@ export default function AppealDetailScreen() {
 
 const styles = StyleSheet.create({
   pendingHeader: {
-    marginHorizontal: 16,
+    marginHorizontal: 0,
     marginBottom: 12,
     marginTop: 8,
     paddingVertical: 10,
@@ -920,6 +1196,88 @@ const styles = StyleSheet.create({
   inputWrap: {
     width: '100%',
     maxWidth: 1000,
+  },
+  actionCard: {
+    paddingHorizontal: 6,
+    paddingTop: 4,
+  },
+  closedNoticeCard: {
+    minHeight: 52,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  closedNoticeText: {
+    color: '#475569',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  actionBtnSingle: {
+    minHeight: 52,
+    borderRadius: 22,
+    backgroundColor: '#2563EB',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: '#1D4ED8',
+    shadowColor: '#1D4ED8',
+    shadowOpacity: 0.2,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 5,
+  },
+  actionBtnSinglePressed: {
+    opacity: 0.92,
+  },
+  actionBtnSingleText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  splitActionRow: {
+    minHeight: 52,
+    borderRadius: 22,
+    overflow: 'hidden',
+    flexDirection: 'row',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    backgroundColor: '#fff',
+    shadowColor: '#111827',
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 5,
+  },
+  splitActionBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+  },
+  splitActionBtnApprove: {
+    backgroundColor: '#16A34A',
+  },
+  splitActionBtnReject: {
+    backgroundColor: '#DC2626',
+  },
+  splitActionBtnPressed: {
+    opacity: 0.9,
+  },
+  splitActionBtnText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  splitDivider: {
+    width: 1,
+    backgroundColor: 'rgba(255,255,255,0.45)',
   },
   modalBackdrop: {
     flex: 1,

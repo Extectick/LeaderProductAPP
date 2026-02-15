@@ -10,16 +10,22 @@ type PresenceMap = Record<number, PresenceInfo>;
 
 export function usePresence(userIds: number[], opts?: { intervalMs?: number }) {
   const intervalMs = opts?.intervalMs ?? 20_000;
-  const ids = useMemo(
-    () => Array.from(new Set(userIds.filter((id) => Number.isFinite(id)))),
-    [userIds]
-  );
-  const idsKey = useMemo(() => ids.join(','), [ids]);
+  const idsKey = useMemo(() => {
+    const unique = Array.from(new Set(userIds.filter((id) => Number.isFinite(id))));
+    return unique.join(',');
+  }, [userIds]);
+  const ids = useMemo(() => {
+    if (!idsKey) return [] as number[];
+    return idsKey
+      .split(',')
+      .map((id) => Number(id))
+      .filter((id) => Number.isFinite(id));
+  }, [idsKey]);
   const [map, setMap] = useState<PresenceMap>({});
 
   useEffect(() => {
     if (!ids.length) {
-      setMap({});
+      setMap((prev) => (Object.keys(prev).length ? {} : prev));
       return;
     }
     let cancelled = false;

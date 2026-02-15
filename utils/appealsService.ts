@@ -166,7 +166,9 @@ export async function getAppealById(id: number, forceRefresh = false): Promise<A
     if (cached) return cached;
   }
 
-  const resp = (await apiClient<undefined, AppealDetail>(`/appeals/${id}`, { method: 'GET' })) as ApiResponse<AppealDetail>;
+  // Добавляем _ts, чтобы избежать промежуточных кэшей на прокси/платформе.
+  const qs = buildQuery({ _ts: Date.now() });
+  const resp = (await apiClient<undefined, AppealDetail>(`/appeals/${id}?${qs}`, { method: 'GET' })) as ApiResponse<AppealDetail>;
   if (!resp.ok) throw new Error(resp.message || 'Ошибка загрузки обращения');
 
   await writeDetailCache(id, resp.data);

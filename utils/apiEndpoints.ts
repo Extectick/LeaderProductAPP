@@ -75,6 +75,10 @@ export const API_ENDPOINTS = {
   UPDATES: {
     CHECK: '/updates/check',
   },
+  NOTIFICATIONS: {
+    SETTINGS:    '/notifications/settings',
+    APPEAL_MUTE: (appealId: number) => `/notifications/appeals/${appealId}/mute`,
+  },
   SERVICES: {
     LIST: '/services',
     ADMIN: '/services/admin',

@@ -2,7 +2,7 @@
 import '@/utils/logbox';
 import { Slot } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Platform, StatusBar, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -50,6 +50,9 @@ export default function RootLayout() {
 
   const [preloadReady, setPreloadReady] = useState(false);
   const [updateReady, setUpdateReady] = useState(false);
+  const handleStartupDone = useCallback(() => {
+    setUpdateReady(true);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -87,9 +90,7 @@ export default function RootLayout() {
             <TrackingProvider>
               <NotificationHost>
                 <UpdateGate
-                  onStartupDone={() => {
-                    setUpdateReady(true);
-                  }}
+                  onStartupDone={handleStartupDone}
                   showCheckingOverlay={false}
                 >
                   <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />

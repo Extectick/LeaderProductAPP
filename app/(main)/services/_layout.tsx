@@ -3,6 +3,8 @@ import { AppHeader } from "@/components/AppHeader";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { getServicesForUser, type ServiceAccessItem } from "@/utils/servicesService";
 import { useNotify } from "@/components/NotificationHost";
+import { Ionicons } from "@expo/vector-icons";
+import { Pressable, StyleSheet, Text } from "react-native";
 
 export default function ServicesLayout() {
   const router = useRouter();
@@ -104,9 +106,11 @@ export default function ServicesLayout() {
       screenOptions={({ route, navigation }) => {
         const name = (route as any)?.routeName || (route.name as string);
         let meta = map[name as keyof typeof map];
+        const currentPath = String(pathname || "").split("?")[0];
 
         const isAppeals = name?.includes("appeals");
         const isAppealsList = name === "appeals" || name === "appeals/index" || name === "appeals/index.web";
+        const showCreateInHeader = /^\/services\/appeals\/?$/.test(currentPath);
 
         if (!meta && isAppeals) {
           meta = {
@@ -125,7 +129,6 @@ export default function ServicesLayout() {
         // чтобы на главной сервисов стрелки не было.
         const shouldShowBack = meta.showBack;
         const onBack = () => {
-          const currentPath = String(pathname || "");
           if (currentPath.startsWith("/services/qrcodes/")) {
             router.replace("/services/qrcodes");
             return;
@@ -154,6 +157,22 @@ export default function ServicesLayout() {
               icon={meta.icon}
               showBack={shouldShowBack}
               onBack={shouldShowBack ? onBack : undefined}
+              rightSlot={
+                showCreateInHeader ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Создать обращение"
+                    onPress={() => router.push("/services/appeals/new")}
+                    style={({ pressed }) => [
+                      styles.createBtn,
+                      pressed ? styles.createBtnPressed : null,
+                    ]}
+                  >
+                    <Ionicons name="add" size={16} color="#1D4ED8" />
+                    <Text style={styles.createBtnText}>Создать</Text>
+                  </Pressable>
+                ) : undefined
+              }
             />
           ),
           animation: "ios_from_left",
@@ -162,3 +181,26 @@ export default function ServicesLayout() {
     />
   );
 }
+
+const styles = StyleSheet.create({
+  createBtn: {
+    minHeight: 34,
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+    backgroundColor: "#EFF6FF",
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 4,
+  },
+  createBtnPressed: {
+    opacity: 0.9,
+  },
+  createBtnText: {
+    color: "#1D4ED8",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+});

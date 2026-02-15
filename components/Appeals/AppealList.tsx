@@ -47,6 +47,7 @@ type AppealsListProps = {
   incomingMessage?: { appealId: number; id: number; senderId?: number; createdAt: string; text?: string };
   initialItems?: AppealListItem[];
   listKey?: string; // уникальный ключ списка для локального стора
+  displayFilter?: (item: AppealListItem) => boolean;
 };
 
 const toNum = (v: any, fallback = 0) => {
@@ -76,6 +77,7 @@ export default function AppealsList({
   incomingMessage,
   initialItems,
   listKey,
+  displayFilter,
 }: AppealsListProps) {
   const cacheKey = useMemo(
     () =>
@@ -94,6 +96,10 @@ export default function AppealsList({
   const [loadingMore, setLoadingMore] = useState(false);
   const emptyText = scope === 'department' ? 'Задач отдела пока нет' : 'Обращений пока нет';
   const showSkeleton = loading && items.length === 0;
+  const displayItems = useMemo(
+    () => (displayFilter ? items.filter(displayFilter) : items),
+    [items, displayFilter]
+  );
 
   const filters = useMemo(() => ({ status, priority }), [status, priority]);
 
@@ -246,7 +252,7 @@ export default function AppealsList({
     <View style={[{ flex: 1 }, style]}>
       <FlatList
         style={{ flex: 1 }}
-        data={items}
+        data={displayItems}
         keyExtractor={(it) => String(it.id)}
         renderItem={({ item }) =>
           renderItem ? (

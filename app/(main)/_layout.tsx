@@ -48,54 +48,93 @@ function AppealsNotificationsBridge() {
   const handleEvent = useCallback(
     (evt: any) => {
       const eventName = evt?.event || evt?.eventType || evt?.type;
-      if (eventName !== 'messageAdded') return;
       const appealId = Number(evt?.appealId);
       if (!Number.isFinite(appealId) || appealId <= 0) return;
-      if (evt?.senderId === userId || evt?.sender?.id === userId) return;
 
       const isAppealsList = pathname === '/services/appeals' || pathname === '/services/appeals/';
       const chatMatch = pathname?.match(/^\/services\/appeals\/(\d+)$/);
       const activeAppealId = chatMatch ? Number(chatMatch[1]) : null;
-      if (isAppealsList) return;
-      if (activeAppealId && activeAppealId === appealId) return;
 
-      const messageId = Number(evt?.id || evt?.messageId);
-      const key = Number.isFinite(messageId)
-        ? `appeal-msg-${appealId}-${messageId}`
-        : `appeal-msg-${appealId}-${evt?.createdAt || Date.now()}`;
-      if (shownRef.current.has(key)) return;
-      shownRef.current.add(key);
-      if (shownRef.current.size > 200) {
-        const next = Array.from(shownRef.current).slice(-120);
-        shownRef.current = new Set(next);
+      if (eventName === 'messageAdded') {
+        if (isAppealsList) return;
+        if (activeAppealId && activeAppealId === appealId) return;
+        if (evt?.senderId === userId || evt?.sender?.id === userId) return;
+
+        const messageId = Number(evt?.id || evt?.messageId);
+        const key = Number.isFinite(messageId)
+          ? `appeal-msg-${appealId}-${messageId}`
+          : `appeal-msg-${appealId}-${evt?.createdAt || Date.now()}`;
+        if (shownRef.current.has(key)) return;
+        shownRef.current.add(key);
+        if (shownRef.current.size > 200) {
+          const next = Array.from(shownRef.current).slice(-120);
+          shownRef.current = new Set(next);
+        }
+
+        const senderName =
+          evt?.senderName ||
+          [evt?.sender?.firstName, evt?.sender?.lastName].filter(Boolean).join(' ').trim() ||
+          evt?.sender?.email ||
+          'Пользователь';
+        const snippet = evt?.text ? String(evt.text).trim() : '';
+        const messageText = snippet || '[Вложение]';
+        const appealNumber = Number(evt?.appealNumber) || appealId;
+        const dismissKeys = [`appeal:${appealId}`];
+        if (Number.isFinite(messageId) && messageId > 0) {
+          dismissKeys.push(`appeal-message:${messageId}`);
+        }
+
+        notify({
+          id: key,
+          title: `Обращение #${appealNumber}`,
+          message: `${senderName}: ${messageText}`,
+          type: 'info',
+          icon: 'chatbubble-ellipses-outline',
+          avatarUrl: evt?.sender?.avatarUrl || evt?.senderAvatarUrl || '',
+          durationMs: 6000,
+          dismissKeys,
+          onPress: () => {
+            router.push(`/(main)/services/appeals/${appealId}` as any);
+          },
+        });
+        return;
       }
 
-      const senderName =
-        evt?.senderName ||
-        [evt?.sender?.firstName, evt?.sender?.lastName].filter(Boolean).join(' ').trim() ||
-        evt?.sender?.email ||
-        'Пользователь';
-      const snippet = evt?.text ? String(evt.text).trim() : '';
-      const messageText = snippet || '[Вложение]';
-      const appealNumber = Number(evt?.appealNumber) || appealId;
-      const dismissKeys = [`appeal:${appealId}`];
-      if (Number.isFinite(messageId) && messageId > 0) {
-        dismissKeys.push(`appeal-message:${messageId}`);
-      }
+      if (eventName === 'statusUpdated' || eventName === 'deadlineUpdated') {
+        if (activeAppealId && activeAppealId === appealId) return;
+        const key = `${eventName}-${appealId}-${evt?.status || evt?.deadline || Date.now()}`;
+        if (shownRef.current.has(key)) return;
+        shownRef.current.add(key);
+        if (shownRef.current.size > 200) {
+          const next = Array.from(shownRef.current).slice(-120);
+          shownRef.current = new Set(next);
+        }
+        const appealNumber = Number(evt?.appealNumber) || appealId;
+        const statusMap: Record<string, string> = {
+          OPEN: 'Открыто',
+          IN_PROGRESS: 'В работе',
+          RESOLVED: 'Ожидание подтверждения',
+          COMPLETED: 'Завершено',
+          DECLINED: 'Отклонено',
+        };
+        const message =
+          eventName === 'statusUpdated'
+            ? `Статус изменён: ${statusMap[String(evt?.status)] || String(evt?.status || 'обновлён')}`
+            : 'Дедлайн обращения изменён';
 
-      notify({
-        id: key,
-        title: `Обращение #${appealNumber}`,
-        message: `${senderName}: ${messageText}`,
-        type: 'info',
-        icon: 'chatbubble-ellipses-outline',
-        avatarUrl: evt?.sender?.avatarUrl || evt?.senderAvatarUrl || '',
-        durationMs: 6000,
-        dismissKeys,
-        onPress: () => {
-          router.push(`/(main)/services/appeals/${appealId}` as any);
-        },
-      });
+        notify({
+          id: key,
+          title: `Обращение #${appealNumber}`,
+          message,
+          type: 'info',
+          icon: eventName === 'statusUpdated' ? 'swap-horizontal-outline' : 'time-outline',
+          durationMs: 6000,
+          dismissKeys: [`appeal:${appealId}`],
+          onPress: () => {
+            router.push(`/(main)/services/appeals/${appealId}` as any);
+          },
+        });
+      }
     },
     [notify, pathname, router, userId]
   );

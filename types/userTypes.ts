@@ -1,4 +1,18 @@
 
+export type NotificationSettings = {
+  inAppNotificationsEnabled:    boolean;
+  telegramNotificationsEnabled: boolean;
+  pushNewMessage?:               boolean;
+  pushStatusChanged?:            boolean;
+  pushDeadlineChanged?:          boolean;
+  telegramNewAppeal?:            boolean;
+  telegramStatusChanged?:        boolean;
+  telegramDeadlineChanged?:      boolean;
+  telegramUnreadReminder?:       boolean;
+  telegramClosureReminder?:      boolean;
+  telegramNewMessage?:           boolean;
+};
+
 export type ProfileStatus = "PENDING" | "ACTIVE" | "BLOCKED"
 export type AuthProvider = "LOCAL" | "TELEGRAM" | "HYBRID"
 export type AuthMethods = {

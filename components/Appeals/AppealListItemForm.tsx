@@ -166,7 +166,7 @@ function AppealListItemForm({ item, currentUserId, listContext = 'my' }: Props) 
       }
       onPressIn={onPressIn}
       onPressOut={onPressOut}
-      style={{ paddingHorizontal: 10, paddingVertical: 6 }}
+      style={{ paddingHorizontal: 0, paddingVertical: 6 }}
     >
       <Animated.View
         style={[

@@ -17,6 +17,7 @@ const ROOT_PATHS = new Set([
   '/ProfilePendingScreen',
   '/ProfileBlockedScreen',
 ]);
+const MINI_APP_SAFE_HOME: Href = '/home';
 
 function normalizePath(pathname: string): string {
   if (!pathname) return '/';
@@ -78,6 +79,21 @@ function getNativeTelegramWebView(): any | null {
   return (window as any)?.Telegram?.WebView || null;
 }
 
+function getWebPathnameOr(defaultPath: string): string {
+  if (typeof window === 'undefined') return defaultPath;
+  try {
+    const direct = normalizePath(String(window.location.pathname || ''));
+    if (direct && direct !== '/') return direct;
+
+    const hash = String(window.location.hash || '').replace(/^#/, '');
+    if (hash.startsWith('/')) {
+      const hashPath = normalizePath(hash.split('?')[0] || '/');
+      if (hashPath) return hashPath;
+    }
+  } catch {}
+  return defaultPath;
+}
+
 export function useTelegramBackButton() {
   const router = useRouter();
   const pathname = usePathname();
@@ -87,18 +103,25 @@ export function useTelegramBackButton() {
   const inMiniApp = Platform.OS === 'web' && (isTelegramMiniAppLaunch() || hasTelegramWebAppObject());
   const fallbackPath = useMemo(() => resolveFallbackPath(path), [path]);
   const isRootPath = ROOT_PATHS.has(path);
-  const shouldShowBackButton = inMiniApp && !isRootPath;
-  const needsWebBackGuard = inMiniApp && Boolean(fallbackPath);
+  const shouldShowBackButton = inMiniApp;
+  const needsWebBackGuard = inMiniApp;
+
+  const resolveSafeTarget = useCallback((): Href => {
+    if (fallbackPath) return fallbackPath;
+    if (isRootPath) return MINI_APP_SAFE_HOME;
+    return MINI_APP_SAFE_HOME;
+  }, [fallbackPath, isRootPath]);
 
   const handleBackPress = useCallback(() => {
-    if (fallbackPath) {
-      router.replace(fallbackPath);
-      return;
+    const target = resolveSafeTarget();
+    router.replace(target);
+    if (typeof window !== 'undefined') {
+      try {
+        const state = { ...(window.history.state || {}), __lpTgBackGuard: String(target) };
+        window.history.pushState(state, '', window.location.href);
+      } catch {}
     }
-    if (router.canGoBack()) {
-      router.back();
-    }
-  }, [fallbackPath, router]);
+  }, [resolveSafeTarget, router]);
 
   useEffect(() => {
     if (!inMiniApp) return;
@@ -158,6 +181,28 @@ export function useTelegramBackButton() {
         } catch {}
       };
     } catch {}
+    const onWindowMessage = (event: MessageEvent) => {
+      try {
+        const payload =
+          typeof event.data === 'string'
+            ? JSON.parse(event.data)
+            : event.data;
+        const eventType = String(payload?.eventType || payload?.type || '');
+        if (eventType === 'back_button_pressed' || eventType === 'backButtonClicked') {
+          handleBackPress();
+        }
+      } catch {}
+    };
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    try {
+      window.addEventListener('message', onWindowMessage);
+      // Android WebView bridge может отправлять message в document.
+      document.addEventListener('message', onWindowMessage as any);
+      window.addEventListener('beforeunload', onBeforeUnload);
+    } catch {}
 
     return () => {
       if (unsubscribe) unsubscribe();
@@ -166,6 +211,11 @@ export function useTelegramBackButton() {
       if (nativeUnsubscribeEventSnake) nativeUnsubscribeEventSnake();
       if (nativeUnsubscribeWebViewEvent) nativeUnsubscribeWebViewEvent();
       if (nativeUnsubscribeWebViewEventSnake) nativeUnsubscribeWebViewEventSnake();
+      try {
+        window.removeEventListener('message', onWindowMessage);
+        document.removeEventListener('message', onWindowMessage as any);
+        window.removeEventListener('beforeunload', onBeforeUnload);
+      } catch {}
       try {
         nativeBack?.hide?.();
       } catch {}
@@ -179,30 +229,20 @@ export function useTelegramBackButton() {
     const nativeTg = getNativeTelegramWebApp();
     const nativeBack = nativeTg?.BackButton;
     safeBackButtonCall(() => {
-      if (shouldShowBackButton) {
-        backButton.show();
-        try {
-          nativeBack?.show?.();
-        } catch {}
-        try {
-          nativeTg?.enableClosingConfirmation?.();
-        } catch {}
-      } else {
-        backButton.hide();
-        try {
-          nativeBack?.hide?.();
-        } catch {}
-        try {
-          nativeTg?.disableClosingConfirmation?.();
-        } catch {}
-      }
+      backButton.show();
+      try {
+        nativeBack?.show?.();
+      } catch {}
+      try {
+        // В mini app всегда держим guard от случайного закрытия по back.
+        nativeTg?.enableClosingConfirmation?.();
+      } catch {}
     });
   }, [inMiniApp, shouldShowBackButton]);
 
   useEffect(() => {
     if (!needsWebBackGuard) return;
     if (typeof window === 'undefined') return;
-    if (!fallbackPath) return;
     if (guardPathRef.current === path) return;
     guardPathRef.current = path;
 
@@ -212,8 +252,8 @@ export function useTelegramBackButton() {
     } catch {}
 
     const onPopState = () => {
-      const currentPath = normalizePath(String(window.location.pathname || path));
-      const target = resolveFallbackPath(currentPath) || fallbackPath;
+      const currentPath = getWebPathnameOr(path);
+      const target = resolveFallbackPath(currentPath) || resolveSafeTarget();
       if (!target) return;
       router.replace(target);
       try {
@@ -229,5 +269,5 @@ export function useTelegramBackButton() {
         guardPathRef.current = null;
       }
     };
-  }, [fallbackPath, needsWebBackGuard, path, router]);
+  }, [needsWebBackGuard, path, resolveSafeTarget, router]);
 }

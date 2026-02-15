@@ -61,6 +61,7 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
   const promptLoggedForRef = useRef<number | null>(null);
   const downloadRef = useRef<FileSystem.DownloadResumable | null>(null);
   const startupDoneRef = useRef(false);
+  const startupCheckStartedRef = useRef(false);
 
   const completeStartup = useCallback(() => {
     if (startupDoneRef.current) return;
@@ -161,6 +162,8 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
   );
 
   useEffect(() => {
+    if (startupCheckStartedRef.current) return;
+    startupCheckStartedRef.current = true;
     if (!shouldCheck || !versionCode) {
       completeStartup();
       return;
