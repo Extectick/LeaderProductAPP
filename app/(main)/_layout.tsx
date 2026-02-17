@@ -9,6 +9,15 @@ import { usePathname, useRouter } from 'expo-router';
 import React, { useCallback, useContext, useEffect, useMemo, useRef } from 'react';
 import { StyleSheet, View } from 'react-native';
 
+function normalizeRoutePath(path: string | null | undefined): string {
+  const raw = String(path || '').trim();
+  if (!raw) return '/';
+  const noGroups = raw.replace(/\/\([^/]+\)/g, '');
+  const compact = noGroups.replace(/\/+/g, '/');
+  if (compact.length > 1 && compact.endsWith('/')) return compact.slice(0, -1);
+  return compact || '/';
+}
+
 function AppealsNotificationsBridge() {
   const auth = useContext(AuthContext);
   const router = useRouter();
@@ -151,23 +160,41 @@ function AppealsNotificationsBridge() {
 
 export default function MainLayout() {
   const router = useRouter();
+  const pathname = usePathname();
   const auth = useContext(AuthContext);
+  const lastRedirectRef = useRef('');
 
   useEffect(() => {
     if (!auth) return;
     if (auth.isLoading) return;
 
+    let target: string | null = null;
     const gate = getProfileGate(auth.profile);
     if (!auth.isAuthenticated) {
-      router.replace('/(auth)/AuthScreen' as any);
+      target = '/(auth)/AuthScreen';
     } else if (gate === 'pending') {
-      router.replace('/(auth)/ProfilePendingScreen' as any);
+      target = '/(auth)/ProfilePendingScreen';
     } else if (gate === 'blocked') {
-      router.replace('/(auth)/ProfileBlockedScreen' as any);
+      target = '/(auth)/ProfileBlockedScreen';
     } else if (gate === 'none') {
-      router.replace('/ProfileSelectionScreen' as any);
+      target = '/ProfileSelectionScreen';
     }
-  }, [auth, router]);
+
+    if (!target) {
+      lastRedirectRef.current = '';
+      return;
+    }
+
+    const currentPath = normalizeRoutePath(pathname);
+    const targetPath = normalizeRoutePath(target);
+    if (currentPath === targetPath) {
+      lastRedirectRef.current = '';
+      return;
+    }
+    if (lastRedirectRef.current === targetPath) return;
+    lastRedirectRef.current = targetPath;
+    router.replace(target as any);
+  }, [auth, pathname, router]);
 
   return (
     <View style={styles.container}>

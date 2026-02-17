@@ -38,6 +38,7 @@ import { AuthContext } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { API_BASE_URL } from '@/utils/config';
 import { shadeColor, tintColor } from '@/utils/color';
+import { isMaxMiniAppLaunch, prepareMaxWebApp } from '@/utils/maxAuthService';
 import { isTelegramMiniAppLaunch, prepareTelegramWebApp } from '@/utils/telegramAuthService';
 import {
   changePassword,
@@ -120,6 +121,10 @@ export default function AuthScreen() {
     let cancelled = false;
     const tryRedirect = () => {
       if (cancelled) return true;
+      if (isMaxMiniAppLaunch()) {
+        router.replace('/(auth)/max' as Href);
+        return true;
+      }
       if (!isTelegramMiniAppLaunch()) return false;
       router.replace('/(auth)/telegram' as Href);
       return true;
@@ -129,6 +134,7 @@ export default function AuthScreen() {
 
     const stopAt = Date.now() + 5000;
     const timer = setInterval(() => {
+      prepareMaxWebApp();
       prepareTelegramWebApp();
       if (tryRedirect() || Date.now() >= stopAt) {
         clearInterval(timer);

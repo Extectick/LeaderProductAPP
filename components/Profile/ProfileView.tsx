@@ -58,6 +58,7 @@ type Chip = { icon: IoniconName; label: string; tone?: Tone };
 type CropImage = { uri: string; width: number; height: number };
 type NameFormState = { firstName: string; lastName: string; middleName: string };
 type PhoneMode = 'collapsed' | 'editing' | 'pending';
+type PhoneVerificationProvider = 'TELEGRAM' | 'MAX';
 type EmailMode = 'view' | 'editing' | 'pending_code';
 type NameMode = 'view' | 'editing';
 
@@ -82,12 +83,27 @@ const profTypeName = (t?: ProfileType | null) =>
 const profStatusTone = (s?: ProfileStatus): Tone =>
   s === 'ACTIVE' ? 'green' : s === 'PENDING' ? 'blue' : s === 'BLOCKED' ? 'red' : 'gray';
 
-function isValidTelegramDeepLink(url: string) {
-  return /^https:\/\/t\.me\/.+\?start=verify_phone_[A-Za-z0-9_-]+$/.test(String(url || '').trim());
+function resolvePreferredPhoneProvider(profile: Profile | null): PhoneVerificationProvider {
+  const hasTelegram = Boolean(profile?.authMethods?.telegramLinked ?? profile?.telegramId);
+  const hasMax = Boolean(profile?.authMethods?.maxLinked ?? profile?.maxId);
+  if (hasMax && !hasTelegram) return 'MAX';
+  return 'TELEGRAM';
 }
 
-async function openTelegramDeepLink(url: string) {
-  if (!url) throw new Error('Telegram ссылка не получена. Проверьте настройки сервера.');
+function isValidPhoneVerificationDeepLink(url: string, provider: PhoneVerificationProvider) {
+  const raw = String(url || '').trim();
+  if (provider === 'MAX') {
+    return /^https:\/\/max\.ru\/.+\?start=verify_phone_[A-Za-z0-9_-]+$/.test(raw);
+  }
+  return /^https:\/\/t\.me\/.+\?start=verify_phone_[A-Za-z0-9_-]+$/.test(raw);
+}
+
+function providerLabel(provider: PhoneVerificationProvider) {
+  return provider === 'MAX' ? 'MAX' : 'Telegram';
+}
+
+async function openPhoneVerificationDeepLink(url: string, provider: PhoneVerificationProvider) {
+  if (!url) throw new Error(`${providerLabel(provider)} ссылка не получена. Проверьте настройки сервера.`);
   if (Platform.OS === 'web' && typeof window !== 'undefined') {
     window.open(url, '_blank', 'noopener,noreferrer');
     return;
@@ -95,11 +111,12 @@ async function openTelegramDeepLink(url: string) {
   await Linking.openURL(url);
 }
 
-function mapPhoneVerificationReason(reason?: string | null) {
+function mapPhoneVerificationReason(reason?: string | null, provider: PhoneVerificationProvider = 'TELEGRAM') {
   if (!reason) return 'Не удалось подтвердить телефон';
-  if (reason === 'PHONE_MISMATCH') return 'Номер из Telegram не совпал с введённым номером';
+  if (reason === 'PHONE_MISMATCH') return `Номер из ${providerLabel(provider)} не совпал с введённым номером`;
   if (reason === 'PHONE_ALREADY_USED') return 'Этот номер уже используется другим пользователем';
   if (reason === 'TELEGRAM_ALREADY_USED') return 'Этот Telegram уже привязан к другому пользователю';
+  if (reason === 'MAX_ALREADY_USED') return 'Этот MAX уже привязан к другому пользователю';
   if (reason === 'SESSION_EXPIRED') return 'Сессия подтверждения истекла';
   return 'Не удалось подтвердить телефон';
 }
@@ -152,6 +169,9 @@ export function ProfileView({
   const [phoneSessionId, setPhoneSessionId] = useState<string | null>(null);
   const [phoneDeepLinkUrl, setPhoneDeepLinkUrl] = useState('');
   const [phoneQrPayload, setPhoneQrPayload] = useState('');
+  const [phoneProvider, setPhoneProvider] = useState<PhoneVerificationProvider>(
+    resolvePreferredPhoneProvider(profileOverride ?? null)
+  );
   const [phoneBusy, setPhoneBusy] = useState(false);
   const [phoneError, setPhoneError] = useState<string | null>(null);
   const [phoneStatusText, setPhoneStatusText] = useState<string | null>(null);
@@ -250,6 +270,11 @@ export function ProfileView({
     }
   }, [phoneMode, profilePhoneMasked]);
 
+  useEffect(() => {
+    if (phoneMode === 'pending') return;
+    setPhoneProvider(resolvePreferredPhoneProvider(profile));
+  }, [phoneMode, profile]);
+
   const resolveImageSize = async (uri: string, width?: number, height?: number): Promise<CropImage> => {
     if (width && height) return { uri, width, height };
     return new Promise((resolve, reject) => {
@@ -328,7 +353,7 @@ export function ProfileView({
       clearPhoneSessionState();
       setPhoneMode('editing');
       if (session.status === 'FAILED') {
-        setPhoneError(mapPhoneVerificationReason(session.failureReason));
+        setPhoneError(mapPhoneVerificationReason(session.failureReason, phoneProvider));
       } else if (session.status === 'EXPIRED') {
         setPhoneError('Сессия подтверждения истекла. Запустите подтверждение снова.');
       } else if (session.status === 'CANCELLED') {
@@ -510,35 +535,40 @@ export function ProfileView({
       setPhoneStatusText(null);
       return;
     }
+    const provider = resolvePreferredPhoneProvider(profile);
     setPhoneBusy(true);
     setPhoneError(null);
     setPhoneStatusText(null);
 
     let createdSessionId: string | null = null;
     try {
-      const started = await startPhoneVerification(normalized);
+      const started = await startPhoneVerification(normalized, provider);
+      const startedProvider = (started.provider || provider) as PhoneVerificationProvider;
       createdSessionId = started.sessionId;
       const deepLink = String(started.deepLinkUrl || '').trim();
       const qrPayload = String(started.qrPayload || '').trim();
 
-      if (!isValidTelegramDeepLink(deepLink)) {
+      if (!isValidPhoneVerificationDeepLink(deepLink, startedProvider)) {
         if (createdSessionId) {
           await cancelPhoneVerification(createdSessionId).catch(() => undefined);
         }
-        throw new Error('Telegram ссылка не получена. Проверьте настройки сервера.');
+        throw new Error(`${providerLabel(startedProvider)} ссылка не получена. Проверьте настройки сервера.`);
       }
 
       setPhoneSessionId(createdSessionId);
       setPhoneDeepLinkUrl(deepLink);
       setPhoneQrPayload(qrPayload || deepLink);
+      setPhoneProvider(startedProvider);
       setPhoneMode('pending');
       setPhoneStatusText('Идёт привязка телефона...');
 
       if (!isDesktopWeb) {
         try {
-          await openTelegramDeepLink(deepLink);
+          await openPhoneVerificationDeepLink(deepLink, startedProvider);
         } catch {
-          setPhoneError('Не удалось открыть Telegram автоматически. Используйте кнопку \"Открыть Telegram\".');
+          setPhoneError(
+            `Не удалось открыть ${providerLabel(startedProvider)} автоматически. Используйте кнопку "Открыть ${providerLabel(startedProvider)}".`
+          );
         }
       }
     } catch (e: any) {
@@ -548,18 +578,18 @@ export function ProfileView({
     } finally {
       setPhoneBusy(false);
     }
-  }, [clearPhoneSessionState, isDesktopWeb, phoneInput]);
+  }, [clearPhoneSessionState, isDesktopWeb, phoneInput, profile]);
 
   const handleOpenTelegram = useCallback(async () => {
     try {
-      if (!isValidTelegramDeepLink(phoneDeepLinkUrl)) {
-        throw new Error('Telegram ссылка не получена. Проверьте настройки сервера.');
+      if (!isValidPhoneVerificationDeepLink(phoneDeepLinkUrl, phoneProvider)) {
+        throw new Error(`${providerLabel(phoneProvider)} ссылка не получена. Проверьте настройки сервера.`);
       }
-      await openTelegramDeepLink(phoneDeepLinkUrl);
+      await openPhoneVerificationDeepLink(phoneDeepLinkUrl, phoneProvider);
     } catch (e: any) {
-      setPhoneError(e?.message || 'Не удалось открыть Telegram ссылку');
+      setPhoneError(e?.message || `Не удалось открыть ${providerLabel(phoneProvider)} ссылку`);
     }
-  }, [phoneDeepLinkUrl]);
+  }, [phoneDeepLinkUrl, phoneProvider]);
 
   const handleCancelPhoneFlow = useCallback(async () => {
     if (!phoneSessionId) return;
@@ -740,6 +770,7 @@ export function ProfileView({
           busy={phoneBusy}
           deepLinkUrl={phoneDeepLinkUrl}
           qrPayload={phoneQrPayload}
+          provider={phoneProvider}
           showDesktopQr={isDesktopWeb}
           statusText={phoneStatusText}
           error={phoneError}
@@ -759,7 +790,7 @@ export function ProfileView({
             setPhoneInput(profilePhoneMasked);
           }}
           onStartFlow={() => void handleStartPhoneFlow()}
-          onOpenTelegram={() => void handleOpenTelegram()}
+          onOpenMessenger={() => void handleOpenTelegram()}
           onCancelFlow={() => void handleCancelPhoneFlow()}
         />
         {facts.map((f, i) => (
@@ -1155,6 +1186,7 @@ function PhoneInfoCard({
   busy,
   deepLinkUrl,
   qrPayload,
+  provider,
   showDesktopQr,
   statusText,
   error,
@@ -1162,7 +1194,7 @@ function PhoneInfoCard({
   onStartEdit,
   onCollapseEdit,
   onStartFlow,
-  onOpenTelegram,
+  onOpenMessenger,
   onCancelFlow,
 }: {
   phoneDisplay: string;
@@ -1174,6 +1206,7 @@ function PhoneInfoCard({
   busy: boolean;
   deepLinkUrl: string;
   qrPayload: string;
+  provider: PhoneVerificationProvider;
   showDesktopQr: boolean;
   statusText: string | null;
   error: string | null;
@@ -1181,7 +1214,7 @@ function PhoneInfoCard({
   onStartEdit: () => void;
   onCollapseEdit: () => void;
   onStartFlow: () => void;
-  onOpenTelegram: () => void;
+  onOpenMessenger: () => void;
   onCancelFlow: () => void;
 }) {
   return (
@@ -1241,17 +1274,17 @@ function PhoneInfoCard({
               </View>
               {deepLinkUrl ? (
                 <Pressable
-                  onPress={onOpenTelegram}
+                  onPress={onOpenMessenger}
                   disabled={busy}
                   style={({ pressed }) => [styles.inlineSecondaryBtn, pressed && !busy ? styles.inlineSecondaryBtnPressed : null]}
                 >
-                  <Text style={styles.inlineSecondaryBtnText}>Открыть Telegram</Text>
+                  <Text style={styles.inlineSecondaryBtnText}>Открыть {providerLabel(provider)}</Text>
                 </Pressable>
               ) : null}
               {showDesktopQr && qrPayload ? (
                 <View style={styles.qrWrap}>
                   <QRCode value={qrPayload} size={180} />
-                  <Text style={styles.verifyHint}>Сканируйте QR в Telegram и отправьте контакт</Text>
+                  <Text style={styles.verifyHint}>Сканируйте QR в {providerLabel(provider)} и отправьте контакт</Text>
                 </View>
               ) : null}
             </>

@@ -13,6 +13,11 @@ export const API_ENDPOINTS = {
     TELEGRAM_CONTACT_STATUS: '/auth/telegram/contact-status',
     TELEGRAM_SIGN_IN: '/auth/telegram/sign-in',
     TELEGRAM_LINK: '/auth/telegram/link',
+    MAX_INIT: '/auth/max/init',
+    MAX_CONTACT: '/auth/max/contact',
+    MAX_CONTACT_STATUS: '/auth/max/contact-status',
+    MAX_SIGN_IN: '/auth/max/sign-in',
+    MAX_LINK: '/auth/max/link',
   },
   PASSWORD_RESET: {
     REQUEST: '/password-reset/request',

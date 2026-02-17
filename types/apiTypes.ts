@@ -125,11 +125,31 @@ export type TelegramContactResponseData = {
   conflictUserHint?: TelegramConflictHint | null;
 };
 
+export type MaxState = TelegramState;
+export type MaxConflictHint = TelegramConflictHint;
+
+export type MaxInitResponseData = {
+  maxSessionToken: string;
+  maxUser: {
+    id: string;
+    username: string | null;
+    firstName: string | null;
+    lastName: string | null;
+  };
+  state: MaxState;
+  conflictUserHint?: MaxConflictHint | null;
+};
+
+export type MaxContactResponseData = {
+  state: MaxState;
+  conflictUserHint?: MaxConflictHint | null;
+};
+
 export type AuthMethod = {
-  key: 'password' | 'telegram';
+  key: 'password' | 'telegram' | 'max';
   label: string;
   enabled: boolean;
-  flow: 'credentials' | 'telegram';
+  flow: 'credentials' | 'telegram' | 'max';
 };
 
 export type AuthMethodsResponseData = {
@@ -154,6 +174,7 @@ export type PhoneVerificationStartResponseData = {
   expiresAt: string;
   pollIntervalSec: number;
   requestedPhone: string | null;
+  provider?: 'TELEGRAM' | 'MAX';
 };
 
 export type EmailChangeSessionData = {

@@ -236,6 +236,15 @@ export type UpdateMyProfilePayload = {
   phone?: string | null;
 };
 
+function isValidPhoneVerificationDeepLink(url: string, provider: 'TELEGRAM' | 'MAX') {
+  const raw = String(url || '').trim();
+  if (!raw) return false;
+  if (provider === 'MAX') {
+    return /^https:\/\/max\.ru\/.+\?start=verify_phone_[A-Za-z0-9_-]+$/.test(raw);
+  }
+  return /^https:\/\/t\.me\/.+\?start=verify_phone_[A-Za-z0-9_-]+$/.test(raw);
+}
+
 export async function updateMyProfile(payload: UpdateMyProfilePayload): Promise<Profile | null> {
   const res = await apiClient<UpdateMyProfilePayload, { profile: Profile }>(API_ENDPOINTS.USERS.PROFILE, {
     method: 'PATCH',
@@ -249,18 +258,26 @@ export async function updateMyProfile(payload: UpdateMyProfilePayload): Promise<
   return profile;
 }
 
-export async function startPhoneVerification(phone: string): Promise<PhoneVerificationStartResponseData> {
-  const res = await apiClient<{ phone: string }, PhoneVerificationStartResponseData>(
+export async function startPhoneVerification(
+  phone: string,
+  provider: 'TELEGRAM' | 'MAX' = 'TELEGRAM'
+): Promise<PhoneVerificationStartResponseData> {
+  const res = await apiClient<{ phone: string; provider: 'TELEGRAM' | 'MAX' }, PhoneVerificationStartResponseData>(
     API_ENDPOINTS.USERS.PHONE_VERIFICATION_START,
     {
       method: 'POST',
-      body: { phone },
+      body: { phone, provider },
     }
   );
   if (!res.ok || !res.data) throw new Error(res.message || 'Не удалось запустить верификацию телефона');
   const deepLink = String(res.data.deepLinkUrl || '').trim();
-  if (!deepLink || !/^https:\/\/t\.me\/.+\?start=verify_phone_[A-Za-z0-9_-]+$/.test(deepLink)) {
-    throw new Error('Telegram ссылка не получена. Проверьте настройки сервера.');
+  const effectiveProvider = (res.data.provider || provider || 'TELEGRAM') as 'TELEGRAM' | 'MAX';
+  if (!isValidPhoneVerificationDeepLink(deepLink, effectiveProvider)) {
+    throw new Error(
+      effectiveProvider === 'MAX'
+        ? 'MAX ссылка не получена. Проверьте настройки сервера.'
+        : 'Telegram ссылка не получена. Проверьте настройки сервера.'
+    );
   }
   return res.data;
 }

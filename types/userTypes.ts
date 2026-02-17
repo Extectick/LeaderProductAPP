@@ -2,6 +2,7 @@
 export type NotificationSettings = {
   inAppNotificationsEnabled:    boolean;
   telegramNotificationsEnabled: boolean;
+  maxNotificationsEnabled:      boolean;
   pushNewMessage?:               boolean;
   pushStatusChanged?:            boolean;
   pushDeadlineChanged?:          boolean;
@@ -11,12 +12,19 @@ export type NotificationSettings = {
   telegramUnreadReminder?:       boolean;
   telegramClosureReminder?:      boolean;
   telegramNewMessage?:           boolean;
+  maxNewAppeal?:                 boolean;
+  maxStatusChanged?:             boolean;
+  maxDeadlineChanged?:           boolean;
+  maxUnreadReminder?:            boolean;
+  maxClosureReminder?:           boolean;
+  maxNewMessage?:                boolean;
 };
 
 export type ProfileStatus = "PENDING" | "ACTIVE" | "BLOCKED"
-export type AuthProvider = "LOCAL" | "TELEGRAM" | "HYBRID"
+export type AuthProvider = "LOCAL" | "TELEGRAM" | "MAX" | "HYBRID"
 export type AuthMethods = {
     telegramLinked: boolean;
+    maxLinked: boolean;
     passwordLoginEnabled: boolean;
     passwordLoginPendingVerification: boolean;
 }
@@ -33,6 +41,8 @@ export type Profile = {
     phoneVerifiedAt?: string | null;
     telegramId?: string | null;
     telegramUsername?: string | null;
+    maxId?: string | null;
+    maxUsername?: string | null;
     authProvider?: AuthProvider;
     authMethods?: AuthMethods;
     avatarUrl: string | null;

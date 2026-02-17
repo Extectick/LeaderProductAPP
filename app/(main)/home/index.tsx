@@ -27,6 +27,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { shadeColor } from "@/utils/color";
 import TabBarSpacer from "@/components/Navigation/TabBarSpacer";
+import { isMaxMiniAppLaunch, prepareMaxWebApp } from "@/utils/maxAuthService";
 
 const updates = [
   { title: "Новый трекинг", desc: "Отслеживайте перемещения сотрудников и точки на карте.", icon: "map-outline", color: "#2563EB" },
@@ -76,19 +77,27 @@ export default function HomeScreen() {
   const { width } = useWindowDimensions();
   const router = useRouter();
   const isWide = Platform.OS === "web" && width >= 960;
+  const isMaxLaunch = Platform.OS === "web" && isMaxMiniAppLaunch();
+  const topPadding = isMaxLaunch ? 0 : Platform.OS === "web" ? 8 : insets.top + 8;
 
-  return (
-    <SafeAreaView
-      style={[
-        styles.safe,
-        {
-          paddingTop: insets.top + 8,
-        },
-      ]}
+  React.useEffect(() => {
+    if (!isMaxLaunch) return;
+    prepareMaxWebApp();
+  }, [isMaxLaunch]);
+
+  const content = (
+    <ScrollView
+      style={styles.scroll}
+      contentContainerStyle={styles.scrollContent}
+      keyboardShouldPersistTaps="handled"
     >
-      <ScrollView
-        contentContainerStyle={[styles.scrollContent, { paddingHorizontal: 16, maxWidth: 1200, alignSelf: "center" }]}
-        keyboardShouldPersistTaps="handled"
+      <View
+        style={{
+          width: "100%",
+          paddingHorizontal: 16,
+          maxWidth: 1200,
+          alignSelf: "center",
+        }}
       >
         <HeroFancy
           title={"Добро пожаловать в\nЛидер Продукт"}
@@ -159,9 +168,27 @@ export default function HomeScreen() {
             </View>
           </Animated.View>
         </View>
+      </View>
 
-        <TabBarSpacer extra={8} />
-      </ScrollView>
+      <View style={styles.bottomFiller} />
+      <TabBarSpacer extra={64} />
+      {Platform.OS === "web" ? (
+        <View style={{ height: 32 }} />
+      ) : null}
+    </ScrollView>
+  );
+
+  if (Platform.OS === "web") {
+    return (
+      <View style={[styles.safe, { paddingTop: topPadding }]}>
+        {content}
+      </View>
+    );
+  }
+
+  return (
+    <SafeAreaView edges={["left", "right"]} style={[styles.safe, { paddingTop: topPadding }]}>
+      {content}
     </SafeAreaView>
   );
 }
@@ -298,8 +325,16 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#F8FAFC",
   },
+  scroll: {
+    flex: 1,
+    backgroundColor: "#F8FAFC",
+  },
   scrollContent: {
     width: "100%",
+    paddingBottom: 24,
+  },
+  bottomFiller: {
+    height: 24,
   },
   sectionTitle: {
     fontSize: 16,

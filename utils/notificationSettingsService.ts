@@ -4,6 +4,7 @@ import { API_ENDPOINTS } from './apiEndpoints';
 export type NotificationSettings = {
   inAppNotificationsEnabled:    boolean;
   telegramNotificationsEnabled: boolean;
+  maxNotificationsEnabled:      boolean;
   pushNewMessage:               boolean;
   pushStatusChanged:            boolean;
   pushDeadlineChanged:          boolean;
@@ -13,6 +14,12 @@ export type NotificationSettings = {
   telegramUnreadReminder:       boolean;
   telegramClosureReminder:      boolean;
   telegramNewMessage:           boolean;
+  maxNewAppeal:                 boolean;
+  maxStatusChanged:             boolean;
+  maxDeadlineChanged:           boolean;
+  maxUnreadReminder:            boolean;
+  maxClosureReminder:           boolean;
+  maxNewMessage:                boolean;
 };
 
 export async function getNotificationSettings(): Promise<NotificationSettings | null> {

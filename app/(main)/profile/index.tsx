@@ -148,6 +148,7 @@ type CredentialsStep = 'credentials' | 'verify';
 
 type ResolvedAuthMethods = {
   telegramLinked: boolean;
+  maxLinked: boolean;
   passwordLoginEnabled: boolean;
   passwordLoginPendingVerification: boolean;
 };
@@ -159,6 +160,7 @@ function resolveAuthMethods(profile: Profile | null): ResolvedAuthMethods {
   if (fromApi) {
     return {
       telegramLinked: Boolean(fromApi.telegramLinked),
+      maxLinked: Boolean(fromApi.maxLinked),
       passwordLoginEnabled: Boolean(fromApi.passwordLoginEnabled),
       passwordLoginPendingVerification: Boolean(fromApi.passwordLoginPendingVerification),
     };
@@ -166,6 +168,7 @@ function resolveAuthMethods(profile: Profile | null): ResolvedAuthMethods {
 
   return {
     telegramLinked: Boolean(profile?.telegramId),
+    maxLinked: Boolean(profile?.maxId),
     passwordLoginEnabled: false,
     passwordLoginPendingVerification: false,
   };
@@ -173,19 +176,32 @@ function resolveAuthMethods(profile: Profile | null): ResolvedAuthMethods {
 
 function mapVerificationReason(reason?: string | null) {
   if (!reason) return 'Не удалось подтвердить телефон';
-  if (reason === 'PHONE_MISMATCH') return 'Номер из Telegram не совпал с введённым номером';
+  if (reason === 'PHONE_MISMATCH') return 'Номер из мессенджера не совпал с введённым номером';
   if (reason === 'PHONE_ALREADY_USED') return 'Этот номер уже используется другим пользователем';
   if (reason === 'TELEGRAM_ALREADY_USED') return 'Этот Telegram уже привязан к другому пользователю';
+  if (reason === 'MAX_ALREADY_USED') return 'Этот MAX уже привязан к другому пользователю';
   if (reason === 'SESSION_EXPIRED') return 'Сессия подтверждения истекла';
   return 'Не удалось подтвердить телефон';
 }
 
-function isValidTelegramDeepLink(url: string) {
-  return /^https:\/\/t\.me\/.+\?start=verify_phone_[A-Za-z0-9_-]+$/.test(String(url || '').trim());
+function resolvePreferredPhoneProvider(profile: Profile | null): 'TELEGRAM' | 'MAX' {
+  const hasTelegram = Boolean(profile?.authMethods?.telegramLinked ?? profile?.telegramId);
+  const hasMax = Boolean(profile?.authMethods?.maxLinked ?? profile?.maxId);
+  if (hasMax && !hasTelegram) return 'MAX';
+  return 'TELEGRAM';
 }
 
-async function openTelegramDeepLink(url: string) {
-  if (!url) throw new Error('Telegram ссылка не получена. Проверьте настройки сервера.');
+function isValidPhoneDeepLink(url: string, provider: 'TELEGRAM' | 'MAX') {
+  const raw = String(url || '').trim();
+  if (provider === 'MAX') {
+    return /^https:\/\/max\.ru\/.+\?start=verify_phone_[A-Za-z0-9_-]+$/.test(raw);
+  }
+  return /^https:\/\/t\.me\/.+\?start=verify_phone_[A-Za-z0-9_-]+$/.test(raw);
+}
+
+async function openMessengerDeepLink(url: string, provider: 'TELEGRAM' | 'MAX') {
+  const label = provider === 'MAX' ? 'MAX' : 'Telegram';
+  if (!url) throw new Error(`${label} ссылка не получена. Проверьте настройки сервера.`);
   if (Platform.OS === 'web') {
     if (typeof window !== 'undefined') {
       window.open(url, '_blank', 'noopener,noreferrer');
@@ -203,7 +219,7 @@ function CredentialsSection({
   onAdded: () => Promise<void>;
 }) {
   const authMethods = resolveAuthMethods(profile);
-  const shouldShowSetup = authMethods.telegramLinked && !authMethods.passwordLoginEnabled;
+  const shouldShowSetup = (authMethods.telegramLinked || authMethods.maxLinked) && !authMethods.passwordLoginEnabled;
   const emailFromProfile = (profile?.email || '').trim().toLowerCase();
 
   const [step, setStep] = useState<CredentialsStep>('credentials');
@@ -443,6 +459,8 @@ function ProfileEditor({
   const phoneVerified = Boolean(profilePhoneDigits && profile?.phoneVerifiedAt);
   const hasPhone = Boolean(profilePhoneDigits);
   const displayedPhone = profilePhoneDigits ? formatPhoneDisplay(profilePhoneDigits) : '';
+  const preferredPhoneProvider = resolvePreferredPhoneProvider(profile);
+  const preferredProviderLabel = preferredPhoneProvider === 'MAX' ? 'MAX' : 'Telegram';
 
   const baseline = useMemo(
     () => ({
@@ -646,6 +664,7 @@ function ProfileEditor({
       setPhoneStatusText(null);
       return;
     }
+    const provider = resolvePreferredPhoneProvider(profile);
 
     setPhoneBusy(true);
     setPhoneError(null);
@@ -653,16 +672,21 @@ function ProfileEditor({
 
     let createdSessionId: string | null = null;
     try {
-      const started = await startPhoneVerification(normalized);
+      const started = await startPhoneVerification(normalized, provider);
+      const startedProvider = (started.provider || provider) as 'TELEGRAM' | 'MAX';
       createdSessionId = started.sessionId;
       const deepLink = String(started.deepLinkUrl || '').trim();
       const qrPayload = String(started.qrPayload || '').trim();
 
-      if (!isValidTelegramDeepLink(deepLink)) {
+      if (!isValidPhoneDeepLink(deepLink, startedProvider)) {
         if (createdSessionId) {
           await cancelPhoneVerification(createdSessionId).catch(() => undefined);
         }
-        throw new Error('Telegram ссылка не получена. Проверьте настройки сервера.');
+        throw new Error(
+          startedProvider === 'MAX'
+            ? 'MAX ссылка не получена. Проверьте настройки сервера.'
+            : 'Telegram ссылка не получена. Проверьте настройки сервера.'
+        );
       }
 
       setPhoneSessionId(createdSessionId);
@@ -673,9 +697,13 @@ function ProfileEditor({
 
       if (!isDesktopWeb) {
         try {
-          await openTelegramDeepLink(deepLink);
+          await openMessengerDeepLink(deepLink, startedProvider);
         } catch {
-          setPhoneError('Не удалось открыть Telegram автоматически. Используйте кнопку "Открыть Telegram".');
+          setPhoneError(
+            startedProvider === 'MAX'
+              ? 'Не удалось открыть MAX автоматически. Используйте кнопку "Открыть MAX".'
+              : 'Не удалось открыть Telegram автоматически. Используйте кнопку "Открыть Telegram".'
+          );
         }
       }
     } catch (e: any) {
@@ -685,18 +713,23 @@ function ProfileEditor({
     } finally {
       setPhoneBusy(false);
     }
-  }, [clearPhoneSessionState, isDesktopWeb, phoneInput]);
+  }, [clearPhoneSessionState, isDesktopWeb, phoneInput, profile]);
 
   const handleOpenTelegram = useCallback(async () => {
     try {
-      if (!isValidTelegramDeepLink(phoneDeepLinkUrl)) {
-        throw new Error('Telegram ссылка не получена. Проверьте настройки сервера.');
+      const provider = resolvePreferredPhoneProvider(profile);
+      if (!isValidPhoneDeepLink(phoneDeepLinkUrl, provider)) {
+        throw new Error(
+          provider === 'MAX'
+            ? 'MAX ссылка не получена. Проверьте настройки сервера.'
+            : 'Telegram ссылка не получена. Проверьте настройки сервера.'
+        );
       }
-      await openTelegramDeepLink(phoneDeepLinkUrl);
+      await openMessengerDeepLink(phoneDeepLinkUrl, provider);
     } catch (e: any) {
-      setPhoneError(e?.message || 'Не удалось открыть Telegram ссылку');
+      setPhoneError(e?.message || 'Не удалось открыть ссылку');
     }
-  }, [phoneDeepLinkUrl]);
+  }, [phoneDeepLinkUrl, profile]);
 
   const handleCancelPhoneFlow = useCallback(async () => {
     if (!phoneSessionId) return;
@@ -899,13 +932,13 @@ function ProfileEditor({
                         pressed && !phoneBusy ? styles.verifySecondaryBtnPressed : null,
                       ]}
                     >
-                      <Text style={styles.verifySecondaryBtnText}>Открыть Telegram</Text>
+                      <Text style={styles.verifySecondaryBtnText}>Открыть {preferredProviderLabel}</Text>
                     </Pressable>
                   ) : null}
                   {isDesktopWeb && phoneQrPayload ? (
                     <View style={styles.qrWrap}>
                       <QRCode value={phoneQrPayload} size={180} />
-                      <Text style={styles.verifyHint}>Сканируйте QR в Telegram и отправьте контакт</Text>
+                      <Text style={styles.verifyHint}>Сканируйте QR в {preferredProviderLabel} и отправьте контакт</Text>
                     </View>
                   ) : null}
                 </>

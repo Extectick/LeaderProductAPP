@@ -12,6 +12,11 @@ const AUTH_PROVIDER_REGISTRY: Record<string, AuthProviderUiItem> = {
     title: 'Войти через Telegram',
     route: '/(auth)/telegram',
   },
+  max: {
+    key: 'max',
+    title: 'Войти через MAX',
+    route: '/(auth)/max',
+  },
 };
 
 export function resolveEnabledAuthProviders(methods: AuthMethod[]): AuthProviderUiItem[] {

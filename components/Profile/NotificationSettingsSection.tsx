@@ -9,6 +9,7 @@ import {
 const DEFAULT_SETTINGS: NotificationSettings = {
   inAppNotificationsEnabled:    true,
   telegramNotificationsEnabled: true,
+  maxNotificationsEnabled:      true,
   pushNewMessage:               true,
   pushStatusChanged:            true,
   pushDeadlineChanged:          true,
@@ -18,6 +19,12 @@ const DEFAULT_SETTINGS: NotificationSettings = {
   telegramUnreadReminder:       true,
   telegramClosureReminder:      true,
   telegramNewMessage:           true,
+  maxNewAppeal:                 true,
+  maxStatusChanged:             true,
+  maxDeadlineChanged:           true,
+  maxUnreadReminder:            true,
+  maxClosureReminder:           true,
+  maxNewMessage:                true,
 };
 
 export function NotificationSettingsSection() {
@@ -84,6 +91,20 @@ export function NotificationSettingsSection() {
         <Switch
           value={settings.telegramNotificationsEnabled}
           onValueChange={() => void toggle('telegramNotificationsEnabled')}
+          disabled={!!saving}
+          trackColor={{ false: '#CBD5E1', true: '#6366F1' }}
+          thumbColor="#fff"
+        />
+      </View>
+
+      <View style={[styles.row, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#DDD6FE', paddingTop: 12 }]}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.label}>Уведомления в MAX</Text>
+          <Text style={styles.hint}>Получать уведомления через MAX-бота</Text>
+        </View>
+        <Switch
+          value={settings.maxNotificationsEnabled}
+          onValueChange={() => void toggle('maxNotificationsEnabled')}
           disabled={!!saving}
           trackColor={{ false: '#CBD5E1', true: '#6366F1' }}
           thumbColor="#fff"
