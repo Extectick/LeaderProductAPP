@@ -5,7 +5,7 @@ import Animated, { FadeInUp, useReducedMotion } from 'react-native-reanimated';
 import Svg, { Circle, Defs, LinearGradient as SvgLinearGradient, Path, Stop } from 'react-native-svg';
 
 import { SkeletonBlock } from '@/components/Home/HomeSkeleton';
-import type { HomeMetricState, HomeSeriesPoint } from '@/types/homeDashboardTypes';
+import type { HomeMetricState, HomeSeriesPoint } from '@/src/entities/home/types';
 
 type Props = {
   series: HomeSeriesPoint[];

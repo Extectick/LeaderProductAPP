@@ -23,7 +23,7 @@ import TabBarSpacer from '@/components/Navigation/TabBarSpacer';
 import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 import { AuthContext } from '@/context/AuthContext';
 import { useHomeDashboardData } from '@/hooks/useHomeDashboardData';
-import type { HomeMetricId } from '@/types/homeDashboardTypes';
+import type { HomeMetricId } from '@/src/entities/home/types';
 import { isMaxMiniAppLaunch, prepareMaxWebApp } from '@/utils/maxAuthService';
 import { getServicesForUser, type ServiceAccessItem } from '@/utils/servicesService';
 

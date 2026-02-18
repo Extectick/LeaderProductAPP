@@ -1,11 +1,9 @@
 import React, { ComponentType } from 'react';
-import Ionicons from 'react-native-vector-icons/Ionicons';
-import HomeScreen from '../app/(main)/home';
-import ProfileScreen from '../app/(main)/profile';
-import TasksScreen from '../app/(main)/tasks';
 
-// Разрешённые названия иконок
-type IconName = 'home' | 'list' | 'person';
+/**
+ * @deprecated Legacy react-navigation tabs config.
+ * Use expo-router file-based routes instead.
+ */
 
 export interface RouteConfig {
   name: string;
@@ -14,31 +12,8 @@ export interface RouteConfig {
   tabBarLabel: string;
 }
 
-const getIcon = (name: IconName, focused: boolean): React.ReactElement => {
-  const iconName = focused ? name : `${name}-outline`;
-  return React.createElement(Ionicons, { 
-    name: iconName as any, 
-    size: 24 
-  });
-};
-
-export const routes: RouteConfig[] = [
-  {
-    name: 'Home',
-    component: HomeScreen,
-    icon: (focused) => getIcon('home', focused),
-    tabBarLabel: 'Главная',
-  },
-  {
-    name: 'Tasks',
-    component: TasksScreen,
-    icon: (focused) => getIcon('list', focused),
-    tabBarLabel: 'Задания',
-  },
-  {
-    name: 'Profile',
-    component: ProfileScreen,
-    icon: (focused) => getIcon('person', focused),
-    tabBarLabel: 'Профиль',
-  },
-];
+/**
+ * @deprecated Legacy container kept as compatibility stub.
+ * Source of truth is expo-router file system routes.
+ */
+export const routes: RouteConfig[] = [];

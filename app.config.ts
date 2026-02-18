@@ -60,6 +60,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     "expo-router",
     "expo-audio",
     "expo-font",
+    "@sentry/react-native",
     "@react-native-community/datetimepicker",
     "expo-notifications",
     [

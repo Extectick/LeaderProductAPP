@@ -4,7 +4,7 @@ import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-n
 import Animated, { FadeInUp, useReducedMotion } from 'react-native-reanimated';
 
 import { SkeletonBlock } from '@/components/Home/HomeSkeleton';
-import type { HomeActivityItem, HomeMetricState } from '@/types/homeDashboardTypes';
+import type { HomeActivityItem, HomeMetricState } from '@/src/entities/home/types';
 
 type Props = {
   items: HomeActivityItem[];

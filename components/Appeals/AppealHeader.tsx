@@ -6,7 +6,7 @@ import dayjs from 'dayjs';
 import { Ionicons } from '@expo/vector-icons';
 import Dropdown, { DropdownItem } from '@/components/ui/Dropdown';
 import AppealStatusMenu from './AppealStatusMenu';
-import { AppealDetail, AppealStatus, AppealPriority } from '@/types/appealsTypes';
+import { AppealDetail, AppealStatus, AppealPriority } from '@/src/entities/appeal/types';
 import {
   getAppealMuteStatus,
   muteAppeal,
@@ -372,3 +372,4 @@ const styles = StyleSheet.create({
 });
 
 export {};
+

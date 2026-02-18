@@ -4,18 +4,10 @@ import { ActivityIndicator, View } from 'react-native';
 
 import { AuthContext } from '@/context/AuthContext';
 import { useThemeColor } from '@/hooks/useThemeColor';
+import { normalizeRoutePath } from '@/src/shared/lib/routePath';
 import { getProfileGate } from '@/utils/profileGate';
 import { getMaxStartAppealId, isMaxMiniAppLaunch } from '@/utils/maxAuthService';
 import { getTelegramStartAppealId, isTelegramMiniAppLaunch } from '@/utils/telegramAuthService';
-
-function normalizeRoutePath(path: string | null | undefined): string {
-  const raw = String(path || '').trim();
-  if (!raw) return '/';
-  const noGroups = raw.replace(/\/\([^/]+\)/g, '');
-  const compact = noGroups.replace(/\/+/g, '/');
-  if (compact.length > 1 && compact.endsWith('/')) return compact.slice(0, -1);
-  return compact || '/';
-}
 
 export default function RootRedirect() {
   const router = useRouter();

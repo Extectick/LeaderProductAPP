@@ -1,0 +1,32 @@
+name: Quality Check (Non-Blocking)
+
+on:
+  pull_request:
+  push:
+    branches: [dev, production]
+
+jobs:
+  typescript-check:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript check
+        run: npx tsc --noEmit
+
+      - name: Legacy types imports check
+        run: npm run check:no-legacy-types-imports
+
+      - name: Sentry config check
+        run: npm run check:sentry-config

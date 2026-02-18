@@ -30,7 +30,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import QRCode from 'react-native-qrcode-svg';
 import { Colors } from '@/constants/Colors';
-import { Profile, ProfileType, ProfileStatus } from '@/types/userTypes';
+import { Profile, ProfileType, ProfileStatus } from '@/src/entities/user/types';
 import {
   cancelEmailChange,
   cancelPhoneVerification,
@@ -49,6 +49,15 @@ import { usePresence } from '@/hooks/usePresence';
 import { formatDistanceToNow } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import * as ImagePicker from 'expo-image-picker';
+import {
+  isValidEmail,
+  isValidPhoneVerificationDeepLink,
+  mapPhoneVerificationReason,
+  openPhoneVerificationDeepLink,
+  providerLabel,
+  resolvePreferredPhoneProvider,
+  type PhoneVerificationProvider,
+} from '@/src/features/profile/lib/verification';
 import { shadeColor, tintColor } from '@/utils/color';
 import { formatPhoneDisplay, formatPhoneInputMask, normalizePhoneInputToDigits11, toApiPhoneDigitsString } from '@/utils/phone';
 import { getRoleDisplayName } from '@/utils/rbacLabels';
@@ -59,11 +68,9 @@ type Chip = { icon: IoniconName; label: string; tone?: Tone };
 type CropImage = { uri: string; width: number; height: number };
 type NameFormState = { firstName: string; lastName: string; middleName: string };
 type PhoneMode = 'collapsed' | 'editing' | 'pending';
-type PhoneVerificationProvider = 'TELEGRAM' | 'MAX';
 type EmailMode = 'view' | 'editing' | 'pending_code';
 type NameMode = 'view' | 'editing';
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const toMaskedPhoneValue = (value?: string | null) => formatPhoneInputMask(value || '');
 
 export type ProfileViewProps = {
@@ -83,44 +90,6 @@ const profTypeName = (t?: ProfileType | null) =>
 
 const profStatusTone = (s?: ProfileStatus): Tone =>
   s === 'ACTIVE' ? 'green' : s === 'PENDING' ? 'blue' : s === 'BLOCKED' ? 'red' : 'gray';
-
-function resolvePreferredPhoneProvider(profile: Profile | null): PhoneVerificationProvider {
-  const hasTelegram = Boolean(profile?.authMethods?.telegramLinked ?? profile?.telegramId);
-  const hasMax = Boolean(profile?.authMethods?.maxLinked ?? profile?.maxId);
-  if (hasMax && !hasTelegram) return 'MAX';
-  return 'TELEGRAM';
-}
-
-function isValidPhoneVerificationDeepLink(url: string, provider: PhoneVerificationProvider) {
-  const raw = String(url || '').trim();
-  if (provider === 'MAX') {
-    return /^https:\/\/max\.ru\/.+\?start=verify_phone_[A-Za-z0-9_-]+$/.test(raw);
-  }
-  return /^https:\/\/t\.me\/.+\?start=verify_phone_[A-Za-z0-9_-]+$/.test(raw);
-}
-
-function providerLabel(provider: PhoneVerificationProvider) {
-  return provider === 'MAX' ? 'MAX' : 'Telegram';
-}
-
-async function openPhoneVerificationDeepLink(url: string, provider: PhoneVerificationProvider) {
-  if (!url) throw new Error(`${providerLabel(provider)} ссылка не получена. Проверьте настройки сервера.`);
-  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-    window.open(url, '_blank', 'noopener,noreferrer');
-    return;
-  }
-  await Linking.openURL(url);
-}
-
-function mapPhoneVerificationReason(reason?: string | null, provider: PhoneVerificationProvider = 'TELEGRAM') {
-  if (!reason) return 'Не удалось подтвердить телефон';
-  if (reason === 'PHONE_MISMATCH') return `Номер из ${providerLabel(provider)} не совпал с введённым номером`;
-  if (reason === 'PHONE_ALREADY_USED') return 'Этот номер уже используется другим пользователем';
-  if (reason === 'TELEGRAM_ALREADY_USED') return 'Этот Telegram уже привязан к другому пользователю';
-  if (reason === 'MAX_ALREADY_USED') return 'Этот MAX уже привязан к другому пользователю';
-  if (reason === 'SESSION_EXPIRED') return 'Сессия подтверждения истекла';
-  return 'Не удалось подтвердить телефон';
-}
 
 function buildNameForm(profile: Profile | null): NameFormState {
   return {
@@ -448,7 +417,7 @@ export function ProfileView({
 
   const handleStartEmailFlow = useCallback(async () => {
     const nextEmail = emailInput.trim().toLowerCase();
-    if (!EMAIL_RE.test(nextEmail)) {
+    if (!isValidEmail(nextEmail)) {
       setEmailError('Введите корректный email');
       setEmailNotice(null);
       return;
@@ -1779,3 +1748,4 @@ const styles = StyleSheet.create({
 });
 
 export default ProfileView;
+

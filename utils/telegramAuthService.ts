@@ -2,7 +2,7 @@ import type {
   AuthLoginResponseData,
   TelegramContactResponseData,
   TelegramInitResponseData,
-} from '@/types/apiTypes';
+} from '@/src/shared/types/api';
 import { normalizePhoneInputToDigits11 } from './phone';
 import {
   init as initTmaSdk,
@@ -329,3 +329,4 @@ export async function telegramLink(tgSessionToken: string) {
   if (!res.ok || !res.data) throw new Error(res.message || 'Не удалось привязать Telegram');
   return res.data;
 }
+

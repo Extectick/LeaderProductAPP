@@ -1,6 +1,7 @@
 import { useContext, useEffect, useMemo } from 'react';
 import { usePathname, useRouter, type Href } from 'expo-router';
 import { AuthContext } from '@/context/AuthContext';
+import { normalizeRoutePath } from '@/src/shared/lib/routePath';
 import { getProfileGate } from '@/utils/profileGate';
 import { isMaxMiniAppLaunch } from '@/utils/maxAuthService';
 import { isTelegramMiniAppLaunch } from '@/utils/telegramAuthService';
@@ -16,15 +17,6 @@ const ROUTES = {
 } as const;
 
 type Gate = 'guest' | 'needsProfile' | 'pending' | 'blocked' | 'ready';
-
-function normalizeRoutePath(path: string | null | undefined): string {
-  const raw = String(path || '').trim();
-  if (!raw) return '/';
-  const noGroups = raw.replace(/\/\([^/]+\)/g, '');
-  const compact = noGroups.replace(/\/+/g, '/');
-  if (compact.length > 1 && compact.endsWith('/')) return compact.slice(0, -1);
-  return compact || '/';
-}
 
 export function useAuthRedirect() {
   const router = useRouter();

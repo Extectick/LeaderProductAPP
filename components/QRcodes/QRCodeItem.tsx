@@ -1,5 +1,5 @@
 // ===== File: components/QRcodes/QRCodeItem.tsx =====
-import { QRCodeItemType, QRType } from '@/types/qrTypes';
+import { QRCodeItemType, QRType } from '@/src/entities/qr/types';
 import { Ionicons } from '@expo/vector-icons';
 import { Skeleton } from 'moti/skeleton';
 import React from 'react';

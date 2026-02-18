@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { io, Socket } from 'socket.io-client';
+import type { Socket } from 'socket.io-client';
 import { API_BASE_URL } from '@/utils/config';
 import { getAccessToken, refreshToken } from '@/utils/tokenService';
+import { createManagedSocketConnection } from '@/src/shared/socket/managedSocket';
 
 interface AppealEvent {
   type: string;
@@ -17,7 +18,7 @@ export function useAppealUpdates(
   appealId: number | undefined,
   onEvent: (event: AppealEvent) => void,
   userId?: number,
-  departmentIds?: number | number[],
+  departmentIds?: number | number[]
 ) {
   const onEventRef = useRef(onEvent);
 
@@ -38,78 +39,45 @@ export function useAppealUpdates(
   }, [deptList]);
 
   useEffect(() => {
-    if (!appealId && !userId && !deptList.length) {
-      return;
-    }
-    let socket: Socket | null = null;
-    let active = true;
-    let retryTimer: ReturnType<typeof setTimeout> | null = null;
-    let loggedError = false;
-    let authRetrying = false;
+    if (!appealId && !userId && !deptList.length) return;
 
-    async function connect() {
-      const token = await getAccessToken();
-      if (!active) return;
-      if (!token) {
-        if (retryTimer) clearTimeout(retryTimer);
-        retryTimer = setTimeout(connect, 1200);
-        return;
-      }
+    let currentSocket: Socket | null = null;
 
-      socket = io(API_BASE_URL, {
-        transports: ['websocket', 'polling'],
-        auth: token ? { token } : undefined,
-        reconnection: true,
-        reconnectionDelay: 800,
-        reconnectionDelayMax: 5000,
-        timeout: 8000,
-      });
+    const connection = createManagedSocketConnection({
+      url: API_BASE_URL,
+      loggerPrefix: '[appeals-ws]',
+      getAccessToken,
+      refreshAccessToken: refreshToken,
+      onSocketReady: (socket) => {
+        currentSocket = socket;
+        const joinRoom = () => {
+          const list = deptListRef.current;
+          if (appealId) socket.emit('join', `appeal:${appealId}`);
+          if (userId) socket.emit('join', `user:${userId}`);
+          list.forEach((id) => socket.emit('join', `department:${id}`));
+        };
 
-      const joinRoom = () => {
-        const list = deptListRef.current;
-        if (appealId) socket?.emit('join', `appeal:${appealId}`);
-        if (userId) socket?.emit('join', `user:${userId}`);
-        list.forEach((id) => socket?.emit('join', `department:${id}`));
-      };
-
-      socket.on('connect', joinRoom);
-      socket.on('connect_error', async (err: any) => {
-        if (!loggedError) {
-          loggedError = true;
-          console.warn('[ws] connect_error', err?.message || err);
+        socket.on('connect', joinRoom);
+        if (socket.connected) {
+          joinRoom();
         }
-        const msg = String(err?.message || '');
-        if (msg.toLowerCase().includes('unauthorized') && !authRetrying) {
-          authRetrying = true;
-          try {
-            await refreshToken();
-          } catch {}
-          if (socket) {
-            socket.disconnect();
-            socket = null;
-          }
-          if (retryTimer) clearTimeout(retryTimer);
-          retryTimer = setTimeout(connect, 1200);
-        }
-      });
-
-      socket.onAny((event, payload) => {
-        onEventRef.current({ event, eventType: event, ...(payload || {}) });
-      });
-    }
-
-    void connect();
+        socket.onAny((event, payload) => {
+          onEventRef.current({ event, eventType: event, ...(payload || {}) });
+        });
+      },
+    });
 
     return () => {
-      active = false;
-      if (retryTimer) clearTimeout(retryTimer);
+      const socket = currentSocket;
       if (socket?.connected) {
         const list = deptListRef.current;
         if (appealId) socket.emit('leave', `appeal:${appealId}`);
         if (userId) socket.emit('leave', `user:${userId}`);
-        list.forEach((id) => socket?.emit('leave', `department:${id}`));
+        list.forEach((id) => socket.emit('leave', `department:${id}`));
       }
-      socket?.disconnect();
+      socket?.offAny();
+      connection.disconnect();
+      currentSocket = null;
     };
   }, [appealId, userId, deptKey, deptList.length]);
 }

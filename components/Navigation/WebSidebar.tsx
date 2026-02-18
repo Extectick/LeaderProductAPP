@@ -1,4 +1,4 @@
-import { tabScreens } from '@/constants/tabScreens';
+import { sidebarScreens } from '@/src/features/navigation/sidebarScreens';
 import type { ThemeKey } from '@/constants/Colors';
 import { useTheme } from '@/context/ThemeContext';
 import { useThemeColor } from '@/hooks/useThemeColor';
@@ -141,7 +141,7 @@ export default function WebSidebar() {
     return pathname === path || pathname.startsWith(`${path}/`);
   };
 
-  const visibleItems = tabScreens.filter(({ sidebar }) => (sidebar.path === '/admin' ? isAdmin : true));
+  const visibleItems = sidebarScreens.filter(({ sidebar }) => (sidebar.path === '/admin' ? isAdmin : true));
   const activeSidebarPath =
     visibleItems.find(({ sidebar }) => getIsActive(sidebar.path))?.sidebar.path || '/home';
   const activeTabMeta = bottomTabItems.find((item) => item.matchPath === activeSidebarPath);

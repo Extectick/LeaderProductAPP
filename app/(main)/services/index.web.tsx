@@ -1,24 +1,28 @@
 import { useThemeColor } from '@/hooks/useThemeColor';
-import { getServicesForUser, type ServiceAccessItem } from '@/utils/servicesService';
 import { useRouter } from 'expo-router';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import {
-  ActivityIndicator,
   FlatList,
   ScrollView,
   StyleSheet,
-  Text,
   useWindowDimensions,
   View,
 } from 'react-native';
 import ServiceCard from './ServiceCard';
 import TabBarSpacer from '@/components/Navigation/TabBarSpacer';
 import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
+import {
+  getDesktopServiceCardSize,
+  getDesktopServiceColumns,
+  getMobileServiceCardSize,
+  getMobileServiceColumns,
+  getVisibleServices,
+} from '@/src/features/services/lib/grid';
+import { useServicesData } from '@/src/features/services/hooks/useServicesData';
+import { ServicesErrorView, ServicesLoadingView } from '@/src/features/services/ui/ServiceStateViews';
 
 export default function ServicesWebPage() {
-  const [services, setServices] = useState<ServiceAccessItem[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { services, error, loading } = useServicesData();
 
   const { width } = useWindowDimensions();
   const router = useRouter();
@@ -27,70 +31,41 @@ export default function ServicesWebPage() {
 
   // более плотная сетка и брейкпоинты для десктопа
   const desktopColumns = useMemo(() => {
-    if (width < 640) return 2;
-    if (width < 960) return 3;
-    if (width < 1280) return 4;
-    if (width < 1600) return 5;
-    return 6;
+    return getDesktopServiceColumns(width);
   }, [width]);
 
   const gap = 16;
   const desktopCardSize = useMemo(() => {
-    const inner = Math.min(1280, width) - gap * 2 - (desktopColumns - 1) * gap;
-    return Math.max(140, Math.floor(inner / desktopColumns));
+    return getDesktopServiceCardSize(width, desktopColumns, gap);
   }, [width, desktopColumns]);
 
   // мобильный/узкий layout
   const mobileColumns = useMemo(() => {
-    if (width < 360) return 2;
-    if (width < 768) return 2;
-    return 3;
+    return getMobileServiceColumns(width);
   }, [width]);
   const mobileGap = 14;
   const mobileCardSize = useMemo(() => {
-    const inner = width - mobileGap * 2 - (mobileColumns - 1) * mobileGap;
-    return Math.min(200, Math.max(120, Math.floor(inner / mobileColumns)));
+    return getMobileServiceCardSize(width, mobileColumns, mobileGap);
   }, [width, mobileColumns]);
-
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const data = await getServicesForUser();
-        setServices(data);
-      } catch (e: any) {
-        setError(e?.message || 'Не удалось загрузить сервисы');
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
-  }, []);
 
   const background = useThemeColor({}, 'background');
   const cardBackground = useThemeColor({}, 'cardBackground');
   const textColor = useThemeColor({}, 'text');
+  const visibleServices = useMemo(() => getVisibleServices(services), [services]);
 
   if (loading) {
-    return (
-      <View style={[styles.center, { backgroundColor: background }]}>
-        <ActivityIndicator size="large" color={textColor} />
-      </View>
-    );
+    return <ServicesLoadingView backgroundColor={background} textColor={textColor} style={styles.center} />;
   }
 
   if (error || !services) {
-    return (
-      <View style={[styles.center, { backgroundColor: background }]}>
-        <Text style={{ color: textColor }}>{error ?? 'Ошибка'}</Text>
-      </View>
-    );
+    return <ServicesErrorView backgroundColor={background} textColor={textColor} message={error} style={styles.center} />;
   }
 
   if (isMobileWidth) {
     return (
       <View style={{ flex: 1, backgroundColor: background, paddingTop: headerTopInset }}>
         <FlatList
-          data={services.filter((item) => item.visible)}
+          data={visibleServices}
           keyExtractor={(item) => item.key}
           numColumns={mobileColumns}
           columnWrapperStyle={{ gap: mobileGap, marginBottom: mobileGap }}
@@ -128,7 +103,7 @@ export default function ServicesWebPage() {
       contentContainerStyle={[styles.page, { maxWidth: 1320, paddingTop: 24 + headerTopInset }]}
     >
       <View style={[styles.grid, { gap }]}>
-        {services.filter((item) => item.visible).map((s) => (
+        {visibleServices.map((s) => (
           <View key={s.key} style={{ width: desktopCardSize }}>
             <ServiceCard
               icon={s.icon || 'apps-outline'}

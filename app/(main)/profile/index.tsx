@@ -16,7 +16,6 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
-import * as Linking from 'expo-linking';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors } from '@/constants/Colors';
 import { ProfileView } from '@/components/Profile/ProfileView';
@@ -33,7 +32,7 @@ import {
   updateMyProfile,
   type UpdateMyProfilePayload,
 } from '@/utils/userService';
-import type { Profile } from '@/types/userTypes';
+import type { Profile } from '@/src/entities/user/types';
 import { useTracking } from '@/context/TrackingContext';
 import { NotificationSettingsSection } from '@/components/Profile/NotificationSettingsSection';
 import { Skeleton } from 'moti/skeleton';
@@ -42,6 +41,15 @@ import TabBarSpacer from '@/components/Navigation/TabBarSpacer';
 import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 import QRCode from 'react-native-qrcode-svg';
 import { formatPhoneDisplay, formatPhoneInputMask, normalizePhoneInputToDigits11, toApiPhoneDigitsString } from '@/utils/phone';
+import {
+  isValidEmail,
+  isValidPhoneVerificationDeepLink,
+  mapPhoneVerificationReason,
+  openPhoneVerificationDeepLink,
+  providerLabel,
+  resolvePreferredPhoneProvider,
+  type PhoneVerificationProvider,
+} from '@/src/features/profile/lib/verification';
 
 const PROFILE_CACHE_KEY = 'profile';
 
@@ -153,8 +161,6 @@ type ResolvedAuthMethods = {
   passwordLoginPendingVerification: boolean;
 };
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
 function resolveAuthMethods(profile: Profile | null): ResolvedAuthMethods {
   const fromApi = profile?.authMethods;
   if (fromApi) {
@@ -174,42 +180,6 @@ function resolveAuthMethods(profile: Profile | null): ResolvedAuthMethods {
   };
 }
 
-function mapVerificationReason(reason?: string | null) {
-  if (!reason) return 'Не удалось подтвердить телефон';
-  if (reason === 'PHONE_MISMATCH') return 'Номер из мессенджера не совпал с введённым номером';
-  if (reason === 'PHONE_ALREADY_USED') return 'Этот номер уже используется другим пользователем';
-  if (reason === 'TELEGRAM_ALREADY_USED') return 'Этот Telegram уже привязан к другому пользователю';
-  if (reason === 'MAX_ALREADY_USED') return 'Этот MAX уже привязан к другому пользователю';
-  if (reason === 'SESSION_EXPIRED') return 'Сессия подтверждения истекла';
-  return 'Не удалось подтвердить телефон';
-}
-
-function resolvePreferredPhoneProvider(profile: Profile | null): 'TELEGRAM' | 'MAX' {
-  const hasTelegram = Boolean(profile?.authMethods?.telegramLinked ?? profile?.telegramId);
-  const hasMax = Boolean(profile?.authMethods?.maxLinked ?? profile?.maxId);
-  if (hasMax && !hasTelegram) return 'MAX';
-  return 'TELEGRAM';
-}
-
-function isValidPhoneDeepLink(url: string, provider: 'TELEGRAM' | 'MAX') {
-  const raw = String(url || '').trim();
-  if (provider === 'MAX') {
-    return /^https:\/\/max\.ru\/.+\?start=verify_phone_[A-Za-z0-9_-]+$/.test(raw);
-  }
-  return /^https:\/\/t\.me\/.+\?start=verify_phone_[A-Za-z0-9_-]+$/.test(raw);
-}
-
-async function openMessengerDeepLink(url: string, provider: 'TELEGRAM' | 'MAX') {
-  const label = provider === 'MAX' ? 'MAX' : 'Telegram';
-  if (!url) throw new Error(`${label} ссылка не получена. Проверьте настройки сервера.`);
-  if (Platform.OS === 'web') {
-    if (typeof window !== 'undefined') {
-      window.open(url, '_blank', 'noopener,noreferrer');
-      return;
-    }
-  }
-  await Linking.openURL(url);
-}
 
 function CredentialsSection({
   profile,
@@ -255,7 +225,7 @@ function CredentialsSection({
 
   const normalizedEmail = email.trim().toLowerCase();
   const verificationEmail = emailFromProfile || normalizedEmail;
-  const emailValid = EMAIL_RE.test(normalizedEmail);
+  const emailValid = isValidEmail(normalizedEmail);
   const passwordValid = password.trim().length >= 6;
   const codeValid = /^\d{6}$/.test(code.trim());
 
@@ -282,7 +252,7 @@ function CredentialsSection({
   };
 
   const onSubmitVerification = async () => {
-    if (!verificationEmail || !EMAIL_RE.test(verificationEmail)) {
+    if (!verificationEmail || !isValidEmail(verificationEmail)) {
       setError('Не удалось определить email для подтверждения');
       return;
     }
@@ -308,7 +278,7 @@ function CredentialsSection({
   };
 
   const onResendCode = async () => {
-    if (!verificationEmail || !EMAIL_RE.test(verificationEmail)) {
+    if (!verificationEmail || !isValidEmail(verificationEmail)) {
       setError('Не удалось определить email для повторной отправки');
       return;
     }
@@ -460,7 +430,7 @@ function ProfileEditor({
   const hasPhone = Boolean(profilePhoneDigits);
   const displayedPhone = profilePhoneDigits ? formatPhoneDisplay(profilePhoneDigits) : '';
   const preferredPhoneProvider = resolvePreferredPhoneProvider(profile);
-  const preferredProviderLabel = preferredPhoneProvider === 'MAX' ? 'MAX' : 'Telegram';
+  const preferredProviderLabel = providerLabel(preferredPhoneProvider);
 
   const baseline = useMemo(
     () => ({
@@ -483,7 +453,7 @@ function ProfileEditor({
   }, [baseline, form]);
 
   const emailValue = form.email.trim();
-  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailValue);
+  const emailValid = isValidEmail(emailValue);
   const emailError = emailValue.length === 0 ? 'Email обязателен' : emailValid ? null : 'Некорректный email';
 
   const clearPhoneSessionState = useCallback(() => {
@@ -548,7 +518,7 @@ function ProfileEditor({
       setPhoneMode('editing');
 
       if (session.status === 'FAILED') {
-        setPhoneError(mapVerificationReason(session.failureReason));
+        setPhoneError(mapPhoneVerificationReason(session.failureReason, resolvePreferredPhoneProvider(profile)));
         return;
       }
       if (session.status === 'EXPIRED') {
@@ -673,20 +643,16 @@ function ProfileEditor({
     let createdSessionId: string | null = null;
     try {
       const started = await startPhoneVerification(normalized, provider);
-      const startedProvider = (started.provider || provider) as 'TELEGRAM' | 'MAX';
+      const startedProvider = (started.provider || provider) as PhoneVerificationProvider;
       createdSessionId = started.sessionId;
       const deepLink = String(started.deepLinkUrl || '').trim();
       const qrPayload = String(started.qrPayload || '').trim();
 
-      if (!isValidPhoneDeepLink(deepLink, startedProvider)) {
+      if (!isValidPhoneVerificationDeepLink(deepLink, startedProvider)) {
         if (createdSessionId) {
           await cancelPhoneVerification(createdSessionId).catch(() => undefined);
         }
-        throw new Error(
-          startedProvider === 'MAX'
-            ? 'MAX ссылка не получена. Проверьте настройки сервера.'
-            : 'Telegram ссылка не получена. Проверьте настройки сервера.'
-        );
+        throw new Error(`${providerLabel(startedProvider)} ссылка не получена. Проверьте настройки сервера.`);
       }
 
       setPhoneSessionId(createdSessionId);
@@ -697,12 +663,10 @@ function ProfileEditor({
 
       if (!isDesktopWeb) {
         try {
-          await openMessengerDeepLink(deepLink, startedProvider);
+          await openPhoneVerificationDeepLink(deepLink, startedProvider);
         } catch {
           setPhoneError(
-            startedProvider === 'MAX'
-              ? 'Не удалось открыть MAX автоматически. Используйте кнопку "Открыть MAX".'
-              : 'Не удалось открыть Telegram автоматически. Используйте кнопку "Открыть Telegram".'
+            `Не удалось открыть ${providerLabel(startedProvider)} автоматически. Используйте кнопку "Открыть ${providerLabel(startedProvider)}".`
           );
         }
       }
@@ -718,14 +682,10 @@ function ProfileEditor({
   const handleOpenTelegram = useCallback(async () => {
     try {
       const provider = resolvePreferredPhoneProvider(profile);
-      if (!isValidPhoneDeepLink(phoneDeepLinkUrl, provider)) {
-        throw new Error(
-          provider === 'MAX'
-            ? 'MAX ссылка не получена. Проверьте настройки сервера.'
-            : 'Telegram ссылка не получена. Проверьте настройки сервера.'
-        );
+      if (!isValidPhoneVerificationDeepLink(phoneDeepLinkUrl, provider)) {
+        throw new Error(`${providerLabel(provider)} ссылка не получена. Проверьте настройки сервера.`);
       }
-      await openMessengerDeepLink(phoneDeepLinkUrl, provider);
+      await openPhoneVerificationDeepLink(phoneDeepLinkUrl, provider);
     } catch (e: any) {
       setPhoneError(e?.message || 'Не удалось открыть ссылку');
     }
@@ -1481,3 +1441,4 @@ const styles = StyleSheet.create({
   },
   logoutText: { color: '#fff', fontWeight: '800' },
 });
+

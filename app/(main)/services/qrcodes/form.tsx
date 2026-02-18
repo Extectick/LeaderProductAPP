@@ -1,6 +1,6 @@
 // ===== File: app/(main)/services/qrcodes/form.tsx =====
 import QRCodeForm from '@/components/QRcodes/QRCodeForm';
-import type { QRCodeItemType, QRType } from '@/types/qrTypes';
+import type { QRCodeItemType, QRType } from '@/src/entities/qr/types';
 import { createQRCode, getQRCodeById, updateQRCode } from '@/utils/qrService';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Skeleton } from 'moti/skeleton';

@@ -2,7 +2,7 @@ import type {
   AuthLoginResponseData,
   MaxContactResponseData,
   MaxInitResponseData,
-} from '@/types/apiTypes';
+} from '@/src/shared/types/api';
 import { normalizePhoneInputToDigits11 } from './phone';
 import { apiClient } from './apiClient';
 import { API_ENDPOINTS } from './apiEndpoints';
@@ -407,3 +407,4 @@ export async function maxLink(maxSessionToken: string) {
   if (!res.ok || !res.data) throw new Error(res.message || 'Не удалось привязать MAX');
   return res.data;
 }
+

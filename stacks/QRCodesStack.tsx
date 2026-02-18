@@ -9,6 +9,9 @@ export type QRCodesStackParamList = {
 
 const Stack = createNativeStackNavigator<QRCodesStackParamList>();
 
+/**
+ * @deprecated Legacy stack kept for compatibility while migrating to expo-router routes.
+ */
 export default function QRCodesStack() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>

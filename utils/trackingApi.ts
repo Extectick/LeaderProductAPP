@@ -1,5 +1,4 @@
-import { authFetch } from './authFetch';
-import { API_BASE_URL } from './config';
+import { apiClient } from './apiClient';
 
 export type TrackingPointInput = {
   latitude: number;
@@ -36,11 +35,14 @@ export type SaveTrackingPointsResponse = {
 export async function sendTrackingPoints(
   body: SaveTrackingPointsRequest
 ): Promise<{ ok: boolean; data?: SaveTrackingPointsResponse; message?: string; status?: number }> {
-  return authFetch<SaveTrackingPointsRequest, SaveTrackingPointsResponse>(
-    `${API_BASE_URL}/tracking/points`,
-    {
-      method: 'POST',
-      body,
-    }
-  );
+  const response = await apiClient<SaveTrackingPointsRequest, SaveTrackingPointsResponse>('/tracking/points', {
+    method: 'POST',
+    body,
+  });
+  return {
+    ok: response.ok,
+    data: response.data,
+    message: response.message,
+    status: response.status,
+  };
 }

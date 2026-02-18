@@ -5,18 +5,23 @@ import type {
   CreateSupplierProfileDto,
   ProfileStatus,
   ProfileType
-} from '@/types/userTypes';
+} from '@/src/entities/user/types';
 import type {
   EmailChangeSessionData,
   EmailChangeStartResponseData,
   PhoneVerificationSessionData,
   PhoneVerificationStartResponseData,
-} from '@/types/apiTypes';
+} from '@/src/shared/types/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Profile } from '../types/userTypes';
 import { apiClient } from './apiClient';
 import { API_ENDPOINTS } from './apiEndpoints';
 import { Platform } from 'react-native';
+import {
+  isValidPhoneVerificationDeepLink,
+  providerLabel,
+  type PhoneVerificationProvider,
+} from '@/src/features/profile/lib/verification';
 const PROFILE_KEY = 'profile';
 
 export type Department = { id: number; name: string };
@@ -467,15 +472,6 @@ export type UpdateMyProfilePayload = {
   phone?: string | null;
 };
 
-function isValidPhoneVerificationDeepLink(url: string, provider: 'TELEGRAM' | 'MAX') {
-  const raw = String(url || '').trim();
-  if (!raw) return false;
-  if (provider === 'MAX') {
-    return /^https:\/\/max\.ru\/.+\?start=verify_phone_[A-Za-z0-9_-]+$/.test(raw);
-  }
-  return /^https:\/\/t\.me\/.+\?start=verify_phone_[A-Za-z0-9_-]+$/.test(raw);
-}
-
 export async function updateMyProfile(payload: UpdateMyProfilePayload): Promise<Profile | null> {
   const res = await apiClient<UpdateMyProfilePayload, { profile: Profile }>(API_ENDPOINTS.USERS.PROFILE, {
     method: 'PATCH',
@@ -502,13 +498,9 @@ export async function startPhoneVerification(
   );
   if (!res.ok || !res.data) throw new Error(res.message || 'Не удалось запустить верификацию телефона');
   const deepLink = String(res.data.deepLinkUrl || '').trim();
-  const effectiveProvider = (res.data.provider || provider || 'TELEGRAM') as 'TELEGRAM' | 'MAX';
+  const effectiveProvider = (res.data.provider || provider || 'TELEGRAM') as PhoneVerificationProvider;
   if (!isValidPhoneVerificationDeepLink(deepLink, effectiveProvider)) {
-    throw new Error(
-      effectiveProvider === 'MAX'
-        ? 'MAX ссылка не получена. Проверьте настройки сервера.'
-        : 'Telegram ссылка не получена. Проверьте настройки сервера.'
-    );
+    throw new Error(`${providerLabel(effectiveProvider)} ссылка не получена. Проверьте настройки сервера.`);
   }
   return res.data;
 }
@@ -686,3 +678,4 @@ export async function uploadProfileAvatar(type: ProfileType, file: { uri: string
   if (!res.ok) throw new Error(res.message || 'Не удалось загрузить аватар');
   return res.data?.profile ?? null;
 }
+

@@ -5,6 +5,7 @@ import { jwtDecode } from 'jwt-decode';
 
 import { API_BASE_URL } from './config';
 import { pushNotification } from './notificationStore';
+import { setServerReachable, setServerUnavailable } from '@/src/shared/network/serverStatus';
 
 const ACCESS_KEY = 'accessToken';
 const REFRESH_KEY = 'refreshToken';
@@ -78,6 +79,7 @@ export async function isRefreshTokenExpired(): Promise<boolean> {
 }
 
 export async function handleBackendUnavailable(reason?: string) {
+  setServerUnavailable(reason || 'Network error');
   const expired = await isRefreshTokenExpired();
   if (expired) {
     await logout();
@@ -136,6 +138,7 @@ export async function refreshToken(): Promise<string | null> {
       await saveTokens(accessToken, refreshToStore, profile);
       refreshAttempts = 0;
       lastWarnTs = 0;
+      setServerReachable();
       return accessToken;
     } catch (e: any) {
       const status = e?.response?.status;

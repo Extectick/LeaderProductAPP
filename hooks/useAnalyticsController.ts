@@ -1,6 +1,6 @@
 // components/analytics/useAnalyticsController.ts
 import { PERIODS, type PeriodKey } from '@/components/QRcodes/Analytics/PeriodModal';
-import type { AnalyticsPayload, QRCodeItemType, ScanRow } from '@/types/qrTypes';
+import type { AnalyticsPayload, QRCodeItemType, ScanRow } from '@/src/entities/qr/types';
 import { getAnalytics, getQRCodesList, getScans } from '@/utils/qrService';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 

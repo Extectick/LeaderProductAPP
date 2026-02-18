@@ -17,7 +17,7 @@ import {
   ViewToken,
 } from 'react-native';
 import { Skeleton } from 'moti/skeleton';
-import { AppealMessage } from '@/types/appealsTypes';
+import { AppealMessage } from '@/src/entities/appeal/types';
 import MessageBubble from './MessageBubble';
 import { usePresence } from '@/hooks/usePresence';
 
@@ -75,6 +75,8 @@ type MessagesListProps = {
   onInitialPositioned?: () => void;
   readActivationMode?: ReadActivationMode;
   onUserInteraction?: () => void;
+  onRetryLocalMessage?: (message: AppealMessage) => void;
+  onCancelLocalMessage?: (message: AppealMessage) => void;
 };
 
 const MessagesList = React.forwardRef<MessagesListHandle, MessagesListProps>(
@@ -94,6 +96,8 @@ const MessagesList = React.forwardRef<MessagesListHandle, MessagesListProps>(
       onInitialPositioned,
       readActivationMode = 'after_user_interaction',
       onUserInteraction,
+      onRetryLocalMessage,
+      onCancelLocalMessage,
     },
     ref
   ) => {
@@ -657,6 +661,8 @@ const MessagesList = React.forwardRef<MessagesListHandle, MessagesListProps>(
                 presence={msg.sender?.id ? presenceMap[msg.sender.id] : undefined}
                 showHeader={item.showHeader}
                 isGrouped={item.isGrouped}
+                onRetryLocalMessage={onRetryLocalMessage}
+                onCancelLocalMessage={onCancelLocalMessage}
               />
             );
           }}
@@ -751,3 +757,4 @@ const styles = StyleSheet.create({
     color: '#1D4ED8',
   },
 });
+

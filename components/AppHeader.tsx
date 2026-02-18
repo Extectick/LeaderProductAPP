@@ -1,6 +1,7 @@
 import { useTheme } from '@/context/ThemeContext';
 import { useThemeColor } from '@/hooks/useThemeColor';
 import { LiquidGlassSurface } from '@/components/ui/LiquidGlassSurface';
+import ServerStatusIndicator from '@/src/shared/ui/ServerStatusIndicator';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView } from 'moti';
@@ -151,7 +152,10 @@ export function AppHeader({
           ) : null}
         </View>
 
-        {rightSlot}
+        <View style={styles.rightCluster}>
+          <ServerStatusIndicator />
+          {rightSlot}
+        </View>
       </View>
 
       {bottomSlot ? <View style={styles.bottomSlot}>{bottomSlot}</View> : null}
@@ -223,6 +227,11 @@ const styles = StyleSheet.create({
   textWrap: {
     flex: 1,
     minWidth: 0,
+  },
+  rightCluster: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   backBtn: {
     width: 36,

@@ -2,7 +2,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import { apiClient } from './apiClient';
-import { ErrorResponse, SuccessResponse } from '@/types';
+import { ErrorResponse, SuccessResponse } from '@/src/shared/types/api';
 import {
   AppealDetail,
   AppealListResponse,
@@ -16,7 +16,7 @@ import {
   Scope,
   AppealMessagesResponse,
   UserMini,
-} from '@/types/appealsTypes';
+} from '@/src/entities/appeal/types';
 
 export type ApiResponse<T> = SuccessResponse<T> | ErrorResponse;
 
@@ -468,3 +468,4 @@ export async function exportAppealsCSV(params: {
   const resp = (await apiClient<undefined, Blob>(`/appeals/export?${qs}`, { method: 'GET' })) as any;
   return resp as Blob;
 }
+

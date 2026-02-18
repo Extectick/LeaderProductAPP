@@ -1,5 +1,5 @@
 // utils/qrService.ts
-import { ErrorResponse, SuccessResponse } from '@/types';
+import { ErrorResponse, SuccessResponse } from '@/src/shared/types/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { QRCodeItem, QRCodeListResponse } from '../types/apiTypes';
 import { AnalyticsPayload, QRCodeItemType, ScansEnvelope } from '../types/qrTypes';

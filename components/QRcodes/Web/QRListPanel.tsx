@@ -1,6 +1,6 @@
 // components/qrcodes/web/QRListPanel.tsx
 import { useTheme } from '@/context/ThemeContext';
-import type { QRCodeItemType } from '@/types/qrTypes';
+import type { QRCodeItemType } from '@/src/entities/qr/types';
 import { Ionicons } from '@expo/vector-icons';
 import React, { useMemo, useRef, useState } from 'react';
 import ReactDOM from 'react-dom';

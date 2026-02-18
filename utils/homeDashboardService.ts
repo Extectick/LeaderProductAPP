@@ -1,5 +1,5 @@
-import type { AppealCounters, AppealListItem, AppealStatus, Scope } from '@/types/appealsTypes';
-import type { HomeActivityItem, HomeMetricState, HomeSeriesPoint } from '@/types/homeDashboardTypes';
+import type { AppealCounters, AppealListItem, AppealStatus, Scope } from '@/src/entities/appeal/types';
+import type { HomeActivityItem, HomeMetricState, HomeSeriesPoint } from '@/src/entities/home/types';
 import { apiClient } from '@/utils/apiClient';
 
 type ResolvedMetricState = Exclude<HomeMetricState, 'loading'>;
@@ -372,3 +372,4 @@ export async function fetchSecondaryCounters(): Promise<SecondaryCountersFetchRe
     urgentDeadlines,
   };
 }
+

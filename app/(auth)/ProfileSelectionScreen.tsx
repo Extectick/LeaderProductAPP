@@ -4,7 +4,7 @@ import ShimmerButton from '@/components/ShimmerButton';
 import { gradientColors, ThemeKey } from '@/constants/Colors';
 import { AuthContext } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
-import type { CreateEmployeeProfileDto, ProfileStatus, ProfileType } from '@/types/userTypes';
+import type { CreateEmployeeProfileDto, ProfileStatus, ProfileType } from '@/src/entities/user/types';
 import { createProfile, Department, getDepartments, getProfile, setCurrentProfileType } from '@/utils/userService';
 import { getProfileGate, resolveActiveProfile } from '@/utils/profileGate';
 import { formatPhoneDisplay } from '@/utils/phone';
@@ -968,3 +968,4 @@ const getStyles = (colors: {
       marginTop: 16,
     },
   });
+

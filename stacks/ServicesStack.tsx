@@ -9,6 +9,9 @@ import TrackingServiceScreen from '@/app/(main)/services/tracking';
 
 const Stack = createNativeStackNavigator();
 
+/**
+ * @deprecated Legacy stack kept for compatibility while migrating to expo-router routes.
+ */
 export default function ServicesStack() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>

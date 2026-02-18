@@ -14,24 +14,16 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 
 import {
-  createPermissionGroup,
-  createRole,
-  deletePermissionGroup,
-  deleteRole,
-  getPermissionGroups,
-  getPermissions,
-  getRoles,
-  movePermissionToGroup,
   PermissionGroupItem,
   PermissionItem,
   RoleItem,
-  updatePermissionGroup,
-  updateRole,
   updateRolePermissions,
 } from '@/utils/userService';
 import { getRoleDisplayName } from '@/utils/rbacLabels';
 import { AdminStyles } from '@/components/admin/adminStyles';
 import { useTabBarSpacerHeight } from '@/components/Navigation/TabBarSpacer';
+import { useRolesData } from './useRolesData';
+import { useRolesActions } from './useRolesActions';
 
 type RolesTabProps = {
   active: boolean;
@@ -49,26 +41,25 @@ type PermissionSection = {
   directTotal: number;
 };
 
-const CORE_GROUP: PermissionGroupItem = {
-  id: 0,
-  key: 'core',
-  displayName: 'Основные',
-  description: 'Базовые права пользователя и общесистемные действия.',
-  isSystem: true,
-  sortOrder: 10,
-  serviceId: null,
-  service: null,
-};
-
 const SYSTEM_ROLE_NAMES = new Set(['user', 'employee', 'department_manager', 'admin']);
-const GROUP_KEY_RE = /^[a-z0-9_]+$/;
 
 export default function RolesTab({ active, styles, colors }: RolesTabProps) {
   const tabBarSpacer = useTabBarSpacerHeight();
-
-  const [roles, setRoles] = useState<RoleItem[]>([]);
-  const [permissions, setPermissions] = useState<PermissionItem[]>([]);
-  const [groups, setGroups] = useState<PermissionGroupItem[]>([]);
+  const {
+    roles,
+    setRoles,
+    permissions,
+    setPermissions,
+    groups,
+    setGroups,
+    sortedRoles,
+    sortedGroups,
+    rolesById,
+    childrenByParentId,
+    rootRoles,
+    loadData,
+    coreGroup,
+  } = useRolesData(active);
 
   const [newRoleName, setNewRoleName] = useState('');
   const [newRoleDisplayName, setNewRoleDisplayName] = useState('');
@@ -102,36 +93,6 @@ export default function RolesTab({ active, styles, colors }: RolesTabProps) {
 
   const ui = useMemo(() => createUiStyles(colors), [colors]);
 
-  const sortedRoles = useMemo(
-    () => [...roles].sort((a, b) => getRoleDisplayName(a).localeCompare(getRoleDisplayName(b), 'ru', { sensitivity: 'base' })),
-    [roles]
-  );
-
-  const sortedGroups = useMemo(
-    () =>
-      [...groups].sort((a, b) => {
-        const ao = Number(a.sortOrder ?? 500);
-        const bo = Number(b.sortOrder ?? 500);
-        if (ao !== bo) return ao - bo;
-        return (a.displayName || a.key).localeCompare(b.displayName || b.key, 'ru', { sensitivity: 'base' });
-      }),
-    [groups]
-  );
-
-  const rolesById = useMemo(() => new Map(sortedRoles.map((r) => [r.id, r])), [sortedRoles]);
-  const childrenByParentId = useMemo(() => {
-    const map = new Map<number | null, RoleItem[]>();
-    for (const role of sortedRoles) {
-      const parentId = role.parentRole?.id && rolesById.has(role.parentRole.id) ? role.parentRole.id : null;
-      const list = map.get(parentId) ?? [];
-      list.push(role);
-      map.set(parentId, list);
-    }
-    return map;
-  }, [rolesById, sortedRoles]);
-
-  const rootRoles = useMemo(() => childrenByParentId.get(null) ?? [], [childrenByParentId]);
-
   useEffect(() => {
     setExpandedRoleIds((prev) => {
       const next: Record<number, boolean> = {};
@@ -141,22 +102,6 @@ export default function RolesTab({ active, styles, colors }: RolesTabProps) {
       return next;
     });
   }, [sortedRoles]);
-
-  const loadData = useCallback(async () => {
-    try {
-      const [loadedRoles, loadedPermissions, loadedGroups] = await Promise.all([getRoles(), getPermissions(), getPermissionGroups()]);
-      setRoles(loadedRoles);
-      setPermissions(loadedPermissions);
-      setGroups(loadedGroups);
-    } catch (e: any) {
-      Alert.alert('Ошибка', e?.message || 'Не удалось загрузить данные');
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!active) return;
-    void loadData();
-  }, [active, loadData]);
 
   const inheritedPermissionInfo = useMemo(() => {
     const inherited = new Set<string>();
@@ -196,12 +141,12 @@ export default function RolesTab({ active, styles, colors }: RolesTabProps) {
     sortedGroups.forEach((group) => {
       map.set(group.key, { group, permissions: [] });
     });
-    if (!map.has(CORE_GROUP.key)) {
-      map.set(CORE_GROUP.key, { group: CORE_GROUP, permissions: [] });
+    if (!map.has(coreGroup.key)) {
+      map.set(coreGroup.key, { group: coreGroup, permissions: [] });
     }
 
     filteredPermissions.forEach((permission) => {
-      const group = permission.group?.key ? permission.group : CORE_GROUP;
+      const group = permission.group?.key ? permission.group : coreGroup;
       const bucket = map.get(group.key) ?? { group, permissions: [] };
       bucket.permissions.push(permission);
       map.set(group.key, bucket);
@@ -233,7 +178,7 @@ export default function RolesTab({ active, styles, colors }: RolesTabProps) {
         if (ao !== bo) return ao - bo;
         return (a.group.displayName || a.group.key).localeCompare(b.group.displayName || b.group.key, 'ru', { sensitivity: 'base' });
       });
-  }, [sortedGroups, filteredPermissions, inheritedPermissionInfo.inherited, rolePermsDraft]);
+  }, [coreGroup, filteredPermissions, inheritedPermissionInfo.inherited, rolePermsDraft, sortedGroups]);
 
   useEffect(() => {
     setExpandedPermGroupKeys((prev) => {
@@ -275,175 +220,52 @@ export default function RolesTab({ active, styles, colors }: RolesTabProps) {
     },
     [inheritedPermissionInfo.inherited]
   );
-
-  const handleCreateRole = async () => {
-    const name = newRoleName.trim();
-    const displayName = newRoleDisplayName.trim();
-    if (!name || !displayName) {
-      Alert.alert('Ошибка', 'Заполните код и название роли');
-      return;
-    }
-    try {
-      const created = await createRole({ name, displayName, parentRoleId: newParentRoleId });
-      setRoles((prev) => [...prev, { ...created, permissions: created.permissions || [] }]);
-      setNewRoleName('');
-      setNewRoleDisplayName('');
-      setNewParentRoleId(null);
-    } catch (e: any) {
-      Alert.alert('Ошибка', e?.message || 'Не удалось создать роль');
-    }
-  };
-
-  const handleUpdateRole = async () => {
-    if (!editRoleModal) return;
-    const displayName = editRoleDisplayName.trim();
-    if (!displayName) {
-      Alert.alert('Ошибка', 'Название роли не может быть пустым');
-      return;
-    }
-
-    const payload: { displayName?: string; parentRoleId?: number | null } = {};
-    if ((editRoleModal.displayName || editRoleModal.name) !== displayName) payload.displayName = displayName;
-    if ((editRoleModal.parentRole?.id ?? null) !== editRoleParentId) payload.parentRoleId = editRoleParentId;
-
-    if (!Object.keys(payload).length) {
-      setEditRoleModal(null);
-      return;
-    }
-
-    try {
-      const updated = await updateRole(editRoleModal.id, payload);
-      setRoles((prev) => prev.map((r) => (r.id === updated.id ? { ...r, ...updated } : r)));
-      setEditRoleModal(null);
-    } catch (e: any) {
-      Alert.alert('Ошибка', e?.message || 'Не удалось обновить роль');
-    }
-  };
-
-  const handleDeleteRole = async (role: RoleItem) => {
-    if (SYSTEM_ROLE_NAMES.has(role.name)) {
-      Alert.alert('Недоступно', 'Базовую роль нельзя удалить');
-      return;
-    }
-    Alert.alert('Удалить роль?', 'Действие необратимо', [
-      { text: 'Отмена', style: 'cancel' },
-      {
-        text: 'Удалить',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await deleteRole(role.id);
-            setRoles((prev) => prev.filter((r) => r.id !== role.id));
-          } catch (e: any) {
-            Alert.alert('Ошибка', e?.message || 'Не удалось удалить роль');
-          }
-        },
-      },
-    ]);
-  };
-
-  const handleCreateGroup = async () => {
-    const key = newGroupKey.trim().toLowerCase();
-    const displayName = newGroupDisplayName.trim();
-    const description = newGroupDescription.trim();
-    const sortOrder = Number(newGroupSortOrder || '500');
-
-    if (!key || !GROUP_KEY_RE.test(key)) {
-      Alert.alert('Ошибка', 'Ключ группы должен быть в формате lowercase snake_case');
-      return;
-    }
-    if (!displayName) {
-      Alert.alert('Ошибка', 'Название группы обязательно');
-      return;
-    }
-    if (!Number.isFinite(sortOrder)) {
-      Alert.alert('Ошибка', 'Некорректный порядок сортировки');
-      return;
-    }
-
-    try {
-      const created = await createPermissionGroup({ key, displayName, description, sortOrder: Math.trunc(sortOrder) });
-      setGroups((prev) => [...prev, created]);
-      setNewGroupKey('');
-      setNewGroupDisplayName('');
-      setNewGroupDescription('');
-      setNewGroupSortOrder('500');
-    } catch (e: any) {
-      Alert.alert('Ошибка', e?.message || 'Не удалось создать группу прав');
-    }
-  };
-
-  const openEditGroup = (group: PermissionGroupItem) => {
-    setEditingGroup(group);
-    setEditGroupDisplayName(group.displayName || group.key);
-    setEditGroupDescription(group.description || '');
-    setEditGroupSortOrder(String(group.sortOrder ?? 500));
-  };
-
-  const handleUpdateGroup = async () => {
-    if (!editingGroup) return;
-    const displayName = editGroupDisplayName.trim();
-    const description = editGroupDescription.trim();
-    const sortOrder = Number(editGroupSortOrder || '500');
-
-    if (!displayName) {
-      Alert.alert('Ошибка', 'Название группы обязательно');
-      return;
-    }
-    if (!Number.isFinite(sortOrder)) {
-      Alert.alert('Ошибка', 'Некорректный порядок сортировки');
-      return;
-    }
-
-    try {
-      const updated = await updatePermissionGroup(editingGroup.id, {
-        displayName,
-        description,
-        sortOrder: Math.trunc(sortOrder),
-      });
-      setGroups((prev) => prev.map((g) => (g.id === updated.id ? updated : g)));
-      setEditingGroup(updated);
-    } catch (e: any) {
-      Alert.alert('Ошибка', e?.message || 'Не удалось обновить группу');
-    }
-  };
-
-  const handleDeleteGroup = async (group: PermissionGroupItem) => {
-    if (group.isSystem || group.key === CORE_GROUP.key) {
-      Alert.alert('Недоступно', 'Системную группу нельзя удалить');
-      return;
-    }
-    Alert.alert('Удалить группу?', 'Права группы перейдут в "Основные".', [
-      { text: 'Отмена', style: 'cancel' },
-      {
-        text: 'Удалить',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await deletePermissionGroup(group.id);
-            await loadData();
-          } catch (e: any) {
-            Alert.alert('Ошибка', e?.message || 'Не удалось удалить группу');
-          }
-        },
-      },
-    ]);
-  };
-
-  const handleMovePermission = async () => {
-    if (!movePermissionId || !moveTargetGroupId) {
-      Alert.alert('Ошибка', 'Выберите право и целевую группу');
-      return;
-    }
-    try {
-      const updated = await movePermissionToGroup(movePermissionId, moveTargetGroupId);
-      setPermissions((prev) => prev.map((p) => (p.id === updated.id ? { ...p, group: updated.group } : p)));
-      setMovePermissionId(null);
-      setMoveTargetGroupId(null);
-    } catch (e: any) {
-      Alert.alert('Ошибка', e?.message || 'Не удалось перенести право');
-    }
-  };
+  const {
+    handleCreateRole,
+    handleUpdateRole,
+    handleDeleteRole,
+    handleCreateGroup,
+    openEditGroup,
+    handleUpdateGroup,
+    handleDeleteGroup,
+    handleMovePermission,
+  } = useRolesActions({
+    newRoleName,
+    newRoleDisplayName,
+    newParentRoleId,
+    setRoles,
+    setNewRoleName,
+    setNewRoleDisplayName,
+    setNewParentRoleId,
+    editRoleModal,
+    editRoleDisplayName,
+    editRoleParentId,
+    setEditRoleModal,
+    newGroupKey,
+    newGroupDisplayName,
+    newGroupDescription,
+    newGroupSortOrder,
+    setGroups,
+    setNewGroupKey,
+    setNewGroupDisplayName,
+    setNewGroupDescription,
+    setNewGroupSortOrder,
+    editingGroup,
+    editGroupDisplayName,
+    editGroupDescription,
+    editGroupSortOrder,
+    setEditingGroup,
+    setEditGroupDisplayName,
+    setEditGroupDescription,
+    setEditGroupSortOrder,
+    movePermissionId,
+    moveTargetGroupId,
+    setPermissions,
+    setMovePermissionId,
+    setMoveTargetGroupId,
+    loadData,
+    coreGroupKey: coreGroup.key,
+  });
 
   const filteredPermissionsForMove = useMemo(() => {
     const q = movePermissionSearch.trim().toLowerCase();
@@ -738,7 +560,7 @@ export default function RolesTab({ active, styles, colors }: RolesTabProps) {
                   <TouchableOpacity style={styles.iconBtn} onPress={() => openEditGroup(group)}>
                     <Ionicons name="pencil-outline" size={18} color={colors.text} />
                   </TouchableOpacity>
-                  {!group.isSystem && group.key !== CORE_GROUP.key ? (
+                  {!group.isSystem && group.key !== coreGroup.key ? (
                     <TouchableOpacity style={styles.iconBtnDanger} onPress={() => handleDeleteGroup(group)}>
                       <Ionicons name="trash-outline" size={18} color="#DC2626" />
                     </TouchableOpacity>

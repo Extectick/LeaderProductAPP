@@ -1,7 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import axios from 'axios';
-import { API_BASE_URL } from './config';
-import { getAccessToken, refreshToken } from './tokenService';
+import { apiClient } from './apiClient';
 import { SaveTrackingPointsRequest, SaveTrackingPointsResponse, TrackingPointInput } from './trackingApi';
 
 const STORAGE_KEYS = {
@@ -11,7 +9,6 @@ const STORAGE_KEYS = {
 
 const MAX_QUEUE_LENGTH = 1000;
 const MAX_BATCH_POINTS = 200;
-const REQUEST_TIMEOUT_MS = 20_000;
 const RETRY_DELAY_MS = 30_000;
 const PERIODIC_FLUSH_MS = 60_000;
 const WATCHDOG_MS = 45_000;
@@ -100,49 +97,23 @@ function scheduleRetry(logPrefix: string) {
   }, RETRY_DELAY_MS);
 }
 
-async function sendOnceAxios(token: string, payload: SaveTrackingPointsRequest, logPrefix: string): Promise<SendResult> {
-  try {
-    const resp = await axios.post<SaveTrackingPointsResponse>(
-      `${API_BASE_URL}/tracking/points`,
-      payload,
-      {
-        timeout: REQUEST_TIMEOUT_MS,
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-      }
-    );
-    const result: SendResult = { ok: true, status: resp.status, data: resp.data };
-    return result;
-  } catch (e: any) {
-    const status: number | undefined = e?.response?.status;
-    const message: string | undefined = e?.response?.data?.message || e?.message;
-    const result: SendResult = { ok: false, status: status ?? 0, message };
-    return result;
-  }
-}
-
-async function sendWithRefresh(payload: SaveTrackingPointsRequest, logPrefix: string): Promise<SendResult> {
-  let token = await getAccessToken();
-  if (!token) token = await refreshToken();
-  if (!token) return { ok: false, status: 401, message: 'Нет accessToken' };
-
-  const first = await sendOnceAxios(token, payload, `${logPrefix} [try-1]`);
-  if (first.ok || first.status !== 401) return first;
-
-  warn(logPrefix, '401 received, refreshing');
-  const refreshed = await refreshToken();
-  const retryToken = refreshed || (await getAccessToken());
-  if (!retryToken) {
-    warn(logPrefix, 'refresh returned no token, aborting retry');
-    return first;
-  }
-
-  log(logPrefix, 'retry with refreshed token', {
-    tokenPreview: `${retryToken.slice(0, 8)}...${retryToken.slice(-6)}`,
+async function sendTrackingBatch(payload: SaveTrackingPointsRequest): Promise<SendResult> {
+  const response = await apiClient<SaveTrackingPointsRequest, SaveTrackingPointsResponse>('/tracking/points', {
+    method: 'POST',
+    body: payload,
   });
-  return sendOnceAxios(retryToken, payload, `${logPrefix} [try-2]`);
+  if (!response.ok) {
+    return {
+      ok: false,
+      status: response.status,
+      message: response.message,
+    };
+  }
+  return {
+    ok: true,
+    status: response.status,
+    data: response.data,
+  };
 }
 
 async function processQueue(logPrefix: string) {
@@ -163,7 +134,7 @@ async function processQueue(logPrefix: string) {
     startNewRoute: !activeRouteId,
   };
 
-  const result = await sendWithRefresh(payload, logPrefix);
+  const result = await sendTrackingBatch(payload);
 
   if (!result.ok) {
     warn(logPrefix, 'batch failed, will retry later', { status: result.status, message: result.message });

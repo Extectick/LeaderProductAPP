@@ -1,4 +1,4 @@
-import type { AuthMethod } from '@/types/apiTypes';
+import type { AuthMethod } from '@/src/shared/types/api';
 
 export type AuthProviderUiItem = {
   key: string;
@@ -25,3 +25,4 @@ export function resolveEnabledAuthProviders(methods: AuthMethod[]): AuthProvider
     .map((method) => AUTH_PROVIDER_REGISTRY[method.key])
     .filter((item): item is AuthProviderUiItem => Boolean(item));
 }
+

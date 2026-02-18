@@ -39,6 +39,8 @@ export interface AppealMessage {
   attachments: AppealAttachment[];
   readBy?: { userId: number; readAt: string }[];
   isRead?: boolean;
+  localState?: 'pending' | 'failed';
+  localError?: string;
 }
 
 export interface StatusHistoryItem {

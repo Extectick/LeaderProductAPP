@@ -1,5 +1,5 @@
 // ===== File: components/QRcodes/QRCodeForm.tsx =====
-import type { QRCodeItemType, QRType } from '@/types/qrTypes';
+import type { QRCodeItemType, QRType } from '@/src/entities/qr/types';
 import { Ionicons } from '@expo/vector-icons';
 import React, { useEffect, useRef, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';

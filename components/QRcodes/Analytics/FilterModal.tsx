@@ -1,6 +1,6 @@
 // D:\Extectick\LeaderProductAPP\components\QRcodes\Analytics\FilterModal.tsx
 import { useTheme } from '@/context/ThemeContext';
-import type { QRCodeItemType } from '@/types/qrTypes';
+import type { QRCodeItemType } from '@/src/entities/qr/types';
 import { Ionicons } from '@expo/vector-icons';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {

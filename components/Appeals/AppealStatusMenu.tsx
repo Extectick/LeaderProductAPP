@@ -9,7 +9,7 @@ import {
   FlatList,
   GestureResponderEvent,
 } from 'react-native';
-import { AppealStatus } from '@/types/appealsTypes';
+import { AppealStatus } from '@/src/entities/appeal/types';
 
 type Props = {
   visible: boolean;
@@ -102,3 +102,4 @@ const styles = StyleSheet.create({
   cancel: { marginTop: 10, alignSelf: 'flex-end', paddingHorizontal: 8, paddingVertical: 6 },
   cancelText: { color: '#007AFF', fontSize: 15, fontWeight: '600' },
 });
+

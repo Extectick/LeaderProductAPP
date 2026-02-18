@@ -17,10 +17,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 import InfoModal from '@/components/InfoModal';
 import {
-  cleanupUpdates,
   createUpdate,
-  deleteUpdate,
-  getUpdatesList,
   UpdateItem,
   updateUpdate,
   uploadUpdateWithProgress,
@@ -28,77 +25,15 @@ import {
 
 import { AdminStyles } from '@/components/admin/adminStyles';
 import { useTabBarSpacerHeight } from '@/components/Navigation/TabBarSpacer';
+import { UPDATES_HELP_TEXT } from './updatesTab.help';
+import { useUpdatesData } from './useUpdatesData';
+import { useUpdatesActions } from './useUpdatesActions';
 
 type UpdatesTabProps = {
   active: boolean;
   styles: AdminStyles;
   colors: any;
   isWide: boolean;
-};
-
-const HELP_TEXT = {
-  platform: {
-    title: 'Платформа',
-    message:
-      'Выберите платформу для обновления. Для Android можно загрузить APK, для iOS используется ссылка на App Store/TestFlight.',
-  },
-  channel: {
-    title: 'Канал',
-    message:
-      'Канал обновлений. prod — основная ветка, dev — тестовая. Клиент берёт канал из EXPO_PUBLIC_UPDATE_CHANNEL.',
-  },
-  versionCode: {
-    title: 'Код версии (versionCode)',
-    message:
-      'Целочисленный код сборки для сравнения версий (Android versionCode / iOS buildNumber). Должен быть больше текущего.',
-  },
-  versionName: {
-    title: 'Имя версии (versionName)',
-    message: 'Человекочитаемая версия, например 1.2.3.',
-  },
-  minSupportedVersionCode: {
-    title: 'Минимальная поддерживаемая версия',
-    message:
-      'Если версия пользователя ниже этого значения, обновление считается обязательным.',
-  },
-  rolloutPercent: {
-    title: 'Процент раскатки',
-    message:
-      'Сколько устройств получат обновление. 100 — всем, 10 — примерно 10% (по deviceId).',
-  },
-  mandatory: {
-    title: 'Обязательное обновление',
-    message:
-      'Если включено, пользователь не сможет продолжить работу без обновления.',
-  },
-  active: {
-    title: 'Активное обновление',
-    message:
-      'Только активные записи участвуют в проверке обновлений. Неактивные игнорируются.',
-  },
-  storeUrl: {
-    title: 'Store URL',
-    message:
-      'Ссылка на App Store/TestFlight или Google Play. Для iOS обязательна, если нет APK.',
-  },
-  releaseNotes: {
-    title: 'Release notes',
-    message: 'Короткое описание изменений, показывается пользователю.',
-  },
-  apk: {
-    title: 'APK файл',
-    message: 'Файл APK для Android. Для iOS загрузка APK не используется.',
-  },
-  cleanupKeepLatest: {
-    title: 'Оставить последних',
-    message:
-      'Сколько последних версий оставить (по платформе и каналу). Остальные будут удалены.',
-  },
-  cleanupPurge: {
-    title: 'Удалять APK',
-    message:
-      'Если включено, файл APK будет удалён из хранилища вместе с записью.',
-  },
 };
 
 export default function UpdatesTab({ active, styles, colors, isWide }: UpdatesTabProps) {
@@ -132,8 +67,7 @@ export default function UpdatesTab({ active, styles, colors, isWide }: UpdatesTa
     [getCurrentVersionCode]
   );
 
-  const [updates, setUpdates] = useState<UpdateItem[]>([]);
-  const [updatesLoading, setUpdatesLoading] = useState(false);
+  const { updates, setUpdates, updatesLoading, loadUpdates } = useUpdatesData(active);
   const [updateSaving, setUpdateSaving] = useState(false);
   const [selectedUpdateId, setSelectedUpdateId] = useState<number | null>(null);
   const [updateFile, setUpdateFile] = useState<{
@@ -191,6 +125,13 @@ export default function UpdatesTab({ active, styles, colors, isWide }: UpdatesTa
     }
   }, []);
 
+  const { handleDeleteUpdate, handleToggleActive, handleCleanup } = useUpdatesActions({
+    loadUpdates,
+    notify,
+    cleanupKeepLatest,
+    cleanupPurgeFile,
+  });
+
   const handlePlatformChange = useCallback(
     (platform: 'android' | 'ios') => {
       setUpdateFile(null);
@@ -218,23 +159,6 @@ export default function UpdatesTab({ active, styles, colors, isWide }: UpdatesTa
       versionCodeTouched,
     ]
   );
-
-  const loadUpdates = useCallback(async () => {
-    setUpdatesLoading(true);
-    try {
-      const data = await getUpdatesList({ limit: 100 });
-      setUpdates(data.data);
-    } catch (e: any) {
-      Alert.alert('Ошибка', e?.message || 'Не удалось загрузить обновления');
-    } finally {
-      setUpdatesLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!active) return;
-    void loadUpdates();
-  }, [active, loadUpdates]);
 
   const handlePickApk = useCallback(async () => {
     if (!isAndroid) {
@@ -390,70 +314,6 @@ export default function UpdatesTab({ active, styles, colors, isWide }: UpdatesTa
       storeUrl: item.storeUrl || '',
     });
   }, []);
-
-  const handleDeleteUpdate = useCallback(
-    async (item: UpdateItem) => {
-      if (Platform.OS === 'web') {
-        const confirmDelete =
-          typeof window !== 'undefined'
-            ? window.confirm('Удалить обновление?')
-            : true;
-        if (!confirmDelete) return;
-        try {
-          await deleteUpdate(item.id, true);
-          await loadUpdates();
-          notify('success', `Обновление #${item.id} удалено`);
-        } catch (e: any) {
-          notify('error', e?.message || 'Не удалось удалить');
-        }
-        return;
-      }
-      Alert.alert('Удалить обновление?', 'Запись будет удалена', [
-        { text: 'Отмена', style: 'cancel' },
-        {
-          text: 'Удалить',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await deleteUpdate(item.id, true);
-              await loadUpdates();
-              notify('success', `Обновление #${item.id} удалено`);
-            } catch (e: any) {
-              notify('error', e?.message || 'Не удалось удалить');
-            }
-          },
-        },
-      ]);
-    },
-    [loadUpdates, notify]
-  );
-
-  const handleToggleActive = useCallback(
-    async (item: UpdateItem) => {
-      try {
-        await updateUpdate(item.id, { isActive: !item.isActive });
-        await loadUpdates();
-        notify('success', `Обновление #${item.id} обновлено`);
-      } catch (e: any) {
-        notify('error', e?.message || 'Не удалось обновить запись');
-      }
-    },
-    [loadUpdates, notify]
-  );
-
-  const handleCleanup = useCallback(async () => {
-    const keepLatest = Math.max(parseInt(cleanupKeepLatest || '1', 10) || 1, 1);
-    try {
-      const result = await cleanupUpdates({
-        keepLatest,
-        purgeFile: cleanupPurgeFile,
-      });
-      notify('success', `Удалено: ${result.deletedCount}`);
-      await loadUpdates();
-    } catch (e: any) {
-      notify('error', e?.message || 'Не удалось выполнить очистку');
-    }
-  }, [cleanupKeepLatest, cleanupPurgeFile, loadUpdates, notify]);
 
   const renderUpdateMeta = useCallback(
     (item: UpdateItem) => {
@@ -625,7 +485,7 @@ export default function UpdatesTab({ active, styles, colors, isWide }: UpdatesTa
                   <View style={styles.labelRow}>
                     <Text style={styles.labelText}>Платформа</Text>
                     <Pressable
-                      onPress={() => openInfo(HELP_TEXT.platform.title, HELP_TEXT.platform.message)}
+                      onPress={() => openInfo(UPDATES_HELP_TEXT.platform.title, UPDATES_HELP_TEXT.platform.message)}
                       style={styles.helpBtn}
                       hitSlop={8}
                     >
@@ -666,7 +526,7 @@ export default function UpdatesTab({ active, styles, colors, isWide }: UpdatesTa
                   <View style={styles.labelRow}>
                     <Text style={styles.labelText}>Канал</Text>
                     <Pressable
-                      onPress={() => openInfo(HELP_TEXT.channel.title, HELP_TEXT.channel.message)}
+                      onPress={() => openInfo(UPDATES_HELP_TEXT.channel.title, UPDATES_HELP_TEXT.channel.message)}
                       style={styles.helpBtn}
                       hitSlop={8}
                     >
@@ -709,7 +569,7 @@ export default function UpdatesTab({ active, styles, colors, isWide }: UpdatesTa
                   <View style={styles.labelRow}>
                     <Text style={styles.labelText}>Код версии</Text>
                     <Pressable
-                      onPress={() => openInfo(HELP_TEXT.versionCode.title, HELP_TEXT.versionCode.message)}
+                      onPress={() => openInfo(UPDATES_HELP_TEXT.versionCode.title, UPDATES_HELP_TEXT.versionCode.message)}
                       style={styles.helpBtn}
                       hitSlop={8}
                     >
@@ -732,7 +592,7 @@ export default function UpdatesTab({ active, styles, colors, isWide }: UpdatesTa
                   <View style={styles.labelRow}>
                     <Text style={styles.labelText}>Имя версии</Text>
                     <Pressable
-                      onPress={() => openInfo(HELP_TEXT.versionName.title, HELP_TEXT.versionName.message)}
+                      onPress={() => openInfo(UPDATES_HELP_TEXT.versionName.title, UPDATES_HELP_TEXT.versionName.message)}
                       style={styles.helpBtn}
                       hitSlop={8}
                     >
@@ -756,8 +616,8 @@ export default function UpdatesTab({ active, styles, colors, isWide }: UpdatesTa
                     <Pressable
                       onPress={() =>
                         openInfo(
-                          HELP_TEXT.minSupportedVersionCode.title,
-                          HELP_TEXT.minSupportedVersionCode.message
+                          UPDATES_HELP_TEXT.minSupportedVersionCode.title,
+                          UPDATES_HELP_TEXT.minSupportedVersionCode.message
                         )
                       }
                       style={styles.helpBtn}
@@ -782,7 +642,7 @@ export default function UpdatesTab({ active, styles, colors, isWide }: UpdatesTa
                   <View style={styles.labelRow}>
                     <Text style={styles.labelText}>Процент раскатки</Text>
                     <Pressable
-                      onPress={() => openInfo(HELP_TEXT.rolloutPercent.title, HELP_TEXT.rolloutPercent.message)}
+                      onPress={() => openInfo(UPDATES_HELP_TEXT.rolloutPercent.title, UPDATES_HELP_TEXT.rolloutPercent.message)}
                       style={styles.helpBtn}
                       hitSlop={8}
                     >
@@ -803,7 +663,7 @@ export default function UpdatesTab({ active, styles, colors, isWide }: UpdatesTa
                 <View style={styles.labelRow}>
                   <Text style={styles.toggleLabel}>Обязательное</Text>
                   <Pressable
-                    onPress={() => openInfo(HELP_TEXT.mandatory.title, HELP_TEXT.mandatory.message)}
+                    onPress={() => openInfo(UPDATES_HELP_TEXT.mandatory.title, UPDATES_HELP_TEXT.mandatory.message)}
                     style={styles.helpBtn}
                     hitSlop={8}
                   >
@@ -821,7 +681,7 @@ export default function UpdatesTab({ active, styles, colors, isWide }: UpdatesTa
                 <View style={styles.labelRow}>
                   <Text style={styles.toggleLabel}>Активное обновление</Text>
                   <Pressable
-                    onPress={() => openInfo(HELP_TEXT.active.title, HELP_TEXT.active.message)}
+                    onPress={() => openInfo(UPDATES_HELP_TEXT.active.title, UPDATES_HELP_TEXT.active.message)}
                     style={styles.helpBtn}
                     hitSlop={8}
                   >
@@ -847,7 +707,7 @@ export default function UpdatesTab({ active, styles, colors, isWide }: UpdatesTa
                   <View style={styles.labelRow}>
                     <Text style={styles.labelText}>Store URL</Text>
                     <Pressable
-                      onPress={() => openInfo(HELP_TEXT.storeUrl.title, HELP_TEXT.storeUrl.message)}
+                      onPress={() => openInfo(UPDATES_HELP_TEXT.storeUrl.title, UPDATES_HELP_TEXT.storeUrl.message)}
                       style={styles.helpBtn}
                       hitSlop={8}
                     >
@@ -868,7 +728,7 @@ export default function UpdatesTab({ active, styles, colors, isWide }: UpdatesTa
                   <View style={styles.labelRow}>
                     <Text style={styles.labelText}>Release notes</Text>
                     <Pressable
-                      onPress={() => openInfo(HELP_TEXT.releaseNotes.title, HELP_TEXT.releaseNotes.message)}
+                      onPress={() => openInfo(UPDATES_HELP_TEXT.releaseNotes.title, UPDATES_HELP_TEXT.releaseNotes.message)}
                       style={styles.helpBtn}
                       hitSlop={8}
                     >
@@ -890,7 +750,7 @@ export default function UpdatesTab({ active, styles, colors, isWide }: UpdatesTa
                   <View style={styles.labelRow}>
                     <Text style={styles.labelText}>APK файл</Text>
                     <Pressable
-                      onPress={() => openInfo(HELP_TEXT.apk.title, HELP_TEXT.apk.message)}
+                      onPress={() => openInfo(UPDATES_HELP_TEXT.apk.title, UPDATES_HELP_TEXT.apk.message)}
                       style={styles.helpBtn}
                       hitSlop={8}
                     >
@@ -985,7 +845,7 @@ export default function UpdatesTab({ active, styles, colors, isWide }: UpdatesTa
                   <View style={styles.labelRow}>
                     <Text style={styles.labelText}>Оставить последних</Text>
                     <Pressable
-                      onPress={() => openInfo(HELP_TEXT.cleanupKeepLatest.title, HELP_TEXT.cleanupKeepLatest.message)}
+                      onPress={() => openInfo(UPDATES_HELP_TEXT.cleanupKeepLatest.title, UPDATES_HELP_TEXT.cleanupKeepLatest.message)}
                       style={styles.helpBtn}
                       hitSlop={8}
                     >
@@ -1005,7 +865,7 @@ export default function UpdatesTab({ active, styles, colors, isWide }: UpdatesTa
                 <View style={styles.labelRow}>
                   <Text style={styles.toggleLabel}>Удалять APK</Text>
                   <Pressable
-                    onPress={() => openInfo(HELP_TEXT.cleanupPurge.title, HELP_TEXT.cleanupPurge.message)}
+                    onPress={() => openInfo(UPDATES_HELP_TEXT.cleanupPurge.title, UPDATES_HELP_TEXT.cleanupPurge.message)}
                     style={styles.helpBtn}
                     hitSlop={8}
                   >
@@ -1043,3 +903,4 @@ export default function UpdatesTab({ active, styles, colors, isWide }: UpdatesTa
     </>
   );
 }
+

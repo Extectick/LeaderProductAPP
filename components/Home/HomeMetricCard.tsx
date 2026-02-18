@@ -3,7 +3,7 @@ import React from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeInUp, useReducedMotion } from 'react-native-reanimated';
 
-import type { HomeMetricCard as HomeMetricCardType } from '@/types/homeDashboardTypes';
+import type { HomeMetricCard as HomeMetricCardType } from '@/src/entities/home/types';
 import { SkeletonBlock } from '@/components/Home/HomeSkeleton';
 
 type Props = {

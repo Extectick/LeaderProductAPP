@@ -13,6 +13,7 @@ import {
   getQueueDebug,
   getTrackingRouteId,
 } from '@/utils/trackingUploader';
+import { addMonitoringBreadcrumb, captureException } from '@/src/shared/monitoring';
 
 const BACKGROUND_TASK_NAME = 'BACKGROUND_LOCATION_TRACKING';
 const STORAGE_KEYS = {
@@ -86,12 +87,14 @@ async function enqueueLocations(locations: Location.LocationObject[], logPrefix:
   try {
     await enqueueTrackingPoints(points, logPrefix);
   } catch (e) {
+    captureException(e, { where: 'TrackingContext:enqueueLocations', logPrefix });
     console.warn(`${logPrefix} enqueue/send failed`, e);
   }
 }
 
 TaskManager.defineTask(BACKGROUND_TASK_NAME, async ({ data, error }) => {
   if (error) {
+    captureException(error, { where: 'TrackingContext:backgroundTask' });
     console.error('Location task error:', error);
     return;
   }
@@ -170,6 +173,7 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const hardDisableTracking = useCallback(
     async (logPrefix: string) => {
+      addMonitoringBreadcrumb('tracking_hard_disable', { logPrefix });
       const hasStarted = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_TASK_NAME);
       if (hasStarted) {
         await Location.stopLocationUpdatesAsync(BACKGROUND_TASK_NAME);
@@ -200,10 +204,12 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         }
         const hasStarted = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_TASK_NAME);
         if (!hasStarted) {
+          addMonitoringBreadcrumb('tracking_task_restart', { logPrefix });
           console.log(`${logPrefix} restarting location updates`);
           await Location.startLocationUpdatesAsync(BACKGROUND_TASK_NAME, locationOptions);
         }
       } catch (e) {
+        captureException(e, { where: 'TrackingContext:ensureLocationTaskRunning', logPrefix });
         console.warn(`${logPrefix} ensureLocationTaskRunning failed`, e);
       }
     },
@@ -252,6 +258,7 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   ]);
 
   const startTracking = useCallback(async () => {
+    addMonitoringBreadcrumb('tracking_start_requested');
     const notifOk = await ensureNotificationPermission();
     if (!notifOk) {
       await hardDisableTracking('[tracking-start]');
@@ -278,6 +285,7 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     try {
       await Location.startLocationUpdatesAsync(BACKGROUND_TASK_NAME, locationOptions);
     } catch (e) {
+      captureException(e, { where: 'TrackingContext:startTracking:startLocationUpdates' });
       console.error('[tracking] failed to start location updates (manual)', e);
       await hardDisableTracking('[tracking-start]');
       throw e;
@@ -297,6 +305,7 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     await flushAndSync('[tracking]');
     await ensureLocationTaskRunning('[tracking-start]');
     await startForegroundWatch('[tracking-start]');
+    addMonitoringBreadcrumb('tracking_start_done');
   }, [ensureNotificationPermission, flushAndSync, ensureLocationTaskRunning, startForegroundWatch, hardDisableTracking]);
 
   // Дополнительный триггер флеша при смене состояния приложения (активно/фон)
@@ -359,6 +368,7 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [trackingEnabled, ensureLocationTaskRunning]);
 
   const stopTracking = useCallback(async () => {
+    addMonitoringBreadcrumb('tracking_stop_requested');
     const hasStarted = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_TASK_NAME);
     if (hasStarted) {
       await Location.stopLocationUpdatesAsync(BACKGROUND_TASK_NAME);
@@ -369,6 +379,7 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     await flushAndSync('[tracking-stop]');
     await clearRouteIdIfIdle('[tracking-stop]');
     await syncRouteId();
+    addMonitoringBreadcrumb('tracking_stop_done');
   }, [flushAndSync, syncRouteId, stopForegroundWatch]);
 
   // Диагностика очереди при фокусе

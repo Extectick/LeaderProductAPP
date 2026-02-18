@@ -1,24 +1,22 @@
 import { useThemeColor } from '@/hooks/useThemeColor';
-import { getServicesForUser, type ServiceAccessItem } from '@/utils/servicesService';
 import { useRouter } from 'expo-router';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import {
-  ActivityIndicator,
   FlatList,
   Platform,
   StyleSheet,
-  Text,
   useWindowDimensions,
   View,
 } from 'react-native';
 import ServiceCard from './ServiceCard';
 import TabBarSpacer from '@/components/Navigation/TabBarSpacer';
 import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
+import { getMobileServiceCardSize, getMobileServiceColumns, getVisibleServices } from '@/src/features/services/lib/grid';
+import { useServicesData } from '@/src/features/services/hooks/useServicesData';
+import { ServicesErrorView, ServicesLoadingView } from '@/src/features/services/ui/ServiceStateViews';
 
 export default function ServicesScreen() {
-  const [services, setServices] = useState<ServiceAccessItem[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { services, error, loading } = useServicesData();
 
   const router = useRouter();
   const { width } = useWindowDimensions();
@@ -26,58 +24,31 @@ export default function ServicesScreen() {
 
   // брейкпоинты под мобильные/планшеты
   const numColumns = useMemo(() => {
-    if (width < 360) return 2;       // маленькие телефоны
-    if (width < 768) return 2;       // телефоны
-    return 3;                        // планшеты
+    return getMobileServiceColumns(width);
   }, [width]);
 
   const spacing = 14;
   const cardSize = useMemo(() => {
-    // обеспечим фиксированный отступ между плитками
-    const innerWidth = width - spacing * 2 - (numColumns - 1) * spacing;
-    const side = Math.floor(innerWidth / numColumns);
-    // ограничим «чтобы дышало»
-    return Math.min(200, Math.max(120, side));
+    return getMobileServiceCardSize(width, numColumns, spacing);
   }, [width, numColumns]);
-
-  useEffect(() => {
-    const fetchServices = async () => {
-      try {
-        const data = await getServicesForUser();
-        setServices(data);
-      } catch (e: any) {
-        setError(e?.message || 'Не удалось загрузить сервисы');
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchServices();
-  }, []);
 
   const background = useThemeColor({}, 'background');
   const cardBackground = useThemeColor({}, 'cardBackground');
   const textColor = useThemeColor({}, 'text');
+  const visibleServices = useMemo(() => getVisibleServices(services), [services]);
 
   if (loading) {
-    return (
-      <View style={[styles.centered, { backgroundColor: background }]}>
-        <ActivityIndicator size="large" color={textColor} />
-      </View>
-    );
+    return <ServicesLoadingView backgroundColor={background} textColor={textColor} style={styles.centered} />;
   }
 
   if (error || !services) {
-    return (
-      <View style={[styles.centered, { backgroundColor: background }]}>
-        <Text style={{ color: textColor, fontSize: 16 }}>{error ?? 'Ошибка'}</Text>
-      </View>
-    );
+    return <ServicesErrorView backgroundColor={background} textColor={textColor} message={error} style={styles.centered} />;
   }
 
   return (
     <View style={[styles.container, { backgroundColor: background }]}>
       <FlatList
-        data={services.filter((item) => item.visible)}
+        data={visibleServices}
         keyExtractor={(item) => item.key}
         numColumns={numColumns}
         columnWrapperStyle={{ gap: spacing, marginBottom: spacing }}

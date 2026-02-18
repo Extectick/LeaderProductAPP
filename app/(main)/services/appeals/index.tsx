@@ -6,7 +6,7 @@ import AppealsList from '@/components/Appeals/AppealList';
 import AppealListItemForm from '@/components/Appeals/AppealListItemForm';
 import AppealDetailContent from '@/components/Appeals/AppealDetailContent';
 import { exportAppealsCSV, getAppealsCounters, getAppealsList } from '@/utils/appealsService';
-import { AppealCounters, AppealListItem, AppealPriority, AppealStatus, Scope } from '@/types/appealsTypes';
+import { AppealCounters, AppealListItem, AppealPriority, AppealStatus, Scope } from '@/src/entities/appeal/types';
 import * as FileSystem from 'expo-file-system';
 import { useAppealUpdates } from '@/hooks/useAppealUpdates';
 import useWebSidebarMetrics from '@/hooks/useWebSidebarMetrics';
@@ -24,6 +24,7 @@ import {
 } from '@/utils/appealsStore';
 import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 import { useTabBarSpacerHeight } from '@/components/Navigation/TabBarSpacer';
+import { useAppealsOutboxStats } from '@/src/features/appeals/hooks/useAppealsOutboxStats';
 import {
   DESKTOP_CHAT_MAX_WIDTH,
   DESKTOP_CHAT_MIN_WIDTH,
@@ -127,6 +128,7 @@ export default function AppealsIndex() {
   const [onlyAssignedToMe, setOnlyAssignedToMe] = useState(false);
   const [filtersReady, setFiltersReady] = useState(false);
   const [filtersPanelVisible, setFiltersPanelVisible] = useState(false);
+  const outboxStats = useAppealsOutboxStats();
   const [counters, setCounters] = useState<AppealCounters | null>(null);
   const listScope: Scope = tab === 'mine' ? 'my' : 'department';
   const countersRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -611,6 +613,16 @@ export default function AppealsIndex() {
               <Text style={styles.filterMetaText}>
                 {visibleItemsCount} из {cachedItems.length}
               </Text>
+              {outboxStats.total > 0 ? (
+                <Text
+                  style={[
+                    styles.filterMetaText,
+                    outboxStats.failed > 0 ? styles.outboxMetaFailed : styles.outboxMetaPending,
+                  ]}
+                >
+                  Очередь: {outboxStats.pending} в отправке, {outboxStats.failed} ошибок
+                </Text>
+              ) : null}
               {hasNonDefaultFilters ? (
                 <Pressable onPress={resetFilters} style={({ pressed }) => [styles.metaResetBtn, pressed && { opacity: 0.85 }]}>
                   <Text style={styles.metaResetText}>Сбросить</Text>
@@ -870,6 +882,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
+  outboxMetaPending: {
+    color: '#0F766E',
+  },
+  outboxMetaFailed: {
+    color: '#B91C1C',
+  },
   metaResetBtn: {
     borderRadius: 8,
     paddingHorizontal: 8,
@@ -997,3 +1015,4 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 });
+

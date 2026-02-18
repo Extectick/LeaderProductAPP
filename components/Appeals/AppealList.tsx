@@ -15,7 +15,7 @@ import {
   AppealPriority,
   AppealStatus,
   Scope,
-} from '@/types/appealsTypes';
+} from '@/src/entities/appeal/types';
 import AppealListItemForm from './AppealListItemForm';
 import EmptyState from '@/components/ui/EmptyState';
 import {
@@ -324,3 +324,4 @@ const styles = StyleSheet.create({
   },
   skeletonRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
 });
+

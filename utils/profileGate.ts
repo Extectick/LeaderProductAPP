@@ -1,4 +1,4 @@
-import type { Profile, ProfileStatus, ProfileType } from '@/types/userTypes';
+import type { Profile, ProfileStatus, ProfileType } from '@/src/entities/user/types';
 
 export type ActiveProfileInfo = {
   type: ProfileType | null;
@@ -43,3 +43,4 @@ export const getProfileGate = (profile: Profile | null): ProfileGate => {
 
   return 'none';
 };
+

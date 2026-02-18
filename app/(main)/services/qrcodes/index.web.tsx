@@ -17,7 +17,7 @@ import { useRouter } from 'expo-router';
 
 import { useTheme } from '@/context/ThemeContext';
 import { useAnalyticsController } from '@/hooks/useAnalyticsController';
-import type { QRCodeItemType } from '@/types/qrTypes';
+import type { QRCodeItemType } from '@/src/entities/qr/types';
 import { createQRCode, getQRCodesList, updateQRCode } from '@/utils/qrService';
 
 import QRCodeForm from '@/components/QRcodes/QRCodeForm';

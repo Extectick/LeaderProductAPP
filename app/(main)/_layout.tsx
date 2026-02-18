@@ -3,20 +3,13 @@ import Navigation from '@/components/Navigation/Navigation';
 import { AuthContext } from '@/context/AuthContext';
 import { useAppealUpdates } from '@/hooks/useAppealUpdates';
 import { useNotify } from '@/components/NotificationHost';
+import { normalizeRoutePath } from '@/src/shared/lib/routePath';
+import { startAppealsOutboxAutoFlush, stopAppealsOutboxAutoFlush } from '@/src/features/appeals/sync/outbox';
 import { bindPushNavigation } from '@/utils/pushNotifications';
 import { getProfileGate } from '@/utils/profileGate';
 import { usePathname, useRouter } from 'expo-router';
 import React, { useCallback, useContext, useEffect, useMemo, useRef } from 'react';
 import { StyleSheet, View } from 'react-native';
-
-function normalizeRoutePath(path: string | null | undefined): string {
-  const raw = String(path || '').trim();
-  if (!raw) return '/';
-  const noGroups = raw.replace(/\/\([^/]+\)/g, '');
-  const compact = noGroups.replace(/\/+/g, '/');
-  if (compact.length > 1 && compact.endsWith('/')) return compact.slice(0, -1);
-  return compact || '/';
-}
 
 function AppealsNotificationsBridge() {
   const auth = useContext(AuthContext);
@@ -163,6 +156,13 @@ export default function MainLayout() {
   const pathname = usePathname();
   const auth = useContext(AuthContext);
   const lastRedirectRef = useRef('');
+
+  useEffect(() => {
+    void startAppealsOutboxAutoFlush();
+    return () => {
+      stopAppealsOutboxAutoFlush();
+    };
+  }, []);
 
   useEffect(() => {
     if (!auth) return;

@@ -1,8 +1,7 @@
 // components/Appeals/AppealDetailContent.tsx
 import { useEffect, useState, useCallback, useContext, useRef, useMemo } from 'react';
-import { Platform, View, Text, Pressable, StyleSheet, Modal, ScrollView, ActivityIndicator, Image, Keyboard, Dimensions, LayoutChangeEvent } from 'react-native';
+import { Alert, Platform, View, Text, Pressable, StyleSheet, Modal, ScrollView, ActivityIndicator, Image, Keyboard, Dimensions } from 'react-native';
 import {
-  addAppealMessage,
   getAppealById,
   getAppealMessagesBootstrap,
   getAppealMessagesPage,
@@ -11,27 +10,19 @@ import {
   assignAppeal,
   claimAppeal,
   changeAppealDepartment,
-  markAppealMessagesReadBulk,
   getDepartmentMembers,
 } from '@/utils/appealsService';
-import { AppealDetail, AppealStatus, AppealMessage, UserMini, AttachmentType } from '@/types/appealsTypes';
+import { AppealDetail, AppealStatus, AppealMessage, UserMini } from '@/src/entities/appeal/types';
 import AppealHeader from '@/components/Appeals/AppealHeader'; // <-- исправлено имя файла
 import MessagesList, { MessagesListHandle } from '@/components/Appeals/MessagesList';
-import AppealChatInput from '@/components/Appeals/AppealChatInput';
 import DateTimeInput from '@/components/ui/DateTimeInput';
 import { AuthContext } from '@/context/AuthContext';
-import { useAppealUpdates } from '@/hooks/useAppealUpdates';
 import {
   getMessages,
   getMessagesMeta,
   setMessages,
   prependMessages,
   setAppeals,
-  upsertMessage,
-  updateMessage,
-  removeMessage,
-  applyMessageReads,
-  markAppealReadLocal,
   subscribe as subscribeAppeals,
 } from '@/utils/appealsStore';
 import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
@@ -43,7 +34,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { dismissNotificationsByKeys } from '@/utils/notificationStore';
 import { dismissAppealSystemNotifications } from '@/utils/pushNotifications';
 import CustomAlert from '@/components/CustomAlert';
-import { AnimatePresence, MotiView } from 'moti';
+import { useAppealMessageSend } from '@/src/features/appeals/hooks/useAppealMessageSend';
+import {
+  cancelAppealsOutboxMessageByLocalId,
+  retryAppealsOutboxMessageByLocalId,
+} from '@/src/features/appeals/sync/outbox';
+import { useAppealReadController } from '@/src/features/appeals/hooks/useAppealReadController';
+import { useAppealRealtimeEvents } from '@/src/features/appeals/hooks/useAppealRealtimeEvents';
+import AppealActionDock from '@/src/features/appeals/ui/AppealActionDock';
 
 type DockMode = 'chat' | 'claim' | 'creator_resolved' | 'closed';
 type PendingDockAction = 'claim' | 'complete' | 'reject';
@@ -77,13 +75,6 @@ export default function AppealDetailContent({
   const insets = useSafeAreaInsets();
   const contentSidePadding = isPaneMode ? 12 : Platform.OS === 'web' ? 16 : 12;
   const listRef = useRef<MessagesListHandle>(null);
-  const readQueueRef = useRef<Set<number>>(new Set());
-  const readTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const readArmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const readArmedRef = useRef(false);
-  const initialPositionReadyRef = useRef(false);
-  const userInteractedRef = useRef(false);
-  const latestVisibleIdsRef = useRef<number[]>([]);
   const openSessionRef = useRef(0);
   const storeSyncReadyRef = useRef(false);
   const pageSize = 30;
@@ -125,6 +116,30 @@ export default function AppealDetailContent({
     [appealId]
   );
 
+  const messagesById = useMemo(() => {
+    const map = new Map<number, AppealMessage>();
+    (messages || []).forEach((m) => map.set(m.id, m));
+    return map;
+  }, [messages]);
+
+  const {
+    initialPositionReadyRef,
+    resetReadController,
+    handleVisibleMessageIds,
+    handleUserInteraction,
+    tryArmReadsAfterInteraction,
+    armReads,
+    enqueueReadIds,
+  } = useAppealReadController({
+    appealId,
+    viewerUserId: auth?.profile?.id,
+    messagesById,
+    isAtBottom,
+    initialLoading,
+    devLog,
+    dismissAppealNotifications,
+  });
+
   const load = useCallback(async (force = false, _refreshMessages = false) => {
     if (!hasValidAppealId) return;
     const sessionId = openSessionRef.current;
@@ -152,23 +167,10 @@ export default function AppealDetailContent({
       return;
     }
     let active = true;
-    const readQueue = readQueueRef.current;
     const sessionId = openSessionRef.current + 1;
     openSessionRef.current = sessionId;
     storeSyncReadyRef.current = false;
-    readArmedRef.current = false;
-    initialPositionReadyRef.current = false;
-    userInteractedRef.current = false;
-    latestVisibleIdsRef.current = [];
-    readQueue.clear();
-    if (readTimerRef.current) {
-      clearTimeout(readTimerRef.current);
-      readTimerRef.current = null;
-    }
-    if (readArmTimerRef.current) {
-      clearTimeout(readArmTimerRef.current);
-      readArmTimerRef.current = null;
-    }
+    resetReadController();
 
     setInitialLoading(true);
     setInitialAnchorMessageId(null);
@@ -230,21 +232,9 @@ export default function AppealDetailContent({
 
     return () => {
       active = false;
-      if (readTimerRef.current) {
-        clearTimeout(readTimerRef.current);
-        readTimerRef.current = null;
-      }
-      if (readArmTimerRef.current) {
-        clearTimeout(readArmTimerRef.current);
-        readArmTimerRef.current = null;
-      }
-      readArmedRef.current = false;
-      initialPositionReadyRef.current = false;
-      userInteractedRef.current = false;
-      latestVisibleIdsRef.current = [];
-      readQueue.clear();
+      resetReadController();
     };
-  }, [appealId, pageSize, devLog, hasValidAppealId]);
+  }, [appealId, pageSize, devLog, hasValidAppealId, resetReadController]);
   useEffect(() => {
     dismissAppealNotifications();
   }, [dismissAppealNotifications]);
@@ -259,203 +249,18 @@ export default function AppealDetailContent({
     return () => unsub();
   }, [appealId]);
 
-  const messagesById = useMemo(() => {
-    const map = new Map<number, AppealMessage>();
-    (messages || []).forEach((m) => map.set(m.id, m));
-    return map;
-  }, [messages]);
-
-  const flushReadQueue = useCallback(() => {
-    const userId = auth?.profile?.id;
-    if (!userId) return;
-    const ids = Array.from(readQueueRef.current);
-    readQueueRef.current.clear();
-    if (!ids.length) return;
-    devLog('read_bulk_sent', { count: ids.length });
-    markAppealMessagesReadBulk(appealId, ids)
-      .then((res) => {
-        applyMessageReads(appealId, res.messageIds, userId, res.readAt);
-        markAppealReadLocal(appealId);
-        dismissAppealNotifications(res.messageIds);
-      })
-      .catch(() => {});
-  }, [appealId, auth?.profile?.id, dismissAppealNotifications, devLog]);
-
-  const enqueueReadIds = useCallback((ids: number[]) => {
-    if (!ids.length) return;
-    let added = false;
-    ids.forEach((id) => {
-      if (readQueueRef.current.has(id)) return;
-      readQueueRef.current.add(id);
-      added = true;
-    });
-    if (!added) return;
-    if (readTimerRef.current) clearTimeout(readTimerRef.current);
-    readTimerRef.current = setTimeout(() => {
-      readTimerRef.current = null;
-      flushReadQueue();
-    }, 300);
-  }, [flushReadQueue]);
-
-  const processVisibleMessageIds = useCallback((ids: number[]) => {
-    const userId = auth?.profile?.id;
-    if (!userId || !ids.length) return;
-    const eligibleIds: number[] = [];
-    ids.forEach((id) => {
-      const msg = messagesById.get(id);
-      if (!msg) return;
-      if (msg.sender?.id === userId) return;
-      const alreadyRead = msg.isRead || (msg.readBy || []).some((r) => r.userId === userId);
-      if (alreadyRead) return;
-      eligibleIds.push(id);
-    });
-    enqueueReadIds(eligibleIds);
-  }, [auth?.profile?.id, enqueueReadIds, messagesById]);
-
-  const armReads = useCallback((reason: string) => {
-    if (readArmedRef.current) return;
-    if (readArmTimerRef.current) {
-      clearTimeout(readArmTimerRef.current);
-      readArmTimerRef.current = null;
-    }
-    readArmTimerRef.current = setTimeout(() => {
-      readArmTimerRef.current = null;
-      if (!initialPositionReadyRef.current) return;
-      if (reason === 'user_interaction' && !userInteractedRef.current) return;
-      if ((reason === 'auto_bottom' || reason === 'incoming_at_bottom') && !isAtBottom) return;
-      readArmedRef.current = true;
-      devLog('read_armed', { reason });
-      if (latestVisibleIdsRef.current.length) {
-        processVisibleMessageIds(latestVisibleIdsRef.current);
-      }
-    }, 280);
-  }, [devLog, isAtBottom, processVisibleMessageIds]);
-
-  const tryArmReadsAfterInteraction = useCallback(() => {
-    if (!initialPositionReadyRef.current) return;
-    if (!userInteractedRef.current) return;
-    armReads('user_interaction');
-  }, [armReads]);
-
-  const handleUserInteraction = useCallback(() => {
-    if (!userInteractedRef.current) {
-      userInteractedRef.current = true;
-      devLog('user_interaction_detected');
-    }
-    tryArmReadsAfterInteraction();
-  }, [devLog, tryArmReadsAfterInteraction]);
-
-  const handleVisibleMessageIds = useCallback((ids: number[]) => {
-    latestVisibleIdsRef.current = ids;
-    if (!readArmedRef.current) return;
-    processVisibleMessageIds(ids);
-  }, [processVisibleMessageIds]);
-
-  useEffect(() => {
-    if (initialLoading) return;
-    if (!initialPositionReadyRef.current) return;
-    if (!isAtBottom) return;
-    armReads('auto_bottom');
-  }, [armReads, initialLoading, isAtBottom]);
-
-  useEffect(() => {
-    return () => {
-      if (readTimerRef.current) clearTimeout(readTimerRef.current);
-      if (readArmTimerRef.current) clearTimeout(readArmTimerRef.current);
-    };
-  }, []);
-
-  // Подписка на события конкретного обращения: новые сообщения, смена статуса и т.д.
-  useAppealUpdates(hasValidAppealId ? appealId : undefined, (evt) => {
-    const eventName = evt.event || evt.eventType || evt.type;
-    if (eventName === 'messageAdded' && evt.appealId === appealId) {
-      const incomingMessageId = Number(evt.id || evt.messageId);
-      const newMsg: AppealMessage = {
-        id: incomingMessageId,
-        appealId: evt.appealId,
-        text: evt.text || '',
-        type: evt.type === 'SYSTEM' ? 'SYSTEM' : 'USER',
-        systemEvent: evt.systemEvent ?? null,
-        createdAt: evt.createdAt || new Date().toISOString(),
-        sender: evt.sender || { id: evt.senderId, email: '' },
-        attachments: evt.attachments || [],
-        isRead: evt.isRead,
-        readBy: evt.readBy || [],
-      };
-      upsertMessage(appealId, newMsg, auth?.profile?.id).catch(() => {});
-      const senderId = evt.senderId ?? evt.sender?.id ?? newMsg.sender?.id;
-      const isIncoming = Number.isFinite(senderId) && senderId !== auth?.profile?.id;
-      if (isIncoming && Number.isFinite(incomingMessageId) && initialPositionReadyRef.current && isAtBottom) {
-        armReads('incoming_at_bottom');
-        enqueueReadIds([incomingMessageId]);
-      }
-    } else if (eventName === 'messageEdited' && evt.appealId === appealId) {
-      updateMessage(appealId, evt.messageId, { text: evt.text, editedAt: evt.editedAt }).catch(() => {});
-    } else if (eventName === 'messageDeleted' && evt.appealId === appealId) {
-      removeMessage(appealId, evt.messageId).catch(() => {});
-    } else if (eventName === 'messageRead' && evt.appealId === appealId) {
-      const ids = Array.isArray(evt.messageIds)
-        ? evt.messageIds
-        : evt.messageId
-        ? [evt.messageId]
-        : [];
-      if (ids.length && evt.userId && evt.readAt) {
-        applyMessageReads(
-          appealId,
-          ids,
-          evt.userId,
-          evt.readAt,
-          auth?.profile?.id ?? evt.userId
-        ).catch(() => {});
-      }
-    } else if (eventName === 'appealUpdated' && evt.appealId === appealId) {
-      if (evt.lastMessage?.id) {
-        upsertMessage(appealId, evt.lastMessage, auth?.profile?.id).catch(() => {});
-      }
-      if (!data) {
-        void load(true, false);
-        return;
-      }
-      const hasDeadline = Object.prototype.hasOwnProperty.call(evt, 'deadline');
-      setData((prev) => {
-        if (!prev) return prev;
-        const nextAssignees = Array.isArray(evt.assigneeIds)
-          ? evt.assigneeIds.map((id: number) => ({ user: { id, email: '' } }))
-          : prev.assignees;
-        return {
-          ...prev,
-          status: evt.status ?? prev.status,
-          priority: evt.priority ?? prev.priority,
-          deadline: hasDeadline ? (evt.deadline ?? null) : prev.deadline,
-          assignees: nextAssignees as any,
-          toDepartment:
-            evt.toDepartmentId && prev.toDepartment?.id !== evt.toDepartmentId
-              ? {
-                  ...prev.toDepartment,
-                  id: evt.toDepartmentId,
-                }
-              : prev.toDepartment,
-        };
-      });
-      if (evt.toDepartmentId && data.toDepartment?.id !== evt.toDepartmentId) {
-        void load(true, false);
-      }
-    } else if (eventName === 'statusUpdated' && evt.appealId === appealId) {
-      if (!data || !evt.status) {
-        void load(true, false);
-        return;
-      }
-      setData((prev) => (prev ? { ...prev, status: evt.status } : prev));
-    } else if (
-      evt.appealId === appealId &&
-      (eventName === 'assigneesUpdated' ||
-        eventName === 'departmentChanged' ||
-        eventName === 'watchersUpdated')
-    ) {
-      void load(true, false);
-    }
-  }, auth?.profile?.id, auth?.profile?.departmentRoles?.map((d) => d.department.id) ||
-    auth?.profile?.employeeProfile?.department?.id);
+  useAppealRealtimeEvents({
+    appealId,
+    enabled: hasValidAppealId,
+    profile: auth?.profile,
+    data,
+    setData,
+    load,
+    isAtBottom,
+    initialPositionReadyRef,
+    armReads,
+    enqueueReadIds,
+  });
 
   const userId = auth?.profile?.id;
   const toDepartmentId = data?.toDepartment?.id;
@@ -482,6 +287,33 @@ export default function AppealDetailContent({
   const canTransfer = !!data && (isAdmin || isDeptManager);
   const canClaim = !!data && !isClosedStatus && !isAssignee && !isCreator && isDeptMember;
   const canEditDeadline = !!data && (isCreator || isAdmin);
+  const { onSend: sendAppealMessage } = useAppealMessageSend({
+    appealId,
+    profile: auth?.profile,
+  });
+
+  const handleRetryLocalMessage = useCallback(async (message: AppealMessage) => {
+    if (!message || message.id >= 0) return;
+    await retryAppealsOutboxMessageByLocalId(appealId, message.id);
+  }, [appealId]);
+
+  const handleCancelLocalMessage = useCallback((message: AppealMessage) => {
+    if (!message || message.id >= 0) return;
+    Alert.alert(
+      'Удалить сообщение?',
+      'Сообщение будет удалено из очереди отправки.',
+      [
+        { text: 'Отмена', style: 'cancel' },
+        {
+          text: 'Удалить',
+          style: 'destructive',
+          onPress: () => {
+            void cancelAppealsOutboxMessageByLocalId(appealId, message.id);
+          },
+        },
+      ]
+    );
+  }, [appealId]);
 
   const allowedStatuses = useMemo(() => {
     if (!data) return [] as AppealStatus[];
@@ -780,13 +612,6 @@ export default function AppealDetailContent({
     };
   }, []);
 
-  function handleActionDockLayout(event: LayoutChangeEvent) {
-    const height = event.nativeEvent.layout.height;
-    if (height > 0) {
-      setInputHeight(height);
-    }
-  }
-
   function openDockConfirm(action: PendingDockAction) {
     if (dockActionLoading) return;
     setPendingDockAction(action);
@@ -829,13 +654,6 @@ export default function AppealDetailContent({
 
     setConfirmVisible(false);
     setPendingDockAction(null);
-  }
-
-  function resolveAttachmentType(mimeType?: string | null): AttachmentType {
-    const value = String(mimeType || '').toLowerCase();
-    if (value.startsWith('image/')) return 'IMAGE';
-    if (value.startsWith('audio/')) return 'AUDIO';
-    return 'FILE';
   }
 
   const showErrorState = !!loadError && !data;
@@ -903,177 +721,27 @@ export default function AppealDetailContent({
             onInitialPositioned={handleInitialPositioned}
             readActivationMode="after_user_interaction"
             onUserInteraction={handleUserInteraction}
+            onRetryLocalMessage={handleRetryLocalMessage}
+            onCancelLocalMessage={handleCancelLocalMessage}
           />
         </View>
       </View>
 
-      {canRenderActions ? (
-        <View
-          style={[
-            styles.inputDock,
-            {
-              bottom: dockBottom,
-              left: contentSidePadding,
-              right: contentSidePadding,
-            },
-          ]}
-        >
-          <View style={isPaneMode ? styles.inputWrapPane : styles.inputWrap}>
-            <AnimatePresence exitBeforeEnter>
-              {dockMode === 'chat' ? (
-                <MotiView
-                  key="dock-chat"
-                  from={{ opacity: 0, translateY: 8, scale: 0.98 }}
-                  animate={{ opacity: 1, translateY: 0, scale: 1 }}
-                  exit={{ opacity: 0, translateY: 6, scale: 0.98 }}
-                  transition={{ type: 'timing', duration: 210 }}
-                >
-                  <AppealChatInput
-                    bottomInset={0}
-                    onHeightChange={setInputHeight}
-                    showScrollToBottom={!isAtBottom}
-                    onScrollToBottom={() => listRef.current?.scrollToBottom(true)}
-                    onSend={async ({ text, files }) => {
-                      const res = await addAppealMessage(appealId, { text, files });
-                      const optimisticAttachments = (files || [])
-                        .filter((file) => file?.uri)
-                        .map((file, index) => ({
-                          id: -(index + 1),
-                          fileUrl: file.uri,
-                          fileName: file.name || `attachment-${index + 1}`,
-                          fileType: resolveAttachmentType(file.type),
-                        }));
-                      const responseAttachments = Array.isArray((res as any)?.attachments)
-                        ? (res as any).attachments
-                        : null;
-                      // Оптимистично добавляем своё сообщение в локальный стор, чтобы не ждать сокет
-                      const avatarUrl =
-                        auth?.profile?.avatarUrl ||
-                        auth?.profile?.employeeProfile?.avatarUrl ||
-                        auth?.profile?.clientProfile?.avatarUrl ||
-                        auth?.profile?.supplierProfile?.avatarUrl ||
-                        null;
-                      const department = auth?.profile?.employeeProfile?.department || null;
-                      const isDepartmentManager = (auth?.profile?.departmentRoles || []).some(
-                        (dr) => dr.role?.name === 'department_manager'
-                      );
-                      upsertMessage(
-                        appealId,
-                        {
-                          id: res.id,
-                          appealId,
-                          text: text || '',
-                          createdAt: res.createdAt || new Date().toISOString(),
-                          sender: auth?.profile
-                            ? {
-                                id: auth.profile.id,
-                                email: auth.profile.email || '',
-                                firstName: auth.profile.firstName || undefined,
-                                lastName: auth.profile.lastName || undefined,
-                                avatarUrl,
-                                department,
-                                isAdmin: auth.profile.role?.name === 'admin',
-                                isDepartmentManager,
-                              }
-                            : { id: 0, email: '' },
-                          attachments: responseAttachments ?? optimisticAttachments,
-                          readBy: [],
-                          isRead: true,
-                        },
-                        auth?.profile?.id
-                      ).then(() => setMessagesState(getMessages(appealId)));
-                    }}
-                    onInputFocus={handleUserInteraction}
-                  />
-                </MotiView>
-              ) : null}
-
-              {dockMode === 'closed' ? (
-                <MotiView
-                  key="dock-closed"
-                  onLayout={handleActionDockLayout}
-                  from={{ opacity: 0, translateY: 8, scale: 0.98 }}
-                  animate={{ opacity: 1, translateY: 0, scale: 1 }}
-                  exit={{ opacity: 0, translateY: 6, scale: 0.98 }}
-                  transition={{ type: 'timing', duration: 210 }}
-                >
-                  <View style={styles.actionCard}>
-                    <View style={styles.closedNoticeCard}>
-                      <Ionicons name="lock-closed-outline" size={16} color="#64748B" />
-                      <Text style={styles.closedNoticeText}>
-                        {data?.status === 'DECLINED' ? 'Обращение отклонено' : 'Обращение закрыто'}
-                      </Text>
-                    </View>
-                  </View>
-                </MotiView>
-              ) : null}
-
-              {dockMode === 'claim' ? (
-                <MotiView
-                  key="dock-claim"
-                  onLayout={handleActionDockLayout}
-                  from={{ opacity: 0, translateY: 8, scale: 0.98 }}
-                  animate={{ opacity: 1, translateY: 0, scale: 1 }}
-                  exit={{ opacity: 0, translateY: 6, scale: 0.98 }}
-                  transition={{ type: 'timing', duration: 210 }}
-                >
-                  <View style={styles.actionCard}>
-                    <Pressable
-                      style={({ pressed }) => [
-                        styles.actionBtnSingle,
-                        pressed && styles.actionBtnSinglePressed,
-                      ]}
-                      onPress={() => openDockConfirm('claim')}
-                      disabled={dockActionLoading}
-                    >
-                      <Text style={styles.actionBtnSingleText}>Принять обращение</Text>
-                    </Pressable>
-                  </View>
-                </MotiView>
-              ) : null}
-
-              {dockMode === 'creator_resolved' ? (
-                <MotiView
-                  key="dock-creator-resolved"
-                  onLayout={handleActionDockLayout}
-                  from={{ opacity: 0, translateY: 8, scale: 0.98 }}
-                  animate={{ opacity: 1, translateY: 0, scale: 1 }}
-                  exit={{ opacity: 0, translateY: 6, scale: 0.98 }}
-                  transition={{ type: 'timing', duration: 210 }}
-                >
-                  <View style={styles.actionCard}>
-                    <View style={styles.splitActionRow}>
-                      <Pressable
-                        style={({ pressed }) => [
-                          styles.splitActionBtn,
-                          styles.splitActionBtnApprove,
-                          pressed && styles.splitActionBtnPressed,
-                        ]}
-                        onPress={() => openDockConfirm('complete')}
-                        disabled={dockActionLoading}
-                      >
-                        <Text style={styles.splitActionBtnText}>Подтвердить</Text>
-                      </Pressable>
-                      <View style={styles.splitDivider} />
-                      <Pressable
-                        style={({ pressed }) => [
-                          styles.splitActionBtn,
-                          styles.splitActionBtnReject,
-                          pressed && styles.splitActionBtnPressed,
-                        ]}
-                        onPress={() => openDockConfirm('reject')}
-                        disabled={dockActionLoading}
-                      >
-                        <Text style={styles.splitActionBtnText}>Отклонить</Text>
-                      </Pressable>
-                    </View>
-                  </View>
-                </MotiView>
-              ) : null}
-            </AnimatePresence>
-          </View>
-        </View>
-      ) : null}
+      <AppealActionDock
+        visible={canRenderActions}
+        dockMode={dockMode}
+        isPaneMode={isPaneMode}
+        contentSidePadding={contentSidePadding}
+        dockBottom={dockBottom}
+        isAtBottom={isAtBottom}
+        closedStatus={data?.status}
+        actionLoading={dockActionLoading}
+        onAction={openDockConfirm}
+        onHeightChange={setInputHeight}
+        onScrollToBottom={() => listRef.current?.scrollToBottom(true)}
+        onSend={sendAppealMessage}
+        onInputFocus={handleUserInteraction}
+      />
 
       <CustomAlert
         visible={confirmVisible && !!pendingDockAction}
@@ -1411,3 +1079,4 @@ const styles = StyleSheet.create({
   memberName: { fontWeight: '600', color: '#111827' },
   memberDept: { fontSize: 12, color: '#6B7280' },
 });
+

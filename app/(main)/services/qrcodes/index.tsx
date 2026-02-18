@@ -1,7 +1,7 @@
 // ===== File: app/(main)/services/qrcodes/index.tsx =====
 import ActionSheet from '@/components/ActionSheet';
 import QRCodeItem from '@/components/QRcodes/QRCodeItem';
-import type { QRCodeItemType } from '@/types/qrTypes';
+import type { QRCodeItemType } from '@/src/entities/qr/types';
 import { deleteQRCode, getQRCodeById, getQRCodesList } from '@/utils/qrService';
 import { Ionicons } from '@expo/vector-icons';
 // legacy API для кэш-директории/кодировок

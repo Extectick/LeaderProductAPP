@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { AppealListItem, AppealMessage } from '@/types/appealsTypes';
+import { AppealListItem, AppealMessage } from '@/src/entities/appeal/types';
 
 type MessagesMeta = {
   hasMoreBefore: boolean;
@@ -358,3 +358,4 @@ export async function appendListPage(
 ) {
   return setListPage(listKey, pageItems, meta, false);
 }
+

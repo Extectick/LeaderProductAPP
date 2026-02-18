@@ -12,7 +12,7 @@ import { useRouter } from 'expo-router';
 import dayjs from 'dayjs';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { AppealListItem, AppealRoleBadge, Scope } from '@/types/appealsTypes';
+import { AppealListItem, AppealRoleBadge, Scope } from '@/src/entities/appeal/types';
 
 type Props = {
   item: AppealListItem;
@@ -393,3 +393,4 @@ function AppealListItemForm({
 }
 
 export default React.memo(AppealListItemForm);
+

@@ -17,26 +17,13 @@ import { NotificationHost } from '@/components/NotificationHost';
 import UpdateGate from '@/components/UpdateGate';
 import StartupSplash from '@/components/StartupSplash';
 import { initPushNotifications } from '@/utils/pushNotifications';
+import { captureException, initMonitoring, installGlobalJsErrorHandler } from '@/src/shared/monitoring';
 
 if (Platform.OS !== 'web') {
   void SplashScreen.preventAutoHideAsync().catch(() => {});
 }
 
 enableScreens();
-
-try {
-  // @ts-ignore
-  const defaultHandler = global.ErrorUtils?.getGlobalHandler?.();
-  // @ts-ignore
-  global.ErrorUtils?.setGlobalHandler?.((error: any, isFatal?: boolean) => {
-    console.error(
-      '[GlobalError] JS',
-      isFatal ? 'Fatal' : 'Non-fatal',
-      error?.stack || String(error)
-    );
-    defaultHandler && defaultHandler(error, isFatal);
-  });
-} catch {}
 
 function InnerLayout() {
   const { isChecking } = useAuthRedirect();
@@ -50,6 +37,12 @@ export default function RootLayout() {
 
   const [preloadReady, setPreloadReady] = useState(false);
   const [updateReady, setUpdateReady] = useState(false);
+
+  useEffect(() => {
+    initMonitoring();
+    installGlobalJsErrorHandler();
+  }, []);
+
   const handleStartupDone = useCallback(() => {
     setUpdateReady(true);
   }, []);
@@ -61,6 +54,7 @@ export default function RootLayout() {
         // preload...
         await initPushNotifications();
       } catch (e) {
+        captureException(e, { where: 'RootLayout:initPushNotifications' });
         console.warn('App init error:', e);
       } finally {
         if (!cancelled) {

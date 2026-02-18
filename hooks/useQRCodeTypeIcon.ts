@@ -1,5 +1,5 @@
 // hooks/useQRCodeTypeIcon.ts
-import { QRType } from '@/types/qrTypes';
+import { QRType } from '@/src/entities/qr/types';
 import { Ionicons } from '@expo/vector-icons';
 
 type IoniconName = keyof typeof Ionicons.glyphMap;

@@ -13,7 +13,7 @@ import {
 import { useState, useEffect } from 'react';
 import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { Ionicons } from '@expo/vector-icons';
-import { AppealMessage } from '@/types/appealsTypes';
+import { AppealMessage } from '@/src/entities/appeal/types';
 import { MotiView } from 'moti';
 import * as FileSystem from 'expo-file-system/legacy';
 import { formatDistanceToNow } from 'date-fns';
@@ -28,12 +28,16 @@ export default function MessageBubble({
   presence,
   showHeader = true,
   isGrouped = false,
+  onRetryLocalMessage,
+  onCancelLocalMessage,
 }: {
   message: AppealMessage;
   own: boolean;
   presence?: PresenceInfo;
   showHeader?: boolean;
   isGrouped?: boolean;
+  onRetryLocalMessage?: (message: AppealMessage) => void;
+  onCancelLocalMessage?: (message: AppealMessage) => void;
 }) {
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const attachments = Array.isArray(message.attachments)
@@ -82,6 +86,8 @@ export default function MessageBubble({
   const status = useAudioPlayerStatus(player);
   const showHeaderRow = showHeader && !isSystem;
   const metaText = `${timeStr} · ${dateStr}`;
+  const isPending = own && message.localState === 'pending';
+  const isFailed = own && message.localState === 'failed';
   const hasAttachments = attachments.length > 0;
   const bubbleMaxWidth =
     Platform.OS === 'web'
@@ -313,16 +319,55 @@ export default function MessageBubble({
           }
           return null;
         })}
+        {isFailed && message.localError ? (
+          <Text style={styles.localErrorText} numberOfLines={2}>
+            {message.localError}
+          </Text>
+        ) : null}
         <View style={styles.meta}>
           <Text style={styles.metaText} numberOfLines={2} ellipsizeMode="clip">
             {metaText}
           </Text>
+          {isFailed ? (
+            <View style={styles.failedActions}>
+              <Pressable
+                onPress={() => onRetryLocalMessage?.(message)}
+                style={({ pressed }) => [styles.failedActionBtn, pressed ? styles.failedActionBtnPressed : null]}
+                hitSlop={6}
+              >
+                <Ionicons name="refresh-outline" size={12} color="#0F172A" />
+              </Pressable>
+              <Pressable
+                onPress={() => onCancelLocalMessage?.(message)}
+                style={({ pressed }) => [styles.failedActionBtn, pressed ? styles.failedActionBtnPressed : null]}
+                hitSlop={6}
+              >
+                <Ionicons name="close-outline" size={12} color="#0F172A" />
+              </Pressable>
+            </View>
+          ) : null}
+          {isPending ? (
+            <View style={styles.deliveryBadge}>
+              <Ionicons name="time-outline" size={12} color="#6B7280" />
+            </View>
+          ) : null}
+          {isFailed ? (
+            <View style={styles.deliveryBadge}>
+              <Ionicons name="alert-circle-outline" size={12} color="#DC2626" />
+            </View>
+          ) : null}
           {own ? (
             <View style={styles.readMark}>
               <Ionicons
                 name={(message.readBy?.length ?? 0) > 0 ? 'checkmark-done' : 'checkmark'}
                 size={14}
-                color={(message.readBy?.length ?? 0) > 0 ? '#2563EB' : '#9CA3AF'}
+                color={
+                  isFailed
+                    ? '#DC2626'
+                    : (message.readBy?.length ?? 0) > 0
+                    ? '#2563EB'
+                    : '#9CA3AF'
+                }
               />
             </View>
           ) : null}
@@ -669,6 +714,34 @@ const styles = StyleSheet.create({
     includeFontPadding: false,
   },
   readMark: { marginLeft: 6, flexShrink: 0, alignSelf: 'flex-end' },
+  deliveryBadge: {
+    marginLeft: 6,
+    flexShrink: 0,
+    alignSelf: 'flex-end',
+  },
+  failedActions: {
+    marginLeft: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  failedActionBtn: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#E2E8F0',
+  },
+  failedActionBtnPressed: {
+    opacity: 0.8,
+  },
+  localErrorText: {
+    marginTop: 6,
+    color: '#B91C1C',
+    fontSize: 11,
+    lineHeight: 15,
+  },
   previewBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.6)',
@@ -703,3 +776,4 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
 });
+

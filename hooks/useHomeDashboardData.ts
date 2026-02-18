@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from 'expo-router';
 import React from 'react';
 
-import type { HomeDashboardData, HomeMetricCard, HomeMetricId } from '@/types/homeDashboardTypes';
+import type { HomeDashboardData, HomeMetricCard, HomeMetricId } from '@/src/entities/home/types';
 import {
   fetchDailyScans24h,
   fetchHomeActivityFeed,
