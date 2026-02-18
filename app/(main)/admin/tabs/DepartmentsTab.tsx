@@ -27,6 +27,7 @@ import {
 import { AdminStyles } from '@/components/admin/adminStyles';
 import { useTabBarSpacerHeight } from '@/components/Navigation/TabBarSpacer';
 import { formatPhoneDisplay } from '@/utils/phone';
+import { getRoleDisplayName } from '@/utils/rbacLabels';
 
 type DepartmentsTabProps = {
   active: boolean;
@@ -241,7 +242,7 @@ export default function DepartmentsTab({ active, styles, colors, onOpenUser }: D
                         <Text style={styles.deptUserName} numberOfLines={2}>
                           #{u.id} · {fullName}
                         </Text>
-                        <Text style={styles.deptUserRole}>{u.role?.name || '—'}</Text>
+                        <Text style={styles.deptUserRole}>{getRoleDisplayName(u.role)}</Text>
                       </View>
                       <Text style={styles.deptUserSub}>{u.email}</Text>
                       <Text style={styles.deptUserSub}>{u.phone ? formatPhoneDisplay(u.phone) : '—'}</Text>

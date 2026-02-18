@@ -8,6 +8,7 @@ import {
   StyleSheet,
   Switch,
   Text,
+  TextInput,
   TouchableOpacity,
   TouchableWithoutFeedback,
   View,
@@ -17,7 +18,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { AdminStyles } from '@/components/admin/adminStyles';
 import { useTabBarSpacerHeight } from '@/components/Navigation/TabBarSpacer';
 import { Department, getDepartments, getRoles, RoleItem } from '@/utils/userService';
+import { getRoleDisplayName } from '@/utils/rbacLabels';
 import {
+  createAdminService,
   deleteServiceDepartmentAccess,
   deleteServiceRoleAccess,
   getAdminServices,
@@ -37,6 +40,14 @@ type ServicesTabProps = {
 
 type RuleType = 'role' | 'department';
 
+const SERVICE_PERMISSION_ACTION_OPTIONS = [
+  { key: 'view', label: 'Просмотр' },
+  { key: 'create', label: 'Создание' },
+  { key: 'update', label: 'Изменение' },
+  { key: 'delete', label: 'Удаление' },
+  { key: 'export', label: 'Экспорт' },
+];
+
 export default function ServicesTab({ active, styles, colors }: ServicesTabProps) {
   const tabBarSpacer = useTabBarSpacerHeight();
   const [services, setServices] = useState<ServiceAdminItem[]>([]);
@@ -51,9 +62,25 @@ export default function ServicesTab({ active, styles, colors }: ServicesTabProps
   const [ruleVisible, setRuleVisible] = useState(true);
   const [ruleEnabled, setRuleEnabled] = useState(true);
 
+  const [newServiceKey, setNewServiceKey] = useState('');
+  const [newServiceName, setNewServiceName] = useState('');
+  const [newServiceRoute, setNewServiceRoute] = useState('');
+  const [newServiceIcon, setNewServiceIcon] = useState('');
+  const [newServiceDescription, setNewServiceDescription] = useState('');
+  const [newServiceIsActive, setNewServiceIsActive] = useState(true);
+  const [newServiceDefaultVisible, setNewServiceDefaultVisible] = useState(true);
+  const [newServiceDefaultEnabled, setNewServiceDefaultEnabled] = useState(true);
+  const [generatePermissionTemplate, setGeneratePermissionTemplate] = useState(true);
+  const [selectedPermissionActions, setSelectedPermissionActions] = useState<string[]>(
+    SERVICE_PERMISSION_ACTION_OPTIONS.map((x) => x.key)
+  );
+
   const localStyles = useMemo(() => makeLocalStyles(colors), [colors]);
 
-  const roleMap = useMemo(() => new Map(roles.map((r) => [r.id, r.name])), [roles]);
+  const roleMap = useMemo(
+    () => new Map(roles.map((r) => [r.id, getRoleDisplayName(r)])),
+    [roles]
+  );
   const deptMap = useMemo(() => new Map(departments.map((d) => [d.id, d.name])), [departments]);
 
   const loadData = useCallback(async () => {
@@ -82,6 +109,56 @@ export default function ServicesTab({ active, styles, colors }: ServicesTabProps
       setServices((prev) => prev.map((s) => (s.id === serviceId ? { ...s, ...updated } : s)));
     } catch (e: any) {
       Alert.alert('Ошибка', e?.message || 'Не удалось обновить сервис');
+    }
+  };
+
+  const handleCreateService = async () => {
+    const key = newServiceKey.trim().toLowerCase();
+    const name = newServiceName.trim();
+    if (!key || !/^[a-z0-9_]+$/.test(key)) {
+      Alert.alert('Ошибка', 'Ключ сервиса должен быть в формате lowercase snake_case');
+      return;
+    }
+    if (!name) {
+      Alert.alert('Ошибка', 'Название сервиса обязательно');
+      return;
+    }
+    if (generatePermissionTemplate && !selectedPermissionActions.length) {
+      Alert.alert('Ошибка', 'Выберите хотя бы одно действие для шаблона прав');
+      return;
+    }
+
+    try {
+      const created = await createAdminService({
+        key,
+        name,
+        route: newServiceRoute.trim() || null,
+        icon: newServiceIcon.trim() || null,
+        description: newServiceDescription.trim() || null,
+        isActive: newServiceIsActive,
+        defaultVisible: newServiceDefaultVisible,
+        defaultEnabled: newServiceDefaultEnabled,
+        generatePermissionTemplate,
+        permissionActions: selectedPermissionActions,
+      });
+      setNewServiceKey('');
+      setNewServiceName('');
+      setNewServiceRoute('');
+      setNewServiceIcon('');
+      setNewServiceDescription('');
+      setGeneratePermissionTemplate(true);
+      setSelectedPermissionActions(SERVICE_PERMISSION_ACTION_OPTIONS.map((x) => x.key));
+      await loadData();
+
+      const createdPermNames = (created?.createdPermissions || []).map((p) => p.name);
+      Alert.alert(
+        'Сервис создан',
+        createdPermNames.length
+          ? `Созданы права: ${createdPermNames.join(', ')}`
+          : 'Сервис создан без шаблона прав'
+      );
+    } catch (e: any) {
+      Alert.alert('Ошибка', e?.message || 'Не удалось создать сервис');
     }
   };
 
@@ -225,6 +302,82 @@ export default function ServicesTab({ active, styles, colors }: ServicesTabProps
   return (
     <>
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ gap: 12, paddingBottom: tabBarSpacer + 12 }}>
+        <View style={styles.toolbarCard}>
+          <View style={{ gap: 8 }}>
+            <TextInput
+              placeholder="Ключ сервиса (например, orders)"
+              value={newServiceKey}
+              onChangeText={setNewServiceKey}
+              style={styles.input}
+              autoCapitalize="none"
+            />
+            <TextInput
+              placeholder="Название сервиса"
+              value={newServiceName}
+              onChangeText={setNewServiceName}
+              style={styles.input}
+            />
+            <TextInput
+              placeholder="Маршрут (например, /services/orders)"
+              value={newServiceRoute}
+              onChangeText={setNewServiceRoute}
+              style={styles.input}
+              autoCapitalize="none"
+            />
+            <TextInput
+              placeholder="Иконка Ionicons (например, cube-outline)"
+              value={newServiceIcon}
+              onChangeText={setNewServiceIcon}
+              style={styles.input}
+              autoCapitalize="none"
+            />
+            <TextInput
+              placeholder="Описание"
+              value={newServiceDescription}
+              onChangeText={setNewServiceDescription}
+              style={styles.input}
+            />
+            <View style={{ flexDirection: 'row', gap: 12, flexWrap: 'wrap' }}>
+              <ToggleRow label="Активен" value={newServiceIsActive} onChange={setNewServiceIsActive} colors={colors} />
+              <ToggleRow label="Видим по умолчанию" value={newServiceDefaultVisible} onChange={setNewServiceDefaultVisible} colors={colors} />
+              <ToggleRow label="Доступен по умолчанию" value={newServiceDefaultEnabled} onChange={setNewServiceDefaultEnabled} colors={colors} />
+            </View>
+            <ToggleRow
+              label="Создать шаблон прав"
+              value={generatePermissionTemplate}
+              onChange={setGeneratePermissionTemplate}
+              colors={colors}
+            />
+            {generatePermissionTemplate ? (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                {SERVICE_PERMISSION_ACTION_OPTIONS.map((option) => {
+                  const activeOption = selectedPermissionActions.includes(option.key);
+                  return (
+                    <Pressable
+                      key={`service-action-${option.key}`}
+                      onPress={() =>
+                        setSelectedPermissionActions((prev) =>
+                          prev.includes(option.key)
+                            ? prev.filter((x) => x !== option.key)
+                            : [...prev, option.key]
+                        )
+                      }
+                      style={[styles.optionChip, activeOption && styles.optionChipActive]}
+                    >
+                      <Text style={[styles.optionText, activeOption && styles.optionTextActive]}>
+                        {option.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            ) : null}
+            <TouchableOpacity style={[styles.smallBtn, { backgroundColor: colors.tint }]} onPress={handleCreateService}>
+              <Text style={{ color: '#fff', fontWeight: '700' }}>Создать сервис</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
         {loading ? (
           <ActivityIndicator />
         ) : (
@@ -315,7 +468,10 @@ export default function ServicesTab({ active, styles, colors }: ServicesTabProps
               <ScrollView style={{ maxHeight: 180 }}>
                 {(ruleType === 'role' ? roles : departments).map((item) => {
                   const id = ruleType === 'role' ? (item as RoleItem).id : (item as Department).id;
-                  const label = ruleType === 'role' ? (item as RoleItem).name : (item as Department).name;
+                  const label =
+                    ruleType === 'role'
+                      ? getRoleDisplayName(item as RoleItem)
+                      : (item as Department).name;
                   const activeItem =
                     ruleType === 'role' ? selectedRoleId === id : selectedDepartmentId === id;
                   return (

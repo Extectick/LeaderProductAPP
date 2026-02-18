@@ -43,6 +43,7 @@ import { EditableCard, SelectableChip, SelectorCard, StaticCard } from '@/compon
 import { usePresence } from '@/hooks/usePresence';
 import { useTabBarSpacerHeight } from '@/components/Navigation/TabBarSpacer';
 import { formatPhoneDisplay, toApiPhoneDigitsString } from '@/utils/phone';
+import { getRoleDisplayName } from '@/utils/rbacLabels';
 
 const formatPhone = (input: string) => {
   const digits = input.replace(/\D/g, '').slice(0, 11);
@@ -346,7 +347,7 @@ function UserListItem({
                 </View>
                 <View style={styles.rolePill}>
                   <Text style={styles.rolePillText} numberOfLines={2}>
-                    {item.role?.name || 'Без роли'}
+                    {getRoleDisplayName(item.role)}
                   </Text>
                 </View>
                 {departmentName ? (
@@ -673,7 +674,7 @@ export default function UsersTab({
     const nameKey = (u: AdminUserItem) =>
       `${u.lastName || ''} ${u.firstName || ''} ${u.middleName || ''}`.trim().toLowerCase() ||
       (u.email || '').toLowerCase();
-    const roleKey = (u: AdminUserItem) => (u.role?.name || '').toLowerCase();
+    const roleKey = (u: AdminUserItem) => getRoleDisplayName(u.role).toLowerCase();
     const lastSeenKey = (u: AdminUserItem) => {
       const p = presenceMap[u.id];
       const lastSeen = p?.lastSeenAt ?? u.lastSeenAt;
@@ -790,7 +791,10 @@ export default function UsersTab({
       setActiveProfileTab(available[0]?.key ?? 'employee');
     }
   }, [activeProfileTab, profileTabs, selectedProfile]);
-  const roleOptions = useMemo(() => roles.map((r) => ({ value: r.id, label: r.name })), [roles]);
+  const roleOptions = useMemo(
+    () => roles.map((r) => ({ value: r.id, label: getRoleDisplayName(r) })),
+    [roles]
+  );
   const departmentOptions = useMemo(
     () => [{ value: null, label: 'Без отдела' }, ...departments.map((d) => ({ value: d.id, label: d.name }))],
     [departments]
@@ -918,7 +922,13 @@ export default function UsersTab({
                 email: form.email,
                 phone: form.phone,
                 profileStatus: form.status,
-                role: selectedRole ? { id: selectedRole.id, name: selectedRole.name } : u.role,
+                role: selectedRole
+                  ? {
+                      id: selectedRole.id,
+                      name: selectedRole.name,
+                      displayName: selectedRole.displayName,
+                    }
+                  : u.role,
               }
             : u
         )
@@ -1220,7 +1230,7 @@ export default function UsersTab({
                           />
                           <SelectableChip
                             styles={styles}
-                            label={selectedRole?.name || 'Роль'}
+                            label={selectedRole ? getRoleDisplayName(selectedRole) : 'Роль'}
                             icon="person-outline"
                             tone="blue"
                             onPress={handleRoleChipPress}

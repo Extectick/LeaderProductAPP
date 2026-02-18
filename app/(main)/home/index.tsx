@@ -1,513 +1,363 @@
-import React from "react";
+import React from 'react';
 import {
   Platform,
-  useWindowDimensions,
-  Pressable,
+  RefreshControl,
   ScrollView,
-  View,
-  Text,
   StyleSheet,
-  StyleProp,
-  ViewStyle,
-} from "react-native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { Ionicons } from "@expo/vector-icons";
-import { Image } from "expo-image";
-import { useRouter } from "expo-router";
-import { LinearGradient } from "expo-linear-gradient";
-import Animated, {
-  FadeInDown,
-  FadeInUp,
-  useSharedValue,
-  withSpring,
-  useAnimatedStyle,
-  withRepeat,
-  withTiming,
-  Easing,
-} from "react-native-reanimated";
-import { shadeColor } from "@/utils/color";
-import TabBarSpacer from "@/components/Navigation/TabBarSpacer";
-import { isMaxMiniAppLaunch, prepareMaxWebApp } from "@/utils/maxAuthService";
+  Text,
+  useWindowDimensions,
+  View,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import Animated, { FadeInUp, useReducedMotion } from 'react-native-reanimated';
 
-const updates = [
-  { title: "Новый трекинг", desc: "Отслеживайте перемещения сотрудников и точки на карте.", icon: "map-outline", color: "#2563EB" },
-  { title: "Задачи и обращения", desc: "Быстрый доступ к актуальным задачам и переписке с клиентами.", icon: "chatbox-ellipses-outline", color: "#10B981" },
-  { title: "Обновление каталога", desc: "Товары и цены синхронизированы, доступны свежие данные из 1С.", icon: "cloud-download-outline", color: "#F59E0B" },
-];
+import HomeActivityFeed from '@/components/Home/HomeActivityFeed';
+import HomeHero from '@/components/Home/HomeHero';
+import HomeMetricCard from '@/components/Home/HomeMetricCard';
+import HomeQuickActions from '@/components/Home/HomeQuickActions';
+import HomeScansMiniChart from '@/components/Home/HomeScansMiniChart';
+import { HomeDashboardSkeleton } from '@/components/Home/HomeSkeleton';
+import TabBarSpacer from '@/components/Navigation/TabBarSpacer';
+import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
+import { AuthContext } from '@/context/AuthContext';
+import { useHomeDashboardData } from '@/hooks/useHomeDashboardData';
+import type { HomeMetricId } from '@/types/homeDashboardTypes';
+import { isMaxMiniAppLaunch, prepareMaxWebApp } from '@/utils/maxAuthService';
+import { getServicesForUser, type ServiceAccessItem } from '@/utils/servicesService';
 
-const stats = [
-  { label: "Открытых задач", value: "12" },
-  { label: "Новых обращений", value: "7" },
-  { label: "Сканов QR за сутки", value: "128" },
-];
-
-const links = [
-  {
-    label: "Сервисы",
-    desc: "Все инструменты и разделы компании",
-    href: "/services",
-    icon: "apps-outline",
-    gradient: ["#6366F1", "#8B5CF6"] as const,
-  },
-  {
-    label: "Задачи",
-    desc: "Актуальные поручения команды",
-    href: "/tasks",
-    icon: "list-outline",
-    gradient: ["#22C55E", "#16A34A"] as const,
-  },
-  {
-    label: "Обращения",
-    desc: "Коммуникация с клиентами и партнёрами",
-    href: "/services/appeals",
-    icon: "chatbubbles-outline",
-    gradient: ["#FB923C", "#F97316"] as const,
-  },
-  {
-    label: "Трекинг",
-    desc: "Маршруты и точки на карте",
-    href: "/services/tracking",
-    icon: "navigate-outline",
-    gradient: ["#0EA5E9", "#2563EB"] as const,
-  },
-];
+const PRIMARY_METRICS: HomeMetricId[] = ['open_appeals', 'my_tasks', 'daily_scans'];
+const SECONDARY_METRICS: HomeMetricId[] = ['unread_messages', 'urgent_deadlines'];
 
 export default function HomeScreen() {
-  const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
   const router = useRouter();
-  const isWide = Platform.OS === "web" && width >= 960;
-  const isMaxLaunch = Platform.OS === "web" && isMaxMiniAppLaunch();
-  const topPadding = isMaxLaunch ? 0 : Platform.OS === "web" ? 8 : insets.top + 8;
+  const auth = React.useContext(AuthContext);
+  const reducedMotion = useReducedMotion();
+  const { width } = useWindowDimensions();
+  const topInsetFromHeader = useHeaderContentTopInset({ hasSubtitle: true });
+  const isMaxLaunch = Platform.OS === 'web' && isMaxMiniAppLaunch();
+
+  const { dashboard, refreshing, initialLoading, onRefresh } = useHomeDashboardData();
+  const [servicesSnapshot, setServicesSnapshot] = React.useState<{ loaded: boolean; items: ServiceAccessItem[] }>({
+    loaded: false,
+    items: [],
+  });
 
   React.useEffect(() => {
     if (!isMaxLaunch) return;
     prepareMaxWebApp();
   }, [isMaxLaunch]);
 
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const services = await getServicesForUser();
+        if (!cancelled) {
+          setServicesSnapshot({ loaded: true, items: services });
+        }
+      } catch {
+        if (!cancelled) {
+          setServicesSnapshot({ loaded: true, items: [] });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const isDesktop = Platform.OS === 'web' && width >= 1160;
+  const isTablet = width >= 760;
+  const isMobile = !isTablet;
+  const isWebMobileLayout = Platform.OS === 'web' && width <= 820;
+  const quickActionColumns: 2 | 4 = isDesktop ? 4 : 2;
+  const metricsPerRow = isDesktop ? 3 : 2;
+  const contentTopPadding =
+    Platform.OS === 'web'
+      ? isWebMobileLayout
+        ? 20
+        : topInsetFromHeader + (isMaxLaunch ? 0 : 20)
+      : 20;
+
+  const userName = React.useMemo(() => {
+    const profile = auth?.profile;
+    const byName = [profile?.firstName, profile?.lastName].filter(Boolean).join(' ').trim();
+    if (byName) return byName;
+    if (profile?.email) return profile.email;
+    return 'Команда';
+  }, [auth?.profile]);
+
+  const findService = React.useCallback(
+    (key: string, routeFragment?: string) =>
+      servicesSnapshot.items.find(
+        (svc) =>
+          svc.key === key ||
+          (routeFragment ? String(svc.route || '').toLowerCase().includes(routeFragment.toLowerCase()) : false)
+      ),
+    [servicesSnapshot.items]
+  );
+
+  const appealsService = findService('appeals', '/appeals');
+  const qrService = findService('qrcodes', '/qrcodes');
+  const isQrVisible = qrService ? qrService.visible !== false : true;
+  const isQrEnabled = qrService ? qrService.enabled !== false : true;
+
+  const quickActions = React.useMemo(
+    () => [
+      {
+        id: 'services',
+        title: 'Сервисы',
+        description: 'Каталог инструментов компании',
+        icon: 'apps-outline',
+        gradient: ['#38BDF8', '#2563EB'] as const,
+        onPress: () => router.push('/services'),
+      },
+      {
+        id: 'appeals',
+        title: 'Обращения',
+        description: 'Проверить обращения и ответы',
+        icon: 'mail-open-outline',
+        gradient: ['#818CF8', '#4F46E5'] as const,
+        hidden: Boolean(appealsService && !appealsService.visible),
+        enabled: appealsService ? appealsService.enabled !== false : true,
+        statusLabel:
+          appealsService && appealsService.enabled === false
+            ? 'Недоступно для вашей роли'
+            : undefined,
+        onPress: () => router.push('/services/appeals'),
+      },
+      {
+        id: 'qrcodes',
+        title: 'QR-коды',
+        description: 'Статистика и управление кодами',
+        icon: 'qr-code-outline',
+        gradient: ['#34D399', '#059669'] as const,
+        hidden: Boolean(qrService && !qrService.visible),
+        enabled: qrService ? qrService.enabled !== false : true,
+        statusLabel:
+          qrService && qrService.enabled === false
+            ? 'Недоступно для вашей роли'
+            : undefined,
+        onPress: () => router.push('/services/qrcodes'),
+      },
+      {
+        id: 'tasks',
+        title: 'Задачи',
+        description: 'Открыть список текущих задач',
+        icon: 'checkbox-outline',
+        gradient: ['#F59E0B', '#D97706'] as const,
+        onPress: () => router.push('/tasks'),
+      },
+    ],
+    [appealsService, qrService, router]
+  );
+
+  const primaryMetricIds = PRIMARY_METRICS.filter((id) => (id === 'daily_scans' ? isQrVisible : true));
+  const primaryMetrics = primaryMetricIds.map((id) => {
+    const metric = dashboard.metrics[id];
+    if (id === 'daily_scans' && !isQrEnabled) {
+      return {
+        ...metric,
+        state: 'locked' as const,
+        value: null,
+        hint: 'Сервис QR-кодов недоступен для вашей роли или отдела',
+      };
+    }
+    return metric;
+  });
+  const secondaryMetrics = SECONDARY_METRICS.map((id) => dashboard.metrics[id]);
+  const allMetrics = [...primaryMetrics, ...secondaryMetrics];
+  const activityMaxHeight = isDesktop ? 540 : 300;
+
   const content = (
     <ScrollView
       style={styles.scroll}
-      contentContainerStyle={styles.scrollContent}
+      contentContainerStyle={[styles.scrollContent, { paddingTop: contentTopPadding }]}
       keyboardShouldPersistTaps="handled"
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
     >
-      <View
-        style={{
-          width: "100%",
-          paddingHorizontal: 16,
-          maxWidth: 1200,
-          alignSelf: "center",
-        }}
-      >
-        <HeroFancy
-          title={"Добро пожаловать в\nЛидер Продукт"}
-          subtitle="Работайте с сервисами, задачами и аналитикой — всё в одном месте."
-          onPressCTA={() => router.push("/services")}
+      <View style={styles.page}>
+        <HomeHero
+          userName={userName}
+          updatedAt={dashboard.lastUpdatedAt}
+          onOpenServices={() => router.push('/services')}
         />
 
-        <View style={[styles.responsiveRow, { flexDirection: isWide ? "row" : "column" }]}>
-          <Animated.View entering={FadeInUp.delay(120).duration(600)} style={[styles.column, isWide && { flex: 2 }]}>
-            <Text style={styles.sectionTitle}>Что нового</Text>
-            <View style={styles.card}>
-              {updates.map((item, idx) => (
-                <View key={item.title} style={[styles.updateItem, idx < updates.length - 1 && styles.updateDivider]}>
-                  <View style={[styles.iconBadge, { backgroundColor: item.color }]}>
-                    <Ionicons name={item.icon as any} size={18} color="#fff" />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.updateTitle}>{item.title}</Text>
-                    <Text style={styles.updateText}>{item.desc}</Text>
-                  </View>
+        <HomeQuickActions actions={quickActions} columns={quickActionColumns} />
+
+        {initialLoading ? (
+          <HomeDashboardSkeleton />
+        ) : (
+          <View style={[styles.mainGrid, isDesktop ? styles.mainGridDesktop : null]}>
+            <Animated.View
+              entering={reducedMotion ? undefined : FadeInUp.delay(80).duration(360)}
+              style={styles.leftColumn}
+            >
+              <View style={[styles.sectionHeader, styles.sectionCard, isMobile ? styles.sectionCardMobile : null]}>
+                <View style={styles.sectionTitleWrap}>
+                  <Ionicons name="speedometer-outline" size={isMobile ? 16 : 18} color="#0F172A" />
+                  <Text style={[styles.sectionTitle, isMobile ? styles.sectionTitleMobile : null]}>
+                    Ключевые показатели
+                  </Text>
                 </View>
-              ))}
-            </View>
-          </Animated.View>
+                <Text style={[styles.sectionHint, isMobile ? styles.sectionHintMobile : null]}>
+                  Обновление каждые 30 секунд
+                </Text>
+              </View>
 
-          <View style={isWide ? { width: 16 } : { height: 16 }} />
-
-          <Animated.View entering={FadeInUp.delay(200).duration(600)} style={[styles.column, isWide && { flex: 1 }]}>
-            <Text style={styles.sectionTitle}>Краткие показатели</Text>
-            <View style={[styles.statsGrid, { flexDirection: isWide ? "column" : "row" }]}>
-              {stats.map((item) => (
-                <View key={item.label} style={styles.statCard}>
-                  <Text style={styles.statValue}>{item.value}</Text>
-                  <Text style={styles.statLabel}>{item.label}</Text>
-                </View>
-              ))}
-            </View>
-
-            <Text style={[styles.sectionTitle, { marginTop: 18 }]}>Полезные ссылки</Text>
-            <View style={styles.linksGrid}>
-              {links.map((link) => (
-                <Pressable
-                  key={link.label}
-                  onPress={() => router.push(link.href)}
-                  style={({ pressed }) => [
-                    styles.linkCard,
-                    { transform: [{ scale: pressed ? 0.98 : 1 }] },
-                    ]}
-                >
-                  <LinearGradient
-                    colors={link.gradient}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.linkGradient}
-                  />
-                  <View style={{ gap: 8, flex: 1 }}>
-                    <View style={styles.linkIconWrap}>
-                      <Ionicons name={link.icon as any} size={18} color="#fff" />
+              <View style={styles.metricsGrid}>
+                {allMetrics.map((metric, index) => {
+                  const isLast = index === allMetrics.length - 1;
+                  const isOddCount = allMetrics.length % 2 === 1;
+                  const stretchLastMobile = isMobile && metricsPerRow === 2 && isOddCount && isLast;
+                  return (
+                    <View
+                      key={metric.id}
+                      style={{ width: stretchLastMobile ? '100%' : `${100 / metricsPerRow}%`, padding: 5 }}
+                    >
+                      <HomeMetricCard
+                        compact={isMobile}
+                        metric={metric}
+                        delay={70 + index * 40}
+                        onPress={metric.state === 'ready' ? () => router.push('/services/appeals') : undefined}
+                      />
                     </View>
-                    <Text style={styles.linkTitle}>{link.label}</Text>
-                    <Text style={styles.linkDesc}>{link.desc}</Text>
-                  </View>
-                  <View style={styles.linkArrow}>
-                    <Ionicons name="arrow-forward" size={16} color="#111827" />
-                  </View>
-                </Pressable>
-              ))}
+                  );
+                })}
+              </View>
+
+              {isQrVisible ? (
+                <HomeScansMiniChart
+                  series={dashboard.scansSeries}
+                  state={isQrEnabled ? dashboard.scansSeriesState : 'locked'}
+                  message={
+                    isQrEnabled
+                      ? dashboard.scansSeriesMessage
+                      : 'Сервис QR-кодов недоступен для вашей роли или отдела'
+                  }
+                  onPress={isQrEnabled ? () => router.push('/services/qrcodes/analytics') : undefined}
+                  disabled={!isQrEnabled}
+                />
+              ) : null}
+            </Animated.View>
+
+            <View style={[styles.rightColumn, isDesktop ? styles.rightColumnDesktop : null]}>
+              <HomeActivityFeed
+                items={dashboard.activity}
+                state={dashboard.activityState}
+                message={dashboard.activityMessage}
+                onOpenItem={(item) => router.push(item.route as any)}
+                maxListHeight={activityMaxHeight}
+              />
             </View>
-          </Animated.View>
-        </View>
+          </View>
+        )}
       </View>
 
-      <View style={styles.bottomFiller} />
-      <TabBarSpacer extra={64} />
-      {Platform.OS === "web" ? (
-        <View style={{ height: 32 }} />
-      ) : null}
+      <TabBarSpacer extra={66} />
+      {Platform.OS === 'web' ? <View style={{ height: 18 }} /> : null}
     </ScrollView>
   );
 
-  if (Platform.OS === "web") {
-    return (
-      <View style={[styles.safe, { paddingTop: topPadding }]}>
-        {content}
-      </View>
-    );
+  if (Platform.OS === 'web') {
+    return <View style={styles.safe}>{content}</View>;
   }
 
   return (
-    <SafeAreaView edges={["left", "right"]} style={[styles.safe, { paddingTop: topPadding }]}>
+    <SafeAreaView edges={['left', 'right']} style={styles.safe}>
       {content}
     </SafeAreaView>
-  );
-}
-
-function HeroFancy({
-  title,
-  subtitle,
-  onPressCTA,
-}: {
-  title: string;
-  subtitle: string;
-  onPressCTA: () => void;
-}) {
-  const float = useSharedValue(0);
-  React.useEffect(() => {
-    float.value = withRepeat(
-      withTiming(1, { duration: 2200, easing: Easing.inOut(Easing.quad) }),
-      -1,
-      true
-    );
-  }, [float]);
-
-  const logoStyle = useAnimatedStyle(() => {
-    const translateY = (float.value - 0.5) * 12;
-    const scale = 1 + (float.value - 0.5) * 0.04;
-    return { transform: [{ translateY }, { scale }] };
-  });
-
-  return (
-    <Animated.View entering={FadeInDown.duration(700)} style={fancy.heroWrap}>
-      <LinearGradient
-        colors={["#C7D2FE", "#E9D5FF"]}
-        start={{ x: 0.15, y: 0.1 }}
-        end={{ x: 0.85, y: 1 }}
-        style={fancy.bg}
-      />
-      <LinearGradient
-        colors={["#FFFFFF60", "#FFFFFF10"]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={fancy.gloss}
-      />
-
-      <View style={fancy.inner}>
-        <Animated.View style={[fancy.logoBadge, logoStyle]}>
-          <Image
-            source={require("@/assets/images/icon.png")}
-            style={fancy.logo}
-            contentFit="contain"
-            transition={150}
-          />
-        </Animated.View>
-
-        <Text style={fancy.title}>{title}</Text>
-        <Text style={fancy.subtitle}>{subtitle}</Text>
-
-        <SpringButton onPress={onPressCTA} style={fancy.ctaBtn} androidRippleColor="#5B21B6">
-          <Ionicons name="rocket-outline" size={18} color="#fff" />
-          <Text style={fancy.ctaText}>Перейти к сервисам</Text>
-        </SpringButton>
-      </View>
-    </Animated.View>
-  );
-}
-
-function SpringButton({
-  onPress,
-  children,
-  style,
-  androidRippleColor,
-}: {
-  onPress: () => void;
-  children: React.ReactNode;
-  style?: StyleProp<ViewStyle>;
-  androidRippleColor?: string | null;
-}) {
-  const scale = useSharedValue(1);
-  const aStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
-
-  const flat = StyleSheet.flatten(style) as ViewStyle | undefined;
-  const {
-    margin,
-    marginTop,
-    marginRight,
-    marginBottom,
-    marginLeft,
-    marginHorizontal,
-    marginVertical,
-    borderRadius,
-    ...innerRest
-  } = flat || {};
-
-  const baseBg = (innerRest.backgroundColor as string) || "transparent";
-  const pressBg = baseBg !== "transparent" ? shadeColor(baseBg, 0.12) : baseBg;
-
-  const outerStyle: ViewStyle = {
-    margin,
-    marginTop,
-    marginRight,
-    marginBottom,
-    marginLeft,
-    marginHorizontal,
-    marginVertical,
-    borderRadius,
-    overflow: "hidden",
-  };
-
-  return (
-    <Animated.View style={[outerStyle, aStyle]}>
-      <Pressable
-        accessibilityRole="button"
-        onPress={onPress}
-        onPressIn={() => (scale.value = withSpring(0.97, { damping: 18, stiffness: 300 }))}
-        onPressOut={() => (scale.value = withSpring(1, { damping: 18, stiffness: 300 }))}
-        onHoverIn={() => (scale.value = withSpring(1.03, { damping: 18, stiffness: 300 }))}
-        onHoverOut={() => (scale.value = withSpring(1, { damping: 18, stiffness: 300 }))}
-        android_ripple={
-          Platform.OS === "android" && androidRippleColor ? { color: androidRippleColor } : undefined
-        }
-        style={({ pressed }) => [
-          innerRest,
-          pressed ? { backgroundColor: pressBg } : null,
-          pressed && Platform.OS === "ios" ? { opacity: 0.9 } : null,
-        ]}
-      >
-        {children}
-      </Pressable>
-    </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: "#F8FAFC",
+    backgroundColor: '#F0F4FF',
   },
   scroll: {
     flex: 1,
-    backgroundColor: "#F8FAFC",
+    backgroundColor: '#F0F4FF',
   },
   scrollContent: {
-    width: "100%",
-    paddingBottom: 24,
+    width: '100%',
+    paddingBottom: 20,
   },
-  bottomFiller: {
-    height: 24,
+  page: {
+    width: '100%',
+    maxWidth: 1240,
+    alignSelf: 'center',
+    gap: 14,
+    paddingHorizontal: 14,
   },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#111827",
-    marginBottom: 10,
+  mainGrid: {
+    gap: 14,
   },
-  card: {
-    backgroundColor: "#fff",
-    borderRadius: 14,
-    borderWidth: 1,
-    padding: 14,
-    marginBottom: 12,
+  mainGridDesktop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  leftColumn: {
+    flex: 1.6,
     gap: 12,
   },
-  iconBadge: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
+  rightColumn: {
+    width: '100%',
+    minWidth: 0,
+    alignSelf: 'stretch',
+    marginTop: 8,
   },
-  responsiveRow: {
-    width: "100%",
+  rightColumnDesktop: {
+    flex: 1,
+    minWidth: 320,
+    marginTop: 0,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     gap: 8,
   },
-  column: {
-    flex: 1,
+  sectionCard: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#DBEAFE',
+    backgroundColor: '#EEF2FF',
+    paddingVertical: 10,
+    paddingHorizontal: 4,
   },
-  updateItem: {
-    flexDirection: "row",
-    gap: 10,
-    alignItems: "flex-start",
+  sectionCardMobile: {
     paddingVertical: 8,
   },
-  updateDivider: {
-    borderBottomWidth: 1,
-    borderBottomColor: "#E5E7EB",
+  sectionTitleWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
-  updateTitle: { fontWeight: "700", color: "#111827" },
-  updateText: { color: "#4B5563" },
-  statsGrid: {
-    gap: 10,
-    flexWrap: "wrap",
+  sectionTitle: {
+    color: '#0F172A',
+    fontWeight: '900',
+    fontSize: 17,
   },
-  statCard: {
-    backgroundColor: "#F9FAFB",
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    padding: 12,
-    marginBottom: 8,
+  sectionTitleMobile: {
+    fontSize: 15,
   },
-  statValue: { fontSize: 18, fontWeight: "800", color: "#111827" },
-  statLabel: { color: "#4B5563", marginTop: 4 },
-  linksGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 12,
+  sectionHint: {
+    color: '#64748B',
+    fontSize: 12,
+    fontWeight: '700',
   },
-  linkCard: {
-    flex: 1,
-    minWidth: 0,
-    flexBasis: "48%",
-    padding: 14,
-    borderRadius: 14,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    backgroundColor: "#FFFFFF",
-    shadowColor: "#000",
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 2,
+  sectionHintMobile: {
+    fontSize: 11,
+    flexShrink: 1,
+    textAlign: 'right',
+    maxWidth: 136,
   },
-  linkCardHover: {
-    shadowOpacity: 0.14,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 4,
+  metricsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginHorizontal: -5,
   },
-  linkGradient: {
-    ...StyleSheet.absoluteFillObject,
-    opacity: 0.12,
-  },
-  linkIconWrap: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#111827",
-  },
-  linkTitle: { fontSize: 16, fontWeight: "800", color: "#0F172A" },
-  linkDesc: { color: "#4B5563", fontSize: 13, lineHeight: 18 },
-  linkArrow: {
-    position: "absolute",
-    right: 12,
-    bottom: 12,
-    width: 28,
-    height: 28,
-    borderRadius: 9,
-    backgroundColor: "#F3F4F6",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-});
-
-const fancy = StyleSheet.create({
-  heroWrap: {
-    borderRadius: 20,
-    overflow: "hidden",
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: "#E0E7FF",
-    shadowColor: "#000",
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 3,
-  },
-  bg: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  gloss: {
-    position: "absolute",
-    left: -40,
-    right: -40,
-    top: -20,
-    height: 120,
-    borderRadius: 120,
-    opacity: 0.55,
-  },
-  inner: {
-    padding: 18,
-  },
-  logoBadge: {
-    alignSelf: "flex-start",
-    width: 68,
-    height: 68,
-    borderRadius: 20,
-    backgroundColor: "#FFFFFF",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: "#EEF2FF",
-  },
-  logo: {
-    width: 56,
-    height: 56,
-    borderRadius: 14,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: "800",
-    color: "#0F172A",
-    lineHeight: 30,
-  },
-  subtitle: {
-    marginTop: 8,
-    color: "#334155",
-  },
-  ctaBtn: {
-    marginTop: 16,
-    minHeight: 48,
-    borderRadius: 999,
-    backgroundColor: "#6366F1",
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 8,
-  },
-  ctaText: { color: "#fff", fontWeight: "800" },
 });

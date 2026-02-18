@@ -60,6 +60,7 @@ export interface Address {
 export interface Role {
   id: number;
   name: string;
+  displayName?: string;
   permissions?: RolePermissions[];
   parentRoleId?: number;
   parentRole?: Role;
@@ -69,6 +70,20 @@ export interface Role {
 export interface Permission {
   id: number;
   name: string;
+  displayName?: string;
+  description?: string;
+  group?: PermissionGroup | null;
+}
+
+export interface PermissionGroup {
+  id: number;
+  key: string;
+  displayName: string;
+  description: string;
+  isSystem: boolean;
+  sortOrder?: number;
+  serviceId?: number | null;
+  service?: { id: number; key: string; name: string } | null;
 }
 
 export interface RolePermissions {

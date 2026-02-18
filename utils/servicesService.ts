@@ -44,6 +44,27 @@ export type ServiceAdminItem = {
   departmentAccess: ServiceDepartmentRule[];
 };
 
+export type ServiceTemplatePermission = {
+  id: number;
+  name: string;
+  displayName: string;
+  description: string;
+};
+
+export type ServiceAdminCreateResult = {
+  service: ServiceAdminItem;
+  permissionGroup: {
+    id: number;
+    key: string;
+    displayName: string;
+    description: string;
+    isSystem: boolean;
+    sortOrder: number;
+    serviceId: number | null;
+  } | null;
+  createdPermissions: ServiceTemplatePermission[];
+};
+
 export async function getServicesForUser(): Promise<ServiceAccessItem[]> {
   const res = await apiClient<void, { services: ServiceAccessItem[] }>(API_ENDPOINTS.SERVICES.LIST);
   if (!res.ok) throw new Error(res.message);
@@ -54,6 +75,28 @@ export async function getAdminServices(): Promise<ServiceAdminItem[]> {
   const res = await apiClient<void, { services: ServiceAdminItem[] }>(API_ENDPOINTS.SERVICES.ADMIN);
   if (!res.ok) throw new Error(res.message);
   return res.data?.services || [];
+}
+
+export async function createAdminService(payload: {
+  key: string;
+  name: string;
+  route?: string | null;
+  icon?: string | null;
+  description?: string | null;
+  gradientStart?: string | null;
+  gradientEnd?: string | null;
+  isActive?: boolean;
+  defaultVisible?: boolean;
+  defaultEnabled?: boolean;
+  generatePermissionTemplate?: boolean;
+  permissionActions?: string[];
+}) {
+  const res = await apiClient<typeof payload, ServiceAdminCreateResult>(
+    API_ENDPOINTS.SERVICES.ADMIN_CREATE,
+    { method: 'POST', body: payload }
+  );
+  if (!res.ok) throw new Error(res.message);
+  return res.data as ServiceAdminCreateResult;
 }
 
 export async function updateService(

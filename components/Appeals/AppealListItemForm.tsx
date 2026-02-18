@@ -18,6 +18,9 @@ type Props = {
   item: AppealListItem;
   currentUserId?: number;
   listContext?: Scope;
+  onPress?: (appealId: number) => void;
+  selected?: boolean;
+  compact?: boolean;
 };
 
 const statusLabel: Record<string, string> = {
@@ -100,7 +103,14 @@ function getBadgeMeta(badge: AppealRoleBadge) {
   };
 }
 
-function AppealListItemForm({ item, currentUserId, listContext = 'my' }: Props) {
+function AppealListItemForm({
+  item,
+  currentUserId,
+  listContext = 'my',
+  onPress,
+  selected = false,
+  compact = false,
+}: Props) {
   const router = useRouter();
   const mountAnim = useRef(new Animated.Value(0)).current;
   const pressAnim = useRef(new Animated.Value(1)).current;
@@ -152,6 +162,7 @@ function AppealListItemForm({ item, currentUserId, listContext = 'my' }: Props) 
       duration: 90,
       useNativeDriver: true,
     }).start();
+
   const onPressOut = () =>
     Animated.timing(pressAnim, {
       toValue: 1,
@@ -159,28 +170,46 @@ function AppealListItemForm({ item, currentUserId, listContext = 'my' }: Props) 
       useNativeDriver: true,
     }).start();
 
+  const cardRadius = compact ? 14 : 16;
+  const shellPadding = compact ? 4 : 6;
+  const headerPaddingHorizontal = compact ? 12 : 14;
+  const headerPaddingTop = compact ? 8 : 10;
+  const headerPaddingBottom = compact ? 7 : 8;
+  const bodyPaddingHorizontal = compact ? 12 : 14;
+  const bodyPaddingVertical = compact ? 8 : 10;
+  const bodyGap = compact ? 6 : 8;
+  const titleSize = compact ? 14 : 15;
+  const chipTextSize = compact ? 10 : 11;
+  const senderNameSize = compact ? 11 : 12;
+  const messageSize = compact ? 12 : 13;
+  const timeSize = compact ? 11 : 12;
+
   return (
     <Pressable
-      onPress={() =>
-        router.push({ pathname: '/(main)/services/appeals/[id]', params: { id: String(item.id) } })
-      }
+      onPress={() => {
+        if (onPress) {
+          onPress(item.id);
+          return;
+        }
+        router.push({ pathname: '/(main)/services/appeals/[id]', params: { id: String(item.id) } });
+      }}
       onPressIn={onPressIn}
       onPressOut={onPressOut}
-      style={{ paddingHorizontal: 0, paddingVertical: 6 }}
+      style={{ paddingHorizontal: 0, paddingVertical: shellPadding }}
     >
       <Animated.View
         style={[
           {
-            borderRadius: 16,
+            borderRadius: cardRadius,
             borderWidth: 1,
-            borderColor: '#E2E8F0',
-            backgroundColor: '#FFFFFF',
+            borderColor: selected ? '#93C5FD' : '#E2E8F0',
+            backgroundColor: selected ? '#F0F7FF' : '#FFFFFF',
             overflow: 'hidden',
             shadowColor: '#0F172A',
-            shadowOpacity: 0.06,
+            shadowOpacity: selected ? 0.12 : 0.06,
             shadowRadius: 10,
             shadowOffset: { width: 0, height: 4 },
-            elevation: 2,
+            elevation: selected ? 4 : 2,
           },
           animatedCardStyle,
         ]}
@@ -197,13 +226,17 @@ function AppealListItemForm({ item, currentUserId, listContext = 'my' }: Props) 
         />
 
         <LinearGradient
-          colors={['#F8FAFC', '#EEF2FF']}
+          colors={selected ? ['#EAF3FF', '#DBEAFE'] : ['#F8FAFC', '#EEF2FF']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
-          style={{ paddingHorizontal: 14, paddingTop: 10, paddingBottom: 8 }}
+          style={{
+            paddingHorizontal: headerPaddingHorizontal,
+            paddingTop: headerPaddingTop,
+            paddingBottom: headerPaddingBottom,
+          }}
         >
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Text style={{ fontSize: 15, fontWeight: '800', color: '#0F172A', flex: 1 }} numberOfLines={1}>
+            <Text style={{ fontSize: titleSize, fontWeight: '800', color: '#0F172A', flex: 1 }} numberOfLines={1}>
               #{item.number} {item.title ?? 'Без названия'}
             </Text>
             {unread > 0 ? (
@@ -224,7 +257,7 @@ function AppealListItemForm({ item, currentUserId, listContext = 'my' }: Props) 
           </View>
         </LinearGradient>
 
-        <View style={{ paddingHorizontal: 14, paddingVertical: 10, gap: 8 }}>
+        <View style={{ paddingHorizontal: bodyPaddingHorizontal, paddingVertical: bodyPaddingVertical, gap: bodyGap }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
             <View
               style={{
@@ -238,7 +271,7 @@ function AppealListItemForm({ item, currentUserId, listContext = 'my' }: Props) 
               }}
             >
               <View style={{ width: 8, height: 8, borderRadius: 8, backgroundColor: statusColor }} />
-              <Text style={{ fontSize: 11, fontWeight: '700', color: '#0F172A' }}>
+              <Text style={{ fontSize: chipTextSize, fontWeight: '700', color: '#0F172A' }}>
                 {statusLabel[item.status] ?? item.status}
               </Text>
             </View>
@@ -255,7 +288,7 @@ function AppealListItemForm({ item, currentUserId, listContext = 'my' }: Props) 
               }}
             >
               <View style={{ width: 8, height: 8, borderRadius: 8, backgroundColor: priorityColor }} />
-              <Text style={{ fontSize: 11, fontWeight: '700', color: '#0F172A' }}>
+              <Text style={{ fontSize: chipTextSize, fontWeight: '700', color: '#0F172A' }}>
                 {priorityLabel[item.priority] ?? item.priority}
               </Text>
             </View>
@@ -268,7 +301,7 @@ function AppealListItemForm({ item, currentUserId, listContext = 'my' }: Props) 
                 backgroundColor: '#F1F5F9',
               }}
             >
-              <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155' }} numberOfLines={1}>
+              <Text style={{ fontSize: chipTextSize, fontWeight: '700', color: '#334155' }} numberOfLines={1}>
                 {item.toDepartment?.name}
               </Text>
             </View>
@@ -324,7 +357,7 @@ function AppealListItemForm({ item, currentUserId, listContext = 'my' }: Props) 
 
             <View style={{ flex: 1, minWidth: 0 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Text style={{ fontSize: 12, fontWeight: '700', color: '#0F172A' }} numberOfLines={1}>
+                <Text style={{ fontSize: senderNameSize, fontWeight: '700', color: '#0F172A' }} numberOfLines={1}>
                   {senderName}
                 </Text>
                 {!!senderDept ? (
@@ -336,16 +369,16 @@ function AppealListItemForm({ item, currentUserId, listContext = 'my' }: Props) 
                   </>
                 ) : null}
               </View>
-              <Text style={{ color: '#334155', fontSize: 13 }} numberOfLines={1}>
+              <Text style={{ color: '#334155', fontSize: messageSize }} numberOfLines={1}>
                 {snippet}
               </Text>
             </View>
 
             <Text
               style={{
-                minWidth: 44,
+                minWidth: compact ? 40 : 44,
                 textAlign: 'right',
-                fontSize: 12,
+                fontSize: timeSize,
                 color: '#64748B',
                 fontVariant: ['tabular-nums'],
               }}

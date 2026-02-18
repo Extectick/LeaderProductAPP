@@ -1,12 +1,15 @@
 import { useMemo, useState, useContext, useEffect, useRef, useCallback } from 'react';
-import { View, Alert, Pressable, Text, StyleSheet, ScrollView, useWindowDimensions } from 'react-native';
-import { useRouter } from 'expo-router';
+import { View, Alert, Pressable, Text, StyleSheet, ScrollView, useWindowDimensions, Platform } from 'react-native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import AppealsList from '@/components/Appeals/AppealList';
+import AppealListItemForm from '@/components/Appeals/AppealListItemForm';
+import AppealDetailContent from '@/components/Appeals/AppealDetailContent';
 import { exportAppealsCSV, getAppealsCounters, getAppealsList } from '@/utils/appealsService';
 import { AppealCounters, AppealListItem, AppealPriority, AppealStatus, Scope } from '@/types/appealsTypes';
 import * as FileSystem from 'expo-file-system';
 import { useAppealUpdates } from '@/hooks/useAppealUpdates';
+import useWebSidebarMetrics from '@/hooks/useWebSidebarMetrics';
 import { AuthContext } from '@/context/AuthContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
@@ -21,16 +24,99 @@ import {
 } from '@/utils/appealsStore';
 import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 import { useTabBarSpacerHeight } from '@/components/Navigation/TabBarSpacer';
+import {
+  DESKTOP_CHAT_MAX_WIDTH,
+  DESKTOP_CHAT_MIN_WIDTH,
+  DESKTOP_CHAT_PREFERRED_WIDTH,
+  DESKTOP_GAP,
+  DESKTOP_INBOX_MAX_WIDTH,
+  DESKTOP_INBOX_MIN_WIDTH,
+  DESKTOP_INBOX_PREFERRED_WIDTH,
+  DESKTOP_LEFT_PAGE_INSET,
+  DESKTOP_SIDE_PADDING,
+  DESKTOP_SPLIT_ENTER_WIDTH,
+  DESKTOP_SPLIT_EXIT_WIDTH,
+  WEB_SIDEBAR_BREAKPOINT,
+} from '@/components/Appeals/desktopLayoutConfig';
 // import * as Sharing from 'expo-sharing';
 
 type AppealsViewMode = 'active' | 'in_progress' | 'completed' | 'all';
 const APPEALS_FILTERS_KEY = 'appeals:list:filters:v1';
+const APPEAL_FORCE_PAGE_ONCE_KEY = 'lp:appeals:force-page-once:v1';
 
 export default function AppealsIndex() {
   const headerTopInset = useHeaderContentTopInset({ hasSubtitle: true });
   const tabBarSpacerHeight = useTabBarSpacerHeight();
+  const searchParams = useLocalSearchParams<{ appealId?: string }>();
   const { width } = useWindowDimensions();
+  const { sidebarWidthPx } = useWebSidebarMetrics();
+  const [containerWidth, setContainerWidth] = useState(0);
   const compact = width < 390;
+  const usesWebSidebar = Platform.OS === 'web' && width > WEB_SIDEBAR_BREAKPOINT;
+  const fallbackContentWidth = usesWebSidebar ? Math.max(0, width - sidebarWidthPx) : width;
+  const effectiveContentWidth = containerWidth > 0 ? containerWidth : fallbackContentWidth;
+  const splitBasisWidth = Math.max(0, effectiveContentWidth - DESKTOP_LEFT_PAGE_INSET);
+  const routingBasisWidth = Math.max(0, fallbackContentWidth - DESKTOP_LEFT_PAGE_INSET);
+  const [splitEligible, setSplitEligible] = useState(() => {
+    if (Platform.OS !== 'web') return false;
+    return splitBasisWidth >= DESKTOP_SPLIT_ENTER_WIDTH;
+  });
+  const splitDecisionReady = Platform.OS !== 'web' || containerWidth > 0;
+  const handleContainerLayout = useCallback((event: any) => {
+    const nextWidth = Math.round(event?.nativeEvent?.layout?.width || 0);
+    if (!Number.isFinite(nextWidth) || nextWidth <= 0) return;
+    setContainerWidth((prev) => (Math.abs(prev - nextWidth) >= 1 ? nextWidth : prev));
+  }, []);
+  useEffect(() => {
+    if (Platform.OS !== 'web') {
+      setSplitEligible(false);
+      return;
+    }
+    setSplitEligible((prev) => (prev ? splitBasisWidth >= DESKTOP_SPLIT_EXIT_WIDTH : splitBasisWidth >= DESKTOP_SPLIT_ENTER_WIDTH));
+  }, [splitBasisWidth]);
+  const desktopLayout = useMemo(() => {
+    if (Platform.OS !== 'web') return null;
+    if (!splitEligible) return null;
+    const usable = Math.max(0, splitBasisWidth - DESKTOP_SIDE_PADDING * 2);
+    const minRowWidth = DESKTOP_INBOX_MIN_WIDTH + DESKTOP_GAP + DESKTOP_CHAT_MIN_WIDTH;
+    if (usable < minRowWidth) return null;
+
+    let inboxWidth = Math.round(
+      Math.min(DESKTOP_INBOX_MAX_WIDTH, Math.max(DESKTOP_INBOX_MIN_WIDTH, DESKTOP_INBOX_PREFERRED_WIDTH))
+    );
+    let chatWidth = DESKTOP_CHAT_PREFERRED_WIDTH;
+
+    const preferredRowWidth = inboxWidth + DESKTOP_GAP + chatWidth;
+    if (preferredRowWidth > usable) {
+      chatWidth = Math.max(DESKTOP_CHAT_MIN_WIDTH, usable - inboxWidth - DESKTOP_GAP);
+    }
+    if (inboxWidth + DESKTOP_GAP + chatWidth > usable) {
+      inboxWidth = Math.max(DESKTOP_INBOX_MIN_WIDTH, usable - DESKTOP_GAP - chatWidth);
+    }
+    if (inboxWidth + DESKTOP_GAP + chatWidth > usable) {
+      return null;
+    }
+
+    chatWidth = Math.round(Math.min(DESKTOP_CHAT_MAX_WIDTH, Math.max(DESKTOP_CHAT_MIN_WIDTH, chatWidth)));
+    inboxWidth = Math.round(Math.min(DESKTOP_INBOX_MAX_WIDTH, Math.max(DESKTOP_INBOX_MIN_WIDTH, inboxWidth)));
+    const rowWidth = inboxWidth + DESKTOP_GAP + chatWidth;
+    const rawOffset = usable / 2 - (inboxWidth + DESKTOP_GAP + chatWidth / 2);
+    const maxOffset = Math.max(0, usable - rowWidth);
+    const leftOffset = Math.max(0, Math.min(maxOffset, Math.round(rawOffset)));
+
+    return { gap: DESKTOP_GAP, inboxWidth, chatWidth, leftOffset };
+  }, [splitBasisWidth, splitEligible]);
+  const isDesktopSplit = Platform.OS === 'web' && !!desktopLayout;
+  const shouldForcePageMode = Platform.OS === 'web' && splitDecisionReady && routingBasisWidth <= DESKTOP_SPLIT_EXIT_WIDTH;
+  const markForcePageOnce = useCallback((appealId: number) => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    try {
+      window.sessionStorage.setItem(
+        APPEAL_FORCE_PAGE_ONCE_KEY,
+        JSON.stringify({ appealId, at: Date.now() })
+      );
+    } catch {}
+  }, []);
   const router = useRouter();
   const auth = useContext(AuthContext);
   const [status] = useState<AppealStatus | undefined>();
@@ -50,6 +136,25 @@ export default function AppealsIndex() {
   );
   const [cachedItems, setCachedItems] = useState(getListSnapshot(listKey).items);
   const lastWsMsg = useRef<any>(null);
+  const selectedAppealIdFromQuery = useMemo(() => {
+    const value = Number(searchParams.appealId);
+    return Number.isFinite(value) && value > 0 ? value : null;
+  }, [searchParams.appealId]);
+  const [activeAppealId, setActiveAppealId] = useState<number | null>(selectedAppealIdFromQuery);
+
+  useEffect(() => {
+    setActiveAppealId(selectedAppealIdFromQuery);
+  }, [selectedAppealIdFromQuery]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    if (!splitDecisionReady) return;
+    if (!shouldForcePageMode) return;
+    if (!selectedAppealIdFromQuery) return;
+    markForcePageOnce(selectedAppealIdFromQuery);
+    router.replace(`/services/appeals/${selectedAppealIdFromQuery}` as any);
+  }, [markForcePageOnce, router, selectedAppealIdFromQuery, shouldForcePageMode, splitDecisionReady]);
+
 
   const loadCounters = useCallback(async () => {
     try {
@@ -78,21 +183,9 @@ export default function AppealsIndex() {
     (data?: { activeCount: number; unreadMessagesCount: number }) => {
       if (!data) return null;
       const activeCount = Math.max(0, data.activeCount || 0);
-      const unreadCount = Math.max(0, data.unreadMessagesCount || 0);
-      if (activeCount === 0 && unreadCount === 0) return null;
       return (
-        <View style={styles.tabBadges}>
-          {activeCount > 0 ? (
-            <View style={styles.activeCountBadge}>
-              <Text style={styles.activeCountText}>{formatBadgeCount(activeCount)}</Text>
-            </View>
-          ) : null}
-          {unreadCount > 0 ? (
-            <View style={styles.unreadChip}>
-              <Ionicons name="chatbubble-ellipses-outline" size={12} color="#0F766E" />
-              <Text style={styles.unreadChipText}>{formatBadgeCount(unreadCount)}</Text>
-            </View>
-          ) : null}
+        <View style={styles.tabCountBadge}>
+          <Text style={styles.tabCountText}>{formatBadgeCount(activeCount)}</Text>
         </View>
       );
     },
@@ -307,6 +400,34 @@ export default function AppealsIndex() {
   }, []);
   const hasNonDefaultFilters = viewMode !== 'active' || onlyAssignedToMe;
 
+  const handleSelectAppeal = useCallback(
+    (appealId: number) => {
+      if (!isDesktopSplit) {
+        markForcePageOnce(appealId);
+        router.push(`/services/appeals/${appealId}` as any);
+        return;
+      }
+      if (activeAppealId === appealId && selectedAppealIdFromQuery === appealId) {
+        return;
+      }
+      setActiveAppealId(appealId);
+      if (selectedAppealIdFromQuery !== appealId) {
+        router.setParams({ appealId: String(appealId) } as any);
+      }
+    },
+    [activeAppealId, isDesktopSplit, markForcePageOnce, router, selectedAppealIdFromQuery]
+  );
+
+  const clearSelectedAppeal = useCallback(() => {
+    if (activeAppealId === null && selectedAppealIdFromQuery === null) {
+      return;
+    }
+    setActiveAppealId(null);
+    if (selectedAppealIdFromQuery !== null) {
+      router.setParams({ appealId: undefined } as any);
+    }
+  }, [activeAppealId, router, selectedAppealIdFromQuery]);
+
   const listEmptyComponent = useMemo(() => {
     if (cachedItems.length === 0) {
       if (tab === 'mine') {
@@ -356,149 +477,279 @@ export default function AppealsIndex() {
     { key: 'all', label: 'Все' },
   ];
 
+  const appealsListElement = (
+    <AppealsList
+      scope={listScope}
+      status={status}
+      priority={priority}
+      pageSize={20}
+      refreshKey={refreshKey}
+      onLoadedMeta={() => {}}
+      currentUserId={auth?.profile?.id}
+      incomingMessage={lastWsMsg.current as any}
+      initialItems={cachedItems}
+      listKey={listKey}
+      onItemsChange={(items) => setCachedItems(items)}
+      onRefreshDone={() => {
+        void loadCounters();
+      }}
+      style={isDesktopSplit ? styles.desktopInboxList : undefined}
+      contentContainerStyle={{ paddingBottom: isDesktopSplit ? 10 : tabBarSpacerHeight + 8 }}
+      displayFilter={displayFilter}
+      ListEmptyComponent={listEmptyComponent}
+      renderItem={(item) => (
+        <AppealListItemForm
+          item={item}
+          currentUserId={auth?.profile?.id}
+          listContext={listScope}
+          selected={isDesktopSplit ? activeAppealId === item.id : false}
+          onPress={handleSelectAppeal}
+          compact={isDesktopSplit}
+        />
+      )}
+    />
+  );
+
   return (
     <View style={{ flex: 1, backgroundColor: '#fff' }}>
       <View
-        style={{
-          width: '100%',
-          maxWidth: 1100,
-          alignSelf: 'center',
-          paddingHorizontal: 12,
-          paddingTop: 4 + headerTopInset,
-          paddingBottom: 10,
-          flex: 1,
-        }}
+        onLayout={handleContainerLayout}
+        style={[
+          {
+            width: '100%',
+            maxWidth: isDesktopSplit ? undefined : 1100,
+            alignSelf: isDesktopSplit ? 'stretch' : 'center',
+            paddingLeft: isDesktopSplit ? DESKTOP_SIDE_PADDING + DESKTOP_LEFT_PAGE_INSET : 12,
+            paddingRight: isDesktopSplit ? DESKTOP_SIDE_PADDING : 12,
+            paddingTop: 4 + headerTopInset,
+            paddingBottom: 10,
+            flex: 1,
+          },
+          isDesktopSplit
+            ? [
+                styles.desktopSplitRoot,
+                {
+                  gap: desktopLayout!.gap,
+                  paddingLeft: desktopLayout!.leftOffset,
+                },
+              ]
+            : null,
+        ]}
       >
-        <View style={styles.controlsBlock}>
-          <View style={styles.scopeSwitch}>
-            <Pressable
-              onPress={() => setTab('mine')}
-              style={[styles.scopeItem, tab === 'mine' && styles.scopeItemActive]}
-            >
-              <View style={styles.scopeItemRow}>
-                <Text style={[styles.scopeItemText, tab === 'mine' && styles.scopeItemTextActive]}>
-                  {compact ? 'Мои' : 'Мои обращения'}
-                </Text>
-                {renderTabBadges(counters?.my)}
-              </View>
-            </Pressable>
-            {departmentTabAvailable ? (
+        <View
+          style={
+            isDesktopSplit
+              ? [styles.desktopLeftPane, { width: desktopLayout!.inboxWidth }]
+              : null
+          }
+        >
+          <View style={isDesktopSplit ? styles.desktopLeftShell : null}>
+            <View style={[styles.controlsBlock, isDesktopSplit ? styles.desktopInboxTop : null]}>
+            <View style={styles.scopeSwitch}>
               <Pressable
-                onPress={() => setTab('tasks')}
-                style={[styles.scopeItem, tab === 'tasks' && styles.scopeItemActive]}
+                onPress={() => setTab('mine')}
+                style={[styles.scopeItem, tab === 'mine' && styles.scopeItemActive]}
               >
                 <View style={styles.scopeItemRow}>
-                  <Text style={[styles.scopeItemText, tab === 'tasks' && styles.scopeItemTextActive]}>
-                    {compact ? 'Отдел' : 'Задачи отдела'}
+                  <Text style={[styles.scopeItemText, tab === 'mine' && styles.scopeItemTextActive]}>
+                    {compact ? 'Мои' : 'Мои обращения'}
                   </Text>
-                  {renderTabBadges(counters?.department)}
+                  {renderTabBadges(counters?.my)}
                 </View>
               </Pressable>
-            ) : null}
-          </View>
-
-          <View style={styles.filterRow}>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.filterScrollContent}
-              style={styles.filterScroll}
-            >
-              {modeOptions.map((opt) => {
-                const active = viewMode === opt.key;
-                return (
-                  <Pressable
-                    key={opt.key}
-                    onPress={() => setViewMode(opt.key)}
-                    style={[styles.filterChip, active && styles.filterChipActive]}
-                  >
-                    <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>
-                      {opt.label}
+              {departmentTabAvailable ? (
+                <Pressable
+                  onPress={() => setTab('tasks')}
+                  style={[styles.scopeItem, tab === 'tasks' && styles.scopeItemActive]}
+                >
+                  <View style={styles.scopeItemRow}>
+                    <Text style={[styles.scopeItemText, tab === 'tasks' && styles.scopeItemTextActive]}>
+                      {compact ? 'Отдел' : 'Задачи отдела'}
                     </Text>
-                  </Pressable>
-                );
-              })}
-            </ScrollView>
+                    {renderTabBadges(counters?.department)}
+                  </View>
+                </Pressable>
+              ) : null}
+            </View>
 
-            <Pressable
-              onPress={() => setFiltersPanelVisible((v) => !v)}
-              style={[styles.filterSettingsBtn, filtersPanelVisible && styles.filterSettingsBtnActive]}
-            >
-              <Ionicons
-                name={filtersPanelVisible ? 'close-outline' : 'options-outline'}
-                size={16}
-                color={filtersPanelVisible ? '#1D4ED8' : '#4B5563'}
-              />
-            </Pressable>
-          </View>
+            <View style={styles.filterRow}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.filterScrollContent}
+                style={styles.filterScroll}
+              >
+                {modeOptions.map((opt) => {
+                  const active = viewMode === opt.key;
+                  return (
+                    <Pressable
+                      key={opt.key}
+                      onPress={() => setViewMode(opt.key)}
+                      style={[styles.filterChip, active && styles.filterChipActive]}
+                    >
+                      <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>
+                        {opt.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
 
-          <View style={styles.filterMetaRow}>
-            <Text style={styles.filterMetaText}>
-              {visibleItemsCount} из {cachedItems.length}
-            </Text>
-            {hasNonDefaultFilters ? (
-              <Pressable onPress={resetFilters} style={({ pressed }) => [styles.metaResetBtn, pressed && { opacity: 0.85 }]}>
-                <Text style={styles.metaResetText}>Сбросить</Text>
+              <Pressable
+                onPress={() => setFiltersPanelVisible((v) => !v)}
+                style={[styles.filterSettingsBtn, filtersPanelVisible && styles.filterSettingsBtnActive]}
+              >
+                <Ionicons
+                  name={filtersPanelVisible ? 'close-outline' : 'options-outline'}
+                  size={16}
+                  color={filtersPanelVisible ? '#1D4ED8' : '#4B5563'}
+                />
               </Pressable>
+            </View>
+
+            <View style={styles.filterMetaRow}>
+              <Text style={styles.filterMetaText}>
+                {visibleItemsCount} из {cachedItems.length}
+              </Text>
+              {hasNonDefaultFilters ? (
+                <Pressable onPress={resetFilters} style={({ pressed }) => [styles.metaResetBtn, pressed && { opacity: 0.85 }]}>
+                  <Text style={styles.metaResetText}>Сбросить</Text>
+                </Pressable>
+              ) : null}
+            </View>
+            </View>
+
+            {filtersPanelVisible ? (
+              <View style={styles.filtersPanel}>
+                <Pressable
+                  onPress={() => setOnlyAssignedToMe((v) => !v)}
+                  style={[styles.panelToggle, onlyAssignedToMe && styles.panelToggleActive]}
+                >
+                  <Ionicons
+                    name={onlyAssignedToMe ? 'checkmark-circle' : 'ellipse-outline'}
+                    size={16}
+                    color={onlyAssignedToMe ? '#1D4ED8' : '#6B7280'}
+                  />
+                  <Text style={[styles.panelToggleText, onlyAssignedToMe && styles.panelToggleTextActive]}>
+                    Только я исполнитель
+                  </Text>
+                </Pressable>
+
+                <View style={styles.panelActionsRow}>
+                  <Pressable
+                    onPress={() => {
+                      void handleExport();
+                    }}
+                    style={[styles.panelActionBtn, styles.panelActionBtnPrimary]}
+                  >
+                    <Ionicons name="download-outline" size={14} color="#fff" />
+                    <Text style={styles.panelActionPrimaryText}>Экспорт CSV</Text>
+                  </Pressable>
+                </View>
+              </View>
             ) : null}
+
+            {appealsListElement}
           </View>
         </View>
 
-        {filtersPanelVisible ? (
-          <View style={styles.filtersPanel}>
-            <Pressable
-              onPress={() => setOnlyAssignedToMe((v) => !v)}
-              style={[styles.panelToggle, onlyAssignedToMe && styles.panelToggleActive]}
-            >
-              <Ionicons
-                name={onlyAssignedToMe ? 'checkmark-circle' : 'ellipse-outline'}
-                size={16}
-                color={onlyAssignedToMe ? '#1D4ED8' : '#6B7280'}
-              />
-              <Text style={[styles.panelToggleText, onlyAssignedToMe && styles.panelToggleTextActive]}>
-                Только я исполнитель
-              </Text>
-            </Pressable>
-
-            <View style={styles.panelActionsRow}>
-              <Pressable
-                onPress={() => {
-                  void handleExport();
-                }}
-                style={[styles.panelActionBtn, styles.panelActionBtnPrimary]}
-              >
-                <Ionicons name="download-outline" size={14} color="#fff" />
-                <Text style={styles.panelActionPrimaryText}>Экспорт CSV</Text>
-              </Pressable>
+        {isDesktopSplit ? (
+          <View style={[styles.desktopRightPane, { width: desktopLayout!.chatWidth }]}>
+            <View style={styles.desktopChatShell}>
+              {activeAppealId ? (
+                <AppealDetailContent
+                  appealId={activeAppealId}
+                  mode="pane"
+                  onClearSelection={clearSelectedAppeal}
+                />
+              ) : (
+                <View style={styles.desktopPlaceholderCard}>
+                  <Ionicons name="chatbubbles-outline" size={26} color="#64748B" />
+                  <Text style={styles.desktopPlaceholderTitle}>Выберите обращение</Text>
+                  <Text style={styles.desktopPlaceholderText}>
+                    Откройте карточку из списка слева, чтобы увидеть переписку и действия по обращению.
+                  </Text>
+                </View>
+              )}
             </View>
           </View>
         ) : null}
-
-        <AppealsList
-          scope={listScope}
-          status={status}
-          priority={priority}
-          pageSize={20}
-          refreshKey={refreshKey}
-          onLoadedMeta={() => {}}
-          currentUserId={auth?.profile?.id}
-          incomingMessage={lastWsMsg.current as any}
-          initialItems={cachedItems}
-          listKey={listKey}
-          onItemsChange={(items) => setCachedItems(items)}
-          onRefreshDone={() => {
-            void loadCounters();
-          }}
-          contentContainerStyle={{ paddingBottom: tabBarSpacerHeight + 8 }}
-          displayFilter={displayFilter}
-          ListEmptyComponent={listEmptyComponent}
-        />
       </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  desktopSplitRoot: {
+    width: '100%',
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    justifyContent: 'flex-start',
+  },
+  desktopLeftPane: {
+    minWidth: DESKTOP_INBOX_MIN_WIDTH,
+    maxWidth: DESKTOP_INBOX_MAX_WIDTH,
+    flexShrink: 0,
+    alignSelf: 'stretch',
+  },
+  desktopLeftShell: {
+    flex: 1,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+    overflow: 'hidden',
+  },
+  desktopInboxTop: {
+    marginBottom: 0,
+    paddingHorizontal: 8,
+    paddingTop: 8,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#EEF2F7',
+    backgroundColor: '#F8FAFC',
+  },
+  desktopInboxList: {
+    flex: 1,
+  },
+  desktopRightPane: {
+    minWidth: DESKTOP_CHAT_MIN_WIDTH,
+    maxWidth: DESKTOP_CHAT_MAX_WIDTH,
+    flexShrink: 0,
+    alignItems: 'flex-start',
+    justifyContent: 'flex-start',
+    alignSelf: 'stretch',
+  },
+  desktopChatShell: {
+    width: '100%',
+    flex: 1,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    overflow: 'hidden',
+    backgroundColor: '#FFFFFF',
+  },
+  desktopPlaceholderCard: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+    gap: 8,
+  },
+  desktopPlaceholderTitle: {
+    color: '#0F172A',
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  desktopPlaceholderText: {
+    color: '#64748B',
+    fontSize: 13,
+    lineHeight: 20,
+    textAlign: 'center',
+    maxWidth: 360,
+  },
   controlsBlock: {
     marginBottom: 8,
   },
@@ -541,40 +792,21 @@ const styles = StyleSheet.create({
   scopeItemTextActive: {
     color: '#1D4ED8',
   },
-  tabBadges: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  activeCountBadge: {
-    minWidth: 18,
-    height: 18,
-    borderRadius: 9,
+  tabCountBadge: {
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
     paddingHorizontal: 6,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#16A34A',
-  },
-  activeCountText: {
-    color: '#FFFFFF',
-    fontSize: 10,
-    fontWeight: '800',
-  },
-  unreadChip: {
-    height: 18,
-    borderRadius: 9,
-    paddingHorizontal: 5,
-    backgroundColor: '#ECFEFF',
     borderWidth: 1,
-    borderColor: '#A7F3D0',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 2,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
   },
-  unreadChipText: {
-    color: '#0F766E',
-    fontSize: 10,
-    fontWeight: '800',
+  tabCountText: {
+    color: '#64748B',
+    fontSize: 11,
+    fontWeight: '700',
   },
   filterRow: {
     marginTop: 8,

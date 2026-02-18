@@ -42,6 +42,9 @@ export const API_ENDPOINTS = {
       EMPLOYEE: '/users/profiles/employee'
     },
     PERMISSIONS: '/users/permissions',
+    PERMISSION_GROUPS: '/users/permission-groups',
+    PERMISSION_GROUP_BY_ID: (groupId: number) => `/users/permission-groups/${groupId}`,
+    PERMISSION_MOVE_GROUP: (permissionId: number) => `/users/permissions/${permissionId}/group`,
     ROLES: '/users/roles',
     ROLE_BY_ID: (roleId: number) => `/users/roles/${roleId}`,
     ROLE_PERMISSIONS: (roleId: number) => `/users/roles/${roleId}/permissions`,
@@ -87,6 +90,7 @@ export const API_ENDPOINTS = {
   SERVICES: {
     LIST: '/services',
     ADMIN: '/services/admin',
+    ADMIN_CREATE: '/services/admin',
     SERVICE_BY_ID: (serviceId: number) => `/services/${serviceId}`,
     ROLE_ACCESS: (serviceId: number) => `/services/${serviceId}/role-access`,
     ROLE_ACCESS_BY_ROLE: (serviceId: number, roleId: number) =>

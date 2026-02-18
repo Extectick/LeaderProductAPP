@@ -42,22 +42,148 @@ export async function getDepartments(): Promise<Department[]> {
   return res.data || [];
 }
 
-export type Permission = string;
+export type PermissionGroupItem = {
+  id: number;
+  key: string;
+  displayName: string;
+  description: string;
+  isSystem: boolean;
+  sortOrder?: number;
+  serviceId?: number | null;
+  service?: { id: number; key: string; name: string } | null;
+};
+
+export type PermissionItem = {
+  id: number;
+  name: string;
+  displayName?: string;
+  description?: string;
+  group?: PermissionGroupItem | null;
+};
 
 export type RoleItem = {
   id: number;
   name: string;
-  parentRole: { id: number; name: string } | null;
+  displayName?: string;
+  parentRole: { id: number; name: string; displayName?: string } | null;
   permissions: string[];
 };
 
-export async function getPermissions(): Promise<Permission[]> {
+function parsePermissionGroup(raw: any): PermissionGroupItem | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const key = String(raw.key || '').trim();
+  if (!key) return null;
+  return {
+    id: Number(raw.id) || 0,
+    key,
+    displayName: String(raw.displayName || key),
+    description: String(raw.description || ''),
+    isSystem: Boolean(raw.isSystem),
+    sortOrder: raw.sortOrder == null ? undefined : Number(raw.sortOrder),
+    serviceId: raw.serviceId == null ? null : Number(raw.serviceId),
+    service: raw.service
+      ? {
+          id: Number(raw.service.id) || 0,
+          key: String(raw.service.key || ''),
+          name: String(raw.service.name || ''),
+        }
+      : null,
+  };
+}
+
+export async function getPermissions(): Promise<PermissionItem[]> {
   const res = await apiClient<void, any>(API_ENDPOINTS.USERS.PERMISSIONS);
   if (!res.ok) throw new Error(res.message);
   const data = res.data || [];
   return Array.isArray(data)
-    ? data.map((p: any) => (typeof p === 'string' ? p : p?.name)).filter(Boolean)
+    ? data
+        .map((p: any) => {
+          if (typeof p === 'string') {
+            return { id: 0, name: p, displayName: p, description: '' };
+          }
+          if (!p?.name) return null;
+          return {
+            id: Number(p.id) || 0,
+            name: p.name,
+            displayName: p.displayName || p.name,
+            description: p.description || '',
+            group: parsePermissionGroup(p.group),
+          } as PermissionItem;
+        })
+        .filter(Boolean) as PermissionItem[]
     : [];
+}
+
+export async function getPermissionGroups(): Promise<PermissionGroupItem[]> {
+  const res = await apiClient<void, any>(API_ENDPOINTS.USERS.PERMISSION_GROUPS);
+  if (!res.ok) throw new Error(res.message);
+  const data = res.data || [];
+  return Array.isArray(data)
+    ? data.map((item: any) => parsePermissionGroup(item)).filter(Boolean) as PermissionGroupItem[]
+    : [];
+}
+
+export async function createPermissionGroup(payload: {
+  key: string;
+  displayName: string;
+  description?: string;
+  sortOrder?: number;
+  serviceId?: number | null;
+}) {
+  const res = await apiClient<typeof payload, PermissionGroupItem>(API_ENDPOINTS.USERS.PERMISSION_GROUPS, {
+    method: 'POST',
+    body: payload,
+  });
+  if (!res.ok) throw new Error(res.message);
+  return parsePermissionGroup(res.data) as PermissionGroupItem;
+}
+
+export async function updatePermissionGroup(
+  groupId: number,
+  payload: { displayName?: string; description?: string; sortOrder?: number }
+) {
+  const res = await apiClient<typeof payload, PermissionGroupItem>(
+    API_ENDPOINTS.USERS.PERMISSION_GROUP_BY_ID(groupId),
+    {
+      method: 'PATCH',
+      body: payload,
+    }
+  );
+  if (!res.ok) throw new Error(res.message);
+  return parsePermissionGroup(res.data) as PermissionGroupItem;
+}
+
+export async function deletePermissionGroup(groupId: number) {
+  const res = await apiClient<void, { message: string }>(
+    API_ENDPOINTS.USERS.PERMISSION_GROUP_BY_ID(groupId),
+    {
+      method: 'DELETE',
+    }
+  );
+  if (!res.ok) throw new Error(res.message);
+  return res.data;
+}
+
+export async function movePermissionToGroup(permissionId: number, groupId: number) {
+  const res = await apiClient<{ groupId: number }, PermissionItem>(
+    API_ENDPOINTS.USERS.PERMISSION_MOVE_GROUP(permissionId),
+    {
+      method: 'PATCH',
+      body: { groupId },
+    }
+  );
+  if (!res.ok) throw new Error(res.message);
+  const data = res.data as any;
+  if (!data?.name) {
+    throw new Error('Некорректный ответ сервера');
+  }
+  return {
+    id: Number(data.id) || 0,
+    name: String(data.name),
+    displayName: data.displayName || data.name,
+    description: data.description || '',
+    group: parsePermissionGroup(data.group),
+  } as PermissionItem;
 }
 
 export async function getRoles(): Promise<RoleItem[]> {
@@ -66,25 +192,38 @@ export async function getRoles(): Promise<RoleItem[]> {
   return res.data || [];
 }
 
-export async function createRole(payload: { name: string; parentRoleId?: number | null; permissions?: string[] }) {
-  const res = await apiClient<typeof payload, { id: number; name: string }>(API_ENDPOINTS.USERS.ROLES, {
+export async function createRole(payload: {
+  name: string;
+  displayName: string;
+  parentRoleId?: number | null;
+  permissions?: string[];
+}) {
+  const res = await apiClient<typeof payload, RoleItem>(API_ENDPOINTS.USERS.ROLES, {
     method: 'POST',
     body: payload,
   });
   if (!res.ok) throw new Error(res.message);
-  return res.data;
+  const role = res.data as any;
+  return {
+    ...(role || {}),
+    permissions: Array.isArray(role?.permissions) ? role.permissions : [],
+  } as RoleItem;
 }
 
 export async function updateRole(
   roleId: number,
-  payload: { name?: string; parentRoleId?: number | null }
+  payload: { displayName?: string; parentRoleId?: number | null; name?: string }
 ) {
-  const res = await apiClient<typeof payload, { id: number; name: string }>(API_ENDPOINTS.USERS.ROLE_BY_ID(roleId), {
+  const res = await apiClient<typeof payload, RoleItem>(API_ENDPOINTS.USERS.ROLE_BY_ID(roleId), {
     method: 'PATCH',
     body: payload,
   });
   if (!res.ok) throw new Error(res.message);
-  return res.data;
+  const role = res.data as any;
+  return {
+    ...(role || {}),
+    permissions: Array.isArray(role?.permissions) ? role.permissions : [],
+  } as RoleItem;
 }
 
 export async function updateRolePermissions(roleId: number, permissions: string[]) {
@@ -156,7 +295,7 @@ export type AdminUserItem = {
   profileStatus?: ProfileStatus;
   currentProfileType?: ProfileType | null;
   departmentName?: string | null;
-  role: { id: number; name: string } | null;
+  role: { id: number; name: string; displayName?: string } | null;
   lastSeenAt?: string | null;
   isOnline?: boolean;
 };

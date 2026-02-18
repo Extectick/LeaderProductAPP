@@ -51,6 +51,7 @@ import { ru } from 'date-fns/locale';
 import * as ImagePicker from 'expo-image-picker';
 import { shadeColor, tintColor } from '@/utils/color';
 import { formatPhoneDisplay, formatPhoneInputMask, normalizePhoneInputToDigits11, toApiPhoneDigitsString } from '@/utils/phone';
+import { getRoleDisplayName } from '@/utils/rbacLabels';
 
 type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
 type Tone = 'green' | 'violet' | 'gray' | 'red' | 'blue';
@@ -645,7 +646,7 @@ export function ProfileView({
   const chips: Chip[] = [
     { icon: 'id-card-outline' as IoniconName, label: profTypeName(currentProfileType), tone: 'violet' },
     { icon: 'shield-checkmark-outline' as IoniconName, label: profileStatus ?? '—', tone: profStatusTone(profileStatus) },
-    { icon: 'person-outline' as IoniconName, label: role?.name || '—', tone: 'blue' },
+    { icon: 'person-outline' as IoniconName, label: getRoleDisplayName(role), tone: 'blue' },
     ...(deptName ? [{ icon: 'business-outline' as IoniconName, label: deptName, tone: 'gray' as Tone }] : []),
   ];
 
@@ -807,7 +808,7 @@ export function ProfileView({
               <DepartmentRoleRow
                 key={`${dr.department?.id}-${dr.role?.id}-${idx}`}
                 department={dr.department?.name || `Отдел #${dr.department?.id ?? '—'}`}
-                roleName={dr.role?.name || '—'}
+                roleName={getRoleDisplayName(dr.role)}
                 delay={idx * 60}
               />
             ))}
