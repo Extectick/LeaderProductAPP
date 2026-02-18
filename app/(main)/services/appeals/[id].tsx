@@ -12,7 +12,6 @@ import {
   assignAppeal,
   claimAppeal,
   changeAppealDepartment,
-  updateAppealWatchers,
   markAppealMessagesReadBulk,
   getDepartmentMembers,
 } from '@/utils/appealsService';
@@ -455,7 +454,7 @@ export default function AppealDetailScreen() {
 
   const canAssign = !!data && (isAdmin || isDeptManager);
   const canTransfer = !!data && (isAdmin || isDeptManager);
-  const canClaim = !!data && !isClosedStatus && !isAssignee && isDeptMember;
+  const canClaim = !!data && !isClosedStatus && !isAssignee && !isCreator && isDeptMember;
   const canEditDeadline = !!data && (isCreator || isAdmin);
 
   const allowedStatuses = useMemo(() => {
@@ -833,13 +832,11 @@ export default function AppealDetailScreen() {
               onAssign={openAssignModal}
               onTransfer={openTransferModal}
               onClaim={handleClaim}
-              onWatch={() => updateAppealWatchers(appealId, []).then(() => load(true, false))}
               onEditDeadline={openDeadlineModal}
               allowedStatuses={allowedStatuses}
               canAssign={canAssign}
               canTransfer={canTransfer}
               canClaim={canClaim}
-              canWatch
               canEditDeadline={canEditDeadline}
             />
           ) : (

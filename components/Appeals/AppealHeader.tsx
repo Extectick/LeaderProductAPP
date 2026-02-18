@@ -18,12 +18,10 @@ type Props = {
   title?: string;
   onChangeStatus?: (s: AppealStatus) => void;
   onAssign?: () => void;
-  onWatch?: () => void;
   onClaim?: () => void;
   onTransfer?: () => void;
   onEditDeadline?: () => void;
   canAssign?: boolean;
-  canWatch?: boolean;
   canClaim?: boolean;
   canTransfer?: boolean;
   canEditDeadline?: boolean;
@@ -76,12 +74,10 @@ export default function AppealHeader({
   title,
   onChangeStatus,
   onAssign,
-  onWatch,
   onClaim,
   onTransfer,
   onEditDeadline,
   canAssign,
-  canWatch,
   canClaim,
   canTransfer,
   canEditDeadline,
@@ -127,7 +123,7 @@ export default function AppealHeader({
     }
   };
 
-  const actionItems: DropdownItem<'status' | 'assign' | 'watch' | 'claim' | 'transfer' | 'deadline'>[] = [
+  const actionItems: DropdownItem<'status' | 'assign' | 'claim' | 'transfer' | 'deadline'>[] = [
     ...(allowedStatuses && allowedStatuses.length && onChangeStatus
       ? [{ label: 'Изменить статус', value: 'status' as const }]
       : []),
@@ -135,10 +131,9 @@ export default function AppealHeader({
     ...(canClaim && onClaim ? [{ label: 'Взять в работу', value: 'claim' as const }] : []),
     ...(canAssign && onAssign ? [{ label: 'Назначить', value: 'assign' as const }] : []),
     ...(canTransfer && onTransfer ? [{ label: 'Передать в отдел', value: 'transfer' as const }] : []),
-    ...(canWatch && onWatch ? [{ label: 'Наблюдать', value: 'watch' as const }] : []),
   ];
 
-  const handleAction = (action: 'status' | 'assign' | 'watch' | 'claim' | 'transfer' | 'deadline') => {
+  const handleAction = (action: 'status' | 'assign' | 'claim' | 'transfer' | 'deadline') => {
     switch (action) {
       case 'status':
         setStatusMenuVisible(true);
@@ -148,9 +143,6 @@ export default function AppealHeader({
         break;
       case 'assign':
         onAssign?.();
-        break;
-      case 'watch':
-        onWatch?.();
         break;
       case 'claim':
         onClaim?.();
