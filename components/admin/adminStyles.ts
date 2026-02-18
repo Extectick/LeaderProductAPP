@@ -1,40 +1,54 @@
 import { Platform, StyleSheet } from 'react-native';
 
 export type AdminStyles = ReturnType<typeof createAdminStyles>;
+export const ADMIN_BREAKPOINTS = {
+  mobileMax: 767,
+  tabletMax: 1199,
+  desktopMin: 1200,
+} as const;
 
 export const createAdminStyles = (colors: any) =>
   StyleSheet.create({
     screen: { flex: 1 },
     container: {
       flex: 1,
-      paddingHorizontal: 16,
-      paddingTop: 6,
+      paddingHorizontal: 12,
+      paddingTop: 8,
       paddingBottom: 14,
-      gap: 10,
+      gap: 12,
       width: '100%',
       ...Platform.select({
-        web: { maxWidth: 1440, alignSelf: 'center', width: '100%', paddingHorizontal: 32, paddingTop: 14 },
+        web: {
+          maxWidth: 1600,
+          alignSelf: 'center',
+          width: '100%',
+          paddingHorizontal: 24,
+          paddingTop: 14,
+        },
         default: {},
       }),
     },
     title: { fontSize: 22, fontWeight: '800', color: colors.text, marginBottom: 10 },
     tabsWrap: {
       backgroundColor: colors.cardBackground,
-      borderRadius: 20,
+      borderRadius: 16,
       padding: 6,
       borderWidth: 1,
       borderColor: colors.inputBorder,
-      shadowColor: '#000',
-      shadowOpacity: 0.08,
-      shadowRadius: 10,
-      shadowOffset: { width: 0, height: 4 },
-      elevation: 4,
+      ...Platform.select({
+        web: {
+          position: 'sticky' as any,
+          top: 8,
+          zIndex: 5,
+        },
+        default: {},
+      }),
     },
     tabsScroll: { flexGrow: 0 },
-    tabsContent: { flexDirection: 'row', gap: 8, paddingBottom: 2 },
+    tabsContent: { flexDirection: 'row', gap: 6, paddingBottom: 1 },
     tabBtn: {
-      paddingVertical: 8,
-      paddingHorizontal: 14,
+      paddingVertical: 9,
+      paddingHorizontal: 12,
       borderRadius: 999,
       backgroundColor: colors.inputBackground,
       borderWidth: 1,
@@ -48,16 +62,11 @@ export const createAdminStyles = (colors: any) =>
     tabTextActive: { color: colors.tint },
     panel: {
       backgroundColor: colors.cardBackground,
-      borderRadius: 20,
-      padding: 14,
+      borderRadius: 16,
+      padding: 12,
       gap: 12,
       borderWidth: 1,
       borderColor: colors.inputBorder,
-      shadowColor: '#000',
-      shadowOpacity: 0.08,
-      shadowRadius: 12,
-      shadowOffset: { width: 0, height: 6 },
-      elevation: 4,
       flex: 1,
       minHeight: 0,
     },

@@ -300,10 +300,102 @@ export type AdminUserItem = {
   isOnline?: boolean;
 };
 
+export type AdminModerationState =
+  | 'NO_EMPLOYEE_PROFILE'
+  | 'EMPLOYEE_PENDING'
+  | 'EMPLOYEE_ACTIVE'
+  | 'EMPLOYEE_BLOCKED';
+
+export type AdminUsersListItem = AdminUserItem & {
+  createdAt?: string | Date | null;
+  departmentId?: number | null;
+  employeeStatus?: ProfileStatus | null;
+  moderationState: AdminModerationState;
+  channels: {
+    push: boolean;
+    telegram: boolean;
+    max: boolean;
+  };
+};
+
+export type AdminUsersPageResponse = {
+  items: AdminUsersListItem[];
+  meta: {
+    page: number;
+    limit: number;
+    total: number;
+    hasNext: boolean;
+  };
+};
+
+export type AdminUsersListQuery = {
+  search?: string;
+  page?: number;
+  limit?: number;
+  moderationState?: AdminModerationState | 'all';
+  roleId?: number | null;
+  departmentId?: number | null;
+  online?: 'online' | 'offline' | 'all';
+  sortBy?: 'createdAt' | 'name' | 'email' | 'lastSeenAt' | 'role' | 'status';
+  sortDir?: 'asc' | 'desc';
+};
+
+export type AdminModerationActionResponse = {
+  profile: Profile | null;
+  moderation: {
+    action: 'APPROVE' | 'REJECT';
+    reason: string | null;
+    employeeStatusBefore: ProfileStatus;
+    employeeStatusAfter: ProfileStatus;
+    roleChanged: boolean;
+    roleChange: { from: string | null; to: string | null } | null;
+    currentProfileTypeReset: boolean;
+  };
+  notification: {
+    pushSent: boolean;
+    telegramSent: boolean;
+    maxSent: boolean;
+    skipped: string[];
+  };
+};
+
 export async function getUsers(search?: string): Promise<AdminUserItem[]> {
   const res = await apiClient<void, AdminUserItem[]>(API_ENDPOINTS.USERS.USERS(search));
   if (!res.ok) throw new Error(res.message);
   return res.data || [];
+}
+
+export async function getAdminUsersPage(query: AdminUsersListQuery = {}): Promise<AdminUsersPageResponse> {
+  const params = new URLSearchParams();
+  if (query.search?.trim()) params.set('search', query.search.trim());
+  if (query.page && query.page > 0) params.set('page', String(query.page));
+  if (query.limit && query.limit > 0) params.set('limit', String(query.limit));
+  if (query.moderationState && query.moderationState !== 'all') params.set('moderationState', query.moderationState);
+  if (query.roleId && query.roleId > 0) params.set('roleId', String(query.roleId));
+  if (query.departmentId && query.departmentId > 0) params.set('departmentId', String(query.departmentId));
+  if (query.online && query.online !== 'all') params.set('online', query.online);
+  if (query.sortBy) params.set('sortBy', query.sortBy);
+  if (query.sortDir) params.set('sortDir', query.sortDir);
+
+  const path = `${API_ENDPOINTS.USERS.ADMIN_LIST}${params.toString() ? `?${params.toString()}` : ''}`;
+  const res = await apiClient<void, AdminUsersPageResponse>(path);
+  if (!res.ok || !res.data) throw new Error(res.message || 'Не удалось получить список пользователей');
+  return res.data;
+}
+
+export async function moderateEmployeeProfile(
+  userId: number,
+  payload: { action: 'APPROVE' | 'REJECT'; reason?: string }
+): Promise<AdminModerationActionResponse> {
+  const res = await apiClient<typeof payload, AdminModerationActionResponse>(
+    API_ENDPOINTS.USERS.USER_EMPLOYEE_MODERATION(userId),
+    {
+      method: 'POST',
+      body: payload,
+    }
+  );
+  if (!res.ok || !res.data) throw new Error(res.message || 'Не удалось выполнить модерацию');
+  return res.data;
 }
 
 export async function getProfile(): Promise<Profile | null> {

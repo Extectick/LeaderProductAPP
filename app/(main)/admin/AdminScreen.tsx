@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { useWindowDimensions, View } from 'react-native';
+import { Text, useWindowDimensions, View } from 'react-native';
 import { Redirect } from 'expo-router';
 
 import { useTheme } from '@/context/ThemeContext';
@@ -41,6 +41,12 @@ export default function AdminScreen() {
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
       <View style={[styles.container, { paddingTop: headerTopInset, paddingBottom: tabBarSpacer + 16 }]}>
+        <View style={{ gap: 2 }}>
+          <Text style={{ color: colors.text, fontWeight: '800', fontSize: isWide ? 22 : 20 }}>Администрирование</Text>
+          <Text style={{ color: colors.secondaryText, fontSize: 12 }}>
+            Управление пользователями, ролями, отделами и сервисами
+          </Text>
+        </View>
         <AdminTabsBar
           styles={styles}
           activeKey={activeTab}

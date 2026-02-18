@@ -32,7 +32,9 @@ export default function AdminTabsBar({ styles, activeKey, tabs, onChange }: Admi
               onPress={() => onChange(tab.key)}
               style={[styles.tabBtn, isActive && styles.tabBtnActive]}
             >
-              <Text style={[styles.tabText, isActive && styles.tabTextActive]}>{tab.label}</Text>
+              <Text numberOfLines={1} style={[styles.tabText, isActive && styles.tabTextActive]}>
+                {tab.label}
+              </Text>
             </Pressable>
           );
         })}

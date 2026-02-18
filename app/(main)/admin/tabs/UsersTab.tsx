@@ -1,154 +1,41 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Animated,
-  FlatList,
   Image,
-  KeyboardAvoidingView,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
-  TouchableOpacity,
   TouchableWithoutFeedback,
   useWindowDimensions,
   View,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons } from '@expo/vector-icons';
-import { MotiView } from 'moti';
 
-import ShimmerButton from '@/components/ShimmerButton';
+import CustomAlert from '@/components/CustomAlert';
+import { useTabBarSpacerHeight } from '@/components/Navigation/TabBarSpacer';
+import { AdminStyles } from '@/components/admin/adminStyles';
+import { ProfileStatus } from '@/types/userTypes';
+import { toApiPhoneDigitsString } from '@/utils/phone';
+import { getRoleDisplayName } from '@/utils/rbacLabels';
 import {
-  assignUserRole,
-  adminUpdatePassword,
+  type AdminModerationState,
+  type AdminUsersListItem,
   adminUpdateUser,
   adminUpdateUserProfile,
-  AdminUserItem,
+  assignUserRole,
+  type Department,
+  getAdminUsersPage,
   getDepartments,
   getProfileById,
   getRoles,
-  getUsers,
-  RoleItem,
-  Department,
+  moderateEmployeeProfile,
+  type RoleItem,
 } from '@/utils/userService';
-import { Profile, ProfileStatus } from '@/types/userTypes';
 
-import { AdminStyles } from '@/components/admin/adminStyles';
-import { EditableCard, SelectableChip, SelectorCard, StaticCard } from '@/components/admin/AdminCards';
-import { usePresence } from '@/hooks/usePresence';
-import { useTabBarSpacerHeight } from '@/components/Navigation/TabBarSpacer';
-import { formatPhoneDisplay, toApiPhoneDigitsString } from '@/utils/phone';
-import { getRoleDisplayName } from '@/utils/rbacLabels';
-
-const formatPhone = (input: string) => {
-  const digits = input.replace(/\D/g, '').slice(0, 11);
-  if (!digits) return '';
-  let num = digits;
-  if (num.startsWith('8')) num = '7' + num.slice(1);
-  if (!num.startsWith('7')) num = '7' + num;
-  const parts = [
-    '+7',
-    num.slice(1, 4) ? ` (${num.slice(1, 4)}` : '',
-    num.length > 4 ? ')' : '',
-    num.slice(4, 7) ? ` ${num.slice(4, 7)}` : '',
-    num.length > 7 ? '-' : '',
-    num.slice(7, 9),
-    num.length > 9 ? '-' : '',
-    num.slice(9, 11),
-  ];
-  return parts.join('').replace(/\s+-/g, ' ').trim();
-};
-
-const normalizePhoneE164 = (val: string) => {
-  return toApiPhoneDigitsString(val) || '';
-};
-
-const withOpacity = (color: string, opacity: number) => {
-  if (!color.startsWith('#')) return color;
-  const hex = color.replace('#', '');
-  const normalized =
-    hex.length === 3
-      ? hex
-          .split('')
-          .map((c) => c + c)
-          .join('')
-      : hex;
-  const int = Number.parseInt(normalized, 16);
-  const r = (int >> 16) & 255;
-  const g = (int >> 8) & 255;
-  const b = int & 255;
-  return `rgba(${r}, ${g}, ${b}, ${opacity})`;
-};
-
-type FormState = {
-  firstName: string;
-  lastName: string;
-  middleName: string;
-  email: string;
-  phone: string;
-  status: ProfileStatus;
-  departmentId: number | null;
-  roleId: number | null;
-};
-
-const STATUS_OPTIONS: ProfileStatus[] = ['ACTIVE', 'PENDING', 'BLOCKED'];
-type UserStatusFilter = 'all' | ProfileStatus;
-type OnlineFilter = 'all' | 'online' | 'offline';
-type SortKey = 'recent' | 'name' | 'role' | 'status';
-type SortDir = 'asc' | 'desc';
-
-const STATUS_FILTERS: { key: UserStatusFilter; label: string }[] = [
-  { key: 'all', label: 'Все' },
-  { key: 'ACTIVE', label: 'Активные' },
-  { key: 'PENDING', label: 'Ожидают' },
-  { key: 'BLOCKED', label: 'Заблокированы' },
-];
-
-const ONLINE_FILTERS: { key: OnlineFilter; label: string }[] = [
-  { key: 'all', label: 'Все' },
-  { key: 'online', label: 'Онлайн' },
-  { key: 'offline', label: 'Оффлайн' },
-];
-
-const SORT_OPTIONS: { key: SortKey; label: string }[] = [
-  { key: 'recent', label: 'Активность' },
-  { key: 'name', label: 'Имя' },
-  { key: 'role', label: 'Роль' },
-  { key: 'status', label: 'Статус' },
-];
-
-const statusMeta = (status?: ProfileStatus) => {
-  if (status === 'ACTIVE') return { label: 'Активен', color: '#16A34A', bg: '#DCFCE7' };
-  if (status === 'BLOCKED') return { label: 'Заблокирован', color: '#DC2626', bg: '#FEE2E2' };
-  return { label: 'На проверке', color: '#2563EB', bg: '#DBEAFE' };
-};
-
-type AddressForm = {
-  street: string;
-  city: string;
-  state: string;
-  postalCode: string;
-  country: string;
-};
-
-type ProfileFormState = {
-  status: ProfileStatus;
-  departmentId?: number | null;
-  address?: AddressForm;
-};
-
-type ProfilesFormState = {
-  client: ProfileFormState | null;
-  supplier: ProfileFormState | null;
-  employee: ProfileFormState | null;
-};
-
-type UsersTabProps = {
+type Props = {
   active: boolean;
   styles: AdminStyles;
   colors: any;
@@ -157,1545 +44,891 @@ type UsersTabProps = {
   onConsumeQueuedUser: () => void;
 };
 
-function FilterChip({
-  styles,
-  label,
-  active,
-  onPress,
-  compact,
-}: {
-  styles: AdminStyles;
-  label: string;
-  active: boolean;
-  onPress: () => void;
-  compact?: boolean;
-}) {
-  const scale = useRef(new Animated.Value(1)).current;
-  const [hovered, setHovered] = useState(false);
+type FilterState = {
+  moderation: 'all' | AdminModerationState;
+  online: 'all' | 'online' | 'offline';
+  sortBy: 'lastSeenAt' | 'name' | 'status';
+  sortDir: 'asc' | 'desc';
+};
 
-  const animateTo = (value: number) => {
-    Animated.spring(scale, {
-      toValue: value,
-      useNativeDriver: true,
-      friction: 6,
-      tension: 160,
-    }).start();
-  };
+type EditorState = {
+  firstName: string;
+  lastName: string;
+  middleName: string;
+  email: string;
+  phone: string;
+  roleId: number | null;
+  departmentId: number | null;
+  employeeStatus: ProfileStatus | null;
+};
 
-  return (
-    <Pressable
-      onPress={onPress}
-      onPressIn={() => animateTo(0.96)}
-      onPressOut={() => animateTo(1)}
-      onHoverIn={() => {
-        setHovered(true);
-        animateTo(1.03);
-      }}
-      onHoverOut={() => {
-        setHovered(false);
-        animateTo(1);
-      }}
-    >
-      <Animated.View
-        style={[
-          styles.filterChip,
-          compact && styles.filterChipCompact,
-          active && styles.filterChipActive,
-          hovered && styles.filterChipHover,
-          { transform: [{ scale }] },
-        ]}
-      >
-        <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>{label}</Text>
-      </Animated.View>
-    </Pressable>
-  );
+type ConfirmAction = {
+  item: AdminUsersListItem;
+  action: 'APPROVE' | 'REJECT';
+  reason?: string;
+};
+
+const moderationFilters: Array<{ key: FilterState['moderation']; label: string }> = [
+  { key: 'all', label: 'Все статусы' },
+  { key: 'EMPLOYEE_PENDING', label: 'На проверке' },
+  { key: 'EMPLOYEE_ACTIVE', label: 'Подтвержденные' },
+  { key: 'EMPLOYEE_BLOCKED', label: 'Отклоненные' },
+  { key: 'NO_EMPLOYEE_PROFILE', label: 'Без профиля сотрудника' },
+];
+
+const onlineFilters: Array<{ key: FilterState['online']; label: string }> = [
+  { key: 'all', label: 'Все' },
+  { key: 'online', label: 'Онлайн' },
+  { key: 'offline', label: 'Оффлайн' },
+];
+
+function moderationLabel(state: AdminModerationState) {
+  if (state === 'EMPLOYEE_ACTIVE') return 'Подтвержден';
+  if (state === 'EMPLOYEE_BLOCKED') return 'Отклонен';
+  if (state === 'NO_EMPLOYEE_PROFILE') return 'Без профиля';
+  return 'На проверке';
 }
 
-function SummaryChip({
-  styles,
-  label,
-  value,
-  color,
-  active,
-  onPress,
-}: {
-  styles: AdminStyles;
-  label: string;
-  value: number;
-  color: string;
-  active: boolean;
-  onPress: () => void;
-}) {
-  const bg = withOpacity(color, active ? 0.18 : 0.1);
-  const border = withOpacity(color, active ? 0.6 : 0.35);
-
-  return (
-    <Pressable onPress={onPress}>
-      {({ pressed }) => (
-        <MotiView
-          animate={{
-            scale: pressed ? 0.96 : 1,
-            opacity: pressed ? 0.92 : 1,
-          }}
-          transition={{ type: 'timing', duration: 120 }}
-          style={[
-            styles.summaryCard,
-            { backgroundColor: bg, borderColor: border },
-            active && {
-              backgroundColor: withOpacity(color, 0.22),
-              borderColor: withOpacity(color, 0.75),
-            },
-          ]}
-        >
-          <Text style={[styles.summaryValue, { color }]}>{value}</Text>
-          <Text style={styles.summaryLabel}>{label}</Text>
-        </MotiView>
-      )}
-    </Pressable>
-  );
+function profileStatusLabel(state: ProfileStatus) {
+  if (state === 'ACTIVE') return 'Подтвержден';
+  if (state === 'BLOCKED') return 'Отклонен';
+  return 'На проверке';
 }
 
-function UserListItem({
-  styles,
-  item,
-  active,
-  isWide,
-  onPress,
-  isOnline,
-  statusMeta,
-}: {
-  styles: AdminStyles;
-  item: AdminUserItem;
-  active: boolean;
-  isWide: boolean;
-  onPress: () => void;
-  isOnline: boolean;
-  statusMeta: { label: string; color: string; bg: string };
-}) {
-  const scale = useRef(new Animated.Value(1)).current;
-  const [hovered, setHovered] = useState(false);
-
-  const animateTo = (value: number) => {
-    Animated.spring(scale, {
-      toValue: value,
-      useNativeDriver: true,
-      friction: 7,
-      tension: 180,
-    }).start();
-  };
-
-  const initials =
-    `${(item.firstName?.[0] || '').toUpperCase()}${(item.lastName?.[0] || '').toUpperCase()}` || 'U';
-  const fullName =
-    [item.lastName, item.firstName, item.middleName].filter(Boolean).join(' ') || item.email;
-  const departmentName = item.departmentName || null;
-  const phoneDisplay = item.phone ? formatPhoneDisplay(item.phone) : '—';
-
-  return (
-    <View style={[styles.userCardWrap, isWide && styles.userCardWrapWide]}>
-      <Pressable
-        onPress={onPress}
-        onPressIn={() => animateTo(0.98)}
-        onPressOut={() => animateTo(1)}
-        onHoverIn={() => {
-          setHovered(true);
-          animateTo(Platform.OS === 'web' ? 1.01 : 1.02);
-        }}
-        onHoverOut={() => {
-          setHovered(false);
-          animateTo(1);
-        }}
-      >
-        <Animated.View
-          style={[
-            styles.userCard,
-            active && styles.userCardActive,
-            item.profileStatus === 'BLOCKED' && styles.userCardBlocked,
-            hovered && styles.userCardHover,
-            { transform: [{ scale }] },
-          ]}
-        >
-          <View style={styles.userRow}>
-            <View style={styles.userAvatarWrap}>
-              {item.avatarUrl ? (
-                <Image source={{ uri: item.avatarUrl }} style={styles.userAvatar} resizeMode="cover" />
-              ) : (
-                <View style={[styles.userAvatar, styles.userAvatarFallback]}>
-                  <Text style={styles.userAvatarText}>{initials}</Text>
-                </View>
-              )}
-              <View style={[styles.userPresenceDot, { backgroundColor: isOnline ? '#22c55e' : '#94a3b8' }]} />
-            </View>
-            <View style={styles.userInfo}>
-              <View style={styles.userNameRow}>
-                <Text style={styles.userName} numberOfLines={2}>
-                  {fullName}
-                </Text>
-                <View style={styles.userIdBadge}>
-                  <Text style={styles.userIdText}>#{item.id}</Text>
-                </View>
-              </View>
-              <Text style={styles.userMeta} numberOfLines={2}>
-                {item.email}
-              </Text>
-              <Text style={styles.userMeta}>
-                <Text style={styles.userMetaStrong}>Тел:</Text> {phoneDisplay}
-              </Text>
-              <View style={styles.userPillsRow}>
-                <View style={[styles.statusPill, { backgroundColor: statusMeta.bg, borderColor: statusMeta.color }]}>
-                  <Text style={[styles.statusPillText, { color: statusMeta.color }]}>{statusMeta.label}</Text>
-                </View>
-                <View style={styles.rolePill}>
-                  <Text style={styles.rolePillText} numberOfLines={2}>
-                    {getRoleDisplayName(item.role)}
-                  </Text>
-                </View>
-                {departmentName ? (
-                  <View style={styles.departmentPill}>
-                    <Text style={styles.departmentPillText} numberOfLines={2}>
-                      {departmentName}
-                    </Text>
-                  </View>
-                ) : null}
-              </View>
-            </View>
-          </View>
-        </Animated.View>
-      </Pressable>
-    </View>
-  );
+function nameOf(item: AdminUsersListItem) {
+  const text = [item.lastName, item.firstName, item.middleName].filter(Boolean).join(' ').trim();
+  return text || item.email || `Пользователь #${item.id}`;
 }
 
-export default function UsersTab({
-  active,
-  styles,
-  colors,
-  btnGradient,
-  queuedUserId,
-  onConsumeQueuedUser,
-}: UsersTabProps) {
-  const [users, setUsers] = useState<AdminUserItem[]>([]);
+function formatPhone(value: string | null | undefined) {
+  const digits = String(value || '').replace(/\D/g, '').slice(0, 11);
+  if (!digits) return '';
+  let num = digits;
+  if (num.startsWith('8')) num = `7${num.slice(1)}`;
+  if (!num.startsWith('7')) num = `7${num}`;
+  return `+7 (${num.slice(1, 4)}) ${num.slice(4, 7)}-${num.slice(7, 9)}-${num.slice(9, 11)}`.trim();
+}
+
+function needsModeration(item: AdminUsersListItem) {
+  return item.moderationState === 'EMPLOYEE_PENDING';
+}
+
+function formatLastSeen(iso?: string | null) {
+  if (!iso) return 'Нет данных';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return 'Нет данных';
+  return date.toLocaleString('ru-RU', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function moderationTone(state: AdminModerationState) {
+  if (state === 'EMPLOYEE_ACTIVE') return { bg: '#DCFCE7', border: '#86EFAC', text: '#166534' };
+  if (state === 'EMPLOYEE_BLOCKED') return { bg: '#FEE2E2', border: '#FCA5A5', text: '#991B1B' };
+  if (state === 'NO_EMPLOYEE_PROFILE') return { bg: '#F3F4F6', border: '#D1D5DB', text: '#4B5563' };
+  return { bg: '#FEF3C7', border: '#FCD34D', text: '#92400E' };
+}
+
+function onlineTone(isOnline?: boolean) {
+  if (isOnline) return { bg: '#DCFCE7', border: '#86EFAC', text: '#166534', textValue: 'Онлайн' };
+  return { bg: '#EEF2FF', border: '#C7D2FE', text: '#4338CA', textValue: 'Не в сети' };
+}
+
+function channelLabel(item: AdminUsersListItem) {
+  const push = item.channels?.push ? 'push ✓' : 'push ✕';
+  const telegram = item.channels?.telegram ? 'tg ✓' : 'tg ✕';
+  const max = item.channels?.max ? 'max ✓' : 'max ✕';
+  return `${push} • ${telegram} • ${max}`;
+}
+
+function initialsOf(item: AdminUsersListItem) {
+  const first = String(item.firstName || '').trim();
+  const last = String(item.lastName || '').trim();
+  const source = `${first}${last}`.trim();
+  if (!source) return 'U';
+  return source
+    .slice(0, 2)
+    .toUpperCase()
+    .replace(/\s+/g, '');
+}
+
+function shortTime(iso?: string | null) {
+  if (!iso) return '--:--';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '--:--';
+  return date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+}
+
+export default function UsersTab({ active, colors, queuedUserId, onConsumeQueuedUser }: Props) {
+  const { width } = useWindowDimensions();
+  const tabBarSpacer = useTabBarSpacerHeight();
+  const desktop = width >= 1200;
+
   const [roles, setRoles] = useState<RoleItem[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [items, setItems] = useState<AdminUsersListItem[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [limit] = useState(20);
   const [search, setSearch] = useState('');
-  const [loadingUsers, setLoadingUsers] = useState(false);
-  const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
-  const [modalVisible, setModalVisible] = useState(false);
-  const [selectedProfile, setSelectedProfile] = useState<Profile | null>(null);
-  const [profileLoading, setProfileLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [employeeStatusMap, setEmployeeStatusMap] = useState<Record<number, ProfileStatus | null>>({});
-  const [pickerType, setPickerType] = useState<'role' | 'department' | null>(null);
-  const [statusFilter, setStatusFilter] = useState<UserStatusFilter>('all');
-  const [onlineFilter, setOnlineFilter] = useState<OnlineFilter>('all');
-  const [sortKey, setSortKey] = useState<SortKey>('recent');
-  const [sortDir, setSortDir] = useState<SortDir>('desc');
-  const presenceMap = usePresence(active ? users.map((u) => u.id) : []);
-  const [form, setForm] = useState<FormState>({
-    firstName: '',
-    lastName: '',
-    middleName: '',
-    email: '',
-    phone: '',
-    status: 'PENDING',
-    departmentId: null,
-    roleId: null,
+  const [loading, setLoading] = useState(false);
+  const [filters, setFilters] = useState<FilterState>({
+    moderation: 'all',
+    online: 'all',
+    sortBy: 'lastSeenAt',
+    sortDir: 'desc',
   });
-  const [profileForms, setProfileForms] = useState<ProfilesFormState>({
-    client: null,
-    supplier: null,
-    employee: null,
-  });
-  const [initialProfileForms, setInitialProfileForms] = useState<ProfilesFormState | null>(null);
-  const [initialForm, setInitialForm] = useState<FormState | null>(null);
-  const [newPassword, setNewPassword] = useState('');
-  const [activeTab, setActiveTab] = useState<'user' | 'profiles'>('user');
-  const [activeProfileTab, setActiveProfileTab] = useState<'employee' | 'client' | 'supplier'>('employee');
-  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
-  const columns = windowWidth >= 1600 ? 3 : windowWidth >= 1200 ? 2 : 1;
-  const isWide = columns > 1;
-  const showSideFilters = windowWidth >= 1200;
-  const showSummaryGrid = windowWidth >= 1100;
-  const modalMaxHeight = Math.max(320, Math.min(windowHeight - 24, Platform.OS === 'web' ? 860 : windowHeight - 24));
-  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const tabBarSpacer = useTabBarSpacerHeight();
-  const [filtersOpen, setFiltersOpen] = useState(false);
-  const activeFilterCount = [statusFilter !== 'all', onlineFilter !== 'all', sortKey !== 'recent'].filter(Boolean).length;
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const selected = useMemo(() => items.find((x) => x.id === selectedId) || null, [items, selectedId]);
+  const [actionBusyId, setActionBusyId] = useState<number | null>(null);
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
+  const [rejectTarget, setRejectTarget] = useState<AdminUsersListItem | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
+  const [editorVisible, setEditorVisible] = useState(false);
+  const [editorUserId, setEditorUserId] = useState<number | null>(null);
+  const [editor, setEditor] = useState<EditorState | null>(null);
+  const [editorInitial, setEditorInitial] = useState<EditorState | null>(null);
 
-  useEffect(() => {
-    if (showSideFilters) {
-      setFiltersOpen(false);
-    }
-  }, [showSideFilters]);
+  const hasNext = page * limit < total;
+  const pendingCountOnPage = useMemo(() => items.filter((item) => needsModeration(item)).length, [items]);
 
   const loadRefs = useCallback(async () => {
-    try {
-      const [r, d] = await Promise.all([getRoles(), getDepartments()]);
-      setRoles(r);
-      setDepartments(d);
-    } catch (e: any) {
-      console.warn('loadRefs error', e?.message);
-    }
+    const [r, d] = await Promise.all([getRoles(), getDepartments()]);
+    setRoles(r);
+    setDepartments(d);
   }, []);
 
-  const loadUsers = useCallback(
-    async (q?: string) => {
-      setLoadingUsers(true);
-      try {
-        const data = await getUsers(q);
-        setUsers(data);
-      } catch (e: any) {
-        Alert.alert('Ошибка', e?.message || 'Не удалось загрузить пользователей');
-      } finally {
-        setLoadingUsers(false);
-      }
-    },
-    []
-  );
+  const loadData = useCallback(async () => {
+    if (!active) return;
+    setLoading(true);
+    try {
+      const res = await getAdminUsersPage({
+        search,
+        page,
+        limit,
+        moderationState: filters.moderation,
+        online: filters.online,
+        sortBy: filters.sortBy,
+        sortDir: filters.sortDir,
+      });
+      const nextItems = res.items || [];
+      setItems(nextItems);
+      setTotal(res.meta?.total || 0);
+      setSelectedId((prev) => {
+        if (!nextItems.length) return null;
+        if (!prev || !nextItems.some((x) => x.id === prev)) return nextItems[0].id;
+        return prev;
+      });
+    } catch (error: any) {
+      Alert.alert('Ошибка', error?.message || 'Не удалось загрузить пользователей');
+    } finally {
+      setLoading(false);
+    }
+  }, [active, filters.moderation, filters.online, filters.sortBy, filters.sortDir, limit, page, search]);
 
-  const missingEmployeeStatusIds = useMemo(
-    () => users.map((u) => u.id).filter((id) => employeeStatusMap[id] === undefined),
-    [users, employeeStatusMap]
-  );
-
-  useEffect(() => {
-    if (!active || missingEmployeeStatusIds.length === 0) return;
-    let cancelled = false;
-    const ids = [...missingEmployeeStatusIds];
-    const concurrency = 4;
-
-    const worker = async () => {
-      while (!cancelled) {
-        const id = ids.shift();
-        if (id == null) return;
-        try {
-          const profile = await getProfileById(id);
-          const status = profile?.employeeProfile?.status ?? null;
-          if (!cancelled) {
-            setEmployeeStatusMap((prev) => ({ ...prev, [id]: status }));
-          }
-        } catch {
-          if (!cancelled) {
-            setEmployeeStatusMap((prev) => ({ ...prev, [id]: null }));
-          }
-        }
-      }
-    };
-
-    const workers = Array.from({ length: Math.min(concurrency, ids.length) }, () => worker());
-    void Promise.all(workers);
-    return () => {
-      cancelled = true;
-    };
-  }, [active, missingEmployeeStatusIds]);
-
-  const buildAddressForm = useCallback(
-    (address?: { street?: string; city?: string; state?: string | null; postalCode?: string | null; country?: string } | null): AddressForm => ({
-      street: address?.street || '',
-      city: address?.city || '',
-      state: address?.state || '',
-      postalCode: address?.postalCode || '',
-      country: address?.country || '',
-    }),
-    []
-  );
-
-  const buildProfileForms = useCallback((profile: Profile): ProfilesFormState => {
-    return {
-      client: profile.clientProfile
-        ? {
-            status: profile.clientProfile.status || 'PENDING',
-            address: buildAddressForm(profile.clientProfile.address),
-          }
-        : null,
-      supplier: profile.supplierProfile
-        ? {
-            status: profile.supplierProfile.status || 'PENDING',
-            address: buildAddressForm(profile.supplierProfile.address),
-          }
-        : null,
-      employee: profile.employeeProfile
-        ? {
-            status: profile.employeeProfile.status || 'PENDING',
-            departmentId: profile.employeeProfile.department?.id ?? null,
-          }
-        : null,
-    };
-  }, [buildAddressForm]);
-
-  const syncForm = useCallback((profile: Profile) => {
-    const next: FormState = {
-      firstName: profile.firstName || '',
-      lastName: profile.lastName || '',
-      middleName: profile.middleName || '',
-      email: profile.email || '',
-      phone: formatPhone(profile.phone || ''),
-      status: profile.profileStatus || 'PENDING',
-      departmentId: profile.employeeProfile?.department?.id ?? null,
-      roleId: profile.role?.id ?? null,
-    };
-    setForm(next);
-    setInitialForm(next);
-    setNewPassword('');
-    const profilesState = buildProfileForms(profile);
-    setProfileForms(profilesState);
-    setInitialProfileForms(profilesState);
-  }, [buildProfileForms]);
-
-  const loadProfile = useCallback(
-    async (userId?: number | null) => {
-      if (!userId) return;
-      try {
-        setProfileLoading(true);
-        const prof = await getProfileById(userId);
-        if (!prof) throw new Error('Профиль не найден');
-        setSelectedProfile(prof);
-        syncForm(prof);
-      } catch (e: any) {
-        Alert.alert('Ошибка', e?.message || 'Не удалось загрузить профиль');
-        setSelectedProfile(null);
-        setInitialForm(null);
-      } finally {
-        setProfileLoading(false);
-      }
-    },
-    [syncForm]
-  );
+  const openEditor = useCallback(async (userId: number) => {
+    setEditorUserId(userId);
+    setEditorVisible(true);
+    try {
+      const profile = await getProfileById(userId);
+      if (!profile) throw new Error('Профиль не найден');
+      const next: EditorState = {
+        firstName: profile.firstName || '',
+        lastName: profile.lastName || '',
+        middleName: profile.middleName || '',
+        email: profile.email || '',
+        phone: formatPhone(profile.phone),
+        roleId: profile.role?.id ?? null,
+        departmentId: profile.employeeProfile?.department?.id ?? null,
+        employeeStatus: profile.employeeProfile?.status ?? null,
+      };
+      setEditor(next);
+      setEditorInitial(next);
+    } catch (error: any) {
+      Alert.alert('Ошибка', error?.message || 'Не удалось загрузить профиль');
+      setEditorVisible(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!active) return;
     void loadRefs();
-    void loadUsers('');
-  }, [active, loadRefs, loadUsers]);
+  }, [active, loadRefs]);
 
   useEffect(() => {
     if (!active) return;
-    if (searchTimer.current) clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => {
-      void loadUsers(search.trim());
-    }, 400);
-    return () => {
-      if (searchTimer.current) clearTimeout(searchTimer.current);
-    };
-  }, [search, loadUsers, active]);
+    void loadData();
+  }, [active, loadData]);
 
   useEffect(() => {
     if (!active || !queuedUserId) return;
-    setSelectedUserId(queuedUserId);
-    setModalVisible(true);
-    void loadProfile(queuedUserId);
+    setSelectedId(queuedUserId);
+    void openEditor(queuedUserId);
     onConsumeQueuedUser();
-  }, [active, queuedUserId, onConsumeQueuedUser, loadProfile]);
+  }, [active, onConsumeQueuedUser, openEditor, queuedUserId]);
 
-  const isDirty = useMemo(() => {
-    if (!initialForm) return false;
-    const profileDirty = initialProfileForms
-      ? JSON.stringify(profileForms) !== JSON.stringify(initialProfileForms)
-      : false;
-    return (
-      form.firstName.trim() !== initialForm.firstName.trim() ||
-      form.lastName.trim() !== initialForm.lastName.trim() ||
-      form.middleName.trim() !== initialForm.middleName.trim() ||
-      form.email.trim() !== initialForm.email.trim() ||
-      form.phone.trim() !== initialForm.phone.trim() ||
-      form.status !== initialForm.status ||
-      form.departmentId !== initialForm.departmentId ||
-      form.roleId !== initialForm.roleId ||
-      newPassword.trim().length > 0 ||
-      profileDirty
-    );
-  }, [form, initialForm, newPassword, profileForms, initialProfileForms]);
-
-  const selectedRole = useMemo(
-    () => (form.roleId ? roles.find((r) => r.id === form.roleId) || null : null),
-    [roles, form.roleId]
-  );
-  const selectedDepartment = useMemo(
-    () => (form.departmentId ? departments.find((d) => d.id === form.departmentId) || null : null),
-    [departments, form.departmentId]
-  );
-
-  const resolveEmployeeStatus = useCallback(
-    (u: AdminUserItem) => {
-      const cached = employeeStatusMap[u.id];
-      if (cached !== undefined) return cached;
-      return u.currentProfileType === 'EMPLOYEE' ? u.profileStatus ?? null : null;
-    },
-    [employeeStatusMap]
-  );
-
-  const filteredUsers = useMemo(() => {
-    let list = users;
-    if (statusFilter !== 'all') {
-      list = list.filter((u) => {
-        const status = resolveEmployeeStatus(u);
-        return status === statusFilter;
-      });
-    }
-    if (onlineFilter !== 'all') {
-      list = list.filter((u) => {
-        const presence = presenceMap[u.id];
-        const isOnline = presence?.isOnline ?? u.isOnline ?? false;
-        return onlineFilter === 'online' ? isOnline : !isOnline;
-      });
-    }
-    return list;
-  }, [users, statusFilter, onlineFilter, presenceMap, resolveEmployeeStatus]);
-
-  const statusCounts = useMemo(() => {
-    let total = 0;
-    const counts: Record<UserStatusFilter, number> = { all: 0, ACTIVE: 0, PENDING: 0, BLOCKED: 0 };
-    users.forEach((u) => {
-      const st = resolveEmployeeStatus(u);
-      if (!st) return;
-      total += 1;
-      counts[st] = (counts[st] || 0) + 1;
-    });
-    counts.all = total;
-    return counts;
-  }, [users, resolveEmployeeStatus]);
-
-  const onlineCounts = useMemo(() => {
-    let online = 0;
-    let offline = 0;
-    users.forEach((u) => {
-      const presence = presenceMap[u.id];
-      const isOnline = presence?.isOnline ?? u.isOnline ?? false;
-      if (isOnline) online += 1;
-      else offline += 1;
-    });
-    return { all: users.length, online, offline };
-  }, [users, presenceMap]);
-
-  const sortedUsers = useMemo(() => {
-    const list = [...filteredUsers];
-    const dir = sortDir === 'asc' ? 1 : -1;
-    const statusRank = (s?: ProfileStatus) => (s === 'BLOCKED' ? 0 : s === 'PENDING' ? 1 : 2);
-    const nameKey = (u: AdminUserItem) =>
-      `${u.lastName || ''} ${u.firstName || ''} ${u.middleName || ''}`.trim().toLowerCase() ||
-      (u.email || '').toLowerCase();
-    const roleKey = (u: AdminUserItem) => getRoleDisplayName(u.role).toLowerCase();
-    const lastSeenKey = (u: AdminUserItem) => {
-      const p = presenceMap[u.id];
-      const lastSeen = p?.lastSeenAt ?? u.lastSeenAt;
-      return lastSeen ? new Date(lastSeen).getTime() : 0;
-    };
-    const isOnline = (u: AdminUserItem) => {
-      const p = presenceMap[u.id];
-      return p?.isOnline ?? u.isOnline ?? false;
-    };
-
-    list.sort((a, b) => {
-      if (sortKey === 'name') return nameKey(a).localeCompare(nameKey(b), 'ru') * dir;
-      if (sortKey === 'role') return roleKey(a).localeCompare(roleKey(b), 'ru') * dir;
-      if (sortKey === 'status') return (statusRank(a.profileStatus) - statusRank(b.profileStatus)) * dir;
-
-      // recent: online first, then lastSeen desc, then name
-      const aOnline = isOnline(a);
-      const bOnline = isOnline(b);
-      if (aOnline !== bOnline) return (aOnline ? -1 : 1) * dir;
-      const aSeen = lastSeenKey(a);
-      const bSeen = lastSeenKey(b);
-      if (aSeen !== bSeen) return (bSeen - aSeen) * dir;
-      return nameKey(a).localeCompare(nameKey(b), 'ru') * dir;
-    });
-    return list;
-  }, [filteredUsers, sortKey, sortDir, presenceMap]);
-
-  const isSummaryActive = useCallback(
-    (key: string) => {
-      if (key === 'total') return statusFilter === 'all' && onlineFilter === 'all';
-      if (key === 'active') return statusFilter === 'ACTIVE';
-      if (key === 'pending') return statusFilter === 'PENDING';
-      if (key === 'blocked') return statusFilter === 'BLOCKED';
-      if (key === 'online') return onlineFilter === 'online';
-      return false;
-    },
-    [onlineFilter, statusFilter]
-  );
-
-  const applySummaryFilter = useCallback(
-    (key: string) => {
-      if (key === 'total') {
-        setStatusFilter('all');
-        setOnlineFilter('all');
-        return;
-      }
-      if (key === 'active' || key === 'pending' || key === 'blocked') {
-        setStatusFilter(key.toUpperCase() as ProfileStatus);
-        setOnlineFilter('all');
-        return;
-      }
-      if (key === 'online') {
-        setOnlineFilter('online');
-        setStatusFilter('all');
+  const doModeration = useCallback(
+    async (item: AdminUsersListItem, action: 'APPROVE' | 'REJECT', reason?: string) => {
+      setActionBusyId(item.id);
+      try {
+        await moderateEmployeeProfile(item.id, { action, reason });
+        await loadData();
+        Alert.alert('Готово', action === 'APPROVE' ? 'Сотрудник подтвержден' : 'Сотрудник отклонен');
+      } catch (error: any) {
+        Alert.alert('Ошибка', error?.message || 'Не удалось выполнить действие');
+      } finally {
+        setActionBusyId(null);
       }
     },
-    [setOnlineFilter, setStatusFilter]
+    [loadData]
   );
 
-  const summaryItems = useMemo(
-    () => [
-      { key: 'total', label: 'Всего', value: sortedUsers.length, color: colors.tint },
-      { key: 'active', label: 'Активные', value: statusCounts.ACTIVE ?? 0, color: '#16A34A' },
-      { key: 'pending', label: 'Ожидают', value: statusCounts.PENDING ?? 0, color: '#2563EB' },
-      { key: 'blocked', label: 'Заблокированы', value: statusCounts.BLOCKED ?? 0, color: '#DC2626' },
-      { key: 'online', label: 'Онлайн', value: onlineCounts.online ?? 0, color: '#22C55E' },
-    ],
-    [colors.tint, onlineCounts, sortedUsers.length, statusCounts]
-  );
-
-  const userInitials = useMemo(() => {
-    const first = (form.firstName || selectedProfile?.firstName || '').trim()[0] || '';
-    const last = (form.lastName || selectedProfile?.lastName || '').trim()[0] || '';
-    return `${first}${last}`.toUpperCase() || 'U';
-  }, [form.firstName, form.lastName, selectedProfile]);
-
-  const profileTabs = useMemo(
-    () => [
-      {
-        key: 'employee' as const,
-        label: 'Сотрудник',
-        avatarUrl: selectedProfile?.employeeProfile?.avatarUrl || null,
-        status: profileForms.employee?.status || null,
-        available: Boolean(selectedProfile?.employeeProfile),
-      },
-      {
-        key: 'client' as const,
-        label: 'Клиент',
-        avatarUrl: selectedProfile?.clientProfile?.avatarUrl || null,
-        status: profileForms.client?.status || null,
-        available: Boolean(selectedProfile?.clientProfile),
-      },
-      {
-        key: 'supplier' as const,
-        label: 'Поставщик',
-        avatarUrl: selectedProfile?.supplierProfile?.avatarUrl || null,
-        status: profileForms.supplier?.status || null,
-        available: Boolean(selectedProfile?.supplierProfile),
-      },
-    ],
-    [profileForms, selectedProfile]
-  );
-
-  useEffect(() => {
-    if (!selectedProfile) return;
-    setActiveTab('user');
-  }, [selectedProfile, modalVisible]);
-
-  useEffect(() => {
-    if (!selectedProfile) return;
-    const available = profileTabs.filter((tab) => tab.available);
-    const hasActive = profileTabs.some((tab) => tab.key === activeProfileTab && tab.available);
-    if (!hasActive) {
-      setActiveProfileTab(available[0]?.key ?? 'employee');
-    }
-  }, [activeProfileTab, profileTabs, selectedProfile]);
-  const roleOptions = useMemo(
-    () => roles.map((r) => ({ value: r.id, label: getRoleDisplayName(r) })),
-    [roles]
-  );
-  const departmentOptions = useMemo(
-    () => [{ value: null, label: 'Без отдела' }, ...departments.map((d) => ({ value: d.id, label: d.name }))],
-    [departments]
-  );
-
-  const handleSelectUser = (user: AdminUserItem) => {
-    setSelectedUserId(user.id);
-    setModalVisible(true);
-    void loadProfile(user.id);
-  };
-
-  const cycleStatus = useCallback(() => {
-    const idx = STATUS_OPTIONS.indexOf(form.status);
-    const next = STATUS_OPTIONS[(idx + 1) % STATUS_OPTIONS.length];
-    setForm((prev) => ({ ...prev, status: next }));
-  }, [form.status]);
-
-  const handleRoleChipPress = useCallback(() => {
-    if (!roles.length) {
-      Alert.alert('Нет ролей', 'Сначала создайте роли');
-      return;
-    }
-    setPickerType('role');
-  }, [roles]);
-
-  const handleDepartmentChipPress = useCallback(() => {
-    if (!departments.length) {
-      setForm((prev) => ({ ...prev, departmentId: null }));
-    }
-    setPickerType('department');
-  }, [departments]);
-
-  const handleSave = async () => {
-    if (!selectedUserId || !initialForm) return;
-    const payload: Partial<FormState> & { profileStatus?: ProfileStatus } = {};
-    if (form.firstName.trim() !== initialForm.firstName.trim()) payload.firstName = form.firstName.trim();
-    if (form.lastName.trim() !== initialForm.lastName.trim()) payload.lastName = form.lastName.trim();
-    if (form.middleName.trim() !== initialForm.middleName.trim()) payload.middleName = form.middleName.trim();
-    if (form.email.trim() !== initialForm.email.trim()) payload.email = form.email.trim();
-    if (form.phone.trim() !== initialForm.phone.trim()) payload.phone = normalizePhoneE164(form.phone);
-    if (form.status !== initialForm.status) payload.profileStatus = form.status;
-    if (form.departmentId !== initialForm.departmentId) payload.departmentId = form.departmentId;
-
-    setSaving(true);
+  const saveEditor = useCallback(async () => {
+    if (!editorUserId || !editor || !editorInitial) return;
     try {
-      if (Object.keys(payload).length) {
-        await adminUpdateUser(selectedUserId, payload);
+      const patch: any = {};
+      if (editor.firstName !== editorInitial.firstName) patch.firstName = editor.firstName.trim();
+      if (editor.lastName !== editorInitial.lastName) patch.lastName = editor.lastName.trim();
+      if (editor.middleName !== editorInitial.middleName) patch.middleName = editor.middleName.trim();
+      if (editor.email !== editorInitial.email) patch.email = editor.email.trim();
+      if (editor.phone !== editorInitial.phone) patch.phone = toApiPhoneDigitsString(editor.phone) || '';
+      if (Object.keys(patch).length) await adminUpdateUser(editorUserId, patch);
+      if (editor.roleId && editor.roleId !== editorInitial.roleId) {
+        await assignUserRole(editorUserId, { roleId: editor.roleId });
       }
-      if (form.roleId && form.roleId !== initialForm.roleId) {
-        await assignUserRole(selectedUserId, { roleId: form.roleId });
+      const employeePatch: any = {};
+      if (editor.departmentId !== editorInitial.departmentId) employeePatch.departmentId = editor.departmentId;
+      if (editor.employeeStatus && editor.employeeStatus !== editorInitial.employeeStatus) {
+        employeePatch.status = editor.employeeStatus;
       }
-      if (newPassword.trim()) {
-        await adminUpdatePassword(selectedUserId, newPassword.trim());
+      if (Object.keys(employeePatch).length) {
+        await adminUpdateUserProfile(editorUserId, 'employee', employeePatch);
       }
-
-      if (initialProfileForms) {
-        const updateProfile = async (
-          type: 'client' | 'supplier' | 'employee',
-          current: ProfileFormState | null,
-          initial: ProfileFormState | null
-        ) => {
-          if (!current || !initial) return;
-          const profilePayload: any = {};
-
-          if (current.status !== initial.status) profilePayload.status = current.status;
-
-          if (type === 'employee') {
-            if (current.departmentId !== initial.departmentId) {
-              profilePayload.departmentId = current.departmentId ?? null;
-            }
-          } else {
-            const curAddress = current.address || {
-              street: '',
-              city: '',
-              state: '',
-              postalCode: '',
-              country: '',
-            };
-            const initAddress = initial.address || {
-              street: '',
-              city: '',
-              state: '',
-              postalCode: '',
-              country: '',
-            };
-            const addressChanged = JSON.stringify(curAddress) !== JSON.stringify(initAddress);
-            if (addressChanged) {
-              const hasAny = Object.values(curAddress).some((v) => String(v || '').trim().length > 0);
-              if (!hasAny) {
-                profilePayload.address = null;
-              } else {
-                if (!curAddress.street.trim() || !curAddress.city.trim() || !curAddress.country.trim()) {
-                  throw new Error('Для адреса обязательны улица, город и страна');
-                }
-                profilePayload.address = {
-                  street: curAddress.street.trim(),
-                  city: curAddress.city.trim(),
-                  state: curAddress.state.trim() || null,
-                  postalCode: curAddress.postalCode.trim() || null,
-                  country: curAddress.country.trim(),
-                };
-              }
-            }
-          }
-
-          if (Object.keys(profilePayload).length) {
-            await adminUpdateUserProfile(selectedUserId, type, profilePayload);
-          }
-        };
-
-        await updateProfile('employee', profileForms.employee, initialProfileForms.employee);
-        await updateProfile('client', profileForms.client, initialProfileForms.client);
-        await updateProfile('supplier', profileForms.supplier, initialProfileForms.supplier);
-      }
-
-      await loadProfile(selectedUserId);
-      setUsers((prev) =>
-        prev.map((u) =>
-          u.id === selectedUserId
-            ? {
-                ...u,
-                firstName: form.firstName,
-                lastName: form.lastName,
-                middleName: form.middleName,
-                email: form.email,
-                phone: form.phone,
-                profileStatus: form.status,
-                role: selectedRole
-                  ? {
-                      id: selectedRole.id,
-                      name: selectedRole.name,
-                      displayName: selectedRole.displayName,
-                    }
-                  : u.role,
-              }
-            : u
-        )
-      );
-      Alert.alert('Успех', 'Данные пользователя обновлены');
-    } catch (e: any) {
-      Alert.alert('Ошибка', e?.message || 'Не удалось сохранить изменения');
-    } finally {
-      setSaving(false);
+      setEditorVisible(false);
+      await loadData();
+    } catch (error: any) {
+      Alert.alert('Ошибка', error?.message || 'Не удалось сохранить');
     }
+  }, [editor, editorInitial, editorUserId, loadData]);
+
+  const confirmContent = useMemo(() => {
+    if (!confirmAction) return null;
+    if (confirmAction.action === 'APPROVE') {
+      return {
+        title: 'Подтвердить сотрудника?',
+        message: `${nameOf(confirmAction.item)} получит подтверждение профиля сотрудника.`,
+        confirmText: 'Подтвердить',
+      };
+    }
+    return {
+      title: 'Отклонить сотрудника?',
+      message: confirmAction.reason
+        ? `Профиль сотрудника "${nameOf(confirmAction.item)}" будет отклонен.\nПричина: ${confirmAction.reason}`
+        : `Профиль сотрудника "${nameOf(confirmAction.item)}" будет отклонен.`,
+      confirmText: 'Отклонить',
+    };
+  }, [confirmAction]);
+
+  const confirmModeration = useCallback(() => {
+    const current = confirmAction;
+    if (!current) return;
+    setConfirmAction(null);
+    void doModeration(current.item, current.action, current.reason);
+  }, [confirmAction, doModeration]);
+
+  const styles = useMemo(
+    () =>
+      StyleSheet.create({
+        root: { flex: 1, gap: 8 },
+        toolbar: {
+          borderWidth: 1,
+          borderColor: colors.inputBorder,
+          borderRadius: 14,
+          padding: 10,
+          gap: 8,
+          backgroundColor: colors.cardBackground,
+        },
+        toolbarMeta: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+        toolbarMetaText: {
+          color: colors.secondaryText,
+          fontSize: 11,
+          fontWeight: '700',
+          borderWidth: 1,
+          borderColor: colors.inputBorder,
+          backgroundColor: colors.inputBackground,
+          borderRadius: 999,
+          paddingHorizontal: 8,
+          paddingVertical: 5,
+        },
+        input: {
+          borderWidth: 1,
+          borderColor: colors.inputBorder,
+          borderRadius: 10,
+          paddingHorizontal: 10,
+          paddingVertical: 7,
+          color: colors.text,
+          backgroundColor: colors.inputBackground,
+        },
+        chips: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+        chip: {
+          borderWidth: 1,
+          borderColor: colors.inputBorder,
+          borderRadius: 999,
+          paddingHorizontal: 9,
+          paddingVertical: 5,
+          backgroundColor: colors.inputBackground,
+        },
+        chipActive: { borderColor: colors.tint, backgroundColor: `${colors.tint}15` },
+        chipText: { color: colors.secondaryText, fontSize: 11, fontWeight: '700' },
+        chipTextActive: { color: colors.tint },
+        desktop: { flex: 1, flexDirection: 'row', gap: 12 },
+        list: {
+          flex: 1,
+          borderWidth: 1,
+          borderColor: colors.inputBorder,
+          borderRadius: 14,
+          backgroundColor: colors.cardBackground,
+          overflow: 'hidden',
+        },
+        listHeader: {
+          paddingHorizontal: 12,
+          paddingVertical: 10,
+          borderBottomWidth: 1,
+          borderBottomColor: colors.inputBorder,
+          backgroundColor: colors.inputBackground,
+        },
+        listHeaderText: { color: colors.secondaryText, fontWeight: '700', fontSize: 12 },
+        side: {
+          width: 360,
+          borderWidth: 1,
+          borderColor: colors.inputBorder,
+          borderRadius: 14,
+          backgroundColor: colors.cardBackground,
+          padding: 12,
+          gap: 10,
+        },
+        rowWrap: { paddingHorizontal: 6, paddingTop: 6 },
+        row: {
+          padding: 8,
+          gap: 6,
+          borderWidth: 1,
+          borderColor: colors.inputBorder,
+          borderRadius: 10,
+          backgroundColor: colors.background,
+        },
+        rowSelected: { borderColor: colors.tint, backgroundColor: `${colors.tint}08` },
+        rowHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+        rowId: { color: colors.text, fontWeight: '800', fontSize: 13 },
+        rowTime: { color: colors.secondaryText, fontSize: 10, fontWeight: '700' },
+        tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 5, alignItems: 'center' },
+        tag: {
+          borderRadius: 999,
+          borderWidth: 1,
+          paddingHorizontal: 6,
+          paddingVertical: 3,
+          backgroundColor: colors.inputBackground,
+          borderColor: colors.inputBorder,
+        },
+        tagText: { color: colors.text, fontSize: 10, fontWeight: '700' },
+        summaryRow: { flexDirection: 'row', gap: 6, alignItems: 'center' },
+        avatarWrap: { width: 26, height: 26, position: 'relative' },
+        avatar: { width: 26, height: 26, borderRadius: 13 },
+        avatarFallback: {
+          width: 26,
+          height: 26,
+          borderRadius: 13,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: colors.tint,
+        },
+        avatarFallbackText: { color: '#FFFFFF', fontWeight: '800', fontSize: 9 },
+        onlineDot: {
+          position: 'absolute',
+          right: -1,
+          top: -1,
+          width: 7,
+          height: 7,
+          borderRadius: 999,
+          borderWidth: 1,
+          borderColor: colors.background,
+          backgroundColor: '#94A3B8',
+        },
+        rowMainTextWrap: { flex: 1, minWidth: 0 },
+        rowName: { color: colors.text, fontWeight: '800', fontSize: 13 },
+        rowNameMeta: { color: colors.secondaryText, fontWeight: '700', fontSize: 10 },
+        rowMetaLine: { color: colors.secondaryText, fontSize: 11 },
+        badge: {
+          borderRadius: 999,
+          borderWidth: 1,
+          paddingHorizontal: 8,
+          paddingVertical: 4,
+        },
+        badgeText: { fontSize: 11, fontWeight: '800' },
+        badgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, justifyContent: 'flex-end' },
+        metaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+        metaCell: {
+          borderWidth: 1,
+          borderColor: colors.inputBorder,
+          borderRadius: 7,
+          paddingHorizontal: 7,
+          paddingVertical: 5,
+          backgroundColor: colors.inputBackground,
+        },
+        metaLabel: { color: colors.secondaryText, fontSize: 9, fontWeight: '700' },
+        metaValue: { color: colors.text, fontSize: 11, fontWeight: '700' },
+        channelsText: { color: colors.secondaryText, fontSize: 11 },
+        actions: { flexDirection: 'row', gap: 5, flexWrap: 'wrap', alignItems: 'center' },
+        actionHint: { color: colors.secondaryText, fontSize: 10, fontWeight: '600' },
+        btn: {
+          borderWidth: 1,
+          borderColor: colors.inputBorder,
+          borderRadius: 7,
+          paddingHorizontal: 7,
+          paddingVertical: 4,
+          alignItems: 'center',
+          justifyContent: 'center',
+          minWidth: 72,
+        },
+        btnText: { color: colors.text, fontWeight: '700', fontSize: 10 },
+        pagination: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
+        paginationText: { color: colors.secondaryText, fontSize: 11, fontWeight: '700' },
+        empty: { color: colors.secondaryText, fontSize: 13, textAlign: 'center', paddingVertical: 22 },
+        mobileList: { gap: 6 },
+        mobileCard: {
+          borderRadius: 12,
+          overflow: 'hidden',
+        },
+        modalWrap: {
+          flex: 1,
+          backgroundColor: 'rgba(2,6,23,0.5)',
+          justifyContent: 'center',
+          alignItems: 'center',
+          padding: 12,
+        },
+        modalCard: {
+          width: '100%',
+          maxWidth: 760,
+          maxHeight: '90%',
+          borderRadius: 16,
+          borderWidth: 1,
+          borderColor: colors.inputBorder,
+          backgroundColor: colors.cardBackground,
+          padding: 12,
+          gap: 8,
+        },
+        sectionTitle: { color: colors.text, fontWeight: '800', fontSize: 15 },
+        sub: { color: colors.secondaryText, fontSize: 12 },
+      }),
+    [colors]
+  );
+
+  if (!active) return <View style={{ display: 'none' }} />;
+
+  const renderActionButtons = (item: AdminUsersListItem) => {
+    const pending = needsModeration(item);
+    return (
+      <View style={styles.actions}>
+        {pending ? (
+          <>
+            <Pressable
+              disabled={actionBusyId === item.id}
+              onPress={() => setConfirmAction({ item, action: 'APPROVE' })}
+              style={[styles.btn, { borderColor: '#86EFAC', backgroundColor: '#F0FDF4' }, actionBusyId === item.id && { opacity: 0.6 }]}
+            >
+              <Text style={[styles.btnText, { color: '#166534' }]}>Подтвердить</Text>
+            </Pressable>
+            <Pressable
+              disabled={actionBusyId === item.id}
+              onPress={() => {
+                setRejectTarget(item);
+                setRejectReason('');
+              }}
+              style={[styles.btn, { borderColor: '#FCA5A5', backgroundColor: '#FEF2F2' }, actionBusyId === item.id && { opacity: 0.6 }]}
+            >
+              <Text style={[styles.btnText, { color: '#991B1B' }]}>Отклонить</Text>
+            </Pressable>
+          </>
+        ) : (
+          <Text style={styles.actionHint}>Модерация не требуется</Text>
+        )}
+        <Pressable onPress={() => void openEditor(item.id)} style={styles.btn}>
+          <Text style={styles.btnText}>Редактировать</Text>
+        </Pressable>
+      </View>
+    );
   };
 
-  if (!active) {
-    return <View style={{ display: 'none' }} />;
-  }
+  const renderUserRow = (item: AdminUsersListItem, selectable = true) => {
+    const moderation = moderationTone(item.moderationState);
+    const online = onlineTone(item.isOnline);
+    const displayName = nameOf(item);
+    const roleName = getRoleDisplayName(item.role);
+    const departmentName = item.departmentName || 'Без отдела';
+    const emailOrPhone = item.email || formatPhone(item.phone) || 'Нет контактов';
+    const activityText = item.isOnline ? 'Онлайн сейчас' : formatLastSeen(item.lastSeenAt);
 
-  const ChipsRow = ({ children }: { children: React.ReactNode }) =>
-    showSideFilters ? (
-      <View style={styles.filterChipsRow}>{children}</View>
-    ) : (
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterChipsRow}>
-        {children}
-      </ScrollView>
+    return (
+      <Pressable key={item.id} onPress={selectable ? () => setSelectedId(item.id) : undefined}>
+        <View style={styles.rowWrap}>
+          <View style={[styles.row, selectable && selectedId === item.id ? styles.rowSelected : null]}>
+            <View style={styles.rowHeader}>
+              <Text style={styles.rowId}>#{item.id}</Text>
+              <Text style={styles.rowTime}>{shortTime(item.lastSeenAt)}</Text>
+            </View>
+
+            <View style={styles.tagRow}>
+              <View style={[styles.tag, { backgroundColor: moderation.bg, borderColor: moderation.border }]}>
+                <Text style={[styles.tagText, { color: moderation.text }]}>{moderationLabel(item.moderationState)}</Text>
+              </View>
+              <View style={[styles.tag, { backgroundColor: '#FFF7ED', borderColor: '#FDBA74' }]}>
+                <Text style={[styles.tagText, { color: '#9A3412' }]}>{roleName}</Text>
+              </View>
+              <View style={[styles.tag, { backgroundColor: online.bg, borderColor: online.border }]}>
+                <Text style={[styles.tagText, { color: online.text }]}>{online.textValue}</Text>
+              </View>
+            </View>
+
+            <View style={styles.summaryRow}>
+              <View style={styles.avatarWrap}>
+                {item.avatarUrl ? (
+                  <Image source={{ uri: item.avatarUrl }} style={styles.avatar} />
+                ) : (
+                  <View style={styles.avatarFallback}>
+                    <Text style={styles.avatarFallbackText}>{initialsOf(item)}</Text>
+                  </View>
+                )}
+                <View style={[styles.onlineDot, { backgroundColor: item.isOnline ? '#22C55E' : '#94A3B8' }]} />
+              </View>
+
+              <View style={styles.rowMainTextWrap}>
+                <Text numberOfLines={1} style={styles.rowName}>
+                  {displayName} <Text style={styles.rowNameMeta}>• {departmentName}</Text>
+                </Text>
+                <Text numberOfLines={1} style={styles.rowMetaLine}>
+                  {emailOrPhone}
+                </Text>
+                <Text numberOfLines={1} style={styles.rowMetaLine}>
+                  {activityText}
+                </Text>
+              </View>
+            </View>
+
+            <Text style={styles.channelsText}>Каналы: {channelLabel(item)}</Text>
+            {renderActionButtons(item)}
+          </View>
+        </View>
+      </Pressable>
     );
+  };
 
-  const filtersContent = (
-    <View style={[styles.filterGrid, (showSideFilters || isWide) && styles.filterGridWide]}>
-      <View style={[styles.filterGroup, showSideFilters && styles.filterGroupFull]}>
-        <View style={styles.filterGroupHeader}>
-          <Text style={styles.filterLabel}>Статус</Text>
-        </View>
-        <ChipsRow>
-          {STATUS_FILTERS.map((opt) => {
-            const active = statusFilter === opt.key;
-            const count = statusCounts[opt.key] ?? 0;
-            return (
-              <FilterChip
-                key={`status-${opt.key}`}
-                styles={styles}
-                active={active}
-                compact
-                onPress={() => setStatusFilter(opt.key)}
-                label={`${opt.label} · ${count}`}
-              />
-            );
-          })}
-        </ChipsRow>
-      </View>
-      <View style={[styles.filterGroup, showSideFilters && styles.filterGroupFull]}>
-        <View style={styles.filterGroupHeader}>
-          <Text style={styles.filterLabel}>Онлайн</Text>
-        </View>
-        <ChipsRow>
-          {ONLINE_FILTERS.map((opt) => {
-            const active = onlineFilter === opt.key;
-            const count = onlineCounts[opt.key] ?? 0;
-            return (
-              <FilterChip
-                key={`online-${opt.key}`}
-                styles={styles}
-                active={active}
-                compact
-                onPress={() => setOnlineFilter(opt.key)}
-                label={`${opt.label} · ${count}`}
-              />
-            );
-          })}
-        </ChipsRow>
-      </View>
-      <View style={[styles.filterGroup, showSideFilters && styles.filterGroupFull]}>
-        <View style={styles.filterGroupHeader}>
-          <Text style={styles.filterLabel}>Сортировка</Text>
-          <Pressable
-            onPress={() => setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
-            style={styles.sortDirBtn}
-          >
-            <Text style={styles.sortDirText}>{sortDir === 'asc' ? '↑ Возр.' : '↓ Убыв.'}</Text>
-          </Pressable>
-        </View>
-        <ChipsRow>
-          {SORT_OPTIONS.map((opt) => {
-            const active = sortKey === opt.key;
-            return (
-              <FilterChip
-                key={`sort-${opt.key}`}
-                styles={styles}
-                active={active}
-                compact
-                onPress={() => setSortKey(opt.key)}
-                label={opt.label}
-              />
-            );
-          })}
-        </ChipsRow>
-      </View>
-      <View style={styles.filterGroupCompactRow}>
-        <Pressable
-          onPress={() => {
-            setStatusFilter('all');
-            setOnlineFilter('all');
-            setSortKey('recent');
-            setSortDir('desc');
-          }}
-          style={styles.resetBtn}
-        >
-          <Text style={styles.resetBtnText}>Сбросить фильтры</Text>
-        </Pressable>
-        <Text style={styles.filterHint}>Найдено: {sortedUsers.length}</Text>
-      </View>
+  const renderPagination = () => (
+    <View style={styles.pagination}>
+      <Pressable
+        disabled={page <= 1}
+        onPress={() => setPage((p) => Math.max(1, p - 1))}
+        style={[styles.btn, page <= 1 && { opacity: 0.5 }]}
+      >
+        <Text style={styles.btnText}>Назад</Text>
+      </Pressable>
+      <Text style={styles.paginationText}>
+        Страница {page} из {Math.max(1, Math.ceil(total / limit))}
+      </Text>
+      <Pressable disabled={!hasNext} onPress={() => setPage((p) => p + 1)} style={[styles.btn, !hasNext && { opacity: 0.5 }]}>
+        <Text style={styles.btnText}>Вперед</Text>
+      </Pressable>
     </View>
   );
 
   return (
-    <>
-      <View style={styles.summaryWrap}>
-        {showSummaryGrid ? (
-          <View style={styles.summaryRowWrap}>
-            {summaryItems.map((item) => (
-              <SummaryChip
-                key={item.key}
-                styles={styles}
-                label={item.label}
-                value={item.value}
-                color={item.color}
-                active={isSummaryActive(item.key)}
-                onPress={() => applySummaryFilter(item.key)}
-              />
-            ))}
-          </View>
-        ) : (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.summaryRow}>
-            {summaryItems.map((item) => (
-              <SummaryChip
-                key={item.key}
-                styles={styles}
-                label={item.label}
-                value={item.value}
-                color={item.color}
-                active={isSummaryActive(item.key)}
-                onPress={() => applySummaryFilter(item.key)}
-              />
-            ))}
-          </ScrollView>
-        )}
-      </View>
-      <View style={styles.toolbarRow}>
-        <View style={[styles.searchRow, styles.searchRowCompact, { flex: 1 }]}>
-          <TextInput
-            value={search}
-            onChangeText={setSearch}
-            placeholder="Поиск по имени, email или телефону"
-            style={[styles.searchInput, { paddingVertical: 0 }]}
-          />
-          {loadingUsers && <ActivityIndicator size="small" />}
+    <View style={styles.root}>
+      <View style={styles.toolbar}>
+        <TextInput
+          value={search}
+          onChangeText={(v) => {
+            setSearch(v);
+            setPage(1);
+          }}
+          placeholder="Поиск по ФИО, email, телефону, ID"
+          placeholderTextColor={colors.secondaryText}
+          style={styles.input}
+        />
+        <View style={styles.toolbarMeta}>
+          <Text style={styles.toolbarMetaText}>Всего пользователей: {total}</Text>
+          <Text style={styles.toolbarMetaText}>На странице ждут проверки: {pendingCountOnPage}</Text>
         </View>
-        {!showSideFilters ? (
-          <Pressable
-            onPress={() => setFiltersOpen(true)}
-            style={[styles.filterIconBtn, filtersOpen && styles.filterActionActive]}
-            accessibilityLabel="Фильтры"
-          >
-            <Ionicons name="filter-outline" size={18} color={colors.text} />
-            {activeFilterCount > 0 ? (
-              <View style={[styles.filterBadge, { position: 'absolute', top: -4, right: -4 }]}>
-                <Text style={styles.filterBadgeText}>{activeFilterCount}</Text>
-              </View>
-            ) : null}
-          </Pressable>
-        ) : null}
-      </View>
-      {!showSideFilters ? <Text style={styles.filterHint}>Найдено: {sortedUsers.length}</Text> : null}
-      <View style={[styles.usersBody, showSideFilters && styles.usersBodyWide]}>
-        {showSideFilters ? (
-          <View style={styles.filtersColumn}>
-            <View style={styles.filtersCard}>
-              <Text style={styles.sectionTitle}>Фильтры</Text>
-              {filtersContent}
-            </View>
-          </View>
-        ) : null}
-        <View style={styles.userListWrap}>
-          <FlatList
-            data={sortedUsers}
-            numColumns={columns}
-            key={`user-list-${columns}`}
-            columnWrapperStyle={columns > 1 ? styles.userColumnWrap : undefined}
-            keyExtractor={(item) => String(item.id)}
-            renderItem={({ item }) => {
-              const activeRow = item.id === selectedUserId;
-              const presence = presenceMap[item.id];
-              const isOnline = presence?.isOnline ?? item.isOnline ?? false;
-              return (
-                <UserListItem
-                  styles={styles}
-                  item={item}
-                  active={activeRow}
-                  isWide={isWide}
-                  onPress={() => handleSelectUser(item)}
-                  isOnline={isOnline}
-                  statusMeta={statusMeta(resolveEmployeeStatus(item) || item.profileStatus || 'PENDING')}
-                />
-              );
-            }}
-            ListEmptyComponent={
-              <Text style={styles.subtitle}>
-                {loadingUsers ? 'Поиск...' : 'Нет пользователей по выбранным фильтрам'}
-              </Text>
-            }
-            style={{ flex: 1 }}
-            contentContainerStyle={{
-              flexGrow: 1,
-              paddingTop: 6,
-              paddingBottom: tabBarSpacer + 12,
-              ...(Platform.OS === 'web' && showSideFilters ? { paddingHorizontal: 8 } : {}),
-            }}
-          />
+        <View style={styles.chips}>
+          {moderationFilters.map((f) => {
+            const activeFilter = filters.moderation === f.key;
+            return (
+              <Pressable
+                key={f.key}
+                onPress={() => {
+                  setFilters((s) => ({ ...s, moderation: f.key }));
+                  setPage(1);
+                }}
+                style={[styles.chip, activeFilter && styles.chipActive]}
+              >
+                <Text style={[styles.chipText, activeFilter && styles.chipTextActive]}>{f.label}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+        <View style={styles.chips}>
+          {onlineFilters.map((f) => {
+            const activeFilter = filters.online === f.key;
+            return (
+              <Pressable
+                key={f.key}
+                onPress={() => {
+                  setFilters((s) => ({ ...s, online: f.key }));
+                  setPage(1);
+                }}
+                style={[styles.chip, activeFilter && styles.chipActive]}
+              >
+                <Text style={[styles.chipText, activeFilter && styles.chipTextActive]}>{f.label}</Text>
+              </Pressable>
+            );
+          })}
         </View>
       </View>
 
+      {desktop ? (
+        <View style={styles.desktop}>
+          <View style={styles.list}>
+            <View style={styles.listHeader}>
+              <Text style={styles.listHeaderText}>Список пользователей</Text>
+            </View>
+            <ScrollView contentContainerStyle={{ paddingBottom: tabBarSpacer + 12 }}>
+              {loading ? <ActivityIndicator style={{ marginVertical: 20 }} color={colors.tint} /> : null}
+              {!loading && !items.length ? <Text style={styles.empty}>Пользователи не найдены</Text> : null}
+              {items.map((item) => renderUserRow(item))}
+            </ScrollView>
+          </View>
+          <View style={styles.side}>
+            <Text style={styles.sectionTitle}>Карточка пользователя</Text>
+            {!selected ? (
+              <Text style={styles.sub}>Выберите пользователя в списке слева</Text>
+            ) : (
+              <>
+                <Text style={[styles.rowName, { fontSize: 16 }]}>{nameOf(selected)}</Text>
+                <Text style={styles.sub}>ID: {selected.id}</Text>
+                <Text style={styles.sub}>Email: {selected.email || '—'}</Text>
+                <Text style={styles.sub}>Телефон: {formatPhone(selected.phone) || '—'}</Text>
+                <Text style={styles.sub}>Статус модерации: {moderationLabel(selected.moderationState)}</Text>
+                <Text style={styles.sub}>Роль: {getRoleDisplayName(selected.role)}</Text>
+                <Text style={styles.sub}>Отдел: {selected.departmentName || 'Не назначен'}</Text>
+                <Text style={styles.sub}>
+                  Активность: {selected.isOnline ? 'Сейчас онлайн' : formatLastSeen(selected.lastSeenAt)}
+                </Text>
+                <Text style={styles.sub}>Каналы: {channelLabel(selected)}</Text>
+                {renderActionButtons(selected)}
+              </>
+            )}
+            <View style={{ marginTop: 'auto' }}>{renderPagination()}</View>
+          </View>
+        </View>
+      ) : (
+        <ScrollView contentContainerStyle={{ paddingBottom: tabBarSpacer + 12 }}>
+          {loading ? <ActivityIndicator style={{ marginVertical: 20 }} color={colors.tint} /> : null}
+          {!loading && !items.length ? <Text style={styles.empty}>Пользователи не найдены</Text> : null}
+          <View style={styles.mobileList}>
+            {items.map((item) => (
+              <View key={item.id} style={styles.mobileCard}>
+                {renderUserRow(item, false)}
+              </View>
+            ))}
+          </View>
+          <View style={{ marginTop: 8 }}>{renderPagination()}</View>
+        </ScrollView>
+      )}
+
       <Modal
-        visible={filtersOpen && !showSideFilters}
+        visible={!!rejectTarget}
         transparent
         animationType="fade"
-        onRequestClose={() => setFiltersOpen(false)}
+        onRequestClose={() => {
+          setRejectTarget(null);
+          setRejectReason('');
+        }}
       >
-        <View style={styles.modalOverlay}>
-          <TouchableWithoutFeedback onPress={() => setFiltersOpen(false)}>
+        <View style={styles.modalWrap}>
+          <TouchableWithoutFeedback
+            onPress={() => {
+              setRejectTarget(null);
+              setRejectReason('');
+            }}
+          >
             <View style={StyleSheet.absoluteFill} />
           </TouchableWithoutFeedback>
-          <View style={[styles.filtersModalCard, { backgroundColor: colors.cardBackground }]}>
-            <View style={styles.filtersModalHeader}>
-              <Text style={styles.filtersModalTitle}>Фильтры</Text>
-              <Pressable onPress={() => setFiltersOpen(false)} style={styles.filtersModalClose}>
-                <Text style={styles.filtersModalCloseText}>Закрыть</Text>
+          <View style={[styles.modalCard, { maxWidth: 520 }]}>
+            <Text style={styles.sectionTitle}>Причина отклонения</Text>
+            <Text style={styles.sub}>{rejectTarget ? nameOf(rejectTarget) : ''}</Text>
+            <TextInput
+              value={rejectReason}
+              onChangeText={setRejectReason}
+              placeholder="Укажите причину (опционально)"
+              placeholderTextColor={colors.secondaryText}
+              multiline
+              style={[styles.input, { minHeight: 90, textAlignVertical: 'top' }]}
+            />
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
+              <Pressable
+                onPress={() => {
+                  setRejectTarget(null);
+                  setRejectReason('');
+                }}
+                style={styles.btn}
+              >
+                <Text style={styles.btnText}>Отмена</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  if (!rejectTarget) return;
+                  setConfirmAction({
+                    item: rejectTarget,
+                    action: 'REJECT',
+                    reason: rejectReason.trim() || undefined,
+                  });
+                  setRejectTarget(null);
+                  setRejectReason('');
+                }}
+                style={[styles.btn, { borderColor: '#FCA5A5', backgroundColor: '#FEF2F2' }]}
+              >
+                <Text style={[styles.btnText, { color: '#991B1B' }]}>Далее</Text>
               </Pressable>
             </View>
-            <ScrollView contentContainerStyle={{ paddingBottom: 8 }}>{filtersContent}</ScrollView>
           </View>
         </View>
       </Modal>
 
-      <Modal
-        visible={active && modalVisible}
-        animationType="fade"
-        transparent
-        onRequestClose={() => setModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <TouchableWithoutFeedback onPress={() => setModalVisible(false)}>
+      <CustomAlert
+        visible={!!confirmAction && !!confirmContent}
+        title={confirmContent?.title || 'Подтверждение'}
+        message={confirmContent?.message || 'Вы уверены?'}
+        cancelText="Отмена"
+        confirmText={confirmContent?.confirmText || 'Подтвердить'}
+        onCancel={() => setConfirmAction(null)}
+        onConfirm={confirmModeration}
+      />
+
+      <Modal visible={editorVisible} transparent animationType="fade" onRequestClose={() => setEditorVisible(false)}>
+        <View style={styles.modalWrap}>
+          <TouchableWithoutFeedback onPress={() => setEditorVisible(false)}>
             <View style={StyleSheet.absoluteFill} />
           </TouchableWithoutFeedback>
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={{ width: '100%', maxWidth: 980, maxHeight: modalMaxHeight, height: modalMaxHeight }}
-          >
-            <View style={[styles.modalCard, { backgroundColor: colors.cardBackground, maxHeight: modalMaxHeight, flex: 1 }]}>
-              {profileLoading ? (
-                <View style={styles.center}>
-                  <ActivityIndicator size="large" color={colors.tint} />
-                </View>
-              ) : selectedProfile ? (
-                <View style={styles.modalBody}>
-                  <ScrollView
-                    style={styles.modalScroll}
-                    contentContainerStyle={styles.modalScrollContent}
-                    showsVerticalScrollIndicator
-                  >
-                    <View style={styles.heroWrap}>
-                      <LinearGradient
-                        colors={['#C7D2FE', '#E9D5FF']}
-                        start={{ x: 0, y: 0.4 }}
-                        end={{ x: 1, y: 1 }}
-                        style={styles.heroBg}
-                      />
-                      <View style={styles.heroInner}>
-                        <View style={styles.avatarOuter}>
-                          {selectedProfile.avatarUrl ? (
-                            <Image source={{ uri: selectedProfile.avatarUrl }} style={styles.avatar} resizeMode="cover" />
-                          ) : (
-                            <View style={[styles.avatar, styles.avatarFallback]}>
-                              <Text style={styles.avatarInitials}>{userInitials}</Text>
-                            </View>
-                          )}
-                        </View>
-                        <Text style={styles.heroTitle}>
-                          {[form.lastName, form.firstName, form.middleName].filter(Boolean).join(' ') || 'Профиль'}
-                        </Text>
-                        <Text style={styles.heroSubtitle}>
-                          {selectedDepartment?.name || selectedProfile.employeeProfile?.department?.name || 'Без отдела'}
-                        </Text>
-                        <View style={styles.chipsRow}>
-                          <SelectableChip styles={styles} label="Сотрудник" icon="id-card-outline" tone="violet" />
-                          <SelectableChip
-                            styles={styles}
-                            label={form.status || 'STATUS'}
-                            icon="shield-checkmark-outline"
-                            tone={form.status === 'ACTIVE' ? 'green' : form.status === 'BLOCKED' ? 'red' : 'blue'}
-                            onPress={cycleStatus}
-                          />
-                          <SelectableChip
-                            styles={styles}
-                            label={selectedRole ? getRoleDisplayName(selectedRole) : 'Роль'}
-                            icon="person-outline"
-                            tone="blue"
-                            onPress={handleRoleChipPress}
-                          />
-                          <SelectableChip
-                            styles={styles}
-                            label={selectedDepartment?.name || 'Отдел'}
-                            icon="business-outline"
-                            tone="gray"
-                            onPress={handleDepartmentChipPress}
-                          />
-                        </View>
-                      </View>
-                    </View>
+          <View style={styles.modalCard}>
+            {!editor ? (
+              <ActivityIndicator style={{ marginVertical: 20 }} color={colors.tint} />
+            ) : (
+              <>
+                <Text style={styles.sectionTitle}>Редактирование пользователя #{editorUserId}</Text>
+                <ScrollView contentContainerStyle={{ gap: 8 }}>
+                  <TextInput
+                    value={editor.lastName}
+                    onChangeText={(v) => setEditor((s) => (s ? { ...s, lastName: v } : s))}
+                    style={styles.input}
+                    placeholder="Фамилия"
+                    placeholderTextColor={colors.secondaryText}
+                  />
+                  <TextInput
+                    value={editor.firstName}
+                    onChangeText={(v) => setEditor((s) => (s ? { ...s, firstName: v } : s))}
+                    style={styles.input}
+                    placeholder="Имя"
+                    placeholderTextColor={colors.secondaryText}
+                  />
+                  <TextInput
+                    value={editor.middleName}
+                    onChangeText={(v) => setEditor((s) => (s ? { ...s, middleName: v } : s))}
+                    style={styles.input}
+                    placeholder="Отчество"
+                    placeholderTextColor={colors.secondaryText}
+                  />
+                  <TextInput
+                    value={editor.email}
+                    onChangeText={(v) => setEditor((s) => (s ? { ...s, email: v } : s))}
+                    style={styles.input}
+                    placeholder="Email"
+                    placeholderTextColor={colors.secondaryText}
+                  />
+                  <TextInput
+                    value={editor.phone}
+                    onChangeText={(v) => setEditor((s) => (s ? { ...s, phone: formatPhone(v) } : s))}
+                    style={styles.input}
+                    placeholder="Телефон"
+                    placeholderTextColor={colors.secondaryText}
+                  />
 
-                    <View style={styles.modalTabs}>
+                  <Text style={styles.sub}>Роль</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                    {roles.map((r) => (
                       <Pressable
-                        onPress={() => setActiveTab('user')}
-                        style={[styles.tabBtn, activeTab === 'user' && styles.tabBtnActive]}
+                        key={`role-${r.id}`}
+                        onPress={() => setEditor((s) => (s ? { ...s, roleId: r.id } : s))}
+                        style={[styles.chip, editor.roleId === r.id && styles.chipActive]}
                       >
-                        <Text style={[styles.tabText, activeTab === 'user' && styles.tabTextActive]}>Пользователь</Text>
+                        <Text style={[styles.chipText, editor.roleId === r.id && styles.chipTextActive]}>
+                          {getRoleDisplayName(r)}
+                        </Text>
                       </Pressable>
-                      <Pressable
-                        onPress={() => setActiveTab('profiles')}
-                        style={[styles.tabBtn, activeTab === 'profiles' && styles.tabBtnActive]}
-                      >
-                        <Text style={[styles.tabText, activeTab === 'profiles' && styles.tabTextActive]}>Профили</Text>
-                      </Pressable>
-                    </View>
-
-                    {activeTab === 'user' ? (
-                      <View style={styles.cardsWrap}>
-                        <SelectorCard
-                          styles={styles}
-                          icon="shield-checkmark-outline"
-                          label="Статус"
-                          options={STATUS_OPTIONS.map((s) => ({ value: s, label: s }))}
-                          selected={form.status}
-                          onSelect={(v) => setForm((prev) => ({ ...prev, status: v as ProfileStatus }))}
-                        />
-                        <EditableCard
-                          styles={styles}
-                          icon="mail-outline"
-                          label="Email"
-                          value={form.email}
-                          onChangeText={(text) => setForm((prev) => ({ ...prev, email: text }))}
-                          placeholder="email@example.com"
-                          keyboardType="email-address"
-                        />
-                        <EditableCard
-                          styles={styles}
-                          icon="call-outline"
-                          label="Телефон"
-                          value={form.phone}
-                          mask="+7 (999) 999-99-99"
-                          onMaskedChange={(masked, raw) => {
-                            const normalizedMasked = formatPhone(masked || raw || '');
-                            setForm((prev) => ({ ...prev, phone: normalizedMasked }));
-                          }}
-                          onChangeText={(text) => setForm((prev) => ({ ...prev, phone: formatPhone(text) }))}
-                          placeholder="+7 ..."
-                          keyboardType="phone-pad"
-                        />
-                        <EditableCard
-                          styles={styles}
-                          icon="document-text-outline"
-                          label="Фамилия"
-                          value={form.lastName}
-                          onChangeText={(text) => setForm((prev) => ({ ...prev, lastName: text }))}
-                          placeholder="Фамилия"
-                        />
-                        <EditableCard
-                          styles={styles}
-                          icon="document-text-outline"
-                          label="Имя"
-                          value={form.firstName}
-                          onChangeText={(text) => setForm((prev) => ({ ...prev, firstName: text }))}
-                          placeholder="Имя"
-                        />
-                        <EditableCard
-                          styles={styles}
-                          icon="document-text-outline"
-                          label="Отчество"
-                          value={form.middleName}
-                          onChangeText={(text) => setForm((prev) => ({ ...prev, middleName: text }))}
-                          placeholder="Отчество"
-                        />
-                        <EditableCard
-                          styles={styles}
-                          icon="key-outline"
-                          label="Новый пароль"
-                          value={newPassword}
-                          onChangeText={setNewPassword}
-                          placeholder="Оставьте пустым чтобы не менять"
-                          secureTextEntry
-                        />
-
-                        <StaticCard
-                          styles={styles}
-                          icon="barcode-outline"
-                          label="ID пользователя"
-                          value={`#${selectedProfile.id}`}
-                        />
-                      </View>
-                    ) : (
-                      <View style={{ gap: 12 }}>
-                        <View style={styles.profileTabsRow}>
-                          {profileTabs.map((tab) => {
-                            const isActive = tab.key === activeProfileTab;
-                            return (
-                              <Pressable
-                                key={tab.key}
-                                onPress={() => tab.available && setActiveProfileTab(tab.key)}
-                                disabled={!tab.available}
-                                style={{ flexGrow: isWide ? 0 : 1 }}
-                              >
-                                <View
-                                  style={[
-                                    styles.profileTabCard,
-                                    isActive && styles.profileTabCardActive,
-                                    !tab.available && styles.profileTabCardDisabled,
-                                  ]}
-                                >
-                                  {tab.avatarUrl ? (
-                                    <Image source={{ uri: tab.avatarUrl }} style={styles.profileAvatar} resizeMode="cover" />
-                                  ) : (
-                                    <View style={[styles.profileAvatar, styles.profileAvatarFallback]}>
-                                      <Text style={styles.profileAvatarText}>{userInitials}</Text>
-                                    </View>
-                                  )}
-                                  <View style={styles.profileTabMeta}>
-                                    <Text style={styles.profileTabLabel}>{tab.label}</Text>
-                                    <Text style={styles.profileTabStatus}>
-                                      {tab.available ? tab.status || '—' : 'Не создан'}
-                                    </Text>
-                                  </View>
-                                </View>
-                              </Pressable>
-                            );
-                          })}
-                        </View>
-
-                        {activeProfileTab === 'employee' ? (
-                          <View style={{ gap: 8 }}>
-                            <Text style={styles.sectionTitle}>Профиль сотрудника</Text>
-                            {profileForms.employee ? (
-                              <>
-                                <SelectorCard
-                                  styles={styles}
-                                  icon="shield-checkmark-outline"
-                                  label="Статус профиля"
-                                  options={STATUS_OPTIONS.map((s) => ({ value: s, label: s }))}
-                                  selected={profileForms.employee.status}
-                                  onSelect={(v) =>
-                                    setProfileForms((prev) => ({
-                                      ...prev,
-                                      employee: prev.employee ? { ...prev.employee, status: v as ProfileStatus } : prev.employee,
-                                    }))
-                                  }
-                                />
-                              </>
-                            ) : (
-                              <StaticCard styles={styles} icon="alert-circle-outline" label="Профиль сотрудника" value="Не создан" />
-                            )}
-                          </View>
-                        ) : null}
-
-                        {activeProfileTab === 'client' ? (
-                          <View style={{ gap: 8 }}>
-                            <Text style={styles.sectionTitle}>Профиль клиента</Text>
-                            {profileForms.client ? (
-                              <>
-                                <SelectorCard
-                                  styles={styles}
-                                  icon="shield-checkmark-outline"
-                                  label="Статус профиля"
-                                  options={STATUS_OPTIONS.map((s) => ({ value: s, label: s }))}
-                                  selected={profileForms.client.status}
-                                  onSelect={(v) =>
-                                    setProfileForms((prev) => ({
-                                      ...prev,
-                                      client: prev.client ? { ...prev.client, status: v as ProfileStatus } : prev.client,
-                                    }))
-                                  }
-                                />
-                                <EditableCard
-                                  styles={styles}
-                                  icon="location-outline"
-                                  label="Улица"
-                                  value={profileForms.client.address?.street || ''}
-                                  onChangeText={(text) =>
-                                    setProfileForms((prev) => ({
-                                      ...prev,
-                                      client: prev.client
-                                        ? {
-                                            ...prev.client,
-                                            address: { ...(prev.client.address || buildAddressForm(null)), street: text },
-                                          }
-                                        : prev.client,
-                                    }))
-                                  }
-                                  placeholder="Улица"
-                                />
-                                <EditableCard
-                                  styles={styles}
-                                  icon="business-outline"
-                                  label="Город"
-                                  value={profileForms.client.address?.city || ''}
-                                  onChangeText={(text) =>
-                                    setProfileForms((prev) => ({
-                                      ...prev,
-                                      client: prev.client
-                                        ? {
-                                            ...prev.client,
-                                            address: { ...(prev.client.address || buildAddressForm(null)), city: text },
-                                          }
-                                        : prev.client,
-                                    }))
-                                  }
-                                  placeholder="Город"
-                                />
-                                <EditableCard
-                                  styles={styles}
-                                  icon="map-outline"
-                                  label="Регион"
-                                  value={profileForms.client.address?.state || ''}
-                                  onChangeText={(text) =>
-                                    setProfileForms((prev) => ({
-                                      ...prev,
-                                      client: prev.client
-                                        ? {
-                                            ...prev.client,
-                                            address: { ...(prev.client.address || buildAddressForm(null)), state: text },
-                                          }
-                                        : prev.client,
-                                    }))
-                                  }
-                                  placeholder="Регион"
-                                />
-                                <EditableCard
-                                  styles={styles}
-                                  icon="mail-outline"
-                                  label="Индекс"
-                                  value={profileForms.client.address?.postalCode || ''}
-                                  onChangeText={(text) =>
-                                    setProfileForms((prev) => ({
-                                      ...prev,
-                                      client: prev.client
-                                        ? {
-                                            ...prev.client,
-                                            address: { ...(prev.client.address || buildAddressForm(null)), postalCode: text },
-                                          }
-                                        : prev.client,
-                                    }))
-                                  }
-                                  placeholder="Почтовый индекс"
-                                  keyboardType="numeric"
-                                />
-                                <EditableCard
-                                  styles={styles}
-                                  icon="flag-outline"
-                                  label="Страна"
-                                  value={profileForms.client.address?.country || ''}
-                                  onChangeText={(text) =>
-                                    setProfileForms((prev) => ({
-                                      ...prev,
-                                      client: prev.client
-                                        ? {
-                                            ...prev.client,
-                                            address: { ...(prev.client.address || buildAddressForm(null)), country: text },
-                                          }
-                                        : prev.client,
-                                    }))
-                                  }
-                                  placeholder="Страна"
-                                />
-                              </>
-                            ) : (
-                              <StaticCard styles={styles} icon="alert-circle-outline" label="Профиль клиента" value="Не создан" />
-                            )}
-                          </View>
-                        ) : null}
-
-                        {activeProfileTab === 'supplier' ? (
-                          <View style={{ gap: 8 }}>
-                            <Text style={styles.sectionTitle}>Профиль поставщика</Text>
-                            {profileForms.supplier ? (
-                              <>
-                                <SelectorCard
-                                  styles={styles}
-                                  icon="shield-checkmark-outline"
-                                  label="Статус профиля"
-                                  options={STATUS_OPTIONS.map((s) => ({ value: s, label: s }))}
-                                  selected={profileForms.supplier.status}
-                                  onSelect={(v) =>
-                                    setProfileForms((prev) => ({
-                                      ...prev,
-                                      supplier: prev.supplier ? { ...prev.supplier, status: v as ProfileStatus } : prev.supplier,
-                                    }))
-                                  }
-                                />
-                                <EditableCard
-                                  styles={styles}
-                                  icon="location-outline"
-                                  label="Улица"
-                                  value={profileForms.supplier.address?.street || ''}
-                                  onChangeText={(text) =>
-                                    setProfileForms((prev) => ({
-                                      ...prev,
-                                      supplier: prev.supplier
-                                        ? {
-                                            ...prev.supplier,
-                                            address: { ...(prev.supplier.address || buildAddressForm(null)), street: text },
-                                          }
-                                        : prev.supplier,
-                                    }))
-                                  }
-                                  placeholder="Улица"
-                                />
-                                <EditableCard
-                                  styles={styles}
-                                  icon="business-outline"
-                                  label="Город"
-                                  value={profileForms.supplier.address?.city || ''}
-                                  onChangeText={(text) =>
-                                    setProfileForms((prev) => ({
-                                      ...prev,
-                                      supplier: prev.supplier
-                                        ? {
-                                            ...prev.supplier,
-                                            address: { ...(prev.supplier.address || buildAddressForm(null)), city: text },
-                                          }
-                                        : prev.supplier,
-                                    }))
-                                  }
-                                  placeholder="Город"
-                                />
-                                <EditableCard
-                                  styles={styles}
-                                  icon="map-outline"
-                                  label="Регион"
-                                  value={profileForms.supplier.address?.state || ''}
-                                  onChangeText={(text) =>
-                                    setProfileForms((prev) => ({
-                                      ...prev,
-                                      supplier: prev.supplier
-                                        ? {
-                                            ...prev.supplier,
-                                            address: { ...(prev.supplier.address || buildAddressForm(null)), state: text },
-                                          }
-                                        : prev.supplier,
-                                    }))
-                                  }
-                                  placeholder="Регион"
-                                />
-                                <EditableCard
-                                  styles={styles}
-                                  icon="mail-outline"
-                                  label="Индекс"
-                                  value={profileForms.supplier.address?.postalCode || ''}
-                                  onChangeText={(text) =>
-                                    setProfileForms((prev) => ({
-                                      ...prev,
-                                      supplier: prev.supplier
-                                        ? {
-                                            ...prev.supplier,
-                                            address: { ...(prev.supplier.address || buildAddressForm(null)), postalCode: text },
-                                          }
-                                        : prev.supplier,
-                                    }))
-                                  }
-                                  placeholder="Почтовый индекс"
-                                  keyboardType="numeric"
-                                />
-                                <EditableCard
-                                  styles={styles}
-                                  icon="flag-outline"
-                                  label="Страна"
-                                  value={profileForms.supplier.address?.country || ''}
-                                  onChangeText={(text) =>
-                                    setProfileForms((prev) => ({
-                                      ...prev,
-                                      supplier: prev.supplier
-                                        ? {
-                                            ...prev.supplier,
-                                            address: { ...(prev.supplier.address || buildAddressForm(null)), country: text },
-                                          }
-                                        : prev.supplier,
-                                    }))
-                                  }
-                                  placeholder="Страна"
-                                />
-                              </>
-                            ) : (
-                              <StaticCard styles={styles} icon="alert-circle-outline" label="Профиль поставщика" value="Не создан" />
-                            )}
-                          </View>
-                        ) : null}
-                      </View>
-                    )}
-
-                    {isDirty ? (
-                      <View style={{ marginTop: 12 }}>
-                        <ShimmerButton
-                          title={saving ? 'Сохраняем...' : 'Сохранить'}
-                          loading={saving}
-                          gradientColors={btnGradient}
-                          onPress={handleSave}
-                        />
-                      </View>
-                    ) : null}
+                    ))}
                   </ScrollView>
-                </View>
-              ) : (
-                <Text style={{ color: colors.text }}>Нет данных</Text>
-              )}
-              <TouchableOpacity style={styles.modalClose} onPress={() => setModalVisible(false)}>
-                <Text style={styles.modalCloseText}>Закрыть</Text>
-              </TouchableOpacity>
 
-              {pickerType && (
-                <View style={styles.pickerOverlay} pointerEvents="box-none">
-                  <TouchableWithoutFeedback onPress={() => setPickerType(null)}>
-                    <View style={StyleSheet.absoluteFill} />
-                  </TouchableWithoutFeedback>
-                  <View style={[styles.pickerCard, { backgroundColor: colors.cardBackground }]}>
-                    <Text style={styles.pickerTitle}>
-                      {pickerType === 'role' ? 'Выбор роли' : 'Выбор отдела'}
-                    </Text>
-                    <ScrollView style={{ maxHeight: 320 }}>
-                      {(pickerType === 'role' ? roleOptions : departmentOptions).map((opt) => {
-                        const activeOption =
-                          pickerType === 'role'
-                            ? opt.value === form.roleId
-                            : opt.value === form.departmentId;
-                        return (
-                          <Pressable
-                            key={`${pickerType}-${opt.value ?? 'none'}`}
-                            onPress={() => {
-                              if (pickerType === 'role') {
-                                setForm((prev) => ({ ...prev, roleId: Number(opt.value) }));
-                              } else {
-                                setForm((prev) => ({
-                                  ...prev,
-                                  departmentId: opt.value === null ? null : Number(opt.value),
-                                }));
-                              }
-                              setPickerType(null);
-                            }}
-                            style={[styles.pickerOption, activeOption && styles.pickerOptionActive]}
-                          >
-                            <Text style={[styles.pickerOptionText, activeOption && styles.pickerOptionTextActive]}>
-                              {opt.label}
-                            </Text>
-                          </Pressable>
-                        );
-                      })}
-                    </ScrollView>
+                  <Text style={styles.sub}>Отдел</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                    <Pressable
+                      onPress={() => setEditor((s) => (s ? { ...s, departmentId: null } : s))}
+                      style={[styles.chip, editor.departmentId === null && styles.chipActive]}
+                    >
+                      <Text style={[styles.chipText, editor.departmentId === null && styles.chipTextActive]}>
+                        Без отдела
+                      </Text>
+                    </Pressable>
+                    {departments.map((d) => (
+                      <Pressable
+                        key={`dept-${d.id}`}
+                        onPress={() => setEditor((s) => (s ? { ...s, departmentId: d.id } : s))}
+                        style={[styles.chip, editor.departmentId === d.id && styles.chipActive]}
+                      >
+                        <Text style={[styles.chipText, editor.departmentId === d.id && styles.chipTextActive]}>
+                          {d.name}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </ScrollView>
+
+                  <Text style={styles.sub}>Статус профиля сотрудника</Text>
+                  <View style={styles.chips}>
+                    {(['PENDING', 'ACTIVE', 'BLOCKED'] as ProfileStatus[]).map((st) => (
+                      <Pressable
+                        key={`st-${st}`}
+                        onPress={() => setEditor((s) => (s ? { ...s, employeeStatus: st } : s))}
+                        style={[styles.chip, editor.employeeStatus === st && styles.chipActive]}
+                      >
+                        <Text style={[styles.chipText, editor.employeeStatus === st && styles.chipTextActive]}>
+                          {profileStatusLabel(st)}
+                        </Text>
+                      </Pressable>
+                    ))}
                   </View>
+                </ScrollView>
+                <View style={{ flexDirection: 'row', gap: 8, justifyContent: 'flex-end' }}>
+                  <Pressable onPress={() => setEditorVisible(false)} style={styles.btn}>
+                    <Text style={styles.btnText}>Закрыть</Text>
+                  </Pressable>
+                  <Pressable onPress={() => void saveEditor()} style={[styles.btn, { borderColor: colors.tint }]}>
+                    <Text style={[styles.btnText, { color: colors.tint }]}>Сохранить</Text>
+                  </Pressable>
                 </View>
-              )}
-            </View>
-          </KeyboardAvoidingView>
+              </>
+            )}
+          </View>
         </View>
       </Modal>
-    </>
+    </View>
   );
 }

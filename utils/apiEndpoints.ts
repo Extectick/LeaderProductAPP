@@ -50,9 +50,11 @@ export const API_ENDPOINTS = {
     ROLE_PERMISSIONS: (roleId: number) => `/users/roles/${roleId}/permissions`,
     USER_ROLE: (userId: number) => `/users/${userId}/role`,
     USERS: (search?: string) => `/users${search ? `?search=${encodeURIComponent(search)}` : ''}`,
+    ADMIN_LIST: '/users/admin/list',
     USER_ADMIN_UPDATE: (userId: number) => `/users/${userId}`,
     USER_PROFILE_UPDATE: (userId: number, type: 'client' | 'supplier' | 'employee') =>
       `/users/${userId}/profiles/${type}`,
+    USER_EMPLOYEE_MODERATION: (userId: number) => `/users/${userId}/employee-moderation`,
     USER_ADMIN_PASSWORD: (userId: number) => `/users/${userId}/password`,
     DEPARTMENT_USERS: (departmentId: number) => `/users/departments/${departmentId}/users`,
     PHONE_VERIFICATION_START: '/users/me/phone/verification/start',
