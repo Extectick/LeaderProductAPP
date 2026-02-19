@@ -2,6 +2,8 @@ type ServerStatusSnapshot = {
   isReachable: boolean;
   lastChangedAt: number;
   lastReason: string | null;
+  lastReachableAt: number | null;
+  lastUnavailableAt: number | null;
 };
 
 type Listener = (snapshot: ServerStatusSnapshot) => void;
@@ -12,6 +14,8 @@ const state: ServerStatusSnapshot = {
   isReachable: true,
   lastChangedAt: Date.now(),
   lastReason: null,
+  lastReachableAt: Date.now(),
+  lastUnavailableAt: null,
 };
 
 function emit() {
@@ -34,6 +38,7 @@ export function setServerReachable() {
   state.isReachable = true;
   state.lastChangedAt = Date.now();
   state.lastReason = null;
+  state.lastReachableAt = state.lastChangedAt;
   emit();
 }
 
@@ -43,6 +48,7 @@ export function setServerUnavailable(reason?: string) {
   state.isReachable = false;
   state.lastChangedAt = Date.now();
   state.lastReason = nextReason;
+  state.lastUnavailableAt = state.lastChangedAt;
   emit();
 }
 
@@ -52,4 +58,3 @@ export function subscribeServerStatus(listener: Listener) {
     listeners.delete(listener);
   };
 }
-

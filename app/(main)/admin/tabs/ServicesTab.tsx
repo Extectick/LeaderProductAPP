@@ -26,6 +26,7 @@ import {
   getAdminServices,
   ServiceAdminItem,
   ServiceDepartmentRule,
+  ServiceKind,
   ServiceRoleRule,
   updateService,
   upsertServiceDepartmentAccess,
@@ -48,6 +49,11 @@ const SERVICE_PERMISSION_ACTION_OPTIONS = [
   { key: 'export', label: 'Экспорт' },
 ];
 
+const SERVICE_KIND_OPTIONS: Array<{ value: ServiceKind; label: string }> = [
+  { value: 'CLOUD', label: 'Cloud' },
+  { value: 'LOCAL', label: 'Local' },
+];
+
 export default function ServicesTab({ active, styles, colors }: ServicesTabProps) {
   const tabBarSpacer = useTabBarSpacerHeight();
   const [services, setServices] = useState<ServiceAdminItem[]>([]);
@@ -67,6 +73,7 @@ export default function ServicesTab({ active, styles, colors }: ServicesTabProps
   const [newServiceRoute, setNewServiceRoute] = useState('');
   const [newServiceIcon, setNewServiceIcon] = useState('');
   const [newServiceDescription, setNewServiceDescription] = useState('');
+  const [newServiceKind, setNewServiceKind] = useState<ServiceKind>('CLOUD');
   const [newServiceIsActive, setNewServiceIsActive] = useState(true);
   const [newServiceDefaultVisible, setNewServiceDefaultVisible] = useState(true);
   const [newServiceDefaultEnabled, setNewServiceDefaultEnabled] = useState(true);
@@ -132,6 +139,7 @@ export default function ServicesTab({ active, styles, colors }: ServicesTabProps
       const created = await createAdminService({
         key,
         name,
+        kind: newServiceKind,
         route: newServiceRoute.trim() || null,
         icon: newServiceIcon.trim() || null,
         description: newServiceDescription.trim() || null,
@@ -146,6 +154,7 @@ export default function ServicesTab({ active, styles, colors }: ServicesTabProps
       setNewServiceRoute('');
       setNewServiceIcon('');
       setNewServiceDescription('');
+      setNewServiceKind('CLOUD');
       setGeneratePermissionTemplate(true);
       setSelectedPermissionActions(SERVICE_PERMISSION_ACTION_OPTIONS.map((x) => x.key));
       await loadData();
@@ -337,6 +346,21 @@ export default function ServicesTab({ active, styles, colors }: ServicesTabProps
               onChangeText={setNewServiceDescription}
               style={styles.input}
             />
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <Text style={{ fontSize: 12, fontWeight: '700', color: colors.secondaryText }}>Тип сервиса</Text>
+              {SERVICE_KIND_OPTIONS.map((option) => {
+                const activeKind = newServiceKind === option.value;
+                return (
+                  <Pressable
+                    key={`service-kind-new-${option.value}`}
+                    onPress={() => setNewServiceKind(option.value)}
+                    style={[styles.optionChip, activeKind && styles.optionChipActive]}
+                  >
+                    <Text style={[styles.optionText, activeKind && styles.optionTextActive]}>{option.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
             <View style={{ flexDirection: 'row', gap: 12, flexWrap: 'wrap' }}>
               <ToggleRow label="Активен" value={newServiceIsActive} onChange={setNewServiceIsActive} colors={colors} />
               <ToggleRow label="Видим по умолчанию" value={newServiceDefaultVisible} onChange={setNewServiceDefaultVisible} colors={colors} />
@@ -389,11 +413,26 @@ export default function ServicesTab({ active, styles, colors }: ServicesTabProps
                 </Text>
                 <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
                   <Tag text={service.key} colors={colors} />
+                  <Tag text={`Тип: ${service.kind}`} colors={colors} />
                   {service.route ? <Tag text={service.route} colors={colors} /> : null}
                 </View>
               </View>
 
               <View style={{ gap: 6, alignItems: 'flex-end' }}>
+                <View style={{ flexDirection: 'row', gap: 6 }}>
+                  {SERVICE_KIND_OPTIONS.map((option) => {
+                    const activeKind = service.kind === option.value;
+                    return (
+                      <Pressable
+                        key={`service-kind-${service.id}-${option.value}`}
+                        onPress={() => handleUpdateService(service.id, { kind: option.value })}
+                        style={[styles.optionChip, activeKind && styles.optionChipActive]}
+                      >
+                        <Text style={[styles.optionText, activeKind && styles.optionTextActive]}>{option.label}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
                 <ToggleRow
                   label="Видим"
                   value={service.defaultVisible}

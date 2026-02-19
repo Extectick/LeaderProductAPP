@@ -1,4 +1,5 @@
 import { useThemeColor } from '@/hooks/useThemeColor';
+import type { ServiceKind } from '@/utils/servicesService';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useMemo } from 'react';
@@ -52,6 +53,9 @@ interface Props {
 
   /** Заблокирована */
   disabled?: boolean;
+
+  /** Тип сервиса (для cloud-маркера) */
+  kind?: ServiceKind;
 }
 
 /**
@@ -80,6 +84,7 @@ export default function ServiceCard({
   containerStyle,
   textStyle,
   disabled = false,
+  kind = 'CLOUD',
 }: Props) {
   const themeCardBg = useThemeColor({}, 'cardBackground');
   const themeText = useThemeColor({}, 'text');
@@ -220,22 +225,29 @@ export default function ServiceCard({
         {/* Контент */}
         <View style={styles.content}>
           {/* Бейдж под иконку */}
-          <LinearGradient
-            colors={[c1, c2]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={[
-              styles.badge,
-              {
-                width: badge,
-                height: badge,
-                borderRadius: badge / 2,
-                shadowColor: c1,
-              },
-            ]}
-          >
-            <Ionicons name={icon as any} size={iconSize} color="#fff" />
-          </LinearGradient>
+          <View style={styles.badgeWrap}>
+            <LinearGradient
+              colors={[c1, c2]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={[
+                styles.badge,
+                {
+                  width: badge,
+                  height: badge,
+                  borderRadius: badge / 2,
+                  shadowColor: c1,
+                },
+              ]}
+            >
+              <Ionicons name={icon as any} size={iconSize} color="#fff" />
+            </LinearGradient>
+            {kind === 'CLOUD' ? (
+              <View style={styles.cloudIconBadge}>
+                <Ionicons name="cloud-outline" size={11} color="#1E40AF" />
+              </View>
+            ) : null}
+          </View>
 
           <View style={{ gap: 4, width: '100%' }}>
             <Text
@@ -299,6 +311,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 10,
   },
+  badgeWrap: {
+    position: 'relative',
+  },
 
   badge: {
     alignItems: 'center',
@@ -352,6 +367,19 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: '#312E81',
+  },
+  cloudIconBadge: {
+    position: 'absolute',
+    right: -4,
+    bottom: -3,
+    width: 18,
+    height: 18,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    backgroundColor: '#EFF6FF',
   },
 
   // декоративные элементы

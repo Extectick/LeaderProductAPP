@@ -18,14 +18,40 @@ type DashboardSnapshot = {
   services: ServiceAccessItem[];
 };
 
+function normalizeServices(raw: unknown): ServiceAccessItem[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null;
+      const source = item as Partial<ServiceAccessItem>;
+      return {
+        id: Number(source.id || 0),
+        key: String(source.key || ''),
+        name: String(source.name || ''),
+        kind: source.kind === 'LOCAL' ? 'LOCAL' : 'CLOUD',
+        route: source.route ?? null,
+        icon: source.icon ?? null,
+        description: source.description ?? null,
+        gradientStart: source.gradientStart ?? null,
+        gradientEnd: source.gradientEnd ?? null,
+        visible: source.visible !== false,
+        enabled: source.enabled !== false,
+      } satisfies ServiceAccessItem;
+    })
+    .filter((item): item is ServiceAccessItem => Boolean(item && item.key));
+}
+
 function parseSnapshot(raw: string | null): DashboardSnapshot | null {
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as DashboardSnapshot;
     if (!parsed || typeof parsed !== 'object') return null;
     if (!parsed.dashboard || typeof parsed.dashboard !== 'object') return null;
-    if (!Array.isArray(parsed.services)) return null;
-    return parsed;
+    const services = normalizeServices(parsed.services);
+    return {
+      ...parsed,
+      services,
+    };
   } catch {
     return null;
   }

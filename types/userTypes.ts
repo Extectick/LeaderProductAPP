@@ -34,6 +34,7 @@ export type ProfileType = "CLIENT" | "SUPPLIER" | "EMPLOYEE"
 export type Profile = {
     id: number;
     email: string | null;
+    emailVerifiedAt?: string | null;
     firstName: string | null;
     lastName: string | null;
     middleName: string | null;

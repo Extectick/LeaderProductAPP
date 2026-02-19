@@ -4,7 +4,6 @@ import axios from 'axios';
 import { jwtDecode } from 'jwt-decode';
 
 import { API_BASE_URL } from './config';
-import { pushNotification } from './notificationStore';
 import { setServerReachable, setServerUnavailable } from '@/src/shared/network/serverStatus';
 
 const ACCESS_KEY = 'accessToken';
@@ -17,7 +16,6 @@ let refreshInFlight: Promise<string | null> | null = null;
 let lastWarnTs = 0;
 
 const REFRESH_TIMEOUT_MS = 15000;
-const NETWORK_NOTICE_COOLDOWN_MS = 8000;
 
 export async function getAccessToken(): Promise<string | null> {
   return AsyncStorage.getItem(ACCESS_KEY);
@@ -85,17 +83,6 @@ export async function handleBackendUnavailable(reason?: string) {
     await logout();
     return;
   }
-
-  const now = Date.now();
-  if (now - lastWarnTs < NETWORK_NOTICE_COOLDOWN_MS) return;
-  lastWarnTs = now;
-
-  pushNotification({
-    title: 'Сервер недоступен',
-    message: reason || 'Не удалось связаться с сервером. Попробуйте позже.',
-    type: 'warning',
-    durationMs: 6000,
-  });
 }
 
 export async function refreshToken(): Promise<string | null> {

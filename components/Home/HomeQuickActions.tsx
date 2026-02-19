@@ -13,6 +13,7 @@ export type HomeQuickAction = {
   enabled?: boolean;
   hidden?: boolean;
   statusLabel?: string;
+  serviceKind?: 'LOCAL' | 'CLOUD';
 };
 
 type Props = {
@@ -52,6 +53,11 @@ export default function HomeQuickActions({ actions, columns }: Props) {
               <View style={[styles.accentLine, { backgroundColor: enabled ? '#94A3B8' : '#CBD5E1' }]} />
               <View style={styles.iconWrap}>
                 <Ionicons name={action.icon as any} size={18} color={enabled ? '#334155' : '#94A3B8'} />
+                {action.serviceKind === 'CLOUD' ? (
+                  <View style={styles.cloudIconBadge}>
+                    <Ionicons name="cloud-outline" size={10} color="#1E3A8A" />
+                  </View>
+                ) : null}
               </View>
               <Text style={styles.cardTitle}>{action.title}</Text>
               <Text numberOfLines={2} style={styles.cardDescription}>
@@ -133,6 +139,7 @@ const styles = StyleSheet.create({
     width: 3,
   },
   iconWrap: {
+    position: 'relative',
     width: 30,
     height: 30,
     borderRadius: 11,
@@ -151,6 +158,19 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#64748B',
     lineHeight: 16,
+  },
+  cloudIconBadge: {
+    position: 'absolute',
+    right: -4,
+    bottom: -4,
+    width: 16,
+    height: 16,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#EEF2FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
   },
   statusBadge: {
     alignSelf: 'flex-start',

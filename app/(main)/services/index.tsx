@@ -1,4 +1,6 @@
 import { useThemeColor } from '@/hooks/useThemeColor';
+import { useNotify } from '@/components/NotificationHost';
+import { useServerStatus } from '@/src/shared/network/useServerStatus';
 import { useRouter } from 'expo-router';
 import React, { useMemo } from 'react';
 import {
@@ -19,6 +21,8 @@ export default function ServicesScreen() {
   const { services, error, loading } = useServicesData();
 
   const router = useRouter();
+  const notify = useNotify();
+  const { isReachable } = useServerStatus();
   const { width } = useWindowDimensions();
   const headerTopInset = useHeaderContentTopInset({ hasSubtitle: true });
 
@@ -37,17 +41,18 @@ export default function ServicesScreen() {
   const textColor = useThemeColor({}, 'text');
   const visibleServices = useMemo(() => getVisibleServices(services), [services]);
 
-  if (loading) {
+  if (loading && !services?.length) {
     return <ServicesLoadingView backgroundColor={background} textColor={textColor} style={styles.centered} />;
   }
 
-  if (error || !services) {
+  if (error || !services?.length) {
     return <ServicesErrorView backgroundColor={background} textColor={textColor} message={error} style={styles.centered} />;
   }
 
   return (
     <View style={[styles.container, { backgroundColor: background }]}>
       <FlatList
+        key={`services-grid-${numColumns}`}
         data={visibleServices}
         keyExtractor={(item) => item.key}
         numColumns={numColumns}
@@ -61,9 +66,20 @@ export default function ServicesScreen() {
               icon={item.icon || 'apps-outline'}
               name={item.name}
               description={item.description || undefined}
+              kind={item.kind}
               size={cardSize}
               onPress={() => {
                 if (!item.route || !item.enabled) return;
+                if (item.kind === 'CLOUD' && !isReachable) {
+                  notify({
+                    type: 'warning',
+                    title: 'Нет связи с сервером',
+                    message: 'Для открытия облачного сервиса нужна связь с сервером.',
+                    icon: 'cloud-offline-outline',
+                    durationMs: 5000,
+                  });
+                  return;
+                }
                 router.push(item.route as any);
               }}
               gradient={

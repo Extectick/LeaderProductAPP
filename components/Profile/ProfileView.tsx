@@ -82,6 +82,7 @@ export type ProfileViewProps = {
   loadingOverride?: boolean;
   errorOverride?: string | null;
   onProfileUpdated?: (profile: Profile) => void;
+  disableAppearAnimation?: boolean;
 };
 
 /* ---------- helpers ---------- */
@@ -109,6 +110,7 @@ export function ProfileView({
   loadingOverride,
   errorOverride,
   onProfileUpdated,
+  disableAppearAnimation = false,
 }: ProfileViewProps) {
   const auth = useContext(AuthContext);
   const usingOverride = profileOverride !== undefined;
@@ -610,6 +612,10 @@ export function ProfileView({
   const initials = `${(firstName?.[0] ?? '').toUpperCase()}${(lastName?.[0] ?? '').toUpperCase()}` || '👤';
   const hasPhone = Boolean(profilePhoneDigits);
   const phoneVerified = Boolean(profilePhoneDigits && profile.phoneVerifiedAt);
+  const emailVerified = Boolean(
+    String(email || '').trim() &&
+      (profile.emailVerifiedAt || profile.authMethods?.passwordLoginPendingVerification !== true)
+  );
   const phoneDisplay = profilePhoneDigits ? formatPhoneDisplay(profilePhoneDigits) : '';
   const deptName = employeeProfile?.department?.name;
 
@@ -679,11 +685,12 @@ export function ProfileView({
           setNameForm(buildNameForm(profile));
         }}
         onNameSave={() => void handleSaveName()}
+        disableAppearAnimation={disableAppearAnimation}
       />
 
       {/* Действия — не показываем для своего профиля */}
       {!isSelf && (
-        <Animated.View entering={FadeInUp.delay(120).duration(500)} style={styles.actionsRow}>
+        <Animated.View entering={disableAppearAnimation ? undefined : FadeInUp.delay(120).duration(500)} style={styles.actionsRow}>
           <ActionButton
             label="Написать"
             icon="mail-outline"
@@ -711,12 +718,14 @@ export function ProfileView({
 
       {/* Основные факты */}
       <Animated.View
-        entering={FadeInDown.delay(150).duration(600)}
-        layout={Layout.springify()}
+        entering={disableAppearAnimation ? undefined : FadeInDown.delay(150).duration(600)}
+        layout={disableAppearAnimation ? undefined : Layout.springify()}
         style={styles.cardsWrap}
       >
         <EmailInfoCard
+          disableAppearAnimation={disableAppearAnimation}
           email={email || ''}
+          verified={emailVerified}
           canManage={isSelf}
           mode={emailMode}
           emailInput={emailInput}
@@ -744,6 +753,7 @@ export function ProfileView({
           onCancel={() => void handleCancelEmailFlow()}
         />
         <PhoneInfoCard
+          disableAppearAnimation={disableAppearAnimation}
           phoneDisplay={phoneDisplay}
           hasPhone={hasPhone}
           verified={phoneVerified}
@@ -777,13 +787,23 @@ export function ProfileView({
           onCancelFlow={() => void handleCancelPhoneFlow()}
         />
         {facts.map((f, i) => (
-          <InfoCard key={i} icon={f.icon} label={f.label} value={f.value} delay={(i + 1) * 60} />
+          <InfoCard
+            key={i}
+            icon={f.icon}
+            label={f.label}
+            value={f.value}
+            delay={(i + 1) * 60}
+            disableAppearAnimation={disableAppearAnimation}
+          />
         ))}
       </Animated.View>
 
       {/* Роли по отделам */}
       {departmentRoles?.length ? (
-        <Animated.View entering={FadeInDown.delay(180).duration(600)} layout={Layout.springify()}>
+        <Animated.View
+          entering={disableAppearAnimation ? undefined : FadeInDown.delay(180).duration(600)}
+          layout={disableAppearAnimation ? undefined : Layout.springify()}
+        >
           <Text style={styles.sectionTitle}>Роли по отделам</Text>
           <View style={{ gap: 10 }}>
             {departmentRoles.map((dr, idx) => (
@@ -792,6 +812,7 @@ export function ProfileView({
                 department={dr.department?.name || `Отдел #${dr.department?.id ?? '—'}`}
                 roleName={getRoleDisplayName(dr.role)}
                 delay={idx * 60}
+                disableAppearAnimation={disableAppearAnimation}
               />
             ))}
           </View>
@@ -830,6 +851,7 @@ function Hero({
   onNameEdit,
   onNameCancel,
   onNameSave,
+  disableAppearAnimation,
 }: {
   avatarUrl?: string;
   initials: string;
@@ -851,6 +873,7 @@ function Hero({
   onNameEdit: () => void;
   onNameCancel: () => void;
   onNameSave: () => void;
+  disableAppearAnimation?: boolean;
 }) {
   const float = useSharedValue(0);
   useEffect(() => {
@@ -863,7 +886,7 @@ function Hero({
   });
 
   return (
-    <Animated.View entering={FadeInDown.duration(600)} style={styles.heroWrap}>
+    <Animated.View entering={disableAppearAnimation ? undefined : FadeInDown.duration(600)} style={styles.heroWrap}>
       <LinearGradient
         colors={
           heroRoleTone === 'admin'
@@ -1021,8 +1044,26 @@ function Chip({
   );
 }
 
+function VerificationBadge({ verified }: { verified: boolean }) {
+  return (
+    <View
+      style={[
+        styles.verificationBadge,
+        verified ? styles.verificationBadgeVerified : styles.verificationBadgeUnverified,
+      ]}
+    >
+      <Ionicons
+        name={verified ? 'checkmark' : 'alert'}
+        size={12}
+        color={verified ? '#15803D' : '#B45309'}
+      />
+    </View>
+  );
+}
+
 function EmailInfoCard({
   email,
+  verified,
   canManage,
   mode,
   emailInput,
@@ -1037,8 +1078,10 @@ function EmailInfoCard({
   onVerify,
   onResend,
   onCancel,
+  disableAppearAnimation,
 }: {
   email: string;
+  verified: boolean;
   canManage: boolean;
   mode: EmailMode;
   emailInput: string;
@@ -1053,9 +1096,13 @@ function EmailInfoCard({
   onVerify: () => void;
   onResend: () => void;
   onCancel: () => void;
+  disableAppearAnimation?: boolean;
 }) {
   return (
-    <Animated.View entering={FadeInDown.delay(20).duration(400)} layout={Layout.springify()}>
+    <Animated.View
+      entering={disableAppearAnimation ? undefined : FadeInDown.delay(20).duration(400)}
+      layout={disableAppearAnimation ? undefined : Layout.springify()}
+    >
       <View style={styles.infoCard}>
         <View style={styles.infoIcon}>
           <Ionicons name="mail-outline" size={18} color="#4F46E5" />
@@ -1147,18 +1194,22 @@ function EmailInfoCard({
             </>
           ) : (
             <>
-              <Text style={styles.infoValue} numberOfLines={2}>
-                {email || '—'}
-              </Text>
-              {canManage ? (
-                <Pressable
-                  onPress={onStartEdit}
-                  style={({ pressed }) => [styles.yellowPillBtn, pressed ? styles.yellowPillBtnPressed : null]}
-                >
-                  <Ionicons name="create-outline" size={14} color={Colors.leaderprod.tint} />
-                  <Text style={styles.yellowPillBtnText}>Изменить</Text>
-                </Pressable>
-              ) : null}
+              <View style={styles.infoValueActionRow}>
+                <Text style={[styles.infoValue, styles.infoValueFlex]} numberOfLines={2}>
+                  {email || '—'}
+                </Text>
+                <View style={styles.valueActionsRight}>
+                  {email ? <VerificationBadge verified={verified} /> : null}
+                  {canManage ? (
+                    <Pressable
+                      onPress={onStartEdit}
+                      style={({ pressed }) => [styles.editIconBtn, pressed ? styles.editIconBtnPressed : null]}
+                    >
+                      <Ionicons name="pencil-outline" size={16} color={Colors.leaderprod.tint} />
+                    </Pressable>
+                  ) : null}
+                </View>
+              </View>
             </>
           )}
           {notice ? <Text style={styles.inlineNoticeText}>{notice}</Text> : null}
@@ -1189,6 +1240,7 @@ function PhoneInfoCard({
   onStartFlow,
   onOpenMessenger,
   onCancelFlow,
+  disableAppearAnimation,
 }: {
   phoneDisplay: string;
   hasPhone: boolean;
@@ -1209,9 +1261,13 @@ function PhoneInfoCard({
   onStartFlow: () => void;
   onOpenMessenger: () => void;
   onCancelFlow: () => void;
+  disableAppearAnimation?: boolean;
 }) {
   return (
-    <Animated.View entering={FadeInDown.delay(60).duration(400)} layout={Layout.springify()}>
+    <Animated.View
+      entering={disableAppearAnimation ? undefined : FadeInDown.delay(60).duration(400)}
+      layout={disableAppearAnimation ? undefined : Layout.springify()}
+    >
       <View style={styles.infoCard}>
         <View style={styles.infoIcon}>
           <Ionicons name="call-outline" size={18} color="#4F46E5" />
@@ -1221,32 +1277,41 @@ function PhoneInfoCard({
           {mode === 'editing' ? (
             <>
               {verified && hasPhone ? <Text style={styles.fieldHintText}>Текущий подтверждённый: {phoneDisplay}</Text> : null}
-              <View style={styles.phoneEditRow}>
-                <TextInput
-                  value={phoneInput}
-                  onChangeText={(value) => onChangePhoneInput(formatPhoneInputMask(value))}
-                  style={[styles.fieldInput, styles.phoneInput, error ? styles.fieldInputError : null]}
-                  placeholder="+7 (___) ___-__-__"
-                  keyboardType="phone-pad"
-                  editable={!busy}
-                  autoCorrect={false}
-                  maxLength={18}
-                />
+              <TextInput
+                value={phoneInput}
+                onChangeText={(value) => onChangePhoneInput(formatPhoneInputMask(value))}
+                style={[styles.fieldInput, error ? styles.fieldInputError : null]}
+                placeholder="+7 (___) ___-__-__"
+                keyboardType="phone-pad"
+                editable={!busy}
+                autoCorrect={false}
+                maxLength={18}
+              />
+              <View style={styles.inlineActionsRow}>
                 <Pressable
                   onPress={onStartFlow}
                   disabled={busy}
                   style={({ pressed }) => [
-                    styles.phonePrimaryBtn,
-                    pressed && !busy ? styles.phonePrimaryBtnPressed : null,
+                    styles.inlinePrimaryBtn,
+                    pressed && !busy ? styles.inlinePrimaryBtnPressed : null,
                     busy ? styles.inlineBtnDisabled : null,
                   ]}
                 >
-                  {busy ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="arrow-forward" size={18} color="#fff" />}
+                  {busy ? <ActivityIndicator color="#fff" size="small" /> : null}
+                  <Text style={styles.inlinePrimaryBtnText}>{busy ? 'Отправка...' : 'Отправить код'}</Text>
+                </Pressable>
+                <Pressable
+                  onPress={onCollapseEdit}
+                  disabled={busy}
+                  style={({ pressed }) => [
+                    styles.inlineSecondaryBtn,
+                    pressed && !busy ? styles.inlineSecondaryBtnPressed : null,
+                    busy ? styles.inlineBtnDisabled : null,
+                  ]}
+                >
+                  <Text style={styles.inlineSecondaryBtnText}>Отмена</Text>
                 </Pressable>
               </View>
-              <Pressable onPress={onCollapseEdit} disabled={busy} style={({ pressed }) => [styles.inlineGhostBtn, pressed && !busy ? styles.inlineGhostBtnPressed : null]}>
-                <Text style={styles.inlineGhostBtnText}>Свернуть</Text>
-              </Pressable>
             </>
           ) : mode === 'pending' ? (
             <>
@@ -1286,8 +1351,22 @@ function PhoneInfoCard({
               {hasPhone ? (
                 <View style={styles.phoneTop}>
                   <View style={styles.phoneValueRow}>
-                    <Text style={styles.infoValue}>{phoneDisplay}</Text>
-                    {verified ? <Ionicons name="checkmark-circle" size={18} color="#16A34A" /> : null}
+                    <View style={styles.phoneValueMain}>
+                      <Text style={[styles.infoValue, styles.infoValueFlex]} numberOfLines={2}>
+                        {phoneDisplay}
+                      </Text>
+                    </View>
+                    <View style={styles.valueActionsRight}>
+                      <VerificationBadge verified={verified} />
+                      {canManage && verified ? (
+                        <Pressable
+                          onPress={onStartEdit}
+                          style={({ pressed }) => [styles.editIconBtn, pressed ? styles.editIconBtnPressed : null]}
+                        >
+                          <Ionicons name="pencil-outline" size={16} color={Colors.leaderprod.tint} />
+                        </Pressable>
+                      ) : null}
+                    </View>
                   </View>
                   {!verified && !canManage ? (
                     <View style={styles.phoneUnverifiedBadge}>
@@ -1299,7 +1378,7 @@ function PhoneInfoCard({
               ) : (
                 <Text style={styles.fieldHintText}>Номер телефона не привязан</Text>
               )}
-              {canManage ? (
+              {canManage && !(hasPhone && verified) ? (
                 <Pressable
                   onPress={onStartEdit}
                   style={({ pressed }) => [
@@ -1307,7 +1386,7 @@ function PhoneInfoCard({
                     pressed ? (verified ? styles.yellowPillBtnPressed : styles.phoneActionBtnPressed) : null,
                   ]}
                 >
-                  {verified ? <Ionicons name="create-outline" size={14} color={Colors.leaderprod.tint} /> : null}
+                  {verified ? <Ionicons name="pencil-outline" size={14} color={Colors.leaderprod.tint} /> : null}
                   <Text style={verified ? styles.yellowPillBtnText : styles.phoneActionBtnText}>
                     {!hasPhone ? 'Привязать телефон' : verified ? 'Изменить' : 'Подтвердить'}
                   </Text>
@@ -1328,14 +1407,19 @@ function InfoCard({
   label,
   value,
   delay = 0,
+  disableAppearAnimation,
 }: {
   icon: IoniconName;
   label: string;
   value?: string;
   delay?: number;
+  disableAppearAnimation?: boolean;
 }) {
   return (
-    <Animated.View entering={FadeInDown.delay(delay).duration(400)} layout={Layout.springify()}>
+    <Animated.View
+      entering={disableAppearAnimation ? undefined : FadeInDown.delay(delay).duration(400)}
+      layout={disableAppearAnimation ? undefined : Layout.springify()}
+    >
       <View style={styles.infoCard}>
         <View style={styles.infoIcon}>
           <Ionicons name={icon} size={18} color="#4F46E5" />
@@ -1355,13 +1439,18 @@ function DepartmentRoleRow({
   department,
   roleName,
   delay = 0,
+  disableAppearAnimation,
 }: {
   department: string;
   roleName: string;
   delay?: number;
+  disableAppearAnimation?: boolean;
 }) {
   return (
-    <Animated.View entering={FadeInDown.delay(delay).duration(400)} layout={Layout.springify()}>
+    <Animated.View
+      entering={disableAppearAnimation ? undefined : FadeInDown.delay(delay).duration(400)}
+      layout={disableAppearAnimation ? undefined : Layout.springify()}
+    >
       <View style={styles.deptRow}>
         <View style={styles.deptIcon}>
           <Ionicons name="business-outline" size={18} color="#0EA5E9" />
@@ -1678,6 +1767,36 @@ const styles = StyleSheet.create({
   },
   infoLabel: { color: '#6B7280', fontSize: 12, fontWeight: '700' },
   infoValue: { color: '#111827', fontSize: 14, fontWeight: '700' },
+  infoValueFlex: { flex: 1, minWidth: 0 },
+  infoValueActionRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  valueActionsRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  verificationBadge: {
+    width: 20,
+    height: 20,
+    borderRadius: 999,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  verificationBadgeVerified: {
+    backgroundColor: '#DCFCE7',
+    borderColor: '#86EFAC',
+  },
+  verificationBadgeUnverified: {
+    backgroundColor: '#FEF3C7',
+    borderColor: '#FCD34D',
+  },
+  editIconBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#FBD38D',
+    backgroundColor: '#FFF7E6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editIconBtnPressed: { backgroundColor: '#FFE8C2' },
   fieldInput: {
     backgroundColor: '#F9FAFB',
     borderColor: '#E5E7EB',
@@ -1691,6 +1810,7 @@ const styles = StyleSheet.create({
   fieldHintText: { color: '#64748B', fontSize: 12 },
   phoneTop: { gap: 8 },
   phoneValueRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  phoneValueMain: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 },
   phoneActionBtn: {
     alignSelf: 'flex-start',
     borderRadius: 10,
@@ -1715,17 +1835,6 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
   },
   phoneUnverifiedBadgeText: { color: '#B45309', fontWeight: '700', fontSize: 12 },
-  phoneEditRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  phoneInput: { flex: 1 },
-  phonePrimaryBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Colors.leaderprod.button,
-  },
-  phonePrimaryBtnPressed: { backgroundColor: '#F59E0B' },
   phonePendingRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   phonePendingText: { flex: 1, color: '#1E293B', fontWeight: '600', fontSize: 13 },
   phoneDangerBtn: {

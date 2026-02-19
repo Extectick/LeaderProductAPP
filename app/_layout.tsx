@@ -13,6 +13,7 @@ import { ThemeProvider } from '@/context/ThemeContext';
 import { useAuthRedirect } from '@/hooks/useAuthRedirect';
 import { useTelegramBackButton } from '@/hooks/useTelegramBackButton';
 import { TrackingProvider } from '@/context/TrackingContext';
+import { NotificationViewportProvider } from '@/context/NotificationViewportContext';
 import { NotificationHost } from '@/components/NotificationHost';
 import UpdateGate from '@/components/UpdateGate';
 import StartupSplash from '@/components/StartupSplash';
@@ -82,15 +83,17 @@ export default function RootLayout() {
         <ThemeProvider>
           <AuthProvider>
             <TrackingProvider>
-              <NotificationHost>
-                <UpdateGate
-                  onStartupDone={handleStartupDone}
-                  showCheckingOverlay={false}
-                >
-                  <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
-                  {appIsReady ? <InnerLayout /> : <StartupSplash />}
-                </UpdateGate>
-              </NotificationHost>
+              <NotificationViewportProvider>
+                <NotificationHost>
+                  <UpdateGate
+                    onStartupDone={handleStartupDone}
+                    showCheckingOverlay={false}
+                  >
+                    <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
+                    {appIsReady ? <InnerLayout /> : <StartupSplash />}
+                  </UpdateGate>
+                </NotificationHost>
+              </NotificationViewportProvider>
             </TrackingProvider>
           </AuthProvider>
         </ThemeProvider>

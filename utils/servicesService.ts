@@ -1,10 +1,13 @@
 import { apiClient } from './apiClient';
 import { API_ENDPOINTS } from './apiEndpoints';
 
+export type ServiceKind = 'LOCAL' | 'CLOUD';
+
 export type ServiceAccessItem = {
   id: number;
   key: string;
   name: string;
+  kind: ServiceKind;
   route: string | null;
   icon: string | null;
   description: string | null;
@@ -32,6 +35,7 @@ export type ServiceAdminItem = {
   id: number;
   key: string;
   name: string;
+  kind: ServiceKind;
   route: string | null;
   icon: string | null;
   description: string | null;
@@ -80,6 +84,7 @@ export async function getAdminServices(): Promise<ServiceAdminItem[]> {
 export async function createAdminService(payload: {
   key: string;
   name: string;
+  kind?: ServiceKind;
   route?: string | null;
   icon?: string | null;
   description?: string | null;
@@ -103,6 +108,7 @@ export async function updateService(
   serviceId: number,
   payload: Partial<{
     name: string;
+    kind: ServiceKind;
     route: string | null;
     icon: string | null;
     description: string | null;

@@ -110,12 +110,24 @@ export default function ProfileScreen() {
     );
   }
 
+  if (loading && !profile) {
+    return (
+      <View style={[styles.loaderWrap, { paddingTop: 16 + headerTopInset }]}>
+        <View style={styles.loaderCard}>
+          <ActivityIndicator size="small" color="#2563EB" />
+          <Text style={styles.loaderText}>Загрузка профиля...</Text>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <ScrollView style={styles.scroll} contentContainerStyle={[styles.scrollContent, { paddingTop: 16 + headerTopInset }]}>
       <ProfileView
         profileOverride={profile}
         loadingOverride={loading}
         errorOverride={error}
+        disableAppearAnimation
         onProfileUpdated={(next) => {
           setProfile(next);
           setError(null);
@@ -1173,6 +1185,27 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: 16,
     ...Platform.select({ web: { maxWidth: 900, marginHorizontal: 'auto' }, default: {} }),
+  },
+  loaderWrap: {
+    flex: 1,
+    backgroundColor: Colors.leaderprod.background,
+    paddingHorizontal: 16,
+  },
+  loaderCard: {
+    marginTop: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 18,
+  },
+  loaderText: {
+    color: '#475569',
+    fontSize: 13,
+    fontWeight: '600',
   },
   trackingRow: {
     marginTop: 16,

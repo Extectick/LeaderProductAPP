@@ -51,7 +51,7 @@ import {
 } from '@/components/Appeals/desktopLayoutConfig';
 // import * as Sharing from 'expo-sharing';
 
-type AppealsViewMode = 'active' | 'in_progress' | 'completed' | 'all';
+type AppealsViewMode = 'active' | 'open' | 'in_progress' | 'completed' | 'all';
 const APPEALS_FILTERS_KEY = 'appeals:list:filters:v1';
 const APPEAL_FORCE_PAGE_ONCE_KEY = 'lp:appeals:force-page-once:v1';
 
@@ -231,7 +231,7 @@ export default function AppealsIndex() {
             viewMode: AppealsViewMode;
             onlyAssignedToMe: boolean;
           }>;
-          if (parsed.viewMode && ['active', 'in_progress', 'completed', 'all'].includes(parsed.viewMode)) {
+          if (parsed.viewMode && ['active', 'open', 'in_progress', 'completed', 'all'].includes(parsed.viewMode)) {
             setViewMode(parsed.viewMode);
           }
           if (typeof parsed.onlyAssignedToMe === 'boolean') {
@@ -406,6 +406,7 @@ export default function AppealsIndex() {
       const statusValue = item.status;
       const isCompleted = statusValue === 'COMPLETED' || statusValue === 'DECLINED';
       if (viewMode === 'active' && isCompleted) return false;
+      if (viewMode === 'open' && statusValue !== 'OPEN') return false;
       if (viewMode === 'completed' && !isCompleted) return false;
       if (viewMode === 'in_progress' && statusValue !== 'IN_PROGRESS') return false;
       if (onlyAssignedToMe && auth?.profile?.id) {
@@ -506,6 +507,7 @@ export default function AppealsIndex() {
 
   const modeOptions: { key: AppealsViewMode; label: string }[] = [
     { key: 'active', label: 'Активные' },
+    { key: 'open', label: 'Открытые' },
     { key: 'in_progress', label: 'В работе' },
     { key: 'completed', label: 'Завершённые' },
     { key: 'all', label: 'Все' },

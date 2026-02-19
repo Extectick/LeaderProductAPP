@@ -164,6 +164,7 @@ function normalizeServiceItem(raw: Partial<ServiceAccessItem>): ServiceAccessIte
     id: Number(raw.id || 0),
     key: String(raw.key || ''),
     name: String(raw.name || ''),
+    kind: raw.kind === 'LOCAL' ? 'LOCAL' : 'CLOUD',
     route: raw.route ?? null,
     icon: raw.icon ?? null,
     description: raw.description ?? null,

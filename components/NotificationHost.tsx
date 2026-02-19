@@ -14,6 +14,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 
+import { useNotificationViewport } from '@/context/NotificationViewportContext';
 import {
   dismissNotification,
   markNotificationClosed,
@@ -32,11 +33,11 @@ type ActiveNotification = Required<NotificationPayload> & {
   dragY: Animated.Value;
 };
 
-const palette: Record<NotificationType, { bg: string; text: string; border: string; icon: string }> = {
-  info: { bg: '#E0F2FE', text: '#0F172A', border: '#0EA5E9', icon: 'information-circle-outline' },
-  success: { bg: '#DCFCE7', text: '#0F172A', border: '#16A34A', icon: 'checkmark-circle-outline' },
-  warning: { bg: '#FEF3C7', text: '#0F172A', border: '#D97706', icon: 'alert-circle-outline' },
-  error: { bg: '#FEE2E2', text: '#0F172A', border: '#EF4444', icon: 'close-circle-outline' },
+const palette: Record<NotificationType, { bg: string; text: string; border: string; icon: string; iconTint: string }> = {
+  info: { bg: '#E8F1FF', text: '#0B1A3A', border: '#A7C4FF', icon: 'information-circle', iconTint: '#1D4ED8' },
+  success: { bg: '#E7FAEF', text: '#052E16', border: '#86E5B0', icon: 'checkmark-circle', iconTint: '#0E9F6E' },
+  warning: { bg: '#FFF7E8', text: '#3A2305', border: '#FDD38A', icon: 'warning', iconTint: '#D97706' },
+  error: { bg: '#FFECEC', text: '#3B0A0A', border: '#FCA5A5', icon: 'alert-circle', iconTint: '#DC2626' },
 };
 
 export function useNotify() {
@@ -64,6 +65,8 @@ export function NotificationHost({ children }: Props) {
   const [items, setItems] = useState<ActiveNotification[]>([]);
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
+  const { headerBottomOffset } = useNotificationViewport();
+
   const isTouchWeb =
     Platform.OS === 'web' &&
     typeof window !== 'undefined' &&
@@ -71,7 +74,7 @@ export function NotificationHost({ children }: Props) {
       (typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0));
   const swipeEnabled = Platform.OS !== 'web' || isTouchWeb;
   const showClose = Platform.OS === 'web' && !isTouchWeb;
-  const maxWidth = width >= 780 ? 520 : width >= 420 ? width - 28 : width - 18;
+  const maxWidth = width >= 780 ? 560 : width >= 420 ? width - 26 : width - 14;
 
   const remove = useCallback((id: string, immediate = false) => {
     setItems((prev) => {
@@ -80,12 +83,20 @@ export function NotificationHost({ children }: Props) {
       const next = [...prev];
       const [target] = next.splice(idx, 1);
       if (target && !immediate) {
-        Animated.timing(target.anim, {
-          toValue: 0,
-          duration: 180,
-          easing: Easing.out(Easing.ease),
-          useNativeDriver: true,
-        }).start(() => {
+        Animated.parallel([
+          Animated.timing(target.anim, {
+            toValue: 0,
+            duration: 220,
+            easing: Easing.in(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          Animated.timing(target.dragY, {
+            toValue: -18,
+            duration: 220,
+            easing: Easing.in(Easing.cubic),
+            useNativeDriver: false,
+          }),
+        ]).start(() => {
           markNotificationClosed(id);
           setItems((p) => p.filter((n) => n.id !== id));
         });
@@ -96,25 +107,25 @@ export function NotificationHost({ children }: Props) {
     });
   }, []);
 
-  const add = useCallback((n: Required<NotificationPayload>) => {
-    const anim = new Animated.Value(0);
-    const dragY = new Animated.Value(0);
-    const normalized: ActiveNotification = { ...n, anim, dragY };
-    setItems((prev) => {
-      const next = [normalized, ...prev].slice(0, 4);
-      return next;
-    });
-    Animated.timing(anim, {
-      toValue: 1,
-      duration: 250,
-      easing: Easing.out(Easing.ease),
-      useNativeDriver: true,
-    }).start();
+  const add = useCallback(
+    (notification: Required<NotificationPayload>) => {
+      const anim = new Animated.Value(0);
+      const dragY = new Animated.Value(0);
+      const normalized: ActiveNotification = { ...notification, anim, dragY };
+      setItems((prev) => [normalized, ...prev].slice(0, 4));
+      Animated.timing(anim, {
+        toValue: 1,
+        duration: 300,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
 
-    if (n.durationMs >= 0) {
-      setTimeout(() => remove(n.id), n.durationMs || 5200);
-    }
-  }, [remove]);
+      if (notification.durationMs >= 0) {
+        setTimeout(() => remove(notification.id), notification.durationMs || 5200);
+      }
+    },
+    [remove]
+  );
 
   useEffect(() => {
     const unsub = subscribeToNotifications(add);
@@ -129,10 +140,10 @@ export function NotificationHost({ children }: Props) {
     () => [
       styles.host,
       {
-        paddingTop: Math.max(insets.top, Platform.OS === 'web' ? 12 : 6) + 6,
+        paddingTop: Math.max(headerBottomOffset + 8, Math.max(insets.top, Platform.OS === 'web' ? 10 : 6) + 6),
       },
     ],
-    [insets.top]
+    [headerBottomOffset, insets.top]
   );
 
   return (
@@ -140,61 +151,60 @@ export function NotificationHost({ children }: Props) {
       {children}
       <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
         <View pointerEvents="box-none" style={containerStyle}>
-          {items.map((item, idx) => {
+          {items.map((item, index) => {
             const colors = palette[item.type] || palette.info;
             const bg = item.backgroundColor || colors.bg;
             const border = item.borderColor || colors.border;
             const textColor = item.textColor || colors.text;
             const iconName = item.icon || colors.icon;
-            const iconBg = withOpacity(border, 0.14);
+            const iconTint = item.borderColor ? border : colors.iconTint;
+            const iconBg = withOpacity(iconTint, 0.13);
             const entryTranslate = item.anim.interpolate({
               inputRange: [0, 1],
-              outputRange: [-18, 0],
+              outputRange: [-34, 0],
             });
             const translateY = Animated.add(entryTranslate, item.dragY);
-            const scale = item.anim.interpolate({ inputRange: [0, 1], outputRange: [0.98, 1] });
+            const scale = item.anim.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1] });
             const panResponder = PanResponder.create({
-              onMoveShouldSetPanResponder: (_evt, gesture) => {
+              onMoveShouldSetPanResponder: (_event, gesture) => {
                 if (!swipeEnabled) return false;
                 const dy = gesture.dy;
                 const dx = gesture.dx;
                 return dy < -8 && Math.abs(dy) > Math.abs(dx);
               },
-              onPanResponderMove: (_evt, gesture) => {
+              onPanResponderMove: (_event, gesture) => {
                 if (!swipeEnabled) return;
-                const next = Math.max(-80, Math.min(0, gesture.dy));
+                const next = Math.max(-90, Math.min(0, gesture.dy));
                 item.dragY.setValue(next);
               },
-              onPanResponderRelease: (_evt, gesture) => {
+              onPanResponderRelease: (_event, gesture) => {
                 if (!swipeEnabled) return;
-                const shouldDismiss = gesture.dy < -35 || gesture.vy < -0.6;
+                const shouldDismiss = gesture.dy < -32 || gesture.vy < -0.65;
                 if (shouldDismiss) {
                   dismissNotification(item.id);
-                } else {
-                  Animated.spring(item.dragY, {
-                    toValue: 0,
-                    useNativeDriver: false,
-                    damping: 18,
-                    stiffness: 220,
-                  }).start();
+                  return;
                 }
+                Animated.spring(item.dragY, {
+                  toValue: 0,
+                  useNativeDriver: false,
+                  damping: 18,
+                  stiffness: 220,
+                }).start();
               },
             });
+
             return (
               <Animated.View
                 key={item.id}
                 style={[
                   styles.card,
                   {
-                    transform: [
-                      { translateY },
-                      { scale },
-                    ],
+                    transform: [{ translateY }, { scale }],
                     opacity: item.anim,
                     backgroundColor: bg,
                     borderColor: border,
                     maxWidth,
-                    marginTop: idx === 0 ? 0 : 8,
+                    marginTop: index === 0 ? 0 : 8,
                   },
                 ]}
                 {...(swipeEnabled ? panResponder.panHandlers : {})}
@@ -205,20 +215,16 @@ export function NotificationHost({ children }: Props) {
                     if (item.actionHref) openNotificationLink(item.actionHref);
                     dismissNotification(item.id);
                   }}
-                  style={({ pressed }) => [
-                    styles.inner,
-                    pressed && { opacity: 0.92 },
-                    { flexDirection: 'row', alignItems: 'flex-start' },
-                  ]}
+                  style={({ pressed }) => [styles.inner, pressed ? styles.pressed : null]}
                 >
                   {item.avatarUrl ? (
                     <Image source={{ uri: item.avatarUrl }} style={styles.avatar} />
                   ) : (
-                    <View style={[styles.iconWrap, { borderColor: border, backgroundColor: iconBg }]}>
-                      <Ionicons name={iconName as any} size={18} color={border} />
+                    <View style={[styles.iconWrap, { backgroundColor: iconBg }]}>
+                      <Ionicons name={iconName as any} size={20} color={iconTint} />
                     </View>
                   )}
-                  <View style={{ flex: 1, gap: 2 }}>
+                  <View style={styles.content}>
                     {item.title ? (
                       <Text style={[styles.title, { color: textColor }]} numberOfLines={2}>
                         {item.title}
@@ -228,7 +234,7 @@ export function NotificationHost({ children }: Props) {
                       {item.message}
                     </Text>
                     {item.actionLabel ? (
-                      <Text style={[styles.link, { color: border }]} numberOfLines={2}>
+                      <Text style={[styles.link, { color: iconTint }]} numberOfLines={2}>
                         {item.actionLabel}
                       </Text>
                     ) : null}
@@ -237,23 +243,14 @@ export function NotificationHost({ children }: Props) {
                     <Pressable
                       accessibilityRole="button"
                       accessibilityLabel="Закрыть уведомление"
-                      onPress={(e) => {
-                        (e as any)?.stopPropagation?.();
+                      onPress={(event) => {
+                        (event as any)?.stopPropagation?.();
                         dismissNotification(item.id);
                       }}
-                      style={({ pressed }) => [
-                        styles.closeBtn,
-                        { borderColor: border, backgroundColor: iconBg },
-                        pressed && { opacity: 0.7 },
-                      ]}
+                      style={({ pressed }) => [styles.closeBtn, { backgroundColor: iconBg }, pressed ? styles.closePressed : null]}
                     >
-                      <Ionicons name="close" size={14} color={border} />
+                      <Ionicons name="close" size={16} color={iconTint} />
                     </Pressable>
-                  ) : null}
-                  {swipeEnabled ? (
-                    <Text style={[styles.swipeHint, { color: textColor }]} numberOfLines={1}>
-                      свайп вверх
-                    </Text>
                   ) : null}
                 </Pressable>
               </Animated.View>
@@ -276,64 +273,68 @@ const styles = StyleSheet.create({
     pointerEvents: 'box-none',
   },
   card: {
-    borderRadius: 14,
+    borderRadius: 16,
     borderWidth: 1,
-    shadowColor: '#000',
-    shadowOpacity: 0.16,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 6,
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.2,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 8,
     overflow: 'hidden',
   },
   inner: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  pressed: {
+    opacity: 0.94,
   },
   iconWrap: {
-    width: 36,
-    height: 36,
+    width: 38,
+    height: 38,
     borderRadius: 12,
-    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 10,
   },
   avatar: {
-    width: 36,
-    height: 36,
+    width: 38,
+    height: 38,
     borderRadius: 12,
-    marginRight: 10,
     backgroundColor: '#E5E7EB',
   },
+  content: {
+    flex: 1,
+    gap: 3,
+  },
   title: {
-    fontWeight: '800',
-    fontSize: 14,
-    letterSpacing: 0.2,
+    fontWeight: '900',
+    fontSize: 15,
+    lineHeight: 20,
   },
   message: {
     fontSize: 13,
-    lineHeight: 17,
+    lineHeight: 18,
+    fontWeight: '600',
   },
   link: {
-    fontWeight: '700',
+    marginTop: 2,
+    fontWeight: '800',
     fontSize: 13,
     textDecorationLine: 'underline',
     flexShrink: 1,
   },
-  swipeHint: {
-    marginLeft: 10,
-    fontSize: 11,
-    fontWeight: '700',
-    opacity: 0.6,
-  },
   closeBtn: {
-    width: 28,
-    height: 28,
+    width: 30,
+    height: 30,
     borderRadius: 10,
-    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    marginLeft: 8,
+  },
+  closePressed: {
+    opacity: 0.72,
   },
 });
+

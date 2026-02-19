@@ -32,6 +32,7 @@ const ITEM_VERTICAL_PADDING = 6;
 const ICON_SIZE = 20;
 const ROW_HEIGHT = ICON_SIZE + ITEM_VERTICAL_PADDING * 2;
 const PILL_HEIGHT = ROW_HEIGHT + 8;
+const TAB_BAR_MAX_WIDTH = 420;
 const SURFACE_OPACITY_LIGHT = 0.82;
 const SURFACE_OPACITY_DARK = 0.6;
 const SURFACE_OPACITY_ANDROID_BUMP = 0.08;
@@ -353,6 +354,8 @@ const styles = StyleSheet.create({
   },
   barWrap: {
     width: '100%',
+    maxWidth: TAB_BAR_MAX_WIDTH,
+    alignSelf: 'center',
   },
   item: {
     alignItems: 'center',

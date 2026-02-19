@@ -1,4 +1,5 @@
 import { useTheme } from '@/context/ThemeContext';
+import { useNotificationViewport } from '@/context/NotificationViewportContext';
 import { useThemeColor } from '@/hooks/useThemeColor';
 import { LiquidGlassSurface } from '@/components/ui/LiquidGlassSurface';
 import ServerStatusIndicator from '@/src/shared/ui/ServerStatusIndicator';
@@ -7,6 +8,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView } from 'moti';
 import React from 'react';
 import {
+  type LayoutChangeEvent,
   Platform,
   Pressable,
   StyleSheet,
@@ -86,6 +88,7 @@ export function AppHeader({
 }: Props) {
   const { top } = useSafeAreaInsets();
   const { theme } = useTheme();
+  const { setHeaderBottomOffset } = useNotificationViewport();
   const isDark = theme === 'dark';
   const isAndroid = Platform.OS === 'android';
 
@@ -108,6 +111,19 @@ export function AppHeader({
   const blurTint = isDark ? 'dark' : 'light';
   const borderColor = withOpacity(textColor, isDark ? 0.12 : 0.18);
   const backBg = withOpacity(textColor, isDark ? 0.16 : 0.08);
+  const handleWrapLayout = React.useCallback(
+    (event: LayoutChangeEvent) => {
+      const { y, height } = event.nativeEvent.layout;
+      setHeaderBottomOffset(y + height);
+    },
+    [setHeaderBottomOffset]
+  );
+
+  React.useEffect(() => {
+    return () => {
+      setHeaderBottomOffset(0);
+    };
+  }, [setHeaderBottomOffset]);
 
   const headerContent = (
     <View style={[styles.card, compact && styles.cardCompact]}>
@@ -163,7 +179,11 @@ export function AppHeader({
   );
 
   return (
-    <View pointerEvents="box-none" style={[styles.wrap, { paddingTop: topPadding, paddingHorizontal: sidePadding }]}>
+    <View
+      pointerEvents="box-none"
+      onLayout={handleWrapLayout}
+      style={[styles.wrap, { paddingTop: topPadding, paddingHorizontal: sidePadding }]}
+    >
       <MotiView
         from={{ opacity: 0, translateY: -8 }}
         animate={{ opacity: 1, translateY: 0 }}

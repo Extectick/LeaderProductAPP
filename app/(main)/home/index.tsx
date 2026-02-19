@@ -77,6 +77,7 @@ export default function HomeScreen() {
 
   const appealsService = findService('appeals', '/appeals');
   const qrService = findService('qrcodes', '/qrcodes');
+  const tasksService = findService('tasks', '/tasks');
   const isQrVisible = qrService ? qrService.visible !== false : true;
   const isQrEnabled = qrService ? qrService.enabled !== false : true;
 
@@ -102,6 +103,7 @@ export default function HomeScreen() {
           appealsService && appealsService.enabled === false
             ? 'Недоступно для вашей роли'
             : undefined,
+        serviceKind: appealsService?.kind,
         onPress: () => router.push('/services/appeals'),
       },
       {
@@ -116,6 +118,7 @@ export default function HomeScreen() {
           qrService && qrService.enabled === false
             ? 'Недоступно для вашей роли'
             : undefined,
+        serviceKind: qrService?.kind,
         onPress: () => router.push('/services/qrcodes'),
       },
       {
@@ -124,10 +127,11 @@ export default function HomeScreen() {
         description: 'Открыть список текущих задач',
         icon: 'checkbox-outline',
         gradient: ['#F59E0B', '#D97706'] as const,
+        serviceKind: tasksService?.kind,
         onPress: () => router.push('/tasks'),
       },
     ],
-    [appealsService, qrService, router]
+    [appealsService, qrService, router, tasksService]
   );
 
   const primaryMetricIds = PRIMARY_METRICS.filter((id) => (id === 'daily_scans' ? isQrVisible : true));
