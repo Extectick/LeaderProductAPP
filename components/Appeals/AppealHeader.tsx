@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Animated, Pressable } from 'react-native';
+import { View, Text, StyleSheet, Animated, Pressable, Platform } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import AnimatedRe, { FadeInDown } from 'react-native-reanimated';
 import dayjs from 'dayjs';
@@ -21,10 +21,12 @@ type Props = {
   onClaim?: () => void;
   onTransfer?: () => void;
   onEditDeadline?: () => void;
+  onOpenParticipants?: () => void;
   canAssign?: boolean;
   canClaim?: boolean;
   canTransfer?: boolean;
   canEditDeadline?: boolean;
+  canOpenParticipants?: boolean;
   allowedStatuses?: AppealStatus[];
 };
 
@@ -77,10 +79,12 @@ export default function AppealHeader({
   onClaim,
   onTransfer,
   onEditDeadline,
+  onOpenParticipants,
   canAssign,
   canClaim,
   canTransfer,
   canEditDeadline,
+  canOpenParticipants,
   allowedStatuses,
 }: Props) {
   const displayTitle = title ?? data.title ?? data.messages[0]?.text ?? 'Без названия';
@@ -123,17 +127,28 @@ export default function AppealHeader({
     }
   };
 
-  const actionItems: DropdownItem<'status' | 'assign' | 'claim' | 'transfer' | 'deadline'>[] = [
+  const actionItems: DropdownItem<'status' | 'assign' | 'claim' | 'transfer' | 'deadline' | 'participants'>[] = [
     ...(allowedStatuses && allowedStatuses.length && onChangeStatus
-      ? [{ label: 'Изменить статус', value: 'status' as const }]
+      ? [{ label: 'Изменить статус', value: 'status' as const, icon: 'sync-outline' as const }]
       : []),
-    ...(canEditDeadline && onEditDeadline ? [{ label: 'Изменить дедлайн', value: 'deadline' as const }] : []),
-    ...(canClaim && onClaim ? [{ label: 'Взять в работу', value: 'claim' as const }] : []),
-    ...(canAssign && onAssign ? [{ label: 'Назначить', value: 'assign' as const }] : []),
-    ...(canTransfer && onTransfer ? [{ label: 'Передать в отдел', value: 'transfer' as const }] : []),
+    ...(canEditDeadline && onEditDeadline
+      ? [{ label: 'Изменить дедлайн', value: 'deadline' as const, icon: 'time-outline' as const }]
+      : []),
+    ...(canClaim && onClaim
+      ? [{ label: 'Взять в работу', value: 'claim' as const, icon: 'briefcase-outline' as const }]
+      : []),
+    ...(canAssign && onAssign
+      ? [{ label: 'Назначить', value: 'assign' as const, icon: 'person-add-outline' as const }]
+      : []),
+    ...(canOpenParticipants !== false && onOpenParticipants
+      ? [{ label: 'Участники', value: 'participants' as const, icon: 'people-outline' as const }]
+      : []),
+    ...(canTransfer && onTransfer
+      ? [{ label: 'Передать в отдел', value: 'transfer' as const, icon: 'swap-horizontal-outline' as const }]
+      : []),
   ];
 
-  const handleAction = (action: 'status' | 'assign' | 'claim' | 'transfer' | 'deadline') => {
+  const handleAction = (action: 'status' | 'assign' | 'claim' | 'transfer' | 'deadline' | 'participants') => {
     switch (action) {
       case 'status':
         setStatusMenuVisible(true);
@@ -143,6 +158,9 @@ export default function AppealHeader({
         break;
       case 'assign':
         onAssign?.();
+        break;
+      case 'participants':
+        onOpenParticipants?.();
         break;
       case 'claim':
         onClaim?.();
@@ -181,6 +199,7 @@ export default function AppealHeader({
             items={actionItems}
             onChange={handleAction}
             placeholder=""
+            menuAlign="right"
             style={styles.menuWrap}
             buttonStyle={styles.iconBtn}
             renderTrigger={() => <Ionicons name="ellipsis-horizontal" size={16} color="#fff" />}
@@ -291,7 +310,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     paddingRight: 80,
-    overflow: 'hidden',
+    overflow: Platform.select({ web: 'visible', default: 'hidden' }),
     position: 'relative',
     shadowColor: '#2563EB',
     shadowOpacity: 0.16,
@@ -313,7 +332,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  menuWrap: { position: 'absolute', top: 8, right: 8, zIndex: 2 },
+  menuWrap: { position: 'absolute', top: 8, right: 8, zIndex: 20 },
   iconBtn: {
     width: 30,
     height: 30,

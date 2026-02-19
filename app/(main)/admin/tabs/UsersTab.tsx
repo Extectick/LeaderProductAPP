@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Modal,
   Pressable,
   ScrollView,
   Text,
   TextInput,
+  TouchableWithoutFeedback,
   useWindowDimensions,
   View,
 } from 'react-native';
@@ -77,6 +79,7 @@ export default function UsersTab({ active, colors, queuedUserId, onConsumeQueued
   const [editorUserId, setEditorUserId] = useState<number | null>(null);
   const [editor, setEditor] = useState<UsersEditorState | null>(null);
   const [editorInitial, setEditorInitial] = useState<UsersEditorState | null>(null);
+  const [mobileFiltersVisible, setMobileFiltersVisible] = useState(false);
 
   const hasNext = page * limit < total;
   const pendingCountOnPage = useMemo(() => items.filter((item) => needsModeration(item)).length, [items]);
@@ -130,6 +133,10 @@ export default function UsersTab({ active, colors, queuedUserId, onConsumeQueued
   }, []);
 
   const styles = useMemo(() => createUsersTabStyles(colors), [colors]);
+  const activeModerationLabel =
+    moderationFilters.find((f) => f.key === filters.moderation)?.label || moderationFilters[0]?.label || 'Все';
+  const activeOnlineLabel =
+    onlineFilters.find((f) => f.key === filters.online)?.label || onlineFilters[0]?.label || 'Все';
 
   if (!active) return <View style={{ display: 'none' }} />;
 
@@ -168,40 +175,53 @@ export default function UsersTab({ active, colors, queuedUserId, onConsumeQueued
           <Text style={styles.toolbarMetaText}>Всего пользователей: {total}</Text>
           <Text style={styles.toolbarMetaText}>На странице ждут проверки: {pendingCountOnPage}</Text>
         </View>
-        <View style={styles.chips}>
-          {moderationFilters.map((f) => {
-            const activeFilter = filters.moderation === f.key;
-            return (
-              <Pressable
-                key={f.key}
-                onPress={() => {
-                  setFilters((s) => ({ ...s, moderation: f.key }));
-                  setPage(1);
-                }}
-                style={[styles.chip, activeFilter && styles.chipActive]}
-              >
-                <Text style={[styles.chipText, activeFilter && styles.chipTextActive]}>{f.label}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
-        <View style={styles.chips}>
-          {onlineFilters.map((f) => {
-            const activeFilter = filters.online === f.key;
-            return (
-              <Pressable
-                key={f.key}
-                onPress={() => {
-                  setFilters((s) => ({ ...s, online: f.key }));
-                  setPage(1);
-                }}
-                style={[styles.chip, activeFilter && styles.chipActive]}
-              >
-                <Text style={[styles.chipText, activeFilter && styles.chipTextActive]}>{f.label}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
+        {desktop ? (
+          <>
+            <View style={styles.chips}>
+              {moderationFilters.map((f) => {
+                const activeFilter = filters.moderation === f.key;
+                return (
+                  <Pressable
+                    key={`moderation-${f.key}`}
+                    onPress={() => {
+                      setFilters((s) => ({ ...s, moderation: f.key }));
+                      setPage(1);
+                    }}
+                    style={[styles.chip, activeFilter && styles.chipActive]}
+                  >
+                    <Text style={[styles.chipText, activeFilter && styles.chipTextActive]}>{f.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <View style={styles.chips}>
+              {onlineFilters.map((f) => {
+                const activeFilter = filters.online === f.key;
+                return (
+                  <Pressable
+                    key={`online-${f.key}`}
+                    onPress={() => {
+                      setFilters((s) => ({ ...s, online: f.key }));
+                      setPage(1);
+                    }}
+                    style={[styles.chip, activeFilter && styles.chipActive]}
+                  >
+                    <Text style={[styles.chipText, activeFilter && styles.chipTextActive]}>{f.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </>
+        ) : (
+          <Pressable
+            style={styles.btn}
+            onPress={() => setMobileFiltersVisible(true)}
+          >
+            <Text style={styles.btnText}>
+              Фильтры: {activeModerationLabel}, {activeOnlineLabel}
+            </Text>
+          </Pressable>
+        )}
       </View>
 
       {desktop ? (
@@ -225,6 +245,7 @@ export default function UsersTab({ active, colors, queuedUserId, onConsumeQueued
                   onApprove={() => setConfirmAction({ item, action: 'APPROVE' })}
                   onReject={() => openRejectModal(item)}
                   onEdit={() => void openEditor(item.id)}
+                  onAvatarPress={() => void openEditor(item.id)}
                 />
               ))}
             </ScrollView>
@@ -274,6 +295,7 @@ export default function UsersTab({ active, colors, queuedUserId, onConsumeQueued
                   onApprove={() => setConfirmAction({ item, action: 'APPROVE' })}
                   onReject={() => openRejectModal(item)}
                   onEdit={() => void openEditor(item.id)}
+                  onAvatarPress={() => void openEditor(item.id)}
                 />
               </View>
             ))}
@@ -281,6 +303,66 @@ export default function UsersTab({ active, colors, queuedUserId, onConsumeQueued
           <View style={{ marginTop: 8 }}>{renderPagination()}</View>
         </ScrollView>
       )}
+
+      <Modal
+        visible={!desktop && mobileFiltersVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMobileFiltersVisible(false)}
+      >
+        <View style={styles.modalWrap}>
+          <TouchableWithoutFeedback onPress={() => setMobileFiltersVisible(false)}>
+            <View style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }} />
+          </TouchableWithoutFeedback>
+          <View style={[styles.modalCard, { maxWidth: 520 }]}>
+            <Text style={styles.sectionTitle}>Фильтры пользователей</Text>
+
+            <Text style={styles.sub}>Модерация</Text>
+            <View style={styles.chips}>
+              {moderationFilters.map((f) => {
+                const activeFilter = filters.moderation === f.key;
+                return (
+                  <Pressable
+                    key={`mobile-moderation-${f.key}`}
+                    onPress={() => {
+                      setFilters((s) => ({ ...s, moderation: f.key }));
+                      setPage(1);
+                    }}
+                    style={[styles.chip, activeFilter && styles.chipActive]}
+                  >
+                    <Text style={[styles.chipText, activeFilter && styles.chipTextActive]}>{f.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <Text style={styles.sub}>Онлайн</Text>
+            <View style={styles.chips}>
+              {onlineFilters.map((f) => {
+                const activeFilter = filters.online === f.key;
+                return (
+                  <Pressable
+                    key={`mobile-online-${f.key}`}
+                    onPress={() => {
+                      setFilters((s) => ({ ...s, online: f.key }));
+                      setPage(1);
+                    }}
+                    style={[styles.chip, activeFilter && styles.chipActive]}
+                  >
+                    <Text style={[styles.chipText, activeFilter && styles.chipTextActive]}>{f.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
+              <Pressable onPress={() => setMobileFiltersVisible(false)} style={styles.btn}>
+                <Text style={styles.btnText}>Готово</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <UsersRejectReasonModal
         visible={!!rejectTarget}

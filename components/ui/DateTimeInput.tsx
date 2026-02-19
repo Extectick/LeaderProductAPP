@@ -99,6 +99,64 @@ function formatDisplay(date: Date, includeTime: boolean, precision: 'minute' | '
   return `${dd}.${mm}.${yy} ${hh}:${mins}`;
 }
 
+function clampTwoDigitSegment(segment: string, min: number, max: number): string {
+  if (!/^\d{2}$/.test(segment)) return segment;
+  const parsed = Number(segment);
+  if (!Number.isFinite(parsed)) return segment;
+  const bounded = Math.min(max, Math.max(min, parsed));
+  return pad2(bounded);
+}
+
+function sanitizeMaskedInput(masked: string, includeTime: boolean): string {
+  let next = masked;
+
+  if (next.length >= 2) {
+    const dd = next.slice(0, 2);
+    if (/^\d{2}$/.test(dd)) {
+      next = `${clampTwoDigitSegment(dd, 1, 31)}${next.slice(2)}`;
+    }
+  }
+
+  if (next.length >= 5) {
+    const mm = next.slice(3, 5);
+    if (/^\d{2}$/.test(mm)) {
+      next = `${next.slice(0, 3)}${clampTwoDigitSegment(mm, 1, 12)}${next.slice(5)}`;
+    }
+  }
+
+  if (next.length >= 5) {
+    const dd = next.slice(0, 2);
+    const mm = next.slice(3, 5);
+    if (/^\d{2}$/.test(dd) && /^\d{2}$/.test(mm)) {
+      const yearGuess = next.length >= 8 && /^\d{2}$/.test(next.slice(6, 8))
+        ? 2000 + Number(next.slice(6, 8))
+        : new Date().getFullYear();
+      const monthNum = Number(mm);
+      const maxDay = new Date(yearGuess, monthNum, 0).getDate();
+      const safeDay = clampTwoDigitSegment(dd, 1, maxDay);
+      if (safeDay !== dd) {
+        next = `${safeDay}${next.slice(2)}`;
+      }
+    }
+  }
+
+  if (includeTime && next.length >= 11) {
+    const hh = next.slice(9, 11);
+    if (/^\d{2}$/.test(hh)) {
+      next = `${next.slice(0, 9)}${clampTwoDigitSegment(hh, 0, 23)}${next.slice(11)}`;
+    }
+  }
+
+  if (includeTime && next.length >= 14) {
+    const mins = next.slice(12, 14);
+    if (/^\d{2}$/.test(mins)) {
+      next = `${next.slice(0, 12)}${clampTwoDigitSegment(mins, 0, 59)}${next.slice(14)}`;
+    }
+  }
+
+  return next;
+}
+
 function parseStrictMasked(text: string, includeTime: boolean, precision: 'minute' | 'hour'): Date | null {
   const trimmed = text.trim();
   const match = includeTime
@@ -378,16 +436,11 @@ export default function DateTimeInput({
       const message = `Введите дату в формате ${fmt}.`;
       setLocalError(message);
       Alert.alert('Неверный формат', message);
-      if (selected) setText(formatDisplay(selected, includeTime, timePrecision));
-      else setText('');
       return;
     }
 
-    if (!emitDate(parsed)) {
-      if (selected) setText(formatDisplay(selected, includeTime, timePrecision));
-      else setText('');
-    }
-  }, [emitDate, includeTime, selected, text, timePrecision]);
+    if (!emitDate(parsed)) return;
+  }, [emitDate, includeTime, text, timePrecision]);
 
   const onWebApply = useCallback(() => {
     const base = new Date(webDay.getFullYear(), webDay.getMonth(), webDay.getDate(), 0, 0, 0, 0);
@@ -470,7 +523,7 @@ export default function DateTimeInput({
         <MaskInput
           value={text}
           onChangeText={(masked) => {
-            setText(masked);
+            setText(sanitizeMaskedInput(masked, includeTime));
             if (localError) setLocalError('');
           }}
           onBlur={commitText}
@@ -681,14 +734,25 @@ const styles = StyleSheet.create({
   },
   input: {
     color: '#111827',
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 15,
+    fontWeight: '800',
     paddingVertical: 10,
+    borderWidth: 0,
+    ...(Platform.OS === 'web'
+      ? ({
+          outlineWidth: 0,
+          outlineColor: 'transparent',
+          outlineStyle: 'none',
+          borderColor: 'transparent',
+          boxShadow: 'none',
+        } as any)
+      : null),
   },
   iconBtn: {
     position: 'absolute',
     right: 6,
-    top: 6,
+    top: '50%',
+    marginTop: -16,
     width: 32,
     height: 32,
     borderRadius: 16,
@@ -699,7 +763,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   iconBtnPressed: { transform: [{ scale: 0.98 }], opacity: 0.95 },
-  clearBtn: { position: 'absolute', right: 44, top: 6 },
+  clearBtn: { position: 'absolute', right: 44, top: '50%', marginTop: -9 },
   errorText: { color: '#EF4444', fontSize: 12 },
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.2)' },
   backdropDark: {

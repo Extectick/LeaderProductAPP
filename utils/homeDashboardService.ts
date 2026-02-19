@@ -1,6 +1,16 @@
 import type { AppealCounters, AppealListItem, AppealStatus, Scope } from '@/src/entities/appeal/types';
-import type { HomeActivityItem, HomeMetricState, HomeSeriesPoint } from '@/src/entities/home/types';
+import type {
+  HomeActivityItem,
+  HomeDashboardBundleDto,
+  HomeDashboardData,
+  HomeMetricCard,
+  HomeMetricId,
+  HomeMetricState,
+  HomeSeriesPoint,
+} from '@/src/entities/home/types';
 import { apiClient } from '@/utils/apiClient';
+import { API_ENDPOINTS } from '@/utils/apiEndpoints';
+import type { ServiceAccessItem } from '@/utils/servicesService';
 
 type ResolvedMetricState = Exclude<HomeMetricState, 'loading'>;
 
@@ -25,6 +35,74 @@ export type ActivityFetchResult = {
 export type SecondaryCountersFetchResult = {
   unreadMessages: MetricFetchResult;
   urgentDeadlines: MetricFetchResult;
+};
+
+const HOME_METRIC_META: Record<HomeMetricId, Omit<HomeMetricCard, 'value' | 'state' | 'hint'>> = {
+  open_appeals: {
+    id: 'open_appeals',
+    title: 'Новые обращения',
+    description: 'Открытые обращения в вашем отделе',
+    tone: 'info',
+    icon: 'mail-unread-outline',
+  },
+  my_tasks: {
+    id: 'my_tasks',
+    title: 'Мои задачи',
+    description: 'Принятые мной обращения в работе',
+    tone: 'success',
+    icon: 'checkbox-outline',
+  },
+  daily_scans: {
+    id: 'daily_scans',
+    title: 'Сканов за 24 часа',
+    description: 'Количество сканов ваших QR-кодов',
+    tone: 'warning',
+    icon: 'qr-code-outline',
+  },
+  unread_messages: {
+    id: 'unread_messages',
+    title: 'Непрочитанные',
+    description: 'Новые сообщения по вашим обращениям',
+    tone: 'neutral',
+    icon: 'chatbubble-ellipses-outline',
+  },
+  urgent_deadlines: {
+    id: 'urgent_deadlines',
+    title: 'Срочные дедлайны',
+    description: 'Дедлайн в ближайшие 48 часов',
+    tone: 'danger',
+    icon: 'alarm-outline',
+  },
+};
+
+function createMetricCard(id: HomeMetricId): HomeMetricCard {
+  return {
+    ...HOME_METRIC_META[id],
+    value: null,
+    state: 'loading',
+  };
+}
+
+export function createInitialHomeDashboard(): HomeDashboardData {
+  return {
+    metrics: {
+      open_appeals: createMetricCard('open_appeals'),
+      my_tasks: createMetricCard('my_tasks'),
+      daily_scans: createMetricCard('daily_scans'),
+      unread_messages: createMetricCard('unread_messages'),
+      urgent_deadlines: createMetricCard('urgent_deadlines'),
+    },
+    scansSeries: [],
+    scansSeriesState: 'loading',
+    activity: [],
+    activityState: 'loading',
+    lastUpdatedAt: null,
+  };
+}
+
+export type HomeDashboardBundleResult = {
+  dashboard: HomeDashboardData;
+  services: ServiceAccessItem[];
 };
 
 type AppealListEnvelope = {
@@ -75,6 +153,70 @@ function metricLocked(message?: string): MetricFetchResult {
 function resolveApiMessage(status: number, message?: string): string {
   if (status === 0) return 'Ошибка сети. Проверьте соединение';
   return message || 'Не удалось получить данные';
+}
+
+function normalizeResolvedState(state: unknown, fallback: ResolvedMetricState = 'error'): ResolvedMetricState {
+  return state === 'ready' || state === 'locked' || state === 'error' ? state : fallback;
+}
+
+function normalizeServiceItem(raw: Partial<ServiceAccessItem>): ServiceAccessItem {
+  return {
+    id: Number(raw.id || 0),
+    key: String(raw.key || ''),
+    name: String(raw.name || ''),
+    route: raw.route ?? null,
+    icon: raw.icon ?? null,
+    description: raw.description ?? null,
+    gradientStart: raw.gradientStart ?? null,
+    gradientEnd: raw.gradientEnd ?? null,
+    visible: raw.visible !== false,
+    enabled: raw.enabled !== false,
+  };
+}
+
+function mapDashboardBundle(dto?: HomeDashboardBundleDto): HomeDashboardBundleResult {
+  const dashboardDto = dto?.dashboard || null;
+  const base = createInitialHomeDashboard();
+  const metricIds: HomeMetricId[] = ['open_appeals', 'my_tasks', 'daily_scans', 'unread_messages', 'urgent_deadlines'];
+  const nextMetrics: HomeDashboardData['metrics'] = { ...base.metrics };
+
+  metricIds.forEach((metricId) => {
+    const rawMetric = dashboardDto?.metrics?.[metricId];
+    if (!rawMetric) return;
+    nextMetrics[metricId] = {
+      ...nextMetrics[metricId],
+      state: normalizeResolvedState(rawMetric.state, 'error'),
+      value: rawMetric.value ?? null,
+      hint: rawMetric.message,
+    };
+  });
+
+  const servicesRaw = Array.isArray(dto?.services) ? dto?.services : [];
+
+  return {
+    dashboard: {
+      ...base,
+      metrics: nextMetrics,
+      scansSeries: Array.isArray(dashboardDto?.scansSeries) ? dashboardDto!.scansSeries : [],
+      scansSeriesState: normalizeResolvedState(dashboardDto?.scansSeriesState, 'error'),
+      scansSeriesMessage: dashboardDto?.scansSeriesMessage,
+      activity: Array.isArray(dashboardDto?.activity) ? dashboardDto!.activity : [],
+      activityState: normalizeResolvedState(dashboardDto?.activityState, 'error'),
+      activityMessage: dashboardDto?.activityMessage,
+      lastUpdatedAt: dashboardDto?.lastUpdatedAt || new Date().toISOString(),
+    },
+    services: servicesRaw.map((item) => normalizeServiceItem(item)),
+  };
+}
+
+export async function fetchHomeDashboardBundle(): Promise<HomeDashboardBundleResult> {
+  const response = await apiClient<void, HomeDashboardBundleDto>(API_ENDPOINTS.HOME.DASHBOARD, {
+    method: 'GET',
+  });
+  if (!response.ok) {
+    throw new Error(resolveApiMessage(response.status, response.message));
+  }
+  return mapDashboardBundle(response.data);
 }
 
 function buildAppealsListPath(

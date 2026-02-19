@@ -77,6 +77,7 @@ type MessagesListProps = {
   onUserInteraction?: () => void;
   onRetryLocalMessage?: (message: AppealMessage) => void;
   onCancelLocalMessage?: (message: AppealMessage) => void;
+  onSenderPress?: (userId: number) => void;
 };
 
 const MessagesList = React.forwardRef<MessagesListHandle, MessagesListProps>(
@@ -98,6 +99,7 @@ const MessagesList = React.forwardRef<MessagesListHandle, MessagesListProps>(
       onUserInteraction,
       onRetryLocalMessage,
       onCancelLocalMessage,
+      onSenderPress,
     },
     ref
   ) => {
@@ -663,6 +665,7 @@ const MessagesList = React.forwardRef<MessagesListHandle, MessagesListProps>(
                 isGrouped={item.isGrouped}
                 onRetryLocalMessage={onRetryLocalMessage}
                 onCancelLocalMessage={onCancelLocalMessage}
+                onSenderPress={onSenderPress}
               />
             );
           }}

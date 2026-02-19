@@ -289,6 +289,33 @@ export async function patchAppeal(appealId: number, patch: Partial<AppealListIte
   await persist();
 }
 
+export async function removeAppeal(appealId: number) {
+  if (!Number.isFinite(appealId) || appealId <= 0) return;
+
+  delete state.appeals[appealId];
+  delete state.messages[appealId];
+  delete state.messagesMeta[appealId];
+
+  Object.keys(state.lists).forEach((key) => {
+    const entry = state.lists[key];
+    if (!entry) return;
+    const nextIds = (entry.ids || []).filter((id) => id !== appealId);
+    const nextTotal =
+      typeof entry.meta?.total === 'number'
+        ? Math.max(0, entry.meta.total - (nextIds.length < (entry.ids || []).length ? 1 : 0))
+        : entry.meta?.total;
+
+    state.lists[key] = {
+      ...entry,
+      ids: nextIds,
+      meta: entry.meta ? { ...entry.meta, total: nextTotal } : entry.meta,
+    };
+  });
+
+  notify();
+  await persist();
+}
+
 export async function applyMessageReads(
   appealId: number,
   messageIds: number[],

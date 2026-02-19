@@ -141,7 +141,9 @@ function parseAppealId(value: any): number | null {
 }
 
 function parseAppealIdFromData(data: any): number | null {
-  if (!data || data.type !== 'APPEAL_MESSAGE') return null;
+  if (!data) return null;
+  const type = String(data.type || '').toUpperCase();
+  if (!type.startsWith('APPEAL_')) return null;
   return parseAppealId(data.appealId);
 }
 

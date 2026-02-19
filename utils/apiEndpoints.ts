@@ -101,4 +101,7 @@ export const API_ENDPOINTS = {
     DEPARTMENT_ACCESS_BY_DEPARTMENT: (serviceId: number, departmentId: number) =>
       `/services/${serviceId}/department-access/${departmentId}`,
   },
+  HOME: {
+    DASHBOARD: '/home/dashboard',
+  },
 };

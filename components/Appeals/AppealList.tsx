@@ -249,9 +249,9 @@ export default function AppealsList({
   }
 
   return (
-    <View style={[{ flex: 1 }, style]}>
+    <View style={[{ flex: 1, minHeight: 0 }, style]}>
       <FlatList
-        style={{ flex: 1 }}
+        style={{ flex: 1, minHeight: 0 }}
         data={displayItems}
         keyExtractor={(it) => String(it.id)}
         renderItem={({ item }) =>

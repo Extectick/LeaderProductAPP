@@ -26,6 +26,14 @@ const PROFILE_KEY = 'profile';
 
 export type Department = { id: number; name: string };
 
+type ApiErrorWithStatus = Error & { status?: number };
+
+function createApiError(message: string, status?: number): ApiErrorWithStatus {
+  const err = new Error(message) as ApiErrorWithStatus;
+  if (typeof status === 'number') err.status = status;
+  return err;
+}
+
 
 export async function createProfile(
   type: 'CLIENT' | 'SUPPLIER' | 'EMPLOYEE',
@@ -435,8 +443,7 @@ export async function getProfileById(userId?: number | null): Promise<Profile | 
 
   const res = await apiClient<void, { profile: Profile }>(url);
   if (!res.ok) {
-    console.error('Ошибка получения профиля:', res.message);
-    return null;
+    throw createApiError(res.message || 'Не удалось загрузить профиль', res.status);
   }
 
   const profile = res.data?.profile ?? null;

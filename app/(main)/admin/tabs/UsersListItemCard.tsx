@@ -25,6 +25,7 @@ type Props = {
   onApprove: () => void;
   onReject: () => void;
   onEdit: () => void;
+  onAvatarPress?: () => void;
 };
 
 export function UsersListItemCard({
@@ -37,6 +38,7 @@ export function UsersListItemCard({
   onApprove,
   onReject,
   onEdit,
+  onAvatarPress,
 }: Props) {
   const moderation = moderationTone(item.moderationState);
   const online = onlineTone(item.isOnline);
@@ -67,7 +69,13 @@ export function UsersListItemCard({
           </View>
 
           <View style={styles.summaryRow}>
-            <View style={styles.avatarWrap}>
+            <Pressable
+              style={styles.avatarWrap}
+              onPress={(event) => {
+                event.stopPropagation?.();
+                onAvatarPress?.();
+              }}
+            >
               {item.avatarUrl ? (
                 <Image source={{ uri: item.avatarUrl }} style={styles.avatar} />
               ) : (
@@ -76,7 +84,7 @@ export function UsersListItemCard({
                 </View>
               )}
               <View style={[styles.onlineDot, { backgroundColor: item.isOnline ? '#22C55E' : '#94A3B8' }]} />
-            </View>
+            </Pressable>
 
             <View style={styles.rowMainTextWrap}>
               <Text numberOfLines={1} style={styles.rowName}>

@@ -70,6 +70,7 @@ type NameFormState = { firstName: string; lastName: string; middleName: string }
 type PhoneMode = 'collapsed' | 'editing' | 'pending';
 type EmailMode = 'view' | 'editing' | 'pending_code';
 type NameMode = 'view' | 'editing';
+type HeroRoleTone = 'admin' | 'manager' | 'employee';
 
 const toMaskedPhoneValue = (value?: string | null) => formatPhoneInputMask(value || '');
 
@@ -197,7 +198,7 @@ export function ProfileView({
       } catch (e) {
         if (!alive) return;
         console.error('Profile fetch error:', e);
-        setErr('Не удалось загрузить профиль');
+        setErr((e as any)?.message || 'Не удалось загрузить профиль');
       } finally {
         if (alive) {
           setLoading(false);
@@ -613,11 +614,22 @@ export function ProfileView({
   const deptName = employeeProfile?.department?.name;
 
   const chips: Chip[] = [
-    { icon: 'id-card-outline' as IoniconName, label: profTypeName(currentProfileType), tone: 'violet' },
-    { icon: 'shield-checkmark-outline' as IoniconName, label: profileStatus ?? '—', tone: profStatusTone(profileStatus) },
     { icon: 'person-outline' as IoniconName, label: getRoleDisplayName(role), tone: 'blue' },
+    { icon: 'shield-checkmark-outline' as IoniconName, label: profileStatus ?? '—', tone: profStatusTone(profileStatus) },
     ...(deptName ? [{ icon: 'business-outline' as IoniconName, label: deptName, tone: 'gray' as Tone }] : []),
   ];
+
+  const heroRoleTone: HeroRoleTone = (() => {
+    const rootRole = String(role?.name || '').toLowerCase();
+    const deptRoleNames = (departmentRoles || []).map((dr) => String(dr?.role?.name || '').toLowerCase());
+    if (rootRole === 'admin' || rootRole === 'administrator' || deptRoleNames.includes('admin') || deptRoleNames.includes('administrator')) {
+      return 'admin';
+    }
+    if (rootRole === 'department_manager' || deptRoleNames.includes('department_manager')) {
+      return 'manager';
+    }
+    return 'employee';
+  })();
 
   const facts: Array<{ icon: IoniconName; label: string; value?: string }> = [
     { icon: 'barcode-outline', label: 'ID пользователя', value: String(id) },
@@ -640,10 +652,11 @@ export function ProfileView({
         avatarUrl={avatarUrl || undefined}
         initials={initials}
         title={fullName || 'Профиль'}
-        subtitle={deptName ? `${profTypeName(currentProfileType)} • ${deptName}` : profTypeName(currentProfileType)}
+        subtitle={undefined}
         chips={chips}
         presenceLabel={!isSelf ? presenceLabel : null}
         presenceOnline={presence?.isOnline}
+        heroRoleTone={heroRoleTone}
         avatarEditable={isSelf}
         avatarBusy={uploadingAvatar}
         onEditAvatar={handlePickAvatar}
@@ -804,6 +817,7 @@ function Hero({
   chips,
   presenceLabel,
   presenceOnline,
+  heroRoleTone,
   avatarEditable,
   avatarBusy,
   onEditAvatar,
@@ -824,6 +838,7 @@ function Hero({
   chips: Chip[];
   presenceLabel?: string | null;
   presenceOnline?: boolean;
+  heroRoleTone?: HeroRoleTone;
   avatarEditable?: boolean;
   avatarBusy?: boolean;
   onEditAvatar?: () => void;
@@ -850,36 +865,55 @@ function Hero({
   return (
     <Animated.View entering={FadeInDown.duration(600)} style={styles.heroWrap}>
       <LinearGradient
-        colors={['#C7D2FE', '#E9D5FF']}
+        colors={
+          heroRoleTone === 'admin'
+            ? ['#FDE68A', '#FCA5A5']
+            : heroRoleTone === 'manager'
+            ? ['#FFEDD5', '#FED7AA']
+            : ['#C7D2FE', '#E9D5FF']
+        }
         start={{ x: 0, y: 0.4 }}
         end={{ x: 1, y: 1 }}
         style={styles.heroBg}
       />
       <View style={styles.heroInner}>
-        <Pressable
-          onPress={avatarEditable ? onEditAvatar : undefined}
-          disabled={!avatarEditable || avatarBusy}
-          style={{ alignSelf: 'flex-start' }}
-        >
-          <Animated.View style={[styles.avatarOuter, avatarAnim]}>
-            {avatarUrl ? (
-              <Image source={{ uri: avatarUrl }} style={styles.avatar} />
-            ) : (
-              <View style={[styles.avatar, styles.avatarFallback]}>
-                <Text style={styles.avatarInitials}>{initials}</Text>
-              </View>
-            )}
-            {avatarEditable ? (
-              <View style={styles.avatarEditBadge}>
-                {avatarBusy ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Ionicons name="camera" size={16} color="#fff" />
-                )}
-              </View>
-            ) : null}
-          </Animated.View>
-        </Pressable>
+        <View style={styles.avatarRow}>
+          <Pressable
+            onPress={avatarEditable ? onEditAvatar : undefined}
+            disabled={!avatarEditable || avatarBusy}
+            style={styles.avatarPressable}
+          >
+            <Animated.View style={[styles.avatarOuter, avatarAnim]}>
+              {avatarUrl ? (
+                <Image source={{ uri: avatarUrl }} style={styles.avatar} />
+              ) : (
+                <View style={[styles.avatar, styles.avatarFallback]}>
+                  <Text style={styles.avatarInitials}>{initials}</Text>
+                </View>
+              )}
+              {typeof presenceOnline === 'boolean' ? (
+                <View
+                  style={[
+                    styles.avatarPresenceDot,
+                    { backgroundColor: presenceOnline ? '#22c55e' : '#94a3b8' },
+                  ]}
+                />
+              ) : null}
+              {avatarEditable ? (
+                <View style={styles.avatarEditBadge}>
+                  {avatarBusy ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Ionicons name="camera" size={16} color="#fff" />
+                  )}
+                </View>
+              ) : null}
+            </Animated.View>
+          </Pressable>
+          {!presenceOnline && presenceLabel && presenceLabel.startsWith('Был') ? (
+            <Text style={styles.avatarLastSeenText}>{presenceLabel}</Text>
+          ) : null}
+        </View>
 
         {nameMode === 'editing' ? (
           <View style={styles.inlineNameEditor}>
@@ -949,17 +983,6 @@ function Hero({
           </View>
         )}
         {subtitle ? <Text style={styles.heroSubtitle}>{subtitle}</Text> : null}
-        {presenceLabel ? (
-          <View style={styles.presenceRow}>
-            <View
-              style={[
-                styles.presenceDot,
-                { backgroundColor: presenceOnline ? '#22c55e' : '#94a3b8' },
-              ]}
-            />
-            <Text style={styles.presenceText}>{presenceLabel}</Text>
-          </View>
-        ) : null}
 
         <View style={styles.chipsRow}>
           {chips.map((c, idx) => (
@@ -1486,6 +1509,8 @@ const styles = StyleSheet.create({
   heroBg: { ...StyleSheet.absoluteFillObject },
   heroInner: { padding: 18, gap: 8 },
   heroTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  avatarRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  avatarPressable: { alignSelf: 'flex-start' },
   avatarOuter: {
     alignSelf: 'flex-start',
     width: 96,
@@ -1501,6 +1526,16 @@ const styles = StyleSheet.create({
   avatar: { width: 88, height: 88, borderRadius: 24 },
   avatarFallback: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#EEF2FF' },
   avatarInitials: { fontSize: 28, fontWeight: '800', color: '#0F172A' },
+  avatarPresenceDot: {
+    position: 'absolute',
+    right: -4,
+    bottom: -4,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
   avatarEditBadge: {
     position: 'absolute',
     right: -6,
@@ -1514,11 +1549,16 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#fff',
   },
+  avatarLastSeenText: {
+    flex: 1,
+    color: '#334155',
+    fontSize: 12,
+    fontWeight: '600',
+    lineHeight: 16,
+    marginRight: 8,
+  },
   heroTitle: { fontSize: 22, fontWeight: '800', color: '#0F172A', flexShrink: 1 },
   heroSubtitle: { marginTop: 6, color: '#334155' },
-  presenceRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 },
-  presenceDot: { width: 8, height: 8, borderRadius: 4 },
-  presenceText: { color: '#334155', fontSize: 12, fontWeight: '600' },
   chipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
 
   inlineNameEditor: { gap: 8 },

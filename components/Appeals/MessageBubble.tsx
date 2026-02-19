@@ -30,6 +30,7 @@ export default function MessageBubble({
   isGrouped = false,
   onRetryLocalMessage,
   onCancelLocalMessage,
+  onSenderPress,
 }: {
   message: AppealMessage;
   own: boolean;
@@ -38,6 +39,7 @@ export default function MessageBubble({
   isGrouped?: boolean;
   onRetryLocalMessage?: (message: AppealMessage) => void;
   onCancelLocalMessage?: (message: AppealMessage) => void;
+  onSenderPress?: (userId: number) => void;
 }) {
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const attachments = Array.isArray(message.attachments)
@@ -85,6 +87,8 @@ export default function MessageBubble({
   const player = useAudioPlayer(null, { updateInterval: 250 });
   const status = useAudioPlayerStatus(player);
   const showHeaderRow = showHeader && !isSystem;
+  const senderId = Number(message.sender?.id);
+  const canOpenSender = Number.isFinite(senderId) && senderId > 0;
   const metaText = `${timeStr} · ${dateStr}`;
   const isPending = own && message.localState === 'pending';
   const isFailed = own && message.localState === 'failed';
@@ -193,7 +197,14 @@ export default function MessageBubble({
       >
         {showHeaderRow ? (
           <View style={[styles.senderRow, own && styles.senderRowOwn]}>
-            <View style={styles.avatarWrap}>
+            <Pressable
+              style={styles.avatarWrap}
+              disabled={!canOpenSender}
+              onPress={() => {
+                if (!canOpenSender) return;
+                onSenderPress?.(senderId);
+              }}
+            >
               {avatarUrl ? (
                 <Image source={{ uri: avatarUrl }} style={styles.avatar} />
               ) : (
@@ -201,7 +212,7 @@ export default function MessageBubble({
                   <Text style={styles.avatarText}>{initials}</Text>
                 </View>
               )}
-            </View>
+            </Pressable>
             <View style={styles.senderMeta}>
               <View style={styles.senderNameRow}>
                 <Text style={styles.senderName}>

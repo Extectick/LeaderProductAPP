@@ -32,6 +32,14 @@ type ListCacheEnvelope = {
   ts: number;
 };
 
+type ApiErrorWithStatus = Error & { status?: number };
+
+function createApiError(message: string, status?: number): ApiErrorWithStatus {
+  const err = new Error(message) as ApiErrorWithStatus;
+  if (typeof status === 'number') err.status = status;
+  return err;
+}
+
 function listKey(scope: Scope, limit: number, offset: number, status?: AppealStatus, priority?: AppealPriority) {
   return JSON.stringify({ scope, limit, offset, status, priority });
 }
@@ -273,7 +281,7 @@ export async function changeAppealDepartment(id: number, departmentId: number) {
     { method: 'PUT', body: { departmentId } }
   )) as ApiResponse<{ id: number; status: AppealStatus; toDepartmentId: number }>;
 
-  if (!resp.ok) throw new Error(resp.message || 'Ошибка смены отдела');
+  if (!resp.ok) throw createApiError(resp.message || 'Ошибка смены отдела', Number((resp as any)?.status || 0));
   await invalidateDetailCache(id);
   await invalidateListCache();
   return resp.data;
@@ -286,7 +294,7 @@ export async function assignAppeal(id: number, assigneeIds: number[]) {
     body: { assigneeIds },
   })) as ApiResponse<{ id: number; status: AppealStatus }>;
 
-  if (!resp.ok) throw new Error(resp.message || 'Ошибка назначения исполнителей');
+  if (!resp.ok) throw createApiError(resp.message || 'Ошибка назначения исполнителей', Number((resp as any)?.status || 0));
   await invalidateDetailCache(id);
   return resp.data;
 }

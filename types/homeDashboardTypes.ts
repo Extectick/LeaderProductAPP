@@ -1,4 +1,5 @@
 import type { AppealPriority, AppealStatus } from '@/types/appealsTypes';
+import type { ServiceAccessItem } from '@/utils/servicesService';
 
 export type HomeMetricId =
   | 'open_appeals'
@@ -54,4 +55,28 @@ export type HomeDashboardData = {
   activityState: HomeMetricState;
   activityMessage?: string;
   lastUpdatedAt: string | null;
+};
+
+export type HomeResolvedMetricState = Exclude<HomeMetricState, 'loading'>;
+
+export type HomeDashboardMetricDto = {
+  state: HomeResolvedMetricState;
+  value: number | null;
+  message?: string;
+};
+
+export type HomeDashboardDto = {
+  metrics: Partial<Record<HomeMetricId, HomeDashboardMetricDto>>;
+  scansSeries?: HomeSeriesPoint[];
+  scansSeriesState?: HomeResolvedMetricState;
+  scansSeriesMessage?: string;
+  activity?: HomeActivityItem[];
+  activityState?: HomeResolvedMetricState;
+  activityMessage?: string;
+  lastUpdatedAt?: string | null;
+};
+
+export type HomeDashboardBundleDto = {
+  dashboard?: HomeDashboardDto;
+  services?: ServiceAccessItem[];
 };

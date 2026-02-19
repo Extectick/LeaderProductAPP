@@ -19,6 +19,8 @@ type Props = {
   closedStatus?: AppealStatus;
   actionLoading: boolean;
   onAction: (action: PendingDockAction) => void;
+  canAssignInClaimMode?: boolean;
+  onAssign?: () => void;
   onHeightChange: (height: number) => void;
   onScrollToBottom: () => void;
   onSend: (payload: { text?: string; files?: AttachmentFile[] }) => Promise<void> | void;
@@ -44,6 +46,8 @@ export default function AppealActionDock({
   closedStatus,
   actionLoading,
   onAction,
+  canAssignInClaimMode,
+  onAssign,
   onHeightChange,
   onScrollToBottom,
   onSend,
@@ -115,16 +119,44 @@ export default function AppealActionDock({
               transition={{ type: 'timing', duration: 210 }}
             >
               <View style={styles.actionCard}>
-                <Pressable
-                  style={({ pressed }) => [
-                    styles.actionBtnSingle,
-                    pressed && styles.actionBtnSinglePressed,
-                  ]}
-                  onPress={() => onAction('claim')}
-                  disabled={actionLoading}
-                >
-                  <Text style={styles.actionBtnSingleText}>Принять обращение</Text>
-                </Pressable>
+                {canAssignInClaimMode && onAssign ? (
+                  <View style={styles.splitActionRow}>
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.splitActionBtn,
+                        styles.splitActionBtnClaim,
+                        pressed && styles.splitActionBtnPressed,
+                      ]}
+                      onPress={() => onAction('claim')}
+                      disabled={actionLoading}
+                    >
+                      <Text style={styles.splitActionBtnText}>Принять</Text>
+                    </Pressable>
+                    <View style={styles.splitDivider} />
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.splitActionBtn,
+                        styles.splitActionBtnAssign,
+                        pressed && styles.splitActionBtnPressed,
+                      ]}
+                      onPress={onAssign}
+                      disabled={actionLoading}
+                    >
+                      <Text style={styles.splitActionBtnText}>Назначить</Text>
+                    </Pressable>
+                  </View>
+                ) : (
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.actionBtnSingle,
+                      pressed && styles.actionBtnSinglePressed,
+                    ]}
+                    onPress={() => onAction('claim')}
+                    disabled={actionLoading}
+                  >
+                    <Text style={styles.actionBtnSingleText}>Принять обращение</Text>
+                  </Pressable>
+                )}
               </View>
             </MotiView>
           ) : null}
@@ -252,6 +284,12 @@ const styles = StyleSheet.create({
   },
   splitActionBtnApprove: {
     backgroundColor: '#16A34A',
+  },
+  splitActionBtnClaim: {
+    backgroundColor: '#2563EB',
+  },
+  splitActionBtnAssign: {
+    backgroundColor: '#1D4ED8',
   },
   splitActionBtnReject: {
     backgroundColor: '#F97316',

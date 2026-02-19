@@ -1,5 +1,15 @@
 import { useMemo, useState, useContext, useEffect, useRef, useCallback } from 'react';
-import { View, Alert, Pressable, Text, StyleSheet, ScrollView, useWindowDimensions, Platform } from 'react-native';
+import {
+  View,
+  Alert,
+  Pressable,
+  Text,
+  StyleSheet,
+  ScrollView,
+  useWindowDimensions,
+  Platform,
+  ActivityIndicator,
+} from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import AppealsList from '@/components/Appeals/AppealList';
@@ -124,6 +134,7 @@ export default function AppealsIndex() {
   const [priority] = useState<AppealPriority | undefined>();
   const [wsTick, setWsTick] = useState(0);
   const [tab, setTab] = useState<'mine' | 'tasks'>('mine');
+  const [scopeSwitchLoading, setScopeSwitchLoading] = useState(false);
   const [viewMode, setViewMode] = useState<AppealsViewMode>('active');
   const [onlyAssignedToMe, setOnlyAssignedToMe] = useState(false);
   const [filtersReady, setFiltersReady] = useState(false);
@@ -185,9 +196,23 @@ export default function AppealsIndex() {
     (data?: { activeCount: number; unreadMessagesCount: number }) => {
       if (!data) return null;
       const activeCount = Math.max(0, data.activeCount || 0);
+      const unreadCount = Math.max(0, data.unreadMessagesCount || 0);
+      if (!activeCount && !unreadCount) return null;
       return (
-        <View style={styles.tabCountBadge}>
-          <Text style={styles.tabCountText}>{formatBadgeCount(activeCount)}</Text>
+        <View style={styles.tabBadgesRow}>
+          {activeCount ? (
+            <View style={styles.tabCountBadge}>
+              <Text style={styles.tabCountText}>{formatBadgeCount(activeCount)}</Text>
+            </View>
+          ) : null}
+          {unreadCount ? (
+            <View style={[styles.tabCountBadge, styles.tabUnreadBadge]}>
+              <Ionicons name="chatbubble-ellipses-outline" size={11} color="#FFFFFF" />
+              <Text style={[styles.tabCountText, styles.tabUnreadText]}>
+                {formatBadgeCount(unreadCount)}
+              </Text>
+            </View>
+          ) : null}
         </View>
       );
     },
@@ -236,6 +261,7 @@ export default function AppealsIndex() {
   useEffect(() => {
     if (!departmentTabAvailable && tab === 'tasks') {
       setTab('mine');
+      setScopeSwitchLoading(false);
     }
   }, [departmentTabAvailable, tab]);
 
@@ -430,6 +456,12 @@ export default function AppealsIndex() {
     }
   }, [activeAppealId, router, selectedAppealIdFromQuery]);
 
+  const switchScopeTab = useCallback((nextTab: 'mine' | 'tasks') => {
+    if (tab === nextTab) return;
+    setScopeSwitchLoading(true);
+    setTab(nextTab);
+  }, [tab]);
+
   const listEmptyComponent = useMemo(() => {
     if (cachedItems.length === 0) {
       if (tab === 'mine') {
@@ -486,14 +518,23 @@ export default function AppealsIndex() {
       priority={priority}
       pageSize={20}
       refreshKey={refreshKey}
-      onLoadedMeta={() => {}}
+      onLoadedMeta={() => {
+        setScopeSwitchLoading(false);
+      }}
+      onLoadError={() => {
+        setScopeSwitchLoading(false);
+      }}
       currentUserId={auth?.profile?.id}
       incomingMessage={lastWsMsg.current as any}
       initialItems={cachedItems}
       listKey={listKey}
-      onItemsChange={(items) => setCachedItems(items)}
+      onItemsChange={(items) => {
+        setCachedItems(items);
+        setScopeSwitchLoading(false);
+      }}
       onRefreshDone={() => {
         void loadCounters();
+        setScopeSwitchLoading(false);
       }}
       style={isDesktopSplit ? styles.desktopInboxList : undefined}
       contentContainerStyle={{ paddingBottom: isDesktopSplit ? 10 : tabBarSpacerHeight + 8 }}
@@ -542,14 +583,14 @@ export default function AppealsIndex() {
           style={
             isDesktopSplit
               ? [styles.desktopLeftPane, { width: desktopLayout!.inboxWidth }]
-              : null
+              : styles.mobileLeftPane
           }
         >
-          <View style={isDesktopSplit ? styles.desktopLeftShell : null}>
+          <View style={isDesktopSplit ? styles.desktopLeftShell : styles.mobileLeftShell}>
             <View style={[styles.controlsBlock, isDesktopSplit ? styles.desktopInboxTop : null]}>
             <View style={styles.scopeSwitch}>
               <Pressable
-                onPress={() => setTab('mine')}
+                onPress={() => switchScopeTab('mine')}
                 style={[styles.scopeItem, tab === 'mine' && styles.scopeItemActive]}
               >
                 <View style={styles.scopeItemRow}>
@@ -561,7 +602,7 @@ export default function AppealsIndex() {
               </Pressable>
               {departmentTabAvailable ? (
                 <Pressable
-                  onPress={() => setTab('tasks')}
+                  onPress={() => switchScopeTab('tasks')}
                   style={[styles.scopeItem, tab === 'tasks' && styles.scopeItemActive]}
                 >
                   <View style={styles.scopeItemRow}>
@@ -661,7 +702,15 @@ export default function AppealsIndex() {
               </View>
             ) : null}
 
-            {appealsListElement}
+            <View style={styles.listHost}>
+              {appealsListElement}
+              {scopeSwitchLoading ? (
+                <View style={styles.scopeLoaderOverlay}>
+                  <ActivityIndicator size="small" color="#2563EB" />
+                  <Text style={styles.scopeLoaderText}>Загрузка списка...</Text>
+                </View>
+              ) : null}
+            </View>
           </View>
         </View>
 
@@ -706,6 +755,10 @@ const styles = StyleSheet.create({
     flexShrink: 0,
     alignSelf: 'stretch',
   },
+  mobileLeftPane: {
+    flex: 1,
+    minHeight: 0,
+  },
   desktopLeftShell: {
     flex: 1,
     borderRadius: 16,
@@ -713,6 +766,10 @@ const styles = StyleSheet.create({
     borderColor: '#E2E8F0',
     backgroundColor: '#FFFFFF',
     overflow: 'hidden',
+  },
+  mobileLeftShell: {
+    flex: 1,
+    minHeight: 0,
   },
   desktopInboxTop: {
     marginBottom: 0,
@@ -819,6 +876,41 @@ const styles = StyleSheet.create({
     color: '#64748B',
     fontSize: 11,
     fontWeight: '700',
+  },
+  tabBadgesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  tabUnreadBadge: {
+    backgroundColor: '#2563EB',
+    borderColor: '#1D4ED8',
+    minWidth: 34,
+    paddingHorizontal: 6,
+    flexDirection: 'row',
+    gap: 3,
+  },
+  tabUnreadText: {
+    color: '#FFFFFF',
+  },
+  listHost: {
+    flex: 1,
+    minHeight: 0,
+    position: 'relative',
+  },
+  scopeLoaderOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(255,255,255,0.9)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderRadius: 12,
+    zIndex: 10,
+  },
+  scopeLoaderText: {
+    color: '#475569',
+    fontSize: 13,
+    fontWeight: '600',
   },
   filterRow: {
     marginTop: 8,
@@ -1015,4 +1107,3 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 });
-

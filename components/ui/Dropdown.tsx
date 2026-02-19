@@ -13,7 +13,7 @@ import {
   ViewStyle,
   LayoutRectangle,
   ScrollView,
-  Dimensions,
+  useWindowDimensions,
   Animated,
 } from 'react-native';
 import AnimatedRe, { FadeInDown, FadeOut } from 'react-native-reanimated';
@@ -22,6 +22,7 @@ import { Ionicons } from '@expo/vector-icons';
 export type DropdownItem<T extends string | number> = {
   label: string;
   value: T;
+  icon?: React.ComponentProps<typeof Ionicons>['name'];
   disabled?: boolean;
   visible?: boolean; // default true
 };
@@ -36,7 +37,89 @@ type DropdownProps<T extends string | number> = {
   renderTrigger?: (selectedLabel?: string, open?: boolean) => React.ReactNode;
   errorText?: string;
   menuMaxHeight?: number;
+  menuAlign?: 'auto' | 'left' | 'right';
 };
+
+type DropdownMenuItemProps<T extends string | number> = {
+  item: DropdownItem<T>;
+  selected: boolean;
+  onPress: () => void;
+};
+
+function DropdownMenuItem<T extends string | number>({
+  item,
+  selected,
+  onPress,
+}: DropdownMenuItemProps<T>) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const shiftX = useRef(new Animated.Value(0)).current;
+  const [isHovered, setIsHovered] = useState(false);
+
+  const animate = (toScale: number, toShiftX: number) => {
+    Animated.parallel([
+      Animated.timing(scale, { toValue: toScale, duration: 110, useNativeDriver: true }),
+      Animated.timing(shiftX, { toValue: toShiftX, duration: 110, useNativeDriver: true }),
+    ]).start();
+  };
+
+  return (
+    <Pressable
+      disabled={item.disabled}
+      onPress={onPress}
+      onHoverIn={() => {
+        if (item.disabled) return;
+        setIsHovered(true);
+        animate(1.01, 2);
+      }}
+      onHoverOut={() => {
+        if (item.disabled) return;
+        setIsHovered(false);
+        animate(1, 0);
+      }}
+      onPressIn={() => !item.disabled && animate(0.985, 0)}
+      onPressOut={() => !item.disabled && animate(1.01, 2)}
+      style={({ pressed }) => [
+        styles.item,
+        selected && styles.itemSelected,
+        isHovered && !item.disabled && styles.itemHovered,
+        pressed && !item.disabled && styles.itemPressed,
+        item.disabled && styles.itemDisabled,
+      ]}
+      android_ripple={{ color: 'rgba(37,99,235,0.10)' }}
+    >
+      <Animated.View
+        style={[
+          styles.itemInner,
+          {
+            transform: [{ translateX: shiftX }, { scale }],
+          },
+        ]}
+      >
+        {item.icon ? (
+          <View style={[styles.itemIconWrap, selected && styles.itemIconWrapSelected]}>
+            <Ionicons
+              name={item.icon}
+              size={15}
+              color={selected ? '#2563EB' : '#475569'}
+            />
+          </View>
+        ) : null}
+        <Text
+          numberOfLines={2}
+          ellipsizeMode="tail"
+          style={[
+            styles.itemText,
+            selected && styles.itemTextSelected,
+            item.disabled && styles.itemTextDisabled,
+          ]}
+        >
+          {item.label}
+        </Text>
+        {selected ? <Ionicons name="checkmark-circle" size={16} color="#2563EB" /> : null}
+      </Animated.View>
+    </Pressable>
+  );
+}
 
 export default function Dropdown<T extends string | number>({
   items,
@@ -48,11 +131,13 @@ export default function Dropdown<T extends string | number>({
   renderTrigger,
   errorText,
   menuMaxHeight = 300,
+  menuAlign = 'auto',
 }: DropdownProps<T>) {
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState<LayoutRectangle | null>(null);
   const anchorWrapRef = useRef<View | null>(null);
   const scale = useRef(new Animated.Value(1)).current;
+  const { width: winWidth, height: winHeight } = useWindowDimensions();
 
   const selectedLabel = useMemo(
     () => items.find((i) => i.value === value)?.label,
@@ -70,9 +155,27 @@ export default function Dropdown<T extends string | number>({
     });
   };
 
-  const { width: winWidth } = Dimensions.get('window');
-  const menuWidth = anchor?.width ? Math.max(anchor.width, 220) : 260;
-  const left = Math.min(Math.max(anchor?.x ?? 16, 16), winWidth - menuWidth - 16);
+  const sideGutter = 12;
+  const maxMenuWidth = Math.max(winWidth - sideGutter * 2, 0);
+  const desiredMenuWidth = anchor?.width ? Math.max(anchor.width, 220) : 260;
+  const menuWidth = maxMenuWidth > 0 ? Math.min(desiredMenuWidth, maxMenuWidth) : desiredMenuWidth;
+  const minLeft = sideGutter;
+  const maxLeft = Math.max(winWidth - menuWidth - sideGutter, minLeft);
+  const anchorX = anchor?.x ?? minLeft;
+  const anchorWidth = anchor?.width ?? 0;
+  const preferredLeft =
+    menuAlign === 'right'
+      ? anchorX + anchorWidth - menuWidth
+      : anchorX;
+  const left = Math.min(Math.max(preferredLeft, minLeft), maxLeft);
+
+  const estimatedMenuHeight = Math.min(menuMaxHeight, visibleItems.length * 46 + 20);
+  const anchorBottom = (anchor?.y ?? 0) + (anchor?.height ?? 0);
+  const bottomGutter = 12;
+  const hasSpaceBelow = anchorBottom + 4 + estimatedMenuHeight <= winHeight - bottomGutter;
+  const top = hasSpaceBelow
+    ? anchorBottom + 4
+    : Math.max((anchor?.y ?? 0) - estimatedMenuHeight - 4, bottomGutter);
 
   return (
     <View style={[styles.wrap, style]}>
@@ -136,7 +239,7 @@ export default function Dropdown<T extends string | number>({
           style={[
             styles.menu,
             {
-              top: (anchor?.y ?? 0) + (anchor?.height ?? 0) + 4,
+              top,
               left,
               width: menuWidth,
             },
@@ -151,34 +254,15 @@ export default function Dropdown<T extends string | number>({
               {visibleItems.map((it) => {
                 const selected = value === it.value;
                 return (
-                  <Pressable
+                  <DropdownMenuItem
                     key={String(it.value)}
-                    disabled={it.disabled}
+                    item={it}
+                    selected={selected}
                     onPress={() => {
                       onChange(it.value);
                       setOpen(false);
                     }}
-                    style={({ pressed }) => [
-                      styles.item,
-                      selected && styles.itemSelected,
-                      it.disabled && styles.itemDisabled,
-                      pressed && !it.disabled && styles.itemPressed,
-                    ]}
-                    android_ripple={{ color: 'rgba(0,0,0,0.05)' }}
-                  >
-                    <Text
-                      numberOfLines={2}
-                      ellipsizeMode="tail"
-                      style={[
-                        styles.itemText,
-                        selected && styles.itemTextSelected,
-                        it.disabled && styles.itemTextDisabled,
-                      ]}
-                    >
-                      {it.label}
-                    </Text>
-                    {selected && <Ionicons name="checkmark" size={16} color="#2563EB" />}
-                  </Pressable>
+                  />
                 );
               })}
             </ScrollView>
@@ -211,27 +295,49 @@ const styles = StyleSheet.create({
   menu: {
     position: 'absolute',
     backgroundColor: '#fff',
-    borderRadius: 12,
-    paddingVertical: 6,
+    borderRadius: 14,
+    paddingVertical: 8,
     elevation: 8,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#EEF2FF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
     shadowColor: '#000',
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.14,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
   },
   item: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    paddingVertical: 10,
+    paddingVertical: 4,
     paddingHorizontal: 12,
   },
-  itemPressed: { backgroundColor: 'rgba(0,0,0,0.04)' },
+  itemInner: {
+    minHeight: 40,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  itemHovered: { backgroundColor: '#F8FAFC' },
+  itemPressed: { backgroundColor: '#EEF2FF' },
   itemDisabled: { opacity: 0.5 },
-  itemSelected: { backgroundColor: '#EEF2FF' },
-  itemText: { color: '#111827', fontSize: 14, flex: 1, flexShrink: 1, paddingRight: 8 },
+  itemSelected: { backgroundColor: '#EFF6FF' },
+  itemIconWrap: {
+    width: 24,
+    height: 24,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  itemIconWrapSelected: {
+    backgroundColor: '#DBEAFE',
+    borderColor: '#93C5FD',
+  },
+  itemText: { color: '#111827', fontSize: 14, fontWeight: '500', flex: 1, flexShrink: 1, paddingRight: 8 },
   itemTextSelected: { color: '#2563EB', fontWeight: '700' },
   itemTextDisabled: { color: '#9CA3AF' },
   emptyWrap: { paddingVertical: 10, paddingHorizontal: 12 },

@@ -25,7 +25,6 @@ import { AuthContext } from '@/context/AuthContext';
 import { useHomeDashboardData } from '@/hooks/useHomeDashboardData';
 import type { HomeMetricId } from '@/src/entities/home/types';
 import { isMaxMiniAppLaunch, prepareMaxWebApp } from '@/utils/maxAuthService';
-import { getServicesForUser, type ServiceAccessItem } from '@/utils/servicesService';
 
 const PRIMARY_METRICS: HomeMetricId[] = ['open_appeals', 'my_tasks', 'daily_scans'];
 const SECONDARY_METRICS: HomeMetricId[] = ['unread_messages', 'urgent_deadlines'];
@@ -38,35 +37,12 @@ export default function HomeScreen() {
   const topInsetFromHeader = useHeaderContentTopInset({ hasSubtitle: true });
   const isMaxLaunch = Platform.OS === 'web' && isMaxMiniAppLaunch();
 
-  const { dashboard, refreshing, initialLoading, onRefresh } = useHomeDashboardData();
-  const [servicesSnapshot, setServicesSnapshot] = React.useState<{ loaded: boolean; items: ServiceAccessItem[] }>({
-    loaded: false,
-    items: [],
-  });
+  const { dashboard, services, refreshing, initialLoading, onRefresh } = useHomeDashboardData();
 
   React.useEffect(() => {
     if (!isMaxLaunch) return;
     prepareMaxWebApp();
   }, [isMaxLaunch]);
-
-  React.useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const services = await getServicesForUser();
-        if (!cancelled) {
-          setServicesSnapshot({ loaded: true, items: services });
-        }
-      } catch {
-        if (!cancelled) {
-          setServicesSnapshot({ loaded: true, items: [] });
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const isDesktop = Platform.OS === 'web' && width >= 1160;
   const isTablet = width >= 760;
@@ -91,12 +67,12 @@ export default function HomeScreen() {
 
   const findService = React.useCallback(
     (key: string, routeFragment?: string) =>
-      servicesSnapshot.items.find(
+      services.find(
         (svc) =>
           svc.key === key ||
           (routeFragment ? String(svc.route || '').toLowerCase().includes(routeFragment.toLowerCase()) : false)
       ),
-    [servicesSnapshot.items]
+    [services]
   );
 
   const appealsService = findService('appeals', '/appeals');
