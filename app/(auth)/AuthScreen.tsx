@@ -11,6 +11,7 @@ import {
   Easing,
   Image,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -26,6 +27,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import 'react-native-reanimated';
+import QRCode from 'react-native-qrcode-svg';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import BrandedBackground from '@/components/BrandedBackground';
@@ -41,16 +43,22 @@ import { shadeColor, tintColor } from '@/utils/color';
 import { isMaxMiniAppLaunch, prepareMaxWebApp } from '@/utils/maxAuthService';
 import { isTelegramMiniAppLaunch, prepareTelegramWebApp } from '@/utils/telegramAuthService';
 import {
+  cancelMessengerQrAuth,
   changePassword,
+  getAuthMethods,
+  getMessengerQrAuthStatus,
   login,
   register,
   resendVerification,
   requestPasswordReset,
+  startMessengerQrAuth,
   verify,
   verifyPasswordReset,
 } from '@/utils/authService';
 import { getProfileGate } from '@/utils/profileGate';
+import { saveTokens } from '@/utils/tokenService';
 import { applyWebAutofillFix } from '@/utils/webAutofillFix';
+import type { MessengerQrAuthProvider, MessengerQrAuthState } from '@/types/apiTypes';
 
 /** ─── Module-level cache to defeat StrictMode remounts in dev ─── */
 const __authInitCache: {
@@ -71,6 +79,7 @@ const __authInitCache: {
 /** Горизонтальный паддинг карточки (должен совпадать со styles.card.padding) */
 const CARD_PAD_H = Platform.OS === 'web' ? 20 : 22;
 const APP_LOGO = require('../../assets/images/icon.png');
+const MAX_ICON = require('../../assets/icons/max.png');
 
 /* ───── utils ───── */
 const STORAGE_KEYS = {
@@ -109,6 +118,28 @@ function normalizeError(err: any): string {
     return 'Нет соединения с сервером';
   }
   return raw || 'Произошла ошибка. Попробуйте снова.';
+}
+
+function providerLabel(provider: MessengerQrAuthProvider) {
+  return provider === 'MAX' ? 'MAX' : 'Telegram';
+}
+
+function mapQrFailureReason(failureReason?: string | null, provider: MessengerQrAuthProvider = 'TELEGRAM') {
+  const reason = String(failureReason || '').trim().toUpperCase();
+  if (!reason) return `Не удалось завершить вход через ${providerLabel(provider)}.`;
+  if (reason === 'ACCOUNT_CONFLICT') {
+    return `Этот ${providerLabel(provider)}-аккаунт уже связан с другим профилем. Войдите по email/паролю и привяжите мессенджер в профиле.`;
+  }
+  if (reason === 'SESSION_EXPIRED') {
+    return 'QR-сессия истекла. Запустите вход заново.';
+  }
+  if (reason === 'CANCELLED_BY_USER') {
+    return 'Вход через QR отменён.';
+  }
+  if (reason === 'INVALID_PHONE') {
+    return `Не удалось получить корректный номер из ${providerLabel(provider)}. Повторите сканирование.`;
+  }
+  return `Не удалось завершить вход через ${providerLabel(provider)}.`;
 }
 
 /* ───── screen ───── */
@@ -165,6 +196,7 @@ export default function AuthScreen() {
   const insets = useSafeAreaInsets();
   const { width: winW, height: winH } = useWindowDimensions();
   const isWeb = Platform.OS === 'web';
+  const isDesktopWeb = isWeb && winW >= 768;
   const isWebMobile = isWeb && winW < 768;
   const isNativeMobile = !isWeb && winW < 700;
   const isWebTablet = isWeb && winW >= 768 && winW < 1280;
@@ -216,6 +248,16 @@ export default function AuthScreen() {
   const [bannerNoticeTone, setBannerNoticeTone] = useState<'success' | 'info'>('success');
   const [resendTimer, setResendTimer] = useState(0);
   const [resetResendTimer, setResetResendTimer] = useState(0);
+  const [desktopQrProviders, setDesktopQrProviders] = useState<MessengerQrAuthProvider[]>([]);
+  const [qrModalVisible, setQrModalVisible] = useState(false);
+  const [qrProvider, setQrProvider] = useState<MessengerQrAuthProvider | null>(null);
+  const [qrSessionToken, setQrSessionToken] = useState('');
+  const [qrPayload, setQrPayload] = useState('');
+  const [qrDeepLinkUrl, setQrDeepLinkUrl] = useState('');
+  const [qrStatus, setQrStatus] = useState<MessengerQrAuthState | null>(null);
+  const [qrError, setQrError] = useState('');
+  const [qrNotice, setQrNotice] = useState('');
+  const [qrBusy, setQrBusy] = useState(false);
 
   // field-level errors (онлайн-валидация)
   const [loginEmailErr, setLoginEmailErr] = useState('');
@@ -243,6 +285,8 @@ export default function AuthScreen() {
   const lastVerifyCode = useRef('');
   const resetVerifyInFlight = useRef(false);
   const lastResetVerifyCode = useRef('');
+  const qrPollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const qrPollingInFlightRef = useRef(false);
 
   /* anim */
   const fadeIn = useRef(new Animated.Value(0)).current;
@@ -394,6 +438,249 @@ export default function AuthScreen() {
       }
     }
   };
+
+  const stopQrPolling = React.useCallback(() => {
+    if (qrPollTimerRef.current) {
+      clearInterval(qrPollTimerRef.current);
+      qrPollTimerRef.current = null;
+    }
+    qrPollingInFlightRef.current = false;
+  }, []);
+
+  const resetQrModalState = React.useCallback(() => {
+    setQrProvider(null);
+    setQrSessionToken('');
+    setQrPayload('');
+    setQrDeepLinkUrl('');
+    setQrStatus(null);
+    setQrError('');
+    setQrNotice('');
+    setQrBusy(false);
+  }, []);
+
+  const pollQrStatus = React.useCallback(
+    async (provider: MessengerQrAuthProvider, sessionToken: string) => {
+      if (qrPollingInFlightRef.current) return;
+      if (!provider || !sessionToken) return;
+      qrPollingInFlightRef.current = true;
+      try {
+        const data = await getMessengerQrAuthStatus(provider, sessionToken);
+        setQrStatus(data.state);
+
+        if (data.state === 'AUTHORIZED') {
+          stopQrPolling();
+          if (!data.accessToken || !data.refreshToken) {
+            throw new Error('Сервер не вернул токены для авторизации');
+          }
+          await saveTokens(data.accessToken, data.refreshToken, data.profile ?? null);
+          if (!setAuthenticated || !setProfile) {
+            throw new Error('Ошибка состояния авторизации');
+          }
+          await setProfile(data.profile ?? null);
+          setAuthenticated(true);
+          const gate = getProfileGate(data.profile ?? null);
+          if (gate === 'active') router.replace(ROUTES.HOME);
+          else if (gate === 'pending') router.replace(ROUTES.PENDING);
+          else if (gate === 'blocked') router.replace(ROUTES.BLOCKED);
+          else router.replace(ROUTES.PROFILE);
+          setQrModalVisible(false);
+          resetQrModalState();
+          return;
+        }
+
+        if (data.state === 'PENDING') {
+          setQrError('');
+          setQrNotice(`Сканируйте QR в ${providerLabel(provider)}.`);
+          return;
+        }
+
+        if (data.state === 'AWAITING_CONTACT') {
+          setQrError('');
+          setQrNotice(`Откройте ${providerLabel(provider)} и отправьте контакт.`);
+          return;
+        }
+
+        if (data.state === 'FAILED') {
+          stopQrPolling();
+          setQrNotice('');
+          setQrError(mapQrFailureReason(data.failureReason, provider));
+          return;
+        }
+
+        if (data.state === 'EXPIRED') {
+          stopQrPolling();
+          setQrNotice('');
+          setQrError('QR-сессия истекла. Запустите вход заново.');
+          return;
+        }
+
+        if (data.state === 'CANCELLED') {
+          stopQrPolling();
+          setQrNotice('');
+          setQrError('QR-сессия отменена. Запустите вход заново.');
+          return;
+        }
+
+        if (data.state === 'CONSUMED') {
+          stopQrPolling();
+          setQrNotice('');
+          setQrError('Эта QR-сессия уже использована. Создайте новую.');
+        }
+      } catch (e: any) {
+        setQrNotice('');
+        setQrError(normalizeError(e));
+      } finally {
+        qrPollingInFlightRef.current = false;
+      }
+    },
+    [resetQrModalState, router, setAuthenticated, setProfile, stopQrPolling]
+  );
+
+  const startQrPolling = React.useCallback(
+    (provider: MessengerQrAuthProvider, sessionToken: string, intervalSec?: number) => {
+      stopQrPolling();
+      const ms = Math.max(1, Number(intervalSec) || 3) * 1000;
+      qrPollTimerRef.current = setInterval(() => {
+        void pollQrStatus(provider, sessionToken);
+      }, ms);
+    },
+    [pollQrStatus, stopQrPolling]
+  );
+
+  const openQrSignInModal = React.useCallback(
+    async (provider: MessengerQrAuthProvider) => {
+      setQrModalVisible(true);
+      setQrProvider(provider);
+      setQrStatus('PENDING');
+      setQrBusy(true);
+      setQrError('');
+      setQrNotice('Генерируем QR-код...');
+      stopQrPolling();
+
+      try {
+        const started = await startMessengerQrAuth(provider);
+        const sessionToken = String(started.sessionToken || '').trim();
+        const deepLink = String(started.deepLinkUrl || '').trim();
+        const payload = String(started.qrPayload || started.deepLinkUrl || '').trim();
+
+        if (!sessionToken || !deepLink || !payload) {
+          throw new Error('Сервер вернул некорректные данные QR-сессии');
+        }
+
+        setQrProvider(provider);
+        setQrSessionToken(sessionToken);
+        setQrDeepLinkUrl(deepLink);
+        setQrPayload(payload);
+        setQrNotice(`Сканируйте QR в ${providerLabel(provider)} и отправьте контакт.`);
+        setQrError('');
+        setQrBusy(false);
+        void pollQrStatus(provider, sessionToken);
+        startQrPolling(provider, sessionToken, started.pollIntervalSec);
+      } catch (e: any) {
+        setQrBusy(false);
+        setQrStatus('FAILED');
+        setQrNotice('');
+        setQrError(normalizeError(e));
+      }
+    },
+    [pollQrStatus, startQrPolling, stopQrPolling]
+  );
+
+  const closeQrModal = React.useCallback(
+    async (withCancel = true) => {
+      const provider = qrProvider;
+      const sessionToken = qrSessionToken;
+      const state = qrStatus;
+      stopQrPolling();
+      setQrModalVisible(false);
+      setQrBusy(false);
+
+      if (
+        withCancel &&
+        provider &&
+        sessionToken &&
+        (state === 'PENDING' || state === 'AWAITING_CONTACT')
+      ) {
+        await cancelMessengerQrAuth(provider, sessionToken).catch(() => undefined);
+      }
+
+      resetQrModalState();
+    },
+    [qrProvider, qrSessionToken, qrStatus, resetQrModalState, stopQrPolling]
+  );
+
+  const openQrProviderApp = React.useCallback(() => {
+    const url = String(qrDeepLinkUrl || '').trim();
+    if (!url) return;
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.open(url, '_blank', 'noopener,noreferrer');
+      return;
+    }
+  }, [qrDeepLinkUrl]);
+
+  useEffect(() => {
+    if (!isDesktopWeb) {
+      setDesktopQrProviders([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const methods = await getAuthMethods();
+        if (cancelled) return;
+        const providers: MessengerQrAuthProvider[] = [];
+        methods.forEach((method) => {
+          if (!method.enabled) return;
+          if (method.key === 'telegram') providers.push('TELEGRAM');
+          if (method.key === 'max') providers.push('MAX');
+        });
+        setDesktopQrProviders(providers);
+      } catch {
+        if (!cancelled) {
+          setDesktopQrProviders([]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isDesktopWeb]);
+
+  useEffect(() => {
+    if (!qrModalVisible || !qrProvider || !qrSessionToken) return;
+
+    const onForeground = () => {
+      void pollQrStatus(qrProvider, qrSessionToken);
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', onForeground);
+    }
+    if (typeof document !== 'undefined') {
+      const onVisibility = () => {
+        if (document.visibilityState === 'visible') onForeground();
+      };
+      document.addEventListener('visibilitychange', onVisibility);
+      return () => {
+        if (typeof window !== 'undefined') {
+          window.removeEventListener('focus', onForeground);
+        }
+        document.removeEventListener('visibilitychange', onVisibility);
+      };
+    }
+
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('focus', onForeground);
+      }
+    };
+  }, [pollQrStatus, qrModalVisible, qrProvider, qrSessionToken]);
+
+  useEffect(() => {
+    return () => {
+      stopQrPolling();
+    };
+  }, [stopQrPolling]);
 
   /* validators (по вводу) */
   const onLoginEmailChange = (v: string) => {
@@ -1499,6 +1786,42 @@ export default function AuthScreen() {
               )}
             </Animated.View>
 
+            {isDesktopWeb && desktopQrProviders.length > 0 && (
+              <View style={[styles.desktopProviderWrap, { maxWidth: outerW }]}>
+                <Text style={styles.desktopProviderTitle}>Быстрый вход</Text>
+                <View style={styles.desktopProviderRow}>
+                  {desktopQrProviders.includes('TELEGRAM') && (
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      accessibilityLabel="Войти через Telegram по QR"
+                      activeOpacity={0.85}
+                      style={[styles.desktopProviderBtn, styles.telegramProviderBtn]}
+                      onPress={() => {
+                        void openQrSignInModal('TELEGRAM');
+                      }}
+                    >
+                      <Ionicons name="paper-plane" size={20} color="#FFFFFF" />
+                      <Text style={styles.desktopProviderBtnText}>Telegram</Text>
+                    </TouchableOpacity>
+                  )}
+                  {desktopQrProviders.includes('MAX') && (
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      accessibilityLabel="Войти через MAX по QR"
+                      activeOpacity={0.85}
+                      style={[styles.desktopProviderBtn, styles.maxProviderBtn]}
+                      onPress={() => {
+                        void openQrSignInModal('MAX');
+                      }}
+                    >
+                      <Image source={MAX_ICON} style={styles.maxProviderIcon} resizeMode="contain" />
+                      <Text style={styles.desktopProviderBtnText}>MAX</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+            )}
+
             <View style={[styles.buildInfo, { maxWidth: outerW, marginTop: isWeb ? 14 : 12 }]}>
               <Text
                 style={[
@@ -1519,16 +1842,89 @@ export default function AuthScreen() {
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
-        <TouchableOpacity
-          accessibilityRole="button"
-          accessibilityLabel="Войти через Telegram"
-          activeOpacity={0.9}
-          onPress={() => router.replace('/(auth)/telegram' as Href)}
-          style={[styles.telegramFloatingBtn, { bottom: (Platform.OS === 'web' ? 14 : 10) + insets.bottom }]}
-        >
-          <Ionicons name="paper-plane" size={24} color="#FFFFFF" />
-        </TouchableOpacity>
+        {!isDesktopWeb && (
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Войти через Telegram"
+            activeOpacity={0.9}
+            onPress={() => router.replace('/(auth)/telegram' as Href)}
+            style={[styles.telegramFloatingBtn, { bottom: (Platform.OS === 'web' ? 14 : 10) + insets.bottom }]}
+          >
+            <Ionicons name="paper-plane" size={24} color="#FFFFFF" />
+          </TouchableOpacity>
+        )}
       </SafeAreaView>
+
+      <Modal
+        transparent
+        visible={qrModalVisible}
+        animationType="fade"
+        onRequestClose={() => {
+          void closeQrModal(true);
+        }}
+      >
+        <View style={styles.qrModalOverlay}>
+          <Pressable
+            style={styles.qrModalBackdrop}
+            onPress={() => {
+              void closeQrModal(true);
+            }}
+          />
+          <View style={styles.qrModalCard}>
+            <View style={styles.qrModalHeader}>
+              {qrProvider === 'MAX' ? (
+                <Image source={MAX_ICON} style={styles.qrModalProviderIcon} resizeMode="contain" />
+              ) : (
+                <Ionicons name="paper-plane" size={20} color="#FFFFFF" />
+              )}
+              <Text style={styles.qrModalTitle}>Вход через {qrProvider ? providerLabel(qrProvider) : ''}</Text>
+            </View>
+
+            <View style={styles.qrBox}>
+              {qrBusy && <ThemedLoader size={22} />}
+              {!qrBusy && !!qrPayload && <QRCode value={qrPayload} size={220} />}
+            </View>
+
+            {!!qrNotice && <Text style={styles.qrNoticeText}>{qrNotice}</Text>}
+            {!!qrError && <Text style={styles.qrErrorText}>{qrError}</Text>}
+
+            <View style={styles.qrModalActions}>
+              <TouchableOpacity
+                activeOpacity={0.85}
+                style={[styles.qrActionBtn, styles.qrActionPrimary, !qrDeepLinkUrl && styles.qrActionDisabled]}
+                disabled={!qrDeepLinkUrl}
+                onPress={openQrProviderApp}
+              >
+                <Text style={styles.qrActionPrimaryText}>
+                  Открыть {qrProvider ? providerLabel(qrProvider) : 'мессенджер'}
+                </Text>
+              </TouchableOpacity>
+
+              {qrProvider && !!qrError && (
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  style={[styles.qrActionBtn, styles.qrActionSecondary]}
+                  onPress={() => {
+                    void openQrSignInModal(qrProvider);
+                  }}
+                >
+                  <Text style={styles.qrActionSecondaryText}>Создать новый QR</Text>
+                </TouchableOpacity>
+              )}
+
+              <TouchableOpacity
+                activeOpacity={0.85}
+                style={[styles.qrActionBtn, styles.qrActionCancel]}
+                onPress={() => {
+                  void closeQrModal(true);
+                }}
+              >
+                <Text style={styles.qrActionCancelText}>Отменить</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </BrandedBackground>
   );
 }
@@ -1747,5 +2143,185 @@ const getStyles = (colors: {
       opacity: 0.8,
       textAlign: 'center',
       flexShrink: 1,
+    },
+    desktopProviderWrap: {
+      width: '100%',
+      marginTop: 14,
+      marginBottom: 2,
+      alignItems: 'center',
+      paddingHorizontal: 4,
+    },
+    desktopProviderTitle: {
+      fontSize: 13,
+      lineHeight: 18,
+      fontWeight: '700',
+      color: colors.secondaryText,
+      opacity: 0.9,
+      marginBottom: 8,
+      textAlign: 'center',
+    },
+    desktopProviderRow: {
+      width: '100%',
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 10,
+      flexWrap: 'wrap',
+    },
+    desktopProviderBtn: {
+      minWidth: 140,
+      borderRadius: 14,
+      paddingHorizontal: 14,
+      paddingVertical: 11,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+    },
+    telegramProviderBtn: {
+      backgroundColor: '#229ED9',
+    },
+    maxProviderBtn: {
+      backgroundColor: '#2E60F0',
+    },
+    maxProviderIcon: {
+      width: 18,
+      height: 18,
+      borderRadius: 4,
+      backgroundColor: 'transparent',
+    },
+    desktopProviderBtnText: {
+      color: '#FFFFFF',
+      fontSize: 14,
+      lineHeight: 18,
+      fontWeight: '800',
+    },
+    qrModalOverlay: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: 18,
+    },
+    qrModalBackdrop: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: 'rgba(15, 23, 42, 0.56)',
+    },
+    qrModalCard: {
+      width: '100%',
+      maxWidth: 420,
+      borderRadius: 20,
+      padding: 18,
+      backgroundColor: '#FFFFFF',
+      alignItems: 'center',
+      shadowColor: '#0F172A',
+      shadowOpacity: 0.28,
+      shadowOffset: { width: 0, height: 10 },
+      shadowRadius: 24,
+      elevation: 12,
+    },
+    qrModalHeader: {
+      width: '100%',
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      marginBottom: 14,
+      backgroundColor: '#1E3A8A',
+      borderRadius: 12,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+    },
+    qrModalProviderIcon: {
+      width: 20,
+      height: 20,
+      borderRadius: 4,
+      backgroundColor: 'transparent',
+    },
+    qrModalTitle: {
+      color: '#FFFFFF',
+      fontSize: 16,
+      lineHeight: 20,
+      fontWeight: '800',
+      textAlign: 'center',
+      flexShrink: 1,
+    },
+    qrBox: {
+      width: 252,
+      height: 252,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: '#E5E7EB',
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: 12,
+      backgroundColor: '#FFFFFF',
+    },
+    qrNoticeText: {
+      width: '100%',
+      textAlign: 'center',
+      color: '#1F2937',
+      fontSize: 14,
+      lineHeight: 20,
+      fontWeight: '600',
+      marginBottom: 8,
+    },
+    qrErrorText: {
+      width: '100%',
+      textAlign: 'center',
+      color: colors.error,
+      fontSize: 14,
+      lineHeight: 20,
+      fontWeight: '700',
+      marginBottom: 8,
+    },
+    qrModalActions: {
+      width: '100%',
+      gap: 8,
+      marginTop: 2,
+    },
+    qrActionBtn: {
+      width: '100%',
+      borderRadius: 12,
+      paddingVertical: 11,
+      paddingHorizontal: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+    },
+    qrActionPrimary: {
+      backgroundColor: '#1D4ED8',
+      borderColor: '#1D4ED8',
+    },
+    qrActionPrimaryText: {
+      color: '#FFFFFF',
+      fontSize: 14,
+      lineHeight: 18,
+      fontWeight: '800',
+      textAlign: 'center',
+    },
+    qrActionSecondary: {
+      backgroundColor: '#FFFFFF',
+      borderColor: '#CBD5E1',
+    },
+    qrActionSecondaryText: {
+      color: '#1F2937',
+      fontSize: 14,
+      lineHeight: 18,
+      fontWeight: '700',
+      textAlign: 'center',
+    },
+    qrActionCancel: {
+      backgroundColor: '#FFFFFF',
+      borderColor: '#E11D48',
+    },
+    qrActionCancelText: {
+      color: '#BE123C',
+      fontSize: 14,
+      lineHeight: 18,
+      fontWeight: '800',
+      textAlign: 'center',
+    },
+    qrActionDisabled: {
+      opacity: 0.55,
     },
   });

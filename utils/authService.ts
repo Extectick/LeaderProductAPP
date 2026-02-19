@@ -6,6 +6,9 @@ import type {
   AuthRegisterRequest,
   AuthVerifyRequest,
   AuthVerifyResponseData,
+  MessengerQrAuthProvider,
+  MessengerQrAuthStartResponseData,
+  MessengerQrAuthStatusResponseData,
   PasswordResetRequestRequest,
   PasswordResetSubmitRequest,
 } from '../types/apiTypes';
@@ -113,4 +116,76 @@ export async function getAuthMethods() {
   });
   if (!res.ok || !res.data) throw new Error(res.message || 'Не удалось получить способы входа');
   return res.data.methods || [];
+}
+
+function getQrStartEndpoint(provider: MessengerQrAuthProvider) {
+  return provider === 'MAX'
+    ? API_ENDPOINTS.AUTH.MAX_QR_START
+    : API_ENDPOINTS.AUTH.TELEGRAM_QR_START;
+}
+
+function getQrStatusEndpoint(provider: MessengerQrAuthProvider) {
+  return provider === 'MAX'
+    ? API_ENDPOINTS.AUTH.MAX_QR_STATUS
+    : API_ENDPOINTS.AUTH.TELEGRAM_QR_STATUS;
+}
+
+function getQrCancelEndpoint(provider: MessengerQrAuthProvider) {
+  return provider === 'MAX'
+    ? API_ENDPOINTS.AUTH.MAX_QR_CANCEL
+    : API_ENDPOINTS.AUTH.TELEGRAM_QR_CANCEL;
+}
+
+export async function startMessengerQrAuth(provider: MessengerQrAuthProvider) {
+  const res = await apiClient<void, MessengerQrAuthStartResponseData>(
+    getQrStartEndpoint(provider),
+    {
+      method: 'POST',
+      skipAuth: true,
+    }
+  );
+  if (!res.ok || !res.data) {
+    throw new Error(res.message || `Не удалось запустить QR-вход через ${provider}`);
+  }
+  return res.data;
+}
+
+export async function getMessengerQrAuthStatus(
+  provider: MessengerQrAuthProvider,
+  sessionToken: string
+) {
+  const token = String(sessionToken || '').trim();
+  if (!token) throw new Error('sessionToken is required');
+
+  const res = await apiClient<void, MessengerQrAuthStatusResponseData>(
+    `${getQrStatusEndpoint(provider)}?sessionToken=${encodeURIComponent(token)}`,
+    {
+      method: 'GET',
+      skipAuth: true,
+    }
+  );
+  if (!res.ok || !res.data) {
+    throw new Error(res.message || `Не удалось проверить QR-вход через ${provider}`);
+  }
+  return res.data;
+}
+
+export async function cancelMessengerQrAuth(
+  provider: MessengerQrAuthProvider,
+  sessionToken: string
+) {
+  const token = String(sessionToken || '').trim();
+  if (!token) throw new Error('sessionToken is required');
+  const res = await apiClient<{ sessionToken: string }, { cancelled: boolean }>(
+    getQrCancelEndpoint(provider),
+    {
+      method: 'POST',
+      body: { sessionToken: token },
+      skipAuth: true,
+    }
+  );
+  if (!res.ok || !res.data) {
+    throw new Error(res.message || `Не удалось отменить QR-вход через ${provider}`);
+  }
+  return Boolean(res.data.cancelled);
 }
