@@ -1,3 +1,4 @@
+import { withOpacity, servicesTokens } from '@/src/features/services/ui/servicesTokens';
 import { useThemeColor } from '@/hooks/useThemeColor';
 import type { ServiceKind } from '@/utils/servicesService';
 import { Ionicons } from '@expo/vector-icons';
@@ -13,10 +14,11 @@ import {
   ViewStyle,
 } from 'react-native';
 import Animated, {
+  FadeInDown,
   Easing,
   useAnimatedStyle,
+  useReducedMotion,
   useSharedValue,
-  withSpring,
   withTiming,
 } from 'react-native-reanimated';
 
@@ -26,261 +28,213 @@ interface Props {
   size: number;
   onPress: () => void;
   description?: string;
-
-  /** Градиент акцентного бейджа/фона */
   gradient?: [string, string];
-
-  /** Явный фон карточки (иначе из темы или из containerStyle.backgroundColor) */
   backgroundColor?: string;
-
-  /** Цвет текста (иначе из темы) */
   textColor?: string;
-
-  /** Размер иконки в бейдже */
   iconSize?: number;
-
-  /** Отключить тень */
   disableShadow?: boolean;
-
-  /** Отключить пружинку на нажатие */
   disableScaleOnPress?: boolean;
-
-  /** Внешние стили (используются только маргины/радиус/фон) */
   containerStyle?: ViewStyle;
-
-  /** Доп. стили текста */
   textStyle?: TextStyle;
-
-  /** Заблокирована */
   disabled?: boolean;
-
-  /** Тип сервиса (для cloud-маркера) */
   kind?: ServiceKind;
+  enterIndex?: number;
 }
 
-/**
- * Новый дизайн ServiceCard:
- * - стеклянная карточка с мягким светом и градиентными «каплями»
- * - крупный круглый бейдж под иконку
- * - hover (web): лёгкий подъем и усиление свечения
- * - press (native): пружинка + ripple
- * - disabled: замок, понижение контраста, блокировка нажатий
- */
+const isWeb = Platform.OS === 'web';
+
 export default function ServiceCard({
   icon,
   name,
   size,
   onPress,
-
   description,
   gradient,
   backgroundColor,
   textColor,
   iconSize = 36,
-
   disableShadow = false,
   disableScaleOnPress = false,
-
   containerStyle,
   textStyle,
   disabled = false,
   kind = 'CLOUD',
+  enterIndex = 0,
 }: Props) {
+  const reduceMotion = useReducedMotion();
   const themeCardBg = useThemeColor({}, 'cardBackground');
   const themeText = useThemeColor({}, 'text');
   const themeBorder = useThemeColor({}, 'inputBorder' as any);
   const themeSecondary = useThemeColor({}, 'secondaryText' as any);
+  const cardBg = backgroundColor ?? (containerStyle as ViewStyle | undefined)?.backgroundColor ?? themeCardBg;
+  const textPrimary = textColor ?? themeText;
 
-  // Позволяем переопределять фон через props или containerStyle.backgroundColor
-  const containerBg = (containerStyle as ViewStyle | undefined)?.backgroundColor;
-  const cardBg = backgroundColor ?? containerBg ?? themeCardBg;
-  const txtColor = textColor ?? themeText;
+  const [accentStart, accentEnd] = useMemo<[string, string]>(() => {
+    if (gradient?.length === 2) return gradient;
+    return ['#2563EB', '#1D4ED8'];
+  }, [gradient]);
 
-  const isWeb = Platform.OS === 'web';
-
-  // --- Animation state ---
   const scale = useSharedValue(1);
-  const hover = useSharedValue(0); // 0..1
+  const hover = useSharedValue(0);
 
-  const onHoverIn = () => {
-    if (!isWeb || disabled) return;
-    hover.value = withTiming(1, { duration: 180, easing: Easing.out(Easing.quad) });
-    if (!disableScaleOnPress) {
-      scale.value = withTiming(1.015, { duration: 160 });
-    }
-  };
-  const onHoverOut = () => {
-    if (!isWeb) return;
-    hover.value = withTiming(0, { duration: 220 });
-    if (!disableScaleOnPress) {
-      scale.value = withTiming(1, { duration: 180 });
-    }
-  };
-
-  const onPressIn = () => {
-    if (disabled || disableScaleOnPress) return;
-    scale.value = withSpring(0.97, { damping: 18, stiffness: 260 });
-  };
-  const onPressOut = () => {
-    if (disabled || disableScaleOnPress) return;
-    scale.value = withSpring(1, { damping: 18, stiffness: 260 });
-  };
-
-  // --- Animated styles ---
-  const aOuter = useAnimatedStyle(() => {
-    const raise = hover.value * 4; // подъем на web
+  const cardAnimatedStyle = useAnimatedStyle(() => {
+    const lift = hover.value * servicesTokens.motion.hoverLiftPx;
     return {
-      transform: [{ scale: scale.value }, { translateY: -raise }],
-      shadowOpacity: disableShadow ? 0 : 0.12 + hover.value * 0.10,
-      shadowRadius: disableShadow ? 0 : 6 + hover.value * 10,
-      elevation: disableShadow ? 0 : 3 + hover.value * 3,
+      transform: [{ scale: scale.value }, { translateY: -lift }],
+      shadowOpacity: disableShadow ? 0 : servicesTokens.card.shadowOpacity + hover.value * 0.08,
+      shadowRadius: disableShadow ? 0 : servicesTokens.card.shadowRadius + hover.value * 5,
+      elevation: disableShadow ? 0 : 3 + hover.value * 2,
     };
   });
 
-  const aGlow = useAnimatedStyle(() => ({
-    opacity: 0.14 + hover.value * 0.2,
-    transform: [{ scale: 1 + hover.value * 0.04 }],
-  }));
-
-  // Акцентные цвета для бейджа/капель
-  const [c1, c2] = useMemo<[string, string]>(() => {
-    if (gradient?.length === 2) return gradient;
-    return ['#7C3AED', '#4F46E5']; // фиолетово-индиговый по умолчанию
-  }, [gradient]);
-
-  // Разбор внешних стилей: чтобы не дублировать фон/бордер
-  const flat = StyleSheet.flatten(containerStyle) as ViewStyle | undefined;
-  const {
-    margin, marginTop, marginRight, marginBottom, marginLeft, marginHorizontal, marginVertical,
-    borderRadius,
-  } = flat || {};
-  const outerStyle: ViewStyle = {
-    margin, marginTop, marginRight, marginBottom, marginLeft, marginHorizontal, marginVertical,
-    borderRadius: borderRadius ?? 20,
-    overflow: 'hidden', // для ripple
+  const handleHoverIn = () => {
+    if (!isWeb || disabled) return;
+    hover.value = withTiming(1, {
+      duration: servicesTokens.motion.hoverDurationMs,
+      easing: Easing.out(Easing.quad),
+    });
+    if (!disableScaleOnPress) {
+      scale.value = withTiming(1.01, { duration: servicesTokens.motion.hoverDurationMs });
+    }
   };
 
-  // Пропорции
-  const radius = (outerStyle.borderRadius as number) || 18;
-  const badge = Math.max(48, Math.floor(size * 0.32)); // круг под иконку
+  const handleHoverOut = () => {
+    if (!isWeb) return;
+    hover.value = withTiming(0, {
+      duration: servicesTokens.motion.hoverDurationMs,
+      easing: Easing.out(Easing.quad),
+    });
+    if (!disableScaleOnPress) {
+      scale.value = withTiming(1, { duration: servicesTokens.motion.hoverDurationMs });
+    }
+  };
+
+  const handlePressIn = () => {
+    if (disabled || disableScaleOnPress) return;
+    scale.value = withTiming(servicesTokens.motion.pressScale, { duration: servicesTokens.motion.pressDurationMs });
+  };
+
+  const handlePressOut = () => {
+    if (disabled || disableScaleOnPress) return;
+    scale.value = withTiming(1, { duration: servicesTokens.motion.pressDurationMs });
+  };
+
+  const cardRadius = (StyleSheet.flatten(containerStyle)?.borderRadius as number) || servicesTokens.card.radius;
+  const iconContainerSize = Math.min(
+    servicesTokens.card.iconContainerMaxSize,
+    Math.max(servicesTokens.card.iconContainerMinSize, Math.floor(size * servicesTokens.card.iconContainerSizeRatio))
+  );
 
   return (
-    <Animated.View style={[{ width: size, minHeight: size * 0.9 }, outerStyle, aOuter]}>
+    <Animated.View
+      entering={
+        reduceMotion
+          ? undefined
+          : FadeInDown
+              .delay(enterIndex * servicesTokens.motion.enterDelayStepMs)
+              .duration(servicesTokens.motion.enterDurationMs)
+      }
+      style={[
+        {
+          width: size,
+          minHeight: Math.floor(size * servicesTokens.card.minHeightRatio),
+          borderRadius: cardRadius,
+          overflow: 'hidden',
+          shadowColor: servicesTokens.card.shadowColor,
+          shadowOffset: {
+            width: servicesTokens.card.shadowOffsetX,
+            height: servicesTokens.card.shadowOffsetY,
+          },
+        },
+        containerStyle,
+        cardAnimatedStyle,
+      ]}
+    >
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={name}
         disabled={disabled}
         onPress={() => !disabled && onPress()}
-        onPressIn={onPressIn}
-        onPressOut={onPressOut}
-        // web hover
-        {...(isWeb ? { onHoverIn, onHoverOut } : {})}
-        android_ripple={{ color: '#E5E7EB' }}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
+        {...(isWeb ? { onHoverIn: handleHoverIn, onHoverOut: handleHoverOut } : {})}
+        android_ripple={{ color: '#DFE9FA' }}
         style={({ pressed }) => [
-          styles.cardBase,
+          styles.card,
           {
-            borderRadius: radius,
-            backgroundColor: cardBg,
-            borderColor: themeBorder,
-            opacity: disabled ? 0.6 : 1,
+            borderRadius: cardRadius,
+            borderColor: disabled ? servicesTokens.states.disabledBorder : themeBorder || servicesTokens.card.borderColor,
+            borderWidth: servicesTokens.card.borderWidth,
+            backgroundColor: disabled ? servicesTokens.states.disabledBackground : cardBg || servicesTokens.card.background,
+            opacity: disabled ? servicesTokens.states.disabledOpacity : 1,
           },
-          pressed && Platform.OS === 'ios' ? { opacity: 0.9 } : null,
+          pressed && Platform.OS === 'ios' ? styles.cardPressedIos : null,
         ]}
       >
-        {/* Декоративные капли/свечения */}
-        <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-          {/* верхний правый градиентный овал */}
-          <LinearGradient
-            pointerEvents="none"
-            colors={[c1 + '33', c2 + '22']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={[
-              styles.blob,
-              { top: -size * 0.18, right: -size * 0.12, width: size * 0.8, height: size * 0.6 },
-            ]}
-          />
-          {/* нижний левый мягкий свет */}
-          <LinearGradient
-            pointerEvents="none"
-            colors={[c2 + '22', c1 + '11']}
-            start={{ x: 0, y: 1 }}
-            end={{ x: 1, y: 0 }}
-            style={[
-              styles.blob,
-              { bottom: -size * 0.2, left: -size * 0.2, width: size * 0.9, height: size * 0.7 },
-            ]}
-          />
-          {/* скользящий блик */}
-          <Animated.View
-            pointerEvents="none"
-            style={[
-              styles.gloss,
-              { borderRadius: radius },
-              aGlow,
-            ]}
-          />
-        </View>
+        <LinearGradient
+          pointerEvents="none"
+          colors={[withOpacity(accentStart, 0.2), withOpacity(accentEnd, 0.1), 'transparent']}
+          start={{ x: 0.1, y: 0 }}
+          end={{ x: 0.95, y: 1 }}
+          style={styles.softDecor}
+        />
 
-        {/* Контент */}
         <View style={styles.content}>
-          {/* Бейдж под иконку */}
-          <View style={styles.badgeWrap}>
-            <LinearGradient
-              colors={[c1, c2]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
+          <View style={styles.iconRow}>
+            <View
               style={[
-                styles.badge,
+                styles.iconShell,
                 {
-                  width: badge,
-                  height: badge,
-                  borderRadius: badge / 2,
-                  shadowColor: c1,
+                  width: iconContainerSize,
+                  height: iconContainerSize,
+                  borderRadius: iconContainerSize / 2,
                 },
               ]}
             >
-              <Ionicons name={icon as any} size={iconSize} color="#fff" />
-            </LinearGradient>
-            {kind === 'CLOUD' ? (
-              <View style={styles.cloudIconBadge}>
-                <Ionicons name="cloud-outline" size={11} color="#1E40AF" />
-              </View>
-            ) : null}
+              <LinearGradient
+                colors={[accentStart, accentEnd]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={[
+                  styles.iconGradient,
+                  {
+                    width: iconContainerSize,
+                    height: iconContainerSize,
+                    borderRadius: iconContainerSize / 2,
+                  },
+                ]}
+              >
+                <Ionicons name={icon as any} size={iconSize} color="#FFFFFF" />
+              </LinearGradient>
+              {kind === 'CLOUD' ? (
+                <View style={styles.cloudBadge}>
+                  <Ionicons name="cloud-outline" size={servicesTokens.card.cloudDotIconSize} color="#1E40AF" />
+                </View>
+              ) : null}
+            </View>
           </View>
 
-          <View style={{ gap: 4, width: '100%' }}>
-            <Text
-              numberOfLines={2}
-              style={[
-                styles.title,
-                { color: txtColor },
-                textStyle,
-              ]}
-            >
+          <View style={styles.textWrap}>
+            <Text numberOfLines={2} style={[styles.title, { color: disabled ? servicesTokens.states.disabledText : textPrimary }, textStyle]}>
               {name}
             </Text>
             {description ? (
-              <Text numberOfLines={3} style={styles.desc}>
+              <Text numberOfLines={3} style={[styles.description, { color: disabled ? '#7A8BA3' : themeSecondary || '#475569' }]}>
                 {description}
               </Text>
             ) : null}
           </View>
 
-          {disabled && (
-            <View style={styles.lockWrap}>
-              <Ionicons name="lock-closed" size={14} color="#EF4444" />
-              <Text style={styles.lockTxt}>Недоступно</Text>
+          {disabled ? (
+            <View style={styles.disabledBadge}>
+              <Ionicons name="lock-closed-outline" size={13} color="#B91C1C" />
+              <Text style={styles.disabledBadgeText}>Недоступно</Text>
             </View>
-          )}
-
-          {!disabled && (
-            <View style={styles.ctaRow}>
-              <Ionicons name="sparkles-outline" size={14} color={c1} />
-              <Text style={[styles.ctaText, { color: themeSecondary }]}>
-                Открыть
-              </Text>
-              <Ionicons name="arrow-forward" size={14} color={c1} />
+          ) : (
+            <View style={[styles.cta, { backgroundColor: withOpacity(accentStart, 0.12), borderColor: withOpacity(accentStart, 0.2) }]}>
+              <Ionicons name="sparkles-outline" size={13} color={accentStart} />
+              <Text style={[styles.ctaText, { color: accentStart }]}>Открыть</Text>
+              <Ionicons name="arrow-forward" size={13} color={accentStart} />
             </View>
           )}
         </View>
@@ -290,112 +244,103 @@ export default function ServiceCard({
 }
 
 const styles = StyleSheet.create({
-  cardBase: {
+  card: {
     flex: 1,
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-
-    // тень (iOS) — часть усиливается анимацией aOuter
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    // Android тень настраивается elevation в aOuter
+    paddingHorizontal: servicesTokens.card.paddingHorizontal,
+    paddingVertical: servicesTokens.card.paddingVertical,
+    justifyContent: 'space-between',
+    overflow: 'hidden',
   },
-
+  cardPressedIos: {
+    opacity: 0.95,
+  },
+  softDecor: {
+    position: 'absolute',
+    top: -22,
+    right: -30,
+    width: 210,
+    height: 165,
+    borderRadius: 999,
+  },
   content: {
-    alignItems: 'flex-start',
-    justifyContent: 'center',
-    gap: 10,
+    flex: 1,
+    gap: 11,
   },
-  badgeWrap: {
+  iconRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-start',
+  },
+  iconShell: {
     position: 'relative',
-  },
-
-  badge: {
     alignItems: 'center',
     justifyContent: 'center',
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
+  },
+  iconGradient: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#2563EB',
+    shadowOpacity: 0.24,
+    shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
-    elevation: 4,
+    elevation: 3,
   },
-
-  title: {
-    fontSize: 14,
-    fontWeight: '700',
-    textAlign: 'left',
-    letterSpacing: 0.2,
-  },
-  desc: {
-    fontSize: 12,
-    color: '#4B5563',
-    lineHeight: 16,
-  },
-
-  lockWrap: {
-    marginTop: 6,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
-    backgroundColor: '#FEE2E2',
-    borderWidth: 1,
-    borderColor: '#FCA5A5',
-  },
-  lockTxt: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#B91C1C',
-  },
-  ctaRow: {
-    marginTop: 4,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: '#EEF2FF',
-    borderRadius: 999,
-  },
-  ctaText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#312E81',
-  },
-  cloudIconBadge: {
+  cloudBadge: {
     position: 'absolute',
     right: -4,
     bottom: -3,
-    width: 18,
-    height: 18,
+    width: servicesTokens.card.cloudDotSize,
+    height: servicesTokens.card.cloudDotSize,
     borderRadius: 999,
-    alignItems: 'center',
-    justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#BFDBFE',
     backgroundColor: '#EFF6FF',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-
-  // декоративные элементы
-  blob: {
-    position: 'absolute',
-    borderRadius: 999,
-    filter: Platform.OS === 'web' ? 'blur(12px)' as any : undefined,
+  textWrap: {
+    gap: 5,
   },
-  gloss: {
-    position: 'absolute',
-    left: -40,
-    right: -40,
-    top: -10,
-    height: 90,
-    backgroundColor: '#FFFFFF',
-    opacity: 0.12,
-    transform: [{ rotate: '-12deg' }],
+  title: {
+    fontSize: servicesTokens.card.titleSize,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+  description: {
+    fontSize: servicesTokens.card.descSize,
+    lineHeight: 17,
+    fontWeight: '500',
+  },
+  cta: {
+    alignSelf: 'flex-start',
+    minHeight: servicesTokens.card.ctaHeight,
+    borderRadius: servicesTokens.card.ctaRadius,
+    borderWidth: 1,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  ctaText: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  disabledBadge: {
+    alignSelf: 'flex-start',
+    minHeight: servicesTokens.card.ctaHeight,
+    borderRadius: servicesTokens.card.ctaRadius,
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  disabledBadgeText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#B91C1C',
   },
 });

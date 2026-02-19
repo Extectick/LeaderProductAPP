@@ -1,45 +1,48 @@
-import { useThemeColor } from '@/hooks/useThemeColor';
-import { useNotify } from '@/components/NotificationHost';
-import { useServerStatus } from '@/src/shared/network/useServerStatus';
-import { useRouter } from 'expo-router';
-import React, { useMemo } from 'react';
-import {
-  FlatList,
-  Platform,
-  StyleSheet,
-  useWindowDimensions,
-  View,
-} from 'react-native';
-import ServiceCard from './ServiceCard';
 import TabBarSpacer from '@/components/Navigation/TabBarSpacer';
 import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
-import { getMobileServiceCardSize, getMobileServiceColumns, getVisibleServices } from '@/src/features/services/lib/grid';
+import { useNotify } from '@/components/NotificationHost';
+import { useThemeColor } from '@/hooks/useThemeColor';
 import { useServicesData } from '@/src/features/services/hooks/useServicesData';
+import { getServiceGridMetrics, getVisibleServices } from '@/src/features/services/lib/grid';
+import { useServerStatus } from '@/src/shared/network/useServerStatus';
 import { ServicesErrorView, ServicesLoadingView } from '@/src/features/services/ui/ServiceStateViews';
+import { servicesTokens } from '@/src/features/services/ui/servicesTokens';
+import { useRouter } from 'expo-router';
+import React, { useMemo } from 'react';
+import { FlatList, Platform, StyleSheet, useWindowDimensions, View } from 'react-native';
+import ServiceCard from './ServiceCard';
 
 export default function ServicesScreen() {
   const { services, error, loading } = useServicesData();
-
   const router = useRouter();
   const notify = useNotify();
   const { isReachable } = useServerStatus();
   const { width } = useWindowDimensions();
   const headerTopInset = useHeaderContentTopInset({ hasSubtitle: true });
-
-  // брейкпоинты под мобильные/планшеты
-  const numColumns = useMemo(() => {
-    return getMobileServiceColumns(width);
-  }, [width]);
-
-  const spacing = 14;
-  const cardSize = useMemo(() => {
-    return getMobileServiceCardSize(width, numColumns, spacing);
-  }, [width, numColumns]);
-
   const background = useThemeColor({}, 'background');
   const cardBackground = useThemeColor({}, 'cardBackground');
   const textColor = useThemeColor({}, 'text');
+
+  const metrics = useMemo(
+    () => getServiceGridMetrics({ width, platform: Platform.OS === 'web' ? 'web' : 'native', isMobileLayout: true }),
+    [width]
+  );
   const visibleServices = useMemo(() => getVisibleServices(services), [services]);
+
+  const openService = React.useCallback((item: (typeof visibleServices)[number]) => {
+    if (!item.route || !item.enabled) return;
+    if (item.kind === 'CLOUD' && !isReachable) {
+      notify({
+        type: 'warning',
+        title: 'Нет связи с сервером',
+        message: 'Для открытия облачного сервиса нужна связь с сервером.',
+        icon: 'cloud-offline-outline',
+        durationMs: 5000,
+      });
+      return;
+    }
+    router.push(item.route as any);
+  }, [isReachable, notify, router]);
 
   if (loading && !services?.length) {
     return <ServicesLoadingView backgroundColor={background} textColor={textColor} style={styles.centered} />;
@@ -52,51 +55,45 @@ export default function ServicesScreen() {
   return (
     <View style={[styles.container, { backgroundColor: background }]}>
       <FlatList
-        key={`services-grid-${numColumns}`}
+        key={`services-mobile-grid-${metrics.columns}`}
         data={visibleServices}
         keyExtractor={(item) => item.key}
-        numColumns={numColumns}
-        columnWrapperStyle={{ gap: spacing, marginBottom: spacing }}
-        contentContainerStyle={{ padding: spacing, paddingTop: headerTopInset + spacing }}
+        numColumns={metrics.columns}
+        columnWrapperStyle={
+          metrics.columns > 1
+            ? { gap: metrics.gap, justifyContent: 'center' }
+            : undefined
+        }
+        contentContainerStyle={{
+          paddingTop: headerTopInset + servicesTokens.page.topPadding,
+          paddingHorizontal: metrics.horizontalPadding,
+          paddingBottom: 14,
+          rowGap: metrics.gap,
+          alignItems: 'center',
+        }}
         ListFooterComponent={<TabBarSpacer />}
-        showsVerticalScrollIndicator={false}
-        renderItem={({ item }) => (
-          <View>
+        renderItem={({ item, index }) => (
+          <View style={{ width: metrics.cardSize }}>
             <ServiceCard
               icon={item.icon || 'apps-outline'}
               name={item.name}
               description={item.description || undefined}
               kind={item.kind}
-              size={cardSize}
-              onPress={() => {
-                if (!item.route || !item.enabled) return;
-                if (item.kind === 'CLOUD' && !isReachable) {
-                  notify({
-                    type: 'warning',
-                    title: 'Нет связи с сервером',
-                    message: 'Для открытия облачного сервиса нужна связь с сервером.',
-                    icon: 'cloud-offline-outline',
-                    durationMs: 5000,
-                  });
-                  return;
-                }
-                router.push(item.route as any);
-              }}
+              size={metrics.cardSize}
+              enterIndex={index}
+              onPress={() => openService(item)}
               gradient={
                 item.gradientStart && item.gradientEnd
                   ? ([item.gradientStart, item.gradientEnd] as [string, string])
                   : undefined
               }
               iconSize={40}
-              disableShadow={false}
-              disableScaleOnPress={false}
               disabled={!item.enabled}
-              containerStyle={{
-                backgroundColor: cardBackground,
-              }}
+              containerStyle={{ backgroundColor: cardBackground }}
             />
           </View>
         )}
+        showsVerticalScrollIndicator={false}
       />
     </View>
   );
@@ -105,10 +102,11 @@ export default function ServicesScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    ...Platform.select({
-      web: { maxWidth: 1200, marginHorizontal: 'auto', paddingHorizontal: 24 },
-      default: {},
-    }),
+    backgroundColor: servicesTokens.page.shellBackground,
   },
-  centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  centered: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
 });

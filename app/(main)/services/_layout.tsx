@@ -16,7 +16,7 @@ type HeaderMeta = {
 };
 
 const headerMap: Record<string, HeaderMeta> = {
-  index: { title: 'Главная сервисов', icon: 'apps-outline', showBack: false, subtitle: 'Все доступные сервисы' },
+  index: { title: 'Каталог сервисов', icon: 'apps-outline', showBack: false, subtitle: 'Все доступные сервисы' },
   qrcodes: { title: 'QR генератор', icon: 'qr-code-outline', showBack: true, parent: '/services', subtitle: 'Создание и аналитика QR' },
   'qrcodes/index': { title: 'Список QR кодов', icon: 'qr-code-outline', showBack: true, parent: '/services/qrcodes', subtitle: 'Все ваши QR-коды' },
   'qrcodes/form': { title: 'Форма QR кода', icon: 'qr-code-outline', showBack: true, parent: '/services/qrcodes', subtitle: 'Создание и правка' },
@@ -90,6 +90,12 @@ export default function ServicesLayout() {
   if (serviceKey && (loading || blocked)) return null;
 
   const showCloudServiceInHeader = Boolean(serviceKey && guardedService?.kind === 'CLOUD');
+  const servicesSummary = useMemo(() => {
+    const visible = (services || []).filter((service) => service.visible);
+    const enabled = visible.filter((service) => service.enabled).length;
+    const cloud = visible.filter((service) => service.kind === 'CLOUD').length;
+    return { visible: visible.length, enabled, cloud };
+  }, [services]);
 
   return (
     <Stack
@@ -101,6 +107,7 @@ export default function ServicesLayout() {
         const isAppeals = name?.includes('appeals');
         const isAppealsList = name === 'appeals' || name === 'appeals/index' || name === 'appeals/index.web';
         const showCreateInHeader = /^\/services\/appeals\/?$/.test(currentPath);
+        const showServicesSummaryInHeader = /^\/services\/?$/.test(currentPath);
 
         if (!meta && isAppeals) {
           meta = {
@@ -132,9 +139,17 @@ export default function ServicesLayout() {
           else router.replace('/services');
         };
 
-        const shouldRenderRight = showCreateInHeader || showCloudServiceInHeader;
+        const shouldRenderRight = showCreateInHeader || showCloudServiceInHeader || showServicesSummaryInHeader;
         const rightSlot = shouldRenderRight ? (
           <View style={styles.rightHeaderRow}>
+            {showServicesSummaryInHeader ? (
+              <View style={styles.servicesSummaryChip}>
+                <Ionicons name="grid-outline" size={13} color="#1E3A8A" />
+                <Text style={styles.servicesSummaryText}>
+                  {servicesSummary.enabled}/{servicesSummary.visible}
+                </Text>
+              </View>
+            ) : null}
             {showCloudServiceInHeader ? (
               <View style={styles.cloudHeaderBadge}>
                 <Ionicons name="cloud-outline" size={13} color="#1E40AF" />
@@ -181,6 +196,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+  },
+  servicesSummaryChip: {
+    minHeight: 30,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 6,
+  },
+  servicesSummaryText: {
+    color: '#1E3A8A',
+    fontSize: 12,
+    fontWeight: '800',
   },
   cloudHeaderBadge: {
     width: 30,

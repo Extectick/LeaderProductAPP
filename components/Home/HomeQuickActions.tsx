@@ -1,3 +1,4 @@
+import { withOpacity, servicesTokens } from '@/src/features/services/ui/servicesTokens';
 import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -21,10 +22,12 @@ type Props = {
   columns: 2 | 4;
 };
 
+const isWeb = Platform.OS === 'web';
+
 export default function HomeQuickActions({ actions, columns }: Props) {
-  const reducedMotion = useReducedMotion();
-  const basis = columns === 4 ? '24%' : '48%';
+  const reduceMotion = useReducedMotion();
   const visibleActions = actions.filter((item) => !item.hidden);
+  const basis = columns === 4 ? '24%' : '48.5%';
 
   return (
     <View style={styles.wrap}>
@@ -32,50 +35,72 @@ export default function HomeQuickActions({ actions, columns }: Props) {
       <View style={styles.grid}>
         {visibleActions.map((action, index) => {
           const enabled = action.enabled !== false;
+          const [c1, c2] = action.gradient;
           return (
-          <Animated.View
-            entering={reducedMotion ? undefined : FadeInUp.delay(80 + index * 35).duration(360)}
-            key={action.id}
-            style={[styles.itemWrap, { flexBasis: basis }]}
-          >
-            <Pressable
-              onPress={enabled ? action.onPress : undefined}
-              style={(state: any) => [
-                styles.card,
-                state.hovered ? styles.hovered : null,
-                state.pressed && enabled ? styles.pressed : null,
-                !enabled ? styles.disabledCard : null,
-              ]}
-              accessibilityRole="button"
-              accessibilityLabel={enabled ? action.title : `${action.title} недоступно`}
-              disabled={!enabled}
+            <Animated.View
+              key={action.id}
+              entering={
+                reduceMotion
+                  ? undefined
+                  : FadeInUp
+                      .delay(80 + index * servicesTokens.motion.enterDelayStepMs)
+                      .duration(servicesTokens.motion.enterDurationMs)
+              }
+              style={[styles.itemWrap, { flexBasis: basis }]}
             >
-              <View style={[styles.accentLine, { backgroundColor: enabled ? '#94A3B8' : '#CBD5E1' }]} />
-              <View style={styles.iconWrap}>
-                <Ionicons name={action.icon as any} size={18} color={enabled ? '#334155' : '#94A3B8'} />
-                {action.serviceKind === 'CLOUD' ? (
-                  <View style={styles.cloudIconBadge}>
-                    <Ionicons name="cloud-outline" size={10} color="#1E3A8A" />
+              <Pressable
+                onPress={enabled ? action.onPress : undefined}
+                accessibilityRole="button"
+                accessibilityLabel={enabled ? action.title : `${action.title} недоступно`}
+                disabled={!enabled}
+                style={(state: any) => [
+                  styles.card,
+                  {
+                    borderColor: enabled ? '#D5E0F1' : servicesTokens.states.disabledBorder,
+                    backgroundColor: enabled ? '#FFFFFF' : servicesTokens.states.disabledBackground,
+                    opacity: enabled ? 1 : servicesTokens.states.disabledOpacity,
+                  },
+                  state.hovered && enabled && isWeb ? styles.cardHovered : null,
+                  state.pressed && enabled ? styles.cardPressed : null,
+                ]}
+              >
+                <View style={[styles.decor, { backgroundColor: withOpacity(c1, enabled ? 0.18 : 0.08) }]} />
+
+                <View style={styles.iconWrap}>
+                  <View style={[styles.iconBubble, { backgroundColor: withOpacity(c1, enabled ? 0.9 : 0.35) }]}>
+                    <Ionicons name={action.icon as any} size={servicesTokens.quick.iconSize} color="#FFFFFF" />
+                  </View>
+                  {action.serviceKind === 'CLOUD' ? (
+                    <View style={styles.cloudIconBadge}>
+                      <Ionicons name="cloud-outline" size={10} color="#1E3A8A" />
+                    </View>
+                  ) : null}
+                </View>
+
+                <Text style={[styles.cardTitle, !enabled ? styles.cardTitleDisabled : null]} numberOfLines={1}>
+                  {action.title}
+                </Text>
+                <Text numberOfLines={2} style={[styles.cardDescription, !enabled ? styles.cardDescriptionDisabled : null]}>
+                  {action.description}
+                </Text>
+
+                {action.statusLabel ? (
+                  <View style={[styles.statusBadge, !enabled ? styles.statusBadgeDisabled : null]}>
+                    <Text style={[styles.statusBadgeText, !enabled ? styles.statusBadgeTextDisabled : null]}>
+                      {action.statusLabel}
+                    </Text>
                   </View>
                 ) : null}
-              </View>
-              <Text style={styles.cardTitle}>{action.title}</Text>
-              <Text numberOfLines={2} style={styles.cardDescription}>
-                {action.description}
-              </Text>
-              {action.statusLabel ? (
-                <View style={[styles.statusBadge, !enabled ? styles.statusBadgeDisabled : null]}>
-                  <Text style={styles.statusBadgeText}>{action.statusLabel}</Text>
-                </View>
-              ) : null}
-              {!enabled ? (
-                <View style={styles.lockOverlay}>
-                  <Ionicons name="lock-closed-outline" size={15} color="#334155" />
-                </View>
-              ) : null}
-            </Pressable>
-          </Animated.View>
-        )})}
+
+                {!enabled ? (
+                  <View style={styles.lockOverlay}>
+                    <Ionicons name="lock-closed-outline" size={14} color="#475569" />
+                  </View>
+                ) : null}
+              </Pressable>
+            </Animated.View>
+          );
+        })}
       </View>
     </View>
   );
@@ -96,81 +121,85 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   itemWrap: {
-    minWidth: 120,
+    minWidth: 122,
   },
   card: {
-    borderRadius: 16,
+    minHeight: servicesTokens.quick.cardMinHeight,
+    borderRadius: servicesTokens.quick.cardRadius,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
-    backgroundColor: '#FFFFFF',
-    minHeight: 114,
     overflow: 'hidden',
-    padding: 12,
+    padding: servicesTokens.quick.cardPadding,
     gap: 7,
-    shadowColor: '#0F172A',
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
+    shadowColor: servicesTokens.card.shadowColor,
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
     ...(Platform.OS === 'android' ? { elevation: 2 } : null),
   },
-  hovered: {
-    borderColor: '#94A3B8',
-    backgroundColor: '#F8FAFC',
-    transform: [{ translateY: -1 }],
-    shadowOpacity: 0.08,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
+  cardHovered: {
+    transform: [{ translateY: -2 }],
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 5 },
     ...(Platform.OS === 'android' ? { elevation: 4 } : null),
   },
-  pressed: {
-    transform: [{ scale: 0.985 }],
-    opacity: 0.96,
+  cardPressed: {
+    transform: [{ scale: servicesTokens.motion.pressScale }],
   },
-  disabledCard: {
-    opacity: 0.74,
-    borderColor: '#94A3B8',
-    backgroundColor: '#F8FAFC',
-  },
-  accentLine: {
+  decor: {
     position: 'absolute',
-    left: 0,
-    top: 0,
-    bottom: 0,
-    width: 3,
+    top: -30,
+    right: -20,
+    width: 128,
+    height: 96,
+    borderRadius: 999,
   },
   iconWrap: {
     position: 'relative',
-    width: 30,
-    height: 30,
-    borderRadius: 11,
+    width: servicesTokens.quick.iconWrapSize,
+    height: servicesTokens.quick.iconWrapSize,
+  },
+  iconBubble: {
+    width: servicesTokens.quick.iconWrapSize,
+    height: servicesTokens.quick.iconWrapSize,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#EEF2F7',
-    borderWidth: 1,
-    borderColor: '#D7DEE8',
-  },
-  cardTitle: {
-    fontSize: 15,
-    color: '#1E293B',
-    fontWeight: '800',
-  },
-  cardDescription: {
-    fontSize: 12,
-    color: '#64748B',
-    lineHeight: 16,
+    shadowColor: '#2563EB',
+    shadowOpacity: 0.2,
+    shadowRadius: 7,
+    shadowOffset: { width: 0, height: 3 },
+    ...(Platform.OS === 'android' ? { elevation: 2 } : null),
   },
   cloudIconBadge: {
     position: 'absolute',
     right: -4,
     bottom: -4,
-    width: 16,
-    height: 16,
+    width: servicesTokens.quick.cloudSize,
+    height: servicesTokens.quick.cloudSize,
     borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#EEF2FF',
     borderWidth: 1,
     borderColor: '#BFDBFE',
+    backgroundColor: '#EEF2FF',
+  },
+  cardTitle: {
+    fontSize: 15,
+    color: '#162235',
+    fontWeight: '800',
+  },
+  cardTitleDisabled: {
+    color: servicesTokens.states.disabledText,
+  },
+  cardDescription: {
+    fontSize: 12,
+    color: '#5F7088',
+    lineHeight: 16,
+    fontWeight: '500',
+  },
+  cardDescriptionDisabled: {
+    color: '#7E8EA6',
   },
   statusBadge: {
     alignSelf: 'flex-start',
@@ -178,9 +207,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 999,
-    backgroundColor: '#E0F2FE',
+    backgroundColor: '#E0EEFF',
     borderWidth: 1,
-    borderColor: '#93C5FD',
+    borderColor: '#B7D3FF',
   },
   statusBadgeDisabled: {
     backgroundColor: '#E2E8F0',
@@ -190,6 +219,9 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '800',
     color: '#1E3A8A',
+  },
+  statusBadgeTextDisabled: {
+    color: '#475569',
   },
   lockOverlay: {
     position: 'absolute',
