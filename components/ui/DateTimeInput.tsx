@@ -492,7 +492,7 @@ export default function DateTimeInput({
     ];
   }, [includeTime, quickActions]);
 
-  const useQuick = (getDate: () => Date) => {
+  const applyQuickPreset = (getDate: () => Date) => {
     setTemp(applyPrecision(getDate(), timePrecision, safeMinuteStep));
   };
 
@@ -573,7 +573,7 @@ export default function DateTimeInput({
             {quickActions ? (
               <View style={styles.quickRow}>
                 {quicks.map((quick) => (
-                  <Pressable key={quick.label} onPress={() => useQuick(quick.getDate)} style={({ pressed }) => [styles.quickChip, pressed && { opacity: 0.9 }]}>
+                  <Pressable key={quick.label} onPress={() => applyQuickPreset(quick.getDate)} style={({ pressed }) => [styles.quickChip, pressed && { opacity: 0.9 }]}>
                     <Text style={styles.quickChipText}>{quick.label}</Text>
                   </Pressable>
                 ))}

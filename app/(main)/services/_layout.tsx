@@ -86,16 +86,16 @@ export default function ServicesLayout() {
     router.replace('/services');
   }, [deniedByAccess, deniedByOffline, loading, notify, router, serviceKey]);
 
-  const blocked = !!serviceKey && !loading && (deniedByAccess || deniedByOffline);
-  if (serviceKey && (loading || blocked)) return null;
-
-  const showCloudServiceInHeader = Boolean(serviceKey && guardedService?.kind === 'CLOUD');
   const servicesSummary = useMemo(() => {
     const visible = (services || []).filter((service) => service.visible);
     const enabled = visible.filter((service) => service.enabled).length;
     const cloud = visible.filter((service) => service.kind === 'CLOUD').length;
     return { visible: visible.length, enabled, cloud };
   }, [services]);
+  const blocked = !!serviceKey && !loading && (deniedByAccess || deniedByOffline);
+  if (serviceKey && (loading || blocked)) return null;
+
+  const showCloudServiceInHeader = Boolean(serviceKey && guardedService?.kind === 'CLOUD');
 
   return (
     <Stack
@@ -139,7 +139,8 @@ export default function ServicesLayout() {
           else router.replace('/services');
         };
 
-        const shouldRenderRight = showCreateInHeader || showCloudServiceInHeader || showServicesSummaryInHeader;
+        const showCloudInHeader = showCloudServiceInHeader && !showCreateInHeader;
+        const shouldRenderRight = showCreateInHeader || showCloudInHeader || showServicesSummaryInHeader;
         const rightSlot = shouldRenderRight ? (
           <View style={styles.rightHeaderRow}>
             {showServicesSummaryInHeader ? (
@@ -150,7 +151,7 @@ export default function ServicesLayout() {
                 </Text>
               </View>
             ) : null}
-            {showCloudServiceInHeader ? (
+            {showCloudInHeader ? (
               <View style={styles.cloudHeaderBadge}>
                 <Ionicons name="cloud-outline" size={13} color="#1E40AF" />
               </View>
