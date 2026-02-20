@@ -1,4 +1,5 @@
 import { io, type Socket } from 'socket.io-client';
+import { AppState, Platform } from 'react-native';
 
 type ManagedSocketOptions = {
   url: string;
@@ -23,6 +24,9 @@ export function createManagedSocketConnection(options: ManagedSocketOptions): Ma
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let authRetrying = false;
   let loggedError = false;
+  let focusCleanup: (() => void) | null = null;
+  let focused = true;
+  let lastSentFocused: boolean | null = null;
 
   const clearRetry = () => {
     if (retryTimer) {
@@ -36,6 +40,55 @@ export function createManagedSocketConnection(options: ManagedSocketOptions): Ma
     retryTimer = setTimeout(() => {
       void connect();
     }, reconnectDelayMs);
+  };
+
+  const resolveFocusedState = () => {
+    if (Platform.OS === 'web') {
+      if (typeof document === 'undefined') return true;
+      const isVisible = document.visibilityState === 'visible';
+      const hasFocus = typeof document.hasFocus === 'function' ? document.hasFocus() : true;
+      return isVisible && hasFocus;
+    }
+    return AppState.currentState === 'active';
+  };
+
+  const emitPresenceFocus = (force = false) => {
+    if (!socket?.connected) return;
+    if (!force && lastSentFocused === focused) return;
+    socket.emit('presence:focus', { focused });
+    lastSentFocused = focused;
+  };
+
+  const updateFocusedState = (nextFocused: boolean) => {
+    if (focused === nextFocused) return;
+    focused = nextFocused;
+    lastSentFocused = null;
+    emitPresenceFocus();
+  };
+
+  const bindFocusTracking = () => {
+    if (focusCleanup) return;
+    focused = resolveFocusedState();
+    if (Platform.OS === 'web') {
+      if (typeof window === 'undefined' || typeof document === 'undefined') {
+        focusCleanup = () => {};
+        return;
+      }
+      const sync = () => updateFocusedState(resolveFocusedState());
+      window.addEventListener('focus', sync);
+      window.addEventListener('blur', sync);
+      document.addEventListener('visibilitychange', sync);
+      focusCleanup = () => {
+        window.removeEventListener('focus', sync);
+        window.removeEventListener('blur', sync);
+        document.removeEventListener('visibilitychange', sync);
+      };
+      return;
+    }
+    const sub = AppState.addEventListener('change', (state) => {
+      updateFocusedState(state === 'active');
+    });
+    focusCleanup = () => sub.remove();
   };
 
   async function connect() {
@@ -60,6 +113,8 @@ export function createManagedSocketConnection(options: ManagedSocketOptions): Ma
     socket.on('connect', () => {
       authRetrying = false;
       loggedError = false;
+      lastSentFocused = null;
+      emitPresenceFocus(true);
     });
 
     socket.on('connect_error', async (err: any) => {
@@ -85,12 +140,15 @@ export function createManagedSocketConnection(options: ManagedSocketOptions): Ma
     options.onSocketReady(socket);
   }
 
+  bindFocusTracking();
   void connect();
 
   return {
     disconnect: () => {
       active = false;
       clearRetry();
+      focusCleanup?.();
+      focusCleanup = null;
       socket?.disconnect();
       socket = null;
     },
