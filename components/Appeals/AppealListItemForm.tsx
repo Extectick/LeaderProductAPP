@@ -183,6 +183,29 @@ function AppealListItemForm({
   const senderNameSize = compact ? 11 : 12;
   const messageSize = compact ? 12 : 13;
   const timeSize = compact ? 11 : 12;
+  const scopeChipTextSize = compact ? 9 : 10;
+  const scopeTheme =
+    listContext === 'department'
+      ? {
+          scopeLabel: 'Отдел',
+          scopeIcon: 'briefcase-outline' as const,
+          scopeChipBg: '#D1FAE5',
+          scopeChipColor: '#047857',
+          selectedBorder: '#6EE7B7',
+          selectedSurface: '#F0FDF4',
+          headerGradient: selected ? (['#DCFCE7', '#BBF7D0'] as const) : (['#F0FDF4', '#DCFCE7'] as const),
+          unreadBg: '#059669',
+        }
+      : {
+          scopeLabel: 'Моё',
+          scopeIcon: 'person-outline' as const,
+          scopeChipBg: '#DBEAFE',
+          scopeChipColor: '#1D4ED8',
+          selectedBorder: '#93C5FD',
+          selectedSurface: '#F0F7FF',
+          headerGradient: selected ? (['#EAF3FF', '#DBEAFE'] as const) : (['#F8FAFC', '#EEF2FF'] as const),
+          unreadBg: '#2563EB',
+        };
 
   return (
     <Pressable
@@ -202,8 +225,8 @@ function AppealListItemForm({
           {
             borderRadius: cardRadius,
             borderWidth: 1,
-            borderColor: selected ? '#93C5FD' : '#E2E8F0',
-            backgroundColor: selected ? '#F0F7FF' : '#FFFFFF',
+            borderColor: selected ? scopeTheme.selectedBorder : '#E2E8F0',
+            backgroundColor: selected ? scopeTheme.selectedSurface : '#FFFFFF',
             overflow: 'hidden',
             shadowColor: '#0F172A',
             shadowOpacity: selected ? 0.12 : 0.06,
@@ -226,7 +249,7 @@ function AppealListItemForm({
         />
 
         <LinearGradient
-          colors={selected ? ['#EAF3FF', '#DBEAFE'] : ['#F8FAFC', '#EEF2FF']}
+          colors={scopeTheme.headerGradient}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={{
@@ -235,6 +258,24 @@ function AppealListItemForm({
             paddingBottom: headerPaddingBottom,
           }}
         >
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 4,
+                paddingHorizontal: 7,
+                paddingVertical: 3,
+                borderRadius: 999,
+                backgroundColor: scopeTheme.scopeChipBg,
+              }}
+            >
+              <Ionicons name={scopeTheme.scopeIcon} size={11} color={scopeTheme.scopeChipColor} />
+              <Text style={{ fontSize: scopeChipTextSize, fontWeight: '800', color: scopeTheme.scopeChipColor }}>
+                {scopeTheme.scopeLabel}
+              </Text>
+            </View>
+          </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Text style={{ fontSize: titleSize, fontWeight: '800', color: '#0F172A', flex: 1 }} numberOfLines={1}>
               #{item.number} {item.title ?? 'Без названия'}
@@ -246,7 +287,7 @@ function AppealListItemForm({
                   height: 24,
                   paddingHorizontal: 7,
                   borderRadius: 12,
-                  backgroundColor: '#2563EB',
+                  backgroundColor: scopeTheme.unreadBg,
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}

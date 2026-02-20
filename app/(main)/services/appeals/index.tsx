@@ -211,7 +211,7 @@ export default function AppealsIndex() {
   const formatBadgeCount = useCallback((value: number) => (value > 99 ? '99+' : String(value)), []);
 
   const renderTabBadges = useCallback(
-    (data?: { itemCount: number; unreadMessagesCount: number }) => {
+    (data: { itemCount: number; unreadMessagesCount: number } | undefined, isActive: boolean) => {
       if (!data) return null;
       const activeCount = Math.max(0, data.itemCount || 0);
       const unreadCount = Math.max(0, data.unreadMessagesCount || 0);
@@ -219,8 +219,10 @@ export default function AppealsIndex() {
       return (
         <View style={styles.tabBadgesRow}>
           {activeCount ? (
-            <View style={styles.tabCountBadge}>
-              <Text style={styles.tabCountText}>{formatBadgeCount(activeCount)}</Text>
+            <View style={[styles.tabCountBadge, isActive && styles.tabCountBadgeActive]}>
+              <Text style={[styles.tabCountText, isActive && styles.tabCountTextActive]}>
+                {formatBadgeCount(activeCount)}
+              </Text>
             </View>
           ) : null}
           {unreadCount ? (
@@ -483,6 +485,21 @@ export default function AppealsIndex() {
     () => buildTabBadgeData(scopeItems.tasks),
     [buildTabBadgeData, scopeItems.tasks]
   );
+  const activeScopeMeta = useMemo(
+    () =>
+      tab === 'mine'
+        ? {
+            label: 'Личный поток',
+            subtitle: 'Только ваши созданные обращения и диалоги.',
+            icon: 'person-outline' as const,
+          }
+        : {
+            label: 'Командный поток',
+            subtitle: 'Обращения, поступившие в ваш отдел.',
+            icon: 'briefcase-outline' as const,
+          },
+    [tab]
+  );
 
   const visibleItemsCount = useMemo(
     () => cachedItems.filter(doesItemMatchFilters).length,
@@ -579,6 +596,7 @@ export default function AppealsIndex() {
     { key: 'completed', label: 'Завершённые' },
   ];
   const shouldUseWrappedFilters = Platform.OS === 'web' && effectiveContentWidth >= 760;
+  const isTasksTab = tab === 'tasks';
 
   const appealsListElement = (
     <AppealsList
@@ -661,28 +679,71 @@ export default function AppealsIndex() {
             <View style={styles.scopeSwitch}>
               <Pressable
                 onPress={() => switchScopeTab('mine')}
-                style={[styles.scopeItem, tab === 'mine' && styles.scopeItemActive]}
+                style={[
+                  styles.scopeItem,
+                  tab === 'mine' && styles.scopeItemActive,
+                  tab === 'mine' && styles.scopeItemActiveMine,
+                ]}
               >
                 <View style={styles.scopeItemRow}>
-                  <Text style={[styles.scopeItemText, tab === 'mine' && styles.scopeItemTextActive]}>
+                  <Ionicons
+                    name="person-outline"
+                    size={14}
+                    color={tab === 'mine' ? '#1D4ED8' : '#94A3B8'}
+                  />
+                  <Text style={[styles.scopeItemText, tab === 'mine' && styles.scopeItemTextActiveMine]}>
                     {compact ? 'Мои' : 'Мои обращения'}
                   </Text>
-                  {renderTabBadges(mineTabBadgeData)}
+                  {renderTabBadges(mineTabBadgeData, tab === 'mine')}
                 </View>
               </Pressable>
               {departmentTabAvailable ? (
                 <Pressable
                   onPress={() => switchScopeTab('tasks')}
-                  style={[styles.scopeItem, tab === 'tasks' && styles.scopeItemActive]}
+                  style={[
+                    styles.scopeItem,
+                    tab === 'tasks' && styles.scopeItemActive,
+                    tab === 'tasks' && styles.scopeItemActiveTasks,
+                  ]}
                 >
                   <View style={styles.scopeItemRow}>
-                    <Text style={[styles.scopeItemText, tab === 'tasks' && styles.scopeItemTextActive]}>
+                    <Ionicons
+                      name="briefcase-outline"
+                      size={14}
+                      color={tab === 'tasks' ? '#047857' : '#94A3B8'}
+                    />
+                    <Text style={[styles.scopeItemText, tab === 'tasks' && styles.scopeItemTextActiveTasks]}>
                       {compact ? 'Отдел' : 'Задачи отдела'}
                     </Text>
-                    {renderTabBadges(departmentTabBadgeData)}
+                    {renderTabBadges(departmentTabBadgeData, tab === 'tasks')}
                   </View>
                 </Pressable>
               ) : null}
+            </View>
+            <View style={styles.scopeContextRow}>
+              <View
+                style={[
+                  styles.scopeContextPill,
+                  tab === 'mine' ? styles.scopeContextPillMine : styles.scopeContextPillTasks,
+                ]}
+              >
+                <Ionicons
+                  name={activeScopeMeta.icon}
+                  size={13}
+                  color={tab === 'mine' ? '#1D4ED8' : '#047857'}
+                />
+                <Text
+                  style={[
+                    styles.scopeContextPillText,
+                    tab === 'mine' ? styles.scopeContextPillTextMine : styles.scopeContextPillTextTasks,
+                  ]}
+                >
+                  {activeScopeMeta.label}
+                </Text>
+              </View>
+              <Text style={styles.scopeContextHint} numberOfLines={1}>
+                {activeScopeMeta.subtitle}
+              </Text>
             </View>
 
             <View style={[styles.filterRow, shouldUseWrappedFilters && styles.filterRowDesktop]}>
@@ -694,9 +755,19 @@ export default function AppealsIndex() {
                       <Pressable
                         key={opt.key}
                         onPress={() => setViewMode(opt.key)}
-                        style={[styles.filterChip, active && styles.filterChipActive]}
+                        style={[
+                          styles.filterChip,
+                          active && styles.filterChipActive,
+                          active && isTasksTab && styles.filterChipActiveTasks,
+                        ]}
                       >
-                        <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>
+                        <Text
+                          style={[
+                            styles.filterChipText,
+                            active && styles.filterChipTextActive,
+                            active && isTasksTab && styles.filterChipTextActiveTasks,
+                          ]}
+                        >
                           {opt.label}
                         </Text>
                       </Pressable>
@@ -716,9 +787,19 @@ export default function AppealsIndex() {
                       <Pressable
                         key={opt.key}
                         onPress={() => setViewMode(opt.key)}
-                        style={[styles.filterChip, active && styles.filterChipActive]}
+                        style={[
+                          styles.filterChip,
+                          active && styles.filterChipActive,
+                          active && isTasksTab && styles.filterChipActiveTasks,
+                        ]}
                       >
-                        <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>
+                        <Text
+                          style={[
+                            styles.filterChipText,
+                            active && styles.filterChipTextActive,
+                            active && isTasksTab && styles.filterChipTextActiveTasks,
+                          ]}
+                        >
                           {opt.label}
                         </Text>
                       </Pressable>
@@ -733,12 +814,13 @@ export default function AppealsIndex() {
                   styles.filterSettingsBtn,
                   shouldUseWrappedFilters && styles.filterSettingsBtnDesktop,
                   filtersPanelVisible && styles.filterSettingsBtnActive,
+                  filtersPanelVisible && isTasksTab && styles.filterSettingsBtnActiveTasks,
                 ]}
               >
                 <Ionicons
                   name={filtersPanelVisible ? 'close-outline' : 'options-outline'}
                   size={16}
-                  color={filtersPanelVisible ? '#1D4ED8' : '#4B5563'}
+                  color={filtersPanelVisible ? (isTasksTab ? '#047857' : '#1D4ED8') : '#4B5563'}
                 />
               </Pressable>
             </View>
@@ -769,27 +851,47 @@ export default function AppealsIndex() {
               <View style={styles.filtersPanel}>
                 <Pressable
                   onPress={() => setOnlyAssignedToMe((v) => !v)}
-                  style={[styles.panelToggle, onlyAssignedToMe && styles.panelToggleActive]}
+                  style={[
+                    styles.panelToggle,
+                    onlyAssignedToMe && styles.panelToggleActive,
+                    onlyAssignedToMe && isTasksTab && styles.panelToggleActiveTasks,
+                  ]}
                 >
                   <Ionicons
                     name={onlyAssignedToMe ? 'checkmark-circle' : 'ellipse-outline'}
                     size={16}
-                    color={onlyAssignedToMe ? '#1D4ED8' : '#6B7280'}
+                    color={onlyAssignedToMe ? (isTasksTab ? '#047857' : '#1D4ED8') : '#6B7280'}
                   />
-                  <Text style={[styles.panelToggleText, onlyAssignedToMe && styles.panelToggleTextActive]}>
+                  <Text
+                    style={[
+                      styles.panelToggleText,
+                      onlyAssignedToMe && styles.panelToggleTextActive,
+                      onlyAssignedToMe && isTasksTab && styles.panelToggleTextActiveTasks,
+                    ]}
+                  >
                     Только я исполнитель
                   </Text>
                 </Pressable>
                 <Pressable
                   onPress={() => setRememberFilters((v) => !v)}
-                  style={[styles.panelToggle, rememberFilters && styles.panelToggleActive]}
+                  style={[
+                    styles.panelToggle,
+                    rememberFilters && styles.panelToggleActive,
+                    rememberFilters && isTasksTab && styles.panelToggleActiveTasks,
+                  ]}
                 >
                   <Ionicons
                     name={rememberFilters ? 'checkmark-circle' : 'ellipse-outline'}
                     size={16}
-                    color={rememberFilters ? '#1D4ED8' : '#6B7280'}
+                    color={rememberFilters ? (isTasksTab ? '#047857' : '#1D4ED8') : '#6B7280'}
                   />
-                  <Text style={[styles.panelToggleText, rememberFilters && styles.panelToggleTextActive]}>
+                  <Text
+                    style={[
+                      styles.panelToggleText,
+                      rememberFilters && styles.panelToggleTextActive,
+                      rememberFilters && isTasksTab && styles.panelToggleTextActiveTasks,
+                    ]}
+                  >
                     Запомнить настройки фильтров
                   </Text>
                 </Pressable>
@@ -809,6 +911,12 @@ export default function AppealsIndex() {
             ) : null}
 
             <View style={styles.listHost}>
+              <View
+                style={[
+                  styles.listScopeAccent,
+                  tab === 'mine' ? styles.listScopeAccentMine : styles.listScopeAccentTasks,
+                ]}
+              />
               {appealsListElement}
               {scopeSwitchLoading ? (
                 <View style={styles.scopeLoaderOverlay}>
@@ -930,26 +1038,39 @@ const styles = StyleSheet.create({
   },
   scopeSwitch: {
     width: '100%',
-    borderRadius: 14,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    backgroundColor: '#F8FAFC',
-    padding: 4,
+    borderColor: '#D9E2EF',
+    backgroundColor: '#F2F5F9',
+    padding: 5,
     flexDirection: 'row',
-    gap: 4,
+    gap: 6,
   },
   scopeItem: {
     flex: 1,
     minWidth: 0,
-    borderRadius: 10,
-    paddingVertical: 10,
+    borderRadius: 12,
+    paddingVertical: 11,
     paddingHorizontal: 10,
     justifyContent: 'center',
   },
   scopeItemActive: {
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#DBEAFE',
+    borderColor: '#D2DDEB',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 1,
+  },
+  scopeItemActiveMine: {
+    borderColor: '#BFDBFE',
+    backgroundColor: '#F7FAFF',
+  },
+  scopeItemActiveTasks: {
+    borderColor: '#A7F3D0',
+    backgroundColor: '#F6FEFA',
   },
   scopeItemRow: {
     flexDirection: 'row',
@@ -959,13 +1080,16 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   scopeItemText: {
-    color: '#475569',
-    fontSize: 15,
+    color: '#64748B',
+    fontSize: 14,
     fontWeight: '700',
     textAlign: 'center',
   },
-  scopeItemTextActive: {
+  scopeItemTextActiveMine: {
     color: '#1D4ED8',
+  },
+  scopeItemTextActiveTasks: {
+    color: '#047857',
   },
   tabCountBadge: {
     minWidth: 20,
@@ -978,10 +1102,17 @@ const styles = StyleSheet.create({
     borderColor: '#CBD5E1',
     backgroundColor: '#FFFFFF',
   },
+  tabCountBadgeActive: {
+    borderColor: '#CBD5E1',
+    backgroundColor: '#F8FAFC',
+  },
   tabCountText: {
     color: '#64748B',
     fontSize: 11,
     fontWeight: '700',
+  },
+  tabCountTextActive: {
+    color: '#334155',
   },
   tabBadgesRow: {
     flexDirection: 'row',
@@ -999,10 +1130,70 @@ const styles = StyleSheet.create({
   tabUnreadText: {
     color: '#FFFFFF',
   },
+  scopeContextRow: {
+    marginTop: 8,
+    marginBottom: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  scopeContextPill: {
+    minHeight: 28,
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexShrink: 0,
+  },
+  scopeContextPillMine: {
+    borderColor: '#BFDBFE',
+    backgroundColor: '#EFF6FF',
+  },
+  scopeContextPillTasks: {
+    borderColor: '#A7F3D0',
+    backgroundColor: '#ECFDF5',
+  },
+  scopeContextPillText: {
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  scopeContextPillTextMine: {
+    color: '#1D4ED8',
+  },
+  scopeContextPillTextTasks: {
+    color: '#047857',
+  },
+  scopeContextHint: {
+    flex: 1,
+    color: '#64748B',
+    fontSize: 12,
+    lineHeight: 16,
+  },
   listHost: {
     flex: 1,
     minHeight: 0,
     position: 'relative',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+    overflow: 'hidden',
+  },
+  listScopeAccent: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    height: 2,
+    zIndex: 2,
+  },
+  listScopeAccentMine: {
+    backgroundColor: '#93C5FD',
+  },
+  listScopeAccentTasks: {
+    backgroundColor: '#6EE7B7',
   },
   scopeLoaderOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -1056,6 +1247,10 @@ const styles = StyleSheet.create({
     borderColor: '#BFDBFE',
     backgroundColor: '#EFF6FF',
   },
+  filterChipActiveTasks: {
+    borderColor: '#A7F3D0',
+    backgroundColor: '#ECFDF5',
+  },
   filterChipText: {
     color: '#475569',
     fontSize: 12,
@@ -1063,6 +1258,9 @@ const styles = StyleSheet.create({
   },
   filterChipTextActive: {
     color: '#1D4ED8',
+  },
+  filterChipTextActiveTasks: {
+    color: '#047857',
   },
   filterSettingsBtn: {
     width: 34,
@@ -1081,6 +1279,10 @@ const styles = StyleSheet.create({
   filterSettingsBtnActive: {
     borderColor: '#93C5FD',
     backgroundColor: '#EFF6FF',
+  },
+  filterSettingsBtnActiveTasks: {
+    borderColor: '#6EE7B7',
+    backgroundColor: '#ECFDF5',
   },
   filterMetaRow: {
     marginTop: 2,
@@ -1139,6 +1341,10 @@ const styles = StyleSheet.create({
     borderColor: '#93C5FD',
     backgroundColor: '#EFF6FF',
   },
+  panelToggleActiveTasks: {
+    borderColor: '#6EE7B7',
+    backgroundColor: '#ECFDF5',
+  },
   panelToggleText: {
     color: '#334155',
     fontSize: 13,
@@ -1146,6 +1352,9 @@ const styles = StyleSheet.create({
   },
   panelToggleTextActive: {
     color: '#1D4ED8',
+  },
+  panelToggleTextActiveTasks: {
+    color: '#047857',
   },
   panelActionsRow: {
     flexDirection: 'row',
@@ -1231,3 +1440,4 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 });
+
