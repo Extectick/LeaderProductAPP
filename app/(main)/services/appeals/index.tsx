@@ -52,6 +52,14 @@ import {
 // import * as Sharing from 'expo-sharing';
 
 type AppealsViewMode = 'active' | 'open' | 'in_progress' | 'completed' | 'all';
+type AppealsScopeTab = 'mine' | 'tasks';
+type StoredAppealsFilters = {
+  rememberFilters?: boolean;
+  viewMode?: AppealsViewMode;
+  onlyAssignedToMe?: boolean;
+  tab?: AppealsScopeTab;
+};
+const DEFAULT_VIEW_MODE: AppealsViewMode = 'active';
 const APPEALS_FILTERS_KEY = 'appeals:list:filters:v1';
 const APPEAL_FORCE_PAGE_ONCE_KEY = 'lp:appeals:force-page-once:v1';
 
@@ -133,21 +141,31 @@ export default function AppealsIndex() {
   const [status] = useState<AppealStatus | undefined>();
   const [priority] = useState<AppealPriority | undefined>();
   const [wsTick, setWsTick] = useState(0);
-  const [tab, setTab] = useState<'mine' | 'tasks'>('mine');
+  const [tab, setTab] = useState<AppealsScopeTab>('mine');
   const [scopeSwitchLoading, setScopeSwitchLoading] = useState(false);
-  const [viewMode, setViewMode] = useState<AppealsViewMode>('active');
+  const [viewMode, setViewMode] = useState<AppealsViewMode>(DEFAULT_VIEW_MODE);
   const [onlyAssignedToMe, setOnlyAssignedToMe] = useState(false);
+  const [rememberFilters, setRememberFilters] = useState(false);
   const [filtersReady, setFiltersReady] = useState(false);
   const [filtersPanelVisible, setFiltersPanelVisible] = useState(false);
   const outboxStats = useAppealsOutboxStats();
   const [counters, setCounters] = useState<AppealCounters | null>(null);
   const listScope: Scope = tab === 'mine' ? 'my' : 'department';
   const countersRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const listKey = useMemo(
-    () => `scope:${listScope}-status:${status ?? 'any'}-priority:${priority ?? 'any'}`,
-    [listScope, priority, status]
+  const myListKey = useMemo(
+    () => `scope:my-status:${status ?? 'any'}-priority:${priority ?? 'any'}`,
+    [priority, status]
   );
+  const departmentListKey = useMemo(
+    () => `scope:department-status:${status ?? 'any'}-priority:${priority ?? 'any'}`,
+    [priority, status]
+  );
+  const listKey = useMemo(() => (tab === 'mine' ? myListKey : departmentListKey), [departmentListKey, myListKey, tab]);
   const [cachedItems, setCachedItems] = useState(getListSnapshot(listKey).items);
+  const [scopeItems, setScopeItems] = useState<{ mine: AppealListItem[]; tasks: AppealListItem[] }>(() => ({
+    mine: getListSnapshot(myListKey).items,
+    tasks: getListSnapshot(departmentListKey).items,
+  }));
   const lastWsMsg = useRef<any>(null);
   const selectedAppealIdFromQuery = useMemo(() => {
     const value = Number(searchParams.appealId);
@@ -193,9 +211,9 @@ export default function AppealsIndex() {
   const formatBadgeCount = useCallback((value: number) => (value > 99 ? '99+' : String(value)), []);
 
   const renderTabBadges = useCallback(
-    (data?: { activeCount: number; unreadMessagesCount: number }) => {
+    (data?: { itemCount: number; unreadMessagesCount: number }) => {
       if (!data) return null;
-      const activeCount = Math.max(0, data.activeCount || 0);
+      const activeCount = Math.max(0, data.itemCount || 0);
       const unreadCount = Math.max(0, data.unreadMessagesCount || 0);
       if (!activeCount && !unreadCount) return null;
       return (
@@ -227,15 +245,26 @@ export default function AppealsIndex() {
       try {
         const raw = await AsyncStorage.getItem(APPEALS_FILTERS_KEY);
         if (active && raw) {
-          const parsed = JSON.parse(raw) as Partial<{
-            viewMode: AppealsViewMode;
-            onlyAssignedToMe: boolean;
-          }>;
-          if (parsed.viewMode && ['active', 'open', 'in_progress', 'completed', 'all'].includes(parsed.viewMode)) {
-            setViewMode(parsed.viewMode);
-          }
-          if (typeof parsed.onlyAssignedToMe === 'boolean') {
-            setOnlyAssignedToMe(parsed.onlyAssignedToMe);
+          const parsed = JSON.parse(raw) as StoredAppealsFilters;
+          const hasLegacyValue =
+            typeof parsed.viewMode === 'string' ||
+            typeof parsed.onlyAssignedToMe === 'boolean' ||
+            parsed.tab === 'mine' ||
+            parsed.tab === 'tasks';
+          const shouldApplySavedFilters =
+            parsed.rememberFilters === true || (parsed.rememberFilters == null && hasLegacyValue);
+
+          setRememberFilters(shouldApplySavedFilters);
+          if (shouldApplySavedFilters) {
+            if (parsed.viewMode && ['active', 'open', 'in_progress', 'completed', 'all'].includes(parsed.viewMode)) {
+              setViewMode(parsed.viewMode);
+            }
+            if (typeof parsed.onlyAssignedToMe === 'boolean') {
+              setOnlyAssignedToMe(parsed.onlyAssignedToMe);
+            }
+            if (parsed.tab === 'mine' || parsed.tab === 'tasks') {
+              setTab(parsed.tab);
+            }
           }
         }
       } catch {}
@@ -248,11 +277,11 @@ export default function AppealsIndex() {
 
   useEffect(() => {
     if (!filtersReady) return;
-    void AsyncStorage.setItem(
-      APPEALS_FILTERS_KEY,
-      JSON.stringify({ viewMode, onlyAssignedToMe })
-    ).catch(() => undefined);
-  }, [filtersReady, viewMode, onlyAssignedToMe]);
+    const payload: StoredAppealsFilters = rememberFilters
+      ? { rememberFilters: true, viewMode, onlyAssignedToMe, tab }
+      : { rememberFilters: false };
+    void AsyncStorage.setItem(APPEALS_FILTERS_KEY, JSON.stringify(payload)).catch(() => undefined);
+  }, [filtersReady, onlyAssignedToMe, rememberFilters, tab, viewMode]);
 
   useEffect(() => {
     void loadCounters();
@@ -380,8 +409,17 @@ export default function AppealsIndex() {
 
   // Инициализация локального кэша обращений и подписка
   useEffect(() => {
+    let cancelled = false;
+    const syncScopeSnapshots = () => {
+      const mineItems = getListSnapshot(myListKey).items;
+      const taskItems = getListSnapshot(departmentListKey).items;
+      const activeItems = getListSnapshot(listKey).items;
+      setCachedItems(activeItems);
+      setScopeItems({ mine: mineItems, tasks: taskItems });
+    };
     initAppealsStore().then(() => {
-      setCachedItems(getListSnapshot(listKey).items);
+      if (cancelled) return;
+      syncScopeSnapshots();
       // если кэш пустой - подтягиваем с сервера и кладём в стор
       if (getListSnapshot(listKey).items.length === 0) {
         getAppealsList(listScope, 20, 0, { forceRefresh: true })
@@ -393,15 +431,21 @@ export default function AppealsIndex() {
               true
             )
           )
-          .then(() => setCachedItems(getListSnapshot(listKey).items))
+          .then(() => {
+            if (cancelled) return;
+            syncScopeSnapshots();
+          })
           .catch(() => {});
       }
     });
-    const unsub = subscribeAppeals(() => setCachedItems(getListSnapshot(listKey).items));
-    return () => unsub();
-  }, [listKey, listScope]);
+    const unsub = subscribeAppeals(syncScopeSnapshots);
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, [departmentListKey, listKey, listScope, myListKey]);
 
-  const displayFilter = useCallback(
+  const doesItemMatchFilters = useCallback(
     (item: AppealListItem) => {
       const statusValue = item.status;
       const isCompleted = statusValue === 'COMPLETED' || statusValue === 'DECLINED';
@@ -418,9 +462,31 @@ export default function AppealsIndex() {
     [auth?.profile?.id, onlyAssignedToMe, viewMode]
   );
 
+  const buildTabBadgeData = useCallback(
+    (items: AppealListItem[]) => {
+      const filtered = items.filter(doesItemMatchFilters);
+      const unreadMessagesCount = filtered.reduce((acc, item) => {
+        const unread = Number(item.unreadCount);
+        if (!Number.isFinite(unread) || unread <= 0) return acc;
+        return acc + unread;
+      }, 0);
+      return { itemCount: filtered.length, unreadMessagesCount };
+    },
+    [doesItemMatchFilters]
+  );
+
+  const mineTabBadgeData = useMemo(
+    () => buildTabBadgeData(scopeItems.mine),
+    [buildTabBadgeData, scopeItems.mine]
+  );
+  const departmentTabBadgeData = useMemo(
+    () => buildTabBadgeData(scopeItems.tasks),
+    [buildTabBadgeData, scopeItems.tasks]
+  );
+
   const visibleItemsCount = useMemo(
-    () => cachedItems.filter(displayFilter).length,
-    [cachedItems, displayFilter]
+    () => cachedItems.filter(doesItemMatchFilters).length,
+    [cachedItems, doesItemMatchFilters]
   );
 
   const resetFilters = useCallback(() => {
@@ -457,7 +523,7 @@ export default function AppealsIndex() {
     }
   }, [activeAppealId, router, selectedAppealIdFromQuery]);
 
-  const switchScopeTab = useCallback((nextTab: 'mine' | 'tasks') => {
+  const switchScopeTab = useCallback((nextTab: AppealsScopeTab) => {
     if (tab === nextTab) return;
     setScopeSwitchLoading(true);
     setTab(nextTab);
@@ -506,12 +572,13 @@ export default function AppealsIndex() {
   }, [cachedItems.length, resetFilters, router, tab]);
 
   const modeOptions: { key: AppealsViewMode; label: string }[] = [
+    { key: 'all', label: 'Все' },
     { key: 'active', label: 'Активные' },
     { key: 'open', label: 'Открытые' },
     { key: 'in_progress', label: 'В работе' },
     { key: 'completed', label: 'Завершённые' },
-    { key: 'all', label: 'Все' },
   ];
+  const shouldUseWrappedFilters = Platform.OS === 'web' && effectiveContentWidth >= 760;
 
   const appealsListElement = (
     <AppealsList
@@ -532,6 +599,7 @@ export default function AppealsIndex() {
       listKey={listKey}
       onItemsChange={(items) => {
         setCachedItems(items);
+        setScopeItems((prev) => (tab === 'mine' ? { ...prev, mine: items } : { ...prev, tasks: items }));
         setScopeSwitchLoading(false);
       }}
       onRefreshDone={() => {
@@ -540,7 +608,7 @@ export default function AppealsIndex() {
       }}
       style={isDesktopSplit ? styles.desktopInboxList : undefined}
       contentContainerStyle={{ paddingBottom: isDesktopSplit ? 10 : tabBarSpacerHeight + 8 }}
-      displayFilter={displayFilter}
+      displayFilter={doesItemMatchFilters}
       ListEmptyComponent={listEmptyComponent}
       renderItem={(item) => (
         <AppealListItemForm
@@ -599,7 +667,7 @@ export default function AppealsIndex() {
                   <Text style={[styles.scopeItemText, tab === 'mine' && styles.scopeItemTextActive]}>
                     {compact ? 'Мои' : 'Мои обращения'}
                   </Text>
-                  {renderTabBadges(counters?.my)}
+                  {renderTabBadges(mineTabBadgeData)}
                 </View>
               </Pressable>
               {departmentTabAvailable ? (
@@ -611,38 +679,61 @@ export default function AppealsIndex() {
                     <Text style={[styles.scopeItemText, tab === 'tasks' && styles.scopeItemTextActive]}>
                       {compact ? 'Отдел' : 'Задачи отдела'}
                     </Text>
-                    {renderTabBadges(counters?.department)}
+                    {renderTabBadges(departmentTabBadgeData)}
                   </View>
                 </Pressable>
               ) : null}
             </View>
 
-            <View style={styles.filterRow}>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.filterScrollContent}
-                style={styles.filterScroll}
-              >
-                {modeOptions.map((opt) => {
-                  const active = viewMode === opt.key;
-                  return (
-                    <Pressable
-                      key={opt.key}
-                      onPress={() => setViewMode(opt.key)}
-                      style={[styles.filterChip, active && styles.filterChipActive]}
-                    >
-                      <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>
-                        {opt.label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </ScrollView>
+            <View style={[styles.filterRow, shouldUseWrappedFilters && styles.filterRowDesktop]}>
+              {shouldUseWrappedFilters ? (
+                <View style={styles.filterWrapContent}>
+                  {modeOptions.map((opt) => {
+                    const active = viewMode === opt.key;
+                    return (
+                      <Pressable
+                        key={opt.key}
+                        onPress={() => setViewMode(opt.key)}
+                        style={[styles.filterChip, active && styles.filterChipActive]}
+                      >
+                        <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>
+                          {opt.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              ) : (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.filterScrollContent}
+                  style={styles.filterScroll}
+                >
+                  {modeOptions.map((opt) => {
+                    const active = viewMode === opt.key;
+                    return (
+                      <Pressable
+                        key={opt.key}
+                        onPress={() => setViewMode(opt.key)}
+                        style={[styles.filterChip, active && styles.filterChipActive]}
+                      >
+                        <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>
+                          {opt.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+              )}
 
               <Pressable
                 onPress={() => setFiltersPanelVisible((v) => !v)}
-                style={[styles.filterSettingsBtn, filtersPanelVisible && styles.filterSettingsBtnActive]}
+                style={[
+                  styles.filterSettingsBtn,
+                  shouldUseWrappedFilters && styles.filterSettingsBtnDesktop,
+                  filtersPanelVisible && styles.filterSettingsBtnActive,
+                ]}
               >
                 <Ionicons
                   name={filtersPanelVisible ? 'close-outline' : 'options-outline'}
@@ -687,6 +778,19 @@ export default function AppealsIndex() {
                   />
                   <Text style={[styles.panelToggleText, onlyAssignedToMe && styles.panelToggleTextActive]}>
                     Только я исполнитель
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setRememberFilters((v) => !v)}
+                  style={[styles.panelToggle, rememberFilters && styles.panelToggleActive]}
+                >
+                  <Ionicons
+                    name={rememberFilters ? 'checkmark-circle' : 'ellipse-outline'}
+                    size={16}
+                    color={rememberFilters ? '#1D4ED8' : '#6B7280'}
+                  />
+                  <Text style={[styles.panelToggleText, rememberFilters && styles.panelToggleTextActive]}>
+                    Запомнить настройки фильтров
                   </Text>
                 </Pressable>
 
@@ -921,6 +1025,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
+  filterRowDesktop: {
+    alignItems: 'flex-start',
+  },
+  filterWrapContent: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
   filterScroll: {
     flex: 1,
     minHeight: 34,
@@ -960,6 +1074,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  filterSettingsBtnDesktop: {
+    alignSelf: 'flex-start',
+    flexShrink: 0,
+  },
   filterSettingsBtnActive: {
     borderColor: '#93C5FD',
     backgroundColor: '#EFF6FF',
@@ -970,11 +1088,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 8,
   },
   filterMetaText: {
     color: '#6B7280',
     fontSize: 12,
     fontWeight: '600',
+    flexShrink: 1,
   },
   outboxMetaPending: {
     color: '#0F766E',
@@ -987,6 +1108,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
     backgroundColor: '#F3F4F6',
+    marginLeft: 'auto',
   },
   metaResetText: {
     color: '#4B5563',
