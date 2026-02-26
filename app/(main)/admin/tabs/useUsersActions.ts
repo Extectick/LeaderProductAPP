@@ -2,6 +2,7 @@ import { useCallback, type Dispatch, type SetStateAction } from 'react';
 import { Alert } from 'react-native';
 import { toApiPhoneDigitsString } from '@/utils/phone';
 import {
+  adminUpdatePassword,
   adminUpdateUser,
   adminUpdateUserProfile,
   assignUserRole,
@@ -18,6 +19,7 @@ export type UsersEditorState = {
   middleName: string;
   email: string;
   phone: string;
+  newPassword: string;
   roleId: number | null;
   departmentId: number | null;
   employeeStatus: ProfileStatus | null;
@@ -59,6 +61,7 @@ export function useUsersActions({
           middleName: profile.middleName || '',
           email: profile.email || '',
           phone: formatPhone(profile.phone),
+          newPassword: '',
           roleId: profile.role?.id ?? null,
           departmentId: profile.employeeProfile?.department?.id ?? null,
           employeeStatus: profile.employeeProfile?.status ?? null,
@@ -92,6 +95,12 @@ export function useUsersActions({
   const saveEditor = useCallback(async () => {
     if (!editorUserId || !editor || !editorInitial) return;
     try {
+      const nextPassword = editor.newPassword.trim();
+      if (nextPassword.length > 0 && nextPassword.length < 6) {
+        Alert.alert('Ошибка', 'Новый пароль должен содержать минимум 6 символов');
+        return;
+      }
+
       const patch: Record<string, unknown> = {};
       if (editor.firstName !== editorInitial.firstName) patch.firstName = editor.firstName.trim();
       if (editor.lastName !== editorInitial.lastName) patch.lastName = editor.lastName.trim();
@@ -111,6 +120,9 @@ export function useUsersActions({
       }
       if (Object.keys(employeePatch).length) {
         await adminUpdateUserProfile(editorUserId, 'employee', employeePatch);
+      }
+      if (nextPassword.length > 0) {
+        await adminUpdatePassword(editorUserId, nextPassword);
       }
 
       setEditorVisible(false);

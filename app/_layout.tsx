@@ -29,7 +29,14 @@ enableScreens();
 function InnerLayout() {
   const { isChecking } = useAuthRedirect();
   useTelegramBackButton();
-  if (isChecking) return null;
+  if (isChecking) {
+    return (
+      <StartupSplash
+        statusText="Проверка авторизации"
+        hintText="Проверяем сессию и загружаем доступные разделы."
+      />
+    );
+  }
   return <Slot />;
 }
 
@@ -38,6 +45,7 @@ export default function RootLayout() {
 
   const [preloadReady, setPreloadReady] = useState(false);
   const [updateReady, setUpdateReady] = useState(false);
+  const [minSplashReady, setMinSplashReady] = useState(false);
 
   useEffect(() => {
     initMonitoring();
@@ -68,7 +76,42 @@ export default function RootLayout() {
     };
   }, []);
 
-  const appIsReady = useMemo(() => preloadReady && updateReady, [preloadReady, updateReady]);
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setMinSplashReady(true);
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, []);
+
+  const appIsReady = useMemo(
+    () => preloadReady && updateReady && minSplashReady,
+    [minSplashReady, preloadReady, updateReady]
+  );
+
+  const startupSplash = useMemo(() => {
+    if (!preloadReady) {
+      return {
+        statusText: 'Инициализация сервисов',
+        hintText: 'Подключаем уведомления и системные модули.',
+      };
+    }
+    if (!updateReady) {
+      return {
+        statusText: 'Проверка обновлений',
+        hintText: 'Проверяем актуальность версии приложения.',
+      };
+    }
+    if (!minSplashReady) {
+      return {
+        statusText: 'Подготовка интерфейса',
+        hintText: 'Формируем стартовый экран.',
+      };
+    }
+    return {
+      statusText: 'Запуск приложения',
+      hintText: 'Подготавливаем рабочее пространство.',
+    };
+  }, [minSplashReady, preloadReady, updateReady]);
 
   // Надёжно прячем splash как только инициализация завершена
   useEffect(() => {
@@ -90,7 +133,14 @@ export default function RootLayout() {
                     showCheckingOverlay={false}
                   >
                     <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
-                    {appIsReady ? <InnerLayout /> : <StartupSplash />}
+                    {appIsReady ? (
+                      <InnerLayout />
+                    ) : (
+                      <StartupSplash
+                        statusText={startupSplash.statusText}
+                        hintText={startupSplash.hintText}
+                      />
+                    )}
                   </UpdateGate>
                 </NotificationHost>
               </NotificationViewportProvider>

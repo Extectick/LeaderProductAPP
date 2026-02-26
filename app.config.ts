@@ -15,6 +15,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   newArchEnabled: true,
   scheme: "leaderproduct",
   icon: "./assets/images/icon.png",
+  web: {
+    favicon: "./assets/images/favicon.png",
+  },
 
   ios: { bundleIdentifier: "com.leaderproduct.app", buildNumber: "3" },
   android: {

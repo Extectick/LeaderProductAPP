@@ -163,11 +163,14 @@ export default function OTP6Input({
   const focusHidden = (pos: number) => {
     const p = Math.max(0, Math.min(CELLS, pos));
     setCursor(p);
+    if (Platform.OS === 'web') {
+      // Mobile browsers may ignore delayed focus and not open the keyboard.
+      hiddenRef.current?.focus();
+      return;
+    }
     requestAnimationFrame(() => {
       hiddenRef.current?.focus();
-      if (Platform.OS !== 'web') {
-        hiddenRef.current?.setNativeProps?.({ selection: { start: p, end: p } } as any);
-      }
+      hiddenRef.current?.setNativeProps?.({ selection: { start: p, end: p } } as any);
     });
   };
 
@@ -211,6 +214,7 @@ export default function OTP6Input({
             <AnimatedTouchable
               key={idx}
               activeOpacity={0.85}
+              onPressIn={() => focusHidden(d ? idx + 1 : idx)}
               onPress={() => focusHidden(d ? idx + 1 : idx)}
               onLongPress={() => focusHidden(idx)}
               accessibilityLabel={`Цифра ${idx + 1}`}

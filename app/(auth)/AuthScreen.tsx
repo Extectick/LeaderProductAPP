@@ -11,35 +11,29 @@ import {
   Easing,
   Image,
   KeyboardAvoidingView,
-  Modal,
   Platform,
   Pressable,
   ScrollView,
   StatusBar,
   StyleSheet,
-  StyleProp,
   Switch,
   Text,
   TextInput,
   TouchableOpacity,
   View,
-  ViewStyle,
   useWindowDimensions,
 } from 'react-native';
 import 'react-native-reanimated';
-import QRCode from 'react-native-qrcode-svg';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import BrandedBackground from '@/components/BrandedBackground';
 import FormInput from '@/components/FormInput';
 import OTP6Input from '@/components/OTP6Input';
-import ShimmerButton from '@/components/ShimmerButton';
 import ThemedLoader from '@/components/ui/ThemedLoader';
 import { gradientColors } from '@/constants/Colors';
 import { AuthContext } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { API_BASE_URL } from '@/utils/config';
-import { shadeColor, tintColor } from '@/utils/color';
 import { isMaxMiniAppLaunch, prepareMaxWebApp } from '@/utils/maxAuthService';
 import { isTelegramMiniAppLaunch, prepareTelegramWebApp } from '@/utils/telegramAuthService';
 import {
@@ -59,6 +53,19 @@ import { getProfileGate } from '@/utils/profileGate';
 import { saveTokens } from '@/utils/tokenService';
 import { applyWebAutofillFix } from '@/utils/webAutofillFix';
 import type { MessengerQrAuthProvider, MessengerQrAuthState } from '@/types/apiTypes';
+import { BounceButton, MiniButton } from './authScreen/AuthActionButtons';
+import AuthDesktopQrProviders from './authScreen/AuthDesktopQrProviders';
+import AuthQrModal from './authScreen/AuthQrModal';
+import { APP_LOGO, CARD_PAD_H, ROUTES, STORAGE_KEYS } from './authScreen/constants';
+import { getAuthScreenStyles } from './authScreen/styles';
+import {
+  mapQrFailureReason,
+  normalizeEmail,
+  normalizeError,
+  passwordScore,
+  providerLabel,
+  validateEmail,
+} from './authScreen/utils';
 
 /** ─── Module-level cache to defeat StrictMode remounts in dev ─── */
 const __authInitCache: {
@@ -75,72 +82,6 @@ const __authInitCache: {
   minTopHeight: null,
 };
 (Object.assign(globalThis as any, { __authInitCache }));
-
-/** Горизонтальный паддинг карточки (должен совпадать со styles.card.padding) */
-const CARD_PAD_H = Platform.OS === 'web' ? 20 : 22;
-const APP_LOGO = require('../../assets/images/icon.png');
-const MAX_ICON = require('../../assets/icons/max.png');
-
-/* ───── utils ───── */
-const STORAGE_KEYS = {
-  REMEMBER_FLAG: '@remember_me',
-  REMEMBER_EMAIL: '@remember_email',
-  REMEMBER_PASSWORD: '@remember_password',
-} as const;
-
-function validateEmail(email: string) {
-  const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return re.test(email.toLowerCase());
-}
-function normalizeEmail(s: string) {
-  return s.trim().toLowerCase();
-}
-function passwordScore(pw: string) {
-  let s = 0;
-  if (pw.length >= 6) s++;
-  if (pw.length >= 10) s++;
-  if (/[A-Z]/.test(pw)) s++;
-  if (/[0-9]/.test(pw)) s++;
-  if (/[^A-Za-z0-9]/.test(pw)) s++;
-  return Math.min(s, 4);
-}
-
-const ROUTES = {
-  HOME: '/home' as Href,
-  PROFILE: '/ProfileSelectionScreen' as Href,
-  PENDING: '/(auth)/ProfilePendingScreen' as Href,
-  BLOCKED: '/(auth)/ProfileBlockedScreen' as Href,
-} as const;
-
-function normalizeError(err: any): string {
-  const raw = err?.message || (typeof err === 'string' ? err : '');
-  if (/network request failed|failed to fetch|network error/i.test(raw)) {
-    return 'Нет соединения с сервером';
-  }
-  return raw || 'Произошла ошибка. Попробуйте снова.';
-}
-
-function providerLabel(provider: MessengerQrAuthProvider) {
-  return provider === 'MAX' ? 'MAX' : 'Telegram';
-}
-
-function mapQrFailureReason(failureReason?: string | null, provider: MessengerQrAuthProvider = 'TELEGRAM') {
-  const reason = String(failureReason || '').trim().toUpperCase();
-  if (!reason) return `Не удалось завершить вход через ${providerLabel(provider)}.`;
-  if (reason === 'ACCOUNT_CONFLICT') {
-    return `Этот ${providerLabel(provider)}-аккаунт уже связан с другим профилем. Войдите по email/паролю и привяжите мессенджер в профиле.`;
-  }
-  if (reason === 'SESSION_EXPIRED') {
-    return 'QR-сессия истекла. Запустите вход заново.';
-  }
-  if (reason === 'CANCELLED_BY_USER') {
-    return 'Вход через QR отменён.';
-  }
-  if (reason === 'INVALID_PHONE') {
-    return `Не удалось получить корректный номер из ${providerLabel(provider)}. Повторите сканирование.`;
-  }
-  return `Не удалось завершить вход через ${providerLabel(provider)}.`;
-}
 
 /* ───── screen ───── */
 export default function AuthScreen() {
@@ -192,11 +133,10 @@ export default function AuthScreen() {
   const colors = themes[theme];
   const grad = gradientColors[theme as keyof typeof gradientColors] || gradientColors.light;
   const btnGradient = useMemo(() => [grad[0], grad[1]] as [string, string], [grad]);
-  const styles = useMemo(() => getStyles(colors), [colors]);
+  const styles = useMemo(() => getAuthScreenStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
   const { width: winW, height: winH } = useWindowDimensions();
   const isWeb = Platform.OS === 'web';
-  const isDesktopWeb = isWeb && winW >= 768;
   const isWebMobile = isWeb && winW < 768;
   const isNativeMobile = !isWeb && winW < 700;
   const isWebTablet = isWeb && winW >= 768 && winW < 1280;
@@ -619,7 +559,7 @@ export default function AuthScreen() {
   }, [qrDeepLinkUrl]);
 
   useEffect(() => {
-    if (!isDesktopWeb) {
+    if (!isWeb) {
       setDesktopQrProviders([]);
       return;
     }
@@ -644,7 +584,7 @@ export default function AuthScreen() {
     return () => {
       cancelled = true;
     };
-  }, [isDesktopWeb]);
+  }, [isWeb]);
 
   useEffect(() => {
     if (!qrModalVisible || !qrProvider || !qrSessionToken) return;
@@ -908,13 +848,46 @@ export default function AuthScreen() {
     }
   };
 
+  const readClipboardTextSafe = async () => {
+    try {
+      const fromExpo = await Clipboard.getStringAsync();
+      if (fromExpo) return String(fromExpo);
+    } catch {
+      // noop: fallback to Web Clipboard API below
+    }
+
+    if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator?.clipboard?.readText) {
+      try {
+        return await navigator.clipboard.readText();
+      } catch {
+        // noop: handled by caller
+      }
+    }
+
+    return '';
+  };
+
+  const requestOtpViaPromptIfNeeded = (source: string) => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return '';
+    return window.prompt(`Вставьте ${source} (6 цифр):`, '') || '';
+  };
+
   const handlePasteOTP = async () => {
     try {
-      const str = await Clipboard.getStringAsync();
+      let str = await readClipboardTextSafe();
+      if (!str) {
+        str = requestOtpViaPromptIfNeeded('код подтверждения');
+      }
       const only = (str || '').replace(/\D/g, '').slice(0, 6);
-      if (!only) return;
+      if (!only) {
+        setBannerNoticeTone('info');
+        setBannerNotice('Не удалось вставить код. Разрешите доступ к буферу или введите код вручную.');
+        return;
+      }
       setCode(only); // OTP6Input получит value и сам вызовет onFilled
       setCodeErr(only.length === 6 ? '' : 'Код из 6 цифр');
+      setBannerError('');
+      setBannerNotice('');
       Haptics.selectionAsync();
     } catch {
       setBannerError('Не удалось получить текст из буфера');
@@ -1110,11 +1083,20 @@ export default function AuthScreen() {
 
   const handlePasteResetOTP = async () => {
     try {
-      const str = await Clipboard.getStringAsync();
+      let str = await readClipboardTextSafe();
+      if (!str) {
+        str = requestOtpViaPromptIfNeeded('код для сброса');
+      }
       const only = (str || '').replace(/\D/g, '').slice(0, 6);
-      if (!only) return;
+      if (!only) {
+        setBannerNoticeTone('info');
+        setBannerNotice('Не удалось вставить код. Разрешите доступ к буферу или введите код вручную.');
+        return;
+      }
       setResetCode(only);
       setResetCodeErr(only.length === 6 ? '' : 'Код из 6 цифр');
+      setBannerError('');
+      setBannerNotice('');
       Haptics.selectionAsync();
     } catch {
       setBannerError('Не удалось получить текст из буфера');
@@ -1146,108 +1128,6 @@ export default function AuthScreen() {
     bannerNoticeTone === 'success'
       ? { bg: `${colors.success}22`, border: colors.success, text: colors.success }
       : { bg: `${colors.info}22`, border: colors.info, text: colors.info };
-
-  // маленькая анимируемая кнопка для Verify
-  const MiniButton: React.FC<{
-    title: React.ReactNode;
-    onPress: () => void;
-    variant?: 'filled' | 'outline';
-    disabled?: boolean;
-  }> = ({ title, onPress, variant = 'filled', disabled }) => {
-    const scale = useRef(new Animated.Value(1)).current;
-    const [hovered, setHovered] = useState(false);
-    const hoveredRef = useRef(false);
-    const pressIn = () => {
-      if (disabled) return;
-      Animated.spring(scale, { toValue: 0.97, useNativeDriver: true, friction: 5 }).start();
-    };
-    const pressOut = () => {
-      if (disabled) return;
-      const to = hoveredRef.current ? 1.03 : 1;
-      Animated.spring(scale, { toValue: to, useNativeDriver: true, friction: 5 }).start();
-    };
-    const hoverIn = () => {
-      if (disabled) return;
-      hoveredRef.current = true;
-      setHovered(true);
-      Animated.spring(scale, { toValue: 1.03, useNativeDriver: true, friction: 5 }).start();
-    };
-    const hoverOut = () => {
-      if (disabled) return;
-      hoveredRef.current = false;
-      setHovered(false);
-      Animated.spring(scale, { toValue: 1, useNativeDriver: true, friction: 5 }).start();
-    };
-    const baseText = variant === 'filled' ? colors.buttonText : colors.text;
-    const textColor = disabled ? colors.disabledText : baseText;
-    const disabledBg = colors.disabledBackground;
-    const disabledBorder = colors.disabledBackground || colors.border;
-    const baseBg = variant === 'filled' ? colors.tint : 'transparent';
-    const hoverBg =
-      variant === 'filled'
-        ? tintColor(colors.tint, 0.12)
-        : colors.inputBackground || colors.cardBackground;
-    const pressBg =
-      variant === 'filled'
-        ? shadeColor(colors.tint, 0.12)
-        : tintColor(colors.inputBackground || colors.cardBackground, 0.08);
-    const renderTitle =
-      typeof title === 'string' || typeof title === 'number'
-        ? <Text style={{ color: textColor, fontWeight: '700' }}>{title}</Text>
-        : title;
-    return (
-      <Animated.View style={{ transform: [{ scale }], flexGrow: 1 }}>
-        <Pressable
-          onPressIn={pressIn}
-          onPressOut={pressOut}
-          onHoverIn={hoverIn}
-          onHoverOut={hoverOut}
-          onPress={onPress}
-          disabled={disabled}
-          style={({ pressed }) => [
-            {
-              height: 44,
-              borderRadius: 12,
-              alignItems: 'center',
-              justifyContent: 'center',
-              paddingHorizontal: 14,
-              marginVertical: 4,
-              backgroundColor: baseBg,
-            },
-            disabled
-              ? { backgroundColor: disabledBg, borderWidth: 1, borderColor: disabledBorder }
-              : variant === 'filled'
-              ? null
-              : { borderWidth: 1, borderColor: colors.border, backgroundColor: 'transparent' },
-            hovered && !pressed && !disabled ? { backgroundColor: hoverBg } : null,
-            pressed && !disabled ? { backgroundColor: pressBg } : null,
-          ]}
-        >
-          {renderTitle}
-        </Pressable>
-      </Animated.View>
-    );
-  };
-
-  const BounceButton: React.FC<{
-    title: string;
-    onPress: () => void;
-    loading?: boolean;
-    gradientColors: [string, string];
-    style?: StyleProp<ViewStyle>;
-  }> = ({ title, onPress, loading, gradientColors, style }) => {
-    return (
-      <ShimmerButton
-        title={title}
-        onPress={onPress}
-        loading={loading}
-        haptics
-        gradientColors={gradientColors}
-        textStyle={ctaTextStyle}
-        style={style ? StyleSheet.flatten(style) : undefined}
-      />
-    );
-  };
 
   // РЕНДЕР
   return (
@@ -1394,6 +1274,7 @@ export default function AuthScreen() {
                           onPress={handleResetRequest}
                           loading={loading}
                           gradientColors={btnGradient}
+                          textStyle={ctaTextStyle}
                           style={{ height: BTN_HEIGHT }}
                         />
                       </View>
@@ -1408,6 +1289,7 @@ export default function AuthScreen() {
                             setResetCodeErr('');
                             setBannerNotice('');
                           }}
+                          colors={colors}
                           variant="outline"
                         />
                       </View>
@@ -1431,7 +1313,7 @@ export default function AuthScreen() {
                       />
 
                       <View style={styles.otpActionsRow}>
-                        <MiniButton title="Вставить" onPress={handlePasteResetOTP} variant="filled" />
+                        <MiniButton title="Вставить" onPress={handlePasteResetOTP} colors={colors} variant="filled" />
                         <MiniButton
                           title={
                             resetResendTimer > 0 ? (
@@ -1444,6 +1326,7 @@ export default function AuthScreen() {
                             )
                           }
                           onPress={handleResetResendCode}
+                          colors={colors}
                           variant="outline"
                           disabled={resetResendTimer > 0}
                         />
@@ -1453,6 +1336,7 @@ export default function AuthScreen() {
                             setResetStep(0);
                             setBannerNotice('');
                           }}
+                          colors={colors}
                           variant="outline"
                         />
                       </View>
@@ -1512,12 +1396,13 @@ export default function AuthScreen() {
                           onPress={handleResetChange}
                           loading={loading}
                           gradientColors={btnGradient}
+                          textStyle={ctaTextStyle}
                           style={{ height: BTN_HEIGHT }}
                         />
                       </View>
 
                       <View style={styles.otpActionsRow}>
-                        <MiniButton title="Назад" onPress={() => setResetStep(1)} variant="outline" />
+                        <MiniButton title="Назад" onPress={() => setResetStep(1)} colors={colors} variant="outline" />
                       </View>
                     </View>
                   )}
@@ -1621,6 +1506,7 @@ export default function AuthScreen() {
                         onPress={handleLogin}
                         loading={loading}
                         gradientColors={btnGradient}
+                        textStyle={ctaTextStyle}
                         style={{ height: BTN_HEIGHT }}
                       />
                     </View>
@@ -1728,6 +1614,7 @@ export default function AuthScreen() {
                         onPress={handleRegister}
                         loading={loading}
                         gradientColors={btnGradient}
+                        textStyle={ctaTextStyle}
                         style={{ height: BTN_HEIGHT }}
                       />
                     </View>
@@ -1754,7 +1641,7 @@ export default function AuthScreen() {
 
                   {/* Кнопки действий */}
                   <View style={styles.otpActionsRow}>
-                    <MiniButton title="Вставить" onPress={handlePasteOTP} variant="filled" />
+                    <MiniButton title="Вставить" onPress={handlePasteOTP} colors={colors} variant="filled" />
                     <MiniButton
                       title={
                         resendTimer > 0 ? (
@@ -1767,6 +1654,7 @@ export default function AuthScreen() {
                         )
                       }
                       onPress={handleResendCode}
+                      colors={colors}
                       variant="outline"
                       disabled={resendTimer > 0}
                     />
@@ -1779,6 +1667,7 @@ export default function AuthScreen() {
                         setResendTimer(0);
                         setBannerNotice('');
                       }}
+                      colors={colors}
                       variant="outline"
                     />
                   </View>
@@ -1786,40 +1675,13 @@ export default function AuthScreen() {
               )}
             </Animated.View>
 
-            {isDesktopWeb && desktopQrProviders.length > 0 && (
-              <View style={[styles.desktopProviderWrap, { maxWidth: outerW }]}>
-                <Text style={styles.desktopProviderTitle}>Быстрый вход</Text>
-                <View style={styles.desktopProviderRow}>
-                  {desktopQrProviders.includes('TELEGRAM') && (
-                    <TouchableOpacity
-                      accessibilityRole="button"
-                      accessibilityLabel="Войти через Telegram по QR"
-                      activeOpacity={0.85}
-                      style={[styles.desktopProviderBtn, styles.telegramProviderBtn]}
-                      onPress={() => {
-                        void openQrSignInModal('TELEGRAM');
-                      }}
-                    >
-                      <Ionicons name="paper-plane" size={20} color="#FFFFFF" />
-                      <Text style={styles.desktopProviderBtnText}>Telegram</Text>
-                    </TouchableOpacity>
-                  )}
-                  {desktopQrProviders.includes('MAX') && (
-                    <TouchableOpacity
-                      accessibilityRole="button"
-                      accessibilityLabel="Войти через MAX по QR"
-                      activeOpacity={0.85}
-                      style={[styles.desktopProviderBtn, styles.maxProviderBtn]}
-                      onPress={() => {
-                        void openQrSignInModal('MAX');
-                      }}
-                    >
-                      <Image source={MAX_ICON} style={styles.maxProviderIcon} resizeMode="contain" />
-                      <Text style={styles.desktopProviderBtnText}>MAX</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              </View>
+            {isWeb && (
+              <AuthDesktopQrProviders
+                providers={desktopQrProviders}
+                outerW={outerW}
+                styles={styles}
+                onOpen={openQrSignInModal}
+              />
             )}
 
             <View style={[styles.buildInfo, { maxWidth: outerW, marginTop: isWeb ? 14 : 12 }]}>
@@ -1842,7 +1704,7 @@ export default function AuthScreen() {
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
-        {!isDesktopWeb && (
+        {!isWeb && (
           <TouchableOpacity
             accessibilityRole="button"
             accessibilityLabel="Войти через Telegram"
@@ -1855,473 +1717,25 @@ export default function AuthScreen() {
         )}
       </SafeAreaView>
 
-      <Modal
-        transparent
+      <AuthQrModal
         visible={qrModalVisible}
-        animationType="fade"
-        onRequestClose={() => {
+        provider={qrProvider}
+        qrBusy={qrBusy}
+        qrPayload={qrPayload}
+        qrNotice={qrNotice}
+        qrError={qrError}
+        qrDeepLinkUrl={qrDeepLinkUrl}
+        styles={styles}
+        onOpenProviderApp={openQrProviderApp}
+        onRetry={() => {
+          if (!qrProvider) return;
+          void openQrSignInModal(qrProvider);
+        }}
+        onClose={() => {
           void closeQrModal(true);
         }}
-      >
-        <View style={styles.qrModalOverlay}>
-          <Pressable
-            style={styles.qrModalBackdrop}
-            onPress={() => {
-              void closeQrModal(true);
-            }}
-          />
-          <View style={styles.qrModalCard}>
-            <View style={styles.qrModalHeader}>
-              {qrProvider === 'MAX' ? (
-                <Image source={MAX_ICON} style={styles.qrModalProviderIcon} resizeMode="contain" />
-              ) : (
-                <Ionicons name="paper-plane" size={20} color="#FFFFFF" />
-              )}
-              <Text style={styles.qrModalTitle}>Вход через {qrProvider ? providerLabel(qrProvider) : ''}</Text>
-            </View>
-
-            <View style={styles.qrBox}>
-              {qrBusy && <ThemedLoader size={22} />}
-              {!qrBusy && !!qrPayload && <QRCode value={qrPayload} size={220} />}
-            </View>
-
-            {!!qrNotice && <Text style={styles.qrNoticeText}>{qrNotice}</Text>}
-            {!!qrError && <Text style={styles.qrErrorText}>{qrError}</Text>}
-
-            <View style={styles.qrModalActions}>
-              <TouchableOpacity
-                activeOpacity={0.85}
-                style={[styles.qrActionBtn, styles.qrActionPrimary, !qrDeepLinkUrl && styles.qrActionDisabled]}
-                disabled={!qrDeepLinkUrl}
-                onPress={openQrProviderApp}
-              >
-                <Text style={styles.qrActionPrimaryText}>
-                  Открыть {qrProvider ? providerLabel(qrProvider) : 'мессенджер'}
-                </Text>
-              </TouchableOpacity>
-
-              {qrProvider && !!qrError && (
-                <TouchableOpacity
-                  activeOpacity={0.85}
-                  style={[styles.qrActionBtn, styles.qrActionSecondary]}
-                  onPress={() => {
-                    void openQrSignInModal(qrProvider);
-                  }}
-                >
-                  <Text style={styles.qrActionSecondaryText}>Создать новый QR</Text>
-                </TouchableOpacity>
-              )}
-
-              <TouchableOpacity
-                activeOpacity={0.85}
-                style={[styles.qrActionBtn, styles.qrActionCancel]}
-                onPress={() => {
-                  void closeQrModal(true);
-                }}
-              >
-                <Text style={styles.qrActionCancelText}>Отменить</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+      />
     </BrandedBackground>
   );
 }
 
-/* ───── styles ───── */
-const getStyles = (colors: {
-  text: string;
-  background: string;
-  tint: string;
-  icon: string;
-  tabIconDefault: string;
-  tabIconSelected: string;
-  inputBackground: string;
-  inputBorder: string;
-  button: string;
-  buttonText: string;
-  buttonDisabled: string;
-  secondaryText: string;
-  error: string;
-  success: string;
-  warning: string;
-  info: string;
-  disabledText: string;
-  disabledBackground: string;
-  cardBackground: string;
-  placeholder: string;
-  shadow: string;
-  expired: string;
-  card: string;
-  border: string;
-}) =>
-  StyleSheet.create({
-    scrollContent: {
-      flexGrow: 1,
-      justifyContent: 'center',
-      alignItems: 'center',
-      paddingHorizontal: 20,
-      paddingVertical: 0,
-    },
-    header: {
-      width: '100%',
-      maxWidth: Platform.OS === 'web' ? 820 : 620,
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginBottom: 12,
-    },
-    logoWrap: {
-      backgroundColor: 'rgba(255,255,255,0.92)',
-      alignItems: 'center',
-      justifyContent: 'center',
-      shadowColor: '#000',
-      shadowOpacity: 0.14,
-      shadowRadius: 12,
-      shadowOffset: { width: 0, height: 6 },
-      elevation: 4,
-    },
-
-    segmentWrapper: { width: '100%', alignItems: 'center', marginBottom: 10 },
-    segment: {
-      width: '100%',
-      maxWidth: 420,
-      backgroundColor: 'rgba(255,255,255,0.7)',
-      borderRadius: 16,
-      padding: 4,
-      flexDirection: 'row',
-      overflow: 'hidden',
-      ...Platform.select({ web: { backdropFilter: 'blur(8px)' } }),
-    },
-    segmentBtn: { flex: 1, paddingVertical: 10, alignItems: 'center', justifyContent: 'center' },
-    segmentText: { fontWeight: '700', color: '#4b5563' },
-    segmentTextActive: { color: '#111827' },
-    segmentPill: { position: 'absolute', top: 4, bottom: 4, borderRadius: 12, backgroundColor: '#fff' },
-
-    errorWrap: {
-      maxWidth: 420,
-      width: '100%',
-      backgroundColor: `${colors.error}22`,
-      borderColor: colors.error,
-      borderWidth: 1,
-      paddingVertical: 10,
-      paddingHorizontal: 12,
-      borderRadius: 12,
-      marginBottom: 10,
-    },
-    errorText: { color: colors.error, textAlign: 'center', fontWeight: '700' },
-    noticeWrap: {
-      maxWidth: 420,
-      width: '100%',
-      borderWidth: 1,
-      paddingVertical: 10,
-      paddingHorizontal: 12,
-      borderRadius: 12,
-      marginBottom: 10,
-    },
-    noticeText: { textAlign: 'center', fontWeight: '700' },
-
-    topBlock: {
-      justifyContent: 'flex-start',
-    },
-    card: {
-      backgroundColor: Platform.OS === 'web' ? 'rgba(255,255,255,0.85)' : colors.cardBackground,
-      borderRadius: 20,
-      padding: CARD_PAD_H,
-      overflow: 'hidden',
-      ...Platform.select({
-        ios: {
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: 10 },
-          shadowOpacity: 0.18,
-          shadowRadius: 16,
-        },
-        android: { elevation: 8 },
-        web: { backdropFilter: 'blur(10px)', boxShadow: '0px 12px 24px rgba(0,0,0,0.15)' },
-      }),
-    },
-
-    slide: { paddingBottom: Platform.OS === 'web' ? 8 : 4, paddingHorizontal: 0 },
-
-    title: { fontSize: 26, fontWeight: '800', color: colors.text, textAlign: 'center', marginBottom: 14 },
-
-    fieldCompact: { width: '100%', alignSelf: 'stretch', marginBottom: 10 },
-    loginPasswordFieldCompact: { marginBottom: 0 },
-
-    loginFooterRow: {
-      width: '100%',
-      marginTop: 20,
-      marginBottom: 0,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: 6,
-    },
-    rememberInline: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      minWidth: 0,
-      borderRadius: 12,
-      paddingHorizontal: 0,
-      paddingVertical: 2,
-    },
-    rememberInlinePressed: {
-      opacity: 0.9,
-    },
-    rememberInlineText: {
-      color: colors.secondaryText,
-      fontSize: 14,
-      lineHeight: 20,
-      fontWeight: '700',
-      flexShrink: 1,
-      marginLeft: 2,
-      includeFontPadding: true,
-    },
-    forgotInlineLink: { flexShrink: 1, alignItems: 'flex-end' },
-
-    buttonWrap: {
-      width: '100%',
-      alignSelf: 'stretch',
-      overflow: 'hidden',
-      borderRadius: 16,
-      marginTop: 0,
-      marginBottom: 0,
-    },
-    fill: { flex: 1 },
-    linkText: {
-      fontSize: 14,
-      fontWeight: '700',
-      textDecorationLine: 'underline',
-      color: colors.tint,
-    },
-
-    secondary: { color: colors.secondaryText, fontSize: 14 },
-
-    strengthRow: { flexDirection: 'row', alignItems: 'center', marginTop: -4, marginBottom: 8 },
-    strengthBg: { height: 8, backgroundColor: '#00000020', borderRadius: 6, flex: 1, overflow: 'hidden' },
-    strengthFill: { height: 8, borderRadius: 6 },
-
-    otpActionsRow: {
-      width: '100%',
-      marginTop: 12,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: 10,
-      flexWrap: 'wrap',
-    },
-    telegramFloatingBtn: {
-      position: 'absolute',
-      right: 14,
-      width: 54,
-      height: 54,
-      borderRadius: 27,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: '#229ED9',
-      shadowColor: '#0F172A',
-      shadowOpacity: 0.25,
-      shadowOffset: { width: 0, height: 8 },
-      shadowRadius: 16,
-      elevation: 8,
-      zIndex: 20,
-    },
-    buildInfo: {
-      marginTop: 12,
-      marginBottom: 28,
-      width: '100%',
-      maxWidth: 420,
-      alignItems: 'center',
-      gap: 2,
-      paddingHorizontal: 8,
-    },
-    buildInfoText: {
-      width: '100%',
-      fontSize: 12,
-      lineHeight: 17,
-      color: colors.secondaryText,
-      opacity: 0.8,
-      textAlign: 'center',
-      flexShrink: 1,
-    },
-    desktopProviderWrap: {
-      width: '100%',
-      marginTop: 14,
-      marginBottom: 2,
-      alignItems: 'center',
-      paddingHorizontal: 4,
-    },
-    desktopProviderTitle: {
-      fontSize: 13,
-      lineHeight: 18,
-      fontWeight: '700',
-      color: colors.secondaryText,
-      opacity: 0.9,
-      marginBottom: 8,
-      textAlign: 'center',
-    },
-    desktopProviderRow: {
-      width: '100%',
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 10,
-      flexWrap: 'wrap',
-    },
-    desktopProviderBtn: {
-      minWidth: 140,
-      borderRadius: 14,
-      paddingHorizontal: 14,
-      paddingVertical: 11,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 8,
-    },
-    telegramProviderBtn: {
-      backgroundColor: '#229ED9',
-    },
-    maxProviderBtn: {
-      backgroundColor: '#2E60F0',
-    },
-    maxProviderIcon: {
-      width: 18,
-      height: 18,
-      borderRadius: 4,
-      backgroundColor: 'transparent',
-    },
-    desktopProviderBtnText: {
-      color: '#FFFFFF',
-      fontSize: 14,
-      lineHeight: 18,
-      fontWeight: '800',
-    },
-    qrModalOverlay: {
-      flex: 1,
-      alignItems: 'center',
-      justifyContent: 'center',
-      padding: 18,
-    },
-    qrModalBackdrop: {
-      ...StyleSheet.absoluteFillObject,
-      backgroundColor: 'rgba(15, 23, 42, 0.56)',
-    },
-    qrModalCard: {
-      width: '100%',
-      maxWidth: 420,
-      borderRadius: 20,
-      padding: 18,
-      backgroundColor: '#FFFFFF',
-      alignItems: 'center',
-      shadowColor: '#0F172A',
-      shadowOpacity: 0.28,
-      shadowOffset: { width: 0, height: 10 },
-      shadowRadius: 24,
-      elevation: 12,
-    },
-    qrModalHeader: {
-      width: '100%',
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 8,
-      marginBottom: 14,
-      backgroundColor: '#1E3A8A',
-      borderRadius: 12,
-      paddingVertical: 10,
-      paddingHorizontal: 12,
-    },
-    qrModalProviderIcon: {
-      width: 20,
-      height: 20,
-      borderRadius: 4,
-      backgroundColor: 'transparent',
-    },
-    qrModalTitle: {
-      color: '#FFFFFF',
-      fontSize: 16,
-      lineHeight: 20,
-      fontWeight: '800',
-      textAlign: 'center',
-      flexShrink: 1,
-    },
-    qrBox: {
-      width: 252,
-      height: 252,
-      borderRadius: 14,
-      borderWidth: 1,
-      borderColor: '#E5E7EB',
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginBottom: 12,
-      backgroundColor: '#FFFFFF',
-    },
-    qrNoticeText: {
-      width: '100%',
-      textAlign: 'center',
-      color: '#1F2937',
-      fontSize: 14,
-      lineHeight: 20,
-      fontWeight: '600',
-      marginBottom: 8,
-    },
-    qrErrorText: {
-      width: '100%',
-      textAlign: 'center',
-      color: colors.error,
-      fontSize: 14,
-      lineHeight: 20,
-      fontWeight: '700',
-      marginBottom: 8,
-    },
-    qrModalActions: {
-      width: '100%',
-      gap: 8,
-      marginTop: 2,
-    },
-    qrActionBtn: {
-      width: '100%',
-      borderRadius: 12,
-      paddingVertical: 11,
-      paddingHorizontal: 12,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderWidth: 1,
-    },
-    qrActionPrimary: {
-      backgroundColor: '#1D4ED8',
-      borderColor: '#1D4ED8',
-    },
-    qrActionPrimaryText: {
-      color: '#FFFFFF',
-      fontSize: 14,
-      lineHeight: 18,
-      fontWeight: '800',
-      textAlign: 'center',
-    },
-    qrActionSecondary: {
-      backgroundColor: '#FFFFFF',
-      borderColor: '#CBD5E1',
-    },
-    qrActionSecondaryText: {
-      color: '#1F2937',
-      fontSize: 14,
-      lineHeight: 18,
-      fontWeight: '700',
-      textAlign: 'center',
-    },
-    qrActionCancel: {
-      backgroundColor: '#FFFFFF',
-      borderColor: '#E11D48',
-    },
-    qrActionCancelText: {
-      color: '#BE123C',
-      fontSize: 14,
-      lineHeight: 18,
-      fontWeight: '800',
-      textAlign: 'center',
-    },
-    qrActionDisabled: {
-      opacity: 0.55,
-    },
-  });

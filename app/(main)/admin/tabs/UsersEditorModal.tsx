@@ -89,6 +89,17 @@ export function UsersEditorModal({
                   placeholder="Телефон"
                   placeholderTextColor={colors.secondaryText}
                 />
+                <Text style={styles.sub}>Новый пароль</Text>
+                <TextInput
+                  value={editor.newPassword}
+                  onChangeText={(v) => onChangeEditor((s) => (s ? { ...s, newPassword: v } : s))}
+                  style={styles.input}
+                  placeholder="Оставьте пустым, чтобы не менять"
+                  placeholderTextColor={colors.secondaryText}
+                  secureTextEntry
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
 
                 <Text style={styles.sub}>Роль</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>

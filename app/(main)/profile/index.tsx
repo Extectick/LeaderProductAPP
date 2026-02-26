@@ -5,6 +5,7 @@ import {
   AppState,
   Alert,
   LayoutAnimation,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -17,9 +18,18 @@ import {
   View,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Clipboard from 'expo-clipboard';
 import { Colors } from '@/constants/Colors';
 import { ProfileView } from '@/components/Profile/ProfileView';
-import { addCredentials, logoutUser, resendVerification, verify } from '@/utils/authService';
+import {
+  addCredentials,
+  changePassword,
+  logoutUser,
+  requestPasswordReset,
+  resendVerification,
+  verify,
+  verifyPasswordReset,
+} from '@/utils/authService';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 import CustomAlert from '@/components/CustomAlert';
@@ -39,6 +49,7 @@ import { Skeleton } from 'moti/skeleton';
 import { shadeColor } from '@/utils/color';
 import TabBarSpacer from '@/components/Navigation/TabBarSpacer';
 import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
+import OTP6Input from '@/components/OTP6Input';
 import QRCode from 'react-native-qrcode-svg';
 import { formatPhoneDisplay, formatPhoneInputMask, normalizePhoneInputToDigits11, toApiPhoneDigitsString } from '@/utils/phone';
 import {
@@ -203,6 +214,8 @@ function CredentialsSection({
   const authMethods = resolveAuthMethods(profile);
   const shouldShowSetup = (authMethods.telegramLinked || authMethods.maxLinked) && !authMethods.passwordLoginEnabled;
   const emailFromProfile = (profile?.email || '').trim().toLowerCase();
+  const hasLinkedEmail = isValidEmail(emailFromProfile);
+  const canResetPassword = authMethods.passwordLoginEnabled && hasLinkedEmail;
 
   const [step, setStep] = useState<CredentialsStep>('credentials');
   const [showCompletion, setShowCompletion] = useState(false);
@@ -211,8 +224,21 @@ function CredentialsSection({
   const [code, setCode] = useState('');
   const [saving, setSaving] = useState(false);
   const [resending, setResending] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [resetModalVisible, setResetModalVisible] = useState(false);
+  const [resetModalStep, setResetModalStep] = useState<0 | 1>(0);
+  const [resetCode, setResetCode] = useState('');
+  const [resetPassword, setResetPassword] = useState('');
+  const [resetPasswordRepeat, setResetPasswordRepeat] = useState('');
+  const [resetModalBusy, setResetModalBusy] = useState(false);
+  const [resetResending, setResetResending] = useState(false);
+  const [resetResendTimer, setResetResendTimer] = useState(0);
+  const [resetModalNotice, setResetModalNotice] = useState<string | null>(null);
+  const [resetModalError, setResetModalError] = useState<string | null>(null);
+  const resetVerifyInFlightRef = useRef(false);
+  const lastAutoVerifyCodeRef = useRef('');
 
   useEffect(() => {
     if (!profile) return;
@@ -233,7 +259,26 @@ function CredentialsSection({
     authMethods.passwordLoginPendingVerification,
   ]);
 
-  if (!profile || (!shouldShowSetup && !showCompletion)) return null;
+  useEffect(() => {
+    if (!resetModalVisible || resetResendTimer <= 0) return;
+    const t = setTimeout(() => setResetResendTimer((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resetModalVisible, resetResendTimer]);
+
+  useEffect(() => {
+    if (resetCode.length < 6) {
+      lastAutoVerifyCodeRef.current = '';
+    }
+  }, [resetCode]);
+
+  useEffect(() => {
+    if (!resetModalVisible || resetModalStep !== 0) {
+      resetVerifyInFlightRef.current = false;
+      lastAutoVerifyCodeRef.current = '';
+    }
+  }, [resetModalStep, resetModalVisible]);
+
+  if (!profile || (!shouldShowSetup && !showCompletion && !canResetPassword)) return null;
 
   const normalizedEmail = email.trim().toLowerCase();
   const verificationEmail = emailFromProfile || normalizedEmail;
@@ -306,14 +351,179 @@ function CredentialsSection({
     }
   };
 
+  const onRequestPasswordReset = async () => {
+    if (!canResetPassword || !emailFromProfile) return;
+    setResetting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await requestPasswordReset(emailFromProfile);
+      setResetModalVisible(true);
+      setResetModalStep(0);
+      setResetCode('');
+      setResetPassword('');
+      setResetPasswordRepeat('');
+      setResetModalError(null);
+      setResetResendTimer(30);
+      setResetModalNotice(`Код для сброса пароля отправлен на ${emailFromProfile}.`);
+      setNotice(`Код для сброса пароля отправлен на ${emailFromProfile}.`);
+    } catch (e: any) {
+      setError(e?.message || 'Не удалось отправить код для сброса пароля');
+    } finally {
+      setResetting(false);
+    }
+  };
+
+  const onResetCodeChange = (value: string) => {
+    const only = value.replace(/\D/g, '').slice(0, 6);
+    setResetCode(only);
+    if (resetModalError) setResetModalError(null);
+  };
+
+  const readClipboardTextSafe = async () => {
+    try {
+      const fromExpo = await Clipboard.getStringAsync();
+      if (fromExpo) return String(fromExpo);
+    } catch {}
+
+    if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator?.clipboard?.readText) {
+      try {
+        return await navigator.clipboard.readText();
+      } catch {}
+    }
+    return '';
+  };
+
+  const onPasteResetCode = async () => {
+    try {
+      const text = await readClipboardTextSafe();
+      const only = String(text || '').replace(/\D/g, '').slice(0, 6);
+      if (!only) {
+        setResetModalError('Не удалось вставить код из буфера');
+        return;
+      }
+      setResetCode(only);
+      setResetModalError(null);
+    } catch {
+      setResetModalError('Не удалось вставить код из буфера');
+    }
+  };
+
+  const onVerifyResetCode = async (otp?: string, source: 'auto' | 'manual' = 'manual') => {
+    const codeValue = String(otp || resetCode || '').trim();
+    if (!/^\d{6}$/.test(codeValue)) {
+      setResetModalError('Введите 6-значный код из письма');
+      return;
+    }
+    if (!emailFromProfile || !isValidEmail(emailFromProfile)) {
+      setResetModalError('Не удалось определить email для подтверждения');
+      return;
+    }
+    if (resetVerifyInFlightRef.current || resetModalBusy) return;
+    if (source === 'auto' && lastAutoVerifyCodeRef.current === codeValue) return;
+
+    resetVerifyInFlightRef.current = true;
+    if (source === 'auto') {
+      lastAutoVerifyCodeRef.current = codeValue;
+    }
+    setResetModalBusy(true);
+    setResetModalError(null);
+    setResetModalNotice(null);
+    try {
+      await verifyPasswordReset(emailFromProfile, codeValue);
+      setResetCode(codeValue);
+      setResetModalStep(1);
+      setResetModalNotice('Код подтверждён. Укажите новый пароль.');
+    } catch (e: any) {
+      setResetModalError(e?.message || 'Не удалось подтвердить код');
+    } finally {
+      resetVerifyInFlightRef.current = false;
+      setResetModalBusy(false);
+    }
+  };
+
+  const onResendResetCode = async () => {
+    if (!emailFromProfile || !isValidEmail(emailFromProfile)) {
+      setResetModalError('Не удалось определить email для повторной отправки');
+      return;
+    }
+    if (resetResendTimer > 0) return;
+    setResetResending(true);
+    setResetModalError(null);
+    try {
+      await requestPasswordReset(emailFromProfile);
+      setResetCode('');
+      lastAutoVerifyCodeRef.current = '';
+      setResetResendTimer(30);
+      setResetModalNotice(`Код для сброса пароля отправлен повторно на ${emailFromProfile}.`);
+    } catch (e: any) {
+      setResetModalError(e?.message || 'Не удалось отправить код повторно');
+    } finally {
+      setResetResending(false);
+    }
+  };
+
+  const onSubmitNewPassword = async () => {
+    const nextPassword = resetPassword.trim();
+    const repeatPassword = resetPasswordRepeat.trim();
+    if (nextPassword.length < 6) {
+      setResetModalError('Новый пароль должен быть не короче 6 символов');
+      return;
+    }
+    if (!repeatPassword) {
+      setResetModalError('Повторите новый пароль');
+      return;
+    }
+    if (nextPassword !== repeatPassword) {
+      setResetModalError('Пароли не совпадают');
+      return;
+    }
+    if (!/^\d{6}$/.test(resetCode)) {
+      setResetModalError('Код подтверждения недействителен, запросите новый');
+      setResetModalStep(0);
+      return;
+    }
+    if (!emailFromProfile || !isValidEmail(emailFromProfile)) {
+      setResetModalError('Не удалось определить email');
+      return;
+    }
+    setResetModalBusy(true);
+    setResetModalError(null);
+    setResetModalNotice(null);
+    try {
+      await changePassword(emailFromProfile, resetCode, nextPassword);
+      setResetModalVisible(false);
+      setResetModalStep(0);
+      setResetCode('');
+      setResetPassword('');
+      setResetPasswordRepeat('');
+      setResetResendTimer(0);
+      setResetModalNotice(null);
+      setNotice('Пароль успешно изменён.');
+    } catch (e: any) {
+      setResetModalError(e?.message || 'Не удалось изменить пароль');
+    } finally {
+      setResetModalBusy(false);
+    }
+  };
+
+  const onCloseResetModal = () => {
+    if (resetModalBusy || resetResending) return;
+    setResetModalVisible(false);
+    setResetModalStep(0);
+    setResetCode('');
+    setResetPassword('');
+    setResetPasswordRepeat('');
+    setResetResendTimer(0);
+    setResetModalError(null);
+    setResetModalNotice(null);
+  };
+
   return (
-    <View style={styles.credentialsCard}>
-      <Text style={styles.credentialsTitle}>Вход по email и паролю</Text>
-      <Text style={styles.credentialsSubtitle}>
-        Для этого Telegram-аккаунта можно добавить резервный способ входа.
-      </Text>
-      {error ? <Text style={styles.credentialsError}>{error}</Text> : null}
-      {notice ? <Text style={styles.credentialsNotice}>{notice}</Text> : null}
+    <>
+      <View style={styles.credentialsCard}>
+        {error ? <Text style={styles.credentialsError}>{error}</Text> : null}
+        {notice ? <Text style={styles.credentialsNotice}>{notice}</Text> : null}
 
       {!showCompletion && shouldShowSetup && step === 'credentials' ? (
         <>
@@ -394,7 +604,176 @@ function CredentialsSection({
           <Text style={styles.credentialsDoneText}>Вход по email/паролю активирован.</Text>
         </View>
       ) : null}
-    </View>
+
+        {canResetPassword ? (
+          <>
+            <Pressable
+              onPress={onRequestPasswordReset}
+              disabled={resetting || saving || resending}
+              style={({ pressed }) => [
+                styles.credentialsResetButton,
+                (resetting || saving || resending) && styles.credentialsButtonDisabled,
+                pressed && !(resetting || saving || resending) ? styles.credentialsResetButtonPressed : null,
+              ]}
+            >
+              <Text style={styles.credentialsResetButtonText}>
+                {resetting ? 'Отправка...' : 'Сбросить пароль'}
+              </Text>
+            </Pressable>
+          </>
+        ) : null}
+      </View>
+
+      <Modal visible={resetModalVisible} transparent animationType="fade" onRequestClose={onCloseResetModal}>
+        <View style={styles.resetModalOverlay}>
+          <Pressable style={StyleSheet.absoluteFillObject} onPress={onCloseResetModal} />
+          <View style={styles.resetModalCard}>
+            <Text style={styles.credentialsTitle}>Сброс пароля</Text>
+            <Text style={styles.credentialsSubtitle}>
+              {resetModalStep === 0
+                ? `Введите код из письма для ${emailFromProfile}.`
+                : `Укажите новый пароль для ${emailFromProfile}.`}
+            </Text>
+
+            {resetModalError ? <Text style={styles.credentialsError}>{resetModalError}</Text> : null}
+            {resetModalNotice ? <Text style={styles.credentialsNotice}>{resetModalNotice}</Text> : null}
+
+            {resetModalStep === 0 ? (
+              <>
+                <OTP6Input
+                  value={resetCode}
+                  onChange={onResetCodeChange}
+                  onFilled={(value) => {
+                    void onVerifyResetCode(value, 'auto');
+                  }}
+                  disabled={resetModalBusy}
+                  error={Boolean(resetModalError)}
+                  secure={false}
+                  autoFocus
+                />
+                <View style={styles.resetModalActions}>
+                  <Pressable
+                    onPress={() => {
+                      void onPasteResetCode();
+                    }}
+                    disabled={resetModalBusy || resetResending}
+                    style={({ pressed }) => [
+                      styles.credentialsSecondaryButton,
+                      (resetModalBusy || resetResending) && styles.credentialsButtonDisabled,
+                      pressed && !(resetModalBusy || resetResending) ? styles.credentialsSecondaryButtonPressed : null,
+                    ]}
+                  >
+                    <Text style={styles.credentialsSecondaryButtonText}>Вставить код</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => {
+                      void onResendResetCode();
+                    }}
+                    disabled={resetModalBusy || resetResending || resetResendTimer > 0}
+                    style={({ pressed }) => [
+                      styles.credentialsSecondaryButton,
+                      (resetModalBusy || resetResending || resetResendTimer > 0) && styles.credentialsButtonDisabled,
+                      pressed && !(resetModalBusy || resetResending || resetResendTimer > 0)
+                        ? styles.credentialsSecondaryButtonPressed
+                        : null,
+                    ]}
+                  >
+                    <Text style={styles.credentialsSecondaryButtonText}>
+                      {resetResending
+                        ? 'Отправка...'
+                        : resetResendTimer > 0
+                        ? `Повторно через ${resetResendTimer}с`
+                        : 'Отправить код повторно'}
+                    </Text>
+                  </Pressable>
+                </View>
+                <View style={styles.resetModalActions}>
+                  <Pressable
+                    onPress={() => {
+                      void onVerifyResetCode();
+                    }}
+                    disabled={resetModalBusy || resetResending}
+                    style={({ pressed }) => [
+                      styles.credentialsButton,
+                      (resetModalBusy || resetResending) && styles.credentialsButtonDisabled,
+                      pressed && !(resetModalBusy || resetResending) ? styles.credentialsButtonPressed : null,
+                    ]}
+                  >
+                    <Text style={styles.credentialsButtonText}>
+                      {resetModalBusy ? 'Проверка...' : 'Подтвердить код'}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={onCloseResetModal}
+                    disabled={resetModalBusy || resetResending}
+                    style={({ pressed }) => [
+                      styles.credentialsSecondaryButton,
+                      (resetModalBusy || resetResending) && styles.credentialsButtonDisabled,
+                      pressed && !(resetModalBusy || resetResending) ? styles.credentialsSecondaryButtonPressed : null,
+                    ]}
+                  >
+                    <Text style={styles.credentialsSecondaryButtonText}>Отмена</Text>
+                  </Pressable>
+                </View>
+              </>
+            ) : (
+              <>
+                <TextInput
+                  value={resetPassword}
+                  onChangeText={setResetPassword}
+                  style={styles.fieldInput}
+                  placeholder="Новый пароль"
+                  secureTextEntry
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                <TextInput
+                  value={resetPasswordRepeat}
+                  onChangeText={setResetPasswordRepeat}
+                  style={styles.fieldInput}
+                  placeholder="Повторите пароль"
+                  secureTextEntry
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                <View style={styles.resetModalActions}>
+                  <Pressable
+                    onPress={() => {
+                      void onSubmitNewPassword();
+                    }}
+                    disabled={resetModalBusy}
+                    style={({ pressed }) => [
+                      styles.credentialsButton,
+                      resetModalBusy && styles.credentialsButtonDisabled,
+                      pressed && !resetModalBusy ? styles.credentialsButtonPressed : null,
+                    ]}
+                  >
+                    <Text style={styles.credentialsButtonText}>
+                      {resetModalBusy ? 'Сохранение...' : 'Сохранить пароль'}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => {
+                      if (resetModalBusy) return;
+                      setResetModalStep(0);
+                      setResetModalError(null);
+                    }}
+                    disabled={resetModalBusy}
+                    style={({ pressed }) => [
+                      styles.credentialsSecondaryButton,
+                      resetModalBusy && styles.credentialsButtonDisabled,
+                      pressed && !resetModalBusy ? styles.credentialsSecondaryButtonPressed : null,
+                    ]}
+                  >
+                    <Text style={styles.credentialsSecondaryButtonText}>Назад</Text>
+                  </Pressable>
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
+    </>
   );
 }
 
@@ -1438,6 +1817,44 @@ const styles = StyleSheet.create({
   credentialsSecondaryButtonText: {
     color: '#3730A3',
     fontWeight: '700',
+  },
+  credentialsResetButton: {
+    borderRadius: 10,
+    paddingVertical: 11,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+  },
+  credentialsResetButtonPressed: {
+    backgroundColor: '#FDE68A',
+  },
+  credentialsResetButtonText: {
+    color: '#92400E',
+    fontWeight: '800',
+  },
+  resetModalOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.56)',
+    padding: 16,
+  },
+  resetModalCard: {
+    width: '100%',
+    maxWidth: 460,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#FFFFFF',
+    padding: 16,
+    gap: 10,
+  },
+  resetModalActions: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
   },
   credentialsDoneWrap: {
     borderRadius: 10,
