@@ -138,6 +138,11 @@ export default function AppealsIndex() {
   }, []);
   const router = useRouter();
   const auth = useContext(AuthContext);
+  const canViewAnalytics = useMemo(() => {
+    const roleName = auth?.profile?.role?.name;
+    if (roleName === 'admin' || roleName === 'department_manager') return true;
+    return (auth?.profile?.departmentRoles || []).some((dr) => dr.role?.name === 'department_manager');
+  }, [auth?.profile?.departmentRoles, auth?.profile?.role?.name]);
   const [status] = useState<AppealStatus | undefined>();
   const [priority] = useState<AppealPriority | undefined>();
   const [wsTick, setWsTick] = useState(0);
@@ -829,6 +834,15 @@ export default function AppealsIndex() {
               <Text style={styles.filterMetaText}>
                 {visibleItemsCount} из {cachedItems.length}
               </Text>
+              {canViewAnalytics ? (
+                <Pressable
+                  onPress={() => router.push('/services/appeals/analytics' as any)}
+                  style={({ pressed }) => [styles.analyticsBtn, pressed && { opacity: 0.9 }]}
+                >
+                  <Ionicons name="stats-chart-outline" size={13} color="#0B4A6F" />
+                  <Text style={styles.analyticsBtnText}>Аналитика</Text>
+                </Pressable>
+              ) : null}
               {outboxStats.total > 0 ? (
                 <Text
                   style={[
@@ -1316,6 +1330,22 @@ const styles = StyleSheet.create({
     color: '#4B5563',
     fontSize: 11,
     fontWeight: '700',
+  },
+  analyticsBtn: {
+    minHeight: 28,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    backgroundColor: '#F0F9FF',
+    paddingHorizontal: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  analyticsBtnText: {
+    color: '#0B4A6F',
+    fontSize: 11,
+    fontWeight: '800',
   },
   filtersPanel: {
     marginBottom: 8,

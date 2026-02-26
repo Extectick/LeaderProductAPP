@@ -16,8 +16,9 @@ export default function AppealDetailWebScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const { sidebarWidthPx, ready: sidebarReady } = useWebSidebarMetrics();
-  const { id, forcePage } = useLocalSearchParams<{ id: string; forcePage?: string }>();
+  const { id, forcePage, backTo } = useLocalSearchParams<{ id: string; forcePage?: string; backTo?: string }>();
   const appealId = Number(id);
+  const fromAnalytics = String(backTo || '').toLowerCase() === 'analytics';
   const [forcePageOnce] = useState(() => {
     if (typeof window === 'undefined') return false;
     try {
@@ -33,14 +34,14 @@ export default function AppealDetailWebScreen() {
       return false;
     }
   });
-  const forcePageMode = forcePage === '1' || forcePageOnce;
+  const forcePageMode = fromAnalytics || forcePage === '1' || forcePageOnce;
   const usesWebSidebar = width > WEB_SIDEBAR_BREAKPOINT;
   const effectiveContentWidth = Math.max(0, width - (usesWebSidebar ? sidebarWidthPx : 0));
   const splitBasisWidth = Math.max(0, effectiveContentWidth - DESKTOP_LEFT_PAGE_INSET);
   const [splitEligible, setSplitEligible] = useState(false);
   const splitDecisionReady = !usesWebSidebar || sidebarReady;
   const canReturnToSplit = splitDecisionReady && splitBasisWidth >= DESKTOP_SPLIT_ENTER_WIDTH;
-  const allowAutoReturn = forcePage === '1';
+  const allowAutoReturn = forcePage === '1' && !fromAnalytics;
 
   useEffect(() => {
     if (!allowAutoReturn) return;

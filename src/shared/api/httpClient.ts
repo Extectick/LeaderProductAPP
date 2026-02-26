@@ -49,7 +49,14 @@ function buildHeaders(base: Record<string, string>, token: string | null, isForm
 
 async function parseResponse<Res>(response: Response): Promise<{ data: Res | undefined; message?: string }> {
   const ct = response.headers.get('content-type') || '';
-  if (ct.includes('text/csv') || ct.includes('application/octet-stream') || ct.includes('application/pdf')) {
+  const contentDisposition = response.headers.get('content-disposition') || '';
+  const isBinaryAttachment =
+    contentDisposition.toLowerCase().includes('attachment') ||
+    ct.includes('text/csv') ||
+    ct.includes('application/octet-stream') ||
+    ct.includes('application/pdf') ||
+    ct.includes('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  if (isBinaryAttachment) {
     const blob = await response.blob();
     return { data: blob as unknown as Res };
   }

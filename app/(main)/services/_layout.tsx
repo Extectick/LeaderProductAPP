@@ -1,4 +1,4 @@
-import { Stack, usePathname, useRouter } from 'expo-router';
+import { Stack, useGlobalSearchParams, usePathname, useRouter } from 'expo-router';
 import { AppHeader } from '@/components/AppHeader';
 import React, { useEffect, useMemo, useRef } from 'react';
 import { useNotify } from '@/components/NotificationHost';
@@ -28,6 +28,7 @@ const headerMap: Record<string, HeaderMeta> = {
   'appeals/[id].web': { title: 'Обращения', icon: 'chatbubbles-outline', showBack: true, parent: '/services/appeals', subtitle: 'Центр общения' },
   'appeals/new': { title: 'Новое обращение', icon: 'chatbubbles-outline', showBack: true, parent: '/services/appeals', subtitle: 'Создать обращение' },
   'appeals/new.web': { title: 'Новое обращение', icon: 'chatbubbles-outline', showBack: true, parent: '/services/appeals', subtitle: 'Создать обращение' },
+  'appeals/analytics': { title: 'Аналитика обращений', icon: 'stats-chart-outline', showBack: true, parent: '/services/appeals', subtitle: 'SLA, часы и выплаты' },
   tracking: { title: 'Геомаршруты', icon: 'map-outline', showBack: true, parent: '/services', subtitle: 'Маршруты и точки на карте' },
   'tracking/index': { title: 'Геомаршруты', icon: 'map-outline', showBack: true, parent: '/services', subtitle: 'Маршруты и точки на карте' },
 };
@@ -35,6 +36,7 @@ const headerMap: Record<string, HeaderMeta> = {
 export default function ServicesLayout() {
   const router = useRouter();
   const pathname = usePathname();
+  const globalParams = useGlobalSearchParams<{ backTo?: string; from?: string }>();
   const notify = useNotify();
   const { services, loading } = useServicesData();
   const { isReachable } = useServerStatus();
@@ -122,6 +124,16 @@ export default function ServicesLayout() {
 
         const shouldShowBack = meta.showBack;
         const onBack = () => {
+          const isAppealsListPath = /^\/services\/appeals\/?$/.test(currentPath);
+          const isAppealDetailPath = /^\/services\/appeals\/[^/]+$/.test(currentPath);
+          const backToAnalytics =
+            String(globalParams?.backTo || '').toLowerCase() === 'analytics' ||
+            String(globalParams?.from || '').toLowerCase() === 'analytics';
+          if (isAppealDetailPath && backToAnalytics) {
+            router.replace('/services/appeals/analytics');
+            return;
+          }
+
           if (currentPath.startsWith('/services/qrcodes/')) {
             router.replace('/services/qrcodes');
             return;
@@ -130,7 +142,9 @@ export default function ServicesLayout() {
             router.replace('/services');
             return;
           }
-          const target = isAppeals ? '/services' : (meta as any).parent;
+          const target = isAppeals
+            ? (isAppealsListPath ? '/services' : '/services/appeals')
+            : (meta as any).parent;
           if (target) {
             router.replace(target as any);
             return;

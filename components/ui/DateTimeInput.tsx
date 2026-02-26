@@ -262,12 +262,51 @@ export default function DateTimeInput({
   const [iosVisible, setIosVisible] = useState(false);
   const [temp, setTemp] = useState<Date>(() => applyPrecision(safeDate(value), timePrecision, safeMinuteStep));
   const androidOpenRef = useRef(false);
+  const suppressNextBackdropCloseRef = useRef(false);
 
   const [webVisible, setWebVisible] = useState(false);
   const [webMonth, setWebMonth] = useState<Date>(new Date());
   const [webDay, setWebDay] = useState<Date>(() => new Date());
   const [webHour, setWebHour] = useState<number>(new Date().getHours());
   const [webMinute, setWebMinute] = useState<number>(snapMinute(new Date().getMinutes(), safeMinuteStep));
+  const markModalInteractionStart = () => {
+    suppressNextBackdropCloseRef.current = true;
+  };
+  const markModalInteractionEnd = () => {
+    suppressNextBackdropCloseRef.current = false;
+  };
+  const modalContentGuardProps =
+    Platform.OS === 'web'
+      ? ({
+          onMouseDownCapture: markModalInteractionStart,
+          onMouseDown: markModalInteractionStart,
+          onTouchStart: markModalInteractionStart,
+          onMouseUp: markModalInteractionEnd,
+          onTouchEnd: markModalInteractionEnd,
+          onClick: (event: any) => {
+            event.stopPropagation?.();
+            markModalInteractionEnd();
+          },
+          onStartShouldSetResponderCapture: () => {
+            markModalInteractionStart();
+            return false;
+          },
+        } as any)
+      : ({
+          onTouchStart: markModalInteractionStart,
+          onTouchEnd: markModalInteractionEnd,
+          onStartShouldSetResponderCapture: () => {
+            markModalInteractionStart();
+            return false;
+          },
+        } as any);
+  const closeFromBackdrop = (onClose: () => void) => () => {
+    if (suppressNextBackdropCloseRef.current) {
+      suppressNextBackdropCloseRef.current = false;
+      return;
+    }
+    onClose();
+  };
 
   const bounds = useMemo(
     () => resolveBounds(minDate, maxDate, disabledPast, disabledFuture),
@@ -564,8 +603,8 @@ export default function DateTimeInput({
 
       {iosVisible ? (
         <Modal transparent animationType="fade" visible onRequestClose={() => setIosVisible(false)}>
-          <Pressable style={styles.backdrop} onPress={() => setIosVisible(false)} />
-          <View style={styles.modalCard}>
+          <Pressable style={styles.backdrop} onPress={closeFromBackdrop(() => setIosVisible(false))} />
+          <View style={styles.modalCard} {...modalContentGuardProps}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>{includeTime ? 'Выберите дату и время' : 'Выберите дату'}</Text>
             </View>
@@ -611,8 +650,8 @@ export default function DateTimeInput({
       {Platform.OS === 'web' && webVisible ? (
         <Modal transparent animationType="fade" visible onRequestClose={() => setWebVisible(false)}>
           <View style={styles.backdropDark}>
-            <Pressable style={styles.backdropHitArea} onPress={() => setWebVisible(false)} />
-            <View style={styles.webModalCard}>
+            <Pressable style={styles.backdropHitArea} onPress={closeFromBackdrop(() => setWebVisible(false))} />
+            <View style={styles.webModalCard} {...modalContentGuardProps}>
               <View style={styles.webHeader}>
                 <Text style={styles.webTitle}>{includeTime ? 'Выберите дедлайн' : 'Выберите дату'}</Text>
                 <View style={styles.todayRow}>

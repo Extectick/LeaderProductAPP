@@ -5,6 +5,7 @@
 import React, { useMemo, useRef, useState } from 'react';
 import {
   Modal,
+  Platform,
   Pressable,
   StyleProp,
   StyleSheet,
@@ -136,8 +137,47 @@ export default function Dropdown<T extends string | number>({
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState<LayoutRectangle | null>(null);
   const anchorWrapRef = useRef<View | null>(null);
+  const suppressNextBackdropCloseRef = useRef(false);
   const scale = useRef(new Animated.Value(1)).current;
   const { width: winWidth, height: winHeight } = useWindowDimensions();
+  const markModalInteractionStart = () => {
+    suppressNextBackdropCloseRef.current = true;
+  };
+  const markModalInteractionEnd = () => {
+    suppressNextBackdropCloseRef.current = false;
+  };
+  const closeMenuFromBackdrop = () => {
+    if (suppressNextBackdropCloseRef.current) {
+      suppressNextBackdropCloseRef.current = false;
+      return;
+    }
+    setOpen(false);
+  };
+  const modalContentGuardProps =
+    Platform.OS === 'web'
+      ? ({
+          onMouseDownCapture: markModalInteractionStart,
+          onMouseDown: markModalInteractionStart,
+          onTouchStart: markModalInteractionStart,
+          onMouseUp: markModalInteractionEnd,
+          onTouchEnd: markModalInteractionEnd,
+          onStartShouldSetResponderCapture: () => {
+            markModalInteractionStart();
+            return false;
+          },
+          onClick: (event: any) => {
+            event.stopPropagation?.();
+            markModalInteractionEnd();
+          },
+        } as any)
+      : ({
+          onTouchStart: markModalInteractionStart,
+          onTouchEnd: markModalInteractionEnd,
+          onStartShouldSetResponderCapture: () => {
+            markModalInteractionStart();
+            return false;
+          },
+        } as any);
 
   const selectedLabel = useMemo(
     () => items.find((i) => i.value === value)?.label,
@@ -232,7 +272,7 @@ export default function Dropdown<T extends string | number>({
       {!!errorText && <Text style={styles.errorText}>{errorText}</Text>}
 
       <Modal transparent visible={open} onRequestClose={() => setOpen(false)}>
-        <Pressable style={styles.backdrop} onPress={() => setOpen(false)} />
+        <Pressable style={styles.backdrop} onPress={closeMenuFromBackdrop} />
         <AnimatedRe.View
           entering={FadeInDown.duration(160)}
           exiting={FadeOut.duration(120)}
@@ -245,28 +285,30 @@ export default function Dropdown<T extends string | number>({
             },
           ]}
         >
-          {visibleItems.length === 0 ? (
-            <View style={styles.emptyWrap}>
-              <Text style={styles.emptyText}>Нет вариантов</Text>
-            </View>
-          ) : (
-            <ScrollView style={{ maxHeight: menuMaxHeight }} nestedScrollEnabled>
-              {visibleItems.map((it) => {
-                const selected = value === it.value;
-                return (
-                  <DropdownMenuItem
-                    key={String(it.value)}
-                    item={it}
-                    selected={selected}
-                    onPress={() => {
-                      onChange(it.value);
-                      setOpen(false);
-                    }}
-                  />
-                );
-              })}
-            </ScrollView>
-          )}
+          <View {...modalContentGuardProps}>
+            {visibleItems.length === 0 ? (
+              <View style={styles.emptyWrap}>
+                <Text style={styles.emptyText}>Нет вариантов</Text>
+              </View>
+            ) : (
+              <ScrollView style={{ maxHeight: menuMaxHeight }} nestedScrollEnabled>
+                {visibleItems.map((it) => {
+                  const selected = value === it.value;
+                  return (
+                    <DropdownMenuItem
+                      key={String(it.value)}
+                      item={it}
+                      selected={selected}
+                      onPress={() => {
+                        onChange(it.value);
+                        setOpen(false);
+                      }}
+                    />
+                  );
+                })}
+              </ScrollView>
+            )}
+          </View>
         </AnimatedRe.View>
       </Modal>
     </View>

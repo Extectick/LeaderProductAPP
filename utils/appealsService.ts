@@ -16,6 +16,20 @@ import {
   Scope,
   AppealMessagesResponse,
   UserMini,
+  AppealLaborPaymentStatus,
+  AppealLaborEntryDto,
+  AppealsAnalyticsMeta,
+  AppealsAnalyticsAppealsResponse,
+  AppealsAnalyticsUsersResponse,
+  AppealsAnalyticsUserAppealsResponse,
+  AppealsAnalyticsUpdateHourlyRateResponse,
+  AppealsSlaDashboardResponse,
+  AppealsKpiDashboardResponse,
+  AppealsPaymentQueueResponse,
+  AppealsLaborAuditLogResponse,
+  AppealsFunnelResponse,
+  AppealsHeatmapResponse,
+  AppealsForecastResponse,
 } from '@/src/entities/appeal/types';
 
 export type ApiResponse<T> = SuccessResponse<T> | ErrorResponse;
@@ -475,5 +489,264 @@ export async function exportAppealsCSV(params: {
   // apiClient сам вернёт Blob по content-type
   const resp = (await apiClient<undefined, Blob>(`/appeals/export?${qs}`, { method: 'GET' })) as any;
   return resp as Blob;
+}
+
+export async function getAppealsAnalyticsMeta(): Promise<AppealsAnalyticsMeta> {
+  const resp = (await apiClient<undefined, AppealsAnalyticsMeta>('/appeals/analytics/meta', {
+    method: 'GET',
+  })) as ApiResponse<AppealsAnalyticsMeta>;
+  if (!resp.ok) throw new Error(resp.message || 'Ошибка загрузки метаданных аналитики');
+  return resp.data;
+}
+
+export async function getAppealsAnalyticsAppeals(params: {
+  fromDate?: string;
+  toDate?: string;
+  departmentId?: number;
+  assigneeUserId?: number;
+  status?: AppealStatus;
+  limit?: number;
+  offset?: number;
+  search?: string;
+}): Promise<AppealsAnalyticsAppealsResponse> {
+  const qs = buildQuery({
+    fromDate: params.fromDate,
+    toDate: params.toDate,
+    departmentId: params.departmentId,
+    assigneeUserId: params.assigneeUserId,
+    status: params.status,
+    limit: params.limit ?? 20,
+    offset: params.offset ?? 0,
+    search: params.search,
+  });
+  const resp = (await apiClient<undefined, AppealsAnalyticsAppealsResponse>(`/appeals/analytics/appeals?${qs}`, {
+    method: 'GET',
+  })) as ApiResponse<AppealsAnalyticsAppealsResponse>;
+  if (!resp.ok) throw new Error(resp.message || 'Ошибка загрузки аналитики обращений');
+  return resp.data;
+}
+
+export async function getAppealsAnalyticsUsers(params: {
+  fromDate?: string;
+  toDate?: string;
+  departmentId?: number;
+}): Promise<AppealsAnalyticsUsersResponse> {
+  const qs = buildQuery({
+    fromDate: params.fromDate,
+    toDate: params.toDate,
+    departmentId: params.departmentId,
+  });
+  const resp = (await apiClient<undefined, AppealsAnalyticsUsersResponse>(`/appeals/analytics/users?${qs}`, {
+    method: 'GET',
+  })) as ApiResponse<AppealsAnalyticsUsersResponse>;
+  if (!resp.ok) throw new Error(resp.message || 'Ошибка загрузки аналитики исполнителей');
+  return resp.data;
+}
+
+export async function getAppealsAnalyticsUserAppeals(params: {
+  userId: number;
+  fromDate?: string;
+  toDate?: string;
+  departmentId?: number;
+}): Promise<AppealsAnalyticsUserAppealsResponse> {
+  const qs = buildQuery({
+    fromDate: params.fromDate,
+    toDate: params.toDate,
+    departmentId: params.departmentId,
+  });
+  const resp = (await apiClient<undefined, AppealsAnalyticsUserAppealsResponse>(
+    `/appeals/analytics/users/${params.userId}/appeals?${qs}`,
+    { method: 'GET' }
+  )) as ApiResponse<AppealsAnalyticsUserAppealsResponse>;
+  if (!resp.ok) throw new Error(resp.message || 'Ошибка загрузки обращений исполнителя');
+  return resp.data;
+}
+
+export async function upsertAppealLabor(
+  appealId: number,
+  items: Array<{
+    assigneeUserId: number;
+    accruedHours?: number;
+    paidHours?: number;
+    hours?: number;
+    paymentStatus?: AppealLaborPaymentStatus;
+  }>
+): Promise<{ appealId: number; paymentRequired: boolean; currency: 'RUB'; laborEntries: AppealLaborEntryDto[] }> {
+  const resp = (await apiClient<
+    {
+      items: Array<{
+        assigneeUserId: number;
+        accruedHours?: number;
+        paidHours?: number;
+        hours?: number;
+        paymentStatus?: AppealLaborPaymentStatus;
+      }>;
+    },
+    { appealId: number; paymentRequired: boolean; currency: 'RUB'; laborEntries: AppealLaborEntryDto[] }
+  >(`/appeals/${appealId}/labor`, {
+    method: 'PUT',
+    body: { items },
+  })) as ApiResponse<{ appealId: number; paymentRequired: boolean; currency: 'RUB'; laborEntries: AppealLaborEntryDto[] }>;
+  if (!resp.ok) throw new Error(resp.message || 'Ошибка сохранения трудозатрат');
+  return resp.data;
+}
+
+export async function setAppealsAnalyticsUserHourlyRate(
+  userId: number,
+  hourlyRateRub: number
+): Promise<AppealsAnalyticsUpdateHourlyRateResponse> {
+  const resp = (await apiClient<{ hourlyRateRub: number }, AppealsAnalyticsUpdateHourlyRateResponse>(
+    `/appeals/analytics/users/${userId}/hourly-rate`,
+    {
+      method: 'PUT',
+      body: { hourlyRateRub },
+    }
+  )) as ApiResponse<AppealsAnalyticsUpdateHourlyRateResponse>;
+  if (!resp.ok) throw new Error(resp.message || 'Ошибка сохранения ставки исполнителя');
+  return resp.data;
+}
+
+export async function getAppealsSlaDashboard(params: {
+  fromDate?: string;
+  toDate?: string;
+  departmentId?: number;
+}): Promise<AppealsSlaDashboardResponse> {
+  const qs = buildQuery(params as any);
+  const resp = (await apiClient<undefined, AppealsSlaDashboardResponse>(`/appeals/analytics/sla-dashboard?${qs}`, {
+    method: 'GET',
+  })) as ApiResponse<AppealsSlaDashboardResponse>;
+  if (!resp.ok) throw new Error(resp.message || 'Ошибка загрузки SLA dashboard');
+  return resp.data;
+}
+
+export async function getAppealsKpiDashboard(params: {
+  fromDate?: string;
+  toDate?: string;
+  departmentId?: number;
+  assigneeUserId?: number;
+  status?: AppealStatus;
+  search?: string;
+}): Promise<AppealsKpiDashboardResponse> {
+  const qs = buildQuery(params as any);
+  const resp = (await apiClient<undefined, AppealsKpiDashboardResponse>(`/appeals/analytics/kpi-dashboard?${qs}`, {
+    method: 'GET',
+  })) as ApiResponse<AppealsKpiDashboardResponse>;
+  if (!resp.ok) throw new Error(resp.message || 'Ошибка загрузки KPI dashboard');
+  return resp.data;
+}
+
+export async function getAppealsPaymentQueue(params: {
+  fromDate?: string;
+  toDate?: string;
+  departmentId?: number;
+  assigneeUserId?: number;
+}): Promise<AppealsPaymentQueueResponse> {
+  const qs = buildQuery(params as any);
+  const resp = (await apiClient<undefined, AppealsPaymentQueueResponse>(`/appeals/analytics/payment-queue?${qs}`, {
+    method: 'GET',
+  })) as ApiResponse<AppealsPaymentQueueResponse>;
+  if (!resp.ok) throw new Error(resp.message || 'Ошибка загрузки очереди выплат');
+  return resp.data;
+}
+
+export async function markAppealsPaymentQueuePaid(items: Array<{ appealId: number; assigneeUserId: number }>) {
+  const resp = (await apiClient<{ items: Array<{ appealId: number; assigneeUserId: number }> }, { updated: number }>(
+    '/appeals/analytics/payment-queue/mark-paid',
+    { method: 'PUT', body: { items } }
+  )) as ApiResponse<{ updated: number }>;
+  if (!resp.ok) throw new Error(resp.message || 'Ошибка массовой оплаты');
+  return resp.data;
+}
+
+export async function getAppealsLaborAudit(params: {
+  fromDate?: string;
+  toDate?: string;
+  departmentId?: number;
+  assigneeUserId?: number;
+  appealId?: number;
+  limit?: number;
+  offset?: number;
+}): Promise<AppealsLaborAuditLogResponse> {
+  const qs = buildQuery(params as any);
+  const resp = (await apiClient<undefined, AppealsLaborAuditLogResponse>(`/appeals/analytics/labor-audit?${qs}`, {
+    method: 'GET',
+  })) as ApiResponse<AppealsLaborAuditLogResponse>;
+  if (!resp.ok) throw new Error(resp.message || 'Ошибка загрузки аудита');
+  return resp.data;
+}
+
+export async function getAppealsFunnel(params: {
+  fromDate?: string;
+  toDate?: string;
+  departmentId?: number;
+}): Promise<AppealsFunnelResponse> {
+  const qs = buildQuery(params as any);
+  const resp = (await apiClient<undefined, AppealsFunnelResponse>(`/appeals/analytics/funnel?${qs}`, {
+    method: 'GET',
+  })) as ApiResponse<AppealsFunnelResponse>;
+  if (!resp.ok) throw new Error(resp.message || 'Ошибка загрузки воронки');
+  return resp.data;
+}
+
+export async function getAppealsHeatmap(params: {
+  fromDate?: string;
+  toDate?: string;
+  departmentId?: number;
+  assigneeUserId?: number;
+}): Promise<AppealsHeatmapResponse> {
+  const qs = buildQuery(params as any);
+  const resp = (await apiClient<undefined, AppealsHeatmapResponse>(`/appeals/analytics/heatmap?${qs}`, {
+    method: 'GET',
+  })) as ApiResponse<AppealsHeatmapResponse>;
+  if (!resp.ok) throw new Error(resp.message || 'Ошибка загрузки heatmap');
+  return resp.data;
+}
+
+export async function getAppealsForecast(params?: {
+  departmentId?: number;
+  horizon?: 'week' | 'month';
+}): Promise<AppealsForecastResponse> {
+  const qs = buildQuery(params || {});
+  const resp = (await apiClient<undefined, AppealsForecastResponse>(`/appeals/analytics/forecast?${qs}`, {
+    method: 'GET',
+  })) as ApiResponse<AppealsForecastResponse>;
+  if (!resp.ok) throw new Error(resp.message || 'Ошибка загрузки прогноза');
+  return resp.data;
+}
+
+export async function exportAppealsAnalyticsByAppeals(params: {
+  fromDate?: string;
+  toDate?: string;
+  departmentId?: number;
+  assigneeUserId?: number;
+  status?: AppealStatus;
+  search?: string;
+  userId?: number;
+  format?: 'csv' | 'xlsx';
+}): Promise<Blob> {
+  const qs = buildQuery({ ...params, format: params.format ?? 'csv' } as any);
+  const resp = await apiClient<undefined, Blob>(`/appeals/analytics/export/appeals?${qs}`, {
+    method: 'GET',
+  });
+  if (!resp.ok || !resp.data) throw new Error(resp.message || 'Ошибка экспорта по обращениям');
+  return resp.data;
+}
+
+export async function exportAppealsAnalyticsByUsers(params: {
+  fromDate?: string;
+  toDate?: string;
+  departmentId?: number;
+  assigneeUserId?: number;
+  status?: AppealStatus;
+  search?: string;
+  userId?: number;
+  format?: 'csv' | 'xlsx';
+}): Promise<Blob> {
+  const qs = buildQuery({ ...params, format: params.format ?? 'csv' } as any);
+  const resp = await apiClient<undefined, Blob>(`/appeals/analytics/export/users?${qs}`, {
+    method: 'GET',
+  });
+  if (!resp.ok || !resp.data) throw new Error(resp.message || 'Ошибка экспорта по исполнителям');
+  return resp.data;
 }
 

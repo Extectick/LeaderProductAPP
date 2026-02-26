@@ -3,6 +3,7 @@ export type AppealStatus = 'OPEN' | 'IN_PROGRESS' | 'COMPLETED' | 'DECLINED' | '
 export type AppealPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 export type AttachmentType = 'IMAGE' | 'AUDIO' | 'FILE';
 export type AppealMessageType = 'USER' | 'SYSTEM';
+export type AppealLaborPaymentStatus = 'UNPAID' | 'PARTIAL' | 'PAID' | 'NOT_REQUIRED';
 
 export type Scope = 'my' | 'department' | 'assigned';
 export type AppealRoleBadge = 'OWN_APPEAL' | 'ASSIGNEE';
@@ -150,4 +151,232 @@ export interface AppealMessageAddedEvent extends AppealMessage {
   appealNumber?: number;
   senderName?: string;
   senderAvatarUrl?: string | null;
+}
+
+export interface AppealLaborEntryDto {
+  assigneeUserId: number;
+  accruedHours: number;
+  paidHours: number;
+  remainingHours: number;
+  payable: boolean;
+  hourlyRateRub: number | null;
+  effectiveHourlyRateRub: number;
+  amountAccruedRub: number;
+  amountPaidRub: number;
+  amountRemainingRub: number;
+  // alias for backward compatibility
+  hours: number;
+  paymentStatus: AppealLaborPaymentStatus;
+  paidAt: string | null;
+  paidBy: UserMini | null;
+  assignee: UserMini;
+  updatedAt: string;
+}
+
+export interface AppealsAnalyticsAppealItem {
+  id: number;
+  number: number;
+  title: string | null;
+  status: AppealStatus;
+  createdAt: string;
+  deadline: string | null;
+  completedAt: string | null;
+  createdBy: {
+    id: number;
+    email: string | null;
+    firstName: string | null;
+    lastName: string | null;
+  };
+  toDepartment: {
+    id: number;
+    name: string;
+    paymentRequired: boolean;
+    hourlyRateRub: number;
+  };
+  assignees: Array<UserMini & { hourlyRateRub: number | null; effectiveHourlyRateRub: number }>;
+  sla: {
+    openDurationMs: number;
+    workDurationMs: number;
+    timeToFirstInProgressMs: number | null;
+    timeToFirstResolvedMs: number | null;
+  };
+  allowedStatuses: AppealStatus[];
+  actionPermissions: {
+    canChangeStatus: boolean;
+    canEditDeadline: boolean;
+    canAssign: boolean;
+    canTransfer: boolean;
+    canOpenParticipants: boolean;
+    canSetLabor: boolean;
+    canClaim: boolean;
+  };
+  laborEntries: AppealLaborEntryDto[];
+}
+
+export interface AppealsAnalyticsMeta {
+  availableDepartments: Array<{
+    id: number;
+    name: string;
+    paymentRequired: boolean;
+    hourlyRateRub: number;
+  }>;
+  availableAssignees: Array<{
+    id: number;
+    email: string | null;
+    firstName: string | null;
+    lastName: string | null;
+    department: { id: number; name: string } | null;
+    hourlyRateRub: number | null;
+  }>;
+  role: {
+    isAdmin: boolean;
+    isDepartmentManager: boolean;
+  };
+}
+
+export interface AppealsAnalyticsAppealsResponse {
+  data: AppealsAnalyticsAppealItem[];
+  meta: {
+    total: number;
+    limit: number;
+    offset: number;
+    hasMore: boolean;
+  };
+}
+
+export interface AppealsAnalyticsUsersSummaryItem {
+  user: UserMini & {
+    hourlyRateRub: number | null;
+    effectiveHourlyRateRub: number;
+  };
+  stats: {
+    appealsCount: number;
+    paidAppealsCount: number;
+    unpaidAppealsCount: number;
+    partialAppealsCount: number;
+    notRequiredAppealsCount: number;
+    accruedHours: number;
+    paidHours: number;
+    remainingHours: number;
+    accruedAmountRub: number;
+    paidAmountRub: number;
+    remainingAmountRub: number;
+  };
+}
+
+export interface AppealsAnalyticsUsersResponse {
+  data: AppealsAnalyticsUsersSummaryItem[];
+}
+
+export interface AppealsAnalyticsUserAppealsResponse {
+  user: UserMini;
+  data: AppealsAnalyticsAppealItem[];
+}
+
+export type AppealFinancialFunnelStatus = 'NOT_PAYABLE' | 'TO_PAY' | 'PARTIAL' | 'PAID';
+
+export interface AppealsSlaDashboardResponse {
+  transitions: Array<{
+    key: 'OPEN_TO_IN_PROGRESS' | 'IN_PROGRESS_TO_RESOLVED' | 'RESOLVED_TO_COMPLETED';
+    count: number;
+    avgMs: number | null;
+    p50Ms: number | null;
+    p90Ms: number | null;
+  }>;
+}
+
+export interface AppealsKpiDashboardResponse {
+  appeals: {
+    totalCount: number;
+    openCount: number;
+    inProgressCount: number;
+    completedCount: number;
+    resolvedCount: number;
+    declinedCount: number;
+  };
+  timing: {
+    avgTakeMs: number | null;
+    avgExecutionMs: number | null;
+    takeCount: number;
+    executionCount: number;
+  };
+  labor: {
+    totalAccruedHours: number;
+    totalPaidHours: number;
+    totalRemainingHours: number;
+    totalNotRequiredHours: number;
+    totalAccruedAmountRub: number;
+    totalPaidAmountRub: number;
+    totalRemainingAmountRub: number;
+    currency: 'RUB';
+  };
+}
+
+export interface AppealsPaymentQueueUserGroup {
+  assignee: UserMini;
+  departments: Array<{
+    id: number;
+    name: string;
+    items: Array<{
+      appealId: number;
+      appealNumber: number;
+      hours: number;
+      paymentStatus: AppealLaborPaymentStatus;
+      financialStatus: AppealFinancialFunnelStatus;
+    }>;
+    totalHours: number;
+  }>;
+  totalHours: number;
+}
+
+export interface AppealsPaymentQueueResponse {
+  data: AppealsPaymentQueueUserGroup[];
+  meta: { totalItems: number };
+}
+
+export interface AppealsLaborAuditLogResponse {
+  data: Array<{
+    id: number;
+    appealId: number;
+    assigneeUserId: number;
+    changedBy: UserMini;
+    oldHours: number | null;
+    newHours: number;
+    oldPaidHours: number | null;
+    newPaidHours: number | null;
+    oldPaymentStatus: AppealLaborPaymentStatus | null;
+    newPaymentStatus: AppealLaborPaymentStatus;
+    changedAt: string;
+  }>;
+  meta: { total: number; limit: number; offset: number; hasMore: boolean };
+}
+
+export interface AppealsAnalyticsUpdateHourlyRateResponse {
+  userId: number;
+  hourlyRateRub: number;
+}
+
+export interface AppealsFunnelResponse {
+  byStatus: Array<{ status: AppealFinancialFunnelStatus; count: number }>;
+}
+
+export interface AppealsHeatmapResponse {
+  data: Array<{
+    user: UserMini;
+    cells: Array<{ date: string; totalHours: number; appealsCount: number }>;
+  }>;
+}
+
+export interface AppealsForecastResponse {
+  horizon: 'week' | 'month';
+  generatedAt: string;
+  lookbackDays: number;
+  remainingDays: number;
+  departments: Array<{
+    id: number;
+    name: string;
+    expectedHours: number;
+    expectedPayout: number;
+    formula: string;
+  }>;
 }

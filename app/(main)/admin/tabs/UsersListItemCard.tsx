@@ -22,10 +22,14 @@ type Props = {
   isSelected?: boolean;
   actionBusy: boolean;
   onSelect?: () => void;
-  onApprove: () => void;
-  onReject: () => void;
-  onEdit: () => void;
+  onApprove?: () => void;
+  onReject?: () => void;
+  onEdit?: () => void;
   onAvatarPress?: () => void;
+  showAdminBadges?: boolean;
+  showChannels?: boolean;
+  showActions?: boolean;
+  footerSlot?: React.ReactNode;
 };
 
 export function UsersListItemCard({
@@ -39,6 +43,10 @@ export function UsersListItemCard({
   onReject,
   onEdit,
   onAvatarPress,
+  showAdminBadges = true,
+  showChannels = true,
+  showActions = true,
+  footerSlot,
 }: Props) {
   const moderation = moderationTone(item.moderationState);
   const online = onlineTone(item.isOnline);
@@ -57,15 +65,19 @@ export function UsersListItemCard({
           </View>
 
           <View style={styles.tagRow}>
-            <View style={[styles.tag, { backgroundColor: moderation.bg, borderColor: moderation.border }]}>
-              <Text style={[styles.tagText, { color: moderation.text }]}>{moderationLabel(item.moderationState)}</Text>
-            </View>
-            <View style={[styles.tag, { backgroundColor: '#FFF7ED', borderColor: '#FDBA74' }]}>
-              <Text style={[styles.tagText, { color: '#9A3412' }]}>{roleName}</Text>
-            </View>
-            <View style={[styles.tag, { backgroundColor: online.bg, borderColor: online.border }]}>
-              <Text style={[styles.tagText, { color: online.text }]}>{online.textValue}</Text>
-            </View>
+            {showAdminBadges ? (
+              <>
+                <View style={[styles.tag, { backgroundColor: moderation.bg, borderColor: moderation.border }]}>
+                  <Text style={[styles.tagText, { color: moderation.text }]}>{moderationLabel(item.moderationState)}</Text>
+                </View>
+                <View style={[styles.tag, { backgroundColor: '#FFF7ED', borderColor: '#FDBA74' }]}>
+                  <Text style={[styles.tagText, { color: '#9A3412' }]}>{roleName}</Text>
+                </View>
+                <View style={[styles.tag, { backgroundColor: online.bg, borderColor: online.border }]}>
+                  <Text style={[styles.tagText, { color: online.text }]}>{online.textValue}</Text>
+                </View>
+              </>
+            ) : null}
           </View>
 
           <View style={styles.summaryRow}>
@@ -99,16 +111,18 @@ export function UsersListItemCard({
             </View>
           </View>
 
-          <Text style={styles.channelsText}>Каналы: {channelLabel(item)}</Text>
-
-          <UsersModerationActions
-            item={item}
-            styles={styles}
-            actionBusy={actionBusy}
-            onApprove={onApprove}
-            onReject={onReject}
-            onEdit={onEdit}
-          />
+          {showChannels ? <Text style={styles.channelsText}>Каналы: {channelLabel(item)}</Text> : null}
+          {footerSlot}
+          {showActions && onApprove && onReject && onEdit ? (
+            <UsersModerationActions
+              item={item}
+              styles={styles}
+              actionBusy={actionBusy}
+              onApprove={onApprove}
+              onReject={onReject}
+              onEdit={onEdit}
+            />
+          ) : null}
         </View>
       </View>
     </Pressable>

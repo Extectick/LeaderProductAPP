@@ -65,17 +65,56 @@ function statusColor(status: AppealStatus) {
 export default function AppealStatusMenu({ visible, current, allowed, onSelect, onClose }: Props) {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const webDefaultCursorStyle = Platform.OS === 'web' ? ({ cursor: 'default' } as any) : null;
+  const suppressNextBackdropCloseRef = React.useRef(false);
+  const markModalInteractionStart = () => {
+    suppressNextBackdropCloseRef.current = true;
+  };
+  const markModalInteractionEnd = () => {
+    suppressNextBackdropCloseRef.current = false;
+  };
+  const modalContentGuardProps =
+    Platform.OS === 'web'
+      ? ({
+          onMouseDownCapture: markModalInteractionStart,
+          onMouseDown: markModalInteractionStart,
+          onTouchStart: markModalInteractionStart,
+          onMouseUp: markModalInteractionEnd,
+          onTouchEnd: markModalInteractionEnd,
+          onClick: (event: any) => {
+            event.stopPropagation?.();
+            markModalInteractionEnd();
+          },
+          onStartShouldSetResponderCapture: () => {
+            markModalInteractionStart();
+            return false;
+          },
+        } as any)
+      : ({
+          onTouchStart: markModalInteractionStart,
+          onTouchEnd: markModalInteractionEnd,
+          onStartShouldSetResponderCapture: () => {
+            markModalInteractionStart();
+            return false;
+          },
+        } as any);
 
   const data = useMemo(() => (allowed && allowed.length ? allowed : ALL), [allowed]);
   const modalWidth = Math.min(560, Math.max(300, windowWidth - 24));
   const modalHeight = Math.min(560, Math.max(360, windowHeight - 80));
+  const handleBackdropPress = () => {
+    if (suppressNextBackdropCloseRef.current) {
+      suppressNextBackdropCloseRef.current = false;
+      return;
+    }
+    onClose();
+  };
 
   return (
     <Modal transparent animationType="fade" visible={visible} onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable
+      <Pressable style={styles.backdrop} onPress={handleBackdropPress}>
+        <View
           style={[styles.card, webDefaultCursorStyle, { width: modalWidth, height: modalHeight }]}
-          onPress={(event) => event.stopPropagation?.()}
+          {...modalContentGuardProps}
         >
           <LinearGradient
             colors={['#E0E7FF', '#DBEAFE']}
@@ -154,7 +193,7 @@ export default function AppealStatusMenu({ visible, current, allowed, onSelect, 
               <Text style={styles.cancelBtnText}>Отмена</Text>
             </Pressable>
           </View>
-        </Pressable>
+        </View>
       </Pressable>
     </Modal>
   );

@@ -10,7 +10,6 @@ import {
   Modal,
   ScrollView,
   ActivityIndicator,
-  Image,
   Keyboard,
   Dimensions,
   useWindowDimensions,
@@ -29,7 +28,6 @@ import {
 import { AppealDetail, AppealStatus, AppealMessage, UserMini } from '@/src/entities/appeal/types';
 import AppealHeader from '@/components/Appeals/AppealHeader'; // <-- исправлено имя файла
 import MessagesList, { MessagesListHandle } from '@/components/Appeals/MessagesList';
-import DateTimeInput from '@/components/ui/DateTimeInput';
 import { AuthContext } from '@/context/AuthContext';
 import {
   getMessages,
@@ -61,9 +59,9 @@ import { usePresence } from '@/hooks/usePresence';
 import type { PresenceInfo } from '@/utils/presenceService';
 import { formatDistanceToNow } from 'date-fns';
 import { ru } from 'date-fns/locale';
-import { getRoleDisplayName } from '@/utils/rbacLabels';
 import { Skeleton } from 'moti/skeleton';
-import { LinearGradient } from 'expo-linear-gradient';
+import { AppealParticipantCard } from '@/components/Appeals/AppealParticipantCard';
+import { AppealAssignPanel, AppealDeadlinePanel, AppealTransferPanel } from '@/components/Appeals/AppealActionPanels';
 
 type DockMode = 'chat' | 'claim' | 'creator_resolved' | 'closed';
 type PendingDockAction = 'claim' | 'complete' | 'reject';
@@ -889,72 +887,6 @@ export default function AppealDetailContent({
     setSelectedProfileUserId(null);
   }, [peopleView]);
 
-  const renderAssignMemberRow = useCallback(
-    (member: UserMini) => {
-      const displayName =
-        [member.firstName, member.lastName].filter(Boolean).join(' ') ||
-        member.email ||
-        'Пользователь';
-      const initials = getParticipantInitials(member);
-      const roleChip = getParticipantRoleChip(member);
-      const roleGradient = getParticipantRoleGradient(member);
-      const departmentLabel = member.department?.name || 'Без отдела';
-      const presence = assignPresenceMap[member.id];
-      const presenceLabel = getPresenceLabel(presence);
-      const isOnline = !!presence?.isOnline;
-      const isSelected = selectedAssignees.includes(member.id);
-
-      return (
-        <Pressable
-          key={member.id}
-          style={styles.assignRowPressable}
-          onPress={() => toggleAssignee(member.id)}
-        >
-          <LinearGradient
-            colors={roleGradient}
-            start={{ x: 0, y: 0.35 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.assignRowGradient}
-          >
-            <View style={styles.memberAvatarWrap}>
-              <View style={styles.memberAvatar}>
-                {member.avatarUrl ? (
-                  <Image source={{ uri: member.avatarUrl }} style={styles.memberAvatarImage} />
-                ) : (
-                  <Text style={styles.memberInitials}>{initials}</Text>
-                )}
-              </View>
-              <View
-                style={[
-                  styles.memberAvatarPresence,
-                  { backgroundColor: isOnline ? '#22C55E' : '#94A3B8' },
-                ]}
-              />
-            </View>
-
-            <View style={styles.memberInfo}>
-              <Text style={styles.memberName}>{displayName}</Text>
-              <Text style={styles.memberPresenceText}>{presenceLabel}</Text>
-              <View style={styles.memberChipRow}>
-                <ParticipantChip icon={roleChip.icon} label={roleChip.label} tone={roleChip.tone} />
-                <ParticipantChip icon="business-outline" label={departmentLabel} tone="gray" />
-              </View>
-            </View>
-
-            <View style={styles.assignCheckboxWrap}>
-              <Ionicons
-                name={isSelected ? 'checkbox' : 'square-outline'}
-                size={22}
-                color={isSelected ? '#2563EB' : '#64748B'}
-              />
-            </View>
-          </LinearGradient>
-        </Pressable>
-      );
-    },
-    [assignPresenceMap, selectedAssignees]
-  );
-
   useEffect(() => {
     if (!peopleModalVisible) {
       setPeopleSkeletonVisible(false);
@@ -1205,10 +1137,6 @@ export default function AppealDetailContent({
                         [person.firstName, person.lastName].filter(Boolean).join(' ') ||
                         person.email ||
                         `Пользователь #${person.id}`;
-                      const initials = getParticipantInitials(person);
-                      const roleChip = getParticipantRoleChip(person);
-                      const roleGradient = getParticipantRoleGradient(person);
-                      const departmentLabel = person.department?.name || 'Без отдела';
                       const presence = participantPresenceMap[person.id];
                       const presenceLabel = getPresenceLabel(presence);
                       const isOnline = !!presence?.isOnline;
@@ -1219,60 +1147,16 @@ export default function AppealDetailContent({
                           style={styles.participantRowPressable}
                           onPress={() => openProfileCard(person.id)}
                         >
-                          <LinearGradient
-                            colors={roleGradient}
-                            start={{ x: 0, y: 0.35 }}
-                            end={{ x: 1, y: 1 }}
+                          <AppealParticipantCard
+                            user={person}
+                            displayName={displayName}
+                            presenceText={presenceLabel}
+                            isOnline={isOnline}
+                            isCreator={participant.isCreator}
+                            isAssignee={participant.isAssignee}
                             style={styles.participantRowGradient}
-                          >
-                            <View style={styles.memberAvatarWrap}>
-                              <View style={styles.memberAvatar}>
-                                {person.avatarUrl ? (
-                                  <Image source={{ uri: person.avatarUrl }} style={styles.memberAvatarImage} />
-                                ) : (
-                                  <Text style={styles.memberInitials}>{initials}</Text>
-                                )}
-                              </View>
-                              <View
-                                style={[
-                                  styles.memberAvatarPresence,
-                                  { backgroundColor: isOnline ? '#22C55E' : '#94A3B8' },
-                                ]}
-                              />
-                            </View>
-
-                            <View style={styles.memberInfo}>
-                              <View style={styles.memberNameRow}>
-                                <Text style={styles.memberName}>{displayName}</Text>
-                                <View style={styles.memberTagRow}>
-                                  {participant.isCreator ? (
-                                    <View style={[styles.memberTag, styles.memberTagCreator]}>
-                                      <Text style={[styles.memberTagText, styles.memberTagCreatorText]}>
-                                        Создатель
-                                      </Text>
-                                    </View>
-                                  ) : null}
-                                  {participant.isAssignee ? (
-                                    <View style={[styles.memberTag, styles.memberTagAssignee]}>
-                                      <Text style={[styles.memberTagText, styles.memberTagAssigneeText]}>
-                                        Исполнитель
-                                      </Text>
-                                    </View>
-                                  ) : null}
-                                </View>
-                              </View>
-                              <Text style={styles.memberPresenceText}>{presenceLabel}</Text>
-                              <View style={styles.memberChipRow}>
-                                <ParticipantChip
-                                  icon={roleChip.icon}
-                                  label={roleChip.label}
-                                  tone={roleChip.tone}
-                                />
-                                <ParticipantChip icon="business-outline" label={departmentLabel} tone="gray" />
-                              </View>
-                            </View>
-                            <Ionicons name="chevron-forward-outline" size={18} color="#6B7280" />
-                          </LinearGradient>
+                            rightSlot={<Ionicons name="chevron-forward-outline" size={18} color="#6B7280" />}
+                          />
                         </Pressable>
                       );
                     })}
@@ -1298,69 +1182,13 @@ export default function AppealDetailContent({
             style={[styles.modalCard, styles.deadlineModalCard, webDefaultCursorStyle, { width: deadlineModalSize.width, height: deadlineModalSize.height }]}
             onPress={(event) => event.stopPropagation?.()}
           >
-            <LinearGradient
-              colors={['#E0E7FF', '#DBEAFE']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.deadlineHeader}
-            >
-              <View style={styles.deadlineHeaderIconWrap}>
-                <Ionicons name="time-outline" size={18} color="#1D4ED8" />
-              </View>
-              <View style={styles.deadlineHeaderTextWrap}>
-                <Text style={styles.deadlineHeaderTitle}>Изменить дедлайн</Text>
-                <Text style={styles.deadlineHeaderSubtitle}>Укажите новую дату и время</Text>
-              </View>
-              <Pressable onPress={closeDeadlineModal} style={styles.deadlineCloseBtn} disabled={deadlineSaving}>
-                <Ionicons name="close" size={18} color="#334155" />
-              </Pressable>
-            </LinearGradient>
-
-            <View style={styles.deadlineBody}>
-              <View style={styles.deadlineHintCard}>
-                <Ionicons name="calendar-outline" size={16} color="#1E3A8A" />
-                <Text style={styles.deadlineHintText}>
-                  Дедлайн влияет на контроль сроков и статус просрочки в карточке обращения.
-                </Text>
-              </View>
-
-              <View style={styles.deadlineInputWrap}>
-                <DateTimeInput
-                  value={deadlineDraft ?? undefined}
-                  onChange={(iso) => setDeadlineDraft(iso)}
-                  placeholder="ДД.ММ.ГГ ЧЧ:ММ"
-                  includeTime
-                  disabledPast
-                  timePrecision="minute"
-                  minuteStep={5}
-                />
-              </View>
-
-              {deadlineSaving ? (
-                <View style={styles.modalLoading}>
-                  <ActivityIndicator />
-                </View>
-              ) : null}
-            </View>
-
-            <View style={styles.deadlineActions}>
-              <Pressable style={styles.modalBtn} onPress={closeDeadlineModal} disabled={deadlineSaving}>
-                <Text style={styles.modalBtnText}>Отмена</Text>
-              </Pressable>
-              <Pressable style={styles.modalBtn} onPress={() => setDeadlineDraft(null)} disabled={deadlineSaving}>
-                <Text style={styles.modalBtnText}>Сбросить</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.modalBtn, styles.modalBtnPrimary, deadlineSaving && styles.modalBtnDisabled]}
-                onPress={handleSaveDeadline}
-                disabled={deadlineSaving}
-              >
-                <Ionicons name="save-outline" size={15} color="#fff" />
-                <Text style={[styles.modalBtnText, styles.modalBtnTextPrimary]}>
-                  {deadlineSaving ? 'Сохранение...' : 'Сохранить'}
-                </Text>
-              </Pressable>
-            </View>
+            <AppealDeadlinePanel
+              value={deadlineDraft}
+              onChange={setDeadlineDraft}
+              onClose={closeDeadlineModal}
+              onSave={handleSaveDeadline}
+              isBusy={deadlineSaving}
+            />
           </Pressable>
         </Pressable>
       </Modal>
@@ -1371,36 +1199,19 @@ export default function AppealDetailContent({
             style={[styles.modalCard, styles.assignModalCard, webDefaultCursorStyle, { width: peopleModalSize.width }]}
             onPress={(event) => event.stopPropagation?.()}
           >
-            <View style={styles.peopleHeader}>
-              <Pressable onPress={closeAssignModal} style={styles.peopleBackBtn} disabled={assignLoading}>
-                <Ionicons name="arrow-back-outline" size={18} color="#111827" />
-              </Pressable>
-              <Text style={styles.modalTitle}>Назначить исполнителей</Text>
-              <View style={styles.peopleHeaderSpacer} />
-            </View>
-            {assignLoading ? (
-              <View style={styles.modalLoading}>
-                <ActivityIndicator />
-              </View>
-            ) : deptMembers.length ? (
-              <ScrollView style={styles.modalList} contentContainerStyle={styles.modalListContent}>
-                {deptMembers.map((member) => renderAssignMemberRow(member))}
-              </ScrollView>
-            ) : (
-              <Text style={styles.modalEmpty}>Сотрудников пока нет</Text>
-            )}
-            <View style={styles.modalActions}>
-              <Pressable style={styles.modalBtn} onPress={closeAssignModal} disabled={assignLoading}>
-                <Text style={styles.modalBtnText}>Отмена</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.modalBtn, styles.modalBtnPrimary]}
-                onPress={handleSaveAssignees}
-                disabled={assignLoading}
-              >
-                <Text style={[styles.modalBtnText, styles.modalBtnTextPrimary]}>Сохранить</Text>
-              </Pressable>
-            </View>
+            <AppealAssignPanel
+              members={deptMembers}
+              selectedIds={selectedAssignees}
+              onToggleMember={toggleAssignee}
+              onClose={closeAssignModal}
+              onSave={handleSaveAssignees}
+              loading={assignLoading}
+              getPresenceText={(user) => {
+                const presence = assignPresenceMap[user.id];
+                return getPresenceLabel(presence);
+              }}
+              getIsOnline={(user) => !!assignPresenceMap[user.id]?.isOnline}
+            />
           </Pressable>
         </Pressable>
       </Modal>
@@ -1411,157 +1222,20 @@ export default function AppealDetailContent({
             style={[styles.modalCard, styles.transferModalCard, webDefaultCursorStyle, { width: transferModalSize.width, height: transferModalSize.height }]}
             onPress={(event) => event.stopPropagation?.()}
           >
-            <LinearGradient
-              colors={['#DBEAFE', '#E0E7FF']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.transferHeader}
-            >
-              <View style={styles.transferHeaderIconWrap}>
-                <Ionicons name="swap-horizontal-outline" size={18} color="#1D4ED8" />
-              </View>
-              <View style={styles.transferHeaderTextWrap}>
-                <Text style={styles.transferHeaderTitle}>Передать в отдел</Text>
-                <Text style={styles.transferHeaderSubtitle}>Выберите новый отдел для обращения</Text>
-              </View>
-              <Pressable onPress={closeTransferModal} style={styles.transferCloseBtn} disabled={transferLoading}>
-                <Ionicons name="close" size={18} color="#334155" />
-              </Pressable>
-            </LinearGradient>
-
-            <View style={styles.transferBody}>
-              <View style={styles.transferHintCard}>
-                <Ionicons name="information-circle-outline" size={16} color="#92400E" />
-                <Text style={styles.transferHintText}>После смены отдела текущие исполнители будут сняты автоматически.</Text>
-              </View>
-
-              {departmentsLoading ? (
-                <View style={styles.modalLoading}>
-                  <ActivityIndicator />
-                </View>
-              ) : departments.length ? (
-                <ScrollView style={styles.transferDepartmentsList} contentContainerStyle={styles.transferDepartmentsListContent}>
-                  {departments.map((department) => {
-                    const isSelected = selectedDepartmentId === department.id;
-                    return (
-                      <Pressable
-                        key={department.id}
-                        style={({ pressed }) => [
-                          styles.transferDepartmentItem,
-                          isSelected && styles.transferDepartmentItemSelected,
-                          pressed && styles.transferDepartmentItemPressed,
-                        ]}
-                        onPress={() => setSelectedDepartmentId(department.id)}
-                      >
-                        <View style={styles.transferDepartmentLeft}>
-                          <View
-                            style={[
-                              styles.transferDepartmentIconWrap,
-                              isSelected && styles.transferDepartmentIconWrapSelected,
-                            ]}
-                          >
-                            <Ionicons
-                              name="business-outline"
-                              size={15}
-                              color={isSelected ? '#1D4ED8' : '#475569'}
-                            />
-                          </View>
-                          <Text
-                            style={[
-                              styles.transferDepartmentName,
-                              isSelected && styles.transferDepartmentNameSelected,
-                            ]}
-                            numberOfLines={1}
-                          >
-                            {department.name}
-                          </Text>
-                        </View>
-                        <Ionicons
-                          name={isSelected ? 'radio-button-on' : 'radio-button-off'}
-                          size={20}
-                          color={isSelected ? '#2563EB' : '#94A3B8'}
-                        />
-                      </Pressable>
-                    );
-                  })}
-                </ScrollView>
-              ) : (
-                <Text style={styles.modalEmpty}>Отделы не найдены</Text>
-              )}
-
-              {transferLoading ? (
-                <View style={styles.modalLoading}>
-                  <ActivityIndicator />
-                </View>
-              ) : null}
-            </View>
-
-            <View style={styles.transferActions}>
-              <Pressable style={styles.modalBtn} onPress={closeTransferModal} disabled={transferLoading}>
-                <Text style={styles.modalBtnText}>Отмена</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.modalBtn, styles.modalBtnPrimary, !selectedDepartmentId && styles.modalBtnDisabled]}
-                onPress={handleTransferDepartment}
-                disabled={!selectedDepartmentId || transferLoading}
-              >
-                <Ionicons name="swap-horizontal-outline" size={15} color="#fff" />
-                <Text style={[styles.modalBtnText, styles.modalBtnTextPrimary]}>Передать</Text>
-              </Pressable>
-            </View>
+            <AppealTransferPanel
+              departments={departments.map((dep) => ({ id: dep.id, name: dep.name }))}
+              selectedDepartmentId={selectedDepartmentId}
+              onSelectDepartment={setSelectedDepartmentId}
+              onClose={closeTransferModal}
+              onSubmit={handleTransferDepartment}
+              isBusy={transferLoading}
+              isDepartmentsLoading={departmentsLoading}
+            />
           </Pressable>
         </Pressable>
       </Modal>
     </View>
   );
-}
-
-function getParticipantInitials(user: UserMini) {
-  const first = (user.firstName || '').trim();
-  const last = (user.lastName || '').trim();
-  if (first || last) {
-    return `${first[0] || ''}${last[0] || first[1] || ''}`.toUpperCase();
-  }
-  const local = (user.email || '').split('@')[0];
-  if (local.length >= 2) return local.slice(0, 2).toUpperCase();
-  if (local.length === 1) return `${local}${local}`.toUpperCase();
-  return 'U';
-}
-
-function getParticipantRoleChip(user: UserMini): {
-  label: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  tone: ParticipantChipTone;
-} {
-  if (user.isAdmin) {
-    return {
-      label: getRoleDisplayName({ name: 'admin' }),
-      icon: 'shield-checkmark-outline',
-      tone: 'gray',
-    };
-  }
-  if (user.isDepartmentManager) {
-    return {
-      label: getRoleDisplayName({ name: 'department_manager' }),
-      icon: 'ribbon-outline',
-      tone: 'gray',
-    };
-  }
-  return {
-    label: getRoleDisplayName({ name: 'employee' }),
-    icon: 'person-outline',
-    tone: 'gray',
-  };
-}
-
-function getParticipantRoleGradient(user: UserMini): [string, string] {
-  if (user.isAdmin) {
-    return ['#FDE68A', '#FCA5A5'];
-  }
-  if (user.isDepartmentManager) {
-    return ['#FFEDD5', '#FED7AA'];
-  }
-  return ['#C7D2FE', '#E9D5FF'];
 }
 
 function getPresenceLabel(presence?: PresenceInfo) {
@@ -1574,31 +1248,6 @@ function getPresenceLabel(presence?: PresenceInfo) {
     }
   }
   return 'Не в сети';
-}
-
-type ParticipantChipTone = 'gray';
-
-function ParticipantChip({
-  icon,
-  label,
-  tone,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  tone: ParticipantChipTone;
-}) {
-  const palette = {
-    gray: { bg: '#F3F4F6', bd: '#E5E7EB', text: '#374151' },
-  }[tone];
-
-  return (
-    <View style={[styles.participantChip, { backgroundColor: palette.bg, borderColor: palette.bd }]}>
-      <Ionicons name={icon} size={13} color={palette.text} />
-      <Text style={[styles.participantChipText, { color: palette.text }]} numberOfLines={1}>
-        {label}
-      </Text>
-    </View>
-  );
 }
 
 function PeopleModalSkeleton() {
@@ -1877,236 +1526,11 @@ const styles = StyleSheet.create({
     padding: 0,
     overflow: 'hidden',
   },
-  deadlineHeader: {
-    minHeight: 76,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#BFDBFE',
-  },
-  deadlineHeaderIconWrap: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#93C5FD',
-    backgroundColor: 'rgba(255,255,255,0.68)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  deadlineHeaderTextWrap: {
-    flex: 1,
-    gap: 2,
-  },
-  deadlineHeaderTitle: {
-    color: '#0F172A',
-    fontSize: 17,
-    fontWeight: '800',
-  },
-  deadlineHeaderSubtitle: {
-    color: '#334155',
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  deadlineCloseBtn: {
-    width: 30,
-    height: 30,
-    borderRadius: 9,
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    backgroundColor: 'rgba(255,255,255,0.72)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  deadlineBody: {
-    flex: 1,
-    minHeight: 0,
-    paddingHorizontal: 14,
-    paddingTop: 12,
-    paddingBottom: 10,
-    gap: 12,
-  },
-  deadlineHintCard: {
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#93C5FD',
-    backgroundColor: '#EFF6FF',
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-  },
-  deadlineHintText: {
-    flex: 1,
-    color: '#1E3A8A',
-    fontSize: 12,
-    lineHeight: 17,
-    fontWeight: '500',
-  },
-  deadlineInputWrap: {
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#F8FAFC',
-    padding: 10,
-  },
-  deadlineActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 8,
-    paddingHorizontal: 14,
-    paddingTop: 6,
-    paddingBottom: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#E2E8F0',
-    backgroundColor: '#F8FAFC',
-  },
   transferModalCard: {
     maxWidth: 620,
     maxHeight: '92%',
     padding: 0,
     overflow: 'hidden',
-  },
-  transferHeader: {
-    minHeight: 78,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#BFDBFE',
-  },
-  transferHeaderIconWrap: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#93C5FD',
-    backgroundColor: 'rgba(255,255,255,0.65)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  transferHeaderTextWrap: {
-    flex: 1,
-    gap: 2,
-  },
-  transferHeaderTitle: {
-    color: '#0F172A',
-    fontSize: 17,
-    fontWeight: '800',
-  },
-  transferHeaderSubtitle: {
-    color: '#334155',
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  transferCloseBtn: {
-    width: 30,
-    height: 30,
-    borderRadius: 9,
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    backgroundColor: 'rgba(255,255,255,0.72)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  transferBody: {
-    flex: 1,
-    minHeight: 0,
-    paddingHorizontal: 14,
-    paddingTop: 12,
-    paddingBottom: 10,
-    gap: 10,
-  },
-  transferHintCard: {
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#FCD34D',
-    backgroundColor: '#FEF3C7',
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-  },
-  transferHintText: {
-    flex: 1,
-    color: '#78350F',
-    fontSize: 12,
-    lineHeight: 17,
-    fontWeight: '500',
-  },
-  transferDepartmentsList: {
-    flex: 1,
-    minHeight: 0,
-  },
-  transferDepartmentsListContent: {
-    gap: 8,
-    paddingBottom: 8,
-  },
-  transferDepartmentItem: {
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#F8FAFC',
-    paddingHorizontal: 10,
-    paddingVertical: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-  },
-  transferDepartmentItemSelected: {
-    borderColor: '#93C5FD',
-    backgroundColor: '#EFF6FF',
-  },
-  transferDepartmentItemPressed: {
-    opacity: 0.88,
-  },
-  transferDepartmentLeft: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  transferDepartmentIconWrap: {
-    width: 26,
-    height: 26,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  transferDepartmentIconWrapSelected: {
-    borderColor: '#93C5FD',
-    backgroundColor: '#DBEAFE',
-  },
-  transferDepartmentName: {
-    flex: 1,
-    color: '#1F2937',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  transferDepartmentNameSelected: {
-    color: '#1D4ED8',
-  },
-  transferActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 8,
-    paddingHorizontal: 14,
-    paddingTop: 6,
-    paddingBottom: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#E2E8F0',
-    backgroundColor: '#F8FAFC',
   },
   participantRowPressable: {
     marginBottom: 10,
@@ -2120,119 +1544,6 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1,
     borderColor: '#E5E7EB',
-  },
-  assignRowPressable: {
-    marginBottom: 10,
-  },
-  assignRowGradient: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  assignCheckboxWrap: {
-    width: 26,
-    alignItems: 'center',
-    justifyContent: 'center',
-    alignSelf: 'center',
-    marginLeft: 4,
-  },
-  memberRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 2,
-    borderBottomWidth: 1,
-    borderColor: '#F3F4F6',
-  },
-  memberAvatarWrap: {
-    width: 42,
-    height: 42,
-  },
-  memberAvatar: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: '#EEF2FF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  memberAvatarImage: { width: 42, height: 42, borderRadius: 21 },
-  memberAvatarPresence: {
-    position: 'absolute',
-    right: 0,
-    bottom: 0,
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderColor: '#fff',
-  },
-  memberInitials: { fontWeight: '700', color: '#1F2937', fontSize: 13 },
-  memberInfo: { flex: 1, gap: 5 },
-  memberNameRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: 6,
-  },
-  memberName: { fontWeight: '700', color: '#111827', fontSize: 14, flexShrink: 1 },
-  memberDept: { fontSize: 12, color: '#6B7280' },
-  memberPresenceText: { fontSize: 12, color: '#64748B' },
-  memberTagRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  memberTag: {
-    borderRadius: 999,
-    borderWidth: 1,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
-  memberTagCreator: {
-    backgroundColor: '#DBEAFE',
-    borderColor: '#93C5FD',
-  },
-  memberTagAssignee: {
-    backgroundColor: '#DCFCE7',
-    borderColor: '#86EFAC',
-  },
-  memberTagText: {
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  memberTagCreatorText: {
-    color: '#1E40AF',
-  },
-  memberTagAssigneeText: {
-    color: '#166534',
-  },
-  memberChipRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginTop: 2,
-  },
-  participantChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    maxWidth: '100%',
-  },
-  participantChipText: {
-    fontSize: 12,
-    fontWeight: '700',
-    maxWidth: 180,
   },
   peopleSkeletonWrap: {
     flex: 1,
