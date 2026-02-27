@@ -193,7 +193,7 @@ function AppealListItemForm({
           scopeChipColor: '#047857',
           selectedBorder: '#6EE7B7',
           selectedSurface: '#F0FDF4',
-          headerGradient: selected ? (['#DCFCE7', '#BBF7D0'] as const) : (['#F0FDF4', '#DCFCE7'] as const),
+          headerGradient: ['#F8FAFC', '#F1F5F9'] as const,
           unreadBg: '#059669',
         }
       : {

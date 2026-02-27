@@ -482,14 +482,32 @@ export default function AppealsIndex() {
     [doesItemMatchFilters]
   );
 
-  const mineTabBadgeData = useMemo(
+  const mineTabBadgeDataFallback = useMemo(
     () => buildTabBadgeData(scopeItems.mine),
     [buildTabBadgeData, scopeItems.mine]
   );
-  const departmentTabBadgeData = useMemo(
+  const departmentTabBadgeDataFallback = useMemo(
     () => buildTabBadgeData(scopeItems.tasks),
     [buildTabBadgeData, scopeItems.tasks]
   );
+  const mineTabBadgeData = useMemo(() => {
+    if (counters?.my) {
+      return {
+        itemCount: Math.max(0, Number(counters.my.activeCount) || 0),
+        unreadMessagesCount: Math.max(0, Number(counters.my.unreadMessagesCount) || 0),
+      };
+    }
+    return mineTabBadgeDataFallback;
+  }, [counters?.my, mineTabBadgeDataFallback]);
+  const departmentTabBadgeData = useMemo(() => {
+    if (counters?.department) {
+      return {
+        itemCount: Math.max(0, Number(counters.department.activeCount) || 0),
+        unreadMessagesCount: Math.max(0, Number(counters.department.unreadMessagesCount) || 0),
+      };
+    }
+    return departmentTabBadgeDataFallback;
+  }, [counters?.department, departmentTabBadgeDataFallback]);
   const activeScopeMeta = useMemo(
     () =>
       tab === 'mine'

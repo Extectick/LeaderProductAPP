@@ -1,7 +1,9 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   Pressable,
   ScrollView,
   Text,
@@ -10,9 +12,11 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 
 import CustomAlert from '@/components/CustomAlert';
 import { useTabBarSpacerHeight } from '@/components/Navigation/TabBarSpacer';
+import { useNotify } from '@/components/NotificationHost';
 import { AdminStyles } from '@/components/admin/adminStyles';
 import { getRoleDisplayName } from '@/utils/rbacLabels';
 import { type AdminUsersListItem } from '@/utils/userService';
@@ -52,23 +56,24 @@ type ConfirmAction = {
 export default function UsersTab({ active, colors, queuedUserId, onConsumeQueuedUser }: Props) {
   const { width } = useWindowDimensions();
   const tabBarSpacer = useTabBarSpacerHeight();
+  const notify = useNotify();
   const desktop = width >= 1200;
   const {
     roles,
     departments,
     items,
     total,
-    page,
-    setPage,
-    limit,
+    hasNextPage,
     search,
     setSearch,
     loading,
+    loadingMore,
     filters,
     setFilters,
     selectedId,
     setSelectedId,
     loadData,
+    loadMore,
   } = useUsersData(active);
   const selected = useMemo(() => items.find((x) => x.id === selectedId) || null, [items, selectedId]);
   const [actionBusyId, setActionBusyId] = useState<number | null>(null);
@@ -79,17 +84,20 @@ export default function UsersTab({ active, colors, queuedUserId, onConsumeQueued
   const [editorUserId, setEditorUserId] = useState<number | null>(null);
   const [editor, setEditor] = useState<UsersEditorState | null>(null);
   const [editorInitial, setEditorInitial] = useState<UsersEditorState | null>(null);
+  const [editorSaving, setEditorSaving] = useState(false);
   const [mobileFiltersVisible, setMobileFiltersVisible] = useState(false);
+  const loadMoreLockRef = useRef(false);
 
-  const hasNext = page * limit < total;
   const pendingCountOnPage = useMemo(() => items.filter((item) => needsModeration(item)).length, [items]);
   const { openEditor, doModeration, saveEditor } = useUsersActions({
     editorUserId,
     editor,
     editorInitial,
     loadData,
+    notify,
     setActionBusyId,
     setEditorVisible,
+    setEditorSaving,
     setEditorUserId,
     setEditor,
     setEditorInitial,
@@ -101,6 +109,10 @@ export default function UsersTab({ active, colors, queuedUserId, onConsumeQueued
     void openEditor(queuedUserId);
     onConsumeQueuedUser();
   }, [active, onConsumeQueuedUser, openEditor, queuedUserId]);
+
+  useEffect(() => {
+    if (!loadingMore) loadMoreLockRef.current = false;
+  }, [loadingMore]);
 
   const confirmContent = useMemo(() => {
     if (!confirmAction) return null;
@@ -133,95 +145,125 @@ export default function UsersTab({ active, colors, queuedUserId, onConsumeQueued
   }, []);
 
   const styles = useMemo(() => createUsersTabStyles(colors), [colors]);
-  const activeModerationLabel =
-    moderationFilters.find((f) => f.key === filters.moderation)?.label || moderationFilters[0]?.label || 'Все';
-  const activeOnlineLabel =
-    onlineFilters.find((f) => f.key === filters.online)?.label || onlineFilters[0]?.label || 'Все';
+
+  const hasActiveMobileFilters = filters.moderation !== 'all' || filters.online !== 'all';
+  const handleListScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      if (!hasNextPage || loading || loadingMore || loadMoreLockRef.current) return;
+      const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
+      const distanceFromBottom = contentSize.height - (layoutMeasurement.height + contentOffset.y);
+      if (distanceFromBottom > 180) return;
+      loadMoreLockRef.current = true;
+      void loadMore();
+    },
+    [hasNextPage, loadMore, loading, loadingMore]
+  );
 
   if (!active) return <View style={{ display: 'none' }} />;
 
-  const renderPagination = () => (
-    <View style={styles.pagination}>
-      <Pressable
-        disabled={page <= 1}
-        onPress={() => setPage((p) => Math.max(1, p - 1))}
-        style={[styles.btn, page <= 1 && { opacity: 0.5 }]}
-      >
-        <Text style={styles.btnText}>Назад</Text>
-      </Pressable>
-      <Text style={styles.paginationText}>
-        Страница {page} из {Math.max(1, Math.ceil(total / limit))}
-      </Text>
-      <Pressable disabled={!hasNext} onPress={() => setPage((p) => p + 1)} style={[styles.btn, !hasNext && { opacity: 0.5 }]}>
-        <Text style={styles.btnText}>Вперед</Text>
-      </Pressable>
-    </View>
-  );
-
   return (
     <View style={styles.root}>
-      <View style={styles.toolbar}>
-        <TextInput
-          value={search}
-          onChangeText={(v) => {
-            setSearch(v);
-            setPage(1);
-          }}
-          placeholder="Поиск по ФИО, email, телефону, ID"
-          placeholderTextColor={colors.secondaryText}
-          style={styles.input}
-        />
-        <View style={styles.toolbarMeta}>
-          <Text style={styles.toolbarMetaText}>Всего пользователей: {total}</Text>
-          <Text style={styles.toolbarMetaText}>На странице ждут проверки: {pendingCountOnPage}</Text>
-        </View>
-        {desktop ? (
-          <>
-            <View style={styles.chips}>
-              {moderationFilters.map((f) => {
-                const activeFilter = filters.moderation === f.key;
-                return (
-                  <Pressable
-                    key={`moderation-${f.key}`}
-                    onPress={() => {
-                      setFilters((s) => ({ ...s, moderation: f.key }));
-                      setPage(1);
-                    }}
-                    style={[styles.chip, activeFilter && styles.chipActive]}
-                  >
-                    <Text style={[styles.chipText, activeFilter && styles.chipTextActive]}>{f.label}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-            <View style={styles.chips}>
-              {onlineFilters.map((f) => {
-                const activeFilter = filters.online === f.key;
-                return (
-                  <Pressable
-                    key={`online-${f.key}`}
-                    onPress={() => {
-                      setFilters((s) => ({ ...s, online: f.key }));
-                      setPage(1);
-                    }}
-                    style={[styles.chip, activeFilter && styles.chipActive]}
-                  >
-                    <Text style={[styles.chipText, activeFilter && styles.chipTextActive]}>{f.label}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          </>
-        ) : (
+      <View style={[styles.toolbar, !desktop && styles.toolbarCompact]}>
+        <View style={[styles.toolbarTopRow, !desktop && styles.toolbarTopRowCompact]}>
+          <View style={styles.toolbarSearchCol}>
+            <Text style={[styles.filterGroupLabel, !desktop && styles.hidden]}>Поиск пользователей</Text>
+            <TextInput
+              value={search}
+              onChangeText={(v) => {
+                setSearch(v);
+              }}
+              placeholder={desktop ? 'Поиск по ФИО, email, телефону, ID' : 'Поиск'}
+              placeholderTextColor={colors.secondaryText}
+              style={[styles.input, styles.toolbarSearchInput, !desktop && styles.toolbarSearchInputCompact]}
+            />
+          </View>
+          {!desktop ? (
+            <Pressable
+              style={[
+                styles.filtersIconBtn,
+                !desktop && styles.filtersIconBtnCompact,
+                hasActiveMobileFilters && styles.filtersIconBtnActive,
+              ]}
+              onPress={() => setMobileFiltersVisible(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Открыть фильтры пользователей"
+            >
+              <Ionicons name="filter-outline" size={16} color={colors.tint} />
+            </Pressable>
+          ) : null}
           <Pressable
-            style={styles.btn}
-            onPress={() => setMobileFiltersVisible(true)}
+            style={[
+              styles.resetFiltersBtn,
+              !hasActiveMobileFilters && styles.resetFiltersBtnDisabled,
+              !desktop && styles.hidden,
+            ]}
+            onPress={() => {
+              setFilters((state) => ({ ...state, moderation: 'all', online: 'all' }));
+            }}
+            disabled={!hasActiveMobileFilters}
+            accessibilityRole="button"
+            accessibilityLabel="Сбросить фильтры пользователей"
           >
-            <Text style={styles.btnText}>
-              Фильтры: {activeModerationLabel}, {activeOnlineLabel}
-            </Text>
+            <Ionicons name="refresh-outline" size={16} color={colors.tint} />
+            {desktop ? <Text style={styles.resetFiltersBtnText}>Сбросить</Text> : null}
           </Pressable>
-        )}
+        </View>
+
+        <View style={[styles.toolbarMeta, !desktop && styles.toolbarMetaCompact]}>
+          <Text style={[styles.toolbarMetaText, !desktop && styles.toolbarMetaTextCompact]}>
+            {'\u0412\u0441\u0435\u0433\u043e \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u0435\u0439: '}
+            {total}
+          </Text>
+          {desktop ? (
+            <Text style={styles.toolbarMetaText}>
+              {'\u041d\u0430 \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u0435 \u0436\u0434\u0443\u0442 \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0438: '}
+              {pendingCountOnPage}
+            </Text>
+          ) : null}
+        </View>
+
+        {desktop ? (
+          <View style={styles.filtersWrap}>
+            <View style={styles.filterGroupCol}>
+              <Text style={styles.filterGroupLabel}>Модерация</Text>
+              <View style={styles.chips}>
+                {moderationFilters.map((f) => {
+                  const activeFilter = filters.moderation === f.key;
+                  return (
+                    <Pressable
+                      key={`moderation-${f.key}`}
+                      onPress={() => {
+                        setFilters((s) => ({ ...s, moderation: f.key }));
+                      }}
+                      style={[styles.chip, activeFilter && styles.chipActive]}
+                    >
+                      <Text style={[styles.chipText, activeFilter && styles.chipTextActive]}>{f.label}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+            <View style={styles.filterGroupCol}>
+              <Text style={styles.filterGroupLabel}>Онлайн</Text>
+              <View style={styles.chips}>
+                {onlineFilters.map((f) => {
+                  const activeFilter = filters.online === f.key;
+                  return (
+                    <Pressable
+                      key={`online-${f.key}`}
+                      onPress={() => {
+                        setFilters((s) => ({ ...s, online: f.key }));
+                      }}
+                      style={[styles.chip, activeFilter && styles.chipActive]}
+                    >
+                      <Text style={[styles.chipText, activeFilter && styles.chipTextActive]}>{f.label}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          </View>
+        ) : null}
       </View>
 
       {desktop ? (
@@ -230,7 +272,11 @@ export default function UsersTab({ active, colors, queuedUserId, onConsumeQueued
             <View style={styles.listHeader}>
               <Text style={styles.listHeaderText}>Список пользователей</Text>
             </View>
-            <ScrollView contentContainerStyle={{ paddingBottom: tabBarSpacer + 12 }}>
+            <ScrollView
+              contentContainerStyle={{ paddingBottom: tabBarSpacer + 12 }}
+              onScroll={handleListScroll}
+              scrollEventThrottle={16}
+            >
               {loading ? <ActivityIndicator style={{ marginVertical: 20 }} color={colors.tint} /> : null}
               {!loading && !items.length ? <Text style={styles.empty}>Пользователи не найдены</Text> : null}
               {items.map((item) => (
@@ -248,6 +294,7 @@ export default function UsersTab({ active, colors, queuedUserId, onConsumeQueued
                   onAvatarPress={() => void openEditor(item.id)}
                 />
               ))}
+              {loadingMore ? <ActivityIndicator style={styles.loadMoreInlineIndicator} color={colors.tint} /> : null}
             </ScrollView>
           </View>
           <View style={styles.side}>
@@ -277,11 +324,14 @@ export default function UsersTab({ active, colors, queuedUserId, onConsumeQueued
                 />
               </>
             )}
-            <View style={{ marginTop: 'auto' }}>{renderPagination()}</View>
           </View>
         </View>
       ) : (
-        <ScrollView contentContainerStyle={{ paddingBottom: tabBarSpacer + 12 }}>
+        <ScrollView
+          contentContainerStyle={{ paddingBottom: tabBarSpacer + 12 }}
+          onScroll={handleListScroll}
+          scrollEventThrottle={16}
+        >
           {loading ? <ActivityIndicator style={{ marginVertical: 20 }} color={colors.tint} /> : null}
           {!loading && !items.length ? <Text style={styles.empty}>Пользователи не найдены</Text> : null}
           <View style={styles.mobileList}>
@@ -300,7 +350,7 @@ export default function UsersTab({ active, colors, queuedUserId, onConsumeQueued
               </View>
             ))}
           </View>
-          <View style={{ marginTop: 8 }}>{renderPagination()}</View>
+          {loadingMore ? <ActivityIndicator style={styles.loadMoreInlineIndicator} color={colors.tint} /> : null}
         </ScrollView>
       )}
 
@@ -314,50 +364,69 @@ export default function UsersTab({ active, colors, queuedUserId, onConsumeQueued
           <TouchableWithoutFeedback onPress={() => setMobileFiltersVisible(false)}>
             <View style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }} />
           </TouchableWithoutFeedback>
-          <View style={[styles.modalCard, { maxWidth: 520 }]}>
+          <View style={[styles.modalCard, styles.filtersModalCard]}>
             <Text style={styles.sectionTitle}>Фильтры пользователей</Text>
 
-            <Text style={styles.sub}>Модерация</Text>
-            <View style={styles.chips}>
-              {moderationFilters.map((f) => {
-                const activeFilter = filters.moderation === f.key;
-                return (
-                  <Pressable
-                    key={`mobile-moderation-${f.key}`}
-                    onPress={() => {
-                      setFilters((s) => ({ ...s, moderation: f.key }));
-                      setPage(1);
-                    }}
-                    style={[styles.chip, activeFilter && styles.chipActive]}
-                  >
-                    <Text style={[styles.chipText, activeFilter && styles.chipTextActive]}>{f.label}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
+            <ScrollView style={styles.filtersModalScroll} contentContainerStyle={styles.filtersModalContent}>
+              <View style={styles.filterGroupCol}>
+                <Text style={styles.filterGroupLabel}>Модерация</Text>
+                <View style={styles.chips}>
+                  {moderationFilters.map((f) => {
+                    const activeFilter = filters.moderation === f.key;
+                    return (
+                      <Pressable
+                        key={`mobile-moderation-${f.key}`}
+                        onPress={() => {
+                          setFilters((s) => ({ ...s, moderation: f.key }));
+                        }}
+                        style={[styles.chip, activeFilter && styles.chipActive]}
+                      >
+                        <Text style={[styles.chipText, activeFilter && styles.chipTextActive]}>{f.label}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
 
-            <Text style={styles.sub}>Онлайн</Text>
-            <View style={styles.chips}>
-              {onlineFilters.map((f) => {
-                const activeFilter = filters.online === f.key;
-                return (
-                  <Pressable
-                    key={`mobile-online-${f.key}`}
-                    onPress={() => {
-                      setFilters((s) => ({ ...s, online: f.key }));
-                      setPage(1);
-                    }}
-                    style={[styles.chip, activeFilter && styles.chipActive]}
-                  >
-                    <Text style={[styles.chipText, activeFilter && styles.chipTextActive]}>{f.label}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
+              <View style={styles.filterGroupCol}>
+                <Text style={styles.filterGroupLabel}>Онлайн</Text>
+                <View style={styles.chips}>
+                  {onlineFilters.map((f) => {
+                    const activeFilter = filters.online === f.key;
+                    return (
+                      <Pressable
+                        key={`mobile-online-${f.key}`}
+                        onPress={() => {
+                          setFilters((s) => ({ ...s, online: f.key }));
+                        }}
+                        style={[styles.chip, activeFilter && styles.chipActive]}
+                      >
+                        <Text style={[styles.chipText, activeFilter && styles.chipTextActive]}>{f.label}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+            </ScrollView>
 
-            <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
-              <Pressable onPress={() => setMobileFiltersVisible(false)} style={styles.btn}>
-                <Text style={styles.btnText}>Готово</Text>
+            <View style={styles.filtersModalActions}>
+              <Pressable
+                style={[
+                  styles.resetFiltersBtn,
+                  styles.filtersModalResetBtn,
+                  !hasActiveMobileFilters && styles.resetFiltersBtnDisabled,
+                ]}
+                onPress={() => {
+                  setFilters((state) => ({ ...state, moderation: 'all', online: 'all' }));
+                }}
+                disabled={!hasActiveMobileFilters}
+              >
+                <Ionicons name="refresh-outline" size={16} color={colors.tint} />
+                <Text style={styles.resetFiltersBtnText}>Сбросить</Text>
+              </Pressable>
+
+              <Pressable onPress={() => setMobileFiltersVisible(false)} style={styles.modalPrimaryBtn}>
+                <Text style={styles.modalPrimaryBtnText}>Готово</Text>
               </Pressable>
             </View>
           </View>
@@ -403,13 +472,16 @@ export default function UsersTab({ active, colors, queuedUserId, onConsumeQueued
         colors={colors}
         editorUserId={editorUserId}
         editor={editor}
+        saving={editorSaving}
         roles={roles}
         departments={departments}
-        onClose={() => setEditorVisible(false)}
+        onClose={() => {
+          if (editorSaving) return;
+          setEditorVisible(false);
+        }}
         onSave={() => void saveEditor()}
         onChangeEditor={setEditor}
       />
     </View>
   );
 }
-

@@ -1,4 +1,4 @@
-import type { ProfileStatus } from '@/src/entities/user/types';
+import type { ProfileStatus, ProfileType } from '@/src/entities/user/types';
 import type { AdminModerationState, AdminUsersListItem } from '@/utils/userService';
 
 export type UsersModerationFilterKey = 'all' | AdminModerationState;
@@ -29,6 +29,17 @@ export function profileStatusLabel(state: ProfileStatus) {
   if (state === 'ACTIVE') return 'Подтвержден';
   if (state === 'BLOCKED') return 'Отклонен';
   return 'На проверке';
+}
+
+export function profileTypeLabel(type?: ProfileType | null) {
+  if (type === 'EMPLOYEE') return 'Сотрудник';
+  if (type === 'CLIENT') return 'Клиент';
+  if (type === 'SUPPLIER') return 'Поставщик';
+  return 'Не выбран';
+}
+
+export function activeProfileTypeLabel(type?: ProfileType | null) {
+  return `Основной профиль: ${profileTypeLabel(type)}`;
 }
 
 export function nameOf(item: AdminUsersListItem) {

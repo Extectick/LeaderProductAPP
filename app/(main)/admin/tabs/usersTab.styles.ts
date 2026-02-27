@@ -11,7 +11,39 @@ export function createUsersTabStyles(colors: any) {
       gap: 8,
       backgroundColor: colors.cardBackground,
     },
+    toolbarCompact: {
+      padding: 6,
+      gap: 4,
+    },
+    toolbarTopRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      gap: 8,
+    },
+    toolbarTopRowCompact: {
+      alignItems: 'center',
+      gap: 5,
+    },
+    toolbarSearchCol: {
+      flex: 1,
+      minWidth: 0,
+      gap: 6,
+    },
+    toolbarSearchInput: {
+      minHeight: 44,
+      borderRadius: 10,
+      paddingVertical: 10,
+    },
+    toolbarSearchInputCompact: {
+      minHeight: 34,
+      borderRadius: 9,
+      paddingVertical: 6,
+    },
     toolbarMeta: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+    toolbarMetaCompact: {
+      marginTop: 2,
+      gap: 6,
+    },
     toolbarMetaText: {
       color: colors.secondaryText,
       fontSize: 11,
@@ -22,6 +54,67 @@ export function createUsersTabStyles(colors: any) {
       borderRadius: 999,
       paddingHorizontal: 8,
       paddingVertical: 5,
+    },
+    toolbarMetaTextCompact: {
+      fontSize: 10,
+      paddingHorizontal: 7,
+      paddingVertical: 4,
+    },
+    filtersWrap: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 10,
+    },
+    filterGroupCol: {
+      flexGrow: 1,
+      flexBasis: 240,
+      minWidth: 220,
+      gap: 6,
+    },
+    filterGroupLabel: {
+      color: colors.secondaryText,
+      fontSize: 12,
+      fontWeight: '700',
+    },
+    filtersIconBtn: {
+      width: 44,
+      minWidth: 44,
+      height: 44,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: colors.tint,
+      backgroundColor: `${colors.tint}14`,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    filtersIconBtnCompact: {
+      width: 34,
+      minWidth: 34,
+      height: 34,
+      borderRadius: 9,
+    },
+    filtersIconBtnActive: {
+      backgroundColor: `${colors.tint}22`,
+    },
+    resetFiltersBtn: {
+      minHeight: 44,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: colors.tint,
+      backgroundColor: `${colors.tint}14`,
+      paddingHorizontal: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+    },
+    resetFiltersBtnDisabled: {
+      opacity: 0.5,
+    },
+    resetFiltersBtnText: {
+      color: colors.tint,
+      fontSize: 12,
+      fontWeight: '700',
     },
     input: {
       borderWidth: 1,
@@ -155,6 +248,10 @@ export function createUsersTabStyles(colors: any) {
     btnText: { color: colors.text, fontWeight: '700', fontSize: 10 },
     pagination: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
     paginationText: { color: colors.secondaryText, fontSize: 11, fontWeight: '700' },
+    loadMoreInlineIndicator: {
+      marginTop: 8,
+      marginBottom: 10,
+    },
     empty: { color: colors.secondaryText, fontSize: 13, textAlign: 'center', paddingVertical: 22 },
     mobileList: { gap: 6 },
     mobileCard: {
@@ -179,7 +276,188 @@ export function createUsersTabStyles(colors: any) {
       padding: 12,
       gap: 8,
     },
+    filtersModalCard: {
+      maxWidth: 620,
+      maxHeight: '84%',
+      gap: 10,
+    },
+    filtersModalScroll: {
+      width: '100%',
+      maxHeight: 420,
+    },
+    filtersModalContent: {
+      gap: 10,
+      paddingBottom: 4,
+    },
+    filtersModalActions: {
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+      gap: 8,
+    },
+    filtersModalResetBtn: {
+      minHeight: 36,
+      paddingHorizontal: 10,
+      borderRadius: 9,
+      backgroundColor: 'transparent',
+      borderColor: colors.inputBorder,
+    },
+    modalPrimaryBtn: {
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: colors.tint,
+      backgroundColor: colors.tint,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      minHeight: 40,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    modalPrimaryBtnText: {
+      color: '#FFFFFF',
+      fontSize: 12,
+      fontWeight: '700',
+    },
+    userEditorModalCard: {
+      maxWidth: 980,
+      padding: 0,
+      gap: 0,
+      overflow: 'hidden',
+    },
+    userEditorHeader: {
+      paddingHorizontal: 18,
+      paddingTop: 18,
+      paddingBottom: 14,
+      gap: 4,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.inputBorder,
+      backgroundColor: colors.inputBackground,
+    },
+    userEditorScroll: {
+      flex: 1,
+    },
+    userEditorContent: {
+      padding: 16,
+      gap: 12,
+    },
+    userEditorSection: {
+      borderWidth: 1,
+      borderColor: colors.inputBorder,
+      borderRadius: 14,
+      backgroundColor: colors.background,
+      padding: 12,
+      gap: 8,
+    },
+    userEditorSectionTitle: {
+      color: colors.text,
+      fontSize: 13,
+      fontWeight: '800',
+    },
+    userEditorGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 10,
+    },
+    userEditorField: {
+      minWidth: 240,
+      flexGrow: 1,
+      flexShrink: 1,
+      gap: 6,
+    },
+    userEditorLabel: {
+      color: colors.secondaryText,
+      fontSize: 12,
+      fontWeight: '700',
+    },
+    userEditorMuted: {
+      color: colors.secondaryText,
+      fontSize: 11,
+      fontWeight: '600',
+    },
+    userEditorReadonly: {
+      borderWidth: 1,
+      borderColor: colors.inputBorder,
+      borderRadius: 10,
+      paddingHorizontal: 10,
+      paddingVertical: 10,
+      backgroundColor: colors.inputBackground,
+    },
+    userEditorReadonlyText: {
+      color: colors.secondaryText,
+      fontSize: 12,
+      fontWeight: '600',
+    },
+    userProfileGrid: {
+      gap: 8,
+    },
+    userProfileCard: {
+      borderWidth: 1,
+      borderColor: colors.inputBorder,
+      borderRadius: 12,
+      backgroundColor: colors.cardBackground,
+      padding: 10,
+      gap: 8,
+    },
+    userProfileCardDisabled: {
+      opacity: 0.75,
+      backgroundColor: colors.inputBackground,
+    },
+    userProfileCardHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 8,
+      flexWrap: 'wrap',
+    },
+    userProfileName: {
+      color: colors.text,
+      fontSize: 13,
+      fontWeight: '800',
+    },
+    userProfileBadge: {
+      borderRadius: 999,
+      borderWidth: 1,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+    },
+    userProfileBadgeExists: {
+      borderColor: '#86EFAC',
+      backgroundColor: '#DCFCE7',
+    },
+    userProfileBadgeMissing: {
+      borderColor: colors.inputBorder,
+      backgroundColor: colors.inputBackground,
+    },
+    userProfileBadgeText: {
+      fontSize: 10,
+      fontWeight: '800',
+    },
+    userProfileBadgeTextExists: {
+      color: '#166534',
+    },
+    userProfileBadgeTextMissing: {
+      color: colors.secondaryText,
+    },
+    userEditorFooter: {
+      borderTopWidth: 1,
+      borderTopColor: colors.inputBorder,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+      gap: 10,
+      backgroundColor: colors.inputBackground,
+    },
+    userEditorSaveBtn: {
+      borderColor: colors.tint,
+      backgroundColor: `${colors.tint}14`,
+    },
+    userEditorSaveText: {
+      color: colors.tint,
+    },
     sectionTitle: { color: colors.text, fontWeight: '800', fontSize: 15 },
     sub: { color: colors.secondaryText, fontSize: 12 },
+    hidden: {
+      display: 'none',
+    },
   });
 }

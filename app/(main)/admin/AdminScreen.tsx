@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Text, useWindowDimensions, View } from 'react-native';
+import { Platform, useWindowDimensions, View } from 'react-native';
 import { Redirect } from 'expo-router';
 
 import { useTheme } from '@/context/ThemeContext';
@@ -25,6 +25,7 @@ export default function AdminScreen() {
   const styles = useMemo(() => createAdminStyles(colors), [colors]);
   const { width } = useWindowDimensions();
   const isWide = width >= 980;
+  const isWebDesktop = Platform.OS === 'web' && isWide;
   const tabBarSpacer = useTabBarSpacerHeight();
   const headerTopInset = useHeaderContentTopInset();
   const grad = gradientColors[theme as ThemeKey] || gradientColors.leaderprod;
@@ -40,13 +41,15 @@ export default function AdminScreen() {
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
-      <View style={[styles.container, { paddingTop: headerTopInset, paddingBottom: tabBarSpacer + 16 }]}>
-        <View style={{ gap: 2 }}>
-          <Text style={{ color: colors.text, fontWeight: '800', fontSize: isWide ? 22 : 20 }}>Администрирование</Text>
-          <Text style={{ color: colors.secondaryText, fontSize: 12 }}>
-            Управление пользователями, ролями, отделами и сервисами
-          </Text>
-        </View>
+      <View
+        style={[
+          styles.container,
+          {
+            paddingTop: headerTopInset,
+            paddingBottom: isWebDesktop ? 0 : tabBarSpacer + 16,
+          },
+        ]}
+      >
         <AdminTabsBar
           styles={styles}
           activeKey={activeTab}
