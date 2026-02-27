@@ -20,6 +20,8 @@ import {
   AppealLaborEntryDto,
   AppealsAnalyticsMeta,
   AppealsAnalyticsAppealsResponse,
+  AppealsAnalyticsPaymentState,
+  AppealsAnalyticsTableColumnKey,
   AppealsAnalyticsUsersResponse,
   AppealsAnalyticsUserAppealsResponse,
   AppealsAnalyticsUpdateHourlyRateResponse,
@@ -505,6 +507,7 @@ export async function getAppealsAnalyticsAppeals(params: {
   departmentId?: number;
   assigneeUserId?: number;
   status?: AppealStatus;
+  paymentState?: AppealsAnalyticsPaymentState;
   limit?: number;
   offset?: number;
   search?: string;
@@ -515,6 +518,7 @@ export async function getAppealsAnalyticsAppeals(params: {
     departmentId: params.departmentId,
     assigneeUserId: params.assigneeUserId,
     status: params.status,
+    paymentState: params.paymentState,
     limit: params.limit ?? 20,
     offset: params.offset ?? 0,
     search: params.search,
@@ -625,6 +629,7 @@ export async function getAppealsKpiDashboard(params: {
   departmentId?: number;
   assigneeUserId?: number;
   status?: AppealStatus;
+  paymentState?: AppealsAnalyticsPaymentState;
   search?: string;
 }): Promise<AppealsKpiDashboardResponse> {
   const qs = buildQuery(params as any);
@@ -720,11 +725,17 @@ export async function exportAppealsAnalyticsByAppeals(params: {
   departmentId?: number;
   assigneeUserId?: number;
   status?: AppealStatus;
+  paymentState?: AppealsAnalyticsPaymentState;
   search?: string;
+  columns?: AppealsAnalyticsTableColumnKey[] | string;
   userId?: number;
   format?: 'csv' | 'xlsx';
 }): Promise<Blob> {
-  const qs = buildQuery({ ...params, format: params.format ?? 'csv' } as any);
+  const qs = buildQuery({
+    ...params,
+    columns: Array.isArray(params.columns) ? params.columns.join(',') : params.columns,
+    format: params.format ?? 'csv',
+  } as any);
   const resp = await apiClient<undefined, Blob>(`/appeals/analytics/export/appeals?${qs}`, {
     method: 'GET',
   });

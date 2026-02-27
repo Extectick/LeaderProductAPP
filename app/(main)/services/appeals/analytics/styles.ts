@@ -490,6 +490,9 @@ export const analyticsStyles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 10,
   },
+  tableCellTextMultiline: {
+    lineHeight: 18,
+  },
   colNumber: { width: 74 },
   colTitle: { width: 220 },
   colStatus: { width: 170 },
@@ -501,6 +504,47 @@ export const analyticsStyles = StyleSheet.create({
     flex: 1,
     minHeight: 0,
     marginTop: 10,
+  },
+  tableTopActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginBottom: 6,
+  },
+  columnVisibilityBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    backgroundColor: '#EFF6FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web'
+      ? ({
+          transitionDuration: '120ms',
+          transitionProperty: 'transform, background-color, border-color, box-shadow',
+          boxShadow: '0 0 0 rgba(37,99,235,0)',
+        } as any)
+      : null),
+  },
+  columnVisibilityBtnHover: {
+    backgroundColor: '#DBEAFE',
+    borderColor: '#93C5FD',
+    ...(Platform.OS === 'web'
+      ? ({
+          transform: 'translateY(-1px)',
+          boxShadow: '0 7px 12px rgba(37,99,235,0.16)',
+        } as any)
+      : null),
+  },
+  columnVisibilityBtnPressed: {
+    ...(Platform.OS === 'web'
+      ? ({
+          transform: 'translateY(0px) scale(0.985)',
+          boxShadow: '0 3px 8px rgba(37,99,235,0.15)',
+        } as any)
+      : null),
+    opacity: 0.95,
   },
   tableHorizontalScroll: {
     flex: 1,
@@ -637,6 +681,63 @@ export const analyticsStyles = StyleSheet.create({
   modalList: {
     flex: 1,
     minHeight: 0,
+  },
+  columnsModalScroll: {
+    maxHeight: 360,
+    width: '100%',
+  },
+  columnsModalContent: {
+    gap: 6,
+    paddingBottom: 6,
+  },
+  columnToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    ...(Platform.OS === 'web'
+      ? ({
+          transitionDuration: '120ms',
+          transitionProperty: 'transform, background-color, border-color',
+        } as any)
+      : null),
+  },
+  columnToggleRowHover: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#BFDBFE',
+    ...(Platform.OS === 'web' ? ({ transform: 'translateY(-1px)' } as any) : null),
+  },
+  columnToggleRowLocked: {
+    opacity: 0.72,
+    backgroundColor: '#F1F5F9',
+  },
+  columnToggleCheckbox: {
+    width: 18,
+    height: 18,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: '#94A3B8',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  columnToggleCheckboxActive: {
+    borderColor: '#93C5FD',
+    backgroundColor: '#DBEAFE',
+  },
+  columnToggleLabel: {
+    flex: 1,
+    color: '#0F172A',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  columnToggleLabelLocked: {
+    color: '#475569',
   },
   modalLoading: {
     paddingVertical: 16,
@@ -1144,6 +1245,41 @@ export const analyticsStyles = StyleSheet.create({
     color: '#1E3A8A',
     fontSize: 11,
     fontWeight: '700',
+  },
+  statusBadgeOpen: {
+    borderColor: '#93C5FD',
+    backgroundColor: '#DBEAFE',
+  },
+  statusBadgeTextOpen: {
+    color: '#1E3A8A',
+  },
+  statusBadgeInProgress: {
+    borderColor: '#FDE68A',
+    backgroundColor: '#FFFBEB',
+  },
+  statusBadgeTextInProgress: {
+    color: '#92400E',
+  },
+  statusBadgeResolved: {
+    borderColor: '#C4B5FD',
+    backgroundColor: '#F5F3FF',
+  },
+  statusBadgeTextResolved: {
+    color: '#5B21B6',
+  },
+  statusBadgeCompleted: {
+    borderColor: '#BBF7D0',
+    backgroundColor: '#F0FDF4',
+  },
+  statusBadgeTextCompleted: {
+    color: '#166534',
+  },
+  statusBadgeDeclined: {
+    borderColor: '#FECACA',
+    backgroundColor: '#FEF2F2',
+  },
+  statusBadgeTextDeclined: {
+    color: '#B91C1C',
   },
   deadlineCell: {
     justifyContent: 'center',

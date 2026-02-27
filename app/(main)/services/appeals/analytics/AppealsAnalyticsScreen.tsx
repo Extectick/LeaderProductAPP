@@ -36,11 +36,21 @@ import { AppealsTableSection } from './components/AppealsTableSection';
 import { UsersAnalyticsSection } from './components/UsersAnalyticsSection';
 import { AppealActionModals } from './components/AppealActionModals';
 import { analyticsStyles as styles } from './styles';
-import type { ActionKey, LaborDraftState, PeriodPreset, TabKey } from './types';
+import {
+  APPEALS_ANALYTICS_ALL_COLUMNS,
+  APPEALS_ANALYTICS_LOCKED_COLUMNS,
+  type ActionKey,
+  type LaborDraftState,
+  type PaymentStateFilter,
+  type PeriodPreset,
+  type TabKey,
+  type TableColumnKey,
+} from './types';
 import { blobToBase64, hydrateLaborDraftState, toDraftNumericString } from './helpers';
 
 const PAGE_SIZE = 20;
 const ANALYTICS_FILTERS_STORAGE_KEY = 'appeals_analytics_filters_v1';
+const ANALYTICS_VISIBLE_COLUMNS_STORAGE_KEY = 'appeals_analytics_visible_columns_v1';
 
 type StoredAnalyticsFilters = {
   periodPreset: PeriodPreset;
@@ -49,8 +59,24 @@ type StoredAnalyticsFilters = {
   departmentId: number | null;
   assigneeUserId: number | null;
   status: AppealStatus | null;
+  paymentState: PaymentStateFilter | null;
   searchInput: string;
 };
+
+function sanitizeVisibleColumns(raw: unknown): TableColumnKey[] {
+  const allowed = new Set<TableColumnKey>(APPEALS_ANALYTICS_ALL_COLUMNS);
+  const locked = new Set<TableColumnKey>(APPEALS_ANALYTICS_LOCKED_COLUMNS);
+  const parsedList = Array.isArray(raw) ? raw : [];
+  const selected = new Set<TableColumnKey>();
+  for (const item of parsedList) {
+    if (typeof item !== 'string') continue;
+    const key = item as TableColumnKey;
+    if (allowed.has(key)) selected.add(key);
+  }
+  for (const key of locked) selected.add(key);
+  if (!selected.size) return [...APPEALS_ANALYTICS_ALL_COLUMNS];
+  return APPEALS_ANALYTICS_ALL_COLUMNS.filter((key) => selected.has(key));
+}
 
 export default function AppealsAnalyticsScreen() {
   const router = useRouter();
@@ -68,9 +94,12 @@ export default function AppealsAnalyticsScreen() {
   const [departmentId, setDepartmentId] = useState<number | undefined>(undefined);
   const [assigneeUserId, setAssigneeUserId] = useState<number | undefined>(undefined);
   const [status, setStatus] = useState<AppealStatus | undefined>(undefined);
+  const [paymentState, setPaymentState] = useState<PaymentStateFilter | undefined>(undefined);
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [filtersHydrated, setFiltersHydrated] = useState(false);
+  const [visibleColumns, setVisibleColumns] = useState<TableColumnKey[]>([...APPEALS_ANALYTICS_ALL_COLUMNS]);
+  const [columnsHydrated, setColumnsHydrated] = useState(false);
 
   const [periodModalVisible, setPeriodModalVisible] = useState(false);
   const [periodDraftFrom, setPeriodDraftFrom] = useState<string | undefined>(undefined);
@@ -136,6 +165,7 @@ export default function AppealsAnalyticsScreen() {
         setDepartmentId(typeof parsed.departmentId === 'number' ? parsed.departmentId : undefined);
         setAssigneeUserId(typeof parsed.assigneeUserId === 'number' ? parsed.assigneeUserId : undefined);
         setStatus((parsed.status as AppealStatus | null | undefined) ?? undefined);
+        setPaymentState((parsed.paymentState as PaymentStateFilter | null | undefined) ?? undefined);
         const restoredSearch = String(parsed.searchInput || '');
         setSearchInput(restoredSearch);
         setSearch(restoredSearch.trim());
@@ -146,6 +176,30 @@ export default function AppealsAnalyticsScreen() {
       }
     };
     void restoreFilters();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    const restoreVisibleColumns = async () => {
+      try {
+        const raw = await AsyncStorage.getItem(ANALYTICS_VISIBLE_COLUMNS_STORAGE_KEY);
+        if (!mounted || !raw) return;
+        const parsed = JSON.parse(raw) as unknown;
+        setVisibleColumns(sanitizeVisibleColumns(parsed));
+      } catch {
+        if (mounted) {
+          setVisibleColumns([...APPEALS_ANALYTICS_ALL_COLUMNS]);
+        }
+      } finally {
+        if (mounted) {
+          setColumnsHydrated(true);
+        }
+      }
+    };
+    void restoreVisibleColumns();
     return () => {
       mounted = false;
     };
@@ -164,8 +218,9 @@ export default function AppealsAnalyticsScreen() {
       departmentId != null ||
       assigneeUserId != null ||
       status != null ||
+      paymentState != null ||
       searchInput.trim().length > 0,
-    [assigneeUserId, customFromDate, customToDate, departmentId, periodPreset, searchInput, status]
+    [assigneeUserId, customFromDate, customToDate, departmentId, paymentState, periodPreset, searchInput, status]
   );
 
   useEffect(() => {
@@ -177,6 +232,7 @@ export default function AppealsAnalyticsScreen() {
       departmentId: departmentId ?? null,
       assigneeUserId: assigneeUserId ?? null,
       status: status ?? null,
+      paymentState: paymentState ?? null,
       searchInput,
     };
 
@@ -193,9 +249,18 @@ export default function AppealsAnalyticsScreen() {
     filtersHydrated,
     hasActiveFilters,
     periodPreset,
+    paymentState,
     searchInput,
     status,
   ]);
+
+  useEffect(() => {
+    if (!columnsHydrated) return;
+    void AsyncStorage.setItem(
+      ANALYTICS_VISIBLE_COLUMNS_STORAGE_KEY,
+      JSON.stringify(sanitizeVisibleColumns(visibleColumns))
+    );
+  }, [columnsHydrated, visibleColumns]);
 
   const periodRange = useMemo(() => {
     if (periodPreset === 'all') {
@@ -222,9 +287,10 @@ export default function AppealsAnalyticsScreen() {
       departmentId,
       assigneeUserId,
       status,
+      paymentState,
       search: search || undefined,
     }),
-    [assigneeUserId, departmentId, periodRange.fromDate, periodRange.toDate, search, status]
+    [assigneeUserId, departmentId, paymentState, periodRange.fromDate, periodRange.toDate, search, status]
   );
   const queryKey = useMemo(() => JSON.stringify(query), [query]);
 
@@ -317,6 +383,7 @@ export default function AppealsAnalyticsScreen() {
         departmentId,
         assigneeUserId,
         status,
+        paymentState,
         search: search || undefined,
       });
       setKpiDashboard(data);
@@ -325,7 +392,7 @@ export default function AppealsAnalyticsScreen() {
     } finally {
       setLoadingKpi(false);
     }
-  }, [assigneeUserId, departmentId, periodRange.fromDate, periodRange.toDate, search, status]);
+  }, [assigneeUserId, departmentId, paymentState, periodRange.fromDate, periodRange.toDate, search, status]);
 
   const loadUsers = useCallback(async () => {
     setLoadingUsers(true);
@@ -410,6 +477,7 @@ export default function AppealsAnalyticsScreen() {
     setDepartmentId(undefined);
     setAssigneeUserId(undefined);
     setStatus(undefined);
+    setPaymentState(undefined);
     setSearchInput('');
     setSearch('');
   }, []);
@@ -702,7 +770,9 @@ export default function AppealsAnalyticsScreen() {
           departmentId,
           assigneeUserId,
           status,
+          paymentState,
           search: search || undefined,
+          columns: visibleColumns,
           format,
         });
         const fileName = `appeals_analytics_${Date.now()}.${format}`;
@@ -739,10 +809,12 @@ export default function AppealsAnalyticsScreen() {
       assigneeUserId,
       departmentId,
       exportBusy,
+      paymentState,
       periodRange.fromDate,
       periodRange.toDate,
       search,
       status,
+      visibleColumns,
     ]
   );
 
@@ -758,6 +830,14 @@ export default function AppealsAnalyticsScreen() {
     },
     [customFromDate, customToDate]
   );
+
+  const updateVisibleColumns = useCallback((next: TableColumnKey[]) => {
+    setVisibleColumns(sanitizeVisibleColumns(next));
+  }, []);
+
+  const resetVisibleColumns = useCallback(() => {
+    setVisibleColumns([...APPEALS_ANALYTICS_ALL_COLUMNS]);
+  }, []);
 
   return (
     <View style={styles.root}>
@@ -776,6 +856,8 @@ export default function AppealsAnalyticsScreen() {
           onAssigneeChange={setAssigneeUserId}
           status={status}
           onStatusChange={setStatus}
+          paymentState={paymentState}
+          onPaymentStateChange={setPaymentState}
           searchInput={searchInput}
           onSearchInputChange={setSearchInput}
           canResetFilters={hasActiveFilters}
@@ -807,6 +889,9 @@ export default function AppealsAnalyticsScreen() {
               void loadAppeals(false);
             }}
             onOpenActions={setMenuAppealId}
+            visibleColumns={visibleColumns}
+            onChangeVisibleColumns={updateVisibleColumns}
+            onResetVisibleColumns={resetVisibleColumns}
           />
         ) : (
           <UsersAnalyticsSection

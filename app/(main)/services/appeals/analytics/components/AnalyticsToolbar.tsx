@@ -3,7 +3,7 @@ import { Modal, Platform, Pressable, ScrollView, Text, TextInput, useWindowDimen
 import { Ionicons } from '@expo/vector-icons';
 import Dropdown from '@/components/ui/Dropdown';
 import type { AppealsAnalyticsMeta, AppealStatus } from '@/src/entities/appeal/types';
-import type { PeriodPreset, TabKey } from '../types';
+import type { PaymentStateFilter, PeriodPreset, TabKey } from '../types';
 import { analyticsStyles as styles } from '../styles';
 import { personName } from '../helpers';
 
@@ -21,6 +21,8 @@ type Props = {
   onAssigneeChange: (assigneeUserId: number | undefined) => void;
   status?: AppealStatus;
   onStatusChange: (status: AppealStatus | undefined) => void;
+  paymentState?: PaymentStateFilter;
+  onPaymentStateChange: (paymentState: PaymentStateFilter | undefined) => void;
   searchInput: string;
   onSearchInputChange: (value: string) => void;
   canResetFilters: boolean;
@@ -46,6 +48,8 @@ export function AnalyticsToolbar({
   onAssigneeChange,
   status,
   onStatusChange,
+  paymentState,
+  onPaymentStateChange,
   searchInput,
   onSearchInputChange,
   canResetFilters,
@@ -209,6 +213,22 @@ export function AnalyticsToolbar({
           />
         </View>
 
+        {tab === 'appeals' ? (
+          <View style={filterColStyle}>
+            <Text style={styles.filterLabel}>Состояние оплаты</Text>
+            <Dropdown
+              value={paymentState ?? 'all'}
+              onChange={(value) => onPaymentStateChange(value === 'all' ? undefined : (value as PaymentStateFilter))}
+              items={[
+                { label: 'Все состояния оплаты', value: 'all' },
+                { label: 'Оплачено', value: 'PAID' },
+                { label: 'Не оплачено', value: 'UNPAID' },
+                { label: 'Не установлено', value: 'UNSET' },
+              ]}
+            />
+          </View>
+        ) : null}
+
         <View style={exportColStyle}>
           <Text style={styles.filterLabel}>Экспорт</Text>
           <Dropdown
@@ -362,6 +382,22 @@ export function AnalyticsToolbar({
               ]}
             />
           </View>
+
+          {tab === 'appeals' ? (
+            <View style={styles.filterCol}>
+              <Text style={styles.filterLabel}>Состояние оплаты</Text>
+              <Dropdown
+                value={paymentState ?? 'all'}
+                onChange={(value) => onPaymentStateChange(value === 'all' ? undefined : (value as PaymentStateFilter))}
+                items={[
+                  { label: 'Все состояния оплаты', value: 'all' },
+                  { label: 'Оплачено', value: 'PAID' },
+                  { label: 'Не оплачено', value: 'UNPAID' },
+                  { label: 'Не установлено', value: 'UNSET' },
+                ]}
+              />
+            </View>
+          ) : null}
 
           <View style={styles.searchCol}>
             <Text style={styles.filterLabel}>Поиск по всем значениям</Text>

@@ -4,6 +4,7 @@ import type {
   AppealStatus,
   UserMini,
 } from '@/src/entities/appeal/types';
+import type { TableColumnKey } from './types';
 
 export function formatHoursByMs(ms: number | null | undefined) {
   if (typeof ms !== 'number' || Number.isNaN(ms)) return '-';
@@ -142,6 +143,75 @@ export function laborSummaryText(appeal: AppealsAnalyticsAppealItem) {
     return `${personName(assignee)} — начисл. ${formatHoursValue(accruedHours, { withUnit: false })}, выпл. ${formatHoursValue(paidHours, { withUnit: false })}, остаток ${formatHoursValue(remainingHours)} • ${formatRub(rate)}/ч`;
   });
   return rows.length ? rows.join('; ') : 'Исполнители не назначены';
+}
+
+type LaborMultilineColumns = Record<
+  Extract<
+    TableColumnKey,
+    'assignees' | 'hoursAccrued' | 'hoursPaid' | 'hoursRemaining' | 'hourlyRate' | 'amountAccrued' | 'amountPaid' | 'amountRemaining'
+  >,
+  string
+>;
+
+export function buildAppealLaborMultilineColumns(appeal: AppealsAnalyticsAppealItem): LaborMultilineColumns {
+  const assignees = appeal.assignees || [];
+  if (!assignees.length) {
+    return {
+      assignees: 'Исполнители не назначены',
+      hoursAccrued: '—',
+      hoursPaid: '—',
+      hoursRemaining: '—',
+      hourlyRate: '—',
+      amountAccrued: '—',
+      amountPaid: '—',
+      amountRemaining: '—',
+    };
+  }
+
+  const lines: Record<keyof LaborMultilineColumns, string[]> = {
+    assignees: [],
+    hoursAccrued: [],
+    hoursPaid: [],
+    hoursRemaining: [],
+    hourlyRate: [],
+    amountAccrued: [],
+    amountPaid: [],
+    amountRemaining: [],
+  };
+
+  for (const assignee of assignees) {
+    const labor = (appeal.laborEntries || []).find((entry) => entry.assigneeUserId === assignee.id);
+    const isUnset = !labor;
+    const accruedHours = labor?.accruedHours ?? 0;
+    const paidHours = labor?.paidHours ?? 0;
+    const remainingHours = labor?.remainingHours ?? Math.max(0, accruedHours - paidHours);
+
+    lines.assignees.push(personName(assignee));
+    lines.hoursAccrued.push(formatHoursValue(accruedHours));
+    lines.hoursPaid.push(formatHoursValue(paidHours));
+    lines.hoursRemaining.push(formatHoursValue(remainingHours));
+    if (isUnset) {
+      lines.hourlyRate.push('Не установлено');
+    } else if (labor.payable) {
+      lines.hourlyRate.push(`${formatRub(labor.effectiveHourlyRateRub)}/ч`);
+    } else {
+      lines.hourlyRate.push('Не требуется');
+    }
+    lines.amountAccrued.push(formatRub(labor?.amountAccruedRub ?? 0));
+    lines.amountPaid.push(formatRub(labor?.amountPaidRub ?? 0));
+    lines.amountRemaining.push(formatRub(labor?.amountRemainingRub ?? 0));
+  }
+
+  return {
+    assignees: lines.assignees.join('\n'),
+    hoursAccrued: lines.hoursAccrued.join('\n'),
+    hoursPaid: lines.hoursPaid.join('\n'),
+    hoursRemaining: lines.hoursRemaining.join('\n'),
+    hourlyRate: lines.hourlyRate.join('\n'),
+    amountAccrued: lines.amountAccrued.join('\n'),
+    amountPaid: lines.amountPaid.join('\n'),
+    amountRemaining: lines.amountRemaining.join('\n'),
+  };
 }
 
 export function participantsList(appeal: AppealsAnalyticsAppealItem) {

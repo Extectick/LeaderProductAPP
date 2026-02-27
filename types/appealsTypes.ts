@@ -244,6 +244,27 @@ export interface AppealsAnalyticsAppealsResponse {
   };
 }
 
+export type AppealsAnalyticsPaymentState = 'PAID' | 'UNPAID' | 'UNSET';
+
+export type AppealsAnalyticsTableColumnKey =
+  | 'number'
+  | 'title'
+  | 'status'
+  | 'department'
+  | 'deadline'
+  | 'slaOpen'
+  | 'slaWork'
+  | 'slaToTake'
+  | 'slaToResolve'
+  | 'assignees'
+  | 'hoursAccrued'
+  | 'hoursPaid'
+  | 'hoursRemaining'
+  | 'hourlyRate'
+  | 'amountAccrued'
+  | 'amountPaid'
+  | 'amountRemaining';
+
 export interface AppealsAnalyticsUsersSummaryItem {
   user: UserMini & {
     hourlyRateRub: number | null;
