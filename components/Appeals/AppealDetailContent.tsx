@@ -10,6 +10,7 @@ import {
   Modal,
   ScrollView,
   ActivityIndicator,
+  TextInput,
   Keyboard,
   Dimensions,
   useWindowDimensions,
@@ -125,6 +126,7 @@ export default function AppealDetailContent({
   const [peopleView, setPeopleView] = useState<'list' | 'profile'>('list');
   const [selectedProfileUserId, setSelectedProfileUserId] = useState<number | null>(null);
   const [peopleSkeletonVisible, setPeopleSkeletonVisible] = useState(false);
+  const [peopleSearchQuery, setPeopleSearchQuery] = useState('');
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
 
   const devLog = useCallback(
@@ -836,6 +838,17 @@ export default function AppealDetailContent({
   );
 
   const participantPresenceMap = usePresence(participantIds);
+  const filteredPeopleList = useMemo(() => {
+    const query = peopleSearchQuery.trim().toLowerCase();
+    if (!query) return peopleList;
+    return peopleList.filter((participant) => {
+      const person = participant.user;
+      const displayName = [person.firstName, person.lastName].filter(Boolean).join(' ').toLowerCase();
+      const email = String(person.email || '').toLowerCase();
+      const department = String(person.department?.name || '').toLowerCase();
+      return displayName.includes(query) || email.includes(query) || department.includes(query);
+    });
+  }, [peopleList, peopleSearchQuery]);
   const assignMemberIds = useMemo(
     () =>
       (deptMembers || [])
@@ -890,6 +903,7 @@ export default function AppealDetailContent({
   useEffect(() => {
     if (!peopleModalVisible) {
       setPeopleSkeletonVisible(false);
+      setPeopleSearchQuery('');
       return;
     }
     setPeopleSkeletonVisible(true);
@@ -1130,37 +1144,57 @@ export default function AppealDetailContent({
                 <PeopleModalSkeleton />
               ) : peopleView === 'list' ? (
                 peopleList.length ? (
-                  <ScrollView style={styles.modalList} contentContainerStyle={styles.modalListContent}>
-                    {peopleList.map((participant) => {
-                      const person = participant.user;
-                      const displayName =
-                        [person.firstName, person.lastName].filter(Boolean).join(' ') ||
-                        person.email ||
-                        `Пользователь #${person.id}`;
-                      const presence = participantPresenceMap[person.id];
-                      const presenceLabel = getPresenceLabel(presence);
-                      const isOnline = !!presence?.isOnline;
+                  <>
+                    <View style={styles.peopleSearchRow}>
+                      <Ionicons name="search-outline" size={16} color="#64748B" />
+                      <TextInput
+                        value={peopleSearchQuery}
+                        onChangeText={setPeopleSearchQuery}
+                        placeholder="Поиск пользователя"
+                        placeholderTextColor="#94A3B8"
+                        style={styles.peopleSearchInput}
+                      />
+                    </View>
+                    <ScrollView style={styles.modalList} contentContainerStyle={styles.modalListContent}>
+                      {filteredPeopleList.length === 0 ? (
+                        <Text style={styles.modalEmpty}>Пользователи не найдены</Text>
+                      ) : (
+                        filteredPeopleList.map((participant) => {
+                          const person = participant.user;
+                          const displayName =
+                            [person.firstName, person.lastName].filter(Boolean).join(' ') ||
+                            person.email ||
+                            `Пользователь #${person.id}`;
+                          const presence = participantPresenceMap[person.id];
+                          const presenceLabel = getPresenceLabel(presence);
+                          const isOnline = !!presence?.isOnline;
 
-                      return (
-                        <Pressable
-                          key={`participant-${person.id}`}
-                          style={styles.participantRowPressable}
-                          onPress={() => openProfileCard(person.id)}
-                        >
-                          <AppealParticipantCard
-                            user={person}
-                            displayName={displayName}
-                            presenceText={presenceLabel}
-                            isOnline={isOnline}
-                            isCreator={participant.isCreator}
-                            isAssignee={participant.isAssignee}
-                            style={styles.participantRowGradient}
-                            rightSlot={<Ionicons name="chevron-forward-outline" size={18} color="#6B7280" />}
-                          />
-                        </Pressable>
-                      );
-                    })}
-                  </ScrollView>
+                          return (
+                            <Pressable
+                              key={`participant-${person.id}`}
+                              style={(state: any) => [
+                                styles.participantRowPressable,
+                                state?.hovered ? styles.participantRowPressableHover : null,
+                                state?.pressed ? styles.participantRowPressablePressed : null,
+                              ]}
+                              onPress={() => openProfileCard(person.id)}
+                            >
+                              <AppealParticipantCard
+                                user={person}
+                                displayName={displayName}
+                                presenceText={presenceLabel}
+                                isOnline={isOnline}
+                                isCreator={participant.isCreator}
+                                isAssignee={participant.isAssignee}
+                                style={styles.participantRowGradient}
+                                rightSlot={<Ionicons name="chevron-forward-outline" size={18} color="#6B7280" />}
+                              />
+                            </Pressable>
+                          );
+                        })
+                      )}
+                    </ScrollView>
+                  </>
                 ) : (
                   <Text style={styles.modalEmpty}>Участники не найдены</Text>
                 )
@@ -1532,8 +1566,60 @@ const styles = StyleSheet.create({
     padding: 0,
     overflow: 'hidden',
   },
+  peopleSearchRow: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+    minHeight: 42,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  peopleSearchInput: {
+    flex: 1,
+    color: '#0F172A',
+    fontSize: 14,
+    fontWeight: '500',
+    minHeight: 24,
+    paddingVertical: 0,
+    ...(Platform.OS === 'web'
+      ? ({
+          outlineStyle: 'none',
+          outlineWidth: 0,
+        } as any)
+      : null),
+  },
   participantRowPressable: {
     marginBottom: 10,
+    borderRadius: 14,
+    ...(Platform.OS === 'web'
+      ? ({
+          transitionDuration: '120ms',
+          transitionProperty: 'transform, opacity, box-shadow',
+          boxShadow: '0 0 0 rgba(15,23,42,0)',
+        } as any)
+      : null),
+  },
+  participantRowPressableHover: {
+    ...(Platform.OS === 'web'
+      ? ({
+          transform: 'translateY(-1px)',
+          boxShadow: '0 9px 16px rgba(15,23,42,0.12)',
+        } as any)
+      : null),
+  },
+  participantRowPressablePressed: {
+    ...(Platform.OS === 'web'
+      ? ({
+          transform: 'translateY(0px) scale(0.99)',
+          boxShadow: '0 4px 8px rgba(15,23,42,0.1)',
+        } as any)
+      : null),
+    opacity: 0.97,
   },
   participantRowGradient: {
     flexDirection: 'row',

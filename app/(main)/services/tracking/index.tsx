@@ -1,64 +1,36 @@
-import { useThemeColor } from '@/hooks/useThemeColor';
 import { AuthContext } from '@/context/AuthContext';
-import { AdminUserItem, getUsers } from '@/utils/userService';
+import { useNotificationViewport } from '@/context/NotificationViewportContext';
 import {
-  fetchUserRoutesWithPoints,
-  RoutePointDto,
-  RouteWithPoints,
-} from '@/utils/trackingService';
+  DEFAULT_MAX_ACCURACY,
+  DEFAULT_POINTS_LIMIT,
+  filterNearbyPoints,
+  formatDateTime,
+  humanName,
+  parseLimitValue,
+} from './helpers';
+import type { Filters, PointLabel, UserOption } from './types';
+import { getUsers } from '@/utils/userService';
+import { fetchUserRoutesWithPoints, type RouteWithPoints } from '@/utils/trackingService';
 import { Ionicons } from '@expo/vector-icons';
-import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
-import React, {
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Dimensions,
-  Modal,
+  Animated,
+  Easing,
+  Image,
   Platform,
   Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
   Text,
   TextInput,
   View,
+  useWindowDimensions,
 } from 'react-native';
-import RangeCalendarModal from '@/components/RangeCalendarModal';
 import LeafletMap from './LeafletMap';
-import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
-// react-native-maps временно отключаем, чтобы не ломать веб-сборку
-const MapView: any = null;
-const Polyline: any = null;
-const Marker: any = null;
-
-type Region = {
-  latitude: number;
-  longitude: number;
-  latitudeDelta: number;
-  longitudeDelta: number;
-};
-
-type UserOption = Pick<
-  AdminUserItem,
-  'id' | 'email' | 'firstName' | 'lastName' | 'middleName' | 'phone'
->;
-
-type Filters = {
-  from: string;
-  to: string;
-  maxAccuracy: string;
-  maxPoints: string;
-};
-
-const DEFAULT_POINTS_LIMIT = 100;
-const DEFAULT_MAX_ACCURACY = 20;
-const MIN_POINT_DISTANCE_METERS = 12;
+import { trackingStyles as styles } from './styles';
+import TrackingPeriodRangeModal from './components/TrackingPeriodRangeModal';
+import TrackingUserPickerModal from './components/TrackingUserPickerModal';
+import TrackingPointsIsland, { type TrackingPointRow } from './components/TrackingPointsIsland';
+import { useServicesHeaderSlot } from '../headerSlotContext';
 
 const defaultFilters: Filters = {
   from: '',
@@ -67,201 +39,127 @@ const defaultFilters: Filters = {
   maxPoints: DEFAULT_POINTS_LIMIT.toString(),
 };
 
-const formatDateTime = (value?: string | null) => {
-  if (!value) return '-';
-  try {
-    return new Date(value).toLocaleString();
-  } catch {
-    return value;
-  }
-};
-
-const humanName = (u?: UserOption | null) => {
-  if (!u) return 'Не выбрано';
-  const parts = [u.lastName, u.firstName, u.middleName].filter(Boolean);
-  if (parts.length) return parts.join(' ');
-  return u.email || `ID ${u.id}`;
-};
-
-const isoToDate = (iso?: string | null) => {
-  if (!iso) return null;
-  const d = new Date(iso);
-  return isNaN(d.getTime()) ? null : d;
-};
-
-const formatDateOnly = (d?: Date | null) => {
-  if (!d) return '';
-  try {
-    return d.toLocaleDateString('ru-RU', { year: 'numeric', month: '2-digit', day: '2-digit' });
-  } catch {
-    const pad = (n: number) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  }
-};
-
-const formatTime = (d?: Date | null) => {
-  if (!d) return '';
-  const pad = (n: number) => n.toString().padStart(2, '0');
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-};
-
-const parseTime = (value: string) => {
-  const match = value.trim().match(/^(\d{1,2}):?(\d{0,2})$/);
-  if (!match) return null;
-  const hours = parseInt(match[1], 10);
-  const minutes = parseInt(match[2] || '0', 10);
-  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
-  return { hours, minutes };
-};
-
-const toRad = (deg: number) => (deg * Math.PI) / 180;
-const calcDistanceMeters = (
-  a: { latitude: number; longitude: number },
-  b: { latitude: number; longitude: number }
-) => {
-  const dLat = toRad(b.latitude - a.latitude);
-  const dLon = toRad(b.longitude - a.longitude);
-  const lat1 = toRad(a.latitude);
-  const lat2 = toRad(b.latitude);
-  const sinLat = Math.sin(dLat / 2);
-  const sinLon = Math.sin(dLon / 2);
-  const h =
-    sinLat * sinLat +
-    Math.cos(lat1) * Math.cos(lat2) * sinLon * sinLon;
-  const c = 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
-  return 6371000 * c;
-};
-
-const filterNearbyPoints = (
-  pts: RoutePointDto[],
-  minDistanceMeters = MIN_POINT_DISTANCE_METERS
-) => {
-  if (pts.length < 2) return pts;
-  const result: RoutePointDto[] = [];
-  for (const p of pts) {
-    const tooClose = result.some(
-      (keep) => calcDistanceMeters(keep, p) < minDistanceMeters
-    );
-    if (!tooClose) {
-      result.push(p);
-    }
-  }
-  return result;
-};
-
-const parseLimitValue = (
-  value?: string | number | null,
-  fallback = DEFAULT_POINTS_LIMIT
-) => {
-  const parsed =
-    typeof value === 'number'
-      ? value
-      : parseInt(String(value ?? '').trim(), 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return fallback;
-  }
-  return Math.min(parsed, 2000);
-};
+const POINTS_BATCH_SIZE_DESKTOP = 12;
+const POINTS_BATCH_SIZE_MOBILE = 8;
 
 export default function TrackingServiceScreen() {
-  const headerTopInset = useHeaderContentTopInset({ hasSubtitle: true });
+  const { width, height } = useWindowDimensions();
+  const { headerBottomOffset } = useNotificationViewport();
+  const { setHeaderBottomSlot, setHeaderRightSlot } = useServicesHeaderSlot();
   const auth = useContext(AuthContext);
   const profile = auth?.profile;
+
   const canViewOthers = useMemo(() => {
     const role = (profile?.role?.name || '').toLowerCase();
     return role.includes('admin') || role.includes('manager');
   }, [profile]);
+
+  const isWeb = Platform.OS === 'web';
+  const isMobileWeb = isWeb && width < 920;
+  const isCompactWeb = isWeb && width < 720;
+  const headerFilterSizing = useMemo(() => {
+    if (isMobileWeb) {
+      return {
+        wrapMaxWidth: 0,
+        gap: 8,
+        metricWidth: 0,
+        periodWidth: 0,
+        iconButtonWidth: 52,
+        userMinWidth: 72,
+        userMaxWidth: 0,
+        periodClearWidth: 40,
+        periodFontSize: 14,
+        showLastSeen: true,
+        showMetricLabels: true,
+      };
+    }
+    const slotSpace = Math.max(520, Math.min(1280, width - 500));
+    const t = Math.max(0, Math.min(1, (slotSpace - 520) / 760));
+    return {
+      wrapMaxWidth: slotSpace,
+      gap: Math.round(4 + t * 4),
+      metricWidth: Math.round(104 + t * 72),
+      periodWidth: Math.round(150 + t * 138),
+      iconButtonWidth: Math.round(40 + t * 12),
+      userMinWidth: Math.round(48 + t * 24),
+      periodClearWidth: Math.round(30 + t * 10),
+      periodFontSize: t > 0.35 ? 13 : 12,
+      showLastSeen: t > 0.55,
+      showMetricLabels: t > 0.28,
+    };
+  }, [isMobileWeb, width]);
 
   const [selectedUser, setSelectedUser] = useState<UserOption | null>(null);
   const [userQuery, setUserQuery] = useState('');
   const [userOptions, setUserOptions] = useState<UserOption[]>([]);
   const [userSearchLoading, setUserSearchLoading] = useState(false);
   const [userPickerVisible, setUserPickerVisible] = useState(false);
+  const userSearchRequestIdRef = useRef(0);
+  const lastLoadedUserQueryRef = useRef<string>('');
 
   const [filters, setFilters] = useState<Filters>(defaultFilters);
+  const filtersRef = useRef<Filters>(defaultFilters);
+
   const [routes, setRoutes] = useState<RouteWithPoints[]>([]);
   const [loadingRoutes, setLoadingRoutes] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const filtersRef = useRef<Filters>(filters);
-  const [pickerField, setPickerField] = useState<'from' | 'to' | null>(null);
-  const [dateModalVisible, setDateModalVisible] = useState(false);
-  const [calendarDate, setCalendarDate] = useState<Date | null>(null);
-  const [CalendarComponent, setCalendarComponent] = useState<React.ComponentType<any> | null>(null);
-  const [timeInput, setTimeInput] = useState('');
-  const [dateError, setDateError] = useState<string | null>(null);
+
   const [periodCalendarVisible, setPeriodCalendarVisible] = useState(false);
-  const [mapModalVisible, setMapModalVisible] = useState(false);
+  const [mobileFiltersExpanded, setMobileFiltersExpanded] = useState(false);
+  const [mobilePointsExpanded, setMobilePointsExpanded] = useState(false);
+  const [mobilePointsCollapseRequestId, setMobilePointsCollapseRequestId] = useState(0);
   const [selectedPointIndex, setSelectedPointIndex] = useState<number | null>(null);
-  const [controlledRegion, setControlledRegion] = useState<Region | null>(null);
-  const mapRef = useRef<any>(null);
-  const [mapInteracting, setMapInteracting] = useState(false);
-  const handleMapTouchStart = useCallback(() => setMapInteracting(true), []);
-  const handleMapTouchEnd = useCallback(() => setMapInteracting(false), []);
-  useEffect(() => {
-    if (!mapInteracting) return;
-    const t = setTimeout(() => setMapInteracting(false), 1200);
-    return () => clearTimeout(t);
-  }, [mapInteracting]);
-  const isWeb = Platform.OS === 'web';
-  const screenH = Dimensions.get('window').height;
-  const modalMapHeight = useMemo(
-    () => (isWeb ? Math.min(screenH * 0.82, 900) : screenH * 0.6),
-    [isWeb, screenH]
-  );
-
-  const background = useThemeColor({}, 'background');
-  const cardBackground = useThemeColor({}, 'cardBackground');
-  const textColor = useThemeColor({}, 'text');
-  const mutedText = useThemeColor({}, 'secondaryText');
+  const [visiblePointsCount, setVisiblePointsCount] = useState(POINTS_BATCH_SIZE_DESKTOP);
+  const mobileFiltersAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    if (profile) {
-      setSelectedUser({
-        id: profile.id,
-        email: profile.email || '',
-        firstName: profile.firstName ?? null,
-        lastName: profile.lastName ?? null,
-        middleName: profile.middleName ?? null,
-        phone: profile.phone ?? null,
-      });
-    }
+    if (!profile) return;
+    const profileAny = profile as any;
+    setSelectedUser({
+      id: profile.id,
+      email: profile.email || '',
+      firstName: profile.firstName ?? null,
+      lastName: profile.lastName ?? null,
+      middleName: profile.middleName ?? null,
+      phone: profile.phone ?? null,
+      avatarUrl: profileAny?.avatarUrl ?? null,
+      departmentName: profileAny?.department?.name ?? null,
+      isOnline: profileAny?.isOnline ?? false,
+      lastSeenAt: profileAny?.lastSeenAt ?? null,
+      role: profileAny?.role ?? null,
+    });
   }, [profile]);
-
-  useEffect(() => {
-    if (Platform.OS !== 'web') return;
-    let mounted = true;
-    void import('react-calendar')
-      .then((mod) => {
-        if (!mounted) return;
-        setCalendarComponent(() => (mod.default as React.ComponentType<any>) ?? null);
-      })
-      .catch((e) => {
-        console.warn('react-calendar not available:', e);
-        if (mounted) setCalendarComponent(null);
-      });
-    return () => {
-      mounted = false;
-    };
-  }, []);
 
   const searchUsers = useCallback(async () => {
     if (!canViewOthers) return;
+    const requestId = ++userSearchRequestIdRef.current;
+    const query = userQuery.trim();
     setUserSearchLoading(true);
     try {
-      const list = await getUsers(userQuery);
+      const list = await getUsers(query);
+      if (requestId !== userSearchRequestIdRef.current) return;
       setUserOptions(list);
+      lastLoadedUserQueryRef.current = query;
     } catch (e: any) {
       console.error('Не удалось получить список пользователей', e);
     } finally {
-      setUserSearchLoading(false);
+      if (requestId === userSearchRequestIdRef.current) {
+        setUserSearchLoading(false);
+      }
     }
   }, [canViewOthers, userQuery]);
 
   useEffect(() => {
-    if (canViewOthers) {
-      searchUsers();
-    }
-  }, [canViewOthers, searchUsers]);
+    if (!userPickerVisible || !canViewOthers) return;
+    const query = userQuery.trim();
+    const hasSameLoadedQuery =
+      lastLoadedUserQueryRef.current === query && userOptions.length > 0;
+    if (hasSameLoadedQuery) return;
+    const timer = setTimeout(() => {
+      void searchUsers();
+    }, 280);
+    return () => clearTimeout(timer);
+  }, [canViewOthers, searchUsers, userOptions.length, userPickerVisible, userQuery]);
 
   useEffect(() => {
     filtersRef.current = filters;
@@ -307,14 +205,11 @@ export default function TrackingServiceScreen() {
     return [...pts].sort((a, b) => {
       const ta = new Date(a.recordedAt || 0).getTime();
       const tb = new Date(b.recordedAt || 0).getTime();
-      return tb - ta; // новые сверху
+      return tb - ta;
     });
   }, [activeRoute]);
 
-  const spacedPoints = useMemo(
-    () => filterNearbyPoints(points),
-    [points]
-  );
+  const spacedPoints = useMemo(() => filterNearbyPoints(points), [points]);
 
   const displayLimit = useMemo(
     () => parseLimitValue(filters.maxPoints, DEFAULT_POINTS_LIMIT),
@@ -326,954 +221,653 @@ export default function TrackingServiceScreen() {
     [spacedPoints, displayLimit]
   );
 
-  const baseRegion: Region | null = useMemo(() => {
-    if (!limitedPoints.length) return null;
-    const first = limitedPoints[0];
-    return {
-      latitude: first.latitude,
-      longitude: first.longitude,
-      latitudeDelta: 0.05,
-      longitudeDelta: 0.05,
-    };
-  }, [limitedPoints]);
-
-  const polylineCoords = useMemo(
+  const pointLabels = useMemo<PointLabel[]>(
     () =>
-      limitedPoints.map((p) => ({
-        latitude: p.latitude,
-        longitude: p.longitude,
+      limitedPoints.map((point, idx) => ({
+        latitude: point.latitude,
+        longitude: point.longitude,
+        label: `${idx + 1}. ${formatDateTime(point.recordedAt)}`,
       })),
     [limitedPoints]
   );
 
-  const hasPolyline = polylineCoords.length > 0;
-  const nativeMapAvailable = false; // временно всегда используем Leaflet (см. коммент выше)
-
-  const pointLabels = useMemo(
+  const pointDateFormatter = useMemo(
     () =>
-      limitedPoints.map((p, idx) => ({
-        latitude: p.latitude,
-        longitude: p.longitude,
-        label: `${idx + 1}. ${formatDateTime(p.recordedAt)}`,
-      })),
-    [limitedPoints]
+      new Intl.DateTimeFormat('ru-RU', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+      }),
+    []
   );
+  const pointTimeFormatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat('ru-RU', {
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+    []
+  );
+  const filteredPointRows = useMemo<TrackingPointRow[]>(
+    () =>
+      limitedPoints.map((point, globalIdx) => {
+        const dt = new Date(point.recordedAt || 0);
+        const dateLabel = Number.isNaN(dt.getTime()) ? '-' : pointDateFormatter.format(dt);
+        const timeLabel = Number.isNaN(dt.getTime()) ? '-' : pointTimeFormatter.format(dt);
+        return { point, globalIdx, dateLabel, timeLabel };
+      }),
+    [limitedPoints, pointDateFormatter, pointTimeFormatter]
+  );
+
+  const pointsBatchSize = isMobileWeb ? POINTS_BATCH_SIZE_MOBILE : POINTS_BATCH_SIZE_DESKTOP;
+  const visiblePoints = useMemo(
+    () => filteredPointRows.slice(0, visiblePointsCount),
+    [filteredPointRows, visiblePointsCount]
+  );
+  const hasMoreVisiblePoints = visiblePoints.length < filteredPointRows.length;
+  const selectedPointPosition = useMemo(() => {
+    if (filteredPointRows.length === 0) return -1;
+    if (selectedPointIndex == null) return 0;
+    return filteredPointRows.findIndex((row) => row.globalIdx === selectedPointIndex);
+  }, [filteredPointRows, selectedPointIndex]);
+  const hasPrevPoint = selectedPointPosition > 0;
+  const hasNextPoint =
+    selectedPointPosition >= 0 && selectedPointPosition < filteredPointRows.length - 1;
 
   useEffect(() => {
-    if (baseRegion) {
-      setControlledRegion(baseRegion);
-    } else {
-      setControlledRegion(null);
+    setVisiblePointsCount(pointsBatchSize);
+  }, [filteredPointRows.length, pointsBatchSize]);
+
+  const mapHeight = useMemo(() => Math.max(height, 360), [height]);
+  const desktopPointPanelTop = useMemo(
+    () => Math.max(headerBottomOffset + 4, 92),
+    [headerBottomOffset]
+  );
+  const selectedUserInitials = useMemo(() => {
+    const first = String(selectedUser?.firstName || '').trim();
+    const last = String(selectedUser?.lastName || '').trim();
+    if (first || last) {
+      return `${first[0] || ''}${last[0] || first[1] || ''}`.toUpperCase();
     }
-    setSelectedPointIndex(null);
-  }, [baseRegion]);
-
-  useEffect(() => {
-    if (!mapModalVisible) setMapInteracting(false);
-  }, [mapModalVisible]);
+    const local = String(selectedUser?.email || '').split('@')[0];
+    if (local.length >= 2) return local.slice(0, 2).toUpperCase();
+    if (local.length === 1) return `${local}${local}`.toUpperCase();
+    return 'U';
+  }, [selectedUser?.email, selectedUser?.firstName, selectedUser?.lastName]);
+  const selectedUserLastSeenLabel = useMemo(() => {
+    if (selectedUser?.isOnline) return 'В сети сейчас';
+    if (!selectedUser?.lastSeenAt) return 'Последний визит: нет данных';
+    const parsed = new Date(selectedUser.lastSeenAt);
+    if (Number.isNaN(parsed.getTime())) return 'Последний визит: нет данных';
+    return `Был(а) в сети: ${parsed.toLocaleString('ru-RU')}`;
+  }, [selectedUser?.isOnline, selectedUser?.lastSeenAt]);
+  const rangeLabel = useMemo(() => {
+    const formatRangeDate = (iso?: string) => {
+      if (!iso) return '—';
+      const parsed = new Date(iso);
+      if (Number.isNaN(parsed.getTime())) return '—';
+      return parsed.toLocaleDateString('ru-RU');
+    };
+    return `${formatRangeDate(filters.from)} - ${formatRangeDate(filters.to)}`;
+  }, [filters.from, filters.to]);
 
   const focusPoint = useCallback(
     (idx: number) => {
       if (!limitedPoints[idx]) return;
       setSelectedPointIndex(idx);
-      const p = limitedPoints[idx];
-      const region: Region = {
-        latitude: p.latitude,
-        longitude: p.longitude,
-        latitudeDelta: 0.01,
-        longitudeDelta: 0.01,
-      };
-      setControlledRegion(region);
-      if (mapRef.current && Platform.OS !== 'web') {
-        mapRef.current.animateToRegion(region, 350);
-      }
     },
     [limitedPoints]
   );
 
-  const openDatePicker = (field: 'from' | 'to') => {
-    setPickerField(field);
-    const current = isoToDate(filtersRef.current[field]) || new Date();
-    setCalendarDate(current);
-    setTimeInput(formatTime(current));
-    setDateError(null);
-    setDateModalVisible(true);
-  };
+  const clearPeriod = useCallback(() => {
+    const next = {
+      ...filtersRef.current,
+      from: '',
+      to: '',
+    };
+    setFilters(next);
+    filtersRef.current = next;
+  }, []);
 
-  const applyDateInput = () => {
-    if (!pickerField) return;
-    const base = calendarDate || new Date();
-    const parsedTime = parseTime(timeInput || '00:00');
-    if (!parsedTime) {
-      setDateError('Неверное время (чч:мм)');
+  const primaryBtnStyle = useCallback(
+    (state: any) => [
+      styles.primaryBtn,
+      state?.hovered && styles.primaryBtnHover,
+      state?.pressed && styles.primaryBtnPressed,
+    ],
+    []
+  );
+  const secondaryBtnStyle = useCallback(
+    (state: any) => [
+      styles.secondaryBtn,
+      state?.hovered && styles.secondaryBtnHover,
+      state?.pressed && styles.secondaryBtnPressed,
+    ],
+    []
+  );
+
+  const loadMoreVisiblePoints = useCallback(() => {
+    if (!hasMoreVisiblePoints) return;
+    setVisiblePointsCount((prev) => Math.min(prev + pointsBatchSize, filteredPointRows.length));
+  }, [filteredPointRows.length, hasMoreVisiblePoints, pointsBatchSize]);
+  const focusPrevMobilePoint = useCallback(() => {
+    if (!hasPrevPoint || selectedPointPosition < 1) return;
+    const prevRow = filteredPointRows[selectedPointPosition - 1];
+    if (!prevRow) return;
+    focusPoint(prevRow.globalIdx);
+  }, [filteredPointRows, focusPoint, hasPrevPoint, selectedPointPosition]);
+  const focusNextMobilePoint = useCallback(() => {
+    if (!hasNextPoint || selectedPointPosition < 0) return;
+    const nextRow = filteredPointRows[selectedPointPosition + 1];
+    if (!nextRow) return;
+    focusPoint(nextRow.globalIdx);
+  }, [filteredPointRows, focusPoint, hasNextPoint, selectedPointPosition]);
+
+  useEffect(() => {
+    if (!isMobileWeb && mobileFiltersExpanded) {
+      setMobileFiltersExpanded(false);
+    }
+  }, [isMobileWeb, mobileFiltersExpanded]);
+  useEffect(() => {
+    if (!isMobileWeb && mobilePointsExpanded) {
+      setMobilePointsExpanded(false);
+    }
+  }, [isMobileWeb, mobilePointsExpanded]);
+  useEffect(() => {
+    if (!isMobileWeb || !mobilePointsExpanded) return;
+    if (selectedPointIndex != null) return;
+    const first = filteredPointRows[0];
+    if (!first) return;
+    setSelectedPointIndex(first.globalIdx);
+  }, [filteredPointRows, isMobileWeb, mobilePointsExpanded, selectedPointIndex]);
+
+  useEffect(() => {
+    if (!isMobileWeb) {
+      mobileFiltersAnim.setValue(0);
       return;
     }
-    const dt = new Date(base);
-    dt.setHours(parsedTime.hours, parsedTime.minutes, 0, 0);
-    const iso = dt.toISOString();
-    setFilters((prev) => ({ ...prev, [pickerField]: iso }));
-    filtersRef.current = { ...filtersRef.current, [pickerField]: iso };
-    setDateModalVisible(false);
-    setPickerField(null);
-  };
-
-  const openPeriodCalendar = () => {
-    setPeriodCalendarVisible(true);
-  };
-
-  const openNativePicker = () => {
-    if (!pickerField) return;
-    if (Platform.OS === 'android' && DateTimePickerAndroid) {
-      const initial = isoToDate(filtersRef.current[pickerField]) || new Date();
-      DateTimePickerAndroid.open({
-        value: initial,
-        mode: 'date',
-        is24Hour: true,
-        onChange: (event, date?: Date) => {
-          if (!date || (event && event.type === 'dismissed')) return;
-          setCalendarDate(date);
-          setTimeInput(formatTime(date));
-        },
-      });
-    }
-  };
-
-  const onRefresh = useCallback(() => {
-    loadRoutes();
-  }, [loadRoutes]);
-
-  return (
-    <View style={{ flex: 1, backgroundColor: background }}>
-      <ScrollView
-        contentContainerStyle={[
-          styles.scrollContent,
-          isWeb && styles.webContentContainer,
-          { paddingTop: 16 + headerTopInset },
+    Animated.timing(mobileFiltersAnim, {
+      toValue: mobileFiltersExpanded ? 1 : 0,
+      duration: mobileFiltersExpanded ? 220 : 180,
+      easing: mobileFiltersExpanded ? Easing.out(Easing.cubic) : Easing.inOut(Easing.quad),
+      useNativeDriver: false,
+    }).start();
+  }, [isMobileWeb, mobileFiltersAnim, mobileFiltersExpanded]);
+  const headerFiltersSlot = useMemo(
+    () => (
+      <View
+        style={[
+          styles.headerFiltersWrap,
+          !isMobileWeb && styles.headerFiltersWrapDesktop,
+          !isMobileWeb && { maxWidth: headerFilterSizing.wrapMaxWidth },
         ]}
-        scrollEnabled={!mapInteracting}
-        refreshControl={<RefreshControl refreshing={loadingRoutes} onRefresh={onRefresh} />}
       >
-        <Text style={[styles.title, { color: textColor }]}>История перемещений</Text>
-        <Text style={{ color: mutedText }}>
-          Сервис показывает точки трека за выбранный период. Выберите пользователя и период, затем
-          работайте с картой и списком точек.
-        </Text>
-
-        <View style={[styles.card, { backgroundColor: cardBackground }]}>
-          <Text style={[styles.blockTitle, { color: textColor }]}>Пользователь</Text>
-          <Pressable
-            onPress={() => setUserPickerVisible(true)}
+        {isMobileWeb ? (
+          <Animated.View
+            pointerEvents={mobileFiltersExpanded ? 'auto' : 'none'}
             style={[
-              styles.input,
+              styles.mobileFiltersAnimatedWrap,
               {
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                borderColor: mutedText,
+                opacity: mobileFiltersAnim,
+                maxHeight: mobileFiltersAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0, 240],
+                }),
+                transform: [
+                  {
+                    translateY: mobileFiltersAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [-8, 0],
+                    }),
+                  },
+                ],
               },
             ]}
           >
-            <Text style={{ color: textColor, flex: 1 }} numberOfLines={2} ellipsizeMode="tail">
-              {humanName(selectedUser)}
-            </Text>
-            <Ionicons name="chevron-down" size={18} color={mutedText} />
-          </Pressable>
-          {!canViewOthers && (
-            <Text style={{ color: mutedText, marginTop: 6 }}>
-              Вы можете просматривать только собственные треки.
-            </Text>
-          )}
-        </View>
-
-        <View style={[styles.card, { backgroundColor: cardBackground }]}>
-          <View style={styles.periodHeader}>
-            <Text style={[styles.blockTitle, { color: textColor, flex: 1 }]}>Период</Text>
+            <View style={styles.mobileFiltersStack}>
             <Pressable
-              onPress={openPeriodCalendar}
-              style={({ pressed }) => [
-                styles.secondaryBtn,
-                styles.inlineBtn,
-                pressed && { opacity: 0.9 },
+              onPress={() => canViewOthers && setUserPickerVisible(true)}
+              disabled={!canViewOthers}
+              style={(state: any) => [
+                styles.topOverlayField,
+                styles.topOverlayUserField,
+                styles.mobileUserField,
+                !canViewOthers && { opacity: 0.65 },
+                state?.hovered && canViewOthers && { borderColor: '#93C5FD' },
+                state?.pressed && { opacity: 0.95, transform: [{ scale: 0.99 }] },
               ]}
             >
-              <Ionicons name="calendar" size={16} color="#0B1220" style={{ marginRight: 6 }} />
-              <Text style={styles.secondaryBtnText}>Календарь</Text>
+              <View style={styles.topOverlayUserInfo}>
+                <View style={styles.topOverlayUserAvatarWrap}>
+                  {selectedUser?.avatarUrl ? (
+                    <Image source={{ uri: selectedUser.avatarUrl }} style={styles.topOverlayUserAvatar} />
+                  ) : (
+                    <View style={styles.topOverlayUserAvatarFallback}>
+                      <Text style={styles.topOverlayUserAvatarFallbackText}>{selectedUserInitials}</Text>
+                    </View>
+                  )}
+                  <View
+                    style={[
+                      styles.topOverlayUserPresenceDot,
+                      { backgroundColor: selectedUser?.isOnline ? '#22C55E' : '#94A3B8' },
+                    ]}
+                  />
+                </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.inputValue} numberOfLines={1}>
+                    {humanName(selectedUser)}
+                  </Text>
+                  <Text style={styles.topOverlayUserLastSeen} numberOfLines={1}>
+                    {selectedUserLastSeenLabel}
+                  </Text>
+                </View>
+              </View>
+              <Ionicons name="chevron-down" size={16} color="#64748B" />
             </Pressable>
-          </View>
-          <View style={styles.filterRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.label, { color: mutedText }]}>От</Text>
+
+            <View style={[styles.topOverlayPeriodControl, styles.topOverlayPeriodControlMobile]}>
               <Pressable
-                onPress={() => openDatePicker('from')}
-                style={[styles.input, styles.dateInput, { borderColor: mutedText }]}
+                onPress={() => setPeriodCalendarVisible(true)}
+                style={(state: any) => [
+                  styles.topOverlayPeriodMainBtn,
+                  state?.hovered && { backgroundColor: '#DBEAFE' },
+                  state?.pressed && { opacity: 0.95 },
+                ]}
               >
-                <Text style={{ color: textColor, flex: 1 }} numberOfLines={2} ellipsizeMode="tail">
-                  {filters.from ? formatDateTime(filters.from) : 'Выбрать дату'}
+                <Ionicons name="calendar-clear-outline" size={16} color="#1D4ED8" />
+                <Text style={styles.secondaryBtnText} numberOfLines={1}>
+                  {rangeLabel}
                 </Text>
-                <Ionicons name="calendar-outline" size={18} color={mutedText} />
+              </Pressable>
+              <Pressable
+                onPress={clearPeriod}
+                accessibilityLabel="Очистить период"
+                disabled={!filters.from && !filters.to}
+                style={(state: any) => [
+                  styles.topOverlayPeriodClearBtn,
+                  (!filters.from && !filters.to) && { opacity: 0.45 },
+                  state?.hovered && (filters.from || filters.to) && { backgroundColor: '#DBEAFE' },
+                  state?.pressed && (filters.from || filters.to) && { opacity: 0.9 },
+                ]}
+              >
+                <Ionicons name="close-outline" size={16} color="#1D4ED8" />
               </Pressable>
             </View>
-            <View style={{ width: 12 }} />
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.label, { color: mutedText }]}>До</Text>
-              <Pressable
-                onPress={() => openDatePicker('to')}
-                style={[styles.input, styles.dateInput, { borderColor: mutedText }]}
-              >
-                <Text style={{ color: textColor, flex: 1 }} numberOfLines={2} ellipsizeMode="tail">
-                  {filters.to ? formatDateTime(filters.to) : 'Выбрать дату'}
-                </Text>
-                <Ionicons name="calendar-outline" size={18} color={mutedText} />
-              </Pressable>
-            </View>
-          </View>
 
-          <View style={[styles.filterRow, { marginTop: 8 }]}>
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.label, { color: mutedText }]}>Макс. точность (м)</Text>
-              <TextInput
-                value={filters.maxAccuracy}
-                onChangeText={(v) => setFilters((prev) => ({ ...prev, maxAccuracy: v }))}
-                keyboardType="numeric"
-                placeholder={DEFAULT_MAX_ACCURACY.toString()}
-                placeholderTextColor={mutedText}
-                style={[styles.input, { color: textColor, borderColor: mutedText }]}
-              />
-            </View>
-            <View style={{ width: 12 }} />
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.label, { color: mutedText }]}>Макс. точек</Text>
-              <TextInput
-                value={filters.maxPoints}
-                onChangeText={(v) => setFilters((prev) => ({ ...prev, maxPoints: v }))}
-                keyboardType="numeric"
-                placeholder={DEFAULT_POINTS_LIMIT.toString()}
-                placeholderTextColor={mutedText}
-                style={[styles.input, { color: textColor, borderColor: mutedText }]}
-              />
-            </View>
-          </View>
+            <View style={styles.mobileMetricsRow}>
+              <View style={[styles.topOverlayField, styles.topOverlayLabeledField, styles.mobileMetricField]}>
+                <Text style={styles.topOverlayFieldLabel}>Точность, м</Text>
+                <View style={styles.topOverlayInputRow}>
+                  <Ionicons name="locate-outline" size={16} color="#64748B" />
+                  <TextInput
+                    value={filters.maxAccuracy}
+                    onChangeText={(value) => setFilters((prev) => ({ ...prev, maxAccuracy: value }))}
+                    keyboardType="numeric"
+                    placeholder="Напр. 20"
+                    placeholderTextColor="#94A3B8"
+                    style={styles.textInput}
+                  />
+                </View>
+              </View>
 
-          <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+              <View style={[styles.topOverlayField, styles.topOverlayLabeledField, styles.mobileMetricField]}>
+                <Text style={styles.topOverlayFieldLabel}>Количество точек</Text>
+                <View style={styles.topOverlayInputRow}>
+                  <Ionicons name="list-outline" size={16} color="#64748B" />
+                  <TextInput
+                    value={filters.maxPoints}
+                    onChangeText={(value) => setFilters((prev) => ({ ...prev, maxPoints: value }))}
+                    keyboardType="numeric"
+                    placeholder="Напр. 100"
+                    placeholderTextColor="#94A3B8"
+                    style={styles.textInput}
+                  />
+                </View>
+              </View>
+            </View>
+            </View>
+          </Animated.View>
+        ) : (
+          <View style={[styles.topOverlayGrid, { gap: headerFilterSizing.gap }]}>
             <Pressable
-              onPress={() => setFilters(defaultFilters)}
-              style={({ pressed }) => [styles.secondaryBtn, pressed && { opacity: 0.9 }]}
+              onPress={() => canViewOthers && setUserPickerVisible(true)}
+              disabled={!canViewOthers}
+              style={(state: any) => [
+                styles.topOverlayField,
+                styles.topOverlayUserField,
+                { minWidth: headerFilterSizing.userMinWidth },
+                !canViewOthers && { opacity: 0.65 },
+                state?.hovered && canViewOthers && { borderColor: '#93C5FD' },
+                state?.pressed && { opacity: 0.95, transform: [{ scale: 0.99 }] },
+              ]}
             >
-              <Text style={styles.secondaryBtnText}>Сбросить</Text>
+              <View style={styles.topOverlayUserInfo}>
+                <View style={styles.topOverlayUserAvatarWrap}>
+                  {selectedUser?.avatarUrl ? (
+                    <Image source={{ uri: selectedUser.avatarUrl }} style={styles.topOverlayUserAvatar} />
+                  ) : (
+                    <View style={styles.topOverlayUserAvatarFallback}>
+                      <Text style={styles.topOverlayUserAvatarFallbackText}>{selectedUserInitials}</Text>
+                    </View>
+                  )}
+                  <View
+                    style={[
+                      styles.topOverlayUserPresenceDot,
+                      { backgroundColor: selectedUser?.isOnline ? '#22C55E' : '#94A3B8' },
+                    ]}
+                  />
+                </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.inputValue} numberOfLines={1}>
+                    {humanName(selectedUser)}
+                  </Text>
+                  {headerFilterSizing.showLastSeen ? (
+                    <Text style={styles.topOverlayUserLastSeen} numberOfLines={1}>
+                      {selectedUserLastSeenLabel}
+                    </Text>
+                  ) : null}
+                </View>
+              </View>
+              <Ionicons name="chevron-down" size={16} color="#64748B" />
             </Pressable>
+
+            <View
+              style={[
+                styles.topOverlayField,
+                styles.topOverlayLabeledField,
+                styles.topOverlayAccuracyField,
+                {
+                  width: headerFilterSizing.metricWidth,
+                  minWidth: headerFilterSizing.metricWidth,
+                },
+                !headerFilterSizing.showMetricLabels && styles.topOverlayFieldCompact,
+              ]}
+            >
+              {headerFilterSizing.showMetricLabels ? (
+                <Text style={styles.topOverlayFieldLabel}>Точность, м</Text>
+              ) : null}
+              <View
+                style={[
+                  styles.topOverlayInputRow,
+                  !headerFilterSizing.showMetricLabels && styles.topOverlayInputRowCompact,
+                ]}
+              >
+                <Ionicons name="locate-outline" size={16} color="#64748B" />
+                <TextInput
+                  value={filters.maxAccuracy}
+                  onChangeText={(value) => setFilters((prev) => ({ ...prev, maxAccuracy: value }))}
+                  keyboardType="numeric"
+                  placeholder="Напр. 20"
+                  placeholderTextColor="#94A3B8"
+                  style={styles.textInput}
+                />
+              </View>
+            </View>
+
+            <View
+              style={[
+                styles.topOverlayField,
+                styles.topOverlayLabeledField,
+                styles.topOverlayPointsField,
+                {
+                  width: headerFilterSizing.metricWidth,
+                  minWidth: headerFilterSizing.metricWidth,
+                },
+                !headerFilterSizing.showMetricLabels && styles.topOverlayFieldCompact,
+              ]}
+            >
+              {headerFilterSizing.showMetricLabels ? (
+                <Text style={styles.topOverlayFieldLabel}>Количество точек</Text>
+              ) : null}
+              <View
+                style={[
+                  styles.topOverlayInputRow,
+                  !headerFilterSizing.showMetricLabels && styles.topOverlayInputRowCompact,
+                ]}
+              >
+                <Ionicons name="list-outline" size={16} color="#64748B" />
+                <TextInput
+                  value={filters.maxPoints}
+                  onChangeText={(value) => setFilters((prev) => ({ ...prev, maxPoints: value }))}
+                  keyboardType="numeric"
+                  placeholder="Напр. 100"
+                  placeholderTextColor="#94A3B8"
+                  style={styles.textInput}
+                />
+              </View>
+            </View>
+
+            <View
+              style={[
+                styles.topOverlayPeriodControl,
+                {
+                  width: headerFilterSizing.periodWidth,
+                  minWidth: headerFilterSizing.periodWidth,
+                  maxWidth: headerFilterSizing.periodWidth,
+                },
+              ]}
+            >
+              <Pressable
+                onPress={() => setPeriodCalendarVisible(true)}
+                style={(state: any) => [
+                  styles.topOverlayPeriodMainBtn,
+                  state?.hovered && { backgroundColor: '#DBEAFE' },
+                  state?.pressed && { opacity: 0.95 },
+                ]}
+              >
+                <Ionicons name="calendar-clear-outline" size={16} color="#1D4ED8" />
+                <Text
+                  style={[styles.secondaryBtnText, { fontSize: headerFilterSizing.periodFontSize }]}
+                  numberOfLines={1}
+                >
+                  {rangeLabel}
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={clearPeriod}
+                accessibilityLabel="Очистить период"
+                disabled={!filters.from && !filters.to}
+                style={(state: any) => [
+                  styles.topOverlayPeriodClearBtn,
+                  { width: headerFilterSizing.periodClearWidth },
+                  (!filters.from && !filters.to) && { opacity: 0.45 },
+                  state?.hovered && (filters.from || filters.to) && { backgroundColor: '#DBEAFE' },
+                  state?.pressed && (filters.from || filters.to) && { opacity: 0.9 },
+                ]}
+              >
+                <Ionicons name="close-outline" size={16} color="#1D4ED8" />
+              </Pressable>
+            </View>
 
             <Pressable
               onPress={() => loadRoutes(filters)}
-              style={({ pressed }) => [styles.primaryBtn, pressed && { opacity: 0.85 }]}
-            >
-              {loadingRoutes ? (
-                <ActivityIndicator color="#0B1220" />
-              ) : (
-                <Text style={styles.primaryBtnText}>Загрузить</Text>
-              )}
-            </Pressable>
-          </View>
-        </View>
-
-        <View style={[styles.card, { backgroundColor: cardBackground }]}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-            <Text style={[styles.blockTitle, { color: textColor, flex: 1 }]}>Карта трека</Text>
-            <Pressable
-              onPress={() => setMapModalVisible(true)}
-              style={({ pressed }) => [
-                styles.secondaryBtn,
-                { paddingVertical: 6, paddingHorizontal: 10 },
-                pressed && { opacity: 0.85 },
-              ]}
-            >
-              <Text style={styles.secondaryBtnText}>Открыть карту</Text>
-            </Pressable>
-        </View>
-          {nativeMapAvailable ? (
-            <View
-              onStartShouldSetResponderCapture={() => {
-                handleMapTouchStart();
-                return false;
-              }}
-              onResponderRelease={handleMapTouchEnd}
-              onResponderTerminate={handleMapTouchEnd}
-            >
-              <MapView
-                ref={(ref: any) => (mapRef.current = ref)}
-                style={styles.map}
-                region={controlledRegion || baseRegion || undefined}
-                showsUserLocation={false}
-                showsMyLocationButton={false}
-              >
-                {polylineCoords.length > 1 && (
-                  <Polyline coordinates={polylineCoords} strokeColor="#2563eb" strokeWidth={4} />
-                )}
-                {polylineCoords[0] && <Marker coordinate={polylineCoords[0]} pinColor="green" title="Старт" />}
-                {polylineCoords[polylineCoords.length - 1] && (
-                  <Marker
-                    coordinate={polylineCoords[polylineCoords.length - 1]}
-                    pinColor="red"
-                    title="Финиш"
-                  />
-                )}
-                {pointLabels.map((p, idx) => (
-                  <Marker
-                    key={`pt-${idx}-${p.latitude}-${p.longitude}`}
-                    coordinate={{ latitude: p.latitude, longitude: p.longitude }}
-                    title={p.label}
-                    pinColor={selectedPointIndex === idx ? '#ef4444' : undefined}
-                  />
-                ))}
-              </MapView>
-            </View>
-          ) : hasPolyline ? (
-            <View
-              onStartShouldSetResponderCapture={() => {
-                handleMapTouchStart();
-                return false;
-              }}
-              onResponderRelease={handleMapTouchEnd}
-              onResponderTerminate={handleMapTouchEnd}
-            >
-              <LeafletMap points={pointLabels} selectedIndex={selectedPointIndex} />
-            </View>
-          ) : (
-            <Text style={{ color: mutedText }}>
-              Карта недоступна или нет точек для отображения. Проверьте трек.
-            </Text>
-          )}
-        </View>
-
-        <View style={[styles.card, { backgroundColor: cardBackground }]}>
-          <Text style={[styles.blockTitle, { color: textColor, marginBottom: 8 }]}>
-            Точки трека ({limitedPoints.length}
-            {spacedPoints.length > limitedPoints.length ? ` из ${spacedPoints.length}` : ''})
-          </Text>
-          {spacedPoints.length === 0 ? (
-            <Text style={{ color: mutedText }}>Нет точек за выбранный период.</Text>
-          ) : (
-            <View style={{ gap: 8 }}>
-              {limitedPoints.map((p, idx) => (
-                <Pressable
-                  key={p.id}
-                  onPress={() => focusPoint(idx)}
-                  style={[
-                    styles.pointItem,
-                    {
-                      borderColor:
-                        selectedPointIndex === idx ? '#2563eb' : 'rgba(0,0,0,0.05)',
-                    },
-                  ]}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.pointTime, { color: textColor }]}>
-                      {formatDateTime(p.recordedAt)}
-                    </Text>
-                    <Text style={{ color: mutedText, fontSize: 12, flexWrap: 'wrap' }}>
-                      {p.latitude.toFixed(5)}, {p.longitude.toFixed(5)}
-                    </Text>
-                  </View>
-                  <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={{ color: mutedText, fontSize: 12, flexWrap: 'wrap', maxWidth: 100 }}>
-                      {p.eventType === 'STOP' ? 'стоп' : 'движение'}
-                    </Text>
-                    {p.accuracy != null && (
-                      <Text style={{ color: mutedText, fontSize: 12 }}>+{p.accuracy} м</Text>
-                    )}
-                  </View>
-                </Pressable>
-              ))}
-              {spacedPoints.length > limitedPoints.length && (
-                <Text style={{ color: mutedText, fontSize: 12 }}>
-                  Показаны первые {limitedPoints.length} точек из {spacedPoints.length} после фильтра дублей и ограничений.
-                </Text>
-              )}
-            </View>
-          )}
-        </View>
-
-        {error && !loadingRoutes ? (
-          <Text style={{ color: '#dc2626', marginTop: 6 }}>{error}</Text>
-        ) : null}
-      </ScrollView>
-
-      <Modal
-        visible={userPickerVisible}
-        animationType="none"
-        transparent
-        onRequestClose={() => setUserPickerVisible(false)}
-      >
-        <View style={styles.modalBackdrop}>
-          <View
-            style={[
-              styles.modalCard,
-              { backgroundColor: cardBackground },
-              isWeb && styles.webModalCard,
-            ]}
-          >
-            <View style={styles.modalHeader}>
-              <Text style={[styles.blockTitle, { color: textColor, marginBottom: 0 }]}>
-                Выбор пользователя
-              </Text>
-              <Pressable onPress={() => setUserPickerVisible(false)}>
-                <Ionicons name="close" size={20} color={textColor} />
-              </Pressable>
-            </View>
-
-            <TextInput
-              placeholder="Поиск по имени или email"
-              placeholderTextColor={mutedText}
-              value={userQuery}
-              onChangeText={setUserQuery}
-              onSubmitEditing={searchUsers}
-              style={[
-                styles.input,
-                { color: textColor, borderColor: mutedText, width: '100%' },
-              ]}
-            />
-            <View style={{ minHeight: 28, justifyContent: 'center', marginTop: 6 }}>
-              {userSearchLoading ? (
-                <ActivityIndicator color={textColor} size="small" />
-              ) : null}
-            </View>
-
-            <ScrollView style={{ maxHeight: 320 }} contentContainerStyle={{ gap: 8 }}>
-              {userOptions.length === 0 ? (
-                <Text style={{ color: mutedText }}>Нет результатов</Text>
-              ) : (
-                userOptions.map((item) => {
-                  const isActive = selectedUser?.id === item.id;
-                  return (
-                    <Pressable
-                      key={item.id}
-                      onPress={() => {
-                        setSelectedUser(item);
-                        setUserPickerVisible(false);
-                      }}
-                      style={[
-                        styles.modalUserRow,
-                        { borderColor: isActive ? '#2563eb' : 'rgba(0,0,0,0.05)' },
-                      ]}
-                    >
-                      <Text style={{ color: textColor, fontWeight: '700' }}>
-                        {humanName(item)}
-                      </Text>
-                      <Text style={{ color: mutedText, fontSize: 12 }}>{item.email}</Text>
-                    </Pressable>
-                  );
-                })
-              )}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-
-      <Modal
-        visible={dateModalVisible}
-        transparent
-        animationType="none"
-        onRequestClose={() => {
-          setDateModalVisible(false);
-          setPickerField(null);
-        }}
-      >
-        <View style={styles.modalBackdrop}>
-          <View
-            style={[
-              styles.modalCard,
-              { backgroundColor: cardBackground, width: '100%' },
-              isWeb && styles.webModalCard,
-            ]}
-          >
-            <View style={styles.modalHeader}>
-              <Text style={[styles.blockTitle, { color: textColor, marginBottom: 0 }]}>
-                Выбор даты и времени
-              </Text>
-              <Pressable
-                onPress={() => {
-                  setDateModalVisible(false);
-                  setPickerField(null);
-                }}
-              >
-                <Ionicons name="close" size={20} color={textColor} />
-              </Pressable>
-            </View>
-
-            {Platform.OS === 'web' && CalendarComponent ? (
-              <CalendarComponent
-                value={calendarDate || new Date()}
-                onChange={(val: Date) => {
-                  setCalendarDate(val);
-                  setDateError(null);
-                }}
-              />
-            ) : Platform.OS === 'ios' && DateTimePicker ? (
-              <View style={{ marginTop: 12 }}>
-                <DateTimePicker
-                  value={calendarDate || new Date()}
-                  mode="datetime"
-                  display="inline"
-                  onChange={(_: any, date?: Date) => {
-                    if (!date) return;
-                    setCalendarDate(date);
-                    setTimeInput(formatTime(date));
-                    setDateError(null);
-                  }}
-                />
-              </View>
-            ) : null}
-
-            <Text style={{ color: mutedText, marginTop: 12 }}>Дата</Text>
-            <Pressable
-              onPress={openNativePicker}
-              disabled={Platform.OS === 'web'}
-              style={({ pressed }) => [
-                styles.dateInputShell,
-                pressed && { opacity: 0.9 },
-                Platform.OS === 'web' && { cursor: 'default' as any },
-              ]}
-            >
-              <Ionicons name="calendar-outline" size={18} color={mutedText} />
-              <Text style={{ color: calendarDate ? textColor : mutedText, fontWeight: '700' }}>
-                {formatDateOnly(calendarDate || isoToDate(filtersRef.current[pickerField || 'from']) || new Date())}
-              </Text>
-            </Pressable>
-
-            <Text style={{ color: mutedText, marginTop: 12 }}>Время (чч:мм)</Text>
-            <TextInput
-              value={timeInput}
-              onChangeText={(val) => {
-                setDateError(null);
-                setTimeInput(val.replace(/[^\d:]/g, '').slice(0, 5));
-              }}
-              keyboardType="numeric"
-              placeholder="00:00"
-              placeholderTextColor={mutedText}
-              style={[
-                styles.input,
+              accessibilityLabel="Обновить маршруты"
+              style={(state: any) => [
+                ...primaryBtnStyle(state),
+                styles.topOverlayActionBtn,
+                styles.topOverlayIconOnlyBtn,
                 {
-                  color: textColor,
-                  borderColor: mutedText,
-                  backgroundColor: cardBackground,
-                  borderRadius: 12,
+                  width: headerFilterSizing.iconButtonWidth,
+                  minWidth: headerFilterSizing.iconButtonWidth,
                 },
               ]}
-            />
-            {dateError ? (
-              <Text style={{ color: '#dc2626', marginTop: 6 }}>{dateError}</Text>
-            ) : null}
-
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
-              <Pressable
-                onPress={() => {
-                  setDateModalVisible(false);
-                  setPickerField(null);
-                }}
-                style={({ pressed }) => [styles.secondaryBtn, pressed && { opacity: 0.9 }]}
-              >
-                <Text style={styles.secondaryBtnText}>Отмена</Text>
-              </Pressable>
-              <Pressable
-                onPress={applyDateInput}
-                style={({ pressed }) => [styles.primaryBtn, pressed && { opacity: 0.85 }]}
-              >
-                <Text style={styles.primaryBtnText}>Применить</Text>
-              </Pressable>
-            </View>
+            >
+              {loadingRoutes ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Ionicons name="sync-outline" size={18} color="#FFFFFF" />
+              )}
+            </Pressable>
           </View>
-        </View>
-      </Modal>
+        )}
+        {error ? <Text style={styles.topOverlayError}>{error}</Text> : null}
+      </View>
+    ),
+    [
+      canViewOthers,
+      error,
+      filters,
+      isMobileWeb,
+      mobileFiltersAnim,
+      mobileFiltersExpanded,
+      loadingRoutes,
+      rangeLabel,
+      clearPeriod,
+      headerFilterSizing,
+      selectedUser,
+      selectedUserInitials,
+      selectedUserLastSeenLabel,
+      loadRoutes,
+      primaryBtnStyle,
+    ]
+  );
 
-      <RangeCalendarModal
+  const mobileHeaderControlsSlot = useMemo(
+    () => (
+      <View style={styles.mobileHeaderControlsRow}>
+        <Pressable
+          onPress={() => loadRoutes(filters)}
+          accessibilityLabel="Обновить маршруты"
+          style={(state: any) => [
+            ...primaryBtnStyle(state),
+            styles.topOverlayActionBtn,
+            styles.mobileHeaderIconBtn,
+          ]}
+        >
+          {loadingRoutes ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Ionicons name="sync-outline" size={16} color="#FFFFFF" />
+          )}
+        </Pressable>
+        <Pressable
+          onPress={() => setMobileFiltersExpanded((prev) => !prev)}
+          accessibilityLabel={mobileFiltersExpanded ? 'Свернуть фильтры' : 'Открыть фильтры'}
+          style={(state: any) => [
+            ...secondaryBtnStyle(state),
+            styles.topOverlayActionBtn,
+            styles.mobileHeaderIconBtn,
+            mobileFiltersExpanded && styles.mobileHeaderIconBtnActive,
+          ]}
+        >
+          <Ionicons name="options-outline" size={16} color="#1D4ED8" />
+        </Pressable>
+      </View>
+    ),
+    [
+      filters,
+      loadRoutes,
+      loadingRoutes,
+      mobileFiltersExpanded,
+      primaryBtnStyle,
+      secondaryBtnStyle,
+    ]
+  );
+
+  useEffect(() => {
+    if (isMobileWeb) {
+      setHeaderRightSlot(mobileHeaderControlsSlot);
+      setHeaderBottomSlot(headerFiltersSlot);
+      return () => {
+        setHeaderBottomSlot(null);
+        setHeaderRightSlot(null);
+      };
+    }
+    setHeaderBottomSlot(null);
+    setHeaderRightSlot(headerFiltersSlot);
+    return () => setHeaderRightSlot(null);
+  }, [
+    headerFiltersSlot,
+    isMobileWeb,
+    mobileHeaderControlsSlot,
+    setHeaderBottomSlot,
+    setHeaderRightSlot,
+  ]);
+
+  return (
+    <View style={styles.fullMapRoot}>
+      {isMobileWeb && mobileFiltersExpanded ? (
+        <Pressable
+          style={styles.mobileFiltersBackdrop}
+          onPress={() => setMobileFiltersExpanded(false)}
+        />
+      ) : null}
+      <View style={styles.fullMapLayer}>
+        <LeafletMap
+          points={pointLabels}
+          selectedIndex={selectedPointIndex}
+          selectedVerticalOffsetPx={
+            isMobileWeb && mobilePointsExpanded && selectedPointIndex != null
+              ? Math.max(48, Math.round(mapHeight * 0.18))
+              : 0
+          }
+          onMapTap={() => {
+            if (!isMobileWeb || !mobilePointsExpanded) return;
+            setMobilePointsExpanded(false);
+            setMobilePointsCollapseRequestId((prev) => prev + 1);
+          }}
+          height={mapHeight}
+        />
+      </View>
+
+      <View pointerEvents="none" style={styles.fullMapTint} />
+      <TrackingPointsIsland
+        isMobileWeb={isMobileWeb}
+        rows={filteredPointRows}
+        visibleRows={visiblePoints}
+        selectedPointIndex={selectedPointIndex}
+        onSelectPoint={focusPoint}
+        onPrev={focusPrevMobilePoint}
+        onNext={focusNextMobilePoint}
+        hasPrev={hasPrevPoint}
+        hasNext={hasNextPoint}
+        onLoadMore={loadMoreVisiblePoints}
+        hasMore={hasMoreVisiblePoints}
+        desktopTop={desktopPointPanelTop}
+        onExpandedChange={setMobilePointsExpanded}
+        collapseRequestId={mobilePointsCollapseRequestId}
+      />
+
+      <TrackingUserPickerModal
+        visible={userPickerVisible}
+        userQuery={userQuery}
+        userSearchLoading={userSearchLoading}
+        userOptions={userOptions}
+        selectedUserId={selectedUser?.id}
+        onClose={() => setUserPickerVisible(false)}
+        onChangeQuery={setUserQuery}
+        onSubmitSearch={searchUsers}
+        onSelectUser={(user) => {
+          setSelectedUser(user);
+          setUserPickerVisible(false);
+        }}
+      />
+
+      <TrackingPeriodRangeModal
         visible={periodCalendarVisible}
-        onClose={() => setPeriodCalendarVisible(false)}
+        compact={isCompactWeb}
         initialFrom={filtersRef.current.from || null}
         initialTo={filtersRef.current.to || null}
+        onClose={() => setPeriodCalendarVisible(false)}
         onApply={(from, to) => {
-          const next = { ...filtersRef.current, from: from.toISOString(), to: to.toISOString() };
+          const next = {
+            ...filtersRef.current,
+            from: from.toISOString(),
+            to: to.toISOString(),
+          };
           filtersRef.current = next;
           setFilters(next);
         }}
         onReset={() => {
-          const next = { ...filtersRef.current, from: '', to: '' };
+          const next = {
+            ...filtersRef.current,
+            from: '',
+            to: '',
+          };
           filtersRef.current = next;
           setFilters(next);
         }}
-        colors={{ cardBackground, text: textColor, muted: mutedText }}
       />
-
-      <Modal
-        visible={mapModalVisible}
-        transparent
-        animationType="none"
-        onRequestClose={() => setMapModalVisible(false)}
-      >
-        <View
-          style={[
-            styles.modalBackdrop,
-            {
-              padding: isWeb ? 8 : 12,
-              justifyContent: isWeb ? 'flex-end' : 'center',
-            },
-          ]}
-        >
-          <View
-            style={[
-              styles.fullscreenModal,
-              { backgroundColor: cardBackground },
-              isWeb ? styles.webFullscreenModal : styles.mobileFullscreenModal,
-            ]}
-          >
-            <View style={styles.modalHeader}>
-              <Text style={[styles.blockTitle, { color: textColor, marginBottom: 0 }]}>
-                Карта трека
-              </Text>
-              <Pressable onPress={() => setMapModalVisible(false)}>
-                <Ionicons name="close" size={20} color={textColor} />
-              </Pressable>
-            </View>
-            <View
-              style={[
-                styles.fullscreenContent,
-                isWeb ? styles.fullscreenContentWeb : styles.fullscreenContentMobile,
-              ]}
-            >
-              <View style={styles.modalMapColumn}>
-                <View
-                  style={[
-                    styles.fullscreenMap,
-                    {
-                      minHeight: modalMapHeight,
-                      height: isWeb ? undefined : modalMapHeight,
-                    },
-                  ]}
-                  onStartShouldSetResponderCapture={() => {
-                    handleMapTouchStart();
-                    return false;
-                  }}
-                  onResponderRelease={handleMapTouchEnd}
-                  onResponderTerminate={handleMapTouchEnd}
-                >
-                  {nativeMapAvailable ? (
-                    <MapView
-                      ref={(ref: any) => (mapRef.current = ref)}
-                      style={StyleSheet.absoluteFill}
-                      region={controlledRegion || baseRegion || undefined}
-                      showsUserLocation={false}
-                      showsMyLocationButton={false}
-                    >
-                      {polylineCoords.length > 1 && (
-                        <Polyline coordinates={polylineCoords} strokeColor="#2563eb" strokeWidth={4} />
-                      )}
-                      {polylineCoords[0] && (
-                        <Marker coordinate={polylineCoords[0]} pinColor="green" title="Старт" />
-                      )}
-                      {polylineCoords[polylineCoords.length - 1] && (
-                        <Marker
-                          coordinate={polylineCoords[polylineCoords.length - 1]}
-                          pinColor="red"
-                          title="Финиш"
-                        />
-                      )}
-                      {pointLabels.map((p, idx) => (
-                        <Marker
-                          key={`pt-modal-${idx}-${p.latitude}-${p.longitude}`}
-                          coordinate={{ latitude: p.latitude, longitude: p.longitude }}
-                          title={p.label}
-                          pinColor={selectedPointIndex === idx ? '#ef4444' : undefined}
-                        />
-                      ))}
-                    </MapView>
-                  ) : hasPolyline ? (
-                    <LeafletMap
-                      points={pointLabels}
-                      selectedIndex={selectedPointIndex}
-                      height={modalMapHeight}
-                    />
-                  ) : (
-                    <Text style={{ color: mutedText }}>Нет точек для отображения</Text>
-                  )}
-                </View>
-
-                {!isWeb && (
-                  <View
-                    style={[
-                      styles.mobilePointsPanel,
-                      { borderColor: mutedText, backgroundColor: cardBackground },
-                    ]}
-                  >
-                    <Text style={[styles.blockTitle, { color: textColor, marginBottom: 6 }]}>
-                      Точки ({limitedPoints.length}
-                      {spacedPoints.length > limitedPoints.length ? ` из ${spacedPoints.length}` : ''})
-                    </Text>
-                    <ScrollView
-                      contentContainerStyle={{ gap: 8, paddingBottom: 16, paddingHorizontal: 2 }}
-                      style={{
-                        maxHeight: Math.min(screenH * 0.5, 480),
-                        backgroundColor: cardBackground,
-                      }}
-                    >
-                      {limitedPoints.map((p, idx) => (
-                        <Pressable
-                          key={`sidebar-m-${p.id}`}
-                          onPress={() => focusPoint(idx)}
-                          style={[
-                            styles.pointItem,
-                            {
-                              borderColor:
-                                selectedPointIndex === idx ? '#2563eb' : 'rgba(0,0,0,0.05)',
-                            },
-                          ]}
-                        >
-                          <Text style={[styles.pointTime, { color: textColor }]}>
-                            {formatDateTime(p.recordedAt)}
-                          </Text>
-                          <Text style={{ color: mutedText, fontSize: 12, flexWrap: 'wrap' }}>
-                            {p.latitude.toFixed(5)}, {p.longitude.toFixed(5)}
-                          </Text>
-                          <Text style={{ color: mutedText, fontSize: 12, flexWrap: 'wrap' }}>
-                            {p.eventType === 'STOP' ? 'стоп' : 'движение'}
-                          </Text>
-                        </Pressable>
-                      ))}
-                    </ScrollView>
-                  </View>
-                )}
-              </View>
-              {isWeb && (
-                <View style={[styles.fullscreenSidebar, { borderColor: mutedText }]}>
-                  <ScrollView contentContainerStyle={{ padding: 10, gap: 8 }}>
-                    {limitedPoints.map((p, idx) => (
-                      <Pressable
-                        key={`sidebar-${p.id}`}
-                        onPress={() => focusPoint(idx)}
-                        style={[
-                          styles.pointItem,
-                          {
-                            borderColor:
-                              selectedPointIndex === idx ? '#2563eb' : 'rgba(0,0,0,0.05)',
-                          },
-                        ]}
-                      >
-                        <Text style={[styles.pointTime, { color: textColor }]}>
-                          {formatDateTime(p.recordedAt)}
-                        </Text>
-                        <Text style={{ color: mutedText, fontSize: 12, flexWrap: 'wrap' }}>
-                          {p.latitude.toFixed(5)}, {p.longitude.toFixed(5)}
-                        </Text>
-                        <Text style={{ color: mutedText, fontSize: 12, flexWrap: 'wrap' }}>
-                          {p.eventType === 'STOP' ? 'стоп' : 'движение'}
-                        </Text>
-                      </Pressable>
-                    ))}
-                  </ScrollView>
-                </View>
-              )}
-            </View>
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  scrollContent: {
-    padding: 16,
-    gap: 12,
-  },
-  webContentContainer: {
-    maxWidth: 1100,
-    width: '100%',
-    alignSelf: 'center',
-  },
-  title: {
-    fontSize: 22,
-    fontWeight: '800',
-    letterSpacing: 0.2,
-  },
-  card: {
-    borderRadius: 14,
-    padding: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(0,0,0,0.05)',
-  },
-  periodHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 8,
-  },
-  blockTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    marginBottom: 8,
-  },
-  label: {
-    fontSize: 12,
-    marginBottom: 6,
-  },
-  input: {
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 10,
-    fontSize: 14,
-    backgroundColor: '#f9fafb',
-  },
-  dateInput: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  dateInputShell: {
-    marginTop: 6,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#f9fafb',
-    borderColor: '#e5e7eb',
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  filterRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  primaryBtn: {
-    flex: 1,
-    backgroundColor: '#ffd700',
-    borderRadius: 12,
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  primaryBtnText: {
-    fontWeight: '800',
-    fontSize: 15,
-    color: '#0B1220',
-  },
-  secondaryBtn: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.06)',
-    borderRadius: 12,
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  inlineBtn: {
-    flex: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    backgroundColor: '#f4f5f7',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    minWidth: 130,
-  },
-  secondaryBtnText: {
-    fontWeight: '700',
-    fontSize: 15,
-    color: '#0B1220',
-  },
-  pointTime: {
-    fontWeight: '700',
-    fontSize: 13,
-  },
-  map: {
-    height: 240,
-    borderRadius: 12,
-    overflow: 'hidden',
-  },
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.35)',
-    justifyContent: 'center',
-    padding: 16,
-  },
-  modalCard: {
-    borderRadius: 14,
-    padding: 16,
-  },
-  periodCard: {
-    width: '100%',
-    maxWidth: 600,
-    alignSelf: 'center',
-    gap: 8,
-  },
-  webModalCard: {
-    maxWidth: 520,
-    minWidth: 360,
-    alignSelf: 'center',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  modalUserRow: {
-    padding: 12,
-    borderWidth: 1,
-    borderRadius: 12,
-  },
-  pointItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 10,
-    alignItems: 'center',
-  },
-  fullscreenModal: {
-    borderRadius: 16,
-    padding: 12,
-    minHeight: 400,
-    overflow: 'hidden',
-  },
-  webFullscreenModal: {
-    width: '100%',
-    maxWidth: '96%',
-    alignSelf: 'center',
-    maxHeight: '92%',
-  },
-  mobileFullscreenModal: {
-    width: '94%',
-    height: '97%',
-    alignSelf: 'center',
-    maxWidth: 720,
-    paddingHorizontal: 10,
-  },
-  fullscreenContent: {
-    gap: 12,
-    marginTop: 8,
-  },
-  fullscreenContentWeb: {
-    flexDirection: 'row',
-    alignItems: 'stretch',
-  },
-  fullscreenContentMobile: {
-    flexDirection: 'column',
-    flex: 1,
-  },
-  fullscreenMap: {
-    flex: 1,
-    borderRadius: 12,
-    overflow: 'hidden',
-  },
-  fullscreenSidebar: {
-    width: 240,
-    borderLeftWidth: StyleSheet.hairlineWidth,
-  },
-  mobilePointsPanel: {
-    marginTop: 12,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    paddingTop: 8,
-    paddingBottom: 6,
-  },
-  modalMapColumn: { flex: 1 },
-});

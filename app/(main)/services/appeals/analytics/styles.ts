@@ -245,6 +245,12 @@ export const analyticsStyles = StyleSheet.create({
     minHeight: 44,
     fontSize: 14,
     fontWeight: '500',
+    ...(Platform.OS === 'web'
+      ? ({
+          outlineStyle: 'none',
+          outlineWidth: 0,
+        } as any)
+      : null),
   },
   metaText: {
     color: '#475569',
@@ -763,6 +769,58 @@ export const analyticsStyles = StyleSheet.create({
   },
   participantRowPressable: {
     marginBottom: 10,
+    borderRadius: 14,
+    ...(Platform.OS === 'web'
+      ? ({
+          transitionDuration: '120ms',
+          transitionProperty: 'transform, opacity, box-shadow',
+          boxShadow: '0 0 0 rgba(15,23,42,0)',
+        } as any)
+      : null),
+  },
+  participantRowPressableHover: {
+    ...(Platform.OS === 'web'
+      ? ({
+          transform: 'translateY(-1px)',
+          boxShadow: '0 9px 16px rgba(15,23,42,0.12)',
+        } as any)
+      : null),
+  },
+  participantRowPressablePressed: {
+    ...(Platform.OS === 'web'
+      ? ({
+          transform: 'translateY(0px) scale(0.99)',
+          boxShadow: '0 4px 8px rgba(15,23,42,0.1)',
+        } as any)
+      : null),
+    opacity: 0.97,
+  },
+  peopleSearchRow: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+    minHeight: 42,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  peopleSearchInput: {
+    flex: 1,
+    color: '#0F172A',
+    fontSize: 14,
+    fontWeight: '500',
+    minHeight: 24,
+    paddingVertical: 0,
+    ...(Platform.OS === 'web'
+      ? ({
+          outlineStyle: 'none',
+          outlineWidth: 0,
+        } as any)
+      : null),
   },
   kpiModalCard: {
     width: '100%',

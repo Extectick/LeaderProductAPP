@@ -312,6 +312,12 @@ const getStyles = (colors: any) =>
       color: colors.text,
       fontSize: 14,
       backgroundColor: 'transparent',
+      ...(Platform.OS === 'web'
+        ? ({
+            outlineStyle: 'none',
+            outlineWidth: 0,
+          } as any)
+        : null),
     },
     filterWrap: { position: 'relative', zIndex: 2000 },
     filterBtn: {

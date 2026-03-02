@@ -1,5 +1,14 @@
 import React from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import DateTimeInput from '@/components/ui/DateTimeInput';
@@ -37,6 +46,24 @@ export function AppealAssignPanel({
   getPresenceText,
   getIsOnline,
 }: AssignPanelProps) {
+  const [searchQuery, setSearchQuery] = React.useState('');
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+
+  const filteredMembers = React.useMemo(() => {
+    if (!normalizedQuery) return members;
+    return members.filter((member) => {
+      const displayName =
+        [member.firstName, member.lastName].filter(Boolean).join(' ').toLowerCase() || '';
+      const email = String(member.email || '').toLowerCase();
+      const department = String(member.department?.name || '').toLowerCase();
+      return (
+        displayName.includes(normalizedQuery) ||
+        email.includes(normalizedQuery) ||
+        department.includes(normalizedQuery)
+      );
+    });
+  }, [members, normalizedQuery]);
+
   return (
     <>
       <View style={styles.assignHeader}>
@@ -52,44 +79,66 @@ export function AppealAssignPanel({
           <ActivityIndicator />
         </View>
       ) : members.length ? (
-        <ScrollView
-          style={[styles.assignList, listMaxHeight ? { maxHeight: listMaxHeight } : null]}
-          contentContainerStyle={styles.assignListContent}
-          keyboardShouldPersistTaps="handled"
-        >
-          {members.map((member) => {
-            const selected = selectedIds.includes(member.id);
-            return (
-              <Pressable
-                key={member.id}
-                style={styles.assignRowPressable}
-                onPress={() => onToggleMember(member.id)}
-              >
-                <AppealParticipantCard
-                  user={member}
-                  displayName={
-                    [member.firstName, member.lastName].filter(Boolean).join(' ') ||
-                    member.email ||
-                    `Пользователь #${member.id}`
-                  }
-                  presenceText={getPresenceText ? getPresenceText(member) : member.email || 'Нет данных'}
-                  isOnline={getIsOnline ? getIsOnline(member) : false}
-                  showRoleTags={false}
-                  style={styles.assignCard}
-                  rightSlot={
-                    <View style={styles.assignCheckboxWrap}>
-                      <Ionicons
-                        name={selected ? 'checkbox' : 'square-outline'}
-                        size={22}
-                        color={selected ? '#2563EB' : '#64748B'}
-                      />
-                    </View>
-                  }
-                />
-              </Pressable>
-            );
-          })}
-        </ScrollView>
+        <>
+          <View style={styles.assignSearchWrap}>
+            <Ionicons name="search-outline" size={16} color="#64748B" />
+            <TextInput
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholder="Поиск пользователя"
+              placeholderTextColor="#94A3B8"
+              style={styles.assignSearchInput}
+            />
+          </View>
+          <ScrollView
+            style={[styles.assignList, listMaxHeight ? { maxHeight: listMaxHeight } : null]}
+            contentContainerStyle={styles.assignListContent}
+            keyboardShouldPersistTaps="handled"
+          >
+            {filteredMembers.length === 0 ? (
+              <Text style={styles.emptyText}>Пользователи не найдены</Text>
+            ) : (
+              filteredMembers.map((member) => {
+                const selected = selectedIds.includes(member.id);
+                return (
+                  <Pressable
+                    key={member.id}
+                    style={(state: any) => [
+                      styles.assignRowPressable,
+                      state?.hovered && styles.assignRowPressableHover,
+                      state?.pressed && styles.assignRowPressablePressed,
+                    ]}
+                    onPress={() => onToggleMember(member.id)}
+                  >
+                    <AppealParticipantCard
+                      user={member}
+                      displayName={
+                        [member.firstName, member.lastName].filter(Boolean).join(' ') ||
+                        member.email ||
+                        `Пользователь #${member.id}`
+                      }
+                      presenceText={
+                        getPresenceText ? getPresenceText(member) : member.email || 'Нет данных'
+                      }
+                      isOnline={getIsOnline ? getIsOnline(member) : false}
+                      showRoleTags={false}
+                      style={[styles.assignCard, selected && styles.assignCardSelected]}
+                      rightSlot={
+                        <View style={styles.assignCheckboxWrap}>
+                          <Ionicons
+                            name={selected ? 'checkbox' : 'square-outline'}
+                            size={22}
+                            color={selected ? '#2563EB' : '#64748B'}
+                          />
+                        </View>
+                      }
+                    />
+                  </Pressable>
+                );
+              })
+            )}
+          </ScrollView>
+        </>
       ) : (
         <Text style={styles.emptyText}>{emptyText}</Text>
       )}
@@ -338,14 +387,78 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 0,
   },
+  assignSearchWrap: {
+    marginTop: 2,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+    minHeight: 42,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  assignSearchInput: {
+    flex: 1,
+    color: '#0F172A',
+    fontSize: 14,
+    fontWeight: '500',
+    paddingVertical: 0,
+    minHeight: 24,
+    ...(Platform.OS === 'web'
+      ? ({
+          outlineStyle: 'none',
+          outlineWidth: 0,
+        } as any)
+      : null),
+  },
   assignListContent: {
     paddingBottom: 8,
   },
   assignRowPressable: {
     marginBottom: 10,
+    borderRadius: 14,
+    ...(Platform.OS === 'web'
+      ? ({
+          transitionDuration: '120ms',
+          transitionProperty: 'transform, opacity, box-shadow',
+          boxShadow: '0 0 0 rgba(15,23,42,0)',
+        } as any)
+      : null),
+  },
+  assignRowPressableHover: {
+    ...(Platform.OS === 'web'
+      ? ({
+          transform: 'translateY(-1px)',
+          boxShadow: '0 9px 16px rgba(15,23,42,0.12)',
+        } as any)
+      : null),
+  },
+  assignRowPressablePressed: {
+    ...(Platform.OS === 'web'
+      ? ({
+          transform: 'translateY(0px) scale(0.99)',
+          boxShadow: '0 4px 8px rgba(15,23,42,0.1)',
+        } as any)
+      : null),
+    opacity: 0.97,
   },
   assignCard: {
     borderColor: '#E5E7EB',
+  },
+  assignCardSelected: {
+    borderColor: '#93C5FD',
+    shadowColor: '#1D4ED8',
+    shadowOpacity: 0.14,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    ...(Platform.OS === 'web'
+      ? ({
+          boxShadow: '0 8px 16px rgba(29,78,216,0.16)',
+        } as any)
+      : null),
   },
   assignCheckboxWrap: {
     width: 26,

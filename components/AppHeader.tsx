@@ -52,6 +52,7 @@ type Props = {
   showBack?: boolean;
   onBack?: () => void;
   compact?: boolean;
+  tight?: boolean;
   leftSlot?: React.ReactNode;
   rightSlot?: React.ReactNode;
   bottomSlot?: React.ReactNode;
@@ -82,6 +83,7 @@ export function AppHeader({
   showBack = true,
   onBack,
   compact = false,
+  tight = false,
   leftSlot,
   rightSlot,
   bottomSlot,
@@ -96,7 +98,7 @@ export function AppHeader({
   const textColor = useThemeColor({}, 'text');
   const secondary = useThemeColor({}, 'secondaryText' as any);
 
-  const sidePadding = Platform.OS === 'web' ? 16 : 12;
+  const sidePadding = Platform.OS === 'web' ? (tight ? 12 : 16) : 12;
   const topPadding = Platform.OS === 'web' ? HEADER_TOP_PADDING_WEB : top + HEADER_TOP_PADDING_NATIVE_EXTRA;
   const titleSize = compact ? 17 : Platform.OS === 'web' ? 18 : 19;
   const subtitleSize = compact ? 11 : 12;
@@ -126,8 +128,8 @@ export function AppHeader({
   }, [setHeaderBottomOffset]);
 
   const headerContent = (
-    <View style={[styles.card, compact && styles.cardCompact]}>
-      <View style={styles.row}>
+    <View style={[styles.card, compact && styles.cardCompact, tight && styles.cardTight]}>
+      <View style={[styles.row, tight && styles.rowTight]}>
         {showBack ? (
           <Pressable
             accessibilityRole="button"
@@ -155,26 +157,31 @@ export function AppHeader({
         </LinearGradient>
 
         <View style={styles.textWrap}>
-          <Text style={[styles.title, { color: textColor, fontSize: titleSize }]} numberOfLines={2}>
+          <Text
+            style={[styles.title, tight && styles.titleTight, { color: textColor, fontSize: titleSize }]}
+            numberOfLines={tight ? 1 : 2}
+            ellipsizeMode="tail"
+          >
             {title}
           </Text>
           {subtitle ? (
             <Text
-              style={[styles.subtitle, { color: secondary, fontSize: subtitleSize }]}
-              numberOfLines={compact ? 1 : 2}
+              style={[styles.subtitle, tight && styles.subtitleTight, { color: secondary, fontSize: subtitleSize }]}
+              numberOfLines={tight ? 1 : compact ? 1 : 2}
+              ellipsizeMode="tail"
             >
               {subtitle}
             </Text>
           ) : null}
         </View>
 
-        <View style={styles.rightCluster}>
+        <View style={[styles.rightCluster, tight && styles.rightClusterTight]}>
           <ServerStatusIndicator />
           {rightSlot}
         </View>
       </View>
 
-      {bottomSlot ? <View style={styles.bottomSlot}>{bottomSlot}</View> : null}
+      {bottomSlot ? <View style={[styles.bottomSlot, tight && styles.bottomSlotTight]}>{bottomSlot}</View> : null}
     </View>
   );
 
@@ -182,7 +189,7 @@ export function AppHeader({
     <View
       pointerEvents="box-none"
       onLayout={handleWrapLayout}
-      style={[styles.wrap, { paddingTop: topPadding, paddingHorizontal: sidePadding }]}
+      style={[styles.wrap, tight && styles.wrapTight, { paddingTop: topPadding, paddingHorizontal: sidePadding }]}
     >
       <MotiView
         from={{ opacity: 0, translateY: -8 }}
@@ -208,6 +215,9 @@ export function AppHeader({
 
 const styles = StyleSheet.create({
   wrap: {
+    paddingBottom: 8,
+  },
+  wrapTight: {
     paddingBottom: 8,
   },
   shadowShell: {
@@ -239,10 +249,17 @@ const styles = StyleSheet.create({
   cardCompact: {
     paddingVertical: 10,
   },
+  cardTight: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+  },
+  rowTight: {
+    gap: 8,
   },
   textWrap: {
     flex: 1,
@@ -252,6 +269,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+  },
+  rightClusterTight: {
+    gap: 6,
   },
   backBtn: {
     width: 36,
@@ -273,12 +293,22 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     lineHeight: 23,
   },
+  titleTight: {
+    lineHeight: 20,
+  },
   subtitle: {
     marginTop: 2,
     fontWeight: '600',
     opacity: 0.95,
   },
+  subtitleTight: {
+    marginTop: 1,
+    lineHeight: 14,
+  },
   bottomSlot: {
     marginTop: 10,
+  },
+  bottomSlotTight: {
+    marginTop: 6,
   },
 });

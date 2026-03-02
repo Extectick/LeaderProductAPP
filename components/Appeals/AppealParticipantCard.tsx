@@ -138,7 +138,9 @@ export function AppealParticipantCard({
 
       <View style={styles.memberInfo}>
         <View style={styles.memberNameRow}>
-          <Text style={styles.memberName}>{displayName}</Text>
+          <Text style={styles.memberName} numberOfLines={1} ellipsizeMode="tail">
+            {displayName}
+          </Text>
           {showRoleTags && (isCreator || isAssignee) ? (
             <View style={styles.memberTagRow}>
               {isCreator ? (
@@ -282,4 +284,3 @@ const styles = StyleSheet.create({
     maxWidth: 180,
   },
 });
-

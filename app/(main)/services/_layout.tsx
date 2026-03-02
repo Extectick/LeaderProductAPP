@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useServicesData } from '@/src/features/services/hooks/useServicesData';
 import { useServerStatus } from '@/src/shared/network/useServerStatus';
+import { ServicesHeaderSlotProvider } from './headerSlotContext';
 
 type HeaderMeta = {
   title: string;
@@ -41,6 +42,15 @@ export default function ServicesLayout() {
   const { services, loading } = useServicesData();
   const { isReachable } = useServerStatus();
   const lastAlertRef = useRef<string | null>(null);
+  const [trackingHeaderBottomSlot, setTrackingHeaderBottomSlot] = React.useState<React.ReactNode | null>(null);
+  const [trackingHeaderRightSlot, setTrackingHeaderRightSlot] = React.useState<React.ReactNode | null>(null);
+  const headerSlotContextValue = React.useMemo(
+    () => ({
+      setHeaderBottomSlot: setTrackingHeaderBottomSlot,
+      setHeaderRightSlot: setTrackingHeaderRightSlot,
+    }),
+    []
+  );
 
   const serviceKey = useMemo(() => {
     if (!pathname) return null;
@@ -100,8 +110,9 @@ export default function ServicesLayout() {
   const showCloudServiceInHeader = Boolean(serviceKey && guardedService?.kind === 'CLOUD');
 
   return (
-    <Stack
-      screenOptions={({ route, navigation }) => {
+    <ServicesHeaderSlotProvider value={headerSlotContextValue}>
+      <Stack
+        screenOptions={({ route, navigation }) => {
         const name = (route as any)?.routeName || (route.name as string);
         let meta = headerMap[name as keyof typeof headerMap];
         const currentPath = String(pathname || '').split('?')[0];
@@ -155,6 +166,7 @@ export default function ServicesLayout() {
 
         const showCloudInHeader = showCloudServiceInHeader && !showCreateInHeader;
         const shouldRenderRight = showCreateInHeader || showCloudInHeader || showServicesSummaryInHeader;
+        const showTrackingBottomSlot = /^\/services\/tracking(?:\/.*)?$/.test(currentPath);
         const rightSlot = shouldRenderRight ? (
           <View style={styles.rightHeaderRow}>
             {showServicesSummaryInHeader ? (
@@ -183,6 +195,9 @@ export default function ServicesLayout() {
             ) : null}
           </View>
         ) : undefined;
+        const resolvedRightSlot = showTrackingBottomSlot
+          ? (trackingHeaderRightSlot ?? rightSlot)
+          : rightSlot;
 
         return {
           headerTransparent: true,
@@ -196,13 +211,16 @@ export default function ServicesLayout() {
               icon={meta.icon}
               showBack={shouldShowBack}
               onBack={shouldShowBack ? onBack : undefined}
-              rightSlot={rightSlot}
+              tight={showTrackingBottomSlot}
+              rightSlot={resolvedRightSlot}
+              bottomSlot={showTrackingBottomSlot ? trackingHeaderBottomSlot : undefined}
             />
           ),
           animation: 'ios_from_left',
         };
-      }}
-    />
+        }}
+      />
+    </ServicesHeaderSlotProvider>
   );
 }
 

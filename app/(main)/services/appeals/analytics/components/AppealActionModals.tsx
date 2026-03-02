@@ -185,6 +185,18 @@ export function AppealActionModals({
   const [laborConfirmVisible, setLaborConfirmVisible] = React.useState(false);
   const [peopleView, setPeopleView] = React.useState<'list' | 'profile'>('list');
   const [selectedProfileUserId, setSelectedProfileUserId] = React.useState<number | null>(null);
+  const [peopleSearchQuery, setPeopleSearchQuery] = React.useState('');
+  const filteredParticipants = React.useMemo(() => {
+    const query = peopleSearchQuery.trim().toLowerCase();
+    if (!query) return participants;
+    return participants.filter((participant) => {
+      const person = participant.user;
+      const displayName = [person.firstName, person.lastName].filter(Boolean).join(' ').trim().toLowerCase();
+      const email = String(person.email || '').toLowerCase();
+      const department = String(person.department?.name || '').toLowerCase();
+      return displayName.includes(query) || email.includes(query) || department.includes(query);
+    });
+  }, [participants, peopleSearchQuery]);
   const suppressNextBackdropCloseRef = React.useRef(false);
   const markModalInteractionStart = () => {
     suppressNextBackdropCloseRef.current = true;
@@ -201,6 +213,7 @@ export function AppealActionModals({
     if (activeAction !== 'participants') {
       setPeopleView('list');
       setSelectedProfileUserId(null);
+      setPeopleSearchQuery('');
     }
   }, [activeAction]);
   const openProfileCard = (userIdToOpen?: number | null) => {
@@ -463,37 +476,57 @@ export function AppealActionModals({
               {peopleView === 'list' && participants.length === 0 ? (
                 <Text style={styles.modalEmpty}>Участники не найдены</Text>
               ) : peopleView === 'list' ? (
-                <ScrollView
-                  style={[styles.modalList, { maxHeight: listMaxHeight }]}
-                  contentContainerStyle={styles.modalListContent}
-                  keyboardShouldPersistTaps="handled"
-                >
-                  {participants.map((participant) => {
-                    const person = participant.user;
-                    const presenceText = person.email || 'Нет данных';
-                    const displayName =
-                      [person.firstName, person.lastName].filter(Boolean).join(' ').trim() ||
-                      person.email ||
-                      `Пользователь #${person.id ?? '-'}`;
+                <>
+                  <View style={styles.peopleSearchRow}>
+                    <Ionicons name="search-outline" size={16} color="#64748B" />
+                    <TextInput
+                      value={peopleSearchQuery}
+                      onChangeText={setPeopleSearchQuery}
+                      placeholder="Поиск пользователя"
+                      placeholderTextColor="#94A3B8"
+                      style={styles.peopleSearchInput}
+                    />
+                  </View>
+                  <ScrollView
+                    style={[styles.modalList, { maxHeight: listMaxHeight }]}
+                    contentContainerStyle={styles.modalListContent}
+                    keyboardShouldPersistTaps="handled"
+                  >
+                    {filteredParticipants.length === 0 ? (
+                      <Text style={styles.modalEmpty}>Пользователи не найдены</Text>
+                    ) : (
+                      filteredParticipants.map((participant) => {
+                        const person = participant.user;
+                        const presenceText = person.email || 'Нет данных';
+                        const displayName =
+                          [person.firstName, person.lastName].filter(Boolean).join(' ').trim() ||
+                          person.email ||
+                          `Пользователь #${person.id ?? '-'}`;
 
-                    return (
-                      <Pressable
-                        key={participant.key}
-                        style={styles.participantRowPressable}
-                        onPress={() => openProfileCard(person.id)}
-                      >
-                        <AppealParticipantCard
-                          user={person}
-                          displayName={displayName}
-                          isCreator={participant.isCreator}
-                          isAssignee={participant.isAssignee}
-                          presenceText={presenceText}
-                          rightSlot={<Ionicons name="chevron-forward-outline" size={18} color="#6B7280" />}
-                        />
-                      </Pressable>
-                    );
-                  })}
-                </ScrollView>
+                        return (
+                          <Pressable
+                            key={participant.key}
+                            style={(state: any) => [
+                              styles.participantRowPressable,
+                              state?.hovered && styles.participantRowPressableHover,
+                              state?.pressed && styles.participantRowPressablePressed,
+                            ]}
+                            onPress={() => openProfileCard(person.id)}
+                          >
+                            <AppealParticipantCard
+                              user={person}
+                              displayName={displayName}
+                              isCreator={participant.isCreator}
+                              isAssignee={participant.isAssignee}
+                              presenceText={presenceText}
+                              rightSlot={<Ionicons name="chevron-forward-outline" size={18} color="#6B7280" />}
+                            />
+                          </Pressable>
+                        );
+                      })
+                    )}
+                  </ScrollView>
+                </>
               ) : selectedProfileUserId ? (
                 <ScrollView style={styles.peopleProfileScroll} contentContainerStyle={styles.peopleProfileScrollContent}>
                   <ProfileView userId={selectedProfileUserId} />

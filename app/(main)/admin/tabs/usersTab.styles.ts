@@ -1,4 +1,4 @@
-import { StyleSheet } from 'react-native';
+import { Platform, StyleSheet } from 'react-native';
 
 export function createUsersTabStyles(colors: any) {
   return StyleSheet.create({
@@ -124,6 +124,12 @@ export function createUsersTabStyles(colors: any) {
       paddingVertical: 7,
       color: colors.text,
       backgroundColor: colors.inputBackground,
+      ...(Platform.OS === 'web'
+        ? ({
+            outlineStyle: 'none',
+            outlineWidth: 0,
+          } as any)
+        : null),
     },
     chips: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
     chip: {

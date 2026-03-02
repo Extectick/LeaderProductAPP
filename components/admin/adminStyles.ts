@@ -162,7 +162,16 @@ export const createAdminStyles = (colors: any) =>
       paddingHorizontal: 10,
       paddingVertical: 8,
     },
-    searchInput: { flex: 1, color: colors.text },
+    searchInput: {
+      flex: 1,
+      color: colors.text,
+      ...(Platform.OS === 'web'
+        ? ({
+            outlineStyle: 'none',
+            outlineWidth: 0,
+          } as any)
+        : null),
+    },
     searchRowCompact: {
       paddingHorizontal: 10,
       paddingVertical: 0,
@@ -700,6 +709,12 @@ export const createAdminStyles = (colors: any) =>
       paddingHorizontal: 10,
       paddingVertical: 8,
       color: colors.text,
+      ...(Platform.OS === 'web'
+        ? ({
+            outlineStyle: 'none',
+            outlineWidth: 0,
+          } as any)
+        : null),
     },
     smallBtn: {
       paddingHorizontal: 14,

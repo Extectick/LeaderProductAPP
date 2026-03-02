@@ -346,7 +346,18 @@ const getStyles = (colors: any) =>
       backgroundColor: colors.background,
       marginBottom: 10,
     },
-    searchInput: { flex: 1, marginLeft: 8, color: colors.text, paddingVertical: 0 },
+    searchInput: {
+      flex: 1,
+      marginLeft: 8,
+      color: colors.text,
+      paddingVertical: 0,
+      ...(Platform.OS === 'web'
+        ? ({
+            outlineStyle: 'none',
+            outlineWidth: 0,
+          } as any)
+        : null),
+    },
     clearSearch: { height: 22, width: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
 
     // Top actions
