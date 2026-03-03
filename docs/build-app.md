@@ -12,12 +12,17 @@ Remove-Item -Recurse -Force "C:\Users\extec\.gradle\wrapper\dists\gradle-8.14.3-
 
 
 // БИЛД gradlew на 206 сервере
+npx expo prebuild
+
+cd D:\GitRepositories\LeaderProduct\LeaderProductAPP
 $env:JAVA_HOME="C:\Program Files\Android\Android Studio\jbr"
-$env:Path="$env:JAVA_HOME\bin;$env:Path"
 $env:ANDROID_HOME="C:\Android\Sdk"
+$env:Path="$env:JAVA_HOME\bin;$env:ANDROID_HOME\platform-tools;$env:ANDROID_HOME\emulator;$env:Path"
 $env:NODE_ENV="production"
-.\gradlew.bat --stop
+
+cd .\android\
 .\gradlew.bat :app:assembleRelease --refresh-dependencies
+
 
 Note: local Android release builds now skip the Sentry upload step unless `SENTRY_ORG`, `SENTRY_PROJECT`, and `SENTRY_AUTH_TOKEN` are defined.
 

@@ -9,7 +9,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   name: "Лидер Продукт",
   slug: "leader-product",
   owner: "extectick",
-  version: "0.1.2",
+  version: "0.1.1",
   orientation: "portrait",
   userInterfaceStyle: "automatic",
   newArchEnabled: true,
@@ -43,6 +43,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       "READ_MEDIA_VIDEO",
       "READ_MEDIA_AUDIO",
       "READ_EXTERNAL_STORAGE",
+      "REQUEST_INSTALL_PACKAGES",
       // аудио/микрофон
       "RECORD_AUDIO",
       // bluetooth на будущее (скан/коннект)
@@ -63,6 +64,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     "expo-router",
     "expo-audio",
     "expo-font",
+    "@kesha-antonov/react-native-background-downloader",
     "@sentry/react-native",
     "@react-native-community/datetimepicker",
     "expo-notifications",
