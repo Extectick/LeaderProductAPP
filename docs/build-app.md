@@ -5,6 +5,8 @@
 cd V:\GitProjects\LeaderProductAPP\android
 $env:JAVA_HOME="C:\Program Files\Eclipse Adoptium\jdk-21.0.3.9-hotspot"
 $env:Path="$env:JAVA_HOME\bin;$env:Path"
+$env:ANDROID_HOME="C:\Android\Sdk"
+$env:NODE_ENV="production"
 Remove-Item -Recurse -Force "C:\Users\extec\.gradle\wrapper\dists\gradle-8.14.3-bin" -ErrorAction SilentlyContinue
 .\gradlew.bat :app:assembleRelease --refresh-dependencies
 
@@ -12,8 +14,12 @@ Remove-Item -Recurse -Force "C:\Users\extec\.gradle\wrapper\dists\gradle-8.14.3-
 // БИЛД gradlew на 206 сервере
 $env:JAVA_HOME="C:\Program Files\Android\Android Studio\jbr"
 $env:Path="$env:JAVA_HOME\bin;$env:Path"
+$env:ANDROID_HOME="C:\Android\Sdk"
+$env:NODE_ENV="production"
 .\gradlew.bat --stop
 .\gradlew.bat :app:assembleRelease --refresh-dependencies
+
+Note: local Android release builds now skip the Sentry upload step unless `SENTRY_ORG`, `SENTRY_PROJECT`, and `SENTRY_AUTH_TOKEN` are defined.
 
 
 
@@ -245,6 +251,8 @@ buildTypes {
   * Windows:
 
     ```bat
+    set ANDROID_HOME=C:\Android\Sdk
+    set NODE_ENV=production
     .\gradlew.bat :app:assembleRelease
     ```
 
