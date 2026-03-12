@@ -145,6 +145,16 @@ export function AnalyticsToolbar({
     state?.pressed && styles.resetFiltersBtnPressed,
     !canResetFilters && styles.resetFiltersBtnDisabled,
   ];
+  const paymentStateTriggerLabel =
+    paymentState === 'PAID'
+      ? 'Оплачено'
+      : paymentState === 'UNPAID'
+        ? 'Не оплачено'
+        : paymentState === 'NOT_REQUIRED'
+          ? 'Не требуется'
+          : paymentState === 'UNSET'
+            ? 'Не установлено'
+            : 'Все состояния';
 
   const renderFilterFields = (mode: 'default' | 'modal') => {
     const isModalMode = mode === 'modal';
@@ -219,10 +229,30 @@ export function AnalyticsToolbar({
             <Dropdown
               value={paymentState ?? 'all'}
               onChange={(value) => onPaymentStateChange(value === 'all' ? undefined : (value as PaymentStateFilter))}
+              buttonStyle={styles.compactFilterDropdownButton}
+              renderTrigger={(selectedLabel, open) => (
+                <>
+                  <Ionicons name="list" size={16} color="#111827" style={{ marginRight: 8 }} />
+                  <Text
+                    numberOfLines={1}
+                    ellipsizeMode="tail"
+                    style={[styles.filterDropdownTriggerText, !selectedLabel && styles.filterDropdownTriggerTextPlaceholder]}
+                  >
+                    {paymentStateTriggerLabel}
+                  </Text>
+                  <Ionicons
+                    name={open ? 'chevron-up' : 'chevron-down'}
+                    size={16}
+                    color="#6B7280"
+                    style={{ marginLeft: 'auto' }}
+                  />
+                </>
+              )}
               items={[
-                { label: 'Все состояния оплаты', value: 'all' },
+                { label: 'Все состояния', value: 'all' },
                 { label: 'Оплачено', value: 'PAID' },
                 { label: 'Не оплачено', value: 'UNPAID' },
+                { label: 'Не требуется', value: 'NOT_REQUIRED' },
                 { label: 'Не установлено', value: 'UNSET' },
               ]}
             />
@@ -389,10 +419,30 @@ export function AnalyticsToolbar({
               <Dropdown
                 value={paymentState ?? 'all'}
                 onChange={(value) => onPaymentStateChange(value === 'all' ? undefined : (value as PaymentStateFilter))}
+                buttonStyle={styles.compactFilterDropdownButton}
+                renderTrigger={(selectedLabel, open) => (
+                  <>
+                    <Ionicons name="list" size={16} color="#111827" style={{ marginRight: 8 }} />
+                    <Text
+                      numberOfLines={1}
+                      ellipsizeMode="tail"
+                      style={[styles.filterDropdownTriggerText, !selectedLabel && styles.filterDropdownTriggerTextPlaceholder]}
+                    >
+                      {paymentStateTriggerLabel}
+                    </Text>
+                    <Ionicons
+                      name={open ? 'chevron-up' : 'chevron-down'}
+                      size={16}
+                      color="#6B7280"
+                      style={{ marginLeft: 'auto' }}
+                    />
+                  </>
+                )}
                 items={[
-                  { label: 'Все состояния оплаты', value: 'all' },
+                  { label: 'Все состояния', value: 'all' },
                   { label: 'Оплачено', value: 'PAID' },
                   { label: 'Не оплачено', value: 'UNPAID' },
+                  { label: 'Не требуется', value: 'NOT_REQUIRED' },
                   { label: 'Не установлено', value: 'UNSET' },
                 ]}
               />

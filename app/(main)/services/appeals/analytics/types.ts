@@ -4,14 +4,16 @@ import type { AppealsAnalyticsPaymentState, AppealsAnalyticsTableColumnKey } fro
 export type TabKey = 'appeals' | 'users';
 export type PeriodPreset = 'all' | '7' | '30' | '90' | 'custom';
 export type ActionKey = 'status' | 'deadline' | 'assign' | 'participants' | 'transfer' | 'labor';
+export type AppealMenuActionKey = 'open' | ActionKey;
 export type PaymentStateFilter = AppealsAnalyticsPaymentState;
 export type TableColumnKey = AppealsAnalyticsTableColumnKey;
 
 export const APPEALS_ANALYTICS_ALL_COLUMNS: TableColumnKey[] = [
   'number',
   'title',
+  'createdBy',
   'status',
-  'department',
+  'departmentRoute',
   'deadline',
   'slaOpen',
   'slaWork',
@@ -32,8 +34,10 @@ export const APPEALS_ANALYTICS_LOCKED_COLUMNS: TableColumnKey[] = ['number', 'ti
 export const APPEALS_ANALYTICS_COLUMN_LABELS: Record<TableColumnKey, string> = {
   number: '№',
   title: 'Обращение',
+  createdBy: 'Создал',
   status: 'Статус',
   department: 'Отдел',
+  departmentRoute: 'Маршрут отдела',
   deadline: 'Дедлайн',
   slaOpen: 'Открыто',
   slaWork: 'В работе',
@@ -60,3 +64,5 @@ export type LaborDraftState = Record<
     }
   >
 >;
+
+export type LaborNotRequiredDraftState = Record<number, boolean>;

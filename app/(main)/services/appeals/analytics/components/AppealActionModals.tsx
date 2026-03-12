@@ -22,9 +22,10 @@ import type {
   AppealStatus,
   UserMini,
 } from '@/src/entities/appeal/types';
-import type { ActionKey, LaborDraftState } from '../types';
+import type { ActionKey, LaborDraftState, LaborNotRequiredDraftState } from '../types';
 import { analyticsStyles as styles } from '../styles';
 import {
+  buildAppealActionMenuItems,
   formatHoursValue,
   formatRub,
   paymentStatusLabel,
@@ -66,8 +67,10 @@ type Props = {
   onSaveTransfer: () => void;
 
   laborDraft: LaborDraftState;
+  laborNotRequiredDraft: LaborNotRequiredDraftState;
   onChangeLaborAccruedHours: (appealId: number, assigneeUserId: number, value: string) => void;
   onChangeLaborPaidHours: (appealId: number, assigneeUserId: number, value: string) => void;
+  onChangeLaborNotRequired: (appealId: number, value: boolean) => void;
   onSaveLabor: () => void;
 };
 
@@ -107,21 +110,25 @@ export function AppealActionModals({
   onChangeTransferDepartmentId,
   onSaveTransfer,
   laborDraft,
+  laborNotRequiredDraft,
   onChangeLaborAccruedHours,
   onChangeLaborPaidHours,
+  onChangeLaborNotRequired,
   onSaveLabor,
 }: Props) {
   const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
+  const [renderedAppeal, setRenderedAppeal] = React.useState<AppealsAnalyticsAppealItem | null>(selectedAppeal);
+  const displayedAppeal = selectedAppeal ?? renderedAppeal;
   const menuVisible = !!selectedAppeal && !activeAction;
   const isCompactWeb = Platform.OS === 'web' && viewportWidth < 720;
   const listMaxHeight = Math.max(220, Math.min(340, viewportHeight * 0.45));
   const laborListMaxHeight = Math.max(240, Math.min(380, viewportHeight * 0.5));
   const participants = React.useMemo<AnalyticsParticipant[]>(() => {
-    if (!selectedAppeal) return [];
+    if (!displayedAppeal) return [];
 
     const availableAssigneesById = new Map((meta?.availableAssignees || []).map((u) => [u.id, u]));
     const result = new Map<string, AnalyticsParticipant>();
-    const creatorId = selectedAppeal.createdBy?.id ?? null;
+    const creatorId = displayedAppeal.createdBy?.id ?? null;
 
     const addParticipant = (
       user: AnalyticsParticipant['user'],
@@ -147,14 +154,14 @@ export function AppealActionModals({
       result.set(key, { key, user, isCreator: flags.isCreator, isAssignee: flags.isAssignee });
     };
 
-    const creatorFromAssignee = selectedAppeal.assignees.find((a) => a.id === creatorId);
+    const creatorFromAssignee = displayedAppeal.assignees.find((a) => a.id === creatorId);
     const creatorFromMeta = creatorId != null ? availableAssigneesById.get(creatorId) : undefined;
     addParticipant(
       {
-        id: selectedAppeal.createdBy?.id ?? null,
-        email: selectedAppeal.createdBy?.email ?? '',
-        firstName: selectedAppeal.createdBy?.firstName ?? undefined,
-        lastName: selectedAppeal.createdBy?.lastName ?? undefined,
+        id: displayedAppeal.createdBy?.id ?? null,
+        email: displayedAppeal.createdBy?.email ?? '',
+        firstName: displayedAppeal.createdBy?.firstName ?? undefined,
+        lastName: displayedAppeal.createdBy?.lastName ?? undefined,
         avatarUrl: creatorFromAssignee?.avatarUrl ?? null,
         department: creatorFromAssignee?.department ?? creatorFromMeta?.department ?? null,
         isAdmin: creatorFromAssignee?.isAdmin ?? false,
@@ -163,7 +170,7 @@ export function AppealActionModals({
       { isCreator: true, isAssignee: creatorId != null && !!creatorFromAssignee }
     );
 
-    for (const assignee of selectedAppeal.assignees || []) {
+    for (const assignee of displayedAppeal.assignees || []) {
       const metaUser = availableAssigneesById.get(assignee.id);
       addParticipant(
         {
@@ -181,8 +188,9 @@ export function AppealActionModals({
     }
 
     return Array.from(result.values());
-  }, [meta?.availableAssignees, selectedAppeal]);
+  }, [displayedAppeal, meta?.availableAssignees]);
   const [laborConfirmVisible, setLaborConfirmVisible] = React.useState(false);
+  const [laborModeConfirmVisible, setLaborModeConfirmVisible] = React.useState(false);
   const [peopleView, setPeopleView] = React.useState<'list' | 'profile'>('list');
   const [selectedProfileUserId, setSelectedProfileUserId] = React.useState<number | null>(null);
   const [peopleSearchQuery, setPeopleSearchQuery] = React.useState('');
@@ -205,8 +213,14 @@ export function AppealActionModals({
     suppressNextBackdropCloseRef.current = false;
   };
   React.useEffect(() => {
+    if (selectedAppeal) {
+      setRenderedAppeal(selectedAppeal);
+    }
+  }, [selectedAppeal]);
+  React.useEffect(() => {
     if (activeAction !== 'labor' || !selectedAppeal) {
       setLaborConfirmVisible(false);
+      setLaborModeConfirmVisible(false);
     }
   }, [activeAction, selectedAppeal]);
   React.useEffect(() => {
@@ -274,12 +288,34 @@ export function AppealActionModals({
     state?.hovered && styles.modalBtnSecondaryHover,
     state?.pressed && styles.modalBtnSecondaryPressed,
   ];
+  const laborNotRequiredEnabled = displayedAppeal
+    ? (laborNotRequiredDraft[displayedAppeal.id] ?? displayedAppeal.laborNotRequired)
+    : false;
+  const laborModeHasValuesToReset = React.useMemo(() => {
+    if (!displayedAppeal) return false;
+    const appealDraft = laborDraft[displayedAppeal.id] || {};
+    const hasDraftValues = Object.values(appealDraft).some((entry) => {
+      const accrued = Number(entry?.accruedHours ?? '0');
+      const paid = Number(entry?.paidHours ?? '0');
+      return accrued > 0 || paid > 0;
+    });
+    const hasSavedValues = (displayedAppeal.laborEntries || []).some((entry) => entry.accruedHours > 0 || entry.paidHours > 0);
+    return hasDraftValues || hasSavedValues;
+  }, [displayedAppeal, laborDraft]);
 
   const menuItemStyle = (state: any) => [
     styles.menuItem,
     state?.hovered && styles.menuItemHover,
     state?.pressed && styles.menuItemPressed,
   ];
+  const actionMenuItems = React.useMemo(
+    () =>
+      buildAppealActionMenuItems(displayedAppeal, {
+        onOpenAppeal,
+        onOpenAction,
+      }),
+    [displayedAppeal, onOpenAction, onOpenAppeal]
+  );
 
   return (
     <>
@@ -321,56 +357,20 @@ export function AppealActionModals({
             {...modalContentGuardProps}
           >
             <Text style={styles.modalTitle}>Действия по обращению</Text>
-            {selectedAppeal ? (
-              <Pressable style={menuItemStyle} onPress={() => onOpenAppeal(selectedAppeal.id)}>
-                <Ionicons name="open-outline" size={16} color="#334155" />
-                <Text style={styles.menuItemText}>Открыть обращение</Text>
+            {actionMenuItems.map((item) => (
+              <Pressable key={item.key} style={menuItemStyle} onPress={() => item.onSelect(item.action)}>
+                {item.icon ? <Ionicons name={item.icon} size={16} color="#334155" /> : null}
+                <Text style={styles.menuItemText}>{item.label}</Text>
               </Pressable>
-            ) : null}
-            {selectedAppeal?.actionPermissions.canChangeStatus ? (
-              <Pressable style={menuItemStyle} onPress={() => onOpenAction('status')}>
-                <Ionicons name="sync-outline" size={16} color="#334155" />
-                <Text style={styles.menuItemText}>Изменить статус</Text>
-              </Pressable>
-            ) : null}
-            {selectedAppeal?.actionPermissions.canEditDeadline ? (
-              <Pressable style={menuItemStyle} onPress={() => onOpenAction('deadline')}>
-                <Ionicons name="time-outline" size={16} color="#334155" />
-                <Text style={styles.menuItemText}>Изменить дедлайн</Text>
-              </Pressable>
-            ) : null}
-            {selectedAppeal?.actionPermissions.canAssign ? (
-              <Pressable style={menuItemStyle} onPress={() => onOpenAction('assign')}>
-                <Ionicons name="person-add-outline" size={16} color="#334155" />
-                <Text style={styles.menuItemText}>Назначить</Text>
-              </Pressable>
-            ) : null}
-            {selectedAppeal?.actionPermissions.canOpenParticipants ? (
-              <Pressable style={menuItemStyle} onPress={() => onOpenAction('participants')}>
-                <Ionicons name="people-outline" size={16} color="#334155" />
-                <Text style={styles.menuItemText}>Участники</Text>
-              </Pressable>
-            ) : null}
-            {selectedAppeal?.actionPermissions.canTransfer ? (
-              <Pressable style={menuItemStyle} onPress={() => onOpenAction('transfer')}>
-                <Ionicons name="swap-horizontal-outline" size={16} color="#334155" />
-                <Text style={styles.menuItemText}>Передать в отдел</Text>
-              </Pressable>
-            ) : null}
-            {selectedAppeal?.actionPermissions.canSetLabor ? (
-              <Pressable style={menuItemStyle} onPress={() => onOpenAction('labor')}>
-                <Ionicons name="timer-outline" size={16} color="#334155" />
-                <Text style={styles.menuItemText}>Часы и выплаты</Text>
-              </Pressable>
-            ) : null}
+            ))}
           </View>
         </Pressable>
       </Modal>
 
       <AppealStatusMenu
         visible={activeAction === 'status' && !!selectedAppeal}
-        current={selectedAppeal?.status || 'OPEN'}
-        allowed={selectedAppeal?.allowedStatuses || []}
+        current={displayedAppeal?.status || 'OPEN'}
+        allowed={displayedAppeal?.allowedStatuses || []}
         onSelect={(nextStatus) => !actionBusy && onSaveStatus(nextStatus)}
         onClose={() => !actionBusy && onCloseActionModal()}
       />
@@ -461,7 +461,7 @@ export function AppealActionModals({
                 {peopleView === 'profile' ? 'Карточка участника' : 'Участники обращения'}
               </Text>
               <View style={styles.peopleHeaderRight}>
-                {peopleView === 'list' && selectedAppeal?.actionPermissions.canAssign ? (
+                {peopleView === 'list' && displayedAppeal?.actionPermissions.canAssign ? (
                   <Pressable style={styles.peopleHeaderActionBtn} onPress={() => onOpenAction('assign')}>
                     <Ionicons name="person-add-outline" size={14} color="#1D4ED8" />
                     <Text style={styles.peopleHeaderActionBtnText}>Назначить</Text>
@@ -584,37 +584,71 @@ export function AppealActionModals({
             {...modalContentGuardProps}
           >
             <Text style={styles.modalTitle}>Часы и выплаты</Text>
-            {!selectedAppeal?.toDepartment.paymentRequired ? (
+            {!displayedAppeal?.toDepartment.paymentRequired ? (
               <Text style={styles.modalHint}>Для отдела установлено правило: оплата не требуется.</Text>
             ) : (
               <Text style={styles.modalHint}>Укажите начисленные и выплаченные часы. Частичная выплата поддерживается.</Text>
             )}
+            {displayedAppeal ? (
+              <Pressable
+                style={(state: any) => [
+                  styles.checkboxRow,
+                  state?.hovered && styles.checkboxRowHover,
+                  state?.pressed && styles.checkboxRowPressed,
+                ]}
+                onPress={() => {
+                  if (laborNotRequiredEnabled) {
+                    onChangeLaborNotRequired(displayedAppeal.id, false);
+                    return;
+                  }
+                  if (laborModeHasValuesToReset) {
+                    setLaborModeConfirmVisible(true);
+                    return;
+                  }
+                  onChangeLaborNotRequired(displayedAppeal.id, true);
+                }}
+              >
+                <Ionicons
+                  name={laborNotRequiredEnabled ? 'checkbox-outline' : 'square-outline'}
+                  size={18}
+                  color="#1D4ED8"
+                />
+                <Text style={styles.checkboxText}>Не начислять часы и не требовать оплату</Text>
+              </Pressable>
+            ) : null}
             <ScrollView
               style={{ maxHeight: laborListMaxHeight }}
               contentContainerStyle={styles.modalListContent}
               keyboardShouldPersistTaps="handled"
             >
-              {(selectedAppeal?.assignees || []).map((assignee) => {
-                const appealId = selectedAppeal!.id;
+              {(displayedAppeal?.assignees || []).map((assignee) => {
+                const appealId = displayedAppeal!.id;
                 const draft = laborDraft[appealId]?.[assignee.id] || {};
-                const existing = (selectedAppeal?.laborEntries || []).find((entry) => entry.assigneeUserId === assignee.id);
+                const existing = (displayedAppeal?.laborEntries || []).find((entry) => entry.assigneeUserId === assignee.id);
                 const accruedRaw = Number(draft.accruedHours ?? existing?.accruedHours ?? 0);
                 const paidRaw = Number(draft.paidHours ?? existing?.paidHours ?? 0);
                 const normalizedAccruedRaw = Number.isFinite(accruedRaw) && accruedRaw >= 0 ? accruedRaw : 0;
                 const normalizedPaidRaw = Number.isFinite(paidRaw) && paidRaw >= 0 ? paidRaw : 0;
                 const effectiveRate = existing?.effectiveHourlyRateRub ?? assignee.effectiveHourlyRateRub ?? 0;
-                const payable = (existing?.payable ?? (effectiveRate > 0)) && selectedAppeal!.toDepartment.paymentRequired;
-                const accruedHours = payable
+                const payable =
+                  !laborNotRequiredEnabled &&
+                  (existing?.payable ?? (effectiveRate > 0)) &&
+                  displayedAppeal!.toDepartment.paymentRequired;
+                const accruedHours = laborNotRequiredEnabled
+                  ? 0
+                  : payable
                   ? Math.max(normalizedAccruedRaw, normalizedPaidRaw)
                   : normalizedAccruedRaw;
-                const paidHours = payable
+                const paidHours = laborNotRequiredEnabled
+                  ? 0
+                  : payable
                   ? Math.min(accruedHours, normalizedPaidRaw)
                   : 0;
                 const remainingHours = Math.max(0, Number((accruedHours - paidHours).toFixed(2)));
                 const amountAccrued = Number((accruedHours * effectiveRate).toFixed(2));
                 const amountPaid = Number((paidHours * effectiveRate).toFixed(2));
                 const amountRemaining = Number((remainingHours * effectiveRate).toFixed(2));
-                const statusLabel = !payable
+                const statusLabel = laborNotRequiredEnabled || !payable
                   ? 'Не требуется'
                   : paymentStatusLabel(
                       paidHours <= 0 ? 'UNPAID' : paidHours >= accruedHours ? 'PAID' : 'PARTIAL'
@@ -631,23 +665,24 @@ export function AppealActionModals({
                       <View style={[styles.laborFieldCol, isCompactWeb && styles.laborFieldColCompact]}>
                         <Text style={styles.filterLabel}>Начислено (ч)</Text>
                         <TextInput
-                          value={draft.accruedHours ?? toDraftNumericString(existing?.accruedHours)}
+                          value={laborNotRequiredEnabled ? '' : (draft.accruedHours ?? toDraftNumericString(existing?.accruedHours))}
                           keyboardType="decimal-pad"
                           onChangeText={(value) => onChangeLaborAccruedHours(appealId, assignee.id, value)}
-                          style={styles.input}
-                          placeholder="0.00"
+                          style={[styles.input, laborNotRequiredEnabled && styles.inputDisabled]}
+                          editable={!laborNotRequiredEnabled}
+                          placeholder={laborNotRequiredEnabled ? 'Не требуется' : '0.00'}
                           placeholderTextColor="#94A3B8"
                         />
                       </View>
                       <View style={[styles.laborFieldCol, isCompactWeb && styles.laborFieldColCompact]}>
                         <Text style={styles.filterLabel}>Выплачено (ч)</Text>
                         <TextInput
-                          value={draft.paidHours ?? toDraftNumericString(existing?.paidHours)}
+                          value={laborNotRequiredEnabled ? '' : (draft.paidHours ?? toDraftNumericString(existing?.paidHours))}
                           keyboardType="decimal-pad"
                           onChangeText={(value) => onChangeLaborPaidHours(appealId, assignee.id, value)}
-                          style={[styles.input, !payable && styles.inputDisabled]}
-                          editable={payable}
-                          placeholder={payable ? '0.00' : 'Не требуется'}
+                          style={[styles.input, (!payable || laborNotRequiredEnabled) && styles.inputDisabled]}
+                          editable={payable && !laborNotRequiredEnabled}
+                          placeholder={payable && !laborNotRequiredEnabled ? '0.00' : 'Не требуется'}
                           placeholderTextColor="#94A3B8"
                         />
                       </View>
@@ -677,9 +712,9 @@ export function AppealActionModals({
                           styles.laborQuickBtn,
                           state?.hovered && styles.laborQuickBtnHover,
                           state?.pressed && styles.laborQuickBtnPressed,
-                          !payable && styles.laborQuickBtnDisabled,
+                          (!payable || laborNotRequiredEnabled) && styles.laborQuickBtnDisabled,
                         ]}
-                        disabled={!payable}
+                        disabled={!payable || laborNotRequiredEnabled}
                         onPress={() => onChangeLaborPaidHours(appealId, assignee.id, toDraftNumericString(accruedHours))}
                       >
                         <Text style={styles.laborQuickBtnText}>Выплатить все</Text>
@@ -690,9 +725,9 @@ export function AppealActionModals({
                           styles.laborQuickBtnGhost,
                           state?.hovered && styles.laborQuickBtnHover,
                           state?.pressed && styles.laborQuickBtnPressed,
-                          !payable && styles.laborQuickBtnDisabled,
+                          (!payable || laborNotRequiredEnabled) && styles.laborQuickBtnDisabled,
                         ]}
-                        disabled={!payable}
+                        disabled={!payable || laborNotRequiredEnabled}
                         onPress={() => onChangeLaborPaidHours(appealId, assignee.id, '')}
                       >
                         <Text style={styles.laborQuickBtnGhostText}>Сбросить выплату</Text>
@@ -723,13 +758,30 @@ export function AppealActionModals({
       <CustomAlert
         visible={laborConfirmVisible}
         title="Сохранить изменения?"
-        message="Сохранить изменения по часам и выплатам?"
+        message={
+          laborNotRequiredEnabled
+            ? 'Сохранить режим «Не требуется» и сбросить часы/выплаты по обращению?'
+            : 'Сохранить изменения по часам и выплатам?'
+        }
         cancelText="Отмена"
         confirmText="Сохранить"
         onCancel={() => setLaborConfirmVisible(false)}
         onConfirm={() => {
           setLaborConfirmVisible(false);
           onSaveLabor();
+        }}
+      />
+      <CustomAlert
+        visible={laborModeConfirmVisible}
+        title="Включить режим?"
+        message="Все начисленные и выплаченные часы по обращению будут сброшены. Продолжить?"
+        cancelText="Отмена"
+        confirmText="Включить"
+        onCancel={() => setLaborModeConfirmVisible(false)}
+        onConfirm={() => {
+          setLaborModeConfirmVisible(false);
+          if (!displayedAppeal) return;
+          onChangeLaborNotRequired(displayedAppeal.id, true);
         }}
       />
     </>

@@ -22,10 +22,12 @@ import {
   type AppealDeadlineTone,
   appealStatusLabel,
   buildAppealLaborMultilineColumns,
+  departmentRouteText,
   formatHoursValue,
   formatRub,
   formatHoursByMs,
   getAppealDeadlineMeta,
+  personName,
 } from '../helpers';
 import {
   APPEALS_ANALYTICS_ALL_COLUMNS,
@@ -33,12 +35,17 @@ import {
   APPEALS_ANALYTICS_LOCKED_COLUMNS,
   type TableColumnKey,
 } from '../types';
+import ContextMenuTrigger from '@/components/ui/ContextMenuTrigger';
+import type { ContextMenuItem } from '@/components/ui/ContextMenu';
+import type { AppealMenuActionKey } from '../types';
 
 const COLUMN_WIDTHS: Record<TableColumnKey, number> = {
   number: 74,
   title: 220,
+  createdBy: 200,
   status: 170,
   department: 180,
+  departmentRoute: 250,
   deadline: 190,
   slaOpen: 130,
   slaWork: 130,
@@ -67,6 +74,7 @@ type Props = {
   onRefresh: () => void;
   onLoadMore: () => void;
   onOpenActions: (appealId: number) => void;
+  getActionMenuItems: (appeal: AppealsAnalyticsAppealItem) => ContextMenuItem<AppealMenuActionKey>[];
   visibleColumns: TableColumnKey[];
   onChangeVisibleColumns: (columns: TableColumnKey[]) => void;
   onResetVisibleColumns: () => void;
@@ -85,6 +93,7 @@ export function AppealsTableSection({
   onRefresh,
   onLoadMore,
   onOpenActions,
+  getActionMenuItems,
   visibleColumns,
   onChangeVisibleColumns,
   onResetVisibleColumns,
@@ -122,6 +131,18 @@ export function AppealsTableSection({
     if (tone === 'soon') return styles.deadlineBadgeTextSoon;
     if (tone === 'onTimeCompleted') return styles.deadlineBadgeTextOnTimeCompleted;
     return styles.deadlineBadgeTextNeutral;
+  };
+  const deadlineIconName = (tone: AppealDeadlineTone) => {
+    if (tone === 'overdue') return 'alert-circle';
+    if (tone === 'soon') return 'time';
+    if (tone === 'onTimeCompleted') return 'checkmark-circle';
+    return 'checkmark-circle-outline';
+  };
+  const deadlineIconColor = (tone: AppealDeadlineTone) => {
+    if (tone === 'overdue') return '#B91C1C';
+    if (tone === 'soon') return '#B45309';
+    if (tone === 'onTimeCompleted') return '#15803D';
+    return '#475569';
   };
 
   const statusBadgeStyle = (status: AppealStatus) => {
@@ -213,6 +234,7 @@ export function AppealsTableSection({
     (item: AppealsAnalyticsAppealItem, key: TableColumnKey) => {
       if (key === 'number') return <Text style={cellTextStyle(key)}>#{item.number}</Text>;
       if (key === 'title') return <Text style={cellTextStyle(key)}>{item.title || 'Без названия'}</Text>;
+      if (key === 'createdBy') return <Text style={cellTextStyle(key)}>{personName(item.createdBy)}</Text>;
       if (key === 'status') {
         return (
           <View style={[{ width: COLUMN_WIDTHS.status, justifyContent: 'center', paddingHorizontal: 8, paddingVertical: 8 }]}>
@@ -223,16 +245,41 @@ export function AppealsTableSection({
         );
       }
       if (key === 'department') return <Text style={cellTextStyle(key)}>{item.toDepartment.name}</Text>;
+      if (key === 'departmentRoute') {
+        return (
+          <View style={[styles.departmentRouteCell, { width: COLUMN_WIDTHS.departmentRoute }]}>
+            <Text numberOfLines={1} style={styles.departmentRouteFromChip}>
+              {item.fromDepartment?.name || 'Без отдела'}
+            </Text>
+            <Ionicons name="arrow-forward-outline" size={13} color="#1D4ED8" style={styles.departmentRouteArrow} />
+            <Text numberOfLines={1} style={styles.departmentRouteToChip}>
+              {item.toDepartment.name}
+            </Text>
+          </View>
+        );
+      }
       if (key === 'deadline') {
         const deadlineMeta = getAppealDeadlineMeta(item);
         return (
           <View style={[{ width: COLUMN_WIDTHS.deadline }, styles.deadlineCell]}>
-            <Text style={styles.deadlineDateText}>{deadlineMeta.deadlineText}</Text>
+            <Text numberOfLines={1} style={styles.deadlineDateText}>
+              {deadlineMeta.deadlineText}
+            </Text>
             {deadlineMeta.badgeText ? (
-              <View style={[styles.deadlineBadge, deadlineBadgeStyle(deadlineMeta.tone)]}>
-                <Text style={[styles.deadlineBadgeText, deadlineBadgeTextStyle(deadlineMeta.tone)]}>
-                  {deadlineMeta.badgeText}
-                </Text>
+              <View
+                style={[styles.deadlineBadgeIconWrap, deadlineBadgeStyle(deadlineMeta.tone)]}
+                accessibilityLabel={deadlineMeta.badgeText}
+                {...(Platform.OS === 'web'
+                  ? ({
+                      title: deadlineMeta.badgeText,
+                    } as any)
+                  : {})}
+              >
+                <Ionicons
+                  name={deadlineIconName(deadlineMeta.tone)}
+                  size={14}
+                  color={deadlineIconColor(deadlineMeta.tone)}
+                />
               </View>
             ) : null}
           </View>
@@ -323,22 +370,28 @@ export function AppealsTableSection({
                 (() => {
                   const assigneesCount = Math.max(1, item.assignees?.length || 0);
                   const rowMinHeight = assigneesCount > 1 ? 42 + (assigneesCount - 1) * 18 : undefined;
+                  const contextMenuItems = getActionMenuItems(item);
                   return (
-                    <Pressable
-                      onPress={() => onOpenActions(item.id)}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Открыть обращение #${item.number}`}
-                      style={(state: any) => [
-                        styles.tableRow,
-                        { minWidth: tableMinWidth, minHeight: rowMinHeight },
-                        state?.hovered && styles.tableRowHover,
-                        state?.pressed && styles.tableRowPressed,
-                      ]}
-                    >
-                      {normalizedVisibleColumns.map((key) => (
-                        <View key={`${item.id}-${key}`}>{renderCell(item, key)}</View>
-                      ))}
-                    </Pressable>
+                    <ContextMenuTrigger items={contextMenuItems}>
+                      {(triggerProps) => (
+                        <Pressable
+                          onPress={() => onOpenActions(item.id)}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Открыть обращение #${item.number}`}
+                          {...(Platform.OS === 'web' ? ({ onContextMenu: triggerProps.onContextMenu } as any) : {})}
+                          style={(state: any) => [
+                            styles.tableRow,
+                            { minWidth: tableMinWidth, minHeight: rowMinHeight },
+                            state?.hovered && styles.tableRowHover,
+                            state?.pressed && styles.tableRowPressed,
+                          ]}
+                        >
+                          {normalizedVisibleColumns.map((key) => (
+                            <View key={`${item.id}-${key}`}>{renderCell(item, key)}</View>
+                          ))}
+                        </Pressable>
+                      )}
+                    </ContextMenuTrigger>
                   );
                 })()
               )}

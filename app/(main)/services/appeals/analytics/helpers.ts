@@ -4,7 +4,8 @@ import type {
   AppealStatus,
   UserMini,
 } from '@/src/entities/appeal/types';
-import type { TableColumnKey } from './types';
+import type { ContextMenuItem } from '@/components/ui/ContextMenu';
+import type { ActionKey, AppealMenuActionKey, TableColumnKey } from './types';
 
 export function formatHoursByMs(ms: number | null | undefined) {
   if (typeof ms !== 'number' || Number.isNaN(ms)) return '-';
@@ -41,6 +42,53 @@ export function paymentStatusLabel(status: AppealLaborPaymentStatus) {
   if (status === 'PARTIAL') return 'Частично оплачено';
   if (status === 'NOT_REQUIRED') return 'Не требуется';
   return 'Не оплачено';
+}
+
+type AppealActionMenuHandlers = {
+  onOpenAppeal: (appealId: number) => void;
+  onOpenAction: (action: ActionKey) => void;
+};
+
+export function buildAppealActionMenuItems(
+  appeal: AppealsAnalyticsAppealItem | null | undefined,
+  handlers: AppealActionMenuHandlers
+): ContextMenuItem<AppealMenuActionKey>[] {
+  if (!appeal) return [];
+
+  const items: ContextMenuItem<AppealMenuActionKey>[] = [
+    {
+      key: 'open',
+      action: 'open',
+      label: 'Открыть обращение',
+      icon: 'open-outline',
+      onSelect: () => handlers.onOpenAppeal(appeal.id),
+    },
+  ];
+
+  const appendAction = (
+    action: ActionKey,
+    enabled: boolean,
+    label: string,
+    icon: ContextMenuItem<AppealMenuActionKey>['icon']
+  ) => {
+    if (!enabled) return;
+    items.push({
+      key: action,
+      action,
+      label,
+      icon,
+      onSelect: () => handlers.onOpenAction(action),
+    });
+  };
+
+  appendAction('status', appeal.actionPermissions.canChangeStatus, 'Изменить статус', 'sync-outline');
+  appendAction('deadline', appeal.actionPermissions.canEditDeadline, 'Изменить дедлайн', 'time-outline');
+  appendAction('assign', appeal.actionPermissions.canAssign, 'Назначить', 'person-add-outline');
+  appendAction('participants', appeal.actionPermissions.canOpenParticipants, 'Участники', 'people-outline');
+  appendAction('transfer', appeal.actionPermissions.canTransfer, 'Передать в отдел', 'swap-horizontal-outline');
+  appendAction('labor', appeal.actionPermissions.canSetLabor, 'Часы и выплаты', 'timer-outline');
+
+  return items;
 }
 
 export type AppealDeadlineTone = 'overdue' | 'soon' | 'onTimeCompleted' | 'neutral' | 'none';
@@ -124,6 +172,12 @@ export function personName(user: {
   return `Пользователь #${user.id || '-'}`;
 }
 
+export function departmentRouteText(appeal: Pick<AppealsAnalyticsAppealItem, 'fromDepartment' | 'toDepartment'>) {
+  const fromName = appeal.fromDepartment?.name || 'Без отдела';
+  const toName = appeal.toDepartment?.name || 'Без отдела';
+  return `${fromName} -> ${toName}`;
+}
+
 export function slaTransitionLabel(key: string) {
   if (key === 'OPEN_TO_IN_PROGRESS') return 'Открытие -> Взято в работу';
   if (key === 'IN_PROGRESS_TO_RESOLVED') return 'В работе -> Ожидание подтверждения';
@@ -131,6 +185,10 @@ export function slaTransitionLabel(key: string) {
 }
 
 export function laborSummaryText(appeal: AppealsAnalyticsAppealItem) {
+  if (appeal.laborNotRequired) {
+    const assigneeNames = (appeal.assignees || []).map((assignee) => personName(assignee));
+    return assigneeNames.length ? `${assigneeNames.join('; ')} — Не требуется` : 'Не требуется';
+  }
   const rows = (appeal.assignees || []).map((assignee) => {
     const labor = (appeal.laborEntries || []).find((entry) => entry.assigneeUserId === assignee.id);
     const accruedHours = labor?.accruedHours ?? 0;
@@ -157,11 +215,11 @@ export function buildAppealLaborMultilineColumns(appeal: AppealsAnalyticsAppealI
   const assignees = appeal.assignees || [];
   if (!assignees.length) {
     return {
-      assignees: 'Исполнители не назначены',
+      assignees: appeal.laborNotRequired ? 'Не требуется' : 'Исполнители не назначены',
       hoursAccrued: '—',
       hoursPaid: '—',
       hoursRemaining: '—',
-      hourlyRate: '—',
+      hourlyRate: appeal.laborNotRequired ? 'Не требуется' : '—',
       amountAccrued: '—',
       amountPaid: '—',
       amountRemaining: '—',
@@ -185,21 +243,22 @@ export function buildAppealLaborMultilineColumns(appeal: AppealsAnalyticsAppealI
     const accruedHours = labor?.accruedHours ?? 0;
     const paidHours = labor?.paidHours ?? 0;
     const remainingHours = labor?.remainingHours ?? Math.max(0, accruedHours - paidHours);
+    const isNotRequired = Boolean(appeal.laborNotRequired || (labor && !labor.payable));
 
     lines.assignees.push(personName(assignee));
-    lines.hoursAccrued.push(formatHoursValue(accruedHours));
-    lines.hoursPaid.push(formatHoursValue(paidHours));
-    lines.hoursRemaining.push(formatHoursValue(remainingHours));
+    lines.hoursAccrued.push(isNotRequired ? '—' : formatHoursValue(accruedHours));
+    lines.hoursPaid.push(isNotRequired ? '—' : formatHoursValue(paidHours));
+    lines.hoursRemaining.push(isNotRequired ? '—' : formatHoursValue(remainingHours));
     if (isUnset) {
-      lines.hourlyRate.push('Не установлено');
-    } else if (labor.payable) {
+      lines.hourlyRate.push(appeal.laborNotRequired ? 'Не требуется' : 'Не установлено');
+    } else if (labor.payable && !appeal.laborNotRequired) {
       lines.hourlyRate.push(`${formatRub(labor.effectiveHourlyRateRub)}/ч`);
     } else {
       lines.hourlyRate.push('Не требуется');
     }
-    lines.amountAccrued.push(formatRub(labor?.amountAccruedRub ?? 0));
-    lines.amountPaid.push(formatRub(labor?.amountPaidRub ?? 0));
-    lines.amountRemaining.push(formatRub(labor?.amountRemainingRub ?? 0));
+    lines.amountAccrued.push(isNotRequired ? '—' : formatRub(labor?.amountAccruedRub ?? 0));
+    lines.amountPaid.push(isNotRequired ? '—' : formatRub(labor?.amountPaidRub ?? 0));
+    lines.amountRemaining.push(isNotRequired ? '—' : formatRub(labor?.amountRemainingRub ?? 0));
   }
 
   return {

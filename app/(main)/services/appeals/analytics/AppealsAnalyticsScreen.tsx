@@ -41,12 +41,13 @@ import {
   APPEALS_ANALYTICS_LOCKED_COLUMNS,
   type ActionKey,
   type LaborDraftState,
+  type LaborNotRequiredDraftState,
   type PaymentStateFilter,
   type PeriodPreset,
   type TabKey,
   type TableColumnKey,
 } from './types';
-import { blobToBase64, hydrateLaborDraftState, toDraftNumericString } from './helpers';
+import { blobToBase64, buildAppealActionMenuItems, hydrateLaborDraftState, toDraftNumericString } from './helpers';
 
 const PAGE_SIZE = 20;
 const ANALYTICS_FILTERS_STORAGE_KEY = 'appeals_analytics_filters_v1';
@@ -123,6 +124,7 @@ export default function AppealsAnalyticsScreen() {
   const [loadingSelectedUserAppeals, setLoadingSelectedUserAppeals] = useState(false);
 
   const [laborDraft, setLaborDraft] = useState<LaborDraftState>({});
+  const [laborNotRequiredDraft, setLaborNotRequiredDraft] = useState<LaborNotRequiredDraftState>({});
   const [menuAppealId, setMenuAppealId] = useState<number | null>(null);
   const [activeAction, setActiveAction] = useState<ActionKey | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
@@ -310,6 +312,13 @@ export default function AppealsAnalyticsScreen() {
 
   const hydrateLaborDraft = useCallback((items: AppealsAnalyticsAppealItem[]) => {
     setLaborDraft((prev) => hydrateLaborDraftState(prev, items));
+    setLaborNotRequiredDraft((prev) => {
+      const next = { ...prev };
+      for (const appeal of items) {
+        next[appeal.id] = appeal.laborNotRequired;
+      }
+      return next;
+    });
   }, []);
 
   const loadMeta = useCallback(async () => {
@@ -535,6 +544,10 @@ export default function AppealsAnalyticsScreen() {
       next[appeal.id] = appealDraft;
       return next;
     });
+    setLaborNotRequiredDraft((prev) => ({
+      ...prev,
+      [appeal.id]: appeal.laborNotRequired,
+    }));
   }, []);
 
   const saveUserHourlyRate = useCallback(
@@ -552,18 +565,18 @@ export default function AppealsAnalyticsScreen() {
     [loadKpi, loadSelectedUserAppeals, loadUsers, refreshAppealsSoft, selectedUserId, tab]
   );
 
-  const openAction = useCallback(
-    async (action: ActionKey) => {
-      if (!selectedAppeal) return;
+  const openActionForAppeal = useCallback(
+    async (appeal: AppealsAnalyticsAppealItem, action: ActionKey) => {
+      setMenuAppealId(appeal.id);
       setActiveAction(action);
       if (action === 'deadline') {
-        setDeadlineDraft(selectedAppeal.deadline || null);
+        setDeadlineDraft(appeal.deadline || null);
       }
       if (action === 'assign') {
         setAssignLoading(true);
-        setAssignSelectedIds((selectedAppeal.assignees || []).map((a) => a.id));
+        setAssignSelectedIds((appeal.assignees || []).map((a) => a.id));
         try {
-          const members = await getDepartmentMembers(selectedAppeal.toDepartment.id);
+          const members = await getDepartmentMembers(appeal.toDepartment.id);
           setAssignMembers(members || []);
         } catch (error: any) {
           Alert.alert('Ошибка', error?.message || 'Не удалось загрузить сотрудников отдела');
@@ -572,36 +585,60 @@ export default function AppealsAnalyticsScreen() {
         }
       }
       if (action === 'transfer') {
-        setTransferDepartmentId(selectedAppeal.toDepartment.id);
+        setTransferDepartmentId(appeal.toDepartment.id);
       }
       if (action === 'labor') {
-        resetLaborDraftForAppeal(selectedAppeal);
+        resetLaborDraftForAppeal(appeal);
       }
     },
-    [resetLaborDraftForAppeal, selectedAppeal]
+    [resetLaborDraftForAppeal]
   );
+
+  const openAction = useCallback(
+    async (action: ActionKey) => {
+      if (!selectedAppeal) return;
+      await openActionForAppeal(selectedAppeal, action);
+    },
+    [openActionForAppeal, selectedAppeal]
+  );
+
+  const clearActionFlow = useCallback(() => {
+    setMenuAppealId(null);
+    setActiveAction(null);
+  }, []);
 
   const closeActionModal = useCallback(() => {
     if (activeAction === 'labor') {
       resetLaborDraftForAppeal(selectedAppeal);
     }
-    setActiveAction(null);
-  }, [activeAction, resetLaborDraftForAppeal, selectedAppeal]);
-
-  const closeActionMenu = useCallback(() => {
-    setMenuAppealId(null);
-    setActiveAction(null);
-  }, []);
+    clearActionFlow();
+  }, [activeAction, clearActionFlow, resetLaborDraftForAppeal, selectedAppeal]);
 
   const openAppealFromAnalytics = useCallback(
     (appealId: number) => {
-      closeActionMenu();
+      clearActionFlow();
       router.push({
         pathname: '/services/appeals/[id]',
         params: { id: String(appealId), backTo: 'analytics' },
       } as any);
     },
-    [closeActionMenu, router]
+    [clearActionFlow, router]
+  );
+
+  const openActionMenu = useCallback((appealId: number) => {
+    setMenuAppealId(appealId);
+    setActiveAction(null);
+  }, []);
+
+  const getAppealMenuItems = useCallback(
+    (appeal: AppealsAnalyticsAppealItem) =>
+      buildAppealActionMenuItems(appeal, {
+        onOpenAppeal: openAppealFromAnalytics,
+        onOpenAction: (action) => {
+          void openActionForAppeal(appeal, action);
+        },
+      }),
+    [openActionForAppeal, openAppealFromAnalytics]
   );
 
   const saveStatus = useCallback(
@@ -613,7 +650,7 @@ export default function AppealsAnalyticsScreen() {
         setAppeals((prev) =>
           prev.map((a) => (a.id === selectedAppeal.id ? { ...a, status: nextStatus } : a))
         );
-        setActiveAction(null);
+        clearActionFlow();
         await refreshAppealsSoft();
         await loadKpi();
       } catch (error: any) {
@@ -622,7 +659,7 @@ export default function AppealsAnalyticsScreen() {
         setActionBusy(false);
       }
     },
-    [loadKpi, refreshAppealsSoft, selectedAppeal]
+    [clearActionFlow, loadKpi, refreshAppealsSoft, selectedAppeal]
   );
 
   const saveDeadline = useCallback(async () => {
@@ -635,7 +672,7 @@ export default function AppealsAnalyticsScreen() {
           a.id === selectedAppeal.id ? { ...a, deadline: deadlineDraft || null } : a
         )
       );
-      setActiveAction(null);
+      clearActionFlow();
       await refreshAppealsSoft();
       await loadKpi();
     } catch (error: any) {
@@ -643,14 +680,14 @@ export default function AppealsAnalyticsScreen() {
     } finally {
       setActionBusy(false);
     }
-  }, [deadlineDraft, loadKpi, refreshAppealsSoft, selectedAppeal]);
+  }, [clearActionFlow, deadlineDraft, loadKpi, refreshAppealsSoft, selectedAppeal]);
 
   const saveAssign = useCallback(async () => {
     if (!selectedAppeal) return;
     setActionBusy(true);
     try {
       await assignAppeal(selectedAppeal.id, assignSelectedIds);
-      setActiveAction(null);
+      clearActionFlow();
       await refreshAppealsSoft();
       await loadKpi();
     } catch (error: any) {
@@ -658,14 +695,14 @@ export default function AppealsAnalyticsScreen() {
     } finally {
       setActionBusy(false);
     }
-  }, [assignSelectedIds, loadKpi, refreshAppealsSoft, selectedAppeal]);
+  }, [assignSelectedIds, clearActionFlow, loadKpi, refreshAppealsSoft, selectedAppeal]);
 
   const saveTransfer = useCallback(async () => {
     if (!selectedAppeal || !transferDepartmentId) return;
     setActionBusy(true);
     try {
       await changeAppealDepartment(selectedAppeal.id, transferDepartmentId);
-      setActiveAction(null);
+      clearActionFlow();
       await refreshAppealsSoft();
       await loadKpi();
     } catch (error: any) {
@@ -673,7 +710,7 @@ export default function AppealsAnalyticsScreen() {
     } finally {
       setActionBusy(false);
     }
-  }, [loadKpi, refreshAppealsSoft, selectedAppeal, transferDepartmentId]);
+  }, [clearActionFlow, loadKpi, refreshAppealsSoft, selectedAppeal, transferDepartmentId]);
 
   const toggleAssignMember = useCallback((userId: number) => {
     setAssignSelectedIds((prev) => (prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]));
@@ -705,14 +742,45 @@ export default function AppealsAnalyticsScreen() {
     }));
   }, []);
 
+  const onChangeLaborNotRequired = useCallback((appealId: number, value: boolean) => {
+    setLaborNotRequiredDraft((prev) => ({
+      ...prev,
+      [appealId]: value,
+    }));
+    if (!value) return;
+    setLaborDraft((prev) => {
+      const next = { ...prev };
+      const appealDraft = { ...(next[appealId] || {}) };
+      for (const assigneeId of Object.keys(appealDraft)) {
+        const numericAssigneeId = Number(assigneeId);
+        appealDraft[numericAssigneeId] = {
+          ...(appealDraft[numericAssigneeId] || {}),
+          accruedHours: '',
+          paidHours: '',
+          paymentStatus: 'NOT_REQUIRED',
+        };
+      }
+      next[appealId] = appealDraft;
+      return next;
+    });
+  }, []);
+
   const saveLabor = useCallback(async () => {
     if (!selectedAppeal) return;
 
     setActionBusy(true);
     try {
       const draftForAppeal = laborDraft[selectedAppeal.id] || {};
+      const laborNotRequired = laborNotRequiredDraft[selectedAppeal.id] === true;
       const items = (selectedAppeal.assignees || []).map((assignee) => {
         const draft = draftForAppeal[assignee.id];
+        if (laborNotRequired) {
+          return {
+            assigneeUserId: assignee.id,
+            accruedHours: 0,
+            paidHours: 0,
+          };
+        }
         const parsedAccrued = Number(draft?.accruedHours ?? '0');
         const parsedPaid = Number(draft?.paidHours ?? '0');
         const normalizedAccruedRaw = Number.isFinite(parsedAccrued) && parsedAccrued >= 0 ? parsedAccrued : 0;
@@ -725,12 +793,16 @@ export default function AppealsAnalyticsScreen() {
           paidHours: normalizedPaid,
         };
       });
-      const saved = await upsertAppealLabor(selectedAppeal.id, items);
+      const saved = await upsertAppealLabor(selectedAppeal.id, {
+        laborNotRequired,
+        items,
+      });
       setAppeals((prev) =>
         prev.map((a) =>
           a.id === selectedAppeal.id
             ? {
                 ...a,
+                laborNotRequired: saved.laborNotRequired,
                 laborEntries: saved.laborEntries,
                 toDepartment: { ...a.toDepartment, paymentRequired: saved.paymentRequired },
               }
@@ -750,14 +822,19 @@ export default function AppealsAnalyticsScreen() {
         next[selectedAppeal.id] = persistedDraft;
         return next;
       });
+      setLaborNotRequiredDraft((prev) => ({
+        ...prev,
+        [selectedAppeal.id]: saved.laborNotRequired,
+      }));
+      clearActionFlow();
+      await refreshAppealsSoft();
       await loadKpi();
-      setActiveAction(null);
     } catch (error: any) {
       Alert.alert('Ошибка', error?.message || 'Не удалось сохранить часы и выплаты');
     } finally {
       setActionBusy(false);
     }
-  }, [laborDraft, loadKpi, selectedAppeal]);
+  }, [clearActionFlow, laborDraft, laborNotRequiredDraft, loadKpi, refreshAppealsSoft, selectedAppeal]);
 
   const exportList = useCallback(
     async (format: 'csv' | 'xlsx') => {
@@ -888,7 +965,8 @@ export default function AppealsAnalyticsScreen() {
             onLoadMore={() => {
               void loadAppeals(false);
             }}
-            onOpenActions={setMenuAppealId}
+            onOpenActions={openActionMenu}
+            getActionMenuItems={getAppealMenuItems}
             visibleColumns={visibleColumns}
             onChangeVisibleColumns={updateVisibleColumns}
             onResetVisibleColumns={resetVisibleColumns}
@@ -937,7 +1015,7 @@ export default function AppealsAnalyticsScreen() {
           void openAction(action);
         }}
         onOpenAppeal={openAppealFromAnalytics}
-        onCloseActionMenu={closeActionMenu}
+        onCloseActionMenu={clearActionFlow}
         onCloseActionModal={closeActionModal}
         actionBusy={actionBusy}
         deadlineDraft={deadlineDraft}
@@ -962,8 +1040,10 @@ export default function AppealsAnalyticsScreen() {
           void saveTransfer();
         }}
         laborDraft={laborDraft}
+        laborNotRequiredDraft={laborNotRequiredDraft}
         onChangeLaborAccruedHours={onChangeLaborAccruedHours}
         onChangeLaborPaidHours={onChangeLaborPaidHours}
+        onChangeLaborNotRequired={onChangeLaborNotRequired}
         onSaveLabor={() => {
           void saveLabor();
         }}

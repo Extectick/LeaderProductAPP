@@ -178,6 +178,7 @@ export interface AppealsAnalyticsAppealItem {
   number: number;
   title: string | null;
   status: AppealStatus;
+  laborNotRequired: boolean;
   createdAt: string;
   deadline: string | null;
   completedAt: string | null;
@@ -187,6 +188,10 @@ export interface AppealsAnalyticsAppealItem {
     firstName: string | null;
     lastName: string | null;
   };
+  fromDepartment: {
+    id: number;
+    name: string;
+  } | null;
   toDepartment: {
     id: number;
     name: string;
@@ -244,13 +249,15 @@ export interface AppealsAnalyticsAppealsResponse {
   };
 }
 
-export type AppealsAnalyticsPaymentState = 'PAID' | 'UNPAID' | 'UNSET';
+export type AppealsAnalyticsPaymentState = 'PAID' | 'UNPAID' | 'UNSET' | 'NOT_REQUIRED';
 
 export type AppealsAnalyticsTableColumnKey =
   | 'number'
   | 'title'
+  | 'createdBy'
   | 'status'
   | 'department'
+  | 'departmentRoute'
   | 'deadline'
   | 'slaOpen'
   | 'slaWork'

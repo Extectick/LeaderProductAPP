@@ -568,16 +568,20 @@ export async function getAppealsAnalyticsUserAppeals(params: {
 
 export async function upsertAppealLabor(
   appealId: number,
-  items: Array<{
-    assigneeUserId: number;
-    accruedHours?: number;
-    paidHours?: number;
-    hours?: number;
-    paymentStatus?: AppealLaborPaymentStatus;
-  }>
-): Promise<{ appealId: number; paymentRequired: boolean; currency: 'RUB'; laborEntries: AppealLaborEntryDto[] }> {
+  params: {
+    laborNotRequired?: boolean;
+    items: Array<{
+      assigneeUserId: number;
+      accruedHours?: number;
+      paidHours?: number;
+      hours?: number;
+      paymentStatus?: AppealLaborPaymentStatus;
+    }>;
+  }
+): Promise<{ appealId: number; paymentRequired: boolean; laborNotRequired: boolean; currency: 'RUB'; laborEntries: AppealLaborEntryDto[] }> {
   const resp = (await apiClient<
     {
+      laborNotRequired?: boolean;
       items: Array<{
         assigneeUserId: number;
         accruedHours?: number;
@@ -586,11 +590,11 @@ export async function upsertAppealLabor(
         paymentStatus?: AppealLaborPaymentStatus;
       }>;
     },
-    { appealId: number; paymentRequired: boolean; currency: 'RUB'; laborEntries: AppealLaborEntryDto[] }
+    { appealId: number; paymentRequired: boolean; laborNotRequired: boolean; currency: 'RUB'; laborEntries: AppealLaborEntryDto[] }
   >(`/appeals/${appealId}/labor`, {
     method: 'PUT',
-    body: { items },
-  })) as ApiResponse<{ appealId: number; paymentRequired: boolean; currency: 'RUB'; laborEntries: AppealLaborEntryDto[] }>;
+    body: params,
+  })) as ApiResponse<{ appealId: number; paymentRequired: boolean; laborNotRequired: boolean; currency: 'RUB'; laborEntries: AppealLaborEntryDto[] }>;
   if (!resp.ok) throw new Error(resp.message || 'Ошибка сохранения трудозатрат');
   return resp.data;
 }
