@@ -44,6 +44,19 @@ export const SERVICE_CATALOG: CatalogServiceItem[] = [
   },
   {
     id: 4,
+    key: 'stock_balances',
+    name: 'Остатки по складам',
+    kind: 'CLOUD',
+    route: '/services/stock_balances',
+    icon: 'cube-outline',
+    description: 'Остатки по складам, организациям и сериям товаров.',
+    gradientStart: '#0F766E',
+    gradientEnd: '#22C55E',
+    visible: true,
+    enabled: true,
+  },
+  {
+    id: 5,
     key: 'tasks',
     name: 'Задачи',
     kind: 'CLOUD',
@@ -56,7 +69,7 @@ export const SERVICE_CATALOG: CatalogServiceItem[] = [
     enabled: false,
   },
   {
-    id: 5,
+    id: 6,
     key: 'reports',
     name: 'Отчёты',
     kind: 'CLOUD',
@@ -69,7 +82,7 @@ export const SERVICE_CATALOG: CatalogServiceItem[] = [
     enabled: false,
   },
   {
-    id: 6,
+    id: 7,
     key: 'clients',
     name: 'Клиенты',
     kind: 'CLOUD',

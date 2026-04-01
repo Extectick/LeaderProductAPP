@@ -32,6 +32,8 @@ const headerMap: Record<string, HeaderMeta> = {
   'appeals/analytics': { title: 'Аналитика обращений', icon: 'stats-chart-outline', showBack: true, parent: '/services/appeals', subtitle: 'SLA, часы и выплаты' },
   tracking: { title: 'Геомаршруты', icon: 'map-outline', showBack: true, parent: '/services', subtitle: 'Маршруты и точки на карте' },
   'tracking/index': { title: 'Геомаршруты', icon: 'map-outline', showBack: true, parent: '/services', subtitle: 'Маршруты и точки на карте' },
+  stock_balances: { title: 'Остатки по складам', icon: 'cube-outline', showBack: true, parent: '/services', subtitle: 'Склады, организации и серии товаров' },
+  'stock_balances/index': { title: 'Остатки по складам', icon: 'cube-outline', showBack: true, parent: '/services', subtitle: 'Склады, организации и серии товаров' },
 };
 
 export default function ServicesLayout() {
@@ -113,111 +115,111 @@ export default function ServicesLayout() {
     <ServicesHeaderSlotProvider value={headerSlotContextValue}>
       <Stack
         screenOptions={({ route, navigation }) => {
-        const name = (route as any)?.routeName || (route.name as string);
-        let meta = headerMap[name as keyof typeof headerMap];
-        const currentPath = String(pathname || '').split('?')[0];
+          const name = (route as any)?.routeName || (route.name as string);
+          let meta = headerMap[name as keyof typeof headerMap];
+          const currentPath = String(pathname || '').split('?')[0];
 
-        const isAppeals = name?.includes('appeals');
-        const isAppealsList = name === 'appeals' || name === 'appeals/index' || name === 'appeals/index.web';
-        const showCreateInHeader = /^\/services\/appeals\/?$/.test(currentPath);
-        const showServicesSummaryInHeader = /^\/services\/?$/.test(currentPath);
+          const isAppeals = name?.includes('appeals');
+          const isAppealsList = name === 'appeals' || name === 'appeals/index' || name === 'appeals/index.web';
+          const showCreateInHeader = /^\/services\/appeals\/?$/.test(currentPath);
+          const showServicesSummaryInHeader = /^\/services\/?$/.test(currentPath);
 
-        if (!meta && isAppeals) {
-          meta = {
-            title: 'Обращения',
-            icon: 'chatbubbles-outline',
-            showBack: !isAppealsList,
-            parent: '/services/appeals',
-            subtitle: 'Центр общения',
+          if (!meta && isAppeals) {
+            meta = {
+              title: 'Обращения',
+              icon: 'chatbubbles-outline',
+              showBack: !isAppealsList,
+              parent: '/services/appeals',
+              subtitle: 'Центр общения',
+            };
+          }
+          if (!meta) meta = { title: 'Сервисы', icon: 'apps-outline', showBack: true, parent: '/services' };
+
+          const shouldShowBack = meta.showBack;
+          const onBack = () => {
+            const isAppealsListPath = /^\/services\/appeals\/?$/.test(currentPath);
+            const isAppealDetailPath = /^\/services\/appeals\/[^/]+$/.test(currentPath);
+            const backToAnalytics =
+              String(globalParams?.backTo || '').toLowerCase() === 'analytics' ||
+              String(globalParams?.from || '').toLowerCase() === 'analytics';
+            if (isAppealDetailPath && backToAnalytics) {
+              router.replace('/services/appeals/analytics');
+              return;
+            }
+
+            if (currentPath.startsWith('/services/qrcodes/')) {
+              router.replace('/services/qrcodes');
+              return;
+            }
+            if (currentPath === '/services/qrcodes') {
+              router.replace('/services');
+              return;
+            }
+            const target = isAppeals
+              ? (isAppealsListPath ? '/services' : '/services/appeals')
+              : (meta as any).parent;
+            if (target) {
+              router.replace(target as any);
+              return;
+            }
+            if (navigation.canGoBack()) navigation.goBack();
+            else router.replace('/services');
           };
-        }
-        if (!meta) meta = { title: 'Сервисы', icon: 'apps-outline', showBack: true, parent: '/services' };
 
-        const shouldShowBack = meta.showBack;
-        const onBack = () => {
-          const isAppealsListPath = /^\/services\/appeals\/?$/.test(currentPath);
-          const isAppealDetailPath = /^\/services\/appeals\/[^/]+$/.test(currentPath);
-          const backToAnalytics =
-            String(globalParams?.backTo || '').toLowerCase() === 'analytics' ||
-            String(globalParams?.from || '').toLowerCase() === 'analytics';
-          if (isAppealDetailPath && backToAnalytics) {
-            router.replace('/services/appeals/analytics');
-            return;
-          }
+          const showCloudInHeader = showCloudServiceInHeader && !showCreateInHeader;
+          const shouldRenderRight = showCreateInHeader || showCloudInHeader || showServicesSummaryInHeader;
+          const showTrackingBottomSlot = /^\/services\/tracking(?:\/.*)?$/.test(currentPath);
+          const rightSlot = shouldRenderRight ? (
+            <View style={styles.rightHeaderRow}>
+              {showServicesSummaryInHeader ? (
+                <View style={styles.servicesSummaryChip}>
+                  <Ionicons name="grid-outline" size={13} color="#1E3A8A" />
+                  <Text style={styles.servicesSummaryText}>
+                    {servicesSummary.enabled}/{servicesSummary.visible}
+                  </Text>
+                </View>
+              ) : null}
+              {showCloudInHeader ? (
+                <View style={styles.cloudHeaderBadge}>
+                  <Ionicons name="cloud-outline" size={13} color="#1E40AF" />
+                </View>
+              ) : null}
+              {showCreateInHeader ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Создать обращение"
+                  onPress={() => router.push('/services/appeals/new')}
+                  style={({ pressed }) => [styles.createBtn, pressed ? styles.createBtnPressed : null]}
+                >
+                  <Ionicons name="add" size={16} color="#1D4ED8" />
+                  <Text style={styles.createBtnText}>Создать</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          ) : undefined;
+          const resolvedRightSlot = showTrackingBottomSlot
+            ? (trackingHeaderRightSlot ?? rightSlot)
+            : rightSlot;
 
-          if (currentPath.startsWith('/services/qrcodes/')) {
-            router.replace('/services/qrcodes');
-            return;
-          }
-          if (currentPath === '/services/qrcodes') {
-            router.replace('/services');
-            return;
-          }
-          const target = isAppeals
-            ? (isAppealsListPath ? '/services' : '/services/appeals')
-            : (meta as any).parent;
-          if (target) {
-            router.replace(target as any);
-            return;
-          }
-          if (navigation.canGoBack()) navigation.goBack();
-          else router.replace('/services');
-        };
-
-        const showCloudInHeader = showCloudServiceInHeader && !showCreateInHeader;
-        const shouldRenderRight = showCreateInHeader || showCloudInHeader || showServicesSummaryInHeader;
-        const showTrackingBottomSlot = /^\/services\/tracking(?:\/.*)?$/.test(currentPath);
-        const rightSlot = shouldRenderRight ? (
-          <View style={styles.rightHeaderRow}>
-            {showServicesSummaryInHeader ? (
-              <View style={styles.servicesSummaryChip}>
-                <Ionicons name="grid-outline" size={13} color="#1E3A8A" />
-                <Text style={styles.servicesSummaryText}>
-                  {servicesSummary.enabled}/{servicesSummary.visible}
-                </Text>
-              </View>
-            ) : null}
-            {showCloudInHeader ? (
-              <View style={styles.cloudHeaderBadge}>
-                <Ionicons name="cloud-outline" size={13} color="#1E40AF" />
-              </View>
-            ) : null}
-            {showCreateInHeader ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Создать обращение"
-                onPress={() => router.push('/services/appeals/new')}
-                style={({ pressed }) => [styles.createBtn, pressed ? styles.createBtnPressed : null]}
-              >
-                <Ionicons name="add" size={16} color="#1D4ED8" />
-                <Text style={styles.createBtnText}>Создать</Text>
-              </Pressable>
-            ) : null}
-          </View>
-        ) : undefined;
-        const resolvedRightSlot = showTrackingBottomSlot
-          ? (trackingHeaderRightSlot ?? rightSlot)
-          : rightSlot;
-
-        return {
-          headerTransparent: true,
-          headerShadowVisible: false,
-          headerStatusBarHeight: 0,
-          headerStyle: { backgroundColor: 'transparent' },
-          header: () => (
-            <AppHeader
-              title={meta.title}
-              subtitle={meta.subtitle}
-              icon={meta.icon}
-              showBack={shouldShowBack}
-              onBack={shouldShowBack ? onBack : undefined}
-              tight={showTrackingBottomSlot}
-              rightSlot={resolvedRightSlot}
-              bottomSlot={showTrackingBottomSlot ? trackingHeaderBottomSlot : undefined}
-            />
-          ),
-          animation: 'ios_from_left',
-        };
+          return {
+            headerTransparent: true,
+            headerShadowVisible: false,
+            headerStatusBarHeight: 0,
+            headerStyle: { backgroundColor: 'transparent' },
+            header: () => (
+              <AppHeader
+                title={meta.title}
+                subtitle={meta.subtitle}
+                icon={meta.icon}
+                showBack={shouldShowBack}
+                onBack={shouldShowBack ? onBack : undefined}
+                tight={showTrackingBottomSlot}
+                rightSlot={resolvedRightSlot}
+                bottomSlot={showTrackingBottomSlot ? trackingHeaderBottomSlot : undefined}
+              />
+            ),
+            animation: 'ios_from_left',
+          };
         }}
       />
     </ServicesHeaderSlotProvider>

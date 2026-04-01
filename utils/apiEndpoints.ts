@@ -88,6 +88,11 @@ export const API_ENDPOINTS = {
     ADMIN_USER_ROUTES_WITH_POINTS: (userId: number) =>
       `/tracking/admin/users/${userId}/routes-with-points`,
   },
+  STOCK_BALANCES: {
+    META: '/stock-balances/meta',
+    TREE: '/stock-balances/tree',
+    CHILDREN: '/stock-balances/children',
+  },
   UPDATES: {
     CHECK: '/updates/check',
   },

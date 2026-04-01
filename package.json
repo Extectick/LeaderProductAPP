@@ -17,9 +17,12 @@
     "check:sentry-config": "node ./scripts/checkSentryConfig.js"
   },
   "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
     "@expo/vector-icons": "^15.0.3",
     "@hookform/resolvers": "^5.2.1",
     "@kesha-antonov/react-native-background-downloader": "^4.5.3",
+    "@mui/material": "^7.3.9",
     "@react-native-async-storage/async-storage": "^2.2.0",
     "@react-native-community/blur": "^4.4.1",
     "@react-native-community/datetimepicker": "8.4.4",
@@ -69,6 +72,7 @@
     "jwt-decode": "^4.0.0",
     "lodash.isequal": "^4.5.0",
     "lucide-react-native": "^0.525.0",
+    "material-react-table": "^3.2.1",
     "moti": "^0.30.0",
     "react": "19.1.0",
     "react-calendar": "^6.0.0",
