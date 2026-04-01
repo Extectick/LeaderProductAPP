@@ -3,7 +3,11 @@ import { View, StyleSheet, Platform } from 'react-native';
 import { WebView } from 'react-native-webview';
 
 export type LeafletPoint = { latitude: number; longitude: number; label?: string };
-const LEAFLET_NATIVE_BASE_URL = 'https://www.openstreetmap.org/';
+const OSM_TILE_URL = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
+const OSM_TILE_SUBDOMAINS = 'abcd';
+const OSM_TILE_ATTRIBUTION =
+  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>';
+const LEAFLET_NATIVE_BASE_URL = 'https://carto.com/';
 
 type Props = {
   points: LeafletPoint[];
@@ -41,9 +45,13 @@ const buildHtml = (
     <script>
       const coords = ${encoded};
       const map = L.map('map', { zoomControl: true });
-      const tileUrl = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-      const attribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>';
-      L.tileLayer(tileUrl, { attribution, maxZoom: 19 }).addTo(map);
+      const tileUrl = '${OSM_TILE_URL}';
+      const attribution = '${OSM_TILE_ATTRIBUTION}';
+      L.tileLayer(tileUrl, {
+        attribution,
+        maxZoom: 20,
+        subdomains: '${OSM_TILE_SUBDOMAINS}',
+      }).addTo(map);
 
       const emitMapTap = () => {
         const payload = JSON.stringify({ type: 'leaflet_map_tap' });
@@ -151,8 +159,6 @@ export default function LeafletMap({
       <WebView
         originWhitelist={['*']}
         style={StyleSheet.absoluteFill}
-        // Android WebView renders inline HTML from about:blank by default, so tile requests
-        // can be blocked by OSM because they do not include a usable Referer header.
         source={{ html, baseUrl: LEAFLET_NATIVE_BASE_URL }}
         onMessage={(event) => {
           if (!onMapTap) return;

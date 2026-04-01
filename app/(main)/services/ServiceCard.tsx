@@ -138,65 +138,58 @@ export default function ServiceCard({
         {
           width: size,
           minHeight: Math.floor(size * servicesTokens.card.minHeightRatio),
-          borderRadius: cardRadius,
-          overflow: 'hidden',
-          shadowColor: servicesTokens.card.shadowColor,
-          shadowOffset: {
-            width: servicesTokens.card.shadowOffsetX,
-            height: servicesTokens.card.shadowOffsetY,
-          },
         },
-        containerStyle,
-        cardAnimatedStyle,
       ]}
     >
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={name}
-        disabled={disabled}
-        onPress={() => !disabled && onPress()}
-        onPressIn={handlePressIn}
-        onPressOut={handlePressOut}
-        {...(isWeb ? { onHoverIn: handleHoverIn, onHoverOut: handleHoverOut } : {})}
-        android_ripple={{ color: '#DFE9FA' }}
-        style={({ pressed }) => [
-          styles.card,
+      <Animated.View
+        style={[
           {
             borderRadius: cardRadius,
-            borderColor: disabled ? servicesTokens.states.disabledBorder : themeBorder || servicesTokens.card.borderColor,
-            borderWidth: servicesTokens.card.borderWidth,
-            backgroundColor: disabled ? servicesTokens.states.disabledBackground : cardBg || servicesTokens.card.background,
-            opacity: disabled ? servicesTokens.states.disabledOpacity : 1,
+            overflow: 'hidden',
+            shadowColor: servicesTokens.card.shadowColor,
+            shadowOffset: {
+              width: servicesTokens.card.shadowOffsetX,
+              height: servicesTokens.card.shadowOffsetY,
+            },
           },
-          pressed && Platform.OS === 'ios' ? styles.cardPressedIos : null,
+          containerStyle,
+          cardAnimatedStyle,
         ]}
       >
-        <LinearGradient
-          pointerEvents="none"
-          colors={[withOpacity(accentStart, 0.2), withOpacity(accentEnd, 0.1), 'transparent']}
-          start={{ x: 0.1, y: 0 }}
-          end={{ x: 0.95, y: 1 }}
-          style={styles.softDecor}
-        />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={name}
+          disabled={disabled}
+          onPress={() => !disabled && onPress()}
+          onPressIn={handlePressIn}
+          onPressOut={handlePressOut}
+          {...(isWeb ? { onHoverIn: handleHoverIn, onHoverOut: handleHoverOut } : {})}
+          android_ripple={{ color: '#DFE9FA' }}
+          style={({ pressed }) => [
+            styles.card,
+            {
+              borderRadius: cardRadius,
+              borderColor: disabled ? servicesTokens.states.disabledBorder : themeBorder || servicesTokens.card.borderColor,
+              borderWidth: servicesTokens.card.borderWidth,
+              backgroundColor: disabled ? servicesTokens.states.disabledBackground : cardBg || servicesTokens.card.background,
+              opacity: disabled ? servicesTokens.states.disabledOpacity : 1,
+            },
+            pressed && Platform.OS === 'ios' ? styles.cardPressedIos : null,
+          ]}
+        >
+          <LinearGradient
+            pointerEvents="none"
+            colors={[withOpacity(accentStart, 0.2), withOpacity(accentEnd, 0.1), 'transparent']}
+            start={{ x: 0.1, y: 0 }}
+            end={{ x: 0.95, y: 1 }}
+            style={styles.softDecor}
+          />
 
-        <View style={styles.content}>
-          <View style={styles.iconRow}>
-            <View
-              style={[
-                styles.iconShell,
-                {
-                  width: iconContainerSize,
-                  height: iconContainerSize,
-                  borderRadius: iconContainerSize / 2,
-                },
-              ]}
-            >
-              <LinearGradient
-                colors={[accentStart, accentEnd]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
+          <View style={styles.content}>
+            <View style={styles.iconRow}>
+              <View
                 style={[
-                  styles.iconGradient,
+                  styles.iconShell,
                   {
                     width: iconContainerSize,
                     height: iconContainerSize,
@@ -204,41 +197,55 @@ export default function ServiceCard({
                   },
                 ]}
               >
-                <Ionicons name={icon as any} size={iconSize} color="#FFFFFF" />
-              </LinearGradient>
-              {kind === 'CLOUD' ? (
-                <View style={styles.cloudBadge}>
-                  <Ionicons name="cloud-outline" size={servicesTokens.card.cloudDotIconSize} color="#1E40AF" />
-                </View>
+                <LinearGradient
+                  colors={[accentStart, accentEnd]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={[
+                    styles.iconGradient,
+                    {
+                      width: iconContainerSize,
+                      height: iconContainerSize,
+                      borderRadius: iconContainerSize / 2,
+                    },
+                  ]}
+                >
+                  <Ionicons name={icon as any} size={iconSize} color="#FFFFFF" />
+                </LinearGradient>
+                {kind === 'CLOUD' ? (
+                  <View style={styles.cloudBadge}>
+                    <Ionicons name="cloud-outline" size={servicesTokens.card.cloudDotIconSize} color="#1E40AF" />
+                  </View>
+                ) : null}
+              </View>
+            </View>
+
+            <View style={styles.textWrap}>
+              <Text numberOfLines={2} style={[styles.title, { color: disabled ? servicesTokens.states.disabledText : textPrimary }, textStyle]}>
+                {name}
+              </Text>
+              {description ? (
+                <Text numberOfLines={3} style={[styles.description, { color: disabled ? '#7A8BA3' : themeSecondary || '#475569' }]}>
+                  {description}
+                </Text>
               ) : null}
             </View>
-          </View>
 
-          <View style={styles.textWrap}>
-            <Text numberOfLines={2} style={[styles.title, { color: disabled ? servicesTokens.states.disabledText : textPrimary }, textStyle]}>
-              {name}
-            </Text>
-            {description ? (
-              <Text numberOfLines={3} style={[styles.description, { color: disabled ? '#7A8BA3' : themeSecondary || '#475569' }]}>
-                {description}
-              </Text>
-            ) : null}
+            {disabled ? (
+              <View style={styles.disabledBadge}>
+                <Ionicons name="lock-closed-outline" size={13} color="#B91C1C" />
+                <Text style={styles.disabledBadgeText}>Недоступно</Text>
+              </View>
+            ) : (
+              <View style={[styles.cta, { backgroundColor: withOpacity(accentStart, 0.12), borderColor: withOpacity(accentStart, 0.2) }]}>
+                <Ionicons name="sparkles-outline" size={13} color={accentStart} />
+                <Text style={[styles.ctaText, { color: accentStart }]}>Открыть</Text>
+                <Ionicons name="arrow-forward" size={13} color={accentStart} />
+              </View>
+            )}
           </View>
-
-          {disabled ? (
-            <View style={styles.disabledBadge}>
-              <Ionicons name="lock-closed-outline" size={13} color="#B91C1C" />
-              <Text style={styles.disabledBadgeText}>Недоступно</Text>
-            </View>
-          ) : (
-            <View style={[styles.cta, { backgroundColor: withOpacity(accentStart, 0.12), borderColor: withOpacity(accentStart, 0.2) }]}>
-              <Ionicons name="sparkles-outline" size={13} color={accentStart} />
-              <Text style={[styles.ctaText, { color: accentStart }]}>Открыть</Text>
-              <Ionicons name="arrow-forward" size={13} color={accentStart} />
-            </View>
-          )}
-        </View>
-      </Pressable>
+        </Pressable>
+      </Animated.View>
     </Animated.View>
   );
 }
