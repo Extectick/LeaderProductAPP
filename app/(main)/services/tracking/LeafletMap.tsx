@@ -3,6 +3,7 @@ import { View, StyleSheet, Platform } from 'react-native';
 import { WebView } from 'react-native-webview';
 
 export type LeafletPoint = { latitude: number; longitude: number; label?: string };
+const LEAFLET_NATIVE_BASE_URL = 'https://www.openstreetmap.org/';
 
 type Props = {
   points: LeafletPoint[];
@@ -150,7 +151,9 @@ export default function LeafletMap({
       <WebView
         originWhitelist={['*']}
         style={StyleSheet.absoluteFill}
-        source={{ html }}
+        // Android WebView renders inline HTML from about:blank by default, so tile requests
+        // can be blocked by OSM because they do not include a usable Referer header.
+        source={{ html, baseUrl: LEAFLET_NATIVE_BASE_URL }}
         onMessage={(event) => {
           if (!onMapTap) return;
           let payload: any = event.nativeEvent.data;

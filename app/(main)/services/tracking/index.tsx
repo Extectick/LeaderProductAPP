@@ -1,5 +1,6 @@
 import { AuthContext } from '@/context/AuthContext';
 import { useNotificationViewport } from '@/context/NotificationViewportContext';
+import { AppHeader } from '@/components/AppHeader';
 import {
   DEFAULT_MAX_ACCURACY,
   DEFAULT_POINTS_LIMIT,
@@ -12,6 +13,7 @@ import type { Filters, PointLabel, UserOption } from './types';
 import { getUsers } from '@/utils/userService';
 import { fetchUserRoutesWithPoints, type RouteWithPoints } from '@/utils/trackingService';
 import { Ionicons } from '@expo/vector-icons';
+import { useNavigation, useRouter } from 'expo-router';
 import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -46,6 +48,8 @@ export default function TrackingServiceScreen() {
   const { width, height } = useWindowDimensions();
   const { headerBottomOffset } = useNotificationViewport();
   const { setHeaderBottomSlot, setHeaderRightSlot } = useServicesHeaderSlot();
+  const navigation = useNavigation();
+  const router = useRouter();
   const auth = useContext(AuthContext);
   const profile = auth?.profile;
 
@@ -55,10 +59,12 @@ export default function TrackingServiceScreen() {
   }, [profile]);
 
   const isWeb = Platform.OS === 'web';
-  const isMobileWeb = isWeb && width < 920;
+  const isMobileLayout = width < 920;
+  const isMobileWeb = isWeb && isMobileLayout;
   const isCompactWeb = isWeb && width < 720;
+  const useNativeOverlayHeader = Platform.OS !== 'web' && isMobileLayout;
   const headerFilterSizing = useMemo(() => {
-    if (isMobileWeb) {
+    if (isMobileLayout) {
       return {
         wrapMaxWidth: 0,
         gap: 8,
@@ -87,7 +93,7 @@ export default function TrackingServiceScreen() {
       showLastSeen: t > 0.55,
       showMetricLabels: t > 0.28,
     };
-  }, [isMobileWeb, width]);
+  }, [isMobileLayout, width]);
 
   const [selectedUser, setSelectedUser] = useState<UserOption | null>(null);
   const [userQuery, setUserQuery] = useState('');
@@ -259,7 +265,7 @@ export default function TrackingServiceScreen() {
     [limitedPoints, pointDateFormatter, pointTimeFormatter]
   );
 
-  const pointsBatchSize = isMobileWeb ? POINTS_BATCH_SIZE_MOBILE : POINTS_BATCH_SIZE_DESKTOP;
+  const pointsBatchSize = isMobileLayout ? POINTS_BATCH_SIZE_MOBILE : POINTS_BATCH_SIZE_DESKTOP;
   const visiblePoints = useMemo(
     () => filteredPointRows.slice(0, visiblePointsCount),
     [filteredPointRows, visiblePointsCount]
@@ -364,25 +370,25 @@ export default function TrackingServiceScreen() {
   }, [filteredPointRows, focusPoint, hasNextPoint, selectedPointPosition]);
 
   useEffect(() => {
-    if (!isMobileWeb && mobileFiltersExpanded) {
+    if (!isMobileLayout && mobileFiltersExpanded) {
       setMobileFiltersExpanded(false);
     }
-  }, [isMobileWeb, mobileFiltersExpanded]);
+  }, [isMobileLayout, mobileFiltersExpanded]);
   useEffect(() => {
-    if (!isMobileWeb && mobilePointsExpanded) {
+    if (!isMobileLayout && mobilePointsExpanded) {
       setMobilePointsExpanded(false);
     }
-  }, [isMobileWeb, mobilePointsExpanded]);
+  }, [isMobileLayout, mobilePointsExpanded]);
   useEffect(() => {
-    if (!isMobileWeb || !mobilePointsExpanded) return;
+    if (!isMobileLayout || !mobilePointsExpanded) return;
     if (selectedPointIndex != null) return;
     const first = filteredPointRows[0];
     if (!first) return;
     setSelectedPointIndex(first.globalIdx);
-  }, [filteredPointRows, isMobileWeb, mobilePointsExpanded, selectedPointIndex]);
+  }, [filteredPointRows, isMobileLayout, mobilePointsExpanded, selectedPointIndex]);
 
   useEffect(() => {
-    if (!isMobileWeb) {
+    if (!isMobileLayout) {
       mobileFiltersAnim.setValue(0);
       return;
     }
@@ -392,17 +398,17 @@ export default function TrackingServiceScreen() {
       easing: mobileFiltersExpanded ? Easing.out(Easing.cubic) : Easing.inOut(Easing.quad),
       useNativeDriver: false,
     }).start();
-  }, [isMobileWeb, mobileFiltersAnim, mobileFiltersExpanded]);
+  }, [isMobileLayout, mobileFiltersAnim, mobileFiltersExpanded]);
   const headerFiltersSlot = useMemo(
     () => (
       <View
         style={[
           styles.headerFiltersWrap,
-          !isMobileWeb && styles.headerFiltersWrapDesktop,
-          !isMobileWeb && { maxWidth: headerFilterSizing.wrapMaxWidth },
+          !isMobileLayout && styles.headerFiltersWrapDesktop,
+          !isMobileLayout && { maxWidth: headerFilterSizing.wrapMaxWidth },
         ]}
       >
-        {isMobileWeb ? (
+        {isMobileLayout ? (
           <Animated.View
             pointerEvents={mobileFiltersExpanded ? 'auto' : 'none'}
             style={[
@@ -707,7 +713,7 @@ export default function TrackingServiceScreen() {
       canViewOthers,
       error,
       filters,
-      isMobileWeb,
+      isMobileLayout,
       mobileFiltersAnim,
       mobileFiltersExpanded,
       loadingRoutes,
@@ -765,7 +771,22 @@ export default function TrackingServiceScreen() {
   );
 
   useEffect(() => {
-    if (isMobileWeb) {
+    navigation.setOptions?.({ headerShown: !useNativeOverlayHeader });
+    return () => {
+      navigation.setOptions?.({ headerShown: true });
+    };
+  }, [navigation, useNativeOverlayHeader]);
+
+  useEffect(() => {
+    if (isMobileLayout) {
+      if (useNativeOverlayHeader) {
+        setHeaderBottomSlot(null);
+        setHeaderRightSlot(null);
+        return () => {
+          setHeaderBottomSlot(null);
+          setHeaderRightSlot(null);
+        };
+      }
       setHeaderRightSlot(mobileHeaderControlsSlot);
       setHeaderBottomSlot(headerFiltersSlot);
       return () => {
@@ -777,16 +798,31 @@ export default function TrackingServiceScreen() {
     setHeaderRightSlot(headerFiltersSlot);
     return () => setHeaderRightSlot(null);
   }, [
-    headerFiltersSlot,
-    isMobileWeb,
-    mobileHeaderControlsSlot,
-    setHeaderBottomSlot,
-    setHeaderRightSlot,
+      headerFiltersSlot,
+      isMobileLayout,
+      mobileHeaderControlsSlot,
+      setHeaderBottomSlot,
+      setHeaderRightSlot,
+      useNativeOverlayHeader,
   ]);
 
   return (
     <View style={styles.fullMapRoot}>
-      {isMobileWeb && mobileFiltersExpanded ? (
+      {useNativeOverlayHeader ? (
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 20, elevation: 20 }} pointerEvents="box-none">
+          <AppHeader
+            title="Геомаршруты"
+            subtitle="Маршруты и точки на карте"
+            icon="map-outline"
+            showBack
+            onBack={() => router.replace('/services')}
+            tight
+            rightSlot={mobileHeaderControlsSlot}
+            bottomSlot={headerFiltersSlot}
+          />
+        </View>
+      ) : null}
+      {isMobileLayout && mobileFiltersExpanded ? (
         <Pressable
           style={styles.mobileFiltersBackdrop}
           onPress={() => setMobileFiltersExpanded(false)}
@@ -797,12 +833,12 @@ export default function TrackingServiceScreen() {
           points={pointLabels}
           selectedIndex={selectedPointIndex}
           selectedVerticalOffsetPx={
-            isMobileWeb && mobilePointsExpanded && selectedPointIndex != null
+            isMobileLayout && mobilePointsExpanded && selectedPointIndex != null
               ? Math.max(48, Math.round(mapHeight * 0.18))
               : 0
           }
           onMapTap={() => {
-            if (!isMobileWeb || !mobilePointsExpanded) return;
+            if (!isMobileLayout || !mobilePointsExpanded) return;
             setMobilePointsExpanded(false);
             setMobilePointsCollapseRequestId((prev) => prev + 1);
           }}
@@ -812,7 +848,7 @@ export default function TrackingServiceScreen() {
 
       <View pointerEvents="none" style={styles.fullMapTint} />
       <TrackingPointsIsland
-        isMobileWeb={isMobileWeb}
+        isMobileLayout={isMobileLayout}
         rows={filteredPointRows}
         visibleRows={visiblePoints}
         selectedPointIndex={selectedPointIndex}

@@ -18,6 +18,7 @@ import {
   type ListRenderItem,
   useWindowDimensions,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { RoutePointDto } from '@/utils/trackingService';
 import { trackingStyles as styles } from '../styles';
 
@@ -31,7 +32,7 @@ export type TrackingPointRow = {
 };
 
 type TrackingPointsIslandProps = {
-  isMobileWeb: boolean;
+  isMobileLayout: boolean;
   rows: TrackingPointRow[];
   visibleRows: TrackingPointRow[];
   selectedPointIndex: number | null;
@@ -65,7 +66,7 @@ const withOpacity = (color: string, opacity: number) => {
 };
 
 export default function TrackingPointsIsland({
-  isMobileWeb,
+  isMobileLayout,
   rows,
   visibleRows,
   selectedPointIndex,
@@ -81,6 +82,7 @@ export default function TrackingPointsIsland({
   collapseRequestId = 0,
 }: TrackingPointsIslandProps) {
   const { width, height } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const { theme } = useTheme();
   const backgroundColor = useThemeColor({}, 'background');
   const textColor = useThemeColor({}, 'text');
@@ -95,18 +97,18 @@ export default function TrackingPointsIsland({
   const surfaceColor = withOpacity(backgroundColor, surfaceOverlayOpacity);
 
   const [panelMode, setPanelMode] = useState<TrackingPointsPanelMode>(
-    isMobileWeb ? 'collapsed' : 'expanded'
+    isMobileLayout ? 'collapsed' : 'expanded'
   );
-  const panelAnim = useRef(new Animated.Value(isMobileWeb ? 0 : 1)).current;
-  const wasMobileWebRef = useRef(isMobileWeb);
+  const panelAnim = useRef(new Animated.Value(isMobileLayout ? 0 : 1)).current;
+  const wasMobileLayoutRef = useRef(isMobileLayout);
   const lastCollapseRequestRef = useRef(collapseRequestId);
-  const dragStartValueRef = useRef(isMobileWeb ? 0 : 1);
+  const dragStartValueRef = useRef(isMobileLayout ? 0 : 1);
   const mobileIslandMaxWidth = 420;
   const mobileIslandSideInset = 10;
 
   const mobileBottomOffset = useMemo(
-    () => FLOATING_TAB_BAR_HEIGHT + FLOATING_TAB_BAR_BOTTOM_OFFSET + 2,
-    []
+    () => FLOATING_TAB_BAR_HEIGHT + FLOATING_TAB_BAR_BOTTOM_OFFSET + insets.bottom + 8,
+    [insets.bottom]
   );
   const collapsedHeight = 96;
   const expandedHeight = useMemo(() => {
@@ -116,20 +118,20 @@ export default function TrackingPointsIsland({
   }, [height]);
   const bodyExpandedHeight = useMemo(() => Math.max(150, expandedHeight - 82), [expandedHeight]);
 
-  const isExpanded = !isMobileWeb || panelMode === 'expanded';
+  const isExpanded = !isMobileLayout || panelMode === 'expanded';
 
   useEffect(() => {
-    if (wasMobileWebRef.current === isMobileWeb) return;
-    wasMobileWebRef.current = isMobileWeb;
-    setPanelMode(isMobileWeb ? 'collapsed' : 'expanded');
-    panelAnim.setValue(isMobileWeb ? 0 : 1);
-  }, [isMobileWeb, panelAnim]);
+    if (wasMobileLayoutRef.current === isMobileLayout) return;
+    wasMobileLayoutRef.current = isMobileLayout;
+    setPanelMode(isMobileLayout ? 'collapsed' : 'expanded');
+    panelAnim.setValue(isMobileLayout ? 0 : 1);
+  }, [isMobileLayout, panelAnim]);
   useEffect(() => {
-    onExpandedChange?.(isMobileWeb && panelMode === 'expanded');
-  }, [isMobileWeb, onExpandedChange, panelMode]);
+    onExpandedChange?.(isMobileLayout && panelMode === 'expanded');
+  }, [isMobileLayout, onExpandedChange, panelMode]);
 
   useEffect(() => {
-    if (!isMobileWeb) {
+    if (!isMobileLayout) {
       panelAnim.setValue(1);
       return;
     }
@@ -148,28 +150,28 @@ export default function TrackingPointsIsland({
       duration: 190,
       useNativeDriver: false,
     }).start();
-  }, [isMobileWeb, panelAnim, panelMode]);
+  }, [isMobileLayout, panelAnim, panelMode]);
 
   const openPanel = useCallback(() => {
-    if (!isMobileWeb) return;
+    if (!isMobileLayout) return;
     setPanelMode('expanded');
-  }, [isMobileWeb]);
+  }, [isMobileLayout]);
 
   const closePanel = useCallback(() => {
-    if (!isMobileWeb) return;
+    if (!isMobileLayout) return;
     setPanelMode('collapsed');
-  }, [isMobileWeb]);
+  }, [isMobileLayout]);
 
   const togglePanel = useCallback(() => {
-    if (!isMobileWeb) return;
+    if (!isMobileLayout) return;
     setPanelMode((prev) => (prev === 'expanded' ? 'collapsed' : 'expanded'));
-  }, [isMobileWeb]);
+  }, [isMobileLayout]);
   useEffect(() => {
-    if (!isMobileWeb) return;
+    if (!isMobileLayout) return;
     if (collapseRequestId === lastCollapseRequestRef.current) return;
     lastCollapseRequestRef.current = collapseRequestId;
     setPanelMode('collapsed');
-  }, [collapseRequestId, isMobileWeb]);
+  }, [collapseRequestId, isMobileLayout]);
 
   const panResponder = useMemo(
     () =>
@@ -177,25 +179,25 @@ export default function TrackingPointsIsland({
         onStartShouldSetPanResponder: () => false,
         onStartShouldSetPanResponderCapture: () => false,
         onMoveShouldSetPanResponder: (_evt, gestureState) =>
-          isMobileWeb &&
+          isMobileLayout &&
           Math.abs(gestureState.dy) > 5 &&
           Math.abs(gestureState.dy) > Math.abs(gestureState.dx),
         onMoveShouldSetPanResponderCapture: (_evt, gestureState) =>
-          isMobileWeb &&
+          isMobileLayout &&
           Math.abs(gestureState.dy) > 5 &&
           Math.abs(gestureState.dy) > Math.abs(gestureState.dx),
         onPanResponderGrant: () => {
           dragStartValueRef.current = panelMode === 'expanded' ? 1 : 0;
         },
         onPanResponderMove: (_evt, gestureState) => {
-          if (!isMobileWeb) return;
+          if (!isMobileLayout) return;
           const travel = Math.max(1, expandedHeight - collapsedHeight);
           const next = dragStartValueRef.current - gestureState.dy / travel;
           const clamped = Math.max(0, Math.min(1, next));
           panelAnim.setValue(clamped);
         },
         onPanResponderRelease: (_evt, gestureState) => {
-          if (!isMobileWeb) return;
+          if (!isMobileLayout) return;
           const travel = Math.max(1, expandedHeight - collapsedHeight);
           const next = dragStartValueRef.current - gestureState.dy / travel;
           const clamped = Math.max(0, Math.min(1, next));
@@ -222,7 +224,7 @@ export default function TrackingPointsIsland({
           openPanel();
         },
       }),
-    [closePanel, collapsedHeight, expandedHeight, isMobileWeb, openPanel, panelAnim, panelMode]
+    [closePanel, collapsedHeight, expandedHeight, isMobileLayout, openPanel, panelAnim, panelMode]
   );
 
   const selectedRowPosition = useMemo(() => {
@@ -316,7 +318,7 @@ export default function TrackingPointsIsland({
   );
   const collapsedHeaderRowStyle = useMemo(
     () =>
-      isMobileWeb && !isExpanded
+      isMobileLayout && !isExpanded
         ? ({
             position: 'absolute',
             top: 16,
@@ -324,18 +326,18 @@ export default function TrackingPointsIsland({
             right: 12,
           } as const)
         : null,
-    [isExpanded, isMobileWeb]
+    [isExpanded, isMobileLayout]
   );
   const collapsedHeaderStyle = useMemo(
     () =>
-      isMobileWeb && !isExpanded
+      isMobileLayout && !isExpanded
         ? ({
             minHeight: 76,
             paddingTop: 0,
             paddingBottom: 0,
           } as const)
         : null,
-    [isExpanded, isMobileWeb]
+    [isExpanded, isMobileLayout]
   );
 
   return (
@@ -343,31 +345,31 @@ export default function TrackingPointsIsland({
       <Animated.View
         style={[
           styles.pointsIslandContainer,
-          isMobileWeb ? styles.pointsIslandContainerMobile : styles.pointsIslandContainerDesktop,
-          !isMobileWeb && { top: desktopTop },
-          isMobileWeb && {
+          isMobileLayout ? styles.pointsIslandContainerMobile : styles.pointsIslandContainerDesktop,
+          !isMobileLayout && { top: desktopTop },
+          isMobileLayout && {
             bottom: mobileBottomOffset,
             width: Math.min(mobileIslandMaxWidth, Math.max(280, width - mobileIslandSideInset * 2)),
             left: (width - Math.min(mobileIslandMaxWidth, Math.max(280, width - mobileIslandSideInset * 2))) / 2,
             right: undefined,
           },
-          isMobileWeb && animatedMobileShellStyle,
+          isMobileLayout && animatedMobileShellStyle,
         ]}
       >
-        <View style={[styles.pointsIslandShadow, isMobileWeb && styles.pointsIslandShadowMobile]}>
+        <View style={[styles.pointsIslandShadow, isMobileLayout && styles.pointsIslandShadowMobile]}>
           <LiquidGlassSurface
             blurTint={isDark ? 'dark' : 'light'}
             blurIntensity={36}
             overlayColor={surfaceColor}
             borderColor={borderColor}
             webBackdropFilter="blur(22px) saturate(160%)"
-            style={[styles.pointsIslandGlass, isMobileWeb && styles.pointsIslandGlassMobile]}
+            style={[styles.pointsIslandGlass, isMobileLayout && styles.pointsIslandGlassMobile]}
           >
             <View
               style={[styles.pointsIslandHeader, collapsedHeaderStyle]}
-              {...(isMobileWeb ? panResponder.panHandlers : {})}
+              {...(isMobileLayout ? panResponder.panHandlers : {})}
             >
-              {isMobileWeb ? (
+              {isMobileLayout ? (
                 <View style={styles.pointsIslandHandleTouch}>
                   <View style={styles.pointsIslandHandle} />
                 </View>
@@ -375,22 +377,22 @@ export default function TrackingPointsIsland({
               <View style={[styles.pointsIslandHeaderRow, collapsedHeaderRowStyle]}>
                 <Pressable
                   onPress={isExpanded ? closePanel : openPanel}
-                  disabled={!isMobileWeb}
+                  disabled={!isMobileLayout}
                   style={({ pressed }) => [
                     styles.pointsIslandHeaderMain,
                     pressed && { opacity: 0.92 },
                   ]}
                 >
                   <Text style={styles.pointsOverlayTitle}>Точки трекинга</Text>
-                  <Text style={styles.pointsOverlayMeta}>{isMobileWeb ? collapsedMeta : desktopMeta}</Text>
-                  {isMobileWeb && !isExpanded ? (
+                  <Text style={styles.pointsOverlayMeta}>{isMobileLayout ? collapsedMeta : desktopMeta}</Text>
+                  {isMobileLayout && !isExpanded ? (
                     <Text style={styles.pointsIslandCollapsedCurrent} numberOfLines={1}>
                       {collapsedCurrentPointInfo}
                     </Text>
                   ) : null}
                 </Pressable>
 
-                {isMobileWeb ? (
+                {isMobileLayout ? (
                   <View style={styles.pointsIslandHeaderActions}>
                     <Pressable
                       onPress={onPrev}
@@ -436,12 +438,12 @@ export default function TrackingPointsIsland({
               </View>
             </View>
 
-            {!isMobileWeb || isExpanded ? (
+            {!isMobileLayout || isExpanded ? (
               <Animated.View
                 style={[
                   styles.pointsIslandBody,
-                  isMobileWeb && styles.pointsIslandBodyMobile,
-                  isMobileWeb && animatedMobileBodyStyle,
+                  isMobileLayout && styles.pointsIslandBodyMobile,
+                  isMobileLayout && animatedMobileBodyStyle,
                 ]}
               >
                 <View style={styles.pointsTableHeaderRow}>
@@ -459,14 +461,14 @@ export default function TrackingPointsIsland({
                 </View>
 
                 {visibleRows.length === 0 ? (
-                  <View style={[styles.pointsIslandEmptyWrap, isMobileWeb && styles.pointsIslandEmptyWrapMobile]}>
+                  <View style={[styles.pointsIslandEmptyWrap, isMobileLayout && styles.pointsIslandEmptyWrapMobile]}>
                     <Text style={styles.mutedText}>Нет точек для отображения.</Text>
                   </View>
                 ) : (
                   <FlatList
                     data={visibleRows}
                     keyExtractor={(item) => `${item.point.id}-${item.globalIdx}`}
-                    style={[styles.pointsIslandList, isMobileWeb && styles.pointsIslandListMobile]}
+                    style={[styles.pointsIslandList, isMobileLayout && styles.pointsIslandListMobile]}
                     contentContainerStyle={styles.pointsTableBodyContent}
                     renderItem={renderRow}
                     onEndReachedThreshold={0.35}
