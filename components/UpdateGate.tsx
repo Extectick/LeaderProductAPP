@@ -707,6 +707,18 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
   const showChecking = showCheckingOverlay && checkingVisible && !modalVisible;
   const isMandatory = mandatoryVisible;
   const showProgress = stage !== 'idle';
+  const primaryActionLabel = useMemo(() => {
+    if (stage === 'downloading') return 'Скачивание...';
+    if (stage === 'verifying') return 'Проверка...';
+    if (stage === 'opening') return 'Открываем...';
+    if (stage === 'done') {
+      return Platform.OS === 'android' ? 'Установить' : 'Открыть';
+    }
+    return 'Обновить';
+  }, [stage]);
+  const primaryActionBusy = stage === 'downloading' || stage === 'verifying' || stage === 'opening';
+  const primaryActionDisabled =
+    primaryActionBusy || (!updateInfo?.downloadUrl && !updateInfo?.storeUrl);
 
   const progressLabel = useMemo(() => {
     if (stage === 'downloading') return `Загрузка ${progress}%`;
@@ -783,17 +795,17 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
                 <Text style={styles.secondaryText}>Закрыть</Text>
               </Pressable>
               <Pressable
-                style={[styles.button, styles.primary, busy && styles.primaryDisabled]}
+                style={[styles.button, styles.primary, primaryActionDisabled && styles.primaryDisabled]}
                 onPress={handleUpdate}
-                disabled={busy || (!updateInfo?.downloadUrl && !updateInfo?.storeUrl)}
+                disabled={primaryActionDisabled}
               >
-                {busy ? (
+                {primaryActionBusy ? (
                   <View style={styles.inlineBusy}>
                     <ActivityIndicator size="small" color="#ffffff" />
-                    <Text style={styles.primaryText}>В процессе...</Text>
+                    <Text style={styles.primaryText}>{primaryActionLabel}</Text>
                   </View>
                 ) : (
-                  <Text style={styles.primaryText}>Обновить</Text>
+                  <Text style={styles.primaryText}>{primaryActionLabel}</Text>
                 )}
               </Pressable>
             </View>
