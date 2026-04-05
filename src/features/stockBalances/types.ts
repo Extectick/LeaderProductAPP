@@ -40,6 +40,10 @@ export type StockLeafRow = {
   } | null;
   quantity: number;
   reserved: number;
+  inStock: number;
+  shipping: number;
+  clientReserved: number;
+  managerReserved: number;
   available: number;
   updatedAt: string;
 };
@@ -52,6 +56,10 @@ export type StockSecondLevelGroup = {
   code: string | null;
   quantity: number;
   reserved: number;
+  inStock: number;
+  shipping: number;
+  clientReserved: number;
+  managerReserved: number;
   available: number;
   leafCount?: number;
   leaves: StockLeafRow[];
@@ -65,6 +73,10 @@ export type StockRootGroup = {
   code: string | null;
   quantity: number;
   reserved: number;
+  inStock: number;
+  shipping: number;
+  clientReserved: number;
+  managerReserved: number;
   available: number;
   childCount?: number;
   children: StockSecondLevelGroup[];

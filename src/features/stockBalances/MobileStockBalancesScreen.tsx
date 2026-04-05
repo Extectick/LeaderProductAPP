@@ -1,4 +1,4 @@
-import TabBarSpacer from '@/components/Navigation/TabBarSpacer';
+﻿import TabBarSpacer from '@/components/Navigation/TabBarSpacer';
 import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 import { useThemeColor } from '@/hooks/useThemeColor';
 import type { StockHierarchy, StockLeafRow, StockRootGroup, StockSecondLevelGroup } from './types';
@@ -60,14 +60,14 @@ function formatNumber(value: number) {
 }
 
 function formatDate(value: string | null | undefined) {
-  if (!value) return '—';
+  if (!value) return 'вЂ”';
   const dt = new Date(value);
-  if (Number.isNaN(dt.getTime())) return '—';
+  if (Number.isNaN(dt.getTime())) return 'вЂ”';
   return dt.toLocaleDateString('ru-RU');
 }
 
 function formatUnit(item: StockLeafRow) {
-  return item.product.unit?.symbol || item.product.unit?.name || '—';
+  return item.product.unit?.symbol || item.product.unit?.name || 'вЂ”';
 }
 
 function StockLeafCard({ item }: { item: StockLeafRow }) {
@@ -80,31 +80,37 @@ function StockLeafCard({ item }: { item: StockLeafRow }) {
         <Text style={styles.leafTitle}>{item.product.name}</Text>
       </View>
       <Text style={styles.leafSubtitle}>
-        {item.warehouse.name} • {unit}
+        {item.warehouse.name} вЂў {unit}
       </Text>
       <View style={styles.badgesRow}>
         <View style={[styles.badge, styles.badgeTeal]}>
-          <Text style={styles.badgeText}>{item.organization?.name || 'Без организации'}</Text>
+          <Text style={styles.badgeText}>{item.organization?.name || 'Р‘РµР· РѕСЂРіР°РЅРёР·Р°С†РёРё'}</Text>
         </View>
         <View style={[styles.badge, styles.badgeAmber]}>
-          <Text style={styles.badgeText}>{item.series?.number || 'Без серии'}</Text>
+          <Text style={styles.badgeText}>{item.series?.number || 'Р‘РµР· СЃРµСЂРёРё'}</Text>
         </View>
       </View>
       <View style={styles.metricsRow}>
         <Text style={styles.metricText}>
-          Остаток: {formatNumber(item.quantity)} {unit}
+          В наличии: {formatNumber(item.inStock)} {unit}
         </Text>
         <Text style={styles.metricText}>
-          Резерв: {formatNumber(item.reserved)} {unit}
+          Отгружается: {formatNumber(item.shipping)} {unit}
+        </Text>
+        <Text style={styles.metricText}>
+          В резерве клиентов: {formatNumber(item.clientReserved)} {unit}
+        </Text>
+        <Text style={styles.metricText}>
+          В резерве менеджеров: {formatNumber(item.managerReserved)} {unit}
         </Text>
         <Text style={styles.metricText}>
           Доступно: {formatNumber(item.available)} {unit}
         </Text>
       </View>
       <Text style={styles.leafMeta}>
-        Произв.: {formatDate(item.series?.productionDate)} • Годен до: {formatDate(item.series?.expiresAt)}
+        РџСЂРѕРёР·РІ.: {formatDate(item.series?.productionDate)} вЂў Р“РѕРґРµРЅ РґРѕ: {formatDate(item.series?.expiresAt)}
       </Text>
-      <Text style={styles.leafMeta}>Обновлено: {formatDate(item.updatedAt)}</Text>
+      <Text style={styles.leafMeta}>РћР±РЅРѕРІР»РµРЅРѕ: {formatDate(item.updatedAt)}</Text>
     </View>
   );
 }
@@ -153,13 +159,13 @@ export default function MobileStockBalancesScreen(props: Props) {
       refreshControl={<RefreshControl refreshing={props.refreshing} onRefresh={props.onRefresh} />}
       ListHeaderComponent={
         <View style={[styles.headerWrap, { paddingTop: topInset + 16 }]}>
-          <Text style={[styles.headerTitle, { color: textColor }]}>Остатки</Text>
-          <Text style={styles.headerSubtitle}>Синхронизация: {formatDate(props.lastStockSyncedAt)}</Text>
+          <Text style={[styles.headerTitle, { color: textColor }]}>РћСЃС‚Р°С‚РєРё</Text>
+          <Text style={styles.headerSubtitle}>РЎРёРЅС…СЂРѕРЅРёР·Р°С†РёСЏ: {formatDate(props.lastStockSyncedAt)}</Text>
 
           <TextInput
             value={props.search}
             onChangeText={props.onChangeSearch}
-            placeholder="Поиск по складу, товару, организации, серии"
+            placeholder="РџРѕРёСЃРє РїРѕ СЃРєР»Р°РґСѓ, С‚РѕРІР°СЂСѓ, РѕСЂРіР°РЅРёР·Р°С†РёРё, СЃРµСЂРёРё"
             placeholderTextColor="#94A3B8"
             style={[styles.searchInput, { backgroundColor: cardBackground, color: textColor }]}
           />
@@ -170,7 +176,7 @@ export default function MobileStockBalancesScreen(props: Props) {
               style={[styles.toggleChip, props.hierarchy === 'warehouse-product' && styles.toggleChipActive]}
             >
               <Text style={[styles.toggleChipText, props.hierarchy === 'warehouse-product' && styles.toggleChipTextActive]}>
-                Склад → Номенклатура
+                РЎРєР»Р°Рґ в†’ РќРѕРјРµРЅРєР»Р°С‚СѓСЂР°
               </Text>
             </Pressable>
             <Pressable
@@ -178,7 +184,7 @@ export default function MobileStockBalancesScreen(props: Props) {
               style={[styles.toggleChip, props.hierarchy === 'product-warehouse' && styles.toggleChipActive]}
             >
               <Text style={[styles.toggleChipText, props.hierarchy === 'product-warehouse' && styles.toggleChipTextActive]}>
-                Номенклатура → Склад
+                РќРѕРјРµРЅРєР»Р°С‚СѓСЂР° в†’ РЎРєР»Р°Рґ
               </Text>
             </Pressable>
           </ScrollView>
@@ -188,7 +194,7 @@ export default function MobileStockBalancesScreen(props: Props) {
               onPress={() => props.onChangeOrganization('')}
               style={[styles.orgChip, !props.organizationGuid && styles.orgChipActive]}
             >
-              <Text style={styles.orgChipText}>Все организации</Text>
+              <Text style={styles.orgChipText}>Р’СЃРµ РѕСЂРіР°РЅРёР·Р°С†РёРё</Text>
             </Pressable>
             {props.organizations.map((item) => (
               <Pressable
@@ -210,7 +216,7 @@ export default function MobileStockBalancesScreen(props: Props) {
           {props.canLoadMore ? (
             <Pressable onPress={props.onLoadMore} style={styles.loadMoreBtn}>
               <Ionicons name="chevron-down-outline" size={18} color="#0F172A" />
-              <Text style={styles.loadMoreText}>Показать ещё группы</Text>
+              <Text style={styles.loadMoreText}>РџРѕРєР°Р·Р°С‚СЊ РµС‰С‘ РіСЂСѓРїРїС‹</Text>
             </Pressable>
           ) : null}
           <TabBarSpacer />
@@ -228,7 +234,7 @@ export default function MobileStockBalancesScreen(props: Props) {
               <View style={{ flex: 1 }}>
                 <Text style={[styles.rootTitle, { color: textColor }]}>{item.name}</Text>
                 <Text style={styles.rootMeta}>
-                  Групп: {item.childCount || item.children.length} • Остаток {formatNumber(item.quantity)} • Доступно {formatNumber(item.available)}
+                  Групп: {item.childCount || item.children.length} • В наличии {formatNumber(item.inStock)} • Доступно {formatNumber(item.available)}
                 </Text>
               </View>
               {rootLoading ? (
@@ -252,7 +258,7 @@ export default function MobileStockBalancesScreen(props: Props) {
                         <View style={{ flex: 1 }}>
                           <Text style={[styles.childTitle, { color: textColor }]}>{child.name}</Text>
                           <Text style={styles.rootMeta}>
-                            Строк: {child.leafCount || 0} • Остаток {formatNumber(child.quantity)} • Доступно {formatNumber(child.available)}
+                            Строк: {child.leafCount || 0} • В наличии {formatNumber(child.inStock)} • Доступно {formatNumber(child.available)}
                           </Text>
                         </View>
                         {groupLoading ? (
@@ -275,8 +281,8 @@ export default function MobileStockBalancesScreen(props: Props) {
                             >
                               <Text style={styles.loadInsideText}>
                                 {groupLoading
-                                  ? 'Загрузка строк...'
-                                  : `Показать ещё строки (${leafState.items.length} из ${leafState.total})`}
+                                  ? 'Р—Р°РіСЂСѓР·РєР° СЃС‚СЂРѕРє...'
+                                  : `РџРѕРєР°Р·Р°С‚СЊ РµС‰С‘ СЃС‚СЂРѕРєРё (${leafState.items.length} РёР· ${leafState.total})`}
                               </Text>
                             </Pressable>
                           ) : null}
@@ -294,8 +300,8 @@ export default function MobileStockBalancesScreen(props: Props) {
               >
                 <Text style={styles.loadInsideText}>
                   {rootLoading
-                    ? 'Загрузка групп...'
-                    : `Показать ещё группы (${rootState.items.length} из ${rootState.total})`}
+                    ? 'Р—Р°РіСЂСѓР·РєР° РіСЂСѓРїРї...'
+                    : `РџРѕРєР°Р·Р°С‚СЊ РµС‰С‘ РіСЂСѓРїРїС‹ (${rootState.items.length} РёР· ${rootState.total})`}
                 </Text>
               </Pressable>
             ) : null}
@@ -503,3 +509,4 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
 });
+

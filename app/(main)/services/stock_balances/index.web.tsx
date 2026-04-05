@@ -1,4 +1,4 @@
-import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
+﻿import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 import { useThemeColor } from '@/hooks/useThemeColor';
 import MobileStockBalancesScreen from '@/src/features/stockBalances/MobileStockBalancesScreen';
 import type { StockLeafRow, StockRootGroup, StockSecondLevelGroup } from '@/src/features/stockBalances/types';
@@ -34,6 +34,10 @@ type FlatRow =
       expiresAt: string;
       quantity: number;
       reserved: number;
+      inStock: number;
+      shipping: number;
+      clientReserved: number;
+      managerReserved: number;
       available: number;
       updatedAt: string;
       expandable: boolean;
@@ -57,6 +61,10 @@ type FlatRow =
       expiresAt: '';
       quantity: 0;
       reserved: 0;
+      inStock: 0;
+      shipping: 0;
+      clientReserved: 0;
+      managerReserved: 0;
       available: 0;
       updatedAt: '';
       expandable: false;
@@ -72,16 +80,16 @@ function formatNumber(value: number) {
 }
 
 function formatDate(value: string | null | undefined) {
-  if (!value) return '—';
+  if (!value) return 'вЂ”';
   const dt = new Date(value);
-  if (Number.isNaN(dt.getTime())) return '—';
+  if (Number.isNaN(dt.getTime())) return 'вЂ”';
   return dt.toLocaleDateString('ru-RU');
 }
 
 function formatDateTime(value: string | null | undefined) {
-  if (!value) return '—';
+  if (!value) return 'вЂ”';
   const dt = new Date(value);
-  if (Number.isNaN(dt.getTime())) return '—';
+  if (Number.isNaN(dt.getTime())) return 'вЂ”';
   return dt.toLocaleString('ru-RU', {
     day: '2-digit',
     month: '2-digit',
@@ -92,7 +100,7 @@ function formatDateTime(value: string | null | undefined) {
 }
 
 function formatUnit(item: StockLeafRow) {
-  return item.product.unit?.symbol || item.product.unit?.name || '—';
+  return item.product.unit?.symbol || item.product.unit?.name || 'вЂ”';
 }
 
 function makeLeafRow(item: StockLeafRow, rootGuid: string): FlatRow {
@@ -104,12 +112,16 @@ function makeLeafRow(item: StockLeafRow, rootGuid: string): FlatRow {
     subtitle: item.warehouse.name,
     code: item.product.code || item.warehouse.code || null,
     unit: formatUnit(item),
-    organization: item.organization?.name || 'Без организации',
-    seriesNumber: item.series?.number || 'Без серии',
+    organization: item.organization?.name || 'Р‘РµР· РѕСЂРіР°РЅРёР·Р°С†РёРё',
+    seriesNumber: item.series?.number || 'Р‘РµР· СЃРµСЂРёРё',
     productionDate: formatDate(item.series?.productionDate),
     expiresAt: formatDate(item.series?.expiresAt),
     quantity: item.quantity,
     reserved: item.reserved,
+    inStock: item.inStock,
+    shipping: item.shipping,
+    clientReserved: item.clientReserved,
+    managerReserved: item.managerReserved,
     available: item.available,
     updatedAt: formatDateTime(item.updatedAt),
     expandable: false,
@@ -129,7 +141,7 @@ function makeGroupRow(
     kind: 'group',
     depth: 1,
     title: item.name,
-    subtitle: `${item.leafCount || 0} строк`,
+    subtitle: `${item.leafCount || 0} СЃС‚СЂРѕРє`,
     code: item.code,
     unit: '',
     organization: '',
@@ -138,6 +150,10 @@ function makeGroupRow(
     expiresAt: '',
     quantity: item.quantity,
     reserved: item.reserved,
+    inStock: item.inStock,
+    shipping: item.shipping,
+    clientReserved: item.clientReserved,
+    managerReserved: item.managerReserved,
     available: item.available,
     updatedAt: '',
     expandable: (item.leafCount || 0) > 0,
@@ -155,7 +171,7 @@ function makeRootRow(item: StockRootGroup, expanded: boolean, loading: boolean):
     kind: 'root',
     depth: 0,
     title: item.name,
-    subtitle: `${item.childCount || item.children.length} групп`,
+    subtitle: `${item.childCount || item.children.length} РіСЂСѓРїРї`,
     code: item.code,
     unit: '',
     organization: '',
@@ -164,6 +180,10 @@ function makeRootRow(item: StockRootGroup, expanded: boolean, loading: boolean):
     expiresAt: '',
     quantity: item.quantity,
     reserved: item.reserved,
+    inStock: item.inStock,
+    shipping: item.shipping,
+    clientReserved: item.clientReserved,
+    managerReserved: item.managerReserved,
     available: item.available,
     updatedAt: '',
     expandable: (item.childCount || item.children.length) > 0,
@@ -261,8 +281,8 @@ export default function StockBalancesWebScreen() {
             id: `more-leaves:${key}`,
             kind: 'leaves-more',
             depth: 2,
-            title: groupLoading ? 'Подгружаем строки…' : 'Показать ещё строки',
-            subtitle: `${groupState.items.length} из ${groupState.total}`,
+            title: groupLoading ? 'РџРѕРґРіСЂСѓР¶Р°РµРј СЃС‚СЂРѕРєРёвЂ¦' : 'РџРѕРєР°Р·Р°С‚СЊ РµС‰С‘ СЃС‚СЂРѕРєРё',
+            subtitle: `${groupState.items.length} РёР· ${groupState.total}`,
             code: null,
             unit: '',
             organization: '',
@@ -271,6 +291,10 @@ export default function StockBalancesWebScreen() {
             expiresAt: '',
             quantity: 0,
             reserved: 0,
+            inStock: 0,
+            shipping: 0,
+            clientReserved: 0,
+            managerReserved: 0,
             available: 0,
             updatedAt: '',
             expandable: false,
@@ -287,8 +311,8 @@ export default function StockBalancesWebScreen() {
           id: `more-children:${root.guid}`,
           kind: 'children-more',
           depth: 1,
-          title: rootLoading ? 'Подгружаем группы…' : 'Показать ещё группы',
-          subtitle: `${rootState.items.length} из ${rootState.total}`,
+          title: rootLoading ? 'РџРѕРґРіСЂСѓР¶Р°РµРј РіСЂСѓРїРїС‹вЂ¦' : 'РџРѕРєР°Р·Р°С‚СЊ РµС‰С‘ РіСЂСѓРїРїС‹',
+          subtitle: `${rootState.items.length} РёР· ${rootState.total}`,
           code: null,
           unit: '',
           organization: '',
@@ -297,6 +321,10 @@ export default function StockBalancesWebScreen() {
           expiresAt: '',
           quantity: 0,
           reserved: 0,
+          inStock: 0,
+          shipping: 0,
+          clientReserved: 0,
+          managerReserved: 0,
           available: 0,
           updatedAt: '',
           expandable: false,
@@ -334,7 +362,7 @@ export default function StockBalancesWebScreen() {
     () => [
       {
         accessorKey: 'title',
-        header: stock.hierarchy === 'warehouse-product' ? 'Склад / Номенклатура' : 'Номенклатура / Склад',
+        header: stock.hierarchy === 'warehouse-product' ? 'РЎРєР»Р°Рґ / РќРѕРјРµРЅРєР»Р°С‚СѓСЂР°' : 'РќРѕРјРµРЅРєР»Р°С‚СѓСЂР° / РЎРєР»Р°Рґ',
         size: 380,
         grow: true,
         Cell: ({ row, cell }) => {
@@ -358,7 +386,7 @@ export default function StockBalancesWebScreen() {
                   }}
                   sx={{ textTransform: 'none', borderRadius: '999px' }}
                 >
-                  {item.loading ? 'Загрузка…' : item.title}
+                  {item.loading ? 'Р—Р°РіСЂСѓР·РєР°вЂ¦' : item.title}
                 </Button>
                 <Typography sx={{ mt: 0.5, fontSize: 12, color: '#64748B' }}>{item.subtitle}</Typography>
               </Box>
@@ -429,31 +457,43 @@ export default function StockBalancesWebScreen() {
           );
         },
       },
-      { accessorKey: 'code', header: 'Код', size: 120 },
-      { accessorKey: 'unit', header: 'Ед.', size: 80 },
-      { accessorKey: 'organization', header: 'Организация', size: 180 },
-      { accessorKey: 'seriesNumber', header: 'Серия', size: 160 },
-      { accessorKey: 'productionDate', header: 'Дата произв.', size: 120 },
-      { accessorKey: 'expiresAt', header: 'Годен до', size: 120 },
+      { accessorKey: 'code', header: 'РљРѕРґ', size: 120 },
+      { accessorKey: 'unit', header: 'Р•Рґ.', size: 80 },
+      { accessorKey: 'organization', header: 'РћСЂРіР°РЅРёР·Р°С†РёСЏ', size: 180 },
+      { accessorKey: 'seriesNumber', header: 'РЎРµСЂРёСЏ', size: 160 },
+      { accessorKey: 'productionDate', header: 'Р”Р°С‚Р° РїСЂРѕРёР·РІ.', size: 120 },
+      { accessorKey: 'expiresAt', header: 'Р“РѕРґРµРЅ РґРѕ', size: 120 },
       {
-        accessorKey: 'quantity',
-        header: 'Остаток',
+        accessorKey: 'inStock',
+        header: 'In Stock',
         size: 110,
         Cell: ({ cell, row }) => (row.original.kind === 'children-more' || row.original.kind === 'leaves-more' ? '' : formatNumber(Number(cell.getValue<number>() || 0))),
       },
       {
-        accessorKey: 'reserved',
-        header: 'Резерв',
+        accessorKey: 'shipping',
+        header: 'Shipping',
         size: 110,
+        Cell: ({ cell, row }) => (row.original.kind === 'children-more' || row.original.kind === 'leaves-more' ? '' : formatNumber(Number(cell.getValue<number>() || 0))),
+      },
+      {
+        accessorKey: 'clientReserved',
+        header: 'Client Reserved',
+        size: 140,
+        Cell: ({ cell, row }) => (row.original.kind === 'children-more' || row.original.kind === 'leaves-more' ? '' : formatNumber(Number(cell.getValue<number>() || 0))),
+      },
+      {
+        accessorKey: 'managerReserved',
+        header: 'Manager Reserved',
+        size: 150,
         Cell: ({ cell, row }) => (row.original.kind === 'children-more' || row.original.kind === 'leaves-more' ? '' : formatNumber(Number(cell.getValue<number>() || 0))),
       },
       {
         accessorKey: 'available',
-        header: 'Доступно',
+        header: 'Available',
         size: 110,
         Cell: ({ cell, row }) => (row.original.kind === 'children-more' || row.original.kind === 'leaves-more' ? '' : formatNumber(Number(cell.getValue<number>() || 0))),
       },
-      { accessorKey: 'updatedAt', header: 'Обновлено', size: 140 },
+      { accessorKey: 'updatedAt', header: 'РћР±РЅРѕРІР»РµРЅРѕ', size: 140 },
     ],
     [stock, toggleGroup, toggleRoot]
   );
@@ -550,32 +590,32 @@ export default function StockBalancesWebScreen() {
             <Stack direction="row" spacing={1.25} sx={{ flexWrap: 'wrap', alignItems: 'center' }}>
               <TextField
                 size="small"
-                label="Поиск"
+                label="РџРѕРёСЃРє"
                 value={stock.searchInput}
                 onChange={(event) => stock.setSearchInput(event.target.value)}
-                placeholder="Склад, товар, организация, серия"
+                placeholder="РЎРєР»Р°Рґ, С‚РѕРІР°СЂ, РѕСЂРіР°РЅРёР·Р°С†РёСЏ, СЃРµСЂРёСЏ"
                 sx={{ minWidth: 300 }}
               />
               <TextField
                 select
                 size="small"
-                label="Иерархия"
+                label="РРµСЂР°СЂС…РёСЏ"
                 value={stock.hierarchy}
                 onChange={(event) => stock.setHierarchy(event.target.value as typeof stock.hierarchy)}
                 sx={{ minWidth: 220 }}
               >
-                <MenuItem value="warehouse-product">Склад → Номенклатура</MenuItem>
-                <MenuItem value="product-warehouse">Номенклатура → Склад</MenuItem>
+                <MenuItem value="warehouse-product">РЎРєР»Р°Рґ в†’ РќРѕРјРµРЅРєР»Р°С‚СѓСЂР°</MenuItem>
+                <MenuItem value="product-warehouse">РќРѕРјРµРЅРєР»Р°С‚СѓСЂР° в†’ РЎРєР»Р°Рґ</MenuItem>
               </TextField>
               <TextField
                 select
                 size="small"
-                label="Организация"
+                label="РћСЂРіР°РЅРёР·Р°С†РёСЏ"
                 value={stock.organizationGuid}
                 onChange={(event) => stock.setOrganizationGuid(event.target.value)}
                 sx={{ minWidth: 240 }}
               >
-                <MenuItem value="">Все организации</MenuItem>
+                <MenuItem value="">Р’СЃРµ РѕСЂРіР°РЅРёР·Р°С†РёРё</MenuItem>
                 {(stock.meta?.organizations || []).map((item) => (
                   <MenuItem key={item.guid} value={item.guid}>
                     {item.name}
@@ -583,24 +623,24 @@ export default function StockBalancesWebScreen() {
                 ))}
               </TextField>
               <Button variant="contained" onClick={stock.refresh} sx={{ textTransform: 'none', fontWeight: 700 }}>
-                Обновить
+                РћР±РЅРѕРІРёС‚СЊ
               </Button>
             </Stack>
 
             <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', alignItems: 'center' }}>
               <Chip
                 size="small"
-                label={`Корневых групп: ${stock.tree?.totalRoots || 0}`}
+                label={`РљРѕСЂРЅРµРІС‹С… РіСЂСѓРїРї: ${stock.tree?.totalRoots || 0}`}
                 sx={{ fontWeight: 700 }}
               />
               <Chip
                 size="small"
-                label={`Строк остатков: ${stock.tree?.totalLeaves || 0}`}
+                label={`РЎС‚СЂРѕРє РѕСЃС‚Р°С‚РєРѕРІ: ${stock.tree?.totalLeaves || 0}`}
                 sx={{ fontWeight: 700 }}
               />
               <Chip
                 size="small"
-                label={`Синхронизация: ${formatDateTime(stock.meta?.lastStockSyncedAt)}`}
+                label={`РЎРёРЅС…СЂРѕРЅРёР·Р°С†РёСЏ: ${formatDateTime(stock.meta?.lastStockSyncedAt)}`}
                 sx={{ fontWeight: 700 }}
               />
               {stock.error ? (
@@ -613,11 +653,11 @@ export default function StockBalancesWebScreen() {
           stock.loadingMore ? (
             <Stack direction="row" spacing={1} alignItems="center" sx={{ px: 2 }}>
               <CircularProgress size={16} />
-              <Typography sx={{ fontSize: 13, color: '#64748B' }}>Подгружаем ещё корневые группы…</Typography>
+              <Typography sx={{ fontSize: 13, color: '#64748B' }}>РџРѕРґРіСЂСѓР¶Р°РµРј РµС‰С‘ РєРѕСЂРЅРµРІС‹Рµ РіСЂСѓРїРїС‹вЂ¦</Typography>
             </Stack>
           ) : stock.canLoadMore ? (
             <Typography sx={{ px: 2, fontSize: 13, color: '#64748B' }}>
-              Прокрутите вниз для подгрузки следующих корневых групп
+              РџСЂРѕРєСЂСѓС‚РёС‚Рµ РІРЅРёР· РґР»СЏ РїРѕРґРіСЂСѓР·РєРё СЃР»РµРґСѓСЋС‰РёС… РєРѕСЂРЅРµРІС‹С… РіСЂСѓРїРї
             </Typography>
           ) : null
         }
@@ -625,3 +665,6 @@ export default function StockBalancesWebScreen() {
     </Box>
   );
 }
+
+
+
