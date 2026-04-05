@@ -60,14 +60,14 @@ function formatNumber(value: number) {
 }
 
 function formatDate(value: string | null | undefined) {
-  if (!value) return 'вЂ”';
+  if (!value) return '-';
   const dt = new Date(value);
-  if (Number.isNaN(dt.getTime())) return 'вЂ”';
+  if (Number.isNaN(dt.getTime())) return '-';
   return dt.toLocaleDateString('ru-RU');
 }
 
 function formatUnit(item: StockLeafRow) {
-  return item.product.unit?.symbol || item.product.unit?.name || 'вЂ”';
+  return item.product.unit?.symbol || item.product.unit?.name || '-';
 }
 
 function StockLeafCard({ item }: { item: StockLeafRow }) {
@@ -80,14 +80,14 @@ function StockLeafCard({ item }: { item: StockLeafRow }) {
         <Text style={styles.leafTitle}>{item.product.name}</Text>
       </View>
       <Text style={styles.leafSubtitle}>
-        {item.warehouse.name} вЂў {unit}
+        {item.warehouse.name} • {unit}
       </Text>
       <View style={styles.badgesRow}>
         <View style={[styles.badge, styles.badgeTeal]}>
-          <Text style={styles.badgeText}>{item.organization?.name || 'Р‘РµР· РѕСЂРіР°РЅРёР·Р°С†РёРё'}</Text>
+          <Text style={styles.badgeText}>{item.organization?.name || 'Без организации'}</Text>
         </View>
         <View style={[styles.badge, styles.badgeAmber]}>
-          <Text style={styles.badgeText}>{item.series?.number || 'Р‘РµР· СЃРµСЂРёРё'}</Text>
+          <Text style={styles.badgeText}>{item.series?.number || 'Без серии'}</Text>
         </View>
       </View>
       <View style={styles.metricsRow}>
@@ -108,9 +108,9 @@ function StockLeafCard({ item }: { item: StockLeafRow }) {
         </Text>
       </View>
       <Text style={styles.leafMeta}>
-        РџСЂРѕРёР·РІ.: {formatDate(item.series?.productionDate)} вЂў Р“РѕРґРµРЅ РґРѕ: {formatDate(item.series?.expiresAt)}
+        Произв.: {formatDate(item.series?.productionDate)} • Годен до: {formatDate(item.series?.expiresAt)}
       </Text>
-      <Text style={styles.leafMeta}>РћР±РЅРѕРІР»РµРЅРѕ: {formatDate(item.updatedAt)}</Text>
+      <Text style={styles.leafMeta}>Обновлено: {formatDate(item.updatedAt)}</Text>
     </View>
   );
 }
@@ -159,13 +159,13 @@ export default function MobileStockBalancesScreen(props: Props) {
       refreshControl={<RefreshControl refreshing={props.refreshing} onRefresh={props.onRefresh} />}
       ListHeaderComponent={
         <View style={[styles.headerWrap, { paddingTop: topInset + 16 }]}>
-          <Text style={[styles.headerTitle, { color: textColor }]}>РћСЃС‚Р°С‚РєРё</Text>
-          <Text style={styles.headerSubtitle}>РЎРёРЅС…СЂРѕРЅРёР·Р°С†РёСЏ: {formatDate(props.lastStockSyncedAt)}</Text>
+          <Text style={[styles.headerTitle, { color: textColor }]}>Остатки</Text>
+          <Text style={styles.headerSubtitle}>Синхронизация: {formatDate(props.lastStockSyncedAt)}</Text>
 
           <TextInput
             value={props.search}
             onChangeText={props.onChangeSearch}
-            placeholder="РџРѕРёСЃРє РїРѕ СЃРєР»Р°РґСѓ, С‚РѕРІР°СЂСѓ, РѕСЂРіР°РЅРёР·Р°С†РёРё, СЃРµСЂРёРё"
+            placeholder="Поиск по складу, товару, организации, серии"
             placeholderTextColor="#94A3B8"
             style={[styles.searchInput, { backgroundColor: cardBackground, color: textColor }]}
           />
@@ -176,7 +176,7 @@ export default function MobileStockBalancesScreen(props: Props) {
               style={[styles.toggleChip, props.hierarchy === 'warehouse-product' && styles.toggleChipActive]}
             >
               <Text style={[styles.toggleChipText, props.hierarchy === 'warehouse-product' && styles.toggleChipTextActive]}>
-                РЎРєР»Р°Рґ в†’ РќРѕРјРµРЅРєР»Р°С‚СѓСЂР°
+                Склад -> Номенклатура
               </Text>
             </Pressable>
             <Pressable
@@ -184,7 +184,7 @@ export default function MobileStockBalancesScreen(props: Props) {
               style={[styles.toggleChip, props.hierarchy === 'product-warehouse' && styles.toggleChipActive]}
             >
               <Text style={[styles.toggleChipText, props.hierarchy === 'product-warehouse' && styles.toggleChipTextActive]}>
-                РќРѕРјРµРЅРєР»Р°С‚СѓСЂР° в†’ РЎРєР»Р°Рґ
+                Номенклатура -> Склад
               </Text>
             </Pressable>
           </ScrollView>
@@ -194,7 +194,7 @@ export default function MobileStockBalancesScreen(props: Props) {
               onPress={() => props.onChangeOrganization('')}
               style={[styles.orgChip, !props.organizationGuid && styles.orgChipActive]}
             >
-              <Text style={styles.orgChipText}>Р’СЃРµ РѕСЂРіР°РЅРёР·Р°С†РёРё</Text>
+              <Text style={styles.orgChipText}>Все организации</Text>
             </Pressable>
             {props.organizations.map((item) => (
               <Pressable
@@ -216,7 +216,7 @@ export default function MobileStockBalancesScreen(props: Props) {
           {props.canLoadMore ? (
             <Pressable onPress={props.onLoadMore} style={styles.loadMoreBtn}>
               <Ionicons name="chevron-down-outline" size={18} color="#0F172A" />
-              <Text style={styles.loadMoreText}>РџРѕРєР°Р·Р°С‚СЊ РµС‰С‘ РіСЂСѓРїРїС‹</Text>
+              <Text style={styles.loadMoreText}>Показать еще группы</Text>
             </Pressable>
           ) : null}
           <TabBarSpacer />
@@ -281,8 +281,8 @@ export default function MobileStockBalancesScreen(props: Props) {
                             >
                               <Text style={styles.loadInsideText}>
                                 {groupLoading
-                                  ? 'Р—Р°РіСЂСѓР·РєР° СЃС‚СЂРѕРє...'
-                                  : `РџРѕРєР°Р·Р°С‚СЊ РµС‰С‘ СЃС‚СЂРѕРєРё (${leafState.items.length} РёР· ${leafState.total})`}
+                                  ? 'Загрузка строк...'
+                                  : `Показать еще строки (${leafState.items.length} из ${leafState.total})`}
                               </Text>
                             </Pressable>
                           ) : null}
@@ -300,8 +300,8 @@ export default function MobileStockBalancesScreen(props: Props) {
               >
                 <Text style={styles.loadInsideText}>
                   {rootLoading
-                    ? 'Р—Р°РіСЂСѓР·РєР° РіСЂСѓРїРї...'
-                    : `РџРѕРєР°Р·Р°С‚СЊ РµС‰С‘ РіСЂСѓРїРїС‹ (${rootState.items.length} РёР· ${rootState.total})`}
+                    ? 'Загрузка групп...'
+                    : `Показать еще группы (${rootState.items.length} из ${rootState.total})`}
                 </Text>
               </Pressable>
             ) : null}
