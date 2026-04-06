@@ -93,6 +93,14 @@ export const API_ENDPOINTS = {
     TREE: '/stock-balances/tree',
     CHILDREN: '/stock-balances/children',
   },
+  CLIENT_ORDERS: {
+    LIST: '/api/client-orders',
+    DETAIL: (guid: string) => `/api/client-orders/${encodeURIComponent(guid)}`,
+    REFERENCE_DATA: '/api/client-orders/reference-data',
+    PRODUCTS: '/api/client-orders/products',
+    SUBMIT: (guid: string) => `/api/client-orders/${encodeURIComponent(guid)}/submit`,
+    CANCEL: (guid: string) => `/api/client-orders/${encodeURIComponent(guid)}/cancel`,
+  },
   UPDATES: {
     CHECK: '/updates/check',
   },
