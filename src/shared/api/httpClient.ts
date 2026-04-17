@@ -16,6 +16,7 @@ type BodyLike = any; // JSON | FormData | string | Blob | ArrayBuffer
 export interface HttpResponse<T> {
   ok: boolean;
   data?: T;
+  meta?: any;
   message?: string;
   status: number;
   errorCode?: AppErrorCode;
@@ -47,7 +48,9 @@ function buildHeaders(base: Record<string, string>, token: string | null, isForm
   return h;
 }
 
-async function parseResponse<Res>(response: Response): Promise<{ data: Res | undefined; message?: string }> {
+async function parseResponse<Res>(
+  response: Response
+): Promise<{ data: Res | undefined; meta?: any; message?: string }> {
   const ct = response.headers.get('content-type') || '';
   const contentDisposition = response.headers.get('content-disposition') || '';
   const isBinaryAttachment =
@@ -64,8 +67,9 @@ async function parseResponse<Res>(response: Response): Promise<{ data: Res | und
   try {
     const json = await response.clone().json();
     const data = json && typeof json === 'object' && 'data' in json ? (json.data as Res) : (json as Res);
+    const meta = json && typeof json === 'object' && 'meta' in json ? json.meta : undefined;
     const message = (json && (json.message || json.error)) as string | undefined;
-    return { data, message };
+    return { data, meta, message };
   } catch {
     const text = await response.text();
     return { data: undefined, message: text || undefined };
@@ -114,7 +118,7 @@ export async function httpRequest<Req = undefined, Res = any>(
 
     setServerReachable();
     const status = response.status;
-    const { data, message } = await parseResponse<Res>(response);
+    const { data, meta, message } = await parseResponse<Res>(response);
 
     if (!response.ok) {
       addMonitoringBreadcrumb('http_error_response', { path, status });
@@ -126,7 +130,7 @@ export async function httpRequest<Req = undefined, Res = any>(
       };
     }
 
-    return { ok: true, status, data };
+    return { ok: true, status, data, meta };
   } catch (error: any) {
     const message = error?.message || 'Network error';
     addMonitoringBreadcrumb('http_network_error', { path, message });

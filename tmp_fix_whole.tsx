@@ -120,7 +120,7 @@ function CompactTextField(props: {
       <TextField
         fullWidth
         size="small"
-        placeholder={props.placeholder || 'Поиск'}
+        placeholder={props.placeholder || 'РџРѕРёСЃРє'}
         value={props.value}
         onChange={(event) => props.onChange(event.target.value)}
         sx={{
@@ -183,7 +183,7 @@ function getPickerItemTaxMeta(kind: PickerKind | null, item: any) {
   if (kind !== 'counterparty' && kind !== 'filterCounterparty') return '';
   return [
     item.inn ? `ИНН ${item.inn}` : '',
-    item.kpp ? `КПП ${item.kpp}` : '',
+    item.kpp ? `РљРџРџ ${item.kpp}` : '',
   ].filter(Boolean).join(' • ');
 }
 function getPickerItemKey(kind: PickerKind | null, item: any, index: number) {
@@ -219,16 +219,6 @@ function formatQuantityInputValue(value: number, weight: boolean) {
   return normalized.replace(/\.?0+$/, '');
 }
 
-function getQuantityInputWidthPx(value: unknown, minWidth: number, maxWidth: number) {
-  const length = String(value ?? '').trim().length;
-  const estimated = 18 + Math.max(3, length + 1) * 8;
-  return Math.min(maxWidth, Math.max(minWidth, estimated));
-}
-
-function getQuantityControlWidthPx(value: unknown, buttonSize: number, minInputWidth: number, maxInputWidth: number) {
-  return getQuantityInputWidthPx(value, minInputWidth, maxInputWidth) + buttonSize * 2 + 8;
-}
-
 function stockLabelWithUnit(stock: any, baseUnit?: any) {
   if (!stock) return '';
   const available = stock.available ?? stock.quantity;
@@ -241,45 +231,6 @@ function receiptPriceLabel(item: any) {
   return item?.receiptPrice === null || item?.receiptPrice === undefined
     ? 'Цена поступления —'
     : `Цена поступления ${formatMoney(item.receiptPrice, item.currency)}`;
-}
-
-function productPickerMetaParts(item: any) {
-  return {
-    code: item?.code || 'Без кода',
-    receiptPrice: item?.receiptPrice === null || item?.receiptPrice === undefined
-      ? '—'
-      : formatMoney(item.receiptPrice, item.currency),
-    stock: stockLabelWithUnit(item?.stock, item?.baseUnit) || '—',
-  };
-}
-
-function draftItemMetaParts(item: any) {
-  const receiptPrice = item?.receiptPrice === null || item?.receiptPrice === undefined
-    ? '—'
-    : formatMoney(item.receiptPrice, item.currency);
-  return {
-    code: item?.productCode || 'Без кода',
-    receiptPrice,
-    stock: stockLabelWithUnit(item?.stock, item?.baseUnit) || '—',
-  };
-}
-
-function DraftItemMeta({ item }: { item: any }) {
-  const meta = draftItemMetaParts(item);
-  const iconSx = { display: 'inline-flex', alignItems: 'center', color: '#64748B', mr: 0.35, verticalAlign: 'text-bottom' };
-  return (
-    <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.75, minWidth: 0, flexWrap: 'wrap' }}>
-      <Box component="span">{meta.code}</Box>
-      <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center' }}>
-        <Box component="span" sx={iconSx}><Ionicons name="pricetag-outline" size={11} /></Box>
-        {meta.receiptPrice}
-      </Box>
-      <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center' }}>
-        <Box component="span" sx={iconSx}><Ionicons name="cube-outline" size={11} /></Box>
-        {meta.stock}
-      </Box>
-    </Box>
-  );
 }
 
 function stepQuantity(item: any, direction: 1 | -1) {
@@ -403,8 +354,6 @@ function ProductPickerListItem(props: {
   const title = props.item.name || getPickerItemTitle(props.item);
   const stockAvailable = Number(props.item.stock?.available ?? props.item.stock?.quantity ?? 0);
   const disabled = !!props.disabled;
-  const meta = productPickerMetaParts(props.item);
-  const iconSx = { display: 'inline-flex', alignItems: 'center', color: '#64748B', mr: 0.35, verticalAlign: 'text-bottom' };
 
   return (
     <Box
@@ -442,18 +391,17 @@ function ProductPickerListItem(props: {
       >
         {title}
       </Typography>
-      <Box sx={{ mt: 0.55, display: 'flex', alignItems: 'center', gap: 0.9, flexWrap: 'wrap', minWidth: 0 }}>
-        <Typography sx={{ fontSize: 10.5, color: '#64748B', fontWeight: 700 }}>{meta.code}</Typography>
-        <Typography sx={{ fontSize: 10.5, color: '#64748B', fontWeight: 700, display: 'inline-flex', alignItems: 'center' }}>
-          <Box component="span" sx={iconSx}><Ionicons name="pricetag-outline" size={11} /></Box>
-          {meta.receiptPrice}
+      <Stack spacing={0.3} sx={{ mt: 0.55 }}>
+        {props.item.stock ? (
+          <Typography sx={{ fontSize: 11, color: stockAvailable > 0 ? '#15803D' : '#166534', fontWeight: 800 }}>
+            {stockLabelWithUnit(props.item.stock, props.item.baseUnit)}
+          </Typography>
+        ) : null}
+        <Typography sx={{ fontSize: 10.5, color: '#64748B', fontWeight: 700 }}>
+          {receiptPriceLabel(props.item)}
         </Typography>
-        <Typography sx={{ fontSize: 10.5, color: stockAvailable > 0 ? '#15803D' : '#166534', fontWeight: 800, display: 'inline-flex', alignItems: 'center' }}>
-          <Box component="span" sx={iconSx}><Ionicons name="cube-outline" size={11} /></Box>
-          {meta.stock}
-        </Typography>
-      </Box>
-      {props.note ? <Typography sx={{ mt: 0.35, fontSize: 10.5, color: '#DC2626', fontWeight: 800 }}>{props.note}</Typography> : null}
+        {props.note ? <Typography sx={{ fontSize: 10.5, color: '#DC2626', fontWeight: 800 }}>{props.note}</Typography> : null}
+      </Stack>
     </Box>
   );
 }
@@ -488,9 +436,6 @@ function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookup
   const requestIdRef = React.useRef(0);
   const valueLabel = value ? getPickerItemTitle(value) : '';
   const inputDisabled = !!disabled && !onOpenDetails;
-  const normalizedQuery = query.trim().toLowerCase();
-  const normalizedValueLabel = valueLabel.trim().toLowerCase();
-  const useDefaultListing = !normalizedQuery || normalizedQuery === normalizedValueLabel;
 
   React.useEffect(() => {
     if (open) return;
@@ -519,16 +464,9 @@ function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookup
 
   React.useEffect(() => {
     if (!open || disabled) return;
-    const searchValue = useDefaultListing ? '' : query;
-    const timer = setTimeout(() => void loadPage(searchValue, 0, false), searchValue ? 200 : 0);
+    const timer = setTimeout(() => void loadPage(query, 0, false), query ? 200 : 0);
     return () => clearTimeout(timer);
-  }, [disabled, loadPage, open, query, useDefaultListing]);
-
-  const visibleItems = React.useMemo(() => {
-    if (!value?.guid || !useDefaultListing) return items;
-    const rest = items.filter((item) => item.guid !== value.guid);
-    return [value, ...rest];
-  }, [items, useDefaultListing, value]);
+  }, [disabled, loadPage, open, query]);
 
   const close = React.useCallback(() => {
     setOpen(false);
@@ -548,25 +486,25 @@ function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookup
     const target = event.currentTarget;
     const remaining = target.scrollHeight - target.scrollTop - target.clientHeight;
     if (remaining > 140) return;
-    void loadPage(useDefaultListing ? '' : query, offset + 25, true);
-  }, [hasMore, loadPage, loading, offset, query, useDefaultListing]);
+    void loadPage(query, offset + 25, true);
+  }, [hasMore, loadPage, loading, offset, query]);
 
   const handleKeyDown = React.useCallback((event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'ArrowDown') {
       event.preventDefault();
       setOpen(true);
-      setActiveIndex((prev) => Math.min(prev + 1, Math.max(visibleItems.length - 1, 0)));
+      setActiveIndex((prev) => Math.min(prev + 1, Math.max(items.length - 1, 0)));
     } else if (event.key === 'ArrowUp') {
       event.preventDefault();
       setActiveIndex((prev) => Math.max(prev - 1, 0));
-    } else if (event.key === 'Enter' && open && visibleItems[activeIndex]) {
+    } else if (event.key === 'Enter' && open && items[activeIndex]) {
       event.preventDefault();
-      void selectItem(visibleItems[activeIndex]);
+      void selectItem(items[activeIndex]);
     } else if (event.key === 'Escape') {
       event.preventDefault();
       close();
     }
-  }, [activeIndex, close, open, selectItem, visibleItems]);
+  }, [activeIndex, close, items, open, selectItem]);
 
   return (
     <ClickAwayListener onClickAway={close}>
@@ -579,7 +517,7 @@ function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookup
         <TextField
           fullWidth
           size="small"
-          placeholder={placeholder || 'Поиск'}
+          placeholder={placeholder || 'РџРѕРёСЃРє'}
           value={query}
           disabled={inputDisabled}
           onFocus={(event) => {
@@ -642,15 +580,14 @@ function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookup
           sx={{ zIndex: 1500, width: anchorRef.current?.clientWidth || 260 }}
         >
           <Paper variant="outlined" sx={{ mt: 0.35, maxHeight: 280, overflowY: 'auto', borderRadius: '6px', boxShadow: '0 12px 32px rgba(15, 23, 42, 0.16)' }} onScroll={handleScroll}>
-            {!loading && !visibleItems.length ? (
-              <Typography sx={{ px: 1, py: 0.8, fontSize: 12, color: '#64748B' }}>Ничего не найдено</Typography>
+            {!loading && !items.length ? (
+              <Typography sx={{ px: 1, py: 0.8, fontSize: 12, color: '#64748B' }}>Ничего РЅРµ найдено</Typography>
             ) : null}
-            {visibleItems.map((item, index) => {
+            {items.map((item, index) => {
               const title = getPickerItemTitle(item);
               const meta = getPickerItemMeta(kind, item);
               const taxMeta = getPickerItemTaxMeta(kind, item);
               const active = index === activeIndex;
-              const selected = !!value?.guid && value.guid === item.guid;
               return (
                 <Box
                   key={`${kind}-${item.guid || index}`}
@@ -672,16 +609,9 @@ function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookup
                     '&:active': { transform: 'scale(0.99)', backgroundColor: '#DBEAFE' },
                   }}
                 >
-                  <Stack direction="row" spacing={0.75} alignItems="flex-start" sx={{ minWidth: 0 }}>
-                    <Box sx={{ width: 16, pt: 0.1, flexShrink: 0, display: 'flex', justifyContent: 'center' }}>
-                      {selected ? <Ionicons name="checkmark-circle" size={15} color="#16A34A" /> : null}
-                    </Box>
-                    <Box sx={{ minWidth: 0, flex: 1 }}>
-                      <Typography sx={{ fontSize: 12, fontWeight: 900, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</Typography>
-                      {meta ? <Typography sx={{ fontSize: 10, color: selected ? '#16A34A' : '#64748B', fontWeight: selected ? 800 : 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{meta}</Typography> : null}
-                      {taxMeta ? <Typography sx={{ fontSize: 10, color: '#334155', fontWeight: 800, mt: 0.1 }}>{taxMeta}</Typography> : null}
-                    </Box>
-                  </Stack>
+                  <Typography sx={{ fontSize: 12, fontWeight: 900, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</Typography>
+                  {meta ? <Typography sx={{ fontSize: 10, color: '#64748B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{meta}</Typography> : null}
+                  {taxMeta ? <Typography sx={{ fontSize: 10, color: '#334155', fontWeight: 800, mt: 0.1 }}>{taxMeta}</Typography> : null}
                 </Box>
               );
             })}
@@ -718,14 +648,11 @@ function ToolbarIconButton(props: {
           sx={{
             width: props.label ? 'auto' : buttonSize,
             height: buttonSize,
-            minHeight: buttonSize,
             px: props.label ? 1 : undefined,
-            py: 0,
             gap: props.label ? 0.55 : undefined,
             border: `1px solid ${props.label ? color : '#D8E2F0'}`,
             borderRadius: '7px',
             bgcolor: filled ? color : '#FFFFFF',
-            boxSizing: 'border-box',
             transition: 'background-color 140ms ease, transform 90ms ease',
             '&:hover': { bgcolor: filled ? color : '#F1F5F9', opacity: filled ? 0.9 : 1 },
             '&:active': { transform: 'scale(0.94)' },
@@ -783,12 +710,6 @@ function ResetAdornmentButton(props: { title: string; disabled?: boolean; onClic
       </span>
     </Tooltip>
   );
-}
-
-function getDisplayedPriceValue(manualPrice: string, basePrice?: number | null) {
-  if (manualPrice.trim()) return manualPrice;
-  if (basePrice === null || basePrice === undefined || basePrice <= 0) return '';
-  return String(basePrice);
 }
 
 function DeliveryDateField(props: {
@@ -889,7 +810,7 @@ function DeliveryDateField(props: {
                 </IconButton>
               </Stack>
               <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 0.25 }}>
-                {['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map((label) => (
+                {['РџРЅ', 'Р’С‚', 'РЎСЂ', 'Р§С‚', 'РџС‚', 'РЎР±', 'Р’СЃ'].map((label) => (
                   <Typography key={label} sx={{ fontSize: 10, color: '#64748B', textAlign: 'center', fontWeight: 800 }}>{label}</Typography>
                 ))}
                 {days.map((day) => (
@@ -918,7 +839,7 @@ function DeliveryDateField(props: {
                   </Box>
                 ))}
               </Box>
-              <Typography sx={{ fontSize: 10, color: '#64748B' }}>Доступно с сегодня до {formatShortDate(toDateInputValue(maxDate.toISOString()))}.</Typography>
+              <Typography sx={{ fontSize: 10, color: '#64748B' }}>Доступно СЃ сегодня РґРѕ {formatShortDate(toDateInputValue(maxDate.toISOString()))}.</Typography>
             </Stack>
           </Paper>
         </Popper>
@@ -1071,6 +992,7 @@ export default function ClientOrdersWebScreen() {
   const [pendingPriceTypeAction, setPendingPriceTypeAction] = React.useState<PendingPriceTypeAction | null>(null);
   const [pendingOrganization, setPendingOrganization] = React.useState<ClientOrderOrganization | null>(null);
   const [itemsSearch, setItemsSearch] = React.useState('');
+  const [priceTypeOptions, setPriceTypeOptions] = React.useState<ClientOrderPriceTypeOption[]>([]);
   const [referenceDetailsOpen, setReferenceDetailsOpen] = React.useState(false);
   const [referenceDetailsLoading, setReferenceDetailsLoading] = React.useState(false);
   const [referenceDetailsError, setReferenceDetailsError] = React.useState<string | null>(null);
@@ -1117,7 +1039,7 @@ export default function ClientOrdersWebScreen() {
       setter(dimension === 'width' ? rect.width : rect.height);
       const observer = new ResizeObserver((entries) => {
         const rect = entries[0]?.contentRect;
-        setter(dimension === 'width' ? (rect?.width ?? 0) : (rect?.height ?? 0));
+        setter(dimension === 'width' ? rect?.width ?? 0 : rect?.height ?? 0);
       });
       observer.observe(element);
       observers.push(observer);
@@ -1196,17 +1118,19 @@ export default function ClientOrdersWebScreen() {
     ].some((value) => (value || '').toLowerCase().includes(query)));
   }, [itemsSearch, workspace.draft.items]);
 
-  const quantityColumnWidth = React.useMemo(() => {
-    const fallback = useCompactTable ? 104 : 124;
-    if (!filteredDraftItems.length) return fallback;
-    const buttonSize = 28;
-    const minInputWidth = useCompactTable ? 44 : 52;
-    const maxInputWidth = useCompactTable ? 102 : 126;
-    const maxWidth = filteredDraftItems.reduce((currentMax, item) => (
-      Math.max(currentMax, getQuantityControlWidthPx(item.quantity, buttonSize, minInputWidth, maxInputWidth))
-    ), fallback);
-    return Math.max(fallback, maxWidth + 8);
-  }, [filteredDraftItems, useCompactTable]);
+  React.useEffect(() => {
+    let alive = true;
+    searchPriceTypes({ limit: 100, offset: 0 })
+      .then((result) => {
+        if (alive) setPriceTypeOptions(result.items || []);
+      })
+      .catch(() => {
+        if (alive) setPriceTypeOptions([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [searchPriceTypes]);
 
   React.useEffect(() => {
     if (!settings) return;
@@ -1224,15 +1148,15 @@ export default function ClientOrdersWebScreen() {
 
   const pickerTitle = React.useMemo(() => {
     switch (pickerKind) {
-      case 'filterCounterparty': return 'Фильтр по контрагенту';
+      case 'filterCounterparty': return 'Фильтр РїРѕ контрагенту';
       case 'organization': return 'Выбор организации';
       case 'counterparty': return 'Выбор контрагента';
       case 'agreement': return 'Выбор соглашения';
-      case 'contract': return 'Выбор договора';
+      case 'contract': return 'Выбор РґРѕРіРѕРІРѕСЂР°';
       case 'warehouse': return 'Выбор склада';
       case 'deliveryAddress': return 'Выбор адреса доставки';
-      case 'priceType': return 'Вид цены';
-      case 'product': return 'Подбор товаров';
+      case 'priceType': return 'Р’РёРґ цены';
+      case 'product': return 'РџРѕРґР±РѕСЂ товаров';
       default: return '';
     }
   }, [pickerKind]);
@@ -1434,7 +1358,7 @@ export default function ClientOrdersWebScreen() {
       const details = await getClientOrderReferenceDetails(kind, guid);
       setReferenceDetails(details);
     } catch (error: any) {
-      setReferenceDetailsError(error?.message || 'Не удалось загрузить карточку реквизита');
+      setReferenceDetailsError(error?.message || 'РќРµ удалось загрузить карточку реквизита');
     } finally {
       setReferenceDetailsLoading(false);
     }
@@ -1487,13 +1411,8 @@ export default function ClientOrdersWebScreen() {
   const title = workspace.draftMode
     ? 'Новый заказ клиента'
     : workspace.selectedOrder?.number1c
-      ? `Заказ 1С ${workspace.selectedOrder.number1c}`
+      ? `Заказ 1РЎ ${workspace.selectedOrder.number1c}`
       : `Черновик ${workspace.selectedOrder?.guid.slice(0, 8) || ''}`;
-  const inlineEditorErrorMessages = React.useMemo(() => {
-    const messages = [workspace.error, workspace.validation.blockingMessage].filter(Boolean) as string[];
-    return Array.from(new Set(messages));
-  }, [workspace.error, workspace.validation.blockingMessage]);
-  const showInlineEditorErrors = !isSinglePane && effectiveEditorPaneWidth >= 1180 && inlineEditorErrorMessages.length > 0;
 
   const createDocumentFromList = React.useCallback(async () => {
     await workspace.createDocument();
@@ -1511,21 +1430,21 @@ export default function ClientOrdersWebScreen() {
 
   const showOrdersPane = !isSinglePane || responsivePane === 'orders';
   const showEditorPane = !isSinglePane || responsivePane === 'editor';
-  const renderDraftItemCard = React.useCallback((item: any, rowNumber: number) => {
+  const renderDraftItemCard = React.useCallback((item: any) => {
+    const rowNumber = workspace.draft.items.findIndex((next) => next.key === item.key) + 1;
     const packageValue = item.packageGuid || (item.packages.length ? '' : '__base__');
     const lineErrors = workspace.validation.itemMessages[item.key] || [];
     const quantityError = !isValidQuantityValue(item);
     const priceError = !isValidManualPriceValue(item.manualPrice);
-    const quantityInputWidth = getQuantityInputWidthPx(item.quantity, ui.narrowPriceWidth <= 66 ? 34 : 40, 88);
-    const quantityControlWidth = getQuantityControlWidthPx(item.quantity, ui.narrowControlHeight, ui.narrowPriceWidth <= 66 ? 34 : 40, 88);
     const priceTypeValue = item.manualPrice.trim()
       ? { guid: '__manual__', name: 'Произвольный' }
       : item.priceTypeGuid
-        ? { guid: item.priceTypeGuid, name: item.priceTypeName || workspace.draft.priceTypeName || 'Вид цены' }
+        ? { guid: item.priceTypeGuid, name: item.priceTypeName || workspace.draft.priceTypeName || 'Р’РёРґ цены' }
         : workspace.draft.priceTypeGuid
-          ? { guid: workspace.draft.priceTypeGuid, name: workspace.draft.priceTypeName || 'Вид цены' }
+          ? { guid: workspace.draft.priceTypeGuid, name: workspace.draft.priceTypeName || 'Р’РёРґ цены' }
           : null;
-    const displayedPrice = getDisplayedPriceValue(item.manualPrice, item.basePrice);
+    const displayedPrice = item.manualPrice || (item.basePrice === null || item.basePrice === undefined ? '' : String(item.basePrice));
+    const productMeta = [item.productCode, item.productArticle, item.productSku].filter(Boolean).join(' В· ') || 'Без РєРѕРґР°';
 
     return (
       <Box
@@ -1537,7 +1456,7 @@ export default function ClientOrdersWebScreen() {
         }}
       >
         <Stack spacing={0.45}>
-          <Stack direction="row" spacing={0.35} alignItems="flex-start">
+          <Stack direction="row" spacing={0.55} alignItems="flex-start">
             <IconButton
               size="small"
               color="error"
@@ -1547,7 +1466,7 @@ export default function ClientOrdersWebScreen() {
             >
               <Ionicons name="close-outline" size={ui.narrowPriceWidth <= 66 ? 13 : 14} />
             </IconButton>
-            <Typography sx={{ width: ui.narrowPriceWidth <= 66 ? 10 : 12, fontSize: ui.narrowPriceWidth <= 66 ? 10.5 : 11, color: '#64748B', fontWeight: 900, pt: 0.1, flexShrink: 0 }}>
+            <Typography sx={{ width: ui.narrowPriceWidth <= 66 ? 12 : 14, fontSize: ui.narrowPriceWidth <= 66 ? 10.5 : 11, color: '#64748B', fontWeight: 900, pt: 0.1, flexShrink: 0 }}>
               {rowNumber}
             </Typography>
             <Box sx={{ minWidth: 0, flex: 1 }}>
@@ -1564,7 +1483,7 @@ export default function ClientOrdersWebScreen() {
                 {item.productName}
               </Typography>
               <Typography sx={{ mt: 0.1, fontSize: ui.narrowPriceWidth <= 66 ? 9 : 9.5, lineHeight: 1.1, color: '#64748B' }}>
-                <DraftItemMeta item={item} />
+                {productMeta}
               </Typography>
             </Box>
             <Typography sx={{ fontSize: ui.narrowPriceWidth <= 66 ? 10.8 : 11.5, fontWeight: 900, color: '#0F172A', whiteSpace: 'nowrap', flexShrink: 0, pl: 0.3 }}>
@@ -1575,7 +1494,7 @@ export default function ClientOrdersWebScreen() {
           <Box
             sx={{
               display: 'grid',
-              gridTemplateColumns: `${quantityControlWidth}px ${ui.narrowPackageWidth}px minmax(0, 1fr) ${ui.narrowPriceWidth}px`,
+              gridTemplateColumns: `${ui.narrowQtyWidth}px ${ui.narrowPackageWidth}px minmax(0, 1fr) ${ui.narrowPriceWidth}px`,
               gap: `${ui.narrowRowGap}px`,
               alignItems: 'center',
               pl: ui.narrowPriceWidth <= 66 ? 3.1 : 4.1,
@@ -1597,8 +1516,7 @@ export default function ClientOrdersWebScreen() {
                 disabled={workspace.readOnly}
                 error={quantityError}
                 sx={{
-                  width: quantityInputWidth,
-                  flex: '0 0 auto',
+                  flex: 1,
                   ...compactInputSx,
                   '& .MuiInputBase-root': { minHeight: ui.narrowControlHeight, borderRadius: '6px' },
                   '& input': { textAlign: 'center', fontWeight: 800, fontSize: ui.narrowPriceWidth <= 66 ? 11 : 11.5, px: 0.25, py: 0 },
@@ -1661,26 +1579,23 @@ export default function ClientOrdersWebScreen() {
               kind="priceType"
               label=""
               dense
-              placeholder="Вид цены"
+              placeholder="Р’РёРґ цены"
               value={priceTypeValue}
               loadOptions={loadPriceTypeLookup}
               onSelect={(next) => workspace.setItemPriceType(item.key, next)}
               disabled={workspace.readOnly}
               beforeDetailsAdornment={workspace.isItemPriceTypeCustom(item.key) ? (
                 <ResetAdornmentButton
-                  title="Сбросить вид цены строки"
+                  title="Сбросить РІРёРґ цены строки"
                   disabled={workspace.readOnly}
                   onClick={() => workspace.resetItemPriceType(item.key)}
                 />
               ) : null}
-              onOpenDetails={() => void openReferenceDetails('price-type', item.priceTypeGuid || workspace.draft.priceTypeGuid)}
-              detailsDisabled={!(item.priceTypeGuid || workspace.draft.priceTypeGuid)}
             />
 
             <TextField
               size="small"
               value={displayedPrice}
-              placeholder="0"
               onChange={(e) => {
                 const manualPrice = normalizePriceInput(e.target.value, displayedPrice);
                 workspace.setItemPatch(item.key, {
@@ -1695,7 +1610,6 @@ export default function ClientOrdersWebScreen() {
                 ...compactInputSx,
                 '& .MuiInputBase-root': { minHeight: ui.narrowControlHeight, borderRadius: '6px' },
                 '& .MuiInputBase-input': { fontSize: ui.narrowPriceWidth <= 66 ? 11 : 11.5, fontWeight: 700, px: 0.45, py: 0 },
-                '& .MuiInputBase-input::placeholder': { color: '#94A3B8', opacity: 1 },
               }}
             />
           </Box>
@@ -1717,25 +1631,25 @@ export default function ClientOrdersWebScreen() {
           <Stack spacing={0.9}>
             <Typography sx={{ fontSize: ui.titleSize, fontWeight: 900, lineHeight: 1.1 }}>Заказы клиентов</Typography>
             <CompactTextField
-              label="Поиск"
+              label="РџРѕРёСЃРє"
               value={workspace.filters.search}
-              placeholder="Поиск"
+              placeholder="РџРѕРёСЃРє"
               onChange={(value) => workspace.setFilters((prev) => ({ ...prev, search: value }))}
             />
             <CompactSelectField
               label="Статус"
               value={workspace.filters.status}
               onChange={(value) => workspace.setFilters((prev) => ({ ...prev, status: value }))}
-              renderValue={(value) => value ? (workspace.statusLabels[value] || value) : 'Все статусы'}
+              renderValue={(value) => value ? (workspace.statusLabels[value] || value) : 'Р’СЃРµ статусы'}
             >
-              <MenuItem value="">Все статусы</MenuItem>
+              <MenuItem value="">Р’СЃРµ статусы</MenuItem>
               {Object.entries(workspace.statusLabels).map(([value, label]) => <MenuItem key={value} value={value}>{label}</MenuItem>)}
             </CompactSelectField>
             <QuickLookupField
               kind="filterCounterparty"
               label="Контрагент"
               value={filterCounterparty}
-              placeholder="Все контрагенты"
+              placeholder="Р’СЃРµ контрагенты"
               loadOptions={loadCounterpartyLookup}
               onSelect={selectFilterCounterparty}
               onOpenDetails={() => void openReferenceDetails('counterparty', filterCounterparty?.guid)}
@@ -1766,7 +1680,7 @@ export default function ClientOrdersWebScreen() {
             <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
               <Chip size="small" label={`Всего ${workspace.statusCounts.all}`} sx={{ height: 24, fontSize: 11, fontWeight: 800 }} />
               <Chip size="small" label={`Черновики ${workspace.statusCounts.draft}`} sx={{ height: 24, fontSize: 11, fontWeight: 800 }} />
-              <Chip size="small" label={`В очереди ${workspace.statusCounts.queued}`} sx={{ height: 24, fontSize: 11, fontWeight: 800 }} />
+              <Chip size="small" label={`Р’ очереди ${workspace.statusCounts.queued}`} sx={{ height: 24, fontSize: 11, fontWeight: 800 }} />
             </Stack>
           </Stack>
           <Divider sx={{ my: 0.8 }} />
@@ -1801,13 +1715,13 @@ export default function ClientOrdersWebScreen() {
                         <Typography sx={{ fontSize: 13, fontWeight: 900, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{order.number1c ? `Заказ ${order.number1c}` : `Черновик ${order.guid.slice(0, 8)}`}</Typography>
                         <Chip size="small" color={statusTone(order.status) as any} label={workspace.statusLabels[order.status] || order.status} sx={{ height: 20, fontSize: ui.chipFontSize, fontWeight: 800 }} />
                       </Stack>
-                      <Typography sx={{ fontSize: 11, color: '#475569', fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{order.counterparty?.name || 'Контрагент не выбран'}</Typography>
+                      <Typography sx={{ fontSize: 11, color: '#475569', fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{order.counterparty?.name || 'Контрагент РЅРµ выбран'}</Typography>
                       <Stack direction="row" spacing={0.45} useFlexGap flexWrap="wrap" alignItems="center">
                         <Typography sx={{ fontSize: 9, color: '#0F172A', fontWeight: 900, borderRadius: '999px', bgcolor: '#F1F5F9', px: 0.6, py: 0.15 }}>
-                          {formatMoney(order.totalAmount || 0, order.currency)}
+                          {formatMoney(order.totalAmount ?? 0, order.currency)}
                         </Typography>
                         <Typography sx={{ fontSize: 9, color: '#475569', fontWeight: 800, borderRadius: '999px', bgcolor: '#F8FAFC', px: 0.6, py: 0.15 }}>
-                          {order.items.length} поз.
+                          {order.items.length} РїРѕР·.
                         </Typography>
                         <Typography sx={{ fontSize: 9, color: '#475569', fontWeight: 800, borderRadius: '999px', bgcolor: '#F8FAFC', px: 0.6, py: 0.15 }}>
                           Отгр. {formatDateOnly(order.deliveryDate)}
@@ -1829,7 +1743,7 @@ export default function ClientOrdersWebScreen() {
             <Box sx={{ flex: 1, display: 'grid', placeItems: 'center', p: 2 }}>
               <Stack spacing={1.2} alignItems="center" sx={{ maxWidth: 360, textAlign: 'center' }}>
                 <Typography sx={{ fontSize: 22, fontWeight: 900 }}>Создайте заказ</Typography>
-                <Typography sx={{ color: '#64748B', fontSize: 13 }}>Откройте новый документ. Если есть черновик, он откроется автоматически.</Typography>
+                <Typography sx={{ color: '#64748B', fontSize: 13 }}>Откройте новый документ. Если есть черновик, РѕРЅ откроется автоматически.</Typography>
                 <Button variant="contained" onClick={() => void createDocumentFromList()} sx={{ textTransform: 'none', fontWeight: 900, minHeight: 36, px: 2 }}>
                   <Stack direction="row" spacing={ui.toolbarGap / 10} alignItems="center">
                     <DocumentPlusIcon color="#FFFFFF" size={18} />
@@ -1845,7 +1759,7 @@ export default function ClientOrdersWebScreen() {
                   <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
                     <Stack direction="row" alignItems="center" spacing={0.5} sx={{ minWidth: 0 }}>
                       {isSinglePane ? (
-                        <ToolbarIconButton title="К списку" icon="arrow-back-outline" color="#0F172A" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => setResponsivePane('orders')} />
+                        <ToolbarIconButton title="Рљ СЃРїРёСЃРєСѓ" icon="arrow-back-outline" color="#0F172A" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => setResponsivePane('orders')} />
                       ) : null}
                     <Box sx={{ minWidth: 0 }}>
                       <Stack direction="row" spacing={0.75} alignItems="center" sx={{ minWidth: 0 }}>
@@ -1855,48 +1769,6 @@ export default function ClientOrdersWebScreen() {
                       <Typography sx={{ color: '#64748B', fontSize: ui.subtitleSize }}>{workspace.autosaveLabel}</Typography>
                     </Box>
                     </Stack>
-                    {showInlineEditorErrors ? (
-                      <Box
-                        sx={{
-                          flex: 1,
-                          minWidth: 220,
-                          maxWidth: '100%',
-                          minHeight: Math.max(ui.actionButtonSize + 6, 42),
-                          border: '1px solid #FECACA',
-                          borderRadius: '10px',
-                          background: '#FFF7F7',
-                          display: 'grid',
-                          gridTemplateColumns: '44px minmax(0, 1fr)',
-                          overflow: 'hidden',
-                          alignSelf: 'stretch',
-                        }}
-                      >
-                        <Box
-                          sx={{
-                            background: '#FEE2E2',
-                            color: '#DC2626',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                          }}
-                        >
-                          <Ionicons name="alert-circle-outline" size={18} />
-                        </Box>
-                        <Box sx={{ px: 1, py: 0.55, display: 'flex', alignItems: 'center', minWidth: 0 }}>
-                          <Typography
-                            sx={{
-                              fontSize: 11,
-                              lineHeight: 1.25,
-                              color: '#991B1B',
-                              whiteSpace: 'normal',
-                              overflowWrap: 'anywhere',
-                            }}
-                          >
-                            {inlineEditorErrorMessages.join(' ')}
-                          </Typography>
-                        </Box>
-                      </Box>
-                    ) : null}
                     <Stack direction="row" spacing={ui.actionGap / 16} justifyContent="flex-end" useFlexGap flexWrap={isSinglePane || effectiveEditorPaneWidth < 1160 ? 'wrap' : 'nowrap'}>
                       <ToolbarIconButton
                         title={toolbarUsesDeleteDraft ? 'Удалить черновик' : 'Отменить заказ'}
@@ -1919,7 +1791,7 @@ export default function ClientOrdersWebScreen() {
                       <ToolbarIconButton title="Настройки даты" icon="calendar-outline" color="#2563EB" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => setSettingsOpen(true)} />
                       <ToolbarIconButton title="Инспектор" icon="information-circle-outline" color="#475569" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => setInspectorOpen(true)} />
                       <ToolbarIconButton title="Сохранить" icon="save-outline" color="#2563EB" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => void workspace.saveDraft({ reason: 'manual' })} disabled={workspace.readOnly || workspace.saving || !workspace.validation.canSave} loading={workspace.saving} />
-                      <ToolbarIconButton title="Отправить в 1С" icon="cloud-upload-outline" color="#7C3AED" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => setConfirmSubmitOpen(true)} disabled={workspace.readOnly || workspace.submitting || !workspace.validation.canSave} loading={workspace.submitting} />
+                      <ToolbarIconButton title="Отправить РІ 1РЎ" icon="cloud-upload-outline" color="#7C3AED" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => setConfirmSubmitOpen(true)} disabled={workspace.readOnly || workspace.submitting || !workspace.validation.canSave} loading={workspace.submitting} />
                     </Stack>
                   </Stack>
                   {showSectionSwitcher ? (
@@ -1988,13 +1860,13 @@ export default function ClientOrdersWebScreen() {
                     />
                     <QuickLookupField
                       kind="priceType"
-                      label="Вид цены"
-                      value={workspace.draft.priceTypeGuid ? { guid: workspace.draft.priceTypeGuid, name: workspace.draft.priceTypeName || 'Вид цены' } : null}
+                      label="Р’РёРґ цены"
+                      value={workspace.draft.priceTypeGuid ? { guid: workspace.draft.priceTypeGuid, name: workspace.draft.priceTypeName || 'Р’РёРґ цены' } : null}
                       loadOptions={loadPriceTypeLookup}
                       onSelect={confirmHeaderPriceTypeChange}
                       disabled={workspace.readOnly}
                       beforeDetailsAdornment={workspace.isHeaderPriceTypeCustom ? (
-                        <ResetAdornmentButton title="Сбросить вид цены к соглашению" disabled={workspace.readOnly} onClick={confirmHeaderPriceTypeReset} />
+                        <ResetAdornmentButton title="Сбросить РІРёРґ цены Рє соглашению" disabled={workspace.readOnly} onClick={confirmHeaderPriceTypeReset} />
                       ) : null}
                       onOpenDetails={() => void openReferenceDetails('price-type', workspace.draft.priceTypeGuid)}
                       detailsDisabled={!workspace.draft.priceTypeGuid}
@@ -2039,13 +1911,13 @@ export default function ClientOrdersWebScreen() {
 
               <Box ref={editorScrollRef} sx={{ flex: 1, overflow: 'auto', px: 1, py: 1 }}>
                 <Stack spacing={1}>
-                  {!showInlineEditorErrors && workspace.error ? <Alert severity="error">{workspace.error}</Alert> : null}
-                  {!showInlineEditorErrors && workspace.validation.blockingMessage ? <Alert severity="warning">{workspace.validation.blockingMessage}</Alert> : null}
+                  {workspace.error ? <Alert severity="error">{workspace.error}</Alert> : null}
+                  {workspace.validation.blockingMessage ? <Alert severity="warning">{workspace.validation.blockingMessage}</Alert> : null}
                   {workspace.draftMode && !workspace.draft.organizationGuid && !workspace.loadingSettings ? (
                     <Paper variant="outlined" sx={{ borderRadius: '10px', p: 1, borderColor: '#F59E0B', background: '#FFFBEB' }}>
                       <Stack spacing={ui.toolbarGap / 10}>
-                        <Typography sx={{ fontSize: usePhoneCompactItems ? 12.5 : ui.sectionTitleSize, fontWeight: 900 }}>Не выбрана организация</Typography>
-                        <Typography sx={{ color: '#92400E', fontSize: 12 }}>Выберите организацию в шапке документа или из списка ниже.</Typography>
+                        <Typography sx={{ fontSize: usePhoneCompactItems ? 12.5 : ui.sectionTitleSize, fontWeight: 900 }}>РќРµ выбрана организация</Typography>
+                        <Typography sx={{ color: '#92400E', fontSize: 12 }}>Выберите организацию РІ шапке документа или РёР· СЃРїРёСЃРєР° РЅРёР¶Рµ.</Typography>
                         <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
                           {(workspace.settings?.organizations || []).map((item) => (
                             <Button key={item.guid} variant="contained" onClick={() => void workspace.setOrganization(item)} sx={{ textTransform: 'none', fontWeight: 800, borderRadius: '8px', minHeight: 30 }}>{item.name}</Button>
@@ -2065,7 +1937,7 @@ export default function ClientOrdersWebScreen() {
                         <Stack direction="row" spacing={0.35} alignItems="center" sx={{ minWidth: 0 }}>
                           <TextField
                             size="small"
-                            placeholder="Поиск в строках"
+                            placeholder="РџРѕРёСЃРє РІ строках"
                             value={itemsSearch}
                             onChange={(event) => setItemsSearch(event.target.value)}
                             sx={{
@@ -2078,17 +1950,17 @@ export default function ClientOrdersWebScreen() {
                           />
                           <Stack direction="row" spacing={0.35} alignItems="center" sx={{ flexShrink: 0 }}>
                             <ToolbarIconButton
-                              title="Открыть подбор товаров"
+                              title="Открыть РїРѕРґР±РѕСЂ товаров"
                               icon="add-outline"
                               label={!useItemCards && !usePhoneCompactItems ? 'Добавить товар' : undefined}
                               color="#16A34A"
-                              buttonSize={usePhoneCompactItems ? 28 : Math.max(ui.fieldHeight - 4, 27)}
-                              iconSize={usePhoneCompactItems ? 14 : 15}
+                              buttonSize={usePhoneCompactItems ? 28 : undefined}
+                              iconSize={usePhoneCompactItems ? 14 : undefined}
                               onClick={() => openPicker('product')}
                               disabled={!workspace.draft.counterpartyGuid || workspace.readOnly}
                             />
                             <ToolbarIconButton
-                              title="Удалить все строки"
+                              title="Удалить РІСЃРµ строки"
                               icon="trash-outline"
                               color="#DC2626"
                               buttonSize={usePhoneCompactItems ? 28 : undefined}
@@ -2116,15 +1988,15 @@ export default function ClientOrdersWebScreen() {
                               letterSpacing: '0.03em',
                             }}
                           >
-                            <Box sx={{ gridColumn: '1 / 2' }}>№</Box>
+                            <Box sx={{ gridColumn: '1 / 2' }}>в„–</Box>
                             <Box sx={{ gridColumn: '2 / 3' }}>Товар</Box>
-                            <Box sx={{ gridColumn: '3 / 4' }}>Кол-во</Box>
+                            <Box sx={{ gridColumn: '3 / 4' }}>РљРѕР»-РІРѕ</Box>
                             <Box sx={{ gridColumn: '4 / 5' }}>Упак.</Box>
-                            <Box sx={{ gridColumn: '5 / 6' }}>Вид</Box>
+                            <Box sx={{ gridColumn: '5 / 6' }}>Р’РёРґ</Box>
                             <Box sx={{ gridColumn: '6 / 7' }}>Цена</Box>
                           </Box> : null}
                           <Box sx={{ pb: usePhoneCompactItems ? `${ui.itemsBottomInset}px` : 0 }}>
-                            {filteredDraftItems.map((item, index) => renderDraftItemCard(item, index + 1))}
+                            {filteredDraftItems.map((item) => renderDraftItemCard(item))}
                           </Box>
                         </Box>
                       ) : (
@@ -2136,55 +2008,53 @@ export default function ClientOrdersWebScreen() {
                       }}>
                         <TableHead>
                           <TableRow>
-                            <TableCell width={18}></TableCell>
-                            <TableCell width={24}>№</TableCell>
+                            <TableCell width={28}></TableCell>
+                            <TableCell width={42}>в„–</TableCell>
                             <TableCell>Товар</TableCell>
-                            <TableCell width={quantityColumnWidth}>Количество</TableCell>
+                            <TableCell width={useCompactTable ? 104 : 124}>Количество</TableCell>
                             <TableCell width={filteredDraftItems.some((item) => !hasSinglePackage(item)) ? (useCompactTable ? 120 : 145) : (useCompactTable ? 72 : 84)}>Упаковка</TableCell>
-                            <TableCell width={useCompactTable ? 138 : 168}>Вид цены</TableCell>
+                            <TableCell width={useCompactTable ? 138 : 168}>Р’РёРґ цены</TableCell>
                             <TableCell width={useCompactTable ? 88 : 102}>Цена</TableCell>
-                            <TableCell width={80}>Скидка</TableCell>
+                            <TableCell width={80}>РЎРєРёРґРєР°</TableCell>
                             <TableCell width={useCompactTable ? 78 : 94}>Итого</TableCell>
                           </TableRow>
                         </TableHead>
                         <TableBody>
-                          {filteredDraftItems.map((item, index) => {
-                            const rowNumber = index + 1;
+                          {filteredDraftItems.map((item) => {
+                            const rowNumber = workspace.draft.items.findIndex((next) => next.key === item.key) + 1;
                             const packageValue = item.packageGuid || (item.packages.length ? '' : '__base__');
                             const lineErrors = workspace.validation.itemMessages[item.key] || [];
                             const quantityError = !isValidQuantityValue(item);
                             const priceError = !isValidManualPriceValue(item.manualPrice);
-                            const quantityInputWidth = getQuantityInputWidthPx(item.quantity, useCompactTable ? 44 : 52, useCompactTable ? 102 : 126);
-                            const quantityControlWidth = getQuantityControlWidthPx(item.quantity, 28, useCompactTable ? 44 : 52, useCompactTable ? 102 : 126);
                             const priceTypeValue = item.manualPrice.trim()
                               ? { guid: '__manual__', name: 'Произвольный' }
                               : item.priceTypeGuid
-                                ? { guid: item.priceTypeGuid, name: item.priceTypeName || workspace.draft.priceTypeName || 'Вид цены' }
+                                ? { guid: item.priceTypeGuid, name: item.priceTypeName || workspace.draft.priceTypeName || 'Р’РёРґ цены' }
                                 : workspace.draft.priceTypeGuid
-                                  ? { guid: workspace.draft.priceTypeGuid, name: workspace.draft.priceTypeName || 'Вид цены' }
+                                  ? { guid: workspace.draft.priceTypeGuid, name: workspace.draft.priceTypeName || 'Р’РёРґ цены' }
                                   : null;
-                            const displayedPrice = getDisplayedPriceValue(item.manualPrice, item.basePrice);
+                            const displayedPrice = item.manualPrice || (item.basePrice === null || item.basePrice === undefined ? '' : String(item.basePrice));
                             return (
                             <TableRow key={item.key} hover>
                               <TableCell>
                                 <Tooltip title="Удалить строку" arrow>
                                   <span>
-                                    <IconButton size="small" color="error" onClick={() => workspace.removeItem(item.key)} disabled={workspace.readOnly} sx={{ width: 20, height: 20, ml: -0.2 }}>
-                                      <Ionicons name="close-outline" size={14} />
+                                    <IconButton size="small" color="error" onClick={() => workspace.removeItem(item.key)} disabled={workspace.readOnly} sx={{ width: 24, height: 24 }}>
+                                      <Ionicons name="close-outline" size={16} />
                                     </IconButton>
                                   </span>
                                 </Tooltip>
                               </TableCell>
-                              <TableCell><Typography sx={{ fontSize: 11.5, color: '#64748B', fontWeight: 800, ml: -0.15 }}>{rowNumber}</Typography></TableCell>
+                              <TableCell><Typography sx={{ fontSize: 12, color: '#64748B', fontWeight: 800 }}>{rowNumber}</Typography></TableCell>
                               <TableCell>
                                 <Typography sx={{ fontSize: 11.5, fontWeight: 800, lineHeight: 1.12, display: '-webkit-box', WebkitLineClamp: ui.itemMaxLines, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word' }}>{item.productName}</Typography>
                                 <Typography sx={{ fontSize: 10, color: '#64748B' }}>
-                                  <DraftItemMeta item={item} />
+                                  {[item.productCode, item.productArticle, item.productSku].filter(Boolean).join(' В· ') || 'Без РєРѕРґР°'} В· {formatMoney(item.basePrice, item.currency)}
                                 </Typography>
                                 {lineErrors.length ? <Typography sx={{ fontSize: 10, color: '#DC2626', mt: 0.25 }}>{lineErrors.join(' ')}</Typography> : null}
                               </TableCell>
                               <TableCell>
-                                <Stack direction="row" alignItems="center" spacing={0.3} sx={{ width: quantityControlWidth }}>
+                                <Stack direction="row" alignItems="center" spacing={0.3}>
                                   <IconButton size="small" disabled={workspace.readOnly} onClick={() => {
                                     workspace.setItemPatch(item.key, { quantity: stepQuantity(item, -1) });
                                   }} sx={{ width: 28, height: 28, border: '1px solid #D8E2F0', borderRadius: '6px' }}>
@@ -2196,7 +2066,7 @@ export default function ClientOrdersWebScreen() {
                                     onChange={(e) => workspace.setItemPatch(item.key, { quantity: normalizeQuantityInput(item, e.target.value) })}
                                     disabled={workspace.readOnly}
                                     error={quantityError}
-                                    sx={{ width: quantityInputWidth, ...compactInputSx, '& .MuiInputBase-root': { height: 28, borderRadius: '6px' }, '& input': { textAlign: 'center', fontSize: 10.5, fontWeight: 800, lineHeight: '28px', py: 0 } }}
+                                    sx={{ width: useCompactTable ? 78 : 86, ...compactInputSx, '& .MuiInputBase-root': { height: 28, borderRadius: '6px' }, '& input': { textAlign: 'center', fontSize: 10.5, fontWeight: 800, lineHeight: '28px', py: 0 } }}
                                   />
                                   <IconButton size="small" disabled={workspace.readOnly} onClick={() => {
                                     workspace.setItemPatch(item.key, { quantity: stepQuantity(item, 1) });
@@ -2238,19 +2108,31 @@ export default function ClientOrdersWebScreen() {
                                   kind="priceType"
                                   label=""
                                   dense
-                                  placeholder="Вид цены"
                                   value={priceTypeValue}
                                   loadOptions={loadPriceTypeLookup}
                                   onSelect={(next) => workspace.setItemPriceType(item.key, next)}
                                   disabled={workspace.readOnly}
                                   beforeDetailsAdornment={workspace.isItemPriceTypeCustom(item.key) ? (
-                                    <ResetAdornmentButton title="Сбросить вид цены строки" disabled={workspace.readOnly} onClick={() => workspace.resetItemPriceType(item.key)} />
+                                    <ResetAdornmentButton title="Сбросить РІРёРґ цены строки" disabled={workspace.readOnly} onClick={() => workspace.resetItemPriceType(item.key)} />
                                   ) : null}
-                                  onOpenDetails={() => void openReferenceDetails('price-type', item.priceTypeGuid || workspace.draft.priceTypeGuid)}
-                                  detailsDisabled={!(item.priceTypeGuid || workspace.draft.priceTypeGuid)}
                                 />
+                                <TextField
+                                  select
+                                  size="small"
+                                  value={item.priceTypeGuid || workspace.draft.priceTypeGuid || ''}
+                                  onChange={(e) => {
+                                    const next = priceTypeOptions.find((priceType) => priceType.guid === e.target.value) || null;
+                                    workspace.setItemPriceType(item.key, next);
+                                  }}
+                                  disabled={workspace.readOnly}
+                                  fullWidth
+                                  sx={{ display: 'none' }}
+                                >
+                                  <MenuItem value="">—</MenuItem>
+                                  {priceTypeOptions.map((priceType) => <MenuItem key={priceType.guid} value={priceType.guid}>{priceType.name}</MenuItem>)}
+                                </TextField>
                               </TableCell>
-                              <TableCell><TextField size="small" value={displayedPrice} placeholder="0" onChange={(e) => { const manualPrice = normalizePriceInput(e.target.value, displayedPrice); workspace.setItemPatch(item.key, { manualPrice, priceTypeGuid: manualPrice.trim() ? null : workspace.draft.priceTypeGuid ?? null, priceTypeName: manualPrice.trim() ? 'Произвольный' : workspace.draft.priceTypeName ?? null }); }} disabled={workspace.readOnly} error={priceError} sx={{ ...compactInputSx, '& .MuiInputBase-root': { height: 28, borderRadius: '6px' }, '& .MuiInputBase-input': { fontSize: 10.5, fontWeight: 800, py: 0, lineHeight: '28px' }, '& .MuiInputBase-input::placeholder': { color: '#94A3B8', opacity: 1 } }} /></TableCell>
+                              <TableCell><TextField size="small" value={displayedPrice} onChange={(e) => { const manualPrice = normalizePriceInput(e.target.value, displayedPrice); workspace.setItemPatch(item.key, { manualPrice, priceTypeGuid: manualPrice.trim() ? null : workspace.draft.priceTypeGuid ?? null, priceTypeName: manualPrice.trim() ? 'Произвольный' : workspace.draft.priceTypeName ?? null }); }} disabled={workspace.readOnly} error={priceError} sx={{ ...compactInputSx, '& .MuiInputBase-root': { height: 28, borderRadius: '6px' }, '& .MuiInputBase-input': { fontSize: 10.5, fontWeight: 800, py: 0, lineHeight: '28px' } }} /></TableCell>
                               <TableCell><TextField size="small" value={item.discountPercent} onChange={(e) => workspace.setItemPatch(item.key, { discountPercent: e.target.value })} disabled /></TableCell>
                               <TableCell><Typography sx={{ fontSize: 11, fontWeight: 800, whiteSpace: 'nowrap' }}>{formatMoney(computeLineTotal(item, workspace.draft.generalDiscountPercent), item.currency)}</Typography></TableCell>
                             </TableRow>
@@ -2267,7 +2149,7 @@ export default function ClientOrdersWebScreen() {
                         <Typography sx={{ fontSize: 16, fontWeight: 900 }}>Добавить товары</Typography>
                       </Box>
                       <ToolbarIconButton
-                        title="Открыть подбор товаров"
+                        title="Открыть РїРѕРґР±РѕСЂ товаров"
                         icon="add-circle-outline"
                         color="#2563EB"
                         onClick={() => openPicker('product')}
@@ -2288,7 +2170,7 @@ export default function ClientOrdersWebScreen() {
             <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
               <Box sx={{ minWidth: 0 }}>
                 <Typography sx={{ fontSize: 20, fontWeight: 900 }}>Шапка документа</Typography>
-                <Typography sx={{ color: '#64748B', fontSize: 12 }}>Значения по умолчанию можно изменить вручную.</Typography>
+                <Typography sx={{ color: '#64748B', fontSize: 12 }}>Значения РїРѕ умолчанию РјРѕР¶РЅРѕ изменить вручную.</Typography>
               </Box>
               <Button variant="outlined" onClick={() => setHeaderOpen(false)} sx={{ textTransform: 'none', fontWeight: 800 }}>Закрыть</Button>
             </Stack>
@@ -2298,8 +2180,8 @@ export default function ClientOrdersWebScreen() {
               {workspace.draftMode && !workspace.draft.organizationGuid && !workspace.loadingSettings ? (
                 <Paper variant="outlined" sx={{ borderRadius: '10px', p: 1, borderColor: '#F59E0B', background: '#FFFBEB' }}>
                   <Stack spacing={0.75}>
-                    <Typography sx={{ fontWeight: 900 }}>Нет организации по умолчанию</Typography>
-                    <Typography sx={{ color: '#92400E', fontSize: 12 }}>Выберите организацию. Она сохранится для следующих заказов.</Typography>
+                    <Typography sx={{ fontWeight: 900 }}>Нет организации РїРѕ умолчанию</Typography>
+                    <Typography sx={{ color: '#92400E', fontSize: 12 }}>Выберите организацию. РћРЅР° сохранится для следующих заказов.</Typography>
                     <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
                       {(workspace.settings?.organizations || []).map((item) => (
                         <Button key={item.guid} variant="contained" onClick={() => void workspace.setOrganization(item)} sx={{ textTransform: 'none', fontWeight: 800, minHeight: 30 }}>
@@ -2333,8 +2215,8 @@ export default function ClientOrdersWebScreen() {
                 <Typography sx={{ color: '#64748B', fontSize: 11, mt: 0.35 }}>{workspace.documentHeaderDefaultsState.contract}</Typography>
               </Box>
               <Box>
-                <SelectionButton label="Вид цены" value={workspace.draft.priceTypeName} onClick={() => openPicker('priceType')} disabled={workspace.readOnly} />
-                <Typography sx={{ color: '#64748B', fontSize: 11, mt: 0.35 }}>из соглашения или вручную</Typography>
+                <SelectionButton label="Р’РёРґ цены" value={workspace.draft.priceTypeName} onClick={() => openPicker('priceType')} disabled={workspace.readOnly} />
+                <Typography sx={{ color: '#64748B', fontSize: 11, mt: 0.35 }}>РёР· соглашения или вручную</Typography>
               </Box>
               <Box>
                 <QuickLookupField
@@ -2364,7 +2246,7 @@ export default function ClientOrdersWebScreen() {
                 minRows={5}
                 disabled={workspace.readOnly}
               />
-              <TextField label="Скидки" value="Недоступно в этой версии" disabled />
+              <TextField label="РЎРєРёРґРєРё" value="Недоступно РІ этой версии" disabled />
             </Stack>
           </Box>
         </Box>
@@ -2381,7 +2263,7 @@ export default function ClientOrdersWebScreen() {
               <Stack direction={isPhoneDialog ? 'column' : 'row'} spacing={0.8} alignItems={isPhoneDialog ? 'stretch' : 'center'}>
                 <TextField
                   size="small"
-                  label="Поиск"
+                  label="РџРѕРёСЃРє"
                   value={pickerSearch}
                   onChange={(e) => setPickerSearch(e.target.value)}
                   disabled={pickerKind !== 'organization' && pickerKind !== 'filterCounterparty' && pickerKind !== 'counterparty' && pickerKind !== 'product' && pickerKind !== 'warehouse' && pickerKind !== 'priceType' && !draftCounterpartyGuid}
@@ -2392,7 +2274,7 @@ export default function ClientOrdersWebScreen() {
                     clickable
                     color={productInStockOnly ? 'success' : 'default'}
                     variant={productInStockOnly ? 'filled' : 'outlined'}
-                    label="Только с остатком"
+                    label="Только СЃ остатком"
                     onClick={() => setProductInStockOnly((prev) => !prev)}
                     sx={{ height: 32, fontSize: 12, fontWeight: 900, borderRadius: '8px' }}
                   />
@@ -2405,7 +2287,7 @@ export default function ClientOrdersWebScreen() {
               <Typography sx={{ px: 2, py: 1.5, color: '#64748B', borderBottom: '1px solid #D8E2F0' }}>Сначала выберите контрагента.</Typography>
             ) : null}
             {!pickerLoading && pickerItems.length === 0 && !(pickerNeedsCounterparty(pickerKind) && !draftCounterpartyGuid) ? (
-              <Typography sx={{ px: 2, py: 1.5, color: '#64748B', borderBottom: '1px solid #D8E2F0' }}>Ничего не найдено.</Typography>
+              <Typography sx={{ px: 2, py: 1.5, color: '#64748B', borderBottom: '1px solid #D8E2F0' }}>Ничего РЅРµ найдено.</Typography>
             ) : null}
             {pickerItems.map((item: any, index) => {
               const alreadyInOrder = pickerKind === 'product' && workspace.draft.items.some((line) => line.productGuid === item.guid);
@@ -2416,7 +2298,7 @@ export default function ClientOrdersWebScreen() {
                   kind={pickerKind}
                   isFirst={index === 0}
                   disabled={alreadyInOrder}
-                  note={alreadyInOrder ? 'Уже в заказе' : undefined}
+                  note={alreadyInOrder ? 'РЈР¶Рµ РІ заказе' : undefined}
                   onSelect={(nextItem) => void handlePickerSelect(nextItem)}
                 />
               );
@@ -2472,8 +2354,8 @@ export default function ClientOrdersWebScreen() {
           <Stack spacing={1}>
             <Typography sx={{ color: '#475569', fontSize: 13 }}>
               {discardConfirm.mode === 'create'
-                ? 'В новом документе есть ошибки, поэтому его нельзя сохранить автоматически. Отменить создание и перейти к другому документу?'
-                : 'В текущем документе есть ошибки, поэтому изменения нельзя сохранить автоматически. Перейти без сохранения изменений?'}
+                ? 'Р’ РЅРѕРІРѕРј документе есть ошибки, поэтому его нельзя сохранить автоматически. Отменить создание Рё перейти Рє РґСЂСѓРіРѕРјСѓ документу?'
+                : 'Р’ текущем документе есть ошибки, поэтому изменения нельзя сохранить автоматически. Перейти без сохранения изменений?'}
             </Typography>
             {discardConfirm.blockingMessage ? (
               <Alert severity="warning" sx={{ py: 0.4, '& .MuiAlert-message': { fontSize: 12 } }}>
@@ -2491,10 +2373,10 @@ export default function ClientOrdersWebScreen() {
       </Dialog>
 
       <Dialog open={confirmSubmitOpen} onClose={() => setConfirmSubmitOpen(false)} maxWidth="xs" fullWidth fullScreen={isPhoneDialog}>
-        <DialogTitle>Отправить в 1С?</DialogTitle>
+        <DialogTitle>Отправить РІ 1РЎ?</DialogTitle>
         <DialogContent>
           <Typography sx={{ color: '#475569', fontSize: 13 }}>
-            Документ будет поставлен в очередь обмена. После отправки часть полей станет недоступна для редактирования.
+            Документ будет поставлен РІ очередь обмена. После отправки часть полей станет недоступна для редактирования.
           </Typography>
         </DialogContent>
         <DialogActions>
@@ -2509,7 +2391,7 @@ export default function ClientOrdersWebScreen() {
         <DialogTitle>Отменить заказ?</DialogTitle>
         <DialogContent>
           <Typography sx={{ color: '#475569', fontSize: 13 }}>
-            Заказ будет переведен в статус отмененного. Действие нельзя будет продолжить как обычное редактирование черновика.
+            Заказ будет переведен РІ статус отмененного. Действие нельзя будет продолжить как обычное редактирование черновика.
           </Typography>
         </DialogContent>
         <DialogActions>
@@ -2535,7 +2417,7 @@ export default function ClientOrdersWebScreen() {
         <DialogTitle>Сменить организацию?</DialogTitle>
         <DialogContent>
           <Typography sx={{ color: '#475569', fontSize: 13 }}>
-            Будут пересчитаны соглашение, договор, склад, вид цены и цены по строкам под выбранную организацию.
+            Будут пересчитаны соглашение, РґРѕРіРѕРІРѕСЂ, склад, РІРёРґ цены Рё цены РїРѕ строкам РїРѕРґ выбранную организацию.
           </Typography>
         </DialogContent>
         <DialogActions>
@@ -2555,12 +2437,12 @@ export default function ClientOrdersWebScreen() {
       </Dialog>
 
       <Dialog open={!!pendingPriceTypeAction} onClose={() => setPendingPriceTypeAction(null)} maxWidth="xs" fullWidth fullScreen={isPhoneDialog}>
-        <DialogTitle>{pendingPriceTypeAction?.type === 'reset-header' ? 'Сбросить вид цены?' : 'Сменить вид цены?'}</DialogTitle>
+        <DialogTitle>{pendingPriceTypeAction?.type === 'reset-header' ? 'Сбросить РІРёРґ цены?' : 'Сменить РІРёРґ цены?'}</DialogTitle>
         <DialogContent>
           <Typography sx={{ color: '#475569', fontSize: 13 }}>
             {pendingPriceTypeAction?.type === 'reset-header'
-              ? 'Вид цены и ручные цены строк будут сброшены к значениям соглашения. Продолжить?'
-              : 'Цены строк будут пересчитаны по выбранному виду цены. Ручные цены останутся произвольными. Продолжить?'}
+              ? 'Р’РёРґ цены Рё ручные цены строк Р±СѓРґСѓС‚ сброшены Рє значениям соглашения. Продолжить?'
+              : 'Цены строк Р±СѓРґСѓС‚ пересчитаны РїРѕ выбранному РІРёРґСѓ цены. Ручные цены останутся произвольными. Продолжить?'}
           </Typography>
         </DialogContent>
         <DialogActions>
@@ -2576,10 +2458,10 @@ export default function ClientOrdersWebScreen() {
       </Dialog>
 
       <Dialog open={confirmClearItemsOpen} onClose={() => setConfirmClearItemsOpen(false)} maxWidth="xs" fullWidth fullScreen={isPhoneDialog}>
-        <DialogTitle>Удалить все строки?</DialogTitle>
+        <DialogTitle>Удалить РІСЃРµ строки?</DialogTitle>
         <DialogContent>
           <Typography sx={{ color: '#475569', fontSize: 13 }}>
-            Все товары будут удалены из документа. Действие можно отменить только вручную, добавив товары заново.
+            Р’СЃРµ товары Р±СѓРґСѓС‚ удалены РёР· документа. Действие РјРѕР¶РЅРѕ отменить только вручную, добавив товары заново.
           </Typography>
         </DialogContent>
         <DialogActions>
@@ -2613,18 +2495,18 @@ export default function ClientOrdersWebScreen() {
             <Typography sx={{ fontSize: 18, fontWeight: 900 }}>Инспектор заказа</Typography>
             <Paper variant="outlined" sx={{ borderRadius: '18px', p: 1.75 }}>
               <Stack spacing={0.75}>
-                <Typography sx={{ fontWeight: 900 }}>Статус и 1С</Typography>
+                <Typography sx={{ fontWeight: 900 }}>Статус Рё 1РЎ</Typography>
                 <Typography sx={{ fontSize: 13, color: '#64748B' }}>Revision: {workspace.draft.revision || '—'}</Typography>
                 <Typography sx={{ fontSize: 13, color: '#64748B' }}>Статус: {workspace.statusLabels[workspace.selectedOrder?.status || ''] || workspace.selectedOrder?.status || '—'}</Typography>
                 <Typography sx={{ fontSize: 13, color: '#64748B' }}>Sync state: {workspace.syncLabels[workspace.selectedOrder?.syncState || ''] || workspace.selectedOrder?.syncState || '—'}</Typography>
                 <Typography sx={{ fontSize: 13, color: '#64748B' }}>Организация: {workspace.selectedOrder?.organization?.name || '—'}</Typography>
-                <Typography sx={{ fontSize: 13, color: '#64748B' }}>Документ 1С: {workspace.selectedOrder?.number1c || 'Еще не создан'}</Typography>
+                <Typography sx={{ fontSize: 13, color: '#64748B' }}>Документ 1РЎ: {workspace.selectedOrder?.number1c || 'Еще РЅРµ создан'}</Typography>
               </Stack>
             </Paper>
             <Paper variant="outlined" sx={{ borderRadius: '18px', p: 1.75 }}>
               <Stack spacing={1}>
                 <Typography sx={{ fontWeight: 900 }}>История</Typography>
-                {!workspace.selectedOrder?.events.length ? <Typography sx={{ fontSize: 13, color: '#64748B' }}>Событий пока нет.</Typography> : workspace.selectedOrder.events.map((event) => (
+                {!workspace.selectedOrder?.events.length ? <Typography sx={{ fontSize: 13, color: '#64748B' }}>Событий РїРѕРєР° нет.</Typography> : workspace.selectedOrder.events.map((event) => (
                   <Box key={event.id} sx={{ borderRadius: '14px', bgcolor: '#F8FAFC', px: 1.4, py: 1.2 }}>
                     <Typography sx={{ fontWeight: 800 }}>{event.eventType} • rev {event.revision}</Typography>
                     <Typography sx={{ fontSize: 10, color: '#64748B' }}>{event.source} • {formatDateTime(event.createdAt)}</Typography>

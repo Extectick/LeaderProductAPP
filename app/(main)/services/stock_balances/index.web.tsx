@@ -604,8 +604,8 @@ export default function StockBalancesWebScreen() {
                 onChange={(event) => stock.setHierarchy(event.target.value as typeof stock.hierarchy)}
                 sx={{ minWidth: 220 }}
               >
-                <MenuItem value="warehouse-product">Склад -> Номенклатура</MenuItem>
-                <MenuItem value="product-warehouse">Номенклатура -> Склад</MenuItem>
+                <MenuItem value="warehouse-product">Склад → Номенклатура</MenuItem>
+                <MenuItem value="product-warehouse">Номенклатура → Склад</MenuItem>
               </TextField>
               <TextField
                 select

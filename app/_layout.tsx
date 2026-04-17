@@ -5,6 +5,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Platform, StatusBar, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { MD3LightTheme, PaperProvider } from 'react-native-paper';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { enableScreens } from 'react-native-screens';
 
@@ -42,6 +43,19 @@ function InnerLayout() {
 
 export default function RootLayout() {
   const Root = Platform.OS === 'web' ? View : GestureHandlerRootView;
+  const paperTheme = useMemo(() => ({
+    ...MD3LightTheme,
+    roundness: 16,
+    colors: {
+      ...MD3LightTheme.colors,
+      primary: '#2563EB',
+      secondary: '#0F172A',
+      surface: '#FFFFFF',
+      surfaceVariant: '#F8FAFC',
+      background: '#F8FAFC',
+      error: '#DC2626',
+    },
+  }), []);
 
   const [preloadReady, setPreloadReady] = useState(false);
   const [updateReady, setUpdateReady] = useState(false);
@@ -123,30 +137,32 @@ export default function RootLayout() {
   return (
     <Root style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <ThemeProvider>
-          <AuthProvider>
-            <TrackingProvider>
-              <NotificationViewportProvider>
-                <NotificationHost>
-                  <UpdateGate
-                    onStartupDone={handleStartupDone}
-                    showCheckingOverlay={false}
-                  >
-                    <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
-                    {appIsReady ? (
-                      <InnerLayout />
-                    ) : (
-                      <StartupSplash
-                        statusText={startupSplash.statusText}
-                        hintText={startupSplash.hintText}
-                      />
-                    )}
-                  </UpdateGate>
-                </NotificationHost>
-              </NotificationViewportProvider>
-            </TrackingProvider>
-          </AuthProvider>
-        </ThemeProvider>
+        <PaperProvider theme={paperTheme}>
+          <ThemeProvider>
+            <AuthProvider>
+              <TrackingProvider>
+                <NotificationViewportProvider>
+                  <NotificationHost>
+                    <UpdateGate
+                      onStartupDone={handleStartupDone}
+                      showCheckingOverlay={false}
+                    >
+                      <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
+                      {appIsReady ? (
+                        <InnerLayout />
+                      ) : (
+                        <StartupSplash
+                          statusText={startupSplash.statusText}
+                          hintText={startupSplash.hintText}
+                        />
+                      )}
+                    </UpdateGate>
+                  </NotificationHost>
+                </NotificationViewportProvider>
+              </TrackingProvider>
+            </AuthProvider>
+          </ThemeProvider>
+        </PaperProvider>
       </SafeAreaProvider>
     </Root>
   );

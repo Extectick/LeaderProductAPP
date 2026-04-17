@@ -176,7 +176,7 @@ export default function MobileStockBalancesScreen(props: Props) {
               style={[styles.toggleChip, props.hierarchy === 'warehouse-product' && styles.toggleChipActive]}
             >
               <Text style={[styles.toggleChipText, props.hierarchy === 'warehouse-product' && styles.toggleChipTextActive]}>
-                Склад -> Номенклатура
+                Склад → Номенклатура
               </Text>
             </Pressable>
             <Pressable
@@ -184,7 +184,7 @@ export default function MobileStockBalancesScreen(props: Props) {
               style={[styles.toggleChip, props.hierarchy === 'product-warehouse' && styles.toggleChipActive]}
             >
               <Text style={[styles.toggleChipText, props.hierarchy === 'product-warehouse' && styles.toggleChipTextActive]}>
-                Номенклатура -> Склад
+                Номенклатура → Склад
               </Text>
             </Pressable>
           </ScrollView>
