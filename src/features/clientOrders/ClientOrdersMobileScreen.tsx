@@ -18,29 +18,39 @@ import {
 import { useClientOrdersWorkspace } from '@/src/features/clientOrders/useClientOrdersWorkspace';
 import { getClientOrderReferenceDetails } from '@/utils/clientOrdersService';
 import type { ClientOrder, ClientOrderCounterpartyOption, ClientOrderProduct, ClientOrderReferenceDetails, ClientOrderReferenceKind } from '@/utils/clientOrdersService';
-import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import { ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 import {
   ActivityIndicator,
   Button as PaperButton,
+  Card,
   Chip,
   Divider,
+  Dialog,
   IconButton as PaperIconButton,
   List,
   Menu,
   Modal as PaperModal,
   Portal,
   Searchbar,
+  SegmentedButtons,
   Surface,
-  Text as PaperText,
-  TouchableRipple,
+  Text,
+  TextInput as PaperTextInput,
 } from 'react-native-paper';
 
 type ScreenMode = 'orders' | 'editor';
 type EditorSection = 'header' | 'items';
 type PickerKind = 'filterCounterparty' | 'organization' | 'counterparty' | 'agreement' | 'contract' | 'warehouse' | 'deliveryAddress' | 'priceType' | 'product';
+type ConfirmDialogState = {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  cancelLabel?: string;
+  destructive?: boolean;
+  onConfirm: () => void | Promise<void>;
+} | null;
 
 const PAGE_SIZE = 25;
 const IN_STOCK_KEY = 'clientOrders.productPicker.inStockOnly';
@@ -75,11 +85,6 @@ function displayedPriceValue(item: any) {
   if ((item?.manualPrice || '').trim()) return item.manualPrice;
   if (item?.basePrice === null || item?.basePrice === undefined || item.basePrice <= 0) return '';
   return String(item.basePrice);
-}
-function receiptPriceText(item: any) {
-  return item?.receiptPrice === null || item?.receiptPrice === undefined
-    ? 'Цена поступления —'
-    : `Цена поступления ${formatMoney(item.receiptPrice, item.currency)}`;
 }
 function productPickerMeta(item: any) {
   return {
@@ -200,6 +205,8 @@ export default function ClientOrdersMobileScreen() {
   const [linePriceTarget, setLinePriceTarget] = React.useState<string | null>(null);
   const [actionsMenuOpen, setActionsMenuOpen] = React.useState(false);
   const [pendingPriceTypeAction, setPendingPriceTypeAction] = React.useState<{ priceType: any | null } | null>(null);
+  const [confirmDialog, setConfirmDialog] = React.useState<ConfirmDialogState>(null);
+  const [packagePickerItem, setPackagePickerItem] = React.useState<any | null>(null);
   const [referenceOpen, setReferenceOpen] = React.useState(false);
   const [referenceLoading, setReferenceLoading] = React.useState(false);
   const [referenceError, setReferenceError] = React.useState<string | null>(null);
@@ -348,49 +355,88 @@ export default function ClientOrdersMobileScreen() {
 
   const removeOrCancel = React.useCallback(() => {
     if (workspace.draftMode || workspace.selectedOrder?.status === 'DRAFT') {
-      void workspace.deleteDraft();
-      setMode('orders');
+      setConfirmDialog({
+        title: 'Удалить черновик?',
+        message: 'Черновик будет удален без возможности восстановления.',
+        confirmLabel: 'Удалить',
+        destructive: true,
+        onConfirm: async () => {
+          await workspace.deleteDraft();
+          setMode('orders');
+        },
+      });
       return;
     }
-    Alert.alert('Отменить заказ?', 'Заказ будет отменен.', [
-      { text: 'Нет', style: 'cancel' },
-      { text: 'Отменить', style: 'destructive', onPress: () => void workspace.cancelOrder() },
-    ]);
+    setConfirmDialog({
+      title: 'Отменить заказ?',
+      message: 'Заказ будет отменен.',
+      confirmLabel: 'Отменить',
+      destructive: true,
+      onConfirm: () => workspace.cancelOrder(),
+    });
   }, [workspace]);
 
   const submitFromMenu = React.useCallback(() => {
     setActionsMenuOpen(false);
-    Alert.alert('Отправить в 1С?', 'Документ будет поставлен в очередь обмена.', [
-      { text: 'Отмена', style: 'cancel' },
-      { text: 'Отправить', onPress: () => void workspace.submitOrder() },
-    ]);
+    setConfirmDialog({
+      title: 'Отправить в 1С?',
+      message: 'Документ будет поставлен в очередь обмена.',
+      confirmLabel: 'Отправить',
+      onConfirm: () => workspace.submitOrder(),
+    });
   }, [workspace]);
+
+  const confirmClearItems = React.useCallback(() => {
+    setConfirmDialog({
+      title: 'Удалить все товары?',
+      message: 'Все строки документа будут удалены без возможности восстановления.',
+      confirmLabel: 'Удалить',
+      destructive: true,
+      onConfirm: workspace.clearItems,
+    });
+  }, [workspace.clearItems]);
 
   const title = workspace.draftMode ? 'Новый заказ клиента' : workspace.selectedOrder?.number1c ? `Заказ ${workspace.selectedOrder.number1c}` : `Черновик ${workspace.selectedOrder?.guid.slice(0, 8) || ''}`;
   const filteredItems = React.useMemo(() => {
     const q = itemsSearch.trim().toLowerCase();
     return q ? workspace.draft.items.filter((item) => [item.productName, item.productCode, item.productArticle, item.productSku].some((v) => (v || '').toLowerCase().includes(q))) : workspace.draft.items;
   }, [itemsSearch, workspace.draft.items]);
+  const discardConfirmState = React.useMemo<ConfirmDialogState>(() => {
+    if (!discardConfirm.open) return null;
+    return {
+      title: discardConfirm.mode === 'create' ? 'Закрыть новый документ?' : 'Открыть другой документ?',
+      message: [
+        discardConfirm.mode === 'create' ? 'Несохраненные изменения будут потеряны.' : 'Текущие изменения нужно сохранить или отбросить.',
+        discardConfirm.blockingMessage,
+      ].filter(Boolean).join('\n'),
+      cancelLabel: 'Остаться',
+      confirmLabel: 'Продолжить',
+      onConfirm: () => closeDiscardConfirm(true),
+    };
+  }, [closeDiscardConfirm, discardConfirm.blockingMessage, discardConfirm.mode, discardConfirm.open]);
 
   return (
     <View style={[styles.screen, { backgroundColor: background, paddingTop: Math.max(0, topInset - 8) }]}>
       {mode === 'orders' ? (
         <ScrollView contentContainerStyle={[styles.content, width >= 720 && styles.contentTablet, { paddingHorizontal: ui.pageX, paddingTop: ui.pageY, gap: ui.stackGap, maxWidth: layoutTier === 'tablet' ? 760 : undefined }]}>
-          <View style={[styles.panel, { backgroundColor: card, borderRadius: ui.panelRadius, padding: ui.panelPadding, gap: ui.stackGap }]}>
-            <Text style={styles.title}>Заказы клиентов</Text>
-            <Searchbar style={styles.searchbar} inputStyle={styles.searchbarInput} value={workspace.filters.search} onChangeText={(value) => workspace.setFilters((prev) => ({ ...prev, search: value }))} placeholder="Поиск" />
-            <View style={styles.row}><ActionButton label="Фильтры" icon="options-outline" kind="secondary" onPress={() => setFiltersOpen(true)} /><ActionButton label="Новый заказ" icon="document-text-outline" kind="primary" onPress={() => void createDocument()} /></View>
-            <View style={styles.statsRow}><Pill text={`Всего ${workspace.statusCounts.all}`} /><Pill text={`Черновики ${workspace.statusCounts.draft}`} /><Pill text={`В очереди ${workspace.statusCounts.queued}`} /></View>
-          </View>
+          <Card mode="outlined" style={[styles.panelCard, { backgroundColor: card, borderRadius: ui.panelRadius }]}>
+            <Card.Content style={[styles.cardContent, { padding: ui.panelPadding, gap: ui.stackGap }]}>
+              <Text variant="titleMedium" style={styles.title}>Заказы клиентов</Text>
+              <Searchbar style={styles.searchbar} inputStyle={styles.searchbarInput} value={workspace.filters.search} onChangeText={(value) => workspace.setFilters((prev) => ({ ...prev, search: value }))} placeholder="Поиск" />
+              <View style={styles.row}><ActionButton label="Фильтры" icon="filter-variant" kind="secondary" onPress={() => setFiltersOpen(true)} /><ActionButton label="Новый заказ" icon="file-document-plus-outline" kind="primary" onPress={() => void createDocument()} /></View>
+              <View style={styles.statsRow}><Pill text={`Всего ${workspace.statusCounts.all}`} /><Pill text={`Черновики ${workspace.statusCounts.draft}`} /><Pill text={`В очереди ${workspace.statusCounts.queued}`} /></View>
+            </Card.Content>
+          </Card>
           {workspace.orders.map((order) => <OrderCard key={order.guid} order={order} workspace={workspace} selected={workspace.selectedGuid === order.guid} onPress={() => void selectOrder(order)} />)}
           {workspace.hasMoreOrders ? <ActionButton label={workspace.loadingMoreOrders ? 'Загружаю...' : 'Показать ещё'} kind="secondary" onPress={() => void workspace.loadMoreOrders()} disabled={workspace.loadingMoreOrders} /> : null}
           <TabBarSpacer />
         </ScrollView>
       ) : (
         <ScrollView contentContainerStyle={[styles.content, width >= 720 && styles.contentTablet, { paddingHorizontal: ui.pageX, paddingTop: ui.pageY, gap: ui.stackGap, maxWidth: layoutTier === 'tablet' ? 760 : undefined }]}>
-          <View style={[styles.panel, { backgroundColor: card, borderRadius: ui.panelRadius, padding: ui.panelPadding, gap: ui.stackGap }]}>
+          <Card mode="outlined" style={[styles.panelCard, { backgroundColor: card, borderRadius: ui.panelRadius }]}>
+            <Card.Content style={[styles.cardContent, { padding: ui.panelPadding, gap: ui.stackGap }]}>
             <View style={styles.headerRow}>
-              <Pressable onPress={() => setMode('orders')} style={[styles.iconButton, { width: ui.actionButtonSize + 2, height: ui.actionButtonSize + 2 }]}><Ionicons name="arrow-back-outline" size={ui.actionIconSize} color="#0F172A" /></Pressable>
+              <PaperIconButton icon="arrow-left" size={ui.actionIconSize} onPress={() => setMode('orders')} style={[styles.iconButtonPaper, { width: ui.actionButtonSize + 2, height: ui.actionButtonSize + 2 }]} />
               <View style={{ flex: 1 }}>
                 <Text style={[styles.title, { fontSize: ui.titleSize }]}>{title}</Text>
                 <Text style={[styles.subtitle, { fontSize: ui.subtitleSize }]}>{workspace.autosaveLabel}</Text>
@@ -410,24 +456,37 @@ export default function ClientOrdersMobileScreen() {
             {workspace.error ? <Text style={styles.error}>{workspace.error}</Text> : null}
             {workspace.validation.blockingMessage ? <Text style={styles.warning}>{workspace.validation.blockingMessage}</Text> : null}
             <View style={styles.sectionRow}>
-              <View style={styles.segmentRow}>
-                <SegmentButton label="Шапка" active={section === 'header'} onPress={() => setSection('header')} />
-                <SegmentButton label="Товары" active={section === 'items'} onPress={() => setSection('items')} />
-              </View>
-              <View style={styles.itemCountBadge}>
-                <Ionicons name="cube-outline" size={13} color="#2563EB" />
-                <Text style={styles.itemCountBadgeText}>{workspace.draft.items.length}</Text>
-              </View>
+              <SegmentedButtons
+                value={section}
+                onValueChange={(value) => setSection(value as EditorSection)}
+                buttons={[
+                  { value: 'header', label: 'Шапка' },
+                  { value: 'items', label: 'Товары' },
+                ]}
+                style={styles.segmentedPaper}
+              />
+              <Chip compact icon="cube-outline" style={styles.itemCountChip} textStyle={styles.itemCountBadgeText}>{workspace.draft.items.length}</Chip>
             </View>
-          </View>
-          {section === 'header' ? <HeaderSection workspace={workspace} openPicker={openPicker} openDetails={openReferenceDetails} /> : <ItemsSection workspace={workspace} filteredItems={filteredItems} itemsSearch={itemsSearch} setItemsSearch={setItemsSearch} openPicker={openPicker} ui={ui} editorTier={editorTier} />}
+            </Card.Content>
+          </Card>
+          {section === 'header' ? <HeaderSection workspace={workspace} openPicker={openPicker} openDetails={openReferenceDetails} /> : <ItemsSection workspace={workspace} filteredItems={filteredItems} itemsSearch={itemsSearch} setItemsSearch={setItemsSearch} openPicker={openPicker} openPackagePicker={setPackagePickerItem} onClearItems={confirmClearItems} ui={ui} editorTier={editorTier} />}
           <TabBarSpacer />
         </ScrollView>
       )}
 
       <SheetModal visible={filtersOpen} onClose={() => setFiltersOpen(false)} title="Фильтры">
         <Searchbar style={styles.searchbar} inputStyle={styles.searchbarInput} value={workspace.filters.search} onChangeText={(value) => workspace.setFilters((prev) => ({ ...prev, search: value }))} placeholder="Поиск" />
-        <SelectionCard label="Статус" value={workspace.filters.status ? workspace.statusLabels[workspace.filters.status] || workspace.filters.status : 'Все статусы'} onPress={() => undefined} />
+        <View style={styles.filterGroup}>
+          <Text style={styles.selectionLabel}>Статус</Text>
+          <View style={styles.statusChipRow}>
+            <Chip selected={!workspace.filters.status} onPress={() => workspace.setFilters((prev) => ({ ...prev, status: '' }))} style={styles.filterChip}>Все статусы</Chip>
+            {Object.entries(workspace.statusLabels).map(([value, label]) => (
+              <Chip key={value} selected={workspace.filters.status === value} onPress={() => workspace.setFilters((prev) => ({ ...prev, status: value }))} style={styles.filterChip}>
+                {String(label)}
+              </Chip>
+            ))}
+          </View>
+        </View>
         <SelectionCard label="Контрагент" value={filterCounterparty?.name || 'Все контрагенты'} onPress={() => openPicker('filterCounterparty')} />
         <View style={styles.row}><ActionButton label="Сбросить" kind="secondary" onPress={() => { setFilterCounterparty(null); workspace.clearFilters(); }} /><ActionButton label="Закрыть" kind="primary" onPress={() => setFiltersOpen(false)} /></View>
       </SheetModal>
@@ -495,14 +554,23 @@ export default function ClientOrdersMobileScreen() {
         </View>
       </SheetModal>
 
-      <SheetModal visible={discardConfirm.open} onClose={() => closeDiscardConfirm(false)} title={discardConfirm.mode === 'create' ? 'Закрыть новый документ?' : 'Открыть другой документ?'}>
-        <InfoText text={discardConfirm.mode === 'create' ? 'Несохраненные изменения будут потеряны.' : 'Текущие изменения нужно сохранить или отбросить.'} />
-        {discardConfirm.blockingMessage ? <Text style={styles.warning}>{discardConfirm.blockingMessage}</Text> : null}
-        <View style={styles.row}>
-          <ActionButton label="Остаться" kind="secondary" onPress={() => closeDiscardConfirm(false)} />
-          <ActionButton label="Продолжить" kind="primary" onPress={() => closeDiscardConfirm(true)} />
-        </View>
-      </SheetModal>
+      <PackagePickerDialog
+        item={packagePickerItem}
+        onDismiss={() => setPackagePickerItem(null)}
+        onSelect={(packageGuid) => {
+          if (!packagePickerItem) return;
+          workspace.setItemPatch(packagePickerItem.key, { packageGuid });
+          setPackagePickerItem(null);
+        }}
+      />
+      <ConfirmDialog
+        state={confirmDialog}
+        onDismiss={() => setConfirmDialog(null)}
+      />
+      <ConfirmDialog
+        state={discardConfirmState}
+        onDismiss={() => closeDiscardConfirm(false)}
+      />
     </View>
   );
 }
@@ -515,23 +583,33 @@ function HeaderSection({ workspace, openPicker, openDetails }: { workspace: any;
     <SelectionCard label="Контрагент" value={workspace.selections.counterparty?.name || 'Выбрать'} onPress={() => openPicker('counterparty')} disabled={workspace.readOnly} onDetails={() => openDetails('counterparty', workspace.draft.counterpartyGuid)} />
     <SelectionCard label="Соглашение" value={workspace.selections.agreement?.name || 'Выбрать'} onPress={() => openPicker('agreement')} disabled={workspace.readOnly || !workspace.draft.counterpartyGuid} onDetails={() => openDetails('agreement', workspace.draft.agreementGuid)} />
     <SelectionCard label="Договор" value={workspace.selections.contract?.name || workspace.selections.contract?.number || 'Выбрать'} onPress={() => openPicker('contract')} disabled={workspace.readOnly || !workspace.draft.counterpartyGuid} onDetails={() => openDetails('contract', workspace.draft.contractGuid)} />
-    <View style={styles.inlineRow}><View style={{ flex: 1 }}><SelectionCard label="Вид цены" value={workspace.draft.priceTypeName || workspace.selections.agreement?.priceType?.name || 'Выбрать'} onPress={() => openPicker('priceType')} disabled={workspace.readOnly} onDetails={() => openDetails('price-type', workspace.draft.priceTypeGuid || workspace.selections.agreement?.priceType?.guid)} /></View>{workspace.isHeaderPriceTypeCustom ? <Pressable style={styles.iconButton} onPress={() => workspace.resetHeaderPriceTypeToDefault()}><Ionicons name="refresh-outline" size={18} color="#2563EB" /></Pressable> : null}</View>
+    <View style={styles.inlineRow}><View style={{ flex: 1 }}><SelectionCard label="Вид цены" value={workspace.draft.priceTypeName || workspace.selections.agreement?.priceType?.name || 'Выбрать'} onPress={() => openPicker('priceType')} disabled={workspace.readOnly} onDetails={() => openDetails('price-type', workspace.draft.priceTypeGuid || workspace.selections.agreement?.priceType?.guid)} /></View>{workspace.isHeaderPriceTypeCustom ? <PaperIconButton icon="refresh" size={18} onPress={() => workspace.resetHeaderPriceTypeToDefault()} style={styles.iconButtonPaper} /> : null}</View>
     <SelectionCard label="Склад" value={workspace.selections.warehouse?.name || 'Выбрать'} onPress={() => openPicker('warehouse')} disabled={workspace.readOnly} onDetails={() => openDetails('warehouse', workspace.draft.warehouseGuid)} />
     <SelectionCard label="Адрес доставки" value={workspace.selections.deliveryAddress?.fullAddress || 'Выбрать'} onPress={() => openPicker('deliveryAddress')} disabled={workspace.readOnly || !workspace.draft.counterpartyGuid} onDetails={() => openDetails('delivery-address', workspace.draft.deliveryAddressGuid)} />
     <DateTimeInput label="Дата отгрузки" value={workspace.draft.deliveryDate || undefined} includeTime={false} disabledPast minDate={today} maxDate={maxDate} allowClear={false} disabled={workspace.readOnly} onChange={(iso) => workspace.patchDraft({ deliveryDate: iso })} />
-    <TextInput style={[styles.input, styles.comment]} value={workspace.draft.comment || ''} onChangeText={(value) => workspace.patchDraft({ comment: value })} placeholder="Комментарий" multiline editable={!workspace.readOnly} placeholderTextColor="#94A3B8" />
+    <PaperTextInput
+      mode="outlined"
+      label="Комментарий"
+      value={workspace.draft.comment || ''}
+      onChangeText={(value) => workspace.patchDraft({ comment: value })}
+      multiline
+      dense
+      editable={!workspace.readOnly}
+      style={styles.commentInputPaper}
+      outlineStyle={styles.inputOutlinePaper}
+    />
   </View>;
 }
 
-function ItemsSection({ workspace, filteredItems, itemsSearch, setItemsSearch, openPicker, ui, editorTier }: { workspace: any; filteredItems: any[]; itemsSearch: string; setItemsSearch: (value: string) => void; openPicker: (kind: PickerKind, lineKey?: string) => void; ui: ReturnType<typeof getClientOrdersResponsiveMetrics>; editorTier: ReturnType<typeof resolveClientOrdersEditorTier> }) {
+function ItemsSection({ workspace, filteredItems, itemsSearch, setItemsSearch, openPicker, openPackagePicker, onClearItems, ui, editorTier }: { workspace: any; filteredItems: any[]; itemsSearch: string; setItemsSearch: (value: string) => void; openPicker: (kind: PickerKind, lineKey?: string) => void; openPackagePicker: (item: any) => void; onClearItems: () => void; ui: ReturnType<typeof getClientOrdersResponsiveMetrics>; editorTier: ReturnType<typeof resolveClientOrdersEditorTier> }) {
   const compactActions = editorTier === 'cards';
   const controlHeight = ui.fieldHeight + 8;
   return <View style={styles.cardStack}>
     <View style={styles.panelHeader}><Text style={styles.title}>Товары</Text><Text style={styles.total}>{formatMoney(workspace.localTotal, workspace.draft.currency)}</Text></View>
     <View style={[styles.row, { gap: ui.actionGap + (compactActions ? 0 : 0) }]}>
       <Searchbar style={[styles.searchbar, styles.itemsSearchPaper, { flex: 1, minHeight: controlHeight, height: controlHeight }]} inputStyle={styles.searchbarInput} value={itemsSearch} onChangeText={setItemsSearch} placeholder="Поиск в строках" />
-      <ActionButton label="Добавить" icon="add-outline" kind="success" onPress={() => openPicker('product')} height={controlHeight} />
-      <ActionButton label="Удалить" icon="trash-outline" kind="danger" onPress={() => Alert.alert('Удалить все товары', 'Все строки документа будут удалены без возможности восстановления.', [{ text: 'Отмена', style: 'cancel' }, { text: 'Удалить', style: 'destructive', onPress: workspace.clearItems }])} disabled={!workspace.draft.items.length} height={controlHeight} />
+      <ActionButton label="Добавить" icon="plus" kind="success" onPress={() => openPicker('product')} height={controlHeight} />
+      <ActionButton label="Удалить" icon="trash-can-outline" kind="danger" onPress={onClearItems} disabled={!workspace.draft.items.length} height={controlHeight} />
     </View>
     {filteredItems.length ? (
       <View style={[styles.lineList, { paddingBottom: ui.itemsBottomInset }]}>
@@ -543,72 +621,65 @@ function ItemsSection({ workspace, filteredItems, itemsSearch, setItemsSearch, o
           <Text style={[styles.lineHeaderText, styles.lineHeaderPriceType]}>Вид</Text>
           <Text style={[styles.lineHeaderText, styles.lineHeaderPrice]}>Цена</Text>
         </View>
-        {filteredItems.map((item, index) => <LineItemCard key={item.key} item={item} index={index} workspace={workspace} openPicker={openPicker} ui={ui} />)}
+        {filteredItems.map((item, index) => <LineItemCard key={item.key} item={item} index={index} workspace={workspace} openPicker={openPicker} openPackagePicker={openPackagePicker} ui={ui} />)}
       </View>
     ) : null}
     {!filteredItems.length ? <InfoText text="Подходящие строки не найдены." /> : null}
   </View>;
 }
 
-function LineItemCard({ item, index, workspace, openPicker, ui }: { item: any; index: number; workspace: any; openPicker: (kind: PickerKind, lineKey?: string) => void; ui: ReturnType<typeof getClientOrdersResponsiveMetrics> }) {
+function LineItemCard({ item, index, workspace, openPicker, openPackagePicker, ui }: { item: any; index: number; workspace: any; openPicker: (kind: PickerKind, lineKey?: string) => void; openPackagePicker: (item: any) => void; ui: ReturnType<typeof getClientOrdersResponsiveMetrics> }) {
   const qtyValid = isValidQuantityValue(item);
   const currentManualPrice = item.manualPrice || '';
   const priceValid = !currentManualPrice || isValidManualPriceValue(currentManualPrice);
   const qtyInputWidth = quantityInputWidthPx(item.quantity, 40, 92);
   const qtyControlWidth = qtyInputWidth + ui.narrowControlHeight * 2 + 8;
   const displayedPrice = displayedPriceValue(item);
-  const openPackagePicker = React.useCallback(() => {
-    if (hasSinglePackage(item)) return;
-    const options = [
-      { text: unitLabel(item.baseUnit), onPress: () => workspace.setItemPatch(item.key, { packageGuid: null }) },
-      ...item.packages.map((pack: any) => ({
-        text: packageLabel(pack, item),
-        onPress: () => workspace.setItemPatch(item.key, { packageGuid: pack.guid }),
-      })),
-      { text: 'Отмена', style: 'cancel' as const },
-    ];
-    Alert.alert('Выбор упаковки', undefined, options);
-  }, [item, workspace]);
-  return <View style={styles.lineRow}>
-    <View style={styles.lineTopCompact}><Pressable onPress={() => workspace.removeItem(item.key)} style={styles.lineDeleteCompact}><Ionicons name="close-outline" size={16} color="#0F172A" /></Pressable><Text style={styles.lineNoCompact}>{index + 1}</Text><View style={{ flex: 1, minWidth: 0 }}><Text style={styles.lineTitleCompact}>{item.productName}</Text><Text style={styles.lineMetaCompact} numberOfLines={1}>{[item.productCode, item.productArticle, item.productSku].filter(Boolean).join(' • ')}</Text></View><Text style={styles.lineTotalCompact}>{formatMoney(computeLineTotal(item, workspace.draft.generalDiscountPercent), workspace.draft.currency)}</Text></View>
+  return <Card mode="outlined" style={styles.lineCardPaper}>
+    <Card.Content style={styles.lineCardContentPaper}>
+    <View style={styles.lineTopCompact}><PaperIconButton icon="close" size={16} onPress={() => workspace.removeItem(item.key)} style={styles.lineDeletePaper} /><Text style={styles.lineNoCompact}>{index + 1}</Text><View style={{ flex: 1, minWidth: 0 }}><Text style={styles.lineTitleCompact}>{item.productName}</Text><Text style={styles.lineMetaCompact} numberOfLines={1}>{[item.productCode, item.productArticle, item.productSku].filter(Boolean).join(' • ')}</Text></View><Text style={styles.lineTotalCompact}>{formatMoney(computeLineTotal(item, workspace.draft.generalDiscountPercent), workspace.draft.currency)}</Text></View>
     <View style={[styles.lineControlsRow, { gap: ui.narrowRowGap }]}>
-      <View style={[styles.stepperCompact, { width: qtyControlWidth }]}><Pressable style={[styles.stepButtonCompact, { width: ui.narrowControlHeight, height: ui.narrowControlHeight }]} onPress={() => workspace.setItemPatch(item.key, { quantity: quantityStep(item, -1) })}><Text style={styles.stepTextCompact}>?</Text></Pressable><TextInput style={[styles.smallInputCompact, { width: qtyInputWidth, height: ui.narrowControlHeight, flexGrow: 0, flexShrink: 0 }, !qtyValid && styles.invalidInput]} value={String(item.quantity)} keyboardType="decimal-pad" onChangeText={(value) => workspace.setItemPatch(item.key, { quantity: normalizeQuantityInput(item, value) })} /><Pressable style={[styles.stepButtonCompact, { width: ui.narrowControlHeight, height: ui.narrowControlHeight }]} onPress={() => workspace.setItemPatch(item.key, { quantity: quantityStep(item, 1) })}><Text style={styles.stepTextCompact}>+</Text></Pressable></View>
+      <View style={[styles.stepperCompact, { width: qtyControlWidth }]}><PaperIconButton icon="minus" size={15} onPress={() => workspace.setItemPatch(item.key, { quantity: quantityStep(item, -1) })} style={[styles.stepButtonPaper, { width: ui.narrowControlHeight, height: ui.narrowControlHeight }]} /><PaperTextInput mode="outlined" dense style={[styles.smallInputPaper, { width: qtyInputWidth, height: ui.narrowControlHeight, flexGrow: 0, flexShrink: 0 }]} outlineStyle={[styles.smallInputOutlinePaper, !qtyValid && styles.invalidInputOutline]} value={String(item.quantity)} keyboardType="decimal-pad" onChangeText={(value) => workspace.setItemPatch(item.key, { quantity: normalizeQuantityInput(item, value) })} /><PaperIconButton icon="plus" size={15} onPress={() => workspace.setItemPatch(item.key, { quantity: quantityStep(item, 1) })} style={[styles.stepButtonPaper, { width: ui.narrowControlHeight, height: ui.narrowControlHeight }]} /></View>
       {hasSinglePackage(item)
-        ? <View style={[styles.compactField, styles.compactStaticField, { minHeight: ui.narrowControlHeight, paddingHorizontal: ui.compactStaticFieldHorizontalPadding }]}><Text style={styles.compactFieldText} numberOfLines={1}>{getPackageDisplayText(item)}</Text></View>
-        : <Pressable style={[styles.compactField, styles.compactPackField, { width: ui.narrowPackageWidth, height: ui.narrowControlHeight }]} onPress={openPackagePicker}><Text style={styles.compactFieldText} numberOfLines={1}>{getPackageDisplayText(item)}</Text><Ionicons name="chevron-down-outline" size={14} color="#64748B" /></Pressable>}
-      <Pressable style={[styles.compactField, styles.compactPriceTypeField, { height: ui.narrowControlHeight }]} onPress={() => openPicker('priceType', item.key)}><Text style={styles.compactFieldText} numberOfLines={1}>{currentManualPrice.trim() ? 'Произвольный' : item.priceTypeName || workspace.defaultLinePriceType?.name || 'Выбрать'}</Text>{workspace.isItemPriceTypeCustom(item.key) ? <Pressable style={styles.compactResetButton} onPress={() => workspace.resetItemPriceType(item.key)}><Ionicons name="refresh-outline" size={14} color="#2563EB" /></Pressable> : <Ionicons name="chevron-down-outline" size={14} color="#64748B" />}</Pressable>
-      <TextInput style={[styles.smallPriceInputCompact, { width: ui.narrowPriceWidth, height: ui.narrowControlHeight }, !priceValid && styles.invalidInput]} value={displayedPrice} keyboardType="decimal-pad" onChangeText={(value) => { const manualPrice = normalizePriceInput(value); workspace.setItemPatch(item.key, { manualPrice, priceTypeGuid: manualPrice.trim() ? null : workspace.draft.priceTypeGuid ?? null, priceTypeName: manualPrice.trim() ? 'Произвольный' : workspace.draft.priceTypeName ?? null }); }} placeholder="0" placeholderTextColor="#94A3B8" />
+        ? <Surface style={[styles.compactField, styles.compactStaticField, { minHeight: ui.narrowControlHeight, paddingHorizontal: ui.compactStaticFieldHorizontalPadding }]} elevation={0}><Text style={styles.compactFieldText} numberOfLines={1}>{getPackageDisplayText(item)}</Text></Surface>
+        : <PaperButton mode="outlined" compact onPress={() => openPackagePicker(item)} contentStyle={[styles.compactButtonContent, { height: ui.narrowControlHeight }]} style={[styles.compactButtonPaper, { width: ui.narrowPackageWidth }]} labelStyle={styles.compactButtonLabel}>{getPackageDisplayText(item)}</PaperButton>}
+      <View style={[styles.priceTypeButtonWrap, { height: ui.narrowControlHeight }]}>
+        <PaperButton mode="outlined" compact onPress={() => openPicker('priceType', item.key)} contentStyle={[styles.compactButtonContent, { height: ui.narrowControlHeight }]} style={styles.priceTypeButtonPaper} labelStyle={styles.compactButtonLabel}>{currentManualPrice.trim() ? 'Произвольный' : item.priceTypeName || workspace.defaultLinePriceType?.name || 'Выбрать'}</PaperButton>
+        {workspace.isItemPriceTypeCustom(item.key) ? <PaperIconButton icon="refresh" size={14} onPress={() => workspace.resetItemPriceType(item.key)} style={styles.compactResetButtonPaper} /> : null}
+      </View>
+      <PaperTextInput mode="outlined" dense style={[styles.smallPriceInputPaper, { width: ui.narrowPriceWidth, height: ui.narrowControlHeight }]} outlineStyle={[styles.smallInputOutlinePaper, !priceValid && styles.invalidInputOutline]} value={displayedPrice} keyboardType="decimal-pad" onChangeText={(value) => { const manualPrice = normalizePriceInput(value); workspace.setItemPatch(item.key, { manualPrice, priceTypeGuid: manualPrice.trim() ? null : workspace.draft.priceTypeGuid ?? null, priceTypeName: manualPrice.trim() ? 'Произвольный' : workspace.draft.priceTypeName ?? null }); }} placeholder="0" />
     </View>
     {(workspace.validation.itemMessages[item.key] || []).length ? <Text style={styles.lineErrorCompact}>{(workspace.validation.itemMessages[item.key] || []).join(' ')}</Text> : null}
-  </View>;
+    </Card.Content>
+  </Card>;
 }
 
 function OrderCard({ order, workspace, selected, onPress }: { order: ClientOrder; workspace: any; selected: boolean; onPress: () => void }) {
-  return <Pressable onPress={onPress} style={[styles.orderCard, selected && styles.orderCardSelected]}>
-    <View style={styles.panelHeader}><Text style={styles.orderTitle}>{orderTitle(order)}</Text><Pill text={workspace.statusLabels[order.status] || order.status} tone={order.status === 'CANCELLED' ? 'danger' : undefined} /></View>
-    <Text style={styles.orderMeta}>{order.counterparty?.name || 'Контрагент не выбран'}</Text>
-    <View style={styles.statsRow}><Pill text={formatMoney(order.totalAmount, order.currency)} /><Pill text={`${order.items.length || 0} поз.`} /><Pill text={`Отгр. ${dateOnly(order.deliveryDate)}`} /></View>
-    <Text style={styles.orderMeta}>Изм. {formatDateTime(order.updatedAt)}</Text>
-  </Pressable>;
+  return <Card mode="outlined" onPress={onPress} style={[styles.orderCardPaper, selected && styles.orderCardSelected]}>
+    <Card.Content style={styles.orderCardContentPaper}>
+      <View style={styles.panelHeader}><Text style={styles.orderTitle}>{orderTitle(order)}</Text><Pill text={workspace.statusLabels[order.status] || order.status} tone={order.status === 'CANCELLED' ? 'danger' : undefined} /></View>
+      <Text style={styles.orderMeta}>{order.counterparty?.name || 'Контрагент не выбран'}</Text>
+      <View style={styles.statsRow}><Pill text={formatMoney(order.totalAmount, order.currency)} /><Pill text={`${order.items.length || 0} поз.`} /><Pill text={`Отгр. ${dateOnly(order.deliveryDate)}`} /></View>
+      <Text style={styles.orderMeta}>Изм. {formatDateTime(order.updatedAt)}</Text>
+    </Card.Content>
+  </Card>;
 }
 
 function SelectionCard({ label, value, onPress, disabled, compact, onDetails }: { label: string; value: string; onPress: () => void; disabled?: boolean; compact?: boolean; onDetails?: () => void }) {
   return (
-    <Surface style={[styles.selection, compact && styles.selectionCompact, disabled && styles.disabled]} elevation={1}>
-      <TouchableRipple disabled={disabled} onPress={onPress} borderless={false} style={styles.selectionRipple}>
-        <View>
-          <PaperText style={styles.selectionLabel}>{label}</PaperText>
-          <View style={styles.selectionValueRow}>
-            <PaperText style={[styles.selectionValue, { flex: 1 }]} numberOfLines={2}>{value}</PaperText>
-            {onDetails ? <PaperIconButton icon="magnify" size={18} onPress={onDetails} style={styles.detailsButtonPaper} /> : null}
-          </View>
+    <Card mode="outlined" onPress={disabled ? undefined : onPress} style={[styles.selection, compact && styles.selectionCompact, disabled && styles.disabled]}>
+      <Card.Content style={styles.selectionContentPaper}>
+        <Text style={styles.selectionLabel}>{label}</Text>
+        <View style={styles.selectionValueRow}>
+          <Text style={[styles.selectionValue, { flex: 1 }]} numberOfLines={2}>{value}</Text>
+          {onDetails ? <PaperIconButton icon="magnify" size={18} onPress={onDetails} disabled={disabled} style={styles.detailsButtonPaper} /> : null}
         </View>
-      </TouchableRipple>
-    </Surface>
+      </Card.Content>
+    </Card>
   );
 }
 
-function ActionButton({ label, icon, kind = 'secondary', onPress, disabled, height }: { label: string; icon?: keyof typeof Ionicons.glyphMap; kind?: 'primary' | 'secondary' | 'danger' | 'success'; onPress: () => void; disabled?: boolean; height?: number }) {
+function ActionButton({ label, icon, kind = 'secondary', onPress, disabled, height }: { label: string; icon?: string; kind?: 'primary' | 'secondary' | 'danger' | 'success'; onPress: () => void; disabled?: boolean; height?: number }) {
   const mode = kind === 'secondary' ? 'outlined' : 'contained';
   const buttonColor = kind === 'danger' ? '#DC2626' : kind === 'success' ? '#16A34A' : kind === 'primary' ? '#0F172A' : '#FFFFFF';
   const textColor = kind === 'secondary' ? '#2563EB' : '#FFFFFF';
@@ -617,7 +688,7 @@ function ActionButton({ label, icon, kind = 'secondary', onPress, disabled, heig
       mode={mode}
       disabled={disabled}
       onPress={onPress}
-      icon={icon ? (() => <Ionicons name={icon} size={17} color={textColor} />) : undefined}
+      icon={icon}
       buttonColor={buttonColor}
       textColor={textColor}
       contentStyle={height ? { minHeight: height, height } : undefined}
@@ -629,26 +700,74 @@ function ActionButton({ label, icon, kind = 'secondary', onPress, disabled, heig
   );
 }
 
-function MobileMenuItem({ label, icon, onPress, disabled, tone }: { label: string; icon: keyof typeof Ionicons.glyphMap; onPress: () => void; disabled?: boolean; tone?: 'danger' }) {
-  const color = disabled ? '#94A3B8' : tone === 'danger' ? '#DC2626' : '#0F172A';
-  return (
-    <Pressable disabled={disabled} onPress={onPress} style={[styles.mobileMenuItem, disabled && styles.disabled]}>
-      <Ionicons name={icon} size={18} color={color} />
-      <Text style={[styles.mobileMenuItemText, { color }]}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function SegmentButton({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
-  return <Pressable onPress={onPress} style={[styles.segment, active && styles.segmentActive]}><Text style={[styles.segmentText, active && styles.segmentTextActive]}>{label}</Text></Pressable>;
-}
-
 function Pill({ text, tone }: { text: string; tone?: 'success' | 'danger' }) {
   return <Chip compact style={[styles.pillPaper, tone === 'success' && styles.pillSuccess, tone === 'danger' && styles.pillDanger]} textStyle={[styles.pillText, tone === 'success' && styles.pillSuccessText, tone === 'danger' && styles.pillDangerText]}>{text}</Chip>;
 }
 
 function InfoText({ text }: { text: string }) {
-  return <PaperText style={styles.infoText}>{text}</PaperText>;
+  return <Text style={styles.infoText}>{text}</Text>;
+}
+
+function PackagePickerDialog({ item, onDismiss, onSelect }: { item: any | null; onDismiss: () => void; onSelect: (packageGuid: string | null) => void }) {
+  const packages = item?.packages || [];
+  return (
+    <Portal>
+      <Dialog visible={!!item} onDismiss={onDismiss} style={styles.dialogPaper}>
+        <Dialog.Title>Выбор упаковки</Dialog.Title>
+        <Dialog.Content>
+          <List.Item
+            title={unitLabel(item?.baseUnit)}
+            left={(props) => <List.Icon {...props} icon={!item?.packageGuid ? 'check-circle' : 'cube-outline'} />}
+            onPress={() => onSelect(null)}
+          />
+          {packages.map((pack: any) => (
+            <List.Item
+              key={pack.guid}
+              title={packageLabel(pack, item)}
+              left={(props) => <List.Icon {...props} icon={item?.packageGuid === pack.guid ? 'check-circle' : 'cube-outline'} />}
+              onPress={() => onSelect(pack.guid)}
+            />
+          ))}
+        </Dialog.Content>
+        <Dialog.Actions>
+          <PaperButton onPress={onDismiss}>Закрыть</PaperButton>
+        </Dialog.Actions>
+      </Dialog>
+    </Portal>
+  );
+}
+
+function ConfirmDialog({ state, onDismiss }: { state: ConfirmDialogState; onDismiss: () => void }) {
+  const [confirming, setConfirming] = React.useState(false);
+  React.useEffect(() => {
+    if (!state) setConfirming(false);
+  }, [state]);
+  const confirm = React.useCallback(async () => {
+    if (!state || confirming) return;
+    setConfirming(true);
+    try {
+      await state.onConfirm();
+      onDismiss();
+    } finally {
+      setConfirming(false);
+    }
+  }, [confirming, onDismiss, state]);
+  return (
+    <Portal>
+      <Dialog visible={!!state} onDismiss={onDismiss} style={styles.dialogPaper}>
+        <Dialog.Title>{state?.title || ''}</Dialog.Title>
+        <Dialog.Content>
+          <Text style={styles.orderMeta}>{state?.message || ''}</Text>
+        </Dialog.Content>
+        <Dialog.Actions>
+          <PaperButton onPress={onDismiss} disabled={confirming}>{state?.cancelLabel || 'Отмена'}</PaperButton>
+          <PaperButton onPress={() => void confirm()} loading={confirming} disabled={confirming} textColor={state?.destructive ? '#DC2626' : undefined}>
+            {state?.confirmLabel || 'Продолжить'}
+          </PaperButton>
+        </Dialog.Actions>
+      </Dialog>
+    </Portal>
+  );
 }
 
 function SheetModal({ visible, title, onClose, children, fullScreen }: { visible: boolean; title: string; onClose: () => void; children: React.ReactNode; fullScreen?: boolean }) {
@@ -657,7 +776,7 @@ function SheetModal({ visible, title, onClose, children, fullScreen }: { visible
       <PaperModal visible={visible} onDismiss={onClose} contentContainerStyle={[styles.modalBackdropPaper, fullScreen ? styles.modalBackdropPaperFull : null]}>
         <Surface style={[styles.modalSheetPaper, fullScreen && styles.modalSheetPaperFull]} elevation={2}>
           <View style={styles.sheetHeader}>
-            <PaperText style={styles.sheetTitle}>{title}</PaperText>
+            <Text style={styles.sheetTitle}>{title}</Text>
             <PaperIconButton icon="close" size={22} onPress={onClose} style={styles.sheetCloseButton} />
           </View>
           <Divider />
@@ -674,12 +793,16 @@ const styles = StyleSheet.create({
   screen: { flex: 1 },
   content: { padding: 12, gap: 10, paddingBottom: 110 },
   contentTablet: { maxWidth: 760, alignSelf: 'center', width: '100%' },
+  panelCard: { borderColor: '#DBEAFE', overflow: 'hidden' },
+  cardContent: { paddingTop: 0, paddingBottom: 0 },
   panel: { borderRadius: 18, borderWidth: 1, borderColor: '#DBEAFE', padding: 12, gap: 10, shadowColor: '#0F172A', shadowOpacity: 0.06, shadowRadius: 12, elevation: 2 },
   cardStack: { gap: 10 },
   title: { fontSize: 19, fontWeight: '900', color: '#1F2937' },
   subtitle: { color: '#64748B', fontSize: 12, fontWeight: '700' },
   input: { minHeight: 42, borderRadius: 9, borderWidth: 1, borderColor: '#CBD5E1', paddingHorizontal: 12, color: '#0F172A', fontWeight: '800', backgroundColor: '#FFFFFF' },
   comment: { minHeight: 86, textAlignVertical: 'top', paddingTop: 10 },
+  commentInputPaper: { minHeight: 86, backgroundColor: '#FFFFFF' },
+  inputOutlinePaper: { borderRadius: 8, borderColor: '#CBD5E1' },
   row: { flexDirection: 'row', gap: 8, alignItems: 'center' },
   inlineRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
   statsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, alignItems: 'center' },
@@ -690,6 +813,7 @@ const styles = StyleSheet.create({
   mobileMenuItem: { minHeight: 42, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingVertical: 8 },
   mobileMenuItemText: { fontSize: 14, fontWeight: '800' },
   panelHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
+  iconButtonPaper: { margin: 0, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#DBEAFE' },
   iconButton: { width: 38, height: 38, borderRadius: 10, borderWidth: 1, borderColor: '#DBEAFE', alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF' },
   iconButtonDanger: { width: 38, height: 38, borderRadius: 10, borderWidth: 1, borderColor: '#FECACA', alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF' },
   action: { minHeight: 40, borderRadius: 10, borderWidth: 1, borderColor: '#BFDBFE', paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: '#FFFFFF' },
@@ -701,13 +825,20 @@ const styles = StyleSheet.create({
   actionText: { color: '#2563EB', fontWeight: '900', fontSize: 13 },
   actionTextOnDark: { color: '#FFFFFF' },
   sectionRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  segmentedPaper: { flex: 1 },
   segmentRow: { flex: 1, flexDirection: 'row', padding: 3, borderRadius: 12, backgroundColor: '#EEF2FF', gap: 4 },
   segment: { flex: 1, minHeight: 34, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
   segmentActive: { backgroundColor: '#FFFFFF' },
   segmentText: { color: '#64748B', fontWeight: '900' },
   segmentTextActive: { color: '#2563EB' },
   itemCountBadge: { minHeight: 34, borderRadius: 12, backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#BFDBFE', paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 5 },
+  itemCountChip: { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' },
   itemCountBadgeText: { color: '#2563EB', fontWeight: '900', fontSize: 13 },
+  filterGroup: { gap: 8 },
+  statusChipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  filterChip: { backgroundColor: '#F8FAFC' },
+  orderCardPaper: { borderColor: '#E2E8F0', backgroundColor: '#FFFFFF' },
+  orderCardContentPaper: { gap: 7, padding: 12 },
   orderCard: { borderRadius: 14, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#FFFFFF', padding: 12, gap: 7 },
   orderCardSelected: { borderColor: '#2563EB', backgroundColor: '#EFF6FF' },
   orderTitle: { fontSize: 16, fontWeight: '900', color: '#111827' },
@@ -721,6 +852,7 @@ const styles = StyleSheet.create({
   pillDangerText: { color: '#B91C1C' },
   selection: { borderRadius: 12, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF', overflow: 'hidden' },
   selectionCompact: { paddingVertical: 7 },
+  selectionContentPaper: { padding: 12, gap: 4 },
   selectionRipple: { paddingHorizontal: 12, paddingVertical: 10 },
   selectionLabel: { fontSize: 10, color: '#64748B', fontWeight: '900', textTransform: 'uppercase', letterSpacing: 0.4 },
   selectionValue: { fontSize: 14, color: '#0F172A', fontWeight: '900' },
@@ -736,8 +868,11 @@ const styles = StyleSheet.create({
   lineHeaderPack: { width: 82, textAlign: 'center' },
   lineHeaderPriceType: { flex: 1, textAlign: 'left' },
   lineHeaderPrice: { width: 84, textAlign: 'center' },
+  lineCardPaper: { borderColor: '#E2E8F0', backgroundColor: '#FFFFFF', marginTop: 8 },
+  lineCardContentPaper: { padding: 8 },
   lineRow: { paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#E2E8F0' },
   lineTopCompact: { flexDirection: 'row', alignItems: 'flex-start', gap: 6 },
+  lineDeletePaper: { width: 20, height: 20, margin: 0, marginLeft: -2 },
   lineDeleteCompact: { width: 20, height: 20, alignItems: 'center', justifyContent: 'center', marginLeft: -2 },
   lineNoCompact: { width: 16, color: '#64748B', fontWeight: '900', fontSize: 11, paddingTop: 1 },
   lineTitleCompact: { color: '#111827', fontWeight: '900', fontSize: 12, lineHeight: 14 },
@@ -745,15 +880,26 @@ const styles = StyleSheet.create({
   lineTotalCompact: { color: '#111827', fontWeight: '900', fontSize: 12, paddingLeft: 4 },
   lineControlsRow: { flexDirection: 'row', alignItems: 'center', paddingLeft: 42, paddingTop: 6 },
   stepperCompact: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  stepButtonPaper: { margin: 0, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF' },
   stepButtonCompact: { borderRadius: 7, borderWidth: 1, borderColor: '#CBD5E1', alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF' },
   stepTextCompact: { fontSize: 15, color: '#334155', fontWeight: '900' },
+  smallInputPaper: { backgroundColor: '#FFFFFF', textAlign: 'center', fontSize: 12 },
+  smallInputOutlinePaper: { borderRadius: 7, borderColor: '#CBD5E1' },
+  invalidInputOutline: { borderColor: '#DC2626' },
   smallInputCompact: { flex: 1, borderRadius: 7, borderWidth: 1, borderColor: '#CBD5E1', textAlign: 'center', fontWeight: '900', fontSize: 12, color: '#0F172A', backgroundColor: '#FFFFFF', paddingHorizontal: 4, paddingVertical: 0 },
   compactField: { borderRadius: 7, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF', paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 4 },
   compactStaticField: { backgroundColor: '#F8FAFC', alignSelf: 'flex-start' },
+  compactButtonPaper: { borderRadius: 7, justifyContent: 'center' },
+  compactButtonContent: { paddingHorizontal: 6 },
+  compactButtonLabel: { fontSize: 10.5, fontWeight: '800', marginHorizontal: 0, marginVertical: 0 },
   compactPackField: { justifyContent: 'space-between' },
   compactPriceTypeField: { flex: 1, justifyContent: 'space-between' },
   compactFieldText: { flex: 1, fontSize: 11, color: '#0F172A', fontWeight: '800' },
+  priceTypeButtonWrap: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center' },
+  priceTypeButtonPaper: { flex: 1, minWidth: 0, borderRadius: 7 },
   compactResetButton: { width: 18, height: 18, alignItems: 'center', justifyContent: 'center' },
+  compactResetButtonPaper: { width: 24, height: 24, margin: 0, marginLeft: 2 },
+  smallPriceInputPaper: { backgroundColor: '#FFFFFF', fontSize: 11.5 },
   smallPriceInputCompact: { borderRadius: 7, borderWidth: 1, borderColor: '#CBD5E1', fontWeight: '800', fontSize: 11.5, color: '#0F172A', backgroundColor: '#FFFFFF', paddingHorizontal: 8, paddingVertical: 0, textAlign: 'left' },
   lineErrorCompact: { paddingLeft: 42, paddingTop: 4, fontSize: 10, lineHeight: 12, color: '#B91C1C', fontWeight: '700' },
   lineCard: { borderRadius: 14, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#FFFFFF', padding: 10, gap: 10 },
@@ -794,6 +940,7 @@ const styles = StyleSheet.create({
   referenceValue: { flex: 1, color: '#0F172A', fontWeight: '700', fontSize: 12 },
   error: { color: '#B91C1C', backgroundColor: '#FEE2E2', borderRadius: 10, padding: 10, fontWeight: '800' },
   warning: { color: '#92400E', backgroundColor: '#FEF3C7', borderRadius: 10, padding: 10, fontWeight: '800' },
+  dialogPaper: { borderRadius: 16, backgroundColor: '#FFFFFF' },
   modalBackdropPaper: { flex: 1, margin: 0, justifyContent: 'flex-end' },
   modalBackdropPaperFull: { justifyContent: 'flex-end' },
   modalSheetPaper: { maxHeight: '86%', borderTopLeftRadius: 24, borderTopRightRadius: 24, backgroundColor: '#FFFFFF', overflow: 'hidden' },
