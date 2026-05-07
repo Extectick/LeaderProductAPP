@@ -1,6 +1,6 @@
 import type { OnecLpAppRoutePoint, OnecLpAppTransportTask } from '@/utils/onecLpAppService';
 import type { TransportTaskCoordinatePoint, TransportTaskDeparturePoint } from '../types';
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View } from 'react-native';
 import TransportTasksMobileSheet from '../mobile/TransportTasksMobileSheet';
 import TransportRouteMap from '../TransportRouteMap';
@@ -90,6 +90,7 @@ export default function TransportTasksMobileLayout({
   const [bottomSheetExpanded, setBottomSheetExpanded] = useState(false);
   const [collapseRequestId, setCollapseRequestId] = useState(0);
   const [focusSelectedCounter, setFocusSelectedCounter] = useState(0);
+  const lastFocusDepartureCounterRef = useRef(focusDepartureCounter);
 
   const handleSelectRoutePointIndex = (index: number | null) => {
     onSelectRoutePointIndex(index);
@@ -97,6 +98,12 @@ export default function TransportTasksMobileLayout({
       setFocusSelectedCounter((current) => current + 1);
     }
   };
+
+  useEffect(() => {
+    if (focusDepartureCounter === lastFocusDepartureCounterRef.current) return;
+    lastFocusDepartureCounterRef.current = focusDepartureCounter;
+    setCollapseRequestId((current) => current + 1);
+  }, [focusDepartureCounter]);
 
   return (
     <View style={styles.mobileFullMapRoot}>

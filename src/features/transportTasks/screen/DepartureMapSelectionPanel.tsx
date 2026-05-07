@@ -23,9 +23,6 @@ export default function DepartureMapSelectionPanel({
       <Text variant="titleSmall" style={styles.departureMapSelectionTitle}>
         Выбор точки отправления
       </Text>
-      <Text variant="bodySmall" style={styles.mutedText}>
-        Нажмите на большую карту, чтобы поставить точку 0. Она будет видна в маршруте, но не уйдет в 1С.
-      </Text>
       <Surface style={styles.departureMapSummary} elevation={0}>
         <Text variant="bodySmall" style={styles.mutedText}>
           Выбранные координаты

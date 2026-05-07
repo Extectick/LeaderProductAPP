@@ -133,6 +133,11 @@ export default function useTransportTasksScreen() {
     setSnackbarVisible(true);
   }, []);
 
+  const focusDepartureOnMap = useCallback(() => {
+    setSelectedRoutePointIndex(null);
+    setFocusDepartureCounter((current) => current + 1);
+  }, []);
+
   const persistSelectedTaskGuid = useCallback(
     async (guid: string | null) => {
       try {
@@ -205,6 +210,7 @@ export default function useTransportTasksScreen() {
         setDepartureModalVisible(false);
         setDepartureMapSelectionMode(false);
         setDraftDepartureMapPoint(null);
+        focusDepartureOnMap();
         setSnackbarMessage('Точка отправления сохранена');
         setSnackbarVisible(true);
       } catch (err: any) {
@@ -214,7 +220,7 @@ export default function useTransportTasksScreen() {
         setDepartureSettingsSaving(false);
       }
     },
-    [applyDepartureSettingsResult, showSnackbarError]
+    [applyDepartureSettingsResult, focusDepartureOnMap, showSnackbarError]
   );
 
   const loadTasks = useCallback(async () => {
@@ -287,6 +293,7 @@ export default function useTransportTasksScreen() {
 
   const setTaskStatusFilter = useCallback((status: string | null) => {
     const normalized = normalizeTaskStatusFilter(status);
+    if (normalized === taskStatusFilter) return;
     setTaskStatusFilterState(normalized);
     setTasks([]);
     setTasksOffset(0);
@@ -294,7 +301,7 @@ export default function useTransportTasksScreen() {
     void (normalized
       ? AsyncStorage.setItem(taskStatusFilterStorageKey, normalized)
       : AsyncStorage.removeItem(taskStatusFilterStorageKey));
-  }, [taskStatusFilterStorageKey]);
+  }, [taskStatusFilter, taskStatusFilterStorageKey]);
 
   const openTask = useCallback(async (task: OnecLpAppTransportTask) => {
     const open = async () => {
@@ -475,11 +482,6 @@ export default function useTransportTasksScreen() {
     setDraftDepartureMapPoint(null);
   }, [canDismissDepartureModal, departureSettingsSaving]);
 
-  const focusDepartureOnMap = useCallback(() => {
-    setSelectedRoutePointIndex(null);
-    setFocusDepartureCounter((current) => current + 1);
-  }, []);
-
   const beginDepartureMapSelection = useCallback(() => {
     setDraftDepartureMapPoint(resolveDraftMapPoint(departurePoint));
     setDepartureModalVisible(false);
@@ -561,6 +563,7 @@ export default function useTransportTasksScreen() {
       setDepartureModalVisible(false);
       setDepartureMapSelectionMode(false);
       setDraftDepartureMapPoint(null);
+      focusDepartureOnMap();
       setSnackbarMessage('Точка отправления обновлена по геолокации');
       setSnackbarVisible(true);
     } catch (err: any) {
@@ -569,7 +572,7 @@ export default function useTransportTasksScreen() {
     } finally {
       setDepartureSettingsSaving(false);
     }
-  }, [applyDepartureSettingsResult, showSnackbarError]);
+  }, [applyDepartureSettingsResult, focusDepartureOnMap, showSnackbarError]);
 
   const saveManualMapDeparturePoint = useCallback(async () => {
     if (!draftDepartureMapPoint) {

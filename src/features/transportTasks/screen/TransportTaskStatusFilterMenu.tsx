@@ -1,5 +1,7 @@
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import React from 'react';
-import { Button, Menu } from 'react-native-paper';
+import { Pressable, Text, View } from 'react-native';
+import { Menu } from 'react-native-paper';
 import {
   TRANSPORT_TASK_STATUS_FORMING,
   TRANSPORT_TASK_STATUS_ROUTE_ORDERING,
@@ -38,17 +40,39 @@ export default function TransportTaskStatusFilterMenu({ value, compact, disabled
       onDismiss={close}
       contentStyle={styles.statusFilterMenu}
       anchor={
-        <Button
-          mode="outlined"
-          compact
-          icon={selected.icon}
+        <Pressable
           disabled={disabled}
           onPress={() => setVisible(true)}
-          style={[styles.statusFilterButton, compact && styles.statusFilterButtonCompact]}
-          labelStyle={[styles.statusFilterButtonLabel, compact && styles.statusFilterButtonLabelCompact]}
+          accessibilityRole="button"
+          accessibilityLabel="Фильтр по статусу"
+          style={({ pressed }) => [
+            styles.statusFilterButton,
+            compact && styles.statusFilterButtonCompact,
+            disabled && styles.statusFilterButtonDisabled,
+            pressed && !disabled ? styles.statusFilterButtonPressed : null,
+          ]}
         >
-          {compact ? selected.compactLabel : selected.label}
-        </Button>
+          <View style={styles.statusFilterButtonInner}>
+            <View style={[styles.statusFilterIconWrap, compact && styles.statusFilterIconWrapCompact]}>
+              <MaterialCommunityIcons
+                name={selected.icon as any}
+                size={compact ? 14 : 16}
+                color="#475569"
+              />
+            </View>
+            <Text
+              numberOfLines={1}
+              style={[styles.statusFilterButtonLabel, compact && styles.statusFilterButtonLabelCompact]}
+            >
+              {compact ? selected.compactLabel : selected.label}
+            </Text>
+            <MaterialCommunityIcons
+              name={visible ? 'chevron-up' : 'chevron-down'}
+              size={compact ? 16 : 18}
+              color="#64748B"
+            />
+          </View>
+        </Pressable>
       }
     >
       {STATUS_FILTER_OPTIONS.map((item) => (

@@ -3,7 +3,7 @@ import type { RouteDragHandleProps } from '../RoutePointSortableList';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, Platform, Pressable, TextInput, View } from 'react-native';
 import { IconButton, Surface, Text } from 'react-native-paper';
-import { formatDateTime, routePointAddress } from '../lib/formatters';
+import { formatTimeRange, routePointAddress } from '../lib/formatters';
 import AnimatedPressable from './AnimatedPressable';
 import { itemStyles } from './itemStyles';
 
@@ -201,7 +201,7 @@ export default function RoutePointListItem({
             variant="bodySmall"
             style={[itemStyles.pointMetaText, compact && itemStyles.pointMetaTextCompact]}
           >
-            Доставка: {formatDateTime(point.deliveryTimeFrom)} - {formatDateTime(point.deliveryTimeTo)}
+            Доставка: {formatTimeRange(point.deliveryTimeFrom, point.deliveryTimeTo)}
           </Text>
           <Text
             numberOfLines={1}

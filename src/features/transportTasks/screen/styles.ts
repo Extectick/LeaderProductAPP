@@ -163,26 +163,58 @@ export const styles = StyleSheet.create({
   statusFilterButton: {
     alignSelf: 'flex-start',
     marginTop: 4,
-    borderColor: '#CBD5E1',
-    borderRadius: 12,
+    minHeight: 36,
     minWidth: 142,
+    borderWidth: 1,
+    borderColor: '#D7DEE8',
+    borderRadius: 18,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 10,
+    justifyContent: 'center',
   },
   statusFilterButtonCompact: {
-    marginTop: 0,
-    minWidth: 96,
+    marginTop: 1,
+    minHeight: 32,
+    minWidth: 92,
+    borderRadius: 16,
+    paddingHorizontal: 10,
+  },
+  statusFilterButtonInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  statusFilterButtonDisabled: {
+    opacity: 0.5,
+  },
+  statusFilterButtonPressed: {
+    opacity: 0.92,
+    transform: [{ scale: 0.985 }],
+  },
+  statusFilterIconWrap: {
+    width: 20,
+    height: 20,
     borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F8FAFC',
+  },
+  statusFilterIconWrapCompact: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
   },
   statusFilterButtonLabel: {
     color: '#334155',
     fontSize: 12,
     lineHeight: 16,
-    marginVertical: 2,
+    fontWeight: '700',
+    flexShrink: 1,
   },
   statusFilterButtonLabelCompact: {
     fontSize: 11,
     lineHeight: 14,
-    marginVertical: 0,
-    marginHorizontal: 2,
+    fontWeight: '700',
   },
   statusFilterMenu: {
     borderRadius: 14,
@@ -253,15 +285,24 @@ export const styles = StyleSheet.create({
     paddingHorizontal: 24,
   },
   departureDialog: {
-    maxWidth: 760,
-    width: '100%',
+    maxWidth: 430,
+    width: '92%',
     alignSelf: 'center',
-    borderRadius: 18,
+    borderRadius: 22,
     backgroundColor: '#FFFFFF',
   },
   departureDialogContent: {
     gap: 12,
-    paddingTop: 18,
+  },
+  departureDialogTitle: {
+    textAlign: 'center',
+    color: '#0F172A',
+    fontWeight: '900',
+  },
+  departureDialogText: {
+    color: '#475569',
+    lineHeight: 20,
+    textAlign: 'center',
   },
   toLoadingDialog: {
     maxWidth: 430,
@@ -293,33 +334,21 @@ export const styles = StyleSheet.create({
     paddingVertical: 8,
     textAlign: 'center',
   },
-  departureModalHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-  },
-  departureModalTitleWrap: {
-    flex: 1,
-    minWidth: 0,
-  },
-  departureModalTitle: {
-    color: '#0F172A',
-    fontWeight: '900',
-  },
   departureModalScroll: {
-    gap: 12,
+    gap: 10,
     paddingBottom: 8,
   },
   departureSectionTitle: {
     color: '#0F172A',
     fontWeight: '800',
+    textAlign: 'center',
   },
   departureOptionCard: {
     borderWidth: 1,
     borderColor: '#E2E8F0',
     borderRadius: 12,
     backgroundColor: '#FFFFFF',
-    padding: 12,
+    padding: 11,
     gap: 6,
   },
   departureOptionCardSelected: {
@@ -342,6 +371,12 @@ export const styles = StyleSheet.create({
   },
   departureActionsRow: {
     gap: 10,
+  },
+  departureSecondaryButton: {
+    borderRadius: 14,
+  },
+  departurePrimaryButton: {
+    borderRadius: 14,
   },
   departureMapSelectionPanel: {
     gap: 12,

@@ -89,6 +89,31 @@ export function formatDateTime(value?: string | null) {
   });
 }
 
+const TIME_ONLY_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?$/;
+
+export function formatTime(value?: string | null) {
+  if (!value) return '-';
+  const normalized = String(value).trim();
+  if (!normalized) return '-';
+
+  const timeOnlyMatch = normalized.match(TIME_ONLY_PATTERN);
+  if (timeOnlyMatch) {
+    return `${timeOnlyMatch[1]}:${timeOnlyMatch[2]}`;
+  }
+
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) return normalized;
+  return date.toLocaleTimeString('ru-RU', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+export function formatTimeRange(from?: string | null, to?: string | null) {
+  if (!from && !to) return '-';
+  return `${formatTime(from)} - ${formatTime(to)}`;
+}
+
 export function formatCoordinateValue(value?: number | null) {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '-';
   return value.toFixed(6);

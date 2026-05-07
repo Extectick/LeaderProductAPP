@@ -1,7 +1,7 @@
 import type { TransportTaskDeparturePoint } from '../types';
-import React from 'react';
-import { Platform, View } from 'react-native';
-import { IconButton, Surface, Text } from 'react-native-paper';
+import React, { useCallback, useRef } from 'react';
+import { Animated, Platform, Pressable, View } from 'react-native';
+import { Surface, Text } from 'react-native-paper';
 import { coordinatesSummary, departurePrimaryText, departureSourceLabel } from '../lib/formatters';
 import AnimatedPressable from './AnimatedPressable';
 import { itemStyles } from './itemStyles';
@@ -23,6 +23,18 @@ export default function DepartureRoutePointListItem({
 }: Props) {
   const primaryText = departurePrimaryText(point);
   const sourceLabel = departureSourceLabel(point);
+  const editButtonScale = useRef(new Animated.Value(1)).current;
+
+  const animateEditButton = useCallback(
+    (value: number) => {
+      Animated.timing(editButtonScale, {
+        toValue: value,
+        duration: 120,
+        useNativeDriver: true,
+      }).start();
+    },
+    [editButtonScale]
+  );
 
   return (
     <AnimatedPressable onPress={onPress} hoverScale={1.01} pressScale={0.992} webTitle={primaryText}>
@@ -72,17 +84,24 @@ export default function DepartureRoutePointListItem({
               Точка отправления
             </Text>
           </View>
-          <IconButton
-            icon="pencil-outline"
-            size={18}
-            mode="contained-tonal"
-            onPress={onPressEdit}
-            style={[
-              itemStyles.departurePointEditButton,
-              compact && itemStyles.departurePointEditButtonCompact,
-            ]}
-            accessibilityLabel="Изменить точку отправления"
-          />
+          <Animated.View style={{ transform: [{ scale: editButtonScale }] }}>
+            <Pressable
+              onPress={onPressEdit}
+              onHoverIn={() => animateEditButton(1.06)}
+              onHoverOut={() => animateEditButton(1)}
+              onPressIn={() => animateEditButton(0.92)}
+              onPressOut={() => animateEditButton(Platform.OS === 'web' ? 1.06 : 1)}
+              accessibilityRole="button"
+              accessibilityLabel="Изменить точку отправления"
+              style={({ pressed }) => [
+                itemStyles.departurePointEditButton,
+                compact && itemStyles.departurePointEditButtonCompact,
+                pressed ? itemStyles.departurePointEditButtonPressed : null,
+              ]}
+            >
+              <Text style={itemStyles.departurePointEditIcon}>✎</Text>
+            </Pressable>
+          </Animated.View>
         </View>
         {sourceLabel ? (
           <Text

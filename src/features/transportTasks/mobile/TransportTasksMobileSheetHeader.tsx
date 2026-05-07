@@ -34,14 +34,16 @@ export default function TransportTasksMobileSheetHeader({
           <Text numberOfLines={1} style={styles.title}>
             {title}
           </Text>
-          <Text numberOfLines={1} style={styles.meta}>
-            {meta}
-          </Text>
-          {!expanded ? (
-            <Text numberOfLines={1} style={styles.currentText}>
-              {currentText}
+          <View style={styles.headerTextStack}>
+            <Text numberOfLines={1} style={styles.meta}>
+              {meta}
             </Text>
-          ) : null}
+            {!expanded ? (
+              <Text numberOfLines={1} style={styles.currentText}>
+                {currentText}
+              </Text>
+            ) : null}
+          </View>
         </Pressable>
         <View style={styles.headerActions}>
           <Pressable

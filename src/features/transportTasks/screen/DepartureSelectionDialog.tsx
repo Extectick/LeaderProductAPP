@@ -2,7 +2,7 @@ import type { OnecLpAppDeparturePointPresetKey } from '@/utils/onecLpAppService'
 import type { TransportTaskDeparturePoint, TransportTaskDeparturePreset } from '../types';
 import React from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
-import { Button, Chip, Dialog, IconButton, Surface, Text } from 'react-native-paper';
+import { Button, Chip, Dialog, Surface, Text } from 'react-native-paper';
 import { formatCoordinateValue } from '../lib/formatters';
 import { styles } from './styles';
 
@@ -38,20 +38,16 @@ export default function DepartureSelectionDialog({
       dismissable={canDismiss && !departureSettingsSaving}
       style={styles.departureDialog}
     >
+      <Dialog.Icon icon="map-marker-radius-outline" color="#F97316" />
+      <Dialog.Title style={styles.departureDialogTitle}>
+        {requiresInitialDepartureSelection && !departurePoint
+          ? 'Выберите точку отправления'
+          : 'Настройка точки отправления'}
+      </Dialog.Title>
       <Dialog.Content style={styles.departureDialogContent}>
-        <View style={styles.departureModalHeader}>
-          <View style={styles.departureModalTitleWrap}>
-            <Text variant="titleLarge" style={styles.departureModalTitle}>
-              {requiresInitialDepartureSelection && !departurePoint
-                ? 'Выберите точку отправления'
-                : 'Настройка точки отправления'}
-            </Text>
-            <Text variant="bodySmall" style={styles.mutedText}>
-              Точка 0 будет видна в маршруте, но не уйдет в порядок точек 1С.
-            </Text>
-          </View>
-          {canDismiss && !departureSettingsSaving ? <IconButton icon="close" onPress={onDismiss} /> : null}
-        </View>
+        <Text variant="bodyMedium" style={styles.departureDialogText}>
+          Точка 0 будет видна в маршруте, но не уйдет в порядок точек 1С.
+        </Text>
 
         <ScrollView contentContainerStyle={styles.departureModalScroll}>
           <Text variant="titleSmall" style={styles.departureSectionTitle}>
@@ -90,6 +86,7 @@ export default function DepartureSelectionDialog({
               onPress={onUseCurrentLocation}
               loading={departureSettingsSaving}
               disabled={departureSettingsSaving}
+              style={styles.departureSecondaryButton}
             >
               Использовать мою геолокацию
             </Button>
@@ -98,16 +95,24 @@ export default function DepartureSelectionDialog({
               icon="map-marker-plus"
               onPress={onBeginMapSelection}
               disabled={departureSettingsSaving}
+              buttonColor="#2563EB"
+              textColor="#FFFFFF"
+              style={styles.departurePrimaryButton}
             >
               Выбрать на карте
             </Button>
           </View>
 
-          <Text variant="bodySmall" style={styles.mutedText}>
+          <Text variant="bodySmall" style={styles.toLoadingDialogWarning}>
             После нажатия модальное окно закроется, и выбор точки откроется на большой карте.
           </Text>
         </ScrollView>
       </Dialog.Content>
+      {canDismiss && !departureSettingsSaving ? (
+        <Dialog.Actions>
+          <Button onPress={onDismiss}>Отмена</Button>
+        </Dialog.Actions>
+      ) : null}
     </Dialog>
   );
 }
