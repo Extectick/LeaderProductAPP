@@ -44,3 +44,21 @@ export function mergeServices(baseCatalog: ServiceAccessItem[], nextItems?: Part
   return Array.from(byKey.values()).sort((a, b) => a.id - b.id || a.key.localeCompare(b.key));
 }
 
+export function mergeRemoteServices(baseCatalog: ServiceAccessItem[], nextItems?: PartialService[] | null): ServiceAccessItem[] {
+  const fallbackByKey = new Map<string, ServiceAccessItem>();
+  (baseCatalog || []).forEach((item) => {
+    const normalized = normalizeServiceItem(item);
+    if (!normalized) return;
+    fallbackByKey.set(normalized.key, normalized);
+  });
+
+  return (nextItems || [])
+    .map((item) => {
+      const key = String(item?.key || '').trim();
+      if (!key) return null;
+      return normalizeServiceItem(item, fallbackByKey.get(key));
+    })
+    .filter((item): item is ServiceAccessItem => item !== null)
+    .sort((a, b) => a.id - b.id || a.key.localeCompare(b.key));
+}
+

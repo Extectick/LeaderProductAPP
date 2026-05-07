@@ -75,10 +75,7 @@ export default function TransportTasksScreen() {
           departurePoint={controller.departurePoint}
           departureMapSelectionMode={controller.departureMapSelectionMode}
           draftDepartureMapPoint={controller.draftDepartureMapPoint}
-          onBack={() => {
-            controller.setSelectedTaskGuid(null);
-            controller.setSelectedRoutePointIndex(null);
-          }}
+          onBack={controller.closeSelectedTask}
           onOpenDepartureSelection={controller.openDepartureSelection}
           onSaveRouteOrder={() => void controller.saveRouteOrder()}
           onOpenToLoadingConfirm={controller.openToLoadingConfirm}
@@ -119,10 +116,7 @@ export default function TransportTasksScreen() {
           departurePoint={controller.departurePoint}
           departureMapSelectionMode={controller.departureMapSelectionMode}
           draftDepartureMapPoint={controller.draftDepartureMapPoint}
-          onBack={() => {
-            controller.setSelectedTaskGuid(null);
-            controller.setSelectedRoutePointIndex(null);
-          }}
+          onBack={controller.closeSelectedTask}
           onOpenDepartureSelection={controller.openDepartureSelection}
           onSaveRouteOrder={() => void controller.saveRouteOrder()}
           onOpenToLoadingConfirm={controller.openToLoadingConfirm}

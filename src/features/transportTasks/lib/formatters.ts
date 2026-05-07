@@ -24,6 +24,41 @@ export function isTransportTaskToLoading(status?: string | null) {
   return text === TRANSPORT_TASK_STATUS_TO_LOADING.toLowerCase() || text.includes('погруз');
 }
 
+export function isTransportTaskClosed(status?: string | null) {
+  return normalizedStatus(status).includes('Р·Р°РєСЂС‹');
+}
+
+export function isTransportTaskMarkedForDeletion(task?: OnecLpAppTransportTask | null) {
+  const raw = task as any;
+  return Boolean(
+    raw?.deletionMark ??
+      raw?.markedForDeletion ??
+      raw?.isDeleted ??
+      raw?.deleted ??
+      raw?.ПометкаУдаления
+  );
+}
+
+export function isTransportTaskActual(task?: OnecLpAppTransportTask | null) {
+  return Boolean(task) && !isTransportTaskClosed(task?.status) && !isTransportTaskMarkedForDeletion(task);
+}
+
+export function transportTaskStatusSortPriority(status?: string | null) {
+  if (isTransportTaskRouteEditable(status)) return 0;
+  if (isTransportTaskForming(status)) return 1;
+  return 2;
+}
+
+export function sortTransportTasksForList<T extends OnecLpAppTransportTask>(items: T[]) {
+  return [...items].sort((a, b) => {
+    const statusDelta = transportTaskStatusSortPriority(a.status) - transportTaskStatusSortPriority(b.status);
+    if (statusDelta !== 0) return statusDelta;
+    const dateA = new Date(a.plannedStart || a.date || 0).getTime() || 0;
+    const dateB = new Date(b.plannedStart || b.date || 0).getTime() || 0;
+    return dateB - dateA;
+  });
+}
+
 export function transportTaskStatusLabel(status?: string | null) {
   if (isTransportTaskForming(status)) return 'Формируется';
   if (isTransportTaskRouteEditable(status)) return 'Маршрут сформирован';

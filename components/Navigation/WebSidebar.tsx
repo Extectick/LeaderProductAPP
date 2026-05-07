@@ -9,6 +9,12 @@ import { usePathname, useRouter, type RelativePathString } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { bottomTabItems, type TabAccent } from './bottomTabsConfig';
+import { useLastServiceRoute } from '@/src/features/navigation/LastServiceRouteContext';
+import {
+  getWebCachedLastServiceRoute,
+  resolveServiceRootRoute,
+  saveWebCachedLastServiceRoute,
+} from '@/src/features/navigation/lastServiceRouteStorage';
 import {
   WEB_SIDEBAR_COLLAPSE_STORAGE_KEY,
   WEB_SIDEBAR_COLLAPSED_WIDTH,
@@ -16,6 +22,7 @@ import {
   emitWebSidebarState,
   getPersistedWebSidebarCollapsed,
 } from './sidebarEvents';
+import { useUnsavedChanges } from '@/src/features/navigation/UnsavedChangesContext';
 
 const DEFAULT_ICON_BG = '#E8EDF6';
 
@@ -58,6 +65,9 @@ export default function WebSidebar() {
   const [collapsed, setCollapsed] = useState<boolean>(() => getPersistedWebSidebarCollapsed());
   const router = useRouter();
   const pathname = usePathname();
+  const { lastServiceRoute, resolveLastServiceRoute, clearLastServiceRoute } = useLastServiceRoute();
+  const { confirmNavigation } = useUnsavedChanges();
+  const lastServiceRouteRef = useRef<string | null>(getWebCachedLastServiceRoute());
   const widthAnim = useRef(
     new Animated.Value(collapsed ? WEB_SIDEBAR_COLLAPSED_WIDTH : WEB_SIDEBAR_EXPANDED_WIDTH)
   ).current;
@@ -86,6 +96,19 @@ export default function WebSidebar() {
   useEffect(() => {
     collapsedRef.current = collapsed;
   }, [collapsed]);
+
+  useEffect(() => {
+    const route = resolveServiceRootRoute(pathname);
+    if (!route) {
+      if (pathname === '/services') {
+        lastServiceRouteRef.current = null;
+        clearLastServiceRoute();
+      }
+      return;
+    }
+    lastServiceRouteRef.current = route;
+    saveWebCachedLastServiceRoute(route);
+  }, [clearLastServiceRoute, pathname]);
 
   useEffect(() => {
     const listenerId = widthAnim.addListener(({ value }) => {
@@ -160,7 +183,7 @@ export default function WebSidebar() {
     >
       <View style={styles.brandBlock}>
         <Pressable
-          onPress={() => router.push('/home')}
+          onPress={() => confirmNavigation(() => router.push('/home'))}
           style={(state: any) => [styles.brandPressable, state.hovered ? styles.brandHovered : null]}
         >
           <View style={[styles.brandIcon, { borderColor: `${tintColor}33` }]}>
@@ -216,10 +239,27 @@ export default function WebSidebar() {
           const tabMeta = bottomTabItems.find((item) => item.matchPath === sidebar.path);
           const itemActiveAccent = resolveTabTint(tabMeta?.activeTint, tintColor, themeKey);
           const itemInactiveAccent = resolveTabTint(tabMeta?.inactiveTint, '#334155', themeKey);
+          const openSidebarPath = () => {
+            if (sidebar.path === '/services') {
+              const refRoute = lastServiceRouteRef.current;
+              const webCachedRoute = getWebCachedLastServiceRoute();
+              const target = refRoute || webCachedRoute || lastServiceRoute;
+              if (target) {
+                confirmNavigation(() => router.push(target as RelativePathString));
+                return;
+              }
+              void resolveLastServiceRoute().then((route) => {
+                const asyncTarget = route || sidebar.path;
+                confirmNavigation(() => router.push(asyncTarget as RelativePathString));
+              });
+              return;
+            }
+            confirmNavigation(() => router.push(sidebar.path as RelativePathString));
+          };
           return (
             <Pressable
               key={sidebar.path}
-              onPress={() => router.push(sidebar.path as RelativePathString)}
+              onPress={openSidebarPath}
               accessibilityRole="button"
               accessibilityState={{ selected: isActive }}
               style={(state: any) => [

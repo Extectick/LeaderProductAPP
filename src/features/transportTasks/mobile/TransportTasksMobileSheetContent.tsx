@@ -1,5 +1,5 @@
 import React from 'react';
-import { Platform, ScrollView, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
+import { Platform, ScrollView, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import { ActivityIndicator, Button, List, Text } from 'react-native-paper';
 import DepartureRoutePointListItem from '../components/DepartureRoutePointListItem';
 import TaskListItem from '../components/TaskListItem';
@@ -69,6 +69,8 @@ export default function TransportTasksMobileSheetContent({
   onBodyContentHeightChange,
 }: Props) {
   const selectedTaskNotice = transportTaskStatusNotice(selectedTask?.status);
+  const [toolbarBlockHeight, setToolbarBlockHeight] = React.useState(0);
+
   const handleScroll = React.useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       if (selectedTask || !tasksHasMore || tasksLoadingMore || tasksLoading) return;
@@ -83,111 +85,116 @@ export default function TransportTasksMobileSheetContent({
     [onLoadMoreTasks, selectedTask, tasksHasMore, tasksLoading, tasksLoadingMore]
   );
 
-  return (
-    <ScrollView
-      style={[styles.scroll, mobileWebScrollStyle]}
-      contentContainerStyle={styles.scrollContent}
-      showsVerticalScrollIndicator={false}
-      keyboardShouldPersistTaps="handled"
-      scrollEnabled={expanded}
-      nestedScrollEnabled
-      onScroll={handleScroll}
-      scrollEventThrottle={120}
-      onContentSizeChange={(_width, height) => onBodyContentHeightChange?.(height)}
-    >
-      <TransportTasksMobileSheetToolbar
-        selectedTask={selectedTask}
-        routeCount={routeForView.length}
-        hasRouteOrderChanges={hasRouteOrderChanges}
-        routeOrderEditable={routeOrderEditable}
-        routeOrderSaving={routeOrderSaving}
-        toLoadingSaving={toLoadingSaving}
-        canSubmitToLoading={canSubmitToLoading}
-        tasksLoading={tasksLoading}
-        departurePoint={departurePoint}
-        taskStatusFilter={taskStatusFilter}
-        onBack={onBack}
-        onSaveRouteOrder={onSaveRouteOrder}
-        onOpenToLoadingConfirm={onOpenToLoadingConfirm}
-        onOptimizeRouteOrder={onOptimizeRouteOrder}
-        onRefreshTasks={onRefreshTasks}
-        onTaskStatusFilterChange={onTaskStatusFilterChange}
-        compact
-      />
-      <View style={styles.divider} />
+  const handleToolbarLayout = React.useCallback((event: LayoutChangeEvent) => {
+    const nextHeight = Math.ceil(event.nativeEvent.layout.height);
+    setToolbarBlockHeight((current) => (current === nextHeight ? current : nextHeight));
+  }, []);
 
-      {selectedTask ? (
-        <>
-          {hasRouteOrderChanges ? (
-            <Text style={{ color: '#B45309', fontSize: 11, fontWeight: '700' }}>
-              Есть несохраненные изменения
-            </Text>
-          ) : null}
-          {selectedTaskNotice ? (
-            <Text style={styles.statusNoticeText}>
-              {selectedTaskNotice}
-            </Text>
-          ) : null}
-          {departurePoint && !departureMapSelectionMode ? (
-            <DepartureRoutePointListItem
-              point={departurePoint}
-              selected={selectedRoutePointIndex === null}
-              compact
-              onPress={() => {
-                onFocusDepartureOnMap();
-                onAfterSelectPoint?.();
-              }}
-              onPressEdit={onOpenDepartureSelection}
+  return (
+    <View style={styles.contentRoot}>
+      <View style={styles.toolbarSection} onLayout={handleToolbarLayout}>
+        <TransportTasksMobileSheetToolbar
+          selectedTask={selectedTask}
+          routeCount={routeForView.length}
+          hasRouteOrderChanges={hasRouteOrderChanges}
+          routeOrderEditable={routeOrderEditable}
+          routeOrderSaving={routeOrderSaving}
+          toLoadingSaving={toLoadingSaving}
+          canSubmitToLoading={canSubmitToLoading}
+          tasksLoading={tasksLoading}
+          departurePoint={departurePoint}
+          taskStatusFilter={taskStatusFilter}
+          onBack={onBack}
+          onSaveRouteOrder={onSaveRouteOrder}
+          onOpenToLoadingConfirm={onOpenToLoadingConfirm}
+          onOptimizeRouteOrder={onOptimizeRouteOrder}
+          onRefreshTasks={onRefreshTasks}
+          onTaskStatusFilterChange={onTaskStatusFilterChange}
+          compact
+        />
+        <View style={styles.divider} />
+      </View>
+
+      <ScrollView
+        style={[styles.scroll, mobileWebScrollStyle]}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        scrollEnabled={expanded}
+        nestedScrollEnabled
+        onScroll={handleScroll}
+        scrollEventThrottle={120}
+        onContentSizeChange={(_width, height) => onBodyContentHeightChange?.(height + toolbarBlockHeight)}
+      >
+        {selectedTask ? (
+          <>
+            {hasRouteOrderChanges ? (
+              <Text style={{ color: '#B45309', fontSize: 11, fontWeight: '700' }}>
+                Есть несохраненные изменения
+              </Text>
+            ) : null}
+            {selectedTaskNotice ? <Text style={styles.statusNoticeText}>{selectedTaskNotice}</Text> : null}
+            {departurePoint && !departureMapSelectionMode ? (
+              <DepartureRoutePointListItem
+                point={departurePoint}
+                selected={selectedRoutePointIndex === null}
+                compact
+                onPress={() => {
+                  onFocusDepartureOnMap();
+                  onAfterSelectPoint?.();
+                }}
+                onPressEdit={onOpenDepartureSelection}
+              />
+            ) : null}
+            <TransportTasksMobileRouteList
+              tint={tint}
+              taskDetailLoading={taskDetailLoading}
+              routeOrderEditing={routeOrderEditing}
+              routeOrderSaving={routeOrderSaving}
+              routeForView={routeForView}
+              selectedRoutePointIndex={selectedRoutePointIndex}
+              departureMapSelectionMode={departureMapSelectionMode}
+              draftDepartureMapPoint={draftDepartureMapPoint}
+              departureSettingsSaving={departureSettingsSaving}
+              onMoveRoutePoint={onMoveRoutePoint}
+              onMoveRoutePointToPosition={onMoveRoutePointToPosition}
+              onSelectRoutePointIndex={onSelectRoutePointIndex}
+              onSaveManualDeparturePoint={onSaveManualDeparturePoint}
+              onCancelDepartureMapSelection={onCancelDepartureMapSelection}
+              onAfterSelectPoint={onAfterSelectPoint}
             />
-          ) : null}
-          <TransportTasksMobileRouteList
-            tint={tint}
-            taskDetailLoading={taskDetailLoading}
-            routeOrderEditing={routeOrderEditing}
-            routeOrderSaving={routeOrderSaving}
-            routeForView={routeForView}
-            selectedRoutePointIndex={selectedRoutePointIndex}
-            departureMapSelectionMode={departureMapSelectionMode}
-            draftDepartureMapPoint={draftDepartureMapPoint}
-            departureSettingsSaving={departureSettingsSaving}
-            onMoveRoutePoint={onMoveRoutePoint}
-            onMoveRoutePointToPosition={onMoveRoutePointToPosition}
-            onSelectRoutePointIndex={onSelectRoutePointIndex}
-            onSaveManualDeparturePoint={onSaveManualDeparturePoint}
-            onCancelDepartureMapSelection={onCancelDepartureMapSelection}
-            onAfterSelectPoint={onAfterSelectPoint}
-          />
-        </>
-      ) : tasksLoading ? (
-        <View style={{ alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 24 }}>
-          <ActivityIndicator color={tint} />
-          <Text style={{ color: '#64748B' }}>Загружаем задания</Text>
-        </View>
-      ) : error ? (
-        <View style={{ gap: 10 }}>
-          <Text style={{ color: '#B91C1C', fontWeight: '700' }}>{error}</Text>
-          <Button mode="outlined" onPress={onRefreshTasks}>
-            Повторить
-          </Button>
-        </View>
-      ) : tasks.length ? (
-        <>
-          {tasks.map((task) => (
-            <TaskListItem key={task.guid} task={task} onPress={() => onOpenTask(task)} />
-          ))}
-          {tasksLoadingMore ? <ActivityIndicator color={tint} style={styles.loadMoreIndicator} /> : null}
-        </>
-      ) : (
-        <View style={{ alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 24 }}>
-          <List.Icon icon="clipboard-text-outline" color="#94A3B8" />
-          <Text style={{ color: '#0F172A', fontWeight: '800', textAlign: 'center' }}>
-            Задания на перевозку не найдены
-          </Text>
-          <Text style={{ color: '#64748B', textAlign: 'center' }}>
-            В 1С нет доступных заданий для текущего пользователя.
-          </Text>
-        </View>
-      )}
-    </ScrollView>
+          </>
+        ) : tasksLoading ? (
+          <View style={{ alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 24 }}>
+            <ActivityIndicator color={tint} />
+            <Text style={{ color: '#64748B' }}>Загружаем задания</Text>
+          </View>
+        ) : error ? (
+          <View style={{ gap: 10 }}>
+            <Text style={{ color: '#B91C1C', fontWeight: '700' }}>{error}</Text>
+            <Button mode="outlined" onPress={onRefreshTasks}>
+              Повторить
+            </Button>
+          </View>
+        ) : tasks.length ? (
+          <>
+            {tasks.map((task) => (
+              <TaskListItem key={task.guid} task={task} onPress={() => onOpenTask(task)} />
+            ))}
+            {tasksLoadingMore ? <ActivityIndicator color={tint} style={styles.loadMoreIndicator} /> : null}
+          </>
+        ) : (
+          <View style={{ alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 24 }}>
+            <List.Icon icon="clipboard-text-outline" color="#94A3B8" />
+            <Text style={{ color: '#0F172A', fontWeight: '800', textAlign: 'center' }}>
+              Задания на перевозку не найдены
+            </Text>
+            <Text style={{ color: '#64748B', textAlign: 'center' }}>
+              В 1С нет доступных заданий для текущего пользователя.
+            </Text>
+          </View>
+        )}
+      </ScrollView>
+    </View>
   );
 }

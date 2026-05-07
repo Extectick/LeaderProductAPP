@@ -2,6 +2,7 @@ import TabBarSpacer from '@/components/Navigation/TabBarSpacer';
 import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 import { useNotify } from '@/components/NotificationHost';
 import { useThemeColor } from '@/hooks/useThemeColor';
+import { saveWebCachedLastServiceRoute } from '@/src/features/navigation/lastServiceRouteStorage';
 import { useServicesData } from '@/src/features/services/hooks/useServicesData';
 import { getServiceGridMetrics, getVisibleServices } from '@/src/features/services/lib/grid';
 import { useServerStatus } from '@/src/shared/network/useServerStatus';
@@ -54,15 +55,28 @@ export default function ServicesWebPage() {
       });
       return;
     }
+    saveWebCachedLastServiceRoute(item.route);
     router.push(item.route as any);
   }, [isReachable, notify, router]);
 
-  if (loading && !services?.length) {
+  if (loading && !visibleServices.length) {
     return <ServicesLoadingView backgroundColor={background} textColor={textColor} style={styles.center} />;
   }
 
   if (error || !services?.length) {
     return <ServicesErrorView backgroundColor={background} textColor={textColor} message={error} style={styles.center} />;
+  }
+
+  if (!visibleServices.length) {
+    return (
+      <ServicesErrorView
+        backgroundColor={background}
+        textColor={textColor}
+        title="Нет доступных сервисов"
+        message="Для текущего пользователя не настроены видимые сервисы."
+        style={styles.center}
+      />
+    );
   }
 
   return (

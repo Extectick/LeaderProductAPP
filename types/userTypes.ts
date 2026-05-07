@@ -158,6 +158,10 @@ export type employeeProfile = {
     id: number;
     name: string;
     } | null;
+    activeDepartment: {
+    id: number;
+    name: string;
+    } | null;
     departmentRoles: {
     id: number;
     role: {
@@ -167,6 +171,7 @@ export type employeeProfile = {
     };
     }[];
     onecUserGuid?: string | null;
+    onecPhysicalPersonGuid?: string | null;
     createdAt: Date;
     updatedAt: Date;
 }

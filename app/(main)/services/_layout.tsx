@@ -6,6 +6,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useServicesData } from '@/src/features/services/hooks/useServicesData';
 import { useServerStatus } from '@/src/shared/network/useServerStatus';
+import { useOptionalLastServiceRoute } from '@/src/features/navigation/LastServiceRouteContext';
+import { useOptionalUnsavedChanges } from '@/src/features/navigation/UnsavedChangesContext';
 import { ServicesHeaderSlotProvider } from './headerSlotContext';
 
 type HeaderMeta = {
@@ -46,9 +48,12 @@ export default function ServicesLayout() {
   const pathname = usePathname();
   const globalParams = useGlobalSearchParams<{ backTo?: string; from?: string }>();
   const notify = useNotify();
-  const { services, loading } = useServicesData();
+  const lastService = useOptionalLastServiceRoute();
+  const unsavedChanges = useOptionalUnsavedChanges();
+  const { services, loading, loadServices } = useServicesData();
   const { isReachable } = useServerStatus();
   const lastAlertRef = useRef<string | null>(null);
+  const accessRefreshRef = useRef<string | null>(null);
   const [trackingHeaderBottomSlot, setTrackingHeaderBottomSlot] = React.useState<React.ReactNode | null>(null);
   const [trackingHeaderRightSlot, setTrackingHeaderRightSlot] = React.useState<React.ReactNode | null>(null);
   const headerSlotContextValue = React.useMemo(
@@ -72,12 +77,18 @@ export default function ServicesLayout() {
     return (services || []).find((service) => service.key === serviceKey) || null;
   }, [serviceKey, services]);
 
-  const deniedByAccess = !!serviceKey && !loading && (!guardedService || !guardedService.visible || !guardedService.enabled);
+  const missingServiceMetadata = !!serviceKey && !loading && !guardedService;
+  const deniedByAccess = !!serviceKey && !loading && !!guardedService && (!guardedService.visible || !guardedService.enabled);
   const deniedByOffline = !!serviceKey && !loading && !!guardedService && guardedService.kind === 'CLOUD' && !isReachable;
 
   useEffect(() => {
     if (!serviceKey) return;
     if (loading) return;
+    if (missingServiceMetadata && accessRefreshRef.current !== serviceKey) {
+      accessRefreshRef.current = serviceKey;
+      void loadServices(true);
+      return;
+    }
     if (!deniedByAccess && !deniedByOffline) return;
 
     const reason = deniedByOffline ? 'offline' : 'denied';
@@ -103,7 +114,7 @@ export default function ServicesLayout() {
       );
     }
     router.replace('/services');
-  }, [deniedByAccess, deniedByOffline, loading, notify, router, serviceKey]);
+  }, [deniedByAccess, deniedByOffline, loadServices, loading, missingServiceMetadata, notify, router, serviceKey]);
 
   const servicesSummary = useMemo(() => {
     const visible = (services || []).filter((service) => service.visible);
@@ -112,7 +123,7 @@ export default function ServicesLayout() {
     return { visible: visible.length, enabled, cloud };
   }, [services]);
   const blocked = !!serviceKey && !loading && (deniedByAccess || deniedByOffline);
-  if (serviceKey && (loading || blocked)) return null;
+  if (serviceKey && blocked) return null;
 
   const showCloudServiceInHeader = Boolean(serviceKey && guardedService?.kind === 'CLOUD');
 
@@ -142,6 +153,11 @@ export default function ServicesLayout() {
 
           const shouldShowBack = meta.showBack;
           const onBack = () => {
+            const runBack = () => {
+            const replaceWithCatalog = () => {
+              lastService?.clearLastServiceRoute();
+              router.replace('/services');
+            };
             const isAppealsListPath = /^\/services\/appeals\/?$/.test(currentPath);
             const isAppealDetailPath = /^\/services\/appeals\/[^/]+$/.test(currentPath);
             const backToAnalytics =
@@ -157,18 +173,28 @@ export default function ServicesLayout() {
               return;
             }
             if (currentPath === '/services/qrcodes') {
-              router.replace('/services');
+              replaceWithCatalog();
               return;
             }
             const target = isAppeals
               ? (isAppealsListPath ? '/services' : '/services/appeals')
               : (meta as any).parent;
             if (target) {
+              if (target === '/services') {
+                replaceWithCatalog();
+                return;
+              }
               router.replace(target as any);
               return;
             }
             if (navigation.canGoBack()) navigation.goBack();
-            else router.replace('/services');
+            else replaceWithCatalog();
+            };
+            if (unsavedChanges) {
+              unsavedChanges.confirmNavigation(runBack);
+              return;
+            }
+            runBack();
           };
 
           const showCloudInHeader = showCloudServiceInHeader && !showCreateInHeader;

@@ -23,8 +23,8 @@ export const mobileSheetStyles = StyleSheet.create({
   },
   header: {
     paddingHorizontal: 10,
-    paddingTop: 6,
-    paddingBottom: 7,
+    paddingTop: 3,
+    paddingBottom: 6,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(15, 23, 42, 0.1)',
   },
@@ -34,7 +34,7 @@ export const mobileSheetStyles = StyleSheet.create({
     height: 3,
     borderRadius: 999,
     backgroundColor: '#CBD5E1',
-    marginBottom: 7,
+    marginBottom: 5,
   },
   headerRow: {
     flexDirection: 'row',
@@ -70,9 +70,9 @@ export const mobileSheetStyles = StyleSheet.create({
     gap: 4,
   },
   toggleBtn: {
-    width: 30,
-    height: 30,
-    borderRadius: 9,
+    width: 34,
+    height: 34,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: '#BFDBFE',
     backgroundColor: 'rgba(239, 246, 255, 0.92)',
@@ -88,16 +88,25 @@ export const mobileSheetStyles = StyleSheet.create({
     minHeight: 0,
     overflow: 'hidden',
   },
+  contentRoot: {
+    flex: 1,
+    minHeight: 0,
+  },
+  toolbarSection: {
+    flexShrink: 0,
+    paddingTop: 4,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+  },
   toolbarWrap: {
     paddingHorizontal: 6,
-    paddingTop: 4,
-    paddingBottom: 0,
+    paddingTop: 0,
+    paddingBottom: 4,
   },
   divider: {
     height: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.08)',
     marginHorizontal: 6,
-    marginBottom: 6,
+    marginBottom: 4,
   },
   scroll: {
     flex: 1,
@@ -107,8 +116,8 @@ export const mobileSheetStyles = StyleSheet.create({
   scrollContent: {
     gap: 6,
     paddingTop: 0,
-    paddingLeft: 6,
-    paddingRight: 6,
+    paddingLeft: 4,
+    paddingRight: 4,
     paddingBottom: 4,
   },
   statusNoticeText: {

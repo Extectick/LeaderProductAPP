@@ -1,4 +1,5 @@
 import { AuthContext } from '@/context/AuthContext';
+import { useUnsavedChanges } from '@/src/features/navigation/UnsavedChangesContext';
 import {
   getOnecLpAppDeparturePointSettings,
   getOnecLpAppTransportTask,
@@ -12,11 +13,17 @@ import {
   type OnecLpAppTransportTask,
 } from '@/utils/onecLpAppService';
 import { getProfile } from '@/utils/userService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useNavigation } from 'expo-router';
 import * as Location from 'expo-location';
-import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 import {
+  isTransportTaskActual,
   isTransportTaskRouteEditable,
+  sortTransportTasksForList,
+  TRANSPORT_TASK_STATUS_FORMING,
+  TRANSPORT_TASK_STATUS_ROUTE_ORDERING,
   TRANSPORT_TASK_STATUS_TO_LOADING,
 } from '../lib/formatters';
 import { moveArrayItem, optimizeRouteNearestNeighbor, resolveDraftMapPoint, routeOrderKey } from '../lib/routeOrder';
@@ -27,12 +34,37 @@ import {
   type TransportTaskDeparturePreset,
 } from '../types';
 
+const TRANSPORT_TASK_STATUS_FILTER_STORAGE_KEY = 'transport_tasks_status_filter_v1';
+const TRANSPORT_TASK_LAST_SELECTED_STORAGE_KEY = 'transport_tasks_last_selected_guid_v1';
+const TRANSPORT_TASK_ALLOWED_STATUS_FILTERS = new Set([
+  TRANSPORT_TASK_STATUS_FORMING,
+  TRANSPORT_TASK_STATUS_ROUTE_ORDERING,
+  TRANSPORT_TASK_STATUS_TO_LOADING,
+]);
+
+function normalizeTaskStatusFilter(value: string | null | undefined): string | null {
+  const normalized = String(value || '').trim();
+  if (!normalized || normalized === 'all') return null;
+  return TRANSPORT_TASK_ALLOWED_STATUS_FILTERS.has(normalized) ? normalized : null;
+}
+
+function taskMatchesStatusFilter(task: OnecLpAppTransportTask, statusFilter: string | null) {
+  return !statusFilter || String(task.status || '').trim() === statusFilter;
+}
+
+function canRestoreTransportTask(task: OnecLpAppTransportTask, statusFilter: string | null) {
+  return isTransportTaskActual(task) && taskMatchesStatusFilter(task, statusFilter);
+}
+
 export default function useTransportTasksScreen() {
   const auth = useContext(AuthContext);
+  const navigation = useNavigation<any>();
+  const { confirmNavigation, registerUnsavedChanges } = useUnsavedChanges();
   const profile = auth?.profile ?? null;
   const employeeProfile = profile?.employeeProfile ?? null;
   const onecUserGuid = employeeProfile?.onecUserGuid?.trim() || '';
-  const isLinked = Boolean(onecUserGuid);
+  const onecPhysicalPersonGuid = employeeProfile?.onecPhysicalPersonGuid?.trim() || '';
+  const isLinked = Boolean(onecUserGuid || onecPhysicalPersonGuid);
   const pageSize = 50;
 
   const [profileLoading, setProfileLoading] = useState(false);
@@ -43,7 +75,8 @@ export default function useTransportTasksScreen() {
   const [tasksHasMore, setTasksHasMore] = useState(false);
   const [tasksOffset, setTasksOffset] = useState(0);
   const [taskStatusFilter, setTaskStatusFilterState] = useState<string | null>(null);
-  const [selectedTaskGuid, setSelectedTaskGuid] = useState<string | null>(null);
+  const [taskStatusFilterReady, setTaskStatusFilterReady] = useState(false);
+  const [selectedTaskGuid, setSelectedTaskGuidState] = useState<string | null>(null);
   const [selectedRoutePointIndex, setSelectedRoutePointIndex] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [snackbarMessage, setSnackbarMessage] = useState<string | null>(null);
@@ -62,12 +95,22 @@ export default function useTransportTasksScreen() {
   const [departureModalVisible, setDepartureModalVisible] = useState(false);
   const [departureMapSelectionMode, setDepartureMapSelectionMode] = useState(false);
   const [draftDepartureMapPoint, setDraftDepartureMapPoint] = useState<TransportTaskCoordinatePoint | null>(null);
+  const restoringTaskDetailGuidRef = useRef<string | null>(null);
+  const taskStatusFilterStorageKey = profile?.id
+    ? `${TRANSPORT_TASK_STATUS_FILTER_STORAGE_KEY}:${profile.id}`
+    : TRANSPORT_TASK_STATUS_FILTER_STORAGE_KEY;
+  const lastSelectedTaskStorageKey = profile?.id
+    ? `${TRANSPORT_TASK_LAST_SELECTED_STORAGE_KEY}:${profile.id}`
+    : TRANSPORT_TASK_LAST_SELECTED_STORAGE_KEY;
 
   const selectedTask = useMemo(
     () => tasks.find((task) => task.guid === selectedTaskGuid) ?? null,
     [selectedTaskGuid, tasks]
   );
-  const routeForView = routeDraft ?? selectedTask?.route ?? [];
+  const routeForView = useMemo(
+    () => routeDraft ?? selectedTask?.route ?? [],
+    [routeDraft, selectedTask?.route]
+  );
   const routeOrderEditable = isTransportTaskRouteEditable(selectedTask?.status);
   const hasRouteOrderChanges = useMemo(
     () =>
@@ -80,11 +123,37 @@ export default function useTransportTasksScreen() {
   const canDismissDepartureModal =
     !requiresInitialDepartureSelection || Boolean(departurePoint) || departureSettingsSaving;
 
+  const discardRouteOrderChanges = useCallback(() => {
+    setRouteDraft(selectedTask?.route ? [...selectedTask.route] : null);
+  }, [selectedTask?.route]);
+
   const showSnackbarError = useCallback((message: string) => {
     setSnackbarMessage(null);
     setError(message);
     setSnackbarVisible(true);
   }, []);
+
+  const persistSelectedTaskGuid = useCallback(
+    async (guid: string | null) => {
+      try {
+        if (guid) {
+          await AsyncStorage.setItem(lastSelectedTaskStorageKey, guid);
+          return;
+        }
+        await AsyncStorage.removeItem(lastSelectedTaskStorageKey);
+      } catch {}
+    },
+    [lastSelectedTaskStorageKey]
+  );
+
+  const setSelectedTaskGuid = useCallback(
+    (guid: string | null) => {
+      const normalized = String(guid || '').trim() || null;
+      setSelectedTaskGuidState(normalized);
+      void persistSelectedTaskGuid(normalized);
+    },
+    [persistSelectedTaskGuid]
+  );
 
   const applyDepartureSettingsResult = useCallback((result: {
     presets: TransportTaskDeparturePreset[];
@@ -149,7 +218,7 @@ export default function useTransportTasksScreen() {
   );
 
   const loadTasks = useCallback(async () => {
-    if (!isLinked) return;
+    if (!isLinked || !taskStatusFilterReady) return;
     setTasksLoading(true);
     setError(null);
     try {
@@ -158,19 +227,19 @@ export default function useTransportTasksScreen() {
         offset: 0,
         status: taskStatusFilter ?? undefined,
       });
-      const list = result.tasks ?? [];
+      const list = sortTransportTasksForList(result.tasks ?? []);
       setTasks((current) =>
-        list.map((task) => {
+        sortTransportTasksForList(list.map((task) => {
           const existing = current.find((item) => item.guid === task.guid);
           if (!existing?.route || task.route) return task;
           return { ...existing, ...task, route: existing.route };
-        })
+        }))
       );
       setTasksOffset(list.length);
       setTasksHasMore(Boolean(result.hasMore));
-      setSelectedTaskGuid((current) => {
+      setSelectedTaskGuidState((current) => {
         if (current && list.some((task) => task.guid === current)) return current;
-        return null;
+        return current;
       });
     } catch (err: any) {
       const message = err?.message || 'Не удалось загрузить задания на перевозку';
@@ -178,10 +247,10 @@ export default function useTransportTasksScreen() {
     } finally {
       setTasksLoading(false);
     }
-  }, [isLinked, pageSize, showSnackbarError, taskStatusFilter]);
+  }, [isLinked, pageSize, showSnackbarError, taskStatusFilter, taskStatusFilterReady]);
 
   const loadMoreTasks = useCallback(async () => {
-    if (!isLinked || tasksLoadingMore || tasksLoading || !tasksHasMore) return;
+    if (!isLinked || !taskStatusFilterReady || tasksLoadingMore || tasksLoading || !tasksHasMore) return;
     setTasksLoadingMore(true);
     setError(null);
     try {
@@ -190,10 +259,10 @@ export default function useTransportTasksScreen() {
         offset: tasksOffset,
         status: taskStatusFilter ?? undefined,
       });
-      const next = result.tasks ?? [];
+      const next = sortTransportTasksForList(result.tasks ?? []);
       setTasks((current) => {
         const known = new Set(current.map((task) => task.guid));
-        const merged = [...current, ...next.filter((task) => !known.has(task.guid))];
+        const merged = sortTransportTasksForList([...current, ...next.filter((task) => !known.has(task.guid))]);
         setTasksOffset(merged.length);
         return merged;
       });
@@ -209,6 +278,7 @@ export default function useTransportTasksScreen() {
     pageSize,
     showSnackbarError,
     taskStatusFilter,
+    taskStatusFilterReady,
     tasksHasMore,
     tasksLoading,
     tasksLoadingMore,
@@ -216,13 +286,24 @@ export default function useTransportTasksScreen() {
   ]);
 
   const setTaskStatusFilter = useCallback((status: string | null) => {
-    setTaskStatusFilterState(status);
+    const normalized = normalizeTaskStatusFilter(status);
+    setTaskStatusFilterState(normalized);
     setTasks([]);
     setTasksOffset(0);
     setTasksHasMore(false);
-  }, []);
+    void (normalized
+      ? AsyncStorage.setItem(taskStatusFilterStorageKey, normalized)
+      : AsyncStorage.removeItem(taskStatusFilterStorageKey));
+  }, [taskStatusFilterStorageKey]);
 
   const openTask = useCallback(async (task: OnecLpAppTransportTask) => {
+    const open = async () => {
+    if (!isTransportTaskActual(task)) {
+      setSelectedTaskGuid(null);
+      setSnackbarMessage('Документ закрыт или удален. Открыт список актуальных заданий.');
+      setSnackbarVisible(true);
+      return;
+    }
     setSelectedTaskGuid(task.guid);
     setSelectedRoutePointIndex(null);
     setRouteDraft(null);
@@ -232,14 +313,34 @@ export default function useTransportTasksScreen() {
     setError(null);
     try {
       const detail = await getOnecLpAppTransportTask(task.guid);
+      if (!isTransportTaskActual(detail)) {
+        setSelectedTaskGuid(null);
+        setSnackbarMessage('Документ закрыт или удален. Открыт список актуальных заданий.');
+        setSnackbarVisible(true);
+        return;
+      }
       setTasks((current) => current.map((item) => (item.guid === task.guid ? { ...item, ...detail } : item)));
     } catch (err: any) {
-      const message = err?.message || 'Не удалось загрузить маршрут задания';
-      showSnackbarError(message);
+      setSelectedTaskGuid(null);
+      setSelectedRoutePointIndex(null);
+      setRouteDraft(null);
+      setSnackbarMessage(err?.message || 'Документ недоступен. Открыт список актуальных заданий.');
+      setSnackbarVisible(true);
+      void loadTasks();
     } finally {
       setTaskDetailLoading(false);
     }
-  }, [showSnackbarError]);
+    };
+
+    if (hasRouteOrderChanges && selectedTaskGuid !== task.guid) {
+      confirmNavigation(() => {
+        void open();
+      });
+      return;
+    }
+
+    await open();
+  }, [confirmNavigation, hasRouteOrderChanges, loadTasks, selectedTaskGuid, setSelectedTaskGuid]);
 
   const updateRouteDraft = useCallback(
     (next: OnecLpAppRoutePoint[]) => {
@@ -483,15 +584,116 @@ export default function useTransportTasksScreen() {
     });
   }, [draftDepartureMapPoint, persistDeparturePoint, showSnackbarError]);
 
+  const closeSelectedTask = useCallback(() => {
+    const close = () => {
+      setSelectedTaskGuid(null);
+      setSelectedRoutePointIndex(null);
+      setRouteDraft(null);
+    };
+
+    if (hasRouteOrderChanges) {
+      confirmNavigation(close);
+      return;
+    }
+
+    close();
+  }, [confirmNavigation, hasRouteOrderChanges, setSelectedTaskGuid]);
+
   useEffect(() => {
     void refreshProfile();
   }, [refreshProfile]);
 
   useEffect(() => {
-    if (isLinked) {
+    registerUnsavedChanges(
+      hasRouteOrderChanges
+        ? {
+            active: true,
+            title: 'Выйти без сохранения?',
+            message: 'В документе есть несохраненные изменения порядка маршрута.',
+            warning: 'Если продолжить, изменения будут сброшены.',
+            confirmText: 'Выйти',
+            cancelText: 'Остаться',
+            icon: 'alert-outline',
+            onDiscard: discardRouteOrderChanges,
+          }
+        : null
+    );
+
+    return () => registerUnsavedChanges(null);
+  }, [discardRouteOrderChanges, hasRouteOrderChanges, registerUnsavedChanges]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (!hasRouteOrderChanges) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', beforeUnload);
+    return () => window.removeEventListener('beforeunload', beforeUnload);
+  }, [hasRouteOrderChanges]);
+
+  useEffect(() => {
+    const unsubscribe = navigation.addListener?.('beforeRemove', (event: any) => {
+      if (!hasRouteOrderChanges) return;
+      event.preventDefault();
+      confirmNavigation(() => {
+        navigation.dispatch(event.data.action);
+      });
+    });
+    return unsubscribe;
+  }, [confirmNavigation, hasRouteOrderChanges, navigation]);
+
+  useEffect(() => {
+    let mounted = true;
+    setTaskStatusFilterReady(false);
+
+    AsyncStorage.getItem(taskStatusFilterStorageKey)
+      .then((value) => {
+        if (!mounted) return;
+        setTaskStatusFilterState(normalizeTaskStatusFilter(value));
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setTaskStatusFilterState(null);
+      })
+      .finally(() => {
+        if (mounted) setTaskStatusFilterReady(true);
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [taskStatusFilterStorageKey]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    if (!isLinked) {
+      return () => {
+        mounted = false;
+      };
+    }
+
+    AsyncStorage.getItem(lastSelectedTaskStorageKey)
+      .then((value) => {
+        if (!mounted) return;
+        const guid = String(value || '').trim();
+        if (!guid) return;
+        setSelectedTaskGuidState((current) => current ?? guid);
+      })
+      .catch(() => {});
+
+    return () => {
+      mounted = false;
+    };
+  }, [isLinked, lastSelectedTaskStorageKey]);
+
+  useEffect(() => {
+    if (isLinked && taskStatusFilterReady) {
       void loadTasks();
     }
-  }, [isLinked, loadTasks]);
+  }, [isLinked, loadTasks, taskStatusFilterReady]);
 
   useEffect(() => {
     if (isLinked) {
@@ -508,12 +710,49 @@ export default function useTransportTasksScreen() {
       setDeparturePresets([]);
       setRequiresInitialDepartureSelection(false);
     }
-  }, [isLinked]);
+  }, [isLinked, setSelectedTaskGuid]);
+
+  useEffect(() => {
+    if (!isLinked || !selectedTaskGuid || selectedTask) return;
+    if (restoringTaskDetailGuidRef.current === selectedTaskGuid) return;
+
+    restoringTaskDetailGuidRef.current = selectedTaskGuid;
+    setTaskDetailLoading(true);
+    getOnecLpAppTransportTask(selectedTaskGuid)
+      .then((detail) => {
+        if (!canRestoreTransportTask(detail, taskStatusFilter)) {
+          setSelectedTaskGuid(null);
+          return;
+        }
+        setTasks((current) => {
+          const exists = current.some((task) => task.guid === detail.guid);
+          const next = exists
+            ? current.map((task) => (task.guid === detail.guid ? { ...task, ...detail } : task))
+            : [detail, ...current];
+          return sortTransportTasksForList(next);
+        });
+      })
+      .catch(() => {
+        setSelectedTaskGuid(null);
+      })
+      .finally(() => {
+        if (restoringTaskDetailGuidRef.current === selectedTaskGuid) {
+          restoringTaskDetailGuidRef.current = null;
+        }
+        setTaskDetailLoading(false);
+      });
+  }, [isLinked, selectedTask, selectedTaskGuid, setSelectedTaskGuid, taskStatusFilter]);
 
   useEffect(() => {
     setRouteOrderEditing(false);
     setRouteDraft(null);
   }, [selectedTaskGuid]);
+
+  useEffect(() => {
+    if (!selectedTask) return;
+    if (canRestoreTransportTask(selectedTask, taskStatusFilter)) return;
+    setSelectedTaskGuid(null);
+  }, [selectedTask, setSelectedTaskGuid, taskStatusFilter]);
 
   useEffect(() => {
     if (!selectedTask?.route) return;
@@ -577,6 +816,7 @@ export default function useTransportTasksScreen() {
     setSelectedRoutePointIndex,
     setTaskStatusFilter,
     setSnackbarVisible,
+    closeSelectedTask,
     refreshProfile,
     loadTasks,
     loadMoreTasks,

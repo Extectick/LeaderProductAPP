@@ -21,6 +21,8 @@ import {
 } from 'react-native';
 import type { BottomTabItem, TabAccent } from './bottomTabsConfig';
 import type { ThemeKey } from '@/constants/Colors';
+import { useLastServiceRoute } from '@/src/features/navigation/LastServiceRouteContext';
+import { useUnsavedChanges } from '@/src/features/navigation/UnsavedChangesContext';
 
 const BASE_SIDE_MARGIN = 10;
 const BASE_BOTTOM_MARGIN = 10;
@@ -99,6 +101,8 @@ export default function FloatingTabBar({ items, state, navigation, insets }: Pro
   const router = useRouter();
   const pathname = usePathname();
   const setTabBarHeight = useContext(BottomTabBarHeightCallbackContext);
+  const { lastServiceRoute, resolveLastServiceRoute } = useLastServiceRoute();
+  const { confirmNavigation } = useUnsavedChanges();
   const [rowWidth, setRowWidth] = useState(0);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const isAppealChat = useMemo(() => {
@@ -242,6 +246,20 @@ export default function FloatingTabBar({ items, state, navigation, insets }: Pro
                   themeKey
                 );
                 const onPress = () => {
+                  if (item.matchPath === '/services') {
+                    if (Platform.OS !== 'web') {
+                      void Haptics.selectionAsync();
+                    }
+                    if (lastServiceRoute) {
+                      confirmNavigation(() => router.replace(lastServiceRoute as any));
+                      return;
+                    }
+                    void resolveLastServiceRoute().then((route) => {
+                      confirmNavigation(() => router.replace((route || item.href) as any));
+                    });
+                    return;
+                  }
+
                   const event = navigation.emit({
                     type: 'tabPress',
                     target: route.key,
@@ -252,7 +270,7 @@ export default function FloatingTabBar({ items, state, navigation, insets }: Pro
                     if (Platform.OS !== 'web') {
                       void Haptics.selectionAsync();
                     }
-                    router.push(item.href);
+                    confirmNavigation(() => router.push(item.href));
                   }
                 };
 

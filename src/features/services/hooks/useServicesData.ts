@@ -1,7 +1,11 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { SERVICE_CATALOG } from '@/src/features/services/config/serviceCatalog';
-import { mergeServices, normalizeServiceItem } from '@/src/features/services/lib/mergeServices';
+import { mergeRemoteServices, mergeServices } from '@/src/features/services/lib/mergeServices';
+import {
+  getServicesAccessCacheVersion,
+  readCachedServices,
+  writeCachedServices,
+} from '@/src/features/services/storage/servicesAccessCache';
 import { getServicesForUser, type ServiceAccessItem } from '@/utils/servicesService';
 
 type ServicesSnapshot = {
@@ -10,16 +14,16 @@ type ServicesSnapshot = {
   error: string | null;
 };
 
-const CACHE_KEY = 'services_access_cache_v2';
 const CATALOG_BASE = mergeServices(SERVICE_CATALOG, null);
 
 let state: ServicesSnapshot = {
-  services: CATALOG_BASE,
+  services: null,
   loading: true,
   error: null,
 };
 let inFlight: Promise<void> | null = null;
 let initialized = false;
+let observedCacheVersion = getServicesAccessCacheVersion();
 const listeners = new Set<(snapshot: ServicesSnapshot) => void>();
 
 function emit() {
@@ -47,41 +51,25 @@ function subscribe(listener: (snapshot: ServicesSnapshot) => void) {
   };
 }
 
-async function readCachedServices(): Promise<ServiceAccessItem[] | null> {
-  try {
-    const raw = await AsyncStorage.getItem(CACHE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return null;
-    const normalized = parsed
-      .map((item) => normalizeServiceItem(item))
-      .filter((item): item is ServiceAccessItem => item !== null);
-    return normalized.length ? normalized : null;
-  } catch {
-    return null;
-  }
-}
-
-async function writeCachedServices(services: ServiceAccessItem[]) {
-  try {
-    await AsyncStorage.setItem(CACHE_KEY, JSON.stringify(services));
-  } catch {
-    // ignore cache write errors
-  }
-}
-
 async function loadServicesInternal(force = false) {
   if (inFlight && !force) return inFlight;
 
   const task = (async () => {
-    const fallbackServices = state.services?.length ? state.services : CATALOG_BASE;
+    const currentCacheVersion = getServicesAccessCacheVersion();
+    if (currentCacheVersion !== observedCacheVersion) {
+      observedCacheVersion = currentCacheVersion;
+      initialized = false;
+      setState({ services: null, error: null });
+    }
+
+    const fallbackServices = state.services?.length ? state.services : null;
     setState({ loading: true, error: null, services: fallbackServices });
 
     if (!initialized || force) {
       const cached = await readCachedServices();
       if (cached?.length) {
         setState({
-          services: mergeServices(CATALOG_BASE, cached),
+          services: mergeRemoteServices(CATALOG_BASE, cached),
           loading: true,
           error: null,
         });
@@ -91,7 +79,7 @@ async function loadServicesInternal(force = false) {
 
     try {
       const remote = await getServicesForUser();
-      const merged = mergeServices(CATALOG_BASE, remote);
+      const merged = mergeRemoteServices(CATALOG_BASE, remote);
       await writeCachedServices(remote);
       setState({
         services: merged,
@@ -100,12 +88,12 @@ async function loadServicesInternal(force = false) {
       });
     } catch (error: any) {
       const message = error?.message || 'Не удалось загрузить сервисы';
-      const fallback = state.services?.length ? state.services : CATALOG_BASE;
+      const fallback = state.services?.length ? state.services : null;
       setState({
         services: fallback,
         loading: false,
-        // На офлайне продолжаем работать с fallback-списком без error-экрана.
-        error: fallback.length ? null : message,
+        // На офлайне продолжаем работать с последним серверным списком без error-экрана.
+        error: fallback?.length ? null : message,
       });
     } finally {
       inFlight = null;

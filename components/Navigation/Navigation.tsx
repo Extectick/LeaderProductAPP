@@ -4,6 +4,36 @@ import { usePathname, useRouter } from 'expo-router';
 import React from 'react';
 import MobileTabs from './MobileTabs';
 import WebSidebar from './WebSidebar';
+import {
+  LastServiceRouteProvider,
+  useOptionalLastServiceRoute,
+} from '@/src/features/navigation/LastServiceRouteContext';
+import { UnsavedChangesProvider } from '@/src/features/navigation/UnsavedChangesContext';
+
+function ServicesRouteGuard() {
+  const pathname = usePathname();
+  const router = useRouter();
+  const lastService = useOptionalLastServiceRoute();
+  const previousPathRef = React.useRef<string | null>(null);
+
+  React.useEffect(() => {
+    const previousPath = previousPathRef.current;
+    previousPathRef.current = pathname || null;
+    if (!lastService) return;
+    if (pathname !== '/services') return;
+    if (!previousPath || previousPath.startsWith('/services')) return;
+
+    if (lastService.lastServiceRoute) {
+      router.replace(lastService.lastServiceRoute as any);
+      return;
+    }
+    void lastService.resolveLastServiceRoute().then((route) => {
+      if (route) router.replace(route as any);
+    });
+  }, [lastService, pathname, router]);
+
+  return null;
+}
 
 export default function Navigation() {
   const isWeb = Platform.OS === 'web';
@@ -51,15 +81,27 @@ export default function Navigation() {
   }, [clearRestoreTimers]);
 
   if (useMobileLayout) {
-    return <MobileTabs />;
+    return (
+      <LastServiceRouteProvider>
+        <UnsavedChangesProvider>
+          <ServicesRouteGuard />
+          <MobileTabs />
+        </UnsavedChangesProvider>
+      </LastServiceRouteProvider>
+    );
   }
 
   return (
-    <View style={{ flex: 1, flexDirection: 'row' }}>
-      <WebSidebar />
-      <View style={{ flex: 1 }}>
-        <Slot />
-      </View>
-    </View>
+    <LastServiceRouteProvider>
+      <UnsavedChangesProvider>
+        <ServicesRouteGuard />
+        <View style={{ flex: 1, flexDirection: 'row' }}>
+          <WebSidebar />
+          <View style={{ flex: 1 }}>
+            <Slot />
+          </View>
+        </View>
+      </UnsavedChangesProvider>
+    </LastServiceRouteProvider>
   );
 }

@@ -1,7 +1,7 @@
 import { apiClient } from './apiClient';
 import { API_ENDPOINTS } from './apiEndpoints';
 
-export type OnecLpAppDebugKey = 'ping' | 'users' | 'transport-tasks' | 'route-order' | 'to-loading';
+export type OnecLpAppDebugKey = 'ping' | 'users' | 'physical-persons' | 'transport-tasks' | 'route-order' | 'to-loading';
 export type OnecLpAppHttpMethod = 'GET' | 'POST';
 
 export type OnecLpAppUser = {
@@ -12,10 +12,23 @@ export type OnecLpAppUser = {
   inactive?: boolean;
 };
 
+export type OnecLpAppPhysicalPerson = {
+  guid: string;
+  name: string;
+  code?: string | null;
+};
+
 export type OnecLpAppUsersResponse = {
   users?: OnecLpAppUser[];
   body?: {
     users?: OnecLpAppUser[];
+  };
+};
+
+export type OnecLpAppPhysicalPersonsResponse = {
+  physicalPersons?: OnecLpAppPhysicalPerson[];
+  body?: {
+    physicalPersons?: OnecLpAppPhysicalPerson[];
   };
 };
 
@@ -285,6 +298,15 @@ export function getOnecLpAppUsers() {
   });
 }
 
+export function getOnecLpAppPhysicalPersons() {
+  return runDebugRequest<void, OnecLpAppPhysicalPersonsResponse>({
+    key: 'physical-persons',
+    label: 'GET /physical-persons',
+    method: 'GET',
+    path: API_ENDPOINTS.ONEC_LP_APP.PHYSICAL_PERSONS,
+  });
+}
+
 export async function listOnecLpAppUsers(): Promise<OnecLpAppUser[]> {
   const response = await apiClient<void, OnecLpAppUsersResponse>(API_ENDPOINTS.ONEC_LP_APP.USERS);
   if (!response.ok) {
@@ -293,6 +315,16 @@ export async function listOnecLpAppUsers(): Promise<OnecLpAppUser[]> {
   }
 
   return response.data?.users ?? response.data?.body?.users ?? [];
+}
+
+export async function listOnecLpAppPhysicalPersons(): Promise<OnecLpAppPhysicalPerson[]> {
+  const response = await apiClient<void, OnecLpAppPhysicalPersonsResponse>(API_ENDPOINTS.ONEC_LP_APP.PHYSICAL_PERSONS);
+  if (!response.ok) {
+    const message = response.status === 403 ? 'Нет прав на получение физических лиц 1С' : response.message;
+    throw new Error(message || 'Не удалось получить физических лиц 1С');
+  }
+
+  return response.data?.physicalPersons ?? response.data?.body?.physicalPersons ?? [];
 }
 
 export function getOnecLpAppTransportTasks(query: OnecLpAppTransportTasksQuery) {

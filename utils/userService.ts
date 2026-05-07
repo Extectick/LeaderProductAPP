@@ -309,6 +309,7 @@ export type AdminUserItem = {
   currentProfileType?: ProfileType | null;
   departmentName?: string | null;
   onecUserGuid?: string | null;
+  onecPhysicalPersonGuid?: string | null;
   role: { id: number; name: string; displayName?: string } | null;
   lastSeenAt?: string | null;
   isOnline?: boolean;
@@ -325,6 +326,7 @@ export type AdminUsersListItem = AdminUserItem & {
   departmentId?: number | null;
   employeeStatus?: ProfileStatus | null;
   onecUserGuid?: string | null;
+  onecPhysicalPersonGuid?: string | null;
   moderationState: AdminModerationState;
   channels: {
     push: boolean;
@@ -602,6 +604,7 @@ export async function adminUpdateUser(
     profileStatus: string;
     departmentId: number | null;
     onecUserGuid: string | null;
+    onecPhysicalPersonGuid: string | null;
   }>
 ) {
   const res = await apiClient<typeof payload, { profile: Profile }>(API_ENDPOINTS.USERS.USER_ADMIN_UPDATE(userId), {

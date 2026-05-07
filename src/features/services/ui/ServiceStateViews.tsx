@@ -19,6 +19,7 @@ type LoadingProps = {
 type ErrorProps = {
   backgroundColor: string;
   textColor: string;
+  title?: string;
   message?: string | null;
   style?: any;
 };
@@ -60,7 +61,7 @@ export function ServicesLoadingView({ backgroundColor, textColor, style }: Loadi
   );
 }
 
-export function ServicesErrorView({ backgroundColor, textColor, message, style }: ErrorProps) {
+export function ServicesErrorView({ backgroundColor, textColor, title, message, style }: ErrorProps) {
   return (
     <View style={[styles.shell, style, { backgroundColor }]}>
       <View style={styles.errorPanel}>
@@ -68,7 +69,7 @@ export function ServicesErrorView({ backgroundColor, textColor, message, style }
           <Ionicons name="warning-outline" size={20} color="#B45309" />
         </View>
         <View style={styles.errorBody}>
-          <Text style={[styles.errorTitle, { color: textColor }]}>Не удалось загрузить сервисы</Text>
+          <Text style={[styles.errorTitle, { color: textColor }]}>{title || 'Не удалось загрузить сервисы'}</Text>
           <Text style={styles.errorMessage}>{message || 'Проверьте соединение и обновите страницу.'}</Text>
         </View>
       </View>

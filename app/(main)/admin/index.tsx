@@ -1,3 +1,1 @@
-import AdminScreen from './AdminScreen';
-
-export default AdminScreen;
+export { default } from '@/src/features/admin/screen/AdminScreen';

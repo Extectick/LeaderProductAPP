@@ -5,6 +5,7 @@ import { jwtDecode } from 'jwt-decode';
 
 import { API_BASE_URL } from './config';
 import { setServerReachable, setServerUnavailable } from '@/src/shared/network/serverStatus';
+import { clearServicesAccessCache } from '@/src/features/services/storage/servicesAccessCache';
 
 const ACCESS_KEY = 'accessToken';
 const REFRESH_KEY = 'refreshToken';
@@ -45,6 +46,7 @@ export async function saveTokens(accessToken: string, refreshToken: string, prof
 
 export async function logout(): Promise<void> {
   await AsyncStorage.multiRemove([ACCESS_KEY, REFRESH_KEY, PROFILE_KEY]);
+  await clearServicesAccessCache();
   // Сбрасываем бэкофф, чтобы не было дальнейшего спама предупреждений
   refreshAttempts = 0;
   lastWarnTs = 0;

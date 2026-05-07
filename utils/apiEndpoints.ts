@@ -42,6 +42,8 @@ export const API_ENDPOINTS = {
     PROFILE_BY_ID: (userId: number) => `/users/${userId}/profile`,
     DEPARTMENTS: '/users/departments',
     DEPARTMENT_BY_ID: (id: number) => `/users/departments/${id}`,
+    ACTIVE_DEPARTMENT: '/users/me/active-department',
+    USER_ACTIVE_DEPARTMENT: (userId: number) => `/users/${userId}/active-department`,
     PROFILES: {
       CLIENT: '/users/profiles/client',
       SUPPLIER: '/users/profiles/supplier',
@@ -115,6 +117,7 @@ export const API_ENDPOINTS = {
   ONEC_LP_APP: {
     PING: '/api/1c/lp-app/ping',
     USERS: '/api/1c/lp-app/users',
+    PHYSICAL_PERSONS: '/api/1c/lp-app/physical-persons',
     DEPARTURE_POINT_SETTINGS: '/api/1c/lp-app/departure-point-settings',
     TRANSPORT_TASKS: '/api/1c/lp-app/transport-tasks',
     TRANSPORT_TASK: (taskGuid: string) =>
@@ -135,7 +138,31 @@ export const API_ENDPOINTS = {
     LIST: '/services',
     ADMIN: '/services/admin',
     ADMIN_CREATE: '/services/admin',
+    DEPARTMENT_ACCESS_CATALOG: (departmentId: number, roleId?: number | null) =>
+      `/services/departments/${departmentId}/access-catalog${roleId ? `?roleId=${roleId}` : ''}`,
     SERVICE_BY_ID: (serviceId: number) => `/services/${serviceId}`,
+    ACCESS_PREVIEW: (serviceId: number, userId: number) =>
+      `/services/${serviceId}/access-preview?userId=${userId}`,
+    ACCESS_MATRIX: (
+      serviceId: number,
+      query?: { page?: number; limit?: number; search?: string; roleId?: number | null; departmentId?: number | null }
+    ) => {
+      const params = new URLSearchParams();
+      if (query?.page) params.set('page', String(query.page));
+      if (query?.limit) params.set('limit', String(query.limit));
+      if (query?.search?.trim()) params.set('search', query.search.trim());
+      if (query?.roleId) params.set('roleId', String(query.roleId));
+      if (query?.departmentId) params.set('departmentId', String(query.departmentId));
+      const suffix = params.toString() ? `?${params.toString()}` : '';
+      return `/services/${serviceId}/access-matrix${suffix}`;
+    },
+    ACCESS_RULES: (serviceId: number) => `/services/${serviceId}/access-rules`,
+    USER_ACCESS: (serviceId: number) => `/services/${serviceId}/user-access`,
+    USER_ACCESS_BY_USER: (serviceId: number, userId: number) =>
+      `/services/${serviceId}/user-access/${userId}`,
+    DEPARTMENT_ROLE_ACCESS: (serviceId: number) => `/services/${serviceId}/department-role-access`,
+    DEPARTMENT_ROLE_ACCESS_BY_TARGET: (serviceId: number, departmentId: number, roleId: number) =>
+      `/services/${serviceId}/department-role-access/${departmentId}/${roleId}`,
     ROLE_ACCESS: (serviceId: number) => `/services/${serviceId}/role-access`,
     ROLE_ACCESS_BY_ROLE: (serviceId: number, roleId: number) =>
       `/services/${serviceId}/role-access/${roleId}`,
