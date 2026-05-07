@@ -4,7 +4,7 @@ import { Text, TouchableOpacity, View } from 'react-native';
 
 import { MaxMessengerSignLogo } from './constants';
 import { getAuthScreenStyles } from './styles';
-import type { MessengerQrAuthProvider } from '@/types/apiTypes';
+import type { MessengerQrAuthProvider } from '@/src/shared/types/api';
 
 type AuthScreenStyles = ReturnType<typeof getAuthScreenStyles>;
 

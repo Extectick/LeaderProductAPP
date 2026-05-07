@@ -1,4 +1,4 @@
-import type { MessengerQrAuthProvider } from '@/types/apiTypes';
+import type { MessengerQrAuthProvider } from '@/src/shared/types/api';
 
 export function validateEmail(email: string) {
   const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

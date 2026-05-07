@@ -166,6 +166,7 @@ export type employeeProfile = {
         displayName?: string;
     };
     }[];
+    onecUserGuid?: string | null;
     createdAt: Date;
     updatedAt: Date;
 }

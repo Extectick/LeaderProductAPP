@@ -4,7 +4,7 @@ import { Modal, Pressable, Text, TouchableOpacity, View } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 
 import ThemedLoader from '@/components/ui/ThemedLoader';
-import type { MessengerQrAuthProvider } from '@/types/apiTypes';
+import type { MessengerQrAuthProvider } from '@/src/shared/types/api';
 import { MaxMessengerSignLogo } from './constants';
 import { getAuthScreenStyles } from './styles';
 import { providerLabel } from './utils';

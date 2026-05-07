@@ -52,7 +52,7 @@ import {
 import { getProfileGate } from '@/utils/profileGate';
 import { saveTokens } from '@/utils/tokenService';
 import { applyWebAutofillFix } from '@/utils/webAutofillFix';
-import type { MessengerQrAuthProvider, MessengerQrAuthState } from '@/types/apiTypes';
+import type { MessengerQrAuthProvider, MessengerQrAuthState } from '@/src/shared/types/api';
 import { BounceButton, MiniButton } from './authScreen/AuthActionButtons';
 import AuthDesktopQrProviders from './authScreen/AuthDesktopQrProviders';
 import AuthQrModal from './authScreen/AuthQrModal';

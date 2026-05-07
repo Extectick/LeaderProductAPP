@@ -13,6 +13,7 @@ import {
   Pressable,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
   type ViewStyle,
 } from 'react-native';
@@ -56,6 +57,7 @@ type Props = {
   leftSlot?: React.ReactNode;
   rightSlot?: React.ReactNode;
   bottomSlot?: React.ReactNode;
+  surfaceVisible?: boolean;
 };
 
 type HeaderOffsetOptions = {
@@ -87,12 +89,15 @@ export function AppHeader({
   leftSlot,
   rightSlot,
   bottomSlot,
+  surfaceVisible = true,
 }: Props) {
   const { top } = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
   const { theme } = useTheme();
   const { setHeaderBottomOffset } = useNotificationViewport();
   const isDark = theme === 'dark';
   const isAndroid = Platform.OS === 'android';
+  const isMobileWidth = width < 720;
 
   const background = useThemeColor({}, 'background');
   const textColor = useThemeColor({}, 'text');
@@ -100,8 +105,11 @@ export function AppHeader({
 
   const sidePadding = Platform.OS === 'web' ? (tight ? 12 : 16) : 12;
   const topPadding = Platform.OS === 'web' ? HEADER_TOP_PADDING_WEB : top + HEADER_TOP_PADDING_NATIVE_EXTRA;
-  const titleSize = compact ? 17 : Platform.OS === 'web' ? 18 : 19;
-  const subtitleSize = compact ? 11 : 12;
+  const useCompactHeaderText = tight || compact || isMobileWidth;
+  const titleSize = useCompactHeaderText ? 16 : Platform.OS === 'web' ? 18 : 19;
+  const subtitleSize = useCompactHeaderText ? 11 : 12;
+  const titleLines = useCompactHeaderText ? 1 : 2;
+  const subtitleLines = useCompactHeaderText ? 1 : compact ? 1 : 2;
 
   const baseSurfaceOpacity = isDark ? SURFACE_OPACITY_DARK : SURFACE_OPACITY_LIGHT;
   const surfaceOverlayOpacity = Math.min(
@@ -159,7 +167,7 @@ export function AppHeader({
         <View style={styles.textWrap}>
           <Text
             style={[styles.title, tight && styles.titleTight, { color: textColor, fontSize: titleSize }]}
-            numberOfLines={tight ? 1 : 2}
+            numberOfLines={titleLines}
             ellipsizeMode="tail"
           >
             {title}
@@ -167,7 +175,7 @@ export function AppHeader({
           {subtitle ? (
             <Text
               style={[styles.subtitle, tight && styles.subtitleTight, { color: secondary, fontSize: subtitleSize }]}
-              numberOfLines={tight ? 1 : compact ? 1 : 2}
+              numberOfLines={subtitleLines}
               ellipsizeMode="tail"
             >
               {subtitle}
@@ -185,6 +193,23 @@ export function AppHeader({
     </View>
   );
 
+  const shellContent = surfaceVisible ? (
+    <View style={styles.shadowShell}>
+      <LiquidGlassSurface
+        borderColor={borderColor}
+        overlayColor={surfaceOverlayColor}
+        blurTint={blurTint}
+        blurIntensity={blurIntensity}
+        webBackdropFilter="blur(22px) saturate(160%)"
+        style={styles.glassShell}
+      >
+        {headerContent}
+      </LiquidGlassSurface>
+    </View>
+  ) : (
+    <View style={styles.plainShell}>{headerContent}</View>
+  );
+
   return (
     <View
       pointerEvents="box-none"
@@ -196,18 +221,7 @@ export function AppHeader({
         animate={{ opacity: 1, translateY: 0 }}
         transition={{ type: 'timing', duration: 220 }}
       >
-        <View style={styles.shadowShell}>
-          <LiquidGlassSurface
-            borderColor={borderColor}
-            overlayColor={surfaceOverlayColor}
-            blurTint={blurTint}
-            blurIntensity={blurIntensity}
-            webBackdropFilter="blur(22px) saturate(160%)"
-            style={styles.glassShell}
-          >
-            {headerContent}
-          </LiquidGlassSurface>
-        </View>
+        {shellContent}
       </MotiView>
     </View>
   );
@@ -241,6 +255,10 @@ const styles = StyleSheet.create({
     borderRadius: HEADER_RADIUS,
     borderWidth: 1,
     overflow: 'hidden',
+  },
+  plainShell: {
+    alignSelf: 'stretch',
+    width: '100%',
   },
   card: {
     paddingHorizontal: 12,
@@ -294,12 +312,13 @@ const styles = StyleSheet.create({
     lineHeight: 23,
   },
   titleTight: {
-    lineHeight: 20,
+    lineHeight: 19,
   },
   subtitle: {
     marginTop: 2,
     fontWeight: '600',
     opacity: 0.95,
+    lineHeight: 15,
   },
   subtitleTight: {
     marginTop: 1,

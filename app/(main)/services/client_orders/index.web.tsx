@@ -1,1 +1,1 @@
-export { default } from '@/src/features/clientOrders/ClientOrdersScreen';
+export { default } from '@/src/features/clientOrders/screen/ClientOrdersScreen';

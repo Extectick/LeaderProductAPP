@@ -112,6 +112,18 @@ export const API_ENDPOINTS = {
     SUBMIT: (guid: string) => `/api/client-orders/${encodeURIComponent(guid)}/submit`,
     CANCEL: (guid: string) => `/api/client-orders/${encodeURIComponent(guid)}/cancel`,
   },
+  ONEC_LP_APP: {
+    PING: '/api/1c/lp-app/ping',
+    USERS: '/api/1c/lp-app/users',
+    DEPARTURE_POINT_SETTINGS: '/api/1c/lp-app/departure-point-settings',
+    TRANSPORT_TASKS: '/api/1c/lp-app/transport-tasks',
+    TRANSPORT_TASK: (taskGuid: string) =>
+      `/api/1c/lp-app/transport-tasks/${encodeURIComponent(taskGuid)}`,
+    ROUTE_ORDER: (taskGuid: string) =>
+      `/api/1c/lp-app/transport-tasks/${encodeURIComponent(taskGuid)}/route-order`,
+    TO_LOADING: (taskGuid: string) =>
+      `/api/1c/lp-app/transport-tasks/${encodeURIComponent(taskGuid)}/to-loading`,
+  },
   UPDATES: {
     CHECK: '/updates/check',
   },

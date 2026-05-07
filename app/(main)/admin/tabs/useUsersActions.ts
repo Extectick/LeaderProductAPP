@@ -27,6 +27,7 @@ export type UsersEditorState = {
   hasClientProfile: boolean;
   hasSupplierProfile: boolean;
   departmentId: number | null;
+  onecUserGuid: string | null;
   employeeStatus: ProfileStatus | null;
   clientStatus: ProfileStatus | null;
   supplierStatus: ProfileStatus | null;
@@ -68,6 +69,7 @@ function toEditorState(profile: Profile): UsersEditorState {
     hasClientProfile: Boolean(profile.clientProfile),
     hasSupplierProfile: Boolean(profile.supplierProfile),
     departmentId: profile.employeeProfile?.department?.id ?? null,
+    onecUserGuid: profile.employeeProfile?.onecUserGuid ?? null,
     employeeStatus: profile.employeeProfile?.status ?? null,
     clientStatus: profile.clientProfile?.status ?? null,
     supplierStatus: profile.supplierProfile?.status ?? null,
@@ -164,8 +166,20 @@ export function useUsersActions({
       if (editor.hasEmployeeProfile) {
         const employeePatch: Record<string, unknown> = {};
         if (editor.departmentId !== editorInitial.departmentId) employeePatch.departmentId = editor.departmentId;
+        if ((editor.onecUserGuid ?? null) !== (editorInitial.onecUserGuid ?? null)) {
+          employeePatch.onecUserGuid = editor.onecUserGuid;
+        }
         if (editor.employeeStatus && editor.employeeStatus !== editorInitial.employeeStatus) {
           employeePatch.status = editor.employeeStatus;
+        }
+        const userPatch: Record<string, unknown> = {};
+        if (Object.prototype.hasOwnProperty.call(employeePatch, 'onecUserGuid')) {
+          userPatch.onecUserGuid = employeePatch.onecUserGuid;
+          delete employeePatch.onecUserGuid;
+        }
+        if (Object.keys(userPatch).length) {
+          await adminUpdateUser(editorUserId, userPatch);
+          hasChanges = true;
         }
         if (Object.keys(employeePatch).length) {
           await adminUpdateUserProfile(editorUserId, 'employee', employeePatch);

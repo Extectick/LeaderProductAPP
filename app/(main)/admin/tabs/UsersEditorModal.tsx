@@ -11,9 +11,16 @@ import {
   View,
 } from 'react-native';
 import Dropdown from '@/components/ui/Dropdown';
+import { listOnecLpAppUsers, type OnecLpAppUser } from '@/utils/onecLpAppService';
 import { getRoleDisplayName } from '@/utils/rbacLabels';
 import type { Department, RoleItem } from '@/utils/userService';
 import type { ProfileStatus, ProfileType } from '@/src/entities/user/types';
+import {
+  Button as PaperButton,
+  Surface,
+  TextInput as PaperTextInput,
+  ActivityIndicator as PaperActivityIndicator,
+} from 'react-native-paper';
 import {
   activeProfileTypeLabel,
   formatPhone,
@@ -38,6 +45,166 @@ type Props = {
   onSave: () => void;
   onChangeEditor: (updater: (prev: UsersEditorState | null) => UsersEditorState | null) => void;
 };
+
+type OnecUserPickerProps = {
+  selectedGuid: string | null;
+  disabled: boolean;
+  colors: any;
+  styles: any;
+  onSelect: (user: OnecLpAppUser) => void;
+  onClear: () => void;
+};
+
+function formatOnecUser(user: OnecLpAppUser) {
+  const name = user.name?.trim() || 'Пользователь 1С без имени';
+  return user.inactive ? `${name} (неактивен)` : name;
+}
+
+function OnecUserPicker({ selectedGuid, disabled, colors, styles, onSelect, onClear }: OnecUserPickerProps) {
+  const [open, setOpen] = React.useState(false);
+  const [query, setQuery] = React.useState('');
+  const [users, setUsers] = React.useState<OnecLpAppUser[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  const selectedUser = React.useMemo(
+    () => users.find((user) => user.guid === selectedGuid) ?? null,
+    [selectedGuid, users]
+  );
+
+  const selectedLabel = selectedUser ? formatOnecUser(selectedUser) : selectedGuid ? 'Пользователь 1С выбран' : 'Не привязан';
+  const inputValue = open ? query : selectedUser ? formatOnecUser(selectedUser) : selectedGuid ? selectedGuid : '';
+
+  const filteredUsers = React.useMemo(() => {
+    const text = query.trim().toLowerCase();
+    if (!text) return users;
+    return users.filter((user) => {
+      const haystack = [
+        user.name,
+        user.guid,
+        user.physicalPersonName,
+        user.physicalPersonGuid,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(text);
+    });
+  }, [query, users]);
+
+  const loadUsers = React.useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const list = await listOnecLpAppUsers();
+      setUsers(list);
+    } catch (err: any) {
+      setError(err?.message || 'Не удалось получить пользователей 1С');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const openPicker = React.useCallback(() => {
+    if (disabled) return;
+    setOpen(true);
+    setQuery('');
+    if (!users.length) void loadUsers();
+  }, [disabled, loadUsers, users.length]);
+
+  return (
+    <View style={styles.userEditorField}>
+      <Text style={styles.userEditorLabel}>Пользователь 1С</Text>
+      <View style={localStyles.onecDropdownWrap}>
+        <PaperTextInput
+          mode="outlined"
+          label="Поиск или выбор пользователя 1С"
+          value={inputValue}
+          onFocus={openPicker}
+          onPressIn={openPicker}
+          onChangeText={(value) => {
+            if (!open) setOpen(true);
+            setQuery(value);
+            if (!users.length) void loadUsers();
+          }}
+          autoCapitalize="none"
+          disabled={disabled}
+          right={<PaperTextInput.Icon icon={open ? 'chevron-up' : 'chevron-down'} onPress={openPicker} />}
+        />
+        <Text selectable numberOfLines={2} style={localStyles.onecSelectedGuid}>
+          {selectedGuid || 'GUID не выбран'}
+        </Text>
+        {open ? (
+          <Surface mode="flat" style={localStyles.onecDropdown}>
+            {loading ? (
+              <View style={localStyles.onecDropdownState}>
+                <PaperActivityIndicator color={colors.tint} />
+                <Text style={styles.userEditorMuted}>Загружаем пользователей 1С</Text>
+              </View>
+            ) : null}
+            {error ? (
+              <View style={localStyles.onecError}>
+                <Text style={localStyles.onecErrorText}>{error}</Text>
+                <PaperButton compact onPress={() => void loadUsers()} disabled={loading}>
+                  Повторить
+                </PaperButton>
+              </View>
+            ) : null}
+            {!loading && !error ? (
+              <ScrollView style={localStyles.onecList} keyboardShouldPersistTaps="handled" nestedScrollEnabled>
+                {filteredUsers.length ? (
+                  filteredUsers.map((user) => {
+                    const active = selectedGuid === user.guid;
+                    return (
+                      <Pressable
+                        key={user.guid}
+                        onPress={() => {
+                          onSelect(user);
+                          setQuery('');
+                          setOpen(false);
+                        }}
+                        style={[localStyles.onecOption, active && localStyles.onecOptionActive]}
+                      >
+                        <Text numberOfLines={1} style={[localStyles.onecOptionTitle, active && localStyles.onecOptionTitleActive]}>
+                          {formatOnecUser(user)}
+                        </Text>
+                        <Text numberOfLines={1} style={localStyles.onecOptionGuid}>
+                          {user.guid}
+                        </Text>
+                        {user.physicalPersonName ? (
+                          <Text numberOfLines={1} style={localStyles.onecOptionMeta}>
+                            Физлицо: {user.physicalPersonName}
+                          </Text>
+                        ) : null}
+                      </Pressable>
+                    );
+                  })
+                ) : (
+                  <View style={localStyles.onecDropdownState}>
+                    <Text style={styles.userEditorMuted}>Пользователи 1С не найдены</Text>
+                  </View>
+                )}
+              </ScrollView>
+            ) : null}
+            <View style={localStyles.onecDropdownActions}>
+              {selectedGuid ? (
+                <PaperButton compact disabled={disabled} onPress={onClear}>
+                  Очистить
+                </PaperButton>
+              ) : null}
+              <PaperButton compact onPress={() => void loadUsers()} disabled={loading}>
+                Обновить
+              </PaperButton>
+              <PaperButton compact onPress={() => setOpen(false)}>
+                Скрыть
+              </PaperButton>
+            </View>
+          </Surface>
+        ) : null}
+      </View>
+    </View>
+  );
+}
 
 export function UsersEditorModal({
   visible,
@@ -277,6 +444,26 @@ export function UsersEditorModal({
                 </View>
 
                 <View style={styles.userEditorSection}>
+                  <Text style={styles.userEditorSectionTitle}>1С</Text>
+                  {!editor.hasEmployeeProfile ? (
+                    <Text style={styles.userEditorMuted}>
+                      Профиль сотрудника отсутствует - привязка пользователя 1С недоступна.
+                    </Text>
+                  ) : (
+                    <OnecUserPicker
+                      selectedGuid={editor.onecUserGuid}
+                      disabled={saving}
+                      colors={colors}
+                      styles={styles}
+                      onSelect={(user) =>
+                        onChangeEditor((state) => (state ? { ...state, onecUserGuid: user.guid } : state))
+                      }
+                      onClear={() => onChangeEditor((state) => (state ? { ...state, onecUserGuid: null } : state))}
+                    />
+                  )}
+                </View>
+
+                <View style={styles.userEditorSection}>
                   <Text style={styles.userEditorSectionTitle}>Профили пользователя</Text>
 
                   <View style={styles.userProfileGrid}>
@@ -388,3 +575,82 @@ export function UsersEditorModal({
     </Modal>
   );
 }
+
+const localStyles = StyleSheet.create({
+  onecDropdownWrap: {
+    gap: 6,
+  },
+  onecSelectedGuid: {
+    color: '#475569',
+    fontSize: 12,
+    fontWeight: '600',
+    paddingHorizontal: 2,
+  },
+  onecDropdown: {
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    overflow: 'hidden',
+  },
+  onecDropdownState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 16,
+    paddingHorizontal: 12,
+  },
+  onecList: {
+    maxHeight: 300,
+  },
+  onecOption: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    gap: 3,
+  },
+  onecOptionActive: {
+    backgroundColor: '#EFF6FF',
+  },
+  onecOptionTitle: {
+    color: '#0F172A',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  onecOptionTitleActive: {
+    color: '#2563EB',
+  },
+  onecOptionGuid: {
+    color: '#475569',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  onecOptionMeta: {
+    color: '#64748B',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  onecDropdownActions: {
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 6,
+    flexWrap: 'wrap',
+  },
+  onecError: {
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    backgroundColor: '#FEF2F2',
+    borderRadius: 8,
+    padding: 10,
+  },
+  onecErrorText: {
+    color: '#B91C1C',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+});

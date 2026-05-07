@@ -34,6 +34,8 @@ const headerMap: Record<string, HeaderMeta> = {
   'tracking/index': { title: 'Геомаршруты', icon: 'map-outline', showBack: true, parent: '/services', subtitle: 'Маршруты и точки на карте' },
   stock_balances: { title: 'Остатки по складам', icon: 'cube-outline', showBack: true, parent: '/services', subtitle: 'Склады, организации и серии товаров' },
   'stock_balances/index': { title: 'Остатки по складам', icon: 'cube-outline', showBack: true, parent: '/services', subtitle: 'Склады, организации и серии товаров' },
+  transport_tasks: { title: 'Задания на перевозку', icon: 'map-outline', showBack: true, parent: '/services', subtitle: 'Привязка к 1С' },
+  'transport_tasks/index': { title: 'Задания на перевозку', icon: 'map-outline', showBack: true, parent: '/services', subtitle: 'Привязка к 1С' },
   client_orders: { title: 'Заказы клиентов', icon: 'receipt-outline', showBack: true, parent: '/services', subtitle: 'Создание заказа клиента' },
   'client_orders/index': { title: 'Заказы клиентов', icon: 'receipt-outline', showBack: true, parent: '/services', subtitle: 'Создание заказа клиента' },
   'client_orders/index.web': { title: 'Заказы клиентов', icon: 'receipt-outline', showBack: true, parent: '/services', subtitle: 'Создание заказа клиента' },
