@@ -28,8 +28,6 @@ export default function DepartureSelectionDialog({
   departureSettingsSaving,
   onDismiss,
   onUsePreset,
-  onUseCurrentLocation,
-  onBeginMapSelection,
 }: Props) {
   return (
     <Dialog
@@ -42,17 +40,10 @@ export default function DepartureSelectionDialog({
       <Dialog.Title style={styles.departureDialogTitle}>
         {requiresInitialDepartureSelection && !departurePoint
           ? 'Выберите точку отправления'
-          : 'Настройка точки отправления'}
+          : 'Точка отправления'}
       </Dialog.Title>
       <Dialog.Content style={styles.departureDialogContent}>
-        <Text variant="bodyMedium" style={styles.departureDialogText}>
-          Точка 0 будет видна в маршруте, но не уйдет в порядок точек 1С.
-        </Text>
-
         <ScrollView contentContainerStyle={styles.departureModalScroll}>
-          <Text variant="titleSmall" style={styles.departureSectionTitle}>
-            Пресеты
-          </Text>
           {departurePresets.map((preset) => {
             const selected =
               departurePoint?.source === 'PRESET' && departurePoint?.presetKey === preset.key;
@@ -78,34 +69,6 @@ export default function DepartureSelectionDialog({
               </Pressable>
             );
           })}
-
-          <View style={styles.departureActionsRow}>
-            <Button
-              mode="outlined"
-              icon="crosshairs-gps"
-              onPress={onUseCurrentLocation}
-              loading={departureSettingsSaving}
-              disabled={departureSettingsSaving}
-              style={styles.departureSecondaryButton}
-            >
-              Использовать мою геолокацию
-            </Button>
-            <Button
-              mode="contained"
-              icon="map-marker-plus"
-              onPress={onBeginMapSelection}
-              disabled={departureSettingsSaving}
-              buttonColor="#2563EB"
-              textColor="#FFFFFF"
-              style={styles.departurePrimaryButton}
-            >
-              Выбрать на карте
-            </Button>
-          </View>
-
-          <Text variant="bodySmall" style={styles.toLoadingDialogWarning}>
-            После нажатия модальное окно закроется, и выбор точки откроется на большой карте.
-          </Text>
         </ScrollView>
       </Dialog.Content>
       {canDismiss && !departureSettingsSaving ? (
