@@ -400,8 +400,9 @@ export default function ClientOrdersMobileScreen() {
               >
                 <Menu.Item leadingIcon="content-save-outline" title={workspace.saving ? 'Сохраняю...' : 'Сохранить'} onPress={() => { setActionsMenuOpen(false); void workspace.saveDraft({ reason: 'manual' }); }} disabled={workspace.readOnly || workspace.saving || !workspace.validation.canSave} />
                 <Menu.Item leadingIcon="cloud-upload-outline" title={workspace.submitting ? 'Отправляю...' : 'Отправить в 1С'} onPress={submitFromMenu} disabled={workspace.readOnly || workspace.submitting || !workspace.validation.canSave} />
+                {workspace.canDeriveDraft ? <Menu.Item leadingIcon="pencil-outline" title="Редактировать" onPress={() => { setActionsMenuOpen(false); void workspace.deriveDraftFromSelected(); }} /> : null}
                 <Menu.Item leadingIcon="information-outline" title="Инспектор" onPress={() => { setActionsMenuOpen(false); setInspectorOpen(true); }} />
-                <Menu.Item leadingIcon={workspace.draftMode || workspace.selectedOrder?.status === 'DRAFT' ? 'trash-can-outline' : 'close-circle-outline'} title={workspace.draftMode || workspace.selectedOrder?.status === 'DRAFT' ? 'Удалить черновик' : 'Отменить заказ'} onPress={() => { setActionsMenuOpen(false); removeOrCancel(); }} />
+                <Menu.Item leadingIcon={workspace.draftMode || workspace.selectedOrder?.status === 'DRAFT' ? 'trash-can-outline' : 'close-circle-outline'} title={workspace.draftMode || workspace.selectedOrder?.status === 'DRAFT' ? 'Удалить черновик' : 'Отменить заказ'} onPress={() => { setActionsMenuOpen(false); removeOrCancel(); }} disabled={workspace.selectedOrder?.origin === 'onec'} />
               </Menu>
             </View>
             {workspace.error ? <Text style={styles.error}>{workspace.error}</Text> : null}
@@ -439,6 +440,8 @@ export default function ClientOrdersMobileScreen() {
           </View>
         </View>
         <SelectionCard styles={styles} label="Контрагент" value={filterCounterparty?.name || 'Все контрагенты'} onPress={() => openPicker('filterCounterparty')} />
+        <DateTimeInput label="Период с" value={workspace.filters.dateFrom || undefined} includeTime={false} allowClear={false} onChange={(iso) => workspace.setFilters((prev) => ({ ...prev, dateFrom: iso || null }))} />
+        <DateTimeInput label="Период по" value={workspace.filters.dateTo || undefined} includeTime={false} allowClear={false} onChange={(iso) => workspace.setFilters((prev) => ({ ...prev, dateTo: iso || null }))} />
         <View style={styles.row}><ActionButton styles={styles} label="Сбросить" kind="secondary" onPress={() => { setFilterCounterparty(null); workspace.clearFilters(); }} /><ActionButton styles={styles} label="Закрыть" kind="primary" onPress={() => setFiltersOpen(false)} /></View>
       </SheetModal>
 

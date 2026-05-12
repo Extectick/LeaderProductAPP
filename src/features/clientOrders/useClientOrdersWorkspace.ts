@@ -2,6 +2,7 @@ import { useNotify } from '@/components/NotificationHost';
 import {
   cancelClientOrder,
   createClientOrder,
+  deriveDraftClientOrder,
   deleteClientOrder,
   getClientOrder,
   getClientOrderDefaults,
@@ -66,7 +67,10 @@ type DraftSelections = {
 };
 
 function emptyFilters(): ClientOrdersFilters {
-  return { search: '', status: '', counterpartyGuid: '' };
+  const today = new Date();
+  const dateTo = today.toISOString().slice(0, 10);
+  const dateFrom = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 6).toISOString().slice(0, 10);
+  return { search: '', status: '', counterpartyGuid: '', dateFrom, dateTo };
 }
 
 function emptySelections(): DraftSelections {
@@ -156,7 +160,11 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const contextRefreshSignatureRef = React.useRef('');
 
   const draftMode = !draft.guid;
-  const readOnly = !!selectedOrder?.isPostedIn1c || selectedOrder?.status === 'CANCELLED';
+  const readOnly =
+    selectedOrder?.origin === 'onec'
+      ? true
+      : !!selectedOrder?.isPostedIn1c || selectedOrder?.status === 'CANCELLED';
+  const canDeriveDraft = selectedOrder?.origin === 'onec' && !!selectedOrder?.isEditable;
   const baseValidation = React.useMemo(() => validateDraft(draft), [draft]);
   const validation = React.useMemo(() => {
     if (draftMode && settings?.deliveryDateIssue) {
@@ -271,6 +279,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     setDraft((prev) => ({
       ...prev,
       guid: order.guid,
+      origin: order.origin || prev.origin || 'local',
+      documentGuid: order.documentGuid ?? prev.documentGuid ?? null,
       revision: order.revision,
       deliveryDate: order.deliveryDate ?? prev.deliveryDate ?? null,
       comment: order.comment ?? prev.comment,
@@ -329,6 +339,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         search: filters.search || undefined,
         status: filters.status || undefined,
         counterpartyGuid: filters.counterpartyGuid || undefined,
+        dateFrom: filters.dateFrom || undefined,
+        dateTo: filters.dateTo || undefined,
       });
       const list = Array.isArray(result.items) ? result.items : [];
       setOrders((prev) => (mode === 'append' ? [...prev, ...list] : list));
@@ -357,7 +369,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       setLoadingOrders(false);
       setLoadingMoreOrders(false);
     }
-  }, [filters.counterpartyGuid, filters.search, filters.status, orders.length]);
+  }, [filters.counterpartyGuid, filters.dateFrom, filters.dateTo, filters.search, filters.status, orders.length]);
 
   const loadDetail = React.useCallback(async (guid: string) => {
     setLoadingDetail(true);
@@ -855,6 +867,33 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     }
   }, [dirty, draft.guid, draft.revision, loadOrders, notify, saveDraft, selectedGuid]);
 
+  const deriveDraftFromSelected = React.useCallback(async () => {
+    if (!selectedGuid || !selectedOrder || selectedOrder.origin !== 'onec' || !selectedOrder.isEditable) return null;
+    try {
+      const order = await deriveDraftClientOrder(selectedGuid);
+      setSelectedGuid(order.guid);
+      setSelectedOrder(order);
+      setDraft(orderToDraft(order));
+      setSelections({
+        organization: order.organization || null,
+        counterparty: order.counterparty || null,
+        agreement: order.agreement || null,
+        contract: order.contract || null,
+        warehouse: order.warehouse || null,
+        deliveryAddress: order.deliveryAddress || null,
+      });
+      setDocumentStarted(true);
+      setDirty(false);
+      await loadOrders('reset');
+      return order;
+    } catch (e: any) {
+      const message = e?.message || 'Не удалось создать черновик из документа 1С.';
+      setError(message);
+      notify({ type: 'error', title: 'Ошибка редактирования', message });
+      return null;
+    }
+  }, [loadOrders, notify, selectedGuid, selectedOrder]);
+
   const runCancel = React.useCallback(async (target?: { guid: string; revision: number }) => {
     const targetGuid = target?.guid || draft.guid;
     const targetRevision = target?.revision ?? draft.revision;
@@ -995,6 +1034,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     refreshAll,
     saveDraft,
     submitOrder,
+    deriveDraftFromSelected,
     cancelOrder,
     cancelOrderConfirmed: runCancel,
     deleteDraft,
@@ -1002,6 +1042,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     setError,
     draftMode,
     readOnly,
+    canDeriveDraft,
     dirty,
     validation,
     localTotal,

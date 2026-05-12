@@ -159,6 +159,8 @@ export type ClientOrderItem = {
 
 export type ClientOrder = {
   guid: string;
+  documentGuid?: string | null;
+  origin?: 'local' | 'onec';
   number1c?: string | null;
   date1c?: string | null;
   source: string;
@@ -185,6 +187,9 @@ export type ClientOrder = {
   cancelReason?: string | null;
   last1cError?: string | null;
   last1cSnapshot?: any;
+  status1c?: string | null;
+  isEditable?: boolean;
+  readOnlyReason?: string | null;
   counterparty?: { guid: string; name: string } | null;
   agreement?: ClientOrderAgreementOption | null;
   contract?: { guid: string; number: string } | null;
@@ -263,6 +268,8 @@ export async function getClientOrders(params?: {
   status?: string;
   search?: string;
   counterpartyGuid?: string;
+  dateFrom?: string;
+  dateTo?: string;
 }) {
   const query = buildQuery(params || {});
   const path = query ? `${API_ENDPOINTS.CLIENT_ORDERS.LIST}?${query}` : API_ENDPOINTS.CLIENT_ORDERS.LIST;
@@ -458,6 +465,15 @@ export async function submitClientOrder(guid: string, revision: number) {
     body: { revision },
   });
   if (!res.ok || !res.data) throw new Error(getErrorMessage('Не удалось отправить заказ клиента', res.message));
+  return res.data;
+}
+
+export async function deriveDraftClientOrder(guid: string) {
+  const res = await apiClient<Record<string, never>, ClientOrder>(API_ENDPOINTS.CLIENT_ORDERS.DERIVE_DRAFT(guid), {
+    method: 'POST',
+    body: {},
+  });
+  if (!res.ok || !res.data) throw new Error(getErrorMessage('Не удалось создать черновик из документа 1С', res.message));
   return res.data;
 }
 

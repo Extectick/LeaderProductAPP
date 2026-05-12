@@ -42,6 +42,8 @@ export type DraftItem = {
 
 export type DraftOrder = {
   guid?: string | null;
+  origin?: 'local' | 'onec';
+  documentGuid?: string | null;
   revision: number;
   organizationGuid: string;
   counterpartyGuid: string;
@@ -62,6 +64,8 @@ export type ClientOrdersFilters = {
   search: string;
   status: string;
   counterpartyGuid: string;
+  dateFrom?: string | null;
+  dateTo?: string | null;
 };
 
 export type LayoutTier = 'phone' | 'tablet' | 'laptop' | 'desktop' | 'wide';
@@ -245,6 +249,8 @@ export function makeKey() {
 
 export function emptyDraft(): DraftOrder {
   return {
+    origin: 'local',
+    documentGuid: null,
     revision: 0,
     organizationGuid: '',
     counterpartyGuid: '',
@@ -370,6 +376,8 @@ export function getOrderActivityAt(order: ClientOrder) {
 export function orderToDraft(order: ClientOrder): DraftOrder {
   return {
     guid: order.guid,
+    origin: order.origin || 'local',
+    documentGuid: order.documentGuid ?? null,
     revision: order.revision,
     organizationGuid: order.organization?.guid ?? '',
     counterpartyGuid: order.counterparty?.guid ?? '',

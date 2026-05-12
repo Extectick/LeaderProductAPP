@@ -1377,6 +1377,28 @@ export default function ClientOrdersWebScreen() {
               onOpenDetails={() => void openReferenceDetails('counterparty', filterCounterparty?.guid)}
               detailsDisabled={!filterCounterparty?.guid}
             />
+            <Stack direction="row" spacing={0.55}>
+              <TextField
+                type="date"
+                size="small"
+                label="С"
+                value={workspace.filters.dateFrom || ''}
+                onChange={(event) => workspace.setFilters((prev) => ({ ...prev, dateFrom: event.target.value || null }))}
+                fullWidth
+                InputLabelProps={{ shrink: true }}
+                sx={{ '& .MuiInputBase-root': { height: 32, borderRadius: '6px', fontSize: 11, fontWeight: 800 } }}
+              />
+              <TextField
+                type="date"
+                size="small"
+                label="По"
+                value={workspace.filters.dateTo || ''}
+                onChange={(event) => workspace.setFilters((prev) => ({ ...prev, dateTo: event.target.value || null }))}
+                fullWidth
+                InputLabelProps={{ shrink: true }}
+                sx={{ '& .MuiInputBase-root': { height: 32, borderRadius: '6px', fontSize: 11, fontWeight: 800 } }}
+              />
+            </Stack>
             <Stack direction="row" spacing={0.55} alignItems="center">
               <Button
                 variant="contained"
@@ -1554,6 +1576,16 @@ export default function ClientOrdersWebScreen() {
                       <ToolbarIconButton title="Шапка документа" icon="document-text-outline" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => setHeaderOpen(true)} />
                       <ToolbarIconButton title="Настройки даты" icon="calendar-outline" color="#2563EB" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => setSettingsOpen(true)} />
                       <ToolbarIconButton title="Инспектор" icon="information-circle-outline" color="#475569" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => setInspectorOpen(true)} />
+                      {workspace.canDeriveDraft ? (
+                        <ToolbarIconButton
+                          title="Редактировать"
+                          icon="create-outline"
+                          color="#0F766E"
+                          buttonSize={ui.actionButtonSize}
+                          iconSize={ui.actionIconSize}
+                          onClick={() => void workspace.deriveDraftFromSelected()}
+                        />
+                      ) : null}
                       <ToolbarIconButton title="Сохранить" icon="save-outline" color="#2563EB" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => void workspace.saveDraft({ reason: 'manual' })} disabled={workspace.readOnly || workspace.saving || !workspace.validation.canSave} loading={workspace.saving} />
                       <ToolbarIconButton title="Отправить в 1С" icon="cloud-upload-outline" color="#7C3AED" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => setConfirmSubmitOpen(true)} disabled={workspace.readOnly || workspace.submitting || !workspace.validation.canSave} loading={workspace.submitting} />
                     </Stack>
