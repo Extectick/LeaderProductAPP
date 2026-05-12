@@ -5,6 +5,8 @@ export type TransportTasksMobileSheetProps = {
   tint: string;
   onExpandedChange?: (expanded: boolean) => void;
   collapseRequestId?: number;
+  onPositionEditFocusChange?: (editing: boolean) => void;
+  positionNumberEditing?: boolean;
   selectedTask: OnecLpAppTransportTask | null;
   selectedRoutePointIndex: number | null;
   error: string | null;

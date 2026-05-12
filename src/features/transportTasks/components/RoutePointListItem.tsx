@@ -19,6 +19,8 @@ type Props = {
   dragHandleProps?: RouteDragHandleProps;
   onPress: () => void;
   onMoveTo?: (fromIndex: number, position: number) => void;
+  onPositionEditFocus?: () => void;
+  onPositionEditBlur?: () => void;
 };
 
 export default function RoutePointListItem({
@@ -33,6 +35,8 @@ export default function RoutePointListItem({
   dragHandleProps,
   onPress,
   onMoveTo,
+  onPositionEditFocus,
+  onPositionEditBlur,
 }: Props) {
   const [positionEditing, setPositionEditing] = useState(false);
   const [positionText, setPositionText] = useState(String(index + 1));
@@ -40,6 +44,7 @@ export default function RoutePointListItem({
   const [dragHandleHovered, setDragHandleHovered] = useState(false);
   const [dragHandlePressed, setDragHandlePressed] = useState(false);
   const dragHandleScale = useRef(new Animated.Value(1)).current;
+  const positionEditFinishedRef = useRef(false);
   const fullAddress = routePointAddress(point);
 
   useEffect(() => {
@@ -66,8 +71,15 @@ export default function RoutePointListItem({
     onMoveTo?.(index, Math.max(1, Math.min(total, position)));
   };
 
-  const dragHandleWebProps =
-    editing && Platform.OS === 'web'
+  const finishPositionEditing = (value: string) => {
+    if (positionEditFinishedRef.current) return;
+    positionEditFinishedRef.current = true;
+    onPositionEditBlur?.();
+    applyManualPosition(value);
+  };
+
+  const dragHandlePressableProps =
+    editing && showDragHandle
       ? ({
           ref: dragHandleProps?.setActivatorNodeRef,
           ...(dragHandleProps?.attributes ?? {}),
@@ -92,6 +104,7 @@ export default function RoutePointListItem({
             onHoverOut={() => setNumberHovered(false)}
             onPress={() => {
               if (!editing || saving) return;
+              positionEditFinishedRef.current = false;
               setPositionText(String(index + 1));
               setPositionEditing(true);
             }}
@@ -111,11 +124,15 @@ export default function RoutePointListItem({
                 selectTextOnFocus
                 autoFocus
                 editable={!saving}
+                onFocus={() => {
+                  positionEditFinishedRef.current = false;
+                  onPositionEditFocus?.();
+                }}
                 onChangeText={setPositionText}
-                onBlur={() => applyManualPosition(positionText)}
-                onSubmitEditing={() => applyManualPosition(positionText)}
+                onBlur={() => finishPositionEditing(positionText)}
+                onSubmitEditing={() => finishPositionEditing(positionText)}
                 onKeyPress={(event) => {
-                  if (event.nativeEvent.key === 'Enter') applyManualPosition(positionText);
+                  if (event.nativeEvent.key === 'Enter') finishPositionEditing(positionText);
                 }}
                 style={[
                   itemStyles.pointNumberInput,
@@ -157,7 +174,7 @@ export default function RoutePointListItem({
           {showDragHandle ? (
             <Animated.View style={[itemStyles.routeDragHandleWrap, { transform: [{ scale: dragHandleScale }] }]}>
               <Pressable
-                {...dragHandleWebProps}
+                {...dragHandlePressableProps}
                 disabled={saving}
                 onHoverIn={() => {
                   setDragHandleHovered(true);
@@ -181,6 +198,7 @@ export default function RoutePointListItem({
                   dragHandleHovered && itemStyles.routeDragHandleHovered,
                   dragHandlePressed && itemStyles.routeDragHandlePressed,
                   saving && itemStyles.routeDragHandleDisabled,
+                  Platform.OS === 'web' ? ({ touchAction: 'none' } as any) : null,
                 ]}
                 accessibilityLabel="Перетащить точку маршрута"
               >

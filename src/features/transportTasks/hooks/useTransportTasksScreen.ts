@@ -35,7 +35,6 @@ import {
 } from '../types';
 
 const TRANSPORT_TASK_STATUS_FILTER_STORAGE_KEY = 'transport_tasks_status_filter_v1';
-const TRANSPORT_TASK_LAST_SELECTED_STORAGE_KEY = 'transport_tasks_last_selected_guid_v1';
 const TRANSPORT_TASK_ALLOWED_STATUS_FILTERS = new Set([
   TRANSPORT_TASK_STATUS_FORMING,
   TRANSPORT_TASK_STATUS_ROUTE_ORDERING,
@@ -102,9 +101,6 @@ export default function useTransportTasksScreen() {
   const taskStatusFilterStorageKey = profile?.id
     ? `${TRANSPORT_TASK_STATUS_FILTER_STORAGE_KEY}:${profile.id}`
     : TRANSPORT_TASK_STATUS_FILTER_STORAGE_KEY;
-  const lastSelectedTaskStorageKey = profile?.id
-    ? `${TRANSPORT_TASK_LAST_SELECTED_STORAGE_KEY}:${profile.id}`
-    : TRANSPORT_TASK_LAST_SELECTED_STORAGE_KEY;
 
   const selectedTask = useMemo(
     () => tasks.find((task) => task.guid === selectedTaskGuid) ?? null,
@@ -153,26 +149,12 @@ export default function useTransportTasksScreen() {
     setFocusDepartureCounter((current) => current + 1);
   }, []);
 
-  const persistSelectedTaskGuid = useCallback(
-    async (guid: string | null) => {
-      try {
-        if (guid) {
-          await AsyncStorage.setItem(lastSelectedTaskStorageKey, guid);
-          return;
-        }
-        await AsyncStorage.removeItem(lastSelectedTaskStorageKey);
-      } catch {}
-    },
-    [lastSelectedTaskStorageKey]
-  );
-
   const setSelectedTaskGuid = useCallback(
     (guid: string | null) => {
       const normalized = String(guid || '').trim() || null;
       setSelectedTaskGuidState(normalized);
-      void persistSelectedTaskGuid(normalized);
     },
-    [persistSelectedTaskGuid]
+    []
   );
 
   const applyTaskDetail = useCallback(
@@ -743,29 +725,6 @@ export default function useTransportTasksScreen() {
       mounted = false;
     };
   }, [taskStatusFilterStorageKey]);
-
-  useEffect(() => {
-    let mounted = true;
-
-    if (!isLinked) {
-      return () => {
-        mounted = false;
-      };
-    }
-
-    AsyncStorage.getItem(lastSelectedTaskStorageKey)
-      .then((value) => {
-        if (!mounted) return;
-        const guid = String(value || '').trim();
-        if (!guid) return;
-        setSelectedTaskGuidState((current) => current ?? guid);
-      })
-      .catch(() => {});
-
-    return () => {
-      mounted = false;
-    };
-  }, [isLinked, lastSelectedTaskStorageKey]);
 
   useEffect(() => {
     if (isLinked && taskStatusFilterReady) {

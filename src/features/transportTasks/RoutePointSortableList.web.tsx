@@ -50,7 +50,7 @@ function SortableRoutePoint({
         opacity: isDragging ? 0.72 : 1,
         position: 'relative',
         zIndex: isDragging ? 10 : 0,
-        touchAction: 'none',
+        touchAction: 'auto',
         width: '100%',
         maxWidth: '100%',
         boxSizing: 'border-box',

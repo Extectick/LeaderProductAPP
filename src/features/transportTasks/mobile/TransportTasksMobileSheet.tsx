@@ -24,6 +24,8 @@ import type { TransportTasksMobileSheetProps } from './types';
 export default function TransportTasksMobileSheet({
   onExpandedChange,
   collapseRequestId = 0,
+  onPositionEditFocusChange,
+  positionNumberEditing = false,
   selectedTask,
   selectedRoutePointIndex,
   tasks,
@@ -35,7 +37,7 @@ export default function TransportTasksMobileSheet({
 }: TransportTasksMobileSheetProps) {
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
   const [headerHeight, setHeaderHeight] = useState(MOBILE_SHEET_COLLAPSED_HEIGHT);
   const [bodyContentHeight, setBodyContentHeight] = useState(0);
   const panelAnim = useRef(new Animated.Value(0)).current;
@@ -43,26 +45,30 @@ export default function TransportTasksMobileSheet({
   const lastCollapseRequestRef = useRef(collapseRequestId);
 
   const collapsedHeight = MOBILE_SHEET_COLLAPSED_HEIGHT;
+  const effectiveCollapsedHeight = positionNumberEditing ? 0 : collapsedHeight;
   const maxExpandedHeight = useMemo(() => {
     const fromViewport = Math.round(height * MOBILE_SHEET_MAX_HEIGHT_RATIO);
     const maxAllowed = Math.max(MOBILE_SHEET_MIN_EXPANDED_HEIGHT, height - MOBILE_SHEET_TOP_RESERVED);
     return Math.max(MOBILE_SHEET_MIN_EXPANDED_HEIGHT, Math.min(fromViewport, maxAllowed));
   }, [height]);
   const maxBodyExpandedHeight = useMemo(
-    () => Math.max(MOBILE_SHEET_BODY_MIN_HEIGHT, maxExpandedHeight - collapsedHeight),
-    [collapsedHeight, maxExpandedHeight]
+    () => Math.max(MOBILE_SHEET_BODY_MIN_HEIGHT, maxExpandedHeight - effectiveCollapsedHeight),
+    [effectiveCollapsedHeight, maxExpandedHeight]
   );
   const bodyExpandedHeight = useMemo(
     () => Math.max(1, Math.min(maxBodyExpandedHeight, Math.ceil(bodyContentHeight || maxBodyExpandedHeight))),
     [bodyContentHeight, maxBodyExpandedHeight]
   );
   const expandedHeight = useMemo(
-    () => Math.ceil((headerHeight || collapsedHeight) + bodyExpandedHeight),
-    [bodyExpandedHeight, collapsedHeight, headerHeight]
+    () => Math.ceil((positionNumberEditing ? 0 : headerHeight || collapsedHeight) + bodyExpandedHeight),
+    [bodyExpandedHeight, collapsedHeight, headerHeight, positionNumberEditing]
   );
   const bottomOffset = useMemo(
-    () => FLOATING_TAB_BAR_HEIGHT + FLOATING_TAB_BAR_BOTTOM_OFFSET + insets.bottom + MOBILE_SHEET_BOTTOM_GAP,
-    [insets.bottom]
+    () =>
+      (positionNumberEditing ? 0 : FLOATING_TAB_BAR_HEIGHT + FLOATING_TAB_BAR_BOTTOM_OFFSET) +
+      insets.bottom +
+      MOBILE_SHEET_BOTTOM_GAP,
+    [insets.bottom, positionNumberEditing]
   );
   const shellWidth = Math.min(MOBILE_SHEET_MAX_WIDTH, Math.max(280, width - MOBILE_SHEET_SIDE_INSET * 2));
 
@@ -87,6 +93,12 @@ export default function TransportTasksMobileSheet({
   }, [departureMapSelectionMode]);
 
   useEffect(() => {
+    if (positionNumberEditing) {
+      setExpanded(true);
+    }
+  }, [positionNumberEditing]);
+
+  useEffect(() => {
     if (collapseRequestId === lastCollapseRequestRef.current) return;
     lastCollapseRequestRef.current = collapseRequestId;
     setExpanded(false);
@@ -105,12 +117,12 @@ export default function TransportTasksMobileSheet({
           dragStartValueRef.current = expanded ? 1 : 0;
         },
         onPanResponderMove: (_evt, gestureState) => {
-          const travel = Math.max(1, expandedHeight - collapsedHeight);
+          const travel = Math.max(1, expandedHeight - effectiveCollapsedHeight);
           const next = dragStartValueRef.current - gestureState.dy / travel;
           panelAnim.setValue(Math.max(0, Math.min(1, next)));
         },
         onPanResponderRelease: (_evt, gestureState) => {
-          const travel = Math.max(1, expandedHeight - collapsedHeight);
+          const travel = Math.max(1, expandedHeight - effectiveCollapsedHeight);
           const next = dragStartValueRef.current - gestureState.dy / travel;
           const clamped = Math.max(0, Math.min(1, next));
           const startedExpanded = dragStartValueRef.current >= 0.5;
@@ -125,7 +137,7 @@ export default function TransportTasksMobileSheet({
           setExpanded(!(movedDown || clamped <= 0.8));
         },
       }),
-    [collapsedHeight, expanded, expandedHeight, panelAnim]
+    [effectiveCollapsedHeight, expanded, expandedHeight, panelAnim]
   );
 
   const title = selectedTask ? selectedTask.number || 'Задание на перевозку' : 'Задания на перевозку';
@@ -151,10 +163,10 @@ export default function TransportTasksMobileSheet({
     () => ({
       height: panelAnim.interpolate({
         inputRange: [0, 1],
-        outputRange: [collapsedHeight, expandedHeight],
+        outputRange: [effectiveCollapsedHeight, expandedHeight],
       }),
     }),
-    [collapsedHeight, expandedHeight, panelAnim]
+    [effectiveCollapsedHeight, expandedHeight, panelAnim]
   );
 
   const animatedBodyStyle = useMemo(
@@ -189,15 +201,17 @@ export default function TransportTasksMobileSheet({
       ]}
     >
       <View style={styles.shell}>
-        <TransportTasksMobileSheetHeader
-          expanded={expanded}
-          title={title}
-          meta={meta}
-          currentText={currentText}
-          onToggle={() => setExpanded((current) => !current)}
-          onHeightChange={setHeaderHeight}
-          panHandlers={panResponder.panHandlers}
-        />
+        {positionNumberEditing ? null : (
+          <TransportTasksMobileSheetHeader
+            expanded={expanded}
+            title={title}
+            meta={meta}
+            currentText={currentText}
+            onToggle={() => setExpanded((current) => !current)}
+            onHeightChange={setHeaderHeight}
+            panHandlers={panResponder.panHandlers}
+          />
+        )}
         <Animated.View style={[styles.body, animatedBodyStyle]}>
           <TransportTasksMobileSheetContent
             expanded={expanded}
@@ -210,6 +224,7 @@ export default function TransportTasksMobileSheet({
             departurePoint={departurePoint}
             departureMapSelectionMode={departureMapSelectionMode}
             onBodyContentHeightChange={setBodyContentHeight}
+            onPositionEditFocusChange={onPositionEditFocusChange}
             {...rest}
           />
         </Animated.View>

@@ -4,6 +4,7 @@ import { usePathname, useRouter } from 'expo-router';
 import React from 'react';
 import MobileTabs from './MobileTabs';
 import WebSidebar from './WebSidebar';
+import { TabBarVisibilityProvider } from './TabBarVisibilityContext';
 import {
   LastServiceRouteProvider,
   useOptionalLastServiceRoute,
@@ -84,8 +85,10 @@ export default function Navigation() {
     return (
       <LastServiceRouteProvider>
         <UnsavedChangesProvider>
-          <ServicesRouteGuard />
-          <MobileTabs />
+          <TabBarVisibilityProvider>
+            <ServicesRouteGuard />
+            <MobileTabs />
+          </TabBarVisibilityProvider>
         </UnsavedChangesProvider>
       </LastServiceRouteProvider>
     );
@@ -94,13 +97,15 @@ export default function Navigation() {
   return (
     <LastServiceRouteProvider>
       <UnsavedChangesProvider>
-        <ServicesRouteGuard />
-        <View style={{ flex: 1, flexDirection: 'row' }}>
-          <WebSidebar />
-          <View style={{ flex: 1 }}>
-            <Slot />
+        <TabBarVisibilityProvider>
+          <ServicesRouteGuard />
+          <View style={{ flex: 1, flexDirection: 'row' }}>
+            <WebSidebar />
+            <View style={{ flex: 1 }}>
+              <Slot />
+            </View>
           </View>
-        </View>
+        </TabBarVisibilityProvider>
       </UnsavedChangesProvider>
     </LastServiceRouteProvider>
   );

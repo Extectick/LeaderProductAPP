@@ -177,7 +177,7 @@ export const mobileSheetStyles = StyleSheet.create({
     paddingTop: 0,
     paddingLeft: 4,
     paddingRight: 4,
-    paddingBottom: 4,
+    paddingBottom: 20,
   },
   statusNoticeText: {
     color: '#475569',

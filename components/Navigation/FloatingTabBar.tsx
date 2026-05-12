@@ -23,6 +23,7 @@ import type { BottomTabItem, TabAccent } from './bottomTabsConfig';
 import type { ThemeKey } from '@/constants/Colors';
 import { useLastServiceRoute } from '@/src/features/navigation/LastServiceRouteContext';
 import { useUnsavedChanges } from '@/src/features/navigation/UnsavedChangesContext';
+import { useOptionalTabBarVisibility } from './TabBarVisibilityContext';
 
 const BASE_SIDE_MARGIN = 10;
 const BASE_BOTTOM_MARGIN = 10;
@@ -118,6 +119,7 @@ export default function FloatingTabBar({ items, state, navigation, insets }: Pro
   const textColor = useThemeColor({}, 'text');
   const tintColor = useThemeColor({}, 'tint');
   const { theme } = useTheme();
+  const tabBarVisibility = useOptionalTabBarVisibility();
   const themeKey = (theme || 'light') as ThemeKey;
 
   const isDark = theme === 'dark';
@@ -182,7 +184,7 @@ export default function FloatingTabBar({ items, state, navigation, insets }: Pro
     }
   }, [isAppealChat, setTabBarHeight]);
 
-  if (isAppealChat) {
+  if (isAppealChat || tabBarVisibility?.hidden) {
     return null;
   }
 

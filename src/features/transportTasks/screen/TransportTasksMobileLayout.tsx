@@ -1,4 +1,6 @@
 import type { OnecLpAppRoutePoint, OnecLpAppTransportTask } from '@/utils/onecLpAppService';
+import { useTabBarVisibility } from '@/components/Navigation/TabBarVisibilityContext';
+import { useNavigation } from 'expo-router';
 import type { TransportTaskCoordinatePoint, TransportTaskDeparturePoint } from '../types';
 import React, { useEffect, useRef, useState } from 'react';
 import { View } from 'react-native';
@@ -87,9 +89,12 @@ export default function TransportTasksMobileLayout({
   onSaveManualDeparturePoint,
   onCancelDepartureMapSelection,
 }: Props) {
+  const navigation = useNavigation<any>();
+  const { setHidden: setTabBarHidden } = useTabBarVisibility();
   const [bottomSheetExpanded, setBottomSheetExpanded] = useState(false);
   const [collapseRequestId, setCollapseRequestId] = useState(0);
   const [focusSelectedCounter, setFocusSelectedCounter] = useState(0);
+  const [positionNumberEditing, setPositionNumberEditing] = useState(false);
   const lastFocusDepartureCounterRef = useRef(focusDepartureCounter);
 
   const handleSelectRoutePointIndex = (index: number | null) => {
@@ -104,6 +109,20 @@ export default function TransportTasksMobileLayout({
     lastFocusDepartureCounterRef.current = focusDepartureCounter;
     setCollapseRequestId((current) => current + 1);
   }, [focusDepartureCounter]);
+
+  useEffect(() => {
+    const unsubscribe = navigation.addListener?.('beforeRemove', (event: any) => {
+      if (!bottomSheetExpanded) return;
+      event.preventDefault();
+      setCollapseRequestId((current) => current + 1);
+    });
+    return unsubscribe;
+  }, [bottomSheetExpanded, navigation]);
+
+  useEffect(() => {
+    setTabBarHidden(positionNumberEditing);
+    return () => setTabBarHidden(false);
+  }, [positionNumberEditing, setTabBarHidden]);
 
   return (
     <View style={styles.mobileFullMapRoot}>
@@ -137,6 +156,8 @@ export default function TransportTasksMobileLayout({
         tint={tint}
         onExpandedChange={setBottomSheetExpanded}
         collapseRequestId={collapseRequestId}
+        onPositionEditFocusChange={setPositionNumberEditing}
+        positionNumberEditing={positionNumberEditing}
         selectedTask={selectedTask}
         selectedRoutePointIndex={selectedRoutePointIndex}
         error={error}
