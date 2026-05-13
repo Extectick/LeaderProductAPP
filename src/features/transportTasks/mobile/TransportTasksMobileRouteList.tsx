@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, type LayoutChangeEvent } from 'react-native';
+import { View } from 'react-native';
 import { ActivityIndicator, Text } from 'react-native-paper';
 import RoutePointSortableList from '../RoutePointSortableList';
 import RoutePointListItem from '../components/RoutePointListItem';
@@ -25,7 +25,6 @@ type Props = Pick<
   | 'onCancelDepartureMapSelection'
 > & {
   onAfterSelectPoint?: () => void;
-  onRoutePointLayout?: (index: number, event: LayoutChangeEvent) => void;
   onPositionEditFocus?: (index: number) => void;
   onPositionEditBlur?: () => void;
   activePositionEditingIndex?: number | null;
@@ -47,7 +46,6 @@ export default function TransportTasksMobileRouteList({
   onSaveManualDeparturePoint,
   onCancelDepartureMapSelection,
   onAfterSelectPoint,
-  onRoutePointLayout,
   onPositionEditFocus,
   onPositionEditBlur,
   activePositionEditingIndex,
@@ -87,34 +85,26 @@ export default function TransportTasksMobileRouteList({
         saving={routeOrderSaving}
         getItemId={(point) => point.linkKey}
         onMove={onMoveRoutePoint}
-        renderItem={(point, index, dragHandleProps) => {
-          if (activePositionEditingIndex !== null && activePositionEditingIndex !== index) {
-            return null;
-          }
-
-          return (
-            <View onLayout={(event) => onRoutePointLayout?.(index, event)}>
-              <RoutePointListItem
-                point={point}
-                index={index}
-                total={routeForView.length}
-                selected={selectedRoutePointIndex === index}
-                editing={routeOrderEditing}
-                saving={routeOrderSaving}
-                compact
-                showDragHandle={routeOrderEditing && activePositionEditingIndex === null}
-                dragHandleProps={dragHandleProps}
-                onPress={() => {
-                  onSelectRoutePointIndex(index);
-                  onAfterSelectPoint?.();
-                }}
-                onMoveTo={onMoveRoutePointToPosition}
-                onPositionEditFocus={() => onPositionEditFocus?.(index)}
-                onPositionEditBlur={onPositionEditBlur}
-              />
-            </View>
-          );
-        }}
+        renderItem={(point, index, dragHandleProps) => (
+          <RoutePointListItem
+            point={point}
+            index={index}
+            total={routeForView.length}
+            selected={selectedRoutePointIndex === index}
+            editing={routeOrderEditing}
+            saving={routeOrderSaving}
+            compact
+            showDragHandle={routeOrderEditing && activePositionEditingIndex === null}
+            dragHandleProps={dragHandleProps}
+            onPress={() => {
+              onSelectRoutePointIndex(index);
+              onAfterSelectPoint?.();
+            }}
+            onMoveTo={onMoveRoutePointToPosition}
+            onPositionEditFocus={() => onPositionEditFocus?.(index)}
+            onPositionEditBlur={onPositionEditBlur}
+          />
+        )}
       />
       <View style={styles.routeListEndSpacer} />
     </>

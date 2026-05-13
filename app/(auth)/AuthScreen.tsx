@@ -53,11 +53,11 @@ import { getProfileGate } from '@/utils/profileGate';
 import { saveTokens } from '@/utils/tokenService';
 import { applyWebAutofillFix } from '@/utils/webAutofillFix';
 import type { MessengerQrAuthProvider, MessengerQrAuthState } from '@/src/shared/types/api';
-import { BounceButton, MiniButton } from './authScreen/AuthActionButtons';
-import AuthDesktopQrProviders from './authScreen/AuthDesktopQrProviders';
-import AuthQrModal from './authScreen/AuthQrModal';
-import { APP_LOGO, CARD_PAD_H, ROUTES, STORAGE_KEYS } from './authScreen/constants';
-import { getAuthScreenStyles } from './authScreen/styles';
+import { BounceButton, MiniButton } from '@/src/features/auth/authScreen/AuthActionButtons';
+import AuthDesktopQrProviders from '@/src/features/auth/authScreen/AuthDesktopQrProviders';
+import AuthQrModal from '@/src/features/auth/authScreen/AuthQrModal';
+import { APP_LOGO, CARD_PAD_H, ROUTES, STORAGE_KEYS } from '@/src/features/auth/authScreen/constants';
+import { getAuthScreenStyles } from '@/src/features/auth/authScreen/styles';
 import {
   mapQrFailureReason,
   normalizeEmail,
@@ -65,7 +65,7 @@ import {
   passwordScore,
   providerLabel,
   validateEmail,
-} from './authScreen/utils';
+} from '@/src/features/auth/authScreen/utils';
 
 /** ─── Module-level cache to defeat StrictMode remounts in dev ─── */
 const __authInitCache: {

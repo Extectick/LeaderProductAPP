@@ -1,7 +1,7 @@
 import React from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { ActivityIndicator, FlatList, Platform, Pressable, RefreshControl, Text, TextInput, View, useWindowDimensions } from 'react-native';
-import { UsersListItemCard } from '@/app/(main)/admin/tabs/UsersListItemCard';
+import { UsersListItemCard } from '@/src/features/admin/tabs/users/UsersListItemCard';
 import { getServiceGridMetrics } from '@/src/features/services/lib/grid';
 import type { AdminUsersListItem } from '@/utils/userService';
 import type {

@@ -1,8 +1,9 @@
 import type { OnecLpAppRoutePoint } from '@/utils/onecLpAppService';
+import { Ionicons } from '@expo/vector-icons';
 import type { RouteDragHandleProps } from '../RoutePointSortableList';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, Platform, Pressable, TextInput, View } from 'react-native';
-import { IconButton, Surface, Text } from 'react-native-paper';
+import { Surface, Text } from 'react-native-paper';
 import { formatTimeRange, routePointAddress } from '../lib/formatters';
 import AnimatedPressable from './AnimatedPressable';
 import { itemStyles } from './itemStyles';
@@ -86,9 +87,11 @@ export default function RoutePointListItem({
           ...(dragHandleProps?.listeners ?? {}),
         } as any)
       : {};
+  const nativeDragHandleProps = Platform.OS !== 'web' && editing && showDragHandle
+    ? (dragHandleProps?.listeners ?? {})
+    : null;
 
-  return (
-    <AnimatedPressable onPress={onPress} hoverScale={1.008} pressScale={0.993} webTitle={fullAddress}>
+  const content = (
       <Surface
         style={[
           itemStyles.listItem,
@@ -154,7 +157,11 @@ export default function RoutePointListItem({
               </Text>
             )}
           </Pressable>
-          <View style={itemStyles.pointTextWrap}>
+          <Pressable
+            onPress={onPress}
+            style={itemStyles.pointTextWrap}
+            {...(Platform.OS === 'web' ? ({ title: fullAddress } as any) : {})}
+          >
             <Text
               numberOfLines={2}
               variant="bodyMedium"
@@ -170,50 +177,69 @@ export default function RoutePointListItem({
             >
               {point.zone || 'Зона не указана'}
             </Text>
-          </View>
+          </Pressable>
           {showDragHandle ? (
-            <Animated.View style={[itemStyles.routeDragHandleWrap, { transform: [{ scale: dragHandleScale }] }]}>
-              <Pressable
-                {...dragHandlePressableProps}
-                disabled={saving}
-                onHoverIn={() => {
-                  setDragHandleHovered(true);
-                  animateDragHandle(1.08);
-                }}
-                onHoverOut={() => {
-                  setDragHandleHovered(false);
-                  setDragHandlePressed(false);
-                  animateDragHandle(1);
-                }}
-                onPressIn={() => {
-                  setDragHandlePressed(true);
-                  animateDragHandle(0.94);
-                }}
-                onPressOut={() => {
-                  setDragHandlePressed(false);
-                  animateDragHandle(dragHandleHovered ? 1.08 : 1);
-                }}
-                style={[
-                  itemStyles.routeDragHandle,
-                  dragHandleHovered && itemStyles.routeDragHandleHovered,
-                  dragHandlePressed && itemStyles.routeDragHandlePressed,
-                  saving && itemStyles.routeDragHandleDisabled,
-                  Platform.OS === 'web' ? ({ touchAction: 'none' } as any) : null,
-                ]}
-                accessibilityLabel="Перетащить точку маршрута"
-              >
-                <IconButton
-                  icon="drag"
-                  size={22}
+            <Animated.View
+              style={[itemStyles.routeDragHandleWrap, { transform: [{ scale: dragHandleScale }] }]}
+            >
+              {Platform.OS === 'web' ? (
+                <Pressable
+                  {...dragHandlePressableProps}
                   disabled={saving}
-                  iconColor={dragHandleHovered || dragHandlePressed ? '#1D4ED8' : '#64748B'}
-                  style={itemStyles.routeDragIcon}
-                />
-              </Pressable>
+                  onHoverIn={() => {
+                    setDragHandleHovered(true);
+                    animateDragHandle(1.08);
+                  }}
+                  onHoverOut={() => {
+                    setDragHandleHovered(false);
+                    setDragHandlePressed(false);
+                    animateDragHandle(1);
+                  }}
+                  onPressIn={() => {
+                    setDragHandlePressed(true);
+                    animateDragHandle(0.94);
+                  }}
+                  onPressOut={() => {
+                    setDragHandlePressed(false);
+                    animateDragHandle(dragHandleHovered ? 1.08 : 1);
+                  }}
+                  style={[
+                    itemStyles.routeDragHandle,
+                    dragHandleHovered && itemStyles.routeDragHandleHovered,
+                    dragHandlePressed && itemStyles.routeDragHandlePressed,
+                    saving && itemStyles.routeDragHandleDisabled,
+                    { touchAction: 'none' } as any,
+                  ]}
+                  accessibilityLabel="Перетащить точку маршрута"
+                >
+                  <Ionicons
+                    name="swap-vertical"
+                    size={20}
+                    color={dragHandleHovered || dragHandlePressed ? '#1D4ED8' : '#64748B'}
+                  />
+                </Pressable>
+              ) : (
+                <Pressable
+                  {...(nativeDragHandleProps ?? {})}
+                  disabled={saving}
+                  style={({ pressed }) => [
+                    itemStyles.routeDragHandle,
+                    (pressed || dragHandleProps?.isDragging) && itemStyles.routeDragHandlePressed,
+                    saving && itemStyles.routeDragHandleDisabled,
+                  ]}
+                  accessibilityLabel="Перетащить точку маршрута"
+                >
+                  <Ionicons
+                    name="swap-vertical"
+                    size={20}
+                    color={dragHandleProps?.isDragging ? '#1D4ED8' : '#64748B'}
+                  />
+                </Pressable>
+              )}
             </Animated.View>
           ) : null}
         </View>
-        <View style={[itemStyles.pointMetaRow, compact && itemStyles.pointMetaRowCompact]}>
+        <Pressable onPress={onPress} style={[itemStyles.pointMetaRow, compact && itemStyles.pointMetaRowCompact]}>
           <Text
             numberOfLines={1}
             variant="bodySmall"
@@ -228,8 +254,17 @@ export default function RoutePointListItem({
           >
             Распоряжений: {point.orders?.length ?? 0}
           </Text>
-        </View>
+        </Pressable>
       </Surface>
+  );
+
+  if (showDragHandle) {
+    return <View style={{ width: '100%', paddingHorizontal: 4 }}>{content}</View>;
+  }
+
+  return (
+    <AnimatedPressable onPress={onPress} hoverScale={1.008} pressScale={0.993} webTitle={fullAddress}>
+      {content}
     </AnimatedPressable>
   );
 }

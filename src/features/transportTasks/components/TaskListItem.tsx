@@ -11,7 +11,7 @@ type Props = {
   onPress: () => void;
 };
 
-export default function TaskListItem({ task, onPress }: Props) {
+function TaskListItem({ task, onPress }: Props) {
   const tone = statusTone(task.status);
 
   return (
@@ -47,3 +47,5 @@ export default function TaskListItem({ task, onPress }: Props) {
     </AnimatedPressable>
   );
 }
+
+export default React.memo(TaskListItem);

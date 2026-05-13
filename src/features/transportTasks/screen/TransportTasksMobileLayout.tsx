@@ -1,15 +1,25 @@
 import type { OnecLpAppRoutePoint, OnecLpAppTransportTask } from '@/utils/onecLpAppService';
-import { useTabBarVisibility } from '@/components/Navigation/TabBarVisibilityContext';
+import {
+  FLOATING_TAB_BAR_BOTTOM_OFFSET,
+  FLOATING_TAB_BAR_HEIGHT,
+} from '@/components/Navigation/FloatingTabBar';
 import { useNavigation } from 'expo-router';
 import type { TransportTaskCoordinatePoint, TransportTaskDeparturePoint } from '../types';
-import React, { useEffect, useRef, useState } from 'react';
-import { View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { View, useWindowDimensions } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import TransportTasksMobileSheet from '../mobile/TransportTasksMobileSheet';
+import {
+  MOBILE_SHEET_MAX_WIDTH,
+  MOBILE_SHEET_SIDE_INSET,
+} from '../mobile/mobileSheet.constants';
 import TransportRouteMap from '../TransportRouteMap';
+import DepartureMapSelectionPanel from './DepartureMapSelectionPanel';
 import { styles } from './styles';
 
 type Props = {
   tint: string;
+  topInset: number;
   selectedTask: OnecLpAppTransportTask | null;
   selectedRoutePointIndex: number | null;
   error: string | null;
@@ -51,6 +61,7 @@ type Props = {
 
 export default function TransportTasksMobileLayout({
   tint,
+  topInset,
   selectedTask,
   selectedRoutePointIndex,
   error,
@@ -90,12 +101,21 @@ export default function TransportTasksMobileLayout({
   onCancelDepartureMapSelection,
 }: Props) {
   const navigation = useNavigation<any>();
-  const { setHidden: setTabBarHidden } = useTabBarVisibility();
+  const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const [bottomSheetExpanded, setBottomSheetExpanded] = useState(false);
   const [collapseRequestId, setCollapseRequestId] = useState(0);
   const [focusSelectedCounter, setFocusSelectedCounter] = useState(0);
-  const [positionNumberEditing, setPositionNumberEditing] = useState(false);
   const lastFocusDepartureCounterRef = useRef(focusDepartureCounter);
+  const shellWidth = Math.min(MOBILE_SHEET_MAX_WIDTH, Math.max(280, width - MOBILE_SHEET_SIDE_INSET * 2));
+  const mapSelectionPanelStyle = useMemo(
+    () => ({
+      bottom: FLOATING_TAB_BAR_HEIGHT + FLOATING_TAB_BAR_BOTTOM_OFFSET + insets.bottom + 8,
+      width: shellWidth,
+      left: (width - shellWidth) / 2,
+    }),
+    [insets.bottom, shellWidth, width]
+  );
 
   const handleSelectRoutePointIndex = (index: number | null) => {
     onSelectRoutePointIndex(index);
@@ -120,9 +140,10 @@ export default function TransportTasksMobileLayout({
   }, [bottomSheetExpanded, navigation]);
 
   useEffect(() => {
-    setTabBarHidden(positionNumberEditing);
-    return () => setTabBarHidden(false);
-  }, [positionNumberEditing, setTabBarHidden]);
+    if (!departureMapSelectionMode) return;
+    setBottomSheetExpanded(false);
+    setCollapseRequestId((current) => current + 1);
+  }, [departureMapSelectionMode]);
 
   return (
     <View style={styles.mobileFullMapRoot}>
@@ -152,50 +173,58 @@ export default function TransportTasksMobileLayout({
       </View>
       <View pointerEvents="none" style={styles.mobileFullMapTint} />
 
-      <TransportTasksMobileSheet
-        tint={tint}
-        onExpandedChange={setBottomSheetExpanded}
-        collapseRequestId={collapseRequestId}
-        onPositionEditFocusChange={setPositionNumberEditing}
-        positionNumberEditing={positionNumberEditing}
-        selectedTask={selectedTask}
-        selectedRoutePointIndex={selectedRoutePointIndex}
-        error={error}
-        tasksLoading={tasksLoading}
-        tasksLoadingMore={tasksLoadingMore}
-        taskDetailLoading={taskDetailLoading}
-        tasks={tasks}
-        tasksHasMore={tasksHasMore}
-        taskStatusFilter={taskStatusFilter}
-        routeOrderEditing={routeOrderEditing}
-        routeOrderEditable={routeOrderEditable}
-        routeOrderSaving={routeOrderSaving}
-        toLoadingSaving={toLoadingSaving}
-        routeForView={routeForView}
-        hasRouteOrderChanges={hasRouteOrderChanges}
-        canSubmitToLoading={canSubmitToLoading}
-        focusDepartureCounter={focusDepartureCounter}
-        departureSettingsSaving={departureSettingsSaving}
-        departurePoint={departurePoint}
-        departureMapSelectionMode={departureMapSelectionMode}
-        draftDepartureMapPoint={draftDepartureMapPoint}
-        onBack={onBack}
-        onOpenDepartureSelection={onOpenDepartureSelection}
-        onSaveRouteOrder={onSaveRouteOrder}
-        onOpenToLoadingConfirm={onOpenToLoadingConfirm}
-        onOptimizeRouteOrder={onOptimizeRouteOrder}
-        onRefreshTasks={onRefreshTasks}
-        onTaskStatusFilterChange={onTaskStatusFilterChange}
-        onOpenTask={onOpenTask}
-        onLoadMoreTasks={onLoadMoreTasks}
-        onSelectRoutePointIndex={handleSelectRoutePointIndex}
-        onMoveRoutePoint={onMoveRoutePoint}
-        onMoveRoutePointToPosition={onMoveRoutePointToPosition}
-        onFocusDepartureOnMap={onFocusDepartureOnMap}
-        onHandleDepartureMapPick={onHandleDepartureMapPick}
-        onSaveManualDeparturePoint={onSaveManualDeparturePoint}
-        onCancelDepartureMapSelection={onCancelDepartureMapSelection}
-      />
+      {departureMapSelectionMode ? (
+        <View style={[styles.mobileMapSelectionOverlay, mapSelectionPanelStyle]}>
+          <DepartureMapSelectionPanel
+            draftDepartureMapPoint={draftDepartureMapPoint}
+            departureSettingsSaving={departureSettingsSaving}
+            onSave={onSaveManualDeparturePoint}
+            onCancel={onCancelDepartureMapSelection}
+          />
+        </View>
+      ) : (
+        <TransportTasksMobileSheet
+          tint={tint}
+          topInset={topInset}
+          onExpandedChange={setBottomSheetExpanded}
+          collapseRequestId={collapseRequestId}
+          selectedTask={selectedTask}
+          selectedRoutePointIndex={selectedRoutePointIndex}
+          error={error}
+          tasksLoading={tasksLoading}
+          tasksLoadingMore={tasksLoadingMore}
+          taskDetailLoading={taskDetailLoading}
+          tasks={tasks}
+          tasksHasMore={tasksHasMore}
+          taskStatusFilter={taskStatusFilter}
+          routeOrderEditing={routeOrderEditing}
+          routeOrderEditable={routeOrderEditable}
+          routeOrderSaving={routeOrderSaving}
+          toLoadingSaving={toLoadingSaving}
+          routeForView={routeForView}
+          hasRouteOrderChanges={hasRouteOrderChanges}
+          canSubmitToLoading={canSubmitToLoading}
+          departureSettingsSaving={departureSettingsSaving}
+          departurePoint={departurePoint}
+          departureMapSelectionMode={departureMapSelectionMode}
+          draftDepartureMapPoint={draftDepartureMapPoint}
+          onBack={onBack}
+          onOpenDepartureSelection={onOpenDepartureSelection}
+          onSaveRouteOrder={onSaveRouteOrder}
+          onOpenToLoadingConfirm={onOpenToLoadingConfirm}
+          onOptimizeRouteOrder={onOptimizeRouteOrder}
+          onRefreshTasks={onRefreshTasks}
+          onTaskStatusFilterChange={onTaskStatusFilterChange}
+          onOpenTask={onOpenTask}
+          onLoadMoreTasks={onLoadMoreTasks}
+          onSelectRoutePointIndex={handleSelectRoutePointIndex}
+          onMoveRoutePoint={onMoveRoutePoint}
+          onMoveRoutePointToPosition={onMoveRoutePointToPosition}
+          onFocusDepartureOnMap={onFocusDepartureOnMap}
+          onSaveManualDeparturePoint={onSaveManualDeparturePoint}
+          onCancelDepartureMapSelection={onCancelDepartureMapSelection}
+        />
+      )}
     </View>
   );
 }

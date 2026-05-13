@@ -67,6 +67,14 @@ export const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#0F172A',
   },
+  nativeOverlayHeader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 20,
+    elevation: 20,
+  },
   mobileFullMapLayer: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 1,
@@ -75,6 +83,11 @@ export const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     zIndex: 2,
     backgroundColor: 'rgba(15, 23, 42, 0.05)',
+  },
+  mobileMapSelectionOverlay: {
+    position: 'absolute',
+    zIndex: 5,
+    elevation: 14,
   },
   mobileBottomOverlayWrap: {
     position: 'absolute',

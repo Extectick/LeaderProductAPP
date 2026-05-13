@@ -94,7 +94,7 @@ export function NotificationHost({ children }: Props) {
             toValue: -18,
             duration: 220,
             easing: Easing.in(Easing.cubic),
-            useNativeDriver: false,
+            useNativeDriver: true,
           }),
         ]).start(() => {
           markNotificationClosed(id);
@@ -186,7 +186,7 @@ export function NotificationHost({ children }: Props) {
                 }
                 Animated.spring(item.dragY, {
                   toValue: 0,
-                  useNativeDriver: false,
+                  useNativeDriver: true,
                   damping: 18,
                   stiffness: 220,
                 }).start();
@@ -337,4 +337,3 @@ const styles = StyleSheet.create({
     opacity: 0.72,
   },
 });
-

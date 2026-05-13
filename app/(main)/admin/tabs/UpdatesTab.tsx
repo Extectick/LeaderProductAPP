@@ -25,9 +25,9 @@ import {
 
 import { AdminStyles } from '@/components/admin/adminStyles';
 import { useTabBarSpacerHeight } from '@/components/Navigation/TabBarSpacer';
-import { UPDATES_HELP_TEXT } from './updatesTab.help';
-import { useUpdatesData } from './useUpdatesData';
-import { useUpdatesActions } from './useUpdatesActions';
+import { UPDATES_HELP_TEXT } from '@/src/features/admin/tabs/updates/updatesTab.help';
+import { useUpdatesData } from '@/src/features/admin/tabs/updates/useUpdatesData';
+import { useUpdatesActions } from '@/src/features/admin/tabs/updates/useUpdatesActions';
 
 type UpdatesTabProps = {
   active: boolean;

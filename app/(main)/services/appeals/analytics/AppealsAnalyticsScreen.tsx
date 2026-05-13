@@ -29,13 +29,13 @@ import {
   AppealStatus,
   UserMini,
 } from '@/src/entities/appeal/types';
-import { createUsersTabStyles } from '@/app/(main)/admin/tabs/usersTab.styles';
+import { createUsersTabStyles } from '@/src/features/admin/tabs/users/usersTab.styles';
 import type { AdminUsersListItem } from '@/utils/userService';
-import { AnalyticsToolbar } from './components/AnalyticsToolbar';
-import { AppealsTableSection } from './components/AppealsTableSection';
-import { UsersAnalyticsSection } from './components/UsersAnalyticsSection';
-import { AppealActionModals } from './components/AppealActionModals';
-import { analyticsStyles as styles } from './styles';
+import { AnalyticsToolbar } from '@/src/features/appeals/analytics/components/AnalyticsToolbar';
+import { AppealsTableSection } from '@/src/features/appeals/analytics/components/AppealsTableSection';
+import { UsersAnalyticsSection } from '@/src/features/appeals/analytics/components/UsersAnalyticsSection';
+import { AppealActionModals } from '@/src/features/appeals/analytics/components/AppealActionModals';
+import { analyticsStyles as styles } from '@/src/features/appeals/analytics/styles';
 import {
   APPEALS_ANALYTICS_ALL_COLUMNS,
   APPEALS_ANALYTICS_LOCKED_COLUMNS,
@@ -46,8 +46,8 @@ import {
   type PeriodPreset,
   type TabKey,
   type TableColumnKey,
-} from './types';
-import { blobToBase64, buildAppealActionMenuItems, hydrateLaborDraftState, toDraftNumericString } from './helpers';
+} from '@/src/features/appeals/analytics/types';
+import { blobToBase64, buildAppealActionMenuItems, hydrateLaborDraftState, toDraftNumericString } from '@/src/features/appeals/analytics/helpers';
 
 const PAGE_SIZE = 20;
 const ANALYTICS_FILTERS_STORAGE_KEY = 'appeals_analytics_filters_v1';

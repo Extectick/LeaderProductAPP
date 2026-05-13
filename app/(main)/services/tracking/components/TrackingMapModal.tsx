@@ -1,7 +1,7 @@
 import React from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import type { RoutePointDto } from '@/utils/trackingService';
-import { trackingStyles as styles } from '../styles';
+import { trackingStyles as styles } from '@/src/features/tracking/styles';
 import TrackingModalShell from './TrackingModalShell';
 import TrackingPointsList from './TrackingPointsList';
 

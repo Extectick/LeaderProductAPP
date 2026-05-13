@@ -1,7 +1,7 @@
 import React from 'react';
 import { ActivityIndicator, Text, View } from 'react-native';
 import type { RoutePointDto } from '@/utils/trackingService';
-import { trackingStyles as styles } from '../styles';
+import { trackingStyles as styles } from '@/src/features/tracking/styles';
 import TrackingPointsList from './TrackingPointsList';
 
 type Props = {

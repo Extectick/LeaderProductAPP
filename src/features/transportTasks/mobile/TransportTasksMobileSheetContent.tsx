@@ -73,8 +73,6 @@ export default function TransportTasksMobileSheetContent({
   const selectedTaskNotice = transportTaskStatusNotice(selectedTask?.status);
   const [toolbarBlockHeight, setToolbarBlockHeight] = React.useState(0);
   const [activePositionEditingIndex, setActivePositionEditingIndex] = React.useState<number | null>(null);
-  const scrollRef = React.useRef<ScrollView | null>(null);
-  const routePointOffsetsRef = React.useRef<Record<number, number>>({});
 
   const handleScroll = React.useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -95,18 +93,9 @@ export default function TransportTasksMobileSheetContent({
     setToolbarBlockHeight((current) => (current === nextHeight ? current : nextHeight));
   }, []);
 
-  const handleRoutePointLayout = React.useCallback((index: number, event: LayoutChangeEvent) => {
-    routePointOffsetsRef.current[index] = event.nativeEvent.layout.y;
-  }, []);
-
   const handlePositionEditFocus = React.useCallback((index: number) => {
     setActivePositionEditingIndex(index);
     onPositionEditFocusChange?.(true);
-    const targetY = Math.max(0, (routePointOffsetsRef.current[index] ?? 0) - 12);
-    const scroll = () => scrollRef.current?.scrollTo({ y: targetY, animated: true });
-    scroll();
-    setTimeout(scroll, 120);
-    setTimeout(scroll, 280);
   }, [onPositionEditFocusChange]);
 
   const handlePositionEditBlur = React.useCallback(() => {
@@ -116,35 +105,35 @@ export default function TransportTasksMobileSheetContent({
 
   return (
     <View style={styles.contentRoot}>
-      {activePositionEditingIndex === null ? (
-        <View style={styles.toolbarSection} onLayout={handleToolbarLayout}>
-          <TransportTasksMobileSheetToolbar
-            selectedTask={selectedTask}
-            routeCount={routeForView.length}
-            hasRouteOrderChanges={hasRouteOrderChanges}
-            routeOrderEditable={routeOrderEditable}
-            routeOrderSaving={routeOrderSaving}
-            toLoadingSaving={toLoadingSaving}
-            canSubmitToLoading={canSubmitToLoading}
-            tasksLoading={tasksLoading}
-            departurePoint={departurePoint}
-            taskStatusFilter={taskStatusFilter}
-            onBack={onBack}
-            onSaveRouteOrder={onSaveRouteOrder}
-            onOpenToLoadingConfirm={onOpenToLoadingConfirm}
-            onOptimizeRouteOrder={onOptimizeRouteOrder}
-            onRefreshTasks={onRefreshTasks}
-            onTaskStatusFilterChange={onTaskStatusFilterChange}
-            compact
-          />
-          <View style={styles.divider} />
-        </View>
-      ) : null}
+      <View style={styles.toolbarSection} onLayout={handleToolbarLayout}>
+        <TransportTasksMobileSheetToolbar
+          selectedTask={selectedTask}
+          routeCount={routeForView.length}
+          hasRouteOrderChanges={hasRouteOrderChanges}
+          routeOrderEditable={routeOrderEditable}
+          routeOrderSaving={routeOrderSaving}
+          toLoadingSaving={toLoadingSaving}
+          canSubmitToLoading={canSubmitToLoading}
+          tasksLoading={tasksLoading}
+          departurePoint={departurePoint}
+          taskStatusFilter={taskStatusFilter}
+          onBack={onBack}
+          onSaveRouteOrder={onSaveRouteOrder}
+          onOpenToLoadingConfirm={onOpenToLoadingConfirm}
+          onOptimizeRouteOrder={onOptimizeRouteOrder}
+          onRefreshTasks={onRefreshTasks}
+          onTaskStatusFilterChange={onTaskStatusFilterChange}
+          compact
+        />
+        <View style={styles.divider} />
+      </View>
 
       <ScrollView
-        ref={scrollRef}
         style={[styles.scroll, mobileWebScrollStyle]}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[
+          styles.scrollContent,
+          activePositionEditingIndex !== null ? { paddingBottom: 96 } : null,
+        ]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         scrollEnabled={expanded}
@@ -189,13 +178,12 @@ export default function TransportTasksMobileSheetContent({
               onSaveManualDeparturePoint={onSaveManualDeparturePoint}
               onCancelDepartureMapSelection={onCancelDepartureMapSelection}
               onAfterSelectPoint={onAfterSelectPoint}
-              onRoutePointLayout={handleRoutePointLayout}
               onPositionEditFocus={handlePositionEditFocus}
               onPositionEditBlur={handlePositionEditBlur}
               activePositionEditingIndex={activePositionEditingIndex}
             />
           </>
-        ) : tasksLoading ? (
+        ) : tasksLoading && !tasks.length ? (
           <View style={{ alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 24 }}>
             <ActivityIndicator color={tint} />
             <Text style={{ color: '#64748B' }}>Загружаем задания</Text>

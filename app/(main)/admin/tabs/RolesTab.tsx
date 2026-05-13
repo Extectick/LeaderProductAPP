@@ -22,8 +22,8 @@ import {
 import { getRoleDisplayName } from '@/utils/rbacLabels';
 import { AdminStyles } from '@/components/admin/adminStyles';
 import { useTabBarSpacerHeight } from '@/components/Navigation/TabBarSpacer';
-import { useRolesData } from './useRolesData';
-import { useRolesActions } from './useRolesActions';
+import { useRolesData } from '@/src/features/admin/tabs/roles/useRolesData';
+import { useRolesActions } from '@/src/features/admin/tabs/roles/useRolesActions';
 
 type RolesTabProps = {
   active: boolean;

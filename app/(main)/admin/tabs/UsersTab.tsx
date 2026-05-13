@@ -29,14 +29,14 @@ import {
   nameOf,
   needsModeration,
   onlineFilters,
-} from './usersTab.helpers';
-import { useUsersActions, type UsersEditorState } from './useUsersActions';
-import { createUsersTabStyles } from './usersTab.styles';
-import { useUsersData } from './useUsersData';
-import { UsersListItemCard } from './UsersListItemCard';
-import { UsersEditorModal } from './UsersEditorModal';
-import { UsersRejectReasonModal } from './UsersRejectReasonModal';
-import { UsersModerationActions } from './UsersModerationActions';
+} from '@/src/features/admin/tabs/users/usersTab.helpers';
+import { useUsersActions, type UsersEditorState } from '@/src/features/admin/tabs/users/useUsersActions';
+import { createUsersTabStyles } from '@/src/features/admin/tabs/users/usersTab.styles';
+import { useUsersData } from '@/src/features/admin/tabs/users/useUsersData';
+import { UsersListItemCard } from '@/src/features/admin/tabs/users/UsersListItemCard';
+import { UsersEditorModal } from '@/src/features/admin/tabs/users/UsersEditorModal';
+import { UsersRejectReasonModal } from '@/src/features/admin/tabs/users/UsersRejectReasonModal';
+import { UsersModerationActions } from '@/src/features/admin/tabs/users/UsersModerationActions';
 
 type Props = {
   active: boolean;

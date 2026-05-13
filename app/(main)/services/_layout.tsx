@@ -8,7 +8,7 @@ import { useServicesData } from '@/src/features/services/hooks/useServicesData';
 import { useServerStatus } from '@/src/shared/network/useServerStatus';
 import { useOptionalLastServiceRoute } from '@/src/features/navigation/LastServiceRouteContext';
 import { useOptionalUnsavedChanges } from '@/src/features/navigation/UnsavedChangesContext';
-import { ServicesHeaderSlotProvider } from './headerSlotContext';
+import { ServicesHeaderSlotProvider } from '@/src/features/services/headerSlotContext';
 
 type HeaderMeta = {
   title: string;

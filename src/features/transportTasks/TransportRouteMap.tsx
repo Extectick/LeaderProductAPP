@@ -376,9 +376,21 @@ function buildHtml(
               if (!markerElement || !markerNumberElement || markerElement.dataset.routeEditBound === 'true') return;
               markerElement.dataset.routeEditBound = 'true';
 
-              markerNumberElement.addEventListener('click', (event) => {
-                event.preventDefault();
+              const stopMarkerEvent = (event, preventDefault = true) => {
+                if (preventDefault && event.cancelable) {
+                  event.preventDefault();
+                }
                 event.stopPropagation();
+                if (window.L && L.DomEvent) L.DomEvent.stop(event);
+              };
+
+              markerNumberElement.addEventListener('pointerdown', stopMarkerEvent);
+              markerNumberElement.addEventListener('touchstart', (event) => stopMarkerEvent(event, false));
+              markerNumberElement.addEventListener('mousedown', stopMarkerEvent);
+              markerNumberElement.addEventListener('mouseup', stopMarkerEvent);
+              markerNumberElement.addEventListener('dblclick', stopMarkerEvent);
+              const beginMarkerEditing = (event) => {
+                stopMarkerEvent(event);
                 if (activeEditorCleanup) activeEditorCleanup();
 
                 let finalized = false;
@@ -429,12 +441,14 @@ function buildHtml(
                 input.addEventListener('blur', onBlur, { once: true });
                 input.addEventListener('keydown', onKeyDown);
                 input.addEventListener('click', stopPropagation);
+                input.addEventListener('touchstart', stopPropagation);
                 input.addEventListener('mousedown', stopPropagation);
                 input.addEventListener('mouseup', stopPropagation);
 
                 activeEditorCleanup = () => {
                   input.removeEventListener('keydown', onKeyDown);
                   input.removeEventListener('click', stopPropagation);
+                  input.removeEventListener('touchstart', stopPropagation);
                   input.removeEventListener('mousedown', stopPropagation);
                   input.removeEventListener('mouseup', stopPropagation);
                   const nextElement = marker.getElement();
@@ -445,6 +459,19 @@ function buildHtml(
                   }
                   activeEditorCleanup = null;
                 };
+              };
+
+              markerNumberElement.addEventListener('touchend', (event) => {
+                markerElement.dataset.routeTouchEditAt = String(Date.now());
+                beginMarkerEditing(event);
+              });
+              markerNumberElement.addEventListener('click', (event) => {
+                const lastTouchEditAt = Number(markerElement.dataset.routeTouchEditAt || 0);
+                if (lastTouchEditAt && Date.now() - lastTouchEditAt < 450) {
+                  stopMarkerEvent(event);
+                  return;
+                }
+                beginMarkerEditing(event);
               });
             };
 

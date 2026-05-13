@@ -5,7 +5,7 @@ import MaxMessengerSignLogo from '@/assets/icons/max-messenger-sign-logo.svg';
 /** Горизонтальный паддинг карточки (должен совпадать с styles.card.padding). */
 export const CARD_PAD_H = Platform.OS === 'web' ? 20 : 22;
 
-export const APP_LOGO = require('../../../assets/images/icon.png');
+export const APP_LOGO = require('@/assets/images/icon.png');
 export { MaxMessengerSignLogo };
 
 export const STORAGE_KEYS = {

@@ -1,7 +1,7 @@
 import React from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import type { RoutePointDto } from '@/utils/trackingService';
-import { trackingStyles as styles } from '../styles';
+import { trackingStyles as styles } from '@/src/features/tracking/styles';
 
 type Props = {
   points: RoutePointDto[];

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Text, View } from 'react-native';
-import { trackingStyles as styles } from '../styles';
+import { trackingStyles as styles } from '@/src/features/tracking/styles';
 
 type Props = {
   userLabel: string;

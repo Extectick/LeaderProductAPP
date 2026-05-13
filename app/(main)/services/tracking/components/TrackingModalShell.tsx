@@ -11,7 +11,7 @@ import {
   View,
   ViewStyle,
 } from 'react-native';
-import { trackingStyles as styles } from '../styles';
+import { trackingStyles as styles } from '@/src/features/tracking/styles';
 
 type ModalVariant = 'default' | 'fullscreen';
 

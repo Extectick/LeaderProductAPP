@@ -4,9 +4,9 @@ import { getRoleDisplayName } from '@/utils/rbacLabels';
 import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
 import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import type { UserOption } from '../types';
-import { humanName } from '../helpers';
-import { trackingStyles as styles } from '../styles';
+import type { UserOption } from '@/src/features/tracking/types';
+import { humanName } from '@/src/features/tracking/helpers';
+import { trackingStyles as styles } from '@/src/features/tracking/styles';
 import TrackingModalShell from './TrackingModalShell';
 
 type Props = {

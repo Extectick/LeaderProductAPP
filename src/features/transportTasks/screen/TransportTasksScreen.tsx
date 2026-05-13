@@ -1,8 +1,11 @@
+import { AppHeader } from '@/components/AppHeader';
 import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 import { useNotificationViewport } from '@/context/NotificationViewportContext';
+import { useOptionalUnsavedChanges } from '@/src/features/navigation/UnsavedChangesContext';
 import { useThemeColor } from '@/hooks/useThemeColor';
-import React, { useMemo } from 'react';
-import { Platform, View, useWindowDimensions } from 'react-native';
+import { useNavigation, useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useMemo } from 'react';
+import { BackHandler, Platform, View, useWindowDimensions } from 'react-native';
 import { ActivityIndicator, Portal, Snackbar, Text } from 'react-native-paper';
 import useTransportTasksScreen from '../hooks/useTransportTasksScreen';
 import DepartureSelectionDialog from './DepartureSelectionDialog';
@@ -16,6 +19,9 @@ const WEB_DESKTOP_BREAKPOINT = 1024;
 
 export default function TransportTasksScreen() {
   const controller = useTransportTasksScreen();
+  const navigation = useNavigation<any>();
+  const router = useRouter();
+  const unsavedChanges = useOptionalUnsavedChanges();
   const { width } = useWindowDimensions();
   const topInset = useHeaderContentTopInset();
   const { headerBottomOffset } = useNotificationViewport();
@@ -23,7 +29,54 @@ export default function TransportTasksScreen() {
   const tint = useThemeColor({}, 'tint');
 
   const isDesktop = Platform.OS === 'web' && width >= WEB_DESKTOP_BREAKPOINT;
+  const useNativeOverlayHeader = Platform.OS !== 'web' && !isDesktop;
   const desktopListPaneTop = useMemo(() => Math.max(headerBottomOffset + 4, 92), [headerBottomOffset]);
+  const mobileSheetTopInset = useMemo(
+    () => (useNativeOverlayHeader ? Math.max(headerBottomOffset + 4, topInset) : topInset),
+    [headerBottomOffset, topInset, useNativeOverlayHeader]
+  );
+  const handleHeaderBack = useCallback(() => {
+    const navigateBack = () => router.replace('/services');
+    if (unsavedChanges) {
+      unsavedChanges.confirmNavigation(navigateBack);
+      return;
+    }
+    navigateBack();
+  }, [router, unsavedChanges]);
+
+  useEffect(() => {
+    navigation.setOptions?.({ headerShown: !useNativeOverlayHeader });
+    return () => {
+      navigation.setOptions?.({ headerShown: true });
+    };
+  }, [navigation, useNativeOverlayHeader]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (controller.departureMapSelectionMode) {
+        controller.cancelDepartureMapSelection();
+        return true;
+      }
+
+      if (controller.selectedTask) {
+        controller.closeSelectedTask();
+        return true;
+      }
+
+      handleHeaderBack();
+      return true;
+    });
+
+    return () => subscription.remove();
+  }, [
+    controller.cancelDepartureMapSelection,
+    controller.closeSelectedTask,
+    controller.departureMapSelectionMode,
+    controller.selectedTask,
+    handleHeaderBack,
+  ]);
 
   if (controller.profileLoading && !controller.profile) {
     return (
@@ -49,6 +102,18 @@ export default function TransportTasksScreen() {
 
   return (
     <View style={[styles.root, { backgroundColor: background }]}>
+      {useNativeOverlayHeader ? (
+        <View style={styles.nativeOverlayHeader} pointerEvents="box-none">
+          <AppHeader
+            title="Задания на перевозку"
+            subtitle="Привязка к 1С"
+            icon="map-outline"
+            showBack
+            onBack={handleHeaderBack}
+            tight
+          />
+        </View>
+      ) : null}
       {isDesktop ? (
         <TransportTasksDesktopLayout
           desktopListPaneTop={desktopListPaneTop}
@@ -95,6 +160,7 @@ export default function TransportTasksScreen() {
       ) : (
         <TransportTasksMobileLayout
           tint={tint}
+          topInset={mobileSheetTopInset}
           selectedTask={controller.selectedTask}
           selectedRoutePointIndex={controller.selectedRoutePointIndex}
           error={controller.error}

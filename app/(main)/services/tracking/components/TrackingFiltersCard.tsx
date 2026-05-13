@@ -1,8 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
 import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
-import type { DateField, Filters } from '../types';
-import { trackingStyles as styles } from '../styles';
+import type { DateField, Filters } from '@/src/features/tracking/types';
+import { trackingStyles as styles } from '@/src/features/tracking/styles';
 
 type Props = {
   filters: Filters;

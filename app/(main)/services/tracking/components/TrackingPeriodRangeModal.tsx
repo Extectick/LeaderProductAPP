@@ -1,8 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
 import { Pressable, Text, View } from 'react-native';
-import { buildMonthGrid, endOfDay, formatDateOnly, startOfDay } from '../helpers';
-import { trackingStyles as styles } from '../styles';
+import { buildMonthGrid, endOfDay, formatDateOnly, startOfDay } from '@/src/features/tracking/helpers';
+import { trackingStyles as styles } from '@/src/features/tracking/styles';
 import TrackingModalShell from './TrackingModalShell';
 
 const WEEK_DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];

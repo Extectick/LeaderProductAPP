@@ -2,8 +2,8 @@ import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import React from 'react';
 import { Platform, Pressable, Text, TextInput, View } from 'react-native';
-import { formatDateOnly } from '../helpers';
-import { trackingStyles as styles } from '../styles';
+import { formatDateOnly } from '@/src/features/tracking/helpers';
+import { trackingStyles as styles } from '@/src/features/tracking/styles';
 import TrackingModalShell from './TrackingModalShell';
 
 type Props = {

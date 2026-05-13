@@ -8,8 +8,8 @@ import {
   formatDateTime,
   humanName,
   parseLimitValue,
-} from './helpers';
-import type { Filters, PointLabel, UserOption } from './types';
+} from '@/src/features/tracking/helpers';
+import type { Filters, PointLabel, UserOption } from '@/src/features/tracking/types';
 import { getUsers } from '@/utils/userService';
 import { fetchUserRoutesWithPoints, type RouteWithPoints } from '@/utils/trackingService';
 import { Ionicons } from '@expo/vector-icons';
@@ -28,11 +28,11 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import LeafletMap from './LeafletMap';
-import { trackingStyles as styles } from './styles';
+import { trackingStyles as styles } from '@/src/features/tracking/styles';
 import TrackingPeriodRangeModal from './components/TrackingPeriodRangeModal';
 import TrackingUserPickerModal from './components/TrackingUserPickerModal';
 import TrackingPointsIsland, { type TrackingPointRow } from './components/TrackingPointsIsland';
-import { useServicesHeaderSlot } from '../headerSlotContext';
+import { useServicesHeaderSlot } from '@/src/features/services/headerSlotContext';
 
 const defaultFilters: Filters = {
   from: '',

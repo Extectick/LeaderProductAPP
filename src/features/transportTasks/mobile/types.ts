@@ -3,6 +3,7 @@ import type { TransportTaskCoordinatePoint, TransportTaskDeparturePoint } from '
 
 export type TransportTasksMobileSheetProps = {
   tint: string;
+  topInset?: number;
   onExpandedChange?: (expanded: boolean) => void;
   collapseRequestId?: number;
   onPositionEditFocusChange?: (editing: boolean) => void;
@@ -23,7 +24,6 @@ export type TransportTasksMobileSheetProps = {
   routeForView: OnecLpAppRoutePoint[];
   hasRouteOrderChanges: boolean;
   canSubmitToLoading: boolean;
-  focusDepartureCounter: number;
   departureSettingsSaving: boolean;
   departurePoint: TransportTaskDeparturePoint | null;
   departureMapSelectionMode: boolean;
@@ -41,7 +41,6 @@ export type TransportTasksMobileSheetProps = {
   onMoveRoutePoint: (fromIndex: number, toIndex: number) => void;
   onMoveRoutePointToPosition: (fromIndex: number, position: number) => void;
   onFocusDepartureOnMap: () => void;
-  onHandleDepartureMapPick: (point: TransportTaskCoordinatePoint) => void;
   onSaveManualDeparturePoint: () => void;
   onCancelDepartureMapSelection: () => void;
 };

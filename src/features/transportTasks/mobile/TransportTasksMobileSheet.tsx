@@ -3,7 +3,7 @@ import {
   FLOATING_TAB_BAR_HEIGHT,
 } from '@/components/Navigation/FloatingTabBar';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, PanResponder, View, useWindowDimensions } from 'react-native';
+import { Animated, Keyboard, PanResponder, Platform, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { departurePrimaryText, routePointAddress } from '../lib/formatters';
 import TransportTasksMobileSheetContent from './TransportTasksMobileSheetContent';
@@ -22,17 +22,16 @@ import { mobileSheetStyles as styles } from './styles';
 import type { TransportTasksMobileSheetProps } from './types';
 
 export default function TransportTasksMobileSheet({
+  topInset = 0,
   onExpandedChange,
   collapseRequestId = 0,
   onPositionEditFocusChange,
-  positionNumberEditing = false,
   selectedTask,
   selectedRoutePointIndex,
   tasks,
   tasksHasMore,
   routeForView,
   departurePoint,
-  departureMapSelectionMode,
   ...rest
 }: TransportTasksMobileSheetProps) {
   const { width, height } = useWindowDimensions();
@@ -40,39 +39,53 @@ export default function TransportTasksMobileSheet({
   const [expanded, setExpanded] = useState(true);
   const [headerHeight, setHeaderHeight] = useState(MOBILE_SHEET_COLLAPSED_HEIGHT);
   const [bodyContentHeight, setBodyContentHeight] = useState(0);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const panelAnim = useRef(new Animated.Value(0)).current;
   const dragStartValueRef = useRef(0);
   const lastCollapseRequestRef = useRef(collapseRequestId);
+  const sheetPositionEditingRef = useRef(false);
 
   const collapsedHeight = MOBILE_SHEET_COLLAPSED_HEIGHT;
-  const effectiveCollapsedHeight = positionNumberEditing ? 0 : collapsedHeight;
+  const effectiveCollapsedHeight = collapsedHeight;
+  const bottomOffset = useMemo(
+    () => {
+      if (keyboardHeight > 0) return keyboardHeight + MOBILE_SHEET_BOTTOM_GAP;
+      return FLOATING_TAB_BAR_HEIGHT + FLOATING_TAB_BAR_BOTTOM_OFFSET + insets.bottom + MOBILE_SHEET_BOTTOM_GAP;
+    },
+    [insets.bottom, keyboardHeight]
+  );
   const maxExpandedHeight = useMemo(() => {
     const fromViewport = Math.round(height * MOBILE_SHEET_MAX_HEIGHT_RATIO);
-    const maxAllowed = Math.max(MOBILE_SHEET_MIN_EXPANDED_HEIGHT, height - MOBILE_SHEET_TOP_RESERVED);
+    const topReserved = Math.max(MOBILE_SHEET_TOP_RESERVED, Math.ceil(topInset) + 8);
+    const maxAllowed = Math.max(MOBILE_SHEET_MIN_EXPANDED_HEIGHT, height - bottomOffset - topReserved);
     return Math.max(MOBILE_SHEET_MIN_EXPANDED_HEIGHT, Math.min(fromViewport, maxAllowed));
-  }, [height]);
+  }, [bottomOffset, height, topInset]);
   const maxBodyExpandedHeight = useMemo(
     () => Math.max(MOBILE_SHEET_BODY_MIN_HEIGHT, maxExpandedHeight - effectiveCollapsedHeight),
     [effectiveCollapsedHeight, maxExpandedHeight]
   );
+  const isRouteListMode = Boolean(selectedTask && routeForView.length > 0);
+  const shouldPinListBodyHeight = Boolean(isRouteListMode || (!selectedTask && tasks.length > 0));
+  const shouldSkipHeightAnimation = Platform.OS !== 'web' && isRouteListMode;
   const bodyExpandedHeight = useMemo(
-    () => Math.max(1, Math.min(maxBodyExpandedHeight, Math.ceil(bodyContentHeight || maxBodyExpandedHeight))),
-    [bodyContentHeight, maxBodyExpandedHeight]
+    () =>
+      shouldPinListBodyHeight
+        ? maxBodyExpandedHeight
+        : Math.max(1, Math.min(maxBodyExpandedHeight, Math.ceil(bodyContentHeight || MOBILE_SHEET_BODY_MIN_HEIGHT))),
+    [bodyContentHeight, maxBodyExpandedHeight, shouldPinListBodyHeight]
   );
   const expandedHeight = useMemo(
-    () => Math.ceil((positionNumberEditing ? 0 : headerHeight || collapsedHeight) + bodyExpandedHeight),
-    [bodyExpandedHeight, collapsedHeight, headerHeight, positionNumberEditing]
-  );
-  const bottomOffset = useMemo(
-    () =>
-      (positionNumberEditing ? 0 : FLOATING_TAB_BAR_HEIGHT + FLOATING_TAB_BAR_BOTTOM_OFFSET) +
-      insets.bottom +
-      MOBILE_SHEET_BOTTOM_GAP,
-    [insets.bottom, positionNumberEditing]
+    () => Math.ceil((headerHeight || collapsedHeight) + bodyExpandedHeight),
+    [bodyExpandedHeight, collapsedHeight, headerHeight]
   );
   const shellWidth = Math.min(MOBILE_SHEET_MAX_WIDTH, Math.max(280, width - MOBILE_SHEET_SIDE_INSET * 2));
 
   useEffect(() => {
+    if (shouldSkipHeightAnimation) {
+      panelAnim.setValue(expanded ? 1 : 0);
+      return;
+    }
+
     Animated.spring(panelAnim, {
       toValue: expanded ? 1 : 0,
       damping: 20,
@@ -80,29 +93,42 @@ export default function TransportTasksMobileSheet({
       mass: 0.9,
       useNativeDriver: false,
     }).start();
-  }, [expanded, panelAnim]);
+  }, [expanded, panelAnim, shouldSkipHeightAnimation]);
 
   useEffect(() => {
     onExpandedChange?.(expanded);
   }, [expanded, onExpandedChange]);
 
   useEffect(() => {
-    if (departureMapSelectionMode) {
-      setExpanded(true);
-    }
-  }, [departureMapSelectionMode]);
-
-  useEffect(() => {
-    if (positionNumberEditing) {
-      setExpanded(true);
-    }
-  }, [positionNumberEditing]);
+    setBodyContentHeight(0);
+  }, [selectedTask?.guid]);
 
   useEffect(() => {
     if (collapseRequestId === lastCollapseRequestRef.current) return;
     lastCollapseRequestRef.current = collapseRequestId;
     setExpanded(false);
   }, [collapseRequestId]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    const showSub = Keyboard.addListener('keyboardDidShow', (event) => {
+      if (!sheetPositionEditingRef.current) return;
+      setKeyboardHeight(Math.max(0, event.endCoordinates?.height ?? 0));
+      setExpanded(true);
+    });
+    const hideSub = Keyboard.addListener('keyboardDidHide', () => {
+      setKeyboardHeight(0);
+    });
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  const handlePositionEditFocusChange = (editing: boolean) => {
+    sheetPositionEditingRef.current = editing;
+    onPositionEditFocusChange?.(editing);
+  };
 
   const panResponder = useMemo(
     () =>
@@ -201,17 +227,15 @@ export default function TransportTasksMobileSheet({
       ]}
     >
       <View style={styles.shell}>
-        {positionNumberEditing ? null : (
-          <TransportTasksMobileSheetHeader
-            expanded={expanded}
-            title={title}
-            meta={meta}
-            currentText={currentText}
-            onToggle={() => setExpanded((current) => !current)}
-            onHeightChange={setHeaderHeight}
-            panHandlers={panResponder.panHandlers}
-          />
-        )}
+        <TransportTasksMobileSheetHeader
+          expanded={expanded}
+          title={title}
+          meta={meta}
+          currentText={currentText}
+          onToggle={() => setExpanded((current) => !current)}
+          onHeightChange={setHeaderHeight}
+          panHandlers={panResponder.panHandlers}
+        />
         <Animated.View style={[styles.body, animatedBodyStyle]}>
           <TransportTasksMobileSheetContent
             expanded={expanded}
@@ -222,9 +246,8 @@ export default function TransportTasksMobileSheet({
             tasksHasMore={tasksHasMore}
             routeForView={routeForView}
             departurePoint={departurePoint}
-            departureMapSelectionMode={departureMapSelectionMode}
             onBodyContentHeightChange={setBodyContentHeight}
-            onPositionEditFocusChange={onPositionEditFocusChange}
+            onPositionEditFocusChange={handlePositionEditFocusChange}
             {...rest}
           />
         </Animated.View>

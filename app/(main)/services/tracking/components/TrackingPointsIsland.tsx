@@ -20,7 +20,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { RoutePointDto } from '@/utils/trackingService';
-import { trackingStyles as styles } from '../styles';
+import { trackingStyles as styles } from '@/src/features/tracking/styles';
 
 export type TrackingPointsPanelMode = 'collapsed' | 'expanded';
 
