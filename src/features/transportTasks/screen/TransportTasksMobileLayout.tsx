@@ -6,7 +6,7 @@ import {
 import { useNavigation } from 'expo-router';
 import type { TransportTaskCoordinatePoint, TransportTaskDeparturePoint } from '../types';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, useWindowDimensions } from 'react-native';
+import { BackHandler, Platform, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import TransportTasksMobileSheet from '../mobile/TransportTasksMobileSheet';
 import {
@@ -138,6 +138,18 @@ export default function TransportTasksMobileLayout({
     });
     return unsubscribe;
   }, [bottomSheetExpanded, navigation]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    if (!bottomSheetExpanded) return;
+
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      setCollapseRequestId((current) => current + 1);
+      return true;
+    });
+
+    return () => subscription.remove();
+  }, [bottomSheetExpanded]);
 
   useEffect(() => {
     if (!departureMapSelectionMode) return;

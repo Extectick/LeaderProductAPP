@@ -179,6 +179,9 @@ export const mobileSheetStyles = StyleSheet.create({
     paddingRight: 4,
     paddingBottom: 20,
   },
+  routeListHeaderContent: {
+    gap: 6,
+  },
   statusNoticeText: {
     color: '#475569',
     fontSize: 11,

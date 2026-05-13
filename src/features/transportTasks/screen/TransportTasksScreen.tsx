@@ -3,7 +3,7 @@ import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderConte
 import { useNotificationViewport } from '@/context/NotificationViewportContext';
 import { useOptionalUnsavedChanges } from '@/src/features/navigation/UnsavedChangesContext';
 import { useThemeColor } from '@/hooks/useThemeColor';
-import { useNavigation, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo } from 'react';
 import { BackHandler, Platform, View, useWindowDimensions } from 'react-native';
 import { ActivityIndicator, Portal, Snackbar, Text } from 'react-native-paper';
@@ -19,11 +19,10 @@ const WEB_DESKTOP_BREAKPOINT = 1024;
 
 export default function TransportTasksScreen() {
   const controller = useTransportTasksScreen();
-  const navigation = useNavigation<any>();
   const router = useRouter();
   const unsavedChanges = useOptionalUnsavedChanges();
   const { width } = useWindowDimensions();
-  const topInset = useHeaderContentTopInset();
+  const topInset = useHeaderContentTopInset({ hasSubtitle: true });
   const { headerBottomOffset } = useNotificationViewport();
   const background = useThemeColor({}, 'background');
   const tint = useThemeColor({}, 'tint');
@@ -31,10 +30,7 @@ export default function TransportTasksScreen() {
   const isDesktop = Platform.OS === 'web' && width >= WEB_DESKTOP_BREAKPOINT;
   const useNativeOverlayHeader = Platform.OS !== 'web' && !isDesktop;
   const desktopListPaneTop = useMemo(() => Math.max(headerBottomOffset + 4, 92), [headerBottomOffset]);
-  const mobileSheetTopInset = useMemo(
-    () => (useNativeOverlayHeader ? Math.max(headerBottomOffset + 4, topInset) : topInset),
-    [headerBottomOffset, topInset, useNativeOverlayHeader]
-  );
+  const mobileSheetTopInset = useNativeOverlayHeader ? Math.max(headerBottomOffset + 4, topInset) : topInset;
   const handleHeaderBack = useCallback(() => {
     const navigateBack = () => router.replace('/services');
     if (unsavedChanges) {
@@ -43,13 +39,6 @@ export default function TransportTasksScreen() {
     }
     navigateBack();
   }, [router, unsavedChanges]);
-
-  useEffect(() => {
-    navigation.setOptions?.({ headerShown: !useNativeOverlayHeader });
-    return () => {
-      navigation.setOptions?.({ headerShown: true });
-    };
-  }, [navigation, useNativeOverlayHeader]);
 
   useEffect(() => {
     if (Platform.OS === 'web') return;

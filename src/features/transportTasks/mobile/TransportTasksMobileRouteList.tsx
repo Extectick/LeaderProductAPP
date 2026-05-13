@@ -1,4 +1,5 @@
 import React from 'react';
+import type { NativeScrollEvent, NativeSyntheticEvent, StyleProp, ViewStyle } from 'react-native';
 import { View } from 'react-native';
 import { ActivityIndicator, Text } from 'react-native-paper';
 import RoutePointSortableList from '../RoutePointSortableList';
@@ -28,6 +29,13 @@ type Props = Pick<
   onPositionEditFocus?: (index: number) => void;
   onPositionEditBlur?: () => void;
   activePositionEditingIndex?: number | null;
+  listHeaderComponent?: React.ReactElement | null;
+  listFooterComponent?: React.ReactElement | null;
+  listStyle?: StyleProp<ViewStyle>;
+  listContentContainerStyle?: StyleProp<ViewStyle>;
+  listScrollEnabled?: boolean;
+  onListContentSizeChange?: (width: number, height: number) => void;
+  onListScroll?: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
 };
 
 export default function TransportTasksMobileRouteList({
@@ -49,6 +57,13 @@ export default function TransportTasksMobileRouteList({
   onPositionEditFocus,
   onPositionEditBlur,
   activePositionEditingIndex,
+  listHeaderComponent,
+  listFooterComponent,
+  listStyle,
+  listContentContainerStyle,
+  listScrollEnabled,
+  onListContentSizeChange,
+  onListScroll,
 }: Props) {
   if (departureMapSelectionMode) {
     return (
@@ -85,6 +100,14 @@ export default function TransportTasksMobileRouteList({
         saving={routeOrderSaving}
         getItemId={(point) => point.linkKey}
         onMove={onMoveRoutePoint}
+        listHeaderComponent={listHeaderComponent}
+        listFooterComponent={listFooterComponent}
+        style={listStyle}
+        contentContainerStyle={listContentContainerStyle}
+        scrollEnabled={listScrollEnabled}
+        onContentSizeChange={onListContentSizeChange}
+        onScroll={onListScroll}
+        scrollEventThrottle={120}
         renderItem={(point, index, dragHandleProps) => (
           <RoutePointListItem
             point={point}
@@ -106,7 +129,7 @@ export default function TransportTasksMobileRouteList({
           />
         )}
       />
-      <View style={styles.routeListEndSpacer} />
+      {listFooterComponent ? null : <View style={styles.routeListEndSpacer} />}
     </>
   );
 }

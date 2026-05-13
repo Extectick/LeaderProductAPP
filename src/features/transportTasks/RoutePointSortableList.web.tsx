@@ -73,6 +73,8 @@ export default function RoutePointSortableList({
   saving,
   getItemId,
   onMove,
+  listHeaderComponent,
+  listFooterComponent,
   renderItem,
 }: RoutePointSortableListProps) {
   const sensors = useSensors(
@@ -95,9 +97,11 @@ export default function RoutePointSortableList({
   if (disabled) {
     return (
       <>
+        {listHeaderComponent}
         {route.map((point, index) => (
           <React.Fragment key={itemIds[index]}>{renderItem(point, index)}</React.Fragment>
         ))}
+        {listFooterComponent}
       </>
     );
   }
@@ -111,6 +115,7 @@ export default function RoutePointSortableList({
       autoScroll
     >
       <SortableContext items={itemIds} strategy={verticalListSortingStrategy} disabled={disabled}>
+        {listHeaderComponent}
         {route.map((point, index) => {
           const id = itemIds[index];
           return (
@@ -119,6 +124,7 @@ export default function RoutePointSortableList({
             </SortableRoutePoint>
           );
         })}
+        {listFooterComponent}
       </SortableContext>
     </DndContext>
   );

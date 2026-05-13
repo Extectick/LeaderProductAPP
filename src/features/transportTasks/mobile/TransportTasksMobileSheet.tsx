@@ -66,7 +66,6 @@ export default function TransportTasksMobileSheet({
   );
   const isRouteListMode = Boolean(selectedTask && routeForView.length > 0);
   const shouldPinListBodyHeight = Boolean(isRouteListMode || (!selectedTask && tasks.length > 0));
-  const shouldSkipHeightAnimation = Platform.OS !== 'web' && isRouteListMode;
   const bodyExpandedHeight = useMemo(
     () =>
       shouldPinListBodyHeight
@@ -81,11 +80,6 @@ export default function TransportTasksMobileSheet({
   const shellWidth = Math.min(MOBILE_SHEET_MAX_WIDTH, Math.max(280, width - MOBILE_SHEET_SIDE_INSET * 2));
 
   useEffect(() => {
-    if (shouldSkipHeightAnimation) {
-      panelAnim.setValue(expanded ? 1 : 0);
-      return;
-    }
-
     Animated.spring(panelAnim, {
       toValue: expanded ? 1 : 0,
       damping: 20,
@@ -93,7 +87,7 @@ export default function TransportTasksMobileSheet({
       mass: 0.9,
       useNativeDriver: false,
     }).start();
-  }, [expanded, panelAnim, shouldSkipHeightAnimation]);
+  }, [expanded, panelAnim]);
 
   useEffect(() => {
     onExpandedChange?.(expanded);
@@ -239,6 +233,7 @@ export default function TransportTasksMobileSheet({
         <Animated.View style={[styles.body, animatedBodyStyle]}>
           <TransportTasksMobileSheetContent
             expanded={expanded}
+            bodyHeight={bodyExpandedHeight}
             onAfterSelectPoint={() => setExpanded(false)}
             selectedTask={selectedTask}
             selectedRoutePointIndex={selectedRoutePointIndex}

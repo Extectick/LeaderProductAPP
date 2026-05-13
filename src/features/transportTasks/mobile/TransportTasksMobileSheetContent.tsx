@@ -23,6 +23,7 @@ const mobileWebScrollStyle =
 
 type Props = Omit<TransportTasksMobileSheetProps, 'onExpandedChange' | 'collapseRequestId'> & {
   expanded: boolean;
+  bodyHeight: number;
   onAfterSelectPoint?: () => void;
   onBodyContentHeightChange?: (height: number) => void;
   onPositionEditFocusChange?: (editing: boolean) => void;
@@ -30,6 +31,7 @@ type Props = Omit<TransportTasksMobileSheetProps, 'onExpandedChange' | 'collapse
 
 export default function TransportTasksMobileSheetContent({
   expanded,
+  bodyHeight,
   tint,
   selectedTask,
   selectedRoutePointIndex,
@@ -103,6 +105,88 @@ export default function TransportTasksMobileSheetContent({
     onPositionEditFocusChange?.(false);
   }, [onPositionEditFocusChange]);
 
+  const selectedTaskHeader = selectedTask ? (
+    <View style={styles.routeListHeaderContent}>
+      {hasRouteOrderChanges ? (
+        <Text style={{ color: '#B45309', fontSize: 11, fontWeight: '700' }}>
+          Есть несохраненные изменения
+        </Text>
+      ) : null}
+      {selectedTaskNotice ? <Text style={styles.statusNoticeText}>{selectedTaskNotice}</Text> : null}
+      {departurePoint && !departureMapSelectionMode ? (
+        <DepartureRoutePointListItem
+          point={departurePoint}
+          selected={selectedRoutePointIndex === null}
+          compact
+          onPress={() => {
+            onFocusDepartureOnMap();
+            onAfterSelectPoint?.();
+          }}
+          onPressEdit={onOpenDepartureSelection}
+        />
+      ) : null}
+    </View>
+  ) : null;
+  const routeListFooter = <View style={styles.routeListEndSpacer} />;
+  const routeContentPadding = activePositionEditingIndex !== null ? { paddingBottom: 96 } : null;
+  const nativeRouteListHeight = Math.max(1, Math.floor(bodyHeight - toolbarBlockHeight));
+
+  if (selectedTask && Platform.OS !== 'web') {
+    return (
+      <View style={styles.contentRoot}>
+        <View style={styles.toolbarSection} onLayout={handleToolbarLayout}>
+          <TransportTasksMobileSheetToolbar
+            selectedTask={selectedTask}
+            routeCount={routeForView.length}
+            hasRouteOrderChanges={hasRouteOrderChanges}
+            routeOrderEditable={routeOrderEditable}
+            routeOrderSaving={routeOrderSaving}
+            toLoadingSaving={toLoadingSaving}
+            canSubmitToLoading={canSubmitToLoading}
+            tasksLoading={tasksLoading}
+            departurePoint={departurePoint}
+            taskStatusFilter={taskStatusFilter}
+            onBack={onBack}
+            onSaveRouteOrder={onSaveRouteOrder}
+            onOpenToLoadingConfirm={onOpenToLoadingConfirm}
+            onOptimizeRouteOrder={onOptimizeRouteOrder}
+            onRefreshTasks={onRefreshTasks}
+            onTaskStatusFilterChange={onTaskStatusFilterChange}
+            compact
+          />
+          <View style={styles.divider} />
+        </View>
+
+        <TransportTasksMobileRouteList
+          tint={tint}
+          taskDetailLoading={taskDetailLoading}
+          routeOrderEditing={routeOrderEditing}
+          routeOrderSaving={routeOrderSaving}
+          routeForView={routeForView}
+          selectedRoutePointIndex={selectedRoutePointIndex}
+          departureMapSelectionMode={departureMapSelectionMode}
+          draftDepartureMapPoint={draftDepartureMapPoint}
+          departureSettingsSaving={departureSettingsSaving}
+          onMoveRoutePoint={onMoveRoutePoint}
+          onMoveRoutePointToPosition={onMoveRoutePointToPosition}
+          onSelectRoutePointIndex={onSelectRoutePointIndex}
+          onSaveManualDeparturePoint={onSaveManualDeparturePoint}
+          onCancelDepartureMapSelection={onCancelDepartureMapSelection}
+          onAfterSelectPoint={onAfterSelectPoint}
+          onPositionEditFocus={handlePositionEditFocus}
+          onPositionEditBlur={handlePositionEditBlur}
+          activePositionEditingIndex={activePositionEditingIndex}
+          listHeaderComponent={selectedTaskHeader}
+          listFooterComponent={routeListFooter}
+          listStyle={[styles.scroll, { flex: 0, height: nativeRouteListHeight }]}
+          listContentContainerStyle={[styles.scrollContent, routeContentPadding]}
+          listScrollEnabled={expanded}
+          onListContentSizeChange={(_width, height) => onBodyContentHeightChange?.(height + toolbarBlockHeight)}
+        />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.contentRoot}>
       <View style={styles.toolbarSection} onLayout={handleToolbarLayout}>
@@ -132,7 +216,7 @@ export default function TransportTasksMobileSheetContent({
         style={[styles.scroll, mobileWebScrollStyle]}
         contentContainerStyle={[
           styles.scrollContent,
-          activePositionEditingIndex !== null ? { paddingBottom: 96 } : null,
+          routeContentPadding,
         ]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
@@ -144,24 +228,7 @@ export default function TransportTasksMobileSheetContent({
       >
         {selectedTask ? (
           <>
-            {hasRouteOrderChanges ? (
-              <Text style={{ color: '#B45309', fontSize: 11, fontWeight: '700' }}>
-                Есть несохраненные изменения
-              </Text>
-            ) : null}
-            {selectedTaskNotice ? <Text style={styles.statusNoticeText}>{selectedTaskNotice}</Text> : null}
-            {departurePoint && !departureMapSelectionMode ? (
-              <DepartureRoutePointListItem
-                point={departurePoint}
-                selected={selectedRoutePointIndex === null}
-                compact
-                onPress={() => {
-                  onFocusDepartureOnMap();
-                  onAfterSelectPoint?.();
-                }}
-                onPressEdit={onOpenDepartureSelection}
-              />
-            ) : null}
+            {selectedTaskHeader}
             <TransportTasksMobileRouteList
               tint={tint}
               taskDetailLoading={taskDetailLoading}
@@ -181,6 +248,7 @@ export default function TransportTasksMobileSheetContent({
               onPositionEditFocus={handlePositionEditFocus}
               onPositionEditBlur={handlePositionEditBlur}
               activePositionEditingIndex={activePositionEditingIndex}
+              listFooterComponent={routeListFooter}
             />
           </>
         ) : tasksLoading && !tasks.length ? (
