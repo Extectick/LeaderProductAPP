@@ -1,13 +1,14 @@
 // app/(auth)/AuthScreen.tsx
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import Constants from 'expo-constants';
+import * as Linking from 'expo-linking';
 import { useRouter, type Href } from 'expo-router';
 import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
+  AppState,
   Easing,
   Image,
   KeyboardAvoidingView,
@@ -511,11 +512,23 @@ export default function AuthScreen() {
         setQrSessionToken(sessionToken);
         setQrDeepLinkUrl(deepLink);
         setQrPayload(payload);
-        setQrNotice(`Сканируйте QR в ${providerLabel(provider)} и отправьте контакт.`);
+        setQrNotice(
+          isWeb
+            ? `Сканируйте QR в ${providerLabel(provider)} и отправьте контакт.`
+            : `Открываем ${providerLabel(provider)}. Подтвердите вход и отправьте контакт.`
+        );
         setQrError('');
         setQrBusy(false);
         void pollQrStatus(provider, sessionToken);
         startQrPolling(provider, sessionToken, started.pollIntervalSec);
+
+        if (!isWeb) {
+          try {
+            await Linking.openURL(deepLink);
+          } catch {
+            setQrError(`Не удалось открыть ${providerLabel(provider)}. Откройте приложение вручную или повторите попытку.`);
+          }
+        }
       } catch (e: any) {
         setQrBusy(false);
         setQrStatus('FAILED');
@@ -523,7 +536,7 @@ export default function AuthScreen() {
         setQrError(normalizeError(e));
       }
     },
-    [pollQrStatus, startQrPolling, stopQrPolling]
+    [isWeb, pollQrStatus, startQrPolling, stopQrPolling]
   );
 
   const closeQrModal = React.useCallback(
@@ -549,20 +562,22 @@ export default function AuthScreen() {
     [qrProvider, qrSessionToken, qrStatus, resetQrModalState, stopQrPolling]
   );
 
-  const openQrProviderApp = React.useCallback(() => {
+  const openQrProviderApp = React.useCallback(async () => {
     const url = String(qrDeepLinkUrl || '').trim();
     if (!url) return;
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.open(url, '_blank', 'noopener,noreferrer');
-      return;
+    try {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.open(url, '_blank', 'noopener,noreferrer');
+        return;
+      }
+      await Linking.openURL(url);
+      setQrError('');
+    } catch {
+      setQrError(`Не удалось открыть ${qrProvider ? providerLabel(qrProvider) : 'мессенджер'}. Откройте приложение вручную или повторите попытку.`);
     }
-  }, [qrDeepLinkUrl]);
+  }, [qrDeepLinkUrl, qrProvider]);
 
   useEffect(() => {
-    if (!isWeb) {
-      setDesktopQrProviders([]);
-      return;
-    }
     let cancelled = false;
     (async () => {
       try {
@@ -584,7 +599,7 @@ export default function AuthScreen() {
     return () => {
       cancelled = true;
     };
-  }, [isWeb]);
+  }, []);
 
   useEffect(() => {
     if (!qrModalVisible || !qrProvider || !qrSessionToken) return;
@@ -593,16 +608,25 @@ export default function AuthScreen() {
       void pollQrStatus(qrProvider, qrSessionToken);
     };
 
-    if (typeof window !== 'undefined') {
+    if (Platform.OS !== 'web') {
+      const subscription = AppState.addEventListener('change', (state) => {
+        if (state === 'active') onForeground();
+      });
+      return () => {
+        subscription.remove();
+      };
+    }
+
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
       window.addEventListener('focus', onForeground);
     }
-    if (typeof document !== 'undefined') {
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
       const onVisibility = () => {
         if (document.visibilityState === 'visible') onForeground();
       };
       document.addEventListener('visibilitychange', onVisibility);
       return () => {
-        if (typeof window !== 'undefined') {
+        if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
           window.removeEventListener('focus', onForeground);
         }
         document.removeEventListener('visibilitychange', onVisibility);
@@ -610,7 +634,7 @@ export default function AuthScreen() {
     }
 
     return () => {
-      if (typeof window !== 'undefined') {
+      if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
         window.removeEventListener('focus', onForeground);
       }
     };
@@ -1675,14 +1699,12 @@ export default function AuthScreen() {
               )}
             </Animated.View>
 
-            {isWeb && (
-              <AuthDesktopQrProviders
-                providers={desktopQrProviders}
-                outerW={outerW}
-                styles={styles}
-                onOpen={openQrSignInModal}
-              />
-            )}
+            <AuthDesktopQrProviders
+              providers={desktopQrProviders}
+              outerW={outerW}
+              styles={styles}
+              onOpen={openQrSignInModal}
+            />
 
             <View style={[styles.buildInfo, { maxWidth: outerW, marginTop: isWeb ? 14 : 12 }]}>
               <Text
@@ -1704,17 +1726,6 @@ export default function AuthScreen() {
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
-        {!isWeb && (
-          <TouchableOpacity
-            accessibilityRole="button"
-            accessibilityLabel="Войти через Telegram"
-            activeOpacity={0.9}
-            onPress={() => router.replace('/(auth)/telegram' as Href)}
-            style={[styles.telegramFloatingBtn, { bottom: (Platform.OS === 'web' ? 14 : 10) + insets.bottom }]}
-          >
-            <Ionicons name="paper-plane" size={24} color="#FFFFFF" />
-          </TouchableOpacity>
-        )}
       </SafeAreaView>
 
       <AuthQrModal

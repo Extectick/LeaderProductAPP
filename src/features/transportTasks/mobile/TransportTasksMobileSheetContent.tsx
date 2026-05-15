@@ -105,30 +105,48 @@ export default function TransportTasksMobileSheetContent({
     onPositionEditFocusChange?.(false);
   }, [onPositionEditFocusChange]);
 
-  const selectedTaskHeader = selectedTask ? (
-    <View style={styles.routeListHeaderContent}>
-      {hasRouteOrderChanges ? (
-        <Text style={{ color: '#B45309', fontSize: 11, fontWeight: '700' }}>
-          Есть несохраненные изменения
-        </Text>
-      ) : null}
-      {selectedTaskNotice ? <Text style={styles.statusNoticeText}>{selectedTaskNotice}</Text> : null}
-      {departurePoint && !departureMapSelectionMode ? (
-        <DepartureRoutePointListItem
-          point={departurePoint}
-          selected={selectedRoutePointIndex === null}
-          compact
-          onPress={() => {
-            onFocusDepartureOnMap();
-            onAfterSelectPoint?.();
-          }}
-          onPressEdit={onOpenDepartureSelection}
-        />
-      ) : null}
-    </View>
-  ) : null;
-  const routeListFooter = <View style={styles.routeListEndSpacer} />;
-  const routeContentPadding = activePositionEditingIndex !== null ? { paddingBottom: 96 } : null;
+  const handleDeparturePress = React.useCallback(() => {
+    onFocusDepartureOnMap();
+    onAfterSelectPoint?.();
+  }, [onAfterSelectPoint, onFocusDepartureOnMap]);
+
+  const selectedTaskHeader = React.useMemo(
+    () =>
+      selectedTask ? (
+        <View style={styles.routeListHeaderContent}>
+          {hasRouteOrderChanges ? (
+            <Text style={{ color: '#B45309', fontSize: 11, fontWeight: '700' }}>
+              Есть несохраненные изменения
+            </Text>
+          ) : null}
+          {selectedTaskNotice ? <Text style={styles.statusNoticeText}>{selectedTaskNotice}</Text> : null}
+          {departurePoint && !departureMapSelectionMode ? (
+            <DepartureRoutePointListItem
+              point={departurePoint}
+              selected={selectedRoutePointIndex === null}
+              compact
+              onPress={handleDeparturePress}
+              onPressEdit={onOpenDepartureSelection}
+            />
+          ) : null}
+        </View>
+      ) : null,
+    [
+      departureMapSelectionMode,
+      departurePoint,
+      handleDeparturePress,
+      hasRouteOrderChanges,
+      onOpenDepartureSelection,
+      selectedRoutePointIndex,
+      selectedTask,
+      selectedTaskNotice,
+    ]
+  );
+  const routeListFooter = React.useMemo(() => <View style={styles.routeListEndSpacer} />, []);
+  const routeContentPadding = React.useMemo(
+    () => (activePositionEditingIndex !== null ? { paddingBottom: 96 } : null),
+    [activePositionEditingIndex]
+  );
   const nativeRouteListHeight = Math.max(1, Math.floor(bodyHeight - toolbarBlockHeight));
 
   if (selectedTask && Platform.OS !== 'web') {
@@ -181,7 +199,6 @@ export default function TransportTasksMobileSheetContent({
           listStyle={[styles.scroll, { flex: 0, height: nativeRouteListHeight }]}
           listContentContainerStyle={[styles.scrollContent, routeContentPadding]}
           listScrollEnabled={expanded}
-          onListContentSizeChange={(_width, height) => onBodyContentHeightChange?.(height + toolbarBlockHeight)}
         />
       </View>
     );

@@ -56,7 +56,7 @@ function MobileActionButton({
   );
 }
 
-export default function TransportTasksMobileSheetToolbar({
+function TransportTasksMobileSheetToolbar({
   selectedTask,
   routeCount,
   hasRouteOrderChanges,
@@ -145,3 +145,5 @@ export default function TransportTasksMobileSheetToolbar({
     </View>
   );
 }
+
+export default React.memo(TransportTasksMobileSheetToolbar);

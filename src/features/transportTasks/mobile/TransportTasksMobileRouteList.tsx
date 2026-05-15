@@ -38,7 +38,7 @@ type Props = Pick<
   onListScroll?: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
 };
 
-export default function TransportTasksMobileRouteList({
+function TransportTasksMobileRouteList({
   tint,
   taskDetailLoading,
   routeOrderEditing,
@@ -133,3 +133,5 @@ export default function TransportTasksMobileRouteList({
     </>
   );
 }
+
+export default React.memo(TransportTasksMobileRouteList);

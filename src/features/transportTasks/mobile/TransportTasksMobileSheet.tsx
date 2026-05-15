@@ -39,8 +39,10 @@ export default function TransportTasksMobileSheet({
   const [expanded, setExpanded] = useState(true);
   const [headerHeight, setHeaderHeight] = useState(MOBILE_SHEET_COLLAPSED_HEIGHT);
   const [bodyContentHeight, setBodyContentHeight] = useState(0);
+  const [stableBodyHeight, setStableBodyHeight] = useState(MOBILE_SHEET_BODY_MIN_HEIGHT);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const panelAnim = useRef(new Animated.Value(0)).current;
+  const animatingRef = useRef(false);
   const dragStartValueRef = useRef(0);
   const lastCollapseRequestRef = useRef(collapseRequestId);
   const sheetPositionEditingRef = useRef(false);
@@ -65,6 +67,7 @@ export default function TransportTasksMobileSheet({
     [effectiveCollapsedHeight, maxExpandedHeight]
   );
   const isRouteListMode = Boolean(selectedTask && routeForView.length > 0);
+  const isNativeRouteListMode = Platform.OS !== 'web' && isRouteListMode;
   const shouldPinListBodyHeight = Boolean(isRouteListMode || (!selectedTask && tasks.length > 0));
   const bodyExpandedHeight = useMemo(
     () =>
@@ -80,14 +83,34 @@ export default function TransportTasksMobileSheet({
   const shellWidth = Math.min(MOBILE_SHEET_MAX_WIDTH, Math.max(280, width - MOBILE_SHEET_SIDE_INSET * 2));
 
   useEffect(() => {
-    Animated.spring(panelAnim, {
+    if (!isNativeRouteListMode) {
+      setStableBodyHeight(bodyExpandedHeight);
+      return;
+    }
+    if (animatingRef.current) return;
+    setStableBodyHeight((current) => (current === bodyExpandedHeight ? current : bodyExpandedHeight));
+  }, [bodyExpandedHeight, isNativeRouteListMode]);
+
+  useEffect(() => {
+    animatingRef.current = true;
+    const animation = Animated.spring(panelAnim, {
       toValue: expanded ? 1 : 0,
       damping: 20,
       stiffness: expanded ? 220 : 240,
       mass: 0.9,
       useNativeDriver: false,
-    }).start();
-  }, [expanded, panelAnim]);
+    });
+    animation.start(() => {
+      animatingRef.current = false;
+      if (isNativeRouteListMode && expanded) {
+        setStableBodyHeight((current) => (current === bodyExpandedHeight ? current : bodyExpandedHeight));
+      }
+    });
+    return () => {
+      animation.stop();
+      animatingRef.current = false;
+    };
+  }, [bodyExpandedHeight, expanded, isNativeRouteListMode, panelAnim]);
 
   useEffect(() => {
     onExpandedChange?.(expanded);
@@ -190,22 +213,30 @@ export default function TransportTasksMobileSheet({
   );
 
   const animatedBodyStyle = useMemo(
-    () => ({
-      opacity: panelAnim,
-      height: panelAnim.interpolate({
-        inputRange: [0, 1],
-        outputRange: [0, bodyExpandedHeight],
-      }),
-      transform: [
-        {
-          translateY: panelAnim.interpolate({
-            inputRange: [0, 1],
-            outputRange: [10, 0],
-          }),
-        },
-      ],
-    }),
-    [bodyExpandedHeight, panelAnim]
+    () =>
+      isNativeRouteListMode
+        ? {
+            height: panelAnim.interpolate({
+              inputRange: [0, 1],
+              outputRange: [0, stableBodyHeight],
+            }),
+          }
+        : {
+            opacity: panelAnim,
+            height: panelAnim.interpolate({
+              inputRange: [0, 1],
+              outputRange: [0, bodyExpandedHeight],
+            }),
+            transform: [
+              {
+                translateY: panelAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [10, 0],
+                }),
+              },
+            ],
+          },
+    [bodyExpandedHeight, isNativeRouteListMode, panelAnim, stableBodyHeight]
   );
 
   return (
@@ -233,7 +264,7 @@ export default function TransportTasksMobileSheet({
         <Animated.View style={[styles.body, animatedBodyStyle]}>
           <TransportTasksMobileSheetContent
             expanded={expanded}
-            bodyHeight={bodyExpandedHeight}
+            bodyHeight={isNativeRouteListMode ? stableBodyHeight : bodyExpandedHeight}
             onAfterSelectPoint={() => setExpanded(false)}
             selectedTask={selectedTask}
             selectedRoutePointIndex={selectedRoutePointIndex}
