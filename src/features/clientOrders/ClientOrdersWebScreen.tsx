@@ -12,6 +12,7 @@ import {
   normalizeQuantityInput,
   resolveClientOrdersEditorTier,
   resolveClientOrdersLayoutTier,
+  type DraftItem,
 } from './lib/clientOrdersShared';
 import {
   formatDateOnly,
@@ -27,6 +28,7 @@ import {
   type ClientOrdersPickerKind,
   unitLabel,
 } from './lib/clientOrdersUi';
+import { hasMorePage } from './lib/clientOrdersPaging';
 import { useClientOrdersWorkspace } from './hooks/useClientOrdersWorkspace';
 import type {
   ClientOrderAgreementOption,
@@ -66,16 +68,19 @@ import {
   Paper,
   Popper,
   Stack,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableRow,
   TextField,
   Tooltip,
   Typography,
 } from '@mui/material';
 import { Ionicons } from '@expo/vector-icons';
+import {
+  flexRender,
+  getCoreRowModel,
+  useReactTable,
+  type ColumnDef,
+  type ColumnOrderState,
+  type ColumnSizingState,
+} from '@tanstack/react-table';
 import React from 'react';
 import { useWindowDimensions } from 'react-native';
 import {
@@ -92,6 +97,11 @@ type PendingPriceTypeAction =
   | { type: 'change-header'; priceType: ClientOrderPriceTypeOption | null }
   | { type: 'reset-header' };
 const PRODUCT_IN_STOCK_ONLY_STORAGE_KEY = 'clientOrders.productPicker.inStockOnly';
+const PRODUCT_IMAGE_PLACEHOLDER_URI = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22120%22 height=%22120%22 viewBox=%220 0 120 120%22%3E%3Crect width=%22120%22 height=%22120%22 rx=%2224%22 fill=%22%23EFF6FF%22/%3E%3Crect x=%2222%22 y=%2224%22 width=%2276%22 height=%2272%22 rx=%2216%22 fill=%22%23FFFFFF%22 stroke=%22%2393C5FD%22 stroke-width=%225%22/%3E%3Ccircle cx=%2248%22 cy=%2249%22 r=%2211%22 fill=%22%23BFDBFE%22/%3E%3Cpath d=%22M33 82l19-21 14 14 11-13 22 20H33z%22 fill=%22%232563EB%22 opacity=%22.72%22/%3E%3C/svg%3E';
+
+function getDraftItemImageUri(item: DraftItem | any) {
+  return item?.imageUrl || item?.pictureUrl || item?.photoUrl || item?.thumbnailUrl || PRODUCT_IMAGE_PLACEHOLDER_URI;
+}
 
 function statusTone(status: string) {
   if (status === 'CANCELLED') return 'error';
@@ -200,7 +210,7 @@ function formatQuantityInputValue(value: number, weight: boolean) {
 }
 
 function getQuantityControlWidthPx(value: unknown, buttonSize: number, minInputWidth: number, maxInputWidth: number) {
-  return getQuantityInputWidthPx(value, minInputWidth, maxInputWidth) + buttonSize * 2 + 8;
+  return getQuantityInputWidthPx(value, minInputWidth, maxInputWidth) + buttonSize * 2 + 4;
 }
 
 function receiptPriceLabel(item: any) {
@@ -416,10 +426,11 @@ type QuickLookupFieldProps<T extends { guid?: string | null }> = {
   detailsTooltip?: string;
   beforeDetailsAdornment?: React.ReactNode;
   dense?: boolean;
+  flat?: boolean;
 };
 
 function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookupFieldProps<T>) {
-  const { kind, label, value, placeholder, disabled, loadOptions, onSelect, onOpenDetails, detailsDisabled, detailsTooltip, beforeDetailsAdornment, dense } = props;
+  const { kind, label, value, placeholder, disabled, loadOptions, onSelect, onOpenDetails, detailsDisabled, detailsTooltip, beforeDetailsAdornment, dense, flat } = props;
   const [query, setQuery] = React.useState('');
   const [open, setOpen] = React.useState(false);
   const [items, setItems] = React.useState<T[]>([]);
@@ -429,6 +440,7 @@ function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookup
   const [activeIndex, setActiveIndex] = React.useState(0);
   const anchorRef = React.useRef<HTMLDivElement | null>(null);
   const requestIdRef = React.useRef(0);
+  const appendLoadingRef = React.useRef(false);
   const valueLabel = value ? getPickerItemTitle(value) : '';
   const inputDisabled = !!disabled && !onOpenDetails;
   const normalizedQuery = query.trim().toLowerCase();
@@ -441,6 +453,8 @@ function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookup
   }, [open, valueLabel]);
 
   const loadPage = React.useCallback(async (search: string, nextOffset = 0, append = false) => {
+    if (append && appendLoadingRef.current) return;
+    if (append) appendLoadingRef.current = true;
     const requestId = ++requestIdRef.current;
     setLoading(true);
     try {
@@ -448,14 +462,15 @@ function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookup
       if (requestIdRef.current !== requestId) return;
       const nextItems = result.items || [];
       setItems((prev) => (append ? [...prev, ...nextItems] : nextItems));
-      setOffset(nextOffset);
-      setHasMore(nextOffset + nextItems.length < (result.meta?.total || 0));
+      setOffset(nextOffset + nextItems.length);
+      setHasMore(hasMorePage(nextItems.length, 25, nextOffset, result.meta?.total));
       if (!append) setActiveIndex(0);
     } catch {
       if (requestIdRef.current !== requestId) return;
       if (!append) setItems([]);
       setHasMore(false);
     } finally {
+      if (append) appendLoadingRef.current = false;
       if (requestIdRef.current === requestId) setLoading(false);
     }
   }, [loadOptions]);
@@ -474,6 +489,8 @@ function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookup
   }, [items, useDefaultListing, value]);
 
   const close = React.useCallback(() => {
+    requestIdRef.current += 1;
+    appendLoadingRef.current = false;
     setOpen(false);
     setItems([]);
     setQuery(valueLabel);
@@ -491,7 +508,7 @@ function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookup
     const target = event.currentTarget;
     const remaining = target.scrollHeight - target.scrollTop - target.clientHeight;
     if (remaining > 140) return;
-    void loadPage(useDefaultListing ? '' : query, offset + 25, true);
+    void loadPage(useDefaultListing ? '' : query, offset, true);
   }, [hasMore, loadPage, loading, offset, query, useDefaultListing]);
 
   const handleKeyDown = React.useCallback((event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -573,10 +590,16 @@ function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookup
               </Stack>
             ),
           } : disabled ? { readOnly: true } : undefined}
-          sx={{
-            '& .MuiInputBase-root': { height: dense ? 28 : 30, borderRadius: '6px', fontSize: 10.5, fontWeight: 800, alignItems: 'center', bgcolor: disabled ? '#F8FAFC' : '#FFFFFF' },
-            '& .MuiInputBase-input': { py: 0, lineHeight: dense ? '28px' : '34px' },
-          }}
+          sx={[
+            {
+              '& .MuiInputBase-root': { height: dense ? 28 : 30, borderRadius: flat ? 0 : '6px', fontSize: 10.5, fontWeight: 800, alignItems: 'center', bgcolor: flat ? 'transparent' : disabled ? '#F8FAFC' : '#FFFFFF' },
+              '& .MuiInputBase-input': { py: 0, lineHeight: dense ? '28px' : '34px' },
+            },
+            flat ? {
+              '& .MuiOutlinedInput-notchedOutline': { border: 0 },
+              '& .MuiInputBase-root.Mui-focused .MuiOutlinedInput-notchedOutline': { borderBottom: '1px solid #2563EB' },
+            } : {},
+          ]}
         />
         <Popper
           open={open && !disabled}
@@ -661,9 +684,9 @@ export default function ClientOrdersWebScreen() {
     mode: 'create' | 'edit';
     blockingMessage: string | null;
   }>({ open: false, mode: 'edit', blockingMessage: null });
-  const discardConfirmResolveRef = React.useRef<((value: boolean) => void) | null>(null);
+  const discardConfirmResolveRef = React.useRef<((value: 'save' | 'discard' | 'cancel') => void) | null>(null);
   const requestDiscardConfirm = React.useCallback((context: { draftMode: boolean; hasPersistedDraft: boolean; blockingMessage: string | null }) => (
-    new Promise<boolean>((resolve) => {
+    new Promise<'save' | 'discard' | 'cancel'>((resolve) => {
       discardConfirmResolveRef.current = resolve;
       setDiscardConfirm({
         open: true,
@@ -672,14 +695,17 @@ export default function ClientOrdersWebScreen() {
       });
     })
   ), []);
-  const closeDiscardConfirm = React.useCallback((result: boolean) => {
+  const closeDiscardConfirm = React.useCallback((result: 'save' | 'discard' | 'cancel') => {
     const resolve = discardConfirmResolveRef.current;
     discardConfirmResolveRef.current = null;
     setDiscardConfirm((prev) => ({ ...prev, open: false }));
     resolve?.(result);
   }, []);
   const workspace = useClientOrdersWorkspace({ confirmDiscard: requestDiscardConfirm });
-  const topInset = useHeaderContentTopInset({ hasSubtitle: true });
+  const workspaceRef = React.useRef(workspace);
+  workspaceRef.current = workspace;
+  const topInset = useHeaderContentTopInset({ compact: true, hasSubtitle: false, extraGap: 2 });
+  const pageTopInset = Math.max(0, topInset - 18);
   const background = useThemeColor({}, 'background');
   const [inspectorOpen, setInspectorOpen] = React.useState(false);
   const [settingsOpen, setSettingsOpen] = React.useState(false);
@@ -696,6 +722,7 @@ export default function ClientOrdersWebScreen() {
     return window.localStorage.getItem(PRODUCT_IN_STOCK_ONLY_STORAGE_KEY) === '1';
   });
   const pickerRequestIdRef = React.useRef(0);
+  const pickerAppendLoadingRef = React.useRef(false);
   const [settingsDraft, setSettingsDraft] = React.useState({
     deliveryDateMode: 'NEXT_DAY',
     deliveryDateOffsetDays: 1,
@@ -707,6 +734,7 @@ export default function ClientOrdersWebScreen() {
   const [pendingPriceTypeAction, setPendingPriceTypeAction] = React.useState<PendingPriceTypeAction | null>(null);
   const [pendingOrganization, setPendingOrganization] = React.useState<ClientOrderOrganization | null>(null);
   const [itemsSearch, setItemsSearch] = React.useState('');
+  const [productImagePreview, setProductImagePreview] = React.useState<{ src: string; title: string; subtitle?: string | null } | null>(null);
   const [referenceDetailsOpen, setReferenceDetailsOpen] = React.useState(false);
   const [referenceDetailsLoading, setReferenceDetailsLoading] = React.useState(false);
   const [referenceDetailsError, setReferenceDetailsError] = React.useState<string | null>(null);
@@ -832,17 +860,10 @@ export default function ClientOrdersWebScreen() {
     ].some((value) => (value || '').toLowerCase().includes(query)));
   }, [itemsSearch, workspace.draft.items]);
 
-  const quantityColumnWidth = React.useMemo(() => {
-    const fallback = useCompactTable ? 104 : 124;
-    if (!filteredDraftItems.length) return fallback;
-    const buttonSize = 28;
-    const minInputWidth = useCompactTable ? 44 : 52;
-    const maxInputWidth = useCompactTable ? 102 : 126;
-    const maxWidth = filteredDraftItems.reduce((currentMax, item) => (
-      Math.max(currentMax, getQuantityControlWidthPx(item.quantity, buttonSize, minInputWidth, maxInputWidth))
-    ), fallback);
-    return Math.max(fallback, maxWidth + 8);
-  }, [filteredDraftItems, useCompactTable]);
+  const draftItemsPackageLayoutKey = filteredDraftItems.map((item) => (
+    `${item.key}:${hasSinglePackage(item) ? 'single' : 'multi'}`
+  )).join('|');
+  const quantityColumnWidth = useCompactTable ? 96 : 106;
 
   React.useEffect(() => {
     if (!settings) return;
@@ -874,13 +895,18 @@ export default function ClientOrdersWebScreen() {
   }, [pickerKind]);
 
   const openPicker = React.useCallback((kind: PickerKind) => {
+    pickerRequestIdRef.current += 1;
+    pickerAppendLoadingRef.current = false;
     setPickerKind(kind);
     setPickerSearch('');
     setPickerItems([]);
     setPickerOffset(0);
+    setPickerHasMore(false);
   }, []);
 
   const loadPickerPage = React.useCallback(async (kind: PickerKind, search: string, offset = 0, append = false) => {
+    if (append && pickerAppendLoadingRef.current) return;
+    if (append) pickerAppendLoadingRef.current = true;
     const requestId = ++pickerRequestIdRef.current;
     setPickerLoading(true);
     try {
@@ -898,8 +924,8 @@ export default function ClientOrdersWebScreen() {
         const slice = filtered.slice(offset, offset + 25);
         if (pickerRequestIdRef.current !== requestId) return;
         setPickerItems((prev) => (append ? [...prev, ...slice] : slice));
-        setPickerOffset(offset);
-        setPickerHasMore(offset + slice.length < filtered.length);
+        setPickerOffset(offset + slice.length);
+        setPickerHasMore(hasMorePage(slice.length, 25, offset, filtered.length));
         return;
       }
       let result;
@@ -939,9 +965,10 @@ export default function ClientOrdersWebScreen() {
       if (pickerRequestIdRef.current !== requestId) return;
       const nextItems = result?.items || [];
       setPickerItems((prev) => (append ? [...prev, ...nextItems] : nextItems));
-      setPickerOffset(offset);
-      setPickerHasMore((offset + nextItems.length) < (result?.meta.total || 0));
+      setPickerOffset(offset + nextItems.length);
+      setPickerHasMore(hasMorePage(nextItems.length, 25, offset, result?.meta?.total));
     } finally {
+      if (append) pickerAppendLoadingRef.current = false;
       if (pickerRequestIdRef.current === requestId) {
         setPickerLoading(false);
       }
@@ -959,7 +986,7 @@ export default function ClientOrdersWebScreen() {
     const target = event.currentTarget;
     const remaining = target.scrollHeight - target.scrollTop - target.clientHeight;
     if (remaining > 320) return;
-    void loadPickerPage(pickerKind, pickerSearch, pickerOffset + 25, true);
+    void loadPickerPage(pickerKind, pickerSearch, pickerOffset, true);
   }, [canLoadMorePickerItems, loadPickerPage, pickerKind, pickerOffset, pickerSearch]);
 
   const requestOrganizationChange = React.useCallback((item: ClientOrderOrganization) => {
@@ -1154,13 +1181,6 @@ export default function ClientOrdersWebScreen() {
     const priceError = !isValidManualPriceValue(item.manualPrice);
     const quantityInputWidth = getQuantityInputWidthPx(item.quantity, ui.narrowPriceWidth <= 66 ? 34 : 40, 88);
     const quantityControlWidth = getQuantityControlWidthPx(item.quantity, ui.narrowControlHeight, ui.narrowPriceWidth <= 66 ? 34 : 40, 88);
-    const priceTypeValue = item.manualPrice.trim()
-      ? { guid: '__manual__', name: 'Произвольный' }
-      : item.priceTypeGuid
-        ? { guid: item.priceTypeGuid, name: item.priceTypeName || workspace.draft.priceTypeName || 'Вид цены' }
-        : workspace.draft.priceTypeGuid
-          ? { guid: workspace.draft.priceTypeGuid, name: workspace.draft.priceTypeName || 'Вид цены' }
-          : null;
     const displayedPrice = getDisplayedPriceValue(item.manualPrice, item.basePrice);
 
     return (
@@ -1211,7 +1231,7 @@ export default function ClientOrdersWebScreen() {
           <Box
             sx={{
               display: 'grid',
-              gridTemplateColumns: `${quantityControlWidth}px ${ui.narrowPackageWidth}px minmax(0, 1fr) ${ui.narrowPriceWidth}px`,
+              gridTemplateColumns: `${quantityControlWidth}px ${ui.narrowPackageWidth}px ${ui.narrowPriceWidth}px`,
               gap: `${ui.narrowRowGap}px`,
               alignItems: 'center',
               pl: ui.narrowPriceWidth <= 66 ? 3.1 : 4.1,
@@ -1293,26 +1313,6 @@ export default function ClientOrdersWebScreen() {
               </TextField>
             )}
 
-            <QuickLookupField
-              kind="priceType"
-              label=""
-              dense
-              placeholder="Вид цены"
-              value={priceTypeValue}
-              loadOptions={loadPriceTypeLookup}
-              onSelect={(next) => workspace.setItemPriceType(item.key, next)}
-              disabled={workspace.readOnly}
-              beforeDetailsAdornment={workspace.isItemPriceTypeCustom(item.key) ? (
-                <ResetAdornmentButton
-                  title="Сбросить вид цены строки"
-                  disabled={workspace.readOnly}
-                  onClick={() => workspace.resetItemPriceType(item.key)}
-                />
-              ) : null}
-              onOpenDetails={() => void openReferenceDetails('price-type', item.priceTypeGuid || workspace.draft.priceTypeGuid)}
-              detailsDisabled={!(item.priceTypeGuid || workspace.draft.priceTypeGuid)}
-            />
-
             <TextField
               size="small"
               value={displayedPrice}
@@ -1344,14 +1344,365 @@ export default function ClientOrdersWebScreen() {
         </Stack>
       </Box>
     );
-  }, [loadPriceTypeLookup, ui.compactStaticFieldHorizontalPadding, ui.narrowControlHeight, ui.narrowPackageWidth, ui.narrowPriceWidth, ui.narrowQtyWidth, ui.narrowRowGap, workspace]);
+  }, [ui.compactStaticFieldHorizontalPadding, ui.narrowControlHeight, ui.narrowPackageWidth, ui.narrowPriceWidth, ui.narrowQtyWidth, ui.narrowRowGap, workspace]);
+
+  const draftItemsTableWidth = React.useMemo(() => {
+    const horizontalChrome = isSinglePane ? 24 : 44;
+    return Math.max(Math.floor(effectiveEditorPaneWidth - horizontalChrome), 560);
+  }, [effectiveEditorPaneWidth, isSinglePane]);
+
+  const draftItemsColumnLayout = React.useMemo(() => {
+    const hasVariablePackages = draftItemsPackageLayoutKey.includes(':multi');
+    const base = {
+      actions: 30,
+      product: useCompactTable ? 320 : 440,
+      quantity: quantityColumnWidth,
+      package: hasVariablePackages ? (useCompactTable ? 128 : 154) : (useCompactTable ? 86 : 98),
+      price: useCompactTable ? 94 : 112,
+      total: useCompactTable ? 96 : 116,
+    };
+    const min = {
+      actions: 30,
+      product: useCompactTable ? 170 : 210,
+      quantity: useCompactTable ? 88 : 96,
+      package: hasVariablePackages ? (useCompactTable ? 78 : 88) : (useCompactTable ? 58 : 66),
+      price: useCompactTable ? 70 : 80,
+      total: useCompactTable ? 76 : 86,
+    };
+    const baseTotal = Object.values(base).reduce((sum, width) => sum + width, 0);
+    if (baseTotal <= draftItemsTableWidth) {
+      return {
+        width: {
+          ...base,
+          product: base.product + (draftItemsTableWidth - baseTotal),
+        },
+        min,
+      };
+    }
+
+    const width = { ...base };
+    let overflow = baseTotal - draftItemsTableWidth;
+    const shrinkableKeys = ['product', 'quantity', 'package', 'price', 'total'] as const;
+    const shrinkableTotal = shrinkableKeys.reduce((sum, key) => sum + Math.max(base[key] - min[key], 0), 0);
+    const shrinkFactor = shrinkableTotal > 0 ? Math.min(1, overflow / shrinkableTotal) : 0;
+
+    shrinkableKeys.forEach((key) => {
+      const shrink = Math.floor((base[key] - min[key]) * shrinkFactor);
+      width[key] = Math.max(min[key], base[key] - shrink);
+      overflow -= base[key] - width[key];
+    });
+
+    for (const key of shrinkableKeys) {
+      if (overflow <= 0) break;
+      const room = Math.max(width[key] - min[key], 0);
+      const shrink = Math.min(room, overflow);
+      width[key] -= shrink;
+      overflow -= shrink;
+    }
+
+    return { width, min };
+  }, [draftItemsPackageLayoutKey, draftItemsTableWidth, quantityColumnWidth, useCompactTable]);
+
+  const draftItemColumns = React.useMemo<ColumnDef<DraftItem>[]>(() => {
+    const { width, min } = draftItemsColumnLayout;
+
+    return [
+      {
+        id: 'actions',
+        header: '',
+        size: width.actions,
+        minSize: min.actions,
+        maxSize: width.actions,
+        enableResizing: false,
+        cell: ({ row }) => {
+          const currentWorkspace = workspaceRef.current;
+          return (
+            <Box sx={{ width: '100%', display: 'grid', placeItems: 'center' }}>
+              <Tooltip title="Удалить строку" arrow>
+                <span>
+                  <IconButton
+                    size="small"
+                    color="error"
+                    onClick={() => currentWorkspace.removeItem(row.original.key)}
+                    disabled={currentWorkspace.readOnly}
+                    sx={{
+                      width: 22,
+                      height: 22,
+                      color: '#94A3B8',
+                      borderRadius: 0,
+                      bgcolor: 'transparent',
+                      '&:hover': { color: '#DC2626', bgcolor: 'transparent' },
+                    }}
+                  >
+                    <Ionicons name="close-outline" size={15} />
+                  </IconButton>
+                </span>
+              </Tooltip>
+            </Box>
+          );
+        },
+      },
+      {
+        accessorKey: 'productName',
+        header: 'Товар',
+        size: width.product,
+        minSize: min.product,
+        cell: ({ row }) => {
+          const currentWorkspace = workspaceRef.current;
+          const item = row.original;
+          const lineErrors = currentWorkspace.validation.itemMessages[item.key] || [];
+          const imageUri = getDraftItemImageUri(item);
+          return (
+            <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0, py: 0.1 }}>
+              <Tooltip title="Открыть изображение" arrow>
+                <Box
+                  component="button"
+                  type="button"
+                  onClick={() => setProductImagePreview({
+                    src: imageUri,
+                    title: item.productName,
+                    subtitle: item.productCode || item.productArticle || item.productSku || null,
+                  })}
+                  sx={{
+                    p: 0,
+                    border: 0,
+                    bgcolor: 'transparent',
+                    flexShrink: 0,
+                    cursor: 'pointer',
+                    borderRadius: '6px',
+                    '&:focus-visible': { outline: '2px solid #2563EB', outlineOffset: 2 },
+                  }}
+                >
+                  <Box
+                    component="img"
+                    src={imageUri}
+                    alt={item.productName}
+                    sx={{
+                      width: useCompactTable ? 42 : 52,
+                      height: useCompactTable ? 42 : 52,
+                      display: 'block',
+                      borderRadius: '6px',
+                      border: '1px solid #E2E8F0',
+                      bgcolor: '#F8FAFC',
+                      objectFit: 'cover',
+                    }}
+                  />
+                </Box>
+              </Tooltip>
+              <Box sx={{ minWidth: 0, flex: 1 }}>
+                <Typography
+                  sx={{
+                    fontSize: useCompactTable ? 11.5 : 12.5,
+                    fontWeight: 900,
+                    lineHeight: 1.18,
+                    color: '#0F172A',
+                    display: '-webkit-box',
+                    WebkitLineClamp: useCompactTable ? 2 : 3,
+                    WebkitBoxOrient: 'vertical',
+                    overflow: 'hidden',
+                    wordBreak: 'break-word',
+                  }}
+                >
+                  {item.productName}
+                </Typography>
+                <Typography sx={{ mt: 0.25, fontSize: 10.5, color: '#64748B', lineHeight: 1.18 }}>
+                  <DraftItemMeta item={item} />
+                </Typography>
+                {lineErrors.length ? (
+                  <Box sx={{ mt: 0.45, px: 0.75, py: 0.35, borderRadius: '9px', bgcolor: '#FEF2F2', border: '1px solid #FECACA' }}>
+                    <Typography sx={{ fontSize: 10, color: '#B91C1C', lineHeight: 1.2, fontWeight: 700 }}>
+                      {lineErrors.join(' ')}
+                    </Typography>
+                  </Box>
+                ) : null}
+              </Box>
+            </Stack>
+          );
+        },
+      },
+      {
+        id: 'quantity',
+        header: 'Количество',
+        size: width.quantity,
+        minSize: min.quantity,
+        cell: ({ row }) => {
+          const currentWorkspace = workspaceRef.current;
+          const item = row.original;
+          const quantityError = !isValidQuantityValue(item);
+          const quantityInputWidth = getQuantityInputWidthPx(item.quantity, useCompactTable ? 38 : 44, useCompactTable ? 58 : 66);
+          const quantityControlWidth = getQuantityControlWidthPx(item.quantity, 14, useCompactTable ? 38 : 44, useCompactTable ? 58 : 66);
+          return (
+            <Stack direction="row" alignItems="center" spacing={0.15} sx={{ width: quantityControlWidth, maxWidth: '100%', mx: 'auto' }}>
+              <IconButton
+                size="small"
+                disabled={currentWorkspace.readOnly}
+                onClick={() => currentWorkspace.setItemPatch(item.key, { quantity: stepQuantity(item, -1) })}
+                sx={{ width: 14, height: 28, minWidth: 14, p: 0, border: 0, borderRadius: 0, bgcolor: 'transparent', color: '#64748B', '&:hover': { color: '#0F172A', bgcolor: 'transparent' } }}
+              >
+                <Typography sx={{ fontSize: 15, fontWeight: 500, lineHeight: 1 }}>−</Typography>
+              </IconButton>
+              <TextField
+                size="small"
+                value={item.quantity}
+                onChange={(e) => currentWorkspace.setItemPatch(item.key, { quantity: normalizeQuantityInput(item, e.target.value) })}
+                disabled={currentWorkspace.readOnly}
+                error={quantityError}
+                sx={{
+                  width: quantityInputWidth,
+                  ...compactInputSx,
+                  '& .MuiInputBase-root': { height: 30, borderRadius: 0, bgcolor: 'transparent' },
+                  '& .MuiOutlinedInput-notchedOutline': { border: 0 },
+                  '& .MuiInputBase-root.Mui-focused .MuiOutlinedInput-notchedOutline': { borderBottom: '1px solid #2563EB' },
+                  '& input': { textAlign: 'center', fontSize: 11, fontWeight: 900, lineHeight: '30px', py: 0, px: 0.25 },
+                }}
+              />
+              <IconButton
+                size="small"
+                disabled={currentWorkspace.readOnly}
+                onClick={() => currentWorkspace.setItemPatch(item.key, { quantity: stepQuantity(item, 1) })}
+                sx={{ width: 14, height: 28, minWidth: 14, p: 0, border: 0, borderRadius: 0, bgcolor: 'transparent', color: '#64748B', '&:hover': { color: '#0F172A', bgcolor: 'transparent' } }}
+              >
+                <Typography sx={{ fontSize: 14, fontWeight: 500, lineHeight: 1 }}>+</Typography>
+              </IconButton>
+            </Stack>
+          );
+        },
+      },
+      {
+        id: 'package',
+        header: 'Упаковка',
+        size: width.package,
+        minSize: min.package,
+        cell: ({ row }) => {
+          const currentWorkspace = workspaceRef.current;
+          const item = row.original;
+          const packageValue = item.packageGuid || (item.packages.length ? '' : '__base__');
+          if (hasSinglePackage(item)) {
+            return (
+              <Box sx={{ minHeight: 30, px: 1, border: 0, borderRadius: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'transparent', width: '100%', boxSizing: 'border-box' }}>
+                <Typography sx={{ fontSize: 10.8, fontWeight: 900, color: '#0F172A', whiteSpace: 'nowrap' }}>
+                  {getPackageDisplayText(item)}
+                </Typography>
+              </Box>
+            );
+          }
+          return (
+            <TextField
+              select
+              size="small"
+              value={packageValue}
+              onChange={(e) => currentWorkspace.setItemPatch(item.key, { packageGuid: e.target.value === '__base__' ? null : e.target.value })}
+              disabled={currentWorkspace.readOnly}
+              fullWidth
+              sx={{
+                ...compactInputSx,
+                '& .MuiInputBase-root': { height: 30, borderRadius: 0, bgcolor: 'transparent' },
+                '& .MuiOutlinedInput-notchedOutline': { border: 0 },
+                '& .MuiInputBase-root.Mui-focused .MuiOutlinedInput-notchedOutline': { borderBottom: '1px solid #2563EB' },
+                '& .MuiInputBase-input': { fontSize: 10.8, fontWeight: 900, lineHeight: '30px', py: 0 },
+              }}
+            >
+              <MenuItem value="">{unitLabel(item.baseUnit)}</MenuItem>
+              {item.packages.map((pack) => <MenuItem key={pack.guid} value={pack.guid}>{packageLabel(pack)}</MenuItem>)}
+            </TextField>
+          );
+        },
+      },
+      {
+        id: 'price',
+        header: 'Цена',
+        size: width.price,
+        minSize: min.price,
+        cell: ({ row }) => {
+          const currentWorkspace = workspaceRef.current;
+          const item = row.original;
+          const displayedPrice = getDisplayedPriceValue(item.manualPrice, item.basePrice);
+          const priceError = !isValidManualPriceValue(item.manualPrice);
+          return (
+            <TextField
+              size="small"
+              value={displayedPrice}
+              placeholder="0"
+              onChange={(e) => {
+                const manualPrice = normalizePriceInput(e.target.value, displayedPrice);
+                currentWorkspace.setItemPatch(item.key, {
+                  manualPrice,
+                  priceTypeGuid: manualPrice.trim() ? null : currentWorkspace.draft.priceTypeGuid ?? null,
+                  priceTypeName: manualPrice.trim() ? 'Произвольный' : currentWorkspace.draft.priceTypeName ?? null,
+                });
+              }}
+              disabled={currentWorkspace.readOnly}
+              error={priceError}
+              sx={{
+                ...compactInputSx,
+                '& .MuiInputBase-root': { height: 30, borderRadius: 0, bgcolor: 'transparent' },
+                '& .MuiOutlinedInput-notchedOutline': { border: 0 },
+                '& .MuiInputBase-root.Mui-focused .MuiOutlinedInput-notchedOutline': { borderBottom: '1px solid #2563EB' },
+                '& .MuiInputBase-input': { fontSize: 11, fontWeight: 900, py: 0, lineHeight: '30px' },
+                '& .MuiInputBase-input::placeholder': { color: '#94A3B8', opacity: 1 },
+              }}
+            />
+          );
+        },
+      },
+      {
+        id: 'total',
+        header: 'Итого, ₽',
+        size: width.total,
+        minSize: min.total,
+        cell: ({ row }) => {
+          const currentWorkspace = workspaceRef.current;
+          return (
+            <Typography sx={{ width: '100%', pr: 0.5, fontSize: 12, fontWeight: 900, color: '#0F172A', whiteSpace: 'nowrap', textAlign: 'right' }}>
+              {formatMoney(computeLineTotal(row.original, currentWorkspace.draft.generalDiscountPercent), row.original.currency)}
+            </Typography>
+          );
+        },
+      },
+    ];
+  }, [draftItemsColumnLayout, useCompactTable]);
+
+  const [draftItemsColumnSizing, setDraftItemsColumnSizing] = React.useState<ColumnSizingState>({});
+  const [draftItemsColumnOrder, setDraftItemsColumnOrder] = React.useState<ColumnOrderState>([]);
+  const draggedDraftItemsColumnRef = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    setDraftItemsColumnSizing({});
+  }, [draftItemsTableWidth]);
+  const draftItemsTable = useReactTable({
+    data: filteredDraftItems,
+    columns: draftItemColumns,
+    getCoreRowModel: getCoreRowModel(),
+    columnResizeMode: 'onChange',
+    state: {
+      columnSizing: draftItemsColumnSizing,
+      columnOrder: draftItemsColumnOrder,
+    },
+    onColumnSizingChange: setDraftItemsColumnSizing,
+    onColumnOrderChange: setDraftItemsColumnOrder,
+  });
+
+  const moveDraftItemsColumn = React.useCallback((targetColumnId: string) => {
+    const sourceColumnId = draggedDraftItemsColumnRef.current;
+    draggedDraftItemsColumnRef.current = null;
+    if (!sourceColumnId || sourceColumnId === targetColumnId) return;
+    setDraftItemsColumnOrder((current) => {
+      const fallback = draftItemsTable.getAllLeafColumns().map((column) => column.id);
+      const next = current.length ? [...current] : fallback;
+      const sourceIndex = next.indexOf(sourceColumnId);
+      const targetIndex = next.indexOf(targetColumnId);
+      if (sourceIndex < 0 || targetIndex < 0) return next;
+      const [moved] = next.splice(sourceIndex, 1);
+      next.splice(targetIndex, 0, moved);
+      return next;
+    });
+  }, [draftItemsTable]);
 
   return (
-    <Box sx={{ backgroundColor: background, minHeight: '100%', px: ui.pageX / 8, pb: isSinglePane ? '82px' : ui.pageY / 8, pt: `${topInset + ui.stickyOffset}px`, overflowX: 'hidden' }}>
-      <Stack direction={isSinglePane ? 'column' : 'row'} spacing={ui.stackGap / 8} sx={{ height: isSinglePane ? 'auto' : `calc(100vh - ${topInset + ui.stickyOffset + 8}px)`, minHeight: isSinglePane ? `calc(100vh - ${topInset + 14}px)` : undefined }}>
-        {showOrdersPane ? <Paper ref={ordersPaneRef} sx={{ width: isSinglePane ? `calc(100% - ${ui.pageX * 2}px)` : desktopOrdersPaneWidth, mx: isSinglePane ? 'auto' : 0, alignSelf: isSinglePane ? 'center' : 'stretch', flexShrink: 0, minWidth: 0, height: isSinglePane ? `calc(100vh - ${topInset + 96}px)` : 'auto', borderRadius: `${ui.panelRadius}px`, border: '1px solid #D7E3F1', p: ui.panelPadding / 8, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <Stack spacing={0.9}>
-            <Typography sx={{ fontSize: ui.titleSize, fontWeight: 900, lineHeight: 1.1 }}>Заказы клиентов</Typography>
+    <Box sx={{ backgroundColor: '#FFFFFF', minHeight: '100%', pt: `${pageTopInset}px`, overflowX: 'hidden' }}>
+      <Stack direction={isSinglePane ? 'column' : 'row'} spacing={0} sx={{ height: isSinglePane ? 'auto' : `calc(100vh - ${pageTopInset}px)`, minHeight: isSinglePane ? `calc(100vh - ${pageTopInset}px)` : undefined }}>
+        {showOrdersPane ? <Paper ref={ordersPaneRef} elevation={0} sx={{ width: isSinglePane ? '100%' : 300, mx: 0, alignSelf: 'stretch', flexShrink: 0, minWidth: 0, height: isSinglePane ? `calc(100vh - ${pageTopInset}px)` : 'auto', borderRadius: 0, border: 0, borderRight: isSinglePane ? 0 : '1px solid #E2E8F0', p: 1.25, display: 'flex', flexDirection: 'column', overflow: 'hidden', bgcolor: '#F8FAFC' }}>
+          <Stack spacing={0.8}>
+            <Typography sx={{ fontSize: 15, fontWeight: 900, lineHeight: 1.1 }}>Заказы</Typography>
             <CompactTextField
               label="Поиск"
               value={workspace.filters.search}
@@ -1399,13 +1750,13 @@ export default function ClientOrdersWebScreen() {
                 }}
               />
             </Stack>
-            <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
-              <Chip size="small" label={`Всего ${workspace.statusCounts.all}`} sx={{ height: 24, fontSize: 11, fontWeight: 800 }} />
-              <Chip size="small" label={`Черновики ${workspace.statusCounts.draft}`} sx={{ height: 24, fontSize: 11, fontWeight: 800 }} />
-              <Chip size="small" label={`В очереди ${workspace.statusCounts.queued}`} sx={{ height: 24, fontSize: 11, fontWeight: 800 }} />
+            <Stack direction="row" spacing={0.45} flexWrap="wrap" useFlexGap>
+              <Chip size="small" label={workspace.statusCounts.all} sx={{ height: 22, fontSize: 10.5, fontWeight: 900 }} />
+              <Chip size="small" label={`Черн. ${workspace.statusCounts.draft}`} sx={{ height: 22, fontSize: 10.5, fontWeight: 800 }} />
+              <Chip size="small" label={`Оч. ${workspace.statusCounts.queued}`} sx={{ height: 22, fontSize: 10.5, fontWeight: 800 }} />
             </Stack>
           </Stack>
-          <Divider sx={{ my: 0.8 }} />
+          <Divider sx={{ my: 0.7 }} />
           <Box sx={{ flex: 1, overflow: 'auto' }}>
             <Stack spacing={0.45}>
               {workspace.orders.map((order) => (
@@ -1443,7 +1794,7 @@ export default function ClientOrdersWebScreen() {
                           {formatMoney(order.totalAmount || 0, order.currency)}
                         </Typography>
                         <Typography sx={{ fontSize: 9, color: '#475569', fontWeight: 800, borderRadius: '999px', bgcolor: '#F8FAFC', px: 0.6, py: 0.15 }}>
-                          {order.items.length} поз.
+                          {order.itemsCount ?? order.items.length ?? 0} поз.
                         </Typography>
                         <Typography sx={{ fontSize: 9, color: '#475569', fontWeight: 800, borderRadius: '999px', bgcolor: '#F8FAFC', px: 0.6, py: 0.15 }}>
                           Отгр. {formatDateOnly(order.deliveryDate)}
@@ -1460,7 +1811,7 @@ export default function ClientOrdersWebScreen() {
           </Box>
         </Paper> : null}
 
-        {showEditorPane ? <Paper ref={editorPaneRef} sx={{ flex: 1, minWidth: 0, width: isSinglePane ? `calc(100% - ${ui.pageX * 2}px)` : 'auto', mx: isSinglePane ? 'auto' : 0, alignSelf: isSinglePane ? 'center' : 'stretch', minHeight: isSinglePane ? `calc(100vh - ${topInset + 96}px)` : 0, borderRadius: `${ui.panelRadius}px`, border: '1px solid #D7E3F1', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        {showEditorPane ? <Paper ref={editorPaneRef} elevation={0} sx={{ flex: 1, minWidth: 0, width: '100%', mx: 0, alignSelf: 'stretch', minHeight: isSinglePane ? `calc(100vh - ${pageTopInset}px)` : 0, borderRadius: 0, border: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', bgcolor: '#FFFFFF' }}>
           {!workspace.hasEditableDocument ? (
             <Box sx={{ flex: 1, display: 'grid', placeItems: 'center', p: 2 }}>
               <Stack spacing={1.2} alignItems="center" sx={{ maxWidth: 360, textAlign: 'center' }}>
@@ -1476,19 +1827,23 @@ export default function ClientOrdersWebScreen() {
             </Box>
           ) : (
             <>
-              <Box sx={{ position: 'sticky', top: 0, zIndex: 2, px: ui.panelPadding / 10, py: ui.panelPadding / 20, borderBottom: '1px solid #E2E8F0', background: 'rgba(255,255,255,0.96)', backdropFilter: 'blur(12px)' }}>
-                <Stack spacing={ui.actionGap / 14}>
+              <Box sx={{ position: 'sticky', top: 0, zIndex: 2, px: 1.4, py: 1, borderBottom: '1px solid #E2E8F0', background: '#FFFFFF' }}>
+                <Stack spacing={0.8}>
                   <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
                     <Stack direction="row" alignItems="center" spacing={0.5} sx={{ minWidth: 0 }}>
                       {isSinglePane ? (
-                        <ToolbarIconButton title="К списку" icon="arrow-back-outline" color="#0F172A" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => setResponsivePane('orders')} />
+                        <ToolbarIconButton title="К списку" icon="arrow-back-outline" color="#0F172A" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => {
+                          void workspace.confirmDiscardIfNeeded().then((canLeave: boolean) => {
+                            if (canLeave) setResponsivePane('orders');
+                          });
+                        }} />
                       ) : null}
                     <Box sx={{ minWidth: 0 }}>
                       <Stack direction="row" spacing={0.75} alignItems="center" sx={{ minWidth: 0 }}>
-                        <Typography sx={{ fontSize: ui.titleSize, fontWeight: 900, lineHeight: 1.1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</Typography>
-                        {!workspace.draftMode ? <Chip size="small" label={workspace.statusLabels[workspace.selectedOrder?.status || ''] || workspace.selectedOrder?.status || '?'} sx={{ height: 20, fontSize: ui.chipFontSize, fontWeight: 800 }} /> : null}
+                        <Typography sx={{ fontSize: 18, fontWeight: 900, lineHeight: 1.1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</Typography>
+                        {!workspace.draftMode ? <Chip size="small" label={workspace.statusLabels[workspace.selectedOrder?.status || ''] || workspace.selectedOrder?.status || '?'} sx={{ height: 20, fontSize: 10, fontWeight: 800 }} /> : null}
                       </Stack>
-                      <Typography sx={{ color: '#64748B', fontSize: ui.subtitleSize }}>{workspace.autosaveLabel}</Typography>
+                      <Typography sx={{ color: '#64748B', fontSize: 11, fontWeight: 700 }}>{workspace.autosaveLabel}</Typography>
                     </Box>
                     </Stack>
                     {showInlineEditorErrors ? (
@@ -1533,7 +1888,7 @@ export default function ClientOrdersWebScreen() {
                         </Box>
                       </Box>
                     ) : null}
-                    <Stack direction="row" spacing={ui.actionGap / 16} justifyContent="flex-end" useFlexGap flexWrap={isSinglePane || effectiveEditorPaneWidth < 1160 ? 'wrap' : 'nowrap'}>
+                    <Stack direction="row" spacing={0.45} justifyContent="flex-end" useFlexGap flexWrap={isSinglePane || effectiveEditorPaneWidth < 1160 ? 'wrap' : 'nowrap'}>
                       <ToolbarIconButton
                         title={toolbarUsesDeleteDraft ? 'Удалить черновик' : 'Отменить заказ'}
                         icon={toolbarUsesDeleteDraft ? 'trash-outline' : 'close-circle-outline'}
@@ -1551,11 +1906,8 @@ export default function ClientOrdersWebScreen() {
                         disabled={toolbarUsesDeleteDraft ? workspace.deletingDraft : (workspace.readOnly || workspace.cancelling)}
                         loading={toolbarUsesDeleteDraft ? workspace.deletingDraft : workspace.cancelling}
                       />
-                      <ToolbarIconButton title="Шапка документа" icon="document-text-outline" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => setHeaderOpen(true)} />
-                      <ToolbarIconButton title="Настройки даты" icon="calendar-outline" color="#2563EB" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => setSettingsOpen(true)} />
-                      <ToolbarIconButton title="Инспектор" icon="information-circle-outline" color="#475569" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => setInspectorOpen(true)} />
                       <ToolbarIconButton title="Сохранить" icon="save-outline" color="#2563EB" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => void workspace.saveDraft({ reason: 'manual' })} disabled={workspace.readOnly || workspace.saving || !workspace.validation.canSave} loading={workspace.saving} />
-                      <ToolbarIconButton title="Отправить в 1С" icon="cloud-upload-outline" color="#7C3AED" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => setConfirmSubmitOpen(true)} disabled={workspace.readOnly || workspace.submitting || !workspace.validation.canSave} loading={workspace.submitting} />
+                      <ToolbarIconButton title="Отправить в 1С" icon="cloud-upload-outline" label={effectiveEditorPaneWidth >= 1180 ? 'В 1С' : undefined} color="#16A34A" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => setConfirmSubmitOpen(true)} disabled={workspace.readOnly || workspace.submitting || !workspace.validation.canSubmit} loading={workspace.submitting} />
                     </Stack>
                   </Stack>
                   {showSectionSwitcher ? (
@@ -1578,8 +1930,11 @@ export default function ClientOrdersWebScreen() {
                             : useCompactEditorGrid
                               ? 'repeat(2, minmax(0, 1fr))'
                               : '1fr',
-                      gap: ui.fieldGap / 10,
+                      gap: 0.6,
                       alignItems: 'center',
+                      borderTop: '1px solid #E2E8F0',
+                      pt: 0.75,
+                      bgcolor: '#FFFFFF',
                     }}
                   >
                     <QuickLookupField
@@ -1664,7 +2019,8 @@ export default function ClientOrdersWebScreen() {
                       disabled={workspace.readOnly}
                       sx={{
                         gridColumn: isSinglePane ? 'span 1' : useWideEditorGrid ? 'span 2' : '1 / -1',
-                        '& .MuiInputBase-root': { height: 30, borderRadius: '6px', fontSize: 11 },
+                        bgcolor: '#FFFFFF',
+                        '& .MuiInputBase-root': { height: 30, borderRadius: '7px', fontSize: 11 },
                         '& .MuiInputBase-input': { py: 0, lineHeight: '30px' },
                       }}
                     />
@@ -1673,15 +2029,14 @@ export default function ClientOrdersWebScreen() {
                 </Stack>
               </Box>
 
-              <Box ref={editorScrollRef} sx={{ flex: 1, overflow: 'auto', px: 1, py: 1 }}>
-                <Stack spacing={1}>
+              <Box ref={editorScrollRef} sx={{ flex: 1, minHeight: 0, overflow: 'auto', px: 1.4, py: 1, display: 'flex', flexDirection: 'column' }}>
+                <Stack spacing={0.8} sx={{ flex: 1, minHeight: 0 }}>
                   {!showInlineEditorErrors && workspace.error ? <Alert severity="error">{workspace.error}</Alert> : null}
                   {!showInlineEditorErrors && workspace.validation.blockingMessage ? <Alert severity="warning">{workspace.validation.blockingMessage}</Alert> : null}
                   {workspace.draftMode && !workspace.draft.organizationGuid && !workspace.loadingSettings ? (
                     <Paper variant="outlined" sx={{ borderRadius: '10px', p: 1, borderColor: '#F59E0B', background: '#FFFBEB' }}>
-                      <Stack spacing={ui.toolbarGap / 10}>
-                        <Typography sx={{ fontSize: usePhoneCompactItems ? 12.5 : ui.sectionTitleSize, fontWeight: 900 }}>Не выбрана организация</Typography>
-                        <Typography sx={{ color: '#92400E', fontSize: 12 }}>Выберите организацию в шапке документа или из списка ниже.</Typography>
+                      <Stack spacing={0.7}>
+                        <Typography sx={{ fontSize: 12.5, fontWeight: 900, color: '#92400E' }}>Выберите организацию</Typography>
                         <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
                           {(workspace.settings?.organizations || []).map((item) => (
                             <Button key={item.guid} variant="contained" onClick={() => void workspace.setOrganization(item)} sx={{ textTransform: 'none', fontWeight: 800, borderRadius: '8px', minHeight: 30 }}>{item.name}</Button>
@@ -1691,211 +2046,266 @@ export default function ClientOrdersWebScreen() {
                     </Paper>
                   ) : null}
 
-                  {(!showSectionSwitcher || webEditorSection === 'items') ? <Paper variant="outlined" sx={{ borderRadius: usePhoneCompactItems ? 0 : '10px', p: usePhoneCompactItems ? 0 : ui.panelPadding / 10, borderColor: usePhoneCompactItems ? 'transparent' : undefined, boxShadow: usePhoneCompactItems ? 'none' : undefined, mx: usePhoneCompactItems ? -1 : 0 }}>
-                    <Stack spacing={0.7}>
-                      <Stack spacing={0.55}>
-                        <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={0.8}>
-                          <Typography sx={{ fontSize: 16, fontWeight: 900 }}>Товары</Typography>
-                          <Typography sx={{ fontWeight: 900, fontSize: usePhoneCompactItems ? 12.5 : ui.sectionTitleSize, whiteSpace: 'nowrap', flexShrink: 0 }}>{formatMoney(workspace.localTotal, workspace.draft.currency)}</Typography>
-                        </Stack>
-                        <Stack direction="row" spacing={0.35} alignItems="center" sx={{ minWidth: 0 }}>
-                          <TextField
-                            size="small"
-                            placeholder="Поиск в строках"
-                            value={itemsSearch}
-                            onChange={(event) => setItemsSearch(event.target.value)}
-                            sx={{
-                              minWidth: 0,
-                              maxWidth: isSinglePane ? '100%' : ui.toolbarSearchMaxWidth,
-                              flex: 1,
-                              '& .MuiInputBase-root': { height: usePhoneCompactItems ? 34 : ui.fieldHeight - 4, borderRadius: '6px', fontSize: usePhoneCompactItems ? 12 : ui.fieldFontSize },
-                              '& .MuiInputBase-input': { py: 0.25, px: usePhoneCompactItems ? 1 : undefined },
-                            }}
-                          />
-                          <Stack direction="row" spacing={0.35} alignItems="center" sx={{ flexShrink: 0 }}>
-                            <ToolbarIconButton
-                              title="Открыть подбор товаров"
-                              icon="add-outline"
-                              label={!useItemCards && !usePhoneCompactItems ? 'Добавить товар' : undefined}
-                              color="#16A34A"
-                              buttonSize={usePhoneCompactItems ? 28 : Math.max(ui.fieldHeight - 4, 27)}
-                              iconSize={usePhoneCompactItems ? 14 : 15}
-                              onClick={() => openPicker('product')}
-                              disabled={!workspace.draft.counterpartyGuid || workspace.readOnly}
-                            />
-                            <ToolbarIconButton
-                              title="Удалить все строки"
-                              icon="trash-outline"
-                              color="#DC2626"
-                              buttonSize={usePhoneCompactItems ? 28 : undefined}
-                              iconSize={usePhoneCompactItems ? 14 : undefined}
-                              onClick={() => setConfirmClearItemsOpen(true)}
-                              disabled={!workspace.draft.items.length || workspace.readOnly}
-                            />
-                          </Stack>
-                        </Stack>
-                      </Stack>
-                      {useItemCards ? (
-                        <Box sx={{ borderTop: '1px solid #E2E8F0' }}>
-                          {!usePhoneCompactItems ? <Box
-                            sx={{
-                              display: 'grid',
-                              gridTemplateColumns: `${28 + 22}px minmax(0, 1fr) ${ui.narrowQtyWidth}px ${ui.narrowPackageWidth}px minmax(0, 1fr) ${ui.narrowPriceWidth}px`,
-                              gap: `${ui.narrowRowGap}px`,
-                              alignItems: 'center',
-                              px: 0.2,
-                              py: 0.45,
-                              color: '#64748B',
-                              fontSize: 9.5,
-                              fontWeight: 900,
-                              textTransform: 'uppercase',
-                              letterSpacing: '0.03em',
-                            }}
-                          >
-                            <Box sx={{ gridColumn: '1 / 2' }}>№</Box>
-                            <Box sx={{ gridColumn: '2 / 3' }}>Товар</Box>
-                            <Box sx={{ gridColumn: '3 / 4' }}>Кол-во</Box>
-                            <Box sx={{ gridColumn: '4 / 5' }}>Упак.</Box>
-                            <Box sx={{ gridColumn: '5 / 6' }}>Вид</Box>
-                            <Box sx={{ gridColumn: '6 / 7' }}>Цена</Box>
-                          </Box> : null}
-                          <Box sx={{ pb: usePhoneCompactItems ? `${ui.itemsBottomInset}px` : 0 }}>
-                            {filteredDraftItems.map((item, index) => renderDraftItemCard(item, index + 1))}
-                          </Box>
+                  {(!showSectionSwitcher || webEditorSection === 'items') ? (
+                    <Paper
+                      variant="outlined"
+                      sx={{
+                        borderRadius: 0,
+                        p: usePhoneCompactItems ? 0 : 0,
+                        borderColor: usePhoneCompactItems ? 'transparent' : '#E2E8F0',
+                        boxShadow: 'none',
+                        mx: usePhoneCompactItems ? -1 : -1.4,
+                        overflow: 'hidden',
+                        bgcolor: '#FFFFFF',
+                        flex: usePhoneCompactItems ? undefined : 1,
+                        minHeight: usePhoneCompactItems ? undefined : 0,
+                        display: 'flex',
+                        flexDirection: 'column',
+                      }}
+                    >
+                      {usePhoneCompactItems ? (
+                        <Box sx={{ borderTop: '1px solid #E2E8F0', pb: `${ui.itemsBottomInset}px` }}>
+                          {filteredDraftItems.map((item, index) => renderDraftItemCard(item, index + 1))}
                         </Box>
                       ) : (
-                      <Table size="small" sx={{
-                        tableLayout: 'fixed',
-                        '& .MuiTableCell-root': { px: ui.tableCellX, py: ui.tableCellY, fontSize: ui.fieldFontSize, lineHeight: 1.15, verticalAlign: 'top' },
-                        '& .MuiTableHead-root .MuiTableCell-root': { py: 0.45, fontWeight: 800, color: '#475569', fontSize: ui.fieldFontSize },
-                        '& .MuiTableCell-root:nth-of-type(8)': { display: 'none' },
-                      }}>
-                        <TableHead>
-                          <TableRow>
-                            <TableCell width={18}></TableCell>
-                            <TableCell width={24}>№</TableCell>
-                            <TableCell>Товар</TableCell>
-                            <TableCell width={quantityColumnWidth}>Количество</TableCell>
-                            <TableCell width={filteredDraftItems.some((item) => !hasSinglePackage(item)) ? (useCompactTable ? 120 : 145) : (useCompactTable ? 72 : 84)}>Упаковка</TableCell>
-                            <TableCell width={useCompactTable ? 138 : 168}>Вид цены</TableCell>
-                            <TableCell width={useCompactTable ? 88 : 102}>Цена</TableCell>
-                            <TableCell width={80}>Скидка</TableCell>
-                            <TableCell width={useCompactTable ? 78 : 94}>Итого</TableCell>
-                          </TableRow>
-                        </TableHead>
-                        <TableBody>
-                          {filteredDraftItems.map((item, index) => {
-                            const rowNumber = index + 1;
-                            const packageValue = item.packageGuid || (item.packages.length ? '' : '__base__');
-                            const lineErrors = workspace.validation.itemMessages[item.key] || [];
-                            const quantityError = !isValidQuantityValue(item);
-                            const priceError = !isValidManualPriceValue(item.manualPrice);
-                            const quantityInputWidth = getQuantityInputWidthPx(item.quantity, useCompactTable ? 44 : 52, useCompactTable ? 102 : 126);
-                            const quantityControlWidth = getQuantityControlWidthPx(item.quantity, 28, useCompactTable ? 44 : 52, useCompactTable ? 102 : 126);
-                            const priceTypeValue = item.manualPrice.trim()
-                              ? { guid: '__manual__', name: 'Произвольный' }
-                              : item.priceTypeGuid
-                                ? { guid: item.priceTypeGuid, name: item.priceTypeName || workspace.draft.priceTypeName || 'Вид цены' }
-                                : workspace.draft.priceTypeGuid
-                                  ? { guid: workspace.draft.priceTypeGuid, name: workspace.draft.priceTypeName || 'Вид цены' }
-                                  : null;
-                            const displayedPrice = getDisplayedPriceValue(item.manualPrice, item.basePrice);
-                            return (
-                            <TableRow key={item.key} hover>
-                              <TableCell>
-                                <Tooltip title="Удалить строку" arrow>
-                                  <span>
-                                    <IconButton size="small" color="error" onClick={() => workspace.removeItem(item.key)} disabled={workspace.readOnly} sx={{ width: 20, height: 20, ml: -0.2 }}>
-                                      <Ionicons name="close-outline" size={14} />
-                                    </IconButton>
-                                  </span>
-                                </Tooltip>
-                              </TableCell>
-                              <TableCell><Typography sx={{ fontSize: 11.5, color: '#64748B', fontWeight: 800, ml: -0.15 }}>{rowNumber}</Typography></TableCell>
-                              <TableCell>
-                                <Typography sx={{ fontSize: 11.5, fontWeight: 800, lineHeight: 1.12, display: '-webkit-box', WebkitLineClamp: ui.itemMaxLines, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word' }}>{item.productName}</Typography>
-                                <Typography sx={{ fontSize: 10, color: '#64748B' }}>
-                                  <DraftItemMeta item={item} />
-                                </Typography>
-                                {lineErrors.length ? <Typography sx={{ fontSize: 10, color: '#DC2626', mt: 0.25 }}>{lineErrors.join(' ')}</Typography> : null}
-                              </TableCell>
-                              <TableCell>
-                                <Stack direction="row" alignItems="center" spacing={0.3} sx={{ width: quantityControlWidth }}>
-                                  <IconButton size="small" disabled={workspace.readOnly} onClick={() => {
-                                    workspace.setItemPatch(item.key, { quantity: stepQuantity(item, -1) });
-                                  }} sx={{ width: 28, height: 28, border: '1px solid #D8E2F0', borderRadius: '6px' }}>
-                                    <Ionicons name="remove-outline" size={14} />
-                                  </IconButton>
-                                  <TextField
-                                    size="small"
-                                    value={item.quantity}
-                                    onChange={(e) => workspace.setItemPatch(item.key, { quantity: normalizeQuantityInput(item, e.target.value) })}
-                                    disabled={workspace.readOnly}
-                                    error={quantityError}
-                                    sx={{ width: quantityInputWidth, ...compactInputSx, '& .MuiInputBase-root': { height: 28, borderRadius: '6px' }, '& input': { textAlign: 'center', fontSize: 10.5, fontWeight: 800, lineHeight: '28px', py: 0 } }}
-                                  />
-                                  <IconButton size="small" disabled={workspace.readOnly} onClick={() => {
-                                    workspace.setItemPatch(item.key, { quantity: stepQuantity(item, 1) });
-                                  }} sx={{ width: 28, height: 28, border: '1px solid #D8E2F0', borderRadius: '6px' }}>
-                                    <Ionicons name="add-outline" size={14} />
-                                  </IconButton>
-                                </Stack>
-                              </TableCell>
-                              <TableCell>
-                                {hasSinglePackage(item) ? (
-                                  <Box
-                                    sx={{
-                                      minHeight: '28px',
-                                      px: `${ui.compactStaticFieldHorizontalPadding}px`,
-                                      border: '1px solid #CBD5E1',
-                                      borderRadius: '6px',
-                                      display: 'inline-flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'center',
-                                      bgcolor: '#F8FAFC',
-                                      width: '100%',
-                                      maxWidth: '100%',
-                                      boxSizing: 'border-box',
-                                    }}
-                                  >
-                                    <Typography sx={{ fontSize: 10.5, fontWeight: 800, color: '#0F172A', whiteSpace: 'nowrap', lineHeight: '28px' }}>
-                                      {getPackageDisplayText(item)}
-                                    </Typography>
-                                  </Box>
-                                ) : (
-                                  <TextField select size="small" value={packageValue} onChange={(e) => workspace.setItemPatch(item.key, { packageGuid: e.target.value === '__base__' ? null : e.target.value })} disabled={workspace.readOnly} fullWidth sx={{ ...compactInputSx, '& .MuiInputBase-root': { height: 28, borderRadius: '6px' }, '& .MuiInputBase-input': { fontSize: 10.5, fontWeight: 800, lineHeight: '28px', py: 0 } }}>
-                                    <MenuItem value="">{unitLabel(item.baseUnit)}</MenuItem>
-                                    {item.packages.map((pack) => <MenuItem key={pack.guid} value={pack.guid}>{packageLabel(pack)}</MenuItem>)}
-                                  </TextField>
-                                )}
-                              </TableCell>
-                              <TableCell>
-                                <QuickLookupField
-                                  kind="priceType"
-                                  label=""
-                                  dense
-                                  placeholder="Вид цены"
-                                  value={priceTypeValue}
-                                  loadOptions={loadPriceTypeLookup}
-                                  onSelect={(next) => workspace.setItemPriceType(item.key, next)}
-                                  disabled={workspace.readOnly}
-                                  beforeDetailsAdornment={workspace.isItemPriceTypeCustom(item.key) ? (
-                                    <ResetAdornmentButton title="Сбросить вид цены строки" disabled={workspace.readOnly} onClick={() => workspace.resetItemPriceType(item.key)} />
-                                  ) : null}
-                                  onOpenDetails={() => void openReferenceDetails('price-type', item.priceTypeGuid || workspace.draft.priceTypeGuid)}
-                                  detailsDisabled={!(item.priceTypeGuid || workspace.draft.priceTypeGuid)}
+                        <Box sx={{ bgcolor: '#FFFFFF', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                          <Stack
+                            direction="row"
+                            spacing={1}
+                            alignItems="center"
+                            justifyContent="space-between"
+                            useFlexGap
+                            flexWrap="wrap"
+                            sx={{
+                              minHeight: 38,
+                              bgcolor: '#F8FAFC',
+                              borderBottom: '1px solid #E2E8F0',
+                              px: 1,
+                              py: 0.35,
+                            }}
+                          >
+                            <Stack direction="row" spacing={0.6} alignItems="center" sx={{ minWidth: 0, flex: '1 1 560px' }}>
+                              <TextField
+                                size="small"
+                                placeholder="Поиск товара"
+                                value={itemsSearch}
+                                onChange={(event) => setItemsSearch(event.target.value)}
+                                InputProps={{
+                                  startAdornment: <Ionicons name="search-outline" size={15} color="#64748B" />,
+                                }}
+                                sx={{
+                                  minWidth: 260,
+                                  maxWidth: 460,
+                                  flex: '1 1 360px',
+                                  '& .MuiInputBase-root': {
+                                    height: 30,
+                                    borderRadius: '4px',
+                                    fontSize: 12,
+                                    fontWeight: 800,
+                                    bgcolor: '#FFFFFF',
+                                    gap: 0.8,
+                                    boxShadow: 'inset 0 0 0 1px #D8E2F0',
+                                  },
+                                  '& .MuiOutlinedInput-notchedOutline': { border: 0 },
+                                  '& .MuiInputBase-root.Mui-focused': { boxShadow: 'inset 0 0 0 1px #2563EB, 0 0 0 3px rgba(37, 99, 235, 0.10)' },
+                                  '& .MuiInputBase-input': { py: 0, lineHeight: '30px' },
+                                }}
+                              />
+                              <ToolbarIconButton
+                                title="Удалить все строки"
+                                icon="trash-outline"
+                                label="Очистить"
+                                color="#DC2626"
+                                buttonSize={30}
+                                iconSize={15}
+                                onClick={() => setConfirmClearItemsOpen(true)}
+                                disabled={!workspace.draft.items.length || workspace.readOnly}
+                              />
+                              <ToolbarIconButton
+                                title="Открыть подбор товаров"
+                                icon="add-outline"
+                                label="Добавить товар"
+                                color="#16A34A"
+                                buttonSize={30}
+                                iconSize={15}
+                                onClick={() => openPicker('product')}
+                                disabled={!workspace.draft.counterpartyGuid || workspace.readOnly}
+                              />
+                            </Stack>
+
+                            <Box
+                              sx={{
+                                px: 1.1,
+                                py: 0.35,
+                                borderRadius: '4px',
+                                bgcolor: '#FFFFFF',
+                                border: '1px solid #D8E2F0',
+                                minWidth: 190,
+                                textAlign: 'right',
+                                flexShrink: 0,
+                              }}
+                            >
+                              <Typography sx={{ fontSize: 9.5, fontWeight: 900, color: '#64748B', lineHeight: 1, textTransform: 'uppercase', letterSpacing: 0 }}>
+                                Сумма заказа
+                              </Typography>
+                              <Typography sx={{ mt: 0.2, fontSize: 14, fontWeight: 900, color: '#2563EB', whiteSpace: 'nowrap', lineHeight: 1.15 }}>
+                                {formatMoney(workspace.localTotal, workspace.draft.currency)}
+                              </Typography>
+                            </Box>
+                          </Stack>
+
+                          <Box
+                            sx={{
+                              flex: 1,
+                              minHeight: filteredDraftItems.length ? 320 : 180,
+                              overflowY: 'auto',
+                              overflowX: 'hidden',
+                              bgcolor: '#FFFFFF',
+                            }}
+                          >
+                            {!filteredDraftItems.length ? (
+                              <Box sx={{ py: 4, display: 'grid', placeItems: 'center', gap: 1.2, color: '#64748B' }}>
+                                <Box
+                                  component="img"
+                                  src={PRODUCT_IMAGE_PLACEHOLDER_URI}
+                                  alt=""
+                                  sx={{ width: 72, height: 72, borderRadius: '18px', opacity: 0.9 }}
                                 />
-                              </TableCell>
-                              <TableCell><TextField size="small" value={displayedPrice} placeholder="0" onChange={(e) => { const manualPrice = normalizePriceInput(e.target.value, displayedPrice); workspace.setItemPatch(item.key, { manualPrice, priceTypeGuid: manualPrice.trim() ? null : workspace.draft.priceTypeGuid ?? null, priceTypeName: manualPrice.trim() ? 'Произвольный' : workspace.draft.priceTypeName ?? null }); }} disabled={workspace.readOnly} error={priceError} sx={{ ...compactInputSx, '& .MuiInputBase-root': { height: 28, borderRadius: '6px' }, '& .MuiInputBase-input': { fontSize: 10.5, fontWeight: 800, py: 0, lineHeight: '28px' }, '& .MuiInputBase-input::placeholder': { color: '#94A3B8', opacity: 1 } }} /></TableCell>
-                              <TableCell><TextField size="small" value={item.discountPercent} onChange={(e) => workspace.setItemPatch(item.key, { discountPercent: e.target.value })} disabled /></TableCell>
-                              <TableCell><Typography sx={{ fontSize: 11, fontWeight: 800, whiteSpace: 'nowrap' }}>{formatMoney(computeLineTotal(item, workspace.draft.generalDiscountPercent), item.currency)}</Typography></TableCell>
-                            </TableRow>
-                          );})}
-                        </TableBody>
-                      </Table>
+                                <Typography sx={{ fontSize: 14, fontWeight: 900, color: '#0F172A' }}>
+                                  Товаров пока нет
+                                </Typography>
+                                <Typography sx={{ fontSize: 12, fontWeight: 700, color: '#64748B' }}>
+                                  Добавьте строку через подбор товаров.
+                                </Typography>
+                              </Box>
+                            ) : (
+                              <Box
+                                component="table"
+                                sx={{
+                                  width: '100%',
+                                  maxWidth: '100%',
+                                  borderCollapse: 'separate',
+                                  borderSpacing: 0,
+                                  tableLayout: 'fixed',
+                                }}
+                              >
+                                <colgroup>
+                                  {draftItemsTable.getVisibleLeafColumns().map((column) => (
+                                    <col key={column.id} style={{ width: column.getSize() }} />
+                                  ))}
+                                </colgroup>
+                                <Box component="thead" sx={{ position: 'sticky', top: 0, zIndex: 2 }}>
+                                  {draftItemsTable.getHeaderGroups().map((headerGroup) => (
+                                    <Box component="tr" key={headerGroup.id}>
+                                      {headerGroup.headers.map((header) => (
+                                        <Box
+                                          component="th"
+                                          key={header.id}
+                                          draggable={header.column.id !== 'actions'}
+                                          onDragStart={() => {
+                                            draggedDraftItemsColumnRef.current = header.column.id;
+                                          }}
+                                          onDragOver={(event) => event.preventDefault()}
+                                          onDrop={() => moveDraftItemsColumn(header.column.id)}
+                                          sx={{
+                                            width: header.getSize(),
+                                            minWidth: header.column.columnDef.minSize,
+                                            maxWidth: header.column.columnDef.maxSize,
+                                            position: 'relative',
+                                            bgcolor: '#F8FAFC',
+                                            borderBottom: '1px solid #D8E2F0',
+                                            borderRight: '1px solid #E2E8F0',
+                                            color: '#475569',
+                                            fontSize: 10.5,
+                                            fontWeight: 900,
+                                            lineHeight: 1.1,
+                                            py: 0.75,
+                                            px: ui.tableCellX + 0.35,
+                                            textTransform: 'uppercase',
+                                            letterSpacing: 0,
+                                            textAlign: header.column.id === 'total' ? 'right' : 'left',
+                                            verticalAlign: 'middle',
+                                            whiteSpace: 'nowrap',
+                                            cursor: header.column.id !== 'actions' ? 'grab' : 'default',
+                                            '&:last-of-type': { borderRight: 0 },
+                                          }}
+                                        >
+                                          {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                                          {header.column.getCanResize() ? (
+                                            <Box
+                                              onMouseDown={header.getResizeHandler()}
+                                              onTouchStart={header.getResizeHandler()}
+                                              sx={{
+                                                position: 'absolute',
+                                                top: 0,
+                                                right: -3,
+                                                width: 6,
+                                                height: '100%',
+                                                cursor: 'col-resize',
+                                                userSelect: 'none',
+                                                touchAction: 'none',
+                                                '&:hover': { bgcolor: '#BFDBFE' },
+                                              }}
+                                            />
+                                          ) : null}
+                                        </Box>
+                                      ))}
+                                    </Box>
+                                  ))}
+                                </Box>
+                                <Box component="tbody">
+                                  {draftItemsTable.getRowModel().rows.map((row) => {
+                                    const hasRowErrors = (workspace.validation.itemMessages[row.original.key] || []).length > 0;
+                                    return (
+                                      <Box
+                                        component="tr"
+                                        key={row.id}
+                                        sx={{
+                                          bgcolor: hasRowErrors ? '#FFF7F7' : '#FFFFFF',
+                                          transition: 'background-color 140ms ease',
+                                          '&:hover td': { bgcolor: hasRowErrors ? '#FFF7F7' : '#FFFFFF' },
+                                        }}
+                                      >
+                                        {row.getVisibleCells().map((cell) => (
+                                          <Box
+                                            component="td"
+                                            key={cell.id}
+                                            sx={{
+                                              width: cell.column.getSize(),
+                                              borderBottom: '1px solid #E2E8F0',
+                                              borderRight: '1px solid #E2E8F0',
+                                              px: ui.tableCellX + 0.35,
+                                              py: 0.5,
+                                              verticalAlign: 'middle',
+                                              bgcolor: 'inherit',
+                                              '&:last-of-type': { borderRight: 0 },
+                                            }}
+                                          >
+                                            <Box
+                                              sx={{
+                                                minHeight: 56,
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: cell.column.id === 'total' ? 'flex-end' : cell.column.id === 'actions' ? 'center' : 'flex-start',
+                                                width: '100%',
+                                                minWidth: 0,
+                                              }}
+                                            >
+                                              {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                                            </Box>
+                                          </Box>
+                                        ))}
+                                      </Box>
+                                    );
+                                  })}
+                                </Box>
+                              </Box>
+                            )}
+                          </Box>
+                        </Box>
                       )}
-                    </Stack>
-                  </Paper> : null}
+                    </Paper>
+                  ) : null}
 
                   <Box sx={{ display: 'none' }}>
                     <Stack direction="row" justifyContent="space-between" alignItems="center">
@@ -2102,27 +2512,17 @@ export default function ClientOrdersWebScreen() {
         </MenuItem>
       </Menu>
 
-      <Dialog open={discardConfirm.open} onClose={() => closeDiscardConfirm(false)} maxWidth="xs" fullWidth fullScreen={isPhoneDialog}>
-        <DialogTitle>{discardConfirm.mode === 'create' ? 'Отменить создание заказа?' : 'Отменить изменения?'}</DialogTitle>
+      <Dialog open={discardConfirm.open} onClose={() => closeDiscardConfirm('cancel')} maxWidth="xs" fullWidth fullScreen={isPhoneDialog}>
+        <DialogTitle>Несохраненные изменения</DialogTitle>
         <DialogContent>
-          <Stack spacing={1}>
-            <Typography sx={{ color: '#475569', fontSize: 13 }}>
-              {discardConfirm.mode === 'create'
-                ? 'В новом документе есть ошибки, поэтому его нельзя сохранить автоматически. Отменить создание и перейти к другому документу?'
-                : 'В текущем документе есть ошибки, поэтому изменения нельзя сохранить автоматически. Перейти без сохранения изменений?'}
-            </Typography>
-            {discardConfirm.blockingMessage ? (
-              <Alert severity="warning" sx={{ py: 0.4, '& .MuiAlert-message': { fontSize: 12 } }}>
-                {discardConfirm.blockingMessage}
-              </Alert>
-            ) : null}
-          </Stack>
+          <Typography sx={{ color: '#475569', fontSize: 13 }}>
+            Сохранить изменения перед выходом из документа?
+          </Typography>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => closeDiscardConfirm(false)} sx={{ textTransform: 'none', fontWeight: 800 }}>Остаться</Button>
-          <Button variant="contained" color="error" onClick={() => closeDiscardConfirm(true)} sx={{ textTransform: 'none', fontWeight: 800 }}>
-            {discardConfirm.mode === 'create' ? 'Отменить создание' : 'Перейти без сохранения'}
-          </Button>
+          <Button onClick={() => closeDiscardConfirm('cancel')} sx={{ textTransform: 'none', fontWeight: 800 }}>Остаться</Button>
+          <Button color="error" onClick={() => closeDiscardConfirm('discard')} sx={{ textTransform: 'none', fontWeight: 800 }}>Не сохранять</Button>
+          <Button variant="contained" onClick={() => closeDiscardConfirm('save')} sx={{ textTransform: 'none', fontWeight: 800 }}>Сохранить</Button>
         </DialogActions>
       </Dialog>
 
@@ -2232,6 +2632,65 @@ export default function ClientOrdersWebScreen() {
             Удалить
           </Button>
         </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={!!productImagePreview}
+        onClose={() => setProductImagePreview(null)}
+        maxWidth="md"
+        fullWidth
+        fullScreen={isPhoneDialog}
+      >
+        <DialogTitle sx={{ pb: 0.75 }}>
+          <Stack direction="row" alignItems="flex-start" justifyContent="space-between" spacing={1}>
+            <Box sx={{ minWidth: 0 }}>
+              <Typography sx={{ fontSize: 16, fontWeight: 900, lineHeight: 1.2 }} noWrap>
+                {productImagePreview?.title || 'Изображение товара'}
+              </Typography>
+              {productImagePreview?.subtitle ? (
+                <Typography sx={{ mt: 0.35, fontSize: 11, fontWeight: 700, color: '#64748B' }}>
+                  {productImagePreview.subtitle}
+                </Typography>
+              ) : null}
+            </Box>
+            <IconButton
+              size="small"
+              onClick={() => setProductImagePreview(null)}
+              sx={{ mt: -0.4, width: 30, height: 30 }}
+            >
+              <Ionicons name="close-outline" size={19} />
+            </IconButton>
+          </Stack>
+        </DialogTitle>
+        <DialogContent sx={{ p: 2, pt: 1.25, bgcolor: '#F8FAFC' }}>
+          <Box
+            sx={{
+              minHeight: isPhoneDialog ? '62vh' : 460,
+              display: 'grid',
+              placeItems: 'center',
+              bgcolor: '#FFFFFF',
+              border: '1px solid #D8E2F0',
+              borderRadius: '8px',
+              overflow: 'hidden',
+            }}
+          >
+            {productImagePreview ? (
+              <Box
+                component="img"
+                src={productImagePreview.src}
+                alt={productImagePreview.title}
+                sx={{
+                  maxWidth: '100%',
+                  maxHeight: isPhoneDialog ? '70vh' : 560,
+                  width: 'auto',
+                  height: 'auto',
+                  objectFit: 'contain',
+                  display: 'block',
+                }}
+              />
+            ) : null}
+          </Box>
+        </DialogContent>
       </Dialog>
 
       <ReferenceDetailsDialog

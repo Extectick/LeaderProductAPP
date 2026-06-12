@@ -200,6 +200,7 @@ export default function ServicesLayout() {
           const showCloudInHeader = showCloudServiceInHeader && !showCreateInHeader;
           const shouldRenderRight = showCreateInHeader || showCloudInHeader || showServicesSummaryInHeader;
           const showTrackingBottomSlot = /^\/services\/tracking(?:\/.*)?$/.test(currentPath);
+          const isClientOrdersPath = /^\/services\/client_orders(?:\/.*)?$/.test(currentPath);
           const rightSlot = shouldRenderRight ? (
             <View style={styles.rightHeaderRow}>
               {showServicesSummaryInHeader ? (
@@ -240,11 +241,14 @@ export default function ServicesLayout() {
             header: () => (
               <AppHeader
                 title={meta.title}
-                subtitle={meta.subtitle}
+                subtitle={isClientOrdersPath ? undefined : meta.subtitle}
                 icon={meta.icon}
                 showBack={shouldShowBack}
                 onBack={shouldShowBack ? onBack : undefined}
                 tight={showTrackingBottomSlot}
+                dense={isClientOrdersPath}
+                compact={isClientOrdersPath}
+                horizontalPadding={isClientOrdersPath ? 6 : undefined}
                 rightSlot={resolvedRightSlot}
                 bottomSlot={showTrackingBottomSlot ? trackingHeaderBottomSlot : undefined}
               />

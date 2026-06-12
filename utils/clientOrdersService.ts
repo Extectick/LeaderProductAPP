@@ -6,6 +6,7 @@ export type PaginationMeta = {
   count?: number;
   limit?: number;
   offset?: number;
+  statusCounts?: Record<string, number>;
 };
 
 export type PagedResult<T> = {
@@ -199,6 +200,7 @@ export type ClientOrder = {
     phone?: string | null;
     email?: string | null;
   } | null;
+  itemsCount?: number;
   items: ClientOrderItem[];
   events: ClientOrderEvent[];
 };
@@ -245,7 +247,18 @@ function buildQuery(params: Record<string, string | number | boolean | undefined
 }
 
 function getErrorMessage(fallback: string, message?: string) {
-  return message || fallback;
+  if (!message) return fallback;
+  const normalized = String(message).trim();
+  const looksTechnical =
+    normalized.startsWith('{') ||
+    normalized.startsWith('[') ||
+    normalized.startsWith('<!DOCTYPE') ||
+    normalized.includes('"path"') ||
+    normalized.includes('"code"') ||
+    normalized.includes('ZodError') ||
+    normalized.includes('expected number') ||
+    normalized.includes('\n    at ');
+  return looksTechnical ? fallback : normalized.slice(0, 240);
 }
 
 function mapPagedResponse<T>(res: { ok: boolean; data?: { items?: T[] } | T[]; meta?: PaginationMeta; message?: string }, fallback: string): PagedResult<T> {
@@ -261,8 +274,22 @@ export async function getClientOrders(params?: {
   limit?: number;
   offset?: number;
   status?: string;
+  syncState?: string;
   search?: string;
   counterpartyGuid?: string;
+  organizationGuid?: string;
+  warehouseGuid?: string;
+  priceTypeGuid?: string;
+  amountMin?: string;
+  amountMax?: string;
+  deliveryDateFrom?: string;
+  deliveryDateTo?: string;
+  updatedFrom?: string;
+  updatedTo?: string;
+  itemsMin?: string;
+  itemsMax?: string;
+  hasNumber1c?: string;
+  onlyProblems?: boolean;
 }) {
   const query = buildQuery(params || {});
   const path = query ? `${API_ENDPOINTS.CLIENT_ORDERS.LIST}?${query}` : API_ENDPOINTS.CLIENT_ORDERS.LIST;
@@ -424,6 +451,23 @@ export async function searchClientOrderProducts(params: {
   offset?: number;
 }) {
   return getPagedSelector<ClientOrderProduct>(API_ENDPOINTS.CLIENT_ORDERS.PRODUCTS, params, 'Не удалось загрузить номенклатуру');
+}
+
+export async function getClientOrderProductsBatch(payload: {
+  productGuids: string[];
+  counterpartyGuid?: string;
+  agreementGuid?: string;
+  warehouseGuid?: string;
+  priceTypeGuid?: string;
+}) {
+  const res = await apiClient<typeof payload, { items: ClientOrderProduct[] }>(
+    API_ENDPOINTS.CLIENT_ORDERS.PRODUCTS_BATCH,
+    { method: 'POST', body: payload }
+  );
+  if (!res.ok || !res.data) {
+    throw new Error(getErrorMessage('Не удалось обновить цены и остатки товаров', res.message));
+  }
+  return Array.isArray(res.data.items) ? res.data.items : [];
 }
 
 export async function createClientOrder(payload: any) {

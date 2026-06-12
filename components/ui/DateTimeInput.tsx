@@ -34,6 +34,13 @@ export type DateTimeInputProps = {
   onClear?: () => void;
   onValidate?: (date: Date) => string | void;
   quickActions?: boolean;
+  renderTrigger?: (props: {
+    open: () => void;
+    disabled: boolean;
+    selected?: Date;
+    displayValue: string;
+    error?: string;
+  }) => React.ReactNode;
 };
 
 type DateTimePickerModule = typeof import('@react-native-community/datetimepicker');
@@ -250,6 +257,7 @@ export default function DateTimeInput({
   onClear,
   onValidate,
   quickActions = true,
+  renderTrigger,
 }: DateTimeInputProps) {
   const safeMinuteStep = normalizeMinuteStep(minuteStep);
   const selected = useMemo(() => toDate(value), [value]);
@@ -512,6 +520,12 @@ export default function DateTimeInput({
   const weeks = useMemo(() => Array.from({ length: 6 }, (_, idx) => monthGrid.slice(idx * 7, idx * 7 + 7)), [monthGrid]);
   const nowSnapshot = useMemo(() => applyPrecision(new Date(), timePrecision, safeMinuteStep), [safeMinuteStep, timePrecision, webVisible]);
   const nowLabel = useMemo(() => formatDisplay(nowSnapshot, includeTime, timePrecision), [includeTime, nowSnapshot, timePrecision]);
+  const webSelectedLabel = useMemo(() => {
+    const base = new Date(webDay.getFullYear(), webDay.getMonth(), webDay.getDate(), 0, 0, 0, 0);
+    if (includeTime) base.setHours(webHour, timePrecision === 'hour' ? 0 : webMinute, 0, 0);
+    return formatDisplay(base, includeTime, timePrecision);
+  }, [includeTime, timePrecision, webDay, webHour, webMinute]);
+  const nativeSelectedLabel = useMemo(() => formatDisplay(temp, includeTime, timePrecision), [includeTime, temp, timePrecision]);
 
   const quicks = useMemo(() => {
     if (!quickActions || !includeTime) return [] as { label: string; getDate: () => Date }[];
@@ -544,6 +558,13 @@ export default function DateTimeInput({
   const mask = includeTime ? MASK_DATETIME : MASK_DATE;
   const effectivePlaceholder = placeholder ?? (includeTime ? '23.08.25 00:00' : '23.08.25');
   const renderedError = localError || errorText;
+  const customTrigger = renderTrigger?.({
+    open: () => void openPicker(),
+    disabled,
+    selected,
+    displayValue: selected ? formatDisplay(selected, includeTime, timePrecision) : '',
+    error: renderedError,
+  });
   const jumpToToday = () => {
     const now = applyPrecision(new Date(), timePrecision, safeMinuteStep);
     setWebDay(now);
@@ -556,48 +577,52 @@ export default function DateTimeInput({
 
   return (
     <View style={[styles.wrap, style]}>
-      {label ? <Text style={styles.label}>{label}</Text> : null}
+      {customTrigger ? customTrigger : (
+        <>
+          {label ? <Text style={styles.label}>{label}</Text> : null}
 
-      <View style={styles.inputWrap}>
-        <MaskInput
-          value={text}
-          onChangeText={(masked) => {
-            setText(sanitizeMaskedInput(masked, includeTime));
-            if (localError) setLocalError('');
-          }}
-          onBlur={commitText}
-          onSubmitEditing={commitText}
-          editable={!disabled}
-          mask={mask}
-          placeholder={effectivePlaceholder}
-          keyboardType={Platform.OS === 'ios' ? 'numbers-and-punctuation' : 'numeric'}
-          inputMode="numeric"
-          returnKeyType="done"
-          style={styles.input}
-          placeholderTextColor="#9CA3AF"
-          onKeyPress={(event) => {
-            if (Platform.OS === 'web' && event.nativeEvent.key === 'Enter') commitText();
-          }}
-        />
+          <View style={styles.inputWrap}>
+            <MaskInput
+              value={text}
+              onChangeText={(masked) => {
+                setText(sanitizeMaskedInput(masked, includeTime));
+                if (localError) setLocalError('');
+              }}
+              onBlur={commitText}
+              onSubmitEditing={commitText}
+              editable={!disabled}
+              mask={mask}
+              placeholder={effectivePlaceholder}
+              keyboardType={Platform.OS === 'ios' ? 'numbers-and-punctuation' : 'numeric'}
+              inputMode="numeric"
+              returnKeyType="done"
+              style={styles.input}
+              placeholderTextColor="#9CA3AF"
+              onKeyPress={(event) => {
+                if (Platform.OS === 'web' && event.nativeEvent.key === 'Enter') commitText();
+              }}
+            />
 
-        <Pressable
-          onPress={openPicker}
-          disabled={disabled}
-          style={({ pressed }) => [styles.iconBtn, pressed && styles.iconBtnPressed]}
-          android_ripple={{ color: 'rgba(0,0,0,0.08)', borderless: true }}
-          accessibilityRole="button"
-          accessibilityLabel="Открыть календарь"
-          hitSlop={8}
-        >
-          <Ionicons name="calendar" size={16} color="#111827" />
-        </Pressable>
+            <Pressable
+              onPress={openPicker}
+              disabled={disabled}
+              style={({ pressed }) => [styles.iconBtn, pressed && styles.iconBtnPressed]}
+              android_ripple={{ color: 'rgba(0,0,0,0.08)', borderless: true }}
+              accessibilityRole="button"
+              accessibilityLabel="Открыть календарь"
+              hitSlop={8}
+            >
+              <Ionicons name="calendar" size={16} color="#111827" />
+            </Pressable>
 
-        {allowClear && selected && !disabled ? (
-          <Pressable onPress={clearSelected} hitSlop={10} style={styles.clearBtn} accessibilityLabel="Очистить дату">
-            <Ionicons name="close-circle" size={18} color="#9CA3AF" />
-          </Pressable>
-        ) : null}
-      </View>
+            {allowClear && selected && !disabled ? (
+              <Pressable onPress={clearSelected} hitSlop={10} style={styles.clearBtn} accessibilityLabel="Очистить дату">
+                <Ionicons name="close-circle" size={18} color="#9CA3AF" />
+              </Pressable>
+            ) : null}
+          </View>
+        </>
+      )}
 
       {renderedError ? <Text style={styles.errorText}>{renderedError}</Text> : null}
 
@@ -607,6 +632,7 @@ export default function DateTimeInput({
           <View style={styles.modalCard} {...modalContentGuardProps}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>{includeTime ? 'Выберите дату и время' : 'Выберите дату'}</Text>
+              <Text style={styles.selectedDateText}>Выбрано: {nativeSelectedLabel}</Text>
             </View>
 
             {quickActions ? (
@@ -654,11 +680,14 @@ export default function DateTimeInput({
             <View style={styles.webModalCard} {...modalContentGuardProps}>
               <View style={styles.webHeader}>
                 <Text style={styles.webTitle}>{includeTime ? 'Выберите дедлайн' : 'Выберите дату'}</Text>
-                <View style={styles.todayRow}>
-                  <Text style={styles.todayText}>Сегодня: {nowLabel}</Text>
-                  <Pressable onPress={jumpToToday} style={({ pressed }) => [styles.todayBtn, pressed && { opacity: 0.85 }]}>
-                    <Text style={styles.todayBtnText}>Сегодня</Text>
-                  </Pressable>
+                <View style={styles.dateSummaryBlock}>
+                  <Text style={styles.selectedDateText}>Выбрано: {webSelectedLabel}</Text>
+                  <View style={styles.todayRow}>
+                    <Text style={styles.todayText}>Сегодня: {nowLabel}</Text>
+                    <Pressable onPress={jumpToToday} style={({ pressed }) => [styles.todayBtn, pressed && { opacity: 0.85 }]}>
+                      <Text style={styles.todayBtnText}>Сегодня</Text>
+                    </Pressable>
+                  </View>
                 </View>
               </View>
 
@@ -831,6 +860,7 @@ const styles = StyleSheet.create({
   },
   modalHeader: { padding: 6, paddingBottom: 10 },
   modalTitle: { color: '#111827', fontWeight: '800', fontSize: 16 },
+  selectedDateText: { color: '#111827', fontSize: 13, fontWeight: '800' },
   quickRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 4, paddingBottom: 8 },
   quickChip: { backgroundColor: '#F3F4F6', borderRadius: 999, paddingVertical: 6, paddingHorizontal: 10 },
   quickChipText: { color: '#111827', fontWeight: '700', fontSize: 12 },
@@ -859,6 +889,7 @@ const styles = StyleSheet.create({
   },
   webHeader: { gap: 2 },
   webTitle: { color: '#0F172A', fontSize: 17, fontWeight: '800' },
+  dateSummaryBlock: { marginTop: 4, gap: 4 },
   todayRow: {
     flexDirection: 'row',
     alignItems: 'center',

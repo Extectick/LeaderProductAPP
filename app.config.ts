@@ -5,6 +5,10 @@ import path from "path";
 
 dotenv.config({ path: path.resolve(__dirname, process.env.NODE_ENV === "production" ? ".env.production" : ".env") });
 
+const sentryRuntimeEnabled = String(process.env.EXPO_PUBLIC_SENTRY_ENABLED || "").trim().toLowerCase() === "true";
+const sentryUploadConfigured = !!(process.env.SENTRY_ORG && process.env.SENTRY_PROJECT && process.env.SENTRY_AUTH_TOKEN);
+const enableSentryPlugin = sentryRuntimeEnabled || sentryUploadConfigured;
+
 export default ({ config }: ConfigContext): ExpoConfig => ({
   name: "Лидер Продукт",
   slug: "leader-product",
@@ -65,7 +69,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     "expo-audio",
     "expo-font",
     "@kesha-antonov/react-native-background-downloader",
-    "@sentry/react-native",
+    ...(enableSentryPlugin ? ["@sentry/react-native"] : []),
     "@react-native-community/datetimepicker",
     "expo-notifications",
     [

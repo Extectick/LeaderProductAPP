@@ -54,10 +54,12 @@ type Props = {
   onBack?: () => void;
   compact?: boolean;
   tight?: boolean;
+  dense?: boolean;
   leftSlot?: React.ReactNode;
   rightSlot?: React.ReactNode;
   bottomSlot?: React.ReactNode;
   surfaceVisible?: boolean;
+  horizontalPadding?: number;
 };
 
 type HeaderOffsetOptions = {
@@ -86,10 +88,12 @@ export function AppHeader({
   onBack,
   compact = false,
   tight = false,
+  dense = false,
   leftSlot,
   rightSlot,
   bottomSlot,
   surfaceVisible = true,
+  horizontalPadding,
 }: Props) {
   const { top } = useSafeAreaInsets();
   const { width } = useWindowDimensions();
@@ -103,10 +107,10 @@ export function AppHeader({
   const textColor = useThemeColor({}, 'text');
   const secondary = useThemeColor({}, 'secondaryText' as any);
 
-  const sidePadding = Platform.OS === 'web' ? (tight ? 12 : 16) : 12;
+  const sidePadding = horizontalPadding ?? (Platform.OS === 'web' ? (tight ? 12 : 16) : 12);
   const topPadding = Platform.OS === 'web' ? HEADER_TOP_PADDING_WEB : top + HEADER_TOP_PADDING_NATIVE_EXTRA;
-  const useCompactHeaderText = tight || compact || isMobileWidth;
-  const titleSize = useCompactHeaderText ? 16 : Platform.OS === 'web' ? 18 : 19;
+  const useCompactHeaderText = tight || compact || dense || isMobileWidth;
+  const titleSize = dense ? 15 : useCompactHeaderText ? 16 : Platform.OS === 'web' ? 18 : 19;
   const subtitleSize = useCompactHeaderText ? 11 : 12;
   const titleLines = useCompactHeaderText ? 1 : 2;
   const subtitleLines = useCompactHeaderText ? 1 : compact ? 1 : 2;
@@ -136,8 +140,8 @@ export function AppHeader({
   }, [setHeaderBottomOffset]);
 
   const headerContent = (
-    <View style={[styles.card, compact && styles.cardCompact, tight && styles.cardTight]}>
-      <View style={[styles.row, tight && styles.rowTight]}>
+    <View style={[styles.card, compact && styles.cardCompact, tight && styles.cardTight, dense && styles.cardDense]}>
+      <View style={[styles.row, tight && styles.rowTight, dense && styles.rowDense]}>
         {showBack ? (
           <Pressable
             accessibilityRole="button"
@@ -146,6 +150,7 @@ export function AppHeader({
             onPress={onBack}
             style={({ pressed }) => [
               styles.backBtn,
+              dense && styles.backBtnDense,
               { backgroundColor: pressed ? withOpacity(textColor, isDark ? 0.24 : 0.14) : backBg },
             ]}
           >
@@ -159,9 +164,9 @@ export function AppHeader({
           colors={['#4F46E5', '#7C3AED']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
-          style={styles.iconBadge}
+          style={[styles.iconBadge, dense && styles.iconBadgeDense]}
         >
-          <Ionicons name={icon as any} size={18} color="#fff" />
+          <Ionicons name={icon as any} size={dense ? 16 : 18} color="#fff" />
         </LinearGradient>
 
         <View style={styles.textWrap}>
@@ -183,7 +188,7 @@ export function AppHeader({
           ) : null}
         </View>
 
-        <View style={[styles.rightCluster, tight && styles.rightClusterTight]}>
+        <View style={[styles.rightCluster, tight && styles.rightClusterTight, dense && styles.rightClusterDense]}>
           <ServerStatusIndicator />
           {rightSlot}
         </View>
@@ -194,20 +199,20 @@ export function AppHeader({
   );
 
   const shellContent = surfaceVisible ? (
-    <View style={styles.shadowShell}>
+    <View style={[styles.shadowShell, dense && styles.shadowShellDense]}>
       <LiquidGlassSurface
         borderColor={borderColor}
         overlayColor={surfaceOverlayColor}
         blurTint={blurTint}
         blurIntensity={blurIntensity}
         webBackdropFilter="blur(22px) saturate(160%)"
-        style={styles.glassShell}
+        style={[styles.glassShell, dense && styles.glassShellDense]}
       >
         {headerContent}
       </LiquidGlassSurface>
     </View>
   ) : (
-    <View style={styles.plainShell}>{headerContent}</View>
+    <View style={[styles.plainShell, dense && styles.plainShellDense]}>{headerContent}</View>
   );
 
   return (
@@ -249,6 +254,18 @@ const styles = StyleSheet.create({
       } as ViewStyle,
     }) ?? {}),
   },
+  shadowShellDense: {
+    borderRadius: 14,
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 5,
+    ...(Platform.select({
+      web: {
+        boxShadow: '0 4px 10px rgba(15, 23, 42, 0.14)',
+      } as ViewStyle,
+    }) ?? {}),
+  },
   glassShell: {
     alignSelf: 'stretch',
     width: '100%',
@@ -256,9 +273,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     overflow: 'hidden',
   },
+  glassShellDense: {
+    borderRadius: 14,
+  },
   plainShell: {
     alignSelf: 'stretch',
     width: '100%',
+  },
+  plainShellDense: {
+    borderRadius: 14,
   },
   card: {
     paddingHorizontal: 12,
@@ -271,12 +294,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
   },
+  cardDense: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
   },
   rowTight: {
+    gap: 8,
+  },
+  rowDense: {
     gap: 8,
   },
   textWrap: {
@@ -291,6 +321,9 @@ const styles = StyleSheet.create({
   rightClusterTight: {
     gap: 6,
   },
+  rightClusterDense: {
+    gap: 6,
+  },
   backBtn: {
     width: 36,
     height: 36,
@@ -300,12 +333,22 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.22)',
   },
+  backBtnDense: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+  },
   iconBadge: {
     width: 38,
     height: 38,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  iconBadgeDense: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
   },
   title: {
     fontWeight: '800',

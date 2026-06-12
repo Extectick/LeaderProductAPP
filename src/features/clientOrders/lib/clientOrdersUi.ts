@@ -25,7 +25,7 @@ export function getPickerItemMeta(kind: ClientOrdersPickerKind | null, item: any
   if (kind === 'product') {
     return [item?.code, item?.article, item?.sku].filter(Boolean).join(' • ');
   }
-  return item?.fullName || item?.fullAddress || item?.number || item?.code || item?.article || item?.inn || '';
+  return '';
 }
 
 export function getCounterpartyTaxMeta(item: any) {

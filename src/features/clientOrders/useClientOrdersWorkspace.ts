@@ -5,6 +5,7 @@ import {
   deleteClientOrder,
   getClientOrder,
   getClientOrderDefaults,
+  getClientOrderProductsBatch,
   getClientOrderSettings,
   getClientOrders,
   searchClientOrderAgreements,
@@ -46,15 +47,16 @@ import {
   type DraftOrder,
 } from './clientOrdersShared';
 
-type AutosaveState = 'idle' | 'scheduled' | 'saving' | 'saved' | 'error' | 'paused-invalid';
+type AutosaveState = 'idle' | 'saved' | 'error';
 type SaveOptions = { silent?: boolean; reason?: 'manual' | 'autosave' };
+type DiscardDecision = 'save' | 'discard' | 'cancel';
 type DiscardConfirmContext = {
   draftMode: boolean;
   hasPersistedDraft: boolean;
   blockingMessage: string | null;
 };
 type UseClientOrdersWorkspaceOptions = {
-  confirmDiscard?: (context: DiscardConfirmContext) => Promise<boolean>;
+  confirmDiscard?: (context: DiscardConfirmContext) => Promise<DiscardDecision | boolean>;
 };
 type DraftSelections = {
   organization: ClientOrderOrganization | null;
@@ -66,7 +68,40 @@ type DraftSelections = {
 };
 
 function emptyFilters(): ClientOrdersFilters {
-  return { search: '', status: '', counterpartyGuid: '' };
+  return {
+    search: '',
+    status: '',
+    counterpartyGuid: '',
+    amountMin: '',
+    amountMax: '',
+    deliveryDateFrom: '',
+    deliveryDateTo: '',
+    updatedFrom: '',
+    updatedTo: '',
+    itemsMin: '',
+    itemsMax: '',
+    syncState: '',
+    organizationGuid: '',
+    warehouseGuid: '',
+    priceTypeGuid: '',
+    hasNumber1c: '',
+    onlyProblems: false,
+  };
+}
+
+function userErrorMessage(error: unknown, fallback: string) {
+  const message = error instanceof Error ? error.message.trim() : '';
+  const looksTechnical =
+    !message ||
+    message.startsWith('{') ||
+    message.startsWith('[') ||
+    message.startsWith('<!DOCTYPE') ||
+    message.includes('"path"') ||
+    message.includes('"code"') ||
+    message.includes('ZodError') ||
+    message.includes('expected number') ||
+    message.includes('\n    at ');
+  return looksTechnical ? fallback : message.slice(0, 240);
 }
 
 function emptySelections(): DraftSelections {
@@ -98,9 +133,76 @@ function normalizeFilterSearch(search: string) {
   return search.trim().toLowerCase();
 }
 
+function parseFilterAmount(value: string) {
+  const normalized = value.trim().replace(/\s/g, '').replace(',', '.');
+  if (!normalized) return null;
+  const amount = Number(normalized);
+  return Number.isFinite(amount) ? amount : null;
+}
+
+function parseFilterInteger(value: string) {
+  const normalized = value.trim().replace(/\s/g, '');
+  if (!normalized) return null;
+  const amount = Number(normalized);
+  return Number.isFinite(amount) ? Math.trunc(amount) : null;
+}
+
+function parseFilterDate(value: string) {
+  const normalized = value.trim();
+  if (!normalized) return null;
+  const dotted = normalized.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+  const iso = normalized.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const next = dotted ? `${dotted[3]}-${dotted[2]}-${dotted[1]}` : iso ? normalized : '';
+  if (!next) return null;
+  const date = new Date(`${next}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? null : date.getTime();
+}
+
+function parseOrderDate(value: string | null | undefined) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.getTime();
+}
+
+function orderHasPriceType(order: ClientOrder, priceTypeGuid: string) {
+  if (!priceTypeGuid) return true;
+  return order.items.some((item) => item.priceType?.guid === priceTypeGuid);
+}
+
+function orderHasProblem(order: ClientOrder) {
+  return !!(order.lastExportError || order.last1cError || order.cancelRequestedAt || ['ERROR', 'FAILED', 'CONFLICT', 'CANCEL_REQUESTED'].includes(order.syncState));
+}
+
 function orderMatchesFilters(order: ClientOrder, filters: ClientOrdersFilters) {
   if (filters.status && order.status !== filters.status) return false;
   if (filters.counterpartyGuid && order.counterparty?.guid !== filters.counterpartyGuid) return false;
+  if (filters.syncState && order.syncState !== filters.syncState) return false;
+  if (filters.organizationGuid && order.organization?.guid !== filters.organizationGuid) return false;
+  if (filters.warehouseGuid && order.warehouse?.guid !== filters.warehouseGuid) return false;
+  if (filters.priceTypeGuid && !orderHasPriceType(order, filters.priceTypeGuid)) return false;
+  if (filters.hasNumber1c === 'yes' && !order.number1c) return false;
+  if (filters.hasNumber1c === 'no' && order.number1c) return false;
+  if (filters.onlyProblems && !orderHasProblem(order)) return false;
+  const amount = Number(order.totalAmount || 0);
+  const amountMin = parseFilterAmount(filters.amountMin);
+  const amountMax = parseFilterAmount(filters.amountMax);
+  if (amountMin !== null && amount < amountMin) return false;
+  if (amountMax !== null && amount > amountMax) return false;
+  const itemsCount = order.itemsCount ?? order.items.length ?? 0;
+  const itemsMin = parseFilterInteger(filters.itemsMin);
+  const itemsMax = parseFilterInteger(filters.itemsMax);
+  if (itemsMin !== null && itemsCount < itemsMin) return false;
+  if (itemsMax !== null && itemsCount > itemsMax) return false;
+  const deliveryDate = parseOrderDate(order.deliveryDate);
+  const deliveryFrom = parseFilterDate(filters.deliveryDateFrom);
+  const deliveryTo = parseFilterDate(filters.deliveryDateTo);
+  if (deliveryFrom !== null && (deliveryDate === null || deliveryDate < deliveryFrom)) return false;
+  if (deliveryTo !== null && (deliveryDate === null || deliveryDate > deliveryTo + 86399999)) return false;
+  const updatedDate = parseOrderDate(order.updatedAt || order.sourceUpdatedAt || order.createdAt);
+  const updatedFrom = parseFilterDate(filters.updatedFrom);
+  const updatedTo = parseFilterDate(filters.updatedTo);
+  if (updatedFrom !== null && (updatedDate === null || updatedDate < updatedFrom)) return false;
+  if (updatedTo !== null && (updatedDate === null || updatedDate > updatedTo + 86399999)) return false;
 
   const search = normalizeFilterSearch(filters.search);
   if (!search) return true;
@@ -125,7 +227,12 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const confirmDiscard = options.confirmDiscard;
   const notify = useNotify();
   const [orders, setOrders] = React.useState<ClientOrder[]>([]);
-  const [ordersMeta, setOrdersMeta] = React.useState({ total: 0, limit: 20, offset: 0 });
+  const [ordersMeta, setOrdersMeta] = React.useState<{
+    total: number;
+    limit: number;
+    offset: number;
+    statusCounts: Record<string, number>;
+  }>({ total: 0, limit: 20, offset: 0, statusCounts: {} });
   const [filters, setFilters] = React.useState<ClientOrdersFilters>(emptyFilters());
   const [selectedGuid, setSelectedGuid] = React.useState<string | null>(null);
   const [selectedOrder, setSelectedOrder] = React.useState<ClientOrder | null>(null);
@@ -154,6 +261,12 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const documentStartedRef = React.useRef(false);
   const selectedGuidRef = React.useRef<string | null>(null);
   const contextRefreshSignatureRef = React.useRef('');
+  const ordersRequestIdRef = React.useRef(0);
+  const detailRequestIdRef = React.useRef(0);
+  const defaultsRequestIdRef = React.useRef(0);
+  const pricingRequestIdRef = React.useRef(0);
+  const ordersAppendLoadingRef = React.useRef(false);
+  const ordersNextOffsetRef = React.useRef(0);
 
   const draftMode = !draft.guid;
   const readOnly = !!selectedOrder?.isPostedIn1c || selectedOrder?.status === 'CANCELLED';
@@ -164,6 +277,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         ...baseValidation,
         canSave: false,
         canAutosave: false,
+        canSubmit: false,
         blockingMessage: settings.deliveryDateIssueMessage || 'Проверьте настройки даты отгрузки.',
       };
     }
@@ -174,20 +288,24 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const latestDraftOrder = React.useMemo(() => sortedOrders.find((item) => item.status === 'DRAFT') || null, [sortedOrders]);
   const hasEditableDocument = documentStarted || !!draft.guid || !!selectedGuid || !!selectedOrder;
   const statusCounts = React.useMemo(() => {
-    const counts = sortedOrders.reduce<Record<string, number>>((acc, item) => {
+    const loadedCounts = sortedOrders.reduce<Record<string, number>>((acc, item) => {
       acc[item.status] = (acc[item.status] || 0) + 1;
       return acc;
     }, {});
+    const counts = Object.keys(ordersMeta.statusCounts).length ? ordersMeta.statusCounts : loadedCounts;
+    const allCount = Object.keys(ordersMeta.statusCounts).length
+      ? Object.values(ordersMeta.statusCounts).reduce((sum, count) => sum + count, 0)
+      : ordersMeta.total || sortedOrders.length;
     return {
-      all: sortedOrders.length,
+      all: allCount,
       draft: counts.DRAFT || 0,
       queued: counts.QUEUED || 0,
       sent: counts.SENT_TO_1C || 0,
       cancelled: counts.CANCELLED || 0,
     };
-  }, [sortedOrders]);
+  }, [ordersMeta.statusCounts, ordersMeta.total, sortedOrders]);
 
-  const hasMoreOrders = orders.length < (ordersMeta.total || 0);
+  const hasMoreOrders = ordersNextOffsetRef.current < (ordersMeta.total || 0);
 
   React.useEffect(() => {
     settingsRef.current = settings;
@@ -225,10 +343,9 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
   const markDirty = React.useCallback(() => {
     setDirty(true);
-    if (autosaveState !== 'saving') {
-      setAutosaveError(null);
-    }
-  }, [autosaveState]);
+    setAutosaveError(null);
+    setAutosaveState('idle');
+  }, []);
 
   const patchDraft = React.useCallback((patch: Partial<DraftOrder> | ((prev: DraftOrder) => DraftOrder)) => {
     setDraft((prev) => (typeof patch === 'function' ? patch(prev) : { ...prev, ...patch }));
@@ -306,7 +423,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       }));
       return nextSettings;
     } catch (e: any) {
-      setError(e?.message || 'Не удалось загрузить настройки заказов клиентов.');
+      setError(userErrorMessage(e, 'Не удалось загрузить настройки заказов клиентов.'));
       return null;
     } finally {
       setLoadingSettings(false);
@@ -314,8 +431,11 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, []);
 
   const loadOrders = React.useCallback(async (mode: 'reset' | 'append' = 'reset') => {
-    const offset = mode === 'append' ? orders.length : 0;
+    if (mode === 'append' && ordersAppendLoadingRef.current) return;
+    const offset = mode === 'append' ? ordersNextOffsetRef.current : 0;
+    const requestId = ++ordersRequestIdRef.current;
     if (mode === 'append') {
+      ordersAppendLoadingRef.current = true;
       setLoadingMoreOrders(true);
     } else {
       setLoadingOrders(true);
@@ -328,14 +448,38 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         offset,
         search: filters.search || undefined,
         status: filters.status || undefined,
+        syncState: filters.syncState || undefined,
         counterpartyGuid: filters.counterpartyGuid || undefined,
+        organizationGuid: filters.organizationGuid || undefined,
+        warehouseGuid: filters.warehouseGuid || undefined,
+        priceTypeGuid: filters.priceTypeGuid || undefined,
+        amountMin: filters.amountMin || undefined,
+        amountMax: filters.amountMax || undefined,
+        deliveryDateFrom: filters.deliveryDateFrom || undefined,
+        deliveryDateTo: filters.deliveryDateTo || undefined,
+        updatedFrom: filters.updatedFrom || undefined,
+        updatedTo: filters.updatedTo || undefined,
+        itemsMin: filters.itemsMin || undefined,
+        itemsMax: filters.itemsMax || undefined,
+        hasNumber1c: filters.hasNumber1c || undefined,
+        onlyProblems: filters.onlyProblems || undefined,
       });
+      if (ordersRequestIdRef.current !== requestId) return;
       const list = Array.isArray(result.items) ? result.items : [];
-      setOrders((prev) => (mode === 'append' ? [...prev, ...list] : list));
+      ordersNextOffsetRef.current = offset + list.length;
+      setOrders((prev) => {
+        if (mode !== 'append') return list;
+        const known = new Set(prev.map((item) => item.guid));
+        return [...prev, ...list.filter((item) => !known.has(item.guid))];
+      });
+      const nextTotal = mode === 'append' && list.length === 0
+        ? ordersNextOffsetRef.current
+        : result.meta.total || 0;
       setOrdersMeta({
-        total: result.meta.total || 0,
+        total: nextTotal,
         limit: result.meta.limit || 20,
         offset: result.meta.offset || offset,
+        statusCounts: result.meta.statusCounts || {},
       });
       if (mode === 'reset') {
         const nextSorted = sortClientOrdersForWorkspace(list);
@@ -352,18 +496,24 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         }
       }
     } catch (e: any) {
-      setError(e?.message || 'Не удалось загрузить список заказов.');
+      if (ordersRequestIdRef.current !== requestId) return;
+      setError(userErrorMessage(e, 'Не удалось загрузить список заказов.'));
     } finally {
-      setLoadingOrders(false);
-      setLoadingMoreOrders(false);
+      if (mode === 'append') ordersAppendLoadingRef.current = false;
+      if (ordersRequestIdRef.current === requestId) {
+        setLoadingOrders(false);
+        setLoadingMoreOrders(false);
+      }
     }
-  }, [filters.counterpartyGuid, filters.search, filters.status, orders.length]);
+  }, [filters]);
 
   const loadDetail = React.useCallback(async (guid: string) => {
+    const requestId = ++detailRequestIdRef.current;
     setLoadingDetail(true);
     setError(null);
     try {
       const order = await getClientOrder(guid);
+      if (detailRequestIdRef.current !== requestId || selectedGuidRef.current !== guid) return null;
       setSelectedOrder(order);
       setDraft(orderToDraft(order));
       setDocumentStarted(true);
@@ -380,18 +530,21 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       setAutosaveError(null);
       return order;
     } catch (e: any) {
-      setError(e?.message || 'Не удалось загрузить карточку заказа.');
+      if (detailRequestIdRef.current !== requestId) return null;
+      setError(userErrorMessage(e, 'Не удалось загрузить карточку заказа.'));
       return null;
     } finally {
-      setLoadingDetail(false);
+      if (detailRequestIdRef.current === requestId) setLoadingDetail(false);
     }
   }, []);
 
   const applyResolvedDefaults = React.useCallback(async (organizationGuid: string, counterpartyGuid: string) => {
     if (!organizationGuid || !counterpartyGuid) return;
+    const requestId = ++defaultsRequestIdRef.current;
     setLoadingDefaults(true);
     try {
       const defaults = await getClientOrderDefaults({ organizationGuid, counterpartyGuid });
+      if (defaultsRequestIdRef.current !== requestId) return;
       setDraft((prev) => ({
         ...prev,
         agreementGuid: defaults.agreement?.guid || '',
@@ -418,9 +571,10 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         deliveryAddress: defaults.deliveryAddress || null,
       }));
     } catch (e: any) {
-      setError(e?.message || 'Не удалось подставить значения по умолчанию.');
+      if (defaultsRequestIdRef.current !== requestId) return;
+      setError(userErrorMessage(e, 'Не удалось подставить значения по умолчанию.'));
     } finally {
-      setLoadingDefaults(false);
+      if (defaultsRequestIdRef.current === requestId) setLoadingDefaults(false);
     }
   }, []);
 
@@ -437,8 +591,9 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
   React.useEffect(() => {
     if (!selectedGuid) return;
+    if (selectedOrder?.guid === selectedGuid && selectedOrder.revision === draft.revision) return;
     void loadDetail(selectedGuid);
-  }, [loadDetail, selectedGuid]);
+  }, [draft.revision, loadDetail, selectedGuid, selectedOrder?.guid, selectedOrder?.revision]);
 
   const saveUserSettings = React.useCallback(async (payload: Parameters<typeof updateClientOrderSettings>[0]) => {
     setSavingSettings(true);
@@ -451,7 +606,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       }
       return nextSettings;
     } catch (e: any) {
-      setError(e?.message || 'Не удалось обновить настройки.');
+      setError(userErrorMessage(e, 'Не удалось обновить настройки.'));
       return null;
     } finally {
       setSavingSettings(false);
@@ -462,7 +617,6 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     if (readOnly) return null;
     try {
       setSaving(true);
-      if (options?.reason === 'autosave') setAutosaveState('saving');
       setAutosaveError(null);
 
       const payload = buildPayload(draft, options?.reason || 'manual');
@@ -497,10 +651,10 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       applySavedOrderToList(order);
       return order;
     } catch (e: any) {
-      const message = e?.message || 'Не удалось сохранить заказ.';
+      const message = userErrorMessage(e, 'Не удалось сохранить заказ. Проверьте данные и повторите попытку.');
       setError(message);
       setAutosaveError(message);
-      if (options?.reason === 'autosave') setAutosaveState('error');
+      setAutosaveState('error');
       if (!options?.silent) {
         notify({ type: 'error', title: 'Ошибка сохранения', message });
       }
@@ -509,17 +663,6 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       setSaving(false);
     }
   }, [applySavedOrderToList, draft, mergeSavedOrderIntoDraft, notify, readOnly, selections]);
-
-  React.useEffect(() => {
-    if (!dirty || readOnly) return;
-    if (!validation.canAutosave) {
-      setAutosaveState('paused-invalid');
-      return;
-    }
-    setAutosaveState('scheduled');
-    const timer = setTimeout(() => void saveDraft({ silent: true, reason: 'autosave' }), 1500);
-    return () => clearTimeout(timer);
-  }, [dirty, draft, readOnly, saveDraft, validation.canAutosave]);
 
   React.useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -534,27 +677,44 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
   const confirmDiscardIfNeeded = React.useCallback(async () => {
     if (!dirty) return true;
-    if (validation.canAutosave) {
-      const result = await saveDraft({ silent: true, reason: 'autosave' });
-      if (result) return true;
-    }
+    let decision: DiscardDecision;
     if (confirmDiscard) {
-      return confirmDiscard({
+      const result = await confirmDiscard({
         draftMode,
         hasPersistedDraft: !!draft.guid,
         blockingMessage: validation.blockingMessage,
       });
+      decision = typeof result === 'boolean' ? (result ? 'discard' : 'cancel') : result;
+    } else if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      decision = window.confirm('Сохранить изменения перед выходом?') ? 'save' : 'cancel';
+    } else {
+      decision = await new Promise<DiscardDecision>((resolve) => {
+        Alert.alert('Несохраненные изменения', 'Сохранить изменения перед выходом?', [
+          { text: 'Остаться', style: 'cancel', onPress: () => resolve('cancel') },
+          { text: 'Не сохранять', style: 'destructive', onPress: () => resolve('discard') },
+          { text: 'Сохранить', onPress: () => resolve('save') },
+        ]);
+      });
     }
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      return window.confirm('Есть несохраненные изменения с ошибками. Перейти без сохранения?');
+    if (decision === 'cancel') return false;
+    if (decision === 'save') return !!(await saveDraft({ reason: 'manual' }));
+    if (selectedOrder) {
+      setDraft(orderToDraft(selectedOrder));
+      setSelections({
+        organization: selectedOrder.organization || null,
+        counterparty: selectedOrder.counterparty || null,
+        agreement: selectedOrder.agreement || null,
+        contract: selectedOrder.contract || null,
+        warehouse: selectedOrder.warehouse || null,
+        deliveryAddress: selectedOrder.deliveryAddress || null,
+      });
+      setDirty(false);
+      setError(null);
+    } else {
+      resetDraftToBase();
     }
-    return new Promise<boolean>((resolve) => {
-      Alert.alert('Несохраненные изменения', 'Есть несохраненные изменения с ошибками. Перейти без сохранения?', [
-        { text: 'Остаться', style: 'cancel', onPress: () => resolve(false) },
-        { text: 'Перейти', style: 'destructive', onPress: () => resolve(true) },
-      ]);
-    });
-  }, [confirmDiscard, dirty, draft.guid, draftMode, saveDraft, validation.blockingMessage, validation.canAutosave]);
+    return true;
+  }, [confirmDiscard, dirty, draft.guid, draftMode, resetDraftToBase, saveDraft, selectedOrder, validation.blockingMessage]);
 
   const selectOrder = React.useCallback(async (guid: string) => {
     if (guid === selectedGuid) return true;
@@ -676,6 +836,59 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     }
   }, [draft.agreementGuid, draft.counterpartyGuid, draft.warehouseGuid, setItemPatch]);
 
+  const refreshItemsPricing = React.useCallback(async (items: DraftItem[]) => {
+    if (!draft.counterpartyGuid || !items.length) return;
+    const requestId = ++pricingRequestIdRef.current;
+    try {
+      const products = await getClientOrderProductsBatch({
+        productGuids: items.map((item) => item.productGuid),
+        counterpartyGuid: draft.counterpartyGuid,
+        agreementGuid: draft.agreementGuid || undefined,
+        warehouseGuid: draft.warehouseGuid || undefined,
+        priceTypeGuid: draft.priceTypeGuid || undefined,
+      });
+      if (pricingRequestIdRef.current !== requestId) return;
+      const productByGuid = new Map(products.map((product) => [product.guid, product]));
+      setDraft((prev) => ({
+        ...prev,
+        items: prev.items.map((item) => {
+          const product = productByGuid.get(item.productGuid);
+          if (!product) return item;
+          const hasManualPrice = !!item.manualPrice.trim();
+          return {
+            ...item,
+            basePrice: hasManualPrice ? item.basePrice : product.basePrice ?? null,
+            receiptPrice: product.receiptPrice ?? product.basePrice ?? null,
+            currency: DEFAULT_ORDER_CURRENCY,
+            priceTypeGuid: hasManualPrice
+              ? item.priceTypeGuid ?? null
+              : product.priceType?.guid ?? draft.priceTypeGuid ?? null,
+            priceTypeName: hasManualPrice
+              ? item.priceTypeName ?? null
+              : product.priceType?.name ?? draft.priceTypeName ?? null,
+            baseUnit: product.baseUnit ?? item.baseUnit ?? null,
+            stock: product.stock ?? null,
+            packages: product.packages?.length ? product.packages : item.packages,
+          };
+        }),
+      }));
+    } catch {
+      if (pricingRequestIdRef.current !== requestId) return;
+      setDraft((prev) => ({
+        ...prev,
+        items: prev.items.map((item) => item.manualPrice.trim()
+          ? item
+          : { ...item, basePrice: null }),
+      }));
+    }
+  }, [
+    draft.agreementGuid,
+    draft.counterpartyGuid,
+    draft.priceTypeGuid,
+    draft.priceTypeName,
+    draft.warehouseGuid,
+  ]);
+
   React.useEffect(() => {
     if (!draft.warehouseGuid || !draft.counterpartyGuid || !draft.items.length) {
       contextRefreshSignatureRef.current = '';
@@ -693,11 +906,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     }
     contextRefreshSignatureRef.current = refreshSignature;
 
-    draft.items.forEach((item) => {
-      const priceType = item.priceTypeGuid ? { guid: item.priceTypeGuid, name: item.priceTypeName || 'Вид цены' } : null;
-      void refreshItemPricing(item, priceType);
-    });
-  }, [draft.agreementGuid, draft.counterpartyGuid, draft.warehouseGuid, refreshItemPricing]);
+    void refreshItemsPricing(draft.items);
+  }, [draft.agreementGuid, draft.counterpartyGuid, draft.warehouseGuid, refreshItemsPricing]);
 
   const documentHeaderDefaultsState = React.useMemo(() => ({
     organization: selections.organization ? 'из настроек пользователя' : 'не найдено значение по умолчанию',
@@ -828,6 +1038,12 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [loadDetail, loadOrders, loadSettings, selectedGuid]);
 
   const submitOrder = React.useCallback(async () => {
+    if (!validation.canSubmit) {
+      const message = validation.blockingMessage || 'Исправьте ошибки в строках заказа.';
+      setError(message);
+      notify({ type: 'error', title: 'Заказ не готов к отправке', message });
+      return;
+    }
     let targetGuid = draft.guid || selectedGuid;
     let revision = draft.revision;
     if (!targetGuid || dirty) {
@@ -847,13 +1063,13 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       setDocumentStarted(true);
       setDirty(false);
     } catch (e: any) {
-      const message = e?.message || 'Не удалось отправить заказ.';
+      const message = userErrorMessage(e, 'Не удалось отправить заказ.');
       setError(message);
       notify({ type: 'error', title: 'Ошибка отправки', message });
     } finally {
       setSubmitting(false);
     }
-  }, [dirty, draft.guid, draft.revision, loadOrders, notify, saveDraft, selectedGuid]);
+  }, [dirty, draft.guid, draft.revision, loadOrders, notify, saveDraft, selectedGuid, validation.blockingMessage, validation.canSubmit]);
 
   const runCancel = React.useCallback(async (target?: { guid: string; revision: number }) => {
     const targetGuid = target?.guid || draft.guid;
@@ -872,7 +1088,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       setDraft(orderToDraft(order));
       setDirty(false);
     } catch (e: any) {
-      setError(e?.message || 'Не удалось отменить заказ.');
+      setError(userErrorMessage(e, 'Не удалось отменить заказ.'));
     } finally {
       setCancelling(false);
     }
@@ -895,7 +1111,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       }
       await loadOrders('reset');
     } catch (e: any) {
-      const message = e?.message || 'Не удалось удалить черновик заказа.';
+      const message = userErrorMessage(e, 'Не удалось удалить черновик заказа.');
       setError(message);
       notify({ type: 'error', title: 'Ошибка удаления', message });
       await loadOrders('reset');
@@ -917,22 +1133,16 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
   const autosaveLabel = React.useMemo(() => {
     switch (autosaveState) {
-      case 'scheduled':
-        return 'Автосохранение через секунду';
-      case 'saving':
-        return 'Автосохранение...';
       case 'saved':
         return lastSavedAt
           ? `Сохранено ${new Date(lastSavedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`
           : 'Сохранено';
       case 'error':
-        return autosaveError || 'Ошибка автосохранения';
-      case 'paused-invalid':
-        return validation.blockingMessage || 'Автосохранение остановлено';
+        return 'Не удалось сохранить';
       default:
-        return dirty ? 'Есть изменения' : 'Без изменений';
+        return dirty ? 'Не сохранено' : 'Без изменений';
     }
-  }, [autosaveError, autosaveState, dirty, lastSavedAt, validation.blockingMessage]);
+  }, [autosaveState, dirty, lastSavedAt]);
 
   return {
     orders: sortedOrders,
@@ -994,6 +1204,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     refreshing,
     refreshAll,
     saveDraft,
+    confirmDiscardIfNeeded,
     submitOrder,
     cancelOrder,
     cancelOrderConfirmed: runCancel,

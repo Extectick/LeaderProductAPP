@@ -62,6 +62,20 @@ export type ClientOrdersFilters = {
   search: string;
   status: string;
   counterpartyGuid: string;
+  amountMin: string;
+  amountMax: string;
+  deliveryDateFrom: string;
+  deliveryDateTo: string;
+  updatedFrom: string;
+  updatedTo: string;
+  itemsMin: string;
+  itemsMax: string;
+  syncState: string;
+  organizationGuid: string;
+  warehouseGuid: string;
+  priceTypeGuid: string;
+  hasNumber1c: string;
+  onlyProblems: boolean;
 };
 
 export type LayoutTier = 'phone' | 'tablet' | 'laptop' | 'desktop' | 'wide';
@@ -215,6 +229,7 @@ export function getClientOrdersResponsiveMetrics(
 export type DraftValidation = {
   canSave: boolean;
   canAutosave: boolean;
+  canSubmit: boolean;
   blockingMessage: string | null;
   itemMessages: Record<string, string[]>;
 };
@@ -346,7 +361,7 @@ export function isValidManualPriceValue(value: string) {
 export function formatMoney(value?: number | null, currency?: string | null) {
   if (value === null || value === undefined) return '—';
   const formatted = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(value);
-  const label = (currency || DEFAULT_ORDER_CURRENCY).toUpperCase() === 'RUB' ? 'руб' : (currency || DEFAULT_ORDER_CURRENCY);
+  const label = (currency || DEFAULT_ORDER_CURRENCY).toUpperCase() === 'RUB' ? '₽' : (currency || DEFAULT_ORDER_CURRENCY);
   return `${formatted} ${label}`;
 }
 
@@ -443,6 +458,7 @@ export function validateDraft(draft: DraftOrder): DraftValidation {
     return {
       canSave: false,
       canAutosave: false,
+      canSubmit: false,
       blockingMessage: 'Выберите организацию.',
       itemMessages,
     };
@@ -452,6 +468,7 @@ export function validateDraft(draft: DraftOrder): DraftValidation {
     return {
       canSave: false,
       canAutosave: false,
+      canSubmit: false,
       blockingMessage: 'Выберите контрагента.',
       itemMessages,
     };
@@ -461,6 +478,7 @@ export function validateDraft(draft: DraftOrder): DraftValidation {
     return {
       canSave: false,
       canAutosave: false,
+      canSubmit: false,
       blockingMessage: 'Добавьте хотя бы одну строку заказа.',
       itemMessages,
     };
@@ -474,6 +492,7 @@ export function validateDraft(draft: DraftOrder): DraftValidation {
     return {
       canSave: false,
       canAutosave: false,
+      canSubmit: false,
       blockingMessage: 'Общая скидка должна быть в диапазоне 0-100.',
       itemMessages,
     };
@@ -508,8 +527,9 @@ export function validateDraft(draft: DraftOrder): DraftValidation {
 
   const hasItemErrors = Object.keys(itemMessages).length > 0;
   return {
-    canSave: !hasItemErrors,
-    canAutosave: !hasItemErrors,
+    canSave: true,
+    canAutosave: true,
+    canSubmit: !hasItemErrors,
     blockingMessage: hasItemErrors ? 'Исправьте ошибки в строках заказа.' : null,
     itemMessages,
   };

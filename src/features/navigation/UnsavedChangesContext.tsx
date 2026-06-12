@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet } from 'react-native';
 import { Button, Dialog, Portal, Text } from 'react-native-paper';
 
@@ -10,6 +10,13 @@ type UnsavedChangesConfig = {
   confirmText?: string;
   cancelText?: string;
   icon?: string;
+  iconColor?: string;
+  confirmButtonColor?: string;
+  confirmButtonTextColor?: string;
+  cancelButtonTextColor?: string;
+  warningTextColor?: string;
+  warningBackgroundColor?: string;
+  warningBorderColor?: string;
   onDiscard?: () => void | Promise<void>;
 };
 
@@ -30,13 +37,42 @@ const defaultConfig: UnsavedChangesConfig = {
   confirmText: 'Выйти',
   cancelText: 'Остаться',
   icon: 'alert-outline',
+  iconColor: '#F97316',
+  confirmButtonColor: '#F97316',
+  confirmButtonTextColor: '#FFFFFF',
+  cancelButtonTextColor: '#475569',
+  warningTextColor: '#B45309',
+  warningBackgroundColor: '#FFF7ED',
+  warningBorderColor: '#FED7AA',
 };
+
+const DIALOG_CLOSE_MS = 180;
 
 export function UnsavedChangesProvider({ children }: { children: React.ReactNode }) {
   const configRef = useRef<UnsavedChangesConfig | null>(null);
   const pendingNavigationRef = useRef<PendingNavigation>(null);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [dialogConfig, setDialogConfig] = useState<UnsavedChangesConfig | null>(null);
+  const [dialogVisible, setDialogVisible] = useState(false);
   const [discarding, setDiscarding] = useState(false);
+
+  const clearCloseTimer = useCallback(() => {
+    if (!closeTimerRef.current) return;
+    clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = null;
+  }, []);
+
+  useEffect(() => clearCloseTimer, [clearCloseTimer]);
+
+  const hideDialog = useCallback((afterClose?: () => void, clearConfig = true) => {
+    clearCloseTimer();
+    setDialogVisible(false);
+    closeTimerRef.current = setTimeout(() => {
+      closeTimerRef.current = null;
+      if (clearConfig) setDialogConfig(null);
+      afterClose?.();
+    }, DIALOG_CLOSE_MS);
+  }, [clearCloseTimer]);
 
   const registerUnsavedChanges = useCallback((config: UnsavedChangesConfig | null) => {
     const nextConfig = config?.active ? { ...defaultConfig, ...config, active: true } : null;
@@ -54,8 +90,8 @@ export function UnsavedChangesProvider({ children }: { children: React.ReactNode
   const closeDialog = useCallback(() => {
     if (discarding) return;
     pendingNavigationRef.current = null;
-    setDialogConfig(null);
-  }, [discarding]);
+    hideDialog();
+  }, [discarding, hideDialog]);
 
   const confirmNavigation = useCallback((navigate: () => void) => {
     const config = configRef.current;
@@ -66,6 +102,7 @@ export function UnsavedChangesProvider({ children }: { children: React.ReactNode
 
     pendingNavigationRef.current = navigate;
     setDialogConfig(config);
+    setDialogVisible(true);
     return false;
   }, []);
 
@@ -74,19 +111,18 @@ export function UnsavedChangesProvider({ children }: { children: React.ReactNode
     const config = configRef.current;
     pendingNavigationRef.current = null;
     setDiscarding(true);
-    setDialogConfig(null);
 
     Promise.resolve()
       .then(() => config?.onDiscard?.())
       .catch(() => {})
       .finally(() => {
         configRef.current = null;
-        setDiscarding(false);
-        setTimeout(() => {
+        hideDialog(() => {
+          setDiscarding(false);
           navigate?.();
-        }, 0);
+        });
       });
-  }, []);
+  }, [hideDialog]);
 
   const value = useMemo(
     () => ({
@@ -100,8 +136,8 @@ export function UnsavedChangesProvider({ children }: { children: React.ReactNode
     <UnsavedChangesContext.Provider value={value}>
       {children}
       <Portal>
-        <Dialog visible={!!dialogConfig} onDismiss={closeDialog} dismissable={!discarding} style={styles.dialog}>
-          <Dialog.Icon icon={(dialogConfig?.icon || defaultConfig.icon || 'alert-outline') as any} color="#F97316" />
+        <Dialog visible={dialogVisible} onDismiss={closeDialog} dismissable={!discarding} style={styles.dialog}>
+          <Dialog.Icon icon={(dialogConfig?.icon || defaultConfig.icon || 'alert-outline') as any} color={dialogConfig?.iconColor || defaultConfig.iconColor} />
           <Dialog.Title style={styles.title}>
             {dialogConfig?.title || defaultConfig.title}
           </Dialog.Title>
@@ -110,16 +146,33 @@ export function UnsavedChangesProvider({ children }: { children: React.ReactNode
               {dialogConfig?.message || defaultConfig.message}
             </Text>
             {dialogConfig?.warning ? (
-              <Text variant="bodySmall" style={styles.warning}>
+              <Text
+                variant="bodySmall"
+                style={[
+                  styles.warning,
+                  {
+                    color: dialogConfig.warningTextColor || defaultConfig.warningTextColor,
+                    backgroundColor: dialogConfig.warningBackgroundColor || defaultConfig.warningBackgroundColor,
+                    borderColor: dialogConfig.warningBorderColor || defaultConfig.warningBorderColor,
+                  },
+                ]}
+              >
                 {dialogConfig.warning}
               </Text>
             ) : null}
           </Dialog.Content>
           <Dialog.Actions>
-            <Button onPress={closeDialog} disabled={discarding}>
+            <Button onPress={closeDialog} disabled={discarding} textColor={dialogConfig?.cancelButtonTextColor || defaultConfig.cancelButtonTextColor}>
               {dialogConfig?.cancelText || defaultConfig.cancelText}
             </Button>
-            <Button mode="contained" buttonColor="#F97316" textColor="#FFFFFF" onPress={confirmDiscard} loading={discarding} disabled={discarding}>
+            <Button
+              mode="contained"
+              buttonColor={dialogConfig?.confirmButtonColor || defaultConfig.confirmButtonColor}
+              textColor={dialogConfig?.confirmButtonTextColor || defaultConfig.confirmButtonTextColor}
+              onPress={confirmDiscard}
+              loading={discarding}
+              disabled={discarding}
+            >
               {dialogConfig?.confirmText || defaultConfig.confirmText}
             </Button>
           </Dialog.Actions>

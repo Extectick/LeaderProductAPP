@@ -110,6 +110,7 @@ export const API_ENDPOINTS = {
     DELIVERY_ADDRESSES: '/api/client-orders/delivery-addresses',
     PRICE_TYPES: '/api/client-orders/price-types',
     PRODUCTS: '/api/client-orders/products',
+    PRODUCTS_BATCH: '/api/client-orders/products/batch',
     DELETE: (guid: string) => `/api/client-orders/${encodeURIComponent(guid)}`,
     SUBMIT: (guid: string) => `/api/client-orders/${encodeURIComponent(guid)}/submit`,
     CANCEL: (guid: string) => `/api/client-orders/${encodeURIComponent(guid)}/cancel`,
