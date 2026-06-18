@@ -1505,7 +1505,7 @@ export default function ClientOrdersWebScreen() {
                 >
                   {item.productName}
                 </Typography>
-                <Typography sx={{ mt: 0.25, fontSize: 10.5, color: '#64748B', lineHeight: 1.18 }}>
+                <Typography component="div" sx={{ mt: 0.25, fontSize: 10.5, color: '#64748B', lineHeight: 1.18 }}>
                   <DraftItemMeta item={item} />
                 </Typography>
                 {lineErrors.length ? (

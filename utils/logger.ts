@@ -3,12 +3,14 @@
 // NOTE: using legacy API to silence deprecation warnings in SDK 54+
 import * as FileSystem from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
 
 type Level = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR' | 'FATAL';
 
 const LOG_FILE = `${FileSystem.cacheDirectory}app.log`;
 const MAX_MEM_LOGS = 300;
 const FLUSH_DEBOUNCE_MS = 1200;
+const CAN_WRITE_LOG_FILE = Platform.OS !== 'web';
 
 type LogEntry = {
   ts: string;
@@ -51,11 +53,13 @@ function format(entry: LogEntry) {
 }
 
 function scheduleFlush() {
+  if (!CAN_WRITE_LOG_FILE) return;
   if (flushTimer) clearTimeout(flushTimer);
   flushTimer = setTimeout(flushToDisk, FLUSH_DEBOUNCE_MS);
 }
 
 async function flushToDisk() {
+  if (!CAN_WRITE_LOG_FILE) return;
   if (flushing || !pendingText) return;
   flushing = true;
   try {
@@ -140,10 +144,12 @@ export const logger = {
     return [...memBuffer];
   },
   async getLogFileUri() {
+    if (!CAN_WRITE_LOG_FILE) return null;
     const info = await FileSystem.getInfoAsync(LOG_FILE);
     return info.exists ? LOG_FILE : null;
   },
   async clearFile() {
+    if (!CAN_WRITE_LOG_FILE) return;
     try {
       await FileSystem.deleteAsync(LOG_FILE, { idempotent: true });
     } catch {}
@@ -152,9 +158,9 @@ export const logger = {
     try {
       // ensure latest pending is flushed
       await flushToDisk();
-      const info = await FileSystem.getInfoAsync(LOG_FILE);
       let content = '';
-      if (info.exists) {
+      const info = CAN_WRITE_LOG_FILE ? await FileSystem.getInfoAsync(LOG_FILE) : null;
+      if (info?.exists) {
         content = await FileSystem.readAsStringAsync(LOG_FILE);
       } else {
         content = memBuffer.map(format).join('');
