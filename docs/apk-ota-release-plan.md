@@ -154,24 +154,24 @@ Goal: store OTA manifests, bundles and assets in our S3/MinIO.
 
 API/DB:
 
-- [ ] Add Prisma model `AppOtaUpdate`.
-- [ ] Add Prisma model `AppOtaAsset` if separate asset rows are needed.
+- [x] Add Prisma model `AppOtaUpdate`.
+- [x] Use JSON asset list in `AppOtaUpdate.assets`; separate `AppOtaAsset` table deferred until needed.
 - [ ] Track fields:
-  - [ ] `platform`;
-  - [ ] `channel`;
-  - [ ] `runtimeVersion`;
-  - [ ] `updateId`;
-  - [ ] `manifestKey`;
-  - [ ] `launchAssetKey`;
-  - [ ] `assetKeys` or asset relation;
-  - [ ] `checksum`;
-  - [ ] `isActive`;
-  - [ ] `rolloutPercent`;
-  - [ ] `createdAt`;
-  - [ ] `commitSha`;
-  - [ ] `releaseNotes`.
-- [ ] Add protected publish endpoint for CI.
-- [ ] Add public Expo Updates protocol endpoint.
+  - [x] `platform`;
+  - [x] `channel`;
+  - [x] `runtimeVersion`;
+  - [x] `updateId`;
+  - [x] `manifestKey`;
+  - [x] `launchAssetKey`;
+  - [x] `assetKeys` or asset relation;
+  - [x] `checksum`;
+  - [x] `isActive`;
+  - [x] `rolloutPercent`;
+  - [x] `createdAt`;
+  - [x] `commitSha`;
+  - [x] `releaseNotes`.
+- [x] Add protected publish endpoint for CI.
+- [x] Add public Expo Updates protocol endpoint.
 - [ ] Add cleanup endpoint for old OTA assets.
 
 S3:
@@ -185,10 +185,11 @@ S3:
 Acceptance checks:
 
 - [ ] OTA files are uploaded to S3/MinIO.
-- [ ] DB references all required S3 object keys.
-- [ ] Public OTA endpoint returns correct update for channel/runtime.
+- [x] DB references all required S3 object keys.
+- [x] Public OTA endpoint returns correct update for channel/runtime.
 - [ ] Incompatible runtime gets no OTA update.
-- [ ] Rollout percentage works for OTA.
+- [x] Incompatible runtime gets no OTA update.
+- [x] Rollout percentage works for OTA.
 
 ## Phase 4: GitHub Actions for OTA
 
@@ -280,7 +281,10 @@ Release checklist:
 - [x] 2026-06-23: `expo-updates` installed and bridge APK config added.
 - [x] 2026-06-23: API no-op `/ota/update` endpoint added for safe pre-manifest OTA checks.
 - [ ] Phase 2 completed.
-- [ ] Phase 3 started.
+- [x] Phase 3 started.
+- [x] 2026-06-23: `AppOtaUpdate` model and migration added.
+- [x] 2026-06-23: OTA publish/list/update endpoints added.
+- [x] 2026-06-23: Public OTA manifest endpoint smoke-tested with temporary update row.
 - [ ] Phase 3 completed.
 - [ ] Phase 4 started.
 - [ ] Phase 4 completed.

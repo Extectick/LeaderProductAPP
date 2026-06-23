@@ -88,7 +88,13 @@ updates.url: <api>/ota/update
 updates.requestHeaders.expo-channel-name: dev | prod
 ```
 
-Current `/ota/update` returns `204 No Content`, meaning no OTA update is available yet. Real OTA manifests and S3 bundles are implemented in the next phases.
+`/ota/update` returns `204 No Content` when no compatible OTA exists. When an active OTA row exists for the same `platform`, `channel`, and `runtimeVersion`, API returns an Expo Updates manifest.
+
+OTA publishing requires:
+
+- exported JS bundle/assets in S3 under `dev/updates/ota/...` or `prod/updates/ota/...`;
+- `AppOtaUpdate` metadata created through `POST /ota/publish`;
+- same `runtimeVersion` as the installed bridge APK.
 
 ## Rollback
 
