@@ -23,6 +23,7 @@
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
     "@expo/vector-icons": "^15.0.3",
+    "@gorhom/bottom-sheet": "^5.2.14",
     "@hookform/resolvers": "^5.2.1",
     "@kesha-antonov/react-native-background-downloader": "^4.5.3",
     "@mui/icons-material": "^7.3.11",

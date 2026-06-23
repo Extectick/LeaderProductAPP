@@ -27,6 +27,10 @@ if (Platform.OS !== 'web') {
 
 enableScreens();
 
+const nativeBottomSheetProvider = Platform.OS === 'web'
+  ? null
+  : require('@gorhom/bottom-sheet').BottomSheetModalProvider;
+
 function InnerLayout() {
   const { isChecking } = useAuthRedirect();
   useTelegramBackButton();
@@ -43,6 +47,7 @@ function InnerLayout() {
 
 export default function RootLayout() {
   const Root = Platform.OS === 'web' ? View : GestureHandlerRootView;
+  const MaybeBottomSheetProvider = Platform.OS === 'web' ? React.Fragment : nativeBottomSheetProvider;
   const paperTheme = useMemo(() => ({
     ...MD3LightTheme,
     roundness: 16,
@@ -138,30 +143,32 @@ export default function RootLayout() {
     <Root style={{ flex: 1 }}>
       <SafeAreaProvider>
         <PaperProvider theme={paperTheme}>
-          <ThemeProvider>
-            <AuthProvider>
-              <TrackingProvider>
-                <NotificationViewportProvider>
-                  <NotificationHost>
-                    <UpdateGate
-                      onStartupDone={handleStartupDone}
-                      showCheckingOverlay={false}
-                    >
-                      <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
-                      {appIsReady ? (
-                        <InnerLayout />
-                      ) : (
-                        <StartupSplash
-                          statusText={startupSplash.statusText}
-                          hintText={startupSplash.hintText}
-                        />
-                      )}
-                    </UpdateGate>
-                  </NotificationHost>
-                </NotificationViewportProvider>
-              </TrackingProvider>
-            </AuthProvider>
-          </ThemeProvider>
+          <MaybeBottomSheetProvider>
+            <ThemeProvider>
+              <AuthProvider>
+                <TrackingProvider>
+                  <NotificationViewportProvider>
+                    <NotificationHost>
+                      <UpdateGate
+                        onStartupDone={handleStartupDone}
+                        showCheckingOverlay={false}
+                      >
+                        <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
+                        {appIsReady ? (
+                          <InnerLayout />
+                        ) : (
+                          <StartupSplash
+                            statusText={startupSplash.statusText}
+                            hintText={startupSplash.hintText}
+                          />
+                        )}
+                      </UpdateGate>
+                    </NotificationHost>
+                  </NotificationViewportProvider>
+                </TrackingProvider>
+              </AuthProvider>
+            </ThemeProvider>
+          </MaybeBottomSheetProvider>
         </PaperProvider>
       </SafeAreaProvider>
     </Root>

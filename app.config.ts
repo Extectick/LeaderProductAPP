@@ -13,7 +13,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   name: "Лидер Продукт",
   slug: "leader-product",
   owner: "extectick",
-  version: "0.1.3",
+  version: "0.1.6",
   orientation: "portrait",
   userInterfaceStyle: "automatic",
   newArchEnabled: true,
@@ -23,11 +23,12 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     favicon: "./assets/images/favicon.png",
   },
 
-  ios: { bundleIdentifier: "com.leaderproduct.app", buildNumber: "4" },
+  ios: { bundleIdentifier: "com.leaderproduct.app", buildNumber: "5" },
   android: {
     package: "com.leaderproduct.app",
-    versionCode: 4,
+    versionCode: 5,
     edgeToEdgeEnabled: true,
+    usesCleartextTraffic: true,
     adaptiveIcon: {
       foregroundImage: "./assets/images/adaptive-foreground.png",
       backgroundColor: "#ffffff",

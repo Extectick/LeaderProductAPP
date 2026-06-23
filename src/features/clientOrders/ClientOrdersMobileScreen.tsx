@@ -37,7 +37,9 @@ import type { ClientOrder, ClientOrderCounterpartyOption, ClientOrderOrganizatio
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import React from 'react';
-import { Animated, Image, PanResponder, Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { Animated, findNodeHandle, Image, Keyboard, PanResponder, Pressable, ScrollView, StyleSheet, TextInput, UIManager, useWindowDimensions, View } from 'react-native';
+import type { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ActivityIndicator,
   Button as PaperButton,
@@ -45,7 +47,6 @@ import {
   IconButton as PaperIconButton,
   List,
   Menu,
-  Searchbar,
   Surface,
   Text,
   TextInput as PaperTextInput,
@@ -56,6 +57,8 @@ import {
   InfoText,
   Pill,
   PickerBottomSheet,
+  PickerBottomSheetScrollView,
+  PickerBottomSheetTextInput,
   SheetModal,
 } from './screen/mobile/ClientOrdersMobileUi';
 
@@ -79,6 +82,31 @@ type ConfirmDialogState = {
 const PAGE_SIZE = 25;
 const ITEMS_SEARCH_PAGE_SIZE = 10;
 const IN_STOCK_KEY = 'clientOrders.productPicker.inStockOnly';
+const SheetScrollView = (PickerBottomSheetScrollView || ScrollView) as any;
+const SheetTextInput = (PickerBottomSheetTextInput || TextInput) as any;
+type FilterKeyboardFieldKey = 'deliveryDates' | 'updatedDates' | 'amount' | 'items' | 'counterparty' | 'warehouse' | 'priceType';
+type FilterKeyboardInputRef = React.RefObject<any>;
+type WindowRect = { x: number; y: number; width: number; height: number };
+
+function measureTargetInWindow(target: unknown, onMeasured: (rect: WindowRect) => void) {
+  if (!target) return;
+  const maybeNode = typeof target === 'number' ? target : findNodeHandle(target as any);
+  const targetWithMeasure = target as { measureInWindow?: (callback: (x: number, y: number, width: number, height: number) => void) => void };
+  if (typeof targetWithMeasure.measureInWindow === 'function') {
+    try {
+      targetWithMeasure.measureInWindow((x, y, width, height) => onMeasured({ x, y, width, height }));
+      return;
+    } catch {
+      // Fabric requires measureInWindow to keep its native receiver; fall back to UIManager below.
+    }
+  }
+  if (!maybeNode) return;
+  try {
+    UIManager.measureInWindow(maybeNode, (x, y, width, height) => onMeasured({ x, y, width, height }));
+  } catch {
+    return;
+  }
+}
 
 function pickerTitle(kind: PickerKind | null) {
   return ({ filterCounterparty: 'Контрагент для фильтра', organization: 'Организация', counterparty: 'Контрагент', agreement: 'Соглашение', contract: 'Договор', warehouse: 'Склад', deliveryAddress: 'Адрес доставки', priceType: 'Вид цены', product: 'Подбор товаров' } as Record<PickerKind, string>)[kind || 'product'];
@@ -192,6 +220,11 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const [referenceError, setReferenceError] = React.useState<string | null>(null);
   const [referenceDetails, setReferenceDetails] = React.useState<ClientOrderReferenceDetails | null>(null);
   const [referenceScrollOffset, setReferenceScrollOffset] = React.useState(0);
+  const [editorKeyboardVisible, setEditorKeyboardVisible] = React.useState(false);
+  const editorScrollRef = React.useRef<any>(null);
+  const editorKeyboardTopRef = React.useRef<number | null>(null);
+  const editorFocusedTargetRef = React.useRef<unknown>(null);
+  const editorFocusTimersRef = React.useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const pickerRequestIdRef = React.useRef(0);
   const pickerLoadSignatureRef = React.useRef('');
   const pickerAppendLoadingRef = React.useRef(false);
@@ -210,6 +243,68 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     if (!selectedItem) return pickerItems;
     return [selectedItem, ...pickerItems.filter((item) => item?.guid !== selectedPickerGuid)];
   }, [pickerItems, selectedPickerGuid]);
+  const editorKeyboardPadding = Math.min(460, Math.max(320, Math.round(height * 0.42)));
+
+  const clearEditorFocusTimers = React.useCallback(() => {
+    editorFocusTimersRef.current.forEach((timer) => clearTimeout(timer));
+    editorFocusTimersRef.current = [];
+  }, []);
+
+  const scrollEditorInputIntoView = React.useCallback((target: unknown) => {
+    const keyboardTop = editorKeyboardTopRef.current;
+    if (keyboardTop === null) return;
+    const scrollView = editorScrollRef.current;
+    const scrollResponder = scrollView?.getScrollResponder?.() || scrollView;
+    measureTargetInWindow(target, (rect) => {
+      const fieldBottom = rect.y + rect.height;
+      const visibleBottom = keyboardTop - 24;
+      if (fieldBottom <= visibleBottom) return;
+      setEditorKeyboardVisible(true);
+      if (scrollResponder?.scrollResponderScrollNativeHandleToKeyboard && target) {
+        try {
+          scrollResponder.scrollResponderScrollNativeHandleToKeyboard(target, 128, true);
+        } catch {
+          scrollView?.scrollToEnd?.({ animated: true });
+        }
+        return;
+      }
+      scrollView?.scrollToEnd?.({ animated: true });
+    });
+  }, []);
+
+  const scheduleEditorInputScroll = React.useCallback((target: unknown) => {
+    editorFocusedTargetRef.current = target;
+    clearEditorFocusTimers();
+    [0, 80, 180, 320, 520, 760].forEach((delay) => {
+      const timer = setTimeout(() => scrollEditorInputIntoView(target), delay);
+      editorFocusTimersRef.current.push(timer);
+    });
+  }, [clearEditorFocusTimers, scrollEditorInputIntoView]);
+
+  const handleHeaderCommentFocus = React.useCallback((event: any) => {
+    scheduleEditorInputScroll(event.nativeEvent.target);
+  }, [scheduleEditorInputScroll]);
+
+  React.useEffect(() => {
+    const showSubscription = Keyboard.addListener('keyboardDidShow', (event) => {
+      editorKeyboardTopRef.current = event.endCoordinates?.screenY ?? null;
+      const target = editorFocusedTargetRef.current;
+      if (target) {
+        scheduleEditorInputScroll(target);
+      }
+    });
+    const hideSubscription = Keyboard.addListener('keyboardDidHide', () => {
+      editorKeyboardTopRef.current = null;
+      editorFocusedTargetRef.current = null;
+      setEditorKeyboardVisible(false);
+      clearEditorFocusTimers();
+    });
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+      clearEditorFocusTimers();
+    };
+  }, [clearEditorFocusTimers, scheduleEditorInputScroll]);
 
   React.useEffect(() => { AsyncStorage.getItem(IN_STOCK_KEY).then((v) => setInStockOnly(v === '1')).catch(() => undefined); }, []);
   React.useEffect(() => { void AsyncStorage.setItem(IN_STOCK_KEY, inStockOnly ? '1' : '0'); }, [inStockOnly]);
@@ -568,13 +663,14 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   React.useEffect(() => {
     if (editingItemKey && !editingItem) setEditingItemKey(null);
   }, [editingItem, editingItemKey]);
+  const PickerContentScrollView = pickerKind === 'product' ? ScrollView : SheetScrollView;
   const pickerContent = (
     <>
       <View style={styles.pickerToolbar}>
         <CompactSearchbar style={styles.pickerSearchFlat} inputStyle={styles.pickerSearchInputFlat} value={pickerSearch} onChangeText={setPickerSearch} placeholder="Поиск" />
         {pickerKind === 'product' ? <ActionButton styles={styles} label={inStockOnly ? 'Только с остатком' : 'Показывать все'} kind={inStockOnly ? 'success' : 'secondary'} onPress={() => setInStockOnly((prev) => !prev)} /> : null}
       </View>
-      <ScrollView style={styles.pickerScroll} onScroll={handlePickerScroll} scrollEventThrottle={16} nestedScrollEnabled contentContainerStyle={styles.pickerListContent} keyboardShouldPersistTaps="handled">
+      <PickerContentScrollView style={styles.pickerScroll} onScroll={handlePickerScroll} scrollEventThrottle={16} nestedScrollEnabled contentContainerStyle={styles.pickerListContent} keyboardShouldPersistTaps="handled">
         {pickerNeedsCounterparty(pickerKind) && !workspace.draft.counterpartyGuid ? <InfoText styles={styles} text="Сначала выберите контрагента." /> : null}
         {visiblePickerItems.map((item: any) => {
           const disabled = pickerKind === 'product' && workspace.draft.items.some((line) => line.productGuid === item.guid);
@@ -602,7 +698,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         })}
         {!pickerLoading && !visiblePickerItems.length && !(pickerNeedsCounterparty(pickerKind) && !workspace.draft.counterpartyGuid) ? <InfoText styles={styles} text="Ничего не найдено." /> : null}
         {pickerLoading ? <View style={styles.pickerFooter}><ActivityIndicator size="small" color="#2563EB" /><Text style={styles.pickerFooterText}>Загружаю...</Text></View> : null}
-      </ScrollView>
+      </PickerContentScrollView>
     </>
   );
   const discardConfirmState = React.useMemo<ConfirmDialogState>(() => {
@@ -652,8 +748,17 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         </ScrollView>
       ) : (
         <ScrollView
+          ref={editorScrollRef}
           stickyHeaderIndices={section === 'items' ? [0] : undefined}
-          contentContainerStyle={[styles.content, section === 'items' && styles.editorItemsContent, width >= 720 && styles.contentTablet, { paddingHorizontal: ui.pageX, paddingTop: 0, gap: 6, maxWidth: layoutTier === 'tablet' ? 760 : undefined }]}
+          contentContainerStyle={[
+            styles.content,
+            section === 'items' && styles.editorItemsContent,
+            width >= 720 && styles.contentTablet,
+            { paddingHorizontal: ui.pageX, paddingTop: 0, gap: 6, maxWidth: layoutTier === 'tablet' ? 760 : undefined },
+            section === 'header' && editorKeyboardVisible && { paddingBottom: editorKeyboardPadding },
+          ]}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
         >
           <View style={styles.documentStickyHeader}>
           <View style={styles.documentHeaderFlat}>
@@ -696,7 +801,6 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
               </Menu>
             </View>
             {workspace.error ? <Text style={styles.error}>{workspace.error}</Text> : null}
-            {workspace.validation.blockingMessage ? <Text style={styles.warning}>{workspace.validation.blockingMessage}</Text> : null}
             <View style={styles.documentTabsRow}>
               <Pressable
                 accessibilityRole="button"
@@ -711,11 +815,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
                 style={({ pressed }) => [styles.documentTab, section === 'items' && styles.documentTabActive, pressed && styles.flatPressed]}
               >
                 <Text style={[styles.documentTabText, section === 'items' && styles.documentTabTextActive]}>Товары</Text>
+                <Text style={[styles.documentTabCountText, section === 'items' && styles.documentTabTextActive]}>{workspace.draft.items.length}</Text>
               </Pressable>
-              <View style={styles.documentItemsCount}>
-                <MaterialCommunityIcons name="cube-outline" size={16} color="#2563EB" />
-                <Text style={styles.documentItemsCountText}>{workspace.draft.items.length}</Text>
-              </View>
             </View>
           </View>
           {section === 'items' ? (
@@ -744,7 +845,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
             />
           ) : null}
           </View>
-          {section === 'header' ? <HeaderSection workspace={workspace} openPicker={openPicker} openDetails={openReferenceDetails} /> : <ItemsSection workspace={workspace} filteredItems={filteredItems} ui={ui} onEditItem={setEditingItemKey} onAddItem={() => openPicker('product')} />}
+          {section === 'header' ? <HeaderSection workspace={workspace} openPicker={openPicker} openDetails={openReferenceDetails} onCommentFocus={handleHeaderCommentFocus} /> : <ItemsSection workspace={workspace} filteredItems={filteredItems} ui={ui} onEditItem={setEditingItemKey} onAddItem={() => openPicker('product')} />}
           <TabBarSpacer />
         </ScrollView>
       )}
@@ -844,17 +945,17 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         contentScrollOffset={referenceScrollOffset}
         enableContentDrag
       >
-        <ScrollView
+        <SheetScrollView
           style={styles.referenceScroll}
           contentContainerStyle={styles.referenceSheetContent}
-          onScroll={(event) => setReferenceScrollOffset(event.nativeEvent.contentOffset.y <= 1 ? 0 : 2)}
+          onScroll={(event: NativeSyntheticEvent<NativeScrollEvent>) => setReferenceScrollOffset(event.nativeEvent.contentOffset.y <= 1 ? 0 : 2)}
           scrollEventThrottle={16}
         >
           {referenceLoading ? <InfoText styles={styles} text="Загружаю..." /> : null}
           {referenceError ? <Text style={styles.error}>{referenceError}</Text> : null}
           {referenceDetails?.subtitle ? <Text style={styles.orderMeta}>{referenceDetails.subtitle}</Text> : null}
           {referenceDetails?.sections.map((section) => <View key={section.title} style={styles.referenceSection}><Text style={styles.orderTitle}>{section.title}</Text>{section.rows.map((row) => <View key={`${section.title}-${row.label}`} style={styles.referenceRow}><Text style={styles.referenceLabel}>{row.label}</Text><Text style={styles.referenceValue}>{String(row.value ?? '—')}</Text></View>)}</View>)}
-        </ScrollView>
+        </SheetScrollView>
       </PickerBottomSheet>
 
       <ProductLineEditorSheet
@@ -892,7 +993,17 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   );
 }
 
-function HeaderSection({ workspace, openPicker, openDetails }: { workspace: any; openPicker: (kind: PickerKind, lineKey?: string) => void; openDetails: (kind: ClientOrderReferenceKind, guid?: string | null) => void }) {
+function HeaderSection({
+  workspace,
+  openPicker,
+  openDetails,
+  onCommentFocus,
+}: {
+  workspace: any;
+  openPicker: (kind: PickerKind, lineKey?: string) => void;
+  openDetails: (kind: ClientOrderReferenceKind, guid?: string | null) => void;
+  onCommentFocus: (event: any) => void;
+}) {
   const today = React.useMemo(() => new Date(), []);
   const maxDate = React.useMemo(() => { const next = new Date(); next.setMonth(next.getMonth() + 2); return next; }, []);
   const [commentHeight, setCommentHeight] = React.useState(58);
@@ -929,6 +1040,7 @@ function HeaderSection({ workspace, openPicker, openDetails }: { workspace: any;
       scrollEnabled={false}
       dense
       editable={!workspace.readOnly}
+      onFocus={onCommentFocus}
       onContentSizeChange={(event) => {
         const nextHeight = Math.max(58, Math.ceil(event.nativeEvent.contentSize.height));
         setCommentHeight((current) => (nextHeight > current + 2 ? nextHeight : current));
@@ -1191,7 +1303,6 @@ function ItemsSection({ workspace, filteredItems, ui, onEditItem, onAddItem }: {
       </View>
     ) : (
       <View style={[styles.lineList, { paddingBottom: ui.itemsBottomInset }]}>
-        <InfoText styles={styles} text="Подходящие строки не найдены." />
         <AddProductListCard onPress={onAddItem} />
       </View>
     )}
@@ -1277,16 +1388,27 @@ function CompactSearchbar({
   onBlur?: () => void;
 }) {
   return (
-    <Searchbar
-      style={style}
-      inputStyle={inputStyle}
-      value={value}
-      onChangeText={onChangeText}
-      placeholder={placeholder}
-      onFocus={onFocus}
-      onBlur={onBlur}
-      icon={({ color }) => <MaterialCommunityIcons name="magnify" size={18} color={color} />}
-      right={({ color }) => value ? (
+    <View style={[styles.compactSearchShell, style]}>
+      <MaterialCommunityIcons name="magnify" size={18} color="#475569" />
+      <TextInput
+        style={[styles.compactSearchInputBase, inputStyle]}
+        value={value}
+        onChangeText={onChangeText}
+        placeholder={placeholder}
+        onFocus={onFocus}
+        onBlur={onBlur}
+        placeholderTextColor="#64748B"
+        autoCapitalize="none"
+        autoCorrect={false}
+        spellCheck={false}
+        keyboardType="web-search"
+        returnKeyType="search"
+        inputMode="search"
+        autoComplete="new-password"
+        textContentType="oneTimeCode"
+        importantForAutofill="noExcludeDescendants"
+      />
+      {value ? (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Очистить поиск"
@@ -1294,20 +1416,10 @@ function CompactSearchbar({
           onPress={() => onChangeText('')}
           style={({ pressed }) => [styles.compactSearchClear, pressed && styles.flatPressed]}
         >
-          <MaterialCommunityIcons name="close" size={16} color={color} />
+          <MaterialCommunityIcons name="close" size={16} color="#475569" />
         </Pressable>
       ) : null}
-      iconColor="#475569"
-      placeholderTextColor="#64748B"
-      autoCapitalize="none"
-      autoCorrect={false}
-      spellCheck={false}
-      keyboardType="web-search"
-      inputMode="search"
-      autoComplete="new-password"
-      textContentType="oneTimeCode"
-      importantForAutofill="noExcludeDescendants"
-    />
+    </View>
   );
 }
 
@@ -1424,16 +1536,16 @@ function ProductLineEditorSheet({
       contentScrollOffset={scrollOffset}
       enableContentDrag
     >
-      <ScrollView
+      <SheetScrollView
         style={styles.productEditorScroll}
         contentContainerStyle={styles.productEditorContent}
         keyboardShouldPersistTaps="handled"
         scrollEnabled={contentNeedsScroll}
         bounces={contentNeedsScroll}
         overScrollMode={contentNeedsScroll ? 'auto' : 'never'}
-        onLayout={(event) => setScrollViewportHeight(Math.ceil(event.nativeEvent.layout.height))}
-        onContentSizeChange={(_width, contentHeight) => setScrollContentHeight(Math.ceil(contentHeight))}
-        onScroll={(event) => setScrollOffset(event.nativeEvent.contentOffset.y <= 1 ? 0 : 2)}
+        onLayout={(event: LayoutChangeEvent) => setScrollViewportHeight(Math.ceil(event.nativeEvent.layout.height))}
+        onContentSizeChange={(_width: number, contentHeight: number) => setScrollContentHeight(Math.ceil(contentHeight))}
+        onScroll={(event: NativeSyntheticEvent<NativeScrollEvent>) => setScrollOffset(event.nativeEvent.contentOffset.y <= 1 ? 0 : 2)}
         scrollEventThrottle={16}
       >
         <View style={styles.productEditorFieldsRow}>
@@ -1510,7 +1622,7 @@ function ProductLineEditorSheet({
           </View>
         </View>
 
-      </ScrollView>
+      </SheetScrollView>
 
       <View style={styles.productEditorFooter} onLayout={(event) => setFooterHeight(Math.ceil(event.nativeEvent.layout.height))}>
         <View style={styles.productEditorFooterTotalWrap}>
@@ -1673,6 +1785,8 @@ function FilterLookupField<T extends { guid: string; name: string }>({
   placeholder,
   search,
   onChange,
+  onInputFocus,
+  onFieldLayout,
 }: {
   styles: any;
   label: string;
@@ -1681,7 +1795,10 @@ function FilterLookupField<T extends { guid: string; name: string }>({
   placeholder: string;
   search: (args: { search: string; limit: number; offset: number }) => Promise<{ items: T[] }>;
   onChange: (value: T | null) => void;
+  onInputFocus?: (inputRef: FilterKeyboardInputRef) => void;
+  onFieldLayout?: (event: LayoutChangeEvent) => void;
 }) {
+  const inputRef = React.useRef<any>(null);
   const [query, setQuery] = React.useState(selected?.name || '');
   const [items, setItems] = React.useState<T[]>([]);
   const [loading, setLoading] = React.useState(false);
@@ -1722,7 +1839,7 @@ function FilterLookupField<T extends { guid: string; name: string }>({
   }, [query, search, selected?.name]);
 
   return (
-    <View>
+    <View onLayout={onFieldLayout}>
       <Text style={styles.filtersFieldLabel}>{label}</Text>
       <FilterFieldFrame
         styles={styles}
@@ -1739,19 +1856,19 @@ function FilterLookupField<T extends { guid: string; name: string }>({
               : undefined
         }
       >
-        <PaperTextInput
-          mode="flat"
-          dense
+        <SheetTextInput
+          ref={inputRef}
           value={query}
-          onChangeText={(value) => {
+          onChangeText={(value: string) => {
             setQuery(value);
             if (!value.trim()) onChange(null);
           }}
           placeholder={placeholder}
-          underlineColor="transparent"
-          activeUnderlineColor="transparent"
-          style={styles.filtersInnerTextInput}
-          contentStyle={styles.filtersInnerTextInputContent}
+          placeholderTextColor="#64748B"
+          style={styles.filtersInnerTextInputContent}
+          autoCorrect={false}
+          returnKeyType="search"
+          onFocus={() => onInputFocus?.(inputRef)}
         />
       </FilterFieldFrame>
       {items.length ? (
@@ -1783,6 +1900,7 @@ function FilterInputField({
   placeholder,
   icon,
   keyboardType,
+  onInputFocus,
 }: {
   styles: any;
   label: string;
@@ -1791,7 +1909,9 @@ function FilterInputField({
   placeholder: string;
   icon: string;
   keyboardType?: 'default' | 'number-pad' | 'decimal-pad';
+  onInputFocus?: (inputRef: FilterKeyboardInputRef) => void;
 }) {
+  const inputRef = React.useRef<any>(null);
   return (
     <View style={styles.filtersInputWrap}>
       <Text style={styles.filtersFieldLabel}>{label}</Text>
@@ -1804,17 +1924,18 @@ function FilterInputField({
           </Pressable>
         ) : null}
       >
-        <PaperTextInput
-          mode="flat"
-          dense
+        <SheetTextInput
+          ref={inputRef}
           value={value}
           onChangeText={onChange}
           placeholder={placeholder}
           keyboardType={keyboardType}
-          underlineColor="transparent"
-          activeUnderlineColor="transparent"
-          style={styles.filtersInnerTextInput}
-          contentStyle={styles.filtersInnerTextInputContent}
+          placeholderTextColor="#64748B"
+          style={styles.filtersInnerTextInputContent}
+          autoCapitalize="none"
+          autoCorrect={false}
+          returnKeyType="done"
+          onFocus={() => onInputFocus?.(inputRef)}
         />
       </FilterFieldFrame>
     </View>
@@ -1960,74 +2081,111 @@ function OrdersFiltersBottomSheet({
   onReset: () => void;
   onClose: () => void;
 }) {
-  const { width, height } = useWindowDimensions();
-  const anim = React.useRef(new Animated.Value(0)).current;
-  const dragStartValueRef = React.useRef(1);
-  const sheetWidth = Math.min(520, Math.max(280, width - 16));
-  const sheetHeight = Math.max(360, height - topOffset);
-  const [rendered, setRendered] = React.useState(visible);
+  const [filtersScrollOffset, setFiltersScrollOffset] = React.useState(0);
+  const [keyboardVisible, setKeyboardVisible] = React.useState(false);
+  const { height: windowHeight } = useWindowDimensions();
+  const filtersScrollRef = React.useRef<any>(null);
+  const filtersKeyboardTopRef = React.useRef<number | null>(null);
+  const filtersFocusedFieldRef = React.useRef<FilterKeyboardFieldKey | null>(null);
+  const filtersFocusedInputRef = React.useRef<FilterKeyboardInputRef | null>(null);
+  const filtersFieldLayoutsRef = React.useRef<Partial<Record<FilterKeyboardFieldKey, { y: number; height: number }>>>({});
+  const filtersFocusTimersRef = React.useRef<Array<ReturnType<typeof setTimeout>>>([]);
+  const insets = useSafeAreaInsets();
+  const filtersFooterBottomPadding = Math.max(insets.bottom, 10) + 8;
+  const filtersKeyboardPadding = Math.min(420, Math.max(280, Math.round(windowHeight * 0.36)));
+  const filtersContentBottomPadding = keyboardVisible ? filtersKeyboardPadding : 10;
 
-  const closeWithAnimation = React.useCallback(() => {
-    Animated.spring(anim, {
-      toValue: 0,
-      damping: 24,
-      stiffness: 260,
-      mass: 0.9,
-      useNativeDriver: false,
-    }).start(() => {
-      setRendered(false);
-      onClose();
+  const clearFiltersFocusTimers = React.useCallback(() => {
+    filtersFocusTimersRef.current.forEach((timer) => clearTimeout(timer));
+    filtersFocusTimersRef.current = [];
+  }, []);
+
+  const scrollFilterFieldIntoView = React.useCallback((key: FilterKeyboardFieldKey, inputRef?: FilterKeyboardInputRef | null) => {
+    const keyboardTop = filtersKeyboardTopRef.current;
+    if (keyboardTop === null) return;
+    const field = filtersFieldLayoutsRef.current[key];
+    const scrollView = filtersScrollRef.current;
+    const scrollResponder = scrollView?.getScrollResponder?.() || scrollView;
+    const inputNode = inputRef?.current;
+
+    const liftField = () => {
+      setKeyboardVisible(true);
+      if (inputNode && scrollResponder?.scrollResponderScrollNativeHandleToKeyboard) {
+        try {
+          scrollResponder.scrollResponderScrollNativeHandleToKeyboard(inputNode, 112, true);
+          return;
+        } catch {
+          // Fallback ниже использует сохранённую позицию поля.
+        }
+      }
+      if (field) {
+        scrollView?.scrollTo?.({
+          y: Math.max(0, field.y - 72),
+          animated: true,
+        });
+      }
+    };
+
+    if (!inputNode) {
+      if (field) liftField();
+      return;
+    }
+    measureTargetInWindow(inputNode, (rect) => {
+      const fieldBottom = rect.y + rect.height;
+      const visibleBottom = keyboardTop - 24;
+      if (fieldBottom <= visibleBottom) return;
+      liftField();
     });
-  }, [anim, onClose]);
+  }, []);
+
+  const scheduleFilterFieldScroll = React.useCallback((key: FilterKeyboardFieldKey, inputRef?: FilterKeyboardInputRef) => {
+    filtersFocusedFieldRef.current = key;
+    filtersFocusedInputRef.current = inputRef || null;
+    clearFiltersFocusTimers();
+    [0, 80, 180, 320, 520, 760].forEach((delay) => {
+      const timer = setTimeout(() => scrollFilterFieldIntoView(key, inputRef || filtersFocusedInputRef.current), delay);
+      filtersFocusTimersRef.current.push(timer);
+    });
+  }, [clearFiltersFocusTimers, scrollFilterFieldIntoView]);
+
+  const handleFilterFieldLayout = React.useCallback((key: FilterKeyboardFieldKey, event: LayoutChangeEvent) => {
+    const { y, height } = event.nativeEvent.layout;
+    filtersFieldLayoutsRef.current[key] = { y, height };
+  }, []);
 
   React.useEffect(() => {
     if (visible) {
-      setRendered(true);
+      setFiltersScrollOffset(0);
+      filtersFocusedFieldRef.current = null;
+      filtersFocusedInputRef.current = null;
+    } else {
+      setKeyboardVisible(false);
+      filtersKeyboardTopRef.current = null;
+      clearFiltersFocusTimers();
     }
-  }, [visible]);
+  }, [clearFiltersFocusTimers, visible]);
 
   React.useEffect(() => {
-    if (!rendered) return;
-    Animated.spring(anim, {
-      toValue: visible ? 1 : 0,
-      damping: 22,
-      stiffness: 240,
-      mass: 0.9,
-      useNativeDriver: false,
-    }).start(({ finished }) => {
-      if (finished && !visible) setRendered(false);
+    const showSubscription = Keyboard.addListener('keyboardDidShow', (event) => {
+      filtersKeyboardTopRef.current = event.endCoordinates?.screenY ?? null;
+      const focusedField = filtersFocusedFieldRef.current;
+      if (focusedField) {
+        scheduleFilterFieldScroll(focusedField, filtersFocusedInputRef.current || undefined);
+      }
     });
-  }, [anim, rendered, visible]);
-
-  const panResponder = React.useMemo(
-    () =>
-      PanResponder.create({
-        onStartShouldSetPanResponder: () => false,
-        onMoveShouldSetPanResponder: (_evt, gestureState) =>
-          visible && Math.abs(gestureState.dy) > 5 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx),
-        onPanResponderGrant: () => {
-          dragStartValueRef.current = 1;
-        },
-        onPanResponderMove: (_evt, gestureState) => {
-          const next = dragStartValueRef.current - Math.max(0, gestureState.dy) / sheetHeight;
-          anim.setValue(Math.max(0, Math.min(1, next)));
-        },
-        onPanResponderRelease: (_evt, gestureState) => {
-          if (gestureState.dy > 48 || gestureState.vy > 0.5) {
-            closeWithAnimation();
-            return;
-          }
-          Animated.spring(anim, {
-            toValue: 1,
-            damping: 22,
-            stiffness: 240,
-            mass: 0.9,
-            useNativeDriver: false,
-          }).start();
-        },
-      }),
-    [anim, closeWithAnimation, sheetHeight, visible]
-  );
+    const hideSubscription = Keyboard.addListener('keyboardDidHide', () => {
+      setKeyboardVisible(false);
+      filtersKeyboardTopRef.current = null;
+      filtersFocusedFieldRef.current = null;
+      filtersFocusedInputRef.current = null;
+      clearFiltersFocusTimers();
+    });
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+      clearFiltersFocusTimers();
+    };
+  }, [clearFiltersFocusTimers, scheduleFilterFieldScroll]);
 
   const statusOptions = React.useMemo<FilterSelectOption[]>(() => [
     { value: '', label: 'Все статусы', icon: 'filter-variant', color: '#2563EB' },
@@ -2047,87 +2205,89 @@ function OrdersFiltersBottomSheet({
     { value: 'no', label: 'Без номера 1С', icon: 'minus-circle-outline', color: '#B91C1C' },
   ], []);
 
-  if (!rendered) return null;
-
-  const translateY = anim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [sheetHeight + 24, 0],
-  });
-
   return (
-    <Animated.View
-      style={[
-        styles.filtersSheetWrap,
-        {
-          width: sheetWidth,
-          height: sheetHeight,
-          left: (width - sheetWidth) / 2,
-          transform: [{ translateY }],
-        },
-      ]}
+    <PickerBottomSheet
+      styles={styles}
+      visible={visible}
+      topOffset={topOffset}
+      title="Фильтры"
+      onClose={onClose}
+      minHeight={360}
+      sheetStyle={styles.filtersPickerSheet}
+      contentScrollOffset={filtersScrollOffset}
+      enableContentDrag
+      closeDragDistance={8}
+      closeOnDragMove
+      initialSnapIndex={1}
+      keyboardBehavior="fillParent"
+      keyboardBlurBehavior="restore"
+      androidKeyboardInputMode="adjustResize"
+      enableBlurKeyboardOnGesture
     >
-      <View style={styles.filtersSheet} {...panResponder.panHandlers}>
-        <View style={styles.filtersSheetHandle} />
-        <View style={styles.filtersSheetHeader}>
-          <Text style={styles.filtersSheetTitle}>Фильтры</Text>
-          <PaperIconButton icon="close" size={16} onPress={closeWithAnimation} style={styles.filtersSheetIconButton} />
+      <SheetScrollView
+        ref={filtersScrollRef}
+        style={styles.filtersScroll}
+        contentContainerStyle={[styles.filtersForm, { paddingBottom: filtersContentBottomPadding }]}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        nestedScrollEnabled
+        scrollEventThrottle={16}
+        onScroll={(event: NativeSyntheticEvent<NativeScrollEvent>) => setFiltersScrollOffset(event.nativeEvent.contentOffset.y <= 1 ? 0 : 2)}
+      >
+        <FilterSelectField styles={styles} label="Статус" value={status} options={statusOptions} onChange={onStatusChange} />
+        <FilterSelectField styles={styles} label="Синхронизация" value={syncState} options={syncOptions} onChange={onSyncStateChange} />
+        <FilterSelectField styles={styles} label="Номер 1С" value={hasNumber1c} options={numberOptions} onChange={onHasNumber1cChange} />
+        <FilterFieldFrame
+          styles={styles}
+          icon="alert-circle-outline"
+          onPress={() => onOnlyProblemsChange(!onlyProblems)}
+          right={onlyProblems ? (
+            <Pressable
+              onPress={(event) => {
+                event.stopPropagation();
+                onOnlyProblemsChange(false);
+              }}
+              hitSlop={8}
+              style={styles.filtersInlineClear}
+            >
+              <MaterialCommunityIcons name="close" size={18} color="#475569" />
+            </Pressable>
+          ) : (
+            <MaterialCommunityIcons name="chevron-right" size={18} color="#94A3B8" />
+          )}
+        >
+          <Text style={[styles.filtersToggleText, onlyProblems && styles.filtersToggleTextActive]}>Только проблемные</Text>
+        </FilterFieldFrame>
+        <View style={styles.filtersAmountRow} onLayout={(event) => handleFilterFieldLayout('deliveryDates', event)}>
+          <FilterInputField styles={styles} label="Дата отгрузки от" value={deliveryDateFrom} onChange={onDeliveryDateFromChange} placeholder="От" icon="calendar-outline" onInputFocus={(inputRef) => scheduleFilterFieldScroll('deliveryDates', inputRef)} />
+          <FilterInputField styles={styles} label="Дата отгрузки до" value={deliveryDateTo} onChange={onDeliveryDateToChange} placeholder="До" icon="calendar-outline" onInputFocus={(inputRef) => scheduleFilterFieldScroll('deliveryDates', inputRef)} />
         </View>
-        <ScrollView style={styles.filtersScroll} contentContainerStyle={styles.filtersForm} keyboardShouldPersistTaps="handled">
-          <FilterSelectField styles={styles} label="Статус" value={status} options={statusOptions} onChange={onStatusChange} />
-          <FilterSelectField styles={styles} label="Синхронизация" value={syncState} options={syncOptions} onChange={onSyncStateChange} />
-          <FilterSelectField styles={styles} label="Номер 1С" value={hasNumber1c} options={numberOptions} onChange={onHasNumber1cChange} />
-          <FilterFieldFrame
-            styles={styles}
-            icon="alert-circle-outline"
-            onPress={() => onOnlyProblemsChange(!onlyProblems)}
-            right={onlyProblems ? (
-              <Pressable
-                onPress={(event) => {
-                  event.stopPropagation();
-                  onOnlyProblemsChange(false);
-                }}
-                hitSlop={8}
-                style={styles.filtersInlineClear}
-              >
-                <MaterialCommunityIcons name="close" size={18} color="#475569" />
-              </Pressable>
-            ) : (
-              <MaterialCommunityIcons name="chevron-right" size={18} color="#94A3B8" />
-            )}
-          >
-            <Text style={[styles.filtersToggleText, onlyProblems && styles.filtersToggleTextActive]}>Только проблемные</Text>
-          </FilterFieldFrame>
-          <View style={styles.filtersAmountRow}>
-            <FilterInputField styles={styles} label="Дата отгрузки от" value={deliveryDateFrom} onChange={onDeliveryDateFromChange} placeholder="От" icon="calendar-outline" />
-            <FilterInputField styles={styles} label="Дата отгрузки до" value={deliveryDateTo} onChange={onDeliveryDateToChange} placeholder="До" icon="calendar-outline" />
-          </View>
-          <View style={styles.filtersAmountRow}>
-            <FilterInputField styles={styles} label="Дата изменения от" value={updatedFrom} onChange={onUpdatedFromChange} placeholder="От" icon="calendar-clock-outline" />
-            <FilterInputField styles={styles} label="Дата изменения до" value={updatedTo} onChange={onUpdatedToChange} placeholder="До" icon="calendar-clock-outline" />
-          </View>
-          <View style={styles.filtersAmountRow}>
-            <FilterInputField styles={styles} label="Сумма от" value={amountMin} onChange={onAmountMinChange} placeholder="От" icon="cash" keyboardType="decimal-pad" />
-            <FilterInputField styles={styles} label="Сумма до" value={amountMax} onChange={onAmountMaxChange} placeholder="До" icon="cash" keyboardType="decimal-pad" />
-          </View>
-          <View style={styles.filtersAmountRow}>
-            <FilterInputField styles={styles} label="Позиций от" value={itemsMin} onChange={onItemsMinChange} placeholder="От" icon="format-list-numbered" keyboardType="number-pad" />
-            <FilterInputField styles={styles} label="Позиций до" value={itemsMax} onChange={onItemsMaxChange} placeholder="До" icon="format-list-numbered" keyboardType="number-pad" />
-          </View>
-          <FilterLookupField styles={styles} label="Контрагент" icon="account-outline" selected={filterCounterparty} placeholder="Начните вводить название" search={searchCounterparties} onChange={onCounterpartyChange} />
-          <FilterSelectField styles={styles} label="Организация" value={organizationGuid} options={organizationOptions} onChange={onOrganizationChange} />
-          <FilterLookupField styles={styles} label="Склад" icon="warehouse" selected={filterWarehouse} placeholder="Начните вводить склад" search={searchWarehouses} onChange={onWarehouseChange} />
-          <FilterLookupField styles={styles} label="Вид цены" icon="tag-outline" selected={filterPriceType} placeholder="Начните вводить вид цены" search={searchPriceTypes} onChange={onPriceTypeChange} />
-        </ScrollView>
-        <View style={styles.filtersSheetActions}>
-          <PaperButton mode="outlined" onPress={onReset} style={styles.filtersSheetActionButton} labelStyle={styles.filtersSheetActionLabel} contentStyle={styles.filtersSheetActionContent}>
-            Сбросить
-          </PaperButton>
-          <PaperButton mode="contained" onPress={closeWithAnimation} buttonColor="#0F172A" textColor="#FFFFFF" style={styles.filtersSheetActionButton} labelStyle={styles.filtersSheetActionLabel} contentStyle={styles.filtersSheetActionContent}>
-            Готово
-          </PaperButton>
+        <View style={styles.filtersAmountRow} onLayout={(event) => handleFilterFieldLayout('updatedDates', event)}>
+          <FilterInputField styles={styles} label="Дата изменения от" value={updatedFrom} onChange={onUpdatedFromChange} placeholder="От" icon="calendar-clock-outline" onInputFocus={(inputRef) => scheduleFilterFieldScroll('updatedDates', inputRef)} />
+          <FilterInputField styles={styles} label="Дата изменения до" value={updatedTo} onChange={onUpdatedToChange} placeholder="До" icon="calendar-clock-outline" onInputFocus={(inputRef) => scheduleFilterFieldScroll('updatedDates', inputRef)} />
         </View>
+        <View style={styles.filtersAmountRow} onLayout={(event) => handleFilterFieldLayout('amount', event)}>
+          <FilterInputField styles={styles} label="Сумма от" value={amountMin} onChange={onAmountMinChange} placeholder="От" icon="cash" keyboardType="decimal-pad" onInputFocus={(inputRef) => scheduleFilterFieldScroll('amount', inputRef)} />
+          <FilterInputField styles={styles} label="Сумма до" value={amountMax} onChange={onAmountMaxChange} placeholder="До" icon="cash" keyboardType="decimal-pad" onInputFocus={(inputRef) => scheduleFilterFieldScroll('amount', inputRef)} />
+        </View>
+        <View style={styles.filtersAmountRow} onLayout={(event) => handleFilterFieldLayout('items', event)}>
+          <FilterInputField styles={styles} label="Позиций от" value={itemsMin} onChange={onItemsMinChange} placeholder="От" icon="format-list-numbered" keyboardType="number-pad" onInputFocus={(inputRef) => scheduleFilterFieldScroll('items', inputRef)} />
+          <FilterInputField styles={styles} label="Позиций до" value={itemsMax} onChange={onItemsMaxChange} placeholder="До" icon="format-list-numbered" keyboardType="number-pad" onInputFocus={(inputRef) => scheduleFilterFieldScroll('items', inputRef)} />
+        </View>
+        <FilterLookupField styles={styles} label="Контрагент" icon="account-outline" selected={filterCounterparty} placeholder="Начните вводить название" search={searchCounterparties} onChange={onCounterpartyChange} onFieldLayout={(event) => handleFilterFieldLayout('counterparty', event)} onInputFocus={(inputRef) => scheduleFilterFieldScroll('counterparty', inputRef)} />
+        <FilterSelectField styles={styles} label="Организация" value={organizationGuid} options={organizationOptions} onChange={onOrganizationChange} />
+        <FilterLookupField styles={styles} label="Склад" icon="warehouse" selected={filterWarehouse} placeholder="Начните вводить склад" search={searchWarehouses} onChange={onWarehouseChange} onFieldLayout={(event) => handleFilterFieldLayout('warehouse', event)} onInputFocus={(inputRef) => scheduleFilterFieldScroll('warehouse', inputRef)} />
+        <FilterLookupField styles={styles} label="Вид цены" icon="tag-outline" selected={filterPriceType} placeholder="Начните вводить вид цены" search={searchPriceTypes} onChange={onPriceTypeChange} onFieldLayout={(event) => handleFilterFieldLayout('priceType', event)} onInputFocus={(inputRef) => scheduleFilterFieldScroll('priceType', inputRef)} />
+      </SheetScrollView>
+      <View style={[styles.filtersSheetActions, { paddingBottom: filtersFooterBottomPadding }]}>
+        <PaperButton mode="outlined" onPress={onReset} style={styles.filtersSheetActionButton} labelStyle={styles.filtersSheetActionLabel} contentStyle={styles.filtersSheetActionContent}>
+          Сбросить
+        </PaperButton>
+        <PaperButton mode="contained" onPress={onClose} buttonColor="#0F172A" textColor="#FFFFFF" style={styles.filtersSheetActionButton} labelStyle={styles.filtersSheetActionLabel} contentStyle={styles.filtersSheetActionContent}>
+          Готово
+        </PaperButton>
       </View>
-    </Animated.View>
+    </PickerBottomSheet>
   );
 }
 
@@ -2167,22 +2327,23 @@ const styles = StyleSheet.create({
   cardContent: { paddingTop: 0, paddingBottom: 0 },
   panel: { borderRadius: 18, borderWidth: 1, borderColor: '#DBEAFE', padding: 12, gap: 10, shadowColor: '#0F172A', shadowOpacity: 0.06, shadowRadius: 12, elevation: 2 },
   cardStack: { gap: 4 },
-  documentStickyHeader: { backgroundColor: '#FFFFFF', gap: 4, zIndex: 20, elevation: 8 },
-  documentHeaderFlat: { backgroundColor: '#FFFFFF', gap: 4 },
-  documentHeaderTop: { minHeight: 34, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  documentStickyHeader: { backgroundColor: 'transparent', gap: 0, zIndex: 20, elevation: 0 },
+  documentHeaderFlat: { backgroundColor: 'transparent', gap: 4, paddingBottom: 4 },
+  documentHeaderTop: { minHeight: 38, flexDirection: 'row', alignItems: 'center', gap: 6 },
   documentHeaderIconButton: { width: 34, height: 34, borderRadius: 5, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' },
-  documentHeaderTitleWrap: { flex: 1, minWidth: 0 },
-  documentTitle: { fontSize: 16, fontWeight: '900', color: '#0F172A', lineHeight: 19 },
-  documentSubtitle: { marginTop: 0, fontSize: 10.5, fontWeight: '800', color: '#64748B', lineHeight: 13 },
+  documentHeaderTitleWrap: { flex: 1, minWidth: 0, justifyContent: 'center' },
+  documentTitle: { fontSize: 16, fontWeight: '900', color: '#0F172A', lineHeight: 18, includeFontPadding: false },
+  documentSubtitle: { marginTop: 1, fontSize: 10.5, fontWeight: '800', color: '#64748B', lineHeight: 12, includeFontPadding: false },
   documentTabsRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  documentTab: { flex: 1, minHeight: 32, borderRadius: 4, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' },
+  documentTab: { flex: 1, minHeight: 32, borderRadius: 4, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', position: 'relative' },
   documentTabActive: { borderColor: '#BFDBFE', backgroundColor: '#EFF6FF' },
   documentTabText: { fontSize: 12.5, fontWeight: '800', color: '#334155' },
   documentTabTextActive: { color: '#1D4ED8', fontWeight: '900' },
-  documentItemsCount: { minWidth: 58, height: 32, borderRadius: 4, borderWidth: 1, borderColor: '#BFDBFE', backgroundColor: '#EFF6FF', paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5 },
-  documentItemsCountText: { fontSize: 13, fontWeight: '900', color: '#2563EB' },
+  documentTabCountText: { position: 'absolute', right: 12, fontSize: 12.5, lineHeight: 16, fontWeight: '900', color: '#2563EB', includeFontPadding: false },
   flatPressed: { opacity: 0.78 },
-  compactSearchClear: { width: 28, height: 28, marginRight: 2, alignItems: 'center', justifyContent: 'center' },
+  compactSearchShell: { height: 34, minHeight: 34, flexDirection: 'row', alignItems: 'center', paddingLeft: 8, paddingRight: 2, gap: 6, overflow: 'hidden' },
+  compactSearchInputBase: { flex: 1, minWidth: 0, height: 32, paddingHorizontal: 0, paddingVertical: 0, margin: 0, color: '#0F172A', fontSize: 13, lineHeight: 16, fontWeight: '800', includeFontPadding: false, textAlignVertical: 'center' },
+  compactSearchClear: { width: 28, height: 28, marginRight: 0, alignItems: 'center', justifyContent: 'center' },
   flatField: { minHeight: 48, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#FFFFFF', borderRadius: 4, paddingLeft: 8, paddingRight: 5, paddingVertical: 5, flexDirection: 'row', alignItems: 'center' },
   flatFieldIcon: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center', marginRight: 7 },
   flatFieldTextWrap: { flex: 1, minWidth: 0, justifyContent: 'center' },
@@ -2236,23 +2397,18 @@ const styles = StyleSheet.create({
   statusChipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   filterChip: { backgroundColor: '#F8FAFC' },
   ordersToolbar: { backgroundColor: '#FFFFFF', marginBottom: 4 },
-  filtersSheetWrap: { position: 'absolute', zIndex: 12, bottom: 0 },
-  filtersSheet: { width: '100%', height: '100%', borderTopLeftRadius: 8, borderTopRightRadius: 8, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#FFFFFF', paddingHorizontal: 8, paddingTop: 5, paddingBottom: FLOATING_TAB_BAR_HEIGHT + FLOATING_TAB_BAR_BOTTOM_OFFSET + 8, gap: 8, shadowColor: '#0F172A', shadowOpacity: 0.16, shadowRadius: 18, shadowOffset: { width: 0, height: -6 }, elevation: 14 },
-  filtersSheetHandle: { alignSelf: 'center', width: 34, height: 3, borderRadius: 999, backgroundColor: '#CBD5E1' },
-  filtersSheetHeader: { height: 30, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: '#E2E8F0' },
-  filtersSheetTitle: { fontSize: 13, fontWeight: '900', color: '#0F172A', textTransform: 'uppercase' },
-  filtersSheetIconButton: { width: 28, height: 28, margin: 0, borderRadius: 4, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF' },
+  filtersPickerSheet: { paddingHorizontal: 0, paddingBottom: 0 },
   filtersScroll: { flex: 1, minHeight: 0 },
-  filtersForm: { gap: 7, paddingBottom: 8 },
+  filtersForm: { gap: 7, paddingHorizontal: 8, paddingBottom: 10 },
   filtersSection: { gap: 7 },
   filtersSectionTitle: { display: 'none' },
-  filtersFieldLabel: { marginBottom: 3, fontSize: 10.5, color: '#64748B', fontWeight: '800', textTransform: 'uppercase' },
-  filtersUnifiedField: { height: 42, borderRadius: 4, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF', paddingLeft: 8, paddingRight: 8, flexDirection: 'row', alignItems: 'center' },
+  filtersFieldLabel: { marginBottom: 3, fontSize: 10.5, lineHeight: 12, color: '#64748B', fontWeight: '800', textTransform: 'uppercase', includeFontPadding: false },
+  filtersUnifiedField: { height: 42, borderRadius: 4, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF', paddingLeft: 8, paddingRight: 8, flexDirection: 'row', alignItems: 'center', overflow: 'hidden' },
   filtersFieldIconSlot: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center', marginRight: 8 },
-  filtersFieldContent: { flex: 1, minWidth: 0, justifyContent: 'center' },
+  filtersFieldContent: { flex: 1, minWidth: 0, height: 40, justifyContent: 'center' },
   filtersFieldRightSlot: { width: 24, height: 28, alignItems: 'center', justifyContent: 'center', marginLeft: 6 },
   filtersSelectField: { height: 42, borderRadius: 4, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF', paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  filtersSelectText: { flex: 1, minWidth: 0, fontSize: 12, fontWeight: '800', color: '#0F172A' },
+  filtersSelectText: { width: '100%', minWidth: 0, fontSize: 12, lineHeight: 16, fontWeight: '800', color: '#0F172A', includeFontPadding: false },
   filtersSelectMenu: { marginTop: 3, borderRadius: 4, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#FFFFFF', overflow: 'hidden' },
   filtersSelectOption: { minHeight: 34, paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', gap: 8, borderBottomWidth: 1, borderBottomColor: '#EEF2F7' },
   filtersSelectOptionSelected: { backgroundColor: '#EFF6FF' },
@@ -2263,7 +2419,7 @@ const styles = StyleSheet.create({
   filtersTextInput: { height: 42, backgroundColor: '#FFFFFF', fontSize: 12 },
   filtersTextInputContent: { fontSize: 12, fontWeight: '800', color: '#0F172A' },
   filtersInnerTextInput: { height: 40, minHeight: 40, backgroundColor: 'transparent', margin: 0, padding: 0 },
-  filtersInnerTextInputContent: { minHeight: 40, height: 40, paddingHorizontal: 0, paddingVertical: 0, fontSize: 12, fontWeight: '800', color: '#0F172A' },
+  filtersInnerTextInputContent: { width: '100%', height: 40, minHeight: 40, paddingHorizontal: 0, paddingVertical: 0, paddingTop: 3, margin: 0, fontSize: 12, lineHeight: 16, fontWeight: '800', color: '#0F172A', includeFontPadding: false, textAlignVertical: 'center' },
   filtersInputOutline: { borderRadius: 4, borderColor: '#CBD5E1' },
   filtersSuggestions: { marginTop: 3, borderWidth: 1, borderColor: '#D8E2F0', borderRadius: 4, overflow: 'hidden', backgroundColor: '#FFFFFF' },
   filtersSuggestionItem: { minHeight: 34, paddingVertical: 0 },
@@ -2272,10 +2428,9 @@ const styles = StyleSheet.create({
   filtersAmountInput: { flex: 1 },
   filtersToggle: { height: 42, borderRadius: 4, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF', paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', gap: 8 },
   filtersToggleActive: { borderColor: '#BFDBFE', backgroundColor: '#EFF6FF' },
-  filtersToggleText: { flex: 1, minWidth: 0, fontSize: 12, fontWeight: '800', color: '#334155' },
+  filtersToggleText: { width: '100%', minWidth: 0, fontSize: 12, lineHeight: 16, fontWeight: '800', color: '#334155', includeFontPadding: false },
   filtersToggleTextActive: { color: '#1D4ED8' },
-  filtersSheetSpacer: { flex: 1 },
-  filtersSheetActions: { flexDirection: 'row', gap: 6 },
+  filtersSheetActions: { flexShrink: 0, flexDirection: 'row', gap: 6, paddingTop: 8, paddingHorizontal: 8, borderTopWidth: 1, borderTopColor: '#E2E8F0', backgroundColor: '#FFFFFF' },
   filtersSheetActionButton: { flex: 1, borderRadius: 4, borderColor: '#CBD5E1' },
   filtersSheetActionContent: { height: 34 },
   filtersSheetActionLabel: { fontSize: 12, fontWeight: '900', marginVertical: 0 },
@@ -2284,7 +2439,7 @@ const styles = StyleSheet.create({
   ordersSubtitle: { marginTop: 1, fontSize: 10.5, fontWeight: '700', color: '#64748B' },
   ordersCompactToolbarRow: { minHeight: 34, flexDirection: 'row', gap: 4, alignItems: 'center' },
   ordersSearchbar: { flex: 1, height: 34, backgroundColor: '#FFFFFF', borderRadius: 4, borderWidth: 1, borderColor: '#CBD5E1', elevation: 0 },
-  ordersSearchbarInput: { minHeight: 0, marginLeft: -8, paddingLeft: 0, fontSize: 13, color: '#0F172A', fontWeight: '700' },
+  ordersSearchbarInput: { fontSize: 13, color: '#0F172A', fontWeight: '700' },
   ordersActionRow: { flexDirection: 'row', gap: 6, alignItems: 'center' },
   ordersIconButton: { width: 34, height: 34, margin: 0, borderRadius: 4, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF' },
   ordersIconButtonPrimary: { borderColor: '#16A34A', backgroundColor: '#16A34A' },
@@ -2500,7 +2655,7 @@ const styles = StyleSheet.create({
   itemsToolbarWrap: { position: 'relative', backgroundColor: '#FFFFFF', zIndex: 30 },
   itemsFlatToolbar: { minHeight: 34, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#FFFFFF', zIndex: 2 },
   itemsSearchFlat: { flex: 1, height: 34, backgroundColor: '#FFFFFF', borderRadius: 4, borderWidth: 1, borderColor: '#CBD5E1', elevation: 0 },
-  itemsSearchFlatInput: { minHeight: 0, marginLeft: -8, paddingLeft: 0, fontSize: 13, color: '#0F172A', fontWeight: '800' },
+  itemsSearchFlatInput: { fontSize: 13, color: '#0F172A', fontWeight: '800' },
   itemsToolbarButton: { width: 34, height: 34, borderRadius: 4, alignItems: 'center', justifyContent: 'center' },
   itemsToolbarButtonSuccess: { backgroundColor: '#16A34A' },
   itemsToolbarButtonDanger: { backgroundColor: '#DC2626' },
@@ -2523,16 +2678,20 @@ const styles = StyleSheet.create({
   pickerToolbar: { paddingHorizontal: 8, paddingTop: 6, paddingBottom: 4, gap: 6 },
   pickerBottomSheetWrap: { position: 'absolute', zIndex: 14, bottom: 0 },
   pickerBottomSheet: { width: '100%', height: '100%', borderTopLeftRadius: 8, borderTopRightRadius: 8, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#FFFFFF', paddingTop: 5, paddingBottom: FLOATING_TAB_BAR_HEIGHT + FLOATING_TAB_BAR_BOTTOM_OFFSET + 8, gap: 0, shadowColor: '#0F172A', shadowOpacity: 0.16, shadowRadius: 18, shadowOffset: { width: 0, height: -6 }, elevation: 14 },
-  pickerBottomSheetHandle: { alignSelf: 'center', width: 34, height: 3, borderRadius: 999, backgroundColor: '#CBD5E1', marginBottom: 5 },
-  pickerBottomSheetHeader: { height: 34, paddingLeft: 10, paddingRight: 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: '#E2E8F0' },
-  pickerBottomSheetTitleRow: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 7 },
-  pickerBottomSheetTitle: { flex: 1, minWidth: 0, fontSize: 13, fontWeight: '900', color: '#0F172A', textTransform: 'uppercase' },
-  pickerBottomSheetClose: { width: 28, height: 28, borderRadius: 4, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' },
+  pickerBottomSheetHandle: { alignSelf: 'center', width: 36, height: 4, borderRadius: 999, backgroundColor: '#D0D5DD', marginBottom: 12 },
+  pickerBottomSheetHeader: { minHeight: 44, paddingLeft: 16, paddingRight: 12, paddingBottom: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  pickerBottomSheetTitleRow: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  pickerBottomSheetTitle: { flex: 1, minWidth: 0, fontSize: 16, lineHeight: 20, fontWeight: '800', color: '#111827' },
+  pickerBottomSheetClose: { width: 36, height: 36, borderRadius: 999, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center' },
   pickerBottomSheetBody: { flex: 1, minHeight: 0, gap: 0 },
+  pickerBottomSheetNativeBackground: { backgroundColor: '#FFFFFF', borderTopLeftRadius: 24, borderTopRightRadius: 24 },
+  pickerBottomSheetNativeHandle: { paddingTop: 8, backgroundColor: '#FFFFFF', borderTopLeftRadius: 24, borderTopRightRadius: 24 },
+  pickerBottomSheetNativeContent: { flex: 1, minHeight: 0, backgroundColor: '#FFFFFF', paddingBottom: FLOATING_TAB_BAR_HEIGHT + FLOATING_TAB_BAR_BOTTOM_OFFSET + 8 },
+  pickerBottomSheetHandleOverlay: {},
   pickerSearchInput: {},
   pickerScroll: { flex: 1, minHeight: 0 },
   pickerSearchFlat: { height: 34, backgroundColor: '#FFFFFF', borderRadius: 4, borderWidth: 1, borderColor: '#CBD5E1', elevation: 0 },
-  pickerSearchInputFlat: { minHeight: 0, marginLeft: -8, paddingLeft: 0, fontSize: 13, color: '#0F172A', fontWeight: '800' },
+  pickerSearchInputFlat: { fontSize: 13, color: '#0F172A', fontWeight: '800' },
   pickerListContent: { paddingBottom: 20, flexGrow: 1 },
   pickerFlatRow: { minHeight: 54, borderBottomWidth: 1, borderBottomColor: '#E2E8F0', backgroundColor: '#FFFFFF', paddingLeft: 10, paddingRight: 8, paddingVertical: 6, flexDirection: 'row', alignItems: 'center', gap: 8 },
   pickerFlatTextWrap: { flex: 1, minWidth: 0 },
@@ -2555,7 +2714,6 @@ const styles = StyleSheet.create({
   referenceLabel: { width: 120, color: '#64748B', fontWeight: '900', fontSize: 12 },
   referenceValue: { flex: 1, color: '#0F172A', fontWeight: '700', fontSize: 12 },
   error: { color: '#B91C1C', backgroundColor: '#FEE2E2', borderRadius: 10, padding: 10, fontWeight: '800' },
-  warning: { color: '#92400E', backgroundColor: '#FEF3C7', borderRadius: 10, padding: 10, fontWeight: '800' },
   dialogPaper: { borderRadius: 16, backgroundColor: '#FFFFFF' },
   modalBackdropPaper: { flex: 1, margin: 0, justifyContent: 'flex-end' },
   modalBackdropPaperFull: { justifyContent: 'flex-end' },

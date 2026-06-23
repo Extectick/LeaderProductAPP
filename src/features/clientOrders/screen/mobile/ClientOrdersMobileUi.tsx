@@ -1,7 +1,8 @@
 import { packageLabel, unitLabel } from '../../lib/clientOrdersUi';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import React from 'react';
-import { Animated, BackHandler, PanResponder, Platform, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { Animated, BackHandler, Keyboard, PanResponder, Platform, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
+import type { ScrollViewProps, TextInputProps } from 'react-native';
 import {
   Button as PaperButton,
   Card,
@@ -15,6 +16,12 @@ import {
   Surface,
   Text,
 } from 'react-native-paper';
+
+const nativeBottomSheet = Platform.OS === 'web' ? null : require('@gorhom/bottom-sheet');
+const BottomSheetBackdrop = nativeBottomSheet?.BottomSheetBackdrop;
+const BottomSheetModal = nativeBottomSheet?.BottomSheetModal;
+const BottomSheetScrollView = nativeBottomSheet?.BottomSheetScrollView;
+const BottomSheetTextInput = nativeBottomSheet?.BottomSheetTextInput;
 
 type ConfirmDialogState = {
   title: string;
@@ -250,24 +257,7 @@ export function SheetModal({
   );
 }
 
-export function PickerBottomSheet({
-  styles,
-  visible,
-  topOffset,
-  title,
-  titleIcon,
-  onClose,
-  children,
-  fullWidth = true,
-  showHeader = true,
-  sheetStyle,
-  headerContent,
-  overlayHandle = false,
-  contentScrollOffset = 0,
-  enableContentDrag = false,
-  preferredHeight,
-  minHeight = 360,
-}: {
+type PickerBottomSheetProps = {
   styles?: any;
   visible: boolean;
   topOffset: number;
@@ -282,13 +272,228 @@ export function PickerBottomSheet({
   overlayHandle?: boolean;
   contentScrollOffset?: number;
   enableContentDrag?: boolean;
+  closeDragDistance?: number;
+  closeOnDragMove?: boolean;
   preferredHeight?: number;
   minHeight?: number;
-}) {
+  initialSnapIndex?: number;
+  keyboardBehavior?: 'interactive' | 'extend' | 'fillParent';
+  keyboardBlurBehavior?: 'none' | 'restore';
+  androidKeyboardInputMode?: 'adjustPan' | 'adjustResize';
+  enableBlurKeyboardOnGesture?: boolean;
+};
+
+export function PickerBottomSheet(props: PickerBottomSheetProps) {
+  if (Platform.OS !== 'web') {
+    return <NativePickerBottomSheet {...props} />;
+  }
+  return <LegacyPickerBottomSheet {...props} />;
+}
+
+export const PickerBottomSheetScrollView = (Platform.OS === 'web' ? undefined : BottomSheetScrollView) as
+  | React.ComponentType<React.PropsWithChildren<ScrollViewProps>>
+  | undefined;
+
+export const PickerBottomSheetTextInput = (Platform.OS === 'web' ? undefined : BottomSheetTextInput) as
+  | React.ComponentType<TextInputProps>
+  | undefined;
+
+function NativePickerBottomSheet({
+  styles,
+  visible,
+  topOffset,
+  title,
+  titleIcon,
+  onClose,
+  children,
+  fullWidth = true,
+  showHeader = true,
+  sheetStyle,
+  headerContent,
+  overlayHandle = false,
+  preferredHeight,
+  minHeight = 360,
+  initialSnapIndex = 0,
+  keyboardBehavior = 'fillParent',
+  keyboardBlurBehavior = 'restore',
+  androidKeyboardInputMode = 'adjustResize',
+  enableBlurKeyboardOnGesture = true,
+}: PickerBottomSheetProps) {
+  const ui = styles || pickerBottomSheetDefaultStyles;
+  const { width, height } = useWindowDimensions();
+  const bottomSheetRef = React.useRef<any>(null);
+  const visibleRef = React.useRef(visible);
+  const presentedRef = React.useRef(false);
+  visibleRef.current = visible;
+  const sheetWidth = fullWidth ? width : Math.min(520, Math.max(280, width - 16));
+  const maxSheetHeight = Math.max(minHeight, Math.min(height - topOffset, Math.round(height * 0.95)));
+  const preferredSheetHeight = typeof preferredHeight === 'number'
+    ? Math.min(maxSheetHeight, Math.max(minHeight, preferredHeight))
+    : null;
+  const peekSheetHeight = Math.min(maxSheetHeight, Math.max(minHeight, Math.round(height * 0.6)));
+  const snapPoints = React.useMemo(() => {
+    if (preferredSheetHeight != null) return [preferredSheetHeight];
+    return maxSheetHeight - peekSheetHeight > 32 ? [peekSheetHeight, maxSheetHeight] : [maxSheetHeight];
+  }, [maxSheetHeight, peekSheetHeight, preferredSheetHeight]);
+  const startIndex = React.useMemo(
+    () => Math.max(0, Math.min(initialSnapIndex, snapPoints.length - 1)),
+    [initialSnapIndex, snapPoints.length]
+  );
+  const animationConfigs = React.useMemo(
+    () => ({
+      damping: 28,
+      stiffness: 320,
+      mass: 0.9,
+      overshootClamping: false,
+      restDisplacementThreshold: 0.1,
+      restSpeedThreshold: 0.1,
+    }),
+    []
+  );
+
+  const requestClose = React.useCallback(() => {
+    if (!visibleRef.current) return;
+    Keyboard.dismiss();
+    onClose();
+  }, [onClose]);
+
+  const handleDismiss = React.useCallback(() => {
+    if (!presentedRef.current) return;
+    presentedRef.current = false;
+    Keyboard.dismiss();
+    if (visibleRef.current) {
+      onClose();
+    }
+  }, [onClose]);
+
+  const renderBackdrop = React.useCallback(
+    (props: any) => (
+      <BottomSheetBackdrop
+        {...props}
+        appearsOnIndex={0}
+        disappearsOnIndex={-1}
+        opacity={0.28}
+        pressBehavior="close"
+      />
+    ),
+    []
+  );
+
+  React.useEffect(() => {
+    if (visible) {
+      presentedRef.current = true;
+      bottomSheetRef.current?.present();
+      return;
+    }
+    if (presentedRef.current) {
+      bottomSheetRef.current?.dismiss(animationConfigs);
+    }
+  }, [animationConfigs, visible]);
+
+  React.useEffect(() => {
+    if (!visible) return undefined;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      requestClose();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [requestClose, visible]);
+
+  const left = fullWidth ? 0 : (width - sheetWidth) / 2;
+  const containerStyle = React.useMemo(
+    () => [
+      {
+        width: sheetWidth,
+        marginLeft: left,
+      },
+    ],
+    [left, sheetWidth]
+  );
+
+  const renderHandle = React.useCallback(
+    () => (
+      <View style={ui.pickerBottomSheetNativeHandle}>
+        <View style={[ui.pickerBottomSheetHandle, overlayHandle && ui.pickerBottomSheetHandleOverlay]} />
+        {showHeader ? (
+          <View style={ui.pickerBottomSheetHeader}>
+            <View style={ui.pickerBottomSheetTitleRow}>
+              {titleIcon ? <MaterialCommunityIcons name={titleIcon} size={18} color="#2563EB" /> : null}
+              <Text style={ui.pickerBottomSheetTitle} numberOfLines={1}>{title}</Text>
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Закрыть"
+              onPress={requestClose}
+              hitSlop={8}
+              style={({ pressed }) => [ui.pickerBottomSheetClose, pressed && ui.flatPressed]}
+            >
+              <MaterialCommunityIcons name="close" size={20} color="#475569" />
+            </Pressable>
+          </View>
+        ) : null}
+      </View>
+    ),
+    [overlayHandle, requestClose, showHeader, title, titleIcon, ui]
+  );
+
+  const content = (
+    <>
+      {typeof headerContent === 'function' ? headerContent(requestClose) : headerContent}
+      <View style={ui.pickerBottomSheetBody}>{children}</View>
+    </>
+  );
+
+  return (
+    <BottomSheetModal
+      ref={bottomSheetRef}
+      index={startIndex}
+      snapPoints={snapPoints}
+      enablePanDownToClose
+      enableDismissOnClose
+      enableDynamicSizing={false}
+      enableOverDrag
+      keyboardBehavior={keyboardBehavior}
+      keyboardBlurBehavior={keyboardBlurBehavior}
+      android_keyboardInputMode={androidKeyboardInputMode}
+      enableBlurKeyboardOnGesture={enableBlurKeyboardOnGesture}
+      overDragResistanceFactor={2.2}
+      backdropComponent={renderBackdrop}
+      onDismiss={handleDismiss}
+      containerStyle={containerStyle}
+      backgroundStyle={ui.pickerBottomSheetNativeBackground}
+      handleComponent={renderHandle}
+      animationConfigs={animationConfigs}
+    >
+      <View style={[ui.pickerBottomSheetNativeContent, sheetStyle]}>{content}</View>
+    </BottomSheetModal>
+  );
+}
+
+function LegacyPickerBottomSheet({
+  styles,
+  visible,
+  topOffset,
+  title,
+  titleIcon,
+  onClose,
+  children,
+  fullWidth = true,
+  showHeader = true,
+  sheetStyle,
+  headerContent,
+  overlayHandle = false,
+  contentScrollOffset = 0,
+  enableContentDrag = false,
+  closeDragDistance = 48,
+  closeOnDragMove = false,
+  preferredHeight,
+  minHeight = 360,
+}: PickerBottomSheetProps) {
   const ui = styles || pickerBottomSheetDefaultStyles;
   const { width, height } = useWindowDimensions();
   const anim = React.useRef(new Animated.Value(0)).current;
   const dragStartValueRef = React.useRef(1);
+  const dragClosingRef = React.useRef(false);
   const visibleRef = React.useRef(visible);
   visibleRef.current = visible;
   const sheetWidth = fullWidth ? width : Math.min(520, Math.max(280, width - 16));
@@ -346,15 +551,25 @@ export function PickerBottomSheet({
         onMoveShouldSetPanResponderCapture: capture
           ? (_evt, gestureState) => visible && canStart(gestureState)
           : undefined,
+        onPanResponderTerminationRequest: () => false,
         onPanResponderGrant: () => {
+          dragClosingRef.current = false;
           dragStartValueRef.current = 1;
         },
         onPanResponderMove: (_evt, gestureState) => {
-          const next = dragStartValueRef.current - Math.max(0, gestureState.dy) / sheetHeight;
+          if (dragClosingRef.current || !visibleRef.current) return;
+          const downwardDistance = Math.max(0, gestureState.dy);
+          if (closeOnDragMove && downwardDistance > closeDragDistance) {
+            dragClosingRef.current = true;
+            closeWithAnimation();
+            return;
+          }
+          const next = dragStartValueRef.current - downwardDistance / sheetHeight;
           anim.setValue(Math.max(0, Math.min(1, next)));
         },
         onPanResponderRelease: (_evt, gestureState) => {
-          if (gestureState.dy > 48 || gestureState.vy > 0.5) {
+          if (dragClosingRef.current || !visibleRef.current) return;
+          if (gestureState.dy > closeDragDistance || gestureState.vy > 0.5) {
             closeWithAnimation();
             return;
           }
@@ -368,6 +583,7 @@ export function PickerBottomSheet({
           }).start();
         },
         onPanResponderTerminate: () => {
+          if (dragClosingRef.current || !visibleRef.current) return;
           Animated.spring(anim, {
             toValue: 1,
             damping: 22,
@@ -378,7 +594,7 @@ export function PickerBottomSheet({
           }).start();
         },
       }),
-    [anim, closeWithAnimation, sheetHeight, visible]
+    [anim, closeDragDistance, closeOnDragMove, closeWithAnimation, sheetHeight, visible]
   );
   const headerPanResponder = React.useMemo(
     () => createPanResponder((gestureState) =>
@@ -500,11 +716,15 @@ const pickerBottomSheetDefaultStyles = StyleSheet.create({
     shadowOffset: { width: 0, height: -6 },
     elevation: 14,
   },
-  pickerBottomSheetHandle: { alignSelf: 'center', width: 34, height: 3, borderRadius: 999, backgroundColor: '#CBD5E1', marginBottom: 5 },
-  pickerBottomSheetHeader: { height: 34, paddingLeft: 10, paddingRight: 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: '#E2E8F0' },
-  pickerBottomSheetTitleRow: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 7 },
-  pickerBottomSheetTitle: { flex: 1, minWidth: 0, fontSize: 13, fontWeight: '900', color: '#0F172A', textTransform: 'uppercase' },
-  pickerBottomSheetClose: { width: 28, height: 28, borderRadius: 4, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' },
+  pickerBottomSheetHandle: { alignSelf: 'center', width: 36, height: 4, borderRadius: 999, backgroundColor: '#D0D5DD', marginBottom: 12 },
+  pickerBottomSheetHeader: { minHeight: 44, paddingLeft: 16, paddingRight: 12, paddingBottom: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  pickerBottomSheetTitleRow: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  pickerBottomSheetTitle: { flex: 1, minWidth: 0, fontSize: 16, lineHeight: 20, fontWeight: '800', color: '#111827' },
+  pickerBottomSheetClose: { width: 36, height: 36, borderRadius: 999, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center' },
   pickerBottomSheetBody: { flex: 1, minHeight: 0, gap: 0 },
+  pickerBottomSheetNativeBackground: { backgroundColor: '#FFFFFF', borderTopLeftRadius: 24, borderTopRightRadius: 24 },
+  pickerBottomSheetNativeHandle: { paddingTop: 8, backgroundColor: '#FFFFFF', borderTopLeftRadius: 24, borderTopRightRadius: 24 },
+  pickerBottomSheetNativeContent: { flex: 1, minHeight: 0, backgroundColor: '#FFFFFF' },
+  pickerBottomSheetHandleOverlay: {},
   flatPressed: { opacity: 0.78 },
 });

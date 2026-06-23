@@ -595,7 +595,7 @@ function ServiceCard({
       <Card.Title
         title={service.name}
         subtitle={service.key}
-        left={(props) => <List.Icon {...props} icon={service.icon || 'apps'} />}
+        left={(props) => <List.Icon {...props} icon={toPaperIcon(service.icon)} />}
         right={() => <IconButton icon="shield-key-outline" onPress={onOpenRules} />}
       />
       <Card.Content style={styles.serviceCardContent}>
@@ -1036,6 +1036,18 @@ function draftToPatch(draft: ServiceDraft) {
 function nullableText(value: string) {
   const text = value.trim();
   return text || null;
+}
+
+function toPaperIcon(icon?: string | null) {
+  const normalized = String(icon || '').trim();
+  const iconMap: Record<string, string> = {
+    'qr-code-outline': 'qrcode',
+    documents: 'file-document-outline',
+    'list-outline': 'format-list-bulleted',
+    'stats-chart-outline': 'chart-bar',
+    'people-outline': 'account-group-outline',
+  };
+  return iconMap[normalized] || normalized || 'apps';
 }
 
 function getExistingRule(service: ServiceAdminItem, type: RuleType, targetId: number | null, roleId?: number | null) {
