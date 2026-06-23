@@ -13,6 +13,8 @@
     "web": "expo start --web",
     "build:web": "cross-env NODE_ENV=production expo export --platform web",
     "release:set-version": "node ./scripts/setNativeVersion.js",
+    "release:check-version": "node ./scripts/checkNativeVersion.js",
+    "release:read-version": "node ./scripts/readNativeVersion.js",
     "updates:publish-local": "node ./scripts/publishApkUpdateLocal.js",
     "bump:android": "ts-node ./scripts/bump.ts android",
     "bump:ios": "ts-node ./scripts/bump.ts ios",

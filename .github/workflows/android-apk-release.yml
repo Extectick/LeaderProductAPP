@@ -91,14 +91,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Generate Android native project
-        run: npx expo prebuild --platform android --clean --non-interactive
-
-      - name: Set native version
+      - name: Verify release version is committed
         run: |
-          node ./scripts/setNativeVersion.js \
+          node ./scripts/checkNativeVersion.js \
             --versionName "${{ inputs.versionName }}" \
             --versionCode "${{ inputs.versionCode }}"
+
+      - name: Generate Android native project
+        run: npx expo prebuild --platform android --clean --non-interactive
 
       - name: Build APK
         working-directory: android

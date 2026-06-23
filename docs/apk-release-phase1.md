@@ -23,6 +23,17 @@ For production APK builds, the workflow embeds `https://api.leader-product.ru` a
 
 ## Build APK In GitHub
 
+Before running the workflow, commit the target app version to git. This keeps Metro/dev-client, GitHub Actions, and the API on the same `versionCode`.
+
+```powershell
+cd D:\GitRepositories\LeaderProduct\LeaderProductAPP
+node ./scripts/setNativeVersion.js --versionName 0.1.9 --versionCode 8
+npm run release:check-version -- 0.1.9 8
+git add app.config.ts
+git commit -m "Bump app version to 0.1.9"
+git push
+```
+
 Run workflow:
 
 ```text
@@ -45,7 +56,8 @@ architectures: arm64-v8a
 
 The workflow:
 
-- updates `app.config.ts` and `android/app/build.gradle` inside the CI checkout;
+- checks that `app.config.ts` already matches workflow `versionName` and `versionCode`;
+- fails early if the version was not committed before the workflow;
 - builds APK;
 - uploads APK to S3:
   - `dev/updates/apk/...` for dev;
@@ -132,6 +144,13 @@ npx expo start --dev-client --host lan -c
 ```
 
 10. Confirm `/updates/check` no longer prompts for the installed `versionCode`.
+
+If dev-client still asks to update to the same version, reset Metro cache and verify local config:
+
+```powershell
+npm run release:read-version
+npx expo start --dev-client --host lan -c
+```
 
 ## Bridge APK For OTA
 

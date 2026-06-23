@@ -104,6 +104,7 @@ API URLs:
 - [x] Publish script supports dev API URL.
 - [x] Publish script supports production API URL `https://api.leader-product.ru`.
 - [x] Add direct DB publish script for local/private API environments.
+- [x] Add release version guard so CI refuses APK builds when `app.config.ts` is not bumped in git.
 - [ ] Add rollback procedure:
   - [x] deactivate bad update;
   - [x] reactivate previous update;
@@ -273,6 +274,7 @@ Release checklist:
 - [x] 2026-06-23: GitHub Actions APK workflow publishes dev APK to S3.
 - [x] 2026-06-23: Dev `AppUpdate` published and verified through app update prompt.
 - [x] 2026-06-23: Local DB publish script added for private/local API release registration.
+- [x] 2026-06-23: CI version guard added to prevent Metro/API version drift after APK releases.
 - [ ] Phase 1 completed. Remaining: mandatory update smoke test.
 - [x] Phase 2 started.
 - [x] 2026-06-23: `expo-updates` installed and bridge APK config added.
