@@ -1,0 +1,199 @@
+name: Build Android APK Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Update channel
+        required: true
+        default: dev
+        type: choice
+        options:
+          - dev
+          - prod
+      versionName:
+        description: App version name, for example 0.1.7
+        required: true
+        type: string
+      versionCode:
+        description: Android version code, for example 6
+        required: true
+        type: string
+      minSupportedVersionCode:
+        description: Minimum supported version code
+        required: true
+        type: string
+      isMandatory:
+        description: Force users to update
+        required: true
+        default: false
+        type: boolean
+      rolloutPercent:
+        description: Rollout percent from 0 to 100
+        required: true
+        default: '100'
+        type: string
+      releaseNotes:
+        description: Release notes
+        required: false
+        default: ''
+        type: string
+      buildType:
+        description: Android build type
+        required: true
+        default: release
+        type: choice
+        options:
+          - release
+          - debug
+      architectures:
+        description: React Native architectures
+        required: true
+        default: arm64-v8a
+        type: string
+
+jobs:
+  build-upload:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.channel == 'prod' && 'production' || 'development' }}
+
+    env:
+      S3_ENDPOINT: ${{ secrets.BEGET_S3_ENDPOINT }}
+      S3_REGION: ${{ secrets.BEGET_S3_REGION }}
+      S3_BUCKET: ${{ secrets.BEGET_S3_BUCKET }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.BEGET_S3_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.BEGET_S3_SECRET_ACCESS_KEY }}
+      EXPO_PUBLIC_UPDATE_CHANNEL: ${{ inputs.channel }}
+      EXPO_PUBLIC_API_URL_DEV: ${{ inputs.channel == 'prod' && 'https://api.leader-product.ru' || secrets.EXPO_PUBLIC_API_URL_DEV }}
+      EXPO_PUBLIC_TELEGRAM_BOT_USERNAME: ${{ secrets.EXPO_PUBLIC_TELEGRAM_BOT_USERNAME }}
+      EXPO_PUBLIC_MAX_BOT_USERNAME: ${{ secrets.EXPO_PUBLIC_MAX_BOT_USERNAME }}
+      EXPO_PUBLIC_SENTRY_ENABLED: 'false'
+      EXPO_PUBLIC_SENTRY_ENVIRONMENT: ${{ inputs.channel == 'prod' && 'production' || 'development' }}
+      NODE_ENV: ${{ inputs.channel == 'prod' && 'production' || 'development' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set native version
+        run: |
+          node ./scripts/setNativeVersion.js \
+            --versionName "${{ inputs.versionName }}" \
+            --versionCode "${{ inputs.versionCode }}"
+
+      - name: Build APK
+        working-directory: android
+        run: |
+          chmod +x ./gradlew
+          BUILD_TYPE="${{ inputs.buildType }}"
+          if [ "$BUILD_TYPE" = "debug" ]; then
+            ./gradlew :app:assembleDebug -PreactNativeArchitectures="${{ inputs.architectures }}"
+          else
+            ./gradlew :app:assembleRelease -PreactNativeArchitectures="${{ inputs.architectures }}"
+          fi
+
+      - name: Prepare release metadata
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BUILD_TYPE="${{ inputs.buildType }}"
+          if [ "$BUILD_TYPE" = "debug" ]; then
+            APK_PATH="android/app/build/outputs/apk/debug/app-debug.apk"
+          else
+            APK_PATH="android/app/build/outputs/apk/release/app-release.apk"
+          fi
+
+          if [ ! -f "$APK_PATH" ]; then
+            echo "APK not found: $APK_PATH" >&2
+            exit 1
+          fi
+
+          CHANNEL="${{ inputs.channel }}"
+          VERSION_NAME="${{ inputs.versionName }}"
+          VERSION_CODE="${{ inputs.versionCode }}"
+          APK_NAME="leader-product-${CHANNEL}-${VERSION_NAME}-${VERSION_CODE}.apk"
+          APK_KEY="${CHANNEL}/updates/apk/${APK_NAME}"
+          SHA256="$(sha256sum "$APK_PATH" | awk '{print $1}')"
+          MD5="$(md5sum "$APK_PATH" | awk '{print $1}')"
+          FILE_SIZE="$(stat -c%s "$APK_PATH")"
+
+          mkdir -p release-artifacts
+          cp "$APK_PATH" "release-artifacts/$APK_NAME"
+
+          export APK_KEY SHA256 MD5 FILE_SIZE
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const metadata = {
+            platform: 'android',
+            channel: process.env.CHANNEL,
+            versionName: process.env.VERSION_NAME,
+            versionCode: Number(process.env.VERSION_CODE),
+            minSupportedVersionCode: Number(process.env.MIN_SUPPORTED_VERSION_CODE),
+            isMandatory: process.env.IS_MANDATORY === 'true',
+            rolloutPercent: Number(process.env.ROLLOUT_PERCENT),
+            isActive: true,
+            releaseNotes: process.env.RELEASE_NOTES || '',
+            buildType: process.env.BUILD_TYPE,
+            architectures: process.env.ARCHITECTURES,
+            bucket: process.env.S3_BUCKET,
+            apkKey: process.env.APK_KEY,
+            fileSize: Number(process.env.FILE_SIZE),
+            checksum: process.env.SHA256,
+            checksumMd5: process.env.MD5,
+            commitSha: process.env.GITHUB_SHA,
+            createdAt: new Date().toISOString(),
+          };
+          fs.writeFileSync('release-artifacts/release-metadata.json', JSON.stringify(metadata, null, 2));
+          NODE
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          VERSION_NAME: ${{ inputs.versionName }}
+          VERSION_CODE: ${{ inputs.versionCode }}
+          MIN_SUPPORTED_VERSION_CODE: ${{ inputs.minSupportedVersionCode }}
+          IS_MANDATORY: ${{ inputs.isMandatory }}
+          ROLLOUT_PERCENT: ${{ inputs.rolloutPercent }}
+          RELEASE_NOTES: ${{ inputs.releaseNotes }}
+          BUILD_TYPE: ${{ inputs.buildType }}
+          ARCHITECTURES: ${{ inputs.architectures }}
+
+      - name: Upload APK to S3
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! command -v aws >/dev/null 2>&1; then
+            python -m pip install --user awscli
+            export PATH="$HOME/.local/bin:$PATH"
+          fi
+
+          APK_NAME="leader-product-${{ inputs.channel }}-${{ inputs.versionName }}-${{ inputs.versionCode }}.apk"
+          APK_KEY="${{ inputs.channel }}/updates/apk/$APK_NAME"
+
+          aws s3 cp "release-artifacts/$APK_NAME" "s3://$S3_BUCKET/$APK_KEY" \
+            --endpoint-url "$S3_ENDPOINT" \
+            --region "$S3_REGION" \
+            --content-type "application/vnd.android.package-archive"
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk-${{ inputs.channel }}-${{ inputs.versionName }}-${{ inputs.versionCode }}
+          path: release-artifacts/
+          if-no-files-found: error
