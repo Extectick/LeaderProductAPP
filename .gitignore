@@ -61,6 +61,7 @@ app-example
 coverage/
 .nyc_output/
 .turbo/
+release-artifacts-gh/
 
 # temp / misc
 tmp/
