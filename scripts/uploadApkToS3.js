@@ -20,7 +20,7 @@ async function main() {
   }
 
   const absolutePath = path.resolve(filePath);
-  const stat = fs.statSync(absolutePath);
+  const body = fs.readFileSync(absolutePath);
 
   const client = new S3Client({
     endpoint: requiredEnv('S3_ENDPOINT'),
@@ -36,8 +36,8 @@ async function main() {
     new PutObjectCommand({
       Bucket: requiredEnv('S3_BUCKET'),
       Key: key,
-      Body: fs.createReadStream(absolutePath),
-      ContentLength: stat.size,
+      Body: body,
+      ContentLength: body.length,
       ContentType: 'application/vnd.android.package-archive',
     })
   );
