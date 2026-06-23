@@ -1721,7 +1721,7 @@ export default function AuthScreen() {
                   isWeb && { fontSize: isWebMobile ? 12 : 14, lineHeight: isWebMobile ? 18 : 20 },
                 ]}
               >
-                Версия приложения: v{versionLabel}
+                Версия приложения: v{versionLabel} · OTA dev #1
               </Text>
             </View>
           </ScrollView>
