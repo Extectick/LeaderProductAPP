@@ -55,6 +55,13 @@ The workflow:
 
 ## Publish AppUpdate Locally
 
+There are two local publish paths:
+
+- API publish: calls `POST /updates` and requires an admin access token.
+- DB publish: writes `AppUpdate` directly with Prisma from `LeaderProductAPI`; useful when the API is local/private and GitHub Actions cannot reach it.
+
+### Option A: Publish Through API
+
 Download `release-metadata.json` from the workflow artifact, then run from `LeaderProductAPP`:
 
 ```powershell
@@ -73,11 +80,82 @@ npm run updates:publish-local -- path\to\release-metadata.json --api-url https:/
 
 The token must belong to a user with `manage_updates`.
 
-## Dry Run
+### Option B: Publish Directly To DB
+
+Run from `LeaderProductAPI`:
+
+```powershell
+cd D:\GitRepositories\LeaderProduct\LeaderProductAPI
+npm run updates:publish-apk-db -- ..\LeaderProductAPP\release-artifacts-gh\android-apk-dev-0.1.7-6\release-metadata.json
+```
+
+The script:
+
+- loads `.env`, `.env.dev`, `.env.production` if present;
+- uses `UPDATE_PUBLISH_DATABASE_URL` if set, otherwise `DATABASE_URL`;
+- on Windows maps Docker service host `postgres` to `127.0.0.1` for local runs;
+- upserts by `platform + channel + versionCode`, so rerunning the same metadata updates the row instead of failing.
+
+For production DB publish, pass an explicit database URL or run it on the production host:
+
+```powershell
+$env:UPDATE_PUBLISH_DATABASE_URL = "<production-postgres-url>"
+npm run updates:publish-apk-db -- path\to\release-metadata.json
+```
+
+## Dry Runs
 
 ```powershell
 npm run updates:publish-local -- path\to\release-metadata.json --token test --dry-run
 ```
+
+```powershell
+cd D:\GitRepositories\LeaderProduct\LeaderProductAPI
+node scripts\publish-apk-update-db.js path\to\release-metadata.json --dry-run true
+```
+
+## Dev Smoke Test
+
+1. Build APK in GitHub with `channel=dev`, next `versionCode`, and `rolloutPercent=100`.
+2. Download workflow artifact.
+3. Publish metadata with API or DB publish.
+4. Open old dev APK.
+5. Confirm update prompt appears.
+6. Download APK from app.
+7. Confirm Android installer opens.
+8. Install APK.
+9. Restart Metro with cache reset:
+
+```powershell
+cd D:\GitRepositories\LeaderProduct\LeaderProductAPP
+npx expo start --dev-client --host lan -c
+```
+
+10. Confirm `/updates/check` no longer prompts for the installed `versionCode`.
+
+## Bridge APK For OTA
+
+The APK workflow now embeds Expo OTA config:
+
+```text
+runtimeVersion: appVersion
+updates.url: <api>/ota/update
+updates.requestHeaders.expo-channel-name: dev | prod
+```
+
+Development default:
+
+```text
+http://192.168.30.206:3000/ota/update
+```
+
+Production default:
+
+```text
+https://api.leader-product.ru/ota/update
+```
+
+The API currently returns `204 No Content` from `/ota/update`, which means “no OTA update available”. Real OTA manifests and S3 bundle/assets are implemented in the next phase.
 
 ## Rollback
 
@@ -86,3 +164,11 @@ Use the existing admin Updates tab:
 - deactivate the bad update;
 - reactivate or create a previous known-good update;
 - keep old APK objects in S3 until the rollback is verified.
+
+Direct DB rollback is also possible from `LeaderProductAPI` if the admin UI/API is unavailable:
+
+```powershell
+npx prisma studio
+```
+
+Edit `AppUpdate.isActive` for the bad row. Keep APK files in S3 until devices are verified.

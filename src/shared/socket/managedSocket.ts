@@ -17,6 +17,10 @@ export type ManagedSocketConnection = {
 
 const DEFAULT_RECONNECT_DELAY_MS = 1200;
 
+function socketDebugEnabled() {
+  return process.env.EXPO_PUBLIC_SOCKET_DEBUG === 'true';
+}
+
 export function createManagedSocketConnection(options: ManagedSocketOptions): ManagedSocketConnection {
   const reconnectDelayMs = options.reconnectDelayMs ?? DEFAULT_RECONNECT_DELAY_MS;
   let active = true;
@@ -118,7 +122,7 @@ export function createManagedSocketConnection(options: ManagedSocketOptions): Ma
     });
 
     socket.on('connect_error', async (err: any) => {
-      if (!loggedError) {
+      if (socketDebugEnabled() && !loggedError) {
         loggedError = true;
         console.warn(`${options.loggerPrefix} connect_error`, err?.message || err);
       }

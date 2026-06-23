@@ -8,25 +8,44 @@ dotenv.config({ path: path.resolve(__dirname, process.env.NODE_ENV === "producti
 const sentryRuntimeEnabled = String(process.env.EXPO_PUBLIC_SENTRY_ENABLED || "").trim().toLowerCase() === "true";
 const sentryUploadConfigured = !!(process.env.SENTRY_ORG && process.env.SENTRY_PROJECT && process.env.SENTRY_AUTH_TOKEN);
 const enableSentryPlugin = sentryRuntimeEnabled || sentryUploadConfigured;
+const updateChannel = process.env.EXPO_PUBLIC_UPDATE_CHANNEL || "prod";
+const apiBaseUrl =
+  process.env.EXPO_PUBLIC_API_URL_DEV ||
+  (updateChannel === "prod" ? "https://api.leader-product.ru" : "");
+const otaUpdateUrl =
+  process.env.EXPO_PUBLIC_OTA_UPDATE_URL ||
+  (apiBaseUrl ? `${apiBaseUrl.replace(/\/+$/, "")}/ota/update` : undefined);
 
 export default ({ config }: ConfigContext): ExpoConfig => ({
   name: "Лидер Продукт",
   slug: "leader-product",
   owner: "extectick",
-  version: "0.1.6",
+  version: "0.1.7",
   orientation: "portrait",
   userInterfaceStyle: "automatic",
   newArchEnabled: true,
   scheme: "leaderproduct",
   icon: "./assets/images/icon.png",
+  runtimeVersion: {
+    policy: "appVersion",
+  },
+  updates: {
+    enabled: Boolean(otaUpdateUrl),
+    url: otaUpdateUrl,
+    checkAutomatically: "ON_LOAD",
+    fallbackToCacheTimeout: 0,
+    requestHeaders: {
+      "expo-channel-name": updateChannel,
+    },
+  },
   web: {
     favicon: "./assets/images/favicon.png",
   },
 
-  ios: { bundleIdentifier: "com.leaderproduct.app", buildNumber: "5" },
+  ios: { bundleIdentifier: "com.leaderproduct.app", buildNumber: "6" },
   android: {
     package: "com.leaderproduct.app",
-    versionCode: 5,
+    versionCode: 6,
     edgeToEdgeEnabled: true,
     usesCleartextTraffic: true,
     adaptiveIcon: {
@@ -67,6 +86,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
 
   plugins: [
     "expo-router",
+    "expo-updates",
     "expo-audio",
     "expo-font",
     "@kesha-antonov/react-native-background-downloader",

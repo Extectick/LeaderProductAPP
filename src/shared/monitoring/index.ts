@@ -105,7 +105,6 @@ export function addMonitoringBreadcrumb(message: string, data?: Record<string, u
       // noop
     }
   }
-  logger.debug(message, data, 'monitoring');
 }
 
 export function installGlobalJsErrorHandler() {

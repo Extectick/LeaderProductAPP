@@ -1141,8 +1141,8 @@ export default function AuthScreen() {
   const pillWidth = Math.max(0, outerW / 2 - 6);
   const pillTranslate = tabPill.interpolate({ inputRange: [0, 1], outputRange: [4, 8 + pillWidth] });
   const versionLabel = (
-    Constants.expoConfig?.version ||
     Constants.nativeAppVersion ||
+    Constants.expoConfig?.version ||
     'unknown'
   )
     .toString()

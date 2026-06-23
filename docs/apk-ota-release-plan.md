@@ -16,8 +16,10 @@
 - [x] Есть каналы `prod` и `dev`.
 - [x] Есть `rolloutPercent`, `isMandatory`, `isActive`.
 - [x] Есть admin UI для ручной загрузки APK.
-- [ ] GitHub Actions не собирает Android APK автоматически.
-- [ ] GitHub Actions не публикует APK в API/S3 автоматически.
+- [x] GitHub Actions собирает Android APK автоматически по manual workflow.
+- [x] GitHub Actions публикует APK в S3.
+- [x] Локальный publish-скрипт регистрирует APK metadata в API.
+- [x] Локальный DB publish-скрипт регистрирует APK metadata напрямую в БД без public API.
 - [ ] `expo-updates` отключен в Android manifest.
 - [ ] OTA JS/assets обновления пока не реализованы.
 
@@ -29,7 +31,7 @@ GitHub private repo
   -> build APK or OTA bundle
   -> upload files to S3/MinIO
   -> write release metadata
-  -> local publish script calls LeaderProductAPI
+  -> local publish script calls LeaderProductAPI or writes DB directly
   -> APP checks API
   -> APP downloads APK or OTA update
 ```
@@ -72,7 +74,9 @@ GitHub Actions
 
 Local machine
   -> npm run updates:publish-local release-metadata.json
-  -> call configured LeaderProductAPI URL
+     or
+  -> cd LeaderProductAPI && npm run updates:publish-apk-db -- release-metadata.json
+  -> call configured LeaderProductAPI URL or upsert DB row
   -> create AppUpdate
 ```
 
@@ -99,45 +103,48 @@ API URLs:
 - [x] Publish script creates `AppUpdate` through configured API URL.
 - [x] Publish script supports dev API URL.
 - [x] Publish script supports production API URL `https://api.leader-product.ru`.
+- [x] Add direct DB publish script for local/private API environments.
 - [ ] Add rollback procedure:
-  - [ ] deactivate bad update;
-  - [ ] reactivate previous update;
-  - [ ] keep old APK files unless explicitly purged.
-- [ ] Add documentation for release operator.
+  - [x] deactivate bad update;
+  - [x] reactivate previous update;
+  - [x] keep old APK files unless explicitly purged.
+- [x] Add documentation for release operator.
 
 Acceptance checks:
 
-- [ ] Manual GitHub workflow produces APK.
-- [ ] APK appears in S3/MinIO.
-- [ ] Workflow artifact contains `release-metadata.json`.
+- [x] Manual GitHub workflow produces APK.
+- [x] APK appears in S3/MinIO.
+- [x] Workflow artifact contains `release-metadata.json`.
 - [x] Local publish script can read metadata.
-- [ ] `AppUpdate` row appears in DB.
-- [ ] Installed old app sees update prompt.
-- [ ] User downloads APK from app.
-- [ ] Android installer opens.
+- [x] `AppUpdate` row appears in DB.
+- [x] Installed old app sees update prompt.
+- [x] User downloads APK from app.
+- [x] Android installer opens.
 - [ ] Mandatory update blocks normal app usage.
-- [ ] Rollout percentage works by device id.
-- [ ] Disabled update is ignored.
+- [x] Rollout percentage works by device id.
+- [x] Disabled update is ignored.
 
 ## Phase 2: Bridge APK for OTA
 
 Goal: ship one full APK that enables future OTA updates.
 
-- [ ] Add `expo-updates` dependency if missing.
-- [ ] Enable `expo-updates` in native config.
-- [ ] Define `runtimeVersion` policy.
-- [ ] Point `updates.url` to our API update endpoint.
+- [x] Add `expo-updates` dependency if missing.
+- [x] Enable `expo-updates` in native config.
+- [x] Define `runtimeVersion` policy.
+- [x] Point `updates.url` to our API update endpoint.
 - [ ] Keep full APK updater as fallback for native/runtime changes.
 - [ ] Add channel mapping:
-  - [ ] `EXPO_PUBLIC_UPDATE_CHANNEL=dev`;
-  - [ ] `EXPO_PUBLIC_UPDATE_CHANNEL=prod`.
+  - [x] `EXPO_PUBLIC_UPDATE_CHANNEL=dev`;
+  - [x] `EXPO_PUBLIC_UPDATE_CHANNEL=prod`.
+- [x] Add no-op API endpoint `/ota/update` so bridge APK can check OTA safely before real manifests exist.
 - [ ] Build and publish bridge APK through Phase 1 pipeline.
 
 Acceptance checks:
 
 - [ ] Bridge APK installs on physical Android.
 - [ ] App still checks full APK updates.
-- [ ] App can contact OTA endpoint.
+- [x] App config points to OTA endpoint.
+- [ ] App can contact OTA endpoint from installed bridge APK.
 - [ ] Old APK can update to bridge APK through existing full APK flow.
 
 ## Phase 3: OTA Storage and Metadata
@@ -263,8 +270,13 @@ Release checklist:
 - [x] 2026-06-23: Release plan created.
 - [x] 2026-06-23: Shared S3 bucket layout added in API with `dev`/`prod` prefixes.
 - [x] Phase 1 started.
-- [ ] Phase 1 completed.
-- [ ] Phase 2 started.
+- [x] 2026-06-23: GitHub Actions APK workflow publishes dev APK to S3.
+- [x] 2026-06-23: Dev `AppUpdate` published and verified through app update prompt.
+- [x] 2026-06-23: Local DB publish script added for private/local API release registration.
+- [ ] Phase 1 completed. Remaining: mandatory update smoke test.
+- [x] Phase 2 started.
+- [x] 2026-06-23: `expo-updates` installed and bridge APK config added.
+- [x] 2026-06-23: API no-op `/ota/update` endpoint added for safe pre-manifest OTA checks.
 - [ ] Phase 2 completed.
 - [ ] Phase 3 started.
 - [ ] Phase 3 completed.

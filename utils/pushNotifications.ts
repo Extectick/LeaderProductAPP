@@ -104,9 +104,6 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error || '');
     if (/Default FirebaseApp is not initialized|fcm-credentials|FirebaseApp\.initializeApp/i.test(message)) {
-      if (__DEV__) {
-        console.info('[push] FCM is not configured for this development build; push token sync skipped.');
-      }
       return null;
     }
     console.warn('Failed to get Expo push token:', error);

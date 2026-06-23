@@ -92,6 +92,32 @@ async function enqueueLocations(locations: Location.LocationObject[], logPrefix:
   }
 }
 
+function isTaskNotFoundError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || '');
+  return /TaskNotFoundException|Task .* not found|not found for app ID/i.test(message);
+}
+
+async function stopBackgroundLocationTaskIfRunning() {
+  let hasStarted = false;
+  try {
+    hasStarted = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_TASK_NAME);
+  } catch (error) {
+    if (!isTaskNotFoundError(error)) {
+      throw error;
+    }
+  }
+
+  if (!hasStarted) return;
+
+  try {
+    await Location.stopLocationUpdatesAsync(BACKGROUND_TASK_NAME);
+  } catch (error) {
+    if (!isTaskNotFoundError(error)) {
+      throw error;
+    }
+  }
+}
+
 TaskManager.defineTask(BACKGROUND_TASK_NAME, async ({ data, error }) => {
   if (error) {
     captureException(error, { where: 'TrackingContext:backgroundTask' });
@@ -174,10 +200,7 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const hardDisableTracking = useCallback(
     async (logPrefix: string) => {
       addMonitoringBreadcrumb('tracking_hard_disable', { logPrefix });
-      const hasStarted = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_TASK_NAME);
-      if (hasStarted) {
-        await Location.stopLocationUpdatesAsync(BACKGROUND_TASK_NAME);
-      }
+      await stopBackgroundLocationTaskIfRunning();
       stopForegroundWatch();
       setTrackingEnabled(false);
       await AsyncStorage.removeItem(STORAGE_KEYS.enabled);
@@ -209,11 +232,17 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           await Location.startLocationUpdatesAsync(BACKGROUND_TASK_NAME, locationOptions);
         }
       } catch (e) {
+        if (isTaskNotFoundError(e)) {
+          stopForegroundWatch();
+          setTrackingEnabled(false);
+          await AsyncStorage.removeItem(STORAGE_KEYS.enabled);
+          return;
+        }
         captureException(e, { where: 'TrackingContext:ensureLocationTaskRunning', logPrefix });
         console.warn(`${logPrefix} ensureLocationTaskRunning failed`, e);
       }
     },
-    [trackingEnabled, ensureBackgroundPermission, ensureNotificationPermission, hardDisableTracking]
+    [trackingEnabled, ensureBackgroundPermission, ensureNotificationPermission, hardDisableTracking, stopForegroundWatch]
   );
 
   useEffect(() => {
@@ -369,10 +398,7 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const stopTracking = useCallback(async () => {
     addMonitoringBreadcrumb('tracking_stop_requested');
-    const hasStarted = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_TASK_NAME);
-    if (hasStarted) {
-      await Location.stopLocationUpdatesAsync(BACKGROUND_TASK_NAME);
-    }
+    await stopBackgroundLocationTaskIfRunning();
     stopForegroundWatch();
     setTrackingEnabled(false);
     await AsyncStorage.removeItem(STORAGE_KEYS.enabled);

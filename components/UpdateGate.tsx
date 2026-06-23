@@ -113,11 +113,13 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
     onStartupDone?.();
   }, [onStartupDone]);
 
-  const versionName = Constants.expoConfig?.version ?? '0.0.0';
+  const versionName = Constants.nativeAppVersion ?? Constants.expoConfig?.version ?? '0.0.0';
+  const nativeBuildVersion = Number(Constants.nativeBuildVersion ?? 0);
   const androidVersionCode = Number(Constants.expoConfig?.android?.versionCode ?? 0);
   const iosVersionCode = Number(Constants.expoConfig?.ios?.buildNumber ?? 0);
   const androidPackageName = Constants.expoConfig?.android?.package ?? 'com.leaderproduct.app';
-  const versionCode = Platform.OS === 'ios' ? iosVersionCode : androidVersionCode;
+  const configVersionCode = Platform.OS === 'ios' ? iosVersionCode : androidVersionCode;
+  const versionCode = nativeBuildVersion || configVersionCode;
 
   const shouldCheck = Platform.OS === 'android' || Platform.OS === 'ios';
   const modalVisible = mandatoryVisible || optionalVisible;

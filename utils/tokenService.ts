@@ -93,7 +93,6 @@ export async function refreshToken(): Promise<string | null> {
   // СНАЧАЛА проверяем, есть ли refreshToken в хранилище
   const storedRefreshToken = await getRefreshToken();
   if (!storedRefreshToken) {
-    console.warn('[token] refresh skipped: no refresh token');
     refreshAttempts = 0; // на всякий случай сбросим бэкофф
     return null;
   }
