@@ -96,6 +96,47 @@ OTA publishing requires:
 - `AppOtaUpdate` metadata created through `POST /ota/publish`;
 - same `runtimeVersion` as the installed bridge APK.
 
+## OTA Release Flow
+
+Run GitHub Actions:
+
+```text
+Actions -> Publish OTA Update -> Run workflow
+```
+
+Inputs:
+
+```text
+channel: dev
+platform: android
+runtimeVersion: 0.1.9
+rolloutPercent: 100
+releaseNotes: ...
+```
+
+The workflow exports JS/assets, uploads them to S3, and creates `ota-metadata.json`.
+
+For local/private dev API, download the artifact and publish metadata directly to DB:
+
+```powershell
+cd D:\GitRepositories\LeaderProduct\LeaderProductAPI
+npm run ota:publish-db -- ..\LeaderProductAPP\release-artifacts-gh\ota-dev-android-0.1.9\ota-metadata.json
+```
+
+Dry-run check:
+
+```powershell
+node .\scripts\publish-ota-update-db.js ..\LeaderProductAPP\release-artifacts-gh\ota-dev-android-0.1.9\ota-metadata.json --dryRun true
+```
+
+For public API publishing, use:
+
+```powershell
+cd D:\GitRepositories\LeaderProduct\LeaderProductAPP
+$env:LEADER_PRODUCT_ACCESS_TOKEN = "<admin-token>"
+npm run ota:publish-local -- release-artifacts-gh\ota-dev-android-0.1.9\ota-metadata.json
+```
+
 ## Rollback
 
 Use admin Updates tab or Prisma Studio:

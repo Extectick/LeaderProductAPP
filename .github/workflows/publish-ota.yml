@@ -1,0 +1,102 @@
+name: Publish OTA Update
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Update channel
+        required: true
+        default: dev
+        type: choice
+        options:
+          - dev
+          - prod
+      platform:
+        description: OTA platform
+        required: true
+        default: android
+        type: choice
+        options:
+          - android
+      runtimeVersion:
+        description: Runtime version, must match app.config.ts version
+        required: true
+        type: string
+      rolloutPercent:
+        description: Rollout percent from 0 to 100
+        required: true
+        default: '100'
+        type: string
+      releaseNotes:
+        description: Release notes
+        required: false
+        default: ''
+        type: string
+
+jobs:
+  export-upload:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.channel == 'prod' && 'production' || 'development' }}
+
+    env:
+      S3_ENDPOINT: ${{ secrets.BEGET_S3_ENDPOINT }}
+      S3_REGION: ${{ secrets.BEGET_S3_REGION }}
+      S3_BUCKET: ${{ secrets.BEGET_S3_BUCKET }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.BEGET_S3_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.BEGET_S3_SECRET_ACCESS_KEY }}
+      EXPO_PUBLIC_UPDATE_CHANNEL: ${{ inputs.channel }}
+      EXPO_PUBLIC_API_URL_DEV: ${{ inputs.channel == 'prod' && 'https://api.leader-product.ru' || secrets.EXPO_PUBLIC_API_URL_DEV }}
+      EXPO_PUBLIC_OTA_UPDATE_URL: ${{ inputs.channel == 'prod' && 'https://api.leader-product.ru/ota/update' || format('{0}/ota/update', secrets.EXPO_PUBLIC_API_URL_DEV) }}
+      EXPO_PUBLIC_TELEGRAM_BOT_USERNAME: ${{ secrets.EXPO_PUBLIC_TELEGRAM_BOT_USERNAME }}
+      EXPO_PUBLIC_MAX_BOT_USERNAME: ${{ secrets.EXPO_PUBLIC_MAX_BOT_USERNAME }}
+      EXPO_PUBLIC_SENTRY_ENABLED: 'false'
+      EXPO_PUBLIC_SENTRY_ENVIRONMENT: ${{ inputs.channel == 'prod' && 'production' || 'development' }}
+      NODE_ENV: ${{ inputs.channel == 'prod' && 'production' || 'development' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify runtime version is committed
+        shell: bash
+        run: |
+          ACTUAL="$(node -e "console.log(require('./scripts/readNativeVersion').readVersion().versionName)")"
+          EXPECTED="${{ inputs.runtimeVersion }}"
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "app.config.ts version is $ACTUAL, expected runtimeVersion $EXPECTED" >&2
+            exit 1
+          fi
+          echo "Runtime version OK: $ACTUAL"
+
+      - name: Export Android OTA bundle
+        run: npx expo export --platform ${{ inputs.platform }} --output-dir dist-ota
+
+      - name: Create OTA metadata
+        run: |
+          node ./scripts/createOtaMetadata.js dist-ota \
+            --out release-artifacts/ota-metadata.json \
+            --platform "${{ inputs.platform }}" \
+            --channel "${{ inputs.channel }}" \
+            --runtimeVersion "${{ inputs.runtimeVersion }}" \
+            --rolloutPercent "${{ inputs.rolloutPercent }}" \
+            --releaseNotes "${{ inputs.releaseNotes }}" \
+            --commitSha "$GITHUB_SHA"
+
+      - name: Upload OTA files to S3
+        run: node ./scripts/uploadOtaToS3.js release-artifacts/ota-metadata.json
+
+      - name: Upload OTA artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ota-${{ inputs.channel }}-${{ inputs.platform }}-${{ inputs.runtimeVersion }}
+          path: release-artifacts/
+          if-no-files-found: error

@@ -21,7 +21,7 @@
 - [x] Локальный publish-скрипт регистрирует APK metadata в API.
 - [x] Локальный DB publish-скрипт регистрирует APK metadata напрямую в БД без public API.
 - [ ] `expo-updates` отключен в Android manifest.
-- [ ] OTA JS/assets обновления пока не реализованы.
+- [ ] OTA JS/assets workflow добавлен, end-to-end device test еще не выполнен.
 
 ## Target Architecture
 
@@ -195,17 +195,18 @@ Acceptance checks:
 
 Goal: publish JS/assets updates without rebuilding APK.
 
-- [ ] Add manual GitHub workflow `publish-ota.yml`.
-- [ ] Install dependencies with `npm ci`.
-- [ ] Export/update bundle for Android.
-- [ ] Generate Expo Updates compatible manifest.
-- [ ] Upload bundle/assets to S3/MinIO.
+- [x] Add manual GitHub workflow `publish-ota.yml`.
+- [x] Install dependencies with `npm ci`.
+- [x] Export/update bundle for Android.
+- [x] Generate OTA metadata for API manifest.
+- [x] Upload bundle/assets to S3/MinIO.
 - [ ] Call API to publish OTA metadata.
-- [ ] Include `github.sha` in OTA metadata.
-- [ ] Add workflow environments:
-  - [ ] `development`;
-  - [ ] `production`.
-- [ ] Require manual approval for `production`.
+- [x] Include `github.sha` in OTA metadata.
+- [x] Add workflow environments:
+  - [x] `development`;
+  - [x] `production`.
+- [x] Require manual approval for `production`.
+- [x] Add local DB publish path for private/local dev API.
 
 Acceptance checks:
 
@@ -286,7 +287,8 @@ Release checklist:
 - [x] 2026-06-23: OTA publish/list/update endpoints added.
 - [x] 2026-06-23: Public OTA manifest endpoint smoke-tested with temporary update row.
 - [ ] Phase 3 completed.
-- [ ] Phase 4 started.
+- [x] Phase 4 started.
+- [x] 2026-06-23: OTA export/upload workflow and metadata scripts added.
 - [ ] Phase 4 completed.
 - [ ] Phase 5 started.
 - [ ] Phase 5 completed.
