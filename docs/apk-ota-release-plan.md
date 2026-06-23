@@ -173,7 +173,7 @@ API/DB:
   - [x] `releaseNotes`.
 - [x] Add protected publish endpoint for CI.
 - [x] Add public Expo Updates protocol endpoint.
-- [ ] Add cleanup endpoint for old OTA assets.
+- [x] Add cleanup endpoint for old OTA assets.
 
 S3:
 
@@ -292,6 +292,8 @@ Release checklist:
 - [x] 2026-06-23: OTA export/upload workflow and metadata scripts added.
 - [x] 2026-06-23: Dev OTA workflow run `28035670237` uploaded S3 files and DB metadata.
 - [x] 2026-06-23: `/ota/update` returns Expo multipart manifest for `android/dev/runtimeVersion 0.1.9`.
+- [x] 2026-06-23: Protected OTA cleanup endpoint added in API.
+- [x] 2026-06-23: Release APK `0.1.9 / 8` built for dev channel and published to S3/API.
 - [ ] Phase 4 completed.
 - [ ] Phase 5 started.
 - [ ] Phase 5 completed.
