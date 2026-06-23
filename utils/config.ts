@@ -2,7 +2,7 @@ import { Platform } from 'react-native';
 
 const rawBaseUrl = process.env.EXPO_PUBLIC_API_URL_DEV ?? '';
 
-let resolvedBaseUrl = rawBaseUrl;
+let resolvedBaseUrl = rawBaseUrl.trim().replace(/\/+$/, '');
 
 // На Android эмуляторе localhost указывает внутрь эмулятора,
 // поэтому подменяем на 10.0.2.2, чтобы достучаться до хоста.

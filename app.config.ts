@@ -20,7 +20,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   name: "Лидер Продукт",
   slug: "leader-product",
   owner: "extectick",
-  version: "0.1.9",
+  version: "0.1.10",
   orientation: "portrait",
   userInterfaceStyle: "automatic",
   newArchEnabled: true,
@@ -42,10 +42,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     favicon: "./assets/images/favicon.png",
   },
 
-  ios: { bundleIdentifier: "com.leaderproduct.app", buildNumber: "8" },
+  ios: { bundleIdentifier: "com.leaderproduct.app", buildNumber: "9" },
   android: {
     package: "com.leaderproduct.app",
-    versionCode: 8,
+    versionCode: 9,
     edgeToEdgeEnabled: true,
     usesCleartextTraffic: true,
     adaptiveIcon: {
@@ -87,6 +87,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   plugins: [
     "expo-router",
     "expo-updates",
+    "./plugins/with-android-cleartext-network",
     "expo-audio",
     "expo-font",
     "@kesha-antonov/react-native-background-downloader",
