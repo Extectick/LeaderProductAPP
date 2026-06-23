@@ -21,7 +21,8 @@
 - [x] Локальный publish-скрипт регистрирует APK metadata в API.
 - [x] Локальный DB publish-скрипт регистрирует APK metadata напрямую в БД без public API.
 - [ ] `expo-updates` отключен в Android manifest.
-- [ ] OTA JS/assets workflow добавлен, end-to-end device test еще не выполнен.
+- [x] OTA JS/assets workflow добавлен.
+- [ ] OTA end-to-end device test еще не выполнен.
 
 ## Target Architecture
 
@@ -176,15 +177,15 @@ API/DB:
 
 S3:
 
-- [ ] Upload manifest JSON.
-- [ ] Upload Android JS bundle.
-- [ ] Upload assets.
-- [ ] Use immutable versioned object keys.
-- [ ] Do not overwrite existing published update folders.
+- [x] Upload manifest JSON.
+- [x] Upload Android JS bundle.
+- [x] Upload assets.
+- [x] Use immutable versioned object keys.
+- [x] Do not overwrite existing published update folders.
 
 Acceptance checks:
 
-- [ ] OTA files are uploaded to S3/MinIO.
+- [x] OTA files are uploaded to S3/MinIO.
 - [x] DB references all required S3 object keys.
 - [x] Public OTA endpoint returns correct update for channel/runtime.
 - [ ] Incompatible runtime gets no OTA update.
@@ -210,7 +211,7 @@ Goal: publish JS/assets updates without rebuilding APK.
 
 Acceptance checks:
 
-- [ ] Workflow publishes OTA to `dev`.
+- [x] Workflow publishes OTA to `dev`.
 - [ ] Dev bridge APK receives OTA.
 - [ ] Workflow publishes OTA to `prod` after approval.
 - [ ] Production bridge APK receives OTA.
@@ -289,6 +290,8 @@ Release checklist:
 - [ ] Phase 3 completed.
 - [x] Phase 4 started.
 - [x] 2026-06-23: OTA export/upload workflow and metadata scripts added.
+- [x] 2026-06-23: Dev OTA workflow run `28035670237` uploaded S3 files and DB metadata.
+- [x] 2026-06-23: `/ota/update` returns Expo multipart manifest for `android/dev/runtimeVersion 0.1.9`.
 - [ ] Phase 4 completed.
 - [ ] Phase 5 started.
 - [ ] Phase 5 completed.
