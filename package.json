@@ -113,6 +113,7 @@
     "zod": "^4.0.17"
   },
   "devDependencies": {
+    "@aws-sdk/client-s3": "^3.1075.0",
     "@babel/core": "^7.25.2",
     "@types/jwt-decode": "^2.2.1",
     "@types/lodash.isequal": "^4.5.8",
