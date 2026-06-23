@@ -189,12 +189,16 @@ jobs:
           APK_NAME="leader-product-${{ inputs.channel }}-${{ inputs.versionName }}-${{ inputs.versionCode }}.apk"
           APK_KEY="${{ inputs.channel }}/updates/apk/$APK_NAME"
 
-          aws s3 cp "release-artifacts/$APK_NAME" "s3://$S3_BUCKET/$APK_KEY" \
+          aws s3api put-object \
+            --bucket "$S3_BUCKET" \
+            --key "$APK_KEY" \
+            --body "release-artifacts/$APK_NAME" \
             --endpoint-url "$S3_ENDPOINT" \
             --region "$S3_REGION" \
             --content-type "application/vnd.android.package-archive"
 
       - name: Upload release artifacts
+        if: ${{ always() && hashFiles('release-artifacts/*') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: android-apk-${{ inputs.channel }}-${{ inputs.versionName }}-${{ inputs.versionCode }}
