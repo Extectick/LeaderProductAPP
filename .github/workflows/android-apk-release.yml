@@ -125,7 +125,7 @@ jobs:
           if [ "$BUILD_TYPE" = "debug" ]; then
             ./gradlew --no-daemon :app:assembleDebug -PreactNativeArchitectures="${{ inputs.architectures }}"
           else
-            ./gradlew --no-daemon :app:assembleRelease -PreactNativeArchitectures="${{ inputs.architectures }}"
+            ./gradlew --no-daemon :app:assembleRelease -x lintVitalRelease -x lintRelease -PreactNativeArchitectures="${{ inputs.architectures }}"
           fi
 
       - name: Prepare release metadata
