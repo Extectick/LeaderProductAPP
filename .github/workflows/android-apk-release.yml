@@ -100,15 +100,32 @@ jobs:
       - name: Generate Android native project
         run: npx expo prebuild --platform android --clean --non-interactive
 
+      - name: Configure Gradle memory
+        working-directory: android
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -q '^org.gradle.jvmargs=' gradle.properties; then
+            sed -i 's/^org.gradle.jvmargs=.*/org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1536m -Dfile.encoding=UTF-8/' gradle.properties
+          else
+            echo 'org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1536m -Dfile.encoding=UTF-8' >> gradle.properties
+          fi
+
+          if grep -q '^org.gradle.workers.max=' gradle.properties; then
+            sed -i 's/^org.gradle.workers.max=.*/org.gradle.workers.max=2/' gradle.properties
+          else
+            echo 'org.gradle.workers.max=2' >> gradle.properties
+          fi
+
       - name: Build APK
         working-directory: android
         run: |
           chmod +x ./gradlew
           BUILD_TYPE="${{ inputs.buildType }}"
           if [ "$BUILD_TYPE" = "debug" ]; then
-            ./gradlew :app:assembleDebug -PreactNativeArchitectures="${{ inputs.architectures }}"
+            ./gradlew --no-daemon :app:assembleDebug -PreactNativeArchitectures="${{ inputs.architectures }}"
           else
-            ./gradlew :app:assembleRelease -PreactNativeArchitectures="${{ inputs.architectures }}"
+            ./gradlew --no-daemon :app:assembleRelease -PreactNativeArchitectures="${{ inputs.architectures }}"
           fi
 
       - name: Prepare release metadata
