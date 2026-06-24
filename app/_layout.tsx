@@ -12,6 +12,7 @@ import { enableScreens } from 'react-native-screens';
 import { AuthProvider } from '@/context/AuthContext';
 import { ThemeProvider } from '@/context/ThemeContext';
 import { useAuthRedirect } from '@/hooks/useAuthRedirect';
+import { useStartupOtaUpdate } from '@/hooks/useStartupOtaUpdate';
 import { useTelegramBackButton } from '@/hooks/useTelegramBackButton';
 import { TrackingProvider } from '@/context/TrackingContext';
 import { NotificationViewportProvider } from '@/context/NotificationViewportContext';
@@ -65,6 +66,7 @@ export default function RootLayout() {
   const [preloadReady, setPreloadReady] = useState(false);
   const [updateReady, setUpdateReady] = useState(false);
   const [minSplashReady, setMinSplashReady] = useState(false);
+  const otaUpdate = useStartupOtaUpdate(preloadReady);
 
   useEffect(() => {
     initMonitoring();
@@ -103,8 +105,8 @@ export default function RootLayout() {
   }, []);
 
   const appIsReady = useMemo(
-    () => preloadReady && updateReady && minSplashReady,
-    [minSplashReady, preloadReady, updateReady]
+    () => preloadReady && otaUpdate.ready && updateReady && minSplashReady,
+    [minSplashReady, otaUpdate.ready, preloadReady, updateReady]
   );
 
   const startupSplash = useMemo(() => {
@@ -112,25 +114,36 @@ export default function RootLayout() {
       return {
         statusText: 'Инициализация сервисов',
         hintText: 'Подключаем уведомления и системные модули.',
+        progress: null,
+      };
+    }
+    if (!otaUpdate.ready) {
+      return {
+        statusText: otaUpdate.statusText,
+        hintText: otaUpdate.hintText,
+        progress: otaUpdate.progress,
       };
     }
     if (!updateReady) {
       return {
         statusText: 'Проверка обновлений',
         hintText: 'Проверяем актуальность версии приложения.',
+        progress: null,
       };
     }
     if (!minSplashReady) {
       return {
         statusText: 'Подготовка интерфейса',
         hintText: 'Формируем стартовый экран.',
+        progress: null,
       };
     }
     return {
       statusText: 'Запуск приложения',
       hintText: 'Подготавливаем рабочее пространство.',
+      progress: null,
     };
-  }, [minSplashReady, preloadReady, updateReady]);
+  }, [minSplashReady, otaUpdate.hintText, otaUpdate.progress, otaUpdate.ready, otaUpdate.statusText, preloadReady, updateReady]);
 
   // Надёжно прячем splash как только инициализация завершена
   useEffect(() => {
@@ -160,6 +173,7 @@ export default function RootLayout() {
                           <StartupSplash
                             statusText={startupSplash.statusText}
                             hintText={startupSplash.hintText}
+                            progress={startupSplash.progress}
                           />
                         )}
                       </UpdateGate>

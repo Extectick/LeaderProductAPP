@@ -8,12 +8,20 @@ const logo = require('../assets/images/icon.png');
 type StartupSplashProps = {
   statusText?: string;
   hintText?: string;
+  progress?: number | null;
 };
 
 export default function StartupSplash({
   statusText = 'Запуск приложения',
   hintText = 'Подготавливаем рабочее пространство',
+  progress = null,
 }: StartupSplashProps) {
+  const normalizedProgress =
+    typeof progress === 'number' && Number.isFinite(progress)
+      ? Math.max(0, Math.min(1, progress))
+      : null;
+  const progressPercent = normalizedProgress === null ? 0 : Math.round(normalizedProgress * 100);
+
   return (
     <BrandedBackground speed={1.1}>
       <View style={styles.container}>
@@ -25,6 +33,15 @@ export default function StartupSplash({
           <Text style={styles.title}>Лидер Продукт</Text>
           <Text style={styles.status}>{statusText}</Text>
           <Text style={styles.hint}>{hintText}</Text>
+
+          {normalizedProgress !== null ? (
+            <View style={styles.progressWrap}>
+              <View style={styles.progressTrack}>
+                <View style={[styles.progressFill, { width: `${progressPercent}%` }]} />
+              </View>
+              <Text style={styles.progressText}>{progressPercent}%</Text>
+            </View>
+          ) : null}
 
           <View style={styles.loaderWrap}>
             <View style={styles.loaderCircle}>
@@ -103,6 +120,30 @@ const styles = StyleSheet.create({
   loaderWrap: {
     marginTop: 18,
     paddingTop: 8,
+  },
+  progressWrap: {
+    width: '100%',
+    maxWidth: 300,
+    marginTop: 16,
+    gap: 7,
+  },
+  progressTrack: {
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: '#E0ECFF',
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: 999,
+    backgroundColor: '#2563EB',
+  },
+  progressText: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
+    color: '#1E40AF',
+    textAlign: 'center',
   },
   loaderCircle: {
     width: 88,

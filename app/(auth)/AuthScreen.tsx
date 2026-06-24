@@ -4,6 +4,7 @@ import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import Constants from 'expo-constants';
 import * as Linking from 'expo-linking';
+import * as Updates from 'expo-updates';
 import { useRouter, type Href } from 'expo-router';
 import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -1147,6 +1148,11 @@ export default function AuthScreen() {
   )
     .toString()
     .trim() || 'unknown';
+  const otaDisplay = Updates.isEnabled
+    ? Updates.updateId
+      ? `OTA ${Updates.updateId.slice(-8)}`
+      : 'APK bundle'
+    : 'OTA off';
   const apiDisplay = API_BASE_URL || 'не задан';
   const noticePalette =
     bannerNoticeTone === 'success'
@@ -1721,7 +1727,7 @@ export default function AuthScreen() {
                   isWeb && { fontSize: isWebMobile ? 12 : 14, lineHeight: isWebMobile ? 18 : 20 },
                 ]}
               >
-                Версия приложения: v{versionLabel} · OTA dev #1
+                Версия приложения: v{versionLabel} · {otaDisplay}
               </Text>
             </View>
           </ScrollView>
