@@ -23,7 +23,11 @@ function parseArgs(argv) {
   return args;
 }
 
-function sha256(filePath) {
+function sha256Base64Url(filePath) {
+  return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('base64url');
+}
+
+function sha256Hex(filePath) {
   return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
 }
 
@@ -68,10 +72,11 @@ function main() {
   const platform = String(args.platform || 'android').trim().toLowerCase();
   const channel = String(args.channel || process.env.EXPO_PUBLIC_UPDATE_CHANNEL || 'dev').trim();
   const runtimeVersion = getRuntimeVersion(args);
-  const updateId = String(
+  const releaseKey = String(
     args.updateId ||
       `${platform}-${channel}-${runtimeVersion}-${new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)}-${crypto.randomBytes(4).toString('hex')}`
   );
+  const updateId = String(args.uuid || crypto.randomUUID()).trim();
   const releaseNotes = String(args.releaseNotes || '').trim();
   const commitSha = String(args.commitSha || process.env.GITHUB_SHA || '').trim() || null;
   const rolloutPercent = Number(args.rolloutPercent || 100);
@@ -102,7 +107,8 @@ function main() {
     assetByPath.set(rel, {
       localPath,
       key: `${baseKey}/${rel}`,
-      hash: sha256(localPath),
+      hash: sha256Base64Url(localPath),
+      hashHex: sha256Hex(localPath),
       contentType: contentTypeForExt(ext),
       fileExtension,
       size: fs.statSync(localPath).size,
@@ -115,14 +121,17 @@ function main() {
     channel,
     runtimeVersion,
     updateId,
+    releaseKey,
     manifestKey,
     launchAssetKey,
-    launchAssetHash: sha256(bundlePath),
+    launchAssetHash: sha256Base64Url(bundlePath),
+    launchAssetHashHex: sha256Hex(bundlePath),
     launchAssetType: contentTypeForExt(bundleExt),
     launchAssetLocalPath: bundlePath,
     assets: Array.from(assetByPath.values()),
     metadata: {
       commitSha,
+      releaseKey,
       exportBundler: exportMetadata.bundler,
       exportVersion: exportMetadata.version,
     },
@@ -152,6 +161,7 @@ function main() {
   console.log(`Created OTA metadata: ${outPath}`);
   console.log(JSON.stringify({
     updateId,
+    releaseKey,
     runtimeVersion,
     channel,
     launchAssetKey,
