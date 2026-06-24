@@ -32,7 +32,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   updates: {
     enabled: Boolean(otaUpdateUrl),
     url: otaUpdateUrl,
-    checkAutomatically: "ON_LOAD",
+    checkAutomatically: "NEVER",
     fallbackToCacheTimeout: 0,
     requestHeaders: {
       "expo-channel-name": updateChannel,
