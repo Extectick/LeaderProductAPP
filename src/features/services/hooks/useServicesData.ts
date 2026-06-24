@@ -22,7 +22,6 @@ let state: ServicesSnapshot = {
   error: null,
 };
 let inFlight: Promise<void> | null = null;
-let initialized = false;
 let observedCacheVersion = getServicesAccessCacheVersion();
 const listeners = new Set<(snapshot: ServicesSnapshot) => void>();
 
@@ -58,24 +57,13 @@ async function loadServicesInternal(force = false) {
     const currentCacheVersion = getServicesAccessCacheVersion();
     if (currentCacheVersion !== observedCacheVersion) {
       observedCacheVersion = currentCacheVersion;
-      initialized = false;
       setState({ services: null, error: null });
     }
 
     const fallbackServices = state.services?.length ? state.services : null;
     setState({ loading: true, error: null, services: fallbackServices });
 
-    if (!initialized || force) {
-      const cached = await readCachedServices();
-      if (cached?.length) {
-        setState({
-          services: mergeRemoteServices(CATALOG_BASE, cached),
-          loading: true,
-          error: null,
-        });
-      }
-      initialized = true;
-    }
+    const cachedFallback = fallbackServices ? null : await readCachedServices();
 
     try {
       const remote = await getServicesForUser();
@@ -88,7 +76,7 @@ async function loadServicesInternal(force = false) {
       });
     } catch (error: any) {
       const message = error?.message || 'Не удалось загрузить сервисы';
-      const fallback = state.services?.length ? state.services : null;
+      const fallback = fallbackServices || (cachedFallback?.length ? mergeRemoteServices(CATALOG_BASE, cachedFallback) : null);
       setState({
         services: fallback,
         loading: false,

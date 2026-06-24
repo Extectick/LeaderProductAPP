@@ -22,7 +22,7 @@
 - [x] Локальный DB publish-скрипт регистрирует APK metadata напрямую в БД без public API.
 - [x] `expo-updates` automatic startup check отключен в Android manifest.
 - [x] OTA JS/assets workflow добавлен.
-- [ ] OTA end-to-end device test еще не выполнен.
+- [x] OTA end-to-end device test выполнен на физическом Android.
 
 ## Target Architecture
 
@@ -134,20 +134,20 @@ Goal: ship one full APK that enables future OTA updates.
 - [x] Enable `expo-updates` in native config.
 - [x] Define `runtimeVersion` policy.
 - [x] Point `updates.url` to our API update endpoint.
-- [ ] Keep full APK updater as fallback for native/runtime changes.
-- [ ] Add channel mapping:
+- [x] Keep full APK updater as fallback for native/runtime changes.
+- [x] Add channel mapping:
   - [x] `EXPO_PUBLIC_UPDATE_CHANNEL=dev`;
   - [x] `EXPO_PUBLIC_UPDATE_CHANNEL=prod`.
 - [x] Add no-op API endpoint `/ota/update` so bridge APK can check OTA safely before real manifests exist.
-- [ ] Build and publish bridge APK through Phase 1 pipeline.
+- [x] Build and publish bridge APK through Phase 1 pipeline.
 
 Acceptance checks:
 
-- [ ] Bridge APK installs on physical Android.
-- [ ] App still checks full APK updates.
+- [x] Bridge APK installs on physical Android.
+- [x] App still checks full APK updates.
 - [x] App config points to OTA endpoint.
-- [ ] App can contact OTA endpoint from installed bridge APK.
-- [ ] Old APK can update to bridge APK through existing full APK flow.
+- [x] App can contact OTA endpoint from installed bridge APK.
+- [x] Old APK can update to bridge APK through existing full APK flow.
 
 ## Phase 3: OTA Storage and Metadata
 
@@ -157,7 +157,7 @@ API/DB:
 
 - [x] Add Prisma model `AppOtaUpdate`.
 - [x] Use JSON asset list in `AppOtaUpdate.assets`; separate `AppOtaAsset` table deferred until needed.
-- [ ] Track fields:
+- [x] Track fields:
   - [x] `platform`;
   - [x] `channel`;
   - [x] `runtimeVersion`;
@@ -188,7 +188,6 @@ Acceptance checks:
 - [x] OTA files are uploaded to S3/MinIO.
 - [x] DB references all required S3 object keys.
 - [x] Public OTA endpoint returns correct update for channel/runtime.
-- [ ] Incompatible runtime gets no OTA update.
 - [x] Incompatible runtime gets no OTA update.
 - [x] Rollout percentage works for OTA.
 
@@ -201,7 +200,7 @@ Goal: publish JS/assets updates without rebuilding APK.
 - [x] Export/update bundle for Android.
 - [x] Generate OTA metadata for API manifest.
 - [x] Upload bundle/assets to S3/MinIO.
-- [ ] Call API to publish OTA metadata.
+- [x] Publish OTA metadata through API/local DB path.
 - [x] Include `github.sha` in OTA metadata.
 - [x] Add workflow environments:
   - [x] `development`;
@@ -212,10 +211,10 @@ Goal: publish JS/assets updates without rebuilding APK.
 Acceptance checks:
 
 - [x] Workflow publishes OTA to `dev`.
-- [ ] Dev bridge APK receives OTA.
+- [x] Dev bridge APK receives OTA.
 - [ ] Workflow publishes OTA to `prod` after approval.
 - [ ] Production bridge APK receives OTA.
-- [ ] OTA does not require reinstalling APK.
+- [x] OTA does not require reinstalling APK.
 
 ## Phase 5: Client OTA Runtime
 
@@ -225,16 +224,16 @@ Goal: app safely downloads and applies OTA updates.
 - [x] Add native update state UI before React starts.
 - [x] Add fallback if OTA check fails.
 - [x] Add native startup apply behavior before `MainActivity`.
-- [ ] Keep full APK prompt for native/runtime updates.
-- [ ] Add user/admin-visible update diagnostics if needed.
+- [x] Keep full APK prompt for native/runtime updates.
+- [x] Add user/admin-visible update diagnostics if needed.
 
 Acceptance checks:
 
-- [ ] App starts normally if OTA endpoint is unavailable.
-- [ ] App downloads compatible OTA through native startup gate.
-- [ ] App opens directly into new JS bundle after native startup gate.
-- [ ] Bad OTA can be rolled back by deactivating DB record.
-- [ ] Full APK update still works for native changes.
+- [x] App starts normally if OTA endpoint is unavailable.
+- [x] App downloads compatible OTA through native startup gate.
+- [x] App opens directly into new JS bundle after native startup gate.
+- [x] Bad OTA can be rolled back by deactivating DB record.
+- [x] Full APK update still works for native changes.
 
 ## Phase 6: Release Operations
 
@@ -282,23 +281,23 @@ Release checklist:
 - [x] Phase 2 started.
 - [x] 2026-06-23: `expo-updates` installed and bridge APK config added.
 - [x] 2026-06-23: API no-op `/ota/update` endpoint added for safe pre-manifest OTA checks.
-- [ ] Phase 2 completed.
+- [x] Phase 2 completed.
 - [x] Phase 3 started.
 - [x] 2026-06-23: `AppOtaUpdate` model and migration added.
 - [x] 2026-06-23: OTA publish/list/update endpoints added.
 - [x] 2026-06-23: Public OTA manifest endpoint smoke-tested with temporary update row.
-- [ ] Phase 3 completed.
+- [x] Phase 3 completed.
 - [x] Phase 4 started.
 - [x] 2026-06-23: OTA export/upload workflow and metadata scripts added.
 - [x] 2026-06-23: Dev OTA workflow run `28035670237` uploaded S3 files and DB metadata.
 - [x] 2026-06-23: `/ota/update` returns Expo multipart manifest for `android/dev/runtimeVersion 0.1.9`.
 - [x] 2026-06-23: Protected OTA cleanup endpoint added in API.
 - [x] 2026-06-23: Release APK `0.1.9 / 8` built for dev channel and published to S3/API.
-- [ ] Phase 4 completed.
+- [x] Phase 4 completed.
 - [x] Phase 5 started.
 - [x] 2026-06-24: Android native OTA startup gate added through Expo config plugin.
 - [x] 2026-06-24: `expo-updates` startup auto-check changed to controlled native check/fetch before `MainActivity`.
 - [x] 2026-06-24: OTA launch flow changed to restart native gate before `MainActivity` after a fetched update; optional APK prompts no longer interrupt app resume from background.
 - [x] 2026-06-24: Production versioning added: APK `v<versionName>+<versionCode>`, OTA `v<versionName>+<versionCode>.ota.<N>` per runtime.
-- [ ] Phase 5 completed.
+- [x] Phase 5 completed.
 - [ ] Phase 6 completed.

@@ -23,6 +23,10 @@ import {
   UpdateCheckResult,
 } from '@/utils/updateService';
 import {
+  AppUpdateCheckRequestResult,
+  subscribeAppUpdateCheckRequests,
+} from '@/utils/updateCheckRequests';
+import {
   AndroidApkDownloadState,
   enqueueAndroidApkDownload,
   getAndroidApkDownloadStatus,
@@ -251,15 +255,23 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
   }, [getFailureKey]);
 
   const runCheck = useCallback(
-    async (source: string) => {
-      if (!shouldCheck || checkingRef.current) return;
-      if (!versionCode) return;
+    async (source: string): Promise<AppUpdateCheckRequestResult> => {
+      if (!shouldCheck) {
+        return { handled: true, ok: false, updateAvailable: false, message: 'Проверка обновлений недоступна на этой платформе.' };
+      }
+      if (checkingRef.current) {
+        return { handled: true, ok: false, updateAvailable: false, message: 'Проверка обновлений уже выполняется.' };
+      }
+      if (!versionCode) {
+        return { handled: true, ok: false, updateAvailable: false, message: 'Не удалось определить текущую версию приложения.' };
+      }
 
       checkingRef.current = true;
       try {
-        if (await shouldSkipAfterFailures()) {
+        const isManual = source === 'manual';
+        if (!isManual && await shouldSkipAfterFailures()) {
           lastCheckAtRef.current = Date.now();
-          return;
+          return { handled: true, ok: false, updateAvailable: false, message: 'Проверка временно пропущена после ошибок соединения.' };
         }
 
         if (source === 'startup') {
@@ -286,13 +298,20 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
         if (result.notModified) {
           await clearCheckFailures();
           lastCheckAtRef.current = Date.now();
-          return;
+          return { handled: true, ok: true, updateAvailable: false };
         }
 
         if (!result.ok || !result.data) {
-          await recordCheckFailure();
+          if (!isManual) {
+            await recordCheckFailure();
+          }
           lastCheckAtRef.current = Date.now();
-          return;
+          return {
+            handled: true,
+            ok: false,
+            updateAvailable: false,
+            message: result.message || 'Не удалось проверить обновления.',
+          };
         }
 
         await clearCheckFailures();
@@ -308,8 +327,7 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
         const shouldShowOptional =
           updateAvailable &&
           !mandatory &&
-          source === 'startup' &&
-          (latestVersionCode <= 0 || dismissedCode !== latestVersionCode);
+          (isManual || (source === 'startup' && (latestVersionCode <= 0 || dismissedCode !== latestVersionCode)));
 
         setUpdateInfo(data);
         setMandatoryVisible(updateAvailable && mandatory);
@@ -328,8 +346,15 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
             channel: UPDATE_CHANNEL,
           });
         }
+        return { handled: true, ok: true, updateAvailable };
       } catch (e) {
         console.warn('[update] check failed', source, e);
+        return {
+          handled: true,
+          ok: false,
+          updateAvailable: false,
+          message: e instanceof Error ? e.message : 'Не удалось проверить обновления.',
+        };
       } finally {
         checkingRef.current = false;
         setCheckingVisible(false);
@@ -360,6 +385,10 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
     }
     void runCheck('startup');
   }, [completeStartup, runCheck, shouldCheck, versionCode]);
+
+  useEffect(() => {
+    return subscribeAppUpdateCheckRequests(() => runCheck('manual'));
+  }, [runCheck]);
 
   useEffect(() => {
     const t = setTimeout(() => {

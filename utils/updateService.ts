@@ -9,6 +9,7 @@ const STORAGE_KEYS = {
 
 const UPDATE_CHANNEL = process.env.EXPO_PUBLIC_UPDATE_CHANNEL || 'prod';
 const UPDATE_CHECK_TIMEOUT_MS = 3500;
+const UPDATE_DEBUG_LOGS = process.env.EXPO_PUBLIC_UPDATE_DEBUG === 'true';
 
 export type UpdateCheckResult = {
   updateAvailable: boolean;
@@ -77,13 +78,15 @@ export async function checkForUpdate(
     const headers: Record<string, string> = {};
     if (params.ifNoneMatch) headers['If-None-Match'] = params.ifNoneMatch;
 
-    console.info('[update] check request', {
-      apiBaseUrl: API_BASE_URL,
-      platform: params.platform,
-      versionCode: params.versionCode,
-      versionName: params.versionName,
-      channel: params.channel || UPDATE_CHANNEL,
-    });
+    if (UPDATE_DEBUG_LOGS) {
+      console.info('[update] check request', {
+        apiBaseUrl: API_BASE_URL,
+        platform: params.platform,
+        versionCode: params.versionCode,
+        versionName: params.versionName,
+        channel: params.channel || UPDATE_CHANNEL,
+      });
+    }
 
     const response = await axios.get(`${API_BASE_URL}/updates/check`, {
       params: {
@@ -103,12 +106,14 @@ export async function checkForUpdate(
     }
 
     const payload = response.data;
-    console.info('[update] check response', {
-      status: response.status,
-      updateAvailable: Boolean((payload?.data ?? payload)?.updateAvailable),
-      latestVersionCode: (payload?.data ?? payload)?.latestVersionCode,
-      latestVersionName: (payload?.data ?? payload)?.latestVersionName,
-    });
+    if (UPDATE_DEBUG_LOGS) {
+      console.info('[update] check response', {
+        status: response.status,
+        updateAvailable: Boolean((payload?.data ?? payload)?.updateAvailable),
+        latestVersionCode: (payload?.data ?? payload)?.latestVersionCode,
+        latestVersionName: (payload?.data ?? payload)?.latestVersionName,
+      });
+    }
 
     return {
       ok: true,

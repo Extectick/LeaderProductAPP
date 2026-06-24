@@ -30,30 +30,30 @@ export function getServiceGridMetrics({
   const safeWidth = Math.max(320, Math.floor(width || 0));
 
   if (isMobileLayout) {
-    const gap = safeWidth < 420 ? 12 : 14;
-    const horizontalPadding = safeWidth < 420 ? 12 : 14;
+    const gap = safeWidth < 420 ? 10 : 12;
+    const horizontalPadding = safeWidth < 420 ? 14 : 16;
     const maxContentWidth = safeWidth;
     const available = Math.max(0, safeWidth - horizontalPadding * 2);
-    const targetCard = safeWidth < 620 ? 168 : 178;
-    const maxColumns = safeWidth < 860 ? 2 : 3;
+    const targetCard = safeWidth < 720 ? 420 : 340;
+    const maxColumns = safeWidth < 720 ? 1 : 2;
     const rawColumns = Math.round((available + gap) / (targetCard + gap));
     const columns = clamp(rawColumns, 1, maxColumns);
     const rawCardSize = Math.floor((available - gap * (columns - 1)) / columns);
-    const cardSize = clamp(rawCardSize, 142, 228);
+    const cardSize = columns === 1 ? clamp(rawCardSize, 292, 560) : clamp(rawCardSize, 300, 420);
     return { columns, cardSize, gap, horizontalPadding, maxContentWidth };
   }
 
-  const gap = safeWidth < 960 ? 14 : safeWidth < 1320 ? 16 : 18;
+  const gap = safeWidth < 960 ? 12 : safeWidth < 1320 ? 14 : 16;
   const horizontalPadding = safeWidth < 980 ? 16 : safeWidth < 1360 ? 20 : 24;
   const maxContentWidth = safeWidth < 1320 ? 1200 : safeWidth < 1760 ? 1360 : 1480;
   const effectiveWidth = Math.min(safeWidth, maxContentWidth);
   const available = Math.max(0, effectiveWidth - horizontalPadding * 2);
-  const targetCard = safeWidth < 980 ? 250 : safeWidth < 1320 ? 262 : 274;
-  const maxColumns = safeWidth < 860 ? 2 : safeWidth < 1160 ? 3 : safeWidth < 1460 ? 4 : safeWidth < 1760 ? 5 : 6;
+  const targetCard = safeWidth < 980 ? 360 : safeWidth < 1320 ? 390 : 420;
+  const maxColumns = safeWidth < 860 ? 1 : safeWidth < 1320 ? 2 : safeWidth < 1760 ? 3 : 4;
   const rawColumns = Math.round((available + gap) / (targetCard + gap));
   const columns = clamp(rawColumns, 1, maxColumns);
   const rawCardSize = Math.floor((available - gap * (columns - 1)) / columns);
-  const cardSize = clamp(rawCardSize, 190, 280);
+  const cardSize = clamp(rawCardSize, 320, 480);
   return { columns, cardSize, gap, horizontalPadding, maxContentWidth };
 }
 

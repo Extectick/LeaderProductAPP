@@ -1,21 +1,12 @@
-import { withOpacity, servicesTokens } from '@/src/features/services/ui/servicesTokens';
 import { useThemeColor } from '@/hooks/useThemeColor';
+import { servicesTokens, withOpacity } from '@/src/features/services/ui/servicesTokens';
 import type { ServiceKind } from '@/utils/servicesService';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
-import React, { useMemo } from 'react';
-import {
-  Platform,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextStyle,
-  View,
-  ViewStyle,
-} from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { Platform, StyleSheet, TextStyle, View, ViewStyle } from 'react-native';
+import { Surface, Text, TouchableRipple } from 'react-native-paper';
 import Animated, {
-  FadeInDown,
-  Easing,
+  FadeIn,
   useAnimatedStyle,
   useReducedMotion,
   useSharedValue,
@@ -43,6 +34,32 @@ interface Props {
 
 const isWeb = Platform.OS === 'web';
 
+function getHexLuminance(color: string) {
+  if (!color.startsWith('#')) return 1;
+  const hex = color.replace('#', '');
+  const normalized =
+    hex.length === 3
+      ? hex
+          .split('')
+          .map((ch) => ch + ch)
+          .join('')
+      : hex;
+  if (normalized.length !== 6) return 1;
+  const int = Number.parseInt(normalized, 16);
+  if (Number.isNaN(int)) return 1;
+  const r = (int >> 16) & 255;
+  const g = (int >> 8) & 255;
+  const b = int & 255;
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+}
+
+function getReadableAccent(gradient?: [string, string]) {
+  const candidates = [gradient?.[0], gradient?.[1], '#2563EB'].filter(Boolean) as string[];
+  return candidates.reduce((best, current) =>
+    getHexLuminance(current) < getHexLuminance(best) ? current : best
+  );
+}
+
 export default function ServiceCard({
   icon,
   name,
@@ -52,302 +69,215 @@ export default function ServiceCard({
   gradient,
   backgroundColor,
   textColor,
-  iconSize = 36,
-  disableShadow = false,
+  iconSize = 26,
   disableScaleOnPress = false,
   containerStyle,
   textStyle,
   disabled = false,
-  kind = 'CLOUD',
   enterIndex = 0,
 }: Props) {
   const reduceMotion = useReducedMotion();
+  const [hovered, setHovered] = useState(false);
+  const pressScale = useSharedValue(1);
   const themeCardBg = useThemeColor({}, 'cardBackground');
   const themeText = useThemeColor({}, 'text');
   const themeBorder = useThemeColor({}, 'inputBorder' as any);
   const themeSecondary = useThemeColor({}, 'secondaryText' as any);
-  const cardBg = backgroundColor ?? (containerStyle as ViewStyle | undefined)?.backgroundColor ?? themeCardBg;
+  const flattenedContainer = StyleSheet.flatten(containerStyle) as ViewStyle | undefined;
+  const cardBg = backgroundColor ?? flattenedContainer?.backgroundColor ?? themeCardBg ?? servicesTokens.card.background;
   const textPrimary = textColor ?? themeText;
 
-  const [accentStart, accentEnd] = useMemo<[string, string]>(() => {
-    if (gradient?.length === 2) return gradient;
-    return ['#2563EB', '#1D4ED8'];
-  }, [gradient]);
+  const accent = useMemo(() => getReadableAccent(gradient), [gradient]);
 
-  const scale = useSharedValue(1);
-  const hover = useSharedValue(0);
-
-  const cardAnimatedStyle = useAnimatedStyle(() => {
-    const lift = hover.value * servicesTokens.motion.hoverLiftPx;
-    return {
-      transform: [{ scale: scale.value }, { translateY: -lift }],
-      shadowOpacity: disableShadow ? 0 : servicesTokens.card.shadowOpacity + hover.value * 0.08,
-      shadowRadius: disableShadow ? 0 : servicesTokens.card.shadowRadius + hover.value * 5,
-      elevation: disableShadow ? 0 : 3 + hover.value * 2,
-    };
-  });
-
-  const handleHoverIn = () => {
-    if (!isWeb || disabled) return;
-    hover.value = withTiming(1, {
-      duration: servicesTokens.motion.hoverDurationMs,
-      easing: Easing.out(Easing.quad),
-    });
-    if (!disableScaleOnPress) {
-      scale.value = withTiming(1.01, { duration: servicesTokens.motion.hoverDurationMs });
-    }
-  };
-
-  const handleHoverOut = () => {
-    if (!isWeb) return;
-    hover.value = withTiming(0, {
-      duration: servicesTokens.motion.hoverDurationMs,
-      easing: Easing.out(Easing.quad),
-    });
-    if (!disableScaleOnPress) {
-      scale.value = withTiming(1, { duration: servicesTokens.motion.hoverDurationMs });
-    }
-  };
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: pressScale.value }],
+  }));
 
   const handlePressIn = () => {
-    if (disabled || disableScaleOnPress) return;
-    scale.value = withTiming(servicesTokens.motion.pressScale, { duration: servicesTokens.motion.pressDurationMs });
+    if (disabled || disableScaleOnPress || reduceMotion) return;
+    pressScale.value = withTiming(servicesTokens.motion.pressScale, {
+      duration: servicesTokens.motion.pressDurationMs,
+    });
   };
 
   const handlePressOut = () => {
-    if (disabled || disableScaleOnPress) return;
-    scale.value = withTiming(1, { duration: servicesTokens.motion.pressDurationMs });
+    if (disableScaleOnPress || reduceMotion) return;
+    pressScale.value = withTiming(1, {
+      duration: servicesTokens.motion.pressDurationMs,
+    });
   };
-
-  const cardRadius = (StyleSheet.flatten(containerStyle)?.borderRadius as number) || servicesTokens.card.radius;
-  const iconContainerSize = Math.min(
-    servicesTokens.card.iconContainerMaxSize,
-    Math.max(servicesTokens.card.iconContainerMinSize, Math.floor(size * servicesTokens.card.iconContainerSizeRatio))
-  );
 
   return (
     <Animated.View
       entering={
         reduceMotion
           ? undefined
-          : FadeInDown
-              .delay(enterIndex * servicesTokens.motion.enterDelayStepMs)
-              .duration(servicesTokens.motion.enterDurationMs)
+          : FadeIn.delay(enterIndex * servicesTokens.motion.enterDelayStepMs).duration(
+              servicesTokens.motion.enterDurationMs
+            )
       }
-      style={[
-        {
-          width: size,
-          minHeight: Math.floor(size * servicesTokens.card.minHeightRatio),
-        },
-      ]}
+      style={[{ width: size }, animatedStyle]}
     >
-      <Animated.View
+      <Surface
+        mode="flat"
+        elevation={0}
         style={[
+          styles.surface,
           {
-            borderRadius: cardRadius,
-            overflow: 'hidden',
-            shadowColor: servicesTokens.card.shadowColor,
-            shadowOffset: {
-              width: servicesTokens.card.shadowOffsetX,
-              height: servicesTokens.card.shadowOffsetY,
-            },
+            borderColor: disabled
+              ? servicesTokens.states.disabledBorder
+              : hovered
+                ? withOpacity(accent, 0.38)
+                : themeBorder || servicesTokens.card.borderColor,
+            backgroundColor: disabled
+              ? servicesTokens.states.disabledBackground
+              : hovered
+                ? withOpacity(accent, 0.035)
+                : cardBg,
+            opacity: disabled ? servicesTokens.states.disabledOpacity : 1,
           },
-          containerStyle,
-          cardAnimatedStyle,
         ]}
       >
-        <Pressable
+        <TouchableRipple
           accessibilityRole="button"
           accessibilityLabel={name}
+          borderless={false}
           disabled={disabled}
-          onPress={() => !disabled && onPress()}
+          onPress={onPress}
           onPressIn={handlePressIn}
           onPressOut={handlePressOut}
-          {...(isWeb ? { onHoverIn: handleHoverIn, onHoverOut: handleHoverOut } : {})}
-          android_ripple={{ color: '#DFE9FA' }}
-          style={({ pressed }) => [
-            styles.card,
-            {
-              borderRadius: cardRadius,
-              borderColor: disabled ? servicesTokens.states.disabledBorder : themeBorder || servicesTokens.card.borderColor,
-              borderWidth: servicesTokens.card.borderWidth,
-              backgroundColor: disabled ? servicesTokens.states.disabledBackground : cardBg || servicesTokens.card.background,
-              opacity: disabled ? servicesTokens.states.disabledOpacity : 1,
-            },
-            pressed && Platform.OS === 'ios' ? styles.cardPressedIos : null,
-          ]}
+          rippleColor={withOpacity(accent, 0.12)}
+          underlayColor={withOpacity(accent, 0.04)}
+          {...(isWeb
+            ? {
+                onHoverIn: () => !disabled && setHovered(true),
+                onHoverOut: () => setHovered(false),
+              }
+            : {})}
+          style={styles.touchable}
         >
-          <LinearGradient
-            pointerEvents="none"
-            colors={[withOpacity(accentStart, 0.2), withOpacity(accentEnd, 0.1), 'transparent']}
-            start={{ x: 0.1, y: 0 }}
-            end={{ x: 0.95, y: 1 }}
-            style={styles.softDecor}
-          />
-
-          <View style={styles.content}>
-            <View style={styles.iconRow}>
-              <View
-                style={[
-                  styles.iconShell,
-                  {
-                    width: iconContainerSize,
-                    height: iconContainerSize,
-                    borderRadius: iconContainerSize / 2,
-                  },
-                ]}
-              >
-                <LinearGradient
-                  colors={[accentStart, accentEnd]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={[
-                    styles.iconGradient,
-                    {
-                      width: iconContainerSize,
-                      height: iconContainerSize,
-                      borderRadius: iconContainerSize / 2,
-                    },
-                  ]}
-                >
-                  <Ionicons name={icon as any} size={iconSize} color="#FFFFFF" />
-                </LinearGradient>
-                {kind === 'CLOUD' ? (
-                  <View style={styles.cloudBadge}>
-                    <Ionicons name="cloud-outline" size={servicesTokens.card.cloudDotIconSize} color="#1E40AF" />
-                  </View>
-                ) : null}
+          <View style={styles.row}>
+            <View
+              style={[
+                styles.iconPanel,
+                {
+                  backgroundColor: disabled ? '#E2E8F0' : withOpacity(accent, 0.09),
+                  borderRightColor: disabled ? '#CBD5E1' : withOpacity(accent, 0.18),
+                },
+              ]}
+            >
+              <View style={[styles.iconGlyph, { backgroundColor: disabled ? '#F1F5F9' : withOpacity(accent, 0.08) }]}>
+                <Ionicons
+                  name={icon as any}
+                  size={iconSize}
+                  color={disabled ? servicesTokens.states.disabledText : accent}
+                />
               </View>
             </View>
 
-            <View style={styles.textWrap}>
-              <Text numberOfLines={2} style={[styles.title, { color: disabled ? servicesTokens.states.disabledText : textPrimary }, textStyle]}>
+            <View style={styles.copy}>
+              <Text
+                variant="titleMedium"
+                numberOfLines={2}
+                style={[
+                  styles.title,
+                  { color: disabled ? servicesTokens.states.disabledText : textPrimary },
+                  textStyle,
+                ]}
+              >
                 {name}
               </Text>
               {description ? (
-                <Text numberOfLines={3} style={[styles.description, { color: disabled ? '#7A8BA3' : themeSecondary || '#475569' }]}>
+                <Text
+                  variant="bodyMedium"
+                  numberOfLines={2}
+                  style={[
+                    styles.description,
+                    { color: disabled ? '#7A8BA3' : themeSecondary || '#475569' },
+                  ]}
+                >
                   {description}
                 </Text>
               ) : null}
             </View>
 
-            {disabled ? (
-              <View style={styles.disabledBadge}>
-                <Ionicons name="lock-closed-outline" size={13} color="#B91C1C" />
-                <Text style={styles.disabledBadgeText}>Недоступно</Text>
-              </View>
-            ) : (
-              <View style={[styles.cta, { backgroundColor: withOpacity(accentStart, 0.12), borderColor: withOpacity(accentStart, 0.2) }]}>
-                <Ionicons name="sparkles-outline" size={13} color={accentStart} />
-                <Text style={[styles.ctaText, { color: accentStart }]}>Открыть</Text>
-                <Ionicons name="arrow-forward" size={13} color={accentStart} />
-              </View>
-            )}
+            <View style={styles.trailing}>
+              {disabled ? (
+                <Text numberOfLines={1} style={styles.disabledText}>
+                  Недоступно
+                </Text>
+              ) : (
+                <Ionicons name="chevron-forward" size={22} color={accent} />
+              )}
+            </View>
           </View>
-        </Pressable>
-      </Animated.View>
+        </TouchableRipple>
+      </Surface>
     </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
-  card: {
-    flex: 1,
-    paddingHorizontal: servicesTokens.card.paddingHorizontal,
-    paddingVertical: servicesTokens.card.paddingVertical,
-    justifyContent: 'space-between',
+  surface: {
+    minHeight: servicesTokens.card.minHeight,
+    borderRadius: servicesTokens.card.radius,
+    borderWidth: servicesTokens.card.borderWidth,
     overflow: 'hidden',
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 0,
   },
-  cardPressedIos: {
-    opacity: 0.95,
+  touchable: {
+    minHeight: servicesTokens.card.minHeight,
   },
-  softDecor: {
-    position: 'absolute',
-    top: -22,
-    right: -30,
-    width: 210,
-    height: 165,
-    borderRadius: 999,
-  },
-  content: {
-    flex: 1,
-    gap: 11,
-  },
-  iconRow: {
+  row: {
+    minHeight: servicesTokens.card.minHeight,
     flexDirection: 'row',
-    justifyContent: 'flex-start',
+    alignItems: 'center',
+    gap: 12,
+    paddingRight: servicesTokens.card.paddingHorizontal,
   },
-  iconShell: {
-    position: 'relative',
+  iconPanel: {
+    width: 82,
+    alignSelf: 'stretch',
+    borderRightWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  iconGradient: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#2563EB',
-    shadowOpacity: 0.24,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
-  },
-  cloudBadge: {
-    position: 'absolute',
-    right: -4,
-    bottom: -3,
-    width: servicesTokens.card.cloudDotSize,
-    height: servicesTokens.card.cloudDotSize,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-    backgroundColor: '#EFF6FF',
+  iconGlyph: {
+    width: servicesTokens.card.iconContainerMaxSize,
+    height: servicesTokens.card.iconContainerMaxSize,
+    borderRadius: servicesTokens.card.iconRadius,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  textWrap: {
-    gap: 5,
+  copy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 4,
   },
   title: {
     fontSize: servicesTokens.card.titleSize,
+    lineHeight: servicesTokens.card.titleLineHeight,
     fontWeight: '800',
-    letterSpacing: 0.2,
+    letterSpacing: 0,
   },
   description: {
     fontSize: servicesTokens.card.descSize,
-    lineHeight: 17,
+    lineHeight: servicesTokens.card.descLineHeight,
     fontWeight: '500',
+    letterSpacing: 0,
   },
-  cta: {
-    alignSelf: 'flex-start',
-    minHeight: servicesTokens.card.ctaHeight,
-    borderRadius: servicesTokens.card.ctaRadius,
-    borderWidth: 1,
-    paddingHorizontal: 11,
-    paddingVertical: 6,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
+  trailing: {
+    width: 72,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
   },
-  ctaText: {
-    fontSize: 12,
+  disabledText: {
+    color: servicesTokens.states.disabledText,
+    fontSize: 11,
+    lineHeight: 14,
     fontWeight: '800',
-  },
-  disabledBadge: {
-    alignSelf: 'flex-start',
-    minHeight: servicesTokens.card.ctaHeight,
-    borderRadius: servicesTokens.card.ctaRadius,
-    borderWidth: 1,
-    borderColor: '#FCA5A5',
-    backgroundColor: '#FEE2E2',
-    paddingHorizontal: 11,
-    paddingVertical: 6,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  disabledBadgeText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#B91C1C',
   },
 });

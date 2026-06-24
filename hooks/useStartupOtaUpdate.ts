@@ -12,6 +12,7 @@ const RELOAD_DELAY_MS = 900;
 const RELOAD_CONFIRMATION_WAIT_MS = 1800;
 const RELOAD_MAX_ATTEMPTS = 3;
 const NATIVE_OTA_GATE_HANDLES_STARTUP = Platform.OS === 'android' && !__DEV__;
+const JS_OTA_CHECK_ENABLED = Platform.OS !== 'web' && !__DEV__ && !NATIVE_OTA_GATE_HANDLES_STARTUP;
 
 type StartupOtaPhase =
   | 'waiting'
@@ -58,7 +59,11 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
 function isExpectedUpdatesDisabledError(error: unknown) {
   const code = (error as any)?.code;
   const message = String((error as any)?.message || '');
-  return code === 'ERR_UPDATES_DISABLED' || message.includes('development mode');
+  return (
+    code === 'ERR_UPDATES_DISABLED' ||
+    message.includes('development mode') ||
+    message.includes('development builds')
+  );
 }
 
 function isTransientUpdatesBusyError(error: unknown) {
@@ -73,9 +78,9 @@ function isTransientUpdatesBusyError(error: unknown) {
 
 export function useStartupOtaUpdate(start: boolean): StartupOtaState {
   const updatesState = Updates.useUpdates();
-  const [ready, setReady] = useState(Platform.OS === 'web' || NATIVE_OTA_GATE_HANDLES_STARTUP);
+  const [ready, setReady] = useState(!JS_OTA_CHECK_ENABLED);
   const [phase, setPhase] = useState<StartupOtaPhase>(
-    Platform.OS === 'web' || NATIVE_OTA_GATE_HANDLES_STARTUP ? 'disabled' : 'waiting'
+    JS_OTA_CHECK_ENABLED ? 'waiting' : 'disabled'
   );
   const [manualProgress, setManualProgress] = useState<number | null>(null);
   const startedRef = useRef(false);
@@ -173,11 +178,7 @@ export function useStartupOtaUpdate(start: boolean): StartupOtaState {
 
   useEffect(() => {
     if (!start) return;
-    if (NATIVE_OTA_GATE_HANDLES_STARTUP) {
-      finish('disabled');
-      return;
-    }
-    if (Platform.OS === 'web') {
+    if (!JS_OTA_CHECK_ENABLED) {
       finish('disabled');
       return;
     }
@@ -187,8 +188,8 @@ export function useStartupOtaUpdate(start: boolean): StartupOtaState {
   }, [finish, start]);
 
   useEffect(() => {
-    if (NATIVE_OTA_GATE_HANDLES_STARTUP) return;
-    if (!start || !Updates.isEnabled || Platform.OS === 'web') return;
+    if (!JS_OTA_CHECK_ENABLED) return;
+    if (!start || !Updates.isEnabled) return;
     if (!updatesState.isUpdatePending && !updatesState.downloadedUpdate) return;
     void applyDownloadedUpdate().catch((error) => {
       if (!isExpectedUpdatesDisabledError(error)) {
@@ -200,11 +201,10 @@ export function useStartupOtaUpdate(start: boolean): StartupOtaState {
 
   useEffect(() => {
     if (!start || startedRef.current) return;
-    if (NATIVE_OTA_GATE_HANDLES_STARTUP) {
+    if (!JS_OTA_CHECK_ENABLED) {
       finish('disabled');
       return;
     }
-    if (Platform.OS === 'web') return;
     if (!Updates.isEnabled) return;
 
     let cancelled = false;

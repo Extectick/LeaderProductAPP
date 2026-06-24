@@ -64,6 +64,7 @@ coverage/
 .turbo/
 release-artifacts/
 release-artifacts-gh/
+dev-builds/
 
 # temp / misc
 tmp/

@@ -14,6 +14,11 @@ type LoadingProps = {
   backgroundColor: string;
   textColor: string;
   style?: any;
+  columns?: number;
+  cardSize?: number;
+  gap?: number;
+  horizontalPadding?: number;
+  topPadding?: number;
 };
 
 type ErrorProps = {
@@ -24,7 +29,7 @@ type ErrorProps = {
   style?: any;
 };
 
-function LoadingCard({ index }: { index: number }) {
+function LoadingCard({ size }: { size: number }) {
   const reduceMotion = useReducedMotion();
   const shimmer = useSharedValue(0.6);
 
@@ -38,24 +43,53 @@ function LoadingCard({ index }: { index: number }) {
   }));
 
   return (
-    <Animated.View style={[styles.loadingCard, shimmerStyle, { marginTop: index === 0 ? 0 : 10 }]}>
+    <Animated.View
+      style={[
+        styles.loadingCard,
+        shimmerStyle,
+        {
+          width: size,
+          minHeight: servicesTokens.card.minHeight,
+        },
+      ]}
+    >
       <View style={styles.loadingIcon} />
-      <View style={styles.loadingLineLg} />
-      <View style={styles.loadingLineMd} />
-      <View style={styles.loadingBadge} />
+      <View style={styles.loadingTextBlock}>
+        <View style={styles.loadingLineLg} />
+        <View style={styles.loadingLineMd} />
+        <View style={styles.loadingLineSm} />
+      </View>
+      <View style={styles.loadingFooter} />
     </Animated.View>
   );
 }
 
-export function ServicesLoadingView({ backgroundColor, textColor, style }: LoadingProps) {
+export function ServicesLoadingView({
+  backgroundColor,
+  style,
+  columns = 2,
+  cardSize = 150,
+  gap = 12,
+  horizontalPadding = 12,
+  topPadding = 0,
+}: LoadingProps) {
+  const count = Math.max(4, columns * 4);
   return (
-    <View style={[styles.shell, style, { backgroundColor }]}>
-      <View style={styles.loadingPanel}>
-        <Text style={[styles.loadingTitle, { color: textColor }]}>Загружаем сервисы</Text>
-        <Text style={styles.loadingSubtitle}>Подготавливаем каталог и ваши доступы</Text>
-        <LoadingCard index={0} />
-        <LoadingCard index={1} />
-        <LoadingCard index={2} />
+    <View
+      style={[
+        styles.loadingShell,
+        style,
+        {
+          backgroundColor,
+          paddingTop: topPadding,
+          paddingHorizontal: horizontalPadding,
+        },
+      ]}
+    >
+      <View style={[styles.loadingGrid, { gap }]}>
+        {Array.from({ length: count }).map((_, index) => (
+          <LoadingCard key={index} size={cardSize} />
+        ))}
       </View>
     </View>
   );
@@ -107,35 +141,62 @@ const styles = StyleSheet.create({
   loadingCard: {
     borderRadius: servicesTokens.card.radius,
     borderWidth: 1,
-    borderColor: '#D8E2F1',
+    borderColor: '#E2E8F0',
     backgroundColor: '#FFFFFF',
-    padding: 12,
-    gap: 8,
+    paddingVertical: servicesTokens.card.paddingVertical,
+    paddingHorizontal: servicesTokens.card.paddingHorizontal,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 0,
   },
   loadingIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: withOpacity('#3B82F6', 0.18),
+    width: servicesTokens.card.iconContainerMaxSize,
+    height: servicesTokens.card.iconContainerMaxSize,
+    borderRadius: servicesTokens.card.iconRadius,
+    backgroundColor: withOpacity('#2563EB', 0.1),
+  },
+  loadingTextBlock: {
+    flex: 1,
+    gap: 8,
   },
   loadingLineLg: {
     height: 14,
     borderRadius: 7,
-    width: '68%',
-    backgroundColor: '#DEE8F8',
+    width: '56%',
+    backgroundColor: '#E2E8F0',
   },
   loadingLineMd: {
     height: 12,
     borderRadius: 6,
-    width: '84%',
-    backgroundColor: '#E5ECF9',
+    width: '92%',
+    backgroundColor: '#EEF2F7',
   },
-  loadingBadge: {
-    height: 28,
-    width: 92,
+  loadingLineSm: {
+    height: 12,
+    borderRadius: 6,
+    width: '68%',
+    backgroundColor: '#EEF2F7',
+  },
+  loadingFooter: {
+    height: 22,
+    width: 22,
     borderRadius: 999,
-    backgroundColor: '#DFEAFE',
-    marginTop: 4,
+    backgroundColor: '#E7EEF8',
+  },
+  loadingShell: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  loadingGrid: {
+    width: '100%',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    paddingBottom: 110,
   },
   errorPanel: {
     width: '100%',

@@ -60,10 +60,22 @@ export default function ServicesWebPage() {
   }, [isReachable, notify, router]);
 
   if (loading && !visibleServices.length) {
-    return <ServicesLoadingView backgroundColor={background} textColor={textColor} style={styles.center} />;
+    return (
+      <View style={[styles.container, { backgroundColor: background }]} onLayout={handleLayout}>
+        <ServicesLoadingView
+          backgroundColor={background}
+          textColor={textColor}
+          columns={metrics.columns}
+          cardSize={metrics.cardSize}
+          gap={metrics.gap}
+          horizontalPadding={metrics.horizontalPadding}
+          topPadding={headerTopInset + servicesTokens.page.topPadding}
+        />
+      </View>
+    );
   }
 
-  if (error || !services?.length) {
+  if (error || !services) {
     return <ServicesErrorView backgroundColor={background} textColor={textColor} message={error} style={styles.center} />;
   }
 
@@ -120,7 +132,7 @@ export default function ServicesWebPage() {
                   ? ([item.gradientStart, item.gradientEnd] as [string, string])
                   : undefined
               }
-              iconSize={isMobileWidth ? 40 : 44}
+              iconSize={isMobileWidth ? 26 : 28}
               disabled={!item.enabled}
               containerStyle={{ backgroundColor: cardBackground }}
             />

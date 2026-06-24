@@ -59,6 +59,7 @@ type Props = {
   rightSlot?: React.ReactNode;
   bottomSlot?: React.ReactNode;
   surfaceVisible?: boolean;
+  entranceMotion?: 'slide' | 'fade' | 'none';
   horizontalPadding?: number;
 };
 
@@ -93,6 +94,7 @@ export function AppHeader({
   rightSlot,
   bottomSlot,
   surfaceVisible = true,
+  entranceMotion = 'slide',
   horizontalPadding,
 }: Props) {
   const { top } = useSafeAreaInsets();
@@ -212,8 +214,32 @@ export function AppHeader({
       </LiquidGlassSurface>
     </View>
   ) : (
-    <View style={[styles.plainShell, dense && styles.plainShellDense]}>{headerContent}</View>
+    <View
+      style={[
+        styles.plainShell,
+        dense && styles.plainShellDense,
+        {
+          borderColor,
+          backgroundColor: surfaceOverlayColor,
+        },
+      ]}
+    >
+      {headerContent}
+    </View>
   );
+
+  const animatedShell =
+    entranceMotion === 'none' ? (
+      shellContent
+    ) : (
+      <MotiView
+        from={entranceMotion === 'fade' ? { opacity: 0 } : { opacity: 0, translateY: -8 }}
+        animate={entranceMotion === 'fade' ? { opacity: 1 } : { opacity: 1, translateY: 0 }}
+        transition={{ type: 'timing', duration: entranceMotion === 'fade' ? 160 : 220 }}
+      >
+        {shellContent}
+      </MotiView>
+    );
 
   return (
     <View
@@ -221,13 +247,7 @@ export function AppHeader({
       onLayout={handleWrapLayout}
       style={[styles.wrap, tight && styles.wrapTight, { paddingTop: topPadding, paddingHorizontal: sidePadding }]}
     >
-      <MotiView
-        from={{ opacity: 0, translateY: -8 }}
-        animate={{ opacity: 1, translateY: 0 }}
-        transition={{ type: 'timing', duration: 220 }}
-      >
-        {shellContent}
-      </MotiView>
+      {animatedShell}
     </View>
   );
 }
@@ -279,6 +299,9 @@ const styles = StyleSheet.create({
   plainShell: {
     alignSelf: 'stretch',
     width: '100%',
+    borderRadius: HEADER_RADIUS,
+    borderWidth: 1,
+    overflow: 'hidden',
   },
   plainShellDense: {
     borderRadius: 14,

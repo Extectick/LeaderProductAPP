@@ -55,7 +55,6 @@ export function initMonitoring() {
   }
 
   if (!enabled || !dsn) {
-    logger.info('Monitoring initialized in local-only mode', { enabled, hasDsn: Boolean(dsn) }, 'monitoring');
     return;
   }
 

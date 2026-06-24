@@ -9,6 +9,7 @@ import { useServerStatus } from '@/src/shared/network/useServerStatus';
 import { useOptionalLastServiceRoute } from '@/src/features/navigation/LastServiceRouteContext';
 import { useOptionalUnsavedChanges } from '@/src/features/navigation/UnsavedChangesContext';
 import { ServicesHeaderSlotProvider } from '@/src/features/services/headerSlotContext';
+import ServicesCatalogStatusAction from '@/src/features/services/ui/ServicesCatalogStatusAction';
 
 type HeaderMeta = {
   title: string;
@@ -116,12 +117,6 @@ export default function ServicesLayout() {
     router.replace('/services');
   }, [deniedByAccess, deniedByOffline, loadServices, loading, missingServiceMetadata, notify, router, serviceKey]);
 
-  const servicesSummary = useMemo(() => {
-    const visible = (services || []).filter((service) => service.visible);
-    const enabled = visible.filter((service) => service.enabled).length;
-    const cloud = visible.filter((service) => service.kind === 'CLOUD').length;
-    return { visible: visible.length, enabled, cloud };
-  }, [services]);
   const blocked = !!serviceKey && !loading && (deniedByAccess || deniedByOffline);
   if (serviceKey && blocked) return null;
 
@@ -134,11 +129,12 @@ export default function ServicesLayout() {
           const name = (route as any)?.routeName || (route.name as string);
           let meta = headerMap[name as keyof typeof headerMap];
           const currentPath = String(pathname || '').split('?')[0];
+          const isCatalogPath = /^\/services\/?$/.test(currentPath);
 
           const isAppeals = name?.includes('appeals');
           const isAppealsList = name === 'appeals' || name === 'appeals/index' || name === 'appeals/index.web';
           const showCreateInHeader = /^\/services\/appeals\/?$/.test(currentPath);
-          const showServicesSummaryInHeader = /^\/services\/?$/.test(currentPath);
+          const showCatalogStatusAction = isCatalogPath;
 
           if (!meta && isAppeals) {
             meta = {
@@ -198,18 +194,13 @@ export default function ServicesLayout() {
           };
 
           const showCloudInHeader = showCloudServiceInHeader && !showCreateInHeader;
-          const shouldRenderRight = showCreateInHeader || showCloudInHeader || showServicesSummaryInHeader;
+          const shouldRenderRight = showCatalogStatusAction || showCreateInHeader || showCloudInHeader;
           const showTrackingBottomSlot = /^\/services\/tracking(?:\/.*)?$/.test(currentPath);
           const isClientOrdersPath = /^\/services\/client_orders(?:\/.*)?$/.test(currentPath);
           const rightSlot = shouldRenderRight ? (
             <View style={styles.rightHeaderRow}>
-              {showServicesSummaryInHeader ? (
-                <View style={styles.servicesSummaryChip}>
-                  <Ionicons name="grid-outline" size={13} color="#1E3A8A" />
-                  <Text style={styles.servicesSummaryText}>
-                    {servicesSummary.enabled}/{servicesSummary.visible}
-                  </Text>
-                </View>
+              {showCatalogStatusAction ? (
+                <ServicesCatalogStatusAction loadServices={loadServices} />
               ) : null}
               {showCloudInHeader ? (
                 <View style={styles.cloudHeaderBadge}>
@@ -251,6 +242,8 @@ export default function ServicesLayout() {
                 horizontalPadding={isClientOrdersPath ? 6 : undefined}
                 rightSlot={resolvedRightSlot}
                 bottomSlot={showTrackingBottomSlot ? trackingHeaderBottomSlot : undefined}
+                surfaceVisible={!isCatalogPath}
+                entranceMotion={isCatalogPath ? 'fade' : 'slide'}
               />
             ),
             animation: 'ios_from_left',
@@ -266,23 +259,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-  },
-  servicesSummaryChip: {
-    minHeight: 30,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-    backgroundColor: '#EFF6FF',
-    paddingHorizontal: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'row',
-    gap: 6,
-  },
-  servicesSummaryText: {
-    color: '#1E3A8A',
-    fontSize: 12,
-    fontWeight: '800',
   },
   cloudHeaderBadge: {
     width: 30,
