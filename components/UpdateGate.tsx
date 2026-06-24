@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Application from 'expo-application';
 import Constants from 'expo-constants';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
@@ -113,8 +114,14 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
     onStartupDone?.();
   }, [onStartupDone]);
 
-  const versionName = Constants.nativeAppVersion ?? Constants.expoConfig?.version ?? '0.0.0';
-  const nativeBuildVersion = Number(Constants.nativeBuildVersion ?? 0);
+  const versionName =
+    Application.nativeApplicationVersion ??
+    Constants.nativeAppVersion ??
+    Constants.expoConfig?.version ??
+    '0.0.0';
+  const nativeBuildVersion = Number(
+    Application.nativeBuildVersion ?? Constants.nativeBuildVersion ?? 0
+  );
   const androidVersionCode = Number(Constants.expoConfig?.android?.versionCode ?? 0);
   const iosVersionCode = Number(Constants.expoConfig?.ios?.buildNumber ?? 0);
   const androidPackageName = Constants.expoConfig?.android?.package ?? 'com.leaderproduct.app';
