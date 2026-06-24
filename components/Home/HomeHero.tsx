@@ -80,7 +80,7 @@ export default function HomeHero({ userName, updatedAt, onOpenServices }: Props)
             </View>
           </View>
           <View style={styles.statusWrap}>
-            <Text style={styles.otaBadge}>OTA dev #5</Text>
+            <Text style={styles.otaBadge}>OTA dev #6</Text>
             <Text style={styles.updatedAt}>{formatUpdatedAt(updatedAt)}</Text>
           </View>
         </View>

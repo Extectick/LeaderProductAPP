@@ -31,11 +31,19 @@ enableScreens();
 const nativeBottomSheetProvider = Platform.OS === 'web'
   ? null
   : require('@gorhom/bottom-sheet').BottomSheetModalProvider;
+const hideReactStartupLoader = Platform.OS === 'android' && !__DEV__;
+
+function EmptyStartupSurface() {
+  return <View style={{ flex: 1, backgroundColor: '#FFFFFF' }} />;
+}
 
 function InnerLayout() {
   const { isChecking } = useAuthRedirect();
   useTelegramBackButton();
   if (isChecking) {
+    if (hideReactStartupLoader) {
+      return <EmptyStartupSurface />;
+    }
     return (
       <StartupSplash
         statusText="Проверка авторизации"
@@ -65,7 +73,7 @@ export default function RootLayout() {
 
   const [preloadReady, setPreloadReady] = useState(false);
   const [updateReady, setUpdateReady] = useState(false);
-  const [minSplashReady, setMinSplashReady] = useState(false);
+  const [minSplashReady, setMinSplashReady] = useState(hideReactStartupLoader);
   const otaUpdate = useStartupOtaUpdate(preloadReady);
 
   useEffect(() => {
@@ -98,6 +106,7 @@ export default function RootLayout() {
   }, []);
 
   useEffect(() => {
+    if (hideReactStartupLoader) return;
     const timer = setTimeout(() => {
       setMinSplashReady(true);
     }, 1500);
@@ -169,6 +178,8 @@ export default function RootLayout() {
                         <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
                         {appIsReady ? (
                           <InnerLayout />
+                        ) : hideReactStartupLoader ? (
+                          <EmptyStartupSurface />
                         ) : (
                           <StartupSplash
                             statusText={startupSplash.statusText}
