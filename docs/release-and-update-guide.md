@@ -5,7 +5,10 @@ This document is the operator checklist for APP releases.
 ## Version Rules
 
 - Full APK release: bump `versionName` and `versionCode`.
+- Full APK display version is `v<versionName>+<versionCode>`, for example `v0.1.12+11`.
 - OTA JS/assets release: keep the same APK `versionName`/`runtimeVersion`.
+- OTA display version is assigned per APK/runtime as `v<versionName>+<versionCode>.ota.<N>`, for example `v0.1.12+11.ota.1`.
+- OTA sequence starts from `1` again after a new APK/runtime version.
 - Native dependency, permissions, Android config, Expo SDK, or `app.config.ts` changes require a new APK.
 - The GitHub APK workflow refuses to build if `app.config.ts` does not match workflow `versionName` and `versionCode`.
 
@@ -95,6 +98,8 @@ OTA publishing requires:
 - exported JS bundle/assets in S3 under `dev/updates/ota/...` or `prod/updates/ota/...`;
 - `AppOtaUpdate` metadata created through `POST /ota/publish`;
 - same `runtimeVersion` as the installed bridge APK.
+- API stores `otaSequence` and `displayVersion`, then returns them in the Expo manifest metadata.
+- The app displays `displayVersion` from the running OTA manifest. Embedded APK builds display only `v<versionName>+<versionCode>`.
 
 ## OTA Release Flow
 
@@ -115,6 +120,7 @@ releaseNotes: ...
 ```
 
 The workflow exports JS/assets, uploads them to S3, and creates `ota-metadata.json`.
+When metadata is published to the API, the next OTA sequence is calculated automatically for the same `platform + channel + runtimeVersion`.
 
 For local/private dev API, download the artifact and publish metadata directly to DB:
 

@@ -9,6 +9,7 @@ export type AppVersionInfo = {
   runtimeVersion: string | null;
   updateId: string | null;
   otaShortId: string | null;
+  otaSequence: number | null;
   otaLabel: string;
   fullVersionLabel: string;
 };
@@ -28,6 +29,13 @@ function getConfigBuildVersion(): string | null {
   return null;
 }
 
+function getManifestMetadata(): Record<string, unknown> {
+  const manifest = Updates.manifest as any;
+  const metadata = manifest?.metadata;
+  if (metadata && typeof metadata === 'object') return metadata;
+  return {};
+}
+
 export function getAppVersionInfo(): AppVersionInfo {
   const nativeVersion =
     clean(Application.nativeApplicationVersion) ||
@@ -40,17 +48,24 @@ export function getAppVersionInfo(): AppVersionInfo {
     getConfigBuildVersion();
   const runtimeVersion = clean(Updates.runtimeVersion) || nativeVersion;
   const updateId = clean(Updates.updateId);
+  const metadata = getManifestMetadata();
+  const displayVersion = clean(metadata.displayVersion);
+  const otaSequenceRaw = Number(metadata.otaSequence);
+  const otaSequence = Number.isFinite(otaSequenceRaw) && otaSequenceRaw > 0 ? Math.floor(otaSequenceRaw) : null;
   const otaShortId = updateId ? updateId.slice(0, 8) : null;
 
   const otaLabel = !Updates.isEnabled
     ? 'OTA off'
+    : otaSequence
+      ? `ota.${otaSequence}`
     : otaShortId
       ? `OTA ${otaShortId}`
       : Updates.isEmbeddedLaunch
-        ? 'embedded'
+        ? ''
         : 'dev bundle';
 
   const nativeLabel = nativeBuild ? `v${nativeVersion}+${nativeBuild}` : `v${nativeVersion}`;
+  const fullVersionLabel = displayVersion || (otaLabel ? `${nativeLabel} · ${otaLabel}` : nativeLabel);
 
   return {
     nativeVersion,
@@ -58,7 +73,8 @@ export function getAppVersionInfo(): AppVersionInfo {
     runtimeVersion,
     updateId,
     otaShortId,
+    otaSequence,
     otaLabel,
-    fullVersionLabel: `${nativeLabel} · ${otaLabel}`,
+    fullVersionLabel,
   };
 }

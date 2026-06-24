@@ -298,5 +298,6 @@ Release checklist:
 - [x] Phase 5 started.
 - [x] 2026-06-24: Android native OTA startup gate added through Expo config plugin.
 - [x] 2026-06-24: `expo-updates` startup auto-check changed to controlled native check/fetch before `MainActivity`.
+- [x] 2026-06-24: Production versioning added: APK `v<versionName>+<versionCode>`, OTA `v<versionName>+<versionCode>.ota.<N>` per runtime.
 - [ ] Phase 5 completed.
 - [ ] Phase 6 completed.

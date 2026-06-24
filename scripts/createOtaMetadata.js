@@ -2,6 +2,7 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readVersion } = require('./readNativeVersion');
 
 function parseArgs(argv) {
   const args = { _: [] };
@@ -72,6 +73,7 @@ function main() {
   const platform = String(args.platform || 'android').trim().toLowerCase();
   const channel = String(args.channel || process.env.EXPO_PUBLIC_UPDATE_CHANNEL || 'dev').trim();
   const runtimeVersion = getRuntimeVersion(args);
+  const nativeVersion = readVersion();
   const releaseKey = String(
     args.updateId ||
       `${platform}-${channel}-${runtimeVersion}-${new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)}-${crypto.randomBytes(4).toString('hex')}`
@@ -132,6 +134,9 @@ function main() {
     metadata: {
       commitSha,
       releaseKey,
+      baseVersionName: nativeVersion.versionName,
+      baseVersionCode: nativeVersion.versionCode,
+      baseBuildNumber: nativeVersion.buildNumber,
       exportBundler: exportMetadata.bundler,
       exportVersion: exportMetadata.version,
     },

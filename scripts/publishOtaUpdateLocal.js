@@ -66,6 +66,8 @@ async function main() {
     launchAssetType: metadata.launchAssetType,
     assets: metadata.assets,
     metadata: metadata.metadata,
+    otaSequence: metadata.otaSequence,
+    displayVersion: metadata.displayVersion,
     isActive: metadata.isActive,
     rolloutPercent: metadata.rolloutPercent,
     commitSha: metadata.commitSha,
