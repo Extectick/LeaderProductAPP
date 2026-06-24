@@ -20,7 +20,7 @@
 - [x] GitHub Actions публикует APK в S3.
 - [x] Локальный publish-скрипт регистрирует APK metadata в API.
 - [x] Локальный DB publish-скрипт регистрирует APK metadata напрямую в БД без public API.
-- [ ] `expo-updates` отключен в Android manifest.
+- [x] `expo-updates` automatic startup check отключен в Android manifest.
 - [x] OTA JS/assets workflow добавлен.
 - [ ] OTA end-to-end device test еще не выполнен.
 
@@ -221,18 +221,18 @@ Acceptance checks:
 
 Goal: app safely downloads and applies OTA updates.
 
-- [ ] Configure automatic update check on launch or controlled manual check.
-- [ ] Add update state logging.
-- [ ] Add fallback if OTA check fails.
-- [ ] Add reload/apply behavior.
+- [x] Configure controlled native update check on Android launch.
+- [x] Add native update state UI before React starts.
+- [x] Add fallback if OTA check fails.
+- [x] Add native startup apply behavior before `MainActivity`.
 - [ ] Keep full APK prompt for native/runtime updates.
 - [ ] Add user/admin-visible update diagnostics if needed.
 
 Acceptance checks:
 
 - [ ] App starts normally if OTA endpoint is unavailable.
-- [ ] App downloads compatible OTA.
-- [ ] App reloads into new JS bundle.
+- [ ] App downloads compatible OTA through native startup gate.
+- [ ] App opens directly into new JS bundle after native startup gate.
 - [ ] Bad OTA can be rolled back by deactivating DB record.
 - [ ] Full APK update still works for native changes.
 
@@ -295,6 +295,8 @@ Release checklist:
 - [x] 2026-06-23: Protected OTA cleanup endpoint added in API.
 - [x] 2026-06-23: Release APK `0.1.9 / 8` built for dev channel and published to S3/API.
 - [ ] Phase 4 completed.
-- [ ] Phase 5 started.
+- [x] Phase 5 started.
+- [x] 2026-06-24: Android native OTA startup gate added through Expo config plugin.
+- [x] 2026-06-24: `expo-updates` startup auto-check changed to controlled native check/fetch before `MainActivity`.
 - [ ] Phase 5 completed.
 - [ ] Phase 6 completed.

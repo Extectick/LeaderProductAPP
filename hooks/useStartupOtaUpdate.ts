@@ -11,6 +11,7 @@ const OTA_MAX_CHECK_ATTEMPTS = 3;
 const RELOAD_DELAY_MS = 900;
 const RELOAD_CONFIRMATION_WAIT_MS = 1800;
 const RELOAD_MAX_ATTEMPTS = 3;
+const NATIVE_OTA_GATE_HANDLES_STARTUP = Platform.OS === 'android' && !__DEV__;
 
 type StartupOtaPhase =
   | 'waiting'
@@ -72,8 +73,10 @@ function isTransientUpdatesBusyError(error: unknown) {
 
 export function useStartupOtaUpdate(start: boolean): StartupOtaState {
   const updatesState = Updates.useUpdates();
-  const [ready, setReady] = useState(Platform.OS === 'web');
-  const [phase, setPhase] = useState<StartupOtaPhase>(Platform.OS === 'web' ? 'disabled' : 'waiting');
+  const [ready, setReady] = useState(Platform.OS === 'web' || NATIVE_OTA_GATE_HANDLES_STARTUP);
+  const [phase, setPhase] = useState<StartupOtaPhase>(
+    Platform.OS === 'web' || NATIVE_OTA_GATE_HANDLES_STARTUP ? 'disabled' : 'waiting'
+  );
   const [manualProgress, setManualProgress] = useState<number | null>(null);
   const startedRef = useRef(false);
   const reloadTriggeredRef = useRef(false);
@@ -170,6 +173,10 @@ export function useStartupOtaUpdate(start: boolean): StartupOtaState {
 
   useEffect(() => {
     if (!start) return;
+    if (NATIVE_OTA_GATE_HANDLES_STARTUP) {
+      finish('disabled');
+      return;
+    }
     if (Platform.OS === 'web') {
       finish('disabled');
       return;
@@ -180,6 +187,7 @@ export function useStartupOtaUpdate(start: boolean): StartupOtaState {
   }, [finish, start]);
 
   useEffect(() => {
+    if (NATIVE_OTA_GATE_HANDLES_STARTUP) return;
     if (!start || !Updates.isEnabled || Platform.OS === 'web') return;
     if (!updatesState.isUpdatePending && !updatesState.downloadedUpdate) return;
     void applyDownloadedUpdate().catch((error) => {
@@ -192,6 +200,10 @@ export function useStartupOtaUpdate(start: boolean): StartupOtaState {
 
   useEffect(() => {
     if (!start || startedRef.current) return;
+    if (NATIVE_OTA_GATE_HANDLES_STARTUP) {
+      finish('disabled');
+      return;
+    }
     if (Platform.OS === 'web') return;
     if (!Updates.isEnabled) return;
 

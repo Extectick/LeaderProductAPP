@@ -20,7 +20,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   name: "Лидер Продукт",
   slug: "leader-product",
   owner: "extectick",
-  version: "0.1.10",
+  version: "0.1.11",
   orientation: "portrait",
   userInterfaceStyle: "automatic",
   newArchEnabled: true,
@@ -33,7 +33,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     enabled: Boolean(otaUpdateUrl),
     url: otaUpdateUrl,
     checkAutomatically: "NEVER",
-    fallbackToCacheTimeout: 0,
+    fallbackToCacheTimeout: 30000,
     requestHeaders: {
       "expo-channel-name": updateChannel,
     },
@@ -42,10 +42,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     favicon: "./assets/images/favicon.png",
   },
 
-  ios: { bundleIdentifier: "com.leaderproduct.app", buildNumber: "9" },
+  ios: { bundleIdentifier: "com.leaderproduct.app", buildNumber: "10" },
   android: {
     package: "com.leaderproduct.app",
-    versionCode: 9,
+    versionCode: 10,
     edgeToEdgeEnabled: true,
     usesCleartextTraffic: true,
     adaptiveIcon: {
@@ -103,6 +103,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         backgroundColor: "#ffffff",
       },
     ],
+    "./plugins/with-android-native-ota-loader",
     // 👇 указываем модуль плагина как строку пути + опции
     // ["./plugins/with-cpp-flags", {
     //   createCMakeIfMissing: true,
