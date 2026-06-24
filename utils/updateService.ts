@@ -8,6 +8,7 @@ const STORAGE_KEYS = {
 };
 
 const UPDATE_CHANNEL = process.env.EXPO_PUBLIC_UPDATE_CHANNEL || 'prod';
+const UPDATE_CHECK_TIMEOUT_MS = 3500;
 
 export type UpdateCheckResult = {
   updateAvailable: boolean;
@@ -93,7 +94,7 @@ export async function checkForUpdate(
         deviceId: params.deviceId,
       },
       headers,
-      timeout: 10_000,
+      timeout: UPDATE_CHECK_TIMEOUT_MS,
       validateStatus: (status) => status >= 200 && status < 400,
     });
 

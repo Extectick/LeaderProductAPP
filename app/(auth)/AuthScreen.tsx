@@ -2,9 +2,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
-import Constants from 'expo-constants';
 import * as Linking from 'expo-linking';
-import * as Updates from 'expo-updates';
 import { useRouter, type Href } from 'expo-router';
 import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -35,6 +33,7 @@ import ThemedLoader from '@/components/ui/ThemedLoader';
 import { gradientColors } from '@/constants/Colors';
 import { AuthContext } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
+import { getAppVersionInfo } from '@/utils/appVersion';
 import { API_BASE_URL } from '@/utils/config';
 import { isMaxMiniAppLaunch, prepareMaxWebApp } from '@/utils/maxAuthService';
 import { isTelegramMiniAppLaunch, prepareTelegramWebApp } from '@/utils/telegramAuthService';
@@ -1141,18 +1140,7 @@ export default function AuthScreen() {
   const ps = passwordScore(registerPassword);
   const pillWidth = Math.max(0, outerW / 2 - 6);
   const pillTranslate = tabPill.interpolate({ inputRange: [0, 1], outputRange: [4, 8 + pillWidth] });
-  const versionLabel = (
-    Constants.nativeAppVersion ||
-    Constants.expoConfig?.version ||
-    'unknown'
-  )
-    .toString()
-    .trim() || 'unknown';
-  const otaDisplay = Updates.isEnabled
-    ? Updates.updateId
-      ? `OTA ${Updates.updateId.slice(-8)}`
-      : 'APK bundle'
-    : 'OTA off';
+  const appVersionInfo = useMemo(() => getAppVersionInfo(), []);
   const apiDisplay = API_BASE_URL || 'не задан';
   const noticePalette =
     bannerNoticeTone === 'success'
@@ -1727,7 +1715,7 @@ export default function AuthScreen() {
                   isWeb && { fontSize: isWebMobile ? 12 : 14, lineHeight: isWebMobile ? 18 : 20 },
                 ]}
               >
-                Версия приложения: v{versionLabel} · {otaDisplay}
+                Версия приложения: {appVersionInfo.fullVersionLabel}
               </Text>
             </View>
           </ScrollView>

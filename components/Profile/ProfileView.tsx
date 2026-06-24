@@ -61,6 +61,7 @@ import {
 import { shadeColor, tintColor } from '@/utils/color';
 import { formatPhoneDisplay, formatPhoneInputMask, normalizePhoneInputToDigits11, toApiPhoneDigitsString } from '@/utils/phone';
 import { getRoleDisplayName } from '@/utils/rbacLabels';
+import { getAppVersionInfo } from '@/utils/appVersion';
 
 type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
 type Tone = 'green' | 'violet' | 'gray' | 'red' | 'blue';
@@ -150,6 +151,7 @@ export function ProfileView({
   const [phoneStatusText, setPhoneStatusText] = useState<string | null>(null);
 
   const presenceMap = usePresence(!isSelf && profile ? [profile.id] : []);
+  const appVersionInfo = useMemo(() => getAppVersionInfo(), []);
   const presence = !isSelf && profile ? presenceMap[profile.id] : undefined;
   const presenceLabel = useMemo(() => {
     if (!presence) return null;
@@ -818,6 +820,11 @@ export function ProfileView({
           </View>
         </Animated.View>
         ) : null}
+      {isSelf ? (
+        <Text style={styles.versionFooter}>
+          Версия приложения: {appVersionInfo.fullVersionLabel}
+        </Text>
+      ) : null}
       <AvatarCropperModal
         visible={cropVisible}
         image={cropImage}
@@ -1894,6 +1901,14 @@ const styles = StyleSheet.create({
   },
   deptName: { color: '#0F172A', fontWeight: '800' },
   deptRole: { color: '#334155', marginTop: 2 },
+  versionFooter: {
+    marginTop: 18,
+    marginBottom: 6,
+    color: '#64748B',
+    fontSize: 12,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
 });
 
 export default ProfileView;

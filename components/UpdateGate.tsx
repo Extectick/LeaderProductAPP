@@ -38,6 +38,8 @@ const STORAGE_KEYS = {
 };
 
 const CHECK_INTERVAL_MS = 30 * 60 * 1000;
+const CHECK_FAILURE_COOLDOWN_MS = 5 * 60 * 1000;
+const CHECK_FAILURE_SKIP_AFTER = 2;
 const UPDATE_CHANNEL = process.env.EXPO_PUBLIC_UPDATE_CHANNEL || 'prod';
 const ANDROID_APK_INSTALL_ACTION = 'android.intent.action.VIEW';
 const ANDROID_APK_MIME = 'application/vnd.android.package-archive';
@@ -210,16 +212,60 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
     return `${STORAGE_KEYS.dismissedVersionCode}:${Platform.OS}:${UPDATE_CHANNEL}`;
   }, []);
 
+  const getFailureKey = useCallback(() => {
+    return `update:checkFailures:${Platform.OS}:${UPDATE_CHANNEL}`;
+  }, []);
+
+  const shouldSkipAfterFailures = useCallback(async () => {
+    const raw = await AsyncStorage.getItem(getFailureKey());
+    if (!raw) return false;
+    try {
+      const parsed = JSON.parse(raw) as { count?: number; lastFailedAt?: number };
+      const count = Number(parsed.count || 0);
+      const lastFailedAt = Number(parsed.lastFailedAt || 0);
+      if (count < CHECK_FAILURE_SKIP_AFTER || !lastFailedAt) return false;
+      return Date.now() - lastFailedAt < CHECK_FAILURE_COOLDOWN_MS;
+    } catch {
+      return false;
+    }
+  }, [getFailureKey]);
+
+  const recordCheckFailure = useCallback(async () => {
+    const raw = await AsyncStorage.getItem(getFailureKey());
+    let count = 0;
+    if (raw) {
+      try {
+        count = Number((JSON.parse(raw) as { count?: number }).count || 0);
+      } catch {
+        count = 0;
+      }
+    }
+    await AsyncStorage.setItem(
+      getFailureKey(),
+      JSON.stringify({ count: count + 1, lastFailedAt: Date.now() })
+    );
+  }, [getFailureKey]);
+
+  const clearCheckFailures = useCallback(async () => {
+    await AsyncStorage.removeItem(getFailureKey());
+  }, [getFailureKey]);
+
   const runCheck = useCallback(
     async (source: string) => {
       if (!shouldCheck || checkingRef.current) return;
       if (!versionCode) return;
 
-      if (source === 'startup') {
-        setCheckingVisible(true);
-      }
       checkingRef.current = true;
       try {
+        if (await shouldSkipAfterFailures()) {
+          lastCheckAtRef.current = Date.now();
+          return;
+        }
+
+        if (source === 'startup') {
+          setCheckingVisible(true);
+        }
+
         const deviceId = await getInstallId();
         const etagKey = getEtagKey();
         const storedEtag = await AsyncStorage.getItem(etagKey);
@@ -238,11 +284,18 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
         }
 
         if (result.notModified) {
+          await clearCheckFailures();
           lastCheckAtRef.current = Date.now();
           return;
         }
 
-        if (!result.ok || !result.data) return;
+        if (!result.ok || !result.data) {
+          await recordCheckFailure();
+          lastCheckAtRef.current = Date.now();
+          return;
+        }
+
+        await clearCheckFailures();
 
         const data = result.data;
         const dismissedRaw = await AsyncStorage.getItem(getDismissKey());
@@ -284,7 +337,17 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
         }
       }
     },
-    [completeStartup, getDismissKey, getEtagKey, shouldCheck, versionCode, versionName]
+    [
+      clearCheckFailures,
+      completeStartup,
+      getDismissKey,
+      getEtagKey,
+      recordCheckFailure,
+      shouldCheck,
+      shouldSkipAfterFailures,
+      versionCode,
+      versionName,
+    ]
   );
 
   useEffect(() => {

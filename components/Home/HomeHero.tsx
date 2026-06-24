@@ -80,7 +80,6 @@ export default function HomeHero({ userName, updatedAt, onOpenServices }: Props)
             </View>
           </View>
           <View style={styles.statusWrap}>
-            <Text style={styles.otaBadge}>OTA dev #6</Text>
             <Text style={styles.updatedAt}>{formatUpdatedAt(updatedAt)}</Text>
           </View>
         </View>
@@ -179,16 +178,6 @@ const styles = StyleSheet.create({
   statusWrap: {
     alignItems: 'flex-end',
     gap: 6,
-  },
-  otaBadge: {
-    color: '#0F172A',
-    fontSize: 11,
-    fontWeight: '900',
-    backgroundColor: '#FDE68A',
-    borderRadius: 999,
-    overflow: 'hidden',
-    paddingHorizontal: 9,
-    paddingVertical: 4,
   },
   title: {
     color: '#FFFFFF',
