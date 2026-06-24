@@ -308,6 +308,7 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
         const shouldShowOptional =
           updateAvailable &&
           !mandatory &&
+          source === 'startup' &&
           (latestVersionCode <= 0 || dismissedCode !== latestVersionCode);
 
         setUpdateInfo(data);

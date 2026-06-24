@@ -131,10 +131,14 @@ function updateGateActivitySource(packageName) {
   return `package ${packageName}
 
 import android.app.Activity
+import android.app.AlarmManager
+import android.app.PendingIntent
+import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.os.Bundle
+import android.os.SystemClock
 import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
@@ -157,10 +161,12 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.system.exitProcess
 
 class UpdateGateActivity : Activity(), IUpdatesEventManagerObserver {
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
   private lateinit var statusView: TextView
+  private lateinit var hintView: TextView
   private lateinit var progressBar: ProgressBar
   private lateinit var progressText: TextView
   private var launchedMain = false
@@ -193,14 +199,16 @@ class UpdateGateActivity : Activity(), IUpdatesEventManagerObserver {
   override fun onStateMachineContextEvent(context: UpdatesStateContext) {
     runOnUiThread {
       when {
-        context.isChecking -> showStatus("Проверяем обновления", null)
+        context.isChecking -> showStatus("Проверяем обновления", "Связываемся с сервером обновлений.", null)
         context.isDownloading -> showStatus(
           "Загружаем обновление",
+          "Скачиваем новый интерфейс перед запуском.",
           context.downloadProgress
         )
-        context.isUpdatePending -> showStatus("Запускаем обновление", null)
+        context.isUpdatePending -> showStatus("Обновление готово", "Запускаем свежую версию.", 1.0)
         context.checkError != null || context.downloadError != null -> showStatus(
-          "Запускаем приложение",
+          "Обновление недоступно",
+          "Запускаем текущую установленную версию.",
           null
         )
       }
@@ -210,9 +218,10 @@ class UpdateGateActivity : Activity(), IUpdatesEventManagerObserver {
   private fun runUpdateGate() {
     scope.launch {
       var controller: IUpdatesController? = null
+      var restartingForFetchedUpdate = false
 
       try {
-        showStatus("Проверяем обновления", null)
+        showStatus("Запускаем приложение", "Подготавливаем рабочее пространство.", 1.0)
 
         controller = withContext(Dispatchers.IO) {
           UpdatesController.initializeWithoutStarting(applicationContext)
@@ -220,24 +229,49 @@ class UpdateGateActivity : Activity(), IUpdatesEventManagerObserver {
         }
 
         if (controller?.isActiveController != true) {
-          showStatus("Запускаем приложение", null)
+          showStatus("Запускаем приложение", "OTA недоступно для этой сборки.", 1.0)
           return@launch
         }
 
         controller.eventManager.observer = WeakReference(this@UpdateGateActivity)
         controller.onEventListenerStartObserving()
 
+        prepareLaunch(controller)
+
+        if (consumeFetchedUpdateRestart()) {
+          showStatus("Обновление готово", "Запускаем свежую версию.", 1.0)
+          return@launch
+        }
+
+        showStatus("Проверяем обновления", "Связываемся с сервером обновлений.", null)
         val updateFetched = checkAndFetchUpdate(controller)
         if (updateFetched) {
-          showStatus("Запускаем обновление", null)
+          showStatus("Обновление готово", "Запускаем свежую версию.", 1.0)
+          markFetchedUpdateRestart()
+          restartingForFetchedUpdate = true
+          restartGateForFetchedUpdate()
+          return@launch
         } else {
-          showStatus("Запускаем приложение", null)
+          showStatus("Запускаем приложение", "Текущая версия уже готова к работе.", 1.0)
         }
       } catch (error: Throwable) {
         Log.w(TAG, "Native update gate failed; launching current app", error)
-        showStatus("Запускаем приложение", null)
+        showStatus("Запускаем приложение", "Обновление временно недоступно.", 1.0)
       } finally {
-        startUpdatesAndOpenMain(controller)
+        if (!restartingForFetchedUpdate) {
+          startUpdatesAndOpenMain(controller)
+        }
+      }
+    }
+  }
+
+  private suspend fun prepareLaunch(controller: IUpdatesController) {
+    withContext(Dispatchers.IO) {
+      runCatching {
+        controller.start()
+        controller.launchAssetFile ?: controller.bundleAssetName
+      }.onFailure {
+        Log.w(TAG, "Failed to prepare expo-updates launch", it)
       }
     }
   }
@@ -250,7 +284,7 @@ class UpdateGateActivity : Activity(), IUpdatesEventManagerObserver {
     return when (checkResult) {
       is IUpdatesController.CheckForUpdateResult.UpdateAvailable,
       is IUpdatesController.CheckForUpdateResult.RollBackToEmbedded -> {
-        showStatus("Загружаем обновление", 0.0)
+        showStatus("Загружаем обновление", "Скачиваем новый интерфейс перед запуском.", 0.0)
         val fetchResult = withTimeoutOrNull(OTA_FETCH_TIMEOUT_MS) {
           controller.fetchUpdate()
         }
@@ -265,7 +299,7 @@ class UpdateGateActivity : Activity(), IUpdatesEventManagerObserver {
   }
 
   private suspend fun startUpdatesAndOpenMain(controller: IUpdatesController?) {
-    showStatus("Запускаем приложение", null)
+    showStatus("Запускаем приложение", "Подготавливаем рабочее пространство.", 1.0)
 
     withContext(Dispatchers.IO) {
       runCatching {
@@ -281,6 +315,51 @@ class UpdateGateActivity : Activity(), IUpdatesEventManagerObserver {
     }
 
     openMainActivity()
+  }
+
+  private fun prefs() = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+  private fun markFetchedUpdateRestart() {
+    prefs().edit().putBoolean(KEY_SKIP_REMOTE_CHECK_ONCE, true).apply()
+  }
+
+  private fun consumeFetchedUpdateRestart(): Boolean {
+    val preferences = prefs()
+    val shouldSkip = preferences.getBoolean(KEY_SKIP_REMOTE_CHECK_ONCE, false)
+    if (shouldSkip) {
+      preferences.edit().remove(KEY_SKIP_REMOTE_CHECK_ONCE).apply()
+    }
+    return shouldSkip
+  }
+
+  private fun restartGateForFetchedUpdate() {
+    clearUpdatesObserver()
+
+    val sourceIntent = intent
+    val restartIntent = Intent(this, UpdateGateActivity::class.java).apply {
+      action = sourceIntent?.action
+      data = sourceIntent?.data
+      sourceIntent?.categories?.forEach { addCategory(it) }
+      sourceIntent?.extras?.let { putExtras(it) }
+      flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+    }
+
+    val pendingIntent = PendingIntent.getActivity(
+      this,
+      RESTART_REQUEST_CODE,
+      restartIntent,
+      PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+    val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+    alarmManager.set(
+      AlarmManager.ELAPSED_REALTIME,
+      SystemClock.elapsedRealtime() + RESTART_DELAY_MS,
+      pendingIntent
+    )
+
+    finishAffinity()
+    android.os.Process.killProcess(android.os.Process.myPid())
+    exitProcess(0)
   }
 
   private fun openMainActivity() {
@@ -326,16 +405,42 @@ class UpdateGateActivity : Activity(), IUpdatesEventManagerObserver {
     val logo = ImageView(this).apply {
       setImageResource(R.drawable.splashscreen_logo)
       scaleType = ImageView.ScaleType.FIT_CENTER
-      layoutParams = LinearLayout.LayoutParams(dp(220), dp(220)).apply {
-        bottomMargin = dp(28)
+      layoutParams = LinearLayout.LayoutParams(dp(132), dp(132)).apply {
+        bottomMargin = dp(22)
+      }
+    }
+
+    val title = TextView(this).apply {
+      text = getString(R.string.app_name)
+      setTextColor(Color.parseColor("#0F172A"))
+      setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
+      gravity = Gravity.CENTER
+      typeface = android.graphics.Typeface.DEFAULT_BOLD
+      layoutParams = LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT,
+        ViewGroup.LayoutParams.WRAP_CONTENT
+      ).apply {
+        bottomMargin = dp(10)
       }
     }
 
     statusView = TextView(this).apply {
       setTextColor(Color.parseColor("#0F172A"))
-      setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+      setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
       gravity = Gravity.CENTER
       typeface = android.graphics.Typeface.DEFAULT_BOLD
+      layoutParams = LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT,
+        ViewGroup.LayoutParams.WRAP_CONTENT
+      ).apply {
+        bottomMargin = dp(6)
+      }
+    }
+
+    hintView = TextView(this).apply {
+      setTextColor(Color.parseColor("#475569"))
+      setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+      gravity = Gravity.CENTER
       layoutParams = LinearLayout.LayoutParams(
         ViewGroup.LayoutParams.MATCH_PARENT,
         ViewGroup.LayoutParams.WRAP_CONTENT
@@ -347,8 +452,7 @@ class UpdateGateActivity : Activity(), IUpdatesEventManagerObserver {
     progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
       max = PROGRESS_MAX
       progress = 0
-      isIndeterminate = false
-      visibility = View.GONE
+      isIndeterminate = true
       progressTintList = ColorStateList.valueOf(Color.parseColor("#2563EB"))
       progressBackgroundTintList = ColorStateList.valueOf(Color.parseColor("#E0ECFF"))
       indeterminateTintList = ColorStateList.valueOf(Color.parseColor("#2563EB"))
@@ -375,31 +479,32 @@ class UpdateGateActivity : Activity(), IUpdatesEventManagerObserver {
     }
 
     root.addView(logo)
+    root.addView(title)
     root.addView(statusView)
+    root.addView(hintView)
     root.addView(progressBar)
     root.addView(progressText)
 
     setContentView(root)
-    showStatus("Проверяем обновления", null)
+    showStatus("Проверяем обновления", "Связываемся с сервером обновлений.", null)
   }
 
-  private fun showStatus(status: String, progress: Double?) {
+  private fun showStatus(status: String, hint: String, progress: Double?) {
     if (!::statusView.isInitialized) return
     runOnUiThread {
       statusView.text = status
+      hintView.text = hint
 
       val normalizedProgress = progress?.takeIf { it.isFinite() }?.coerceIn(0.0, 1.0)
+      progressBar.isIndeterminate = normalizedProgress == null
 
       if (normalizedProgress == null) {
-        progressBar.visibility = View.GONE
         progressText.visibility = View.GONE
         return@runOnUiThread
       }
 
       val progressValue = (normalizedProgress * PROGRESS_MAX).roundToInt()
       val percentValue = (normalizedProgress * 100).roundToInt()
-      progressBar.visibility = View.VISIBLE
-      progressBar.isIndeterminate = false
       progressBar.progress = progressValue
       progressText.text = "$percentValue%"
       progressText.visibility = View.VISIBLE
@@ -411,13 +516,16 @@ class UpdateGateActivity : Activity(), IUpdatesEventManagerObserver {
   companion object {
     private const val TAG = "UpdateGateActivity"
     private const val PROGRESS_MAX = 1000
-    private const val OTA_CHECK_TIMEOUT_MS = 30_000L
+    private const val OTA_CHECK_TIMEOUT_MS = 8_000L
     private const val OTA_FETCH_TIMEOUT_MS = 120_000L
+    private const val PREFS_NAME = "leader_product_update_gate"
+    private const val KEY_SKIP_REMOTE_CHECK_ONCE = "skip_remote_check_once"
+    private const val RESTART_REQUEST_CODE = 9071
+    private const val RESTART_DELAY_MS = 250L
   }
 }
 `;
 }
-
 function withAndroidNativeOtaLoader(config) {
   config = withAndroidManifest(config, (modConfig) => {
     const packageName = AndroidConfig.Package.getPackage(modConfig) || 'com.leaderproduct.app';
