@@ -18,10 +18,27 @@ function ServicesRouteGuard() {
   const previousPathRef = React.useRef<string | null>(null);
 
   React.useEffect(() => {
-    const previousPath = previousPathRef.current;
-    previousPathRef.current = pathname || null;
+    const normalizePath = (path: string | null | undefined) => {
+      const clean = String(path || '')
+        .split('?')[0]
+        .split('#')[0]
+        .trim()
+        .replace(/\/\([^/]+\)/g, '')
+        .replace(/\/+/g, '/');
+      return clean.length > 1 && clean.endsWith('/') ? clean.slice(0, -1) : clean;
+    };
+
+    const previousPath = normalizePath(previousPathRef.current);
+    const currentPath = normalizePath(pathname);
+    previousPathRef.current = currentPath || null;
     if (!lastService) return;
-    if (pathname !== '/services') return;
+
+    if (currentPath === '/services' && previousPath.startsWith('/services/')) {
+      lastService.clearLastServiceRoute();
+      return;
+    }
+
+    if (currentPath !== '/services') return;
     if (!previousPath || previousPath.startsWith('/services')) return;
 
     if (lastService.lastServiceRoute) {
