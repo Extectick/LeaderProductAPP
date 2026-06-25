@@ -21,12 +21,12 @@ export default function ClientOrdersScreen() {
   React.useEffect(() => {
     registerUnsavedChanges({
       active: true,
-      title: 'Покинуть заказы клиентов?',
-      message: 'Вы сейчас находитесь в рабочем списке заказов клиентов.',
-      warning: 'Подтвердите выход, если хотите перейти в другой раздел.',
+      minimal: true,
+      title: 'Выйти в каталог сервисов?',
+      message: '',
       confirmText: 'Выйти',
       cancelText: 'Остаться',
-      icon: 'exit-to-app',
+      icon: 'view-grid-outline',
       iconColor: '#2563EB',
       confirmButtonColor: '#2563EB',
       confirmButtonTextColor: '#FFFFFF',

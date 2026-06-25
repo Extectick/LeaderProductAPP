@@ -1,9 +1,11 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Button, Dialog, Portal, Text } from 'react-native-paper';
 
 type UnsavedChangesConfig = {
   active: boolean;
+  minimal?: boolean;
   title: string;
   message: string;
   warning?: string;
@@ -47,6 +49,19 @@ const defaultConfig: UnsavedChangesConfig = {
 };
 
 const DIALOG_CLOSE_MS = 180;
+
+function withAlpha(color: string | undefined, alpha: number, fallback: string) {
+  const source = color || fallback;
+  if (!source.startsWith('#')) return source;
+  const hex = source.slice(1);
+  const normalized = hex.length === 3 ? hex.split('').map((char) => char + char).join('') : hex;
+  const value = Number.parseInt(normalized, 16);
+  if (Number.isNaN(value)) return fallback;
+  const r = (value >> 16) & 255;
+  const g = (value >> 8) & 255;
+  const b = value & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
 
 export function UnsavedChangesProvider({ children }: { children: React.ReactNode }) {
   const configRef = useRef<UnsavedChangesConfig | null>(null);
@@ -137,45 +152,96 @@ export function UnsavedChangesProvider({ children }: { children: React.ReactNode
       {children}
       <Portal>
         <Dialog visible={dialogVisible} onDismiss={closeDialog} dismissable={!discarding} style={styles.dialog}>
-          <Dialog.Icon icon={(dialogConfig?.icon || defaultConfig.icon || 'alert-outline') as any} color={dialogConfig?.iconColor || defaultConfig.iconColor} />
-          <Dialog.Title style={styles.title}>
-            {dialogConfig?.title || defaultConfig.title}
-          </Dialog.Title>
           <Dialog.Content style={styles.content}>
-            <Text variant="bodyMedium" style={styles.message}>
-              {dialogConfig?.message || defaultConfig.message}
-            </Text>
-            {dialogConfig?.warning ? (
-              <Text
-                variant="bodySmall"
-                style={[
-                  styles.warning,
-                  {
-                    color: dialogConfig.warningTextColor || defaultConfig.warningTextColor,
-                    backgroundColor: dialogConfig.warningBackgroundColor || defaultConfig.warningBackgroundColor,
-                    borderColor: dialogConfig.warningBorderColor || defaultConfig.warningBorderColor,
-                  },
-                ]}
-              >
-                {dialogConfig.warning}
+            {dialogConfig?.minimal ? (
+              <Text variant="headlineSmall" style={styles.minimalTitle}>
+                {dialogConfig?.title || defaultConfig.title}
               </Text>
-            ) : null}
+            ) : (
+              <>
+                <View style={styles.header}>
+                  <View
+                    style={[
+                      styles.iconSurface,
+                      {
+                        borderColor: withAlpha(dialogConfig?.iconColor, 0.22, defaultConfig.iconColor || '#2563EB'),
+                        backgroundColor: withAlpha(dialogConfig?.iconColor, 0.1, defaultConfig.iconColor || '#2563EB'),
+                      },
+                    ]}
+                  >
+                    <MaterialCommunityIcons
+                      name={(dialogConfig?.icon || defaultConfig.icon || 'alert-outline') as any}
+                      size={24}
+                      color={dialogConfig?.iconColor || defaultConfig.iconColor}
+                    />
+                  </View>
+                  <View style={styles.titleBlock}>
+                    <Text variant="labelMedium" style={styles.eyebrow}>
+                      Подтверждение перехода
+                    </Text>
+                    <Text variant="headlineSmall" style={styles.title}>
+                      {dialogConfig?.title || defaultConfig.title}
+                    </Text>
+                  </View>
+                </View>
+                <Text variant="bodyMedium" style={styles.message}>
+                  {dialogConfig?.message || defaultConfig.message}
+                </Text>
+                {dialogConfig?.warning ? (
+                  <View
+                    style={[
+                      styles.warning,
+                      {
+                        backgroundColor: dialogConfig.warningBackgroundColor || defaultConfig.warningBackgroundColor,
+                        borderColor: dialogConfig.warningBorderColor || defaultConfig.warningBorderColor,
+                      },
+                    ]}
+                  >
+                    <MaterialCommunityIcons
+                      name="information-outline"
+                      size={17}
+                      color={dialogConfig.warningTextColor || defaultConfig.warningTextColor}
+                    />
+                    <Text
+                      variant="bodySmall"
+                      style={[
+                        styles.warningText,
+                        { color: dialogConfig.warningTextColor || defaultConfig.warningTextColor },
+                      ]}
+                    >
+                      {dialogConfig.warning}
+                    </Text>
+                  </View>
+                ) : null}
+              </>
+            )}
+            <View style={styles.actions}>
+              <Button
+                mode="outlined"
+                onPress={closeDialog}
+                disabled={discarding}
+                textColor={dialogConfig?.cancelButtonTextColor || defaultConfig.cancelButtonTextColor}
+                style={styles.cancelButton}
+                contentStyle={styles.actionButtonContent}
+                labelStyle={styles.actionButtonLabel}
+              >
+                {dialogConfig?.cancelText || defaultConfig.cancelText}
+              </Button>
+              <Button
+                mode="contained"
+                buttonColor={dialogConfig?.confirmButtonColor || defaultConfig.confirmButtonColor}
+                textColor={dialogConfig?.confirmButtonTextColor || defaultConfig.confirmButtonTextColor}
+                onPress={confirmDiscard}
+                loading={discarding}
+                disabled={discarding}
+                style={styles.confirmButton}
+                contentStyle={styles.actionButtonContent}
+                labelStyle={styles.actionButtonLabel}
+              >
+                {dialogConfig?.confirmText || defaultConfig.confirmText}
+              </Button>
+            </View>
           </Dialog.Content>
-          <Dialog.Actions>
-            <Button onPress={closeDialog} disabled={discarding} textColor={dialogConfig?.cancelButtonTextColor || defaultConfig.cancelButtonTextColor}>
-              {dialogConfig?.cancelText || defaultConfig.cancelText}
-            </Button>
-            <Button
-              mode="contained"
-              buttonColor={dialogConfig?.confirmButtonColor || defaultConfig.confirmButtonColor}
-              textColor={dialogConfig?.confirmButtonTextColor || defaultConfig.confirmButtonTextColor}
-              onPress={confirmDiscard}
-              loading={discarding}
-              disabled={discarding}
-            >
-              {dialogConfig?.confirmText || defaultConfig.confirmText}
-            </Button>
-          </Dialog.Actions>
         </Dialog>
       </Portal>
     </UnsavedChangesContext.Provider>
@@ -197,32 +263,102 @@ export function useOptionalUnsavedChanges() {
 const styles = StyleSheet.create({
   dialog: {
     maxWidth: 430,
-    width: '92%',
+    width: '90%',
     alignSelf: 'center',
-    borderRadius: 22,
+    borderRadius: 28,
     backgroundColor: '#FFFFFF',
-  },
-  title: {
-    textAlign: 'center',
-    color: '#0F172A',
-    fontWeight: '900',
+    overflow: 'hidden',
   },
   content: {
-    gap: 10,
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 16,
+    gap: 14,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  iconSurface: {
+    width: 48,
+    height: 48,
+    borderRadius: 16,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  titleBlock: {
+    flex: 1,
+    minWidth: 0,
+  },
+  eyebrow: {
+    color: '#64748B',
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  title: {
+    marginTop: 2,
+    color: '#0F172A',
+    fontSize: 21,
+    lineHeight: 25,
+    fontWeight: '900',
+  },
+  minimalTitle: {
+    color: '#0F172A',
+    fontSize: 22,
+    lineHeight: 27,
+    fontWeight: '900',
+    textAlign: 'center',
+    paddingTop: 6,
+    paddingHorizontal: 4,
   },
   message: {
     color: '#475569',
+    fontSize: 14,
     lineHeight: 20,
-    textAlign: 'center',
   },
   warning: {
-    color: '#B45309',
+    minHeight: 44,
     backgroundColor: '#FFF7ED',
     borderColor: '#FED7AA',
     borderWidth: 1,
-    borderRadius: 12,
+    borderRadius: 14,
     paddingHorizontal: 10,
     paddingVertical: 8,
-    textAlign: 'center',
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  warningText: {
+    flex: 1,
+    minWidth: 0,
+    lineHeight: 18,
+    fontWeight: '700',
+  },
+  actions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingTop: 2,
+  },
+  cancelButton: {
+    flex: 1,
+    borderRadius: 14,
+    borderColor: '#CBD5E1',
+  },
+  confirmButton: {
+    flex: 1,
+    borderRadius: 14,
+  },
+  actionButtonContent: {
+    minHeight: 46,
+  },
+  actionButtonLabel: {
+    marginVertical: 0,
+    fontSize: 14,
+    fontWeight: '900',
   },
 });

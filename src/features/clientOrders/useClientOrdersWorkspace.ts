@@ -400,6 +400,25 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     }));
   }, []);
 
+  const applyOrderDetail = React.useCallback((order: ClientOrder) => {
+    selectedGuidRef.current = order.guid;
+    setSelectedGuid(order.guid);
+    setSelectedOrder(order);
+    setDraft(orderToDraft(order));
+    setDocumentStarted(true);
+    setSelections({
+      organization: order.organization || null,
+      counterparty: order.counterparty || null,
+      agreement: order.agreement || null,
+      contract: order.contract || null,
+      warehouse: order.warehouse || null,
+      deliveryAddress: order.deliveryAddress || null,
+    });
+    setDirty(false);
+    setAutosaveState('idle');
+    setAutosaveError(null);
+  }, []);
+
   const removeItem = React.useCallback((lineKey: string) => {
     patchDraft((prev) => ({ ...prev, items: prev.items.filter((item) => item.key !== lineKey) }));
   }, [patchDraft]);
@@ -514,20 +533,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     try {
       const order = await getClientOrder(guid);
       if (detailRequestIdRef.current !== requestId || selectedGuidRef.current !== guid) return null;
-      setSelectedOrder(order);
-      setDraft(orderToDraft(order));
-      setDocumentStarted(true);
-      setSelections({
-        organization: order.organization || null,
-        counterparty: order.counterparty || null,
-        agreement: order.agreement || null,
-        contract: order.contract || null,
-        warehouse: order.warehouse || null,
-        deliveryAddress: order.deliveryAddress || null,
-      });
-      setDirty(false);
-      setAutosaveState('idle');
-      setAutosaveError(null);
+      applyOrderDetail(order);
       return order;
     } catch (e: any) {
       if (detailRequestIdRef.current !== requestId) return null;
@@ -536,7 +542,13 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     } finally {
       if (detailRequestIdRef.current === requestId) setLoadingDetail(false);
     }
-  }, []);
+  }, [applyOrderDetail]);
+
+  const cancelDetailLoading = React.useCallback(() => {
+    detailRequestIdRef.current += 1;
+    selectedGuidRef.current = selectedGuid;
+    setLoadingDetail(false);
+  }, [selectedGuid]);
 
   const applyResolvedDefaults = React.useCallback(async (organizationGuid: string, counterpartyGuid: string) => {
     if (!organizationGuid || !counterpartyGuid) return;
@@ -624,14 +636,6 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         ? await updateClientOrder(draft.guid, { ...payload, revision: draft.revision })
         : await createClientOrder(payload);
 
-      if (!options?.silent) {
-        notify({
-          type: 'success',
-          title: draft.guid ? 'Заказ обновлен' : 'Заказ создан',
-          message: draft.guid ? 'Изменения сохранены.' : 'Черновик сохранен.',
-        });
-      }
-
       setSelectedGuid(order.guid);
       setSelectedOrder(order);
       mergeSavedOrderIntoDraft(order);
@@ -655,14 +659,11 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       setError(message);
       setAutosaveError(message);
       setAutosaveState('error');
-      if (!options?.silent) {
-        notify({ type: 'error', title: 'Ошибка сохранения', message });
-      }
       return null;
     } finally {
       setSaving(false);
     }
-  }, [applySavedOrderToList, draft, mergeSavedOrderIntoDraft, notify, readOnly, selections]);
+  }, [applySavedOrderToList, draft, mergeSavedOrderIntoDraft, readOnly, selections]);
 
   React.useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -717,19 +718,24 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [confirmDiscard, dirty, draft.guid, draftMode, resetDraftToBase, saveDraft, selectedOrder, validation.blockingMessage]);
 
   const selectOrder = React.useCallback(async (guid: string) => {
-    if (guid === selectedGuid) return true;
+    if (guid === selectedGuid && selectedOrder?.guid === guid) return true;
     const canContinue = await confirmDiscardIfNeeded();
     if (!canContinue) return false;
-    setDocumentStarted(true);
-    setSelectedGuid(guid);
+    selectedGuidRef.current = guid;
+    const order = await loadDetail(guid);
+    if (!order) {
+      selectedGuidRef.current = selectedGuid;
+      return false;
+    }
     return true;
-  }, [confirmDiscardIfNeeded, selectedGuid]);
+  }, [confirmDiscardIfNeeded, loadDetail, selectedGuid, selectedOrder?.guid]);
 
   const createNewOrder = React.useCallback(async () => {
     const canContinue = await confirmDiscardIfNeeded();
-    if (!canContinue) return;
+    if (!canContinue) return false;
     resetDraftToBase();
     setDocumentStarted(true);
+    return true;
   }, [confirmDiscardIfNeeded, resetDraftToBase]);
 
   const setOrganization = React.useCallback(async (organization: ClientOrderOrganization | null) => {
@@ -920,11 +926,25 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }), [draft.deliveryDate, selections]);
 
   const addProduct = React.useCallback((product: ClientOrderProduct) => {
+    const existing = draft.items.find((item) => item.productGuid === product.guid);
+    if (existing) return existing.key;
+    const nextItem = buildNewItem(product);
     patchDraft((prev) => {
       if (prev.items.some((item) => item.productGuid === product.guid)) return prev;
-      return { ...prev, items: [...prev.items, buildNewItem(product)] };
+      return { ...prev, items: [...prev.items, nextItem] };
     });
-  }, [patchDraft]);
+    return nextItem.key;
+  }, [draft.items, patchDraft]);
+
+  const addDraftItem = React.useCallback((draftItem: DraftItem) => {
+    const existing = draft.items.find((item) => item.productGuid === draftItem.productGuid);
+    if (existing) return existing.key;
+    patchDraft((prev) => {
+      if (prev.items.some((item) => item.productGuid === draftItem.productGuid)) return prev;
+      return { ...prev, items: [...prev.items, draftItem] };
+    });
+    return draftItem.key;
+  }, [draft.items, patchDraft]);
 
   const setItemPriceType = React.useCallback((lineKey: string, priceType: ClientOrderPriceTypeOption | null) => {
     const target = draft.items.find((item) => item.key === lineKey);
@@ -1041,7 +1061,6 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     if (!validation.canSubmit) {
       const message = validation.blockingMessage || 'Исправьте ошибки в строках заказа.';
       setError(message);
-      notify({ type: 'error', title: 'Заказ не готов к отправке', message });
       return;
     }
     let targetGuid = draft.guid || selectedGuid;
@@ -1055,7 +1074,6 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     try {
       setSubmitting(true);
       const order = await submitClientOrder(targetGuid, revision);
-      notify({ type: 'success', title: 'Заказ отправлен', message: 'Документ передан в очередь 1С.' });
       await loadOrders('reset');
       setSelectedGuid(order.guid);
       setSelectedOrder(order);
@@ -1065,11 +1083,10 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     } catch (e: any) {
       const message = userErrorMessage(e, 'Не удалось отправить заказ.');
       setError(message);
-      notify({ type: 'error', title: 'Ошибка отправки', message });
     } finally {
       setSubmitting(false);
     }
-  }, [dirty, draft.guid, draft.revision, loadOrders, notify, saveDraft, selectedGuid, validation.blockingMessage, validation.canSubmit]);
+  }, [dirty, draft.guid, draft.revision, loadOrders, saveDraft, selectedGuid, validation.blockingMessage, validation.canSubmit]);
 
   const runCancel = React.useCallback(async (target?: { guid: string; revision: number }) => {
     const targetGuid = target?.guid || draft.guid;
@@ -1154,6 +1171,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     createDocument: createNewOrder,
     hasMoreOrders,
     loadMoreOrders: () => loadOrders('append'),
+    refreshOrders: () => loadOrders('reset'),
     filters,
     setFilters,
     clearFilters: () => setFilters(emptyFilters()),
@@ -1184,6 +1202,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     removeItem,
     clearItems,
     addProduct,
+    addDraftItem,
     searchCounterparties: searchClientOrderCounterparties,
     searchAgreements: searchClientOrderAgreements,
     searchContracts: searchClientOrderContracts,
@@ -1194,6 +1213,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     loadingOrders,
     loadingMoreOrders,
     loadingDetail,
+    cancelDetailLoading,
     loadingDefaults,
     loadingSettings,
     savingSettings,

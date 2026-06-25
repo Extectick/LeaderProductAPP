@@ -61,6 +61,8 @@ type Props = {
   surfaceVisible?: boolean;
   entranceMotion?: 'slide' | 'fade' | 'none';
   horizontalPadding?: number;
+  variant?: 'default' | 'document';
+  showServerStatus?: boolean;
 };
 
 type HeaderOffsetOptions = {
@@ -96,6 +98,8 @@ export function AppHeader({
   surfaceVisible = true,
   entranceMotion = 'slide',
   horizontalPadding,
+  variant = 'default',
+  showServerStatus = true,
 }: Props) {
   const { top } = useSafeAreaInsets();
   const { width } = useWindowDimensions();
@@ -104,6 +108,7 @@ export function AppHeader({
   const isDark = theme === 'dark';
   const isAndroid = Platform.OS === 'android';
   const isMobileWidth = width < 720;
+  const isDocument = variant === 'document';
 
   const background = useThemeColor({}, 'background');
   const textColor = useThemeColor({}, 'text');
@@ -112,7 +117,7 @@ export function AppHeader({
   const sidePadding = horizontalPadding ?? (Platform.OS === 'web' ? (tight ? 12 : 16) : 12);
   const topPadding = Platform.OS === 'web' ? HEADER_TOP_PADDING_WEB : top + HEADER_TOP_PADDING_NATIVE_EXTRA;
   const useCompactHeaderText = tight || compact || dense || isMobileWidth;
-  const titleSize = dense ? 15 : useCompactHeaderText ? 16 : Platform.OS === 'web' ? 18 : 19;
+  const titleSize = isDocument ? 15 : dense ? 15 : useCompactHeaderText ? 16 : Platform.OS === 'web' ? 18 : 19;
   const subtitleSize = useCompactHeaderText ? 11 : 12;
   const titleLines = useCompactHeaderText ? 1 : 2;
   const subtitleLines = useCompactHeaderText ? 1 : compact ? 1 : 2;
@@ -142,8 +147,8 @@ export function AppHeader({
   }, [setHeaderBottomOffset]);
 
   const headerContent = (
-    <View style={[styles.card, compact && styles.cardCompact, tight && styles.cardTight, dense && styles.cardDense]}>
-      <View style={[styles.row, tight && styles.rowTight, dense && styles.rowDense]}>
+    <View style={[styles.card, compact && styles.cardCompact, tight && styles.cardTight, dense && styles.cardDense, isDocument && styles.cardDocument]}>
+      <View style={[styles.row, tight && styles.rowTight, dense && styles.rowDense, isDocument && styles.rowDocument]}>
         {showBack ? (
           <Pressable
             accessibilityRole="button"
@@ -191,16 +196,29 @@ export function AppHeader({
         </View>
 
         <View style={[styles.rightCluster, tight && styles.rightClusterTight, dense && styles.rightClusterDense]}>
-          <ServerStatusIndicator />
+          {showServerStatus ? <ServerStatusIndicator /> : null}
           {rightSlot}
         </View>
       </View>
 
-      {bottomSlot ? <View style={[styles.bottomSlot, tight && styles.bottomSlotTight]}>{bottomSlot}</View> : null}
+      {bottomSlot ? <View style={[styles.bottomSlot, tight && styles.bottomSlotTight, isDocument && styles.bottomSlotDocument]}>{bottomSlot}</View> : null}
     </View>
   );
 
-  const shellContent = surfaceVisible ? (
+  const shellContent = isDocument ? (
+    <View style={styles.documentShell}>
+      <LiquidGlassSurface
+        borderColor={borderColor}
+        overlayColor={surfaceOverlayColor}
+        blurTint={blurTint}
+        blurIntensity={blurIntensity}
+        webBackdropFilter="blur(22px) saturate(160%)"
+        style={styles.documentGlassShell}
+      >
+        {headerContent}
+      </LiquidGlassSurface>
+    </View>
+  ) : surfaceVisible ? (
     <View style={[styles.shadowShell, dense && styles.shadowShellDense]}>
       <LiquidGlassSurface
         borderColor={borderColor}
@@ -245,7 +263,7 @@ export function AppHeader({
     <View
       pointerEvents="box-none"
       onLayout={handleWrapLayout}
-      style={[styles.wrap, tight && styles.wrapTight, { paddingTop: topPadding, paddingHorizontal: sidePadding }]}
+      style={[styles.wrap, tight && styles.wrapTight, isDocument && styles.wrapDocument, { paddingTop: topPadding, paddingHorizontal: sidePadding }]}
     >
       {animatedShell}
     </View>
@@ -258,6 +276,9 @@ const styles = StyleSheet.create({
   },
   wrapTight: {
     paddingBottom: 8,
+  },
+  wrapDocument: {
+    paddingBottom: 0,
   },
   shadowShell: {
     alignSelf: 'stretch',
@@ -321,6 +342,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
   },
+  cardDocument: {
+    paddingHorizontal: 9,
+    paddingTop: 6,
+    paddingBottom: 9,
+  },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -331,6 +357,9 @@ const styles = StyleSheet.create({
   },
   rowDense: {
     gap: 8,
+  },
+  rowDocument: {
+    minHeight: 38,
   },
   textWrap: {
     flex: 1,
@@ -395,5 +424,30 @@ const styles = StyleSheet.create({
   },
   bottomSlotTight: {
     marginTop: 6,
+  },
+  bottomSlotDocument: {
+    marginTop: 8,
+  },
+  documentShell: {
+    alignSelf: 'stretch',
+    width: '100%',
+    borderRadius: 18,
+    borderBottomLeftRadius: 18,
+    borderBottomRightRadius: 18,
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 9,
+    ...(Platform.select({
+      web: {
+        boxShadow: '0 8px 18px rgba(15, 23, 42, 0.14)',
+      } as ViewStyle,
+    }) ?? {}),
+  },
+  documentGlassShell: {
+    borderRadius: 18,
+    borderBottomLeftRadius: 18,
+    borderBottomRightRadius: 18,
   },
 });

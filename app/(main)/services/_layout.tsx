@@ -8,7 +8,7 @@ import { useServicesData } from '@/src/features/services/hooks/useServicesData';
 import { useServerStatus } from '@/src/shared/network/useServerStatus';
 import { useOptionalLastServiceRoute } from '@/src/features/navigation/LastServiceRouteContext';
 import { useOptionalUnsavedChanges } from '@/src/features/navigation/UnsavedChangesContext';
-import { ServicesHeaderSlotProvider } from '@/src/features/services/headerSlotContext';
+import { ServicesHeaderSlotProvider, type ServicesHeaderOverride } from '@/src/features/services/headerSlotContext';
 import ServicesCatalogStatusAction from '@/src/features/services/ui/ServicesCatalogStatusAction';
 
 type HeaderMeta = {
@@ -57,10 +57,12 @@ export default function ServicesLayout() {
   const accessRefreshRef = useRef<string | null>(null);
   const [trackingHeaderBottomSlot, setTrackingHeaderBottomSlot] = React.useState<React.ReactNode | null>(null);
   const [trackingHeaderRightSlot, setTrackingHeaderRightSlot] = React.useState<React.ReactNode | null>(null);
+  const [headerOverride, setHeaderOverride] = React.useState<ServicesHeaderOverride | null>(null);
   const headerSlotContextValue = React.useMemo(
     () => ({
       setHeaderBottomSlot: setTrackingHeaderBottomSlot,
       setHeaderRightSlot: setTrackingHeaderRightSlot,
+      setHeaderOverride,
     }),
     []
   );
@@ -90,34 +92,39 @@ export default function ServicesLayout() {
       void loadServices(true);
       return;
     }
-    if (!deniedByAccess && !deniedByOffline) return;
+    if (deniedByOffline) {
+      const alertKey = `${serviceKey}-offline`;
+      if (lastAlertRef.current !== alertKey) {
+        lastAlertRef.current = alertKey;
+        notify({
+          type: 'warning',
+          title: 'Нет связи с сервером',
+          message: 'Текущий сервис останется открытым. Данные обновятся после восстановления соединения.',
+          icon: 'cloud-offline-outline',
+          durationMs: 5000,
+        });
+      }
+      return;
+    }
 
-    const reason = deniedByOffline ? 'offline' : 'denied';
+    if (!deniedByAccess) return;
+
+    const reason = 'denied';
     const alertKey = `${serviceKey}-${reason}`;
     if (lastAlertRef.current !== alertKey) {
       lastAlertRef.current = alertKey;
-      notify(
-        deniedByOffline
-          ? {
-              type: 'warning',
-              title: 'Нет связи с сервером',
-              message: 'Для открытия облачного сервиса нужна связь с сервером.',
-              icon: 'cloud-offline-outline',
-              durationMs: 5000,
-            }
-          : {
-              type: 'error',
-              title: 'Ошибка',
-              message: 'Сервис временно недоступен',
-              icon: 'close-circle-outline',
-              durationMs: 5200,
-            }
-      );
+      notify({
+        type: 'error',
+        title: 'Ошибка',
+        message: 'Сервис временно недоступен',
+        icon: 'close-circle-outline',
+        durationMs: 5200,
+      });
     }
     router.replace('/services');
   }, [deniedByAccess, deniedByOffline, loadServices, loading, missingServiceMetadata, notify, router, serviceKey]);
 
-  const blocked = !!serviceKey && !loading && (deniedByAccess || deniedByOffline);
+  const blocked = !!serviceKey && !loading && deniedByAccess;
   if (serviceKey && blocked) return null;
 
   const showCloudServiceInHeader = Boolean(serviceKey && guardedService?.kind === 'CLOUD');
@@ -193,19 +200,24 @@ export default function ServicesLayout() {
             runBack();
           };
 
-          const showCloudInHeader = showCloudServiceInHeader && !showCreateInHeader;
-          const shouldRenderRight = showCatalogStatusAction || showCreateInHeader || showCloudInHeader;
           const showTrackingBottomSlot = /^\/services\/tracking(?:\/.*)?$/.test(currentPath);
           const isClientOrdersPath = /^\/services\/client_orders(?:\/.*)?$/.test(currentPath);
+          const showCloudInHeader = showCloudServiceInHeader && !showCreateInHeader && !isClientOrdersPath;
+          const shouldRenderRight = showCatalogStatusAction || showCreateInHeader || showCloudInHeader;
           const rightSlot = shouldRenderRight ? (
             <View style={styles.rightHeaderRow}>
               {showCatalogStatusAction ? (
                 <ServicesCatalogStatusAction loadServices={loadServices} />
               ) : null}
               {showCloudInHeader ? (
-                <View style={styles.cloudHeaderBadge}>
-                  <Ionicons name="cloud-outline" size={13} color="#1E40AF" />
-                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Действия сервиса"
+                  onPress={() => undefined}
+                  style={({ pressed }) => [styles.cloudHeaderAction, pressed ? styles.cloudHeaderActionPressed : null]}
+                >
+                  <Ionicons name="ellipsis-horizontal" size={17} color="#1E40AF" />
+                </Pressable>
               ) : null}
               {showCreateInHeader ? (
                 <Pressable
@@ -223,6 +235,15 @@ export default function ServicesLayout() {
           const resolvedRightSlot = showTrackingBottomSlot
             ? (trackingHeaderRightSlot ?? rightSlot)
             : rightSlot;
+          const activeHeaderOverride = isClientOrdersPath ? headerOverride : null;
+          const overrideHasRightSlot = !!activeHeaderOverride && Object.prototype.hasOwnProperty.call(activeHeaderOverride, 'rightSlot');
+          const overrideHasBottomSlot = !!activeHeaderOverride && Object.prototype.hasOwnProperty.call(activeHeaderOverride, 'bottomSlot');
+          const resolvedHeaderRightSlot = overrideHasRightSlot ? activeHeaderOverride?.rightSlot : resolvedRightSlot;
+          const resolvedHeaderBottomSlot = overrideHasBottomSlot
+            ? activeHeaderOverride?.bottomSlot
+            : showTrackingBottomSlot
+              ? trackingHeaderBottomSlot
+              : undefined;
 
           return {
             headerTransparent: true,
@@ -231,22 +252,27 @@ export default function ServicesLayout() {
             headerStyle: { backgroundColor: 'transparent' },
             header: () => (
               <AppHeader
-                title={meta.title}
-                subtitle={isClientOrdersPath ? undefined : meta.subtitle}
-                icon={meta.icon}
-                showBack={shouldShowBack}
-                onBack={shouldShowBack ? onBack : undefined}
-                tight={showTrackingBottomSlot}
-                dense={isClientOrdersPath}
-                compact={isClientOrdersPath}
-                horizontalPadding={isClientOrdersPath ? 6 : undefined}
-                rightSlot={resolvedRightSlot}
-                bottomSlot={showTrackingBottomSlot ? trackingHeaderBottomSlot : undefined}
-                surfaceVisible={!isCatalogPath}
-                entranceMotion={isCatalogPath ? 'fade' : 'slide'}
+                title={activeHeaderOverride?.title ?? meta.title}
+                subtitle={activeHeaderOverride?.subtitle ?? (isClientOrdersPath ? undefined : meta.subtitle)}
+                icon={activeHeaderOverride?.icon ?? meta.icon}
+                showBack={activeHeaderOverride?.showBack ?? shouldShowBack}
+                onBack={
+                  activeHeaderOverride?.onBack ??
+                  ((activeHeaderOverride?.showBack ?? shouldShowBack) ? onBack : undefined)
+                }
+                tight={activeHeaderOverride?.tight ?? showTrackingBottomSlot}
+                dense={activeHeaderOverride?.dense ?? isClientOrdersPath}
+                compact={activeHeaderOverride?.compact ?? isClientOrdersPath}
+                horizontalPadding={activeHeaderOverride?.horizontalPadding ?? (isClientOrdersPath ? 6 : undefined)}
+                rightSlot={resolvedHeaderRightSlot}
+                bottomSlot={resolvedHeaderBottomSlot}
+                surfaceVisible={activeHeaderOverride?.surfaceVisible ?? !isCatalogPath}
+                entranceMotion={activeHeaderOverride?.entranceMotion ?? (isCatalogPath ? 'fade' : 'slide')}
+                variant={activeHeaderOverride?.variant ?? 'default'}
+                showServerStatus={activeHeaderOverride?.showServerStatus ?? !isCatalogPath}
               />
             ),
-            animation: 'ios_from_left',
+            animation: isClientOrdersPath ? 'fade' : 'ios_from_left',
           };
         }}
       />
@@ -260,15 +286,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-  cloudHeaderBadge: {
-    width: 30,
-    height: 30,
-    borderRadius: 999,
+  cloudHeaderAction: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: '#BFDBFE',
     backgroundColor: '#EFF6FF',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  cloudHeaderActionPressed: {
+    opacity: 0.78,
   },
   createBtn: {
     minHeight: 34,

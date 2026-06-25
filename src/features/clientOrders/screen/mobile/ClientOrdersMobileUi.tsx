@@ -3,6 +3,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import React from 'react';
 import { Animated, BackHandler, Keyboard, PanResponder, Platform, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
 import type { ScrollViewProps, TextInputProps } from 'react-native';
+import Reanimated, { Extrapolation, interpolate, useAnimatedStyle } from 'react-native-reanimated';
 import {
   Button as PaperButton,
   Card,
@@ -18,7 +19,6 @@ import {
 } from 'react-native-paper';
 
 const nativeBottomSheet = Platform.OS === 'web' ? null : require('@gorhom/bottom-sheet');
-const BottomSheetBackdrop = nativeBottomSheet?.BottomSheetBackdrop;
 const BottomSheetModal = nativeBottomSheet?.BottomSheetModal;
 const BottomSheetScrollView = nativeBottomSheet?.BottomSheetScrollView;
 const BottomSheetTextInput = nativeBottomSheet?.BottomSheetTextInput;
@@ -29,6 +29,7 @@ type ConfirmDialogState = {
   confirmLabel: string;
   cancelLabel?: string;
   alternateLabel?: string;
+  hideCancel?: boolean;
   destructive?: boolean;
   onConfirm: () => void | Promise<void>;
   onAlternate?: () => void | Promise<void>;
@@ -198,29 +199,58 @@ export function ConfirmDialog({
 
   return (
     <Portal>
-      <Dialog visible={!!state} onDismiss={onDismiss} style={styles.dialogPaper}>
-        <Dialog.Title>{state?.title || ''}</Dialog.Title>
-        <Dialog.Content>
-          <Text style={styles.orderMeta}>{state?.message || ''}</Text>
-        </Dialog.Content>
-        <Dialog.Actions>
-          <PaperButton onPress={onDismiss} disabled={confirming}>
-            {state?.cancelLabel || 'Отмена'}
-          </PaperButton>
-          {state?.alternateLabel && state.onAlternate ? (
-            <PaperButton onPress={() => void alternate()} disabled={confirming} textColor="#DC2626">
-              {state.alternateLabel}
-            </PaperButton>
+      <Dialog visible={!!state} onDismiss={onDismiss} style={styles.confirmDialogPaper}>
+        <Dialog.Content style={styles.confirmDialogContent}>
+          <Text variant="headlineSmall" style={styles.confirmDialogTitle}>
+            {state?.title || ''}
+          </Text>
+          {state?.message ? (
+            <Text variant="bodyMedium" style={styles.confirmDialogMessage}>
+              {state.message}
+            </Text>
           ) : null}
-          <PaperButton
-            onPress={() => void confirm()}
-            loading={confirming}
-            disabled={confirming}
-            textColor={state?.destructive ? '#DC2626' : undefined}
-          >
-            {state?.confirmLabel || 'Продолжить'}
-          </PaperButton>
-        </Dialog.Actions>
+          <View style={styles.confirmDialogActions}>
+            {!state?.hideCancel ? (
+              <PaperButton
+                mode="outlined"
+                onPress={onDismiss}
+                disabled={confirming}
+                textColor="#2563EB"
+                style={styles.confirmDialogTextButton}
+                contentStyle={styles.confirmDialogButtonContent}
+                labelStyle={styles.confirmDialogButtonLabel}
+              >
+                {state?.cancelLabel || 'Отмена'}
+              </PaperButton>
+            ) : null}
+            {state?.alternateLabel && state.onAlternate ? (
+              <PaperButton
+                mode="outlined"
+                onPress={() => void alternate()}
+                disabled={confirming}
+                textColor="#DC2626"
+                style={styles.confirmDialogTextButton}
+                contentStyle={styles.confirmDialogButtonContent}
+                labelStyle={styles.confirmDialogButtonLabel}
+              >
+                {state.alternateLabel}
+              </PaperButton>
+            ) : null}
+            <PaperButton
+              mode="contained"
+              onPress={() => void confirm()}
+              loading={confirming}
+              disabled={confirming}
+              buttonColor={state?.destructive ? '#DC2626' : '#2563EB'}
+              textColor="#FFFFFF"
+              style={styles.confirmDialogPrimaryButton}
+              contentStyle={styles.confirmDialogButtonContent}
+              labelStyle={styles.confirmDialogButtonLabel}
+            >
+              {state?.confirmLabel || 'Продолжить'}
+            </PaperButton>
+          </View>
+        </Dialog.Content>
       </Dialog>
     </Portal>
   );
@@ -270,6 +300,7 @@ type PickerBottomSheetProps = {
   sheetStyle?: any;
   headerContent?: React.ReactNode | ((close: () => void) => React.ReactNode);
   overlayHandle?: boolean;
+  closeOnBackdropPress?: boolean;
   contentScrollOffset?: number;
   enableContentDrag?: boolean;
   closeDragDistance?: number;
@@ -277,6 +308,7 @@ type PickerBottomSheetProps = {
   preferredHeight?: number;
   minHeight?: number;
   initialSnapIndex?: number;
+  keyboardTopInset?: number;
   keyboardBehavior?: 'interactive' | 'extend' | 'fillParent';
   keyboardBlurBehavior?: 'none' | 'restore';
   androidKeyboardInputMode?: 'adjustPan' | 'adjustResize';
@@ -298,6 +330,39 @@ export const PickerBottomSheetTextInput = (Platform.OS === 'web' ? undefined : B
   | React.ComponentType<TextInputProps>
   | undefined;
 
+function PickerBottomSheetNativeBackdrop({
+  animatedIndex,
+  closeOnBackdropPress,
+  onClose,
+}: {
+  animatedIndex?: { value: number };
+  closeOnBackdropPress: boolean;
+  onClose: () => void;
+}) {
+  const animatedStyle = useAnimatedStyle(() => {
+    const index = animatedIndex?.value ?? -1;
+    return {
+      opacity: interpolate(index, [-1, 0], [0, 1], Extrapolation.CLAMP),
+    };
+  }, [animatedIndex]);
+
+  return (
+    <Reanimated.View
+      pointerEvents={closeOnBackdropPress ? 'auto' : 'none'}
+      style={[pickerBottomSheetDefaultStyles.pickerBottomSheetNativeBackdrop, animatedStyle]}
+    >
+      {closeOnBackdropPress ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Закрыть панель"
+          onPressIn={onClose}
+          style={StyleSheet.absoluteFillObject}
+        />
+      ) : null}
+    </Reanimated.View>
+  );
+}
+
 function NativePickerBottomSheet({
   styles,
   visible,
@@ -311,12 +376,14 @@ function NativePickerBottomSheet({
   sheetStyle,
   headerContent,
   overlayHandle = false,
+  closeOnBackdropPress = true,
   preferredHeight,
   minHeight = 360,
   initialSnapIndex = 0,
-  keyboardBehavior = 'fillParent',
+  keyboardTopInset = 0,
+  keyboardBehavior = 'interactive',
   keyboardBlurBehavior = 'restore',
-  androidKeyboardInputMode = 'adjustResize',
+  androidKeyboardInputMode = 'adjustPan',
   enableBlurKeyboardOnGesture = true,
 }: PickerBottomSheetProps) {
   const ui = styles || pickerBottomSheetDefaultStyles;
@@ -368,21 +435,31 @@ function NativePickerBottomSheet({
 
   const renderBackdrop = React.useCallback(
     (props: any) => (
-      <BottomSheetBackdrop
-        {...props}
-        appearsOnIndex={0}
-        disappearsOnIndex={-1}
-        opacity={0.28}
-        pressBehavior="close"
+      <PickerBottomSheetNativeBackdrop
+        animatedIndex={props.animatedIndex}
+        closeOnBackdropPress={closeOnBackdropPress}
+        onClose={requestClose}
       />
     ),
-    []
+    [closeOnBackdropPress, requestClose]
   );
 
   React.useEffect(() => {
-    if (visible) {
-      presentedRef.current = true;
+    if (!visible) {
+      presentedRef.current = false;
+      return undefined;
+    }
+
+    presentedRef.current = true;
+    const frame = requestAnimationFrame(() => {
       bottomSheetRef.current?.present();
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [visible]);
+
+  React.useEffect(() => {
+    if (visible) {
       return;
     }
     if (presentedRef.current) {
@@ -412,7 +489,7 @@ function NativePickerBottomSheet({
 
   const renderHandle = React.useCallback(
     () => (
-      <View style={ui.pickerBottomSheetNativeHandle}>
+      <View style={[ui.pickerBottomSheetNativeHandle, overlayHandle && ui.pickerBottomSheetNativeHandleOverlay]}>
         <View style={[ui.pickerBottomSheetHandle, overlayHandle && ui.pickerBottomSheetHandleOverlay]} />
         {showHeader ? (
           <View style={ui.pickerBottomSheetHeader}>
@@ -443,6 +520,8 @@ function NativePickerBottomSheet({
     </>
   );
 
+  if (!visible) return null;
+
   return (
     <BottomSheetModal
       ref={bottomSheetRef}
@@ -455,6 +534,7 @@ function NativePickerBottomSheet({
       keyboardBehavior={keyboardBehavior}
       keyboardBlurBehavior={keyboardBlurBehavior}
       android_keyboardInputMode={androidKeyboardInputMode}
+      topInset={Math.max(0, keyboardTopInset)}
       enableBlurKeyboardOnGesture={enableBlurKeyboardOnGesture}
       overDragResistanceFactor={2.2}
       backdropComponent={renderBackdrop}
@@ -482,6 +562,7 @@ function LegacyPickerBottomSheet({
   sheetStyle,
   headerContent,
   overlayHandle = false,
+  closeOnBackdropPress = true,
   contentScrollOffset = 0,
   enableContentDrag = false,
   closeDragDistance = 48,
@@ -630,18 +711,21 @@ function LegacyPickerBottomSheet({
         pointerEvents={visible ? 'box-none' : 'none'}
       >
         <Animated.View
+          pointerEvents={closeOnBackdropPress ? 'auto' : 'none'}
           style={[
             pickerBottomSheetDefaultStyles.pickerBottomSheetBackdrop,
             ui.pickerBottomSheetBackdrop,
             { opacity: backdropOpacity },
           ]}
         >
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Закрыть панель"
-            onPress={closeWithAnimation}
-            style={StyleSheet.absoluteFillObject}
-          />
+          {closeOnBackdropPress ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Закрыть панель"
+              onPress={closeWithAnimation}
+              style={StyleSheet.absoluteFillObject}
+            />
+          ) : null}
         </Animated.View>
         <Animated.View
           style={[
@@ -699,6 +783,7 @@ function LegacyPickerBottomSheet({
 const pickerBottomSheetDefaultStyles = StyleSheet.create({
   pickerBottomSheetOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 14 },
   pickerBottomSheetBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(15,23,42,0.18)' },
+  pickerBottomSheetNativeBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(15,23,42,0.18)' },
   pickerBottomSheetWrap: { position: 'absolute', zIndex: 14, bottom: 0 },
   pickerBottomSheet: {
     width: '100%',
@@ -725,6 +810,7 @@ const pickerBottomSheetDefaultStyles = StyleSheet.create({
   pickerBottomSheetNativeBackground: { backgroundColor: '#FFFFFF', borderTopLeftRadius: 24, borderTopRightRadius: 24 },
   pickerBottomSheetNativeHandle: { paddingTop: 8, backgroundColor: '#FFFFFF', borderTopLeftRadius: 24, borderTopRightRadius: 24 },
   pickerBottomSheetNativeContent: { flex: 1, minHeight: 0, backgroundColor: '#FFFFFF' },
-  pickerBottomSheetHandleOverlay: {},
+  pickerBottomSheetNativeHandleOverlay: { position: 'absolute', top: 0, left: 0, right: 0, height: 0, paddingTop: 0, backgroundColor: 'transparent', zIndex: 10 },
+  pickerBottomSheetHandleOverlay: { position: 'absolute', top: 10, left: '50%', marginLeft: -18, marginBottom: 0, zIndex: 10 },
   flatPressed: { opacity: 0.78 },
 });

@@ -1159,7 +1159,8 @@ export default function ClientOrdersWebScreen() {
   const showInlineEditorErrors = !isSinglePane && effectiveEditorPaneWidth >= 1180 && inlineEditorErrorMessages.length > 0;
 
   const createDocumentFromList = React.useCallback(async () => {
-    await workspace.createDocument();
+    const created = await workspace.createDocument();
+    if (!created) return;
     setWebEditorSection('header');
     if (isSinglePane) setResponsivePane('editor');
   }, [isSinglePane, workspace]);
