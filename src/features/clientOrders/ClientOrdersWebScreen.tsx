@@ -5,6 +5,7 @@ import {
   displayedUnitPriceToBasePriceInput,
   formatDateTime,
   formatMoney,
+  getClientOrderItemsCount,
   getDisplayedUnitPriceValue,
   getClientOrdersResponsiveMetrics,
   getOrderDisplayStatus,
@@ -1939,7 +1940,7 @@ export default function ClientOrdersWebScreen() {
                             {formatMoney(order.totalAmount || 0, order.currency)}
                           </Typography>
                           <Typography sx={{ fontSize: 9.5, color: '#475569', fontWeight: 900, borderRadius: '999px', bgcolor: '#F1F5F9', px: 0.65, py: 0.15, lineHeight: 1.25 }}>
-                            {order.itemsCount ?? order.items.length ?? 0} поз.
+                            {getClientOrderItemsCount(order)} поз.
                           </Typography>
                           <Typography sx={{ fontSize: 9.5, color: '#475569', fontWeight: 900, borderRadius: '999px', bgcolor: '#F1F5F9', px: 0.65, py: 0.15, lineHeight: 1.25 }}>
                             Отгр. {formatDateOnly(order.deliveryDate)}

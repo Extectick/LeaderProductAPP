@@ -475,8 +475,19 @@ export function getOrderActivityAt(order: ClientOrder) {
   return order.updatedAt || order.queuedAt || order.sentTo1cAt || order.createdAt || '';
 }
 
+export function getClientOrderItems(order?: Pick<ClientOrder, 'items'> | null) {
+  return Array.isArray((order as any)?.items) ? (order as ClientOrder).items : [];
+}
+
+export function getClientOrderItemsCount(order?: Pick<ClientOrder, 'items' | 'itemsCount'> | null) {
+  const explicit = Number((order as any)?.itemsCount);
+  if (Number.isFinite(explicit) && explicit >= 0) return explicit;
+  return getClientOrderItems(order as any).length;
+}
+
 export function orderToDraft(order: ClientOrder): DraftOrder {
-  const headerPriceType = order.priceType ?? order.agreement?.priceType ?? order.items.find((item) => item.priceType?.guid)?.priceType ?? null;
+  const orderItems = getClientOrderItems(order);
+  const headerPriceType = order.priceType ?? order.agreement?.priceType ?? orderItems.find((item) => item.priceType?.guid)?.priceType ?? null;
   return {
     guid: order.guid,
     revision: order.revision,
@@ -492,7 +503,7 @@ export function orderToDraft(order: ClientOrder): DraftOrder {
     priceTypeGuid: headerPriceType?.guid ?? null,
     priceTypeName: headerPriceType?.name ?? null,
     generalDiscountPercent: asString(order.generalDiscountPercent),
-    items: order.items.map((item: ClientOrderItem) => ({
+    items: orderItems.map((item: ClientOrderItem) => ({
       key: makeKey(),
       productGuid: item.product.guid,
       productName: item.product.name,

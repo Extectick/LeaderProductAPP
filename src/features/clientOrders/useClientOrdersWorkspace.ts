@@ -39,6 +39,8 @@ import {
   computeDraftTotal,
   DEFAULT_ORDER_CURRENCY,
   emptyDraft,
+  getClientOrderItems,
+  getClientOrderItemsCount,
   getOrderActivityAt,
   orderToDraft,
   STATUS_LABELS,
@@ -225,7 +227,7 @@ function parseOrderDate(value: string | null | undefined) {
 function orderHasPriceType(order: ClientOrder, priceTypeGuid: string) {
   if (!priceTypeGuid) return true;
   if (order.priceType?.guid === priceTypeGuid) return true;
-  return order.items.some((item) => item.priceType?.guid === priceTypeGuid);
+  return getClientOrderItems(order).some((item) => item.priceType?.guid === priceTypeGuid);
 }
 
 function orderHasProblem(order: ClientOrder) {
@@ -261,7 +263,7 @@ function orderMatchesFilters(order: ClientOrder, filters: ClientOrdersFilters) {
   const amountMax = parseFilterAmount(filters.amountMax);
   if (amountMin !== null && amount < amountMin) return false;
   if (amountMax !== null && amount > amountMax) return false;
-  const itemsCount = order.itemsCount ?? order.items.length ?? 0;
+  const itemsCount = getClientOrderItemsCount(order);
   const itemsMin = parseFilterInteger(filters.itemsMin);
   const itemsMax = parseFilterInteger(filters.itemsMax);
   if (itemsMin !== null && itemsCount < itemsMin) return false;

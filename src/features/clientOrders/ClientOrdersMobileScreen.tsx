@@ -14,6 +14,7 @@ import {
   computeLineTotal,
   formatDateTime,
   formatMoney,
+  getClientOrderItemsCount,
   getDisplayedUnitPriceValue,
   getClientOrdersResponsiveMetrics,
   getOrderDisplayStatus,
@@ -3466,7 +3467,7 @@ function OrderCard({
   const statusIcon = orderStatusIcon(displayStatus);
   const hasProblem = orderHasVisibleProblem(order);
   const isLocalOrder = order.origin !== 'onec';
-  const itemsCount = order.itemsCount ?? order.items.length ?? 0;
+  const itemsCount = getClientOrderItemsCount(order);
   const interactionDisabled = disabled || loading;
   const animateScale = React.useCallback((value: number) => {
     Animated.spring(scale, {

@@ -307,6 +307,24 @@ function mapPagedResponse<T>(res: { ok: boolean; data?: { items?: T[] } | T[]; m
   };
 }
 
+function normalizeClientOrder(order: ClientOrder): ClientOrder {
+  const items = Array.isArray((order as any).items) ? order.items : [];
+  const events = Array.isArray((order as any).events) ? order.events : [];
+  return {
+    ...order,
+    items,
+    events,
+    itemsCount: order.itemsCount ?? items.length,
+  };
+}
+
+function normalizeClientOrderPage(result: PagedResult<ClientOrder>): PagedResult<ClientOrder> {
+  return {
+    ...result,
+    items: result.items.map(normalizeClientOrder),
+  };
+}
+
 export async function getClientOrders(params?: {
   limit?: number;
   offset?: number;
@@ -331,13 +349,13 @@ export async function getClientOrders(params?: {
   const query = buildQuery(params || {});
   const path = query ? `${API_ENDPOINTS.CLIENT_ORDERS.LIST}?${query}` : API_ENDPOINTS.CLIENT_ORDERS.LIST;
   const res = await apiClient<void, { items: ClientOrder[] }>(path);
-  return mapPagedResponse(res, 'Не удалось загрузить заказы клиентов');
+  return normalizeClientOrderPage(mapPagedResponse(res, 'Не удалось загрузить заказы клиентов'));
 }
 
 export async function getClientOrder(guid: string) {
   const res = await apiClient<void, ClientOrder>(API_ENDPOINTS.CLIENT_ORDERS.DETAIL(guid));
   if (!res.ok || !res.data) throw new Error(getErrorMessage('Не удалось загрузить заказ клиента', res.message));
-  return res.data;
+  return normalizeClientOrder(res.data);
 }
 
 export async function getClientOrdersReferenceData(counterpartyGuid?: string) {
@@ -522,7 +540,7 @@ export async function createClientOrder(payload: any) {
     body: payload,
   });
   if (!res.ok || !res.data) throw new Error(getErrorMessage('Не удалось создать заказ клиента', res.message));
-  return res.data;
+  return normalizeClientOrder(res.data);
 }
 
 export async function updateClientOrder(guid: string, payload: any) {
@@ -531,7 +549,7 @@ export async function updateClientOrder(guid: string, payload: any) {
     body: payload,
   });
   if (!res.ok || !res.data) throw new Error(getErrorMessage('Не удалось обновить заказ клиента', res.message));
-  return res.data;
+  return normalizeClientOrder(res.data);
 }
 
 export async function deleteClientOrder(guid: string) {
@@ -548,7 +566,7 @@ export async function submitClientOrder(guid: string, revision: number) {
     body: { revision },
   });
   if (!res.ok || !res.data) throw new Error(getErrorMessage('Не удалось отправить заказ клиента', res.message));
-  return res.data;
+  return normalizeClientOrder(res.data);
 }
 
 export async function cancelClientOrder(guid: string, revision: number, reason?: string) {
@@ -557,5 +575,5 @@ export async function cancelClientOrder(guid: string, revision: number, reason?:
     body: { revision, reason },
   });
   if (!res.ok || !res.data) throw new Error(getErrorMessage('Не удалось отменить заказ клиента', res.message));
-  return res.data;
+  return normalizeClientOrder(res.data);
 }
