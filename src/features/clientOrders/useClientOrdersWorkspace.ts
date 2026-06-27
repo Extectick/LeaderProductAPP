@@ -36,12 +36,17 @@ import { Alert, Platform } from 'react-native';
 import {
   buildNewItem,
   buildPayload,
+  computeLineTotal,
   computeDraftTotal,
   DEFAULT_ORDER_CURRENCY,
   emptyDraft,
   getClientOrderItems,
   getClientOrderItemsCount,
+  getDraftPackagesForProduct,
   getOrderActivityAt,
+  hasManualPrice,
+  normalizePackageGuid,
+  normalizeDraftOrder,
   orderToDraft,
   STATUS_LABELS,
   SYNC_LABELS,
@@ -70,8 +75,24 @@ type DraftSelections = {
   warehouse: ClientOrderWarehouseOption | null;
   deliveryAddress: ClientOrderDeliveryAddressOption | null;
 };
+type ClientOrderSavePayload = ReturnType<typeof buildPayload>;
+type DeviceDraftEntry = {
+  id: string;
+  serverGuid: string | null;
+  serverRevision: number | null;
+  order: ClientOrder;
+  payload: ClientOrderSavePayload;
+  createdAt: string;
+  updatedAt: string;
+  lastSyncError?: string | null;
+  syncAttempts?: number;
+  nextSyncAt?: string | null;
+};
 
 const FILTERS_STORAGE_PREFIX = 'client_orders_filters_v1';
+const DEVICE_DRAFTS_STORAGE_PREFIX = 'client_orders_device_drafts_v1';
+const DEVICE_DRAFT_GUID_PREFIX = 'device-order-';
+const DEVICE_DRAFT_SYNC_BACKOFF_MS = [0, 15_000, 60_000, 180_000, 300_000, 600_000];
 
 function emptyFilters(): ClientOrdersFilters {
   return {
@@ -147,6 +168,54 @@ async function removeStoredFilters(storageKey: string) {
     return;
   }
   await AsyncStorage.removeItem(storageKey);
+}
+
+function sanitizeDeviceDraftEntries(value: unknown): DeviceDraftEntry[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return [];
+    const raw = entry as Partial<DeviceDraftEntry>;
+    if (!raw.id || typeof raw.id !== 'string') return [];
+    if (!raw.order || typeof raw.order !== 'object') return [];
+    if (!raw.payload || typeof raw.payload !== 'object') return [];
+    return [{
+      id: raw.id,
+      serverGuid: typeof raw.serverGuid === 'string' && raw.serverGuid ? raw.serverGuid : null,
+      serverRevision: typeof raw.serverRevision === 'number' ? raw.serverRevision : null,
+      order: {
+        ...(raw.order as ClientOrder),
+        items: Array.isArray((raw.order as ClientOrder).items) ? (raw.order as ClientOrder).items : [],
+        events: Array.isArray((raw.order as ClientOrder).events) ? (raw.order as ClientOrder).events : [],
+      },
+      payload: raw.payload as ClientOrderSavePayload,
+      createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : new Date().toISOString(),
+      updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : new Date().toISOString(),
+      lastSyncError: typeof raw.lastSyncError === 'string' ? raw.lastSyncError : null,
+      syncAttempts: typeof raw.syncAttempts === 'number' && Number.isFinite(raw.syncAttempts) ? Math.max(0, raw.syncAttempts) : 0,
+      nextSyncAt: typeof raw.nextSyncAt === 'string' && raw.nextSyncAt ? raw.nextSyncAt : null,
+    }];
+  });
+}
+
+async function readStoredDeviceDrafts(storageKey: string) {
+  try {
+    const raw = Platform.OS === 'web' && typeof window !== 'undefined'
+      ? window.localStorage.getItem(storageKey)
+      : await AsyncStorage.getItem(storageKey);
+    if (!raw) return [];
+    return sanitizeDeviceDraftEntries(JSON.parse(raw));
+  } catch {
+    return [];
+  }
+}
+
+async function writeStoredDeviceDrafts(storageKey: string, entries: DeviceDraftEntry[]) {
+  const payload = JSON.stringify(entries);
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    window.localStorage.setItem(storageKey, payload);
+    return;
+  }
+  await AsyncStorage.setItem(storageKey, payload);
 }
 
 function userErrorMessage(error: unknown, fallback: string) {
@@ -298,6 +367,191 @@ function sortClientOrdersForWorkspace(items: ClientOrder[]) {
   });
 }
 
+function makeDeviceDraftGuid() {
+  return `${DEVICE_DRAFT_GUID_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function isDeviceDraftGuid(guid?: string | null) {
+  return !!guid && guid.startsWith(DEVICE_DRAFT_GUID_PREFIX);
+}
+
+function isNetworkUnavailableError(error: unknown) {
+  const record = error as { status?: number; errorCode?: string; message?: string } | null;
+  const message = String(record?.message || '').toLowerCase();
+  return (
+    record?.status === 0 ||
+    record?.errorCode === 'NETWORK_UNAVAILABLE' ||
+    message.includes('network request failed') ||
+    message.includes('failed to fetch') ||
+    message.includes('network error') ||
+    message.includes('ошибка сети') ||
+    message.includes('нет соединения') ||
+    message.includes('не удалось подключиться')
+  );
+}
+
+function isTransientDeviceDraftSyncError(error: unknown) {
+  const record = error as { status?: number } | null;
+  return isNetworkUnavailableError(error) || record?.status === 502 || record?.status === 503 || record?.status === 504;
+}
+
+function getDeviceDraftBackoffMs(attempts: number) {
+  const index = Math.min(Math.max(attempts, 0), DEVICE_DRAFT_SYNC_BACKOFF_MS.length - 1);
+  return DEVICE_DRAFT_SYNC_BACKOFF_MS[index];
+}
+
+function isDeviceDraftSyncDue(entry: DeviceDraftEntry, nowMs = Date.now()) {
+  if (!entry.nextSyncAt) return true;
+  const nextTime = Date.parse(entry.nextSyncAt);
+  return Number.isNaN(nextTime) || nextTime <= nowMs;
+}
+
+function withDeviceDraftSyncFailure(entry: DeviceDraftEntry, message: string): DeviceDraftEntry {
+  const attempts = Math.min((entry.syncAttempts ?? 0) + 1, DEVICE_DRAFT_SYNC_BACKOFF_MS.length - 1);
+  const now = Date.now();
+  const nextSyncAt = new Date(now + getDeviceDraftBackoffMs(attempts)).toISOString();
+  const updatedAt = new Date(now).toISOString();
+  return {
+    ...entry,
+    syncAttempts: attempts,
+    nextSyncAt,
+    lastSyncError: message,
+    updatedAt,
+    order: { ...entry.order, lastExportError: message, updatedAt },
+  };
+}
+
+function selectedDraftPackage(item: DraftItem) {
+  return item.packageGuid ? item.packages.find((pack) => pack.guid === item.packageGuid) ?? null : null;
+}
+
+function parseDraftNumber(value: string) {
+  const parsed = Number(String(value || '').replace(',', '.').trim());
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function buildDeviceOrderFromDraft(args: {
+  draft: DraftOrder;
+  selections: DraftSelections;
+  guid: string;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+  lastSyncError?: string | null;
+}): ClientOrder {
+  const { draft, selections, guid, revision, createdAt, updatedAt, lastSyncError } = args;
+  const totalAmount = computeDraftTotal(draft);
+  const items = draft.items.map((item) => {
+    const pack = selectedDraftPackage(item);
+    const quantity = parseDraftNumber(item.quantity);
+    const multiplier = Number(pack?.multiplier ?? 1);
+    const safeMultiplier = Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1;
+    const manualPrice = hasManualPrice(item) ? parseDraftNumber(item.manualPrice) : null;
+    const priceType = item.priceTypeGuid
+      ? { guid: item.priceTypeGuid, name: item.priceTypeName || draft.priceTypeName || 'Вид цены' }
+      : draft.priceTypeGuid
+        ? { guid: draft.priceTypeGuid, name: draft.priceTypeName || 'Вид цены' }
+        : null;
+    return {
+      product: {
+        guid: item.productGuid,
+        name: item.productName,
+        code: item.productCode ?? null,
+        article: item.productArticle ?? null,
+        sku: item.productSku ?? null,
+        isWeight: item.productIsWeight ?? null,
+      },
+      package: pack
+        ? {
+            guid: pack.guid,
+            name: pack.name,
+            multiplier: pack.multiplier ?? null,
+          }
+        : null,
+      unit: pack?.unit ?? item.baseUnit ?? null,
+      quantity,
+      quantityBase: quantity * safeMultiplier,
+      basePrice: item.basePrice ?? null,
+      price: manualPrice ?? item.basePrice ?? null,
+      isManualPrice: manualPrice !== null,
+      manualPrice,
+      priceSource: item.priceSource ?? null,
+      priceType,
+      discountPercent: item.discountPercent.trim() ? parseDraftNumber(item.discountPercent) : null,
+      appliedDiscountPercent: item.discountPercent.trim()
+        ? parseDraftNumber(item.discountPercent)
+        : draft.generalDiscountPercent.trim()
+          ? parseDraftNumber(draft.generalDiscountPercent)
+          : null,
+      lineAmount: computeLineTotal(item, draft.generalDiscountPercent),
+      comment: item.comment || null,
+      stock: item.stock ?? null,
+    };
+  });
+
+  return {
+    guid,
+    appGuid: guid,
+    documentGuid: guid,
+    number1c: null,
+    date1c: null,
+    source: 'DEVICE_LOCAL',
+    origin: 'device',
+    readOnly: false,
+    revision,
+    syncState: 'DRAFT',
+    status: 'DRAFT',
+    comment: draft.comment || null,
+    deliveryDate: draft.deliveryDate ?? null,
+    totalAmount,
+    currency: draft.currency || DEFAULT_ORDER_CURRENCY,
+    priceType: draft.priceTypeGuid ? { guid: draft.priceTypeGuid, name: draft.priceTypeName || 'Вид цены' } : null,
+    generalDiscountPercent: draft.generalDiscountPercent.trim() ? parseDraftNumber(draft.generalDiscountPercent) : null,
+    generalDiscountAmount: null,
+    queuedAt: null,
+    sentTo1cAt: null,
+    lastStatusSyncAt: null,
+    exportAttempts: 0,
+    lastExportError: lastSyncError || null,
+    isPostedIn1c: false,
+    postedAt1c: null,
+    cancelRequestedAt: null,
+    cancelReason: null,
+    last1cError: null,
+    counterparty: selections.counterparty
+      ? { guid: selections.counterparty.guid, name: selections.counterparty.name }
+      : draft.counterpartyGuid
+        ? { guid: draft.counterpartyGuid, name: draft.counterpartyGuid }
+        : null,
+    agreement: selections.agreement,
+    contract: selections.contract ? { guid: selections.contract.guid, number: selections.contract.number } : null,
+    warehouse: selections.warehouse ? { guid: selections.warehouse.guid, name: selections.warehouse.name, code: selections.warehouse.code ?? null } : null,
+    deliveryAddress: selections.deliveryAddress
+      ? {
+          guid: selections.deliveryAddress.guid ?? null,
+          fullAddress: selections.deliveryAddress.fullAddress ?? selections.deliveryAddress.address ?? selections.deliveryAddress.name ?? null,
+          name: selections.deliveryAddress.name ?? null,
+        }
+      : null,
+    organization: selections.organization
+      ? {
+          guid: selections.organization.guid,
+          name: selections.organization.name,
+          code: selections.organization.code ?? null,
+          isActive: selections.organization.isActive ?? true,
+        }
+      : draft.organizationGuid
+        ? { guid: draft.organizationGuid, name: draft.organizationGuid, code: null, isActive: true }
+        : null,
+    itemsCount: items.length,
+    items,
+    events: [],
+    createdAt,
+    updatedAt,
+    sourceUpdatedAt: updatedAt,
+  };
+}
+
 export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOptions = {}) {
   const confirmDiscard = options.confirmDiscard;
   const notify = useNotify();
@@ -306,7 +560,13 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     () => `${FILTERS_STORAGE_PREFIX}:${auth?.profile?.id ?? 'anonymous'}`,
     [auth?.profile?.id]
   );
+  const deviceDraftsStorageKey = React.useMemo(
+    () => `${DEVICE_DRAFTS_STORAGE_PREFIX}:${auth?.profile?.id ?? 'anonymous'}`,
+    [auth?.profile?.id]
+  );
   const [orders, setOrders] = React.useState<ClientOrder[]>([]);
+  const [deviceDraftEntries, setDeviceDraftEntries] = React.useState<DeviceDraftEntry[]>([]);
+  const [deviceDraftsHydrated, setDeviceDraftsHydrated] = React.useState(false);
   const [ordersMeta, setOrdersMeta] = React.useState<{
     total: number;
     limit: number;
@@ -340,6 +600,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const [lastSavedAt, setLastSavedAt] = React.useState<string | null>(null);
   const settingsRef = React.useRef<ClientOrderSettings | null>(null);
   const ordersRef = React.useRef<ClientOrder[]>([]);
+  const deviceDraftEntriesRef = React.useRef<DeviceDraftEntry[]>([]);
   const documentStartedRef = React.useRef(false);
   const selectedGuidRef = React.useRef<string | null>(null);
   const contextRefreshSignatureRef = React.useRef('');
@@ -349,6 +610,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const pricingRequestIdRef = React.useRef(0);
   const ordersAppendLoadingRef = React.useRef(false);
   const ordersNextOffsetRef = React.useRef(0);
+  const deviceDraftSyncingRef = React.useRef(false);
 
   const draftMode = !draft.guid;
   const readOnly = !!selectedOrder?.readOnly || !!selectedOrder?.isPostedIn1c || selectedOrder?.status === 'CANCELLED';
@@ -366,7 +628,15 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     return baseValidation;
   }, [baseValidation, draftMode, settings?.deliveryDateIssue, settings?.deliveryDateIssueMessage]);
   const localTotal = React.useMemo(() => computeDraftTotal(draft), [draft]);
-  const sortedOrders = React.useMemo(() => sortClientOrdersForWorkspace(orders), [orders]);
+  const visibleDeviceOrders = React.useMemo(
+    () => deviceDraftEntries.map((entry) => entry.order).filter((order) => orderMatchesFilters(order, filters)),
+    [deviceDraftEntries, filters]
+  );
+  const mergedOrders = React.useMemo(() => {
+    const deviceGuids = new Set(visibleDeviceOrders.map((order) => order.guid));
+    return [...visibleDeviceOrders, ...orders.filter((order) => !deviceGuids.has(order.guid))];
+  }, [orders, visibleDeviceOrders]);
+  const sortedOrders = React.useMemo(() => sortClientOrdersForWorkspace(mergedOrders), [mergedOrders]);
   const latestDraftOrder = React.useMemo(() => sortedOrders.find((item) => item.status === 'DRAFT') || null, [sortedOrders]);
   const hasEditableDocument = documentStarted || !!draft.guid || !!selectedGuid || !!selectedOrder;
   const statusCounts = React.useMemo(() => {
@@ -374,9 +644,14 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       acc[item.status] = (acc[item.status] || 0) + 1;
       return acc;
     }, {});
-    const counts = Object.keys(ordersMeta.statusCounts).length ? ordersMeta.statusCounts : loadedCounts;
+    const counts = Object.keys(ordersMeta.statusCounts).length
+      ? visibleDeviceOrders.reduce<Record<string, number>>((acc, item) => {
+          acc[item.status] = (acc[item.status] || 0) + 1;
+          return acc;
+        }, { ...ordersMeta.statusCounts })
+      : loadedCounts;
     const allCount = Object.keys(ordersMeta.statusCounts).length
-      ? Object.values(ordersMeta.statusCounts).reduce((sum, count) => sum + count, 0)
+      ? Object.values(ordersMeta.statusCounts).reduce((sum, count) => sum + count, 0) + visibleDeviceOrders.length
       : ordersMeta.total || sortedOrders.length;
     return {
       all: allCount,
@@ -385,7 +660,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       sent: counts.SENT_TO_1C || 0,
       cancelled: counts.CANCELLED || 0,
     };
-  }, [ordersMeta.statusCounts, ordersMeta.total, sortedOrders]);
+  }, [ordersMeta.statusCounts, ordersMeta.total, sortedOrders, visibleDeviceOrders]);
 
   const hasMoreOrders = ordersNextOffsetRef.current < (ordersMeta.total || 0);
 
@@ -394,8 +669,12 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [settings]);
 
   React.useEffect(() => {
-    ordersRef.current = orders;
-  }, [orders]);
+    ordersRef.current = sortedOrders;
+  }, [sortedOrders]);
+
+  React.useEffect(() => {
+    deviceDraftEntriesRef.current = deviceDraftEntries;
+  }, [deviceDraftEntries]);
 
   React.useEffect(() => {
     documentStartedRef.current = documentStarted;
@@ -419,6 +698,19 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [filtersStorageKey]);
 
   React.useEffect(() => {
+    let cancelled = false;
+    setDeviceDraftsHydrated(false);
+    void readStoredDeviceDrafts(deviceDraftsStorageKey).then((entries) => {
+      if (cancelled) return;
+      setDeviceDraftEntries(entries);
+      setDeviceDraftsHydrated(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [deviceDraftsStorageKey]);
+
+  React.useEffect(() => {
     if (!filtersHydrated) return;
     const timer = setTimeout(() => {
       void writeStoredFilters(filtersStorageKey, filters);
@@ -430,7 +722,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     const base = buildDraftBase(nextSettings ?? settings);
     selectedGuidRef.current = null;
     documentStartedRef.current = false;
-    setDraft({ ...emptyDraft(), ...base });
+    setDraft(normalizeDraftOrder({ ...emptyDraft(), ...base }));
     setSelections({
       ...emptySelections(),
       organization: (nextSettings ?? settings)?.preferredOrganization || null,
@@ -451,7 +743,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, []);
 
   const patchDraft = React.useCallback((patch: Partial<DraftOrder> | ((prev: DraftOrder) => DraftOrder)) => {
-    setDraft((prev) => (typeof patch === 'function' ? patch(prev) : { ...prev, ...patch }));
+    setDraft((prev) => normalizeDraftOrder(typeof patch === 'function' ? patch(prev) : { ...prev, ...patch }));
     markDirty();
   }, [markDirty]);
 
@@ -488,7 +780,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [patchDraft]);
 
   const mergeSavedOrderIntoDraft = React.useCallback((order: ClientOrder) => {
-    setDraft((prev) => ({
+    setDraft((prev) => normalizeDraftOrder({
       ...prev,
       guid: order.guid,
       revision: order.revision,
@@ -507,7 +799,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     selectedGuidRef.current = order.guid;
     setSelectedGuid(order.guid);
     setSelectedOrder(order);
-    setDraft(orderToDraft(order));
+    setDraft(normalizeDraftOrder(orderToDraft(order)));
     setDocumentStarted(true);
     setSelections({
       organization: order.organization || null,
@@ -521,6 +813,98 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     setAutosaveState('idle');
     setAutosaveError(null);
   }, []);
+
+  const replaceDeviceDraftEntries = React.useCallback((entries: DeviceDraftEntry[]) => {
+    deviceDraftEntriesRef.current = entries;
+    setDeviceDraftEntries(entries);
+    void writeStoredDeviceDrafts(deviceDraftsStorageKey, entries);
+  }, [deviceDraftsStorageKey]);
+
+  const findDeviceDraftEntry = React.useCallback((guid?: string | null) => {
+    if (!guid) return null;
+    return deviceDraftEntriesRef.current.find((entry) => entry.order.guid === guid || entry.serverGuid === guid) ?? null;
+  }, []);
+
+  const removeDeviceDraftEntry = React.useCallback((guid?: string | null) => {
+    if (!guid) return;
+    const next = deviceDraftEntriesRef.current.filter((entry) => entry.order.guid !== guid && entry.serverGuid !== guid);
+    replaceDeviceDraftEntries(next);
+  }, [replaceDeviceDraftEntries]);
+
+  const saveDraftOnDevice = React.useCallback((payload: ClientOrderSavePayload, syncError?: string | null) => {
+    const nowIso = new Date().toISOString();
+    const existing = findDeviceDraftEntry(draft.guid);
+    const serverGuid = existing?.serverGuid ?? (draft.guid && !isDeviceDraftGuid(draft.guid) ? draft.guid : null);
+    const localGuid = existing?.order.guid ?? draft.guid ?? makeDeviceDraftGuid();
+    const createdAt = existing?.createdAt ?? selectedOrder?.createdAt ?? nowIso;
+    const revision = Math.max(1, existing?.order.revision ?? draft.revision ?? 0);
+    const entry: DeviceDraftEntry = {
+      id: existing?.id ?? makeDeviceDraftGuid(),
+      serverGuid,
+      serverRevision: existing?.serverRevision ?? (serverGuid ? draft.revision : null),
+      order: buildDeviceOrderFromDraft({
+        draft: { ...draft, guid: localGuid, revision },
+        selections,
+        guid: localGuid,
+        revision,
+        createdAt,
+        updatedAt: nowIso,
+        lastSyncError: syncError ?? null,
+      }),
+      payload,
+      createdAt,
+      updatedAt: nowIso,
+      lastSyncError: syncError ?? null,
+      syncAttempts: syncError ? existing?.syncAttempts ?? 0 : 0,
+      nextSyncAt: null,
+    };
+    const withoutCurrent = deviceDraftEntriesRef.current.filter((item) => item.id !== entry.id && item.order.guid !== localGuid && item.serverGuid !== serverGuid);
+    replaceDeviceDraftEntries([entry, ...withoutCurrent]);
+    return entry.order;
+  }, [draft, findDeviceDraftEntry, replaceDeviceDraftEntries, selectedOrder?.createdAt, selections]);
+
+  const syncDeviceDrafts = React.useCallback(async () => {
+    if (!deviceDraftsHydrated || deviceDraftSyncingRef.current) return;
+    const entries = deviceDraftEntriesRef.current;
+    if (!entries.length) return;
+    const dueEntries = entries.filter((entry) => isDeviceDraftSyncDue(entry));
+    if (!dueEntries.length) return;
+
+    deviceDraftSyncingRef.current = true;
+    let nextEntries = entries;
+
+    try {
+      for (const entry of dueEntries) {
+        try {
+          const order = entry.serverGuid
+            ? await updateClientOrder(entry.serverGuid, {
+                ...entry.payload,
+                revision: entry.serverRevision ?? entry.order.revision,
+              })
+            : await createClientOrder(entry.payload);
+          nextEntries = nextEntries.filter((item) => item.id !== entry.id);
+          replaceDeviceDraftEntries(nextEntries);
+          applySavedOrderToList(order);
+          const currentGuid = selectedGuidRef.current;
+          if (currentGuid === entry.order.guid || currentGuid === entry.serverGuid) {
+            applyOrderDetail(order);
+          }
+        } catch (error) {
+          const message = userErrorMessage(error, 'Не удалось перенести локальный документ в API.');
+          nextEntries = nextEntries.map((item) => (
+            item.id === entry.id ? withDeviceDraftSyncFailure(item, message) : item
+          ));
+          replaceDeviceDraftEntries(nextEntries);
+
+          if (isTransientDeviceDraftSyncError(error)) {
+            break;
+          }
+        }
+      }
+    } finally {
+      deviceDraftSyncingRef.current = false;
+    }
+  }, [applyOrderDetail, applySavedOrderToList, deviceDraftsHydrated, replaceDeviceDraftEntries]);
 
   const removeItem = React.useCallback((lineKey: string) => {
     patchDraft((prev) => ({ ...prev, items: prev.items.filter((item) => item.key !== lineKey) }));
@@ -537,7 +921,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       setSettings(nextSettings);
       setDraft((prev) => {
         if (prev.guid || prev.organizationGuid || prev.counterpartyGuid || prev.items.length) return prev;
-        return { ...prev, ...buildDraftBase(nextSettings) };
+        return normalizeDraftOrder({ ...prev, ...buildDraftBase(nextSettings) });
       });
       setSelections((prev) => ({
         ...prev,
@@ -620,7 +1004,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         if (!latestDraft && !documentStartedRef.current && !selectedGuidRef.current) {
           setDocumentStarted(false);
           setSelectedOrder(null);
-          setDraft((prev) => (prev.guid ? { ...emptyDraft(), ...buildDraftBase(settingsRef.current) } : prev));
+          setDraft((prev) => (prev.guid ? normalizeDraftOrder({ ...emptyDraft(), ...buildDraftBase(settingsRef.current) }) : prev));
         }
       }
     } catch (e: any) {
@@ -641,6 +1025,12 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [filters]);
 
   const loadDetail = React.useCallback(async (guid: string) => {
+    const deviceEntry = findDeviceDraftEntry(guid);
+    if (deviceEntry) {
+      applyOrderDetail(deviceEntry.order);
+      return deviceEntry.order;
+    }
+
     const requestId = ++detailRequestIdRef.current;
     setLoadingDetail(true);
     setError(null);
@@ -656,7 +1046,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     } finally {
       if (detailRequestIdRef.current === requestId) setLoadingDetail(false);
     }
-  }, [applyOrderDetail]);
+  }, [applyOrderDetail, findDeviceDraftEntry]);
 
   const cancelDetailLoading = React.useCallback(() => {
     detailRequestIdRef.current += 1;
@@ -686,7 +1076,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       const deliveryAddress = defaults.deliveryAddress ?? null;
       const priceType = defaults.priceType ?? agreement?.priceType ?? null;
 
-      setDraft((prev) => ({
+      setDraft((prev) => normalizeDraftOrder({
         ...prev,
         organizationGuid,
         agreementGuid: agreement?.guid || '',
@@ -699,9 +1089,9 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         priceTypeName: priceType?.name ?? null,
         items: prev.items.map((item) => ({
           ...item,
-          priceTypeGuid: item.manualPrice.trim() ? item.priceTypeGuid ?? null : priceType?.guid ?? null,
-          priceTypeName: item.manualPrice.trim() ? item.priceTypeName ?? null : priceType?.name ?? null,
-          basePrice: item.manualPrice.trim() ? item.basePrice : item.basePrice,
+          priceTypeGuid: hasManualPrice(item) ? item.priceTypeGuid ?? null : priceType?.guid ?? null,
+          priceTypeName: hasManualPrice(item) ? item.priceTypeName ?? null : priceType?.name ?? null,
+          basePrice: hasManualPrice(item) ? item.basePrice : item.basePrice,
         })),
       }));
       setSelections((prev) => ({
@@ -737,6 +1127,11 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [filters, filtersHydrated, loadOrders]);
 
   React.useEffect(() => {
+    if (!filtersHydrated || !deviceDraftsHydrated) return;
+    void syncDeviceDrafts();
+  }, [deviceDraftsHydrated, filtersHydrated, syncDeviceDrafts]);
+
+  React.useEffect(() => {
     if (!selectedGuid) return;
     if (selectedOrder?.guid === selectedGuid && selectedOrder.revision === draft.revision) return;
     void loadDetail(selectedGuid);
@@ -762,15 +1157,20 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
   const saveDraft = React.useCallback(async (options?: SaveOptions) => {
     if (readOnly) return null;
+    let payload: ClientOrderSavePayload | null = null;
+    const deviceEntry = findDeviceDraftEntry(draft.guid);
     try {
       setSaving(true);
       setAutosaveError(null);
 
-      const payload = buildPayload(draft, options?.reason || 'manual');
-      const order = draft.guid
-        ? await updateClientOrder(draft.guid, { ...payload, revision: draft.revision })
+      payload = buildPayload(draft, options?.reason || 'manual');
+      const order = deviceEntry?.serverGuid
+        ? await updateClientOrder(deviceEntry.serverGuid, { ...payload, revision: deviceEntry.serverRevision ?? draft.revision })
+        : draft.guid && !isDeviceDraftGuid(draft.guid) && !deviceEntry
+          ? await updateClientOrder(draft.guid, { ...payload, revision: draft.revision })
         : await createClientOrder(payload);
 
+      removeDeviceDraftEntry(draft.guid || deviceEntry?.order.guid || deviceEntry?.serverGuid);
       setSelectedGuid(order.guid);
       setSelectedOrder(order);
       mergeSavedOrderIntoDraft(order);
@@ -790,6 +1190,15 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       applySavedOrderToList(order);
       return order;
     } catch (e: any) {
+      if (payload && isNetworkUnavailableError(e)) {
+        const localOrder = saveDraftOnDevice(payload);
+        applyOrderDetail(localOrder);
+        setError('Нет соединения. Документ сохранен на устройстве и будет перенесен в API автоматически.');
+        setDirty(false);
+        setLastSavedAt(new Date().toISOString());
+        setAutosaveState('saved');
+        return localOrder;
+      }
       const message = userErrorMessage(e, 'Не удалось сохранить заказ. Проверьте данные и повторите попытку.');
       setError(message);
       setAutosaveError(message);
@@ -798,7 +1207,17 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     } finally {
       setSaving(false);
     }
-  }, [applySavedOrderToList, draft, mergeSavedOrderIntoDraft, readOnly, selections]);
+  }, [
+    applyOrderDetail,
+    applySavedOrderToList,
+    draft,
+    findDeviceDraftEntry,
+    mergeSavedOrderIntoDraft,
+    readOnly,
+    removeDeviceDraftEntry,
+    saveDraftOnDevice,
+    selections,
+  ]);
 
   React.useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -835,7 +1254,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     if (decision === 'cancel') return false;
     if (decision === 'save') return !!(await saveDraft({ reason: 'manual' }));
     if (selectedOrder) {
-      setDraft(orderToDraft(selectedOrder));
+      setDraft(normalizeDraftOrder(orderToDraft(selectedOrder)));
       setSelections({
         organization: selectedOrder.organization || null,
         counterparty: selectedOrder.counterparty || null,
@@ -884,7 +1303,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       priceTypeGuid: null,
       priceTypeName: null,
       items: prev.items.map((item) => (
-        item.manualPrice.trim()
+        hasManualPrice(item)
           ? item
           : { ...item, priceTypeGuid: null, priceTypeName: null, basePrice: null }
       )),
@@ -1002,23 +1421,26 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       });
       const product = products.find((next) => next.guid === item.productGuid);
       if (!product) return;
-      const hasManualPrice = item.manualPrice.trim();
+      const isManualPrice = hasManualPrice(item);
+      const packages = getDraftPackagesForProduct(product);
+      const hasProductPackages = Array.isArray(product.packages);
       setItemPatch(item.key, {
-        basePrice: hasManualPrice ? item.basePrice ?? product.basePrice ?? null : product.basePrice ?? item.basePrice ?? null,
+        packageGuid: normalizePackageGuid(item.packageGuid, packages),
+        basePrice: isManualPrice ? item.basePrice ?? product.basePrice ?? null : product.basePrice ?? null,
         receiptPrice: product.receiptPrice ?? product.basePrice ?? item.receiptPrice ?? item.basePrice ?? null,
         currency: DEFAULT_ORDER_CURRENCY,
-        priceTypeGuid: hasManualPrice ? item.priceTypeGuid ?? null : product.priceType?.guid ?? priceType?.guid ?? null,
-        priceTypeName: hasManualPrice ? item.priceTypeName ?? null : product.priceType?.name ?? priceType?.name ?? null,
+        priceTypeGuid: isManualPrice ? item.priceTypeGuid ?? null : product.priceType?.guid ?? priceType?.guid ?? null,
+        priceTypeName: isManualPrice ? item.priceTypeName ?? null : product.priceType?.name ?? priceType?.name ?? null,
         baseUnit: product.baseUnit ?? item.baseUnit ?? null,
         stock: product.stock ?? item.stock ?? null,
-        packages: product.packages?.length ? product.packages : item.packages,
+        packages: hasProductPackages ? packages : item.packages,
       });
     } catch {
-      const hasManualPrice = item.manualPrice.trim();
+      const isManualPrice = hasManualPrice(item);
       setItemPatch(item.key, {
-        priceTypeGuid: hasManualPrice ? item.priceTypeGuid ?? null : priceType?.guid || null,
-        priceTypeName: hasManualPrice ? item.priceTypeName ?? null : priceType?.name || null,
-        basePrice: item.manualPrice.trim() ? item.basePrice : null,
+        priceTypeGuid: isManualPrice ? item.priceTypeGuid ?? null : priceType?.guid || null,
+        priceTypeName: isManualPrice ? item.priceTypeName ?? null : priceType?.name || null,
+        basePrice: isManualPrice ? item.basePrice : null,
       });
     }
   }, [draft.agreementGuid, draft.counterpartyGuid, draft.organizationGuid, draft.warehouseGuid, setItemPatch]);
@@ -1037,34 +1459,37 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       });
       if (pricingRequestIdRef.current !== requestId) return;
       const productByGuid = new Map(products.map((product) => [product.guid, product]));
-      setDraft((prev) => ({
+      setDraft((prev) => normalizeDraftOrder({
         ...prev,
         items: prev.items.map((item) => {
           const product = productByGuid.get(item.productGuid);
           if (!product) return item;
-          const hasManualPrice = !!item.manualPrice.trim();
+          const isManualPrice = hasManualPrice(item);
+          const packages = getDraftPackagesForProduct(product);
+          const hasProductPackages = Array.isArray(product.packages);
           return {
             ...item,
-            basePrice: hasManualPrice ? item.basePrice : product.basePrice ?? null,
+            packageGuid: normalizePackageGuid(item.packageGuid, packages),
+            basePrice: isManualPrice ? item.basePrice : product.basePrice ?? null,
             receiptPrice: product.receiptPrice ?? product.basePrice ?? null,
             currency: DEFAULT_ORDER_CURRENCY,
-            priceTypeGuid: hasManualPrice
+            priceTypeGuid: isManualPrice
               ? item.priceTypeGuid ?? null
               : product.priceType?.guid ?? draft.priceTypeGuid ?? null,
-            priceTypeName: hasManualPrice
+            priceTypeName: isManualPrice
               ? item.priceTypeName ?? null
               : product.priceType?.name ?? draft.priceTypeName ?? null,
             baseUnit: product.baseUnit ?? item.baseUnit ?? null,
             stock: product.stock ?? null,
-            packages: product.packages?.length ? product.packages : item.packages,
+            packages: hasProductPackages ? packages : item.packages,
           };
         }),
       }));
     } catch {
       if (pricingRequestIdRef.current !== requestId) return;
-      setDraft((prev) => ({
+      setDraft((prev) => normalizeDraftOrder({
         ...prev,
-        items: prev.items.map((item) => item.manualPrice.trim()
+        items: prev.items.map((item) => hasManualPrice(item)
           ? item
           : { ...item, basePrice: null }),
       }));
@@ -1097,7 +1522,10 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     }
     contextRefreshSignatureRef.current = refreshSignature;
 
-    void refreshItemsPricing(draft.items);
+    const timer = setTimeout(() => {
+      void refreshItemsPricing(draft.items);
+    }, 180);
+    return () => clearTimeout(timer);
   }, [draft.agreementGuid, draft.counterpartyGuid, draft.organizationGuid, draft.priceTypeGuid, draft.warehouseGuid, refreshItemsPricing]);
 
   const documentHeaderDefaultsState = React.useMemo(() => ({
@@ -1160,6 +1588,39 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       : defaultHeaderPriceType
   ), [defaultHeaderPriceType, draft.priceTypeGuid, draft.priceTypeName, selections.agreement?.priceType?.name]);
 
+  const setItemPackage = React.useCallback((lineKey: string, packageGuid: string | null) => {
+    const target = draft.items.find((item) => item.key === lineKey);
+    if (!target) return;
+    const nextPackageGuid = packageGuid || null;
+    const priceType = target.priceTypeGuid && target.priceTypeName
+      ? { guid: target.priceTypeGuid, name: target.priceTypeName }
+      : defaultLinePriceType;
+    patchDraft((prev) => ({
+      ...prev,
+      items: prev.items.map((item) => (
+        item.key === lineKey
+          ? {
+              ...item,
+              packageGuid: nextPackageGuid,
+              manualPrice: '',
+              priceTypeGuid: priceType?.guid || null,
+              priceTypeName: priceType?.name || null,
+            }
+          : item
+      )),
+    }));
+    void refreshItemPricing(
+      {
+        ...target,
+        packageGuid: nextPackageGuid,
+        manualPrice: '',
+        priceTypeGuid: priceType?.guid || null,
+        priceTypeName: priceType?.name || null,
+      },
+      priceType
+    );
+  }, [defaultLinePriceType, draft.items, patchDraft, refreshItemPricing]);
+
   const isHeaderPriceTypeCustom = React.useMemo(() => {
     const defaultGuid = defaultHeaderPriceType?.guid || null;
     const currentGuid = draft.priceTypeGuid || null;
@@ -1169,7 +1630,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const isItemPriceTypeCustom = React.useCallback((lineKey: string) => {
     const item = draft.items.find((next) => next.key === lineKey);
     if (!item) return false;
-    if (item.manualPrice.trim()) return true;
+    if (hasManualPrice(item)) return true;
     const defaultGuid = defaultLinePriceType?.guid || null;
     if (!item.priceTypeGuid) return false;
     return item.priceTypeGuid !== defaultGuid;
@@ -1197,12 +1658,12 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [defaultLinePriceType, draft.items, patchDraft, refreshItemPricing]);
 
   const setHeaderPriceType = React.useCallback((priceType: ClientOrderPriceTypeOption | null) => {
-    const refreshTargets = draft.items.filter((item) => !item.manualPrice.trim());
+    const refreshTargets = draft.items.filter((item) => !hasManualPrice(item));
     patchDraft((prev) => ({
       ...prev,
       priceTypeGuid: priceType?.guid || null,
       priceTypeName: priceType?.name || null,
-      items: prev.items.map((item) => item.manualPrice.trim()
+      items: prev.items.map((item) => hasManualPrice(item)
         ? { ...item, priceTypeGuid: null, priceTypeName: 'Произвольный' }
         : {
             ...item,
@@ -1250,9 +1711,14 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     }
     let targetGuid = draft.guid || selectedGuid;
     let revision = draft.revision;
-    if (!targetGuid || dirty) {
+    const deviceEntry = findDeviceDraftEntry(targetGuid);
+    if (!targetGuid || dirty || deviceEntry) {
       const saved = await saveDraft({ silent: true, reason: 'manual' });
       if (!saved) return;
+      if (saved.origin === 'device' || findDeviceDraftEntry(saved.guid)) {
+        setError('Документ сохранен на устройстве. Он будет отправлен после восстановления соединения.');
+        return;
+      }
       targetGuid = saved.guid;
       revision = saved.revision;
     }
@@ -1262,7 +1728,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       await loadOrders('reset');
       setSelectedGuid(order.guid);
       setSelectedOrder(order);
-      setDraft(orderToDraft(order));
+      setDraft(normalizeDraftOrder(orderToDraft(order)));
       setDocumentStarted(true);
       setDirty(false);
     } catch (e: any) {
@@ -1271,7 +1737,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     } finally {
       setSubmitting(false);
     }
-  }, [dirty, draft.guid, draft.revision, loadOrders, saveDraft, selectedGuid, validation.blockingMessage, validation.canSubmit]);
+  }, [dirty, draft.guid, draft.revision, findDeviceDraftEntry, loadOrders, saveDraft, selectedGuid, validation.blockingMessage, validation.canSubmit]);
 
   const runCancel = React.useCallback(async (target?: { guid: string; revision: number }) => {
     const targetGuid = target?.guid || draft.guid;
@@ -1287,7 +1753,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       await loadOrders('reset');
       setSelectedGuid(order.guid);
       setSelectedOrder(order);
-      setDraft(orderToDraft(order));
+      setDraft(normalizeDraftOrder(orderToDraft(order)));
       setDirty(false);
     } catch (e: any) {
       setError(userErrorMessage(e, 'Не удалось отменить заказ.'));
@@ -1303,24 +1769,32 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       return;
     }
 
-    try {
-      setDeletingDraft(true);
-      await deleteClientOrder(targetGuid);
-      notify({ type: 'warning', title: 'Черновик удален', message: 'Черновик заказа удален.' });
+    const deviceEntry = findDeviceDraftEntry(targetGuid);
+    if (deviceEntry) {
+      removeDeviceDraftEntry(targetGuid);
       const deletingCurrent = targetGuid === draft.guid || targetGuid === selectedGuid;
       if (deletingCurrent) {
         resetDraftToBase();
       }
+      return;
+    }
+
+    try {
+      setDeletingDraft(true);
+      await deleteClientOrder(targetGuid);
+      const deletingCurrent = targetGuid === draft.guid || targetGuid === selectedGuid;
       await loadOrders('reset');
+      if (deletingCurrent) {
+        resetDraftToBase();
+      }
     } catch (e: any) {
       const message = userErrorMessage(e, 'Не удалось удалить черновик заказа.');
       setError(message);
-      notify({ type: 'error', title: 'Ошибка удаления', message });
       await loadOrders('reset');
     } finally {
       setDeletingDraft(false);
     }
-  }, [draft.guid, loadOrders, notify, resetDraftToBase, selectedGuid]);
+  }, [draft.guid, findDeviceDraftEntry, loadOrders, removeDeviceDraftEntry, resetDraftToBase, selectedGuid]);
 
   const cancelOrder = React.useCallback(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -1357,6 +1831,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     latestDraftOrder,
     hasEditableDocument,
     documentHeaderDefaultsState,
+    deviceDraftsCount: deviceDraftEntries.length,
+    syncDeviceDrafts,
     openLatestDraftIfAny: () => latestDraftOrder ? selectOrder(latestDraftOrder.guid) : Promise.resolve(),
     createDocument: createNewOrder,
     hasMoreOrders,
@@ -1382,6 +1858,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     setWarehouse,
     setDeliveryAddress,
     setItemPatch,
+    setItemPackage,
     setItemPriceType,
     setHeaderPriceType,
     defaultHeaderPriceType,

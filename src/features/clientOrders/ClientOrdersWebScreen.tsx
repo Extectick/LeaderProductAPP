@@ -251,7 +251,7 @@ function getPickerItemKey(kind: PickerKind | null, item: any, index: number) {
 
 function formatQuantityInputValue(value: number, weight: boolean) {
   const normalized = weight ? value.toFixed(3) : String(Math.round(value));
-  return normalized.replace(/\.?0+$/, '');
+  return normalized.replace(/\.?0+$/, '').replace(/\./g, ',');
 }
 
 function getQuantityControlWidthPx(value: unknown, buttonSize: number, minInputWidth: number, maxInputWidth: number) {
@@ -288,10 +288,6 @@ function draftItemMetaParts(item: any) {
 
 function packageSelectValue(item: DraftItem | any) {
   if (item.packageGuid) return item.packageGuid;
-  if (item.packages?.length) {
-    const defaultPackage = item.packages.find((pack: any) => pack?.isDefault) ?? item.packages[0];
-    return defaultPackage?.guid ?? '__base__';
-  }
   return '__base__';
 }
 
@@ -1406,7 +1402,7 @@ export default function ClientOrdersWebScreen() {
                 select
                 size="small"
                 value={packageValue}
-                onChange={(e) => workspace.setItemPatch(item.key, { packageGuid: e.target.value === '__base__' ? null : e.target.value })}
+                onChange={(e) => workspace.setItemPackage(item.key, e.target.value === '__base__' ? null : e.target.value)}
                 disabled={workspace.readOnly}
                 fullWidth
                 sx={{
@@ -1415,7 +1411,7 @@ export default function ClientOrdersWebScreen() {
                   '& .MuiInputBase-input': { fontSize: ui.narrowPriceWidth <= 66 ? 10.5 : 11, fontWeight: 700, py: 0, px: 0.6 },
                 }}
               >
-                {!item.packages.length ? <MenuItem value="__base__">{unitLabel(item.baseUnit)}</MenuItem> : null}
+                <MenuItem value="__base__">{unitLabel(item.baseUnit)}</MenuItem>
                 {item.packages.map((pack: any) => (
                   <MenuItem key={pack.guid} value={pack.guid}>
                     {packageLabel(pack, item)}
@@ -1703,7 +1699,7 @@ export default function ClientOrdersWebScreen() {
               select
               size="small"
               value={packageValue}
-              onChange={(e) => currentWorkspace.setItemPatch(item.key, { packageGuid: e.target.value === '__base__' ? null : e.target.value })}
+              onChange={(e) => currentWorkspace.setItemPackage(item.key, e.target.value === '__base__' ? null : e.target.value)}
               disabled={currentWorkspace.readOnly}
               fullWidth
               sx={{
@@ -1735,7 +1731,7 @@ export default function ClientOrdersWebScreen() {
                 },
               }}
             >
-              {!item.packages.length ? <MenuItem value="__base__">{unitLabel(item.baseUnit)}</MenuItem> : null}
+              <MenuItem value="__base__">{unitLabel(item.baseUnit)}</MenuItem>
               {item.packages.map((pack) => <MenuItem key={pack.guid} value={pack.guid}>{packageLabel(pack, item)}</MenuItem>)}
             </TextField>
           );

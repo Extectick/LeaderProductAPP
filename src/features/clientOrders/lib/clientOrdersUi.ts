@@ -105,12 +105,11 @@ export function packageLabel(pack: any, item?: any) {
 }
 
 export function hasSinglePackage(item: any) {
-  return !item?.packages?.length || item.packages.length === 1;
+  return !item?.packages?.length;
 }
 
 export function getPackageDisplayText(item: any) {
   if (!item?.packages?.length) return unitLabel(item?.baseUnit);
-  if (item.packages.length === 1) return packageLabel(item.packages[0], item);
   const selectedPack = item.packageGuid ? item.packages.find((pack: any) => pack.guid === item.packageGuid) : null;
   return selectedPack ? packageLabel(selectedPack, item) : unitLabel(item.baseUnit);
 }

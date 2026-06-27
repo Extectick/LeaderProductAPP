@@ -350,6 +350,55 @@ export function asString(value?: number | null) {
   return value === null || value === undefined ? '' : String(value);
 }
 
+export function asInputString(value: unknown) {
+  if (value === null || value === undefined) return '';
+  return typeof value === 'string' ? value : String(value);
+}
+
+export function manualPriceInput(item?: Pick<DraftItem, 'manualPrice'> | null) {
+  return asInputString(item?.manualPrice);
+}
+
+export function hasManualPrice(item?: Pick<DraftItem, 'manualPrice'> | null) {
+  return manualPriceInput(item).trim().length > 0;
+}
+
+export function normalizeDraftItem(item: DraftItem): DraftItem {
+  return {
+    ...item,
+    key: asInputString(item.key) || makeKey(),
+    productGuid: asInputString(item.productGuid),
+    productName: asInputString(item.productName),
+    quantity: asInputString(item.quantity).replace(/\./g, ','),
+    manualPrice: asInputString(item.manualPrice),
+    discountPercent: asInputString(item.discountPercent),
+    comment: asInputString(item.comment),
+    packages: Array.isArray(item.packages) ? item.packages : [],
+  };
+}
+
+export function normalizeDraftOrder(draft: DraftOrder): DraftOrder {
+  const items = Array.isArray(draft.items)
+    ? draft.items
+        .filter((item): item is DraftItem => !!item && typeof item === 'object')
+        .map(normalizeDraftItem)
+    : [];
+
+  return {
+    ...draft,
+    organizationGuid: asInputString(draft.organizationGuid),
+    counterpartyGuid: asInputString(draft.counterpartyGuid),
+    agreementGuid: asInputString(draft.agreementGuid),
+    contractGuid: asInputString(draft.contractGuid),
+    warehouseGuid: asInputString(draft.warehouseGuid),
+    deliveryAddressGuid: asInputString(draft.deliveryAddressGuid),
+    comment: asInputString(draft.comment),
+    currency: asInputString(draft.currency) || DEFAULT_ORDER_CURRENCY,
+    generalDiscountPercent: asInputString(draft.generalDiscountPercent),
+    items,
+  };
+}
+
 export function asNumber(value: string) {
   const parsed = Number(value.replace(',', '.').trim());
   return Number.isFinite(parsed) ? parsed : Number.NaN;
@@ -368,12 +417,13 @@ function decimalInputRegex(maxDecimals: number) {
 }
 
 export function normalizeQuantityInput(item: DraftItem, value: string) {
-  const next = value.replace(/\s/g, '');
+  const next = value.replace(/\s/g, '').replace(/\./g, ',');
+  const previous = item.quantity.replace(/\./g, ',');
   if (next === '') return '';
   if (isWeightDraftItem(item)) {
-    return decimalInputRegex(3).test(next) ? next : item.quantity;
+    return decimalInputRegex(3).test(next) ? next : previous;
   }
-  return /^\d*$/.test(next) ? next : item.quantity;
+  return /^\d*$/.test(next) ? next : previous;
 }
 
 export function normalizePriceInput(value: string, previous = '') {
@@ -398,18 +448,53 @@ function priceInputString(value: number) {
   return String(roundMoneyValue(value));
 }
 
-export function getSelectedPackage(item: DraftItem) {
+function unitIdentity(unit?: DraftUnit | null) {
+  const guid = asInputString(unit?.guid).trim().toLowerCase();
+  if (guid) return `guid:${guid}`;
+  const label = `${unit?.symbol ?? ''} ${unit?.name ?? ''}`
+    .trim()
+    .toLocaleLowerCase('ru')
+    .replace(/\s+/g, '');
+  return label ? `label:${label}` : '';
+}
+
+export function isBaseUnitPackage(pack?: DraftPackage | null, baseUnit?: DraftUnit | null) {
+  if (!pack) return false;
+  const multiplier = Number(pack.multiplier ?? 1);
+  const sameMultiplier = !Number.isFinite(multiplier) || multiplier <= 0 || Math.abs(multiplier - 1) < 0.000001;
+  const packUnit = unitIdentity(pack.unit);
+  const base = unitIdentity(baseUnit);
+  const sameUnit = !!packUnit && !!base && packUnit === base;
+  return sameMultiplier && (!pack.unit || sameUnit);
+}
+
+export function getDraftPackagesForProduct(product: Pick<ClientOrderProduct, 'packages' | 'baseUnit'>) {
+  const packages = Array.isArray(product.packages) ? product.packages : [];
+  return product.baseUnit
+    ? packages.filter((pack) => !isBaseUnitPackage(pack, product.baseUnit))
+    : packages;
+}
+
+export function normalizePackageGuid(packageGuid: string | null | undefined, packages: DraftPackage[]) {
+  if (!packageGuid) return null;
+  return packages.some((pack) => pack.guid === packageGuid) ? packageGuid : null;
+}
+
+export function getSelectedPackage(item?: DraftItem | null) {
+  if (!item) return null;
   return item.packageGuid ? item.packages.find((next) => next.guid === item.packageGuid) ?? null : null;
 }
 
-export function getPackageMultiplier(item: DraftItem) {
+export function getPackageMultiplier(item?: DraftItem | null) {
   const multiplier = Number(getSelectedPackage(item)?.multiplier ?? 1);
   return Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1;
 }
 
-export function getDisplayedUnitPriceValue(item: DraftItem) {
-  const sourcePrice = item.manualPrice.trim()
-    ? normalizePriceForPayload(item.manualPrice)
+export function getDisplayedUnitPriceValue(item?: DraftItem | null) {
+  if (!item) return '';
+  const manualPrice = manualPriceInput(item);
+  const sourcePrice = manualPrice.trim()
+    ? normalizePriceForPayload(manualPrice)
     : item.basePrice ?? null;
   if (sourcePrice === null || sourcePrice === undefined || Number.isNaN(sourcePrice) || sourcePrice <= 0) {
     return '';
@@ -445,8 +530,8 @@ export function isValidQuantityValue(item: DraftItem) {
   return validShape && normalizeQuantityForPayload(item) > 0;
 }
 
-export function isValidManualPriceValue(value: string) {
-  const trimmed = value.trim();
+export function isValidManualPriceValue(value: unknown) {
+  const trimmed = asInputString(value).trim();
   if (!trimmed) return true;
   return decimalRegex(2).test(trimmed) && normalizePriceForPayload(trimmed) > 0;
 }
@@ -476,7 +561,12 @@ export function getOrderActivityAt(order: ClientOrder) {
 }
 
 export function getClientOrderItems(order?: Pick<ClientOrder, 'items'> | null) {
-  return Array.isArray((order as any)?.items) ? (order as ClientOrder).items : [];
+  if (!Array.isArray((order as any)?.items)) return [];
+  return (order as ClientOrder).items.filter((item): item is ClientOrderItem => {
+    if (!item || typeof item !== 'object') return false;
+    const product = (item as ClientOrderItem).product;
+    return !!product && typeof product === 'object' && !!product.guid;
+  });
 }
 
 export function getClientOrderItemsCount(order?: Pick<ClientOrder, 'items' | 'itemsCount'> | null) {
@@ -541,7 +631,8 @@ export function orderToDraft(order: ClientOrder): DraftOrder {
 
 export function computeLineTotal(item: DraftItem, generalDiscountPercent?: string) {
   const quantity = normalizeQuantityForPayload(item);
-  const manual = item.manualPrice.trim() ? normalizePriceForPayload(item.manualPrice) : undefined;
+  const manualPrice = manualPriceInput(item);
+  const manual = manualPrice.trim() ? normalizePriceForPayload(manualPrice) : undefined;
   const discount = item.discountPercent.trim()
     ? asNumber(item.discountPercent)
     : generalDiscountPercent?.trim()
@@ -606,8 +697,9 @@ export function validateDraft(draft: DraftOrder): DraftValidation {
   for (const item of draft.items) {
     const messages: string[] = [];
     const quantity = isValidQuantityValue(item) ? normalizeQuantityForPayload(item) : Number.NaN;
-    const manualPrice = item.manualPrice.trim() ? normalizePriceForPayload(item.manualPrice) : undefined;
-    const manualPriceShapeValid = isValidManualPriceValue(item.manualPrice);
+    const manualPriceInputValue = manualPriceInput(item);
+    const manualPrice = manualPriceInputValue.trim() ? normalizePriceForPayload(manualPriceInputValue) : undefined;
+    const manualPriceShapeValid = isValidManualPriceValue(manualPriceInputValue);
     const discountPercent = item.discountPercent.trim() ? asNumber(item.discountPercent) : undefined;
 
     if (Number.isNaN(quantity) || quantity <= 0) {
@@ -663,9 +755,9 @@ export function buildPayload(draft: DraftOrder, saveReason: 'manual' | 'autosave
     items: draft.items.map((item) => ({
       productGuid: item.productGuid,
       packageGuid: item.packageGuid || undefined,
-      priceTypeGuid: item.manualPrice.trim() ? undefined : item.priceTypeGuid || undefined,
+      priceTypeGuid: hasManualPrice(item) ? undefined : item.priceTypeGuid || undefined,
       quantity: normalizeQuantityForPayload(item),
-      manualPrice: item.manualPrice.trim() ? normalizePriceForPayload(item.manualPrice) : undefined,
+      manualPrice: hasManualPrice(item) ? normalizePriceForPayload(manualPriceInput(item)) : undefined,
       discountPercent: item.discountPercent.trim() ? asNumber(item.discountPercent) : undefined,
       comment: item.comment.trim() || undefined,
     })),
@@ -714,8 +806,8 @@ export function applyReferenceDefaults(draft: DraftOrder, refs: ClientOrdersRefe
 }
 
 export function buildNewItem(product: ClientOrderProduct): DraftItem {
-  const packages = Array.isArray(product.packages) ? product.packages : [];
-  const pack = packages.find((item) => item.isDefault) ?? packages[0];
+  const packages = getDraftPackagesForProduct(product);
+  const pack = product.baseUnit ? null : packages.find((item) => item.isDefault) ?? packages[0] ?? null;
   return {
     key: makeKey(),
     productGuid: product.guid,

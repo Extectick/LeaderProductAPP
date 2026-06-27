@@ -192,7 +192,7 @@ function quantityStep(item: any, direction: 1 | -1) {
   const weight = isWeightDraftItem(item);
   const current = Number(String(item.quantity || '').replace(',', '.')) || 0;
   const min = weight ? 0.001 : 1;
-  return String(Math.max(min, current + direction * 1)).replace(/\.0+$/, '');
+  return String(Math.max(min, current + direction * 1)).replace(/\.0+$/, '').replace(/\./g, ',');
 }
 function hasPositiveQuantity(item: any) {
   const quantity = Number(String(item?.quantity || '').replace(',', '.'));
@@ -274,6 +274,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const [pickerLoading, setPickerLoading] = React.useState(false);
   const [filtersOpen, setFiltersOpen] = React.useState(false);
   const [inspectorOpen, setInspectorOpen] = React.useState(false);
+  const [deleteDocumentOverlayVisible, setDeleteDocumentOverlayVisible] = React.useState(false);
   const [filterCounterparty, setFilterCounterparty] = React.useState<ClientOrderCounterpartyOption | null>(null);
   const [filterWarehouse, setFilterWarehouse] = React.useState<ClientOrderWarehouseOption | null>(null);
   const [filterPriceType, setFilterPriceType] = React.useState<ClientOrderPriceTypeOption | null>(null);
@@ -414,6 +415,10 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     setTabBarHidden?.(mode === 'editor');
     return () => setTabBarHidden?.(false);
   }, [mode, setTabBarHidden]);
+  React.useEffect(() => {
+    if (mode !== 'orders') return;
+    void workspace.syncDeviceDrafts?.();
+  }, [mode, workspace.syncDeviceDrafts]);
   React.useEffect(() => {
     if (Platform.OS === 'android' && !IS_NEW_ARCHITECTURE) {
       UIManager.setLayoutAnimationEnabledExperimental?.(true);
@@ -658,14 +663,18 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     return true;
   }, [openingOrderGuid, workspace]);
   const closeDocumentToOrders = React.useCallback(() => {
-    void workspace.confirmDiscardIfNeeded().then((canLeave: boolean) => {
-      if (!canLeave) return;
+    const leaveDocument = () => {
       setOpeningDocument(null);
       runDocumentHeaderTransition();
       setMode('orders');
-      setTimeout(() => {
-        void workspace.refreshOrders?.();
-      }, 0);
+    };
+    if (!workspace.dirty) {
+      leaveDocument();
+      return;
+    }
+    void workspace.confirmDiscardIfNeeded().then((canLeave: boolean) => {
+      if (!canLeave) return;
+      leaveDocument();
     });
   }, [workspace]);
   const closeTopOverlay = React.useCallback(() => {
@@ -878,10 +887,15 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         confirmLabel: 'Удалить',
         destructive: true,
         onConfirm: async () => {
-          await workspace.deleteDraft();
-          setOpeningDocument(null);
-          runDocumentHeaderTransition();
-          setMode('orders');
+          setDeleteDocumentOverlayVisible(true);
+          try {
+            await workspace.deleteDraft();
+            setOpeningDocument(null);
+            runDocumentHeaderTransition();
+            setMode('orders');
+          } finally {
+            setDeleteDocumentOverlayVisible(false);
+          }
         },
       });
       return;
@@ -1281,6 +1295,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const showItemsSearchOverlay = mode === 'editor' && !workspace.readOnly && section === 'items' && !!itemsSearch.trim() && itemsSearchFocused;
   const itemsSearchOverlayTop = Math.max(topInset + 96, headerBottomOffset + 6);
   const showDocumentOpenLoader = mode === 'editor' && (!!openingDocument || workspace.loadingDetail);
+  const showDocumentDeleteOverlay = mode === 'editor' && deleteDocumentOverlayVisible;
   const documentOpenLabel = openingDocument === 'new' ? 'Готовлю новый документ' : 'Открываю документ';
 
   return (
@@ -1407,6 +1422,10 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
           safeBottom={safeBottom}
           onPrimaryAction={handleDocumentPrimaryAction}
         />
+      ) : null}
+
+      {showDocumentDeleteOverlay ? (
+        <DocumentBusyOverlay styles={styles} label="Удаляю черновик" />
       ) : null}
 
       <OrdersFiltersBottomSheet
@@ -2442,6 +2461,7 @@ function ProductLineEditorSheet({
   const [scrollContentHeight, setScrollContentHeight] = React.useState(0);
   const [footerHeight, setFooterHeight] = React.useState(0);
   const [keyboardVisible, setKeyboardVisible] = React.useState(false);
+  const priceInputRef = React.useRef<any>(null);
   const currentDisplayedPrice = getDisplayedUnitPriceValue(displayedItem);
   React.useEffect(() => {
     if (visible) setScrollOffset(0);
@@ -2565,7 +2585,7 @@ function ProductLineEditorSheet({
                     <Pressable
                       key={option.guid || '__base__'}
                       disabled={readOnly}
-                      onPress={() => workspace.setItemPatch(displayedItem.key, { packageGuid: option.guid })}
+                      onPress={() => workspace.setItemPackage(displayedItem.key, option.guid)}
                       style={({ pressed }) => [
                         styles.productEditorPackageButton,
                         selected && styles.productEditorPackageButtonActive,
@@ -2594,6 +2614,7 @@ function ProductLineEditorSheet({
             <Text style={[styles.productEditorLabel, readOnly && styles.productEditorLabelReadOnly]}>Цена за единицу</Text>
             <View style={[styles.productEditorPriceBox, !priceValid && styles.productEditorPriceBoxInvalid, readOnly && styles.productEditorReadOnlySurface]}>
               <SheetTextInput
+                ref={priceInputRef}
                 value={priceFocused ? priceInputValue : displayedPrice}
                 placeholder="0"
                 placeholderTextColor="#94A3B8"
@@ -2625,7 +2646,12 @@ function ProductLineEditorSheet({
                 accessibilityRole="button"
                 accessibilityLabel="Вернуть цену из прайса документа"
                 disabled={readOnly}
-                onPress={() => workspace.resetItemPriceType(displayedItem.key)}
+                onPress={() => {
+                  priceInputRef.current?.blur?.();
+                  setPriceFocused(false);
+                  setPriceInputValue('');
+                  workspace.resetItemPriceType(displayedItem.key);
+                }}
                 hitSlop={6}
                 style={({ pressed }) => [styles.productEditorPriceReset, readOnly && styles.productEditorReadOnlyIconButton, pressed && !readOnly && styles.flatPressed]}
               >
@@ -3096,6 +3122,27 @@ function DocumentOpenLoader({ styles, label }: { styles: any; label: string }) {
           <View style={styles.documentOpenLoaderField} />
           <View style={styles.documentOpenLoaderFieldWide} />
         </View>
+      </Surface>
+    </View>
+  );
+}
+
+function DocumentBusyOverlay({ styles, label }: { styles: any; label: string }) {
+  return (
+    <View pointerEvents="auto" style={styles.documentBusyOverlay}>
+      <LiquidGlassSurface
+        pointerEvents="none"
+        style={styles.documentBusyBlur}
+        borderColor="rgba(226, 232, 240, 0.24)"
+        overlayColor="rgba(248, 250, 252, 0.68)"
+        blurIntensity={30}
+        blurTint="light"
+        specularOpacity={0.12}
+        depthOpacity={0.03}
+      />
+      <Surface mode="flat" style={styles.documentBusyCard}>
+        <ActivityIndicator size={24} color="#2563EB" />
+        <Text style={styles.documentBusyTitle}>{label}</Text>
       </Surface>
     </View>
   );
@@ -3752,6 +3799,10 @@ const styles = StyleSheet.create({
   documentOpenLoaderGrid: { gap: 8, paddingTop: 2 },
   documentOpenLoaderField: { height: 48, borderRadius: 10, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#F8FAFC' },
   documentOpenLoaderFieldWide: { height: 76, borderRadius: 10, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#F8FAFC' },
+  documentBusyOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 260, elevation: 260, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 22 },
+  documentBusyBlur: { ...StyleSheet.absoluteFillObject, borderWidth: 0 },
+  documentBusyCard: { minWidth: 164, minHeight: 92, borderRadius: 18, borderWidth: 1, borderColor: 'rgba(191, 219, 254, 0.82)', backgroundColor: 'rgba(255, 255, 255, 0.86)', alignItems: 'center', justifyContent: 'center', gap: 10, paddingHorizontal: 18, paddingVertical: 16, shadowColor: '#0F172A', shadowOpacity: 0.13, shadowRadius: 22, shadowOffset: { width: 0, height: 12 }, elevation: 18 },
+  documentBusyTitle: { color: '#0F172A', fontSize: 13, lineHeight: 17, fontWeight: '900', textAlign: 'center' },
   ordersPrimaryButton: { width: 30, minWidth: 30, borderRadius: 4 },
   ordersSecondaryButton: { width: 30, minWidth: 30, borderRadius: 4, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF' },
   ordersButtonContent: { width: 30, height: 30, paddingHorizontal: 0 },

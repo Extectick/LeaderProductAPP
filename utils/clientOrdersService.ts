@@ -283,6 +283,18 @@ function buildQuery(params: Record<string, string | number | boolean | undefined
   return query.toString();
 }
 
+const pendingClientOrderReads = new Map<string, Promise<unknown>>();
+
+function dedupeRead<T>(key: string, loader: () => Promise<T>): Promise<T> {
+  const pending = pendingClientOrderReads.get(key) as Promise<T> | undefined;
+  if (pending) return pending;
+  const task = loader().finally(() => {
+    pendingClientOrderReads.delete(key);
+  });
+  pendingClientOrderReads.set(key, task);
+  return task;
+}
+
 function getErrorMessage(fallback: string, message?: string) {
   if (!message) return fallback;
   const normalized = String(message).trim();
@@ -296,6 +308,16 @@ function getErrorMessage(fallback: string, message?: string) {
     normalized.includes('expected number') ||
     normalized.includes('\n    at ');
   return looksTechnical ? fallback : normalized.slice(0, 240);
+}
+
+function throwApiError(fallback: string, res: { message?: string; status?: number; errorCode?: string }): never {
+  const error = new Error(getErrorMessage(fallback, res.message)) as Error & {
+    status?: number;
+    errorCode?: string;
+  };
+  error.status = res.status;
+  error.errorCode = res.errorCode;
+  throw error;
 }
 
 function mapPagedResponse<T>(res: { ok: boolean; data?: { items?: T[] } | T[]; meta?: PaginationMeta; message?: string }, fallback: string): PagedResult<T> {
@@ -348,14 +370,19 @@ export async function getClientOrders(params?: {
 }) {
   const query = buildQuery(params || {});
   const path = query ? `${API_ENDPOINTS.CLIENT_ORDERS.LIST}?${query}` : API_ENDPOINTS.CLIENT_ORDERS.LIST;
-  const res = await apiClient<void, { items: ClientOrder[] }>(path);
-  return normalizeClientOrderPage(mapPagedResponse(res, 'Не удалось загрузить заказы клиентов'));
+  return dedupeRead(`GET ${path}`, async () => {
+    const res = await apiClient<void, { items: ClientOrder[] }>(path);
+    return normalizeClientOrderPage(mapPagedResponse(res, 'Не удалось загрузить заказы клиентов'));
+  });
 }
 
 export async function getClientOrder(guid: string) {
-  const res = await apiClient<void, ClientOrder>(API_ENDPOINTS.CLIENT_ORDERS.DETAIL(guid));
-  if (!res.ok || !res.data) throw new Error(getErrorMessage('Не удалось загрузить заказ клиента', res.message));
-  return normalizeClientOrder(res.data);
+  const path = API_ENDPOINTS.CLIENT_ORDERS.DETAIL(guid);
+  return dedupeRead(`GET ${path}`, async () => {
+    const res = await apiClient<void, ClientOrder>(path);
+    if (!res.ok || !res.data) throw new Error(getErrorMessage('Не удалось загрузить заказ клиента', res.message));
+    return normalizeClientOrder(res.data);
+  });
 }
 
 export async function getClientOrdersReferenceData(counterpartyGuid?: string) {
@@ -374,9 +401,12 @@ export async function getClientOrderDefaults(params: {
   counterpartyGuid: string;
 }) {
   const query = buildQuery(params);
-  const res = await apiClient<void, ClientOrderDefaults>(`${API_ENDPOINTS.CLIENT_ORDERS.DEFAULTS}?${query}`);
-  if (!res.ok || !res.data) throw new Error(getErrorMessage('Не удалось получить значения по умолчанию', res.message));
-  return res.data;
+  const path = `${API_ENDPOINTS.CLIENT_ORDERS.DEFAULTS}?${query}`;
+  return dedupeRead(`GET ${path}`, async () => {
+    const res = await apiClient<void, ClientOrderDefaults>(path);
+    if (!res.ok || !res.data) throw new Error(getErrorMessage('Не удалось получить значения по умолчанию', res.message));
+    return res.data;
+  });
 }
 
 export async function getClientOrderSettings() {
@@ -412,8 +442,10 @@ async function getPagedSelector<T>(
 ) {
   const query = buildQuery(params);
   const path = query ? `${endpoint}?${query}` : endpoint;
-  const res = await apiClient<void, { items: T[] }>(path);
-  return mapPagedResponse(res, fallbackMessage);
+  return dedupeRead(`GET ${path}`, async () => {
+    const res = await apiClient<void, { items: T[] }>(path);
+    return mapPagedResponse(res, fallbackMessage);
+  });
 }
 
 export function searchClientOrderCounterparties(params?: {
@@ -524,14 +556,18 @@ export async function getClientOrderProductsBatch(payload: {
   warehouseGuid?: string;
   priceTypeGuid?: string;
 }) {
-  const res = await apiClient<typeof payload, { items: ClientOrderProduct[] }>(
-    API_ENDPOINTS.CLIENT_ORDERS.PRODUCTS_BATCH,
-    { method: 'POST', body: payload }
-  );
-  if (!res.ok || !res.data) {
-    throw new Error(getErrorMessage('Не удалось обновить цены и остатки товаров', res.message));
-  }
-  return Array.isArray(res.data.items) ? res.data.items : [];
+  const productGuids = [...new Set(payload.productGuids)].sort();
+  const key = `POST ${API_ENDPOINTS.CLIENT_ORDERS.PRODUCTS_BATCH} ${JSON.stringify({ ...payload, productGuids })}`;
+  return dedupeRead(key, async () => {
+    const res = await apiClient<typeof payload, { items: ClientOrderProduct[] }>(
+      API_ENDPOINTS.CLIENT_ORDERS.PRODUCTS_BATCH,
+      { method: 'POST', body: payload }
+    );
+    if (!res.ok || !res.data) {
+      throw new Error(getErrorMessage('Не удалось обновить цены и остатки товаров', res.message));
+    }
+    return Array.isArray(res.data.items) ? res.data.items : [];
+  });
 }
 
 export async function createClientOrder(payload: any) {
@@ -539,7 +575,7 @@ export async function createClientOrder(payload: any) {
     method: 'POST',
     body: payload,
   });
-  if (!res.ok || !res.data) throw new Error(getErrorMessage('Не удалось создать заказ клиента', res.message));
+  if (!res.ok || !res.data) throwApiError('Не удалось создать заказ клиента', res);
   return normalizeClientOrder(res.data);
 }
 
@@ -548,7 +584,7 @@ export async function updateClientOrder(guid: string, payload: any) {
     method: 'PATCH',
     body: payload,
   });
-  if (!res.ok || !res.data) throw new Error(getErrorMessage('Не удалось обновить заказ клиента', res.message));
+  if (!res.ok || !res.data) throwApiError('Не удалось обновить заказ клиента', res);
   return normalizeClientOrder(res.data);
 }
 
