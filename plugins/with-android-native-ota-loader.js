@@ -131,14 +131,10 @@ function updateGateActivitySource(packageName) {
   return `package ${packageName}
 
 import android.app.Activity
-import android.app.AlarmManager
-import android.app.PendingIntent
-import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.os.Bundle
-import android.os.SystemClock
 import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
@@ -161,7 +157,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlin.system.exitProcess
 
 class UpdateGateActivity : Activity(), IUpdatesEventManagerObserver {
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -218,7 +213,6 @@ class UpdateGateActivity : Activity(), IUpdatesEventManagerObserver {
   private fun runUpdateGate() {
     scope.launch {
       var controller: IUpdatesController? = null
-      var restartingForFetchedUpdate = false
 
       try {
         showStatus("Запускаем приложение", "Подготавливаем рабочее пространство.", 1.0)
@@ -236,21 +230,10 @@ class UpdateGateActivity : Activity(), IUpdatesEventManagerObserver {
         controller.eventManager.observer = WeakReference(this@UpdateGateActivity)
         controller.onEventListenerStartObserving()
 
-        prepareLaunch(controller)
-
-        if (consumeFetchedUpdateRestart()) {
-          showStatus("Обновление готово", "Запускаем свежую версию.", 1.0)
-          return@launch
-        }
-
         showStatus("Проверяем обновления", "Связываемся с сервером обновлений.", null)
         val updateFetched = checkAndFetchUpdate(controller)
         if (updateFetched) {
           showStatus("Обновление готово", "Запускаем свежую версию.", 1.0)
-          markFetchedUpdateRestart()
-          restartingForFetchedUpdate = true
-          restartGateForFetchedUpdate()
-          return@launch
         } else {
           showStatus("Запускаем приложение", "Текущая версия уже готова к работе.", 1.0)
         }
@@ -258,20 +241,7 @@ class UpdateGateActivity : Activity(), IUpdatesEventManagerObserver {
         Log.w(TAG, "Native update gate failed; launching current app", error)
         showStatus("Запускаем приложение", "Обновление временно недоступно.", 1.0)
       } finally {
-        if (!restartingForFetchedUpdate) {
-          startUpdatesAndOpenMain(controller)
-        }
-      }
-    }
-  }
-
-  private suspend fun prepareLaunch(controller: IUpdatesController) {
-    withContext(Dispatchers.IO) {
-      runCatching {
-        controller.start()
-        controller.launchAssetFile ?: controller.bundleAssetName
-      }.onFailure {
-        Log.w(TAG, "Failed to prepare expo-updates launch", it)
+        startUpdatesAndOpenMain(controller)
       }
     }
   }
@@ -315,51 +285,6 @@ class UpdateGateActivity : Activity(), IUpdatesEventManagerObserver {
     }
 
     openMainActivity()
-  }
-
-  private fun prefs() = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-
-  private fun markFetchedUpdateRestart() {
-    prefs().edit().putBoolean(KEY_SKIP_REMOTE_CHECK_ONCE, true).apply()
-  }
-
-  private fun consumeFetchedUpdateRestart(): Boolean {
-    val preferences = prefs()
-    val shouldSkip = preferences.getBoolean(KEY_SKIP_REMOTE_CHECK_ONCE, false)
-    if (shouldSkip) {
-      preferences.edit().remove(KEY_SKIP_REMOTE_CHECK_ONCE).apply()
-    }
-    return shouldSkip
-  }
-
-  private fun restartGateForFetchedUpdate() {
-    clearUpdatesObserver()
-
-    val sourceIntent = intent
-    val restartIntent = Intent(this, UpdateGateActivity::class.java).apply {
-      action = sourceIntent?.action
-      data = sourceIntent?.data
-      sourceIntent?.categories?.forEach { addCategory(it) }
-      sourceIntent?.extras?.let { putExtras(it) }
-      flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-    }
-
-    val pendingIntent = PendingIntent.getActivity(
-      this,
-      RESTART_REQUEST_CODE,
-      restartIntent,
-      PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_IMMUTABLE
-    )
-    val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
-    alarmManager.set(
-      AlarmManager.ELAPSED_REALTIME,
-      SystemClock.elapsedRealtime() + RESTART_DELAY_MS,
-      pendingIntent
-    )
-
-    finishAffinity()
-    android.os.Process.killProcess(android.os.Process.myPid())
-    exitProcess(0)
   }
 
   private fun openMainActivity() {
@@ -518,10 +443,6 @@ class UpdateGateActivity : Activity(), IUpdatesEventManagerObserver {
     private const val PROGRESS_MAX = 1000
     private const val OTA_CHECK_TIMEOUT_MS = 8_000L
     private const val OTA_FETCH_TIMEOUT_MS = 120_000L
-    private const val PREFS_NAME = "leader_product_update_gate"
-    private const val KEY_SKIP_REMOTE_CHECK_ONCE = "skip_remote_check_once"
-    private const val RESTART_REQUEST_CODE = 9071
-    private const val RESTART_DELAY_MS = 250L
   }
 }
 `;

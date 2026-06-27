@@ -1,13 +1,53 @@
 import React from 'react';
-import { BackHandler, Platform, useWindowDimensions } from 'react-native';
+import { BackHandler, Platform, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useNavigation, useRouter } from 'expo-router';
+import { logger } from '@/utils/logger';
 import { useUnsavedChanges } from '@/src/features/navigation/UnsavedChangesContext';
 import ClientOrdersMobileLayout from './mobile/ClientOrdersMobileLayout';
 import ClientOrdersDesktopLayout from './desktop/ClientOrdersDesktopLayout';
 
 const WEB_DESKTOP_BREAKPOINT = 1024;
 
-export default function ClientOrdersScreen() {
+type ErrorBoundaryProps = {
+  children: React.ReactNode;
+  onExit: () => void;
+};
+
+type ErrorBoundaryState = {
+  error: Error | null;
+};
+
+class ClientOrdersErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  state: ErrorBoundaryState = { error: null };
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    logger.captureException(error, { where: 'ClientOrdersScreen', componentStack: info.componentStack }, 'client-orders');
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+
+    return (
+      <View style={styles.errorRoot}>
+        <View style={styles.errorCard}>
+          <Text style={styles.errorTitle}>Не удалось открыть заказы клиентов</Text>
+          <Text style={styles.errorText} selectable>
+            {this.state.error.message || 'Произошла ошибка интерфейса.'}
+          </Text>
+          <Pressable style={styles.errorButton} onPress={this.props.onExit}>
+            <Text style={styles.errorButtonText}>В каталог сервисов</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
+}
+
+function ClientOrdersScreenContent() {
   const { width } = useWindowDimensions();
   const router = useRouter();
   const navigation = useNavigation<any>();
@@ -79,3 +119,56 @@ export default function ClientOrdersScreen() {
 
   return <ClientOrdersMobileLayout registerBackOverlayHandler={registerBackOverlayHandler} />;
 }
+
+export default function ClientOrdersScreen() {
+  const router = useRouter();
+  const exitToServices = React.useCallback(() => router.replace('/services'), [router]);
+
+  return (
+    <ClientOrdersErrorBoundary onExit={exitToServices}>
+      <ClientOrdersScreenContent />
+    </ClientOrdersErrorBoundary>
+  );
+}
+
+const styles = StyleSheet.create({
+  errorRoot: {
+    flex: 1,
+    justifyContent: 'center',
+    padding: 20,
+    backgroundColor: '#F8FAFC',
+  },
+  errorCard: {
+    gap: 14,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#DBEAFE',
+    backgroundColor: '#FFFFFF',
+    padding: 20,
+  },
+  errorTitle: {
+    color: '#0F172A',
+    fontSize: 18,
+    fontWeight: '900',
+    lineHeight: 23,
+  },
+  errorText: {
+    color: '#475569',
+    fontSize: 14,
+    fontWeight: '700',
+    lineHeight: 20,
+  },
+  errorButton: {
+    minHeight: 46,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+    backgroundColor: '#2563EB',
+    paddingHorizontal: 16,
+  },
+  errorButtonText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '900',
+  },
+});
