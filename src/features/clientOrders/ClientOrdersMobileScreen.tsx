@@ -306,6 +306,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const pickerLoadSignatureRef = React.useRef('');
   const pickerAppendLoadingRef = React.useRef(false);
   const pickerSearchInputRef = React.useRef<any>(null);
+  const pickerFocusTimersRef = React.useRef<Array<ReturnType<typeof setTimeout>>>([]);
+  const pickerAutoFocusSuppressedRef = React.useRef(false);
   const pickerListRef = React.useRef<any>(null);
   const itemsSearchRequestIdRef = React.useRef(0);
   const itemsSearchLoadingMoreRef = React.useRef(false);
@@ -530,7 +532,21 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     }
   }, []);
 
+  const clearPickerFocusTimers = React.useCallback(() => {
+    pickerFocusTimersRef.current.forEach((timer) => clearTimeout(timer));
+    pickerFocusTimersRef.current = [];
+  }, []);
+
+  const suppressPickerAutoFocus = React.useCallback(() => {
+    pickerAutoFocusSuppressedRef.current = true;
+    clearPickerFocusTimers();
+    pickerSearchInputRef.current?.blur?.();
+    Keyboard.dismiss();
+  }, [clearPickerFocusTimers]);
+
   const openPicker = React.useCallback((kind: PickerKind, lineKey?: string) => {
+    pickerAutoFocusSuppressedRef.current = false;
+    clearPickerFocusTimers();
     setPickerKind(kind);
     setLinePriceTarget(kind === 'priceType' && lineKey ? lineKey : null);
     setPickerSearch('');
@@ -541,7 +557,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     pickerAppendLoadingRef.current = false;
     pickerLoadSignatureRef.current = '';
     requestAnimationFrame(() => scrollPickerListToTop(false));
-  }, [scrollPickerListToTop]);
+  }, [clearPickerFocusTimers, scrollPickerListToTop]);
 
   const handlePickerSearchChange = React.useCallback((value: string) => {
     setPickerSearch(value);
@@ -639,21 +655,40 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     if (!pickerKind) return undefined;
     if (!pickerShouldAutofocusSearch(pickerKind)) return undefined;
     if (pickerNeedsOrderContext(pickerKind) && (!workspace.draft.organizationGuid || !workspace.draft.counterpartyGuid)) return undefined;
+    if (pickerAutoFocusSuppressedRef.current) return undefined;
 
+    clearPickerFocusTimers();
     const focusSearch = () => {
+      if (pickerAutoFocusSuppressedRef.current) return;
       pickerSearchInputRef.current?.focus?.();
     };
-    const timers = [120, 260, 420, 700].map((delay) => setTimeout(focusSearch, delay));
-    return () => timers.forEach((timer) => clearTimeout(timer));
-  }, [pickerKind, pickerLoading, workspace.draft.counterpartyGuid, workspace.draft.organizationGuid]);
+    pickerFocusTimersRef.current = [140, 320].map((delay) => setTimeout(focusSearch, delay));
+    return clearPickerFocusTimers;
+  }, [
+    clearPickerFocusTimers,
+    pickerKind,
+    workspace.draft.counterpartyGuid,
+    workspace.draft.organizationGuid,
+  ]);
+
+  React.useEffect(() => {
+    if (!pickerKind) return undefined;
+    const subscription = Keyboard.addListener('keyboardDidHide', () => {
+      if (!pickerShouldAutofocusSearch(pickerKind)) return;
+      pickerAutoFocusSuppressedRef.current = true;
+      clearPickerFocusTimers();
+    });
+    return () => subscription.remove();
+  }, [clearPickerFocusTimers, pickerKind]);
 
   const closePicker = React.useCallback(() => {
+    suppressPickerAutoFocus();
     pickerRequestIdRef.current += 1;
     pickerAppendLoadingRef.current = false;
     pickerLoadSignatureRef.current = '';
     setPickerKind(null);
     setLinePriceTarget(null);
-  }, []);
+  }, [suppressPickerAutoFocus]);
   const cancelOpeningOrder = React.useCallback(() => {
     if (!openingOrderGuid) return false;
     openingOrderRequestIdRef.current += 1;
@@ -1241,7 +1276,17 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
           ) : null}
         </View>
       </View>
-      <PickerContentScrollView ref={pickerListRef} style={styles.pickerScroll} onScroll={handlePickerScroll} scrollEventThrottle={16} nestedScrollEnabled contentContainerStyle={styles.pickerListContent} keyboardShouldPersistTaps="handled">
+      <PickerContentScrollView
+        ref={pickerListRef}
+        style={styles.pickerScroll}
+        onScroll={handlePickerScroll}
+        onScrollBeginDrag={suppressPickerAutoFocus}
+        scrollEventThrottle={16}
+        nestedScrollEnabled
+        contentContainerStyle={styles.pickerListContent}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+      >
         {pickerNeedsOrderContext(pickerKind) && (!workspace.draft.organizationGuid || !workspace.draft.counterpartyGuid) ? <InfoText styles={styles} text="Сначала выберите организацию и контрагента." /> : null}
         {visiblePickerItems.map((item: any) => {
           const disabled = pickerKind === 'product' && workspace.draft.items.some((line) => line.productGuid === item.guid);

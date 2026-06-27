@@ -13,6 +13,7 @@ const RELOAD_CONFIRMATION_WAIT_MS = 1800;
 const RELOAD_MAX_ATTEMPTS = 3;
 const NATIVE_OTA_GATE_HANDLES_STARTUP = Platform.OS === 'android' && !__DEV__;
 const JS_OTA_CHECK_ENABLED = Platform.OS !== 'web' && !__DEV__ && !NATIVE_OTA_GATE_HANDLES_STARTUP;
+const OTA_PENDING_RELOAD_GUARD_ENABLED = Platform.OS !== 'web' && !__DEV__;
 
 type StartupOtaPhase =
   | 'waiting'
@@ -78,12 +79,13 @@ function isTransientUpdatesBusyError(error: unknown) {
 
 export function useStartupOtaUpdate(start: boolean): StartupOtaState {
   const updatesState = Updates.useUpdates();
-  const [ready, setReady] = useState(!JS_OTA_CHECK_ENABLED);
+  const [ready, setReady] = useState(!(JS_OTA_CHECK_ENABLED || OTA_PENDING_RELOAD_GUARD_ENABLED));
   const [phase, setPhase] = useState<StartupOtaPhase>(
-    JS_OTA_CHECK_ENABLED ? 'waiting' : 'disabled'
+    JS_OTA_CHECK_ENABLED || OTA_PENDING_RELOAD_GUARD_ENABLED ? 'waiting' : 'disabled'
   );
   const [manualProgress, setManualProgress] = useState<number | null>(null);
   const startedRef = useRef(false);
+  const nativeGateStartedRef = useRef(false);
   const reloadTriggeredRef = useRef(false);
   const mountedRef = useRef(true);
   const latestUpdatesStateRef = useRef(updatesState);
@@ -178,17 +180,17 @@ export function useStartupOtaUpdate(start: boolean): StartupOtaState {
 
   useEffect(() => {
     if (!start) return;
-    if (!JS_OTA_CHECK_ENABLED) {
+    if (!Updates.isEnabled) {
       finish('disabled');
       return;
     }
-    if (!Updates.isEnabled) {
+    if (!JS_OTA_CHECK_ENABLED && !OTA_PENDING_RELOAD_GUARD_ENABLED) {
       finish('disabled');
     }
   }, [finish, start]);
 
   useEffect(() => {
-    if (!JS_OTA_CHECK_ENABLED) return;
+    if (!OTA_PENDING_RELOAD_GUARD_ENABLED) return;
     if (!start || !Updates.isEnabled) return;
     if (!updatesState.isUpdatePending && !updatesState.downloadedUpdate) return;
     void applyDownloadedUpdate().catch((error) => {
@@ -197,14 +199,50 @@ export function useStartupOtaUpdate(start: boolean): StartupOtaState {
       }
       finish('error');
     });
-  }, [applyDownloadedUpdate, finish, start, updatesState.isUpdatePending]);
+  }, [applyDownloadedUpdate, finish, start, updatesState.downloadedUpdate, updatesState.isUpdatePending]);
+
+  useEffect(() => {
+    if (!start || JS_OTA_CHECK_ENABLED || !OTA_PENDING_RELOAD_GUARD_ENABLED || nativeGateStartedRef.current) return undefined;
+    if (!Updates.isEnabled) {
+      finish('disabled');
+      return undefined;
+    }
+
+    let cancelled = false;
+    nativeGateStartedRef.current = true;
+
+    void (async () => {
+      try {
+        setReady(false);
+        setPhase('checking');
+        setManualProgress(0.22);
+
+        const nativeState = await waitForNativeUpdatesIdle(() => cancelled);
+        if (cancelled || !mountedRef.current || reloadTriggeredRef.current) return;
+
+        if (nativeState === 'pending' || hasPendingDownloadedUpdate()) {
+          await applyDownloadedUpdate();
+          return;
+        }
+
+        finish(nativeState === 'timeout' ? 'error' : 'up-to-date');
+      } catch (error) {
+        if (cancelled || !mountedRef.current || reloadTriggeredRef.current) return;
+        if (!isExpectedUpdatesDisabledError(error)) {
+          console.warn('[ota] native startup update guard failed', error);
+        }
+        finish('error');
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [applyDownloadedUpdate, finish, hasPendingDownloadedUpdate, start, waitForNativeUpdatesIdle]);
 
   useEffect(() => {
     if (!start || startedRef.current) return;
-    if (!JS_OTA_CHECK_ENABLED) {
-      finish('disabled');
-      return;
-    }
+    if (!JS_OTA_CHECK_ENABLED) return;
     if (!Updates.isEnabled) return;
 
     let cancelled = false;

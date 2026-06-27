@@ -397,11 +397,9 @@ function NativePickerBottomSheet({
   const preferredSheetHeight = typeof preferredHeight === 'number'
     ? Math.min(maxSheetHeight, Math.max(minHeight, preferredHeight))
     : null;
-  const peekSheetHeight = Math.min(maxSheetHeight, Math.max(minHeight, Math.round(height * 0.6)));
   const snapPoints = React.useMemo(() => {
-    if (preferredSheetHeight != null) return [preferredSheetHeight];
-    return maxSheetHeight - peekSheetHeight > 32 ? [peekSheetHeight, maxSheetHeight] : [maxSheetHeight];
-  }, [maxSheetHeight, peekSheetHeight, preferredSheetHeight]);
+    return [preferredSheetHeight ?? maxSheetHeight];
+  }, [maxSheetHeight, preferredSheetHeight]);
   const startIndex = React.useMemo(
     () => Math.max(0, Math.min(initialSnapIndex, snapPoints.length - 1)),
     [initialSnapIndex, snapPoints.length]
