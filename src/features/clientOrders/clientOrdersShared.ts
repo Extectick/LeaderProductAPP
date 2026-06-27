@@ -238,11 +238,70 @@ export const STATUS_LABELS: Record<string, string> = {
   DRAFT: 'Черновик',
   QUEUED: 'В очереди',
   SENT_TO_1C: 'Создан в 1С',
+  AWAITING_APPROVAL: 'Ожидается согласование',
+  AWAITING_ADVANCE_BEFORE_SUPPLY: 'Ожидается аванс до обеспечения',
+  READY_FOR_SUPPLY: 'Готов к обеспечению',
+  AWAITING_PREPAYMENT_BEFORE_SHIPMENT: 'Ожидается предоплата до отгрузки',
+  AWAITING_SUPPLY: 'Ожидается обеспечение',
+  READY_FOR_SHIPMENT: 'Готов к отгрузке',
+  SHIPPING_IN_PROGRESS: 'В процессе отгрузки',
+  AWAITING_PAYMENT_AFTER_SHIPMENT: 'Ожидается оплата после отгрузки',
+  READY_TO_CLOSE: 'Готов к закрытию',
+  NOT_CONFIRMED: 'Не согласован',
+  TO_SUPPLY: 'К обеспечению',
+  TO_SHIP: 'К отгрузке',
+  IN_RESERVE: 'В резерве',
+  TO_FULFILLMENT: 'К выполнению',
   CONFIRMED: 'Подтвержден',
   PARTIAL: 'Частично выполнен',
+  COMPLETED: 'Выполнен',
+  CLOSED: 'Закрыт',
   REJECTED: 'Отклонен',
   CANCELLED: 'Отменен',
 };
+
+export function mapOnecOrderStatus(value?: string | null) {
+  const normalized = (value || '').trim().toLocaleLowerCase('ru').replace(/\s+/g, '');
+  if (!normalized) return null;
+  if (normalized.includes('ожидаетсясоглас')) return 'AWAITING_APPROVAL';
+  if (normalized.includes('ожидаетсяавансдообеспеч')) return 'AWAITING_ADVANCE_BEFORE_SUPPLY';
+  if (normalized.includes('готовкобеспеч')) return 'READY_FOR_SUPPLY';
+  if (normalized.includes('ожидаетсяпредоплатадоотгруз')) return 'AWAITING_PREPAYMENT_BEFORE_SHIPMENT';
+  if (normalized.includes('ожидаетсяобеспеч')) return 'AWAITING_SUPPLY';
+  if (normalized.includes('готовкотгруз')) return 'READY_FOR_SHIPMENT';
+  if (normalized.includes('впроцессеотгруз')) return 'SHIPPING_IN_PROGRESS';
+  if (normalized.includes('ожидаетсяоплатапослеотгруз')) return 'AWAITING_PAYMENT_AFTER_SHIPMENT';
+  if (normalized.includes('готовкзакры')) return 'READY_TO_CLOSE';
+  if (normalized.includes('котгруз')) return 'TO_SHIP';
+  if (normalized.includes('кобеспеч')) return 'TO_SUPPLY';
+  if (normalized.includes('резерв')) return 'IN_RESERVE';
+  if (normalized.includes('квыполн')) return 'TO_FULFILLMENT';
+  if (normalized.includes('отмен')) return 'CANCELLED';
+  if (normalized.includes('отклон')) return 'REJECTED';
+  if (normalized.includes('несоглас') || normalized.includes('неподтверж')) return 'NOT_CONFIRMED';
+  if (normalized.includes('частич')) return 'PARTIAL';
+  if (normalized.includes('выполн')) return 'COMPLETED';
+  if (normalized.includes('закры')) return 'CLOSED';
+  if (normalized.includes('подтверж')) return 'CONFIRMED';
+  return null;
+}
+
+export function getOrderDisplayStatus(order?: Pick<ClientOrder, 'status' | 'number1c' | 'origin' | 'status1c' | 'currentState1c' | 'documentStatus1c'> | null) {
+  if (!order) return 'DRAFT';
+  const onecText = order.currentState1c || order.status1c;
+  const isOnecBacked = Boolean(order.number1c || order.origin === 'onec' || order.origin === 'merged');
+  if (isOnecBacked && onecText) {
+    return mapOnecOrderStatus(onecText) || order.status || onecText;
+  }
+  return order.status || mapOnecOrderStatus(onecText) || 'DRAFT';
+}
+
+export function getOrderDisplayStatusLabel(order?: Pick<ClientOrder, 'status' | 'number1c' | 'origin' | 'status1c' | 'currentState1c' | 'documentStatus1c'> | null) {
+  if (!order) return STATUS_LABELS.DRAFT;
+  const displayStatus = getOrderDisplayStatus(order);
+  const onecText = order.currentState1c || order.status1c;
+  return STATUS_LABELS[displayStatus] || onecText || displayStatus || STATUS_LABELS.DRAFT;
+}
 
 export const SYNC_LABELS: Record<string, string> = {
   DRAFT: 'Черновик',
@@ -331,8 +390,42 @@ export function normalizePriceForPayload(value: string) {
   return Number(normalizeDecimalSeparator(value));
 }
 
+function roundMoneyValue(value: number) {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function priceInputString(value: number) {
+  return String(roundMoneyValue(value));
+}
+
+export function getSelectedPackage(item: DraftItem) {
+  return item.packageGuid ? item.packages.find((next) => next.guid === item.packageGuid) ?? null : null;
+}
+
+export function getPackageMultiplier(item: DraftItem) {
+  const multiplier = Number(getSelectedPackage(item)?.multiplier ?? 1);
+  return Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1;
+}
+
+export function getDisplayedUnitPriceValue(item: DraftItem) {
+  const sourcePrice = item.manualPrice.trim()
+    ? normalizePriceForPayload(item.manualPrice)
+    : item.basePrice ?? null;
+  if (sourcePrice === null || sourcePrice === undefined || Number.isNaN(sourcePrice) || sourcePrice <= 0) {
+    return '';
+  }
+  return priceInputString(sourcePrice * getPackageMultiplier(item));
+}
+
+export function displayedUnitPriceToBasePriceInput(value: string, item: DraftItem) {
+  if (!value.trim()) return '';
+  const displayedPrice = normalizePriceForPayload(value);
+  if (!Number.isFinite(displayedPrice)) return value;
+  return priceInputString(displayedPrice / getPackageMultiplier(item));
+}
+
 export function getDraftItemUnit(item: DraftItem) {
-  const pack = item.packageGuid ? item.packages.find((next) => next.guid === item.packageGuid) : null;
+  const pack = getSelectedPackage(item);
   return pack?.unit ?? item.baseUnit ?? null;
 }
 
@@ -383,6 +476,7 @@ export function getOrderActivityAt(order: ClientOrder) {
 }
 
 export function orderToDraft(order: ClientOrder): DraftOrder {
+  const headerPriceType = order.priceType ?? order.agreement?.priceType ?? order.items.find((item) => item.priceType?.guid)?.priceType ?? null;
   return {
     guid: order.guid,
     revision: order.revision,
@@ -395,8 +489,8 @@ export function orderToDraft(order: ClientOrder): DraftOrder {
     deliveryDate: order.deliveryDate ?? null,
     comment: order.comment ?? '',
     currency: DEFAULT_ORDER_CURRENCY,
-    priceTypeGuid: order.agreement?.priceType?.guid ?? order.items.find((item) => item.priceType?.guid)?.priceType?.guid ?? null,
-    priceTypeName: order.agreement?.priceType?.name ?? order.items.find((item) => item.priceType?.name)?.priceType?.name ?? null,
+    priceTypeGuid: headerPriceType?.guid ?? null,
+    priceTypeName: headerPriceType?.name ?? null,
     generalDiscountPercent: asString(order.generalDiscountPercent),
     items: order.items.map((item: ClientOrderItem) => ({
       key: makeKey(),
@@ -415,8 +509,8 @@ export function orderToDraft(order: ClientOrder): DraftOrder {
       receiptPrice: item.basePrice ?? null,
       currency: DEFAULT_ORDER_CURRENCY,
       priceSource: item.priceSource ?? null,
-      priceTypeGuid: item.priceType?.guid ?? order.agreement?.priceType?.guid ?? null,
-      priceTypeName: item.priceType?.name ?? order.agreement?.priceType?.name ?? null,
+      priceTypeGuid: item.priceType?.guid ?? headerPriceType?.guid ?? null,
+      priceTypeName: item.priceType?.name ?? headerPriceType?.name ?? null,
       baseUnit: item.unit ?? null,
       stock: item.stock ?? null,
       packages: item.package?.guid
@@ -444,7 +538,7 @@ export function computeLineTotal(item: DraftItem, generalDiscountPercent?: strin
       : 0;
   const price = manual ?? item.basePrice ?? 0;
   if (Number.isNaN(quantity)) return 0;
-  return quantity * price * (1 - (Number.isNaN(discount) ? 0 : discount) / 100);
+  return quantity * getPackageMultiplier(item) * price * (1 - (Number.isNaN(discount) ? 0 : discount) / 100);
 }
 
 export function computeDraftTotal(draft: DraftOrder) {

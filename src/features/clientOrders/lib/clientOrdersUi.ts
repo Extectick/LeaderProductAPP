@@ -18,9 +18,17 @@ export function getPickerItemTitle(item: any) {
   return item?.name || item?.fullAddress || item?.number || item?.code || 'Без названия';
 }
 
+function looksLikeGuid(value?: string | null) {
+  return !!value && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.trim());
+}
+
 export function getPickerItemMeta(kind: ClientOrdersPickerKind | null, item: any) {
   if (kind === 'counterparty' || kind === 'filterCounterparty') {
-    return item?.fullName || '';
+    return getCounterpartyTaxMeta(item) || item?.fullName || '';
+  }
+  if (kind === 'agreement' || kind === 'contract') {
+    const organizationName = item?.organization?.name || item?.organizationName;
+    if (organizationName && !looksLikeGuid(organizationName)) return `Организация: ${organizationName}`;
   }
   if (kind === 'product') {
     return [item?.code, item?.article, item?.sku].filter(Boolean).join(' • ');
@@ -45,17 +53,55 @@ export function formatDateOnly(value?: string | null) {
     : date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' });
 }
 
-export function pickerNeedsCounterparty(kind: ClientOrdersPickerKind | null) {
-  return kind === 'agreement' || kind === 'contract' || kind === 'deliveryAddress' || kind === 'product';
+export function pickerNeedsOrderContext(kind: ClientOrdersPickerKind | null) {
+  return kind === 'agreement' || kind === 'contract' || kind === 'warehouse' || kind === 'deliveryAddress' || kind === 'priceType' || kind === 'product';
 }
 
 export function unitLabel(unit: any) {
   return unit?.symbol || unit?.name || 'шт';
 }
 
+function formatPackageMultiplier(value: unknown) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0 || numeric === 1) return '';
+  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 3 }).format(numeric);
+}
+
+function normalizeUnitText(value?: string | null) {
+  return String(value ?? '')
+    .trim()
+    .toLocaleLowerCase('ru')
+    .replace(/\s+/g, '')
+    .replace(/[()]/g, '');
+}
+
+function cleanPackageName(name: string, fallbackUnit: string) {
+  const parts = name
+    .split('/')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length === 2 && normalizeUnitText(parts[0]) === normalizeUnitText(parts[1])) {
+    return parts[0];
+  }
+  if (parts.length === 2 && fallbackUnit && normalizeUnitText(parts[0]) === normalizeUnitText(fallbackUnit)) {
+    return parts[0];
+  }
+  return name;
+}
+
 export function packageLabel(pack: any, item?: any) {
-  const unit = pack?.unit?.symbol || pack?.unit?.name || item?.baseUnit?.symbol || item?.baseUnit?.name || '';
-  return [pack?.name, unit].filter(Boolean).join(' / ') || unitLabel(item?.baseUnit) || 'Упаковка';
+  const rawName = String(pack?.name ?? '').trim();
+  const packageUnit = unitLabel(pack?.unit);
+  const baseUnit = unitLabel(item?.baseUnit);
+  const multiplier = formatPackageMultiplier(pack?.multiplier);
+  const name = rawName ? cleanPackageName(rawName, packageUnit || baseUnit) : '';
+
+  if (name) {
+    return name;
+  }
+
+  if (multiplier && baseUnit) return `${packageUnit} (${multiplier} ${baseUnit})`;
+  return packageUnit || baseUnit || 'Упаковка';
 }
 
 export function hasSinglePackage(item: any) {

@@ -1,10 +1,12 @@
 import { useNotify } from '@/components/NotificationHost';
+import { AuthContext } from '@/context/AuthContext';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   cancelClientOrder,
   createClientOrder,
   deleteClientOrder,
-  getClientOrder,
   getClientOrderDefaults,
+  getClientOrder,
   getClientOrderProductsBatch,
   getClientOrderSettings,
   getClientOrders,
@@ -67,6 +69,8 @@ type DraftSelections = {
   deliveryAddress: ClientOrderDeliveryAddressOption | null;
 };
 
+const FILTERS_STORAGE_PREFIX = 'client_orders_filters_v1';
+
 function emptyFilters(): ClientOrdersFilters {
   return {
     search: '',
@@ -87,6 +91,60 @@ function emptyFilters(): ClientOrdersFilters {
     hasNumber1c: '',
     onlyProblems: false,
   };
+}
+
+function sanitizeStoredFilters(value: unknown): ClientOrdersFilters | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as Partial<ClientOrdersFilters>;
+  return {
+    ...emptyFilters(),
+    search: typeof raw.search === 'string' ? raw.search : '',
+    status: typeof raw.status === 'string' ? raw.status : '',
+    counterpartyGuid: typeof raw.counterpartyGuid === 'string' ? raw.counterpartyGuid : '',
+    amountMin: typeof raw.amountMin === 'string' ? raw.amountMin : '',
+    amountMax: typeof raw.amountMax === 'string' ? raw.amountMax : '',
+    deliveryDateFrom: typeof raw.deliveryDateFrom === 'string' ? raw.deliveryDateFrom : '',
+    deliveryDateTo: typeof raw.deliveryDateTo === 'string' ? raw.deliveryDateTo : '',
+    updatedFrom: typeof raw.updatedFrom === 'string' ? raw.updatedFrom : '',
+    updatedTo: typeof raw.updatedTo === 'string' ? raw.updatedTo : '',
+    itemsMin: typeof raw.itemsMin === 'string' ? raw.itemsMin : '',
+    itemsMax: typeof raw.itemsMax === 'string' ? raw.itemsMax : '',
+    syncState: typeof raw.syncState === 'string' ? raw.syncState : '',
+    organizationGuid: typeof raw.organizationGuid === 'string' ? raw.organizationGuid : '',
+    warehouseGuid: typeof raw.warehouseGuid === 'string' ? raw.warehouseGuid : '',
+    priceTypeGuid: typeof raw.priceTypeGuid === 'string' ? raw.priceTypeGuid : '',
+    hasNumber1c: typeof raw.hasNumber1c === 'string' ? raw.hasNumber1c : '',
+    onlyProblems: raw.onlyProblems === true,
+  };
+}
+
+async function readStoredFilters(storageKey: string) {
+  try {
+    const raw = Platform.OS === 'web' && typeof window !== 'undefined'
+      ? window.localStorage.getItem(storageKey)
+      : await AsyncStorage.getItem(storageKey);
+    if (!raw) return null;
+    return sanitizeStoredFilters(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+async function writeStoredFilters(storageKey: string, filters: ClientOrdersFilters) {
+  const payload = JSON.stringify(filters);
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    window.localStorage.setItem(storageKey, payload);
+    return;
+  }
+  await AsyncStorage.setItem(storageKey, payload);
+}
+
+async function removeStoredFilters(storageKey: string) {
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    window.localStorage.removeItem(storageKey);
+    return;
+  }
+  await AsyncStorage.removeItem(storageKey);
 }
 
 function userErrorMessage(error: unknown, fallback: string) {
@@ -166,11 +224,26 @@ function parseOrderDate(value: string | null | undefined) {
 
 function orderHasPriceType(order: ClientOrder, priceTypeGuid: string) {
   if (!priceTypeGuid) return true;
+  if (order.priceType?.guid === priceTypeGuid) return true;
   return order.items.some((item) => item.priceType?.guid === priceTypeGuid);
 }
 
 function orderHasProblem(order: ClientOrder) {
   return !!(order.lastExportError || order.last1cError || order.cancelRequestedAt || ['ERROR', 'FAILED', 'CONFLICT', 'CANCEL_REQUESTED'].includes(order.syncState));
+}
+
+function orderIsPinnedLocal(order: ClientOrder) {
+  if (orderHasProblem(order)) return true;
+  if (order.origin && order.origin !== 'onec') return true;
+  if (!order.number1c) return true;
+  return ['DRAFT', 'QUEUED', 'ERROR', 'CONFLICT', 'CANCEL_REQUESTED'].includes(order.syncState)
+    || ['DRAFT', 'QUEUED', 'REJECTED', 'CANCELLED'].includes(order.status);
+}
+
+function orderWorkspaceRank(order: ClientOrder) {
+  if (orderHasProblem(order)) return 0;
+  if (orderIsPinnedLocal(order)) return 1;
+  return 2;
 }
 
 function orderMatchesFilters(order: ClientOrder, filters: ClientOrdersFilters) {
@@ -217,8 +290,8 @@ function orderMatchesFilters(order: ClientOrder, filters: ClientOrdersFilters) {
 
 function sortClientOrdersForWorkspace(items: ClientOrder[]) {
   return [...items].sort((a, b) => {
-    if (a.status === 'DRAFT' && b.status !== 'DRAFT') return -1;
-    if (a.status !== 'DRAFT' && b.status === 'DRAFT') return 1;
+    const rankDiff = orderWorkspaceRank(a) - orderWorkspaceRank(b);
+    if (rankDiff !== 0) return rankDiff;
     return getOrderActivityAt(b).localeCompare(getOrderActivityAt(a));
   });
 }
@@ -226,6 +299,11 @@ function sortClientOrdersForWorkspace(items: ClientOrder[]) {
 export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOptions = {}) {
   const confirmDiscard = options.confirmDiscard;
   const notify = useNotify();
+  const auth = React.useContext(AuthContext);
+  const filtersStorageKey = React.useMemo(
+    () => `${FILTERS_STORAGE_PREFIX}:${auth?.profile?.id ?? 'anonymous'}`,
+    [auth?.profile?.id]
+  );
   const [orders, setOrders] = React.useState<ClientOrder[]>([]);
   const [ordersMeta, setOrdersMeta] = React.useState<{
     total: number;
@@ -234,6 +312,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     statusCounts: Record<string, number>;
   }>({ total: 0, limit: 20, offset: 0, statusCounts: {} });
   const [filters, setFilters] = React.useState<ClientOrdersFilters>(emptyFilters());
+  const [filtersHydrated, setFiltersHydrated] = React.useState(false);
   const [selectedGuid, setSelectedGuid] = React.useState<string | null>(null);
   const [selectedOrder, setSelectedOrder] = React.useState<ClientOrder | null>(null);
   const [draft, setDraft] = React.useState<DraftOrder>(() => emptyDraft());
@@ -251,6 +330,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const [deletingDraft, setDeletingDraft] = React.useState(false);
   const [refreshing, setRefreshing] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [ordersAppendError, setOrdersAppendError] = React.useState<string | null>(null);
   const [dirty, setDirty] = React.useState(false);
   const [documentStarted, setDocumentStarted] = React.useState(false);
   const [autosaveState, setAutosaveState] = React.useState<AutosaveState>('idle');
@@ -269,7 +349,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const ordersNextOffsetRef = React.useRef(0);
 
   const draftMode = !draft.guid;
-  const readOnly = !!selectedOrder?.isPostedIn1c || selectedOrder?.status === 'CANCELLED';
+  const readOnly = !!selectedOrder?.readOnly || !!selectedOrder?.isPostedIn1c || selectedOrder?.status === 'CANCELLED';
   const baseValidation = React.useMemo(() => validateDraft(draft), [draft]);
   const validation = React.useMemo(() => {
     if (draftMode && settings?.deliveryDateIssue) {
@@ -322,6 +402,27 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   React.useEffect(() => {
     selectedGuidRef.current = selectedGuid;
   }, [selectedGuid]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setFiltersHydrated(false);
+    void readStoredFilters(filtersStorageKey).then((stored) => {
+      if (cancelled) return;
+      setFilters(stored ?? emptyFilters());
+      setFiltersHydrated(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [filtersStorageKey]);
+
+  React.useEffect(() => {
+    if (!filtersHydrated) return;
+    const timer = setTimeout(() => {
+      void writeStoredFilters(filtersStorageKey, filters);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [filters, filtersHydrated, filtersStorageKey]);
 
   const resetDraftToBase = React.useCallback((nextSettings?: ClientOrderSettings | null) => {
     const base = buildDraftBase(nextSettings ?? settings);
@@ -456,9 +557,11 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     if (mode === 'append') {
       ordersAppendLoadingRef.current = true;
       setLoadingMoreOrders(true);
+      setOrdersAppendError(null);
     } else {
       setLoadingOrders(true);
       setError(null);
+      setOrdersAppendError(null);
     }
 
     try {
@@ -484,6 +587,10 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         onlyProblems: filters.onlyProblems || undefined,
       });
       if (ordersRequestIdRef.current !== requestId) return;
+      const liveSource = result.meta.liveSource;
+      if (liveSource?.status && liveSource.status !== 'ok' && liveSource.message) {
+        setError(liveSource.message);
+      }
       const list = Array.isArray(result.items) ? result.items : [];
       ordersNextOffsetRef.current = offset + list.length;
       setOrders((prev) => {
@@ -516,7 +623,12 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       }
     } catch (e: any) {
       if (ordersRequestIdRef.current !== requestId) return;
-      setError(userErrorMessage(e, 'Не удалось загрузить список заказов.'));
+      const message = userErrorMessage(e, mode === 'append' ? 'Не удалось загрузить ещё документы.' : 'Не удалось загрузить список заказов.');
+      if (mode === 'append') {
+        setOrdersAppendError(message);
+      } else {
+        setError(message);
+      }
     } finally {
       if (mode === 'append') ordersAppendLoadingRef.current = false;
       if (ordersRequestIdRef.current === requestId) {
@@ -550,56 +662,77 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     setLoadingDetail(false);
   }, [selectedGuid]);
 
-  const applyResolvedDefaults = React.useCallback(async (organizationGuid: string, counterpartyGuid: string) => {
+  const applyResolvedDefaults = React.useCallback(async (
+    organizationGuid: string,
+    counterpartyGuid: string,
+    overrides: {
+      organization?: ClientOrderOrganization | null;
+      agreement?: ClientOrderAgreementOption | null;
+      contract?: ClientOrderContractOption | null;
+    } = {}
+  ) => {
     if (!organizationGuid || !counterpartyGuid) return;
     const requestId = ++defaultsRequestIdRef.current;
     setLoadingDefaults(true);
     try {
       const defaults = await getClientOrderDefaults({ organizationGuid, counterpartyGuid });
       if (defaultsRequestIdRef.current !== requestId) return;
+
+      const agreement = overrides.agreement ?? defaults.agreement ?? null;
+      const contract = overrides.contract ?? agreement?.contract ?? defaults.contract ?? null;
+      const warehouse = defaults.warehouse ?? agreement?.warehouse ?? null;
+      const deliveryAddress = defaults.deliveryAddress ?? null;
+      const priceType = defaults.priceType ?? agreement?.priceType ?? null;
+
       setDraft((prev) => ({
         ...prev,
-        agreementGuid: defaults.agreement?.guid || '',
-        contractGuid: defaults.contract?.guid || '',
-        warehouseGuid: defaults.warehouse?.guid || '',
-        deliveryAddressGuid: defaults.deliveryAddress?.guid || '',
-        deliveryDate: defaults.deliveryDate ?? prev.deliveryDate ?? null,
-        currency: DEFAULT_ORDER_CURRENCY,
-        priceTypeGuid: defaults.agreement?.priceType?.guid ?? prev.priceTypeGuid ?? null,
-        priceTypeName: defaults.agreement?.priceType?.name ?? prev.priceTypeName ?? null,
+        organizationGuid,
+        agreementGuid: agreement?.guid || '',
+        contractGuid: contract?.guid || '',
+        warehouseGuid: warehouse?.guid || '',
+        deliveryAddressGuid: deliveryAddress?.guid || '',
+        deliveryDate: prev.deliveryDate ?? defaults.deliveryDate ?? settingsRef.current?.resolvedDeliveryDate ?? null,
+        currency: defaults.currency || DEFAULT_ORDER_CURRENCY,
+        priceTypeGuid: priceType?.guid ?? null,
+        priceTypeName: priceType?.name ?? null,
         items: prev.items.map((item) => ({
           ...item,
-          priceTypeGuid: defaults.agreement?.priceType?.guid ?? item.priceTypeGuid ?? null,
-          priceTypeName: defaults.agreement?.priceType?.name ?? item.priceTypeName ?? null,
+          priceTypeGuid: item.manualPrice.trim() ? item.priceTypeGuid ?? null : priceType?.guid ?? null,
+          priceTypeName: item.manualPrice.trim() ? item.priceTypeName ?? null : priceType?.name ?? null,
           basePrice: item.manualPrice.trim() ? item.basePrice : item.basePrice,
         })),
       }));
       setSelections((prev) => ({
-        organization: defaults.organization || prev.organization,
-        counterparty: defaults.counterparty || prev.counterparty,
-        agreement: defaults.agreement || null,
-        contract: defaults.contract || null,
-        warehouse: defaults.warehouse || null,
-        deliveryAddress: defaults.deliveryAddress || null,
+        organization: overrides.organization ?? prev.organization,
+        counterparty: prev.counterparty,
+        agreement,
+        contract,
+        warehouse,
+        deliveryAddress,
       }));
     } catch (e: any) {
       if (defaultsRequestIdRef.current !== requestId) return;
-      setError(userErrorMessage(e, 'Не удалось подставить значения по умолчанию.'));
+      notify({
+        type: 'warning',
+        title: 'Подсказки не загружены',
+        message: userErrorMessage(e, 'Не удалось подставить значения по умолчанию.'),
+      });
     } finally {
       if (defaultsRequestIdRef.current === requestId) setLoadingDefaults(false);
     }
-  }, []);
+  }, [notify]);
 
   React.useEffect(() => {
     void loadSettings();
   }, [loadSettings]);
 
   React.useEffect(() => {
+    if (!filtersHydrated) return;
     const timer = setTimeout(() => {
       void loadOrders('reset');
     }, filters.search ? 300 : 0);
     return () => clearTimeout(timer);
-  }, [filters, loadOrders]);
+  }, [filters, filtersHydrated, loadOrders]);
 
   React.useEffect(() => {
     if (!selectedGuid) return;
@@ -738,39 +871,78 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     return true;
   }, [confirmDiscardIfNeeded, resetDraftToBase]);
 
-  const setOrganization = React.useCallback(async (organization: ClientOrderOrganization | null) => {
-    const counterpartyGuid = draft.counterpartyGuid;
-    patchDraft((prev) => ({ ...prev, organizationGuid: organization?.guid || '' }));
-    setSelections((prev) => ({ ...prev, organization }));
-    void saveUserSettings({ preferredOrganizationGuid: organization?.guid || null });
-    if (organization?.guid && counterpartyGuid) {
-      await applyResolvedDefaults(organization.guid, counterpartyGuid);
-    }
-  }, [applyResolvedDefaults, draft.counterpartyGuid, patchDraft, saveUserSettings]);
-
-  const setCounterparty = React.useCallback(async (counterparty: ClientOrderCounterpartyOption | null) => {
+  const resetPairDependentDraft = React.useCallback((patch: Partial<DraftOrder>) => {
     patchDraft((prev) => ({
       ...prev,
-      counterpartyGuid: counterparty?.guid || '',
+      ...patch,
       agreementGuid: '',
       contractGuid: '',
       warehouseGuid: '',
       deliveryAddressGuid: '',
+      priceTypeGuid: null,
+      priceTypeName: null,
+      items: prev.items.map((item) => (
+        item.manualPrice.trim()
+          ? item
+          : { ...item, priceTypeGuid: null, priceTypeName: null, basePrice: null }
+      )),
     }));
     setSelections((prev) => ({
       ...prev,
-      counterparty,
       agreement: null,
       contract: null,
       warehouse: null,
       deliveryAddress: null,
     }));
+  }, [patchDraft]);
+
+  const resolveEntityOrganization = React.useCallback((
+    entity?: { organizationGuid?: string | null; organization?: ClientOrderOrganization | null } | null
+  ): ClientOrderOrganization | null => {
+    const guid = entity?.organization?.guid || entity?.organizationGuid || '';
+    if (!guid) return null;
+    return (
+      settingsRef.current?.organizations?.find((item) => item.guid === guid) ||
+      (entity?.organization?.name
+        ? {
+            guid,
+            name: entity.organization.name,
+            code: entity.organization.code ?? null,
+            isActive: entity.organization.isActive ?? true,
+          }
+        : { guid, name: guid, code: null, isActive: true })
+    );
+  }, []);
+
+  const setOrganization = React.useCallback(async (organization: ClientOrderOrganization | null) => {
+    const counterpartyGuid = draft.counterpartyGuid;
+    resetPairDependentDraft({ organizationGuid: organization?.guid || '' });
+    setSelections((prev) => ({ ...prev, organization }));
+    void saveUserSettings({ preferredOrganizationGuid: organization?.guid || null });
+    if (organization?.guid && counterpartyGuid) {
+      await applyResolvedDefaults(organization.guid, counterpartyGuid);
+    }
+  }, [applyResolvedDefaults, draft.counterpartyGuid, resetPairDependentDraft, saveUserSettings]);
+
+  const setCounterparty = React.useCallback(async (counterparty: ClientOrderCounterpartyOption | null) => {
+    resetPairDependentDraft({ counterpartyGuid: counterparty?.guid || '' });
+    setSelections((prev) => ({
+      ...prev,
+      counterparty,
+    }));
     if (counterparty?.guid && draft.organizationGuid) {
       await applyResolvedDefaults(draft.organizationGuid, counterparty.guid);
     }
-  }, [applyResolvedDefaults, draft.organizationGuid, patchDraft]);
+  }, [applyResolvedDefaults, draft.organizationGuid, resetPairDependentDraft]);
 
-  const setAgreement = React.useCallback((agreement: ClientOrderAgreementOption | null) => {
+  const setAgreement = React.useCallback(async (agreement: ClientOrderAgreementOption | null) => {
+    const organization = resolveEntityOrganization(agreement);
+    const organizationGuid = organization?.guid || agreement?.organizationGuid || draft.organizationGuid;
+    if (agreement && organizationGuid && draft.counterpartyGuid) {
+      await applyResolvedDefaults(organizationGuid, draft.counterpartyGuid, { organization, agreement });
+      return;
+    }
+
     patchDraft((prev) => ({
       ...prev,
       agreementGuid: agreement?.guid || '',
@@ -786,16 +958,24 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     }));
     setSelections((prev) => ({
       ...prev,
+      organization: organization ?? prev.organization,
       agreement,
       contract: agreement?.contract || prev.contract,
       warehouse: agreement?.warehouse || prev.warehouse,
     }));
-  }, [patchDraft]);
+  }, [applyResolvedDefaults, draft.counterpartyGuid, draft.organizationGuid, patchDraft, resolveEntityOrganization]);
 
-  const setContract = React.useCallback((contract: ClientOrderContractOption | null) => {
+  const setContract = React.useCallback(async (contract: ClientOrderContractOption | null) => {
+    const organization = resolveEntityOrganization(contract);
+    const organizationGuid = organization?.guid || contract?.organizationGuid || draft.organizationGuid;
+    if (contract && organizationGuid && draft.counterpartyGuid) {
+      await applyResolvedDefaults(organizationGuid, draft.counterpartyGuid, { organization, contract });
+      return;
+    }
+
     patchDraft({ contractGuid: contract?.guid || '' });
-    setSelections((prev) => ({ ...prev, contract }));
-  }, [patchDraft]);
+    setSelections((prev) => ({ ...prev, organization: organization ?? prev.organization, contract }));
+  }, [applyResolvedDefaults, draft.counterpartyGuid, draft.organizationGuid, patchDraft, resolveEntityOrganization]);
 
   const setWarehouse = React.useCallback((warehouse: ClientOrderWarehouseOption | null) => {
     patchDraft({ warehouseGuid: warehouse?.guid || '' });
@@ -810,16 +990,15 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const refreshItemPricing = React.useCallback(async (item: DraftItem, priceType: ClientOrderPriceTypeOption | null) => {
     if (!draft.counterpartyGuid) return;
     try {
-      const result = await searchClientOrderProducts({
-        search: item.productGuid,
+      const products = await getClientOrderProductsBatch({
+        productGuids: [item.productGuid],
+        organizationGuid: draft.organizationGuid || undefined,
         counterpartyGuid: draft.counterpartyGuid,
         agreementGuid: draft.agreementGuid || undefined,
         warehouseGuid: draft.warehouseGuid || undefined,
         priceTypeGuid: priceType?.guid || undefined,
-        limit: 25,
-        offset: 0,
       });
-      const product = result.items.find((next) => next.guid === item.productGuid);
+      const product = products.find((next) => next.guid === item.productGuid);
       if (!product) return;
       const hasManualPrice = item.manualPrice.trim();
       setItemPatch(item.key, {
@@ -840,7 +1019,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         basePrice: item.manualPrice.trim() ? item.basePrice : null,
       });
     }
-  }, [draft.agreementGuid, draft.counterpartyGuid, draft.warehouseGuid, setItemPatch]);
+  }, [draft.agreementGuid, draft.counterpartyGuid, draft.organizationGuid, draft.warehouseGuid, setItemPatch]);
 
   const refreshItemsPricing = React.useCallback(async (items: DraftItem[]) => {
     if (!draft.counterpartyGuid || !items.length) return;
@@ -848,6 +1027,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     try {
       const products = await getClientOrderProductsBatch({
         productGuids: items.map((item) => item.productGuid),
+        organizationGuid: draft.organizationGuid || undefined,
         counterpartyGuid: draft.counterpartyGuid,
         agreementGuid: draft.agreementGuid || undefined,
         warehouseGuid: draft.warehouseGuid || undefined,
@@ -890,21 +1070,24 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [
     draft.agreementGuid,
     draft.counterpartyGuid,
+    draft.organizationGuid,
     draft.priceTypeGuid,
     draft.priceTypeName,
     draft.warehouseGuid,
   ]);
 
   React.useEffect(() => {
-    if (!draft.warehouseGuid || !draft.counterpartyGuid || !draft.items.length) {
+    if (!draft.organizationGuid || !draft.counterpartyGuid || !draft.items.length) {
       contextRefreshSignatureRef.current = '';
       return;
     }
 
     const refreshSignature = [
+      draft.organizationGuid,
       draft.counterpartyGuid,
       draft.agreementGuid || '',
-      draft.warehouseGuid,
+      draft.warehouseGuid || '',
+      draft.priceTypeGuid || '',
     ].join('||');
 
     if (contextRefreshSignatureRef.current === refreshSignature) {
@@ -913,7 +1096,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     contextRefreshSignatureRef.current = refreshSignature;
 
     void refreshItemsPricing(draft.items);
-  }, [draft.agreementGuid, draft.counterpartyGuid, draft.warehouseGuid, refreshItemsPricing]);
+  }, [draft.agreementGuid, draft.counterpartyGuid, draft.organizationGuid, draft.priceTypeGuid, draft.warehouseGuid, refreshItemsPricing]);
 
   const documentHeaderDefaultsState = React.useMemo(() => ({
     organization: selections.organization ? 'из настроек пользователя' : 'не найдено значение по умолчанию',
@@ -1161,6 +1344,11 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     }
   }, [autosaveState, dirty, lastSavedAt]);
 
+  const clearFilters = React.useCallback(() => {
+    setFilters(emptyFilters());
+    void removeStoredFilters(filtersStorageKey);
+  }, [filtersStorageKey]);
+
   return {
     orders: sortedOrders,
     ordersMeta,
@@ -1170,11 +1358,12 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     openLatestDraftIfAny: () => latestDraftOrder ? selectOrder(latestDraftOrder.guid) : Promise.resolve(),
     createDocument: createNewOrder,
     hasMoreOrders,
-    loadMoreOrders: () => loadOrders('append'),
+    ordersAppendError,
+    loadMoreOrders: () => (hasMoreOrders && !ordersAppendLoadingRef.current ? loadOrders('append') : Promise.resolve()),
     refreshOrders: () => loadOrders('reset'),
     filters,
     setFilters,
-    clearFilters: () => setFilters(emptyFilters()),
+    clearFilters,
     selectedGuid,
     selectedOrder,
     selectOrder,

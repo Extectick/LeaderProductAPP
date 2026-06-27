@@ -2,9 +2,13 @@
 import { useThemeColor } from '@/hooks/useThemeColor';
 import {
   computeLineTotal,
+  displayedUnitPriceToBasePriceInput,
   formatDateTime,
   formatMoney,
+  getDisplayedUnitPriceValue,
   getClientOrdersResponsiveMetrics,
+  getOrderDisplayStatus,
+  getOrderDisplayStatusLabel,
   isValidManualPriceValue,
   isValidQuantityValue,
   isWeightDraftItem,
@@ -24,7 +28,7 @@ import {
   getQuantityInputWidthPx,
   hasSinglePackage,
   packageLabel,
-  pickerNeedsCounterparty,
+  pickerNeedsOrderContext,
   type ClientOrdersPickerKind,
   unitLabel,
 } from './lib/clientOrdersUi';
@@ -104,10 +108,50 @@ function getDraftItemImageUri(item: DraftItem | any) {
 }
 
 function statusTone(status: string) {
-  if (status === 'CANCELLED') return 'error';
-  if (status === 'SENT_TO_1C' || status === 'SYNCED') return 'success';
-  if (status === 'QUEUED') return 'warning';
+  if (status === 'CANCELLED' || status === 'REJECTED') return 'error';
+  if (status === 'SENT_TO_1C' || status === 'SYNCED' || status === 'CONFIRMED' || status === 'COMPLETED' || status === 'CLOSED') return 'success';
+  if (
+    status === 'QUEUED' ||
+    status === 'AWAITING_APPROVAL' ||
+    status === 'AWAITING_ADVANCE_BEFORE_SUPPLY' ||
+    status === 'READY_FOR_SUPPLY' ||
+    status === 'AWAITING_PREPAYMENT_BEFORE_SHIPMENT' ||
+    status === 'AWAITING_SUPPLY' ||
+    status === 'READY_FOR_SHIPMENT' ||
+    status === 'SHIPPING_IN_PROGRESS' ||
+    status === 'AWAITING_PAYMENT_AFTER_SHIPMENT' ||
+    status === 'READY_TO_CLOSE' ||
+    status === 'TO_SUPPLY' ||
+    status === 'TO_SHIP' ||
+    status === 'IN_RESERVE' ||
+    status === 'TO_FULFILLMENT'
+  ) return 'warning';
   return 'default';
+}
+
+function orderListTitle(order: ClientOrder) {
+  if (order.number1c) {
+    const date = formatDateOnly(order.date1c);
+    return date === '—' ? order.number1c : `${order.number1c} от ${date}`;
+  }
+  return `Черновик ${order.guid.slice(0, 8)}`;
+}
+
+function orderStatusChipSx(order: ClientOrder) {
+  const status = getOrderDisplayStatus(order);
+  if (status === 'CANCELLED' || status === 'REJECTED') {
+    return { bgcolor: '#DC2626', color: '#FFFFFF' };
+  }
+  if (status === 'SHIPPING_IN_PROGRESS') {
+    return { bgcolor: '#F97316', color: '#FFFFFF' };
+  }
+  if (statusTone(status) === 'warning') {
+    return { bgcolor: '#DBEAFE', color: '#1D4ED8' };
+  }
+  if (statusTone(status) === 'success') {
+    return { bgcolor: '#DCFCE7', color: '#166534' };
+  }
+  return { bgcolor: '#E5E7EB', color: '#111827' };
 }
 
 function SelectionButton(props: { label: string; value?: string | null; onClick: () => void; disabled?: boolean }) {
@@ -215,16 +259,17 @@ function getQuantityControlWidthPx(value: unknown, buttonSize: number, minInputW
 
 function receiptPriceLabel(item: any) {
   return item?.receiptPrice === null || item?.receiptPrice === undefined
-    ? 'Цена поступления —'
-    : `Цена поступления ${formatMoney(item.receiptPrice, item.currency)}`;
+    ? 'Себестоимость —'
+    : `Себестоимость ${formatMoney(item.receiptPrice, item.currency)}`;
 }
 
 function productPickerMetaParts(item: any) {
+  const salePrice = item?.basePrice ?? item?.price;
   return {
     code: item?.code || 'Без кода',
-    receiptPrice: item?.receiptPrice === null || item?.receiptPrice === undefined
+    receiptPrice: salePrice === null || salePrice === undefined
       ? '—'
-      : formatMoney(item.receiptPrice, item.currency),
+      : formatMoney(salePrice, item.currency),
     stock: formatStockLabel(item?.stock, item?.baseUnit) || '—',
   };
 }
@@ -238,6 +283,15 @@ function draftItemMetaParts(item: any) {
     receiptPrice,
     stock: formatStockLabel(item?.stock, item?.baseUnit) || '—',
   };
+}
+
+function packageSelectValue(item: DraftItem | any) {
+  if (item.packageGuid) return item.packageGuid;
+  if (item.packages?.length) {
+    const defaultPackage = item.packages.find((pack: any) => pack?.isDefault) ?? item.packages[0];
+    return defaultPackage?.guid ?? '__base__';
+  }
+  return '__base__';
 }
 
 function DraftItemMeta({ item }: { item: any }) {
@@ -427,10 +481,11 @@ type QuickLookupFieldProps<T extends { guid?: string | null }> = {
   beforeDetailsAdornment?: React.ReactNode;
   dense?: boolean;
   flat?: boolean;
+  popperMinWidth?: number;
 };
 
 function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookupFieldProps<T>) {
-  const { kind, label, value, placeholder, disabled, loadOptions, onSelect, onOpenDetails, detailsDisabled, detailsTooltip, beforeDetailsAdornment, dense, flat } = props;
+  const { kind, label, value, placeholder, disabled, loadOptions, onSelect, onOpenDetails, detailsDisabled, detailsTooltip, beforeDetailsAdornment, dense, flat, popperMinWidth } = props;
   const [query, setQuery] = React.useState('');
   const [open, setOpen] = React.useState(false);
   const [items, setItems] = React.useState<T[]>([]);
@@ -532,7 +587,7 @@ function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookup
     <ClickAwayListener onClickAway={close}>
       <Box ref={anchorRef} sx={{ position: 'relative', minWidth: 0, mt: dense ? 0 : 0.35 }}>
         {label ? (
-          <Typography sx={{ position: 'absolute', top: -5, left: 10, zIndex: 1, px: 0.35, bgcolor: '#FFFFFF', fontSize: 10, fontWeight: 800, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em', lineHeight: 1 }}>
+          <Typography sx={{ position: 'absolute', top: -5, left: 10, zIndex: 1, px: 0.35, bgcolor: disabled ? '#F8FAFC' : '#FFFFFF', fontSize: 10, fontWeight: 800, color: disabled ? '#94A3B8' : '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em', lineHeight: 1 }}>
             {label}
           </Typography>
         ) : null}
@@ -595,6 +650,11 @@ function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookup
               '& .MuiInputBase-root': { height: dense ? 28 : 30, borderRadius: flat ? 0 : '6px', fontSize: 10.5, fontWeight: 800, alignItems: 'center', bgcolor: flat ? 'transparent' : disabled ? '#F8FAFC' : '#FFFFFF' },
               '& .MuiInputBase-input': { py: 0, lineHeight: dense ? '28px' : '34px' },
             },
+            disabled ? {
+              '& .MuiInputBase-root': { color: '#64748B' },
+              '& .MuiInputBase-input': { color: '#64748B', WebkitTextFillColor: '#64748B' },
+              '& .MuiOutlinedInput-notchedOutline': { borderColor: '#D8E2F0' },
+            } : {},
             flat ? {
               '& .MuiOutlinedInput-notchedOutline': { border: 0 },
               '& .MuiInputBase-root.Mui-focused .MuiOutlinedInput-notchedOutline': { borderBottom: '1px solid #2563EB' },
@@ -605,7 +665,7 @@ function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookup
           open={open && !disabled}
           anchorEl={anchorRef.current}
           placement="bottom-start"
-          sx={{ zIndex: 1500, width: anchorRef.current?.clientWidth || 260 }}
+          sx={{ zIndex: 1500, width: Math.max(anchorRef.current?.clientWidth || 260, popperMinWidth || 0) }}
         >
           <Paper variant="outlined" sx={{ mt: 0.35, maxHeight: 280, overflowY: 'auto', borderRadius: '6px', boxShadow: '0 12px 32px rgba(15, 23, 42, 0.16)' }} onScroll={handleScroll}>
             {!loading && !visibleItems.length ? (
@@ -659,11 +719,6 @@ function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookup
   );
 }
 
-function getDisplayedPriceValue(manualPrice: string, basePrice?: number | null) {
-  if (manualPrice.trim()) return manualPrice;
-  if (basePrice === null || basePrice === undefined || basePrice <= 0) return '';
-  return String(basePrice);
-}
 export default function ClientOrdersWebScreen() {
   const { width: viewportWidth } = useWindowDimensions();
   const layoutTier = resolveClientOrdersLayoutTier(viewportWidth);
@@ -672,6 +727,7 @@ export default function ClientOrdersWebScreen() {
   const [responsivePane, setResponsivePane] = React.useState<ResponsivePane>('orders');
   const [webEditorSection, setWebEditorSection] = React.useState<'header' | 'items'>('items');
   const ordersPaneRef = React.useRef<HTMLDivElement | null>(null);
+  const ordersListScrollRef = React.useRef<HTMLDivElement | null>(null);
   const editorPaneRef = React.useRef<HTMLDivElement | null>(null);
   const editorScrollRef = React.useRef<HTMLDivElement | null>(null);
   const editorHeaderSectionRef = React.useRef<HTMLDivElement | null>(null);
@@ -723,6 +779,7 @@ export default function ClientOrdersWebScreen() {
   });
   const pickerRequestIdRef = React.useRef(0);
   const pickerAppendLoadingRef = React.useRef(false);
+  const pickerLoadSignatureRef = React.useRef('');
   const [settingsDraft, setSettingsDraft] = React.useState({
     deliveryDateMode: 'NEXT_DAY',
     deliveryDateOffsetDays: 1,
@@ -732,7 +789,6 @@ export default function ClientOrdersWebScreen() {
   const [confirmCancelOpen, setConfirmCancelOpen] = React.useState(false);
   const [confirmClearItemsOpen, setConfirmClearItemsOpen] = React.useState(false);
   const [pendingPriceTypeAction, setPendingPriceTypeAction] = React.useState<PendingPriceTypeAction | null>(null);
-  const [pendingOrganization, setPendingOrganization] = React.useState<ClientOrderOrganization | null>(null);
   const [itemsSearch, setItemsSearch] = React.useState('');
   const [productImagePreview, setProductImagePreview] = React.useState<{ src: string; title: string; subtitle?: string | null } | null>(null);
   const [referenceDetailsOpen, setReferenceDetailsOpen] = React.useState(false);
@@ -762,11 +818,50 @@ export default function ClientOrdersWebScreen() {
     resetHeaderPriceTypeToDefault,
     addProduct,
   } = workspace;
+  const draftOrganizationGuid = draft.organizationGuid;
   const draftCounterpartyGuid = draft.counterpartyGuid;
   const draftAgreementGuid = draft.agreementGuid;
   const draftWarehouseGuid = draft.warehouseGuid;
   const draftPriceTypeGuid = draft.priceTypeGuid;
+  const hasOrderContext = !!draftOrganizationGuid && !!draftCounterpartyGuid;
   const canLoadMorePickerItems = !!pickerKind && pickerHasMore && !pickerLoading;
+  const showOrdersPane = !isSinglePane || responsivePane === 'orders';
+  const showEditorPane = !isSinglePane || responsivePane === 'editor';
+
+  const prefetchOrdersIfNeeded = React.useCallback((element: HTMLDivElement | null) => {
+    if (!element) return;
+    const currentWorkspace = workspaceRef.current;
+    if (
+      !currentWorkspace.hasMoreOrders ||
+      currentWorkspace.loadingOrders ||
+      currentWorkspace.loadingMoreOrders
+    ) {
+      return;
+    }
+
+    const remaining = element.scrollHeight - element.scrollTop - element.clientHeight;
+    const threshold = Math.max(900, element.clientHeight * 1.5);
+    if (remaining <= threshold) {
+      void currentWorkspace.loadMoreOrders();
+    }
+  }, []);
+
+  const handleOrdersListScroll = React.useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    prefetchOrdersIfNeeded(event.currentTarget);
+  }, [prefetchOrdersIfNeeded]);
+
+  React.useEffect(() => {
+    if (!showOrdersPane) return;
+    const timer = window.setTimeout(() => prefetchOrdersIfNeeded(ordersListScrollRef.current), 0);
+    return () => window.clearTimeout(timer);
+  }, [
+    prefetchOrdersIfNeeded,
+    showOrdersPane,
+    workspace.hasMoreOrders,
+    workspace.loadingMoreOrders,
+    workspace.loadingOrders,
+    workspace.orders.length,
+  ]);
 
   React.useEffect(() => {
     if (typeof window === 'undefined' || typeof ResizeObserver === 'undefined') return;
@@ -897,6 +992,7 @@ export default function ClientOrdersWebScreen() {
   const openPicker = React.useCallback((kind: PickerKind) => {
     pickerRequestIdRef.current += 1;
     pickerAppendLoadingRef.current = false;
+    pickerLoadSignatureRef.current = '';
     setPickerKind(kind);
     setPickerSearch('');
     setPickerItems([]);
@@ -905,12 +1001,21 @@ export default function ClientOrdersWebScreen() {
   }, []);
 
   const loadPickerPage = React.useCallback(async (kind: PickerKind, search: string, offset = 0, append = false) => {
-    if (append && pickerAppendLoadingRef.current) return;
+    const contextSignature = [
+      draftOrganizationGuid || '',
+      draftCounterpartyGuid || '',
+      draftAgreementGuid || '',
+      draftWarehouseGuid || '',
+      draftPriceTypeGuid || '',
+    ].join(':');
+    const signature = `${kind}|${contextSignature}|${search}|${offset}|${append ? 'append' : 'reset'}|${kind === 'product' && productInStockOnly ? 'stock' : 'all'}`;
+    if ((append && pickerAppendLoadingRef.current) || pickerLoadSignatureRef.current === signature) return;
     if (append) pickerAppendLoadingRef.current = true;
+    pickerLoadSignatureRef.current = signature;
     const requestId = ++pickerRequestIdRef.current;
     setPickerLoading(true);
     try {
-      if (pickerNeedsCounterparty(kind) && !draftCounterpartyGuid) {
+      if (pickerNeedsOrderContext(kind) && !hasOrderContext) {
         if (pickerRequestIdRef.current !== requestId) return;
         setPickerItems([]);
         setPickerOffset(offset);
@@ -941,10 +1046,10 @@ export default function ClientOrdersWebScreen() {
           result = await searchContracts({ counterpartyGuid: draftCounterpartyGuid, search, limit: 25, offset });
           break;
         case 'warehouse':
-          result = await searchWarehouses({ search, limit: 25, offset });
+          result = await searchWarehouses({ organizationGuid: draftOrganizationGuid, counterpartyGuid: draftCounterpartyGuid, search, limit: 25, offset });
           break;
         case 'deliveryAddress':
-          result = await searchDeliveryAddresses({ counterpartyGuid: draftCounterpartyGuid, search, limit: 25, offset });
+          result = await searchDeliveryAddresses({ organizationGuid: draftOrganizationGuid, counterpartyGuid: draftCounterpartyGuid, search, limit: 25, offset });
           break;
         case 'priceType':
           result = await searchPriceTypes({ search, limit: 25, offset });
@@ -952,6 +1057,7 @@ export default function ClientOrdersWebScreen() {
         case 'product':
           result = await searchProducts({
             search,
+            organizationGuid: draftOrganizationGuid,
             counterpartyGuid: draftCounterpartyGuid,
             agreementGuid: draftAgreementGuid || undefined,
             warehouseGuid: draftWarehouseGuid || undefined,
@@ -967,13 +1073,18 @@ export default function ClientOrdersWebScreen() {
       setPickerItems((prev) => (append ? [...prev, ...nextItems] : nextItems));
       setPickerOffset(offset + nextItems.length);
       setPickerHasMore(hasMorePage(nextItems.length, 25, offset, result?.meta?.total));
+    } catch {
+      if (pickerRequestIdRef.current === requestId) {
+        setPickerHasMore(false);
+        pickerLoadSignatureRef.current = '';
+      }
     } finally {
       if (append) pickerAppendLoadingRef.current = false;
       if (pickerRequestIdRef.current === requestId) {
         setPickerLoading(false);
       }
     }
-  }, [draftAgreementGuid, draftCounterpartyGuid, draftPriceTypeGuid, draftWarehouseGuid, productInStockOnly, searchAgreements, searchContracts, searchCounterparties, searchDeliveryAddresses, searchPriceTypes, searchProducts, searchWarehouses, settings?.organizations]);
+  }, [draftAgreementGuid, draftCounterpartyGuid, draftOrganizationGuid, draftPriceTypeGuid, draftWarehouseGuid, hasOrderContext, productInStockOnly, searchAgreements, searchContracts, searchCounterparties, searchDeliveryAddresses, searchPriceTypes, searchProducts, searchWarehouses, settings?.organizations]);
 
   React.useEffect(() => {
     if (!pickerKind) return;
@@ -989,21 +1100,6 @@ export default function ClientOrdersWebScreen() {
     void loadPickerPage(pickerKind, pickerSearch, pickerOffset, true);
   }, [canLoadMorePickerItems, loadPickerPage, pickerKind, pickerOffset, pickerSearch]);
 
-  const requestOrganizationChange = React.useCallback((item: ClientOrderOrganization) => {
-    const hasDependentData = !!(
-      workspace.draft.counterpartyGuid ||
-      workspace.draft.agreementGuid ||
-      workspace.draft.contractGuid ||
-      workspace.draft.warehouseGuid ||
-      workspace.draft.items.length
-    );
-    if (hasDependentData && workspace.draft.organizationGuid && workspace.draft.organizationGuid !== item.guid) {
-      setPendingOrganization(item);
-      return;
-    }
-    void setOrganization(item);
-  }, [setOrganization, workspace.draft.agreementGuid, workspace.draft.contractGuid, workspace.draft.counterpartyGuid, workspace.draft.items.length, workspace.draft.organizationGuid, workspace.draft.warehouseGuid]);
-
   const handlePickerSelect = React.useCallback(async (item: any) => {
     switch (pickerKind) {
       case 'filterCounterparty':
@@ -1012,7 +1108,7 @@ export default function ClientOrdersWebScreen() {
         setPickerKind(null);
         return;
       case 'organization':
-        requestOrganizationChange(item as ClientOrderOrganization);
+        await setOrganization(item as ClientOrderOrganization);
         setPickerKind(null);
         return;
       case 'counterparty':
@@ -1020,11 +1116,11 @@ export default function ClientOrdersWebScreen() {
         setPickerKind(null);
         return;
       case 'agreement':
-        setAgreement(item as ClientOrderAgreementOption);
+        await setAgreement(item as ClientOrderAgreementOption);
         setPickerKind(null);
         return;
       case 'contract':
-        setContract(item as ClientOrderContractOption);
+        await setContract(item as ClientOrderContractOption);
         setPickerKind(null);
         return;
       case 'warehouse':
@@ -1043,15 +1139,22 @@ export default function ClientOrdersWebScreen() {
         addProduct(item as ClientOrderProduct);
         return;
     }
-  }, [addProduct, confirmHeaderPriceTypeChange, pickerKind, requestOrganizationChange, setAgreement, setContract, setCounterparty, setDeliveryAddress, setFilters, setWarehouse]);
+  }, [addProduct, confirmHeaderPriceTypeChange, pickerKind, setAgreement, setContract, setCounterparty, setDeliveryAddress, setFilters, setOrganization, setWarehouse]);
 
   const loadCounterpartyLookup = React.useCallback((args: { search: string; limit: number; offset: number }) => {
     return searchCounterparties(args);
   }, [searchCounterparties]);
 
   const loadWarehouseLookup = React.useCallback((args: { search: string; limit: number; offset: number }) => {
-    return searchWarehouses(args);
-  }, [searchWarehouses]);
+    if (!workspace.draft.organizationGuid || !workspace.draft.counterpartyGuid) return Promise.resolve({ items: [], meta: { total: 0 } });
+    return searchWarehouses({
+      organizationGuid: workspace.draft.organizationGuid,
+      counterpartyGuid: workspace.draft.counterpartyGuid,
+      search: args.search,
+      limit: args.limit,
+      offset: args.offset,
+    });
+  }, [searchWarehouses, workspace.draft.counterpartyGuid, workspace.draft.organizationGuid]);
 
   const loadOrganizationLookup = React.useCallback(async (args: { search: string; limit: number; offset: number }) => {
     const search = args.search.trim().toLowerCase();
@@ -1064,23 +1167,30 @@ export default function ClientOrdersWebScreen() {
   }, [workspace.settings?.organizations]);
 
   const loadAgreementLookup = React.useCallback((args: { search: string; limit: number; offset: number }) => {
-    if (!workspace.draft.counterpartyGuid) return Promise.resolve({ items: [], meta: { total: 0 } });
+    if (!workspace.draft.organizationGuid || !workspace.draft.counterpartyGuid) return Promise.resolve({ items: [], meta: { total: 0 } });
     return searchAgreements({ counterpartyGuid: workspace.draft.counterpartyGuid, search: args.search, limit: args.limit, offset: args.offset });
-  }, [searchAgreements, workspace.draft.counterpartyGuid]);
+  }, [searchAgreements, workspace.draft.counterpartyGuid, workspace.draft.organizationGuid]);
 
   const loadContractLookup = React.useCallback((args: { search: string; limit: number; offset: number }) => {
-    if (!workspace.draft.counterpartyGuid) return Promise.resolve({ items: [], meta: { total: 0 } });
+    if (!workspace.draft.organizationGuid || !workspace.draft.counterpartyGuid) return Promise.resolve({ items: [], meta: { total: 0 } });
     return searchContracts({ counterpartyGuid: workspace.draft.counterpartyGuid, search: args.search, limit: args.limit, offset: args.offset });
-  }, [searchContracts, workspace.draft.counterpartyGuid]);
+  }, [searchContracts, workspace.draft.counterpartyGuid, workspace.draft.organizationGuid]);
 
   const loadDeliveryAddressLookup = React.useCallback((args: { search: string; limit: number; offset: number }) => {
-    if (!workspace.draft.counterpartyGuid) return Promise.resolve({ items: [], meta: { total: 0 } });
-    return searchDeliveryAddresses({ counterpartyGuid: workspace.draft.counterpartyGuid, search: args.search, limit: args.limit, offset: args.offset });
-  }, [searchDeliveryAddresses, workspace.draft.counterpartyGuid]);
+    if (!workspace.draft.organizationGuid || !workspace.draft.counterpartyGuid) return Promise.resolve({ items: [], meta: { total: 0 } });
+    return searchDeliveryAddresses({
+      organizationGuid: workspace.draft.organizationGuid,
+      counterpartyGuid: workspace.draft.counterpartyGuid,
+      search: args.search,
+      limit: args.limit,
+      offset: args.offset,
+    });
+  }, [searchDeliveryAddresses, workspace.draft.counterpartyGuid, workspace.draft.organizationGuid]);
 
   const loadPriceTypeLookup = React.useCallback((args: { search: string; limit: number; offset: number }) => {
+    if (!workspace.draft.organizationGuid || !workspace.draft.counterpartyGuid) return Promise.resolve({ items: [], meta: { total: 0 } });
     return searchPriceTypes({ search: args.search, limit: args.limit, offset: args.offset });
-  }, [searchPriceTypes]);
+  }, [searchPriceTypes, workspace.draft.counterpartyGuid, workspace.draft.organizationGuid]);
 
   const selectFilterCounterparty = React.useCallback((item: ClientOrderCounterpartyOption) => {
     setFilterCounterparty(item);
@@ -1173,16 +1283,14 @@ export default function ClientOrdersWebScreen() {
     }
   }, [isSinglePane, workspace]);
 
-  const showOrdersPane = !isSinglePane || responsivePane === 'orders';
-  const showEditorPane = !isSinglePane || responsivePane === 'editor';
   const renderDraftItemCard = React.useCallback((item: any, rowNumber: number) => {
-    const packageValue = item.packageGuid || (item.packages.length ? '' : '__base__');
+    const packageValue = packageSelectValue(item);
     const lineErrors = workspace.validation.itemMessages[item.key] || [];
     const quantityError = !isValidQuantityValue(item);
     const priceError = !isValidManualPriceValue(item.manualPrice);
     const quantityInputWidth = getQuantityInputWidthPx(item.quantity, ui.narrowPriceWidth <= 66 ? 34 : 40, 88);
     const quantityControlWidth = getQuantityControlWidthPx(item.quantity, ui.narrowControlHeight, ui.narrowPriceWidth <= 66 ? 34 : 40, 88);
-    const displayedPrice = getDisplayedPriceValue(item.manualPrice, item.basePrice);
+    const displayedPrice = getDisplayedUnitPriceValue(item);
 
     return (
       <Box
@@ -1195,15 +1303,16 @@ export default function ClientOrdersWebScreen() {
       >
         <Stack spacing={0.45}>
           <Stack direction="row" spacing={0.35} alignItems="flex-start">
-            <IconButton
-              size="small"
-              color="error"
-              onClick={() => workspace.removeItem(item.key)}
-              disabled={workspace.readOnly}
-              sx={{ width: ui.narrowPriceWidth <= 66 ? 18 : 20, height: ui.narrowPriceWidth <= 66 ? 18 : 20, flexShrink: 0, mt: -0.1, ml: -0.25 }}
-            >
-              <Ionicons name="close-outline" size={ui.narrowPriceWidth <= 66 ? 13 : 14} />
-            </IconButton>
+            {!workspace.readOnly ? (
+              <IconButton
+                size="small"
+                color="error"
+                onClick={() => workspace.removeItem(item.key)}
+                sx={{ width: ui.narrowPriceWidth <= 66 ? 18 : 20, height: ui.narrowPriceWidth <= 66 ? 18 : 20, flexShrink: 0, mt: -0.1, ml: -0.25 }}
+              >
+                <Ionicons name="close-outline" size={ui.narrowPriceWidth <= 66 ? 13 : 14} />
+              </IconButton>
+            ) : null}
             <Typography sx={{ width: ui.narrowPriceWidth <= 66 ? 10 : 12, fontSize: ui.narrowPriceWidth <= 66 ? 10.5 : 11, color: '#64748B', fontWeight: 900, pt: 0.1, flexShrink: 0 }}>
               {rowNumber}
             </Typography>
@@ -1235,7 +1344,7 @@ export default function ClientOrdersWebScreen() {
               gridTemplateColumns: `${quantityControlWidth}px ${ui.narrowPackageWidth}px ${ui.narrowPriceWidth}px`,
               gap: `${ui.narrowRowGap}px`,
               alignItems: 'center',
-              pl: ui.narrowPriceWidth <= 66 ? 3.1 : 4.1,
+              pl: workspace.readOnly ? (ui.narrowPriceWidth <= 66 ? 1.35 : 1.6) : (ui.narrowPriceWidth <= 66 ? 3.1 : 4.1),
             }}
           >
             <Stack direction="row" spacing={0.25} alignItems="center" sx={{ minWidth: 0 }}>
@@ -1305,10 +1414,10 @@ export default function ClientOrdersWebScreen() {
                   '& .MuiInputBase-input': { fontSize: ui.narrowPriceWidth <= 66 ? 10.5 : 11, fontWeight: 700, py: 0, px: 0.6 },
                 }}
               >
-                <MenuItem value="">{unitLabel(item.baseUnit)}</MenuItem>
+                {!item.packages.length ? <MenuItem value="__base__">{unitLabel(item.baseUnit)}</MenuItem> : null}
                 {item.packages.map((pack: any) => (
                   <MenuItem key={pack.guid} value={pack.guid}>
-                    {packageLabel(pack)}
+                    {packageLabel(pack, item)}
                   </MenuItem>
                 ))}
               </TextField>
@@ -1319,7 +1428,8 @@ export default function ClientOrdersWebScreen() {
               value={displayedPrice}
               placeholder="0"
               onChange={(e) => {
-                const manualPrice = normalizePriceInput(e.target.value, displayedPrice);
+                const displayedManualPrice = normalizePriceInput(e.target.value, displayedPrice);
+                const manualPrice = displayedUnitPriceToBasePriceInput(displayedManualPrice, item);
                 workspace.setItemPatch(item.key, {
                   manualPrice,
                   priceTypeGuid: manualPrice.trim() ? null : workspace.draft.priceTypeGuid ?? null,
@@ -1355,7 +1465,7 @@ export default function ClientOrdersWebScreen() {
   const draftItemsColumnLayout = React.useMemo(() => {
     const hasVariablePackages = draftItemsPackageLayoutKey.includes(':multi');
     const base = {
-      actions: 30,
+      actions: workspace.readOnly ? 0 : 30,
       product: useCompactTable ? 320 : 440,
       quantity: quantityColumnWidth,
       package: hasVariablePackages ? (useCompactTable ? 128 : 154) : (useCompactTable ? 86 : 98),
@@ -1363,7 +1473,7 @@ export default function ClientOrdersWebScreen() {
       total: useCompactTable ? 96 : 116,
     };
     const min = {
-      actions: 30,
+      actions: workspace.readOnly ? 0 : 30,
       product: useCompactTable ? 170 : 210,
       quantity: useCompactTable ? 88 : 96,
       package: hasVariablePackages ? (useCompactTable ? 78 : 88) : (useCompactTable ? 58 : 66),
@@ -1402,13 +1512,13 @@ export default function ClientOrdersWebScreen() {
     }
 
     return { width, min };
-  }, [draftItemsPackageLayoutKey, draftItemsTableWidth, quantityColumnWidth, useCompactTable]);
+  }, [draftItemsPackageLayoutKey, draftItemsTableWidth, quantityColumnWidth, useCompactTable, workspace.readOnly]);
 
   const draftItemColumns = React.useMemo<ColumnDef<DraftItem>[]>(() => {
     const { width, min } = draftItemsColumnLayout;
 
     return [
-      {
+      ...(!workspace.readOnly ? [{
         id: 'actions',
         header: '',
         size: width.actions,
@@ -1442,7 +1552,7 @@ export default function ClientOrdersWebScreen() {
             </Box>
           );
         },
-      },
+      } as ColumnDef<DraftItem>] : []),
       {
         accessorKey: 'productName',
         header: 'Товар',
@@ -1577,11 +1687,11 @@ export default function ClientOrdersWebScreen() {
         cell: ({ row }) => {
           const currentWorkspace = workspaceRef.current;
           const item = row.original;
-          const packageValue = item.packageGuid || (item.packages.length ? '' : '__base__');
-          if (hasSinglePackage(item)) {
+          const packageValue = packageSelectValue(item);
+          if (currentWorkspace.readOnly || hasSinglePackage(item)) {
             return (
-              <Box sx={{ minHeight: 30, px: 1, border: 0, borderRadius: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'transparent', width: '100%', boxSizing: 'border-box' }}>
-                <Typography sx={{ fontSize: 10.8, fontWeight: 900, color: '#0F172A', whiteSpace: 'nowrap' }}>
+              <Box sx={{ height: 30, px: 1, border: 0, borderRadius: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: currentWorkspace.readOnly ? '#F8FAFC' : 'transparent', width: '100%', boxSizing: 'border-box', overflow: 'hidden' }}>
+                <Typography sx={{ fontSize: 10.8, fontWeight: 900, lineHeight: '30px', color: currentWorkspace.readOnly ? '#9CA3AF' : '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'center', width: '100%' }}>
                   {getPackageDisplayText(item)}
                 </Typography>
               </Box>
@@ -1600,11 +1710,32 @@ export default function ClientOrdersWebScreen() {
                 '& .MuiInputBase-root': { height: 30, borderRadius: 0, bgcolor: 'transparent' },
                 '& .MuiOutlinedInput-notchedOutline': { border: 0 },
                 '& .MuiInputBase-root.Mui-focused .MuiOutlinedInput-notchedOutline': { borderBottom: '1px solid #2563EB' },
-                '& .MuiInputBase-input': { fontSize: 10.8, fontWeight: 900, lineHeight: '30px', py: 0 },
+                '& .MuiSelect-select': {
+                  height: '30px',
+                  minHeight: '30px !important',
+                  py: '0 !important',
+                  pl: '18px !important',
+                  pr: '18px !important',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  textAlign: 'center',
+                  fontSize: 10.8,
+                  fontWeight: 900,
+                  lineHeight: '30px',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                },
+                '& .MuiSelect-icon': {
+                  right: 4,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                },
               }}
             >
-              <MenuItem value="">{unitLabel(item.baseUnit)}</MenuItem>
-              {item.packages.map((pack) => <MenuItem key={pack.guid} value={pack.guid}>{packageLabel(pack)}</MenuItem>)}
+              {!item.packages.length ? <MenuItem value="__base__">{unitLabel(item.baseUnit)}</MenuItem> : null}
+              {item.packages.map((pack) => <MenuItem key={pack.guid} value={pack.guid}>{packageLabel(pack, item)}</MenuItem>)}
             </TextField>
           );
         },
@@ -1617,7 +1748,7 @@ export default function ClientOrdersWebScreen() {
         cell: ({ row }) => {
           const currentWorkspace = workspaceRef.current;
           const item = row.original;
-          const displayedPrice = getDisplayedPriceValue(item.manualPrice, item.basePrice);
+          const displayedPrice = getDisplayedUnitPriceValue(item);
           const priceError = !isValidManualPriceValue(item.manualPrice);
           return (
             <TextField
@@ -1625,7 +1756,8 @@ export default function ClientOrdersWebScreen() {
               value={displayedPrice}
               placeholder="0"
               onChange={(e) => {
-                const manualPrice = normalizePriceInput(e.target.value, displayedPrice);
+                const displayedManualPrice = normalizePriceInput(e.target.value, displayedPrice);
+                const manualPrice = displayedUnitPriceToBasePriceInput(displayedManualPrice, item);
                 currentWorkspace.setItemPatch(item.key, {
                   manualPrice,
                   priceTypeGuid: manualPrice.trim() ? null : currentWorkspace.draft.priceTypeGuid ?? null,
@@ -1661,14 +1793,15 @@ export default function ClientOrdersWebScreen() {
         },
       },
     ];
-  }, [draftItemsColumnLayout, useCompactTable]);
+  }, [draftItemsColumnLayout, useCompactTable, workspace.readOnly]);
 
   const [draftItemsColumnSizing, setDraftItemsColumnSizing] = React.useState<ColumnSizingState>({});
   const [draftItemsColumnOrder, setDraftItemsColumnOrder] = React.useState<ColumnOrderState>([]);
   const draggedDraftItemsColumnRef = React.useRef<string | null>(null);
   React.useEffect(() => {
     setDraftItemsColumnSizing({});
-  }, [draftItemsTableWidth]);
+    setDraftItemsColumnOrder((current) => (workspace.readOnly && current.includes('actions') ? current.filter((columnId) => columnId !== 'actions') : current));
+  }, [draftItemsTableWidth, workspace.readOnly]);
   const draftItemsTable = useReactTable({
     data: filteredDraftItems,
     columns: draftItemColumns,
@@ -1758,56 +1891,68 @@ export default function ClientOrdersWebScreen() {
             </Stack>
           </Stack>
           <Divider sx={{ my: 0.7 }} />
-          <Box sx={{ flex: 1, overflow: 'auto' }}>
+          <Box ref={ordersListScrollRef} onScroll={handleOrdersListScroll} sx={{ flex: 1, overflow: 'auto' }}>
             <Stack spacing={0.45}>
-              {workspace.orders.map((order) => (
-                <Card
-                  key={order.guid}
-                  variant="outlined"
-                  onClick={() => void selectOrderFromList(order.guid)}
-                  onContextMenu={(event) => {
-                    event.preventDefault();
-                    setOrderContextMenu({
-                      mouseX: event.clientX + 2,
-                      mouseY: event.clientY - 6,
-                      order,
-                    });
-                  }}
-                  sx={{
-                    cursor: 'pointer',
-                    borderRadius: '7px',
-                    borderColor: workspace.selectedGuid === order.guid ? '#2563EB' : '#D9E3F0',
-                    background: workspace.selectedGuid === order.guid ? '#EFF6FF' : '#FFFFFF',
-                    transition: 'background-color 140ms ease, border-color 140ms ease, transform 90ms ease',
-                    '&:hover': { backgroundColor: workspace.selectedGuid === order.guid ? '#DBEAFE' : '#F8FAFC', borderColor: '#93C5FD' },
-                    '&:active': { transform: 'scale(0.992)' },
-                  }}
-                >
-                  <CardContent sx={{ px: 0.8, py: 0.65, '&:last-child': { pb: 0.65 } }}>
-                    <Stack spacing={0.25}>
-                      <Stack direction="row" justifyContent="space-between" spacing={1}>
-                        <Typography sx={{ fontSize: 13, fontWeight: 900, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{order.number1c ? `Заказ ${order.number1c}` : `Черновик ${order.guid.slice(0, 8)}`}</Typography>
-                        <Chip size="small" color={statusTone(order.status) as any} label={workspace.statusLabels[order.status] || order.status} sx={{ height: 20, fontSize: ui.chipFontSize, fontWeight: 800 }} />
+              {workspace.orders.map((order) => {
+                const selected = workspace.selectedGuid === order.guid;
+                const readOnlyOrder = !!order.readOnly || !!order.isPostedIn1c || !!order.number1c;
+                const statusChip = orderStatusChipSx(order);
+                return (
+                  <Card
+                    key={order.guid}
+                    variant="outlined"
+                    onClick={() => void selectOrderFromList(order.guid)}
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      setOrderContextMenu({
+                        mouseX: event.clientX + 2,
+                        mouseY: event.clientY - 6,
+                        order,
+                      });
+                    }}
+                    sx={{
+                      cursor: 'pointer',
+                      borderRadius: '8px',
+                      borderColor: selected ? '#2563EB' : '#D8E2F0',
+                      background: selected ? '#EFF6FF' : readOnlyOrder ? '#FBFCFE' : '#FFFFFF',
+                      boxShadow: 'none',
+                      transition: 'background-color 140ms ease, border-color 140ms ease, transform 90ms ease',
+                      '&:hover': { backgroundColor: selected ? '#EFF6FF' : '#F8FAFC', borderColor: selected ? '#2563EB' : '#BBD2F0' },
+                      '&:active': { transform: 'scale(0.992)' },
+                    }}
+                  >
+                    <CardContent sx={{ px: 0.9, py: 0.65, '&:last-child': { pb: 0.65 } }}>
+                      <Stack spacing={0.35}>
+                        <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={0.7}>
+                          <Typography sx={{ fontSize: 13.5, fontWeight: 900, lineHeight: 1.05, minWidth: 0, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {orderListTitle(order)}
+                          </Typography>
+                          <Box sx={{ px: 0.8, py: 0.15, borderRadius: '999px', fontSize: 10, fontWeight: 900, lineHeight: 1.35, whiteSpace: 'nowrap', ...statusChip }}>
+                            {getOrderDisplayStatusLabel(order)}
+                          </Box>
+                        </Stack>
+                        <Typography sx={{ fontSize: 11.5, color: '#475569', fontWeight: 900, lineHeight: 1.1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {order.counterparty?.name || 'Контрагент не выбран'}
+                        </Typography>
+                        <Stack direction="row" spacing={0.35} useFlexGap flexWrap="wrap" alignItems="center">
+                          <Typography sx={{ fontSize: 9.5, color: '#0F172A', fontWeight: 900, borderRadius: '999px', bgcolor: '#F1F5F9', px: 0.65, py: 0.15, lineHeight: 1.25 }}>
+                            {formatMoney(order.totalAmount || 0, order.currency)}
+                          </Typography>
+                          <Typography sx={{ fontSize: 9.5, color: '#475569', fontWeight: 900, borderRadius: '999px', bgcolor: '#F1F5F9', px: 0.65, py: 0.15, lineHeight: 1.25 }}>
+                            {order.itemsCount ?? order.items.length ?? 0} поз.
+                          </Typography>
+                          <Typography sx={{ fontSize: 9.5, color: '#475569', fontWeight: 900, borderRadius: '999px', bgcolor: '#F1F5F9', px: 0.65, py: 0.15, lineHeight: 1.25 }}>
+                            Отгр. {formatDateOnly(order.deliveryDate)}
+                          </Typography>
+                        </Stack>
+                        <Typography sx={{ fontSize: 10.2, color: '#94A3B8', lineHeight: 1.05, fontWeight: 700 }}>
+                          Изм. {formatDateTime(order.updatedAt || order.queuedAt || order.sentTo1cAt)}
+                        </Typography>
                       </Stack>
-                      <Typography sx={{ fontSize: 11, color: '#475569', fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{order.counterparty?.name || 'Контрагент не выбран'}</Typography>
-                      <Stack direction="row" spacing={0.45} useFlexGap flexWrap="wrap" alignItems="center">
-                        <Typography sx={{ fontSize: 9, color: '#0F172A', fontWeight: 900, borderRadius: '999px', bgcolor: '#F1F5F9', px: 0.6, py: 0.15 }}>
-                          {formatMoney(order.totalAmount || 0, order.currency)}
-                        </Typography>
-                        <Typography sx={{ fontSize: 9, color: '#475569', fontWeight: 800, borderRadius: '999px', bgcolor: '#F8FAFC', px: 0.6, py: 0.15 }}>
-                          {order.itemsCount ?? order.items.length ?? 0} поз.
-                        </Typography>
-                        <Typography sx={{ fontSize: 9, color: '#475569', fontWeight: 800, borderRadius: '999px', bgcolor: '#F8FAFC', px: 0.6, py: 0.15 }}>
-                          Отгр. {formatDateOnly(order.deliveryDate)}
-                        </Typography>
-                      </Stack>
-                      <Typography sx={{ fontSize: 10, color: '#94A3B8', lineHeight: 1.1 }}>Изм. {formatDateTime(order.updatedAt || order.queuedAt || order.sentTo1cAt)}</Typography>
-                    </Stack>
-                  </CardContent>
-                </Card>
-              ))}
-              {workspace.loadingOrders ? <CircularProgress size={18} /> : null}
-              {workspace.hasMoreOrders ? <Button variant="outlined" onClick={() => void workspace.loadMoreOrders()} disabled={workspace.loadingMoreOrders} sx={{ textTransform: 'none' }}>{workspace.loadingMoreOrders ? 'Загружаю...' : 'Показать ещё'}</Button> : null}
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </Stack>
           </Box>
         </Paper> : null}
@@ -1828,7 +1973,7 @@ export default function ClientOrdersWebScreen() {
             </Box>
           ) : (
             <>
-              <Box sx={{ position: 'sticky', top: 0, zIndex: 2, px: 1.4, py: 1, borderBottom: '1px solid #E2E8F0', background: '#FFFFFF' }}>
+              <Box sx={{ position: 'sticky', top: 0, zIndex: 2, px: 1.4, py: 1, borderBottom: '1px solid #E2E8F0', background: workspace.readOnly ? '#F8FAFC' : '#FFFFFF' }}>
                 <Stack spacing={0.8}>
                   <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
                     <Stack direction="row" alignItems="center" spacing={0.5} sx={{ minWidth: 0 }}>
@@ -1842,7 +1987,7 @@ export default function ClientOrdersWebScreen() {
                     <Box sx={{ minWidth: 0 }}>
                       <Stack direction="row" spacing={0.75} alignItems="center" sx={{ minWidth: 0 }}>
                         <Typography sx={{ fontSize: 18, fontWeight: 900, lineHeight: 1.1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</Typography>
-                        {!workspace.draftMode ? <Chip size="small" label={workspace.statusLabels[workspace.selectedOrder?.status || ''] || workspace.selectedOrder?.status || '?'} sx={{ height: 20, fontSize: 10, fontWeight: 800 }} /> : null}
+                        {!workspace.draftMode ? <Chip size="small" label={getOrderDisplayStatusLabel(workspace.selectedOrder)} sx={{ height: 20, fontSize: 10, fontWeight: 800, ...(workspace.selectedOrder ? orderStatusChipSx(workspace.selectedOrder) : {}) }} /> : null}
                       </Stack>
                       <Typography sx={{ color: '#64748B', fontSize: 11, fontWeight: 700 }}>{workspace.autosaveLabel}</Typography>
                     </Box>
@@ -1935,7 +2080,7 @@ export default function ClientOrdersWebScreen() {
                       alignItems: 'center',
                       borderTop: '1px solid #E2E8F0',
                       pt: 0.75,
-                      bgcolor: '#FFFFFF',
+                      bgcolor: workspace.readOnly ? '#F8FAFC' : '#FFFFFF',
                     }}
                   >
                     <QuickLookupField
@@ -1943,7 +2088,7 @@ export default function ClientOrdersWebScreen() {
                       label="Организация"
                       value={workspace.selections.organization}
                       loadOptions={loadOrganizationLookup}
-                      onSelect={requestOrganizationChange}
+                      onSelect={setOrganization}
                       disabled={workspace.readOnly}
                       onOpenDetails={() => void openReferenceDetails('organization', workspace.selections.organization?.guid)}
                       detailsDisabled={!workspace.selections.organization?.guid}
@@ -1964,7 +2109,7 @@ export default function ClientOrdersWebScreen() {
                       value={workspace.selections.agreement}
                       loadOptions={loadAgreementLookup}
                       onSelect={setAgreement}
-                      disabled={workspace.readOnly || !workspace.draft.counterpartyGuid}
+                      disabled={workspace.readOnly || !hasOrderContext}
                       onOpenDetails={() => void openReferenceDetails('agreement', workspace.selections.agreement?.guid)}
                       detailsDisabled={!workspace.selections.agreement?.guid}
                     />
@@ -1974,7 +2119,7 @@ export default function ClientOrdersWebScreen() {
                       value={workspace.selections.contract}
                       loadOptions={loadContractLookup}
                       onSelect={setContract}
-                      disabled={workspace.readOnly || !workspace.draft.counterpartyGuid}
+                      disabled={workspace.readOnly || !hasOrderContext}
                       onOpenDetails={() => void openReferenceDetails('contract', workspace.selections.contract?.guid)}
                       detailsDisabled={!workspace.selections.contract?.guid}
                     />
@@ -1984,7 +2129,7 @@ export default function ClientOrdersWebScreen() {
                       value={workspace.draft.priceTypeGuid ? { guid: workspace.draft.priceTypeGuid, name: workspace.draft.priceTypeName || 'Вид цены' } : null}
                       loadOptions={loadPriceTypeLookup}
                       onSelect={confirmHeaderPriceTypeChange}
-                      disabled={workspace.readOnly}
+                      disabled={workspace.readOnly || !hasOrderContext}
                       beforeDetailsAdornment={workspace.isHeaderPriceTypeCustom ? (
                         <ResetAdornmentButton title="Сбросить вид цены к соглашению" disabled={workspace.readOnly} onClick={confirmHeaderPriceTypeReset} />
                       ) : null}
@@ -1997,20 +2142,23 @@ export default function ClientOrdersWebScreen() {
                       value={workspace.selections.warehouse}
                       loadOptions={loadWarehouseLookup}
                       onSelect={setWarehouse}
-                      disabled={workspace.readOnly}
+                      disabled={workspace.readOnly || !hasOrderContext}
                       onOpenDetails={() => void openReferenceDetails('warehouse', workspace.selections.warehouse?.guid)}
                       detailsDisabled={!workspace.selections.warehouse?.guid}
                     />
-                    <QuickLookupField
-                      kind="deliveryAddress"
-                      label="Адрес доставки"
-                      value={workspace.selections.deliveryAddress}
-                      loadOptions={loadDeliveryAddressLookup}
-                      onSelect={setDeliveryAddress}
-                      disabled={workspace.readOnly || !workspace.draft.counterpartyGuid}
-                      onOpenDetails={() => void openReferenceDetails('delivery-address', workspace.selections.deliveryAddress?.guid)}
-                      detailsDisabled={!workspace.selections.deliveryAddress?.guid}
-                    />
+                    <Box sx={{ gridColumn: !isSinglePane && useWideEditorGrid ? 'span 2' : 'auto', minWidth: 0 }}>
+                      <QuickLookupField
+                        kind="deliveryAddress"
+                        label="Адрес доставки"
+                        value={workspace.selections.deliveryAddress}
+                        loadOptions={loadDeliveryAddressLookup}
+                        onSelect={setDeliveryAddress}
+                        disabled={workspace.readOnly || !hasOrderContext}
+                        onOpenDetails={() => void openReferenceDetails('delivery-address', workspace.selections.deliveryAddress?.guid)}
+                        detailsDisabled={!workspace.selections.deliveryAddress?.guid}
+                        popperMinWidth={620}
+                      />
+                    </Box>
                     <DeliveryDateField value={workspace.draft.deliveryDate} onChange={(date) => workspace.patchDraft({ deliveryDate: date })} disabled={workspace.readOnly} />
                     <TextField
                       size="small"
@@ -2020,9 +2168,10 @@ export default function ClientOrdersWebScreen() {
                       disabled={workspace.readOnly}
                       sx={{
                         gridColumn: isSinglePane ? 'span 1' : useWideEditorGrid ? 'span 2' : '1 / -1',
-                        bgcolor: '#FFFFFF',
-                        '& .MuiInputBase-root': { height: 30, borderRadius: '7px', fontSize: 11 },
-                        '& .MuiInputBase-input': { py: 0, lineHeight: '30px' },
+                        bgcolor: workspace.readOnly ? '#F8FAFC' : '#FFFFFF',
+                        '& .MuiInputBase-root': { height: 30, borderRadius: '7px', fontSize: 11, bgcolor: workspace.readOnly ? '#F8FAFC' : '#FFFFFF' },
+                        '& .MuiInputBase-input': { py: 0, lineHeight: '30px', color: workspace.readOnly ? '#64748B' : '#0F172A', WebkitTextFillColor: workspace.readOnly ? '#64748B' : undefined },
+                        '& .MuiOutlinedInput-notchedOutline': { borderColor: workspace.readOnly ? '#D8E2F0' : undefined },
                       }}
                     />
                   </Box>
@@ -2130,7 +2279,7 @@ export default function ClientOrdersWebScreen() {
                                 buttonSize={30}
                                 iconSize={15}
                                 onClick={() => openPicker('product')}
-                                disabled={!workspace.draft.counterpartyGuid || workspace.readOnly}
+                                disabled={!hasOrderContext || workspace.readOnly}
                               />
                             </Stack>
 
@@ -2318,7 +2467,7 @@ export default function ClientOrdersWebScreen() {
                         icon="add-circle-outline"
                         color="#2563EB"
                         onClick={() => openPicker('product')}
-                        disabled={!workspace.draft.counterpartyGuid || workspace.readOnly}
+                        disabled={!hasOrderContext || workspace.readOnly}
                       />
                     </Stack>
                   </Box>
@@ -2372,15 +2521,15 @@ export default function ClientOrdersWebScreen() {
               <Typography sx={{ color: '#64748B', fontSize: 11 }}>{workspace.documentHeaderDefaultsState.counterparty}</Typography>
 
               <Box>
-                <SelectionButton label="Соглашение" value={workspace.selections.agreement?.name} onClick={() => openPicker('agreement')} disabled={workspace.readOnly || !workspace.draft.counterpartyGuid} />
+                <SelectionButton label="Соглашение" value={workspace.selections.agreement?.name} onClick={() => openPicker('agreement')} disabled={workspace.readOnly || !hasOrderContext} />
                 <Typography sx={{ color: '#64748B', fontSize: 11, mt: 0.35 }}>{workspace.documentHeaderDefaultsState.agreement}</Typography>
               </Box>
               <Box>
-                <SelectionButton label="Договор" value={workspace.selections.contract?.number} onClick={() => openPicker('contract')} disabled={workspace.readOnly || !workspace.draft.counterpartyGuid} />
+                <SelectionButton label="Договор" value={workspace.selections.contract?.number} onClick={() => openPicker('contract')} disabled={workspace.readOnly || !hasOrderContext} />
                 <Typography sx={{ color: '#64748B', fontSize: 11, mt: 0.35 }}>{workspace.documentHeaderDefaultsState.contract}</Typography>
               </Box>
               <Box>
-                <SelectionButton label="Вид цены" value={workspace.draft.priceTypeName} onClick={() => openPicker('priceType')} disabled={workspace.readOnly} />
+                <SelectionButton label="Вид цены" value={workspace.draft.priceTypeName} onClick={() => openPicker('priceType')} disabled={workspace.readOnly || !hasOrderContext} />
                 <Typography sx={{ color: '#64748B', fontSize: 11, mt: 0.35 }}>из соглашения или вручную</Typography>
               </Box>
               <Box>
@@ -2390,12 +2539,12 @@ export default function ClientOrdersWebScreen() {
                   value={workspace.selections.warehouse}
                   loadOptions={loadWarehouseLookup}
                   onSelect={setWarehouse}
-                  disabled={workspace.readOnly}
+                  disabled={workspace.readOnly || !hasOrderContext}
                 />
                 <Typography sx={{ color: '#64748B', fontSize: 11, mt: 0.35 }}>{workspace.documentHeaderDefaultsState.warehouse}</Typography>
               </Box>
               <Box>
-                <SelectionButton label="Адрес доставки" value={workspace.selections.deliveryAddress?.fullAddress} onClick={() => openPicker('deliveryAddress')} disabled={workspace.readOnly || !workspace.draft.counterpartyGuid} />
+                <SelectionButton label="Адрес доставки" value={workspace.selections.deliveryAddress?.fullAddress} onClick={() => openPicker('deliveryAddress')} disabled={workspace.readOnly || !hasOrderContext} />
                 <Typography sx={{ color: '#64748B', fontSize: 11, mt: 0.35 }}>{workspace.documentHeaderDefaultsState.deliveryAddress}</Typography>
               </Box>
               <Box>
@@ -2418,7 +2567,7 @@ export default function ClientOrdersWebScreen() {
       </Drawer>
 
       <Drawer anchor={isPhoneDialog ? 'bottom' : 'right'} open={!!pickerKind} onClose={() => setPickerKind(null)}>
-        <Box sx={{ width: isPhoneDialog ? '100vw' : pickerKind === 'product' ? 860 : 380, maxWidth: '100vw', height: isPhoneDialog ? '96vh' : '100%', borderTopLeftRadius: isPhoneDialog ? '18px' : 0, borderTopRightRadius: isPhoneDialog ? '18px' : 0, display: 'flex', flexDirection: 'column', backgroundColor: '#FFFFFF' }}>
+        <Box sx={{ width: isPhoneDialog ? '100vw' : pickerKind === 'product' ? 860 : pickerKind === 'deliveryAddress' ? 620 : 380, maxWidth: '100vw', height: isPhoneDialog ? '96vh' : '100%', borderTopLeftRadius: isPhoneDialog ? '18px' : 0, borderTopRightRadius: isPhoneDialog ? '18px' : 0, display: 'flex', flexDirection: 'column', backgroundColor: '#FFFFFF' }}>
           <Box sx={{ p: 1.25, borderBottom: '1px solid #D8E2F0', backgroundColor: '#FFFFFF' }}>
             <Stack spacing={1.25}>
               <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
@@ -2431,7 +2580,7 @@ export default function ClientOrdersWebScreen() {
                   label="Поиск"
                   value={pickerSearch}
                   onChange={(e) => setPickerSearch(e.target.value)}
-                  disabled={pickerKind !== 'organization' && pickerKind !== 'filterCounterparty' && pickerKind !== 'counterparty' && pickerKind !== 'product' && pickerKind !== 'warehouse' && pickerKind !== 'priceType' && !draftCounterpartyGuid}
+                  disabled={pickerNeedsOrderContext(pickerKind) && !hasOrderContext}
                   sx={{ flex: 1 }}
                 />
                 {pickerKind === 'product' ? (
@@ -2448,10 +2597,10 @@ export default function ClientOrdersWebScreen() {
             </Stack>
           </Box>
           <Box onScroll={handlePickerScroll} sx={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'contain' }}>
-            {pickerNeedsCounterparty(pickerKind) && !draftCounterpartyGuid ? (
-              <Typography sx={{ px: 2, py: 1.5, color: '#64748B', borderBottom: '1px solid #D8E2F0' }}>Сначала выберите контрагента.</Typography>
+            {pickerNeedsOrderContext(pickerKind) && !hasOrderContext ? (
+              <Typography sx={{ px: 2, py: 1.5, color: '#64748B', borderBottom: '1px solid #D8E2F0' }}>Сначала выберите организацию и контрагента.</Typography>
             ) : null}
-            {!pickerLoading && pickerItems.length === 0 && !(pickerNeedsCounterparty(pickerKind) && !draftCounterpartyGuid) ? (
+            {!pickerLoading && pickerItems.length === 0 && !(pickerNeedsOrderContext(pickerKind) && !hasOrderContext) ? (
               <Typography sx={{ px: 2, py: 1.5, color: '#64748B', borderBottom: '1px solid #D8E2F0' }}>Ничего не найдено.</Typography>
             ) : null}
             {pickerItems.map((item: any, index) => {
@@ -2564,29 +2713,6 @@ export default function ClientOrdersWebScreen() {
             sx={{ textTransform: 'none', fontWeight: 800 }}
           >
             {workspace.cancelling ? 'Отменяю...' : 'Отменить заказ'}
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      <Dialog open={!!pendingOrganization} onClose={() => setPendingOrganization(null)} maxWidth="xs" fullWidth fullScreen={isPhoneDialog}>
-        <DialogTitle>Сменить организацию?</DialogTitle>
-        <DialogContent>
-          <Typography sx={{ color: '#475569', fontSize: 13 }}>
-            Будут пересчитаны соглашение, договор, склад, вид цены и цены по строкам под выбранную организацию.
-          </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setPendingOrganization(null)} sx={{ textTransform: 'none', fontWeight: 800 }}>Нет</Button>
-          <Button
-            variant="contained"
-            onClick={() => {
-              const next = pendingOrganization;
-              setPendingOrganization(null);
-              if (next) void setOrganization(next);
-            }}
-            sx={{ textTransform: 'none', fontWeight: 800 }}
-          >
-            Сменить
           </Button>
         </DialogActions>
       </Dialog>
@@ -2711,7 +2837,7 @@ export default function ClientOrdersWebScreen() {
               <Stack spacing={0.75}>
                 <Typography sx={{ fontWeight: 900 }}>Статус и 1С</Typography>
                 <Typography sx={{ fontSize: 13, color: '#64748B' }}>Revision: {workspace.draft.revision || '—'}</Typography>
-                <Typography sx={{ fontSize: 13, color: '#64748B' }}>Статус: {workspace.statusLabels[workspace.selectedOrder?.status || ''] || workspace.selectedOrder?.status || '—'}</Typography>
+                <Typography sx={{ fontSize: 13, color: '#64748B' }}>Статус: {workspace.selectedOrder ? getOrderDisplayStatusLabel(workspace.selectedOrder) : '—'}</Typography>
                 <Typography sx={{ fontSize: 13, color: '#64748B' }}>Sync state: {workspace.syncLabels[workspace.selectedOrder?.syncState || ''] || workspace.selectedOrder?.syncState || '—'}</Typography>
                 <Typography sx={{ fontSize: 13, color: '#64748B' }}>Организация: {workspace.selectedOrder?.organization?.name || '—'}</Typography>
                 <Typography sx={{ fontSize: 13, color: '#64748B' }}>Документ 1С: {workspace.selectedOrder?.number1c || 'Еще не создан'}</Typography>

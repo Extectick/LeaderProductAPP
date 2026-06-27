@@ -7,6 +7,10 @@ export type PaginationMeta = {
   limit?: number;
   offset?: number;
   statusCounts?: Record<string, number>;
+  liveSource?: {
+    status: string;
+    message?: string;
+  };
 };
 
 export type PagedResult<T> = {
@@ -44,13 +48,25 @@ export type ClientOrderCounterpartyOption = {
   fullName?: string | null;
   inn?: string | null;
   kpp?: string | null;
+  phone?: string | null;
+  email?: string | null;
   isActive?: boolean;
 };
 
 export type ClientOrderAgreementOption = {
   guid: string;
   name: string;
+  number?: string | null;
+  date?: string | null;
+  counterpartyGuid?: string | null;
+  organizationGuid?: string | null;
+  organization?: ClientOrderOrganization | null;
+  contractGuid?: string | null;
+  warehouseGuid?: string | null;
+  priceTypeGuid?: string | null;
   currency?: string | null;
+  status?: string | null;
+  isDefault?: boolean;
   isActive?: boolean;
   contract?: { guid: string; number: string } | null;
   warehouse?: { guid: string; name: string } | null;
@@ -60,9 +76,16 @@ export type ClientOrderAgreementOption = {
 export type ClientOrderContractOption = {
   guid: string;
   number: string;
+  name?: string | null;
   date?: string | null;
   validFrom?: string | null;
   validTo?: string | null;
+  counterpartyGuid?: string | null;
+  organizationGuid?: string | null;
+  organization?: ClientOrderOrganization | null;
+  status?: string | null;
+  currency?: string | null;
+  isDefault?: boolean;
   isActive?: boolean;
 };
 
@@ -70,6 +93,7 @@ export type ClientOrderWarehouseOption = {
   guid: string;
   name: string;
   code?: string | null;
+  address?: string | null;
   isDefault?: boolean;
   isPickup?: boolean;
   isActive?: boolean;
@@ -109,6 +133,8 @@ export type ClientOrderDeliveryAddressOption = {
   guid?: string | null;
   name?: string | null;
   fullAddress?: string | null;
+  address?: string | null;
+  counterpartyGuid?: string | null;
   isDefault?: boolean;
   isActive?: boolean;
 };
@@ -123,20 +149,6 @@ export type ClientOrderSettings = {
   deliveryDateIssue?: 'FIXED_DATE_REQUIRED' | 'FIXED_DATE_IN_PAST' | null;
   deliveryDateIssueMessage?: string | null;
   currency: 'RUB';
-};
-
-export type ResolvedClientOrderDefaults = {
-  organization?: ClientOrderOrganization | null;
-  counterparty?: ClientOrderCounterpartyOption | null;
-  agreement?: ClientOrderAgreementOption | null;
-  contract?: ClientOrderContractOption | null;
-  warehouse?: ClientOrderWarehouseOption | null;
-  deliveryAddress?: ClientOrderDeliveryAddressOption | null;
-  currency: 'RUB';
-  deliveryDate?: string | null;
-  deliveryDateIssue?: 'FIXED_DATE_REQUIRED' | 'FIXED_DATE_IN_PAST' | null;
-  deliveryDateIssueMessage?: string | null;
-  discountsEnabled?: boolean;
 };
 
 export type ClientOrderItem = {
@@ -160,19 +172,28 @@ export type ClientOrderItem = {
 
 export type ClientOrder = {
   guid: string;
+  appGuid?: string | null;
+  documentGuid?: string | null;
   number1c?: string | null;
   date1c?: string | null;
   source: string;
+  origin?: 'local' | 'onec' | 'merged' | string;
+  readOnly?: boolean;
+  readOnlyReason?: string | null;
   createdAt?: string;
   updatedAt?: string;
   sourceUpdatedAt?: string | null;
   revision: number;
   syncState: string;
   status: string;
+  status1c?: string | null;
+  currentState1c?: string | null;
+  documentStatus1c?: string | null;
   comment?: string | null;
   deliveryDate?: string | null;
   totalAmount?: number | null;
   currency?: string | null;
+  priceType?: { guid: string; name: string } | null;
   generalDiscountPercent?: number | null;
   generalDiscountAmount?: number | null;
   queuedAt?: string | null;
@@ -211,6 +232,22 @@ export type ClientOrdersReferenceData = {
   contracts: ClientOrderContractOption[];
   deliveryAddresses: ClientOrderDeliveryAddressOption[];
   warehouses: ClientOrderWarehouseOption[];
+};
+
+export type ClientOrderDefaults = {
+  organization?: ClientOrderOrganization | null;
+  counterparty?: ClientOrderCounterpartyOption | null;
+  agreement?: ClientOrderAgreementOption | null;
+  contract?: ClientOrderContractOption | null;
+  warehouse?: ClientOrderWarehouseOption | null;
+  deliveryAddress?: ClientOrderDeliveryAddressOption | null;
+  priceType?: ClientOrderPriceTypeOption | null;
+  currency?: string | null;
+  deliveryDate?: string | null;
+  deliveryDateIssue?: string | null;
+  deliveryDateIssueMessage?: string | null;
+  discountsEnabled?: boolean;
+  warnings?: string[];
 };
 
 export type ClientOrderProduct = {
@@ -314,6 +351,16 @@ export async function getClientOrdersReferenceData(counterpartyGuid?: string) {
   return res.data;
 }
 
+export async function getClientOrderDefaults(params: {
+  organizationGuid: string;
+  counterpartyGuid: string;
+}) {
+  const query = buildQuery(params);
+  const res = await apiClient<void, ClientOrderDefaults>(`${API_ENDPOINTS.CLIENT_ORDERS.DEFAULTS}?${query}`);
+  if (!res.ok || !res.data) throw new Error(getErrorMessage('Не удалось получить значения по умолчанию', res.message));
+  return res.data;
+}
+
 export async function getClientOrderSettings() {
   const res = await apiClient<void, ClientOrderSettings>(API_ENDPOINTS.CLIENT_ORDERS.SETTINGS);
   if (!res.ok || !res.data) throw new Error(getErrorMessage('Не удалось загрузить настройки заказов клиентов', res.message));
@@ -331,13 +378,6 @@ export async function updateClientOrderSettings(payload: {
     body: payload,
   });
   if (!res.ok || !res.data) throw new Error(getErrorMessage('Не удалось обновить настройки заказов клиентов', res.message));
-  return res.data;
-}
-
-export async function getClientOrderDefaults(params: { organizationGuid: string; counterpartyGuid: string }) {
-  const query = buildQuery(params);
-  const res = await apiClient<void, ResolvedClientOrderDefaults>(`${API_ENDPOINTS.CLIENT_ORDERS.DEFAULTS}?${query}`);
-  if (!res.ok || !res.data) throw new Error(getErrorMessage('Не удалось получить данные по умолчанию', res.message));
   return res.data;
 }
 
@@ -373,6 +413,7 @@ export function searchClientOrderCounterparties(params?: {
 
 export function searchClientOrderAgreements(params?: {
   counterpartyGuid?: string;
+  organizationGuid?: string;
   search?: string;
   limit?: number;
   offset?: number;
@@ -387,6 +428,7 @@ export function searchClientOrderAgreements(params?: {
 
 export function searchClientOrderContracts(params?: {
   counterpartyGuid?: string;
+  organizationGuid?: string;
   search?: string;
   limit?: number;
   offset?: number;
@@ -401,6 +443,7 @@ export function searchClientOrderContracts(params?: {
 
 export function searchClientOrderWarehouses(params?: {
   counterpartyGuid?: string;
+  organizationGuid?: string;
   search?: string;
   limit?: number;
   offset?: number;
@@ -428,6 +471,7 @@ export function searchClientOrderPriceTypes(params?: {
 
 export function searchClientOrderDeliveryAddresses(params?: {
   counterpartyGuid?: string;
+  organizationGuid?: string;
   search?: string;
   limit?: number;
   offset?: number;
@@ -442,6 +486,7 @@ export function searchClientOrderDeliveryAddresses(params?: {
 
 export async function searchClientOrderProducts(params: {
   search?: string;
+  organizationGuid?: string;
   counterpartyGuid?: string;
   agreementGuid?: string;
   warehouseGuid?: string;
@@ -455,6 +500,7 @@ export async function searchClientOrderProducts(params: {
 
 export async function getClientOrderProductsBatch(payload: {
   productGuids: string[];
+  organizationGuid?: string;
   counterpartyGuid?: string;
   agreementGuid?: string;
   warehouseGuid?: string;
