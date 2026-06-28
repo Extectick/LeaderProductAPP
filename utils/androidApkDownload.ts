@@ -12,7 +12,7 @@ import { Platform } from 'react-native';
 const DOWNLOAD_ID_PREFIX = 'apk-update:';
 const APK_MIME = 'application/vnd.android.package-archive';
 const INSTALL_FLAGS = 1 | 268435456;
-const USE_BACKGROUND_APK_DOWNLOADER = false;
+const USE_BACKGROUND_APK_DOWNLOADER = true;
 
 let configured = false;
 

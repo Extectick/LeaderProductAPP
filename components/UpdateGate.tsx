@@ -34,6 +34,11 @@ import {
   openAndroidDownloadedApk,
   removeAndroidApkDownload,
 } from '@/utils/androidApkDownload';
+import {
+  AppBinaryUpdatePhase,
+  AppBinaryUpdateStatusContextValue,
+  AppUpdateStatusProvider,
+} from '@/src/shared/appUpdate/AppUpdateStatusContext';
 
 const STORAGE_KEYS = {
   dismissedVersionCode: 'update:dismissedVersionCode',
@@ -48,6 +53,7 @@ const UPDATE_CHANNEL = process.env.EXPO_PUBLIC_UPDATE_CHANNEL || 'prod';
 const ANDROID_APK_INSTALL_ACTION = 'android.intent.action.VIEW';
 const ANDROID_APK_MIME = 'application/vnd.android.package-archive';
 const ANDROID_INSTALL_INTENT_FLAGS = 1 | 268435456;
+const APK_DOWNLOAD_STALE_MS = 20 * 60 * 1000;
 
 type Props = {
   children: React.ReactNode;
@@ -74,15 +80,19 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [androidDownloadId, setAndroidDownloadId] = useState<string | null>(null);
+  const [downloadedApkUri, setDownloadedApkUri] = useState<string | null>(null);
   const [stage, setStage] = useState<
-    'idle' | 'downloading' | 'verifying' | 'opening' | 'done' | 'error'
+    'idle' | 'available' | 'downloading' | 'verifying' | 'opening' | 'done' | 'error'
   >('idle');
   const checkingRef = useRef(false);
   const lastCheckAtRef = useRef(0);
   const promptLoggedForRef = useRef<number | null>(null);
+  const downloadDoneLoggedForRef = useRef<number | null>(null);
   const downloadRef = useRef<FileSystem.DownloadResumable | null>(null);
   const startupDoneRef = useRef(false);
   const startupCheckStartedRef = useRef(false);
+  const autoDownloadVersionRef = useRef<number | null>(null);
+  const downloadStartedAtRef = useRef<number | null>(null);
 
   const getAndroidDownloadKey = useCallback(() => {
     return `${STORAGE_KEYS.androidDownload}:${UPDATE_CHANNEL}`;
@@ -103,6 +113,7 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
 
   const clearAndroidDownloadState = useCallback(async () => {
     setAndroidDownloadId(null);
+    setDownloadedApkUri(null);
     await AsyncStorage.removeItem(getAndroidDownloadKey());
   }, [getAndroidDownloadKey]);
 
@@ -203,9 +214,65 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
     [androidPackageName]
   );
 
+  const verifyManagedDownloadedApk = useCallback(
+    async (saved: AndroidApkDownloadState, localUri?: string | null) => {
+      if (!saved.checksumMd5) return true;
+      if (!localUri) return false;
+
+      const info = await FileSystem.getInfoAsync(localUri, { md5: true });
+      const actualMd5 = info.exists ? info.md5?.toLowerCase() : null;
+      const expectedMd5 = saved.checksumMd5.toLowerCase();
+      if (actualMd5 && actualMd5 === expectedMd5) return true;
+
+      try {
+        await removeAndroidApkDownload(saved.downloadId);
+      } catch {}
+      await clearAndroidDownloadState();
+
+      const deviceId = await getInstallId();
+      await logUpdateEvent({
+        eventType: 'VERIFY_FAILED',
+        platform: Platform.OS as 'android' | 'ios',
+        versionCode,
+        versionName,
+        deviceId,
+        updateId: saved.updateId ?? updateInfo?.latestId,
+        channel: UPDATE_CHANNEL,
+      });
+
+      setErrorMessage('Контрольная сумма файла не совпадает. Повторите загрузку.');
+      setStage('error');
+      setProgress(0);
+      return false;
+    },
+    [clearAndroidDownloadState, updateInfo?.latestId, versionCode, versionName]
+  );
+
+  const logDownloadDoneOnce = useCallback(async () => {
+    const updateId = updateInfo?.latestId ?? 0;
+    if (downloadDoneLoggedForRef.current === updateId) return;
+    downloadDoneLoggedForRef.current = updateId;
+    const deviceId = await getInstallId();
+    await logUpdateEvent({
+      eventType: 'DOWNLOAD_DONE',
+      platform: Platform.OS as 'android' | 'ios',
+      versionCode,
+      versionName,
+      deviceId,
+      updateId: updateInfo?.latestId,
+      channel: UPDATE_CHANNEL,
+    });
+  }, [updateInfo?.latestId, versionCode, versionName]);
+
   const buildAndroidApkFileName = useCallback(() => {
     const nextVersion = updateInfo?.latestVersionCode || Date.now();
     return `leader-product-update-${nextVersion}.apk`;
+  }, [updateInfo?.latestVersionCode]);
+
+  const getFallbackApkFileUri = useCallback(() => {
+    const baseDir = FileSystem.documentDirectory || FileSystem.cacheDirectory;
+    if (!baseDir || !updateInfo?.latestVersionCode) return null;
+    return `${baseDir}updates/update_${updateInfo.latestVersionCode}.apk`;
   }, [updateInfo?.latestVersionCode]);
 
   const getEtagKey = useCallback(() => {
@@ -288,7 +355,7 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
           versionName,
           deviceId,
           channel: UPDATE_CHANNEL,
-          ifNoneMatch: storedEtag,
+          ifNoneMatch: updateInfo ? storedEtag : null,
         });
 
         if (result.etag) {
@@ -298,7 +365,7 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
         if (result.notModified) {
           await clearCheckFailures();
           lastCheckAtRef.current = Date.now();
-          return { handled: true, ok: true, updateAvailable: false };
+          return { handled: true, ok: true, updateAvailable: Boolean(updateInfo?.updateAvailable) };
         }
 
         if (!result.ok || !result.data) {
@@ -317,22 +384,25 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
         await clearCheckFailures();
 
         const data = result.data;
-        const dismissedRaw = await AsyncStorage.getItem(getDismissKey());
-        const dismissedCode = dismissedRaw ? Number(dismissedRaw) : undefined;
-
         const updateAvailable = Boolean(data.updateAvailable);
-        const mandatory = Boolean(data.mandatory);
-        const latestVersionCode = data.latestVersionCode ?? 0;
-
-        const shouldShowOptional =
-          updateAvailable &&
-          !mandatory &&
-          (isManual || (source === 'startup' && (latestVersionCode <= 0 || dismissedCode !== latestVersionCode)));
 
         setUpdateInfo(data);
-        setMandatoryVisible(updateAvailable && mandatory);
-        setOptionalVisible(shouldShowOptional);
+        setMandatoryVisible(false);
+        setOptionalVisible(false);
         setErrorMessage(null);
+        setStage((current) => {
+          if (!updateAvailable) return 'idle';
+          if (current === 'downloading' || current === 'verifying' || current === 'opening' || current === 'done') {
+            return current;
+          }
+          return 'available';
+        });
+        if (!updateAvailable) {
+          autoDownloadVersionRef.current = null;
+          setProgress(0);
+          setAndroidDownloadId(null);
+          setDownloadedApkUri(null);
+        }
         lastCheckAtRef.current = Date.now();
 
         if (updateAvailable) {
@@ -371,6 +441,7 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
       recordCheckFailure,
       shouldCheck,
       shouldSkipAfterFailures,
+      updateInfo,
       versionCode,
       versionName,
     ]
@@ -410,7 +481,7 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
   useEffect(() => {
     if (Platform.OS !== 'android') return;
     if (!isAndroidApkDownloadSupported()) return;
-    if (!modalVisible) return;
+    if (!updateInfo?.updateAvailable) return;
     if (!updateInfo?.downloadUrl) return;
 
     let cancelled = false;
@@ -431,8 +502,11 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
       setAndroidDownloadId(saved.downloadId);
 
       if (status.status === 'SUCCESSFUL') {
+        const verified = await verifyManagedDownloadedApk(saved, status.localUri);
+        if (!verified) return;
         setStage((current) => (current === 'error' ? current : 'done'));
         setProgress(100);
+        await logDownloadDoneOnce();
         return;
       }
 
@@ -463,16 +537,17 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
   }, [
     busy,
     clearAndroidDownloadState,
-    modalVisible,
+    logDownloadDoneOnce,
     readAndroidDownloadState,
     updateInfo?.downloadUrl,
+    updateInfo?.updateAvailable,
     updateInfo?.latestVersionCode,
+    verifyManagedDownloadedApk,
   ]);
 
   useEffect(() => {
     if (Platform.OS !== 'android') return;
     if (!isAndroidApkDownloadSupported()) return;
-    if (!modalVisible) return;
     if (!androidDownloadId) return;
 
     let cancelled = false;
@@ -496,8 +571,14 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
       }
 
       if (status.status === 'SUCCESSFUL') {
+        const saved = await readAndroidDownloadState();
+        if (saved) {
+          const verified = await verifyManagedDownloadedApk(saved, status.localUri);
+          if (!verified) return;
+        }
         setProgress(100);
         setStage((current) => (current === 'error' ? current : 'done'));
+        await logDownloadDoneOnce();
         return;
       }
 
@@ -516,7 +597,20 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [androidDownloadId, busy, clearAndroidDownloadState, modalVisible]);
+  }, [androidDownloadId, busy, clearAndroidDownloadState, logDownloadDoneOnce, readAndroidDownloadState, verifyManagedDownloadedApk]);
+
+  useEffect(() => {
+    if (stage !== 'downloading') return;
+    const startedAt = downloadStartedAtRef.current;
+    if (!startedAt) return;
+    const timer = setTimeout(() => {
+      if (Date.now() - startedAt < APK_DOWNLOAD_STALE_MS) return;
+      setStage('error');
+      setErrorMessage('Загрузка обновления заняла слишком много времени. Повторите позже.');
+      setProgress(0);
+    }, APK_DOWNLOAD_STALE_MS + 1000);
+    return () => clearTimeout(timer);
+  }, [stage]);
 
   useEffect(() => {
     if (!updateInfo?.updateAvailable) return;
@@ -539,7 +633,7 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
     })();
   }, [mandatoryVisible, optionalVisible, updateInfo, versionCode, versionName]);
 
-  const handleUpdate = useCallback(async () => {
+  const startApkDownload = useCallback(async (openWhenReady = false) => {
     setErrorMessage(null);
     if (!updateInfo) return;
 
@@ -550,7 +644,6 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
     }
 
     setBusy(true);
-    setProgress(0);
     try {
       const deviceId = await getInstallId();
 
@@ -569,19 +662,27 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
             setAndroidDownloadId(saved.downloadId);
 
             if (status.status === 'SUCCESSFUL') {
+              const verified = await verifyManagedDownloadedApk(saved, status.localUri);
+              if (!verified) return;
               setProgress(100);
-              setStage('opening');
-              await openManagedDownloadedApk(saved.downloadId);
+              setStage(openWhenReady ? 'opening' : 'done');
+              if (openWhenReady) {
+                await openManagedDownloadedApk(saved.downloadId);
+              }
               setStage('done');
-              await logUpdateEvent({
-                eventType: 'UPDATE_CLICK',
-                platform: Platform.OS as 'android' | 'ios',
-                versionCode,
-                versionName,
-                deviceId,
-                updateId: updateInfo.latestId,
-                channel: UPDATE_CHANNEL,
-              });
+              if (openWhenReady) {
+                await logUpdateEvent({
+                  eventType: 'INSTALL_CLICK',
+                  platform: Platform.OS as 'android' | 'ios',
+                  versionCode,
+                  versionName,
+                  deviceId,
+                  updateId: updateInfo.latestId,
+                  channel: UPDATE_CHANNEL,
+                });
+              } else {
+                await logDownloadDoneOnce();
+              }
               return;
             }
 
@@ -625,8 +726,9 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
 
         setStage('downloading');
         setProgress(0);
+        downloadStartedAtRef.current = Date.now();
         await logUpdateEvent({
-          eventType: 'UPDATE_CLICK',
+          eventType: 'DOWNLOAD_START',
           platform: Platform.OS as 'android' | 'ios',
           versionCode,
           versionName,
@@ -646,7 +748,7 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
         }
         const folder = `${baseDir}updates/`;
         const versionTag = updateInfo.latestVersionCode || Date.now();
-        const fileUri = `${folder}update_${versionTag}.apk`;
+        const fileUri = getFallbackApkFileUri() || `${folder}update_${versionTag}.apk`;
 
         try {
           await FileSystem.makeDirectoryAsync(folder, { intermediates: true });
@@ -655,19 +757,26 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
         const cached = await FileSystem.getInfoAsync(fileUri, { md5: true });
         if (cached.exists && cached.md5 && cached.md5.toLowerCase() === updateInfo.checksumMd5.toLowerCase()) {
           setProgress(100);
-          setStage('opening');
-          await openDownloadedApk(fileUri, updateInfo.downloadUrl);
+          setDownloadedApkUri(fileUri);
+          setStage(openWhenReady ? 'opening' : 'done');
+          if (openWhenReady) {
+            await openDownloadedApk(fileUri, updateInfo.downloadUrl);
+          }
           setProgress(100);
           setStage('done');
-          await logUpdateEvent({
-            eventType: 'UPDATE_CLICK',
-            platform: Platform.OS as 'android' | 'ios',
-            versionCode,
-            versionName,
-            deviceId,
-            updateId: updateInfo.latestId,
-            channel: UPDATE_CHANNEL,
-          });
+          if (openWhenReady) {
+            await logUpdateEvent({
+              eventType: 'INSTALL_CLICK',
+              platform: Platform.OS as 'android' | 'ios',
+              versionCode,
+              versionName,
+              deviceId,
+              updateId: updateInfo.latestId,
+              channel: UPDATE_CHANNEL,
+            });
+          } else {
+            await logDownloadDoneOnce();
+          }
           return;
         }
 
@@ -678,6 +787,17 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
         }
 
         setStage('downloading');
+        setProgress(0);
+        downloadStartedAtRef.current = Date.now();
+        await logUpdateEvent({
+          eventType: 'DOWNLOAD_START',
+          platform: Platform.OS as 'android' | 'ios',
+          versionCode,
+          versionName,
+          deviceId,
+          updateId: updateInfo.latestId,
+          channel: UPDATE_CHANNEL,
+        });
         downloadRef.current = FileSystem.createDownloadResumable(
           updateInfo.downloadUrl,
           fileUri,
@@ -702,15 +822,48 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
         if (result.md5 && updateInfo.checksumMd5 && result.md5.toLowerCase() !== updateInfo.checksumMd5.toLowerCase()) {
           setErrorMessage('Контрольная сумма файла не совпадает. Повторите загрузку.');
           setStage('error');
+          await logUpdateEvent({
+            eventType: 'VERIFY_FAILED',
+            platform: Platform.OS as 'android' | 'ios',
+            versionCode,
+            versionName,
+            deviceId,
+            updateId: updateInfo.latestId,
+            channel: UPDATE_CHANNEL,
+          });
           return;
         }
-        setStage('opening');
-        await openDownloadedApk(result.uri, updateInfo.downloadUrl);
+        setDownloadedApkUri(result.uri);
         setProgress(100);
+        setStage(openWhenReady ? 'opening' : 'done');
+        if (openWhenReady) {
+          await openDownloadedApk(result.uri, updateInfo.downloadUrl);
+        }
         setStage('done');
 
+        if (openWhenReady) {
+          await logUpdateEvent({
+            eventType: 'INSTALL_CLICK',
+            platform: Platform.OS as 'android' | 'ios',
+            versionCode,
+            versionName,
+            deviceId,
+            updateId: updateInfo.latestId,
+            channel: UPDATE_CHANNEL,
+          });
+        } else {
+          await logDownloadDoneOnce();
+        }
+        return;
+      }
+
+      if (openWhenReady) {
+        setStage('opening');
+        await Linking.openURL(url);
+        setProgress(100);
+        setStage('done');
         await logUpdateEvent({
-          eventType: 'UPDATE_CLICK',
+          eventType: 'INSTALL_CLICK',
           platform: Platform.OS as 'android' | 'ios',
           versionCode,
           versionName,
@@ -718,22 +871,9 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
           updateId: updateInfo.latestId,
           channel: UPDATE_CHANNEL,
         });
-        return;
+      } else {
+        setStage('available');
       }
-
-      setStage('opening');
-      await Linking.openURL(url);
-      setProgress(100);
-      setStage('done');
-      await logUpdateEvent({
-        eventType: 'UPDATE_CLICK',
-        platform: Platform.OS as 'android' | 'ios',
-        versionCode,
-        versionName,
-        deviceId,
-        updateId: updateInfo.latestId,
-        channel: UPDATE_CHANNEL,
-      });
     } catch (e) {
       console.warn('[update] openURL failed', e);
       const msg = (e as any)?.message || 'Не удалось выполнить обновление.';
@@ -745,13 +885,121 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
   }, [
     buildAndroidApkFileName,
     clearAndroidDownloadState,
+    getFallbackApkFileUri,
+    logDownloadDoneOnce,
     openDownloadedApk,
     openManagedDownloadedApk,
     readAndroidDownloadState,
     saveAndroidDownloadState,
     updateInfo,
+    verifyManagedDownloadedApk,
     versionCode,
     versionName,
+  ]);
+
+  const installUpdate = useCallback(async () => {
+    if (!updateInfo) return;
+
+    if (Platform.OS === 'android' && updateInfo.downloadUrl) {
+      if (isAndroidApkDownloadSupported() && androidDownloadId) {
+        try {
+          const status = await getAndroidApkDownloadStatus(androidDownloadId);
+          if (status.status === 'SUCCESSFUL') {
+            const saved = await readAndroidDownloadState();
+            if (saved) {
+              const verified = await verifyManagedDownloadedApk(saved, status.localUri);
+              if (!verified) return;
+            }
+            setBusy(true);
+            setStage('opening');
+            const deviceId = await getInstallId();
+            await openManagedDownloadedApk(androidDownloadId);
+            setStage('done');
+            await logUpdateEvent({
+              eventType: 'INSTALL_CLICK',
+              platform: Platform.OS as 'android' | 'ios',
+              versionCode,
+              versionName,
+              deviceId,
+              updateId: updateInfo.latestId,
+              channel: UPDATE_CHANNEL,
+            });
+            return;
+          }
+        } catch (error) {
+          console.warn('[update] managed install failed', error);
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      const candidateUri = downloadedApkUri || getFallbackApkFileUri();
+      if (candidateUri) {
+        try {
+          const info = await FileSystem.getInfoAsync(candidateUri, { md5: true });
+          const validChecksum =
+            !updateInfo.checksumMd5 ||
+            (info.exists && info.md5?.toLowerCase() === updateInfo.checksumMd5.toLowerCase());
+          if (info.exists && validChecksum) {
+            setBusy(true);
+            setStage('opening');
+            const deviceId = await getInstallId();
+            await openDownloadedApk(candidateUri, updateInfo.downloadUrl);
+            setStage('done');
+            await logUpdateEvent({
+              eventType: 'INSTALL_CLICK',
+              platform: Platform.OS as 'android' | 'ios',
+              versionCode,
+              versionName,
+              deviceId,
+              updateId: updateInfo.latestId,
+              channel: UPDATE_CHANNEL,
+            });
+            return;
+          }
+        } catch (error) {
+          console.warn('[update] cached apk install failed', error);
+        } finally {
+          setBusy(false);
+        }
+      }
+    }
+
+    await startApkDownload(true);
+  }, [
+    androidDownloadId,
+    downloadedApkUri,
+    getFallbackApkFileUri,
+    openDownloadedApk,
+    openManagedDownloadedApk,
+    readAndroidDownloadState,
+    startApkDownload,
+    updateInfo,
+    verifyManagedDownloadedApk,
+    versionCode,
+    versionName,
+  ]);
+
+  const handleUpdate = installUpdate;
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    if (!updateInfo?.updateAvailable || !updateInfo.downloadUrl) return;
+    if (busy || stage === 'downloading' || stage === 'verifying' || stage === 'opening' || stage === 'done') return;
+
+    const version = updateInfo.latestVersionCode ?? 0;
+    if (version > 0 && autoDownloadVersionRef.current === version) return;
+    if (stage === 'error') return;
+
+    autoDownloadVersionRef.current = version || Date.now();
+    void startApkDownload(false);
+  }, [
+    busy,
+    stage,
+    startApkDownload,
+    updateInfo?.downloadUrl,
+    updateInfo?.latestVersionCode,
+    updateInfo?.updateAvailable,
   ]);
 
   const handleClose = useCallback(async () => {
@@ -809,6 +1057,62 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
   const showChecking = showCheckingOverlay && checkingVisible && !modalVisible;
   const isMandatory = mandatoryVisible;
   const showProgress = stage !== 'idle';
+  const appUpdatePhase: AppBinaryUpdatePhase = useMemo(() => {
+    if (!shouldCheck) return 'disabled';
+    if (checkingVisible) return 'checking';
+    if (!updateInfo?.updateAvailable) return stage === 'error' ? 'error' : 'idle';
+    if (stage === 'done') return 'ready';
+    if (stage === 'available') return 'available';
+    return stage;
+  }, [checkingVisible, shouldCheck, stage, updateInfo?.updateAvailable]);
+
+  const requestAppUpdateStatusCheck = useCallback(async (source = 'manual') => {
+    const result = await runCheck(source);
+    return Boolean(result.ok && result.updateAvailable);
+  }, [runCheck]);
+
+  const dismissAppUpdateStatus = useCallback(async () => {
+    setMandatoryVisible(false);
+    setOptionalVisible(false);
+    if (stage === 'available' || stage === 'error') {
+      setStage('idle');
+      setProgress(0);
+      setErrorMessage(null);
+    }
+  }, [stage]);
+
+  const appUpdateStatusValue = useMemo<AppBinaryUpdateStatusContextValue>(() => ({
+    phase: appUpdatePhase,
+    progress:
+      appUpdatePhase === 'downloading' || appUpdatePhase === 'verifying' || appUpdatePhase === 'ready'
+        ? Math.max(0, Math.min(100, progress)) / 100
+        : null,
+    updateInfo,
+    latestVersionName: updateInfo?.latestVersionName ?? null,
+    latestVersionCode: updateInfo?.latestVersionCode ?? null,
+    fileSize: updateInfo?.fileSize ?? null,
+    mandatory: Boolean(updateInfo?.mandatory),
+    errorMessage,
+    readyToInstall: appUpdatePhase === 'ready',
+    isChecking: appUpdatePhase === 'checking',
+    isDownloading: appUpdatePhase === 'downloading' || appUpdatePhase === 'verifying',
+    isBusy: busy || appUpdatePhase === 'opening',
+    lastCheckedAt: lastCheckAtRef.current || null,
+    requestCheck: requestAppUpdateStatusCheck,
+    startDownload: () => startApkDownload(false),
+    installUpdate,
+    dismissUpdate: dismissAppUpdateStatus,
+  }), [
+    appUpdatePhase,
+    busy,
+    dismissAppUpdateStatus,
+    errorMessage,
+    installUpdate,
+    progress,
+    requestAppUpdateStatusCheck,
+    startApkDownload,
+    updateInfo,
+  ]);
   const primaryActionLabel = useMemo(() => {
     if (stage === 'downloading') return 'Скачивание...';
     if (stage === 'verifying') return 'Проверка...';
@@ -846,8 +1150,9 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
   const sizeLabel = formatBytes(updateInfo?.fileSize ?? undefined);
 
   return (
-    <View style={{ flex: 1 }}>
-      {children}
+    <AppUpdateStatusProvider value={appUpdateStatusValue}>
+      <View style={{ flex: 1 }}>
+        {children}
       <Modal
         visible={modalVisible}
         transparent
@@ -932,7 +1237,8 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
           </View>
         </View>
       </Modal>
-    </View>
+      </View>
+    </AppUpdateStatusProvider>
   );
 }
 

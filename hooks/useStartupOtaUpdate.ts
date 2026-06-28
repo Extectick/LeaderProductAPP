@@ -190,18 +190,6 @@ export function useStartupOtaUpdate(start: boolean): StartupOtaState {
   }, [finish, start]);
 
   useEffect(() => {
-    if (!OTA_PENDING_RELOAD_GUARD_ENABLED) return;
-    if (!start || !Updates.isEnabled) return;
-    if (!updatesState.isUpdatePending && !updatesState.downloadedUpdate) return;
-    void applyDownloadedUpdate().catch((error) => {
-      if (!isExpectedUpdatesDisabledError(error)) {
-        console.warn('[ota] reload failed', error);
-      }
-      finish('error');
-    });
-  }, [applyDownloadedUpdate, finish, start, updatesState.downloadedUpdate, updatesState.isUpdatePending]);
-
-  useEffect(() => {
     if (!start || JS_OTA_CHECK_ENABLED || !OTA_PENDING_RELOAD_GUARD_ENABLED || nativeGateStartedRef.current) return undefined;
     if (!Updates.isEnabled) {
       finish('disabled');
@@ -221,7 +209,7 @@ export function useStartupOtaUpdate(start: boolean): StartupOtaState {
         if (cancelled || !mountedRef.current || reloadTriggeredRef.current) return;
 
         if (nativeState === 'pending' || hasPendingDownloadedUpdate()) {
-          await applyDownloadedUpdate();
+          finish('up-to-date');
           return;
         }
 

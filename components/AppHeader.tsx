@@ -2,7 +2,7 @@ import { useTheme } from '@/context/ThemeContext';
 import { useNotificationViewport } from '@/context/NotificationViewportContext';
 import { useThemeColor } from '@/hooks/useThemeColor';
 import { LiquidGlassSurface } from '@/components/ui/LiquidGlassSurface';
-import ServerStatusIndicator from '@/src/shared/ui/ServerStatusIndicator';
+import AppStatusIndicator from '@/src/shared/ui/AppStatusIndicator';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView } from 'moti';
@@ -196,7 +196,7 @@ export function AppHeader({
         </View>
 
         <View style={[styles.rightCluster, tight && styles.rightClusterTight, dense && styles.rightClusterDense]}>
-          {showServerStatus ? <ServerStatusIndicator /> : null}
+          {showServerStatus ? <AppStatusIndicator /> : null}
           {rightSlot}
         </View>
       </View>

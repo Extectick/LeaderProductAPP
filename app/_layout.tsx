@@ -19,6 +19,8 @@ import { NotificationViewportProvider } from '@/context/NotificationViewportCont
 import { NotificationHost } from '@/components/NotificationHost';
 import UpdateGate from '@/components/UpdateGate';
 import StartupSplash from '@/components/StartupSplash';
+import { OtaUpdateStatusProvider } from '@/src/shared/ota/OtaUpdateStatusContext';
+import { registerOtaBackgroundPrefetchTask } from '@/src/shared/ota/registerOtaBackgroundTask';
 import { initPushNotifications } from '@/utils/pushNotifications';
 import { captureException, initMonitoring, installGlobalJsErrorHandler } from '@/src/shared/monitoring';
 
@@ -118,6 +120,14 @@ export default function RootLayout() {
     [minSplashReady, otaUpdate.ready, preloadReady, updateReady]
   );
 
+  useEffect(() => {
+    if (!appIsReady) return;
+    void registerOtaBackgroundPrefetchTask().catch((error) => {
+      captureException(error, { where: 'RootLayout:registerOtaBackgroundPrefetchTask' });
+      console.warn('[ota] background prefetch registration failed', error);
+    });
+  }, [appIsReady]);
+
   const startupSplash = useMemo(() => {
     if (!preloadReady) {
       return {
@@ -170,25 +180,27 @@ export default function RootLayout() {
               <AuthProvider>
                 <TrackingProvider>
                   <NotificationViewportProvider>
-                    <NotificationHost>
-                      <UpdateGate
-                        onStartupDone={handleStartupDone}
-                        showCheckingOverlay={false}
-                      >
-                        <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
-                        {appIsReady ? (
-                          <InnerLayout />
-                        ) : hideReactStartupLoader ? (
-                          <EmptyStartupSurface />
-                        ) : (
-                          <StartupSplash
-                            statusText={startupSplash.statusText}
-                            hintText={startupSplash.hintText}
-                            progress={startupSplash.progress}
-                          />
-                        )}
-                      </UpdateGate>
-                    </NotificationHost>
+                    <OtaUpdateStatusProvider enabled={appIsReady}>
+                      <NotificationHost>
+                        <UpdateGate
+                          onStartupDone={handleStartupDone}
+                          showCheckingOverlay={false}
+                        >
+                          <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
+                          {appIsReady ? (
+                            <InnerLayout />
+                          ) : hideReactStartupLoader ? (
+                            <EmptyStartupSurface />
+                          ) : (
+                            <StartupSplash
+                              statusText={startupSplash.statusText}
+                              hintText={startupSplash.hintText}
+                              progress={startupSplash.progress}
+                            />
+                          )}
+                        </UpdateGate>
+                      </NotificationHost>
+                    </OtaUpdateStatusProvider>
                   </NotificationViewportProvider>
                 </TrackingProvider>
               </AuthProvider>

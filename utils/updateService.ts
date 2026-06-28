@@ -37,7 +37,17 @@ type CheckParams = {
 };
 
 type UpdateEventParams = {
-  eventType: 'CHECK' | 'PROMPT_SHOWN' | 'UPDATE_CLICK' | 'DISMISS';
+  eventType:
+    | 'CHECK'
+    | 'PROMPT_SHOWN'
+    | 'UPDATE_CLICK'
+    | 'DISMISS'
+    | 'DOWNLOAD_START'
+    | 'DOWNLOAD_DONE'
+    | 'VERIFY_FAILED'
+    | 'INSTALL_CLICK'
+    | 'OTA_READY'
+    | 'OTA_RELOAD';
   platform: 'android' | 'ios';
   versionCode: number;
   versionName?: string;
