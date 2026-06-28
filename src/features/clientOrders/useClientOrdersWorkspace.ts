@@ -1,8 +1,8 @@
-import { useNotify } from '@/components/NotificationHost';
 import { AuthContext } from '@/context/AuthContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   cancelClientOrder,
+  copyClientOrder,
   createClientOrder,
   deleteClientOrder,
   getClientOrderDefaults,
@@ -18,6 +18,8 @@ import {
   searchClientOrderProducts,
   searchClientOrderWarehouses,
   submitClientOrder,
+  restoreClientOrder,
+  unqueueClientOrder,
   updateClientOrder,
   updateClientOrderSettings,
   type ClientOrder,
@@ -459,7 +461,11 @@ function sortClientOrdersForWorkspace(items: ClientOrder[]) {
   return [...items].sort((a, b) => {
     const rankDiff = orderWorkspaceRank(a) - orderWorkspaceRank(b);
     if (rankDiff !== 0) return rankDiff;
-    return getOrderActivityAt(b).localeCompare(getOrderActivityAt(a));
+    const activityDiff = (parseOrderDate(getOrderActivityAt(b)) ?? 0) - (parseOrderDate(getOrderActivityAt(a)) ?? 0);
+    if (activityDiff !== 0) return activityDiff;
+    const createdDiff = (parseOrderDate(b.createdAt) ?? 0) - (parseOrderDate(a.createdAt) ?? 0);
+    if (createdDiff !== 0) return createdDiff;
+    return String(b.guid).localeCompare(String(a.guid));
   });
 }
 
@@ -682,7 +688,6 @@ function buildDeviceOrderFromDraft(args: {
 
 export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOptions = {}) {
   const confirmDiscard = options.confirmDiscard;
-  const notify = useNotify();
   const auth = React.useContext(AuthContext);
   const filtersStorageKey = React.useMemo(
     () => `${FILTERS_STORAGE_PREFIX}:${auth?.profile?.id ?? 'anonymous'}`,
@@ -721,9 +726,11 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const [savingSettings, setSavingSettings] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [submitting, setSubmitting] = React.useState(false);
+  const [copying, setCopying] = React.useState(false);
   const [cancelling, setCancelling] = React.useState(false);
   const [deletingDraft, setDeletingDraft] = React.useState(false);
   const [refreshing, setRefreshing] = React.useState(false);
+  const [refreshingQueueState, setRefreshingQueueState] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [ordersAppendError, setOrdersAppendError] = React.useState<string | null>(null);
   const [dirty, setDirty] = React.useState(false);
@@ -740,6 +747,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const selectedGuidRef = React.useRef<string | null>(null);
   const contextRefreshSignatureRef = React.useRef('');
   const ordersRequestIdRef = React.useRef(0);
+  const silentOrdersRequestIdRef = React.useRef(0);
+  const queueStateRequestIdRef = React.useRef(0);
   const detailRequestIdRef = React.useRef(0);
   const defaultsRequestIdRef = React.useRef(0);
   const pricingRequestIdRef = React.useRef(0);
@@ -1116,15 +1125,16 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     }
   }, []);
 
-  const loadOrders = React.useCallback(async (mode: 'reset' | 'append' = 'reset') => {
+  const loadOrders = React.useCallback(async (mode: 'reset' | 'append' = 'reset', options?: { silent?: boolean }) => {
     if (mode === 'append' && ordersAppendLoadingRef.current) return;
+    const silent = options?.silent === true;
     const offset = mode === 'append' ? ordersNextOffsetRef.current : 0;
-    const requestId = ++ordersRequestIdRef.current;
+    const requestId = silent ? ++silentOrdersRequestIdRef.current : ++ordersRequestIdRef.current;
     if (mode === 'append') {
       ordersAppendLoadingRef.current = true;
       setLoadingMoreOrders(true);
       setOrdersAppendError(null);
-    } else {
+    } else if (!silent) {
       setLoadingOrders(true);
       setError(null);
       setOrdersAppendError(null);
@@ -1152,9 +1162,12 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         hasNumber1c: filters.hasNumber1c || undefined,
         onlyProblems: filters.onlyProblems || undefined,
       });
-      if (ordersRequestIdRef.current !== requestId) return;
+      const requestIsStale = silent
+        ? silentOrdersRequestIdRef.current !== requestId
+        : ordersRequestIdRef.current !== requestId;
+      if (requestIsStale) return;
       const liveSource = result.meta.liveSource;
-      if (liveSource?.status && liveSource.status !== 'ok' && liveSource.message) {
+      if (!silent && liveSource?.status && liveSource.status !== 'ok' && liveSource.message) {
         setError(liveSource.message);
       }
       const list = Array.isArray(result.items) ? result.items : [];
@@ -1212,21 +1225,38 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         }
       }
     } catch (e: any) {
-      if (ordersRequestIdRef.current !== requestId) return;
+      const requestIsStale = silent
+        ? silentOrdersRequestIdRef.current !== requestId
+        : ordersRequestIdRef.current !== requestId;
+      if (requestIsStale) return;
       const message = userErrorMessage(e, mode === 'append' ? 'Не удалось загрузить ещё документы.' : 'Не удалось загрузить список заказов.');
       if (mode === 'append') {
         setOrdersAppendError(message);
-      } else {
+      } else if (!silent) {
         setError(message);
       }
     } finally {
-      if (mode === 'append') ordersAppendLoadingRef.current = false;
-      if (ordersRequestIdRef.current === requestId) {
-        setLoadingOrders(false);
+      if (mode === 'append') {
+        ordersAppendLoadingRef.current = false;
         setLoadingMoreOrders(false);
+      }
+      if (mode !== 'append' && ordersRequestIdRef.current === requestId && !silent) {
+        setLoadingOrders(false);
       }
     }
   }, [filters, filtersSignature, ordersCacheStorageKey]);
+
+  const refreshQueueState = React.useCallback(async () => {
+    const requestId = ++queueStateRequestIdRef.current;
+    setRefreshingQueueState(true);
+    try {
+      await loadOrders('reset', { silent: true });
+    } finally {
+      if (queueStateRequestIdRef.current === requestId) {
+        setRefreshingQueueState(false);
+      }
+    }
+  }, [loadOrders]);
 
   const loadDetail = React.useCallback(async (guid: string) => {
     const deviceEntry = findDeviceDraftEntry(guid);
@@ -1309,15 +1339,11 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     } catch (e: any) {
       if (defaultsRequestIdRef.current !== requestId) return;
       if (isNetworkUnavailableError(e)) return;
-      notify({
-        type: 'warning',
-        title: 'Подсказки не загружены',
-        message: userErrorMessage(e, 'Не удалось подставить значения по умолчанию.'),
-      });
+      setError(userErrorMessage(e, 'Не удалось подставить значения по умолчанию.'));
     } finally {
       if (defaultsRequestIdRef.current === requestId) setLoadingDefaults(false);
     }
-  }, [notify]);
+  }, []);
 
   React.useEffect(() => {
     void loadSettings();
@@ -1333,17 +1359,11 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
   React.useEffect(() => {
     if (!filtersHydrated || !hasQueuedOrders) return undefined;
-    const shouldRefreshSelected =
-      !!selectedGuid &&
-      (selectedOrder?.status === 'QUEUED' || selectedOrder?.syncState === 'QUEUED');
     const timer = setInterval(() => {
-      void loadOrders('reset');
-      if (shouldRefreshSelected && selectedGuid && !dirtyRef.current) {
-        void loadDetail(selectedGuid);
-      }
+      void refreshQueueState();
     }, QUEUED_ORDERS_REFRESH_INTERVAL_MS);
     return () => clearInterval(timer);
-  }, [filtersHydrated, hasQueuedOrders, loadDetail, loadOrders, selectedGuid, selectedOrder?.status, selectedOrder?.syncState]);
+  }, [filtersHydrated, hasQueuedOrders, refreshQueueState]);
 
   const refreshOrders = React.useCallback(() => loadOrders('reset'), [loadOrders]);
   const loadMoreOrders = React.useCallback(
@@ -1419,13 +1439,6 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         const localOrder = saveDraftOnDevice(payload);
         applyOrderDetail(localOrder);
         setError(null);
-        notify({
-          type: 'success',
-          message: 'Документ сохранен на устройстве',
-          icon: 'checkmark-circle',
-          durationMs: 5000,
-          dismissKeys: ['client-order-device-save'],
-        });
         setDirty(false);
         setLastSavedAt(new Date().toISOString());
         setAutosaveState('saved');
@@ -1980,6 +1993,80 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     }
   }, [applySavedOrderToList, canSubmitOrder, dirty, draft.guid, draft.revision, findDeviceDraftEntry, loadOrders, saveDraft, selectedGuid, selectedOrderQueued, validation.blockingMessage]);
 
+  const unqueueOrder = React.useCallback(async (target?: { guid: string; revision: number }) => {
+    let targetGuid = target?.guid || draft.guid || selectedGuid;
+    let revision = target?.revision ?? draft.revision;
+    if (!targetGuid) return null;
+    if (!target && dirty) {
+      const saved = await saveDraft({ silent: true, reason: 'manual' });
+      if (!saved || isDeviceDraftGuid(saved.guid)) return null;
+      targetGuid = saved.guid;
+      revision = saved.revision;
+    }
+    try {
+      setCancelling(true);
+      const order = await unqueueClientOrder(targetGuid, revision);
+      applySavedOrderToList(order);
+      if (!target || target.guid === selectedGuid) {
+        applyOrderDetail(order);
+        setDirty(false);
+      }
+      setError(null);
+      return order;
+    } catch (e: any) {
+      setError(userErrorMessage(e, 'Не удалось снять заказ с очереди.'));
+      return null;
+    } finally {
+      setCancelling(false);
+    }
+  }, [applyOrderDetail, applySavedOrderToList, dirty, draft.guid, draft.revision, saveDraft, selectedGuid]);
+
+  const restoreOrder = React.useCallback(async (target?: { guid: string; revision: number }) => {
+    const targetGuid = target?.guid || draft.guid || selectedGuid;
+    const revision = target?.revision ?? draft.revision;
+    if (!targetGuid) return null;
+    try {
+      setCancelling(true);
+      const order = await restoreClientOrder(targetGuid, revision);
+      applySavedOrderToList(order);
+      if (!target || target.guid === selectedGuid) {
+        applyOrderDetail(order);
+        setDirty(false);
+      }
+      setError(null);
+      return order;
+    } catch (e: any) {
+      setError(userErrorMessage(e, 'Не удалось восстановить заказ клиента.'));
+      return null;
+    } finally {
+      setCancelling(false);
+    }
+  }, [applyOrderDetail, applySavedOrderToList, draft.guid, draft.revision, selectedGuid]);
+
+  const copyOrder = React.useCallback(async (options?: { saveFirst?: boolean }) => {
+    let targetGuid = draft.guid || selectedGuid;
+    let revision = draft.revision;
+    if (!targetGuid) return null;
+    if (options?.saveFirst && dirty) {
+      const saved = await saveDraft({ silent: true, reason: 'manual' });
+      if (!saved || isDeviceDraftGuid(saved.guid)) return null;
+      targetGuid = saved.guid;
+      revision = saved.revision;
+    }
+    try {
+      setCopying(true);
+      const order = await copyClientOrder(targetGuid, revision);
+      applySavedOrderToList(order);
+      applyOrderDetail(order);
+      return order;
+    } catch (e: any) {
+      setError(userErrorMessage(e, 'Не удалось скопировать заказ клиента.'));
+      return null;
+    } finally {
+      setCopying(false);
+    }
+  }, [applyOrderDetail, applySavedOrderToList, dirty, draft.guid, draft.revision, saveDraft, selectedGuid]);
+
   const runCancel = React.useCallback(async (target?: { guid: string; revision: number }) => {
     const targetGuid = target?.guid || draft.guid;
     const targetRevision = target?.revision ?? draft.revision;
@@ -1990,8 +2077,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     try {
       setCancelling(true);
       const order = await cancelClientOrder(targetGuid, targetRevision, 'Отменено менеджером из приложения');
-      notify({ type: 'warning', title: 'Заказ отменен', message: 'Статус заказа обновлен.' });
-      await loadOrders('reset');
+      applySavedOrderToList(order);
       setSelectedGuid(order.guid);
       setSelectedOrder(order);
       setDraft(normalizeDraftOrder(orderToDraft(order)));
@@ -2001,7 +2087,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     } finally {
       setCancelling(false);
     }
-  }, [draft.guid, draft.revision, loadOrders, notify, resetDraftToBase]);
+  }, [applySavedOrderToList, draft.guid, draft.revision, resetDraftToBase]);
 
   const deleteDraft = React.useCallback(async (guid?: string) => {
     const targetGuid = guid || draft.guid || selectedGuid;
@@ -2024,7 +2110,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       setDeletingDraft(true);
       await deleteClientOrder(targetGuid);
       const deletingCurrent = targetGuid === draft.guid || targetGuid === selectedGuid;
-      await loadOrders('reset');
+      setOrders((prev) => prev.filter((item) => item.guid !== targetGuid));
+      setOrdersMeta((prev) => ({ ...prev, total: Math.max(0, prev.total - 1) }));
       if (deletingCurrent) {
         resetDraftToBase();
       }
@@ -2086,6 +2173,9 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     selectedGuid,
     selectedOrder,
     selectedOrderQueued,
+    unqueueOrder,
+    restoreOrder,
+    copyOrder,
     selectOrder,
     createNewOrder,
     draft,
@@ -2129,9 +2219,11 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     savingSettings,
     saving,
     submitting,
+    copying,
     cancelling,
     deletingDraft,
     refreshing,
+    refreshingQueueState,
     refreshAll,
     saveDraft,
     confirmDiscardIfNeeded,

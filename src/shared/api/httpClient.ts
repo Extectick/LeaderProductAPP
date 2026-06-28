@@ -12,6 +12,7 @@ import { addMonitoringBreadcrumb } from '@/src/shared/monitoring';
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
 
 type BodyLike = any; // JSON | FormData | string | Blob | ArrayBuffer
+const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 
 export interface HttpResponse<T> {
   ok: boolean;
@@ -82,6 +83,7 @@ export async function httpRequest<Req = undefined, Res = any>(
   options: HttpRequestOptions<Req> = {}
 ): Promise<HttpResponse<Res>> {
   const { method = 'GET', body, headers = {}, skipAuth = false, timeoutMs } = options;
+  const effectiveTimeoutMs = timeoutMs === undefined ? DEFAULT_REQUEST_TIMEOUT_MS : timeoutMs;
   const url = path.startsWith('http') ? path : `${API_BASE_URL}${path}`;
 
   let token = !skipAuth ? await getAccessToken() : null;
@@ -98,11 +100,11 @@ export async function httpRequest<Req = undefined, Res = any>(
         reqBody = JSON.stringify(body);
       }
     }
-    if (!timeoutMs || timeoutMs <= 0 || typeof AbortController === 'undefined') {
+    if (!effectiveTimeoutMs || effectiveTimeoutMs <= 0 || typeof AbortController === 'undefined') {
       return fetch(url, { method, headers: h, body: reqBody });
     }
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const timer = setTimeout(() => controller.abort(), effectiveTimeoutMs);
     try {
       return await fetch(url, { method, headers: h, body: reqBody, signal: controller.signal });
     } finally {

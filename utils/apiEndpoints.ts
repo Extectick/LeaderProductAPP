@@ -113,6 +113,9 @@ export const API_ENDPOINTS = {
     PRODUCTS_BATCH: '/api/client-orders/products/batch',
     DELETE: (guid: string) => `/api/client-orders/${encodeURIComponent(guid)}`,
     SUBMIT: (guid: string) => `/api/client-orders/${encodeURIComponent(guid)}/submit`,
+    UNQUEUE: (guid: string) => `/api/client-orders/${encodeURIComponent(guid)}/unqueue`,
+    RESTORE: (guid: string) => `/api/client-orders/${encodeURIComponent(guid)}/restore`,
+    COPY: (guid: string) => `/api/client-orders/${encodeURIComponent(guid)}/copy`,
     CANCEL: (guid: string) => `/api/client-orders/${encodeURIComponent(guid)}/cancel`,
   },
   ONEC_LP_APP: {

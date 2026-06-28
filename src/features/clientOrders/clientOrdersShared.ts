@@ -232,6 +232,8 @@ export type DraftValidation = {
   canSubmit: boolean;
   blockingMessage: string | null;
   itemMessages: Record<string, string[]>;
+  itemWarnings: Record<string, string[]>;
+  warningMessage: string | null;
 };
 
 export const STATUS_LABELS: Record<string, string> = {
@@ -514,6 +516,34 @@ export function getDisplayedUnitPriceValue(item?: DraftItem | null) {
   return priceInputString(sourcePrice * getPackageMultiplier(item));
 }
 
+export function getEffectiveBasePrice(item?: DraftItem | null) {
+  if (!item) return null;
+  const manualPrice = manualPriceInput(item);
+  const sourcePrice = manualPrice.trim()
+    ? normalizePriceForPayload(manualPrice)
+    : item.basePrice ?? null;
+  if (sourcePrice === null || sourcePrice === undefined || Number.isNaN(sourcePrice)) return null;
+  return sourcePrice;
+}
+
+export function getDisplayedReceiptPriceValue(item?: DraftItem | null) {
+  if (!item) return '';
+  const receiptPrice = item.receiptPrice;
+  if (receiptPrice === null || receiptPrice === undefined || Number.isNaN(receiptPrice) || receiptPrice <= 0) return '';
+  return priceInputString(receiptPrice * getPackageMultiplier(item));
+}
+
+export function getBelowCostWarning(item: DraftItem) {
+  const price = getEffectiveBasePrice(item);
+  const receiptPrice = item.receiptPrice ?? null;
+  if (price === null || price <= 0 || receiptPrice === null || receiptPrice === undefined || receiptPrice <= 0) return null;
+  if (price >= receiptPrice) return null;
+  const multiplier = getPackageMultiplier(item);
+  const priceLabel = formatMoney(price * multiplier, item.currency);
+  const costLabel = formatMoney(receiptPrice * multiplier, item.currency);
+  return `Цена ниже себестоимости: ${priceLabel} < ${costLabel}.`;
+}
+
 export function displayedUnitPriceToBasePriceInput(value: string, item: DraftItem) {
   if (!value.trim()) return '';
   const displayedPrice = normalizePriceForPayload(value);
@@ -661,6 +691,8 @@ export function computeDraftTotal(draft: DraftOrder) {
 
 export function validateDraft(draft: DraftOrder): DraftValidation {
   const itemMessages: Record<string, string[]> = {};
+  const itemWarnings: Record<string, string[]> = {};
+  let hasSaveBlockingItemErrors = false;
 
   if (!draft.organizationGuid) {
     return {
@@ -669,6 +701,8 @@ export function validateDraft(draft: DraftOrder): DraftValidation {
       canSubmit: false,
       blockingMessage: 'Выберите организацию.',
       itemMessages,
+      itemWarnings,
+      warningMessage: null,
     };
   }
 
@@ -679,6 +713,8 @@ export function validateDraft(draft: DraftOrder): DraftValidation {
       canSubmit: false,
       blockingMessage: 'Выберите контрагента.',
       itemMessages,
+      itemWarnings,
+      warningMessage: null,
     };
   }
 
@@ -689,6 +725,8 @@ export function validateDraft(draft: DraftOrder): DraftValidation {
       canSubmit: false,
       blockingMessage: 'Добавьте хотя бы одну строку заказа.',
       itemMessages,
+      itemWarnings,
+      warningMessage: null,
     };
   }
 
@@ -703,19 +741,31 @@ export function validateDraft(draft: DraftOrder): DraftValidation {
       canSubmit: false,
       blockingMessage: 'Общая скидка должна быть в диапазоне 0-100.',
       itemMessages,
+      itemWarnings,
+      warningMessage: null,
     };
   }
 
   for (const item of draft.items) {
     const messages: string[] = [];
+    const warnings: string[] = [];
     const quantity = isValidQuantityValue(item) ? normalizeQuantityForPayload(item) : Number.NaN;
     const manualPriceInputValue = manualPriceInput(item);
     const manualPrice = manualPriceInputValue.trim() ? normalizePriceForPayload(manualPriceInputValue) : undefined;
     const manualPriceShapeValid = isValidManualPriceValue(manualPriceInputValue);
     const discountPercent = item.discountPercent.trim() ? asNumber(item.discountPercent) : undefined;
+    const selectedPackageMissing = !!item.packageGuid && !getSelectedPackage(item);
+    const effectivePrice = getEffectiveBasePrice(item);
 
     if (Number.isNaN(quantity) || quantity <= 0) {
       messages.push('Количество должно быть больше 0.');
+    }
+    if (selectedPackageMissing) {
+      messages.push('Выбранная упаковка недоступна для товара.');
+      hasSaveBlockingItemErrors = true;
+    }
+    if (manualPrice === undefined && (effectivePrice === null || effectivePrice <= 0)) {
+      messages.push('Цена должна быть больше 0.');
     }
     if (manualPrice !== undefined && (Number.isNaN(manualPrice) || manualPrice <= 0)) {
       messages.push('Ручная цена должна быть больше 0.');
@@ -732,15 +782,27 @@ export function validateDraft(draft: DraftOrder): DraftValidation {
     if (messages.length) {
       itemMessages[item.key] = messages;
     }
+    const belowCostWarning = getBelowCostWarning(item);
+    if (belowCostWarning) warnings.push(belowCostWarning);
+    if (warnings.length) {
+      itemWarnings[item.key] = warnings;
+    }
   }
 
   const hasItemErrors = Object.keys(itemMessages).length > 0;
+  const hasWarnings = Object.keys(itemWarnings).length > 0;
   return {
-    canSave: true,
-    canAutosave: true,
+    canSave: !hasSaveBlockingItemErrors,
+    canAutosave: !hasSaveBlockingItemErrors,
     canSubmit: !hasItemErrors,
-    blockingMessage: hasItemErrors ? 'Исправьте ошибки в строках заказа.' : null,
+    blockingMessage: hasSaveBlockingItemErrors
+      ? 'Исправьте строки с недоступной упаковкой.'
+      : hasItemErrors
+        ? 'Исправьте ошибки в строках заказа.'
+        : null,
     itemMessages,
+    itemWarnings,
+    warningMessage: hasWarnings ? 'Есть товары с ценой ниже себестоимости.' : null,
   };
 }
 

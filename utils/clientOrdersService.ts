@@ -1,6 +1,8 @@
 import { API_ENDPOINTS } from './apiEndpoints';
 import { apiClient } from './apiClient';
 
+const CLIENT_ORDERS_REQUEST_TIMEOUT_MS = 10_000;
+
 export type PaginationMeta = {
   total?: number;
   count?: number;
@@ -601,9 +603,37 @@ export async function submitClientOrder(guid: string, revision: number) {
   const res = await apiClient<{ revision: number }, ClientOrder>(API_ENDPOINTS.CLIENT_ORDERS.SUBMIT(guid), {
     method: 'POST',
     body: { revision },
-    timeoutMs: 30000,
+    timeoutMs: CLIENT_ORDERS_REQUEST_TIMEOUT_MS,
   });
   if (!res.ok || !res.data) throw new Error(getErrorMessage('Не удалось отправить заказ клиента', res.message));
+  return normalizeClientOrder(res.data);
+}
+
+export async function unqueueClientOrder(guid: string, revision: number) {
+  const res = await apiClient<{ revision: number }, ClientOrder>(API_ENDPOINTS.CLIENT_ORDERS.UNQUEUE(guid), {
+    method: 'POST',
+    body: { revision },
+  });
+  if (!res.ok || !res.data) throw new Error(getErrorMessage('Не удалось снять заказ с очереди', res.message));
+  return normalizeClientOrder(res.data);
+}
+
+export async function restoreClientOrder(guid: string, revision: number) {
+  const res = await apiClient<{ revision: number }, ClientOrder>(API_ENDPOINTS.CLIENT_ORDERS.RESTORE(guid), {
+    method: 'POST',
+    body: { revision },
+  });
+  if (!res.ok || !res.data) throw new Error(getErrorMessage('Не удалось восстановить заказ клиента', res.message));
+  return normalizeClientOrder(res.data);
+}
+
+export async function copyClientOrder(guid: string, revision?: number) {
+  const res = await apiClient<{ revision?: number }, ClientOrder>(API_ENDPOINTS.CLIENT_ORDERS.COPY(guid), {
+    method: 'POST',
+    body: revision ? { revision } : {},
+    timeoutMs: CLIENT_ORDERS_REQUEST_TIMEOUT_MS,
+  });
+  if (!res.ok || !res.data) throw new Error(getErrorMessage('Не удалось скопировать заказ клиента', res.message));
   return normalizeClientOrder(res.data);
 }
 

@@ -19,6 +19,7 @@ import {
   getClientOrdersResponsiveMetrics,
   getOrderDisplayStatus,
   getOrderDisplayStatusLabelWithQueue,
+  hasManualPrice,
   buildNewItem,
   isValidManualPriceValue,
   isValidQuantityValue,
@@ -957,6 +958,49 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   }, [openingOrderGuid, workspace]);
 
   const removeOrCancel = React.useCallback(() => {
+    if (workspace.selectedOrderQueued) {
+      setConfirmDialog({
+        title: 'Документ в очереди',
+        message: '',
+        confirmLabel: 'Снять с очереди',
+        alternateLabel: 'Удалить',
+        destructive: true,
+        onConfirm: async () => { await workspace.unqueueOrder(); },
+        onAlternate: async () => {
+          setDeleteDocumentOverlayVisible(true);
+          try {
+            await workspace.deleteDraft();
+            setOpeningDocument(null);
+            runDocumentHeaderTransition();
+            setMode('orders');
+          } finally {
+            setDeleteDocumentOverlayVisible(false);
+          }
+        },
+      });
+      return;
+    }
+    if (workspace.selectedOrder?.status === 'CANCELLED') {
+      setConfirmDialog({
+        title: 'Отмененный заказ',
+        message: '',
+        confirmLabel: 'Восстановить',
+        alternateLabel: 'Удалить',
+        onConfirm: async () => { await workspace.restoreOrder(); },
+        onAlternate: async () => {
+          setDeleteDocumentOverlayVisible(true);
+          try {
+            await workspace.deleteDraft();
+            setOpeningDocument(null);
+            runDocumentHeaderTransition();
+            setMode('orders');
+          } finally {
+            setDeleteDocumentOverlayVisible(false);
+          }
+        },
+      });
+      return;
+    }
     if (workspace.draftMode || workspace.selectedOrder?.status === 'DRAFT') {
       setConfirmDialog({
         title: 'Удалить черновик?',
@@ -990,20 +1034,71 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     if (!workspace.canSubmitOrder) return;
     setActionsMenuOpen(false);
     const isQueuedResubmit = workspace.selectedOrderQueued && workspace.dirty;
+    const warningMessage = workspace.validation.warningMessage
+      ? `\n${workspace.validation.warningMessage}`
+      : '';
     setConfirmDialog({
       title: isQueuedResubmit ? 'Переотправить в 1С?' : 'Отправить в 1С?',
-      message: isQueuedResubmit ? 'Документ будет сохранен и поставлен в конец очереди.' : '',
+      message: `${isQueuedResubmit ? 'Документ будет сохранен и поставлен в конец очереди.' : ''}${warningMessage}`.trim(),
       confirmLabel: isQueuedResubmit ? 'В конец очереди' : 'Отправить',
       onConfirm: () => workspace.submitOrder(),
     });
   }, [workspace]);
-  const handleDocumentPrimaryAction = React.useCallback(() => {
+  const saveDraftFromMenu = React.useCallback(() => {
+    setActionsMenuOpen(false);
+    if (workspace.validation.warningMessage) {
+      setConfirmDialog({
+        title: 'Сохранить документ?',
+        message: workspace.validation.warningMessage,
+        confirmLabel: 'Сохранить',
+        onConfirm: async () => { await workspace.saveDraft({ reason: 'manual' }); },
+      });
+      return;
+    }
+    void workspace.saveDraft({ reason: 'manual' });
+  }, [workspace]);
+  const copyFromMenu = React.useCallback(() => {
+    if (!workspace.draft.guid && !workspace.selectedGuid) return;
+    setActionsMenuOpen(false);
     if (workspace.dirty) {
-      void workspace.saveDraft({ reason: 'manual' });
+      setConfirmDialog({
+        title: 'Сохранить и скопировать?',
+        message: '',
+        confirmLabel: 'Сохранить и скопировать',
+        onConfirm: async () => {
+          const copied = await workspace.copyOrder({ saveFirst: true });
+          if (copied) {
+            runDocumentHeaderTransition();
+            setMode('editor');
+          }
+        },
+      });
+      return;
+    }
+    setConfirmDialog({
+      title: 'Скопировать документ?',
+      message: '',
+      confirmLabel: 'Скопировать',
+      onConfirm: async () => {
+        const copied = await workspace.copyOrder();
+        if (copied) {
+          runDocumentHeaderTransition();
+          setMode('editor');
+        }
+      },
+    });
+  }, [workspace]);
+  const handleDocumentPrimaryAction = React.useCallback(() => {
+    if (workspace.selectedOrderQueued && workspace.dirty) {
+      submitFromMenu();
+      return;
+    }
+    if (workspace.dirty) {
+      saveDraftFromMenu();
       return;
     }
     submitFromMenu();
-  }, [submitFromMenu, workspace]);
+  }, [saveDraftFromMenu, submitFromMenu, workspace]);
 
   const confirmClearItems = React.useCallback(() => {
     if (workspace.readOnly) return;
@@ -1195,13 +1290,15 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
           actionsMenuOpen={actionsMenuOpen}
           setActionsMenuOpen={setActionsMenuOpen}
           setInspectorOpen={setInspectorOpen}
+          saveDraftFromMenu={saveDraftFromMenu}
           submitFromMenu={submitFromMenu}
+          copyFromMenu={copyFromMenu}
           removeOrCancel={removeOrCancel}
           compact
         />
       </View>
     );
-  }, [actionsMenuOpen, isReachable, mode, removeOrCancel, submitFromMenu, workspace]);
+  }, [actionsMenuOpen, copyFromMenu, isReachable, mode, removeOrCancel, saveDraftFromMenu, submitFromMenu, workspace]);
   const handleEditorSectionChange = React.useCallback((nextSection: EditorSection) => {
     if (nextSection === section) return;
     runDocumentHeaderTransition();
@@ -1871,7 +1968,9 @@ function DocumentActionsMenu({
   actionsMenuOpen,
   setActionsMenuOpen,
   setInspectorOpen,
+  saveDraftFromMenu,
   submitFromMenu,
+  copyFromMenu,
   removeOrCancel,
   compact = false,
 }: {
@@ -1880,10 +1979,27 @@ function DocumentActionsMenu({
   actionsMenuOpen: boolean;
   setActionsMenuOpen: (open: boolean) => void;
   setInspectorOpen: (open: boolean) => void;
+  saveDraftFromMenu: () => void;
   submitFromMenu: () => void;
+  copyFromMenu: () => void;
   removeOrCancel: () => void;
   compact?: boolean;
 }) {
+  const hideSave = workspace.selectedOrderQueued && workspace.dirty;
+  const dangerIcon = workspace.selectedOrderQueued
+    ? 'playlist-remove'
+    : workspace.selectedOrder?.status === 'CANCELLED'
+      ? 'backup-restore'
+    : workspace.draftMode || workspace.selectedOrder?.status === 'DRAFT'
+      ? 'trash-can-outline'
+      : 'close-circle-outline';
+  const dangerTitle = workspace.selectedOrderQueued
+    ? 'Очередь'
+    : workspace.selectedOrder?.status === 'CANCELLED'
+      ? 'Восстановить'
+    : workspace.draftMode || workspace.selectedOrder?.status === 'DRAFT'
+      ? 'Удалить черновик'
+      : 'Отменить заказ';
   return (
     <Menu
       visible={actionsMenuOpen}
@@ -1903,10 +2019,13 @@ function DocumentActionsMenu({
       )}
       contentStyle={styles.mobileMenuPaper}
     >
-      <Menu.Item leadingIcon="content-save-outline" title={workspace.saving ? 'Сохраняю...' : 'Сохранить'} onPress={() => { setActionsMenuOpen(false); void workspace.saveDraft({ reason: 'manual' }); }} disabled={workspace.readOnly || workspace.saving || !workspace.validation.canSave} />
+      {!hideSave ? (
+        <Menu.Item leadingIcon="content-save-outline" title={workspace.saving ? 'Сохраняю...' : 'Сохранить'} onPress={saveDraftFromMenu} disabled={workspace.readOnly || workspace.saving || !workspace.validation.canSave} />
+      ) : null}
       <Menu.Item leadingIcon="cloud-upload-outline" title={workspace.submitting ? 'Отправляю...' : 'Отправить в 1С'} onPress={submitFromMenu} disabled={workspace.readOnly || workspace.submitting || !workspace.canSubmitOrder} />
+      <Menu.Item leadingIcon="content-copy" title={workspace.copying ? 'Копирую...' : 'Копировать'} onPress={copyFromMenu} disabled={workspace.copying || workspace.saving || workspace.submitting || (!workspace.draft.guid && !workspace.selectedGuid)} />
       <Menu.Item leadingIcon="information-outline" title="Инспектор" onPress={() => { setActionsMenuOpen(false); setInspectorOpen(true); }} />
-      <Menu.Item leadingIcon={workspace.draftMode || workspace.selectedOrder?.status === 'DRAFT' ? 'trash-can-outline' : 'close-circle-outline'} title={workspace.draftMode || workspace.selectedOrder?.status === 'DRAFT' ? 'Удалить черновик' : 'Отменить заказ'} onPress={() => { setActionsMenuOpen(false); removeOrCancel(); }} />
+      <Menu.Item leadingIcon={dangerIcon} title={dangerTitle} onPress={() => { setActionsMenuOpen(false); removeOrCancel(); }} />
     </Menu>
   );
 }
@@ -1954,12 +2073,19 @@ function DocumentHeaderSlot({
   openPicker: (kind: PickerKind, lineKey?: string) => void;
   onClearItems: () => void;
 }) {
+  const showQueueStateSkeleton = !!workspace.selectedOrderQueued && !!workspace.refreshingQueueState;
   return (
     <View style={styles.documentHeaderSlot}>
       <View style={styles.documentHeaderDocumentRow}>
-        <View style={styles.documentStatusPill}>
-          <MaterialCommunityIcons name="file-document-edit-outline" size={13} color="#2563EB" />
-          <Text style={styles.documentStatusText} numberOfLines={1}>{documentStatusText}</Text>
+        <View style={[styles.documentStatusPill, showQueueStateSkeleton && styles.documentStatusPillSkeleton]}>
+          {showQueueStateSkeleton ? (
+            <View style={styles.documentStatusSkeletonBar} />
+          ) : (
+            <>
+              <MaterialCommunityIcons name="file-document-edit-outline" size={13} color="#2563EB" />
+              <Text style={styles.documentStatusText} numberOfLines={1}>{documentStatusText}</Text>
+            </>
+          )}
         </View>
         <Text style={styles.documentTitle} numberOfLines={1}>{documentNumber}</Text>
         <View style={styles.documentSavePill}>
@@ -2292,7 +2418,8 @@ function DocumentBottomBar({
   const textColor = useThemeColor({}, 'text');
   const surfaceColor = withColorOpacity(backgroundColor, 0.9);
   const borderColor = withColorOpacity(textColor, 0.18);
-  const shouldSave = !!workspace.dirty;
+  const shouldSubmitQueuedChanges = !!workspace.selectedOrderQueued && !!workspace.dirty;
+  const shouldSave = !!workspace.dirty && !shouldSubmitQueuedChanges;
   const busy = !!workspace.saving || !!workspace.submitting;
   const disabled = workspace.readOnly || busy || (shouldSave ? !workspace.validation.canSave : !workspace.canSubmitOrder);
   const label = workspace.saving
@@ -2402,10 +2529,15 @@ function LineItemCard({ item, index, workspace, onPress, onRemove }: { item: any
   const displayedPrice = getDisplayedUnitPriceValue(item);
   const lineTotal = formatMoney(computeLineTotal(item, workspace.draft.generalDiscountPercent), workspace.draft.currency);
   const packageLabelText = linePackageShortLabel(item);
-  const hasErrors = (workspace.validation.itemMessages[item.key] || []).length > 0;
+  const lineMessages = workspace.validation.itemMessages[item.key] || [];
+  const lineWarnings = workspace.validation.itemWarnings?.[item.key] || [];
+  const hasErrors = lineMessages.length > 0;
+  const hasWarnings = lineWarnings.length > 0;
+  const issueText = [...lineMessages, ...lineWarnings][0] || '';
+  const manualPrice = hasManualPrice(item);
   const readOnly = !!workspace.readOnly;
   return (
-    <Pressable accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.productPreviewCard, hasErrors && styles.productPreviewCardInvalid, readOnly && styles.productPreviewCardReadOnly, pressed && styles.flatPressed]}>
+    <Pressable accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.productPreviewCard, (hasErrors || hasWarnings) && styles.productPreviewCardInvalid, issueText && styles.productPreviewCardWithIssue, readOnly && styles.productPreviewCardReadOnly, pressed && styles.flatPressed]}>
       <View style={[styles.productPreviewMedia, readOnly && styles.productPreviewMediaReadOnly]}>
         <ProductThumb
           item={item}
@@ -2439,10 +2571,14 @@ function LineItemCard({ item, index, workspace, onPress, onRemove }: { item: any
             <Text style={[styles.productPreviewQuantity, readOnly && styles.productPreviewQuantityReadOnly]} numberOfLines={1}>{item.quantity}</Text>
             <Text style={[styles.productPreviewPackage, readOnly && styles.productPreviewMetaReadOnly]} numberOfLines={1}>{packageLabelText}</Text>
             <Text style={[styles.productPreviewFormulaSeparator, readOnly && styles.productPreviewFormulaSeparatorReadOnly]}>×</Text>
+            {manualPrice ? <MaterialCommunityIcons name="pencil-outline" size={12} color={hasErrors || hasWarnings ? '#DC2626' : '#64748B'} /> : null}
             <Text style={[styles.productPreviewPrice, readOnly && styles.productPreviewPriceReadOnly]} numberOfLines={1}>{displayedPrice || '0'} ₽</Text>
           </View>
           <Text style={[styles.productPreviewTotal, readOnly && styles.productPreviewTotalReadOnly]} numberOfLines={1}>{lineTotal}</Text>
         </View>
+        {issueText ? (
+          <Text style={styles.productPreviewIssueText} numberOfLines={1}>{issueText}</Text>
+        ) : null}
       </View>
     </Pressable>
   );
@@ -2843,7 +2979,6 @@ function orderHasVisibleProblem(order: ClientOrder) {
       order.last1cError ||
       order.syncState === 'ERROR' ||
       order.syncState === 'CONFLICT' ||
-      order.status === 'CANCELLED' ||
       order.status === 'REJECTED'
   );
 }
@@ -3730,6 +3865,8 @@ const styles = StyleSheet.create({
   documentHeaderMoreButton: { width: 40, height: 40, borderRadius: 12, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#F8FAFC', alignItems: 'center', justifyContent: 'center' },
   documentHeaderTopMoreButton: { width: 32, height: 32, borderRadius: 10, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#F8FAFC', alignItems: 'center', justifyContent: 'center' },
   documentStatusPill: { flexShrink: 0, maxWidth: 112, minHeight: 24, borderRadius: 999, borderWidth: 1, borderColor: '#BFDBFE', backgroundColor: '#EFF6FF', paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 4 },
+  documentStatusPillSkeleton: { width: 92, borderColor: '#E2E8F0', backgroundColor: '#F8FAFC', justifyContent: 'center' },
+  documentStatusSkeletonBar: { width: '100%', height: 10, borderRadius: 999, backgroundColor: '#E2E8F0' },
   documentStatusText: { color: '#1D4ED8', fontSize: 12, lineHeight: 15, fontWeight: '900', includeFontPadding: false },
   documentTitle: { flex: 1, minWidth: 58, fontSize: 18, fontWeight: '900', color: '#0F172A', lineHeight: 22, includeFontPadding: false },
   documentSavePill: { flexShrink: 1, maxWidth: 116, minHeight: 24, borderRadius: 999, backgroundColor: '#F8FAFC', paddingHorizontal: 7, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 },
@@ -3980,13 +4117,14 @@ const styles = StyleSheet.create({
   productPreviewCard: { height: 96, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#FFFFFF', overflow: 'hidden', flexDirection: 'row', alignItems: 'stretch' },
   productPreviewCardReadOnly: { borderColor: 'rgba(216, 226, 240, 0.7)', backgroundColor: 'rgba(255, 255, 255, 0.64)' },
   productPreviewCardInvalid: { borderColor: '#EF4444', backgroundColor: '#FFF7F7' },
+  productPreviewCardWithIssue: { height: 114 },
   productPreviewMedia: { width: 78, height: '100%', backgroundColor: '#F1F5F9', overflow: 'hidden', borderRightWidth: 1, borderRightColor: '#E2E8F0' },
   productPreviewMediaReadOnly: { backgroundColor: 'rgba(241, 245, 249, 0.56)', borderRightColor: 'rgba(226, 232, 240, 0.66)' },
   productPreviewIndexBadge: { position: 'absolute', top: 5, left: 5, minWidth: 24, height: 22, borderRadius: 7, backgroundColor: 'rgba(255,255,255,0.9)', borderWidth: 1, borderColor: '#DBEAFE', alignItems: 'center', justifyContent: 'center' },
   productPreviewIndexBadgeReadOnly: { backgroundColor: 'rgba(255, 255, 255, 0.62)', borderColor: 'rgba(191, 219, 254, 0.62)' },
   productPreviewIndex: { color: '#2563EB', fontSize: 11, fontWeight: '900', textAlign: 'center', lineHeight: 14 },
   productPreviewIndexReadOnly: { color: 'rgba(37, 99, 235, 0.58)' },
-  productPreviewImage: { width: 78, height: 96, backgroundColor: '#F1F5F9' },
+  productPreviewImage: { width: 78, height: '100%', backgroundColor: '#F1F5F9' },
   productPreviewImageReadOnly: { backgroundColor: 'rgba(241, 245, 249, 0.5)', opacity: 0.72 },
   productImagePlaceholder: { alignItems: 'center', justifyContent: 'center' },
   productPreviewBody: { flex: 1, minWidth: 0, justifyContent: 'center', paddingLeft: 10, paddingRight: 10, paddingVertical: 8, gap: 4 },
@@ -4007,6 +4145,7 @@ const styles = StyleSheet.create({
   productPreviewPriceReadOnly: { color: 'rgba(15, 23, 42, 0.62)' },
   productPreviewTotal: { maxWidth: 112, color: '#2563EB', fontSize: 14, fontWeight: '900', lineHeight: 17, textAlign: 'right', includeFontPadding: false },
   productPreviewTotalReadOnly: { color: 'rgba(37, 99, 235, 0.58)' },
+  productPreviewIssueText: { color: '#DC2626', fontSize: 10.5, fontWeight: '800', lineHeight: 13, marginTop: 2 },
   addProductListCard: { minHeight: 60, borderRadius: 12, borderWidth: 1, borderStyle: 'dashed', borderColor: '#93C5FD', backgroundColor: '#F8FBFF', alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8 },
   addProductListText: { color: '#2563EB', fontSize: 13, fontWeight: '800' },
   productEditorSheet: { borderTopLeftRadius: 18, borderTopRightRadius: 18, borderWidth: 0, paddingTop: 0, overflow: 'hidden', shadowOpacity: 0.08, shadowRadius: 20, shadowOffset: { width: 0, height: -4 } },

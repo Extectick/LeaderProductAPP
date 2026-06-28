@@ -10,6 +10,7 @@ import {
   getClientOrdersResponsiveMetrics,
   getOrderDisplayStatus,
   getOrderDisplayStatusLabelWithQueue,
+  hasManualPrice,
   isValidManualPriceValue,
   isValidQuantityValue,
   isWeightDraftItem,
@@ -783,6 +784,8 @@ export default function ClientOrdersWebScreen() {
     fixedDeliveryDate: '',
   });
   const [confirmSubmitOpen, setConfirmSubmitOpen] = React.useState(false);
+  const [confirmSaveOpen, setConfirmSaveOpen] = React.useState(false);
+  const [confirmCopyOpen, setConfirmCopyOpen] = React.useState<'copy' | 'save-copy' | null>(null);
   const [confirmCancelOpen, setConfirmCancelOpen] = React.useState(false);
   const [confirmClearItemsOpen, setConfirmClearItemsOpen] = React.useState(false);
   const [pendingPriceTypeAction, setPendingPriceTypeAction] = React.useState<PendingPriceTypeAction | null>(null);
@@ -1215,6 +1218,32 @@ export default function ClientOrdersWebScreen() {
     await workspace.submitOrder();
   }, [workspace]);
   const isQueuedResubmit = workspace.selectedOrderQueued && workspace.dirty;
+  const currentCancelTarget = pendingCancelOrder || workspace.selectedOrder;
+  const currentCancelTargetQueued = !!currentCancelTarget && (currentCancelTarget.status === 'QUEUED' || currentCancelTarget.syncState === 'QUEUED');
+  const currentCancelTargetCancelled = currentCancelTarget?.status === 'CANCELLED';
+
+  const saveWithConfirm = React.useCallback(() => {
+    if (workspace.validation.warningMessage) {
+      setConfirmSaveOpen(true);
+      return;
+    }
+    void workspace.saveDraft({ reason: 'manual' });
+  }, [workspace]);
+
+  const copyWithConfirm = React.useCallback(() => {
+    setConfirmCopyOpen(workspace.dirty ? 'save-copy' : 'copy');
+  }, [workspace.dirty]);
+
+  const runCopyConfirm = React.useCallback(async () => {
+    const mode = confirmCopyOpen;
+    setConfirmCopyOpen(null);
+    if (!mode) return;
+    const copied = await workspace.copyOrder({ saveFirst: mode === 'save-copy' });
+    if (copied) {
+      setWebEditorSection('header');
+      if (isSinglePane) setResponsivePane('editor');
+    }
+  }, [confirmCopyOpen, isSinglePane, workspace]);
 
   const closeOrderContextMenu = React.useCallback(() => {
     setOrderContextMenu(null);
@@ -1237,8 +1266,20 @@ export default function ClientOrdersWebScreen() {
       await workspace.deleteDraft(order.guid);
       return;
     }
+    if (order.status === 'CANCELLED') {
+      await workspace.restoreOrder({ guid: order.guid, revision: order.revision });
+      return;
+    }
     setPendingCancelOrder(order);
     setConfirmCancelOpen(true);
+  }, [closeOrderContextMenu, orderContextMenu?.order, workspace]);
+
+  const runContextOrderDeleteAction = React.useCallback(async () => {
+    const order = orderContextMenu?.order;
+    closeOrderContextMenu();
+    if (!order) return;
+    if (typeof window !== 'undefined' && !window.confirm('Удалить отмененный заказ из списка?')) return;
+    await workspace.deleteDraft(order.guid);
   }, [closeOrderContextMenu, orderContextMenu?.order, workspace]);
 
   const saveDeliverySettings = React.useCallback(async () => {
@@ -1254,6 +1295,7 @@ export default function ClientOrdersWebScreen() {
   }, [settingsDraft, workspace]);
 
   const toolbarUsesDeleteDraft = workspace.draftMode || workspace.selectedOrder?.status === 'DRAFT';
+  const toolbarUsesRestore = workspace.selectedOrder?.status === 'CANCELLED';
 
   const title = workspace.draftMode
     ? 'Новый заказ клиента'
@@ -1284,6 +1326,7 @@ export default function ClientOrdersWebScreen() {
   const renderDraftItemCard = React.useCallback((item: any, rowNumber: number) => {
     const packageValue = packageSelectValue(item);
     const lineErrors = workspace.validation.itemMessages[item.key] || [];
+    const lineWarnings = workspace.validation.itemWarnings?.[item.key] || [];
     const quantityError = !isValidQuantityValue(item);
     const priceError = !isValidManualPriceValue(item.manualPrice);
     const quantityInputWidth = getQuantityInputWidthPx(item.quantity, ui.narrowPriceWidth <= 66 ? 34 : 40, 88);
@@ -1296,6 +1339,7 @@ export default function ClientOrdersWebScreen() {
         sx={{
           py: 0.7,
           borderBottom: '1px solid #E2E8F0',
+          bgcolor: lineErrors.length || lineWarnings.length ? '#FFF7F7' : 'transparent',
           '&:last-of-type': { borderBottom: 'none', pb: 0 },
         }}
       >
@@ -1329,6 +1373,9 @@ export default function ClientOrdersWebScreen() {
               </Typography>
               <Typography sx={{ mt: 0.1, fontSize: ui.narrowPriceWidth <= 66 ? 9 : 9.5, lineHeight: 1.1, color: '#64748B' }}>
                 <DraftItemMeta item={item} />
+                {hasManualPrice(item) ? (
+                  <Box component="span" sx={{ ml: 0.5, color: '#2563EB', fontWeight: 900 }}>руч.</Box>
+                ) : null}
               </Typography>
             </Box>
             <Typography sx={{ fontSize: ui.narrowPriceWidth <= 66 ? 10.8 : 11.5, fontWeight: 900, color: '#0F172A', whiteSpace: 'nowrap', flexShrink: 0, pl: 0.3 }}>
@@ -1445,9 +1492,9 @@ export default function ClientOrdersWebScreen() {
             />
           </Box>
 
-          {lineErrors.length ? (
+          {lineErrors.length || lineWarnings.length ? (
             <Typography sx={{ pl: 4.1, fontSize: 9.5, color: '#DC2626', lineHeight: 1.2 }}>
-              {lineErrors.join(' ')}
+              {[...lineErrors, ...lineWarnings].join(' ')}
             </Typography>
           ) : null}
         </Stack>
@@ -1560,6 +1607,7 @@ export default function ClientOrdersWebScreen() {
           const currentWorkspace = workspaceRef.current;
           const item = row.original;
           const lineErrors = currentWorkspace.validation.itemMessages[item.key] || [];
+          const lineWarnings = currentWorkspace.validation.itemWarnings?.[item.key] || [];
           const imageUri = getDraftItemImageUri(item);
           return (
             <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0, py: 0.1 }}>
@@ -1616,11 +1664,14 @@ export default function ClientOrdersWebScreen() {
                 </Typography>
                 <Typography component="div" sx={{ mt: 0.25, fontSize: 10.5, color: '#64748B', lineHeight: 1.18 }}>
                   <DraftItemMeta item={item} />
+                  {hasManualPrice(item) ? (
+                    <Box component="span" sx={{ ml: 0.6, color: '#2563EB', fontWeight: 900 }}>ручная цена</Box>
+                  ) : null}
                 </Typography>
-                {lineErrors.length ? (
+                {lineErrors.length || lineWarnings.length ? (
                   <Box sx={{ mt: 0.45, px: 0.75, py: 0.35, borderRadius: '9px', bgcolor: '#FEF2F2', border: '1px solid #FECACA' }}>
                     <Typography sx={{ fontSize: 10, color: '#B91C1C', lineHeight: 1.2, fontWeight: 700 }}>
-                      {lineErrors.join(' ')}
+                      {[...lineErrors, ...lineWarnings].join(' ')}
                     </Typography>
                   </Box>
                 ) : null}
@@ -2034,9 +2085,9 @@ export default function ClientOrdersWebScreen() {
                     ) : null}
                     <Stack direction="row" spacing={0.45} justifyContent="flex-end" useFlexGap flexWrap={isSinglePane || effectiveEditorPaneWidth < 1160 ? 'wrap' : 'nowrap'}>
                       <ToolbarIconButton
-                        title={toolbarUsesDeleteDraft ? 'Удалить черновик' : 'Отменить заказ'}
-                        icon={toolbarUsesDeleteDraft ? 'trash-outline' : 'close-circle-outline'}
-                        color="#DC2626"
+                        title={toolbarUsesDeleteDraft ? 'Удалить черновик' : toolbarUsesRestore ? 'Восстановить заказ' : 'Отменить заказ'}
+                        icon={toolbarUsesDeleteDraft ? 'trash-outline' : toolbarUsesRestore ? 'refresh-outline' : 'close-circle-outline'}
+                        color={toolbarUsesRestore ? '#2563EB' : '#DC2626'}
                         buttonSize={ui.actionButtonSize}
                         iconSize={ui.actionIconSize}
                         onClick={() => {
@@ -2044,14 +2095,21 @@ export default function ClientOrdersWebScreen() {
                             void workspace.deleteDraft();
                             return;
                           }
+                          if (toolbarUsesRestore) {
+                            void workspace.restoreOrder();
+                            return;
+                          }
                           setPendingCancelOrder(null);
                           setConfirmCancelOpen(true);
                         }}
-                        disabled={toolbarUsesDeleteDraft ? workspace.deletingDraft : (workspace.readOnly || workspace.cancelling)}
+                        disabled={toolbarUsesDeleteDraft ? workspace.deletingDraft : (toolbarUsesRestore ? workspace.cancelling : (workspace.readOnly || workspace.cancelling))}
                         loading={toolbarUsesDeleteDraft ? workspace.deletingDraft : workspace.cancelling}
                       />
-                      <ToolbarIconButton title="Сохранить" icon="save-outline" color="#2563EB" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => void workspace.saveDraft({ reason: 'manual' })} disabled={workspace.readOnly || workspace.saving || !workspace.validation.canSave} loading={workspace.saving} />
+                      {!(workspace.selectedOrderQueued && workspace.dirty) ? (
+                        <ToolbarIconButton title="Сохранить" icon="save-outline" color="#2563EB" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={saveWithConfirm} disabled={workspace.readOnly || workspace.saving || !workspace.validation.canSave} loading={workspace.saving} />
+                      ) : null}
                       <ToolbarIconButton title="Отправить в 1С" icon="cloud-upload-outline" label={effectiveEditorPaneWidth >= 1180 ? 'В 1С' : undefined} color="#16A34A" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => setConfirmSubmitOpen(true)} disabled={workspace.readOnly || workspace.submitting || !workspace.canSubmitOrder} loading={workspace.submitting} />
+                      <ToolbarIconButton title="Копировать" icon="copy-outline" color="#475569" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={copyWithConfirm} disabled={workspace.copying || workspace.saving || workspace.submitting || (!workspace.draft.guid && !workspace.selectedGuid)} loading={workspace.copying} />
                     </Stack>
                   </Stack>
                   {showSectionSwitcher ? (
@@ -2404,14 +2462,15 @@ export default function ClientOrdersWebScreen() {
                                 <Box component="tbody">
                                   {draftItemsTable.getRowModel().rows.map((row) => {
                                     const hasRowErrors = (workspace.validation.itemMessages[row.original.key] || []).length > 0;
+                                    const hasRowWarnings = (workspace.validation.itemWarnings?.[row.original.key] || []).length > 0;
                                     return (
                                       <Box
                                         component="tr"
                                         key={row.id}
                                         sx={{
-                                          bgcolor: hasRowErrors ? '#FFF7F7' : '#FFFFFF',
+                                          bgcolor: hasRowErrors || hasRowWarnings ? '#FFF7F7' : '#FFFFFF',
                                           transition: 'background-color 140ms ease',
-                                          '&:hover td': { bgcolor: hasRowErrors ? '#FFF7F7' : '#FFFFFF' },
+                                          '&:hover td': { bgcolor: hasRowErrors || hasRowWarnings ? '#FFF7F7' : '#FFFFFF' },
                                         }}
                                       >
                                         {row.getVisibleCells().map((cell) => (
@@ -2650,14 +2709,26 @@ export default function ClientOrdersWebScreen() {
             <Typography sx={{ fontSize: 13, fontWeight: 800 }}>Открыть</Typography>
           </Stack>
         </MenuItem>
-        <MenuItem onClick={() => void runContextOrderDangerAction()} sx={{ color: '#DC2626' }}>
+        <MenuItem onClick={() => void runContextOrderDangerAction()} sx={{ color: orderContextMenu?.order.status === 'CANCELLED' ? '#2563EB' : '#DC2626' }}>
           <Stack direction="row" spacing={1} alignItems="center">
-            <Ionicons name={orderContextMenu?.order.status === 'DRAFT' ? 'trash-outline' : 'close-circle-outline'} size={16} color="#DC2626" />
+            <Ionicons
+              name={orderContextMenu?.order.status === 'DRAFT' ? 'trash-outline' : orderContextMenu?.order.status === 'CANCELLED' ? 'refresh-outline' : 'close-circle-outline'}
+              size={16}
+              color={orderContextMenu?.order.status === 'CANCELLED' ? '#2563EB' : '#DC2626'}
+            />
             <Typography sx={{ fontSize: 13, fontWeight: 800 }}>
-              {orderContextMenu?.order.status === 'DRAFT' ? 'Удалить черновик' : 'Отменить заказ'}
+              {orderContextMenu?.order.status === 'DRAFT' ? 'Удалить черновик' : orderContextMenu?.order.status === 'CANCELLED' ? 'Восстановить' : 'Отменить заказ'}
             </Typography>
           </Stack>
         </MenuItem>
+        {orderContextMenu?.order.status === 'CANCELLED' ? (
+          <MenuItem onClick={() => void runContextOrderDeleteAction()} sx={{ color: '#DC2626' }}>
+            <Stack direction="row" spacing={1} alignItems="center">
+              <Ionicons name="trash-outline" size={16} color="#DC2626" />
+              <Typography sx={{ fontSize: 13, fontWeight: 800 }}>Удалить из списка</Typography>
+            </Stack>
+          </MenuItem>
+        ) : null}
       </Menu>
 
       <Dialog open={discardConfirm.open} onClose={() => closeDiscardConfirm('cancel')} maxWidth="xs" fullWidth fullScreen={isPhoneDialog}>
@@ -2682,6 +2753,11 @@ export default function ClientOrdersWebScreen() {
               ? 'Документ будет сохранен и поставлен в конец очереди.'
               : 'Документ будет поставлен в очередь обмена. После отправки часть полей станет недоступна для редактирования.'}
           </Typography>
+          {workspace.validation.warningMessage ? (
+            <Alert severity="warning" sx={{ mt: 1.5 }}>
+              {workspace.validation.warningMessage}
+            </Alert>
+          ) : null}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setConfirmSubmitOpen(false)} sx={{ textTransform: 'none', fontWeight: 800 }}>Остаться</Button>
@@ -2691,28 +2767,91 @@ export default function ClientOrdersWebScreen() {
         </DialogActions>
       </Dialog>
 
-      <Dialog open={confirmCancelOpen} onClose={() => { setConfirmCancelOpen(false); setPendingCancelOrder(null); }} maxWidth="xs" fullWidth fullScreen={isPhoneDialog}>
-        <DialogTitle>Отменить заказ?</DialogTitle>
+      <Dialog open={confirmSaveOpen} onClose={() => setConfirmSaveOpen(false)} maxWidth="xs" fullWidth fullScreen={isPhoneDialog}>
+        <DialogTitle>Сохранить документ?</DialogTitle>
+        <DialogContent>
+          <Alert severity="warning">{workspace.validation.warningMessage}</Alert>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmSaveOpen(false)} sx={{ textTransform: 'none', fontWeight: 800 }}>Остаться</Button>
+          <Button
+            variant="contained"
+            onClick={() => {
+              setConfirmSaveOpen(false);
+              void workspace.saveDraft({ reason: 'manual' });
+            }}
+            disabled={workspace.saving || !workspace.validation.canSave}
+            sx={{ textTransform: 'none', fontWeight: 800 }}
+          >
+            {workspace.saving ? 'Сохраняю...' : 'Сохранить'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={!!confirmCopyOpen} onClose={() => setConfirmCopyOpen(null)} maxWidth="xs" fullWidth fullScreen={isPhoneDialog}>
+        <DialogTitle>{confirmCopyOpen === 'save-copy' ? 'Сохранить и скопировать?' : 'Скопировать документ?'}</DialogTitle>
         <DialogContent>
           <Typography sx={{ color: '#475569', fontSize: 13 }}>
-            Заказ будет переведен в статус отмененного. Действие нельзя будет продолжить как обычное редактирование черновика.
+            {confirmCopyOpen === 'save-copy'
+              ? 'Сначала сохраним текущие изменения, затем откроем новый черновик-копию.'
+              : 'Будет создан новый черновик-копия, и он сразу откроется.'}
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmCopyOpen(null)} sx={{ textTransform: 'none', fontWeight: 800 }}>Отмена</Button>
+          <Button variant="contained" onClick={() => void runCopyConfirm()} disabled={workspace.copying || workspace.saving} sx={{ textTransform: 'none', fontWeight: 800 }}>
+            {workspace.copying ? 'Копирую...' : confirmCopyOpen === 'save-copy' ? 'Сохранить и скопировать' : 'Скопировать'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={confirmCancelOpen} onClose={() => { setConfirmCancelOpen(false); setPendingCancelOrder(null); }} maxWidth="xs" fullWidth fullScreen={isPhoneDialog}>
+        <DialogTitle>{currentCancelTargetQueued ? 'Документ в очереди' : currentCancelTargetCancelled ? 'Восстановить заказ?' : 'Отменить заказ?'}</DialogTitle>
+        <DialogContent>
+          <Typography sx={{ color: '#475569', fontSize: 13 }}>
+            {currentCancelTargetQueued
+              ? 'Можно снять документ с очереди и продолжить редактирование, либо удалить локальный документ.'
+              : currentCancelTargetCancelled
+                ? 'Отмененный локальный заказ вернется в черновики и снова станет доступен для редактирования.'
+              : 'Заказ будет переведен в статус отмененного. Действие нельзя будет продолжить как обычное редактирование черновика.'}
           </Typography>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => { setConfirmCancelOpen(false); setPendingCancelOrder(null); }} sx={{ textTransform: 'none', fontWeight: 800 }}>Остаться</Button>
+          {currentCancelTargetQueued ? (
+            <Button
+              color="error"
+              onClick={() => {
+                const target = currentCancelTarget ? { guid: currentCancelTarget.guid, revision: currentCancelTarget.revision } : undefined;
+                setConfirmCancelOpen(false);
+                setPendingCancelOrder(null);
+                void workspace.deleteDraft(target?.guid);
+              }}
+              disabled={workspace.deletingDraft}
+              sx={{ textTransform: 'none', fontWeight: 800 }}
+            >
+              {workspace.deletingDraft ? 'Удаляю...' : 'Удалить'}
+            </Button>
+          ) : null}
           <Button
             variant="contained"
-            color="error"
+            color={currentCancelTargetQueued || currentCancelTargetCancelled ? 'primary' : 'error'}
             onClick={() => {
               const target = pendingCancelOrder ? { guid: pendingCancelOrder.guid, revision: pendingCancelOrder.revision } : undefined;
               setConfirmCancelOpen(false);
               setPendingCancelOrder(null);
-              void workspace.cancelOrderConfirmed(target);
+              if (currentCancelTargetQueued) {
+                void workspace.unqueueOrder(target);
+              } else if (currentCancelTargetCancelled) {
+                void workspace.restoreOrder(target);
+              } else {
+                void workspace.cancelOrderConfirmed(target);
+              }
             }}
             disabled={workspace.cancelling}
             sx={{ textTransform: 'none', fontWeight: 800 }}
           >
-            {workspace.cancelling ? 'Отменяю...' : 'Отменить заказ'}
+            {workspace.cancelling ? 'Выполняю...' : currentCancelTargetQueued ? 'Снять с очереди' : currentCancelTargetCancelled ? 'Восстановить' : 'Отменить заказ'}
           </Button>
         </DialogActions>
       </Dialog>

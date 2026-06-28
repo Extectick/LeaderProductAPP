@@ -16,7 +16,7 @@ let refreshAttempts = 0;
 let refreshInFlight: Promise<string | null> | null = null;
 let lastWarnTs = 0;
 
-const REFRESH_TIMEOUT_MS = 15000;
+const REFRESH_TIMEOUT_MS = 10_000;
 
 export async function getAccessToken(): Promise<string | null> {
   return AsyncStorage.getItem(ACCESS_KEY);
