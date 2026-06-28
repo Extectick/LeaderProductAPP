@@ -1104,6 +1104,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       }));
     } catch (e: any) {
       if (defaultsRequestIdRef.current !== requestId) return;
+      if (isNetworkUnavailableError(e)) return;
       notify({
         type: 'warning',
         title: 'Подсказки не загружены',
@@ -1133,9 +1134,9 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
   React.useEffect(() => {
     if (!selectedGuid) return;
-    if (selectedOrder?.guid === selectedGuid && selectedOrder.revision === draft.revision) return;
+    if (selectedOrder?.guid === selectedGuid) return;
     void loadDetail(selectedGuid);
-  }, [draft.revision, loadDetail, selectedGuid, selectedOrder?.guid, selectedOrder?.revision]);
+  }, [loadDetail, selectedGuid, selectedOrder?.guid]);
 
   const saveUserSettings = React.useCallback(async (payload: Parameters<typeof updateClientOrderSettings>[0]) => {
     setSavingSettings(true);
@@ -1193,7 +1194,14 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       if (payload && isNetworkUnavailableError(e)) {
         const localOrder = saveDraftOnDevice(payload);
         applyOrderDetail(localOrder);
-        setError('Нет соединения. Документ сохранен на устройстве и будет перенесен в API автоматически.');
+        setError(null);
+        notify({
+          type: 'success',
+          message: 'Документ сохранен на устройстве',
+          icon: 'checkmark-circle',
+          durationMs: 5000,
+          dismissKeys: ['client-order-device-save'],
+        });
         setDirty(false);
         setLastSavedAt(new Date().toISOString());
         setAutosaveState('saved');
@@ -1716,7 +1724,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       const saved = await saveDraft({ silent: true, reason: 'manual' });
       if (!saved) return;
       if (saved.origin === 'device' || findDeviceDraftEntry(saved.guid)) {
-        setError('Документ сохранен на устройстве. Он будет отправлен после восстановления соединения.');
+        setError(null);
         return;
       }
       targetGuid = saved.guid;

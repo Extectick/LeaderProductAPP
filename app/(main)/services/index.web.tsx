@@ -1,6 +1,5 @@
 import TabBarSpacer from '@/components/Navigation/TabBarSpacer';
 import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
-import { useNotify } from '@/components/NotificationHost';
 import { useThemeColor } from '@/hooks/useThemeColor';
 import { saveWebCachedLastServiceRoute } from '@/src/features/navigation/lastServiceRouteStorage';
 import { useServicesData } from '@/src/features/services/hooks/useServicesData';
@@ -18,7 +17,6 @@ export default function ServicesWebPage() {
   const { width } = useWindowDimensions();
   const [containerWidth, setContainerWidth] = React.useState(width);
   const router = useRouter();
-  const notify = useNotify();
   const { isReachable } = useServerStatus();
   const headerTopInset = useHeaderContentTopInset({ hasSubtitle: true });
   const background = useThemeColor({}, 'background');
@@ -46,18 +44,11 @@ export default function ServicesWebPage() {
   const openService = React.useCallback((item: (typeof visibleServices)[number]) => {
     if (!item.route || !item.enabled) return;
     if (item.kind === 'CLOUD' && !isReachable) {
-      notify({
-        type: 'warning',
-        title: 'Нет связи с сервером',
-        message: 'Для открытия облачного сервиса нужна связь с сервером.',
-        icon: 'cloud-offline-outline',
-        durationMs: 5000,
-      });
       return;
     }
     saveWebCachedLastServiceRoute(item.route);
     router.push(item.route as any);
-  }, [isReachable, notify, router]);
+  }, [isReachable, router]);
 
   if (loading && !visibleServices.length) {
     return (

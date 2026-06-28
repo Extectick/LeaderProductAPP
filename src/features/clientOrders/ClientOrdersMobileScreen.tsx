@@ -45,6 +45,7 @@ import { hasMorePage } from './lib/clientOrdersPaging';
 import { useClientOrdersWorkspace } from './hooks/useClientOrdersWorkspace';
 import { getClientOrderReferenceDetails } from '@/utils/clientOrdersService';
 import type { ClientOrder, ClientOrderCounterpartyOption, ClientOrderOrganization, ClientOrderPriceTypeOption, ClientOrderProduct, ClientOrderReferenceDetails, ClientOrderReferenceKind, ClientOrderWarehouseOption } from '@/utils/clientOrdersService';
+import { useServerStatus } from '@/src/shared/network/useServerStatus';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import React from 'react';
@@ -204,7 +205,14 @@ function orderTitle(order: ClientOrder) {
     const date = formatDateOnly(order.date1c);
     return date === '—' ? order.number1c : `${order.number1c} от ${date}`;
   }
-  return order.guid.slice(0, 8);
+  const date = formatDateOnly(order.updatedAt || order.createdAt || order.deliveryDate);
+  const shortGuid = order.guid.slice(0, 8);
+  return date === '—' ? shortGuid : `${shortGuid} от ${date}`;
+}
+
+function compactDocumentStatusLabel(label: string) {
+  if (label === 'В процессе отгрузки') return 'В отгрузке';
+  return label;
 }
 
 function runDocumentHeaderTransition() {
@@ -249,6 +257,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     resolve?.(result);
   }, []);
   const workspace = useClientOrdersWorkspace({ confirmDiscard: requestDiscardConfirm });
+  const { isReachable } = useServerStatus();
   const topInset = useHeaderContentTopInset({ compact: true, hasSubtitle: false, extraGap: 2 });
   const { headerBottomOffset, setHeaderBottomOffset } = useNotificationViewport();
   const { setHeaderOverride } = useServicesHeaderSlot();
@@ -1019,7 +1028,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     : workspace.selectedOrder?.number1c || workspace.selectedOrder?.guid.slice(0, 8) || workspace.draft.guid?.slice(0, 8) || 'Без номера';
   const documentStatusText = workspace.draftMode
     ? 'Черновик'
-    : getOrderDisplayStatusLabel(workspace.selectedOrder);
+    : compactDocumentStatusLabel(getOrderDisplayStatusLabel(workspace.selectedOrder));
   const filteredItems = workspace.draft.items;
   const handleItemsSearchFocus = React.useCallback(() => {
     if (itemsSearchBlurTimerRef.current) clearTimeout(itemsSearchBlurTimerRef.current);
@@ -1172,18 +1181,25 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const documentHeaderRightSlot = React.useMemo(() => {
     if (mode !== 'editor') return undefined;
     return (
-      <DocumentActionsMenu
-        styles={styles}
-        workspace={workspace}
-        actionsMenuOpen={actionsMenuOpen}
-        setActionsMenuOpen={setActionsMenuOpen}
-        setInspectorOpen={setInspectorOpen}
-        submitFromMenu={submitFromMenu}
-        removeOrCancel={removeOrCancel}
-        compact
-      />
+      <View style={styles.documentHeaderRightActions}>
+        {!isReachable ? (
+          <View style={styles.documentHeaderOfflineBadge}>
+            <MaterialCommunityIcons name="wifi-off" size={15} color="#DC2626" />
+          </View>
+        ) : null}
+        <DocumentActionsMenu
+          styles={styles}
+          workspace={workspace}
+          actionsMenuOpen={actionsMenuOpen}
+          setActionsMenuOpen={setActionsMenuOpen}
+          setInspectorOpen={setInspectorOpen}
+          submitFromMenu={submitFromMenu}
+          removeOrCancel={removeOrCancel}
+          compact
+        />
+      </View>
     );
-  }, [actionsMenuOpen, mode, removeOrCancel, submitFromMenu, workspace]);
+  }, [actionsMenuOpen, isReachable, mode, removeOrCancel, submitFromMenu, workspace]);
   const handleEditorSectionChange = React.useCallback((nextSection: EditorSection) => {
     if (nextSection === section) return;
     runDocumentHeaderTransition();
@@ -3590,10 +3606,12 @@ function OrderCard({
   const scale = React.useRef(new Animated.Value(1)).current;
   const activityAt = order.updatedAt || order.queuedAt || order.sentTo1cAt;
   const displayStatus = getOrderDisplayStatus(order);
-  const statusIcon = orderStatusIcon(displayStatus);
-  const hasProblem = orderHasVisibleProblem(order);
+  const isDeviceOrder = order.origin === 'device';
+  const statusIcon = isDeviceOrder ? { name: 'cellphone-check', color: '#1D4ED8' } : orderStatusIcon(displayStatus);
+  const hasProblem = !isDeviceOrder && orderHasVisibleProblem(order);
   const isLocalOrder = order.origin !== 'onec';
   const itemsCount = getClientOrderItemsCount(order);
+  const statusLabel = isDeviceOrder ? 'На устройстве' : getOrderDisplayStatusLabel(order);
   const interactionDisabled = disabled || loading;
   const animateScale = React.useCallback((value: number) => {
     Animated.spring(scale, {
@@ -3645,10 +3663,10 @@ function OrderCard({
             <MaterialCommunityIcons name="chevron-right" size={18} color="#94A3B8" />
           </View>
           <View style={styles.orderCardBottomRow}>
-            <View style={[styles.orderStatusPill, orderStatusTone(displayStatus), hasProblem && styles.orderStatusProblem]}>
+            <View style={[styles.orderStatusPill, orderStatusTone(isDeviceOrder ? 'QUEUED' : displayStatus), hasProblem && styles.orderStatusProblem]}>
               <MaterialCommunityIcons name={statusIcon.name as any} size={14} color={statusIcon.color} />
               <Text style={[styles.orderStatusText, { color: statusIcon.color }]} numberOfLines={1}>
-                {getOrderDisplayStatusLabel(order)}
+                {statusLabel}
               </Text>
             </View>
             <View style={styles.orderMetaRow}>
@@ -3705,6 +3723,8 @@ const styles = StyleSheet.create({
   cardStack: { gap: 4 },
   documentHeaderSlot: { gap: 7 },
   documentHeaderDocumentRow: { minHeight: 32, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  documentHeaderRightActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  documentHeaderOfflineBadge: { width: 32, height: 32, borderRadius: 10, borderWidth: 1, borderColor: '#FECACA', backgroundColor: '#FEF2F2', alignItems: 'center', justifyContent: 'center' },
   documentHeaderMoreButton: { width: 40, height: 40, borderRadius: 12, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#F8FAFC', alignItems: 'center', justifyContent: 'center' },
   documentHeaderTopMoreButton: { width: 32, height: 32, borderRadius: 10, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#F8FAFC', alignItems: 'center', justifyContent: 'center' },
   documentStatusPill: { flexShrink: 0, maxWidth: 112, minHeight: 24, borderRadius: 999, borderWidth: 1, borderColor: '#BFDBFE', backgroundColor: '#EFF6FF', paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 4 },

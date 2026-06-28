@@ -5,7 +5,6 @@ import { useNotify } from '@/components/NotificationHost';
 import { Ionicons } from '@expo/vector-icons';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useServicesData } from '@/src/features/services/hooks/useServicesData';
-import { useServerStatus } from '@/src/shared/network/useServerStatus';
 import { useOptionalLastServiceRoute } from '@/src/features/navigation/LastServiceRouteContext';
 import { useOptionalUnsavedChanges } from '@/src/features/navigation/UnsavedChangesContext';
 import { ServicesHeaderSlotProvider, type ServicesHeaderOverride } from '@/src/features/services/headerSlotContext';
@@ -52,7 +51,6 @@ export default function ServicesLayout() {
   const lastService = useOptionalLastServiceRoute();
   const unsavedChanges = useOptionalUnsavedChanges();
   const { services, loading, loadServices } = useServicesData();
-  const { isReachable } = useServerStatus();
   const lastAlertRef = useRef<string | null>(null);
   const accessRefreshRef = useRef<string | null>(null);
   const [trackingHeaderBottomSlot, setTrackingHeaderBottomSlot] = React.useState<React.ReactNode | null>(null);
@@ -82,28 +80,12 @@ export default function ServicesLayout() {
 
   const missingServiceMetadata = !!serviceKey && !loading && !guardedService;
   const deniedByAccess = !!serviceKey && !loading && !!guardedService && (!guardedService.visible || !guardedService.enabled);
-  const deniedByOffline = !!serviceKey && !loading && !!guardedService && guardedService.kind === 'CLOUD' && !isReachable;
-
   useEffect(() => {
     if (!serviceKey) return;
     if (loading) return;
     if (missingServiceMetadata && accessRefreshRef.current !== serviceKey) {
       accessRefreshRef.current = serviceKey;
       void loadServices(true);
-      return;
-    }
-    if (deniedByOffline) {
-      const alertKey = `${serviceKey}-offline`;
-      if (lastAlertRef.current !== alertKey) {
-        lastAlertRef.current = alertKey;
-        notify({
-          type: 'warning',
-          title: 'Нет связи с сервером',
-          message: 'Текущий сервис останется открытым. Данные обновятся после восстановления соединения.',
-          icon: 'cloud-offline-outline',
-          durationMs: 5000,
-        });
-      }
       return;
     }
 
@@ -122,7 +104,7 @@ export default function ServicesLayout() {
       });
     }
     router.replace('/services');
-  }, [deniedByAccess, deniedByOffline, loadServices, loading, missingServiceMetadata, notify, router, serviceKey]);
+  }, [deniedByAccess, loadServices, loading, missingServiceMetadata, notify, router, serviceKey]);
 
   const blocked = !!serviceKey && !loading && deniedByAccess;
   if (serviceKey && blocked) return null;
