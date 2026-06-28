@@ -9,7 +9,7 @@ import {
   getDisplayedUnitPriceValue,
   getClientOrdersResponsiveMetrics,
   getOrderDisplayStatus,
-  getOrderDisplayStatusLabel,
+  getOrderDisplayStatusLabelWithQueue,
   isValidManualPriceValue,
   isValidQuantityValue,
   isWeightDraftItem,
@@ -1925,7 +1925,7 @@ export default function ClientOrdersWebScreen() {
                             {orderListTitle(order)}
                           </Typography>
                           <Box sx={{ px: 0.8, py: 0.15, borderRadius: '999px', fontSize: 10, fontWeight: 900, lineHeight: 1.35, whiteSpace: 'nowrap', ...statusChip }}>
-                            {getOrderDisplayStatusLabel(order)}
+                            {getOrderDisplayStatusLabelWithQueue(order)}
                           </Box>
                         </Stack>
                         <Typography sx={{ fontSize: 11.5, color: '#475569', fontWeight: 900, lineHeight: 1.1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -1984,7 +1984,7 @@ export default function ClientOrdersWebScreen() {
                     <Box sx={{ minWidth: 0 }}>
                       <Stack direction="row" spacing={0.75} alignItems="center" sx={{ minWidth: 0 }}>
                         <Typography sx={{ fontSize: 18, fontWeight: 900, lineHeight: 1.1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</Typography>
-                        {!workspace.draftMode ? <Chip size="small" label={getOrderDisplayStatusLabel(workspace.selectedOrder)} sx={{ height: 20, fontSize: 10, fontWeight: 800, ...(workspace.selectedOrder ? orderStatusChipSx(workspace.selectedOrder) : {}) }} /> : null}
+                        {!workspace.draftMode ? <Chip size="small" label={getOrderDisplayStatusLabelWithQueue(workspace.selectedOrder)} sx={{ height: 20, fontSize: 10, fontWeight: 800, ...(workspace.selectedOrder ? orderStatusChipSx(workspace.selectedOrder) : {}) }} /> : null}
                       </Stack>
                       <Typography sx={{ color: '#64748B', fontSize: 11, fontWeight: 700 }}>{workspace.autosaveLabel}</Typography>
                     </Box>
@@ -2834,7 +2834,7 @@ export default function ClientOrdersWebScreen() {
               <Stack spacing={0.75}>
                 <Typography sx={{ fontWeight: 900 }}>Статус и 1С</Typography>
                 <Typography sx={{ fontSize: 13, color: '#64748B' }}>Revision: {workspace.draft.revision || '—'}</Typography>
-                <Typography sx={{ fontSize: 13, color: '#64748B' }}>Статус: {workspace.selectedOrder ? getOrderDisplayStatusLabel(workspace.selectedOrder) : '—'}</Typography>
+                <Typography sx={{ fontSize: 13, color: '#64748B' }}>Статус: {workspace.selectedOrder ? getOrderDisplayStatusLabelWithQueue(workspace.selectedOrder) : '—'}</Typography>
                 <Typography sx={{ fontSize: 13, color: '#64748B' }}>Sync state: {workspace.syncLabels[workspace.selectedOrder?.syncState || ''] || workspace.selectedOrder?.syncState || '—'}</Typography>
                 <Typography sx={{ fontSize: 13, color: '#64748B' }}>Организация: {workspace.selectedOrder?.organization?.name || '—'}</Typography>
                 <Typography sx={{ fontSize: 13, color: '#64748B' }}>Документ 1С: {workspace.selectedOrder?.number1c || 'Еще не создан'}</Typography>

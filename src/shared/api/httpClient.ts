@@ -27,6 +27,7 @@ export interface HttpRequestOptions<Req> {
   body?: Req | BodyLike;
   headers?: Record<string, string>;
   skipAuth?: boolean;
+  timeoutMs?: number;
 }
 
 function isFormData(val: any): val is FormData {
@@ -80,7 +81,7 @@ export async function httpRequest<Req = undefined, Res = any>(
   path: string,
   options: HttpRequestOptions<Req> = {}
 ): Promise<HttpResponse<Res>> {
-  const { method = 'GET', body, headers = {}, skipAuth = false } = options;
+  const { method = 'GET', body, headers = {}, skipAuth = false, timeoutMs } = options;
   const url = path.startsWith('http') ? path : `${API_BASE_URL}${path}`;
 
   let token = !skipAuth ? await getAccessToken() : null;
@@ -97,7 +98,16 @@ export async function httpRequest<Req = undefined, Res = any>(
         reqBody = JSON.stringify(body);
       }
     }
-    return fetch(url, { method, headers: h, body: reqBody });
+    if (!timeoutMs || timeoutMs <= 0 || typeof AbortController === 'undefined') {
+      return fetch(url, { method, headers: h, body: reqBody });
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { method, headers: h, body: reqBody, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   try {
@@ -132,7 +142,9 @@ export async function httpRequest<Req = undefined, Res = any>(
 
     return { ok: true, status, data, meta };
   } catch (error: any) {
-    const message = error?.message || 'Network error';
+    const message = error?.name === 'AbortError'
+      ? 'Request timeout'
+      : error?.message || 'Network error';
     addMonitoringBreadcrumb('http_network_error', { path, message });
     setServerUnavailable(message);
     await handleBackendUnavailable(message);

@@ -186,6 +186,7 @@ export type ClientOrder = {
   revision: number;
   syncState: string;
   status: string;
+  queuePosition?: number | null;
   status1c?: string | null;
   currentState1c?: string | null;
   documentStatus1c?: string | null;
@@ -600,6 +601,7 @@ export async function submitClientOrder(guid: string, revision: number) {
   const res = await apiClient<{ revision: number }, ClientOrder>(API_ENDPOINTS.CLIENT_ORDERS.SUBMIT(guid), {
     method: 'POST',
     body: { revision },
+    timeoutMs: 30000,
   });
   if (!res.ok || !res.data) throw new Error(getErrorMessage('Не удалось отправить заказ клиента', res.message));
   return normalizeClientOrder(res.data);

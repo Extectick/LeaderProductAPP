@@ -303,6 +303,18 @@ export function getOrderDisplayStatusLabel(order?: Pick<ClientOrder, 'status' | 
   return STATUS_LABELS[displayStatus] || onecText || displayStatus || STATUS_LABELS.DRAFT;
 }
 
+export function getOrderDisplayStatusLabelWithQueue(
+  order?: Pick<ClientOrder, 'status' | 'syncState' | 'number1c' | 'origin' | 'status1c' | 'currentState1c' | 'documentStatus1c' | 'queuePosition'> | null
+) {
+  if (!order) return STATUS_LABELS.DRAFT;
+  const position = Number(order.queuePosition || 0);
+  const displayStatus = getOrderDisplayStatus(order);
+  if (position > 0 && (displayStatus === 'QUEUED' || order.status === 'QUEUED' || order.syncState === 'QUEUED')) {
+    return `В очереди: ${position}`;
+  }
+  return getOrderDisplayStatusLabel(order);
+}
+
 export const SYNC_LABELS: Record<string, string> = {
   DRAFT: 'Черновик',
   QUEUED: 'Ожидает 1С',

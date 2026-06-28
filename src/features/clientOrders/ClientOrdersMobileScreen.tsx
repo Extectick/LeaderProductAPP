@@ -18,7 +18,7 @@ import {
   getDisplayedUnitPriceValue,
   getClientOrdersResponsiveMetrics,
   getOrderDisplayStatus,
-  getOrderDisplayStatusLabel,
+  getOrderDisplayStatusLabelWithQueue,
   buildNewItem,
   isValidManualPriceValue,
   isValidQuantityValue,
@@ -1028,7 +1028,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     : workspace.selectedOrder?.number1c || workspace.selectedOrder?.guid.slice(0, 8) || workspace.draft.guid?.slice(0, 8) || 'Без номера';
   const documentStatusText = workspace.draftMode
     ? 'Черновик'
-    : compactDocumentStatusLabel(getOrderDisplayStatusLabel(workspace.selectedOrder));
+    : compactDocumentStatusLabel(getOrderDisplayStatusLabelWithQueue(workspace.selectedOrder));
   const filteredItems = workspace.draft.items;
   const handleItemsSearchFocus = React.useCallback(() => {
     if (itemsSearchBlurTimerRef.current) clearTimeout(itemsSearchBlurTimerRef.current);
@@ -1612,7 +1612,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
 
       <SheetModal styles={styles} visible={inspectorOpen} onClose={() => setInspectorOpen(false)} title="Инспектор">
         <Text style={styles.orderMeta}>Revision: {workspace.draft.revision || '—'}</Text>
-        <Text style={styles.orderMeta}>Статус: {workspace.selectedOrder ? getOrderDisplayStatusLabel(workspace.selectedOrder) : '—'}</Text>
+        <Text style={styles.orderMeta}>Статус: {workspace.selectedOrder ? getOrderDisplayStatusLabelWithQueue(workspace.selectedOrder) : '—'}</Text>
         <Text style={styles.orderMeta}>Sync state: {workspace.syncLabels[workspace.selectedOrder?.syncState || ''] || workspace.selectedOrder?.syncState || '—'}</Text>
         <Text style={styles.orderMeta}>Документ 1С: {workspace.selectedOrder?.number1c || 'Еще не создан'}</Text>
       </SheetModal>
@@ -3611,7 +3611,7 @@ function OrderCard({
   const hasProblem = !isDeviceOrder && orderHasVisibleProblem(order);
   const isLocalOrder = order.origin !== 'onec';
   const itemsCount = getClientOrderItemsCount(order);
-  const statusLabel = isDeviceOrder ? 'На устройстве' : getOrderDisplayStatusLabel(order);
+  const statusLabel = isDeviceOrder ? 'На устройстве' : getOrderDisplayStatusLabelWithQueue(order);
   const interactionDisabled = disabled || loading;
   const animateScale = React.useCallback((value: number) => {
     Animated.spring(scale, {
