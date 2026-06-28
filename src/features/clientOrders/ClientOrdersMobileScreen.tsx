@@ -107,6 +107,7 @@ const DOCUMENT_HEADER_TRANSITION = {
 const DOCUMENT_ITEMS_TOOLBAR_HEIGHT_DELTA = 51;
 const LINE_ITEM_SCROLL_ESTIMATE = 116;
 const IS_NEW_ARCHITECTURE = !!(globalThis as any).nativeFabricUIManager;
+let lastClientOrdersListScrollY = 0;
 type FilterKeyboardFieldKey = 'deliveryDates' | 'updatedDates' | 'amount' | 'items' | 'counterparty' | 'warehouse' | 'priceType';
 type FilterKeyboardInputRef = React.RefObject<any>;
 type WindowRect = { x: number; y: number; width: number; height: number };
@@ -298,7 +299,9 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const [referenceDetails, setReferenceDetails] = React.useState<ClientOrderReferenceDetails | null>(null);
   const [referenceScrollOffset, setReferenceScrollOffset] = React.useState(0);
   const [editorKeyboardVisible, setEditorKeyboardVisible] = React.useState(false);
+  const ordersScrollRef = React.useRef<any>(null);
   const editorScrollRef = React.useRef<any>(null);
+  const ordersScrollRestoreRequestRef = React.useRef(0);
   const editorKeyboardTopRef = React.useRef<number | null>(null);
   const editorFocusedTargetRef = React.useRef<unknown>(null);
   const editorFocusTimersRef = React.useRef<Array<ReturnType<typeof setTimeout>>>([]);
@@ -383,11 +386,25 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
 
   const handleOrdersScroll = React.useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+    lastClientOrdersListScrollY = Math.max(0, contentOffset.y);
     ordersViewportHeightRef.current = layoutMeasurement.height;
     ordersContentHeightRef.current = contentSize.height;
     const distanceToEnd = contentSize.height - (contentOffset.y + layoutMeasurement.height);
     if (distanceToEnd <= ORDERS_PREFETCH_DISTANCE) prefetchMoreOrders();
   }, [prefetchMoreOrders]);
+
+  const restoreOrdersScrollPosition = React.useCallback(() => {
+    const targetY = Math.max(0, lastClientOrdersListScrollY);
+    if (targetY <= 1) return;
+    const requestId = ++ordersScrollRestoreRequestRef.current;
+    const restore = () => {
+      if (ordersScrollRestoreRequestRef.current !== requestId || mode !== 'orders') return;
+      ordersScrollRef.current?.scrollTo?.({ y: targetY, animated: false });
+    };
+    requestAnimationFrame(restore);
+    setTimeout(restore, 80);
+    setTimeout(restore, 220);
+  }, [mode]);
 
   const handleOrdersListLayout = React.useCallback((event: LayoutChangeEvent) => {
     ordersViewportHeightRef.current = event.nativeEvent.layout.height;
@@ -417,6 +434,10 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     setTabBarHidden?.(mode === 'editor');
     return () => setTabBarHidden?.(false);
   }, [mode, setTabBarHidden]);
+  React.useEffect(() => {
+    if (mode !== 'orders' || showInitialOrdersSkeleton || !workspace.orders.length) return;
+    restoreOrdersScrollPosition();
+  }, [mode, restoreOrdersScrollPosition, showInitialOrdersSkeleton, workspace.orders.length]);
   React.useEffect(() => {
     if (mode !== 'orders') return;
     void workspace.syncDeviceDrafts?.();
@@ -834,6 +855,18 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
             manualPrice: '',
             priceTypeGuid: workspace.draft.priceTypeGuid ?? null,
             priceTypeName: workspace.draft.priceTypeName ?? null,
+          };
+        });
+      },
+      setItemPackage: (lineKey: string, packageGuid: string | null) => {
+        setPendingProductItem((prev) => {
+          if (!prev || prev.key !== lineKey) return prev;
+          return {
+            ...prev,
+            packageGuid: packageGuid || null,
+            manualPrice: '',
+            priceTypeGuid: prev.priceTypeGuid || workspace.draft.priceTypeGuid || null,
+            priceTypeName: prev.priceTypeName || workspace.draft.priceTypeName || null,
           };
         });
       },
@@ -1358,6 +1391,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
             </View>
           ) : null}
           <ScrollView
+            ref={ordersScrollRef}
             contentContainerStyle={[styles.ordersContent, width >= 720 && styles.contentTablet, { paddingHorizontal: ui.pageX, paddingTop: showInitialOrdersSkeleton ? 2 : 7, maxWidth: layoutTier === 'tablet' ? 760 : undefined }]}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"

@@ -49,23 +49,22 @@ export function getAppVersionInfo(): AppVersionInfo {
   const runtimeVersion = clean(Updates.runtimeVersion) || nativeVersion;
   const updateId = clean(Updates.updateId);
   const metadata = getManifestMetadata();
-  const displayVersion = clean(metadata.displayVersion);
   const otaSequenceRaw = Number(metadata.otaSequence);
   const otaSequence = Number.isFinite(otaSequenceRaw) && otaSequenceRaw > 0 ? Math.floor(otaSequenceRaw) : null;
+  const displayOtaSequence = otaSequence ?? 0;
   const otaShortId = updateId ? updateId.slice(0, 8) : null;
 
   const otaLabel = !Updates.isEnabled
     ? 'OTA off'
-    : otaSequence
-      ? `ota.${otaSequence}`
+    : displayOtaSequence > 0
+      ? `OTA ${displayOtaSequence}`
     : otaShortId
       ? `OTA ${otaShortId}`
       : Updates.isEmbeddedLaunch
         ? ''
         : 'dev bundle';
 
-  const nativeLabel = nativeBuild ? `v${nativeVersion}+${nativeBuild}` : `v${nativeVersion}`;
-  const fullVersionLabel = displayVersion || (otaLabel ? `${nativeLabel} · ${otaLabel}` : nativeLabel);
+  const fullVersionLabel = `${nativeVersion}.${displayOtaSequence}`;
 
   return {
     nativeVersion,
