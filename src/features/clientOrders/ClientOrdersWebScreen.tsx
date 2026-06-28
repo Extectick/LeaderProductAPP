@@ -1214,6 +1214,7 @@ export default function ClientOrdersWebScreen() {
     setConfirmSubmitOpen(false);
     await workspace.submitOrder();
   }, [workspace]);
+  const isQueuedResubmit = workspace.selectedOrderQueued && workspace.dirty;
 
   const closeOrderContextMenu = React.useCallback(() => {
     setOrderContextMenu(null);
@@ -2050,7 +2051,7 @@ export default function ClientOrdersWebScreen() {
                         loading={toolbarUsesDeleteDraft ? workspace.deletingDraft : workspace.cancelling}
                       />
                       <ToolbarIconButton title="Сохранить" icon="save-outline" color="#2563EB" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => void workspace.saveDraft({ reason: 'manual' })} disabled={workspace.readOnly || workspace.saving || !workspace.validation.canSave} loading={workspace.saving} />
-                      <ToolbarIconButton title="Отправить в 1С" icon="cloud-upload-outline" label={effectiveEditorPaneWidth >= 1180 ? 'В 1С' : undefined} color="#16A34A" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => setConfirmSubmitOpen(true)} disabled={workspace.readOnly || workspace.submitting || !workspace.validation.canSubmit} loading={workspace.submitting} />
+                      <ToolbarIconButton title="Отправить в 1С" icon="cloud-upload-outline" label={effectiveEditorPaneWidth >= 1180 ? 'В 1С' : undefined} color="#16A34A" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => setConfirmSubmitOpen(true)} disabled={workspace.readOnly || workspace.submitting || !workspace.canSubmitOrder} loading={workspace.submitting} />
                     </Stack>
                   </Stack>
                   {showSectionSwitcher ? (
@@ -2674,16 +2675,18 @@ export default function ClientOrdersWebScreen() {
       </Dialog>
 
       <Dialog open={confirmSubmitOpen} onClose={() => setConfirmSubmitOpen(false)} maxWidth="xs" fullWidth fullScreen={isPhoneDialog}>
-        <DialogTitle>Отправить в 1С?</DialogTitle>
+        <DialogTitle>{isQueuedResubmit ? 'Переотправить в 1С?' : 'Отправить в 1С?'}</DialogTitle>
         <DialogContent>
           <Typography sx={{ color: '#475569', fontSize: 13 }}>
-            Документ будет поставлен в очередь обмена. После отправки часть полей станет недоступна для редактирования.
+            {isQueuedResubmit
+              ? 'Документ будет сохранен и поставлен в конец очереди.'
+              : 'Документ будет поставлен в очередь обмена. После отправки часть полей станет недоступна для редактирования.'}
           </Typography>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setConfirmSubmitOpen(false)} sx={{ textTransform: 'none', fontWeight: 800 }}>Остаться</Button>
-          <Button variant="contained" color="secondary" onClick={() => void submitWithConfirm()} disabled={workspace.submitting} sx={{ textTransform: 'none', fontWeight: 800 }}>
-            {workspace.submitting ? 'Отправляю...' : 'Отправить'}
+          <Button variant="contained" color="secondary" onClick={() => void submitWithConfirm()} disabled={workspace.submitting || !workspace.canSubmitOrder} sx={{ textTransform: 'none', fontWeight: 800 }}>
+            {workspace.submitting ? 'Отправляю...' : isQueuedResubmit ? 'В конец очереди' : 'Отправить'}
           </Button>
         </DialogActions>
       </Dialog>

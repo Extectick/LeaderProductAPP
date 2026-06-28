@@ -987,11 +987,13 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   }, [workspace]);
 
   const submitFromMenu = React.useCallback(() => {
+    if (!workspace.canSubmitOrder) return;
     setActionsMenuOpen(false);
+    const isQueuedResubmit = workspace.selectedOrderQueued && workspace.dirty;
     setConfirmDialog({
-      title: 'Отправить в 1С?',
-      message: '',
-      confirmLabel: 'Отправить',
+      title: isQueuedResubmit ? 'Переотправить в 1С?' : 'Отправить в 1С?',
+      message: isQueuedResubmit ? 'Документ будет сохранен и поставлен в конец очереди.' : '',
+      confirmLabel: isQueuedResubmit ? 'В конец очереди' : 'Отправить',
       onConfirm: () => workspace.submitOrder(),
     });
   }, [workspace]);
@@ -1902,7 +1904,7 @@ function DocumentActionsMenu({
       contentStyle={styles.mobileMenuPaper}
     >
       <Menu.Item leadingIcon="content-save-outline" title={workspace.saving ? 'Сохраняю...' : 'Сохранить'} onPress={() => { setActionsMenuOpen(false); void workspace.saveDraft({ reason: 'manual' }); }} disabled={workspace.readOnly || workspace.saving || !workspace.validation.canSave} />
-      <Menu.Item leadingIcon="cloud-upload-outline" title={workspace.submitting ? 'Отправляю...' : 'Отправить в 1С'} onPress={submitFromMenu} disabled={workspace.readOnly || workspace.submitting || !workspace.validation.canSubmit} />
+      <Menu.Item leadingIcon="cloud-upload-outline" title={workspace.submitting ? 'Отправляю...' : 'Отправить в 1С'} onPress={submitFromMenu} disabled={workspace.readOnly || workspace.submitting || !workspace.canSubmitOrder} />
       <Menu.Item leadingIcon="information-outline" title="Инспектор" onPress={() => { setActionsMenuOpen(false); setInspectorOpen(true); }} />
       <Menu.Item leadingIcon={workspace.draftMode || workspace.selectedOrder?.status === 'DRAFT' ? 'trash-can-outline' : 'close-circle-outline'} title={workspace.draftMode || workspace.selectedOrder?.status === 'DRAFT' ? 'Удалить черновик' : 'Отменить заказ'} onPress={() => { setActionsMenuOpen(false); removeOrCancel(); }} />
     </Menu>
@@ -2292,7 +2294,7 @@ function DocumentBottomBar({
   const borderColor = withColorOpacity(textColor, 0.18);
   const shouldSave = !!workspace.dirty;
   const busy = !!workspace.saving || !!workspace.submitting;
-  const disabled = workspace.readOnly || busy || (shouldSave ? !workspace.validation.canSave : !workspace.validation.canSubmit);
+  const disabled = workspace.readOnly || busy || (shouldSave ? !workspace.validation.canSave : !workspace.canSubmitOrder);
   const label = workspace.saving
     ? 'Сохраняю'
     : workspace.submitting
