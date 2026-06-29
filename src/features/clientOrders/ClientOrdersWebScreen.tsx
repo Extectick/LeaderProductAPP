@@ -99,6 +99,12 @@ import {
 
 type PickerKind = ClientOrdersPickerKind;
 type ResponsivePane = 'orders' | 'editor';
+type ProductGalleryImage = {
+  key: string;
+  thumbUrl: string;
+  previewUrl: string;
+  isMain?: boolean;
+};
 type PendingPriceTypeAction =
   | { type: 'change-header'; priceType: ClientOrderPriceTypeOption | null }
   | { type: 'reset-header' };
@@ -106,7 +112,175 @@ const PRODUCT_IN_STOCK_ONLY_STORAGE_KEY = 'clientOrders.productPicker.inStockOnl
 const PRODUCT_IMAGE_PLACEHOLDER_URI = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22120%22 height=%22120%22 viewBox=%220 0 120 120%22%3E%3Crect width=%22120%22 height=%22120%22 rx=%2224%22 fill=%22%23EFF6FF%22/%3E%3Crect x=%2222%22 y=%2224%22 width=%2276%22 height=%2272%22 rx=%2216%22 fill=%22%23FFFFFF%22 stroke=%22%2393C5FD%22 stroke-width=%225%22/%3E%3Ccircle cx=%2248%22 cy=%2249%22 r=%2211%22 fill=%22%23BFDBFE%22/%3E%3Cpath d=%22M33 82l19-21 14 14 11-13 22 20H33z%22 fill=%22%232563EB%22 opacity=%22.72%22/%3E%3C/svg%3E';
 
 function getDraftItemImageUri(item: DraftItem | any) {
-  return item?.imageUrl || item?.pictureUrl || item?.photoUrl || item?.thumbnailUrl || PRODUCT_IMAGE_PLACEHOLDER_URI;
+  return getProductGalleryImages(item)[0]?.thumbUrl || PRODUCT_IMAGE_PLACEHOLDER_URI;
+}
+
+function getProductGalleryImages(item: DraftItem | any): ProductGalleryImage[] {
+  const result: ProductGalleryImage[] = [];
+  const seen = new Set<string>();
+  const pushImage = (input: Partial<ProductGalleryImage> & { previewUrl?: string | null; thumbUrl?: string | null }) => {
+    const previewUrl = input.previewUrl || input.thumbUrl || null;
+    const thumbUrl = input.thumbUrl || input.previewUrl || null;
+    if (!previewUrl || !thumbUrl) return;
+    const dedupeKey = `${thumbUrl}|${previewUrl}`;
+    if (seen.has(dedupeKey)) return;
+    seen.add(dedupeKey);
+    result.push({
+      key: input.key || previewUrl,
+      thumbUrl,
+      previewUrl,
+      isMain: input.isMain,
+    });
+  };
+
+  const images = Array.isArray(item?.images) ? item.images : [];
+  [...images]
+    .sort((a, b) => Number(!!b?.isMain) - Number(!!a?.isMain))
+    .forEach((image: any, index) => {
+      pushImage({
+        key: image?.id || image?.fileGuid || `image-${index}`,
+        thumbUrl: image?.thumbUrl,
+        previewUrl: image?.previewUrl,
+        isMain: !!image?.isMain,
+      });
+    });
+  pushImage({
+    key: item?.imageHash || item?.productGuid || item?.guid || 'primary',
+    thumbUrl: item?.imageThumbUrl || item?.thumbnailUrl || item?.imageUrl || item?.pictureUrl || item?.photoUrl,
+    previewUrl: item?.imagePreviewUrl || item?.imageUrl || item?.pictureUrl || item?.photoUrl || item?.imageThumbUrl || item?.thumbnailUrl,
+    isMain: true,
+  });
+  return result;
+}
+
+function isRemoteImageUri(src?: string | null) {
+  return !!src && !src.startsWith('data:');
+}
+
+function WebProductImage({
+  src,
+  alt,
+  sx,
+  loading = 'lazy',
+  spinnerSize = 18,
+  objectFit = 'contain',
+}: {
+  src: string;
+  alt: string;
+  sx?: any;
+  loading?: 'lazy' | 'eager';
+  spinnerSize?: number;
+  objectFit?: 'cover' | 'contain';
+}) {
+  const [loaded, setLoaded] = React.useState(!isRemoteImageUri(src));
+  const [failed, setFailed] = React.useState(false);
+  const displaySrc = failed ? PRODUCT_IMAGE_PLACEHOLDER_URI : src;
+  const shouldShowLoader = isRemoteImageUri(src) && !loaded && !failed;
+  const sxList = Array.isArray(sx) ? sx : [sx];
+
+  React.useEffect(() => {
+    setLoaded(!isRemoteImageUri(src));
+    setFailed(false);
+  }, [src]);
+
+  return (
+    <Box
+      sx={[
+        {
+          position: 'relative',
+          display: 'block',
+          overflow: 'hidden',
+          bgcolor: '#F8FAFC',
+        },
+        ...sxList,
+      ]}
+    >
+      <Box
+        component="img"
+        src={displaySrc}
+        alt={alt}
+        loading={loading}
+        onLoad={() => setLoaded(true)}
+        onError={() => {
+          setFailed(true);
+          setLoaded(true);
+        }}
+        sx={{
+          position: 'absolute',
+          inset: 0,
+          width: '100%',
+          height: '100%',
+          display: 'block',
+          objectFit,
+          opacity: shouldShowLoader ? 0.22 : 1,
+          transition: 'opacity 160ms ease',
+        }}
+      />
+      {shouldShowLoader ? (
+        <Box
+          sx={{
+            position: 'absolute',
+            inset: 0,
+            display: 'grid',
+            placeItems: 'center',
+            bgcolor: 'rgba(248, 250, 252, 0.78)',
+          }}
+        >
+          <CircularProgress size={spinnerSize} thickness={4.5} />
+        </Box>
+      ) : null}
+    </Box>
+  );
+}
+
+function WebProductPreviewImage({ src, alt, isPhoneDialog }: { src: string; alt: string; isPhoneDialog: boolean }) {
+  const [loaded, setLoaded] = React.useState(!isRemoteImageUri(src));
+  const [failed, setFailed] = React.useState(false);
+  const displaySrc = failed ? PRODUCT_IMAGE_PLACEHOLDER_URI : src;
+  const shouldShowLoader = isRemoteImageUri(src) && !loaded && !failed;
+
+  React.useEffect(() => {
+    setLoaded(!isRemoteImageUri(src));
+    setFailed(false);
+  }, [src]);
+
+  return (
+    <>
+      <Box
+        component="img"
+        src={displaySrc}
+        alt={alt}
+        onLoad={() => setLoaded(true)}
+        onError={() => {
+          setFailed(true);
+          setLoaded(true);
+        }}
+        sx={{
+          maxWidth: '100%',
+          maxHeight: isPhoneDialog ? '70vh' : 560,
+          width: 'auto',
+          height: 'auto',
+          objectFit: 'contain',
+          display: 'block',
+          opacity: shouldShowLoader ? 0.22 : 1,
+          transition: 'opacity 160ms ease',
+        }}
+      />
+      {shouldShowLoader ? (
+        <Box
+          sx={{
+            position: 'absolute',
+            inset: 0,
+            display: 'grid',
+            placeItems: 'center',
+            bgcolor: 'rgba(248, 250, 252, 0.72)',
+          }}
+        >
+          <CircularProgress size={30} thickness={4.2} />
+        </Box>
+      ) : null}
+    </>
+  );
 }
 
 function statusTone(status: string) {
@@ -328,6 +502,7 @@ function PickerListItem(props: {
   item: any;
   kind: PickerKind | null;
   onSelect: (item: any) => void;
+  onOpenImages?: (item: any) => void;
   isFirst?: boolean;
   disabled?: boolean;
   note?: string;
@@ -342,6 +517,7 @@ function PickerListItem(props: {
       <ProductPickerListItem
         item={props.item as ClientOrderProduct}
         onSelect={props.onSelect as (item: ClientOrderProduct) => void}
+        onOpenImages={props.onOpenImages as ((item: ClientOrderProduct) => void) | undefined}
         isFirst={props.isFirst}
         disabled={props.disabled}
         note={props.note}
@@ -401,6 +577,7 @@ function PickerListItem(props: {
 function ProductPickerListItem(props: {
   item: ClientOrderProduct;
   onSelect: (item: ClientOrderProduct) => void;
+  onOpenImages?: (item: ClientOrderProduct) => void;
   isFirst?: boolean;
   disabled?: boolean;
   note?: string;
@@ -409,6 +586,8 @@ function ProductPickerListItem(props: {
   const stockAvailable = Number(props.item.stock?.available ?? props.item.stock?.quantity ?? 0);
   const disabled = !!props.disabled;
   const meta = productPickerMetaParts(props.item);
+  const imageUri = getDraftItemImageUri(props.item);
+  const hasGalleryImages = getProductGalleryImages(props.item).length > 0;
   const iconSx = { display: 'inline-flex', alignItems: 'center', color: '#64748B', mr: 0.35, verticalAlign: 'text-bottom' };
 
   return (
@@ -426,7 +605,9 @@ function ProductPickerListItem(props: {
         borderBottom: '1px solid #D8E2F0',
         background: '#FFFFFF',
         cursor: disabled ? 'not-allowed' : 'pointer',
-        display: 'block',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 1,
         px: 1.2,
         py: 1.05,
         textAlign: 'left',
@@ -437,28 +618,55 @@ function ProductPickerListItem(props: {
         '&:focus-visible': { outline: '2px solid #2563EB', outlineOffset: '-2px' },
       }}
     >
-      <Typography
-        sx={{
-          fontWeight: 800,
-          color: '#0F172A',
-          fontSize: 14,
-          lineHeight: 1.2,
+      <Box
+        component="span"
+        role="button"
+        tabIndex={0}
+        onClick={(event) => {
+          event.stopPropagation();
+          if (!hasGalleryImages) return;
+          props.onOpenImages?.(props.item);
         }}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          event.stopPropagation();
+          if (!hasGalleryImages) return;
+          props.onOpenImages?.(props.item);
+        }}
+        sx={{ borderRadius: '8px', flexShrink: 0, cursor: hasGalleryImages ? 'zoom-in' : 'default', '&:focus-visible': { outline: '2px solid #2563EB', outlineOffset: 2 } }}
       >
-        {title}
-      </Typography>
-      <Box sx={{ mt: 0.55, display: 'flex', alignItems: 'center', gap: 0.9, flexWrap: 'wrap', minWidth: 0 }}>
-        <Typography sx={{ fontSize: 10.5, color: '#64748B', fontWeight: 700 }}>{meta.code}</Typography>
-        <Typography sx={{ fontSize: 10.5, color: '#64748B', fontWeight: 700, display: 'inline-flex', alignItems: 'center' }}>
-          <Box component="span" sx={iconSx}><Ionicons name="pricetag-outline" size={11} /></Box>
-          {meta.receiptPrice}
-        </Typography>
-        <Typography sx={{ fontSize: 10.5, color: stockAvailable > 0 ? '#15803D' : '#166534', fontWeight: 800, display: 'inline-flex', alignItems: 'center' }}>
-          <Box component="span" sx={iconSx}><Ionicons name="cube-outline" size={11} /></Box>
-          {meta.stock}
-        </Typography>
+        <WebProductImage
+          src={imageUri}
+          alt=""
+          spinnerSize={16}
+          sx={{ width: 46, height: 46, borderRadius: '8px', border: '1px solid #DBEAFE', bgcolor: '#F8FAFC' }}
+        />
       </Box>
-      {props.note ? <Typography sx={{ mt: 0.35, fontSize: 10.5, color: '#DC2626', fontWeight: 800 }}>{props.note}</Typography> : null}
+      <Box sx={{ minWidth: 0, flex: 1 }}>
+        <Typography
+          sx={{
+            fontWeight: 800,
+            color: '#0F172A',
+            fontSize: 14,
+            lineHeight: 1.2,
+          }}
+        >
+          {title}
+        </Typography>
+        <Box sx={{ mt: 0.55, display: 'flex', alignItems: 'center', gap: 0.9, flexWrap: 'wrap', minWidth: 0 }}>
+          <Typography sx={{ fontSize: 10.5, color: '#64748B', fontWeight: 700 }}>{meta.code}</Typography>
+          <Typography sx={{ fontSize: 10.5, color: '#64748B', fontWeight: 700, display: 'inline-flex', alignItems: 'center' }}>
+            <Box component="span" sx={iconSx}><Ionicons name="pricetag-outline" size={11} /></Box>
+            {meta.receiptPrice}
+          </Typography>
+          <Typography sx={{ fontSize: 10.5, color: stockAvailable > 0 ? '#15803D' : '#166534', fontWeight: 800, display: 'inline-flex', alignItems: 'center' }}>
+            <Box component="span" sx={iconSx}><Ionicons name="cube-outline" size={11} /></Box>
+            {meta.stock}
+          </Typography>
+        </Box>
+        {props.note ? <Typography sx={{ mt: 0.35, fontSize: 10.5, color: '#DC2626', fontWeight: 800 }}>{props.note}</Typography> : null}
+      </Box>
     </Box>
   );
 }
@@ -790,7 +998,17 @@ export default function ClientOrdersWebScreen() {
   const [confirmClearItemsOpen, setConfirmClearItemsOpen] = React.useState(false);
   const [pendingPriceTypeAction, setPendingPriceTypeAction] = React.useState<PendingPriceTypeAction | null>(null);
   const [itemsSearch, setItemsSearch] = React.useState('');
-  const [productImagePreview, setProductImagePreview] = React.useState<{ src: string; title: string; subtitle?: string | null } | null>(null);
+  const [productImagePreview, setProductImagePreview] = React.useState<{ title: string; subtitle?: string | null; images: ProductGalleryImage[]; index: number } | null>(null);
+  const openProductGallery = React.useCallback((item: any, index = 0) => {
+    const images = getProductGalleryImages(item);
+    if (!images.length) return;
+    setProductImagePreview({
+      title: item?.productName || item?.name || getPickerItemTitle(item) || 'Изображение товара',
+      subtitle: item?.productCode || item?.productArticle || item?.productSku || item?.code || item?.article || item?.sku || null,
+      images,
+      index: Math.min(Math.max(index, 0), images.length - 1),
+    });
+  }, []);
   const [referenceDetailsOpen, setReferenceDetailsOpen] = React.useState(false);
   const [referenceDetailsLoading, setReferenceDetailsLoading] = React.useState(false);
   const [referenceDetailsError, setReferenceDetailsError] = React.useState<string | null>(null);
@@ -1615,11 +1833,7 @@ export default function ClientOrdersWebScreen() {
                 <Box
                   component="button"
                   type="button"
-                  onClick={() => setProductImagePreview({
-                    src: imageUri,
-                    title: item.productName,
-                    subtitle: item.productCode || item.productArticle || item.productSku || null,
-                  })}
+                  onClick={() => openProductGallery(item)}
                   sx={{
                     p: 0,
                     border: 0,
@@ -1630,18 +1844,16 @@ export default function ClientOrdersWebScreen() {
                     '&:focus-visible': { outline: '2px solid #2563EB', outlineOffset: 2 },
                   }}
                 >
-                  <Box
-                    component="img"
+                  <WebProductImage
                     src={imageUri}
                     alt={item.productName}
+                    spinnerSize={useCompactTable ? 16 : 18}
                     sx={{
                       width: useCompactTable ? 42 : 52,
                       height: useCompactTable ? 42 : 52,
-                      display: 'block',
                       borderRadius: '6px',
                       border: '1px solid #E2E8F0',
                       bgcolor: '#F8FAFC',
-                      objectFit: 'cover',
                     }}
                   />
                 </Box>
@@ -1842,7 +2054,7 @@ export default function ClientOrdersWebScreen() {
         },
       },
     ];
-  }, [draftItemsColumnLayout, useCompactTable, workspace.readOnly]);
+  }, [draftItemsColumnLayout, openProductGallery, useCompactTable, workspace.readOnly]);
 
   const [draftItemsColumnSizing, setDraftItemsColumnSizing] = React.useState<ColumnSizingState>({});
   const [draftItemsColumnOrder, setDraftItemsColumnOrder] = React.useState<ColumnOrderState>([]);
@@ -2371,10 +2583,10 @@ export default function ClientOrdersWebScreen() {
                           >
                             {!filteredDraftItems.length ? (
                               <Box sx={{ py: 4, display: 'grid', placeItems: 'center', gap: 1.2, color: '#64748B' }}>
-                                <Box
-                                  component="img"
+                                <WebProductImage
                                   src={PRODUCT_IMAGE_PLACEHOLDER_URI}
                                   alt=""
+                                  spinnerSize={20}
                                   sx={{ width: 72, height: 72, borderRadius: '18px', opacity: 0.9 }}
                                 />
                                 <Typography sx={{ fontSize: 14, fontWeight: 900, color: '#0F172A' }}>
@@ -2671,6 +2883,7 @@ export default function ClientOrdersWebScreen() {
                   disabled={alreadyInOrder}
                   note={alreadyInOrder ? 'Уже в заказе' : undefined}
                   onSelect={(nextItem) => void handlePickerSelect(nextItem)}
+                  onOpenImages={openProductGallery}
                 />
               );
             })}
@@ -2929,8 +3142,36 @@ export default function ClientOrdersWebScreen() {
           </Stack>
         </DialogTitle>
         <DialogContent sx={{ p: 2, pt: 1.25, bgcolor: '#F8FAFC' }}>
+          {productImagePreview ? (
+            <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
+              <Typography sx={{ fontSize: 11, color: '#64748B', fontWeight: 800 }}>
+                {productImagePreview.index + 1} из {productImagePreview.images.length}
+              </Typography>
+              {productImagePreview.images.length > 1 ? (
+                <Stack direction="row" spacing={0.75}>
+                  <IconButton
+                    size="small"
+                    onClick={() => setProductImagePreview((prev) => prev ? { ...prev, index: Math.max(0, prev.index - 1) } : prev)}
+                    disabled={productImagePreview.index <= 0}
+                    sx={{ width: 30, height: 30, border: '1px solid #D8E2F0', borderRadius: '8px' }}
+                  >
+                    <Ionicons name="chevron-back-outline" size={16} />
+                  </IconButton>
+                  <IconButton
+                    size="small"
+                    onClick={() => setProductImagePreview((prev) => prev ? { ...prev, index: Math.min(prev.images.length - 1, prev.index + 1) } : prev)}
+                    disabled={productImagePreview.index >= productImagePreview.images.length - 1}
+                    sx={{ width: 30, height: 30, border: '1px solid #D8E2F0', borderRadius: '8px' }}
+                  >
+                    <Ionicons name="chevron-forward-outline" size={16} />
+                  </IconButton>
+                </Stack>
+              ) : null}
+            </Stack>
+          ) : null}
           <Box
             sx={{
+              position: 'relative',
               minHeight: isPhoneDialog ? '62vh' : 460,
               display: 'grid',
               placeItems: 'center',
@@ -2941,21 +3182,39 @@ export default function ClientOrdersWebScreen() {
             }}
           >
             {productImagePreview ? (
-              <Box
-                component="img"
-                src={productImagePreview.src}
+              <WebProductPreviewImage
+                src={productImagePreview.images[productImagePreview.index]?.previewUrl || PRODUCT_IMAGE_PLACEHOLDER_URI}
                 alt={productImagePreview.title}
-                sx={{
-                  maxWidth: '100%',
-                  maxHeight: isPhoneDialog ? '70vh' : 560,
-                  width: 'auto',
-                  height: 'auto',
-                  objectFit: 'contain',
-                  display: 'block',
-                }}
+                key={productImagePreview.images[productImagePreview.index]?.key || productImagePreview.index}
+                isPhoneDialog={isPhoneDialog}
               />
             ) : null}
           </Box>
+          {productImagePreview?.images.length && productImagePreview.images.length > 1 ? (
+            <Stack direction="row" spacing={1} sx={{ mt: 1.25, overflowX: 'auto', pb: 0.25 }}>
+              {productImagePreview.images.map((image, index) => (
+                <Box
+                  key={`preview-thumb-${image.key}`}
+                  component="button"
+                  type="button"
+                  onClick={() => setProductImagePreview((prev) => prev ? { ...prev, index } : prev)}
+                  sx={{
+                    width: 62,
+                    height: 62,
+                    flexShrink: 0,
+                    p: 0,
+                    borderRadius: '10px',
+                    border: index === productImagePreview.index ? '2px solid #2563EB' : '1px solid #D8E2F0',
+                    bgcolor: '#FFFFFF',
+                    overflow: 'hidden',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <WebProductImage src={image.thumbUrl} alt="" spinnerSize={14} sx={{ width: '100%', height: '100%' }} />
+                </Box>
+              ))}
+            </Stack>
+          ) : null}
         </DialogContent>
       </Dialog>
 

@@ -24,6 +24,10 @@ export type DraftItem = {
   productArticle?: string | null;
   productSku?: string | null;
   productIsWeight?: boolean | null;
+  imageThumbUrl?: string | null;
+  imagePreviewUrl?: string | null;
+  imageHash?: string | null;
+  images?: ClientOrderProduct['images'];
   quantity: string;
   packageGuid?: string | null;
   manualPrice: string;
@@ -643,6 +647,10 @@ export function orderToDraft(order: ClientOrder): DraftOrder {
       productArticle: item.product.article ?? null,
       productSku: item.product.sku ?? null,
       productIsWeight: item.product.isWeight ?? null,
+      imageThumbUrl: item.product.imageThumbUrl ?? null,
+      imagePreviewUrl: item.product.imagePreviewUrl ?? null,
+      imageHash: item.product.imageHash ?? null,
+      images: item.product.images ?? [],
       quantity: asString(item.quantity),
       packageGuid: item.package?.guid ?? null,
       manualPrice: asString(item.manualPrice),
@@ -890,6 +898,10 @@ export function buildNewItem(product: ClientOrderProduct): DraftItem {
     productArticle: product.article ?? null,
     productSku: product.sku ?? null,
     productIsWeight: product.isWeight ?? null,
+    imageThumbUrl: product.imageThumbUrl ?? null,
+    imagePreviewUrl: product.imagePreviewUrl ?? null,
+    imageHash: product.imageHash ?? null,
+    images: product.images ?? [],
     quantity: '1',
     packageGuid: pack?.guid ?? null,
     manualPrice: '',

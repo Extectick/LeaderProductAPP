@@ -49,8 +49,9 @@ import type { ClientOrder, ClientOrderCounterpartyOption, ClientOrderOrganizatio
 import { useServerStatus } from '@/src/shared/network/useServerStatus';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { Image as ExpoImage } from 'expo-image';
 import React from 'react';
-import { Animated, findNodeHandle, Image, Keyboard, LayoutAnimation, PanResponder, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, UIManager, useWindowDimensions, View } from 'react-native';
+import { Animated, findNodeHandle, Keyboard, LayoutAnimation, PanResponder, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, UIManager, useWindowDimensions, View } from 'react-native';
 import type { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -79,6 +80,12 @@ type ScreenMode = 'orders' | 'editor';
 type EditorSection = 'header' | 'items';
 type DocumentOpeningState = 'new' | 'existing' | null;
 type PickerKind = ClientOrdersPickerKind;
+type ProductGalleryImage = {
+  key: string;
+  thumbUrl: string;
+  previewUrl: string;
+  isMain?: boolean;
+};
 type ClientOrdersMobileScreenProps = {
   registerBackOverlayHandler?: (handler: (() => boolean) | null) => void;
 };
@@ -189,7 +196,44 @@ function productPickerMeta(item: any, context?: { hasPriceType?: boolean; hasWar
   };
 }
 function getDraftItemImageUri(item: any) {
-  return item?.imageUrl || item?.pictureUrl || item?.photoUrl || item?.thumbnailUrl || null;
+  return getProductGalleryImages(item)[0]?.thumbUrl || null;
+}
+function getProductGalleryImages(item: any): ProductGalleryImage[] {
+  const result: ProductGalleryImage[] = [];
+  const seen = new Set<string>();
+  const pushImage = (input: Partial<ProductGalleryImage> & { previewUrl?: string | null; thumbUrl?: string | null }) => {
+    const previewUrl = input.previewUrl || input.thumbUrl || null;
+    const thumbUrl = input.thumbUrl || input.previewUrl || null;
+    if (!previewUrl || !thumbUrl) return;
+    const dedupeKey = `${thumbUrl}|${previewUrl}`;
+    if (seen.has(dedupeKey)) return;
+    seen.add(dedupeKey);
+    result.push({
+      key: input.key || previewUrl,
+      thumbUrl,
+      previewUrl,
+      isMain: input.isMain,
+    });
+  };
+
+  const images = Array.isArray(item?.images) ? item.images : [];
+  [...images]
+    .sort((a, b) => Number(!!b?.isMain) - Number(!!a?.isMain))
+    .forEach((image: any, index) => {
+      pushImage({
+        key: image?.id || image?.fileGuid || `image-${index}`,
+        thumbUrl: image?.thumbUrl,
+        previewUrl: image?.previewUrl,
+        isMain: !!image?.isMain,
+      });
+    });
+  pushImage({
+    key: item?.imageHash || item?.productGuid || item?.guid || 'primary',
+    thumbUrl: item?.imageThumbUrl || item?.thumbnailUrl || item?.imageUrl || item?.pictureUrl || item?.photoUrl,
+    previewUrl: item?.imagePreviewUrl || item?.imageUrl || item?.pictureUrl || item?.photoUrl || item?.imageThumbUrl || item?.thumbnailUrl,
+    isMain: true,
+  });
+  return result;
 }
 function quantityStep(item: any, direction: 1 | -1) {
   const weight = isWeightDraftItem(item);
@@ -303,6 +347,12 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const [confirmDialog, setConfirmDialog] = React.useState<ConfirmDialogState>(null);
   const [editingItemKey, setEditingItemKey] = React.useState<string | null>(null);
   const [pendingProductItem, setPendingProductItem] = React.useState<DraftItem | null>(null);
+  const [productGallery, setProductGallery] = React.useState<{
+    title: string;
+    subtitle?: string | null;
+    images: ProductGalleryImage[];
+    index: number;
+  } | null>(null);
   const [referenceOpen, setReferenceOpen] = React.useState(false);
   const [referenceLoading, setReferenceLoading] = React.useState(false);
   const [referenceError, setReferenceError] = React.useState<string | null>(null);
@@ -744,6 +794,10 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     });
   }, [workspace]);
   const closeTopOverlay = React.useCallback(() => {
+    if (productGallery) {
+      setProductGallery(null);
+      return true;
+    }
     if (cancelOpeningOrder()) {
       return true;
     }
@@ -768,7 +822,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       return true;
     }
     return false;
-  }, [cancelOpeningOrder, closeDocumentToOrders, closePicker, editingItemKey, filtersOpen, mode, pickerKind, referenceOpen]);
+  }, [cancelOpeningOrder, closeDocumentToOrders, closePicker, editingItemKey, filtersOpen, mode, pickerKind, productGallery, referenceOpen]);
 
   React.useEffect(() => {
     if (!registerBackOverlayHandler) return undefined;
@@ -800,6 +854,17 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     } finally {
       setReferenceLoading(false);
     }
+  }, []);
+
+  const openProductGallery = React.useCallback((item: any, index = 0) => {
+    const images = getProductGalleryImages(item);
+    if (!images.length) return;
+    setProductGallery({
+      title: item?.productName || item?.name || getPickerItemTitle(item) || 'Изображение товара',
+      subtitle: item?.productCode || item?.productArticle || item?.productSku || item?.code || item?.article || item?.sku || null,
+      images,
+      index: Math.min(Math.max(index, 0), images.length - 1),
+    });
   }, []);
 
   const scrollToLineItem = React.useCallback((key: string, fallbackIndex?: number) => {
@@ -1455,6 +1520,15 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
               onPress={() => void selectPickerItem(item)}
               style={({ pressed }) => [styles.pickerFlatRow, disabled && styles.disabled, pressed && styles.flatPressed]}
             >
+              {pickerKind === 'product' ? (
+                <ProductThumb
+                  item={item}
+                  style={[styles.productPickerThumb, disabled && styles.productPickerThumbDisabled]}
+                  iconSize={22}
+                  iconColor={disabled ? '#94A3B8' : '#2563EB'}
+                  onPress={() => openProductGallery(item)}
+                />
+              ) : null}
               <View style={styles.pickerFlatTextWrap}>
                 <Text style={styles.pickerFlatTitle} numberOfLines={2}>{pickerKind === 'product' ? (item.name || getPickerItemTitle(item)) : getPickerItemTitle(item)}</Text>
                 {description ? <Text style={[styles.pickerFlatMeta, disabled && styles.pickerRowDisabled]} numberOfLines={2}>{description}</Text> : null}
@@ -1586,7 +1660,15 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
                 <HeaderSection workspace={workspace} openPicker={openPicker} openDetails={openReferenceDetails} onCommentFocus={handleHeaderCommentFocus} onResetHeaderPriceType={confirmResetHeaderPriceType} />
               </View>
               <View style={[styles.editorPane, section !== 'items' && styles.editorPaneHidden]}>
-                <ItemsSection workspace={workspace} filteredItems={filteredItems} ui={ui} onEditItem={setEditingItemKey} onAddItem={() => openPicker('product')} onItemLayout={handleLineItemLayout} />
+                <ItemsSection
+                  workspace={workspace}
+                  filteredItems={filteredItems}
+                  ui={ui}
+                  onEditItem={setEditingItemKey}
+                  onAddItem={() => openPicker('product')}
+                  onItemLayout={handleLineItemLayout}
+                  onOpenImages={openProductGallery}
+                />
               </View>
             </>
           )}
@@ -1750,6 +1832,13 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
           setPendingProductItem(null);
           setEditingItemKey(null);
         }}
+        onOpenImages={openProductGallery}
+      />
+
+      <ProductImageGalleryModal
+        styles={styles}
+        gallery={productGallery}
+        onClose={() => setProductGallery(null)}
       />
 
       <ConfirmDialog
@@ -2490,6 +2579,7 @@ function ItemsSection({
   onEditItem,
   onAddItem,
   onItemLayout,
+  onOpenImages,
 }: {
   workspace: any;
   filteredItems: any[];
@@ -2497,13 +2587,21 @@ function ItemsSection({
   onEditItem: (key: string) => void;
   onAddItem: () => void;
   onItemLayout: (key: string, y: number) => void;
+  onOpenImages: (item: any) => void;
 }) {
   return <View style={styles.itemsFlatSection}>
     {filteredItems.length ? (
       <View style={[styles.lineList, { paddingBottom: ui.itemsBottomInset }]}>
         {filteredItems.map((item, index) => (
           <View key={item.key} onLayout={(event) => onItemLayout(item.key, event.nativeEvent.layout.y)}>
-            <LineItemCard item={item} index={index} workspace={workspace} onPress={() => onEditItem(item.key)} onRemove={() => workspace.removeItem(item.key)} />
+            <LineItemCard
+              item={item}
+              index={index}
+              workspace={workspace}
+              onPress={() => onEditItem(item.key)}
+              onRemove={() => workspace.removeItem(item.key)}
+              onOpenImages={() => onOpenImages(item)}
+            />
           </View>
         ))}
         {!workspace.readOnly ? <AddProductListCard onPress={onAddItem} /> : null}
@@ -2525,7 +2623,21 @@ function AddProductListCard({ onPress }: { onPress: () => void }) {
   );
 }
 
-function LineItemCard({ item, index, workspace, onPress, onRemove }: { item: any; index: number; workspace: any; onPress: () => void; onRemove: () => void }) {
+function LineItemCard({
+  item,
+  index,
+  workspace,
+  onPress,
+  onRemove,
+  onOpenImages,
+}: {
+  item: any;
+  index: number;
+  workspace: any;
+  onPress: () => void;
+  onRemove: () => void;
+  onOpenImages: () => void;
+}) {
   const displayedPrice = getDisplayedUnitPriceValue(item);
   const lineTotal = formatMoney(computeLineTotal(item, workspace.draft.generalDiscountPercent), workspace.draft.currency);
   const packageLabelText = linePackageShortLabel(item);
@@ -2544,6 +2656,7 @@ function LineItemCard({ item, index, workspace, onPress, onRemove }: { item: any
           style={[styles.productPreviewImage, readOnly && styles.productPreviewImageReadOnly]}
           iconSize={34}
           iconColor={readOnly ? 'rgba(37, 99, 235, 0.42)' : '#2563EB'}
+          onPress={onOpenImages}
         />
         <View style={[styles.productPreviewIndexBadge, readOnly && styles.productPreviewIndexBadgeReadOnly]}>
           <Text style={[styles.productPreviewIndex, readOnly && styles.productPreviewIndexReadOnly]}>{index + 1}</Text>
@@ -2584,15 +2697,74 @@ function LineItemCard({ item, index, workspace, onPress, onRemove }: { item: any
   );
 }
 
-function ProductThumb({ item, style, iconSize, iconColor = '#2563EB' }: { item: any; style: any; iconSize: number; iconColor?: string }) {
+function ProductThumb({
+  item,
+  style,
+  iconSize,
+  iconColor = '#2563EB',
+  onPress,
+}: {
+  item: any;
+  style: any;
+  iconSize: number;
+  iconColor?: string;
+  onPress?: () => void;
+}) {
   const imageUri = getDraftItemImageUri(item);
-  if (imageUri) {
-    return <Image source={{ uri: imageUri }} style={style} resizeMode="cover" />;
+  const recyclingKey = item?.imageHash ? `${item.productGuid || item.guid}:${item.imageHash}` : item?.productGuid || item?.guid || imageUri;
+  const [loading, setLoading] = React.useState(!!imageUri);
+  const [failed, setFailed] = React.useState(false);
+
+  React.useEffect(() => {
+    setLoading(!!imageUri);
+    setFailed(false);
+  }, [imageUri, recyclingKey]);
+
+  const content = (
+    <>
+      {imageUri && !failed ? (
+        <ExpoImage
+          source={{ uri: imageUri }}
+          style={styles.productImageObject}
+          contentFit="contain"
+          cachePolicy="memory-disk"
+          recyclingKey={recyclingKey}
+          onLoadStart={() => setLoading(true)}
+          onLoadEnd={() => setLoading(false)}
+          onError={() => {
+            setFailed(true);
+            setLoading(false);
+          }}
+        />
+      ) : (
+        <View style={styles.productImagePlaceholderFill}>
+          <MaterialCommunityIcons name="image-outline" size={iconSize} color={iconColor} />
+        </View>
+      )}
+      {imageUri && loading && !failed ? (
+        <View pointerEvents="none" style={styles.productImageLoadingOverlay}>
+          <ActivityIndicator size={iconSize >= 40 ? 22 : 16} color="#2563EB" />
+        </View>
+      ) : null}
+    </>
+  );
+
+  if (!onPress || !imageUri) {
+    return <View style={[style, styles.productImageFrame]}>{content}</View>;
   }
+
   return (
-    <View style={[style, styles.productImagePlaceholder]}>
-      <MaterialCommunityIcons name="image-outline" size={iconSize} color={iconColor} />
-    </View>
+    <Pressable
+      accessibilityRole="imagebutton"
+      accessibilityLabel="Открыть изображение товара"
+      onPress={(event) => {
+        event.stopPropagation?.();
+        onPress();
+      }}
+      style={({ pressed }) => [style, styles.productImageFrame, pressed && styles.productImagePressed]}
+    >
+      {content}
+    </Pressable>
   );
 }
 
@@ -2670,6 +2842,7 @@ function ProductLineEditorSheet({
   workspace,
   allowZeroQuantity = false,
   onClose,
+  onOpenImages,
 }: {
   styles: any;
   visible: boolean;
@@ -2679,6 +2852,7 @@ function ProductLineEditorSheet({
   workspace: any;
   allowZeroQuantity?: boolean;
   onClose: () => void;
+  onOpenImages: (item: any) => void;
 }) {
   const { width, height } = useWindowDimensions();
   const lastItemRef = React.useRef(item);
@@ -2766,7 +2940,7 @@ function ProductLineEditorSheet({
         <View style={styles.productEditorHeaderBlock} onLayout={(event) => setHeaderHeight(Math.ceil(event.nativeEvent.layout.height))}>
           <View style={styles.productEditorMediaRow}>
             <View style={styles.productEditorImageWrap}>
-              <ProductThumb item={displayedItem} style={styles.productEditorImage} iconSize={40} />
+              <ProductThumb item={displayedItem} style={styles.productEditorImage} iconSize={40} onPress={() => onOpenImages(displayedItem)} />
               <View style={styles.productPreviewIndexBadge}>
                 <Text style={styles.productPreviewIndex}>{lastRowNumberRef.current}</Text>
               </View>
@@ -3376,6 +3550,146 @@ function DocumentBusyOverlay({ styles, label }: { styles: any; label: string }) 
         <ActivityIndicator size={24} color="#2563EB" />
         <Text style={styles.documentBusyTitle}>{label}</Text>
       </Surface>
+    </View>
+  );
+}
+
+function ProductImageGalleryModal({
+  styles,
+  gallery,
+  onClose,
+}: {
+  styles: any;
+  gallery: { title: string; subtitle?: string | null; images: ProductGalleryImage[]; index: number } | null;
+  onClose: () => void;
+}) {
+  const { width, height } = useWindowDimensions();
+  const scrollRef = React.useRef<any>(null);
+  const [activeIndex, setActiveIndex] = React.useState(gallery?.index || 0);
+  const images = gallery?.images || [];
+  const stageWidth = Math.max(240, Math.min(width - 28, 720));
+  const stageHeight = Math.max(260, Math.min(Math.round(height * 0.62), Math.round(stageWidth * 0.9)));
+
+  React.useEffect(() => {
+    if (!gallery) return;
+    const nextIndex = Math.min(Math.max(gallery.index || 0, 0), Math.max(gallery.images.length - 1, 0));
+    setActiveIndex(nextIndex);
+    requestAnimationFrame(() => scrollRef.current?.scrollTo?.({ x: nextIndex * stageWidth, animated: false }));
+  }, [gallery?.title, gallery?.index, gallery?.images.length, stageWidth]);
+
+  if (!gallery || !images.length) return null;
+
+  const scrollToIndex = (index: number) => {
+    const nextIndex = Math.min(Math.max(index, 0), images.length - 1);
+    setActiveIndex(nextIndex);
+    scrollRef.current?.scrollTo?.({ x: nextIndex * stageWidth, animated: true });
+  };
+
+  return (
+    <Portal>
+      <View style={styles.productGalleryOverlay}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Закрыть просмотр изображения" style={styles.productGalleryBackdrop} onPress={onClose} />
+        <Surface mode="flat" style={[styles.productGalleryCard, { width: stageWidth }]}>
+          <View style={styles.productGalleryHeader}>
+            <View style={styles.productGalleryTitleWrap}>
+              <Text style={styles.productGalleryTitle} numberOfLines={1}>{gallery.title}</Text>
+              <Text style={styles.productGallerySubtitle} numberOfLines={1}>
+                {gallery.subtitle || `${activeIndex + 1} из ${images.length}`}
+              </Text>
+            </View>
+            <View style={styles.productGalleryHeaderActions}>
+              {images.length > 1 ? <Text style={styles.productGalleryCounter}>{activeIndex + 1}/{images.length}</Text> : null}
+              <Pressable accessibilityRole="button" accessibilityLabel="Закрыть" onPress={onClose} style={({ pressed }) => [styles.productGalleryCloseButton, pressed && styles.flatPressed]}>
+                <MaterialCommunityIcons name="close" size={22} color="#0F172A" />
+              </Pressable>
+            </View>
+          </View>
+          <ScrollView
+            ref={scrollRef}
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            scrollEventThrottle={16}
+            onMomentumScrollEnd={(event) => {
+              const nextIndex = Math.round(event.nativeEvent.contentOffset.x / stageWidth);
+              setActiveIndex(Math.min(Math.max(nextIndex, 0), images.length - 1));
+            }}
+            style={{ width: stageWidth }}
+          >
+            {images.map((image) => (
+              <ProductGallerySlide key={image.key} image={image} width={stageWidth} height={stageHeight} styles={styles} />
+            ))}
+          </ScrollView>
+          {images.length > 1 ? (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.productGalleryThumbs}>
+              {images.map((image, index) => (
+                <Pressable
+                  key={`thumb-${image.key}`}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Показать изображение ${index + 1}`}
+                  onPress={() => scrollToIndex(index)}
+                  style={({ pressed }) => [
+                    styles.productGalleryThumb,
+                    activeIndex === index && styles.productGalleryThumbActive,
+                    pressed && styles.flatPressed,
+                  ]}
+                >
+                  <ExpoImage source={{ uri: image.thumbUrl }} style={styles.productGalleryThumbImage} contentFit="contain" cachePolicy="memory-disk" />
+                </Pressable>
+              ))}
+            </ScrollView>
+          ) : null}
+        </Surface>
+      </View>
+    </Portal>
+  );
+}
+
+function ProductGallerySlide({
+  image,
+  width,
+  height,
+  styles,
+}: {
+  image: ProductGalleryImage;
+  width: number;
+  height: number;
+  styles: any;
+}) {
+  const [loading, setLoading] = React.useState(true);
+  const [failed, setFailed] = React.useState(false);
+
+  React.useEffect(() => {
+    setLoading(true);
+    setFailed(false);
+  }, [image.previewUrl]);
+
+  return (
+    <View style={[styles.productGallerySlide, { width, height }]}>
+      {!failed ? (
+        <ExpoImage
+          source={{ uri: image.previewUrl }}
+          style={styles.productGalleryImage}
+          contentFit="contain"
+          cachePolicy="memory-disk"
+          onLoadStart={() => setLoading(true)}
+          onLoadEnd={() => setLoading(false)}
+          onError={() => {
+            setFailed(true);
+            setLoading(false);
+          }}
+        />
+      ) : (
+        <View style={styles.productGalleryEmpty}>
+          <MaterialCommunityIcons name="image-broken-variant" size={42} color="#94A3B8" />
+          <Text style={styles.productGalleryEmptyText}>Изображение не загрузилось</Text>
+        </View>
+      )}
+      {loading && !failed ? (
+        <View pointerEvents="none" style={styles.productGalleryLoader}>
+          <ActivityIndicator size={28} color="#2563EB" />
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -4127,6 +4441,35 @@ const styles = StyleSheet.create({
   productPreviewImage: { width: 78, height: '100%', backgroundColor: '#F1F5F9' },
   productPreviewImageReadOnly: { backgroundColor: 'rgba(241, 245, 249, 0.5)', opacity: 0.72 },
   productImagePlaceholder: { alignItems: 'center', justifyContent: 'center' },
+  productImageFrame: { position: 'relative', overflow: 'hidden', alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF' },
+  productImageObject: { ...StyleSheet.absoluteFillObject },
+  productImagePlaceholderFill: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+  productImageLoadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(248, 250, 252, 0.74)',
+  },
+  productImagePressed: { opacity: 0.82 },
+  productGalleryOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 80, elevation: 80, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 14 },
+  productGalleryBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(15, 23, 42, 0.58)' },
+  productGalleryCard: { maxWidth: '100%', maxHeight: '88%', borderRadius: 18, borderWidth: 1, borderColor: 'rgba(226, 232, 240, 0.72)', backgroundColor: '#FFFFFF', overflow: 'hidden' },
+  productGalleryHeader: { minHeight: 58, paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#E2E8F0', flexDirection: 'row', alignItems: 'center', gap: 10 },
+  productGalleryTitleWrap: { flex: 1, minWidth: 0 },
+  productGalleryTitle: { color: '#0F172A', fontSize: 14, lineHeight: 18, fontWeight: '900' },
+  productGallerySubtitle: { marginTop: 2, color: '#64748B', fontSize: 11, lineHeight: 14, fontWeight: '800' },
+  productGalleryHeaderActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  productGalleryCounter: { minWidth: 38, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 999, backgroundColor: '#EFF6FF', color: '#2563EB', fontSize: 11, lineHeight: 14, fontWeight: '900', textAlign: 'center' },
+  productGalleryCloseButton: { width: 36, height: 36, borderRadius: 12, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center' },
+  productGallerySlide: { position: 'relative', backgroundColor: '#F8FAFC', alignItems: 'center', justifyContent: 'center' },
+  productGalleryImage: { ...StyleSheet.absoluteFillObject },
+  productGalleryLoader: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(248, 250, 252, 0.72)' },
+  productGalleryEmpty: { alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 18 },
+  productGalleryEmptyText: { color: '#64748B', fontSize: 12, lineHeight: 16, fontWeight: '800', textAlign: 'center' },
+  productGalleryThumbs: { paddingHorizontal: 10, paddingVertical: 10, gap: 8, borderTopWidth: 1, borderTopColor: '#E2E8F0' },
+  productGalleryThumb: { width: 54, height: 54, borderRadius: 10, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#F8FAFC', overflow: 'hidden' },
+  productGalleryThumbActive: { borderColor: '#2563EB', borderWidth: 2 },
+  productGalleryThumbImage: { width: '100%', height: '100%' },
   productPreviewBody: { flex: 1, minWidth: 0, justifyContent: 'center', paddingLeft: 10, paddingRight: 10, paddingVertical: 8, gap: 4 },
   productPreviewTitleRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
   productPreviewTitle: { color: '#0F172A', fontSize: 13, fontWeight: '900', lineHeight: 16, paddingRight: 28 },
@@ -4342,6 +4685,8 @@ const styles = StyleSheet.create({
   productStockToggleActive: { borderColor: '#86EFAC', backgroundColor: '#F0FDF4' },
   pickerListContent: { paddingBottom: 20, flexGrow: 1 },
   pickerFlatRow: { minHeight: 54, borderBottomWidth: 1, borderBottomColor: '#E2E8F0', backgroundColor: '#FFFFFF', paddingLeft: 10, paddingRight: 8, paddingVertical: 6, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  productPickerThumb: { width: 42, height: 42, borderRadius: 8, borderWidth: 1, borderColor: '#DBEAFE', backgroundColor: '#F8FAFC' },
+  productPickerThumbDisabled: { opacity: 0.55 },
   pickerFlatTextWrap: { flex: 1, minWidth: 0 },
   pickerFlatTitle: { color: '#0F172A', fontSize: 12.5, fontWeight: '900', lineHeight: 15 },
   pickerFlatMeta: { marginTop: 1, color: '#64748B', fontSize: 10.5, fontWeight: '800', lineHeight: 12.5 },

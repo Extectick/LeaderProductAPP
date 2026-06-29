@@ -154,7 +154,18 @@ export type ClientOrderSettings = {
 };
 
 export type ClientOrderItem = {
-  product: { guid: string; name: string; code?: string | null; article?: string | null; sku?: string | null; isWeight?: boolean | null };
+  product: {
+    guid: string;
+    name: string;
+    code?: string | null;
+    article?: string | null;
+    sku?: string | null;
+    isWeight?: boolean | null;
+    imageThumbUrl?: string | null;
+    imagePreviewUrl?: string | null;
+    imageHash?: string | null;
+    images?: ClientOrderProductImage[];
+  };
   package?: { guid?: string | null; name?: string | null; multiplier?: number | null } | null;
   unit?: { guid?: string | null; name?: string | null; symbol?: string | null } | null;
   quantity: number;
@@ -170,6 +181,15 @@ export type ClientOrderItem = {
   lineAmount?: number | null;
   comment?: string | null;
   stock?: { quantity?: number | null; reserved?: number | null; available?: number | null } | null;
+};
+
+export type ClientOrderProductImage = {
+  id: string;
+  fileGuid: string;
+  thumbUrl: string;
+  previewUrl: string;
+  isMain: boolean;
+  hash: string;
 };
 
 export type ClientOrder = {
@@ -275,6 +295,10 @@ export type ClientOrderProduct = {
   stock?: { quantity?: number | null; reserved?: number | null; available?: number | null } | null;
   priceMatch?: any;
   priceError?: string | null;
+  imageThumbUrl?: string | null;
+  imagePreviewUrl?: string | null;
+  imageHash?: string | null;
+  images?: ClientOrderProductImage[];
 };
 
 function buildQuery(params: Record<string, string | number | boolean | undefined | null>) {

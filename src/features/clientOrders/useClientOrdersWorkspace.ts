@@ -1679,6 +1679,10 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         baseUnit: product.baseUnit ?? item.baseUnit ?? null,
         stock: product.stock ?? item.stock ?? null,
         packages: hasProductPackages ? packages : item.packages,
+        imageThumbUrl: product.imageThumbUrl ?? item.imageThumbUrl ?? null,
+        imagePreviewUrl: product.imagePreviewUrl ?? item.imagePreviewUrl ?? null,
+        imageHash: product.imageHash ?? item.imageHash ?? null,
+        images: product.images ?? item.images ?? [],
       });
     } catch {
       const isManualPrice = hasManualPrice(item);
@@ -1727,6 +1731,10 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
             baseUnit: product.baseUnit ?? item.baseUnit ?? null,
             stock: product.stock ?? null,
             packages: hasProductPackages ? packages : item.packages,
+            imageThumbUrl: product.imageThumbUrl ?? item.imageThumbUrl ?? null,
+            imagePreviewUrl: product.imagePreviewUrl ?? item.imagePreviewUrl ?? null,
+            imageHash: product.imageHash ?? item.imageHash ?? null,
+            images: product.images ?? item.images ?? [],
           };
         }),
       }));
