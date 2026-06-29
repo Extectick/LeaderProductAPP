@@ -430,6 +430,11 @@ function NativePickerBottomSheet({
       onClose();
     }
   }, [onClose]);
+  const handleAnimate = React.useCallback((_fromIndex: number, toIndex: number) => {
+    if (toIndex < 0) {
+      requestClose();
+    }
+  }, [requestClose]);
 
   const renderBackdrop = React.useCallback(
     (props: any) => (
@@ -537,6 +542,7 @@ function NativePickerBottomSheet({
       overDragResistanceFactor={2.2}
       backdropComponent={renderBackdrop}
       onDismiss={handleDismiss}
+      onAnimate={handleAnimate}
       containerStyle={containerStyle}
       backgroundStyle={ui.pickerBottomSheetNativeBackground}
       handleComponent={renderHandle}

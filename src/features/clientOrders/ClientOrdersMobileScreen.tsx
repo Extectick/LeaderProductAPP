@@ -44,7 +44,7 @@ import {
 } from './lib/clientOrdersUi';
 import { hasMorePage } from './lib/clientOrdersPaging';
 import { useClientOrdersWorkspace } from './hooks/useClientOrdersWorkspace';
-import { getClientOrderReferenceDetails } from '@/utils/clientOrdersService';
+import { getClientOrderProductsBatch, getClientOrderReferenceDetails } from '@/utils/clientOrdersService';
 import type { ClientOrder, ClientOrderCounterpartyOption, ClientOrderOrganization, ClientOrderPriceTypeOption, ClientOrderProduct, ClientOrderReferenceDetails, ClientOrderReferenceKind, ClientOrderWarehouseOption } from '@/utils/clientOrdersService';
 import { useServerStatus } from '@/src/shared/network/useServerStatus';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -197,6 +197,26 @@ function productPickerMeta(item: any, context?: { hasPriceType?: boolean; hasWar
 }
 function getDraftItemImageUri(item: any) {
   return getProductGalleryImages(item)[0]?.thumbUrl || null;
+}
+function hasProductImage(item: any) {
+  return getProductGalleryImages(item).length > 0;
+}
+function productImagePatchFromSource(source?: Partial<ClientOrderProduct> | null) {
+  if (!source || !hasProductImage(source)) return null;
+  return {
+    imageThumbUrl: source.imageThumbUrl ?? null,
+    imagePreviewUrl: source.imagePreviewUrl ?? null,
+    imageHash: source.imageHash ?? null,
+    images: source.images ?? [],
+  };
+}
+function mergeProductImageData<T extends Record<string, any>>(target: T, source?: Partial<ClientOrderProduct> | null): T {
+  const patch = productImagePatchFromSource(source);
+  if (!patch) return target;
+  return {
+    ...target,
+    ...patch,
+  };
 }
 function getProductGalleryImages(item: any): ProductGalleryImage[] {
   const result: ProductGalleryImage[] = [];
@@ -394,9 +414,9 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     return [selectedItem, ...pickerItems.filter((item) => item?.guid !== selectedPickerGuid)];
   }, [pickerItems, selectedPickerGuid]);
   const editorKeyboardPadding = Math.min(460, Math.max(320, Math.round(height * 0.42)));
-  const activeOrderFilterCount = countActiveOrderFilters(workspace.filters);
-  const showEmptyOrdersLoading = workspace.loadingOrders && !workspace.orders.length;
-  const showInitialOrdersSkeleton = showEmptyOrdersLoading && activeOrderFilterCount === 0;
+  const showInitialOrdersSkeleton = workspace.loadingOrders && !workspace.ordersInitialLoadDone && !workspace.orders.length;
+  const showEmptyOrdersLoading = workspace.loadingOrders && workspace.ordersInitialLoadDone && !workspace.orders.length;
+  const showOrdersInlineLoading = workspace.loadingOrders && workspace.ordersInitialLoadDone && workspace.orders.length > 0;
   const ordersEntranceStyle = React.useMemo(
     () => ({
       opacity: ordersEntrance,
@@ -729,7 +749,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
 
   React.useEffect(() => {
     if (!pickerKind) return;
-    const timeout = setTimeout(() => void loadPickerPage(pickerKind, pickerSearch, 0, false), pickerSearch ? 250 : 0);
+    const timeout = setTimeout(() => void loadPickerPage(pickerKind, pickerSearch, 0, false), pickerSearch ? 450 : 0);
     return () => clearTimeout(timeout);
   }, [loadPickerPage, pickerKind, pickerSearch]);
   React.useEffect(() => {
@@ -888,7 +908,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   }, [scrollToLineItem]);
 
   const openProductEditorForProduct = React.useCallback((product: ClientOrderProduct) => {
-    if (workspace.readOnly) return;
+    if (workspace.readOnly || workspace.mutationLocked) return;
     const existingIndex = workspace.draft.items.findIndex((line: any) => line.productGuid === product.guid);
     const existingKey = existingIndex >= 0 ? workspace.draft.items[existingIndex]?.key : null;
     setSection('items');
@@ -915,7 +935,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     if (!pendingProductItem) return workspace;
     return {
       ...workspace,
-      readOnly: false,
+      readOnly: !!workspace.mutationLocked,
       setItemPatch: (lineKey: string, patch: Partial<DraftItem>) => {
         setPendingProductItem((prev) => {
           if (!prev || prev.key !== lineKey) return prev;
@@ -976,7 +996,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       } else {
         workspace.setHeaderPriceType(item);
       }
-    } else if (selectedKind === 'product' && !workspace.readOnly) {
+    } else if (selectedKind === 'product' && !workspace.readOnly && !workspace.mutationLocked) {
       closePicker();
       openProductEditorForProduct(item as ClientOrderProduct);
     }
@@ -1166,7 +1186,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   }, [saveDraftFromMenu, submitFromMenu, workspace]);
 
   const confirmClearItems = React.useCallback(() => {
-    if (workspace.readOnly) return;
+    if (workspace.readOnly || workspace.mutationLocked) return;
     setConfirmDialog({
       title: 'Удалить все товары?',
       message: '',
@@ -1174,9 +1194,9 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       destructive: true,
       onConfirm: workspace.clearItems,
     });
-  }, [workspace.clearItems, workspace.readOnly]);
+  }, [workspace.clearItems, workspace.mutationLocked, workspace.readOnly]);
   const confirmResetHeaderPriceType = React.useCallback(() => {
-    if (workspace.readOnly) return;
+    if (workspace.readOnly || workspace.mutationLocked) return;
     setConfirmDialog({
       title: 'Сбросить вид цены?',
       message: '',
@@ -1217,7 +1237,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     setItemsSearchError(null);
     const loadingTimer = setTimeout(() => {
       if (itemsSearchRequestIdRef.current === requestId) setItemsSearchLoading(true);
-    }, 120);
+    }, 180);
     const requestTimer = setTimeout(() => {
       void workspace.searchProducts({
         search,
@@ -1245,7 +1265,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       }).finally(() => {
         if (itemsSearchRequestIdRef.current === requestId) setItemsSearchLoading(false);
       });
-    }, 260);
+    }, 450);
     return () => {
       clearTimeout(loadingTimer);
       clearTimeout(requestTimer);
@@ -1313,6 +1333,69 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     workspace.draft.warehouseGuid,
     workspace.searchProducts,
   ]);
+  const productImageRefreshCandidates = React.useMemo(() => {
+    const byGuid = new Map<string, any>();
+    const addCandidate = (item: any, guid?: string | null) => {
+      const productGuid = guid || item?.guid || item?.productGuid || null;
+      if (!productGuid || hasProductImage(item) || byGuid.has(productGuid)) return;
+      byGuid.set(productGuid, item);
+    };
+    if (pickerKind === 'product') pickerItems.forEach((item) => addCandidate(item, item.guid));
+    itemsSearchResults.forEach((item) => addCandidate(item, item.guid));
+    if (pendingProductItem) addCandidate(pendingProductItem, pendingProductItem.productGuid);
+    workspace.draft.items.forEach((item: DraftItem) => addCandidate(item, item.productGuid));
+    return [...byGuid.keys()].slice(0, 18);
+  }, [itemsSearchResults, pendingProductItem, pickerItems, pickerKind, workspace.draft.items]);
+  const productImageRefreshSignature = productImageRefreshCandidates.join('|');
+  React.useEffect(() => {
+    if (!productImageRefreshCandidates.length || !workspace.draft.counterpartyGuid) return undefined;
+    let cancelled = false;
+    const refreshImages = async () => {
+      try {
+        const products = await getClientOrderProductsBatch({
+          productGuids: productImageRefreshCandidates,
+          organizationGuid: workspace.draft.organizationGuid || undefined,
+          counterpartyGuid: workspace.draft.counterpartyGuid,
+          agreementGuid: workspace.draft.agreementGuid || undefined,
+          warehouseGuid: workspace.draft.warehouseGuid || undefined,
+          priceTypeGuid: workspace.draft.priceTypeGuid || undefined,
+        });
+        if (cancelled) return;
+        const byGuid = new Map(products.map((product) => [product.guid, product]));
+        setPickerItems((prev) => (
+          pickerKind === 'product'
+            ? prev.map((item) => mergeProductImageData(item, byGuid.get(item.guid)))
+            : prev
+        ));
+        setItemsSearchResults((prev) => prev.map((item) => mergeProductImageData(item, byGuid.get(item.guid))));
+        setPendingProductItem((prev) => {
+          if (!prev) return prev;
+          return mergeProductImageData(prev, byGuid.get(prev.productGuid));
+        });
+        workspace.draft.items.forEach((item: DraftItem) => {
+          const patch = productImagePatchFromSource(byGuid.get(item.productGuid));
+          if (!patch) return;
+          workspace.setItemPatch(item.key, patch);
+        });
+      } catch {
+        // Image availability is opportunistic; product search must remain usable.
+      }
+    };
+    const timers = [700, 2400, 5200].map((delay) => setTimeout(() => void refreshImages(), delay));
+    return () => {
+      cancelled = true;
+      timers.forEach(clearTimeout);
+    };
+  }, [
+    productImageRefreshSignature,
+    workspace.draft.agreementGuid,
+    workspace.draft.counterpartyGuid,
+    workspace.draft.organizationGuid,
+    workspace.draft.priceTypeGuid,
+    workspace.draft.warehouseGuid,
+    workspace.setItemPatch,
+    pickerKind,
+  ]);
   const resetItemsSearch = React.useCallback(() => {
     itemsSearchRequestIdRef.current += 1;
     if (itemsSearchBlurTimerRef.current) {
@@ -1330,11 +1413,11 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     setItemsSearchOffset(0);
   }, []);
   const addProductFromItemsSearch = React.useCallback((product: ClientOrderProduct) => {
-    if (workspace.readOnly) return;
+    if (workspace.readOnly || workspace.mutationLocked) return;
     Keyboard.dismiss();
     resetItemsSearch();
     openProductEditorForProduct(product);
-  }, [openProductEditorForProduct, resetItemsSearch, workspace.readOnly]);
+  }, [openProductEditorForProduct, resetItemsSearch, workspace.mutationLocked, workspace.readOnly]);
   const editingItem = React.useMemo(() => workspace.draft.items.find((item) => item.key === editingItemKey) || null, [editingItemKey, workspace.draft.items]);
   const editingItemIndex = React.useMemo(() => editingItem ? workspace.draft.items.findIndex((item) => item.key === editingItem.key) : -1, [editingItem, workspace.draft.items]);
   React.useEffect(() => {
@@ -1368,15 +1451,15 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     if (nextSection === section) return;
     runDocumentHeaderTransition();
 
-    const currentHasToolbar = section === 'items' && !workspace.readOnly;
-    const nextHasToolbar = nextSection === 'items' && !workspace.readOnly;
+    const currentHasToolbar = section === 'items' && !workspace.readOnly && !workspace.mutationLocked;
+    const nextHasToolbar = nextSection === 'items' && !workspace.readOnly && !workspace.mutationLocked;
     if (currentHasToolbar !== nextHasToolbar && headerBottomOffset > 0) {
       const delta = nextHasToolbar ? DOCUMENT_ITEMS_TOOLBAR_HEIGHT_DELTA : -DOCUMENT_ITEMS_TOOLBAR_HEIGHT_DELTA;
       setHeaderBottomOffset(Math.max(topInset, headerBottomOffset + delta));
     }
 
     setSection(nextSection);
-  }, [headerBottomOffset, section, setHeaderBottomOffset, topInset, workspace.readOnly]);
+  }, [headerBottomOffset, section, setHeaderBottomOffset, topInset, workspace.mutationLocked, workspace.readOnly]);
   const documentHeaderSlot = React.useMemo(() => {
     if (mode !== 'editor') return null;
     return (
@@ -1546,20 +1629,23 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   );
   const discardConfirmState = React.useMemo<ConfirmDialogState>(() => {
     if (!discardConfirm.open) return null;
+    const queuedResubmit = !!workspace.selectedOrderQueued && !!workspace.dirty;
     return {
-      title: 'Несохраненные изменения',
-      message: '',
+      title: queuedResubmit ? 'Переотправить документ?' : 'Несохраненные изменения',
+      message: queuedResubmit
+        ? 'Если сохранить изменения, документ будет переотправлен и поставлен в конец очереди.'
+        : '',
       alternateLabel: 'Не сохранять',
-      confirmLabel: 'Сохранить',
+      confirmLabel: queuedResubmit ? 'Переотправить' : 'Сохранить',
       hideCancel: true,
       onAlternate: () => closeDiscardConfirm('discard'),
       onConfirm: () => closeDiscardConfirm('save'),
     };
-  }, [closeDiscardConfirm, discardConfirm.blockingMessage, discardConfirm.mode, discardConfirm.open]);
+  }, [closeDiscardConfirm, discardConfirm.blockingMessage, discardConfirm.mode, discardConfirm.open, workspace.dirty, workspace.selectedOrderQueued]);
 
   const editorTopPadding = Math.max(topInset, headerBottomOffset || 0);
   const pageTopPadding = mode === 'editor' ? editorTopPadding : Math.max(0, topInset - 18);
-  const showItemsSearchOverlay = mode === 'editor' && !workspace.readOnly && section === 'items' && !!itemsSearch.trim() && itemsSearchFocused;
+  const showItemsSearchOverlay = mode === 'editor' && !workspace.readOnly && !workspace.mutationLocked && section === 'items' && !!itemsSearch.trim() && itemsSearchFocused;
   const itemsSearchOverlayTop = Math.max(topInset + 96, headerBottomOffset + 6);
   const showDocumentOpenLoader = mode === 'editor' && (!!openingDocument || workspace.loadingDetail);
   const showDocumentDeleteOverlay = mode === 'editor' && deleteDocumentOverlayVisible;
@@ -1602,8 +1688,9 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
               <OrdersScreenSkeleton styles={styles} />
             ) : (
               <>
+                {showOrdersInlineLoading ? <OrdersInlineLoading styles={styles} /> : null}
                 {showEmptyOrdersLoading ? (
-                  <OrdersListSkeleton styles={styles} />
+                  <OrdersInlineLoading styles={styles} expanded />
                 ) : (
                   workspace.orders.map((order) => (
                     <OrderCard
@@ -1680,7 +1767,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         styles={styles}
         visible={showItemsSearchOverlay}
         topOffset={itemsSearchOverlayTop}
-        sideOffset={Math.max(12, ui.pageX + 6)}
+        sideOffset={Math.max(12, ui.pageX)}
         workspace={workspace}
         searchResults={itemsSearchResults}
         searchLoading={itemsSearchLoading}
@@ -1873,11 +1960,11 @@ function HeaderSection({
   const [commentHeight, setCommentHeight] = React.useState(58);
   const commentFocusedRef = React.useRef(false);
   const commentTargetRef = React.useRef<unknown>(null);
-  const readOnly = !!workspace.readOnly;
+  const readOnly = !!workspace.readOnly || !!workspace.mutationLocked;
   const missingOrderContext = !workspace.draft.organizationGuid || !workspace.draft.counterpartyGuid;
   return <View style={styles.cardStack}>
-    <FlatDocumentField label="Организация" value={workspace.selections.organization?.name || 'Выбрать'} icon="office-building-outline" onPress={() => openPicker('organization')} disabled={workspace.readOnly} onDetails={() => openDetails('organization', workspace.draft.organizationGuid)} />
-    <FlatDocumentField label="Контрагент" value={workspace.selections.counterparty?.name || 'Выбрать'} icon="account-outline" onPress={() => openPicker('counterparty')} disabled={workspace.readOnly} onDetails={() => openDetails('counterparty', workspace.draft.counterpartyGuid)} />
+    <FlatDocumentField label="Организация" value={workspace.selections.organization?.name || 'Выбрать'} icon="office-building-outline" onPress={() => openPicker('organization')} disabled={readOnly} onDetails={() => openDetails('organization', workspace.draft.organizationGuid)} />
+    <FlatDocumentField label="Контрагент" value={workspace.selections.counterparty?.name || 'Выбрать'} icon="account-outline" onPress={() => openPicker('counterparty')} disabled={readOnly} onDetails={() => openDetails('counterparty', workspace.draft.counterpartyGuid)} />
     <FlatDocumentField label="Соглашение" value={workspace.selections.agreement?.name || 'Выбрать'} icon="file-document-outline" onPress={() => openPicker('agreement')} disabled={readOnly || missingOrderContext} onDetails={() => openDetails('agreement', workspace.draft.agreementGuid)} />
     <FlatDocumentField label="Договор" value={workspace.selections.contract?.name || workspace.selections.contract?.number || 'Выбрать'} icon="file-sign" onPress={() => openPicker('contract')} disabled={readOnly || missingOrderContext} onDetails={() => openDetails('contract', workspace.draft.contractGuid)} />
     <FlatDocumentField
@@ -1894,7 +1981,7 @@ function HeaderSection({
     <FlatDateField
       label="Дата отгрузки"
       value={workspace.draft.deliveryDate || undefined}
-      disabled={workspace.readOnly}
+      disabled={readOnly}
       minDate={today}
       maxDate={maxDate}
       onChange={(iso) => workspace.patchDraft({ deliveryDate: iso })}
@@ -1907,7 +1994,7 @@ function HeaderSection({
       multiline
       scrollEnabled={false}
       dense
-      editable={!workspace.readOnly}
+      editable={!readOnly}
       onFocus={(event) => {
         commentFocusedRef.current = true;
         commentTargetRef.current = event.nativeEvent.target;
@@ -2109,12 +2196,12 @@ function DocumentActionsMenu({
       contentStyle={styles.mobileMenuPaper}
     >
       {!hideSave ? (
-        <Menu.Item leadingIcon="content-save-outline" title={workspace.saving ? 'Сохраняю...' : 'Сохранить'} onPress={saveDraftFromMenu} disabled={workspace.readOnly || workspace.saving || !workspace.validation.canSave} />
+        <Menu.Item leadingIcon="content-save-outline" title={workspace.saving ? 'Сохраняю...' : 'Сохранить'} onPress={saveDraftFromMenu} disabled={workspace.readOnly || workspace.mutationLocked || !workspace.validation.canSave} />
       ) : null}
-      <Menu.Item leadingIcon="cloud-upload-outline" title={workspace.submitting ? 'Отправляю...' : 'Отправить в 1С'} onPress={submitFromMenu} disabled={workspace.readOnly || workspace.submitting || !workspace.canSubmitOrder} />
-      <Menu.Item leadingIcon="content-copy" title={workspace.copying ? 'Копирую...' : 'Копировать'} onPress={copyFromMenu} disabled={workspace.copying || workspace.saving || workspace.submitting || (!workspace.draft.guid && !workspace.selectedGuid)} />
+      <Menu.Item leadingIcon="cloud-upload-outline" title={workspace.submitting ? 'Отправляю...' : 'Отправить в 1С'} onPress={submitFromMenu} disabled={workspace.readOnly || workspace.mutationLocked || !workspace.canSubmitOrder} />
+      <Menu.Item leadingIcon="content-copy" title={workspace.copying ? 'Копирую...' : 'Копировать'} onPress={copyFromMenu} disabled={workspace.mutationLocked || (!workspace.draft.guid && !workspace.selectedGuid)} />
       <Menu.Item leadingIcon="information-outline" title="Инспектор" onPress={() => { setActionsMenuOpen(false); setInspectorOpen(true); }} />
-      <Menu.Item leadingIcon={dangerIcon} title={dangerTitle} onPress={() => { setActionsMenuOpen(false); removeOrCancel(); }} />
+      <Menu.Item leadingIcon={dangerIcon} title={dangerTitle} disabled={workspace.mutationLocked} onPress={() => { setActionsMenuOpen(false); removeOrCancel(); }} />
     </Menu>
   );
 }
@@ -2162,19 +2249,12 @@ function DocumentHeaderSlot({
   openPicker: (kind: PickerKind, lineKey?: string) => void;
   onClearItems: () => void;
 }) {
-  const showQueueStateSkeleton = !!workspace.selectedOrderQueued && !!workspace.refreshingQueueState;
   return (
     <View style={styles.documentHeaderSlot}>
       <View style={styles.documentHeaderDocumentRow}>
-        <View style={[styles.documentStatusPill, showQueueStateSkeleton && styles.documentStatusPillSkeleton]}>
-          {showQueueStateSkeleton ? (
-            <View style={styles.documentStatusSkeletonBar} />
-          ) : (
-            <>
-              <MaterialCommunityIcons name="file-document-edit-outline" size={13} color="#2563EB" />
-              <Text style={styles.documentStatusText} numberOfLines={1}>{documentStatusText}</Text>
-            </>
-          )}
+        <View style={styles.documentStatusPill}>
+          <MaterialCommunityIcons name="file-document-edit-outline" size={13} color="#2563EB" />
+          <Text style={styles.documentStatusText} numberOfLines={1}>{documentStatusText}</Text>
         </View>
         <Text style={styles.documentTitle} numberOfLines={1}>{documentNumber}</Text>
         <View style={styles.documentSavePill}>
@@ -2204,7 +2284,7 @@ function DocumentHeaderSlot({
           </View>
         </Pressable>
       </View>
-      {section === 'items' && !workspace.readOnly ? (
+      {section === 'items' && !workspace.readOnly && !workspace.mutationLocked ? (
         <>
           <View style={styles.documentHeaderDivider} />
           <ItemsToolbar
@@ -2340,9 +2420,7 @@ function ItemsToolbar({
                 onPress={() => onSelectSearchResult(product)}
                 style={({ pressed }) => [styles.itemsSearchResultRow, disabled && styles.disabled, pressed && styles.flatPressed]}
               >
-                <View style={styles.itemsSearchResultIcon}>
-                  <MaterialCommunityIcons name={disabled ? 'check-circle-outline' : 'plus-circle-outline'} size={18} color={disabled ? '#16A34A' : '#2563EB'} />
-                </View>
+                <InlineProductSearchThumb styles={styles} item={product} selected={disabled} />
                 <View style={styles.itemsSearchResultTextWrap}>
                   <Text style={styles.itemsSearchResultTitle} numberOfLines={1}>{product.name || getPickerItemTitle(product)}</Text>
                   <Text style={styles.itemsSearchResultMeta} numberOfLines={1}>
@@ -2429,9 +2507,7 @@ function ItemsSearchResultsOverlay({
                   onPress={() => onSelectSearchResult(product)}
                   style={({ pressed }) => [styles.itemsSearchResultRow, disabled && styles.disabled, pressed && styles.flatPressed]}
                 >
-                  <View style={styles.itemsSearchResultIcon}>
-                    <MaterialCommunityIcons name={disabled ? 'check-circle-outline' : 'plus-circle-outline'} size={18} color={disabled ? '#16A34A' : '#2563EB'} />
-                  </View>
+                  <InlineProductSearchThumb styles={styles} item={product} selected={disabled} />
                   <View style={styles.itemsSearchResultTextWrap}>
                     <Text style={styles.itemsSearchResultTitle} numberOfLines={1}>{product.name || getPickerItemTitle(product)}</Text>
                     <Text style={styles.itemsSearchResultMeta} numberOfLines={1}>
@@ -2453,6 +2529,30 @@ function ItemsSearchResultsOverlay({
         </View>
       </View>
     </Portal>
+  );
+}
+
+function InlineProductSearchThumb({
+  styles,
+  item,
+  selected,
+}: {
+  styles: any;
+  item: ClientOrderProduct;
+  selected: boolean;
+}) {
+  return (
+    <View style={styles.itemsSearchResultThumbWrap}>
+      <ProductThumb
+        item={item}
+        style={styles.itemsSearchResultThumb}
+        iconSize={18}
+        iconColor="#2563EB"
+      />
+      <View style={[styles.itemsSearchResultThumbBadge, selected ? styles.itemsSearchResultThumbBadgeSelected : styles.itemsSearchResultThumbBadgeAdd]}>
+        <MaterialCommunityIcons name={selected ? 'check' : 'plus'} size={10} color="#FFFFFF" />
+      </View>
+    </View>
   );
 }
 
@@ -2604,11 +2704,11 @@ function ItemsSection({
             />
           </View>
         ))}
-        {!workspace.readOnly ? <AddProductListCard onPress={onAddItem} /> : null}
+        {!workspace.readOnly && !workspace.mutationLocked ? <AddProductListCard onPress={onAddItem} /> : null}
       </View>
     ) : (
       <View style={[styles.lineList, { paddingBottom: ui.itemsBottomInset }]}>
-        {!workspace.readOnly ? <AddProductListCard onPress={onAddItem} /> : null}
+        {!workspace.readOnly && !workspace.mutationLocked ? <AddProductListCard onPress={onAddItem} /> : null}
       </View>
     )}
   </View>;
@@ -2647,7 +2747,7 @@ function LineItemCard({
   const hasWarnings = lineWarnings.length > 0;
   const issueText = [...lineMessages, ...lineWarnings][0] || '';
   const manualPrice = hasManualPrice(item);
-  const readOnly = !!workspace.readOnly;
+  const readOnly = !!workspace.readOnly || !!workspace.mutationLocked;
   return (
     <Pressable accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.productPreviewCard, (hasErrors || hasWarnings) && styles.productPreviewCardInvalid, issueText && styles.productPreviewCardWithIssue, readOnly && styles.productPreviewCardReadOnly, pressed && styles.flatPressed]}>
       <View style={[styles.productPreviewMedia, readOnly && styles.productPreviewMediaReadOnly]}>
@@ -2870,9 +2970,18 @@ function ProductLineEditorSheet({
   const [keyboardVisible, setKeyboardVisible] = React.useState(false);
   const priceInputRef = React.useRef<any>(null);
   const currentDisplayedPrice = getDisplayedUnitPriceValue(displayedItem);
+  const displayedItemKey = displayedItem?.key || displayedItem?.productGuid || '';
+  const previousDisplayedItemKeyRef = React.useRef(displayedItemKey);
+  const visibleRef = React.useRef(false);
   React.useEffect(() => {
-    if (visible) setScrollOffset(0);
-  }, [visible]);
+    if (visible && !visibleRef.current) {
+      setScrollOffset(0);
+      previousDisplayedItemKeyRef.current = displayedItemKey;
+      setPriceFocused(false);
+      setPriceInputValue(currentDisplayedPrice);
+    }
+    visibleRef.current = visible;
+  }, [currentDisplayedPrice, displayedItemKey, visible]);
   React.useEffect(() => {
     if (!visible) {
       setKeyboardVisible(false);
@@ -2888,16 +2997,26 @@ function ProductLineEditorSheet({
   React.useEffect(() => {
     if (!priceFocused) setPriceInputValue(currentDisplayedPrice);
   }, [currentDisplayedPrice, priceFocused]);
+  React.useEffect(() => {
+    if (!visible) return;
+    if (previousDisplayedItemKeyRef.current === displayedItemKey) return;
+    previousDisplayedItemKeyRef.current = displayedItemKey;
+    setPriceFocused(false);
+    setPriceInputValue(currentDisplayedPrice);
+  }, [currentDisplayedPrice, displayedItemKey, visible]);
 
   if (!displayedItem) return null;
 
-  const readOnly = !!workspace.readOnly;
+  const readOnly = !!workspace.readOnly || !!workspace.mutationLocked;
   const qtyValid = allowZeroQuantity && !hasPositiveQuantity(displayedItem)
     ? true
     : isValidQuantityValue(displayedItem);
   const currentManualPrice = displayedItem.manualPrice || '';
   const priceValid = !currentManualPrice || isValidManualPriceValue(currentManualPrice);
   const displayedPrice = currentDisplayedPrice;
+  const priceInputDisplayValue = priceFocused && previousDisplayedItemKeyRef.current === displayedItemKey
+    ? priceInputValue
+    : displayedPrice;
   const lineTotal = formatMoney(
     computeLineTotal(displayedItem, workspace.draft.generalDiscountPercent),
     displayedItem.currency || workspace.draft.currency
@@ -3022,7 +3141,7 @@ function ProductLineEditorSheet({
             <View style={[styles.productEditorPriceBox, !priceValid && styles.productEditorPriceBoxInvalid, readOnly && styles.productEditorReadOnlySurface]}>
               <SheetTextInput
                 ref={priceInputRef}
-                value={priceFocused ? priceInputValue : displayedPrice}
+                value={priceInputDisplayValue}
                 placeholder="0"
                 placeholderTextColor="#94A3B8"
                 keyboardType="decimal-pad"
@@ -3513,6 +3632,14 @@ function OrdersListSkeleton({ styles }: { styles: any }) {
   );
 }
 
+function OrdersInlineLoading({ styles, expanded = false }: { styles: any; expanded?: boolean }) {
+  return (
+    <View style={[styles.ordersInlineLoading, expanded && styles.ordersInlineLoadingExpanded]}>
+      <ActivityIndicator size="small" color="#2563EB" />
+    </View>
+  );
+}
+
 function DocumentOpenLoader({ styles, label }: { styles: any; label: string }) {
   return (
     <View style={styles.documentOpenLoader}>
@@ -3706,7 +3833,23 @@ function OrdersToolbar({
   onCreate: () => void;
 }) {
   const filters = workspace.filters;
+  const setFilters = workspace.setFilters;
   const activeFilters = countActiveOrderFilters(filters);
+  const [searchDraft, setSearchDraft] = React.useState(filters.search);
+
+  React.useEffect(() => {
+    setSearchDraft(filters.search);
+  }, [filters.search]);
+
+  React.useEffect(() => {
+    if (searchDraft === filters.search) return undefined;
+    const timer = setTimeout(() => {
+      setFilters((prev: any) => (
+        prev.search === searchDraft ? prev : { ...prev, search: searchDraft }
+      ));
+    }, 520);
+    return () => clearTimeout(timer);
+  }, [filters.search, searchDraft, setFilters]);
 
   return (
     <Surface mode="flat" style={styles.ordersToolbar}>
@@ -3714,8 +3857,8 @@ function OrdersToolbar({
         <CompactSearchbar
           style={styles.ordersSearchbar}
           inputStyle={styles.ordersSearchbarInput}
-          value={filters.search}
-          onChangeText={(value) => workspace.setFilters((prev: any) => ({ ...prev, search: value }))}
+          value={searchDraft}
+          onChangeText={setSearchDraft}
           placeholder="Поиск по номеру или клиенту"
         />
         <Pressable
@@ -4321,6 +4464,8 @@ const styles = StyleSheet.create({
   ordersFilterBadge: { position: 'absolute', top: -5, right: -5, minWidth: 18, height: 18, borderRadius: 999, paddingHorizontal: 4, backgroundColor: '#2563EB', borderWidth: 2, borderColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' },
   ordersFilterBadgeText: { color: '#FFFFFF', fontSize: 9, lineHeight: 11, fontWeight: '900' },
   ordersAppendLoading: { minHeight: 42, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' },
+  ordersInlineLoading: { minHeight: 34, alignItems: 'center', justifyContent: 'center' },
+  ordersInlineLoadingExpanded: { minHeight: 82 },
   ordersAppendRetry: { minHeight: 48, borderRadius: 12, borderWidth: 1, borderColor: '#BFDBFE', backgroundColor: '#F8FBFF', paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 9 },
   ordersAppendRetryTextWrap: { flex: 1, minWidth: 0 },
   ordersAppendRetryTitle: { color: '#1E3A8A', fontSize: 12.5, lineHeight: 15, fontWeight: '900', includeFontPadding: false },
@@ -4655,6 +4800,11 @@ const styles = StyleSheet.create({
   itemsSearchErrorText: { paddingHorizontal: 8, paddingVertical: 8, color: '#B91C1C', fontSize: 11.5, fontWeight: '800' },
   itemsSearchResultRow: { minHeight: 42, paddingHorizontal: 8, paddingVertical: 5, borderTopWidth: 1, borderTopColor: '#EEF2F7', flexDirection: 'row', alignItems: 'center', gap: 8 },
   itemsSearchResultIcon: { width: 22, height: 22, alignItems: 'center', justifyContent: 'center' },
+  itemsSearchResultThumbWrap: { width: 34, height: 34, flexShrink: 0, position: 'relative' },
+  itemsSearchResultThumb: { width: 34, height: 34, borderRadius: 8, borderWidth: 1, borderColor: '#DBEAFE', backgroundColor: '#F8FAFC' },
+  itemsSearchResultThumbBadge: { position: 'absolute', right: -3, bottom: -3, width: 15, height: 15, borderRadius: 999, borderWidth: 1.5, borderColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' },
+  itemsSearchResultThumbBadgeAdd: { backgroundColor: '#2563EB' },
+  itemsSearchResultThumbBadgeSelected: { backgroundColor: '#16A34A' },
   itemsSearchResultTextWrap: { flex: 1, minWidth: 0 },
   itemsSearchResultTitle: { color: '#0F172A', fontSize: 12, fontWeight: '900', lineHeight: 15 },
   itemsSearchResultMeta: { marginTop: 1, color: '#64748B', fontSize: 10.5, fontWeight: '700', lineHeight: 13 },
@@ -4713,10 +4863,10 @@ const styles = StyleSheet.create({
   confirmDialogTitle: { color: '#0F172A', fontSize: 22, lineHeight: 27, fontWeight: '900', textAlign: 'center', paddingTop: 6, paddingHorizontal: 4 },
   confirmDialogMessage: { color: '#475569', fontSize: 14, lineHeight: 20, textAlign: 'center', fontWeight: '700' },
   confirmDialogActions: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingTop: 2, flexWrap: 'wrap' },
-  confirmDialogTextButton: { flex: 1, borderRadius: 14, borderColor: '#CBD5E1', minWidth: 128 },
-  confirmDialogPrimaryButton: { flex: 1, borderRadius: 14, minWidth: 128 },
-  confirmDialogButtonContent: { minHeight: 46, paddingHorizontal: 12 },
-  confirmDialogButtonLabel: { marginVertical: 0, fontSize: 14, fontWeight: '900' },
+  confirmDialogTextButton: { flex: 1, borderRadius: 14, borderColor: '#CBD5E1', minWidth: 140 },
+  confirmDialogPrimaryButton: { flex: 1, borderRadius: 14, minWidth: 140 },
+  confirmDialogButtonContent: { minHeight: 46, paddingHorizontal: 8 },
+  confirmDialogButtonLabel: { marginVertical: 0, fontSize: 13, fontWeight: '900' },
   modalBackdropPaper: { flex: 1, margin: 0, justifyContent: 'flex-end' },
   modalBackdropPaperFull: { justifyContent: 'flex-end' },
   modalSheetPaper: { maxHeight: '86%', borderTopLeftRadius: 24, borderTopRightRadius: 24, backgroundColor: '#FFFFFF', overflow: 'hidden' },

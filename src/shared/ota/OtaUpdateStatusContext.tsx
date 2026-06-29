@@ -3,7 +3,7 @@ import { AppState, type AppStateStatus, Platform } from 'react-native';
 import * as Application from 'expo-application';
 import Constants from 'expo-constants';
 import * as Updates from 'expo-updates';
-import { getInstallId, logUpdateEvent } from '@/utils/updateService';
+import { checkForUpdate, getInstallId, logUpdateEvent } from '@/utils/updateService';
 
 const RESUME_BACKGROUND_MIN_MS = 60_000;
 const RESUME_CHECK_INTERVAL_MS = 5 * 60_000;
@@ -13,6 +13,7 @@ const OTA_CHECK_TIMEOUT_MS = 15_000;
 const OTA_FETCH_TIMEOUT_MS = 90_000;
 const OTA_ERROR_BACKOFF_BASE_MS = 2 * 60_000;
 const OTA_ERROR_BACKOFF_MAX_MS = 15 * 60_000;
+const UPDATE_CHANNEL = process.env.EXPO_PUBLIC_UPDATE_CHANNEL || 'prod';
 
 export type OtaUpdatePhase =
   | 'idle'
@@ -143,6 +144,7 @@ export function OtaUpdateStatusProvider({
   const [targetVersionLabel, setTargetVersionLabel] = React.useState<string | null>(null);
   const [targetUpdateId, setTargetUpdateId] = React.useState<string | null>(null);
   const [failureCount, setFailureCount] = React.useState(0);
+  const [blockedByBinaryUpdate, setBlockedByBinaryUpdate] = React.useState(false);
   const mountedRef = React.useRef(true);
   const checkingRef = React.useRef(false);
   const latestUpdatesStateRef = React.useRef(updatesState);
@@ -151,6 +153,7 @@ export function OtaUpdateStatusProvider({
   const failureCountRef = React.useRef(0);
   const nextAutoCheckAtRef = React.useRef(0);
   const otaReadyLoggedForRef = React.useRef<string | null>(null);
+  const blockedByBinaryUpdateRef = React.useRef(false);
 
   React.useEffect(() => {
     latestUpdatesStateRef.current = updatesState;
@@ -191,10 +194,47 @@ export function OtaUpdateStatusProvider({
     [updatesEnabled, versionCode, versionName]
   );
 
+  const markBlockedByBinaryUpdate = React.useCallback((blocked: boolean) => {
+    blockedByBinaryUpdateRef.current = blocked;
+    setBlockedByBinaryUpdate(blocked);
+    if (!blocked) return;
+    setPhase('idle');
+    setManualProgress(null);
+    setTargetVersionLabel(null);
+    setTargetUpdateId(null);
+    setErrorMessage(null);
+  }, []);
+
+  const checkBinaryUpdateBeforeOta = React.useCallback(async () => {
+    if (!versionCode) return false;
+    try {
+      const deviceId = await getInstallId();
+      const result = await checkForUpdate({
+        platform: Platform.OS as 'android' | 'ios',
+        versionCode,
+        versionName,
+        deviceId,
+        channel: UPDATE_CHANNEL,
+      });
+      const available = Boolean(result.ok && result.data?.updateAvailable);
+      markBlockedByBinaryUpdate(available);
+      return available;
+    } catch {
+      return blockedByBinaryUpdateRef.current;
+    }
+  }, [markBlockedByBinaryUpdate, versionCode, versionName]);
+
   React.useEffect(() => {
     if (!updatesEnabled) {
       setPhase(Platform.OS === 'web' ? 'disabled' : 'idle');
       setManualProgress(null);
+      return;
+    }
+    if (blockedByBinaryUpdate) {
+      setPhase('idle');
+      setManualProgress(null);
+      setTargetVersionLabel(null);
+      setTargetUpdateId(null);
       return;
     }
     if (isDownloadedUpdateAlreadyRunning(updatesState)) {
@@ -229,6 +269,7 @@ export function OtaUpdateStatusProvider({
     });
   }, [
     enabled,
+    blockedByBinaryUpdate,
     updatesEnabled,
     updatesState.downloadedUpdate,
     updatesState.isChecking,
@@ -246,7 +287,7 @@ export function OtaUpdateStatusProvider({
 
   const requestCheck = React.useCallback(
     async (source = 'manual') => {
-      if (!updatesEnabled || checkingRef.current || phase === 'ready' || phase === 'restarting') {
+      if (!updatesEnabled || checkingRef.current || phase === 'restarting') {
         return false;
       }
 
@@ -264,6 +305,20 @@ export function OtaUpdateStatusProvider({
       setManualProgress(0.12);
 
       try {
+        const binaryUpdateAvailable = await checkBinaryUpdateBeforeOta();
+        if (binaryUpdateAvailable) {
+          failureCountRef.current = 0;
+          nextAutoCheckAtRef.current = 0;
+          setFailureCount(0);
+          return false;
+        }
+
+        if (phase === 'ready') {
+          setPhase('ready');
+          setManualProgress(1);
+          return true;
+        }
+
         if (hasPendingUpdate(latestUpdatesStateRef.current)) {
           if (!mountedRef.current) return true;
           setPhase('ready');
@@ -344,7 +399,7 @@ export function OtaUpdateStatusProvider({
         checkingRef.current = false;
       }
     },
-    [phase, updatesEnabled]
+    [checkBinaryUpdateBeforeOta, phase, updatesEnabled]
   );
 
   React.useEffect(() => {
@@ -392,6 +447,7 @@ export function OtaUpdateStatusProvider({
 
   const reloadUpdate = React.useCallback(async () => {
     if (!updatesEnabled) return;
+    if (blockedByBinaryUpdateRef.current) return;
     setPhase('restarting');
     setManualProgress(1);
     setErrorMessage(null);

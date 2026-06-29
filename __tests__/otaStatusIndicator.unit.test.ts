@@ -12,6 +12,7 @@ import {
 const mockCheckForUpdateAsync = jest.fn();
 const mockFetchUpdateAsync = jest.fn();
 const mockReloadAsync = jest.fn();
+const mockCheckBinaryUpdate = jest.fn();
 const mockLogUpdateEvent = jest.fn(async (_payload?: unknown) => undefined);
 const mockGetInstallId = jest.fn(async () => 'install-test');
 let mockUpdatesEnabled = true;
@@ -49,6 +50,7 @@ jest.mock('expo-constants', () => ({
 }));
 
 jest.mock('@/utils/updateService', () => ({
+  checkForUpdate: (payload: unknown) => mockCheckBinaryUpdate(payload),
   getInstallId: () => mockGetInstallId(),
   logUpdateEvent: (payload: unknown) => mockLogUpdateEvent(payload),
 }));
@@ -143,6 +145,8 @@ function resetMocks() {
   mockCheckForUpdateAsync.mockReset();
   mockFetchUpdateAsync.mockReset();
   mockReloadAsync.mockReset();
+  mockCheckBinaryUpdate.mockReset();
+  mockCheckBinaryUpdate.mockResolvedValue({ ok: true, data: { updateAvailable: false, mandatory: false } });
   mockGetInstallId.mockClear();
   mockLogUpdateEvent.mockClear();
   jest.mocked(requestAppUpdateCheck).mockClear();
@@ -194,6 +198,44 @@ describe('OTA status indicator', () => {
       await Promise.resolve();
     });
     expect(mockLogUpdateEvent).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'OTA_READY' }));
+  });
+
+  it('skips OTA download when a newer APK runtime is available', async () => {
+    mockCheckBinaryUpdate.mockResolvedValue({
+      ok: true,
+      data: {
+        updateAvailable: true,
+        mandatory: false,
+        latestVersionCode: 17,
+        latestVersionName: '0.1.18',
+      },
+    });
+    mockCheckForUpdateAsync.mockResolvedValue({ isAvailable: true, isRollBackToEmbedded: false });
+    mockFetchUpdateAsync.mockResolvedValue({ isNew: true, isRollBackToEmbedded: false });
+
+    let status: ReturnType<typeof useOtaUpdateStatus>;
+    function Harness() {
+      status = useOtaUpdateStatus();
+      return React.createElement(AppStatusIndicator);
+    }
+
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        React.createElement(OtaUpdateStatusProvider, { enabled: true }, React.createElement(Harness))
+      );
+    });
+
+    await act(async () => {
+      await status!.requestCheck('test');
+    });
+
+    expect(mockCheckBinaryUpdate).toHaveBeenCalledTimes(1);
+    expect(mockCheckForUpdateAsync).not.toHaveBeenCalled();
+    expect(mockFetchUpdateAsync).not.toHaveBeenCalled();
+    expect(status!.phase).toBe('idle');
+    expect(status!.readyToReload).toBe(false);
+    expect(findPressables(renderer!)[0].props.accessibilityLabel).toBe('Сервер доступен');
   });
 
   it('reloads only after the user confirms the ready update modal', async () => {

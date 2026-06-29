@@ -713,6 +713,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const [filters, setFilters] = React.useState<ClientOrdersFilters>(emptyFilters());
   const [filtersHydrated, setFiltersHydrated] = React.useState(false);
   const [ordersCacheHydrated, setOrdersCacheHydrated] = React.useState(false);
+  const [ordersInitialLoadDone, setOrdersInitialLoadDone] = React.useState(false);
   const [selectedGuid, setSelectedGuid] = React.useState<string | null>(null);
   const [selectedOrder, setSelectedOrder] = React.useState<ClientOrder | null>(null);
   const [draft, setDraft] = React.useState<DraftOrder>(() => emptyDraft());
@@ -754,11 +755,19 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const pricingRequestIdRef = React.useRef(0);
   const ordersAppendLoadingRef = React.useRef(false);
   const ordersNextOffsetRef = React.useRef(0);
+  const ordersInitialLoadDoneRef = React.useRef(false);
   const deviceDraftSyncingRef = React.useRef(false);
+
+  const markOrdersInitialLoadDone = React.useCallback(() => {
+    if (ordersInitialLoadDoneRef.current) return;
+    ordersInitialLoadDoneRef.current = true;
+    setOrdersInitialLoadDone(true);
+  }, []);
 
   const draftMode = !draft.guid;
   const filtersSignature = React.useMemo(() => ordersFilterSignature(filters), [filters]);
   const readOnly = !!selectedOrder?.readOnly || !!selectedOrder?.isPostedIn1c || selectedOrder?.status === 'CANCELLED';
+  const mutationLocked = saving || submitting || copying || cancelling || deletingDraft;
   const selectedOrderQueued = isQueuedClientOrder(selectedOrder);
   const baseValidation = React.useMemo(() => validateDraft(draft), [draft]);
   const validation = React.useMemo(() => {
@@ -847,6 +856,12 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
   React.useEffect(() => {
     let cancelled = false;
+    ordersInitialLoadDoneRef.current = false;
+    apiOrdersRef.current = [];
+    ordersNextOffsetRef.current = 0;
+    setOrders([]);
+    setOrdersInitialLoadDone(false);
+    setLoadingOrders(false);
     setFiltersHydrated(false);
     void readStoredFilters(filtersStorageKey).then((stored) => {
       if (cancelled) return;
@@ -872,19 +887,22 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         setOrders(cache.orders);
         ordersNextOffsetRef.current = Math.max(cache.nextOffset, cache.orders.length);
         setOrdersMeta(cache.meta);
+        markOrdersInitialLoadDone();
       } else {
-        apiOrdersRef.current = [];
-        setOrders([]);
         ordersNextOffsetRef.current = 0;
-        setOrdersMeta({ total: 0, limit: ORDERS_PAGE_SIZE, offset: 0, statusCounts: {} });
-        setLoadingOrders(true);
+        if (!ordersInitialLoadDoneRef.current && apiOrdersRef.current.length === 0) {
+          apiOrdersRef.current = [];
+          setOrders([]);
+          setOrdersMeta({ total: 0, limit: ORDERS_PAGE_SIZE, offset: 0, statusCounts: {} });
+          setLoadingOrders(true);
+        }
       }
       setOrdersCacheHydrated(true);
     });
     return () => {
       cancelled = true;
     };
-  }, [filtersHydrated, filtersSignature, ordersCacheStorageKey]);
+  }, [filtersHydrated, filtersSignature, markOrdersInitialLoadDone, ordersCacheStorageKey]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -1211,6 +1229,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         storedAt: new Date().toISOString(),
       });
       if (mode === 'reset') {
+        markOrdersInitialLoadDone();
         const nextSorted = sortClientOrdersForWorkspace(list);
         const latestDraft = nextSorted.find((item) => item.status === 'DRAFT') || null;
         setSelectedGuid((prev) => {
@@ -1234,6 +1253,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         setOrdersAppendError(message);
       } else if (!silent) {
         setError(message);
+        markOrdersInitialLoadDone();
       }
     } finally {
       if (mode === 'append') {
@@ -1244,7 +1264,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         setLoadingOrders(false);
       }
     }
-  }, [filters, filtersSignature, ordersCacheStorageKey]);
+  }, [filters, filtersSignature, markOrdersInitialLoadDone, ordersCacheStorageKey]);
 
   const refreshQueueState = React.useCallback(async () => {
     const requestId = ++queueStateRequestIdRef.current;
@@ -1351,9 +1371,15 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
   React.useEffect(() => {
     if (!filtersHydrated || !ordersCacheHydrated) return;
+    ordersRequestIdRef.current += 1;
+  }, [filtersSignature, filtersHydrated, ordersCacheHydrated]);
+
+  React.useEffect(() => {
+    if (!filtersHydrated || !ordersCacheHydrated) return;
+    const debounceMs = filters.search.trim() ? 650 : 120;
     const timer = setTimeout(() => {
       void loadOrders('reset');
-    }, filters.search ? 300 : 0);
+    }, debounceMs);
     return () => clearTimeout(timer);
   }, [filters, filtersHydrated, loadOrders, ordersCacheHydrated]);
 
@@ -1464,6 +1490,34 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     selections,
   ]);
 
+  const saveAndResubmitQueuedDraft = React.useCallback(async () => {
+    const saved = await saveDraft({ silent: true, reason: 'manual' });
+    if (!saved) return false;
+    if (!selectedOrderQueued) return true;
+    if ((saved as any).origin === 'device' || findDeviceDraftEntry(saved.guid)) return true;
+    try {
+      setSubmitting(true);
+      const order = await submitClientOrder(saved.guid, saved.revision);
+      applySavedOrderToList(order);
+      void loadOrders('reset');
+      setSelectedGuid(order.guid);
+      setSelectedOrder(order);
+      setDraft(normalizeDraftOrder(orderToDraft(order)));
+      setDocumentStarted(true);
+      setDirty(false);
+      setError(null);
+      return true;
+    } catch (e: any) {
+      const message = isNetworkUnavailableError(e)
+        ? 'Не удалось переотправить заказ: нет связи или сервер не ответил. Документ сохранен, повторите отправку позже.'
+        : userErrorMessage(e, 'Не удалось переотправить заказ.');
+      setError(message);
+      return false;
+    } finally {
+      setSubmitting(false);
+    }
+  }, [applySavedOrderToList, findDeviceDraftEntry, loadOrders, saveDraft, selectedOrderQueued]);
+
   React.useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     const beforeUnload = (event: BeforeUnloadEvent) => {
@@ -1497,7 +1551,11 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       });
     }
     if (decision === 'cancel') return false;
-    if (decision === 'save') return !!(await saveDraft({ reason: 'manual' }));
+    if (decision === 'save') {
+      return selectedOrderQueued
+        ? saveAndResubmitQueuedDraft()
+        : !!(await saveDraft({ reason: 'manual' }));
+    }
     if (selectedOrder) {
       setDraft(normalizeDraftOrder(orderToDraft(selectedOrder)));
       setSelections({
@@ -1514,7 +1572,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       resetDraftToBase();
     }
     return true;
-  }, [confirmDiscard, dirty, draft.guid, draftMode, resetDraftToBase, saveDraft, selectedOrder, validation.blockingMessage]);
+  }, [confirmDiscard, dirty, draft.guid, draftMode, resetDraftToBase, saveAndResubmitQueuedDraft, saveDraft, selectedOrder, selectedOrderQueued, validation.blockingMessage]);
 
   const selectOrder = React.useCallback(async (guid: string) => {
     if (guid === selectedGuid && selectedOrder?.guid === guid) return true;
@@ -1674,8 +1732,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         basePrice: isManualPrice ? item.basePrice ?? product.basePrice ?? null : product.basePrice ?? null,
         receiptPrice: product.receiptPrice ?? product.basePrice ?? item.receiptPrice ?? item.basePrice ?? null,
         currency: DEFAULT_ORDER_CURRENCY,
-        priceTypeGuid: isManualPrice ? item.priceTypeGuid ?? null : product.priceType?.guid ?? priceType?.guid ?? null,
-        priceTypeName: isManualPrice ? item.priceTypeName ?? null : product.priceType?.name ?? priceType?.name ?? null,
+        priceTypeGuid: isManualPrice ? item.priceTypeGuid ?? null : priceType?.guid ?? product.priceType?.guid ?? null,
+        priceTypeName: isManualPrice ? item.priceTypeName ?? null : priceType?.name ?? product.priceType?.name ?? null,
         baseUnit: product.baseUnit ?? item.baseUnit ?? null,
         stock: product.stock ?? item.stock ?? null,
         packages: hasProductPackages ? packages : item.packages,
@@ -1724,10 +1782,10 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
             currency: DEFAULT_ORDER_CURRENCY,
             priceTypeGuid: isManualPrice
               ? item.priceTypeGuid ?? null
-              : product.priceType?.guid ?? draft.priceTypeGuid ?? null,
+              : draft.priceTypeGuid ?? product.priceType?.guid ?? null,
             priceTypeName: isManualPrice
               ? item.priceTypeName ?? null
-              : product.priceType?.name ?? draft.priceTypeName ?? null,
+              : draft.priceTypeName ?? product.priceType?.name ?? null,
             baseUnit: product.baseUnit ?? item.baseUnit ?? null,
             stock: product.stock ?? null,
             packages: hasProductPackages ? packages : item.packages,
@@ -2181,6 +2239,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     selectedGuid,
     selectedOrder,
     selectedOrderQueued,
+    mutationLocked,
     unqueueOrder,
     restoreOrder,
     copyOrder,
@@ -2219,6 +2278,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     searchProducts: searchClientOrderProducts,
     searchPriceTypes: searchClientOrderPriceTypes,
     loadingOrders,
+    ordersInitialLoadDone,
     loadingMoreOrders,
     loadingDetail,
     cancelDetailLoading,

@@ -515,7 +515,7 @@ export function getDisplayedUnitPriceValue(item?: DraftItem | null) {
     ? normalizePriceForPayload(manualPrice)
     : item.basePrice ?? null;
   if (sourcePrice === null || sourcePrice === undefined || Number.isNaN(sourcePrice) || sourcePrice <= 0) {
-    return '';
+    return '0';
   }
   return priceInputString(sourcePrice * getPackageMultiplier(item));
 }
