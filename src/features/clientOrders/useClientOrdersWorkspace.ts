@@ -44,7 +44,7 @@ import {
   emptyDraft,
   getClientOrderItems,
   getClientOrderItemsCount,
-  getDraftPackagesForProduct,
+  mergeDraftPackagesForProduct,
   getOrderActivityAt,
   hasManualPrice,
   normalizePackageGuid,
@@ -331,6 +331,15 @@ function userErrorMessage(error: unknown, fallback: string) {
   return looksTechnical ? fallback : message.slice(0, 240);
 }
 
+function isRevisionConflictError(error: unknown) {
+  const record = error as { status?: number; message?: string } | null;
+  const message = error instanceof Error ? error.message : record?.message || '';
+  return (
+    record?.status === 409 ||
+    message.toLocaleLowerCase('ru').includes('версия заказа устарела')
+  );
+}
+
 function emptySelections(): DraftSelections {
   return {
     organization: null,
@@ -350,6 +359,17 @@ function buildDraftBase(settings: ClientOrderSettings | null) {
     priceTypeGuid: null,
     priceTypeName: null,
   };
+}
+
+function buildPricingContextSignature(draft: DraftOrder) {
+  if (!draft.organizationGuid || !draft.counterpartyGuid || !draft.items.length) return '';
+  return [
+    draft.organizationGuid,
+    draft.counterpartyGuid,
+    draft.agreementGuid || '',
+    draft.warehouseGuid || '',
+    draft.priceTypeGuid || '',
+  ].join('||');
 }
 
 function includesSearchToken(value: string | null | undefined, search: string) {
@@ -510,12 +530,13 @@ function isDeviceDraftSyncDue(entry: DeviceDraftEntry, nowMs = Date.now()) {
 }
 
 function isQueuedClientOrder(order?: Pick<ClientOrder, 'status' | 'syncState'> | null) {
-  return order?.status === 'QUEUED' || order?.syncState === 'QUEUED';
+  return order?.syncState === 'QUEUED' || order?.syncState === 'CANCEL_REQUESTED';
 }
 
 function mergeOrderListMetadata(current: ClientOrder, summary: ClientOrder): ClientOrder {
   return {
     ...current,
+    revision: Math.max(current.revision || 0, summary.revision || 0),
     appGuid: summary.appGuid ?? current.appGuid,
     documentGuid: summary.documentGuid ?? current.documentGuid,
     number1c: summary.number1c ?? current.number1c,
@@ -536,7 +557,10 @@ function mergeOrderListMetadata(current: ClientOrder, summary: ClientOrder): Cli
     lastExportError: summary.lastExportError ?? current.lastExportError,
     last1cError: summary.last1cError ?? current.last1cError,
     isPostedIn1c: summary.isPostedIn1c ?? current.isPostedIn1c,
+    hasRealization: summary.hasRealization ?? current.hasRealization,
+    realizationDetectedAt: summary.realizationDetectedAt ?? current.realizationDetectedAt,
     readOnly: summary.readOnly ?? current.readOnly,
+    readOnlyReason: summary.readOnlyReason ?? current.readOnlyReason,
   };
 }
 
@@ -610,6 +634,11 @@ function buildDeviceOrderFromDraft(args: {
       isManualPrice: manualPrice !== null,
       manualPrice,
       priceSource: item.priceSource ?? null,
+      isCancelled: item.isCancelled ?? false,
+      cancelReasonGuid: item.cancelReasonGuid ?? null,
+      cancelReasonName: item.cancelReasonName ?? null,
+      cancelReason: item.cancelReason ?? null,
+      cancelledAmount: item.cancelledAmount ?? null,
       priceType,
       discountPercent: item.discountPercent.trim() ? parseDraftNumber(item.discountPercent) : null,
       appliedDiscountPercent: item.discountPercent.trim()
@@ -677,7 +706,7 @@ function buildDeviceOrderFromDraft(args: {
       : draft.organizationGuid
         ? { guid: draft.organizationGuid, name: draft.organizationGuid, code: null, isActive: true }
         : null,
-    itemsCount: items.length,
+    itemsCount: items.filter((item) => !item.isCancelled).length,
     items,
     events: [],
     createdAt,
@@ -766,23 +795,71 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
   const draftMode = !draft.guid;
   const filtersSignature = React.useMemo(() => ordersFilterSignature(filters), [filters]);
-  const readOnly = !!selectedOrder?.readOnly || !!selectedOrder?.isPostedIn1c || selectedOrder?.status === 'CANCELLED';
+  const readOnly = !!selectedOrder?.readOnly || !!selectedOrder?.hasRealization || selectedOrder?.status === 'CANCELLED';
   const mutationLocked = saving || submitting || copying || cancelling || deletingDraft;
   const selectedOrderQueued = isQueuedClientOrder(selectedOrder);
+  const selectedOrderSynced = !!selectedOrder && (
+    selectedOrder.syncState === 'SYNCED' ||
+    selectedOrder.status === 'SENT_TO_1C' ||
+    selectedOrder.status === 'CONFIRMED'
+  );
   const baseValidation = React.useMemo(() => validateDraft(draft), [draft]);
   const validation = React.useMemo(() => {
+    let nextValidation = baseValidation;
+    const exportValidation = !dirty ? selectedOrder?.exportValidation : null;
+    if (exportValidation?.itemErrors?.length) {
+      const itemMessages = { ...nextValidation.itemMessages };
+      const lineKeyByGuid = new Map(draft.items.map((item) => [item.lineGuid, item.key]));
+      let hasServerItemErrors = false;
+
+      for (const itemError of exportValidation.itemErrors) {
+        if (!itemError.lineGuid) continue;
+        const key = lineKeyByGuid.get(itemError.lineGuid);
+        const message = itemError.message?.trim();
+        if (!key || !message) continue;
+        const currentMessages = itemMessages[key] ?? [];
+        if (!currentMessages.includes(message)) {
+          itemMessages[key] = [...currentMessages, message];
+        }
+        hasServerItemErrors = true;
+      }
+
+      if (hasServerItemErrors) {
+        nextValidation = {
+          ...nextValidation,
+          canSubmit: false,
+          itemMessages,
+          blockingMessage: nextValidation.blockingMessage || 'Исправьте ошибки по остаткам в строках заказа.',
+        };
+      }
+    } else if (exportValidation?.message) {
+      nextValidation = {
+        ...nextValidation,
+        canSubmit: false,
+        blockingMessage: nextValidation.blockingMessage || exportValidation.message,
+      };
+    }
+
     if (draftMode && settings?.deliveryDateIssue) {
       return {
-        ...baseValidation,
+        ...nextValidation,
         canSave: false,
         canAutosave: false,
         canSubmit: false,
         blockingMessage: settings.deliveryDateIssueMessage || 'Проверьте настройки даты отгрузки.',
       };
     }
-    return baseValidation;
-  }, [baseValidation, draftMode, settings?.deliveryDateIssue, settings?.deliveryDateIssueMessage]);
-  const canSubmitOrder = validation.canSubmit && (!selectedOrderQueued || dirty);
+    return nextValidation;
+  }, [
+    baseValidation,
+    dirty,
+    draft.items,
+    draftMode,
+    selectedOrder?.exportValidation,
+    settings?.deliveryDateIssue,
+    settings?.deliveryDateIssueMessage,
+  ]);
+  const canSubmitOrder = validation.canSubmit && (!selectedOrderQueued || dirty) && (!selectedOrderSynced || dirty);
   const localTotal = React.useMemo(() => computeDraftTotal(draft), [draft]);
   const visibleDeviceOrders = React.useMemo(
     () => deviceDraftEntries.map((entry) => entry.order).filter((order) => orderMatchesFilters(order, filters)),
@@ -795,9 +872,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const sortedOrders = React.useMemo(() => sortClientOrdersForWorkspace(mergedOrders), [mergedOrders]);
   const latestDraftOrder = React.useMemo(() => sortedOrders.find((item) => item.status === 'DRAFT') || null, [sortedOrders]);
   const hasQueuedOrders = React.useMemo(
-    () => sortedOrders.some((order) => order.status === 'QUEUED' || order.syncState === 'QUEUED') ||
-      selectedOrder?.status === 'QUEUED' ||
-      selectedOrder?.syncState === 'QUEUED',
+    () => sortedOrders.some(isQueuedClientOrder) || isQueuedClientOrder(selectedOrder),
     [selectedOrder?.status, selectedOrder?.syncState, sortedOrders]
   );
   const hasEditableDocument = documentStarted || !!draft.guid || !!selectedGuid || !!selectedOrder;
@@ -849,6 +924,14 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   React.useEffect(() => {
     dirtyRef.current = dirty;
   }, [dirty]);
+
+  React.useEffect(() => {
+    if (!readOnly || !dirty) return;
+    dirtyRef.current = false;
+    setDirty(false);
+    setAutosaveState('idle');
+    setAutosaveError(null);
+  }, [dirty, readOnly]);
 
   React.useEffect(() => {
     selectedGuidRef.current = selectedGuid;
@@ -929,6 +1012,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     const base = buildDraftBase(nextSettings ?? settings);
     selectedGuidRef.current = null;
     documentStartedRef.current = false;
+    contextRefreshSignatureRef.current = '';
     setDraft(normalizeDraftOrder({ ...emptyDraft(), ...base }));
     setSelections({
       ...emptySelections(),
@@ -986,6 +1070,63 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     }));
   }, [patchDraft]);
 
+  const enrichItemsMetadata = React.useCallback(async (sourceDraft: DraftOrder) => {
+    if (!sourceDraft.counterpartyGuid || !sourceDraft.items.length) return;
+    const productGuids = Array.from(new Set(sourceDraft.items.map((item) => item.productGuid).filter(Boolean)));
+    if (!productGuids.length) return;
+
+    const requestId = ++pricingRequestIdRef.current;
+    const targetGuid = sourceDraft.guid || null;
+    try {
+      const products = await getClientOrderProductsBatch({
+        productGuids,
+        organizationGuid: sourceDraft.organizationGuid || undefined,
+        counterpartyGuid: sourceDraft.counterpartyGuid,
+        agreementGuid: sourceDraft.agreementGuid || undefined,
+        warehouseGuid: sourceDraft.warehouseGuid || undefined,
+        priceTypeGuid: sourceDraft.priceTypeGuid || undefined,
+      });
+      if (pricingRequestIdRef.current !== requestId) return;
+
+      const productByGuid = new Map(products.map((product) => [product.guid, product]));
+      setDraft((prev) => {
+        if (targetGuid && prev.guid !== targetGuid) return prev;
+        if (!targetGuid && prev.guid) return prev;
+
+        return normalizeDraftOrder({
+          ...prev,
+          items: prev.items.map((item) => {
+            const product = productByGuid.get(item.productGuid);
+            if (!product) return item;
+            const packages = mergeDraftPackagesForProduct(product, item.packages, item.baseUnit);
+            const hasProductPackages = Array.isArray(product.packages);
+            return {
+              ...item,
+              packageGuid: normalizePackageGuid(item.packageGuid, packages),
+              receiptPrice: item.receiptPrice ?? product.receiptPrice ?? product.basePrice ?? null,
+              baseUnit: product.baseUnit ?? item.baseUnit ?? null,
+              stock: product.stock ?? item.stock ?? null,
+              packages: hasProductPackages ? packages : item.packages,
+              packagesLoaded: hasProductPackages ? true : item.packagesLoaded,
+              imageThumbUrl: product.imageThumbUrl ?? item.imageThumbUrl ?? null,
+              imagePreviewUrl: product.imagePreviewUrl ?? item.imagePreviewUrl ?? null,
+              imageHash: product.imageHash ?? item.imageHash ?? null,
+              images: product.images ?? item.images ?? [],
+            };
+          }),
+        });
+      });
+    } catch {
+      // Metadata is optional on open: keep saved document values intact.
+    }
+  }, []);
+
+  const enrichItemMetadata = React.useCallback((lineKey: string) => {
+    const item = draft.items.find((next) => next.key === lineKey);
+    if (!item) return Promise.resolve();
+    return enrichItemsMetadata({ ...draft, items: [item] });
+  }, [draft, enrichItemsMetadata]);
+
   const mergeSavedOrderIntoDraft = React.useCallback((order: ClientOrder) => {
     setDraft((prev) => normalizeDraftOrder({
       ...prev,
@@ -1002,11 +1143,26 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     }));
   }, []);
 
+  const mergeServerRevisionIntoOpenDraft = React.useCallback((order: ClientOrder) => {
+    setSelectedOrder((prev) => (
+      prev?.guid === order.guid ? mergeOrderListMetadata(prev, order) : prev
+    ));
+    setDraft((prev) => {
+      if (prev.guid !== order.guid) return prev;
+      const serverRevision = Number(order.revision || 0);
+      if (!Number.isFinite(serverRevision) || serverRevision <= (prev.revision || 0)) return prev;
+      return normalizeDraftOrder({ ...prev, revision: serverRevision });
+    });
+  }, []);
+
   const applyOrderDetail = React.useCallback((order: ClientOrder) => {
+    const nextDraft = normalizeDraftOrder(orderToDraft(order));
     selectedGuidRef.current = order.guid;
+    contextRefreshSignatureRef.current = buildPricingContextSignature(nextDraft);
     setSelectedGuid(order.guid);
     setSelectedOrder(order);
-    setDraft(normalizeDraftOrder(orderToDraft(order)));
+    setDraft(nextDraft);
+    void enrichItemsMetadata(nextDraft);
     setDocumentStarted(true);
     setSelections({
       organization: order.organization || null,
@@ -1019,7 +1175,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     setDirty(false);
     setAutosaveState('idle');
     setAutosaveError(null);
-  }, []);
+  }, [enrichItemsMetadata]);
 
   const replaceDeviceDraftEntries = React.useCallback((entries: DeviceDraftEntry[]) => {
     deviceDraftEntriesRef.current = entries;
@@ -1206,9 +1362,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         ? nextOrders.find((item) => item.guid === currentSelectedGuid)
         : null;
       if (selectedSummary) {
-        setSelectedOrder((prev) => (
-          prev?.guid === selectedSummary.guid ? mergeOrderListMetadata(prev, selectedSummary) : prev
-        ));
+        mergeServerRevisionIntoOpenDraft(selectedSummary);
       }
       const nextTotal = mode === 'append' && list.length === 0
         ? ordersNextOffsetRef.current
@@ -1264,7 +1418,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         setLoadingOrders(false);
       }
     }
-  }, [filters, filtersSignature, markOrdersInitialLoadDone, ordersCacheStorageKey]);
+  }, [filters, filtersSignature, markOrdersInitialLoadDone, mergeServerRevisionIntoOpenDraft, ordersCacheStorageKey]);
 
   const refreshQueueState = React.useCallback(async () => {
     const requestId = ++queueStateRequestIdRef.current;
@@ -1435,11 +1589,35 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       setAutosaveError(null);
 
       payload = buildPayload(draft, options?.reason || 'manual');
-      const order = deviceEntry?.serverGuid
-        ? await updateClientOrder(deviceEntry.serverGuid, { ...payload, revision: deviceEntry.serverRevision ?? draft.revision })
-        : draft.guid && !isDeviceDraftGuid(draft.guid) && !deviceEntry
-          ? await updateClientOrder(draft.guid, { ...payload, revision: draft.revision })
-        : await createClientOrder(payload);
+      const updateTargetGuid = deviceEntry?.serverGuid
+        ?? (draft.guid && !isDeviceDraftGuid(draft.guid) && !deviceEntry ? draft.guid : null);
+      const initialRevision = updateTargetGuid === deviceEntry?.serverGuid
+        ? deviceEntry.serverRevision ?? draft.revision
+        : draft.revision;
+      const saveToApi = (revision: number) => (
+        updateTargetGuid
+          ? updateClientOrder(updateTargetGuid, { ...payload, revision })
+          : createClientOrder(payload)
+      );
+
+      let order: ClientOrder;
+      try {
+        order = await saveToApi(initialRevision);
+      } catch (e) {
+        if (!updateTargetGuid || !isRevisionConflictError(e)) {
+          throw e;
+        }
+
+        const freshOrder = await getClientOrder(updateTargetGuid);
+        applySavedOrderToList(freshOrder);
+        mergeServerRevisionIntoOpenDraft(freshOrder);
+
+        if (freshOrder.readOnly || freshOrder.hasRealization || freshOrder.status === 'CANCELLED') {
+          throw e;
+        }
+
+        order = await saveToApi(freshOrder.revision);
+      }
 
       removeDeviceDraftEntry(draft.guid || deviceEntry?.order.guid || deviceEntry?.serverGuid);
       setSelectedGuid(order.guid);
@@ -1483,6 +1661,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     applySavedOrderToList,
     draft,
     findDeviceDraftEntry,
+    mergeServerRevisionIntoOpenDraft,
     mergeSavedOrderIntoDraft,
     readOnly,
     removeDeviceDraftEntry,
@@ -1493,11 +1672,25 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const saveAndResubmitQueuedDraft = React.useCallback(async () => {
     const saved = await saveDraft({ silent: true, reason: 'manual' });
     if (!saved) return false;
-    if (!selectedOrderQueued) return true;
+    if (!selectedOrderQueued && !selectedOrderSynced) return true;
     if ((saved as any).origin === 'device' || findDeviceDraftEntry(saved.guid)) return true;
     try {
       setSubmitting(true);
-      const order = await submitClientOrder(saved.guid, saved.revision);
+      let order: ClientOrder;
+      try {
+        order = await submitClientOrder(saved.guid, saved.revision);
+      } catch (e) {
+        if (!isRevisionConflictError(e)) {
+          throw e;
+        }
+        const freshOrder = await getClientOrder(saved.guid);
+        applySavedOrderToList(freshOrder);
+        mergeServerRevisionIntoOpenDraft(freshOrder);
+        if (freshOrder.readOnly || freshOrder.hasRealization || freshOrder.status === 'CANCELLED') {
+          throw e;
+        }
+        order = await submitClientOrder(saved.guid, freshOrder.revision);
+      }
       applySavedOrderToList(order);
       void loadOrders('reset');
       setSelectedGuid(order.guid);
@@ -1516,21 +1709,21 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     } finally {
       setSubmitting(false);
     }
-  }, [applySavedOrderToList, findDeviceDraftEntry, loadOrders, saveDraft, selectedOrderQueued]);
+  }, [applySavedOrderToList, findDeviceDraftEntry, loadOrders, mergeServerRevisionIntoOpenDraft, saveDraft, selectedOrderQueued, selectedOrderSynced]);
 
   React.useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     const beforeUnload = (event: BeforeUnloadEvent) => {
-      if (!dirty) return;
+      if (!dirty || readOnly) return;
       event.preventDefault();
       event.returnValue = '';
     };
     window.addEventListener('beforeunload', beforeUnload);
     return () => window.removeEventListener('beforeunload', beforeUnload);
-  }, [dirty]);
+  }, [dirty, readOnly]);
 
   const confirmDiscardIfNeeded = React.useCallback(async () => {
-    if (!dirty) return true;
+    if (!dirty || readOnly) return true;
     let decision: DiscardDecision;
     if (confirmDiscard) {
       const result = await confirmDiscard({
@@ -1552,12 +1745,14 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     }
     if (decision === 'cancel') return false;
     if (decision === 'save') {
-      return selectedOrderQueued
+      return selectedOrderQueued || selectedOrderSynced
         ? saveAndResubmitQueuedDraft()
         : !!(await saveDraft({ reason: 'manual' }));
     }
     if (selectedOrder) {
-      setDraft(normalizeDraftOrder(orderToDraft(selectedOrder)));
+      const nextDraft = normalizeDraftOrder(orderToDraft(selectedOrder));
+      contextRefreshSignatureRef.current = buildPricingContextSignature(nextDraft);
+      setDraft(nextDraft);
       setSelections({
         organization: selectedOrder.organization || null,
         counterparty: selectedOrder.counterparty || null,
@@ -1572,7 +1767,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       resetDraftToBase();
     }
     return true;
-  }, [confirmDiscard, dirty, draft.guid, draftMode, resetDraftToBase, saveAndResubmitQueuedDraft, saveDraft, selectedOrder, selectedOrderQueued, validation.blockingMessage]);
+  }, [confirmDiscard, dirty, draft.guid, draftMode, readOnly, resetDraftToBase, saveAndResubmitQueuedDraft, saveDraft, selectedOrder, selectedOrderQueued, selectedOrderSynced, validation.blockingMessage]);
 
   const selectOrder = React.useCallback(async (guid: string) => {
     if (guid === selectedGuid && selectedOrder?.guid === guid) return true;
@@ -1725,7 +1920,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       const product = products.find((next) => next.guid === item.productGuid);
       if (!product) return;
       const isManualPrice = hasManualPrice(item);
-      const packages = getDraftPackagesForProduct(product);
+      const packages = mergeDraftPackagesForProduct(product, item.packages, item.baseUnit);
       const hasProductPackages = Array.isArray(product.packages);
       setItemPatch(item.key, {
         packageGuid: normalizePackageGuid(item.packageGuid, packages),
@@ -1737,6 +1932,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         baseUnit: product.baseUnit ?? item.baseUnit ?? null,
         stock: product.stock ?? item.stock ?? null,
         packages: hasProductPackages ? packages : item.packages,
+        packagesLoaded: hasProductPackages ? true : item.packagesLoaded,
         imageThumbUrl: product.imageThumbUrl ?? item.imageThumbUrl ?? null,
         imagePreviewUrl: product.imagePreviewUrl ?? item.imagePreviewUrl ?? null,
         imageHash: product.imageHash ?? item.imageHash ?? null,
@@ -1772,7 +1968,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
           const product = productByGuid.get(item.productGuid);
           if (!product) return item;
           const isManualPrice = hasManualPrice(item);
-          const packages = getDraftPackagesForProduct(product);
+          const packages = mergeDraftPackagesForProduct(product, item.packages, item.baseUnit);
           const hasProductPackages = Array.isArray(product.packages);
           return {
             ...item,
@@ -1789,6 +1985,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
             baseUnit: product.baseUnit ?? item.baseUnit ?? null,
             stock: product.stock ?? null,
             packages: hasProductPackages ? packages : item.packages,
+            packagesLoaded: hasProductPackages ? true : item.packagesLoaded,
             imageThumbUrl: product.imageThumbUrl ?? item.imageThumbUrl ?? null,
             imagePreviewUrl: product.imagePreviewUrl ?? item.imagePreviewUrl ?? null,
             imageHash: product.imageHash ?? item.imageHash ?? null,
@@ -1820,13 +2017,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       return;
     }
 
-    const refreshSignature = [
-      draft.organizationGuid,
-      draft.counterpartyGuid,
-      draft.agreementGuid || '',
-      draft.warehouseGuid || '',
-      draft.priceTypeGuid || '',
-    ].join('||');
+    const refreshSignature = buildPricingContextSignature(draft);
 
     if (contextRefreshSignatureRef.current === refreshSignature) {
       return;
@@ -2041,7 +2232,21 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     }
     try {
       setSubmitting(true);
-      const order = await submitClientOrder(targetGuid, revision);
+      let order: ClientOrder;
+      try {
+        order = await submitClientOrder(targetGuid, revision);
+      } catch (e) {
+        if (!isRevisionConflictError(e)) {
+          throw e;
+        }
+        const freshOrder = await getClientOrder(targetGuid);
+        applySavedOrderToList(freshOrder);
+        mergeServerRevisionIntoOpenDraft(freshOrder);
+        if (freshOrder.readOnly || freshOrder.hasRealization || freshOrder.status === 'CANCELLED') {
+          throw e;
+        }
+        order = await submitClientOrder(targetGuid, freshOrder.revision);
+      }
       applySavedOrderToList(order);
       void loadOrders('reset');
       setSelectedGuid(order.guid);
@@ -2057,7 +2262,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     } finally {
       setSubmitting(false);
     }
-  }, [applySavedOrderToList, canSubmitOrder, dirty, draft.guid, draft.revision, findDeviceDraftEntry, loadOrders, saveDraft, selectedGuid, selectedOrderQueued, validation.blockingMessage]);
+  }, [applySavedOrderToList, canSubmitOrder, dirty, draft.guid, draft.revision, findDeviceDraftEntry, loadOrders, mergeServerRevisionIntoOpenDraft, saveDraft, selectedGuid, selectedOrderQueued, validation.blockingMessage]);
 
   const unqueueOrder = React.useCallback(async (target?: { guid: string; revision: number }) => {
     let targetGuid = target?.guid || draft.guid || selectedGuid;
@@ -2239,6 +2444,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     selectedGuid,
     selectedOrder,
     selectedOrderQueued,
+    selectedOrderSynced,
     mutationLocked,
     unqueueOrder,
     restoreOrder,
@@ -2257,6 +2463,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     setWarehouse,
     setDeliveryAddress,
     setItemPatch,
+    enrichItemMetadata,
     setItemPackage,
     setItemPriceType,
     setHeaderPriceType,

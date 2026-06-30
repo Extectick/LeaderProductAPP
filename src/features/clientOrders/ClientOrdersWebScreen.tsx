@@ -10,7 +10,9 @@ import {
   getClientOrdersResponsiveMetrics,
   getOrderDisplayStatus,
   getOrderDisplayStatusLabelWithQueue,
+  getDraftItemCancelReason,
   hasManualPrice,
+  isCancelledDraftItem,
   isValidManualPriceValue,
   isValidQuantityValue,
   isWeightDraftItem,
@@ -1436,6 +1438,8 @@ export default function ClientOrdersWebScreen() {
     await workspace.submitOrder();
   }, [workspace]);
   const isQueuedResubmit = workspace.selectedOrderQueued && workspace.dirty;
+  const isSyncedResubmit = workspace.selectedOrderSynced && workspace.dirty;
+  const isResubmitTo1c = isQueuedResubmit || isSyncedResubmit;
   const currentCancelTarget = pendingCancelOrder || workspace.selectedOrder;
   const currentCancelTargetQueued = !!currentCancelTarget && (currentCancelTarget.status === 'QUEUED' || currentCancelTarget.syncState === 'QUEUED');
   const currentCancelTargetCancelled = currentCancelTarget?.status === 'CANCELLED';
@@ -1545,11 +1549,15 @@ export default function ClientOrdersWebScreen() {
     const packageValue = packageSelectValue(item);
     const lineErrors = workspace.validation.itemMessages[item.key] || [];
     const lineWarnings = workspace.validation.itemWarnings?.[item.key] || [];
-    const quantityError = !isValidQuantityValue(item);
-    const priceError = !isValidManualPriceValue(item.manualPrice);
     const quantityInputWidth = getQuantityInputWidthPx(item.quantity, ui.narrowPriceWidth <= 66 ? 34 : 40, 88);
     const quantityControlWidth = getQuantityControlWidthPx(item.quantity, ui.narrowControlHeight, ui.narrowPriceWidth <= 66 ? 34 : 40, 88);
     const displayedPrice = getDisplayedUnitPriceValue(item);
+    const cancelled = isCancelledDraftItem(item);
+    const itemReadOnly = workspace.readOnly || cancelled;
+    const quantityError = !itemReadOnly && !isValidQuantityValue(item);
+    const priceError = !itemReadOnly && !isValidManualPriceValue(item.manualPrice);
+    const cancelReason = getDraftItemCancelReason(item);
+    const issueText = cancelled ? `Отменено${cancelReason ? `: ${cancelReason}` : ''}` : [...lineErrors, ...lineWarnings].join(' ');
 
     return (
       <Box
@@ -1557,13 +1565,13 @@ export default function ClientOrdersWebScreen() {
         sx={{
           py: 0.7,
           borderBottom: '1px solid #E2E8F0',
-          bgcolor: lineErrors.length || lineWarnings.length ? '#FFF7F7' : 'transparent',
+          bgcolor: cancelled ? '#F8FAFC' : lineErrors.length || lineWarnings.length ? '#FFF7F7' : 'transparent',
           '&:last-of-type': { borderBottom: 'none', pb: 0 },
         }}
       >
         <Stack spacing={0.45}>
           <Stack direction="row" spacing={0.35} alignItems="flex-start">
-            {!workspace.readOnly ? (
+            {!itemReadOnly ? (
               <IconButton
                 size="small"
                 color="error"
@@ -1607,13 +1615,13 @@ export default function ClientOrdersWebScreen() {
               gridTemplateColumns: `${quantityControlWidth}px ${ui.narrowPackageWidth}px ${ui.narrowPriceWidth}px`,
               gap: `${ui.narrowRowGap}px`,
               alignItems: 'center',
-              pl: workspace.readOnly ? (ui.narrowPriceWidth <= 66 ? 1.35 : 1.6) : (ui.narrowPriceWidth <= 66 ? 3.1 : 4.1),
+              pl: itemReadOnly ? (ui.narrowPriceWidth <= 66 ? 1.35 : 1.6) : (ui.narrowPriceWidth <= 66 ? 3.1 : 4.1),
             }}
           >
             <Stack direction="row" spacing={0.25} alignItems="center" sx={{ minWidth: 0 }}>
               <IconButton
                 size="small"
-                disabled={workspace.readOnly}
+                disabled={itemReadOnly}
                 onClick={() => workspace.setItemPatch(item.key, { quantity: stepQuantity(item, -1) })}
                 sx={{ width: ui.narrowControlHeight, height: ui.narrowControlHeight, border: '1px solid #D8E2F0', borderRadius: '6px', flexShrink: 0 }}
               >
@@ -1623,7 +1631,7 @@ export default function ClientOrdersWebScreen() {
                 size="small"
                 value={item.quantity}
                 onChange={(e) => workspace.setItemPatch(item.key, { quantity: normalizeQuantityInput(item, e.target.value) })}
-                disabled={workspace.readOnly}
+                disabled={itemReadOnly}
                 error={quantityError}
                 sx={{
                   width: quantityInputWidth,
@@ -1635,7 +1643,7 @@ export default function ClientOrdersWebScreen() {
               />
               <IconButton
                 size="small"
-                disabled={workspace.readOnly}
+                disabled={itemReadOnly}
                 onClick={() => workspace.setItemPatch(item.key, { quantity: stepQuantity(item, 1) })}
                 sx={{ width: ui.narrowControlHeight, height: ui.narrowControlHeight, border: '1px solid #D8E2F0', borderRadius: '6px', flexShrink: 0 }}
               >
@@ -1669,7 +1677,7 @@ export default function ClientOrdersWebScreen() {
                 size="small"
                 value={packageValue}
                 onChange={(e) => workspace.setItemPackage(item.key, e.target.value === '__base__' ? null : e.target.value)}
-                disabled={workspace.readOnly}
+                disabled={itemReadOnly}
                 fullWidth
                 sx={{
                   ...compactInputSx,
@@ -1699,7 +1707,7 @@ export default function ClientOrdersWebScreen() {
                   priceTypeName: manualPrice.trim() ? 'Произвольный' : workspace.draft.priceTypeName ?? null,
                 });
               }}
-              disabled={workspace.readOnly}
+              disabled={itemReadOnly}
               error={priceError}
               sx={{
                 ...compactInputSx,
@@ -1710,9 +1718,9 @@ export default function ClientOrdersWebScreen() {
             />
           </Box>
 
-          {lineErrors.length || lineWarnings.length ? (
-            <Typography sx={{ pl: 4.1, fontSize: 9.5, color: '#DC2626', lineHeight: 1.2 }}>
-              {[...lineErrors, ...lineWarnings].join(' ')}
+          {issueText ? (
+            <Typography sx={{ pl: 4.1, fontSize: 9.5, color: cancelled ? '#64748B' : '#DC2626', lineHeight: 1.2 }}>
+              {issueText}
             </Typography>
           ) : null}
         </Stack>
@@ -1790,6 +1798,8 @@ export default function ClientOrdersWebScreen() {
         enableResizing: false,
         cell: ({ row }) => {
           const currentWorkspace = workspaceRef.current;
+          const item = row.original;
+          const itemReadOnly = currentWorkspace.readOnly || isCancelledDraftItem(item);
           return (
             <Box sx={{ width: '100%', display: 'grid', placeItems: 'center' }}>
               <Tooltip title="Удалить строку" arrow>
@@ -1797,8 +1807,8 @@ export default function ClientOrdersWebScreen() {
                   <IconButton
                     size="small"
                     color="error"
-                    onClick={() => currentWorkspace.removeItem(row.original.key)}
-                    disabled={currentWorkspace.readOnly}
+                    onClick={() => currentWorkspace.removeItem(item.key)}
+                    disabled={itemReadOnly}
                     sx={{
                       width: 22,
                       height: 22,
@@ -1826,6 +1836,9 @@ export default function ClientOrdersWebScreen() {
           const item = row.original;
           const lineErrors = currentWorkspace.validation.itemMessages[item.key] || [];
           const lineWarnings = currentWorkspace.validation.itemWarnings?.[item.key] || [];
+          const cancelled = isCancelledDraftItem(item);
+          const cancelReason = getDraftItemCancelReason(item);
+          const issueText = cancelled ? `Отменено${cancelReason ? `: ${cancelReason}` : ''}` : [...lineErrors, ...lineWarnings].join(' ');
           const imageUri = getDraftItemImageUri(item);
           return (
             <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0, py: 0.1 }}>
@@ -1880,10 +1893,10 @@ export default function ClientOrdersWebScreen() {
                     <Box component="span" sx={{ ml: 0.6, color: '#2563EB', fontWeight: 900 }}>ручная цена</Box>
                   ) : null}
                 </Typography>
-                {lineErrors.length || lineWarnings.length ? (
-                  <Box sx={{ mt: 0.45, px: 0.75, py: 0.35, borderRadius: '9px', bgcolor: '#FEF2F2', border: '1px solid #FECACA' }}>
-                    <Typography sx={{ fontSize: 10, color: '#B91C1C', lineHeight: 1.2, fontWeight: 700 }}>
-                      {[...lineErrors, ...lineWarnings].join(' ')}
+                {issueText ? (
+                  <Box sx={{ mt: 0.45, px: 0.75, py: 0.35, borderRadius: '9px', bgcolor: cancelled ? '#F1F5F9' : '#FEF2F2', border: `1px solid ${cancelled ? '#CBD5E1' : '#FECACA'}` }}>
+                    <Typography sx={{ fontSize: 10, color: cancelled ? '#64748B' : '#B91C1C', lineHeight: 1.2, fontWeight: 700 }}>
+                      {issueText}
                     </Typography>
                   </Box>
                 ) : null}
@@ -1900,14 +1913,15 @@ export default function ClientOrdersWebScreen() {
         cell: ({ row }) => {
           const currentWorkspace = workspaceRef.current;
           const item = row.original;
-          const quantityError = !isValidQuantityValue(item);
+          const itemReadOnly = currentWorkspace.readOnly || isCancelledDraftItem(item);
           const quantityInputWidth = getQuantityInputWidthPx(item.quantity, useCompactTable ? 38 : 44, useCompactTable ? 58 : 66);
           const quantityControlWidth = getQuantityControlWidthPx(item.quantity, 14, useCompactTable ? 38 : 44, useCompactTable ? 58 : 66);
+          const quantityError = !itemReadOnly && !isValidQuantityValue(item);
           return (
             <Stack direction="row" alignItems="center" spacing={0.15} sx={{ width: quantityControlWidth, maxWidth: '100%', mx: 'auto' }}>
               <IconButton
                 size="small"
-                disabled={currentWorkspace.readOnly}
+                disabled={itemReadOnly}
                 onClick={() => currentWorkspace.setItemPatch(item.key, { quantity: stepQuantity(item, -1) })}
                 sx={{ width: 14, height: 28, minWidth: 14, p: 0, border: 0, borderRadius: 0, bgcolor: 'transparent', color: '#64748B', '&:hover': { color: '#0F172A', bgcolor: 'transparent' } }}
               >
@@ -1917,7 +1931,7 @@ export default function ClientOrdersWebScreen() {
                 size="small"
                 value={item.quantity}
                 onChange={(e) => currentWorkspace.setItemPatch(item.key, { quantity: normalizeQuantityInput(item, e.target.value) })}
-                disabled={currentWorkspace.readOnly}
+                disabled={itemReadOnly}
                 error={quantityError}
                 sx={{
                   width: quantityInputWidth,
@@ -1930,7 +1944,7 @@ export default function ClientOrdersWebScreen() {
               />
               <IconButton
                 size="small"
-                disabled={currentWorkspace.readOnly}
+                disabled={itemReadOnly}
                 onClick={() => currentWorkspace.setItemPatch(item.key, { quantity: stepQuantity(item, 1) })}
                 sx={{ width: 14, height: 28, minWidth: 14, p: 0, border: 0, borderRadius: 0, bgcolor: 'transparent', color: '#64748B', '&:hover': { color: '#0F172A', bgcolor: 'transparent' } }}
               >
@@ -1949,10 +1963,11 @@ export default function ClientOrdersWebScreen() {
           const currentWorkspace = workspaceRef.current;
           const item = row.original;
           const packageValue = packageSelectValue(item);
-          if (currentWorkspace.readOnly || hasSinglePackage(item)) {
+          const itemReadOnly = currentWorkspace.readOnly || isCancelledDraftItem(item);
+          if (itemReadOnly || hasSinglePackage(item)) {
             return (
-              <Box sx={{ height: 30, px: 1, border: 0, borderRadius: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: currentWorkspace.readOnly ? '#F8FAFC' : 'transparent', width: '100%', boxSizing: 'border-box', overflow: 'hidden' }}>
-                <Typography sx={{ fontSize: 10.8, fontWeight: 900, lineHeight: '30px', color: currentWorkspace.readOnly ? '#9CA3AF' : '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'center', width: '100%' }}>
+              <Box sx={{ height: 30, px: 1, border: 0, borderRadius: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: itemReadOnly ? '#F8FAFC' : 'transparent', width: '100%', boxSizing: 'border-box', overflow: 'hidden' }}>
+                <Typography sx={{ fontSize: 10.8, fontWeight: 900, lineHeight: '30px', color: itemReadOnly ? '#9CA3AF' : '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'center', width: '100%' }}>
                   {getPackageDisplayText(item)}
                 </Typography>
               </Box>
@@ -1964,7 +1979,7 @@ export default function ClientOrdersWebScreen() {
               size="small"
               value={packageValue}
               onChange={(e) => currentWorkspace.setItemPackage(item.key, e.target.value === '__base__' ? null : e.target.value)}
-              disabled={currentWorkspace.readOnly}
+              disabled={itemReadOnly}
               fullWidth
               sx={{
                 ...compactInputSx,
@@ -2009,8 +2024,9 @@ export default function ClientOrdersWebScreen() {
         cell: ({ row }) => {
           const currentWorkspace = workspaceRef.current;
           const item = row.original;
+          const itemReadOnly = currentWorkspace.readOnly || isCancelledDraftItem(item);
           const displayedPrice = getDisplayedUnitPriceValue(item);
-          const priceError = !isValidManualPriceValue(item.manualPrice);
+          const priceError = !itemReadOnly && !isValidManualPriceValue(item.manualPrice);
           return (
             <TextField
               size="small"
@@ -2025,7 +2041,7 @@ export default function ClientOrdersWebScreen() {
                   priceTypeName: manualPrice.trim() ? 'Произвольный' : currentWorkspace.draft.priceTypeName ?? null,
                 });
               }}
-              disabled={currentWorkspace.readOnly}
+              disabled={itemReadOnly}
               error={priceError}
               sx={{
                 ...compactInputSx,
@@ -2156,7 +2172,7 @@ export default function ClientOrdersWebScreen() {
             <Stack spacing={0.45}>
               {workspace.orders.map((order) => {
                 const selected = workspace.selectedGuid === order.guid;
-                const readOnlyOrder = !!order.readOnly || !!order.isPostedIn1c || !!order.number1c;
+                const readOnlyOrder = !!order.readOnly || !!order.hasRealization || (order.origin === 'onec' && !order.appGuid);
                 const statusChip = orderStatusChipSx(order);
                 return (
                   <Card
@@ -2317,7 +2333,7 @@ export default function ClientOrdersWebScreen() {
                         disabled={toolbarUsesDeleteDraft ? workspace.deletingDraft : (toolbarUsesRestore ? workspace.cancelling : (workspace.readOnly || workspace.cancelling))}
                         loading={toolbarUsesDeleteDraft ? workspace.deletingDraft : workspace.cancelling}
                       />
-                      {!(workspace.selectedOrderQueued && workspace.dirty) ? (
+                      {!((workspace.selectedOrderQueued || workspace.selectedOrderSynced) && workspace.dirty) ? (
                         <ToolbarIconButton title="Сохранить" icon="save-outline" color="#2563EB" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={saveWithConfirm} disabled={workspace.readOnly || workspace.saving || !workspace.validation.canSave} loading={workspace.saving} />
                       ) : null}
                       <ToolbarIconButton title="Отправить в 1С" icon="cloud-upload-outline" label={effectiveEditorPaneWidth >= 1180 ? 'В 1С' : undefined} color="#16A34A" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => setConfirmSubmitOpen(true)} disabled={workspace.readOnly || workspace.submitting || !workspace.canSubmitOrder} loading={workspace.submitting} />
@@ -2945,25 +2961,31 @@ export default function ClientOrdersWebScreen() {
       </Menu>
 
       <Dialog open={discardConfirm.open} onClose={() => closeDiscardConfirm('cancel')} maxWidth="xs" fullWidth fullScreen={isPhoneDialog}>
-        <DialogTitle>Несохраненные изменения</DialogTitle>
+        <DialogTitle>{isResubmitTo1c ? 'Переотправить документ?' : 'Несохраненные изменения'}</DialogTitle>
         <DialogContent>
           <Typography sx={{ color: '#475569', fontSize: 13 }}>
-            Сохранить изменения перед выходом из документа?
+            {isQueuedResubmit
+              ? 'Если сохранить изменения, документ будет переотправлен и поставлен в конец очереди.'
+              : isSyncedResubmit
+                ? 'Если сохранить изменения, документ будет отправлен в 1С.'
+                : 'Сохранить изменения перед выходом из документа?'}
           </Typography>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => closeDiscardConfirm('cancel')} sx={{ textTransform: 'none', fontWeight: 800 }}>Остаться</Button>
           <Button color="error" onClick={() => closeDiscardConfirm('discard')} sx={{ textTransform: 'none', fontWeight: 800 }}>Не сохранять</Button>
-          <Button variant="contained" onClick={() => closeDiscardConfirm('save')} sx={{ textTransform: 'none', fontWeight: 800 }}>Сохранить</Button>
+          <Button variant="contained" onClick={() => closeDiscardConfirm('save')} sx={{ textTransform: 'none', fontWeight: 800 }}>{isResubmitTo1c ? 'Переотправить' : 'Сохранить'}</Button>
         </DialogActions>
       </Dialog>
 
       <Dialog open={confirmSubmitOpen} onClose={() => setConfirmSubmitOpen(false)} maxWidth="xs" fullWidth fullScreen={isPhoneDialog}>
-        <DialogTitle>{isQueuedResubmit ? 'Переотправить в 1С?' : 'Отправить в 1С?'}</DialogTitle>
+        <DialogTitle>{isResubmitTo1c ? 'Переотправить в 1С?' : 'Отправить в 1С?'}</DialogTitle>
         <DialogContent>
           <Typography sx={{ color: '#475569', fontSize: 13 }}>
             {isQueuedResubmit
               ? 'Документ будет сохранен и поставлен в конец очереди.'
+              : isSyncedResubmit
+                ? 'Изменения будут сохранены и отправлены в 1С.'
               : 'Документ будет поставлен в очередь обмена. После отправки часть полей станет недоступна для редактирования.'}
           </Typography>
           {workspace.validation.warningMessage ? (

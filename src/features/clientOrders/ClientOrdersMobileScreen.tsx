@@ -19,8 +19,10 @@ import {
   getClientOrdersResponsiveMetrics,
   getOrderDisplayStatus,
   getOrderDisplayStatusLabelWithQueue,
+  getDraftItemCancelReason,
   hasManualPrice,
   buildNewItem,
+  isCancelledDraftItem,
   isValidManualPriceValue,
   isValidQuantityValue,
   isWeightDraftItem,
@@ -116,6 +118,8 @@ const DOCUMENT_HEADER_TRANSITION = {
 const DOCUMENT_ITEMS_TOOLBAR_HEIGHT_DELTA = 51;
 const LINE_ITEM_SCROLL_ESTIMATE = 116;
 const IS_NEW_ARCHITECTURE = !!(globalThis as any).nativeFabricUIManager;
+const loadedProductImageUris = new Set<string>();
+const failedProductImageUris = new Set<string>();
 let lastClientOrdersListScrollY = 0;
 type FilterKeyboardFieldKey = 'deliveryDates' | 'updatedDates' | 'amount' | 'items' | 'counterparty' | 'warehouse' | 'priceType';
 type FilterKeyboardInputRef = React.RefObject<any>;
@@ -137,6 +141,36 @@ const withColorOpacity = (color: string, opacity: number) => {
   const b = int & 255;
   return `rgba(${r}, ${g}, ${b}, ${opacity})`;
 };
+
+function normalizeSearchText(value: unknown) {
+  return String(value ?? '')
+    .toLocaleLowerCase('ru')
+    .replace(/ё/g, 'е')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function searchTokens(value: string) {
+  return Array.from(new Set(normalizeSearchText(value).split(' ').filter((token) => token.length >= 2)));
+}
+
+function flattenSearchText(value: unknown, depth = 0): string {
+  if (value === null || value === undefined || depth > 4) return '';
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) return value.map((item) => flattenSearchText(item, depth + 1)).join(' ');
+  if (typeof value === 'object') {
+    return Object.values(value as Record<string, unknown>).map((item) => flattenSearchText(item, depth + 1)).join(' ');
+  }
+  return '';
+}
+
+function matchesTokenSearch(item: unknown, search: string) {
+  const tokens = searchTokens(search);
+  if (!tokens.length) return true;
+  const haystack = normalizeSearchText(flattenSearchText(item));
+  return tokens.every((token) => haystack.includes(token));
+}
 
 function measureTargetInWindow(target: unknown, onMeasured: (rect: WindowRect) => void) {
   if (!target) return;
@@ -367,6 +401,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const [confirmDialog, setConfirmDialog] = React.useState<ConfirmDialogState>(null);
   const [editingItemKey, setEditingItemKey] = React.useState<string | null>(null);
   const [pendingProductItem, setPendingProductItem] = React.useState<DraftItem | null>(null);
+  const [metadataLoadingItemKeys, setMetadataLoadingItemKeys] = React.useState<Set<string>>(() => new Set());
   const [productGallery, setProductGallery] = React.useState<{
     title: string;
     subtitle?: string | null;
@@ -693,8 +728,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       let result: any;
       if (kind === 'organization') {
         const all = workspace.settings?.organizations || [];
-        const needle = search.trim().toLowerCase();
-        const filtered = all.filter((item) => !needle || item.name.toLowerCase().includes(needle) || (item.code || '').toLowerCase().includes(needle));
+        const filtered = all.filter((item) => matchesTokenSearch(item, search));
         result = { items: filtered.slice(offset, offset + PAGE_SIZE), meta: { total: filtered.length } };
       } else if (kind === 'filterCounterparty' || kind === 'counterparty') result = await workspace.searchCounterparties({ search, limit: PAGE_SIZE, offset });
       else if (kind === 'agreement') result = await workspace.searchAgreements({ counterpartyGuid: workspace.draft.counterpartyGuid || undefined, search, limit: PAGE_SIZE, offset });
@@ -749,7 +783,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
 
   React.useEffect(() => {
     if (!pickerKind) return;
-    const timeout = setTimeout(() => void loadPickerPage(pickerKind, pickerSearch, 0, false), pickerSearch ? 450 : 0);
+    const timeout = setTimeout(() => void loadPickerPage(pickerKind, pickerSearch, 0, false), pickerSearch ? 650 : 0);
     return () => clearTimeout(timeout);
   }, [loadPickerPage, pickerKind, pickerSearch]);
   React.useEffect(() => {
@@ -804,7 +838,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       runDocumentHeaderTransition();
       setMode('orders');
     };
-    if (!workspace.dirty) {
+    if (!workspace.dirty || workspace.readOnly) {
       leaveDocument();
       return;
     }
@@ -914,6 +948,19 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     setSection('items');
     if (existingKey) {
       setPendingProductItem(null);
+      setMetadataLoadingItemKeys((prev) => {
+        const next = new Set(prev);
+        next.add(existingKey);
+        return next;
+      });
+      Promise.resolve(workspace.enrichItemMetadata?.(existingKey)).finally(() => {
+        setMetadataLoadingItemKeys((prev) => {
+          if (!prev.has(existingKey)) return prev;
+          const next = new Set(prev);
+          next.delete(existingKey);
+          return next;
+        });
+      });
       setEditingItemKey(existingKey);
       requestScrollToLineItem(existingKey, existingIndex);
       return;
@@ -1119,12 +1166,18 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     if (!workspace.canSubmitOrder) return;
     setActionsMenuOpen(false);
     const isQueuedResubmit = workspace.selectedOrderQueued && workspace.dirty;
+    const isSyncedResubmit = workspace.selectedOrderSynced && workspace.dirty;
+    const isResubmit = isQueuedResubmit || isSyncedResubmit;
     const warningMessage = workspace.validation.warningMessage
       ? `\n${workspace.validation.warningMessage}`
       : '';
     setConfirmDialog({
-      title: isQueuedResubmit ? 'Переотправить в 1С?' : 'Отправить в 1С?',
-      message: `${isQueuedResubmit ? 'Документ будет сохранен и поставлен в конец очереди.' : ''}${warningMessage}`.trim(),
+      title: isResubmit ? 'Переотправить в 1С?' : 'Отправить в 1С?',
+      message: `${isQueuedResubmit
+        ? 'Документ будет сохранен и поставлен в конец очереди.'
+        : isSyncedResubmit
+          ? 'Изменения будут сохранены и отправлены в 1С.'
+          : ''}${warningMessage}`.trim(),
       confirmLabel: isQueuedResubmit ? 'В конец очереди' : 'Отправить',
       onConfirm: () => workspace.submitOrder(),
     });
@@ -1174,7 +1227,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     });
   }, [workspace]);
   const handleDocumentPrimaryAction = React.useCallback(() => {
-    if (workspace.selectedOrderQueued && workspace.dirty) {
+    if ((workspace.selectedOrderQueued || workspace.selectedOrderSynced) && workspace.dirty) {
       submitFromMenu();
       return;
     }
@@ -1220,6 +1273,14 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     if (itemsSearchBlurTimerRef.current) clearTimeout(itemsSearchBlurTimerRef.current);
     itemsSearchBlurTimerRef.current = setTimeout(() => setItemsSearchFocused(false), 160);
   }, []);
+  const dismissItemsSearch = React.useCallback(() => {
+    if (itemsSearchBlurTimerRef.current) {
+      clearTimeout(itemsSearchBlurTimerRef.current);
+      itemsSearchBlurTimerRef.current = null;
+    }
+    Keyboard.dismiss();
+    setItemsSearchFocused(false);
+  }, []);
   React.useEffect(() => {
     const search = itemsSearch.trim();
     const requestId = ++itemsSearchRequestIdRef.current;
@@ -1237,7 +1298,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     setItemsSearchError(null);
     const loadingTimer = setTimeout(() => {
       if (itemsSearchRequestIdRef.current === requestId) setItemsSearchLoading(true);
-    }, 180);
+    }, 320);
     const requestTimer = setTimeout(() => {
       void workspace.searchProducts({
         search,
@@ -1265,7 +1326,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       }).finally(() => {
         if (itemsSearchRequestIdRef.current === requestId) setItemsSearchLoading(false);
       });
-    }, 450);
+    }, 650);
     return () => {
       clearTimeout(loadingTimer);
       clearTimeout(requestTimer);
@@ -1418,6 +1479,26 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     resetItemsSearch();
     openProductEditorForProduct(product);
   }, [openProductEditorForProduct, resetItemsSearch, workspace.mutationLocked, workspace.readOnly]);
+  const requestLineMetadata = React.useCallback((lineKey: string) => {
+    if (!lineKey) return;
+    setMetadataLoadingItemKeys((prev) => {
+      const next = new Set(prev);
+      next.add(lineKey);
+      return next;
+    });
+    Promise.resolve(workspace.enrichItemMetadata?.(lineKey)).finally(() => {
+      setMetadataLoadingItemKeys((prev) => {
+        if (!prev.has(lineKey)) return prev;
+        const next = new Set(prev);
+        next.delete(lineKey);
+        return next;
+      });
+    });
+  }, [workspace]);
+  const openLineEditor = React.useCallback((lineKey: string) => {
+    requestLineMetadata(lineKey);
+    setEditingItemKey(lineKey);
+  }, [requestLineMetadata]);
   const editingItem = React.useMemo(() => workspace.draft.items.find((item) => item.key === editingItemKey) || null, [editingItemKey, workspace.draft.items]);
   const editingItemIndex = React.useMemo(() => editingItem ? workspace.draft.items.findIndex((item) => item.key === editingItem.key) : -1, [editingItem, workspace.draft.items]);
   React.useEffect(() => {
@@ -1493,6 +1574,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     documentStatusText,
     handleItemsSearchBlur,
     handleItemsSearchFocus,
+    dismissItemsSearch,
     handleEditorSectionChange,
     itemsSearch,
     itemsSearchError,
@@ -1630,18 +1712,22 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const discardConfirmState = React.useMemo<ConfirmDialogState>(() => {
     if (!discardConfirm.open) return null;
     const queuedResubmit = !!workspace.selectedOrderQueued && !!workspace.dirty;
+    const syncedResubmit = !!workspace.selectedOrderSynced && !!workspace.dirty;
+    const shouldResubmit = queuedResubmit || syncedResubmit;
     return {
-      title: queuedResubmit ? 'Переотправить документ?' : 'Несохраненные изменения',
+      title: shouldResubmit ? 'Переотправить документ?' : 'Несохраненные изменения',
       message: queuedResubmit
         ? 'Если сохранить изменения, документ будет переотправлен и поставлен в конец очереди.'
+        : syncedResubmit
+          ? 'Если сохранить изменения, документ будет отправлен в 1С.'
         : '',
       alternateLabel: 'Не сохранять',
-      confirmLabel: queuedResubmit ? 'Переотправить' : 'Сохранить',
+      confirmLabel: shouldResubmit ? 'Переотправить' : 'Сохранить',
       hideCancel: true,
       onAlternate: () => closeDiscardConfirm('discard'),
       onConfirm: () => closeDiscardConfirm('save'),
     };
-  }, [closeDiscardConfirm, discardConfirm.blockingMessage, discardConfirm.mode, discardConfirm.open, workspace.dirty, workspace.selectedOrderQueued]);
+  }, [closeDiscardConfirm, discardConfirm.blockingMessage, discardConfirm.mode, discardConfirm.open, workspace.dirty, workspace.selectedOrderQueued, workspace.selectedOrderSynced]);
 
   const editorTopPadding = Math.max(topInset, headerBottomOffset || 0);
   const pageTopPadding = mode === 'editor' ? editorTopPadding : Math.max(0, topInset - 18);
@@ -1751,7 +1837,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
                   workspace={workspace}
                   filteredItems={filteredItems}
                   ui={ui}
-                  onEditItem={setEditingItemKey}
+                  onEditItem={openLineEditor}
                   onAddItem={() => openPicker('product')}
                   onItemLayout={handleLineItemLayout}
                   onOpenImages={openProductGallery}
@@ -1776,6 +1862,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         searchError={itemsSearchError}
         onSelectSearchResult={addProductFromItemsSearch}
         onLoadMoreSearchResults={loadMoreItemsSearchResults}
+        onDismiss={dismissItemsSearch}
       />
 
       {mode === 'editor' && !showDocumentOpenLoader ? (
@@ -1915,6 +2002,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         rowNumber={pendingProductItem ? workspace.draft.items.length + 1 : editingItemIndex >= 0 ? editingItemIndex + 1 : 0}
         workspace={productEditorWorkspace}
         allowZeroQuantity={!!pendingProductItem}
+        metadataLoading={!!editingItemKey && metadataLoadingItemKeys.has(editingItemKey)}
         onClose={() => {
           setPendingProductItem(null);
           setEditingItemKey(null);
@@ -2161,7 +2249,7 @@ function DocumentActionsMenu({
   removeOrCancel: () => void;
   compact?: boolean;
 }) {
-  const hideSave = workspace.selectedOrderQueued && workspace.dirty;
+  const hideSave = (workspace.selectedOrderQueued || workspace.selectedOrderSynced) && workspace.dirty;
   const dangerIcon = workspace.selectedOrderQueued
     ? 'playlist-remove'
     : workspace.selectedOrder?.status === 'CANCELLED'
@@ -2457,6 +2545,7 @@ function ItemsSearchResultsOverlay({
   searchError,
   onSelectSearchResult,
   onLoadMoreSearchResults,
+  onDismiss,
 }: {
   styles: any;
   visible: boolean;
@@ -2470,11 +2559,18 @@ function ItemsSearchResultsOverlay({
   searchError: string | null;
   onSelectSearchResult: (product: ClientOrderProduct) => void;
   onLoadMoreSearchResults: () => void;
+  onDismiss: () => void;
 }) {
   if (!visible) return null;
   return (
     <Portal>
-      <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+      <View style={StyleSheet.absoluteFill}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Закрыть поиск товаров"
+          onPress={onDismiss}
+          style={StyleSheet.absoluteFill}
+        />
         <View style={[styles.itemsSearchResultsPortal, { top: topOffset, left: sideOffset, right: sideOffset }]}>
           <ScrollView
             nestedScrollEnabled
@@ -2607,8 +2703,8 @@ function DocumentBottomBar({
   const textColor = useThemeColor({}, 'text');
   const surfaceColor = withColorOpacity(backgroundColor, 0.9);
   const borderColor = withColorOpacity(textColor, 0.18);
-  const shouldSubmitQueuedChanges = !!workspace.selectedOrderQueued && !!workspace.dirty;
-  const shouldSave = !!workspace.dirty && !shouldSubmitQueuedChanges;
+  const shouldSubmitChangedSyncedDocument = !!workspace.dirty && (!!workspace.selectedOrderQueued || !!workspace.selectedOrderSynced);
+  const shouldSave = !!workspace.dirty && !shouldSubmitChangedSyncedDocument;
   const busy = !!workspace.saving || !!workspace.submitting;
   const disabled = workspace.readOnly || busy || (shouldSave ? !workspace.validation.canSave : !workspace.canSubmitOrder);
   const label = workspace.saving
@@ -2745,11 +2841,13 @@ function LineItemCard({
   const lineWarnings = workspace.validation.itemWarnings?.[item.key] || [];
   const hasErrors = lineMessages.length > 0;
   const hasWarnings = lineWarnings.length > 0;
-  const issueText = [...lineMessages, ...lineWarnings][0] || '';
+  const cancelled = isCancelledDraftItem(item);
+  const cancelReason = getDraftItemCancelReason(item);
+  const issueText = cancelled ? `Отменено${cancelReason ? `: ${cancelReason}` : ''}` : ([...lineMessages, ...lineWarnings][0] || '');
   const manualPrice = hasManualPrice(item);
-  const readOnly = !!workspace.readOnly || !!workspace.mutationLocked;
+  const readOnly = !!workspace.readOnly || !!workspace.mutationLocked || cancelled;
   return (
-    <Pressable accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.productPreviewCard, (hasErrors || hasWarnings) && styles.productPreviewCardInvalid, issueText && styles.productPreviewCardWithIssue, readOnly && styles.productPreviewCardReadOnly, pressed && styles.flatPressed]}>
+    <Pressable accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.productPreviewCard, cancelled && styles.productPreviewCardCancelled, !cancelled && (hasErrors || hasWarnings) && styles.productPreviewCardInvalid, issueText && styles.productPreviewCardWithIssue, readOnly && styles.productPreviewCardReadOnly, pressed && styles.flatPressed]}>
       <View style={[styles.productPreviewMedia, readOnly && styles.productPreviewMediaReadOnly]}>
         <ProductThumb
           item={item}
@@ -2790,7 +2888,7 @@ function LineItemCard({
           <Text style={[styles.productPreviewTotal, readOnly && styles.productPreviewTotalReadOnly]} numberOfLines={1}>{lineTotal}</Text>
         </View>
         {issueText ? (
-          <Text style={styles.productPreviewIssueText} numberOfLines={1}>{issueText}</Text>
+          <Text style={[styles.productPreviewIssueText, cancelled && styles.productPreviewCancelledText]} numberOfLines={1}>{issueText}</Text>
         ) : null}
       </View>
     </Pressable>
@@ -2812,36 +2910,71 @@ function ProductThumb({
 }) {
   const imageUri = getDraftItemImageUri(item);
   const recyclingKey = item?.imageHash ? `${item.productGuid || item.guid}:${item.imageHash}` : item?.productGuid || item?.guid || imageUri;
-  const [loading, setLoading] = React.useState(!!imageUri);
-  const [failed, setFailed] = React.useState(false);
+  const imageSource = React.useMemo(() => (imageUri ? { uri: imageUri } : null), [imageUri]);
+  const imageAlreadyLoaded = !!imageUri && loadedProductImageUris.has(imageUri);
+  const imageAlreadyFailed = !!imageUri && failedProductImageUris.has(imageUri);
+  const [loading, setLoading] = React.useState(!!imageUri && !imageAlreadyLoaded && !imageAlreadyFailed);
+  const [failed, setFailed] = React.useState(imageAlreadyFailed);
 
   React.useEffect(() => {
-    setLoading(!!imageUri);
+    const nextFailed = !!imageUri && failedProductImageUris.has(imageUri);
+    const nextLoaded = !!imageUri && loadedProductImageUris.has(imageUri);
+    setLoading(!!imageUri && !nextLoaded && !nextFailed);
+    setFailed(nextFailed);
+  }, [imageUri]);
+
+  React.useEffect(() => {
+    if (!imageUri || !loading || failed) return undefined;
+    const timeout = setTimeout(() => {
+      failedProductImageUris.add(imageUri);
+      setFailed(true);
+      setLoading(false);
+    }, 12000);
+    return () => clearTimeout(timeout);
+  }, [failed, imageUri, loading]);
+
+  const handleImageLoaded = React.useCallback(() => {
+    if (imageUri) {
+      loadedProductImageUris.add(imageUri);
+      failedProductImageUris.delete(imageUri);
+    }
     setFailed(false);
-  }, [imageUri, recyclingKey]);
+    setLoading(false);
+  }, [imageUri]);
+
+  const handleImageError = React.useCallback(() => {
+    if (imageUri) {
+      failedProductImageUris.add(imageUri);
+      loadedProductImageUris.delete(imageUri);
+    }
+    setFailed(true);
+    setLoading(false);
+  }, [imageUri]);
 
   const content = (
     <>
-      {imageUri && !failed ? (
+      {imageSource && !failed ? (
         <ExpoImage
-          source={{ uri: imageUri }}
+          source={imageSource}
           style={styles.productImageObject}
           contentFit="contain"
           cachePolicy="memory-disk"
           recyclingKey={recyclingKey}
-          onLoadStart={() => setLoading(true)}
-          onLoadEnd={() => setLoading(false)}
-          onError={() => {
-            setFailed(true);
-            setLoading(false);
+          onLoadStart={() => {
+            if (imageUri && !loadedProductImageUris.has(imageUri) && !failedProductImageUris.has(imageUri)) {
+              setLoading(true);
+            }
           }}
+          onLoad={handleImageLoaded}
+          onLoadEnd={() => setLoading(false)}
+          onError={handleImageError}
         />
       ) : (
         <View style={styles.productImagePlaceholderFill}>
           <MaterialCommunityIcons name="image-outline" size={iconSize} color={iconColor} />
         </View>
       )}
-      {imageUri && loading && !failed ? (
+      {imageSource && loading && !failed ? (
         <View pointerEvents="none" style={styles.productImageLoadingOverlay}>
           <ActivityIndicator size={iconSize >= 40 ? 22 : 16} color="#2563EB" />
         </View>
@@ -2849,7 +2982,7 @@ function ProductThumb({
     </>
   );
 
-  if (!onPress || !imageUri) {
+  if (!onPress || !imageSource) {
     return <View style={[style, styles.productImageFrame]}>{content}</View>;
   }
 
@@ -2912,9 +3045,9 @@ function CompactSearchbar({
         keyboardType="web-search"
         returnKeyType="search"
         inputMode="search"
-        autoComplete="new-password"
-        textContentType="oneTimeCode"
-        importantForAutofill="noExcludeDescendants"
+        autoComplete="off"
+        textContentType="none"
+        importantForAutofill="no"
         autoFocus={autoFocus}
         editable={editable}
       />
@@ -2941,6 +3074,7 @@ function ProductLineEditorSheet({
   rowNumber,
   workspace,
   allowZeroQuantity = false,
+  metadataLoading = false,
   onClose,
   onOpenImages,
 }: {
@@ -2951,6 +3085,7 @@ function ProductLineEditorSheet({
   rowNumber: number;
   workspace: any;
   allowZeroQuantity?: boolean;
+  metadataLoading?: boolean;
   onClose: () => void;
   onOpenImages: (item: any) => void;
 }) {
@@ -3007,12 +3142,12 @@ function ProductLineEditorSheet({
 
   if (!displayedItem) return null;
 
-  const readOnly = !!workspace.readOnly || !!workspace.mutationLocked;
-  const qtyValid = allowZeroQuantity && !hasPositiveQuantity(displayedItem)
+  const readOnly = !!workspace.readOnly || !!workspace.mutationLocked || isCancelledDraftItem(displayedItem);
+  const qtyValid = readOnly || (allowZeroQuantity && !hasPositiveQuantity(displayedItem))
     ? true
     : isValidQuantityValue(displayedItem);
   const currentManualPrice = displayedItem.manualPrice || '';
-  const priceValid = !currentManualPrice || isValidManualPriceValue(currentManualPrice);
+  const priceValid = readOnly || !currentManualPrice || isValidManualPriceValue(currentManualPrice);
   const displayedPrice = currentDisplayedPrice;
   const priceInputDisplayValue = priceFocused && previousDisplayedItemKeyRef.current === displayedItemKey
     ? priceInputValue
@@ -3031,6 +3166,7 @@ function ProductLineEditorSheet({
     basePackageOption,
     ...(displayedItem.packages || []).map((pack: any) => ({ guid: pack.guid as string, label: packageLabel(pack, displayedItem) })),
   ];
+  const packageMetadataLoading = metadataLoading && !displayedItem.packagesLoaded;
   const selectedPackageGuid = displayedItem.packageGuid || null;
   const halfControlWidth = Math.max(120, (width - 32) / 2);
   const contentNeedsScroll = scrollViewportHeight > 0 && scrollContentHeight > scrollViewportHeight + 2;
@@ -3055,6 +3191,7 @@ function ProductLineEditorSheet({
       overlayHandle
       preferredHeight={preferredSheetHeight}
       minHeight={0}
+      fastDismiss
       headerContent={(closeSheet) => (
         <View style={styles.productEditorHeaderBlock} onLayout={(event) => setHeaderHeight(Math.ceil(event.nativeEvent.layout.height))}>
           <View style={styles.productEditorMediaRow}>
@@ -3099,7 +3236,12 @@ function ProductLineEditorSheet({
         <View style={styles.productEditorFieldsRow}>
           <View style={[styles.productEditorAdaptiveField, { width: halfControlWidth }]}>
             <Text style={[styles.productEditorLabel, readOnly && styles.productEditorLabelReadOnly]}>Упаковка</Text>
-            {packageOptions.length === 1 ? (
+            {packageMetadataLoading ? (
+              <View style={[styles.productEditorPackageReadonly, readOnly && styles.productEditorReadOnlySoftSurface]}>
+                <ActivityIndicator size={16} color="#2563EB" />
+                <Text style={[styles.productEditorPackageReadonlyText, readOnly && styles.productEditorReadOnlyMutedText]} numberOfLines={1}>Загружаю упаковки</Text>
+              </View>
+            ) : packageOptions.length === 1 ? (
               <View style={[styles.productEditorPackageReadonly, readOnly && styles.productEditorReadOnlySoftSurface]}>
                 <Text style={[styles.productEditorPackageReadonlyText, readOnly && styles.productEditorReadOnlyMutedText]} numberOfLines={1}>{packageOptions[0].label}</Text>
               </View>
@@ -3440,7 +3582,7 @@ function FilterLookupField<T extends { guid: string; name: string }>({
     let cancelled = false;
     const timer = setTimeout(() => {
       if (!cancelled) setLoading(true);
-    }, 120);
+    }, 320);
     const requestTimer = setTimeout(() => {
       void search({ search: normalized, limit: 8, offset: 0 })
         .then((result) => {
@@ -3452,7 +3594,7 @@ function FilterLookupField<T extends { guid: string; name: string }>({
         .finally(() => {
           if (!cancelled) setLoading(false);
         });
-    }, 250);
+    }, 650);
     return () => {
       cancelled = true;
       clearTimeout(timer);
@@ -3490,6 +3632,12 @@ function FilterLookupField<T extends { guid: string; name: string }>({
           placeholderTextColor="#64748B"
           style={styles.filtersInnerTextInputContent}
           autoCorrect={false}
+          spellCheck={false}
+          autoComplete="off"
+          textContentType="none"
+          importantForAutofill="no"
+          inputMode="search"
+          keyboardType="web-search"
           returnKeyType="search"
           onFocus={() => onInputFocus?.(inputRef)}
         />
@@ -3783,28 +3931,57 @@ function ProductGallerySlide({
   height: number;
   styles: any;
 }) {
-  const [loading, setLoading] = React.useState(true);
-  const [failed, setFailed] = React.useState(false);
+  const imageSource = React.useMemo(() => ({ uri: image.previewUrl }), [image.previewUrl]);
+  const [loading, setLoading] = React.useState(!loadedProductImageUris.has(image.previewUrl) && !failedProductImageUris.has(image.previewUrl));
+  const [failed, setFailed] = React.useState(failedProductImageUris.has(image.previewUrl));
 
   React.useEffect(() => {
-    setLoading(true);
+    const nextFailed = failedProductImageUris.has(image.previewUrl);
+    const nextLoaded = loadedProductImageUris.has(image.previewUrl);
+    setLoading(!nextLoaded && !nextFailed);
+    setFailed(nextFailed);
+  }, [image.previewUrl]);
+
+  React.useEffect(() => {
+    if (!loading || failed) return undefined;
+    const timeout = setTimeout(() => {
+      failedProductImageUris.add(image.previewUrl);
+      setFailed(true);
+      setLoading(false);
+    }, 12000);
+    return () => clearTimeout(timeout);
+  }, [failed, image.previewUrl, loading]);
+
+  const handleImageLoaded = React.useCallback(() => {
+    loadedProductImageUris.add(image.previewUrl);
+    failedProductImageUris.delete(image.previewUrl);
     setFailed(false);
+    setLoading(false);
+  }, [image.previewUrl]);
+
+  const handleImageError = React.useCallback(() => {
+    failedProductImageUris.add(image.previewUrl);
+    loadedProductImageUris.delete(image.previewUrl);
+    setFailed(true);
+    setLoading(false);
   }, [image.previewUrl]);
 
   return (
     <View style={[styles.productGallerySlide, { width, height }]}>
       {!failed ? (
         <ExpoImage
-          source={{ uri: image.previewUrl }}
+          source={imageSource}
           style={styles.productGalleryImage}
           contentFit="contain"
           cachePolicy="memory-disk"
-          onLoadStart={() => setLoading(true)}
-          onLoadEnd={() => setLoading(false)}
-          onError={() => {
-            setFailed(true);
-            setLoading(false);
+          onLoadStart={() => {
+            if (!loadedProductImageUris.has(image.previewUrl) && !failedProductImageUris.has(image.previewUrl)) {
+              setLoading(true);
+            }
           }}
+          onLoad={handleImageLoaded}
+          onLoadEnd={() => setLoading(false)}
+          onError={handleImageError}
         />
       ) : (
         <View style={styles.productGalleryEmpty}>
@@ -4575,6 +4752,7 @@ const styles = StyleSheet.create({
   lineList: { backgroundColor: '#F8FAFC', paddingTop: 8, gap: 8 },
   productPreviewCard: { height: 96, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#FFFFFF', overflow: 'hidden', flexDirection: 'row', alignItems: 'stretch' },
   productPreviewCardReadOnly: { borderColor: 'rgba(216, 226, 240, 0.7)', backgroundColor: 'rgba(255, 255, 255, 0.64)' },
+  productPreviewCardCancelled: { borderColor: '#CBD5E1', backgroundColor: '#F8FAFC' },
   productPreviewCardInvalid: { borderColor: '#EF4444', backgroundColor: '#FFF7F7' },
   productPreviewCardWithIssue: { height: 114 },
   productPreviewMedia: { width: 78, height: '100%', backgroundColor: '#F1F5F9', overflow: 'hidden', borderRightWidth: 1, borderRightColor: '#E2E8F0' },
@@ -4634,6 +4812,7 @@ const styles = StyleSheet.create({
   productPreviewTotal: { maxWidth: 112, color: '#2563EB', fontSize: 14, fontWeight: '900', lineHeight: 17, textAlign: 'right', includeFontPadding: false },
   productPreviewTotalReadOnly: { color: 'rgba(37, 99, 235, 0.58)' },
   productPreviewIssueText: { color: '#DC2626', fontSize: 10.5, fontWeight: '800', lineHeight: 13, marginTop: 2 },
+  productPreviewCancelledText: { color: '#64748B' },
   addProductListCard: { minHeight: 60, borderRadius: 12, borderWidth: 1, borderStyle: 'dashed', borderColor: '#93C5FD', backgroundColor: '#F8FBFF', alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8 },
   addProductListText: { color: '#2563EB', fontSize: 13, fontWeight: '800' },
   productEditorSheet: { borderTopLeftRadius: 18, borderTopRightRadius: 18, borderWidth: 0, paddingTop: 0, overflow: 'hidden', shadowOpacity: 0.08, shadowRadius: 20, shadowOffset: { width: 0, height: -4 } },

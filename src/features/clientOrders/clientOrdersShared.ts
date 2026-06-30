@@ -18,6 +18,7 @@ type DraftPackage = {
 
 export type DraftItem = {
   key: string;
+  lineGuid: string;
   productGuid: string;
   productName: string;
   productCode?: string | null;
@@ -39,8 +40,14 @@ export type DraftItem = {
   priceSource?: string | null;
   priceTypeGuid?: string | null;
   priceTypeName?: string | null;
+  isCancelled?: boolean;
+  cancelReasonGuid?: string | null;
+  cancelReasonName?: string | null;
+  cancelReason?: string | null;
+  cancelledAmount?: number | null;
   baseUnit?: DraftUnit | null;
   stock?: ClientOrderProduct['stock'] | null;
+  packagesLoaded?: boolean;
   packages: DraftPackage[];
 };
 
@@ -313,9 +320,12 @@ export function getOrderDisplayStatusLabelWithQueue(
   order?: Pick<ClientOrder, 'status' | 'syncState' | 'number1c' | 'origin' | 'status1c' | 'currentState1c' | 'documentStatus1c' | 'queuePosition'> | null
 ) {
   if (!order) return STATUS_LABELS.DRAFT;
+  if (order.syncState === 'ERROR') return SYNC_LABELS.ERROR;
+  if (order.syncState === 'CONFLICT') return SYNC_LABELS.CONFLICT;
+  if (order.syncState === 'CANCEL_REQUESTED') return SYNC_LABELS.CANCEL_REQUESTED;
   const position = Number(order.queuePosition || 0);
   const displayStatus = getOrderDisplayStatus(order);
-  if (position > 0 && (displayStatus === 'QUEUED' || order.status === 'QUEUED' || order.syncState === 'QUEUED')) {
+  if (position > 0 && order.syncState === 'QUEUED') {
     return `В очереди: ${position}`;
   }
   return getOrderDisplayStatusLabel(order);
@@ -333,6 +343,10 @@ export const SYNC_LABELS: Record<string, string> = {
 
 export function makeKey() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export function makeLineGuid() {
+  return makeKey();
 }
 
 export function emptyDraft(): DraftOrder {
@@ -381,16 +395,27 @@ export function hasManualPrice(item?: Pick<DraftItem, 'manualPrice'> | null) {
   return manualPriceInput(item).trim().length > 0;
 }
 
+export function isCancelledDraftItem(item?: Pick<DraftItem, 'isCancelled'> | null) {
+  return !!item?.isCancelled;
+}
+
+export function getDraftItemCancelReason(item?: Pick<DraftItem, 'cancelReason' | 'cancelReasonName'> | null) {
+  return asInputString(item?.cancelReason || item?.cancelReasonName).trim();
+}
+
 export function normalizeDraftItem(item: DraftItem): DraftItem {
   return {
     ...item,
     key: asInputString(item.key) || makeKey(),
+    lineGuid: asInputString(item.lineGuid) || makeLineGuid(),
     productGuid: asInputString(item.productGuid),
     productName: asInputString(item.productName),
     quantity: asInputString(item.quantity).replace(/\./g, ','),
     manualPrice: asInputString(item.manualPrice),
     discountPercent: asInputString(item.discountPercent),
     comment: asInputString(item.comment),
+    isCancelled: !!item.isCancelled,
+    packagesLoaded: !!item.packagesLoaded,
     packages: Array.isArray(item.packages) ? item.packages : [],
   };
 }
@@ -486,11 +511,29 @@ export function isBaseUnitPackage(pack?: DraftPackage | null, baseUnit?: DraftUn
   return sameMultiplier && (!pack.unit || sameUnit);
 }
 
-export function getDraftPackagesForProduct(product: Pick<ClientOrderProduct, 'packages' | 'baseUnit'>) {
+export function getDraftPackagesForProduct(product: { packages?: DraftPackage[] | null; baseUnit?: DraftUnit | null }) {
   const packages = Array.isArray(product.packages) ? product.packages : [];
   return product.baseUnit
     ? packages.filter((pack) => !isBaseUnitPackage(pack, product.baseUnit))
     : packages;
+}
+
+export function mergeDraftPackagesForProduct(
+  product: { packages?: DraftPackage[] | null; baseUnit?: DraftUnit | null },
+  currentPackages: DraftPackage[] = [],
+  fallbackBaseUnit?: DraftUnit | null
+) {
+  const baseUnit = product.baseUnit ?? fallbackBaseUnit ?? null;
+  const result = new Map<string, DraftPackage>();
+  const pushPackage = (pack?: DraftPackage | null) => {
+    if (!pack?.guid || result.has(pack.guid)) return;
+    if (isBaseUnitPackage(pack, baseUnit)) return;
+    result.set(pack.guid, pack);
+  };
+
+  getDraftPackagesForProduct({ packages: product.packages, baseUnit }).forEach(pushPackage);
+  currentPackages.forEach(pushPackage);
+  return Array.from(result.values());
 }
 
 export function normalizePackageGuid(packageGuid: string | null | undefined, packages: DraftPackage[]) {
@@ -546,6 +589,24 @@ export function getBelowCostWarning(item: DraftItem) {
   const priceLabel = formatMoney(price * multiplier, item.currency);
   const costLabel = formatMoney(receiptPrice * multiplier, item.currency);
   return `Цена ниже себестоимости: ${priceLabel} < ${costLabel}.`;
+}
+
+function formatQuantityLabel(value: number) {
+  return Number.isInteger(value)
+    ? String(value)
+    : value.toLocaleString('ru-RU', { maximumFractionDigits: 3 });
+}
+
+export function getStockShortageMessage(item: DraftItem) {
+  const available = item.stock?.available ?? item.stock?.quantity;
+  if (available === null || available === undefined || !Number.isFinite(available)) return null;
+  if (!isValidQuantityValue(item)) return null;
+
+  const requiredBase = normalizeQuantityForPayload(item) * getPackageMultiplier(item);
+  if (!Number.isFinite(requiredBase) || requiredBase <= 0) return null;
+  if (available + 0.000001 >= requiredBase) return null;
+
+  return `Недостаточно остатка: требуется ${formatQuantityLabel(requiredBase)}, доступно ${formatQuantityLabel(available)}.`;
 }
 
 export function displayedUnitPriceToBasePriceInput(value: string, item: DraftItem) {
@@ -618,12 +679,12 @@ export function getClientOrderItems(order?: Pick<ClientOrder, 'items'> | null) {
 export function getClientOrderItemsCount(order?: Pick<ClientOrder, 'items' | 'itemsCount'> | null) {
   const explicit = Number((order as any)?.itemsCount);
   if (Number.isFinite(explicit) && explicit >= 0) return explicit;
-  return getClientOrderItems(order as any).length;
+  return getClientOrderItems(order as any).filter((item) => !item.isCancelled).length;
 }
 
 export function orderToDraft(order: ClientOrder): DraftOrder {
   const orderItems = getClientOrderItems(order);
-  const headerPriceType = order.priceType ?? order.agreement?.priceType ?? orderItems.find((item) => item.priceType?.guid)?.priceType ?? null;
+  const headerPriceType = order.priceType ?? orderItems.find((item) => item.priceType?.guid)?.priceType ?? order.agreement?.priceType ?? null;
   return {
     guid: order.guid,
     revision: order.revision,
@@ -639,47 +700,71 @@ export function orderToDraft(order: ClientOrder): DraftOrder {
     priceTypeGuid: headerPriceType?.guid ?? null,
     priceTypeName: headerPriceType?.name ?? null,
     generalDiscountPercent: asString(order.generalDiscountPercent),
-    items: orderItems.map((item: ClientOrderItem) => ({
-      key: makeKey(),
-      productGuid: item.product.guid,
-      productName: item.product.name,
-      productCode: item.product.code ?? null,
-      productArticle: item.product.article ?? null,
-      productSku: item.product.sku ?? null,
-      productIsWeight: item.product.isWeight ?? null,
-      imageThumbUrl: item.product.imageThumbUrl ?? null,
-      imagePreviewUrl: item.product.imagePreviewUrl ?? null,
-      imageHash: item.product.imageHash ?? null,
-      images: item.product.images ?? [],
-      quantity: asString(item.quantity),
-      packageGuid: item.package?.guid ?? null,
-      manualPrice: asString(item.manualPrice),
-      discountPercent: asString(item.discountPercent),
-      comment: item.comment ?? '',
-      basePrice: item.basePrice ?? null,
-      receiptPrice: item.basePrice ?? null,
-      currency: DEFAULT_ORDER_CURRENCY,
-      priceSource: item.priceSource ?? null,
-      priceTypeGuid: item.priceType?.guid ?? headerPriceType?.guid ?? null,
-      priceTypeName: item.priceType?.name ?? headerPriceType?.name ?? null,
-      baseUnit: item.unit ?? null,
-      stock: item.stock ?? null,
-      packages: item.package?.guid
-        ? [
-            {
-              guid: item.package.guid,
-              name: item.package.name ?? 'Упаковка',
-              multiplier: item.package.multiplier ?? null,
-              isDefault: true,
-              unit: item.unit ?? null,
-            },
-          ]
-        : [],
-    })),
+    items: orderItems.map((item: ClientOrderItem) => {
+      const productPackages = Array.isArray((item.product as any)?.packages)
+        ? (item.product as any).packages
+        : [];
+      const hasProductPackages = productPackages.length > 0;
+      const productBaseUnit = (item.product as any)?.baseUnit ?? (!item.package?.guid ? item.unit : null);
+      const draftPackage = item.package?.guid
+        ? {
+            guid: item.package.guid,
+            name: item.package.name ?? 'Упаковка',
+            multiplier: item.package.multiplier ?? null,
+            isDefault: true,
+            unit: item.unit ?? null,
+          }
+        : null;
+      const packageComparisonBaseUnit = productBaseUnit ?? item.unit ?? null;
+      const selectedPackage = draftPackage && !isBaseUnitPackage(draftPackage, packageComparisonBaseUnit)
+        ? draftPackage
+        : null;
+      const packages = mergeDraftPackagesForProduct(
+        { packages: productPackages, baseUnit: productBaseUnit },
+        selectedPackage ? [selectedPackage] : [],
+        productBaseUnit
+      );
+
+      return {
+        key: makeKey(),
+        lineGuid: item.lineGuid || makeLineGuid(),
+        productGuid: item.product.guid,
+        productName: item.product.name,
+        productCode: item.product.code ?? null,
+        productArticle: item.product.article ?? null,
+        productSku: item.product.sku ?? null,
+        productIsWeight: item.product.isWeight ?? null,
+        imageThumbUrl: item.product.imageThumbUrl ?? null,
+        imagePreviewUrl: item.product.imagePreviewUrl ?? null,
+        imageHash: item.product.imageHash ?? null,
+        images: item.product.images ?? [],
+        quantity: asString(item.quantity),
+        packageGuid: selectedPackage?.guid ?? null,
+        manualPrice: asString(item.manualPrice),
+        discountPercent: asString(item.discountPercent),
+        comment: item.comment ?? '',
+        basePrice: item.basePrice ?? null,
+        receiptPrice: item.basePrice ?? null,
+        currency: DEFAULT_ORDER_CURRENCY,
+        priceSource: item.priceSource ?? null,
+        priceTypeGuid: item.priceType?.guid ?? headerPriceType?.guid ?? null,
+        priceTypeName: item.priceType?.name ?? headerPriceType?.name ?? null,
+        isCancelled: item.isCancelled ?? false,
+        cancelReasonGuid: item.cancelReasonGuid ?? null,
+        cancelReasonName: item.cancelReasonName ?? null,
+        cancelReason: item.cancelReason ?? null,
+        cancelledAmount: item.cancelledAmount ?? null,
+        baseUnit: productBaseUnit,
+        stock: item.stock ?? null,
+        packagesLoaded: hasProductPackages,
+        packages,
+      };
+    }),
   };
 }
 
 export function computeLineTotal(item: DraftItem, generalDiscountPercent?: string) {
+  if (isCancelledDraftItem(item)) return 0;
   const quantity = normalizeQuantityForPayload(item);
   const manualPrice = manualPriceInput(item);
   const manual = manualPrice.trim() ? normalizePriceForPayload(manualPrice) : undefined;
@@ -726,7 +811,9 @@ export function validateDraft(draft: DraftOrder): DraftValidation {
     };
   }
 
-  if (!draft.items.length) {
+  const activeItems = draft.items.filter((item) => !isCancelledDraftItem(item));
+
+  if (!activeItems.length) {
     return {
       canSave: false,
       canAutosave: false,
@@ -754,7 +841,7 @@ export function validateDraft(draft: DraftOrder): DraftValidation {
     };
   }
 
-  for (const item of draft.items) {
+  for (const item of activeItems) {
     const messages: string[] = [];
     const warnings: string[] = [];
     const quantity = isValidQuantityValue(item) ? normalizeQuantityForPayload(item) : Number.NaN;
@@ -787,6 +874,10 @@ export function validateDraft(draft: DraftOrder): DraftValidation {
     ) {
       messages.push('Скидка строки должна быть в диапазоне 0-100.');
     }
+    const stockShortageMessage = getStockShortageMessage(item);
+    if (stockShortageMessage) {
+      messages.push(stockShortageMessage);
+    }
     if (messages.length) {
       itemMessages[item.key] = messages;
     }
@@ -799,15 +890,27 @@ export function validateDraft(draft: DraftOrder): DraftValidation {
 
   const hasItemErrors = Object.keys(itemMessages).length > 0;
   const hasWarnings = Object.keys(itemWarnings).length > 0;
+  const missingSubmitFields: string[] = [];
+  if (!draft.agreementGuid) missingSubmitFields.push('соглашение');
+  if (!draft.contractGuid) missingSubmitFields.push('договор');
+  if (!draft.warehouseGuid) missingSubmitFields.push('склад');
+  if (!draft.deliveryAddressGuid) missingSubmitFields.push('адрес доставки');
+  if (!draft.deliveryDate) missingSubmitFields.push('дату отгрузки');
+  const submitHeaderBlockingMessage = missingSubmitFields.length
+    ? `Заполните ${missingSubmitFields.join(', ')}.`
+    : null;
+  const blockingMessage = hasSaveBlockingItemErrors
+    ? 'Исправьте строки с недоступной упаковкой.'
+    : submitHeaderBlockingMessage
+      ? submitHeaderBlockingMessage
+      : hasItemErrors
+        ? 'Исправьте ошибки в строках заказа.'
+        : null;
   return {
     canSave: !hasSaveBlockingItemErrors,
     canAutosave: !hasSaveBlockingItemErrors,
-    canSubmit: !hasItemErrors,
-    blockingMessage: hasSaveBlockingItemErrors
-      ? 'Исправьте строки с недоступной упаковкой.'
-      : hasItemErrors
-        ? 'Исправьте ошибки в строках заказа.'
-        : null,
+    canSubmit: !hasItemErrors && !submitHeaderBlockingMessage,
+    blockingMessage,
     itemMessages,
     itemWarnings,
     warningMessage: hasWarnings ? 'Есть товары с ценой ниже себестоимости.' : null,
@@ -829,19 +932,27 @@ export function buildPayload(draft: DraftOrder, saveReason: 'manual' | 'autosave
     contractGuid: draft.contractGuid || null,
     warehouseGuid: draft.warehouseGuid || null,
     deliveryAddressGuid: draft.deliveryAddressGuid || null,
+    priceTypeGuid: draft.priceTypeGuid || null,
     deliveryDate: draft.deliveryDate || undefined,
     comment: draft.comment.trim() || undefined,
     currency: DEFAULT_ORDER_CURRENCY,
     saveReason,
     generalDiscountPercent,
     items: draft.items.map((item) => ({
+      lineGuid: item.lineGuid || item.key,
       productGuid: item.productGuid,
       packageGuid: item.packageGuid || undefined,
       priceTypeGuid: hasManualPrice(item) ? undefined : item.priceTypeGuid || undefined,
       quantity: normalizeQuantityForPayload(item),
+      basePrice: hasManualPrice(item) ? undefined : item.basePrice ?? undefined,
       manualPrice: hasManualPrice(item) ? normalizePriceForPayload(manualPriceInput(item)) : undefined,
       discountPercent: item.discountPercent.trim() ? asNumber(item.discountPercent) : undefined,
       comment: item.comment.trim() || undefined,
+      isCancelled: item.isCancelled ?? false,
+      cancelReasonGuid: item.cancelReasonGuid || undefined,
+      cancelReasonName: item.cancelReasonName || undefined,
+      cancelReason: item.cancelReason || undefined,
+      cancelledAmount: item.cancelledAmount ?? undefined,
     })),
   };
 }
@@ -892,6 +1003,7 @@ export function buildNewItem(product: ClientOrderProduct): DraftItem {
   const pack = product.baseUnit ? null : packages.find((item) => item.isDefault) ?? packages[0] ?? null;
   return {
     key: makeKey(),
+    lineGuid: makeLineGuid(),
     productGuid: product.guid,
     productName: product.name,
     productCode: product.code ?? null,
@@ -915,6 +1027,7 @@ export function buildNewItem(product: ClientOrderProduct): DraftItem {
     priceTypeName: product.priceType?.name ?? null,
     baseUnit: product.baseUnit ?? null,
     stock: product.stock ?? null,
+    packagesLoaded: true,
     packages,
   };
 }

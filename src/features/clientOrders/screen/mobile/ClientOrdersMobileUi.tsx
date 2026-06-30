@@ -313,6 +313,7 @@ type PickerBottomSheetProps = {
   keyboardBlurBehavior?: 'none' | 'restore';
   androidKeyboardInputMode?: 'adjustPan' | 'adjustResize';
   enableBlurKeyboardOnGesture?: boolean;
+  fastDismiss?: boolean;
 };
 
 export function PickerBottomSheet(props: PickerBottomSheetProps) {
@@ -385,12 +386,14 @@ function NativePickerBottomSheet({
   keyboardBlurBehavior = 'restore',
   androidKeyboardInputMode = 'adjustPan',
   enableBlurKeyboardOnGesture = true,
+  fastDismiss = false,
 }: PickerBottomSheetProps) {
   const ui = styles || pickerBottomSheetDefaultStyles;
   const { width, height } = useWindowDimensions();
   const bottomSheetRef = React.useRef<any>(null);
   const visibleRef = React.useRef(visible);
   const presentedRef = React.useRef(false);
+  const closeNotifiedRef = React.useRef(false);
   visibleRef.current = visible;
   const sheetWidth = fullWidth ? width : Math.min(520, Math.max(280, width - 16));
   const maxSheetHeight = Math.max(minHeight, Math.min(height - topOffset, Math.round(height * 0.95)));
@@ -405,33 +408,52 @@ function NativePickerBottomSheet({
     [initialSnapIndex, snapPoints.length]
   );
   const animationConfigs = React.useMemo(
-    () => ({
-      damping: 28,
-      stiffness: 320,
-      mass: 0.9,
-      overshootClamping: false,
-      restDisplacementThreshold: 0.1,
-      restSpeedThreshold: 0.1,
-    }),
-    []
+    () => fastDismiss
+      ? ({
+          damping: 54,
+          stiffness: 980,
+          mass: 0.45,
+          overshootClamping: true,
+          restDisplacementThreshold: 3,
+          restSpeedThreshold: 3,
+        })
+      : ({
+          damping: 28,
+          stiffness: 320,
+          mass: 0.9,
+          overshootClamping: false,
+          restDisplacementThreshold: 0.1,
+          restSpeedThreshold: 0.1,
+        }),
+    [fastDismiss]
   );
 
-  const requestClose = React.useCallback(() => {
-    if (!visibleRef.current) return;
+  const notifyClose = React.useCallback(() => {
+    if (closeNotifiedRef.current) return;
+    closeNotifiedRef.current = true;
     Keyboard.dismiss();
     onClose();
   }, [onClose]);
 
+  const requestClose = React.useCallback(() => {
+    if (!visibleRef.current && closeNotifiedRef.current) return;
+    notifyClose();
+  }, [notifyClose]);
+
   const handleDismiss = React.useCallback(() => {
-    if (!presentedRef.current) return;
     presentedRef.current = false;
     Keyboard.dismiss();
     if (visibleRef.current) {
-      onClose();
+      notifyClose();
     }
-  }, [onClose]);
+  }, [notifyClose]);
   const handleAnimate = React.useCallback((_fromIndex: number, toIndex: number) => {
     if (toIndex < 0) {
+      requestClose();
+    }
+  }, [requestClose]);
+  const handleChange = React.useCallback((index: number) => {
+    if (index < 0) {
       requestClose();
     }
   }, [requestClose]);
@@ -453,6 +475,7 @@ function NativePickerBottomSheet({
       return undefined;
     }
 
+    closeNotifiedRef.current = false;
     presentedRef.current = true;
     const frame = requestAnimationFrame(() => {
       bottomSheetRef.current?.present();
@@ -543,6 +566,7 @@ function NativePickerBottomSheet({
       backdropComponent={renderBackdrop}
       onDismiss={handleDismiss}
       onAnimate={handleAnimate}
+      onChange={handleChange}
       containerStyle={containerStyle}
       backgroundStyle={ui.pickerBottomSheetNativeBackground}
       handleComponent={renderHandle}

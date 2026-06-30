@@ -154,6 +154,7 @@ export type ClientOrderSettings = {
 };
 
 export type ClientOrderItem = {
+  lineGuid?: string | null;
   product: {
     guid: string;
     name: string;
@@ -175,6 +176,11 @@ export type ClientOrderItem = {
   isManualPrice?: boolean;
   manualPrice?: number | null;
   priceSource?: string | null;
+  isCancelled?: boolean;
+  cancelReasonGuid?: string | null;
+  cancelReasonName?: string | null;
+  cancelReason?: string | null;
+  cancelledAmount?: number | null;
   priceType?: { guid: string; name: string } | null;
   discountPercent?: number | null;
   appliedDiscountPercent?: number | null;
@@ -192,6 +198,21 @@ export type ClientOrderProductImage = {
   hash: string;
 };
 
+export type ClientOrderExportItemError = {
+  code?: string | null;
+  lineGuid?: string | null;
+  productGuid?: string | null;
+  productName?: string | null;
+  requiredBase?: number | null;
+  available?: number | null;
+  message: string;
+};
+
+export type ClientOrderExportValidation = {
+  message?: string | null;
+  itemErrors?: ClientOrderExportItemError[];
+};
+
 export type ClientOrder = {
   guid: string;
   appGuid?: string | null;
@@ -202,6 +223,8 @@ export type ClientOrder = {
   origin?: 'local' | 'onec' | 'merged' | string;
   readOnly?: boolean;
   readOnlyReason?: string | null;
+  hasRealization?: boolean;
+  realizationDetectedAt?: string | null;
   createdAt?: string;
   updatedAt?: string;
   sourceUpdatedAt?: string | null;
@@ -224,6 +247,7 @@ export type ClientOrder = {
   lastStatusSyncAt?: string | null;
   exportAttempts?: number;
   lastExportError?: string | null;
+  exportValidation?: ClientOrderExportValidation | null;
   isPostedIn1c?: boolean;
   postedAt1c?: string | null;
   cancelRequestedAt?: string | null;
