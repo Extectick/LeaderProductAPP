@@ -64,8 +64,8 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.BEGET_S3_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.BEGET_S3_SECRET_ACCESS_KEY }}
       EXPO_PUBLIC_UPDATE_CHANNEL: ${{ inputs.channel }}
-      EXPO_PUBLIC_API_URL_DEV: ${{ inputs.channel == 'prod' && 'http://api.leader-product.ru' || secrets.EXPO_PUBLIC_API_URL_DEV }}
-      EXPO_PUBLIC_OTA_UPDATE_URL: ${{ inputs.channel == 'prod' && 'http://api.leader-product.ru/ota/update' || format('{0}/ota/update', secrets.EXPO_PUBLIC_API_URL_DEV) }}
+      EXPO_PUBLIC_API_URL_DEV: ${{ inputs.channel == 'prod' && 'https://api.leader-product.ru' || secrets.EXPO_PUBLIC_API_URL_DEV }}
+      EXPO_PUBLIC_OTA_UPDATE_URL: ${{ inputs.channel == 'prod' && 'https://api.leader-product.ru/ota/update' || format('{0}/ota/update', secrets.EXPO_PUBLIC_API_URL_DEV) }}
       EXPO_PUBLIC_TELEGRAM_BOT_USERNAME: ${{ secrets.EXPO_PUBLIC_TELEGRAM_BOT_USERNAME }}
       EXPO_PUBLIC_MAX_BOT_USERNAME: ${{ secrets.EXPO_PUBLIC_MAX_BOT_USERNAME }}
       EXPO_PUBLIC_SENTRY_ENABLED: 'false'

@@ -11,7 +11,7 @@ const enableSentryPlugin = sentryRuntimeEnabled || sentryUploadConfigured;
 const updateChannel = process.env.EXPO_PUBLIC_UPDATE_CHANNEL || "prod";
 const apiBaseUrl =
   process.env.EXPO_PUBLIC_API_URL_DEV ||
-  (updateChannel === "prod" ? "http://api.leader-product.ru" : "");
+  (updateChannel === "prod" ? "https://api.leader-product.ru" : "");
 const otaUpdateUrl =
   process.env.EXPO_PUBLIC_OTA_UPDATE_URL ||
   (apiBaseUrl ? `${apiBaseUrl.replace(/\/+$/, "")}/ota/update` : undefined);

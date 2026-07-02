@@ -49,7 +49,7 @@ async function main() {
     args['api-url'] ||
     process.env.LEADER_PRODUCT_API_URL ||
     process.env.OTA_PUBLISH_API_URL ||
-    (metadata.channel === 'prod' ? 'http://api.leader-product.ru' : process.env.EXPO_PUBLIC_API_URL_DEV);
+    (metadata.channel === 'prod' ? 'https://api.leader-product.ru' : process.env.EXPO_PUBLIC_API_URL_DEV);
   const token = args.token || process.env.LEADER_PRODUCT_ACCESS_TOKEN || process.env.OTA_PUBLISH_BEARER_TOKEN;
 
   if (!apiUrl) throw new Error('Missing API URL');

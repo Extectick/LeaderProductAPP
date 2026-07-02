@@ -74,7 +74,7 @@ async function main() {
     args['api-url'] ||
     process.env.LEADER_PRODUCT_API_URL ||
     process.env.UPDATE_PUBLISH_API_URL ||
-    (channel === 'prod' ? 'http://api.leader-product.ru' : process.env.EXPO_PUBLIC_API_URL_DEV);
+    (channel === 'prod' ? 'https://api.leader-product.ru' : process.env.EXPO_PUBLIC_API_URL_DEV);
 
   if (!apiUrl) {
     throw new Error('Missing API URL. Pass --api-url or set LEADER_PRODUCT_API_URL.');
