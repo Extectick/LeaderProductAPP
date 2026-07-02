@@ -223,7 +223,7 @@ jobs:
             git checkout -B main origin/main
             printf '%s' "$RELEASE_METADATA_B64" | base64 -d | docker compose exec -T api sh -lc '
               set -eu
-              tmp_file="$(mktemp /tmp/leader-product-apk-release.XXXXXX.json)"
+              tmp_file="$(mktemp /tmp/leader-product-apk-release.XXXXXX)"
               cat > "$tmp_file"
               node scripts/publish-apk-update-db.js "$tmp_file"
               rm -f "$tmp_file"
