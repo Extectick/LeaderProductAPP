@@ -33,6 +33,11 @@ export function getPickerItemMeta(kind: ClientOrdersPickerKind | null, item: any
   if (kind === 'product') {
     return [item?.code, item?.article, item?.sku].filter(Boolean).join(' • ');
   }
+  if (kind === 'deliveryAddress') {
+    return [item?.deliveryComment || item?.comment, item?.kindName || item?.contactInfoKind || (item?.deliveryNumber ? `Адрес доставки ${item.deliveryNumber}` : '')]
+      .filter(Boolean)
+      .join(' • ');
+  }
   return '';
 }
 

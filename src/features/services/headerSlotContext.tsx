@@ -10,6 +10,7 @@ export type ServicesHeaderOverride = {
   dense?: boolean;
   tight?: boolean;
   horizontalPadding?: number;
+  titleSlot?: React.ReactNode;
   rightSlot?: React.ReactNode;
   bottomSlot?: React.ReactNode;
   surfaceVisible?: boolean;

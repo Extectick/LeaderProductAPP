@@ -44,6 +44,8 @@ import {
   emptyDraft,
   getClientOrderItems,
   getClientOrderItemsCount,
+  getOrderDisplayStatusLabel,
+  getOrderDisplayStatus,
   mergeDraftPackagesForProduct,
   getOrderActivityAt,
   hasManualPrice,
@@ -107,6 +109,7 @@ type OrdersCacheEntry = {
     total: number;
     limit: number;
     offset: number;
+    hasMore?: boolean;
     statusCounts: Record<string, number>;
   };
   nextOffset: number;
@@ -116,7 +119,7 @@ type OrdersCacheEntry = {
 function emptyFilters(): ClientOrdersFilters {
   return {
     search: '',
-    status: '',
+    statuses: [],
     counterpartyGuid: '',
     amountMin: '',
     amountMax: '',
@@ -138,10 +141,16 @@ function emptyFilters(): ClientOrdersFilters {
 function sanitizeStoredFilters(value: unknown): ClientOrdersFilters | null {
   if (!value || typeof value !== 'object') return null;
   const raw = value as Partial<ClientOrdersFilters>;
+  const legacyStatus = typeof (raw as { status?: unknown }).status === 'string' ? String((raw as { status?: string }).status).trim() : '';
+  const rawStatuses = Array.isArray(raw.statuses)
+    ? raw.statuses
+    : legacyStatus
+      ? [legacyStatus]
+      : [];
   return {
     ...emptyFilters(),
     search: typeof raw.search === 'string' ? raw.search : '',
-    status: typeof raw.status === 'string' ? raw.status : '',
+    statuses: Array.from(new Set(rawStatuses.map((item) => String(item || '').trim()).filter(Boolean))),
     counterpartyGuid: typeof raw.counterpartyGuid === 'string' ? raw.counterpartyGuid : '',
     amountMin: typeof raw.amountMin === 'string' ? raw.amountMin : '',
     amountMax: typeof raw.amountMax === 'string' ? raw.amountMax : '',
@@ -192,7 +201,7 @@ async function removeStoredFilters(storageKey: string) {
 function ordersFilterSignature(filters: ClientOrdersFilters) {
   return JSON.stringify({
     search: filters.search.trim(),
-    status: filters.status,
+    statuses: [...filters.statuses].sort(),
     counterpartyGuid: filters.counterpartyGuid,
     amountMin: filters.amountMin.trim(),
     amountMax: filters.amountMax.trim(),
@@ -240,6 +249,7 @@ function sanitizeOrdersCacheEntry(value: unknown, signature: string): OrdersCach
       total: typeof meta.total === 'number' ? meta.total : orders.length,
       limit: typeof meta.limit === 'number' ? meta.limit : ORDERS_PAGE_SIZE,
       offset: typeof meta.offset === 'number' ? meta.offset : 0,
+      hasMore: typeof meta.hasMore === 'boolean' ? meta.hasMore : undefined,
       statusCounts: meta.statusCounts && typeof meta.statusCounts === 'object' ? meta.statusCounts : {},
     },
     nextOffset: typeof raw.nextOffset === 'number' ? Math.max(0, raw.nextOffset) : orders.length,
@@ -318,16 +328,25 @@ async function writeStoredDeviceDrafts(storageKey: string, entries: DeviceDraftE
 
 function userErrorMessage(error: unknown, fallback: string) {
   const message = error instanceof Error ? error.message.trim() : '';
+  const lower = message.toLocaleLowerCase('ru');
   const looksTechnical =
     !message ||
     message.startsWith('{') ||
     message.startsWith('[') ||
     message.startsWith('<!DOCTYPE') ||
+    message.includes('errorId=') ||
+    message.includes('HTTP ') ||
     message.includes('"path"') ||
     message.includes('"code"') ||
     message.includes('ZodError') ||
+    message.includes('INTERNAL_ERROR') ||
+    message.includes('Непредвиденная ошибка') ||
+    message.includes('Поле объекта не обнаружено') ||
+    message.includes('Метод объекта не обнаружен') ||
     message.includes('expected number') ||
-    message.includes('\n    at ');
+    message.includes('\n    at ') ||
+    lower.includes('timeout') ||
+    lower.includes('failed to fetch');
   return looksTechnical ? fallback : message.slice(0, 240);
 }
 
@@ -378,6 +397,13 @@ function includesSearchToken(value: string | null | undefined, search: string) {
 
 function normalizeFilterSearch(search: string) {
   return search.trim().toLowerCase();
+}
+
+function normalizeSearchTokens(search: string) {
+  return normalizeFilterSearch(search)
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
 }
 
 function parseFilterAmount(value: string) {
@@ -436,7 +462,8 @@ function orderWorkspaceRank(order: ClientOrder) {
 }
 
 function orderMatchesFilters(order: ClientOrder, filters: ClientOrdersFilters) {
-  if (filters.status && order.status !== filters.status) return false;
+  const statuses = Array.isArray(filters.statuses) ? filters.statuses.filter(Boolean) : [];
+  if (statuses.length && !statuses.includes(getOrderDisplayStatus(order))) return false;
   if (filters.counterpartyGuid && order.counterparty?.guid !== filters.counterpartyGuid) return false;
   if (filters.syncState && order.syncState !== filters.syncState) return false;
   if (filters.organizationGuid && order.organization?.guid !== filters.organizationGuid) return false;
@@ -466,15 +493,22 @@ function orderMatchesFilters(order: ClientOrder, filters: ClientOrdersFilters) {
   if (updatedFrom !== null && (updatedDate === null || updatedDate < updatedFrom)) return false;
   if (updatedTo !== null && (updatedDate === null || updatedDate > updatedTo + 86399999)) return false;
 
-  const search = normalizeFilterSearch(filters.search);
-  if (!search) return true;
+  const searchTokens = normalizeSearchTokens(filters.search);
+  if (!searchTokens.length) return true;
 
-  return [
+  const searchableValues = [
     order.guid,
     order.number1c,
     order.comment,
+    order.organization?.name,
     order.counterparty?.name,
-  ].some((value) => includesSearchToken(value, search));
+    order.status,
+    getOrderDisplayStatusLabel(order),
+    order.status1c,
+    order.currentState1c,
+    order.documentStatus1c,
+  ];
+  return searchTokens.every((token) => searchableValues.some((value) => includesSearchToken(value, token)));
 }
 
 function sortClientOrdersForWorkspace(items: ClientOrder[]) {
@@ -737,6 +771,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     total: number;
     limit: number;
     offset: number;
+    hasMore?: boolean;
     statusCounts: Record<string, number>;
   }>({ total: 0, limit: ORDERS_PAGE_SIZE, offset: 0, statusCounts: {} });
   const [filters, setFilters] = React.useState<ClientOrdersFilters>(emptyFilters());
@@ -865,10 +900,14 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     () => deviceDraftEntries.map((entry) => entry.order).filter((order) => orderMatchesFilters(order, filters)),
     [deviceDraftEntries, filters]
   );
+  const visibleApiOrders = React.useMemo(
+    () => orders.filter((order) => orderMatchesFilters(order, filters)),
+    [orders, filters]
+  );
   const mergedOrders = React.useMemo(() => {
     const deviceGuids = new Set(visibleDeviceOrders.map((order) => order.guid));
-    return [...visibleDeviceOrders, ...orders.filter((order) => !deviceGuids.has(order.guid))];
-  }, [orders, visibleDeviceOrders]);
+    return [...visibleDeviceOrders, ...visibleApiOrders.filter((order) => !deviceGuids.has(order.guid))];
+  }, [visibleApiOrders, visibleDeviceOrders]);
   const sortedOrders = React.useMemo(() => sortClientOrdersForWorkspace(mergedOrders), [mergedOrders]);
   const latestDraftOrder = React.useMemo(() => sortedOrders.find((item) => item.status === 'DRAFT') || null, [sortedOrders]);
   const hasQueuedOrders = React.useMemo(
@@ -899,7 +938,9 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     };
   }, [ordersMeta.statusCounts, ordersMeta.total, sortedOrders, visibleDeviceOrders]);
 
-  const hasMoreOrders = ordersNextOffsetRef.current < (ordersMeta.total || 0);
+  const hasMoreOrders = typeof ordersMeta.hasMore === 'boolean'
+    ? ordersMeta.hasMore
+    : ordersNextOffsetRef.current < (ordersMeta.total || 0);
 
   React.useEffect(() => {
     settingsRef.current = settings;
@@ -1319,7 +1360,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         limit: ORDERS_PAGE_SIZE,
         offset,
         search: filters.search || undefined,
-        status: filters.status || undefined,
+        statuses: filters.statuses.length ? filters.statuses : undefined,
         syncState: filters.syncState || undefined,
         counterpartyGuid: filters.counterpartyGuid || undefined,
         organizationGuid: filters.organizationGuid || undefined,
@@ -1371,6 +1412,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         total: nextTotal,
         limit: result.meta.limit || ORDERS_PAGE_SIZE,
         offset: result.meta.offset || offset,
+        hasMore: typeof result.meta.hasMore === 'boolean' ? result.meta.hasMore : undefined,
         statusCounts: result.meta.statusCounts || {},
       };
       setOrdersMeta(nextMeta);
@@ -1526,6 +1568,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   React.useEffect(() => {
     if (!filtersHydrated || !ordersCacheHydrated) return;
     ordersRequestIdRef.current += 1;
+    setOrdersAppendError(null);
+    setLoadingOrders(true);
   }, [filtersSignature, filtersHydrated, ordersCacheHydrated]);
 
   React.useEffect(() => {
@@ -1620,6 +1664,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       }
 
       removeDeviceDraftEntry(draft.guid || deviceEntry?.order.guid || deviceEntry?.serverGuid);
+      selectedGuidRef.current = order.guid;
+      documentStartedRef.current = true;
       setSelectedGuid(order.guid);
       setSelectedOrder(order);
       mergeSavedOrderIntoDraft(order);
@@ -1692,12 +1738,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         order = await submitClientOrder(saved.guid, freshOrder.revision);
       }
       applySavedOrderToList(order);
+      applyOrderDetail(order);
       void loadOrders('reset');
-      setSelectedGuid(order.guid);
-      setSelectedOrder(order);
-      setDraft(normalizeDraftOrder(orderToDraft(order)));
-      setDocumentStarted(true);
-      setDirty(false);
       setError(null);
       return true;
     } catch (e: any) {
@@ -1709,7 +1751,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     } finally {
       setSubmitting(false);
     }
-  }, [applySavedOrderToList, findDeviceDraftEntry, loadOrders, mergeServerRevisionIntoOpenDraft, saveDraft, selectedOrderQueued, selectedOrderSynced]);
+  }, [applyOrderDetail, applySavedOrderToList, findDeviceDraftEntry, loadOrders, mergeServerRevisionIntoOpenDraft, saveDraft, selectedOrderQueued, selectedOrderSynced]);
 
   React.useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -1733,13 +1775,12 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       });
       decision = typeof result === 'boolean' ? (result ? 'discard' : 'cancel') : result;
     } else if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      decision = window.confirm('Сохранить изменения перед выходом?') ? 'save' : 'cancel';
+      decision = window.confirm('Выйти из документа? Несохраненные изменения будут потеряны.') ? 'discard' : 'cancel';
     } else {
       decision = await new Promise<DiscardDecision>((resolve) => {
-        Alert.alert('Несохраненные изменения', 'Сохранить изменения перед выходом?', [
+        Alert.alert('Выйти из документа?', 'Несохраненные изменения будут потеряны.', [
           { text: 'Остаться', style: 'cancel', onPress: () => resolve('cancel') },
-          { text: 'Не сохранять', style: 'destructive', onPress: () => resolve('discard') },
-          { text: 'Сохранить', onPress: () => resolve('save') },
+          { text: 'Выйти', style: 'destructive', onPress: () => resolve('discard') },
         ]);
       });
     }
@@ -2248,12 +2289,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         order = await submitClientOrder(targetGuid, freshOrder.revision);
       }
       applySavedOrderToList(order);
+      applyOrderDetail(order);
       void loadOrders('reset');
-      setSelectedGuid(order.guid);
-      setSelectedOrder(order);
-      setDraft(normalizeDraftOrder(orderToDraft(order)));
-      setDocumentStarted(true);
-      setDirty(false);
     } catch (e: any) {
       const message = isNetworkUnavailableError(e)
         ? 'Не удалось отправить заказ: нет связи или сервер не ответил. Документ сохранен, повторите отправку позже.'
@@ -2262,7 +2299,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     } finally {
       setSubmitting(false);
     }
-  }, [applySavedOrderToList, canSubmitOrder, dirty, draft.guid, draft.revision, findDeviceDraftEntry, loadOrders, mergeServerRevisionIntoOpenDraft, saveDraft, selectedGuid, selectedOrderQueued, validation.blockingMessage]);
+  }, [applyOrderDetail, applySavedOrderToList, canSubmitOrder, dirty, draft.guid, draft.revision, findDeviceDraftEntry, loadOrders, mergeServerRevisionIntoOpenDraft, saveDraft, selectedGuid, selectedOrderQueued, validation.blockingMessage]);
 
   const unqueueOrder = React.useCallback(async (target?: { guid: string; revision: number }) => {
     let targetGuid = target?.guid || draft.guid || selectedGuid;

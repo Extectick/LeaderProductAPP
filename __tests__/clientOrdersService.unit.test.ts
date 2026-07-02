@@ -59,6 +59,23 @@ describe('clientOrdersService', () => {
     });
   });
 
+  it('serializes multi-status order filters', async () => {
+    apiClientMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { items: [] },
+      meta: { total: 0, limit: 20, offset: 0 },
+    } as any);
+
+    await getClientOrders({
+      limit: 20,
+      offset: 0,
+      statuses: ['QUEUED', 'TO_SHIP', 'SHIPPING_IN_PROGRESS'],
+    });
+
+    expect(apiClientMock).toHaveBeenCalledWith('/api/client-orders?limit=20&offset=0&statuses=QUEUED%2CTO_SHIP%2CSHIPPING_IN_PROGRESS');
+  });
+
   it('deduplicates concurrent order detail reads', async () => {
     let resolve!: (value: any) => void;
     apiClientMock.mockReturnValueOnce(new Promise((next) => { resolve = next; }) as any);

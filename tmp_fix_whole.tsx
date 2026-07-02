@@ -1638,8 +1638,8 @@ export default function ClientOrdersWebScreen() {
             />
             <CompactSelectField
               label="Статус"
-              value={workspace.filters.status}
-              onChange={(value) => workspace.setFilters((prev) => ({ ...prev, status: value }))}
+              value={workspace.filters.statuses[0] || ''}
+              onChange={(value) => workspace.setFilters((prev) => ({ ...prev, statuses: value ? [value] : [] }))}
               renderValue={(value) => value ? (workspace.statusLabels[value] || value) : 'Р’СЃРµ статусы'}
             >
               <MenuItem value="">Р’СЃРµ статусы</MenuItem>

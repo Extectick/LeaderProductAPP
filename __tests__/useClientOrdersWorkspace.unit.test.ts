@@ -44,9 +44,11 @@ jest.mock('@/utils/clientOrdersService', () => ({
 import { AuthContext } from '@/context/AuthContext';
 import { useClientOrdersWorkspace } from '../src/features/clientOrders/useClientOrdersWorkspace';
 import {
+  createClientOrder,
   getClientOrder,
   getClientOrderSettings,
   getClientOrders,
+  submitClientOrder,
 } from '@/utils/clientOrdersService';
 
 const settings = {
@@ -168,6 +170,211 @@ describe('useClientOrdersWorkspace', () => {
     expect(workspace!.selectedOrder?.queuePosition).toBe(2);
     expect(workspace!.draft.items).toHaveLength(1);
     expect(workspace!.loadingDetail).toBe(false);
+
+    await act(async () => {
+      renderer!.unmount();
+    });
+  });
+
+  it('passes and applies status and warehouse filters for loaded orders', async () => {
+    const draftOrder = queuedOrder(0, {
+      guid: 'draft-guid',
+      status: 'DRAFT',
+      syncState: 'DRAFT',
+      warehouse: { guid: 'warehouse-a', name: 'Склад А' },
+    });
+    const shippedOrder = queuedOrder(0, {
+      guid: 'ship-guid',
+      status: 'TO_SHIP',
+      syncState: 'SYNCED',
+      number1c: 'НОУТ-000001',
+      origin: 'onec',
+      currentState1c: 'К отгрузке',
+      warehouse: { guid: 'warehouse-b', name: 'Склад Б' },
+    });
+    jest.mocked(getClientOrders).mockResolvedValue({
+      items: [draftOrder, shippedOrder],
+      meta: { total: 2, limit: 20, offset: 0, statusCounts: {}, liveSource: { status: 'ok' } },
+    } as any);
+
+    let workspace: ReturnType<typeof useClientOrdersWorkspace>;
+    function Harness() {
+      workspace = useClientOrdersWorkspace();
+      return null;
+    }
+
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        React.createElement(
+          AuthContext.Provider,
+          {
+            value: {
+              isLoading: false,
+              isAuthenticated: true,
+              profile: { id: 1 } as any,
+              setAuthenticated: jest.fn(),
+              setProfile: jest.fn(),
+              signOut: jest.fn(),
+            },
+          },
+          React.createElement(Harness)
+        )
+      );
+    });
+
+    await flush();
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(1_000);
+    });
+    await flush();
+
+    expect(workspace!.orders.map((order) => order.guid).sort()).toEqual(['draft-guid', 'ship-guid']);
+
+    await act(async () => {
+      workspace!.setFilters((prev) => ({
+        ...prev,
+        statuses: ['DRAFT'],
+        warehouseGuid: 'warehouse-a',
+      }));
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(1_000);
+    });
+    await flush();
+
+    expect(getClientOrders).toHaveBeenLastCalledWith(expect.objectContaining({
+      statuses: ['DRAFT'],
+      warehouseGuid: 'warehouse-a',
+    }));
+    expect(workspace!.orders.map((order) => order.guid)).toEqual(['draft-guid']);
+
+    await act(async () => {
+      renderer!.unmount();
+    });
+  });
+
+  it('keeps submitted document open when current list filters exclude it', async () => {
+    const savedOrder = queuedOrder(0, {
+      guid: 'new-order-guid',
+      revision: 1,
+      status: 'DRAFT',
+      syncState: 'DRAFT',
+      counterparty: { guid: 'other-counterparty-guid', name: 'Другой контрагент' },
+      agreement: { guid: 'agreement-guid', name: 'Соглашение' },
+      contract: { guid: 'contract-guid', name: 'Договор' },
+      warehouse: { guid: 'warehouse-guid', name: 'Склад' },
+      deliveryAddress: { guid: 'address-guid', fullAddress: 'Адрес' },
+      deliveryDate: '2026-06-30T00:00:00.000Z',
+      items: [
+        {
+          product: { guid: 'product-guid', name: 'Товар' },
+          quantity: 1,
+          basePrice: 100,
+        },
+      ],
+    });
+    const submittedOrder = {
+      ...savedOrder,
+      revision: 2,
+      status: 'SENT_TO_1C',
+      syncState: 'SYNCED',
+      number1c: 'НОУТ-000001',
+    };
+
+    jest.mocked(getClientOrders).mockResolvedValue({
+      items: [],
+      meta: { total: 0, limit: 20, offset: 0, statusCounts: {}, liveSource: { status: 'ok' } },
+    } as any);
+    jest.mocked(createClientOrder).mockResolvedValue(savedOrder as any);
+    jest.mocked(submitClientOrder).mockResolvedValue(submittedOrder as any);
+
+    let workspace: ReturnType<typeof useClientOrdersWorkspace>;
+    function Harness() {
+      workspace = useClientOrdersWorkspace();
+      return null;
+    }
+
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        React.createElement(
+          AuthContext.Provider,
+          {
+            value: {
+              isLoading: false,
+              isAuthenticated: true,
+              profile: { id: 1 } as any,
+              setAuthenticated: jest.fn(),
+              setProfile: jest.fn(),
+              signOut: jest.fn(),
+            },
+          },
+          React.createElement(Harness)
+        )
+      );
+    });
+
+    await flush();
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(1_000);
+    });
+    await flush();
+
+    await act(async () => {
+      workspace!.setFilters((prev) => ({ ...prev, counterpartyGuid: 'filtered-counterparty-guid' }));
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(1_000);
+    });
+    await flush();
+
+    await act(async () => {
+      workspace!.patchDraft({
+        organizationGuid: 'org-guid',
+        counterpartyGuid: 'other-counterparty-guid',
+        agreementGuid: 'agreement-guid',
+        contractGuid: 'contract-guid',
+        warehouseGuid: 'warehouse-guid',
+        deliveryAddressGuid: 'address-guid',
+        deliveryDate: '2026-06-30T00:00:00.000Z',
+        priceTypeGuid: 'price-type-guid',
+        items: [
+          {
+            key: 'line-key',
+            lineGuid: 'line-guid',
+            productGuid: 'product-guid',
+            productName: 'Товар',
+            quantity: '1',
+            packageGuid: null,
+            manualPrice: '',
+            discountPercent: '',
+            comment: '',
+            basePrice: 100,
+            receiptPrice: null,
+            priceTypeGuid: 'price-type-guid',
+            baseUnit: { name: 'шт', symbol: 'шт' },
+            packages: [],
+          },
+        ],
+      });
+    });
+    await flush();
+
+    await act(async () => {
+      await workspace!.submitOrder();
+    });
+    await flush();
+
+    expect(createClientOrder).toHaveBeenCalledTimes(1);
+    expect(submitClientOrder).toHaveBeenCalledWith('new-order-guid', 1);
+    expect(workspace!.orders).toEqual([]);
+    expect(workspace!.selectedGuid).toBe('new-order-guid');
+    expect(workspace!.selectedOrder?.guid).toBe('new-order-guid');
+    expect(workspace!.draft.guid).toBe('new-order-guid');
+    expect(workspace!.draft.counterpartyGuid).toBe('other-counterparty-guid');
+    expect(workspace!.draft.items).toHaveLength(1);
+    expect(workspace!.draftMode).toBe(false);
 
     await act(async () => {
       renderer!.unmount();

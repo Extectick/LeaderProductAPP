@@ -171,10 +171,14 @@ export function ConfirmDialog({
   onDismiss: () => void;
 }) {
   const [confirming, setConfirming] = React.useState(false);
+  const [renderedState, setRenderedState] = React.useState<ConfirmDialogState>(state);
 
   React.useEffect(() => {
+    if (state) setRenderedState(state);
     if (!state) setConfirming(false);
   }, [state]);
+
+  const dialogState = state ?? renderedState;
 
   const confirm = React.useCallback(async () => {
     if (!state || confirming) return;
@@ -197,20 +201,22 @@ export function ConfirmDialog({
     }
   }, [confirming, onDismiss, state]);
 
+  if (!dialogState) return null;
+
   return (
     <Portal>
       <Dialog visible={!!state} onDismiss={onDismiss} style={styles.confirmDialogPaper}>
         <Dialog.Content style={styles.confirmDialogContent}>
           <Text variant="headlineSmall" style={styles.confirmDialogTitle}>
-            {state?.title || ''}
+            {dialogState.title}
           </Text>
-          {state?.message ? (
+          {dialogState.message ? (
             <Text variant="bodyMedium" style={styles.confirmDialogMessage}>
-              {state.message}
+              {dialogState.message}
             </Text>
           ) : null}
           <View style={styles.confirmDialogActions}>
-            {!state?.hideCancel ? (
+            {!dialogState.hideCancel ? (
               <PaperButton
                 mode="outlined"
                 onPress={onDismiss}
@@ -220,10 +226,10 @@ export function ConfirmDialog({
                 contentStyle={styles.confirmDialogButtonContent}
                 labelStyle={styles.confirmDialogButtonLabel}
               >
-                {state?.cancelLabel || 'Отмена'}
+                {dialogState.cancelLabel || 'Отмена'}
               </PaperButton>
             ) : null}
-            {state?.alternateLabel && state.onAlternate ? (
+            {dialogState.alternateLabel && dialogState.onAlternate ? (
               <PaperButton
                 mode="outlined"
                 onPress={() => void alternate()}
@@ -233,7 +239,7 @@ export function ConfirmDialog({
                 contentStyle={styles.confirmDialogButtonContent}
                 labelStyle={styles.confirmDialogButtonLabel}
               >
-                {state.alternateLabel}
+                {dialogState.alternateLabel}
               </PaperButton>
             ) : null}
             <PaperButton
@@ -241,13 +247,13 @@ export function ConfirmDialog({
               onPress={() => void confirm()}
               loading={confirming}
               disabled={confirming}
-              buttonColor={state?.destructive ? '#DC2626' : '#2563EB'}
+              buttonColor={dialogState.destructive ? '#DC2626' : '#2563EB'}
               textColor="#FFFFFF"
               style={styles.confirmDialogPrimaryButton}
               contentStyle={styles.confirmDialogButtonContent}
               labelStyle={styles.confirmDialogButtonLabel}
             >
-              {state?.confirmLabel || 'Продолжить'}
+              {dialogState.confirmLabel || 'Продолжить'}
             </PaperButton>
           </View>
         </Dialog.Content>

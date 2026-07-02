@@ -56,6 +56,7 @@ type Props = {
   tight?: boolean;
   dense?: boolean;
   leftSlot?: React.ReactNode;
+  titleSlot?: React.ReactNode;
   rightSlot?: React.ReactNode;
   bottomSlot?: React.ReactNode;
   surfaceVisible?: boolean;
@@ -93,6 +94,7 @@ export function AppHeader({
   tight = false,
   dense = false,
   leftSlot,
+  titleSlot,
   rightSlot,
   bottomSlot,
   surfaceVisible = true,
@@ -167,33 +169,39 @@ export function AppHeader({
 
         {leftSlot}
 
-        <LinearGradient
-          colors={['#4F46E5', '#7C3AED']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={[styles.iconBadge, dense && styles.iconBadgeDense]}
-        >
-          <Ionicons name={icon as any} size={dense ? 16 : 18} color="#fff" />
-        </LinearGradient>
-
-        <View style={styles.textWrap}>
-          <Text
-            style={[styles.title, tight && styles.titleTight, { color: textColor, fontSize: titleSize }]}
-            numberOfLines={titleLines}
-            ellipsizeMode="tail"
-          >
-            {title}
-          </Text>
-          {subtitle ? (
-            <Text
-              style={[styles.subtitle, tight && styles.subtitleTight, { color: secondary, fontSize: subtitleSize }]}
-              numberOfLines={subtitleLines}
-              ellipsizeMode="tail"
+        {titleSlot ? (
+          <View style={styles.customTitleWrap}>{titleSlot}</View>
+        ) : (
+          <>
+            <LinearGradient
+              colors={['#4F46E5', '#7C3AED']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={[styles.iconBadge, dense && styles.iconBadgeDense]}
             >
-              {subtitle}
-            </Text>
-          ) : null}
-        </View>
+              <Ionicons name={icon as any} size={dense ? 16 : 18} color="#fff" />
+            </LinearGradient>
+
+            <View style={styles.textWrap}>
+              <Text
+                style={[styles.title, tight && styles.titleTight, { color: textColor, fontSize: titleSize }]}
+                numberOfLines={titleLines}
+                ellipsizeMode="tail"
+              >
+                {title}
+              </Text>
+              {subtitle ? (
+                <Text
+                  style={[styles.subtitle, tight && styles.subtitleTight, { color: secondary, fontSize: subtitleSize }]}
+                  numberOfLines={subtitleLines}
+                  ellipsizeMode="tail"
+                >
+                  {subtitle}
+                </Text>
+              ) : null}
+            </View>
+          </>
+        )}
 
         <View style={[styles.rightCluster, tight && styles.rightClusterTight, dense && styles.rightClusterDense]}>
           {showServerStatus ? <AppStatusIndicator /> : null}
@@ -362,6 +370,10 @@ const styles = StyleSheet.create({
     minHeight: 38,
   },
   textWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  customTitleWrap: {
     flex: 1,
     minWidth: 0,
   },

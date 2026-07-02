@@ -71,7 +71,7 @@ export type DraftOrder = {
 
 export type ClientOrdersFilters = {
   search: string;
-  status: string;
+  statuses: string[];
   counterpartyGuid: string;
   amountMin: string;
   amountMax: string;

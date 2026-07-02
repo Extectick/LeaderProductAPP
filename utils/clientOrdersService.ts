@@ -8,6 +8,7 @@ export type PaginationMeta = {
   count?: number;
   limit?: number;
   offset?: number;
+  hasMore?: boolean;
   statusCounts?: Record<string, number>;
   liveSource?: {
     status: string;
@@ -136,6 +137,12 @@ export type ClientOrderDeliveryAddressOption = {
   name?: string | null;
   fullAddress?: string | null;
   address?: string | null;
+  deliveryNumber?: string | null;
+  number?: string | null;
+  comment?: string | null;
+  deliveryComment?: string | null;
+  kindName?: string | null;
+  contactInfoKind?: string | null;
   counterpartyGuid?: string | null;
   isDefault?: boolean;
   isActive?: boolean;
@@ -258,7 +265,7 @@ export type ClientOrder = {
   agreement?: ClientOrderAgreementOption | null;
   contract?: { guid: string; number: string } | null;
   warehouse?: { guid: string; name: string; code?: string | null } | null;
-  deliveryAddress?: { guid?: string | null; fullAddress?: string | null; name?: string | null } | null;
+  deliveryAddress?: ClientOrderDeliveryAddressOption | null;
   organization?: ClientOrderOrganization | null;
   createdByUser?: {
     id: number;
@@ -325,10 +332,15 @@ export type ClientOrderProduct = {
   images?: ClientOrderProductImage[];
 };
 
-function buildQuery(params: Record<string, string | number | boolean | undefined | null>) {
+function buildQuery(params: Record<string, string | number | boolean | string[] | undefined | null>) {
   const query = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
     if (value === undefined || value === null || value === '') return;
+    if (Array.isArray(value)) {
+      const items = value.map((item) => String(item || '').trim()).filter(Boolean);
+      if (items.length) query.set(key, items.join(','));
+      return;
+    }
     query.set(key, String(value));
   });
   return query.toString();
@@ -402,6 +414,7 @@ export async function getClientOrders(params?: {
   limit?: number;
   offset?: number;
   status?: string;
+  statuses?: string[];
   syncState?: string;
   search?: string;
   counterpartyGuid?: string;

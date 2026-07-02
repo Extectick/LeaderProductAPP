@@ -246,10 +246,11 @@ export default function ServicesLayout() {
                 dense={activeHeaderOverride?.dense ?? isClientOrdersPath}
                 compact={activeHeaderOverride?.compact ?? isClientOrdersPath}
                 horizontalPadding={activeHeaderOverride?.horizontalPadding ?? (isClientOrdersPath ? 6 : undefined)}
+                titleSlot={activeHeaderOverride?.titleSlot}
                 rightSlot={resolvedHeaderRightSlot}
                 bottomSlot={resolvedHeaderBottomSlot}
                 surfaceVisible={activeHeaderOverride?.surfaceVisible ?? !isCatalogPath}
-                entranceMotion={activeHeaderOverride?.entranceMotion ?? (isCatalogPath ? 'fade' : 'slide')}
+                entranceMotion={activeHeaderOverride?.entranceMotion ?? (isClientOrdersPath ? 'none' : isCatalogPath ? 'fade' : 'slide')}
                 variant={activeHeaderOverride?.variant ?? 'default'}
                 showServerStatus={activeHeaderOverride?.showServerStatus ?? !isCatalogPath}
               />
