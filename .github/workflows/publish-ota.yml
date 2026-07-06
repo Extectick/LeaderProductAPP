@@ -89,6 +89,8 @@ jobs:
         run: npx expo export --platform "$OTA_PLATFORM" --output-dir dist-ota
 
       - name: Create OTA metadata
+        id: metadata
+        shell: bash
         run: |
           node ./scripts/createOtaMetadata.js dist-ota \
             --out release-artifacts/ota-metadata.json \
@@ -98,9 +100,31 @@ jobs:
             --rolloutPercent "$OTA_ROLLOUT_PERCENT" \
             --releaseNotes "$OTA_RELEASE_NOTES" \
             --commitSha "$GITHUB_SHA"
+          echo "ota_metadata_b64=$(base64 -w0 release-artifacts/ota-metadata.json)" >> "$GITHUB_OUTPUT"
 
       - name: Upload OTA files to S3
         run: node ./scripts/uploadOtaToS3.js release-artifacts/ota-metadata.json
+
+      - name: Publish production OTA in API
+        if: ${{ env.OTA_CHANNEL == 'prod' }}
+        uses: appleboy/ssh-action@v1
+        env:
+          OTA_METADATA_B64: ${{ steps.metadata.outputs.ota_metadata_b64 }}
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          envs: OTA_METADATA_B64
+          script: |
+            set -euo pipefail
+            cd /opt/leader-api/LeaderProductAPI
+            printf '%s' "$OTA_METADATA_B64" | base64 -d | docker compose exec -T api sh -lc '
+              set -eu
+              tmp_file="$(mktemp /tmp/leader-product-ota-release.XXXXXX)"
+              cat > "$tmp_file"
+              node scripts/publish-ota-update-db.js "$tmp_file"
+              rm -f "$tmp_file"
+            '
 
       - name: Upload OTA artifacts
         uses: actions/upload-artifact@v7
