@@ -42,6 +42,10 @@ Thumbs.db
 .env.*
 !.env.example
 
+# local infrastructure access notes with real credentials
+deploy/1c-postgres-ha/docs/*.local.md
+deploy/1c-postgres-ha/ansible/group_vars/vault.yml
+
 # typescript
 *.tsbuildinfo
 

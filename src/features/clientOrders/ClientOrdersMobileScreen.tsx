@@ -2962,13 +2962,13 @@ function DocumentBottomBar({
         <View style={styles.documentBottomContent}>
           <View style={styles.documentBottomInfo}>
             <View style={styles.documentBottomMetaRow}>
-              <View style={styles.documentBottomTotalPill}>
+              <View style={styles.documentBottomTotalPill} accessibilityLabel={`Сумма ${formatMoney(workspace.localTotal, workspace.draft.currency)}`}>
                 <MaterialCommunityIcons name="cash-multiple" size={13} color="#2563EB" />
-                <Text style={styles.documentBottomTotalText} numberOfLines={1}>Сумма {formatMoney(workspace.localTotal, workspace.draft.currency)}</Text>
+                <Text style={styles.documentBottomTotalText} numberOfLines={1}>{formatMoney(workspace.localTotal, workspace.draft.currency)}</Text>
               </View>
-              <View style={styles.documentBottomProfitPill}>
+              <View style={styles.documentBottomProfitPill} accessibilityLabel={`Выручка ${formatMoney(workspace.localProfit, workspace.draft.currency)}`}>
                 <MaterialCommunityIcons name="chart-line" size={13} color={workspace.localProfit < 0 ? '#DC2626' : '#16A34A'} />
-                <Text style={[styles.documentBottomProfitText, workspace.localProfit < 0 && styles.documentBottomProfitTextNegative]} numberOfLines={1}>Выручка {formatMoney(workspace.localProfit, workspace.draft.currency)}</Text>
+                <Text style={[styles.documentBottomProfitText, workspace.localProfit < 0 && styles.documentBottomProfitTextNegative]} numberOfLines={1}>{formatMoney(workspace.localProfit, workspace.draft.currency)}</Text>
               </View>
             </View>
             <View style={styles.documentBottomCounterpartyRow}>
@@ -5674,10 +5674,10 @@ const styles = StyleSheet.create({
   documentBottomGlass: { borderTopLeftRadius: 22, borderTopRightRadius: 22, paddingHorizontal: 10, paddingTop: 8 },
   documentBottomContent: { minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: 8 },
   documentBottomInfo: { flex: 1, minWidth: 0, gap: 6 },
-  documentBottomMetaRow: { minHeight: 25, flexDirection: 'row', alignItems: 'center', gap: 6 },
-  documentBottomTotalPill: { flex: 1, minWidth: 0, minHeight: 25, borderRadius: 999, borderWidth: 1, borderColor: '#BFDBFE', backgroundColor: '#EFF6FF', paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 4 },
+  documentBottomMetaRow: { minHeight: 25, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 },
+  documentBottomTotalPill: { flexGrow: 1, flexShrink: 0, flexBasis: 118, maxWidth: '100%', minHeight: 25, borderRadius: 999, borderWidth: 1, borderColor: '#BFDBFE', backgroundColor: '#EFF6FF', paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 4 },
   documentBottomTotalText: { flex: 1, minWidth: 0, color: '#2563EB', fontSize: 12, lineHeight: 15, fontWeight: '900', includeFontPadding: false },
-  documentBottomProfitPill: { flex: 1, minWidth: 0, minHeight: 25, borderRadius: 999, borderWidth: 1, borderColor: '#BBF7D0', backgroundColor: '#F0FDF4', paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 4 },
+  documentBottomProfitPill: { flexGrow: 1, flexShrink: 0, flexBasis: 118, maxWidth: '100%', minHeight: 25, borderRadius: 999, borderWidth: 1, borderColor: '#BBF7D0', backgroundColor: '#F0FDF4', paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 4 },
   documentBottomProfitText: { flex: 1, minWidth: 0, color: '#16A34A', fontSize: 12, lineHeight: 15, fontWeight: '900', includeFontPadding: false },
   documentBottomProfitTextNegative: { color: '#DC2626' },
   documentBottomDateText: { flexShrink: 0, color: '#475569', fontSize: 11.5, lineHeight: 14, fontWeight: '800', includeFontPadding: false },

@@ -51,7 +51,7 @@ function subscribe(listener: (snapshot: ServicesSnapshot) => void) {
 }
 
 async function loadServicesInternal(force = false) {
-  if (inFlight && !force) return inFlight;
+  if (inFlight) return inFlight;
 
   const task = (async () => {
     const currentCacheVersion = getServicesAccessCacheVersion();
@@ -63,7 +63,7 @@ async function loadServicesInternal(force = false) {
     const fallbackServices = state.services?.length ? state.services : null;
     setState({ loading: true, error: null, services: fallbackServices });
 
-    const cachedFallback = fallbackServices ? null : await readCachedServices();
+    const cachedFallback = !fallbackServices || force ? await readCachedServices() : null;
 
     try {
       const remote = await getServicesForUser();

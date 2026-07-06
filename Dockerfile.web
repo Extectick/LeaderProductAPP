@@ -1,8 +1,14 @@
+# syntax=docker/dockerfile:1.7
 FROM node:20-alpine AS build
 
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm \
+    for attempt in 1 2 3 4 5; do \
+      npm ci --prefer-offline && break; \
+      if [ "$attempt" = "5" ]; then exit 1; fi; \
+      sleep 10; \
+    done
 
 COPY . .
 

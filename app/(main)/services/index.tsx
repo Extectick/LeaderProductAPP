@@ -7,13 +7,13 @@ import { getServiceGridMetrics, getVisibleServices } from '@/src/features/servic
 import { useServerStatus } from '@/src/shared/network/useServerStatus';
 import { ServicesErrorView, ServicesLoadingView } from '@/src/features/services/ui/ServiceStateViews';
 import { servicesTokens } from '@/src/features/services/ui/servicesTokens';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useMemo } from 'react';
 import { FlatList, Platform, StyleSheet, useWindowDimensions, View } from 'react-native';
 import ServiceCard from './ServiceCard';
 
 export default function ServicesScreen() {
-  const { services, error, loading } = useServicesData();
+  const { services, error, loading, loadServices } = useServicesData();
   const router = useRouter();
   const { isReachable } = useServerStatus();
   const { width } = useWindowDimensions();
@@ -27,6 +27,12 @@ export default function ServicesScreen() {
     [width]
   );
   const visibleServices = useMemo(() => getVisibleServices(services), [services]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      void loadServices(true);
+    }, [loadServices])
+  );
 
   const openService = React.useCallback((item: (typeof visibleServices)[number]) => {
     if (!item.route || !item.enabled) return;

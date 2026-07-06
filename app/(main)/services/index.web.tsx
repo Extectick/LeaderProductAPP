@@ -7,13 +7,13 @@ import { getServiceGridMetrics, getVisibleServices } from '@/src/features/servic
 import { useServerStatus } from '@/src/shared/network/useServerStatus';
 import { ServicesErrorView, ServicesLoadingView } from '@/src/features/services/ui/ServiceStateViews';
 import { servicesTokens } from '@/src/features/services/ui/servicesTokens';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useMemo } from 'react';
 import { FlatList, LayoutChangeEvent, StyleSheet, useWindowDimensions, View } from 'react-native';
 import ServiceCard from './ServiceCard';
 
 export default function ServicesWebPage() {
-  const { services, error, loading } = useServicesData();
+  const { services, error, loading, loadServices } = useServicesData();
   const { width } = useWindowDimensions();
   const [containerWidth, setContainerWidth] = React.useState(width);
   const router = useRouter();
@@ -34,6 +34,12 @@ export default function ServicesWebPage() {
     [containerWidth, isMobileWidth, width]
   );
   const visibleServices = useMemo(() => getVisibleServices(services), [services]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      void loadServices(true);
+    }, [loadServices])
+  );
 
   const handleLayout = React.useCallback((event: LayoutChangeEvent) => {
     const next = Math.max(0, Math.round(event.nativeEvent.layout.width || 0));
