@@ -41,6 +41,7 @@ import {
   getPickerItemTitle,
   getSelectedPickerGuid,
   packageLabel,
+  sortDeliveryAddressOptions,
   type ClientOrdersPickerKind,
   unitLabel,
 } from './lib/clientOrdersUi';
@@ -814,10 +815,12 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         setPickerScrollOffset(0);
         requestAnimationFrame(() => scrollPickerListToTop(false));
       }
+      const nextItems = kind === 'deliveryAddress' ? sortDeliveryAddressOptions(items) : items;
       setPickerItems((prev) => {
-        if (!append) return items;
+        if (!append) return nextItems;
         const known = new Set(prev.map((item) => item?.guid || item?.id || `${item?.name || ''}|${item?.fullAddress || ''}`));
-        return [...prev, ...items.filter((item: any) => !known.has(item?.guid || item?.id || `${item?.name || ''}|${item?.fullAddress || ''}`))];
+        const merged = [...prev, ...nextItems.filter((item: any) => !known.has(item?.guid || item?.id || `${item?.name || ''}|${item?.fullAddress || ''}`))];
+        return kind === 'deliveryAddress' ? sortDeliveryAddressOptions(merged) : merged;
       });
       setPickerOffset(offset + items.length);
       setPickerHasMore(hasMorePage(items.length, PAGE_SIZE, offset, result?.meta?.total));
@@ -2164,10 +2167,10 @@ function HeaderSection({
   );
   const deliveryAddressComment = workspace.selections.deliveryAddress?.deliveryComment || workspace.selections.deliveryAddress?.comment || '';
   return <View style={styles.cardStack}>
-    <FlatDocumentField label="Организация" value={workspace.selections.organization?.name || 'Выбрать'} icon="office-building-outline" onPress={() => openPicker('organization')} disabled={readOnly} invalid={showRequiredErrors && !hasOrganizationValue} onDetails={() => openDetails('organization', workspace.draft.organizationGuid || workspace.selections.organization?.guid)} />
-    <FlatDocumentField label="Контрагент" value={workspace.selections.counterparty?.name || 'Выбрать'} icon="account-outline" onPress={() => openPicker('counterparty')} disabled={readOnly} invalid={showRequiredErrors && !hasCounterpartyValue} onDetails={() => openDetails('counterparty', workspace.draft.counterpartyGuid || workspace.selections.counterparty?.guid)} />
-    <FlatDocumentField label="Соглашение" value={workspace.selections.agreement?.name || 'Выбрать'} icon="file-document-outline" onPress={() => openPicker('agreement')} disabled={readOnly || missingOrderContext} invalid={showRequiredErrors && !hasAgreementValue} onDetails={() => openDetails('agreement', workspace.draft.agreementGuid || workspace.selections.agreement?.guid)} />
-    <FlatDocumentField label="Договор" value={workspace.selections.contract?.name || workspace.selections.contract?.number || 'Выбрать'} icon="file-sign" onPress={() => openPicker('contract')} disabled={readOnly || missingOrderContext} invalid={showRequiredErrors && !hasContractValue} onDetails={() => openDetails('contract', workspace.draft.contractGuid || workspace.selections.contract?.guid)} />
+    <FlatDocumentField label="Организация" value={workspace.selections.organization?.name || 'Выбрать'} icon="office-building-outline" onPress={() => openPicker('organization')} disabled={readOnly} invalid={showRequiredErrors && !hasOrganizationValue} loading={workspace.documentHeaderLoadingState.organization} onDetails={() => openDetails('organization', workspace.draft.organizationGuid || workspace.selections.organization?.guid)} />
+    <FlatDocumentField label="Контрагент" value={workspace.selections.counterparty?.name || 'Выбрать'} icon="account-outline" onPress={() => openPicker('counterparty')} disabled={readOnly} invalid={showRequiredErrors && !hasCounterpartyValue} loading={workspace.documentHeaderLoadingState.counterparty} onDetails={() => openDetails('counterparty', workspace.draft.counterpartyGuid || workspace.selections.counterparty?.guid)} />
+    <FlatDocumentField label="Соглашение" value={workspace.selections.agreement?.name || 'Выбрать'} icon="file-document-outline" onPress={() => openPicker('agreement')} disabled={readOnly || missingOrderContext} invalid={showRequiredErrors && !hasAgreementValue} loading={workspace.documentHeaderLoadingState.agreement} onDetails={() => openDetails('agreement', workspace.draft.agreementGuid || workspace.selections.agreement?.guid)} />
+    <FlatDocumentField label="Договор" value={workspace.selections.contract?.name || workspace.selections.contract?.number || 'Выбрать'} icon="file-sign" onPress={() => openPicker('contract')} disabled={readOnly || missingOrderContext} invalid={showRequiredErrors && !hasContractValue} loading={workspace.documentHeaderLoadingState.contract} onDetails={() => openDetails('contract', workspace.draft.contractGuid || workspace.selections.contract?.guid)} />
     <FlatDocumentField
       label="Вид цены"
       value={workspace.draft.priceTypeName || workspace.selections.agreement?.priceType?.name || 'Выбрать'}
@@ -2175,11 +2178,12 @@ function HeaderSection({
       onPress={() => openPicker('priceType')}
       disabled={readOnly || missingOrderContext}
       invalid={showRequiredErrors && !hasPriceTypeValue}
+      loading={workspace.documentHeaderLoadingState.priceType}
       onDetails={() => openDetails('price-type', workspace.draft.priceTypeGuid || workspace.selections.agreement?.priceType?.guid)}
       onReset={workspace.isHeaderPriceTypeCustom ? onResetHeaderPriceType : undefined}
     />
-    <FlatDocumentField label="Склад" value={workspace.selections.warehouse?.name || 'Выбрать'} icon="warehouse" onPress={() => openPicker('warehouse')} disabled={readOnly || missingOrderContext} invalid={showRequiredErrors && !hasWarehouseValue} onDetails={() => openDetails('warehouse', workspace.draft.warehouseGuid || workspace.selections.warehouse?.guid)} />
-    <FlatDocumentField label="Адрес доставки" value={workspace.selections.deliveryAddress?.fullAddress || workspace.selections.deliveryAddress?.name || 'Выбрать'} helperText={deliveryAddressComment} icon="map-marker-outline" onPress={() => openPicker('deliveryAddress')} disabled={readOnly || missingOrderContext} invalid={showRequiredErrors && !hasDeliveryAddressValue} onDetails={() => openDetails('delivery-address', workspace.draft.deliveryAddressGuid || workspace.selections.deliveryAddress?.guid)} />
+    <FlatDocumentField label="Склад" value={workspace.selections.warehouse?.name || 'Выбрать'} icon="warehouse" onPress={() => openPicker('warehouse')} disabled={readOnly || missingOrderContext} invalid={showRequiredErrors && !hasWarehouseValue} loading={workspace.documentHeaderLoadingState.warehouse} onDetails={() => openDetails('warehouse', workspace.draft.warehouseGuid || workspace.selections.warehouse?.guid)} />
+    <FlatDocumentField label="Адрес доставки" value={workspace.selections.deliveryAddress?.fullAddress || workspace.selections.deliveryAddress?.name || 'Выбрать'} helperText={deliveryAddressComment} icon="map-marker-outline" onPress={() => openPicker('deliveryAddress')} disabled={readOnly || missingOrderContext} invalid={showRequiredErrors && !hasDeliveryAddressValue} loading={workspace.documentHeaderLoadingState.deliveryAddress} onDetails={() => openDetails('delivery-address', workspace.draft.deliveryAddressGuid || workspace.selections.deliveryAddress?.guid)} />
     <FlatDateField
       label="Дата отгрузки"
       value={workspace.draft.deliveryDate || undefined}
@@ -2285,6 +2289,7 @@ function FlatDocumentField({
   onDetails,
   onReset,
   resetIcon,
+  loading,
 }: {
   label: string;
   value: string;
@@ -2296,7 +2301,9 @@ function FlatDocumentField({
   onDetails?: () => void;
   onReset?: () => void;
   resetIcon?: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
+  loading?: boolean;
 }) {
+  const showDetailsAction = false;
   return (
     <Pressable
       accessibilityRole="button"
@@ -2316,8 +2323,13 @@ function FlatDocumentField({
           </Text>
         ) : null}
       </View>
-      {onDetails || onReset ? (
+      {loading || onReset || showDetailsAction ? (
         <View style={styles.flatFieldActions}>
+          {loading ? (
+            <View style={styles.flatFieldAction}>
+              <ActivityIndicator size={17} color="#2563EB" />
+            </View>
+          ) : null}
           {onReset ? (
             <Pressable
               accessibilityRole="button"
@@ -2333,14 +2345,14 @@ function FlatDocumentField({
               <MaterialCommunityIcons name={resetIcon || 'refresh'} size={18} color={disabled ? 'rgba(37, 99, 235, 0.42)' : '#2563EB'} />
             </Pressable>
           ) : null}
-          {onDetails ? (
+          {showDetailsAction ? (
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={`Открыть карточку: ${label}`}
               disabled={disabled}
               onPress={(event) => {
                 event.stopPropagation();
-                onDetails();
+                onDetails?.();
               }}
               hitSlop={8}
               style={({ pressed }) => [styles.flatFieldAction, pressed && !disabled && styles.flatPressed]}
@@ -2952,16 +2964,20 @@ function DocumentBottomBar({
             <View style={styles.documentBottomMetaRow}>
               <View style={styles.documentBottomTotalPill}>
                 <MaterialCommunityIcons name="cash-multiple" size={13} color="#2563EB" />
-                <Text style={styles.documentBottomTotalText} numberOfLines={1}>{formatMoney(workspace.localTotal, workspace.draft.currency)}</Text>
+                <Text style={styles.documentBottomTotalText} numberOfLines={1}>Сумма {formatMoney(workspace.localTotal, workspace.draft.currency)}</Text>
               </View>
-              <View style={styles.documentBottomDatePill}>
-                <MaterialCommunityIcons name="truck-outline" size={13} color="#64748B" />
-                <Text style={styles.documentBottomDateText} numberOfLines={1}>{deliveryDate}</Text>
+              <View style={styles.documentBottomProfitPill}>
+                <MaterialCommunityIcons name="chart-line" size={13} color={workspace.localProfit < 0 ? '#DC2626' : '#16A34A'} />
+                <Text style={[styles.documentBottomProfitText, workspace.localProfit < 0 && styles.documentBottomProfitTextNegative]} numberOfLines={1}>Выручка {formatMoney(workspace.localProfit, workspace.draft.currency)}</Text>
               </View>
             </View>
             <View style={styles.documentBottomCounterpartyRow}>
               <MaterialCommunityIcons name="account-outline" size={13} color="#64748B" />
               <Text style={styles.documentBottomCounterpartyText} numberOfLines={1}>{counterparty}</Text>
+              <View style={styles.documentBottomDateInline}>
+                <MaterialCommunityIcons name="truck-outline" size={12} color="#64748B" />
+                <Text style={styles.documentBottomDateText} numberOfLines={1}>{deliveryDate}</Text>
+              </View>
             </View>
           </View>
           <Pressable
@@ -5659,12 +5675,15 @@ const styles = StyleSheet.create({
   documentBottomContent: { minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: 8 },
   documentBottomInfo: { flex: 1, minWidth: 0, gap: 6 },
   documentBottomMetaRow: { minHeight: 25, flexDirection: 'row', alignItems: 'center', gap: 6 },
-  documentBottomTotalPill: { flexShrink: 0, maxWidth: 132, minHeight: 25, borderRadius: 999, borderWidth: 1, borderColor: '#BFDBFE', backgroundColor: '#EFF6FF', paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 4 },
-  documentBottomTotalText: { color: '#2563EB', fontSize: 13, lineHeight: 16, fontWeight: '900', includeFontPadding: false },
-  documentBottomDatePill: { flex: 1, minWidth: 0, minHeight: 25, borderRadius: 999, backgroundColor: '#F8FAFC', paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 4 },
-  documentBottomDateText: { flex: 1, minWidth: 0, color: '#475569', fontSize: 11.5, lineHeight: 14, fontWeight: '800', includeFontPadding: false },
+  documentBottomTotalPill: { flex: 1, minWidth: 0, minHeight: 25, borderRadius: 999, borderWidth: 1, borderColor: '#BFDBFE', backgroundColor: '#EFF6FF', paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 4 },
+  documentBottomTotalText: { flex: 1, minWidth: 0, color: '#2563EB', fontSize: 12, lineHeight: 15, fontWeight: '900', includeFontPadding: false },
+  documentBottomProfitPill: { flex: 1, minWidth: 0, minHeight: 25, borderRadius: 999, borderWidth: 1, borderColor: '#BBF7D0', backgroundColor: '#F0FDF4', paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 4 },
+  documentBottomProfitText: { flex: 1, minWidth: 0, color: '#16A34A', fontSize: 12, lineHeight: 15, fontWeight: '900', includeFontPadding: false },
+  documentBottomProfitTextNegative: { color: '#DC2626' },
+  documentBottomDateText: { flexShrink: 0, color: '#475569', fontSize: 11.5, lineHeight: 14, fontWeight: '800', includeFontPadding: false },
   documentBottomCounterpartyRow: { minHeight: 24, borderRadius: 8, backgroundColor: '#F8FAFC', paddingHorizontal: 7, flexDirection: 'row', alignItems: 'center', gap: 5 },
   documentBottomCounterpartyText: { flex: 1, minWidth: 0, color: '#334155', fontSize: 11.5, lineHeight: 14, fontWeight: '800', includeFontPadding: false },
+  documentBottomDateInline: { flexShrink: 0, maxWidth: 112, minHeight: 20, borderRadius: 999, backgroundColor: '#EEF2F7', paddingHorizontal: 6, flexDirection: 'row', alignItems: 'center', gap: 3 },
   documentBottomPrimaryButton: { width: 106, height: 46, borderRadius: 13, backgroundColor: '#2563EB', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10 },
   documentBottomPrimaryButtonSubmit: { backgroundColor: '#16A34A' },
   documentBottomPrimaryText: { color: '#FFFFFF', fontSize: 12.5, lineHeight: 16, fontWeight: '900', includeFontPadding: false },

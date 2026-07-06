@@ -38,6 +38,7 @@ import { Alert, Platform } from 'react-native';
 import {
   buildNewItem,
   buildPayload,
+  computeDraftProfit,
   computeLineTotal,
   computeDraftTotal,
   DEFAULT_ORDER_CURRENCY,
@@ -896,6 +897,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   ]);
   const canSubmitOrder = validation.canSubmit && (!selectedOrderQueued || dirty) && (!selectedOrderSynced || dirty);
   const localTotal = React.useMemo(() => computeDraftTotal(draft), [draft]);
+  const localProfit = React.useMemo(() => computeDraftProfit(draft), [draft]);
   const visibleDeviceOrders = React.useMemo(
     () => deviceDraftEntries.map((entry) => entry.order).filter((order) => orderMatchesFilters(order, filters)),
     [deviceDraftEntries, filters]
@@ -2081,6 +2083,17 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     deliveryDate: draft.deliveryDate ? 'из настроек пользователя' : 'не найдено значение по умолчанию',
   }), [draft.deliveryDate, selections]);
 
+  const documentHeaderLoadingState = React.useMemo(() => ({
+    organization: false,
+    counterparty: false,
+    agreement: loadingDefaults,
+    contract: loadingDefaults,
+    priceType: loadingDefaults,
+    warehouse: loadingDefaults,
+    deliveryAddress: loadingDefaults,
+    deliveryDate: loadingDefaults,
+  }), [loadingDefaults]);
+
   const addProduct = React.useCallback((product: ClientOrderProduct) => {
     const existing = draft.items.find((item) => item.productGuid === product.guid);
     if (existing) return existing.key;
@@ -2467,6 +2480,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     latestDraftOrder,
     hasEditableDocument,
     documentHeaderDefaultsState,
+    documentHeaderLoadingState,
     deviceDraftsCount: deviceDraftEntries.length,
     syncDeviceDrafts,
     openLatestDraftIfAny: () => latestDraftOrder ? selectOrder(latestDraftOrder.guid) : Promise.resolve(),
@@ -2551,6 +2565,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     validation,
     canSubmitOrder,
     localTotal,
+    localProfit,
     statusCounts,
     autosaveState,
     autosaveLabel,

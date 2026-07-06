@@ -778,8 +778,22 @@ export function computeLineTotal(item: DraftItem, generalDiscountPercent?: strin
   return quantity * getPackageMultiplier(item) * price * (1 - (Number.isNaN(discount) ? 0 : discount) / 100);
 }
 
+export function computeLineProfit(item: DraftItem, generalDiscountPercent?: string) {
+  if (isCancelledDraftItem(item)) return 0;
+  const quantity = normalizeQuantityForPayload(item);
+  if (Number.isNaN(quantity)) return 0;
+
+  const receiptPrice = item.receiptPrice ?? 0;
+  const cost = receiptPrice > 0 ? quantity * getPackageMultiplier(item) * receiptPrice : 0;
+  return computeLineTotal(item, generalDiscountPercent) - cost;
+}
+
 export function computeDraftTotal(draft: DraftOrder) {
   return draft.items.reduce((sum, item) => sum + computeLineTotal(item, draft.generalDiscountPercent), 0);
+}
+
+export function computeDraftProfit(draft: DraftOrder) {
+  return draft.items.reduce((sum, item) => sum + computeLineProfit(item, draft.generalDiscountPercent), 0);
 }
 
 export function validateDraft(draft: DraftOrder): DraftValidation {

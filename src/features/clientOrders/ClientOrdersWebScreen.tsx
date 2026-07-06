@@ -33,6 +33,7 @@ import {
   hasSinglePackage,
   packageLabel,
   pickerNeedsOrderContext,
+  sortDeliveryAddressOptions,
   type ClientOrdersPickerKind,
   unitLabel,
 } from './lib/clientOrdersUi';
@@ -332,7 +333,7 @@ function orderStatusChipSx(order: ClientOrder) {
   return { bgcolor: '#E5E7EB', color: '#111827' };
 }
 
-function SelectionButton(props: { label: string; value?: string | null; onClick: () => void; disabled?: boolean }) {
+function SelectionButton(props: { label: string; value?: string | null; onClick: () => void; disabled?: boolean; loading?: boolean }) {
   return (
     <Button
       variant="outlined"
@@ -354,7 +355,10 @@ function SelectionButton(props: { label: string; value?: string | null; onClick:
       <Typography sx={{ position: 'absolute', top: -5, left: 10, px: 0.35, bgcolor: '#FFFFFF', fontSize: 10, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em', lineHeight: 1 }}>
         {props.label}
       </Typography>
-      <Typography sx={{ fontSize: 11, fontWeight: 800, color: '#0F172A', textAlign: 'left', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: '26px' }}>{props.value || 'Выбрать'}</Typography>
+      <Stack direction="row" spacing={0.75} alignItems="center" sx={{ minWidth: 0, width: '100%' }}>
+        <Typography sx={{ fontSize: 11, fontWeight: 800, color: '#0F172A', textAlign: 'left', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: '26px' }}>{props.value || 'Выбрать'}</Typography>
+        {props.loading ? <CircularProgress size={15} thickness={4.5} /> : null}
+      </Stack>
     </Button>
   );
 }
@@ -687,13 +691,14 @@ type QuickLookupFieldProps<T extends { guid?: string | null }> = {
   detailsDisabled?: boolean;
   detailsTooltip?: string;
   beforeDetailsAdornment?: React.ReactNode;
+  loadingAdornment?: boolean;
   dense?: boolean;
   flat?: boolean;
   popperMinWidth?: number;
 };
 
 function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookupFieldProps<T>) {
-  const { kind, label, value, placeholder, disabled, loadOptions, onSelect, onOpenDetails, detailsDisabled, detailsTooltip, beforeDetailsAdornment, dense, flat, popperMinWidth } = props;
+  const { kind, label, value, placeholder, disabled, loadOptions, onSelect, onOpenDetails, detailsDisabled, detailsTooltip, beforeDetailsAdornment, loadingAdornment, dense, flat, popperMinWidth } = props;
   const [query, setQuery] = React.useState('');
   const [open, setOpen] = React.useState(false);
   const [items, setItems] = React.useState<T[]>([]);
@@ -705,7 +710,8 @@ function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookup
   const requestIdRef = React.useRef(0);
   const appendLoadingRef = React.useRef(false);
   const valueLabel = value ? getPickerItemTitle(value) : '';
-  const inputDisabled = !!disabled && !onOpenDetails;
+  const showDetailsAction = false;
+  const inputDisabled = !!disabled && !showDetailsAction;
   const normalizedQuery = query.trim().toLowerCase();
   const normalizedValueLabel = valueLabel.trim().toLowerCase();
   const useDefaultListing = !normalizedQuery || normalizedQuery === normalizedValueLabel;
@@ -723,8 +729,13 @@ function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookup
     try {
       const result = await loadOptions({ search, limit: 25, offset: nextOffset });
       if (requestIdRef.current !== requestId) return;
-      const nextItems = result.items || [];
-      setItems((prev) => (append ? [...prev, ...nextItems] : nextItems));
+      const nextItems = kind === 'deliveryAddress'
+        ? sortDeliveryAddressOptions(result.items || [])
+        : result.items || [];
+      setItems((prev) => {
+        const merged = append ? [...prev, ...nextItems] : nextItems;
+        return kind === 'deliveryAddress' ? sortDeliveryAddressOptions(merged as T[]) : merged;
+      });
       setOffset(nextOffset + nextItems.length);
       setHasMore(hasMorePage(nextItems.length, 25, nextOffset, result.meta?.total));
       if (!append) setActiveIndex(0);
@@ -816,12 +827,17 @@ function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookup
             setOpen(true);
           }}
           onKeyDown={handleKeyDown}
-          InputProps={(onOpenDetails || beforeDetailsAdornment) ? {
+          InputProps={(showDetailsAction || beforeDetailsAdornment || loadingAdornment) ? {
             readOnly: !!disabled,
             endAdornment: (
               <Stack direction="row" alignItems="center" spacing={0.1} sx={{ mr: -0.4 }}>
                 {beforeDetailsAdornment}
-                {onOpenDetails ? (
+                {loadingAdornment ? (
+                  <Box sx={{ width: 24, height: 24, display: 'grid', placeItems: 'center' }}>
+                    <CircularProgress size={15} thickness={4.5} />
+                  </Box>
+                ) : null}
+                {showDetailsAction ? (
                   <Tooltip title={detailsTooltip || (detailsDisabled ? 'Сначала выберите значение' : 'Открыть карточку')} arrow>
                     <span>
                       <IconButton
@@ -834,7 +850,7 @@ function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookup
                         onClick={(event) => {
                           event.preventDefault();
                           event.stopPropagation();
-                          if (!detailsDisabled) onOpenDetails();
+                          if (!detailsDisabled) onOpenDetails?.();
                         }}
                         sx={{
                           width: 24,
@@ -1289,8 +1305,13 @@ export default function ClientOrdersWebScreen() {
           break;
       }
       if (pickerRequestIdRef.current !== requestId) return;
-      const nextItems = result?.items || [];
-      setPickerItems((prev) => (append ? [...prev, ...nextItems] : nextItems));
+      const nextItems = kind === 'deliveryAddress'
+        ? sortDeliveryAddressOptions((result?.items || []) as ClientOrderDeliveryAddressOption[])
+        : result?.items || [];
+      setPickerItems((prev) => {
+        const merged = append ? [...prev, ...nextItems] : nextItems;
+        return kind === 'deliveryAddress' ? sortDeliveryAddressOptions(merged as any[]) : merged;
+      });
       setPickerOffset(offset + nextItems.length);
       setPickerHasMore(hasMorePage(nextItems.length, 25, offset, result?.meta?.total));
     } catch {
@@ -1404,7 +1425,7 @@ export default function ClientOrdersWebScreen() {
       search: args.search,
       limit: args.limit,
       offset: args.offset,
-    });
+    }).then((result) => ({ ...result, items: sortDeliveryAddressOptions(result.items || []) }));
   }, [searchDeliveryAddresses, workspace.draft.counterpartyGuid, workspace.draft.organizationGuid]);
 
   const loadPriceTypeLookup = React.useCallback((args: { search: string; limit: number; offset: number }) => {
@@ -2374,6 +2395,7 @@ export default function ClientOrdersWebScreen() {
                       loadOptions={loadOrganizationLookup}
                       onSelect={setOrganization}
                       disabled={workspace.readOnly}
+                      loadingAdornment={workspace.documentHeaderLoadingState.organization}
                       onOpenDetails={() => void openReferenceDetails('organization', workspace.selections.organization?.guid)}
                       detailsDisabled={!workspace.selections.organization?.guid}
                     />
@@ -2384,6 +2406,7 @@ export default function ClientOrdersWebScreen() {
                       loadOptions={loadCounterpartyLookup}
                       onSelect={setCounterparty}
                       disabled={workspace.readOnly}
+                      loadingAdornment={workspace.documentHeaderLoadingState.counterparty}
                       onOpenDetails={() => void openReferenceDetails('counterparty', workspace.selections.counterparty?.guid)}
                       detailsDisabled={!workspace.selections.counterparty?.guid}
                     />
@@ -2394,6 +2417,7 @@ export default function ClientOrdersWebScreen() {
                       loadOptions={loadAgreementLookup}
                       onSelect={setAgreement}
                       disabled={workspace.readOnly || !hasOrderContext}
+                      loadingAdornment={workspace.documentHeaderLoadingState.agreement}
                       onOpenDetails={() => void openReferenceDetails('agreement', workspace.selections.agreement?.guid)}
                       detailsDisabled={!workspace.selections.agreement?.guid}
                     />
@@ -2404,6 +2428,7 @@ export default function ClientOrdersWebScreen() {
                       loadOptions={loadContractLookup}
                       onSelect={setContract}
                       disabled={workspace.readOnly || !hasOrderContext}
+                      loadingAdornment={workspace.documentHeaderLoadingState.contract}
                       onOpenDetails={() => void openReferenceDetails('contract', workspace.selections.contract?.guid)}
                       detailsDisabled={!workspace.selections.contract?.guid}
                     />
@@ -2414,6 +2439,7 @@ export default function ClientOrdersWebScreen() {
                       loadOptions={loadPriceTypeLookup}
                       onSelect={confirmHeaderPriceTypeChange}
                       disabled={workspace.readOnly || !hasOrderContext}
+                      loadingAdornment={workspace.documentHeaderLoadingState.priceType}
                       beforeDetailsAdornment={workspace.isHeaderPriceTypeCustom ? (
                         <ResetAdornmentButton title="Сбросить вид цены к соглашению" disabled={workspace.readOnly} onClick={confirmHeaderPriceTypeReset} />
                       ) : null}
@@ -2427,6 +2453,7 @@ export default function ClientOrdersWebScreen() {
                       loadOptions={loadWarehouseLookup}
                       onSelect={setWarehouse}
                       disabled={workspace.readOnly || !hasOrderContext}
+                      loadingAdornment={workspace.documentHeaderLoadingState.warehouse}
                       onOpenDetails={() => void openReferenceDetails('warehouse', workspace.selections.warehouse?.guid)}
                       detailsDisabled={!workspace.selections.warehouse?.guid}
                     />
@@ -2438,6 +2465,7 @@ export default function ClientOrdersWebScreen() {
                         loadOptions={loadDeliveryAddressLookup}
                         onSelect={setDeliveryAddress}
                         disabled={workspace.readOnly || !hasOrderContext}
+                        loadingAdornment={workspace.documentHeaderLoadingState.deliveryAddress}
                         onOpenDetails={() => void openReferenceDetails('delivery-address', workspace.selections.deliveryAddress?.guid)}
                         detailsDisabled={!workspace.selections.deliveryAddress?.guid}
                         popperMinWidth={620}
@@ -2574,17 +2602,29 @@ export default function ClientOrdersWebScreen() {
                                 borderRadius: '4px',
                                 bgcolor: '#FFFFFF',
                                 border: '1px solid #D8E2F0',
-                                minWidth: 190,
+                                minWidth: 260,
                                 textAlign: 'right',
                                 flexShrink: 0,
                               }}
                             >
-                              <Typography sx={{ fontSize: 9.5, fontWeight: 900, color: '#64748B', lineHeight: 1, textTransform: 'uppercase', letterSpacing: 0 }}>
-                                Сумма заказа
-                              </Typography>
-                              <Typography sx={{ mt: 0.2, fontSize: 14, fontWeight: 900, color: '#2563EB', whiteSpace: 'nowrap', lineHeight: 1.15 }}>
-                                {formatMoney(workspace.localTotal, workspace.draft.currency)}
-                              </Typography>
+                              <Stack direction="row" spacing={1.1} justifyContent="flex-end" alignItems="center">
+                                <Box>
+                                  <Typography sx={{ fontSize: 9.5, fontWeight: 900, color: '#64748B', lineHeight: 1, textTransform: 'uppercase', letterSpacing: 0 }}>
+                                    Сумма
+                                  </Typography>
+                                  <Typography sx={{ mt: 0.2, fontSize: 14, fontWeight: 900, color: '#2563EB', whiteSpace: 'nowrap', lineHeight: 1.15 }}>
+                                    {formatMoney(workspace.localTotal, workspace.draft.currency)}
+                                  </Typography>
+                                </Box>
+                                <Box>
+                                  <Typography sx={{ fontSize: 9.5, fontWeight: 900, color: '#64748B', lineHeight: 1, textTransform: 'uppercase', letterSpacing: 0 }}>
+                                    Выручка
+                                  </Typography>
+                                  <Typography sx={{ mt: 0.2, fontSize: 14, fontWeight: 900, color: workspace.localProfit < 0 ? '#DC2626' : '#16A34A', whiteSpace: 'nowrap', lineHeight: 1.15 }}>
+                                    {formatMoney(workspace.localProfit, workspace.draft.currency)}
+                                  </Typography>
+                                </Box>
+                              </Stack>
                             </Box>
                           </Stack>
 
@@ -2792,7 +2832,7 @@ export default function ClientOrdersWebScreen() {
                 </Paper>
               ) : null}
 
-              <SelectionButton label="Организация" value={workspace.selections.organization?.name} onClick={() => openPicker('organization')} disabled={workspace.readOnly} />
+              <SelectionButton label="Организация" value={workspace.selections.organization?.name} onClick={() => openPicker('organization')} disabled={workspace.readOnly} loading={workspace.documentHeaderLoadingState.organization} />
               <Typography sx={{ color: '#64748B', fontSize: 11 }}>{workspace.documentHeaderDefaultsState.organization}</Typography>
 
               <QuickLookupField
@@ -2802,19 +2842,20 @@ export default function ClientOrdersWebScreen() {
                 loadOptions={loadCounterpartyLookup}
                 onSelect={setCounterparty}
                 disabled={workspace.readOnly}
+                loadingAdornment={workspace.documentHeaderLoadingState.counterparty}
               />
               <Typography sx={{ color: '#64748B', fontSize: 11 }}>{workspace.documentHeaderDefaultsState.counterparty}</Typography>
 
               <Box>
-                <SelectionButton label="Соглашение" value={workspace.selections.agreement?.name} onClick={() => openPicker('agreement')} disabled={workspace.readOnly || !hasOrderContext} />
+                <SelectionButton label="Соглашение" value={workspace.selections.agreement?.name} onClick={() => openPicker('agreement')} disabled={workspace.readOnly || !hasOrderContext} loading={workspace.documentHeaderLoadingState.agreement} />
                 <Typography sx={{ color: '#64748B', fontSize: 11, mt: 0.35 }}>{workspace.documentHeaderDefaultsState.agreement}</Typography>
               </Box>
               <Box>
-                <SelectionButton label="Договор" value={workspace.selections.contract?.number} onClick={() => openPicker('contract')} disabled={workspace.readOnly || !hasOrderContext} />
+                <SelectionButton label="Договор" value={workspace.selections.contract?.number} onClick={() => openPicker('contract')} disabled={workspace.readOnly || !hasOrderContext} loading={workspace.documentHeaderLoadingState.contract} />
                 <Typography sx={{ color: '#64748B', fontSize: 11, mt: 0.35 }}>{workspace.documentHeaderDefaultsState.contract}</Typography>
               </Box>
               <Box>
-                <SelectionButton label="Вид цены" value={workspace.draft.priceTypeName} onClick={() => openPicker('priceType')} disabled={workspace.readOnly || !hasOrderContext} />
+                <SelectionButton label="Вид цены" value={workspace.draft.priceTypeName} onClick={() => openPicker('priceType')} disabled={workspace.readOnly || !hasOrderContext} loading={workspace.documentHeaderLoadingState.priceType} />
                 <Typography sx={{ color: '#64748B', fontSize: 11, mt: 0.35 }}>из соглашения или вручную</Typography>
               </Box>
               <Box>
@@ -2825,11 +2866,12 @@ export default function ClientOrdersWebScreen() {
                   loadOptions={loadWarehouseLookup}
                   onSelect={setWarehouse}
                   disabled={workspace.readOnly || !hasOrderContext}
+                  loadingAdornment={workspace.documentHeaderLoadingState.warehouse}
                 />
                 <Typography sx={{ color: '#64748B', fontSize: 11, mt: 0.35 }}>{workspace.documentHeaderDefaultsState.warehouse}</Typography>
               </Box>
               <Box>
-                <SelectionButton label="Адрес доставки" value={workspace.selections.deliveryAddress?.fullAddress} onClick={() => openPicker('deliveryAddress')} disabled={workspace.readOnly || !hasOrderContext} />
+                <SelectionButton label="Адрес доставки" value={workspace.selections.deliveryAddress?.fullAddress} onClick={() => openPicker('deliveryAddress')} disabled={workspace.readOnly || !hasOrderContext} loading={workspace.documentHeaderLoadingState.deliveryAddress} />
                 <Typography sx={{ color: '#64748B', fontSize: 11, mt: 0.35 }}>{workspace.documentHeaderDefaultsState.deliveryAddress}</Typography>
               </Box>
               <Box>

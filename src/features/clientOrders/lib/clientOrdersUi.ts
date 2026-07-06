@@ -1,5 +1,6 @@
 import type {
   ClientOrderCounterpartyOption,
+  ClientOrderDeliveryAddressOption,
   ClientOrderProduct,
 } from '@/utils/clientOrdersService';
 
@@ -39,6 +40,53 @@ export function getPickerItemMeta(kind: ClientOrdersPickerKind | null, item: any
       .join(' • ');
   }
   return '';
+}
+
+function deliveryAddressSortNumber(item?: ClientOrderDeliveryAddressOption | null) {
+  const sources = [
+    item?.deliveryNumber,
+    item?.number,
+    item?.kindName,
+    item?.contactInfoKind,
+    item?.name,
+    item?.fullAddress,
+  ];
+
+  for (const value of sources) {
+    const match = String(value ?? '').match(/\d+/);
+    if (!match) continue;
+    const parsed = Number(match[0]);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+
+  return Number.MAX_SAFE_INTEGER;
+}
+
+function deliveryAddressSortText(item?: ClientOrderDeliveryAddressOption | null) {
+  return String(
+    item?.kindName
+      || item?.contactInfoKind
+      || item?.deliveryNumber
+      || item?.number
+      || item?.fullAddress
+      || item?.name
+      || ''
+  );
+}
+
+export function sortDeliveryAddressOptions<T extends ClientOrderDeliveryAddressOption>(items: readonly T[]) {
+  return [...items]
+    .map((item, index) => ({ item, index }))
+    .sort((left, right) => {
+      const byNumber = deliveryAddressSortNumber(left.item) - deliveryAddressSortNumber(right.item);
+      if (byNumber !== 0) return byNumber;
+      const byText = deliveryAddressSortText(left.item).localeCompare(deliveryAddressSortText(right.item), 'ru', {
+        numeric: true,
+        sensitivity: 'base',
+      });
+      return byText || left.index - right.index;
+    })
+    .map(({ item }) => item);
 }
 
 export function getCounterpartyTaxMeta(item: any) {
