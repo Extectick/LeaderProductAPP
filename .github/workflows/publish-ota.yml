@@ -2,7 +2,7 @@ name: Publish OTA Update
 
 on:
   push:
-    branches: [production]
+    branches: [main, production]
   workflow_dispatch:
     inputs:
       channel:
