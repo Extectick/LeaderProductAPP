@@ -23,13 +23,21 @@ function looksLikeGuid(value?: string | null) {
   return !!value && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.trim());
 }
 
+function getManagerLabel(item: any) {
+  return item?.manager?.name || item?.managerName || item?.manager?.guid || item?.managerGuid || '';
+}
+
 export function getPickerItemMeta(kind: ClientOrdersPickerKind | null, item: any) {
   if (kind === 'counterparty' || kind === 'filterCounterparty') {
     return getCounterpartyTaxMeta(item) || item?.fullName || '';
   }
   if (kind === 'agreement' || kind === 'contract') {
+    const parts: string[] = [];
     const organizationName = item?.organization?.name || item?.organizationName;
-    if (organizationName && !looksLikeGuid(organizationName)) return `Организация: ${organizationName}`;
+    const managerName = getManagerLabel(item);
+    if (organizationName && !looksLikeGuid(organizationName)) parts.push(`Организация: ${organizationName}`);
+    if (managerName) parts.push(`Менеджер: ${managerName}`);
+    if (parts.length) return parts.join(' • ');
   }
   if (kind === 'product') {
     return [item?.code, item?.article, item?.sku].filter(Boolean).join(' • ');
@@ -167,11 +175,112 @@ export function getPackageDisplayText(item: any) {
   return selectedPack ? packageLabel(selectedPack, item) : unitLabel(item.baseUnit);
 }
 
-export function formatStockLabel(stock: any, baseUnit?: any) {
+function formatStockNumber(value: unknown) {
+  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 3 }).format(Number(value) || 0);
+}
+
+export function stockAvailableValue(stock: any) {
   const available = stock?.available ?? stock?.quantity;
-  if (available === null || available === undefined) return '';
+  return available === null || available === undefined ? null : Number(available) || 0;
+}
+
+export function stockMyReservedValue(stock: any) {
+  const reserved = stock?.myReserved;
+  const numeric = reserved === null || reserved === undefined ? 0 : Number(reserved) || 0;
+  return numeric > 0 ? numeric : 0;
+}
+
+export function formatStockQuantity(value: unknown, baseUnit?: any) {
+  if (value === null || value === undefined) return '';
   const unit = baseUnit?.symbol || baseUnit?.name || 'шт';
-  return `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 3 }).format(Number(available) || 0)} ${unit}`;
+  return `${formatStockNumber(value)} ${unit}`;
+}
+
+export function formatStockLabel(stock: any, baseUnit?: any) {
+  const available = stockAvailableValue(stock);
+  if (available === null || available === undefined) return '';
+  const reserve = stockMyReservedValue(stock);
+  const label = formatStockQuantity(available, baseUnit);
+  return reserve > 0 ? `${label} (резерв ${formatStockQuantity(reserve, baseUnit)})` : label;
+}
+
+export function formatStockReserveLabel(stock: any, baseUnit?: any) {
+  const reserved = stockMyReservedValue(stock);
+  return reserved > 0 ? `резерв ${formatStockQuantity(reserved, baseUnit)}` : '';
+}
+
+export function formatStockInlineLabel(stock: any, baseUnit?: any) {
+  const available = stockAvailableValue(stock);
+  if (available === null || available === undefined) return '';
+  return formatStockLabel(stock, baseUnit);
+}
+
+export type ProductSelectionMap = Map<string, ClientOrderProduct>;
+
+export function getProductGuid(product?: Partial<ClientOrderProduct> | null) {
+  return product?.guid || null;
+}
+
+export function isProductAlreadyInOrder(product: Partial<ClientOrderProduct> | string | null | undefined, items: Array<{ productGuid?: string | null }>) {
+  const guid = typeof product === 'string' ? product : getProductGuid(product);
+  if (!guid) return false;
+  return items.some((item) => item.productGuid === guid);
+}
+
+export function toggleProductSelection(
+  current: ProductSelectionMap,
+  product: ClientOrderProduct,
+  orderItems: Array<{ productGuid?: string | null }>
+): ProductSelectionMap {
+  const guid = getProductGuid(product);
+  const next = new Map(current);
+  if (!guid || isProductAlreadyInOrder(guid, orderItems)) return next;
+  if (next.has(guid)) {
+    next.delete(guid);
+  } else {
+    next.set(guid, product);
+  }
+  return next;
+}
+
+export function removeOrderItemsFromProductSelection(
+  current: ProductSelectionMap,
+  orderItems: Array<{ productGuid?: string | null }>
+): ProductSelectionMap {
+  if (!current.size) return current;
+  const existing = new Set(orderItems.map((item) => item.productGuid).filter(Boolean) as string[]);
+  if (!existing.size) return current;
+  let changed = false;
+  const next = new Map(current);
+  existing.forEach((guid) => {
+    if (next.delete(guid)) changed = true;
+  });
+  return changed ? next : current;
+}
+
+export function getSelectedProducts(selection: ReadonlyMap<string, ClientOrderProduct>) {
+  return Array.from(selection.values());
+}
+
+export function formatProductTransferLabel(count: number) {
+  return `Перенести · ${Math.max(0, count)} поз.`;
+}
+
+export function transferSelectedProductsToOrder(
+  selection: ReadonlyMap<string, ClientOrderProduct>,
+  orderItems: Array<{ productGuid?: string | null }>,
+  addProduct: (product: ClientOrderProduct, options?: { quantity?: string | number }) => string | undefined,
+  options: { quantity?: string | number } = {}
+) {
+  const existing = new Set(orderItems.map((item) => item.productGuid).filter(Boolean) as string[]);
+  const addedKeys: string[] = [];
+  selection.forEach((product, guid) => {
+    if (!guid || existing.has(guid)) return;
+    const key = addProduct(product, options);
+    if (key) addedKeys.push(key);
+    existing.add(guid);
+  });
+  return addedKeys;
 }
 
 export function getQuantityInputWidthPx(value: unknown, minWidth: number, maxWidth: number) {
@@ -215,5 +324,5 @@ export function getSelectedPickerGuid(args: {
 }
 
 export function stockMetaText(item: ClientOrderProduct | any) {
-  return formatStockLabel(item?.stock, item?.baseUnit) || '—';
+  return formatStockInlineLabel(item?.stock, item?.baseUnit) || '—';
 }

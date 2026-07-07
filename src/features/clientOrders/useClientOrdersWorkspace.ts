@@ -27,6 +27,7 @@ import {
   type ClientOrderContractOption,
   type ClientOrderCounterpartyOption,
   type ClientOrderDeliveryAddressOption,
+  type ClientOrderEnumOption,
   type ClientOrderOrganization,
   type ClientOrderProduct,
   type ClientOrderPriceTypeOption,
@@ -378,6 +379,8 @@ function buildDraftBase(settings: ClientOrderSettings | null) {
     currency: DEFAULT_ORDER_CURRENCY,
     priceTypeGuid: null,
     priceTypeName: null,
+    paymentForm: null,
+    deliveryMethod: null,
   };
 }
 
@@ -588,6 +591,8 @@ function mergeOrderListMetadata(current: ClientOrder, summary: ClientOrder): Cli
     sourceUpdatedAt: summary.sourceUpdatedAt ?? current.sourceUpdatedAt,
     updatedAt: summary.updatedAt ?? current.updatedAt,
     totalAmount: summary.totalAmount ?? current.totalAmount,
+    paymentForm: summary.paymentForm ?? current.paymentForm,
+    deliveryMethod: summary.deliveryMethod ?? current.deliveryMethod,
     itemsCount: summary.itemsCount ?? current.itemsCount,
     lastExportError: summary.lastExportError ?? current.lastExportError,
     last1cError: summary.last1cError ?? current.last1cError,
@@ -701,6 +706,8 @@ function buildDeviceOrderFromDraft(args: {
     status: 'DRAFT',
     comment: draft.comment || null,
     deliveryDate: draft.deliveryDate ?? null,
+    paymentForm: draft.paymentForm ?? null,
+    deliveryMethod: draft.deliveryMethod ?? null,
     totalAmount,
     currency: draft.currency || DEFAULT_ORDER_CURRENCY,
     priceType: draft.priceTypeGuid ? { guid: draft.priceTypeGuid, name: draft.priceTypeName || 'Вид цены' } : null,
@@ -783,6 +790,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const [selectedOrder, setSelectedOrder] = React.useState<ClientOrder | null>(null);
   const [draft, setDraft] = React.useState<DraftOrder>(() => emptyDraft());
   const [selections, setSelections] = React.useState<DraftSelections>(emptySelections());
+  const [paymentFormOptions, setPaymentFormOptions] = React.useState<ClientOrderEnumOption[]>([]);
+  const [deliveryMethodOptions, setDeliveryMethodOptions] = React.useState<ClientOrderEnumOption[]>([]);
   const [settings, setSettings] = React.useState<ClientOrderSettings | null>(null);
   const [loadingOrders, setLoadingOrders] = React.useState(false);
   const [loadingMoreOrders, setLoadingMoreOrders] = React.useState(false);
@@ -817,6 +826,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const queueStateRequestIdRef = React.useRef(0);
   const detailRequestIdRef = React.useRef(0);
   const defaultsRequestIdRef = React.useRef(0);
+  const enumOptionsRequestIdRef = React.useRef(0);
+  const deliveryAddressManualVersionRef = React.useRef(0);
   const pricingRequestIdRef = React.useRef(0);
   const ordersAppendLoadingRef = React.useRef(false);
   const ordersNextOffsetRef = React.useRef(0);
@@ -831,7 +842,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
   const draftMode = !draft.guid;
   const filtersSignature = React.useMemo(() => ordersFilterSignature(filters), [filters]);
-  const readOnly = !!selectedOrder?.readOnly || !!selectedOrder?.hasRealization || selectedOrder?.status === 'CANCELLED';
+  const readOnly = !!selectedOrder?.readOnly || !!selectedOrder?.hasRealization;
   const mutationLocked = saving || submitting || copying || cancelling || deletingDraft;
   const selectedOrderQueued = isQueuedClientOrder(selectedOrder);
   const selectedOrderSynced = !!selectedOrder && (
@@ -1056,6 +1067,9 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     selectedGuidRef.current = null;
     documentStartedRef.current = false;
     contextRefreshSignatureRef.current = '';
+    defaultsRequestIdRef.current += 1;
+    enumOptionsRequestIdRef.current += 1;
+    deliveryAddressManualVersionRef.current += 1;
     setDraft(normalizeDraftOrder({ ...emptyDraft(), ...base }));
     setSelections({
       ...emptySelections(),
@@ -1063,6 +1077,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     });
     setSelectedGuid(null);
     setSelectedOrder(null);
+    setPaymentFormOptions([]);
+    setDeliveryMethodOptions([]);
     setDocumentStarted(false);
     setDirty(false);
     setAutosaveState('idle');
@@ -1170,7 +1186,10 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     return enrichItemsMetadata({ ...draft, items: [item] });
   }, [draft, enrichItemsMetadata]);
 
-  const mergeSavedOrderIntoDraft = React.useCallback((order: ClientOrder) => {
+  const mergeSavedOrderIntoDraft = React.useCallback((
+    order: ClientOrder,
+    options?: { preservedDeliveryAddressGuid?: string | null }
+  ) => {
     setDraft((prev) => normalizeDraftOrder({
       ...prev,
       guid: order.guid,
@@ -1182,7 +1201,11 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       agreementGuid: order.agreement?.guid ?? prev.agreementGuid,
       contractGuid: order.contract?.guid ?? prev.contractGuid,
       warehouseGuid: order.warehouse?.guid ?? prev.warehouseGuid,
-      deliveryAddressGuid: order.deliveryAddress?.guid ?? prev.deliveryAddressGuid,
+      deliveryAddressGuid: options?.preservedDeliveryAddressGuid
+        ?? order.deliveryAddress?.guid
+        ?? prev.deliveryAddressGuid,
+      paymentForm: order.paymentForm ?? prev.paymentForm ?? null,
+      deliveryMethod: order.deliveryMethod ?? prev.deliveryMethod ?? null,
     }));
   }, []);
 
@@ -1196,6 +1219,23 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       if (!Number.isFinite(serverRevision) || serverRevision <= (prev.revision || 0)) return prev;
       return normalizeDraftOrder({ ...prev, revision: serverRevision });
     });
+  }, []);
+
+  const loadEnumOptionsForContext = React.useCallback(async (organizationGuid?: string | null, counterpartyGuid?: string | null) => {
+    const requestId = ++enumOptionsRequestIdRef.current;
+    if (!organizationGuid || !counterpartyGuid) {
+      setPaymentFormOptions([]);
+      setDeliveryMethodOptions([]);
+      return;
+    }
+    try {
+      const defaults = await getClientOrderDefaults({ organizationGuid, counterpartyGuid });
+      if (enumOptionsRequestIdRef.current !== requestId) return;
+      setPaymentFormOptions(defaults.paymentForms || []);
+      setDeliveryMethodOptions(defaults.deliveryMethods || []);
+    } catch {
+      if (enumOptionsRequestIdRef.current !== requestId) return;
+    }
   }, []);
 
   const applyOrderDetail = React.useCallback((order: ClientOrder) => {
@@ -1215,10 +1255,11 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       warehouse: order.warehouse || null,
       deliveryAddress: order.deliveryAddress || null,
     });
+    void loadEnumOptionsForContext(nextDraft.organizationGuid, nextDraft.counterpartyGuid);
     setDirty(false);
     setAutosaveState('idle');
     setAutosaveError(null);
-  }, [enrichItemsMetadata]);
+  }, [enrichItemsMetadata, loadEnumOptionsForContext]);
 
   const replaceDeviceDraftEntries = React.useCallback((entries: DeviceDraftEntry[]) => {
     deviceDraftEntriesRef.current = entries;
@@ -1517,6 +1558,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   ) => {
     if (!organizationGuid || !counterpartyGuid) return;
     const requestId = ++defaultsRequestIdRef.current;
+    const deliveryAddressManualVersion = deliveryAddressManualVersionRef.current;
     setLoadingDefaults(true);
     try {
       const defaults = await getClientOrderDefaults({ organizationGuid, counterpartyGuid });
@@ -1527,6 +1569,9 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       const warehouse = defaults.warehouse ?? agreement?.warehouse ?? null;
       const deliveryAddress = defaults.deliveryAddress ?? null;
       const priceType = defaults.priceType ?? agreement?.priceType ?? null;
+      const shouldApplyDeliveryAddress = deliveryAddressManualVersionRef.current === deliveryAddressManualVersion;
+      setPaymentFormOptions(defaults.paymentForms || []);
+      setDeliveryMethodOptions(defaults.deliveryMethods || []);
 
       setDraft((prev) => normalizeDraftOrder({
         ...prev,
@@ -1534,8 +1579,12 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         agreementGuid: agreement?.guid || '',
         contractGuid: contract?.guid || '',
         warehouseGuid: warehouse?.guid || '',
-        deliveryAddressGuid: deliveryAddress?.guid || '',
+        deliveryAddressGuid: shouldApplyDeliveryAddress
+          ? deliveryAddress?.guid || ''
+          : prev.deliveryAddressGuid,
         deliveryDate: prev.deliveryDate ?? defaults.deliveryDate ?? settingsRef.current?.resolvedDeliveryDate ?? null,
+        paymentForm: prev.paymentForm ?? defaults.paymentForm ?? null,
+        deliveryMethod: prev.deliveryMethod ?? defaults.deliveryMethod ?? null,
         currency: defaults.currency || DEFAULT_ORDER_CURRENCY,
         priceTypeGuid: priceType?.guid ?? null,
         priceTypeName: priceType?.name ?? null,
@@ -1552,7 +1601,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         agreement,
         contract,
         warehouse,
-        deliveryAddress,
+        deliveryAddress: shouldApplyDeliveryAddress ? deliveryAddress : prev.deliveryAddress,
       }));
     } catch (e: any) {
       if (defaultsRequestIdRef.current !== requestId) return;
@@ -1666,11 +1715,21 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       }
 
       removeDeviceDraftEntry(draft.guid || deviceEntry?.order.guid || deviceEntry?.serverGuid);
+      const savedDeliveryAddressGuid = order.deliveryAddress?.guid ?? null;
+      const requestedDeliveryAddressGuid = payload.deliveryAddressGuid ?? null;
+      const selectedDeliveryAddressForSave =
+        requestedDeliveryAddressGuid && selections.deliveryAddress?.guid === requestedDeliveryAddressGuid
+          ? selections.deliveryAddress
+          : null;
+      const preservedDeliveryAddress =
+        requestedDeliveryAddressGuid && selectedDeliveryAddressForSave && savedDeliveryAddressGuid !== requestedDeliveryAddressGuid
+          ? selectedDeliveryAddressForSave
+          : null;
       selectedGuidRef.current = order.guid;
       documentStartedRef.current = true;
       setSelectedGuid(order.guid);
       setSelectedOrder(order);
-      mergeSavedOrderIntoDraft(order);
+      mergeSavedOrderIntoDraft(order, { preservedDeliveryAddressGuid: preservedDeliveryAddress?.guid ?? null });
       setDocumentStarted(true);
       setSelections({
         organization: order.organization || selections.organization,
@@ -1678,7 +1737,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         agreement: order.agreement || selections.agreement,
         contract: order.contract || selections.contract,
         warehouse: order.warehouse || selections.warehouse,
-        deliveryAddress: order.deliveryAddress || selections.deliveryAddress,
+        deliveryAddress: preservedDeliveryAddress || order.deliveryAddress || selections.deliveryAddress,
       });
       setError(null);
       setDirty(false);
@@ -1834,6 +1893,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [confirmDiscardIfNeeded, resetDraftToBase]);
 
   const resetPairDependentDraft = React.useCallback((patch: Partial<DraftOrder>) => {
+    enumOptionsRequestIdRef.current += 1;
     patchDraft((prev) => ({
       ...prev,
       ...patch,
@@ -1843,6 +1903,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       deliveryAddressGuid: '',
       priceTypeGuid: null,
       priceTypeName: null,
+      paymentForm: null,
+      deliveryMethod: null,
       items: prev.items.map((item) => (
         hasManualPrice(item)
           ? item
@@ -1856,6 +1918,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       warehouse: null,
       deliveryAddress: null,
     }));
+    setPaymentFormOptions([]);
+    setDeliveryMethodOptions([]);
   }, [patchDraft]);
 
   const resolveEntityOrganization = React.useCallback((
@@ -1945,6 +2009,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [patchDraft]);
 
   const setDeliveryAddress = React.useCallback((deliveryAddress: ClientOrderDeliveryAddressOption | null) => {
+    deliveryAddressManualVersionRef.current += 1;
     patchDraft({ deliveryAddressGuid: deliveryAddress?.guid || '' });
     setSelections((prev) => ({ ...prev, deliveryAddress }));
   }, [patchDraft]);
@@ -2094,10 +2159,10 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     deliveryDate: loadingDefaults,
   }), [loadingDefaults]);
 
-  const addProduct = React.useCallback((product: ClientOrderProduct) => {
+  const addProduct = React.useCallback((product: ClientOrderProduct, options?: { quantity?: string | number }) => {
     const existing = draft.items.find((item) => item.productGuid === product.guid);
     if (existing) return existing.key;
-    const nextItem = buildNewItem(product);
+    const nextItem = buildNewItem(product, options);
     patchDraft((prev) => {
       if (prev.items.some((item) => item.productGuid === product.guid)) return prev;
       return { ...prev, items: [...prev.items, nextItem] };
@@ -2504,6 +2569,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     createNewOrder,
     draft,
     selections,
+    paymentFormOptions,
+    deliveryMethodOptions,
     settings,
     saveUserSettings,
     patchDraft,

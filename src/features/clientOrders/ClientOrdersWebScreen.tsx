@@ -24,6 +24,7 @@ import {
 } from './lib/clientOrdersShared';
 import {
   formatDateOnly,
+  formatProductTransferLabel,
   formatStockLabel,
   getCounterpartyTaxMeta,
   getPackageDisplayText,
@@ -31,10 +32,15 @@ import {
   getPickerItemTitle,
   getQuantityInputWidthPx,
   hasSinglePackage,
+  isProductAlreadyInOrder,
   packageLabel,
   pickerNeedsOrderContext,
+  removeOrderItemsFromProductSelection,
   sortDeliveryAddressOptions,
+  toggleProductSelection,
+  transferSelectedProductsToOrder,
   type ClientOrdersPickerKind,
+  type ProductSelectionMap,
   unitLabel,
 } from './lib/clientOrdersUi';
 import { hasMorePage } from './lib/clientOrdersPaging';
@@ -62,6 +68,7 @@ import {
   Button,
   Card,
   CardContent,
+  Checkbox,
   Chip,
   ClickAwayListener,
   CircularProgress,
@@ -111,8 +118,18 @@ type ProductGalleryImage = {
 type PendingPriceTypeAction =
   | { type: 'change-header'; priceType: ClientOrderPriceTypeOption | null }
   | { type: 'reset-header' };
+type SegmentedChoice = { value: string | null; label: string };
 const PRODUCT_IN_STOCK_ONLY_STORAGE_KEY = 'clientOrders.productPicker.inStockOnly';
+const COUNTERPARTY_MANAGER_ONLY_STORAGE_KEY = 'clientOrders.counterpartyPicker.managerOnly';
 const PRODUCT_IMAGE_PLACEHOLDER_URI = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22120%22 height=%22120%22 viewBox=%220 0 120 120%22%3E%3Crect width=%22120%22 height=%22120%22 rx=%2224%22 fill=%22%23EFF6FF%22/%3E%3Crect x=%2222%22 y=%2224%22 width=%2276%22 height=%2272%22 rx=%2216%22 fill=%22%23FFFFFF%22 stroke=%22%2393C5FD%22 stroke-width=%225%22/%3E%3Ccircle cx=%2248%22 cy=%2249%22 r=%2211%22 fill=%22%23BFDBFE%22/%3E%3Cpath d=%22M33 82l19-21 14 14 11-13 22 20H33z%22 fill=%22%232563EB%22 opacity=%22.72%22/%3E%3C/svg%3E';
+const PAYMENT_FORM_CHOICES: SegmentedChoice[] = [
+  { value: null, label: 'Любая' },
+  { value: 'Наличная', label: 'Наличная' },
+];
+const DELIVERY_METHOD_CHOICES: SegmentedChoice[] = [
+  { value: 'ДоКлиента', label: 'Наша доставка' },
+  { value: 'Самовывоз', label: 'Самовывоз' },
+];
 
 function getDraftItemImageUri(item: DraftItem | any) {
   return getProductGalleryImages(item)[0]?.thumbUrl || PRODUCT_IMAGE_PLACEHOLDER_URI;
@@ -363,6 +380,79 @@ function SelectionButton(props: { label: string; value?: string | null; onClick:
   );
 }
 
+function choiceKey(value?: string | null) {
+  return value ?? '';
+}
+
+function unsupportedChoiceValue(choices: SegmentedChoice[], value?: string | null) {
+  if (!value) return null;
+  return choices.some((choice) => choice.value === value) ? null : value;
+}
+
+function SegmentedChoiceField(props: {
+  label: string;
+  value?: string | null;
+  choices: SegmentedChoice[];
+  disabled?: boolean;
+  onChange: (value: string | null) => void;
+  sx?: any;
+}) {
+  const currentKey = choiceKey(props.value);
+  const unsupported = unsupportedChoiceValue(props.choices, props.value);
+  return (
+    <Stack spacing={0.35} sx={{ minWidth: 0, ...props.sx }}>
+      <Typography sx={{ fontSize: 10, fontWeight: 800, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em', lineHeight: 1 }}>
+        {props.label}
+      </Typography>
+      <Box
+        sx={{
+          display: 'grid',
+          gridTemplateColumns: `repeat(${props.choices.length}, minmax(0, 1fr))`,
+          minHeight: 30,
+          borderRadius: '8px',
+          border: '1px solid #D8E2F0',
+          overflow: 'hidden',
+          bgcolor: props.disabled ? '#F8FAFC' : '#FFFFFF',
+        }}
+      >
+        {props.choices.map((choice, index) => {
+          const selected = choiceKey(choice.value) === currentKey && !unsupported;
+          return (
+            <Button
+              key={choiceKey(choice.value) || '__default__'}
+              variant="text"
+              disabled={props.disabled}
+              onClick={() => props.onChange(choice.value)}
+              sx={{
+                minWidth: 0,
+                minHeight: 28,
+                px: 0.75,
+                py: 0,
+                borderRadius: 0,
+                borderRight: index === props.choices.length - 1 ? 'none' : '1px solid #D8E2F0',
+                bgcolor: selected ? '#DBEAFE' : 'transparent',
+                color: selected ? '#1D4ED8' : props.disabled ? '#94A3B8' : '#334155',
+                fontSize: 11,
+                fontWeight: 900,
+                textTransform: 'none',
+                lineHeight: 1.1,
+                '&:hover': { bgcolor: selected ? '#BFDBFE' : '#F8FAFC' },
+              }}
+            >
+              {choice.label}
+            </Button>
+          );
+        })}
+      </Box>
+      {unsupported ? (
+        <Typography sx={{ fontSize: 10.5, color: '#B45309', fontWeight: 800, lineHeight: 1.15 }}>
+          Текущее из 1С: {unsupported}
+        </Typography>
+      ) : null}
+    </Stack>
+  );
+}
+
 function CompactTextField(props: {
   label: string;
   value: string;
@@ -512,6 +602,7 @@ function PickerListItem(props: {
   isFirst?: boolean;
   disabled?: boolean;
   note?: string;
+  selected?: boolean;
 }) {
   const title = getPickerItemTitle(props.item);
   const meta = getPickerItemMeta(props.kind, props.item);
@@ -527,6 +618,7 @@ function PickerListItem(props: {
         isFirst={props.isFirst}
         disabled={props.disabled}
         note={props.note}
+        selected={props.selected}
       />
     );
   }
@@ -587,10 +679,12 @@ function ProductPickerListItem(props: {
   isFirst?: boolean;
   disabled?: boolean;
   note?: string;
+  selected?: boolean;
 }) {
   const title = props.item.name || getPickerItemTitle(props.item);
   const stockAvailable = Number(props.item.stock?.available ?? props.item.stock?.quantity ?? 0);
   const disabled = !!props.disabled;
+  const selected = !!props.selected;
   const meta = productPickerMetaParts(props.item);
   const imageUri = getDraftItemImageUri(props.item);
   const hasGalleryImages = getProductGalleryImages(props.item).length > 0;
@@ -609,17 +703,17 @@ function ProductPickerListItem(props: {
         border: 0,
         borderTop: props.isFirst ? '1px solid #D8E2F0' : 0,
         borderBottom: '1px solid #D8E2F0',
-        background: '#FFFFFF',
+        background: selected ? '#EFF6FF' : '#FFFFFF',
         cursor: disabled ? 'not-allowed' : 'pointer',
         display: 'flex',
         alignItems: 'center',
-        gap: 1,
-        px: 1.2,
-        py: 1.05,
+        gap: 1.2,
+        px: 1.35,
+        py: 1.0,
         textAlign: 'left',
         opacity: disabled ? 0.55 : 1,
         transition: 'background-color 160ms ease, color 160ms ease, transform 110ms ease',
-        '&:hover': { backgroundColor: disabled ? '#FFFFFF' : '#F1F5F9' },
+        '&:hover': { backgroundColor: disabled ? '#FFFFFF' : selected ? '#DBEAFE' : '#F8FAFC' },
         '&:active': disabled ? {} : { transform: 'scale(0.985)', backgroundColor: '#E2E8F0' },
         '&:focus-visible': { outline: '2px solid #2563EB', outlineOffset: '-2px' },
       }}
@@ -640,13 +734,13 @@ function ProductPickerListItem(props: {
           if (!hasGalleryImages) return;
           props.onOpenImages?.(props.item);
         }}
-        sx={{ borderRadius: '8px', flexShrink: 0, cursor: hasGalleryImages ? 'zoom-in' : 'default', '&:focus-visible': { outline: '2px solid #2563EB', outlineOffset: 2 } }}
+        sx={{ borderRadius: '10px', flexShrink: 0, cursor: hasGalleryImages ? 'zoom-in' : 'default', '&:focus-visible': { outline: '2px solid #2563EB', outlineOffset: 2 } }}
       >
         <WebProductImage
           src={imageUri}
           alt=""
-          spinnerSize={16}
-          sx={{ width: 46, height: 46, borderRadius: '8px', border: '1px solid #DBEAFE', bgcolor: '#F8FAFC' }}
+          spinnerSize={18}
+          sx={{ width: 64, height: 64, borderRadius: '10px', bgcolor: 'transparent' }}
         />
       </Box>
       <Box sx={{ minWidth: 0, flex: 1 }}>
@@ -672,6 +766,15 @@ function ProductPickerListItem(props: {
           </Typography>
         </Box>
         {props.note ? <Typography sx={{ mt: 0.35, fontSize: 10.5, color: '#DC2626', fontWeight: 800 }}>{props.note}</Typography> : null}
+        {selected ? (
+          <Box sx={{ mt: 0.45, display: 'inline-flex', alignItems: 'center', gap: 0.35, color: '#1D4ED8', fontSize: 11, fontWeight: 900 }}>
+            <Ionicons name="checkmark-circle" size={13} color="#2563EB" />
+            Добавить в заказ
+          </Box>
+        ) : null}
+      </Box>
+      <Box sx={{ width: 28, display: 'grid', placeItems: 'center', color: selected ? '#2563EB' : disabled ? '#CBD5E1' : '#94A3B8' }}>
+        <Ionicons name={selected ? 'checkmark-circle' : disabled ? 'ban-outline' : 'add-circle-outline'} size={22} />
       </Box>
     </Box>
   );
@@ -712,6 +815,7 @@ function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookup
   const valueLabel = value ? getPickerItemTitle(value) : '';
   const showDetailsAction = false;
   const inputDisabled = !!disabled && !showDetailsAction;
+  const showSearchLoadingAdornment = loading || loadingAdornment;
   const normalizedQuery = query.trim().toLowerCase();
   const normalizedValueLabel = valueLabel.trim().toLowerCase();
   const useDefaultListing = !normalizedQuery || normalizedQuery === normalizedValueLabel;
@@ -827,12 +931,12 @@ function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookup
             setOpen(true);
           }}
           onKeyDown={handleKeyDown}
-          InputProps={(showDetailsAction || beforeDetailsAdornment || loadingAdornment) ? {
+          InputProps={(showDetailsAction || beforeDetailsAdornment || showSearchLoadingAdornment) ? {
             readOnly: !!disabled,
             endAdornment: (
               <Stack direction="row" alignItems="center" spacing={0.1} sx={{ mr: -0.4 }}>
                 {beforeDetailsAdornment}
-                {loadingAdornment ? (
+                {showSearchLoadingAdornment ? (
                   <Box sx={{ width: 24, height: 24, display: 'grid', placeItems: 'center' }}>
                     <CircularProgress size={15} thickness={4.5} />
                   </Box>
@@ -997,9 +1101,15 @@ export default function ClientOrdersWebScreen() {
   const [pickerLoading, setPickerLoading] = React.useState(false);
   const [pickerHasMore, setPickerHasMore] = React.useState(false);
   const [pickerOffset, setPickerOffset] = React.useState(0);
+  const [selectedProducts, setSelectedProducts] = React.useState<ProductSelectionMap>(() => new Map());
+  const [confirmCloseProductPickerOpen, setConfirmCloseProductPickerOpen] = React.useState(false);
   const [productInStockOnly, setProductInStockOnly] = React.useState(() => {
     if (typeof window === 'undefined') return false;
     return window.localStorage.getItem(PRODUCT_IN_STOCK_ONLY_STORAGE_KEY) === '1';
+  });
+  const [counterpartyManagerOnly, setCounterpartyManagerOnly] = React.useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem(COUNTERPARTY_MANAGER_ONLY_STORAGE_KEY) === '1';
   });
   const pickerRequestIdRef = React.useRef(0);
   const pickerAppendLoadingRef = React.useRef(false);
@@ -1061,8 +1171,48 @@ export default function ClientOrdersWebScreen() {
   const draftPriceTypeGuid = draft.priceTypeGuid;
   const hasOrderContext = !!draftOrganizationGuid && !!draftCounterpartyGuid;
   const canLoadMorePickerItems = !!pickerKind && pickerHasMore && !pickerLoading;
+  const selectedProductCount = selectedProducts.size;
   const showOrdersPane = !isSinglePane || responsivePane === 'orders';
   const showEditorPane = !isSinglePane || responsivePane === 'editor';
+
+  React.useEffect(() => {
+    setSelectedProducts((current) => removeOrderItemsFromProductSelection(current, draft.items));
+  }, [draft.items]);
+
+  const closePickerImmediately = React.useCallback(() => {
+    pickerRequestIdRef.current += 1;
+    pickerAppendLoadingRef.current = false;
+    pickerLoadSignatureRef.current = '';
+    setPickerKind(null);
+    setPickerSearch('');
+    setPickerItems([]);
+    setPickerOffset(0);
+    setPickerHasMore(false);
+    setSelectedProducts(new Map());
+    setConfirmCloseProductPickerOpen(false);
+  }, []);
+
+  const requestClosePicker = React.useCallback(() => {
+    if (pickerKind === 'product' && selectedProducts.size > 0) {
+      setConfirmCloseProductPickerOpen(true);
+      return;
+    }
+    closePickerImmediately();
+  }, [closePickerImmediately, pickerKind, selectedProducts.size]);
+
+  const transferSelectedProducts = React.useCallback(() => {
+    const addedKeys = transferSelectedProductsToOrder(selectedProducts, draft.items, addProduct, { quantity: 0 });
+    setSelectedProducts(new Map());
+    closePickerImmediately();
+    setWebEditorSection('items');
+    if (isSinglePane) setResponsivePane('editor');
+    if (addedKeys.length) {
+      requestAnimationFrame(() => {
+        const scrollElement = editorScrollRef.current;
+        if (scrollElement) scrollElement.scrollTop = scrollElement.scrollHeight;
+      });
+    }
+  }, [addProduct, closePickerImmediately, draft.items, isSinglePane, selectedProducts]);
 
   const prefetchOrdersIfNeeded = React.useCallback((element: HTMLDivElement | null) => {
     if (!element) return;
@@ -1157,6 +1307,11 @@ export default function ClientOrdersWebScreen() {
     window.localStorage.setItem(PRODUCT_IN_STOCK_ONLY_STORAGE_KEY, productInStockOnly ? '1' : '0');
   }, [productInStockOnly]);
 
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(COUNTERPARTY_MANAGER_ONLY_STORAGE_KEY, counterpartyManagerOnly ? '1' : '0');
+  }, [counterpartyManagerOnly]);
+
   const confirmHeaderPriceTypeChange = React.useCallback((priceType: ClientOrderPriceTypeOption | null) => {
     if (workspace.draft.items.length) {
       setPendingPriceTypeAction({ type: 'change-header', priceType });
@@ -1234,6 +1389,8 @@ export default function ClientOrdersWebScreen() {
     setPickerItems([]);
     setPickerOffset(0);
     setPickerHasMore(false);
+    setSelectedProducts(new Map());
+    setConfirmCloseProductPickerOpen(false);
   }, []);
 
   const loadPickerPage = React.useCallback(async (kind: PickerKind, search: string, offset = 0, append = false) => {
@@ -1244,7 +1401,9 @@ export default function ClientOrdersWebScreen() {
       draftWarehouseGuid || '',
       draftPriceTypeGuid || '',
     ].join(':');
-    const signature = `${kind}|${contextSignature}|${search}|${offset}|${append ? 'append' : 'reset'}|${kind === 'product' && productInStockOnly ? 'stock' : 'all'}`;
+    const productFilter = kind === 'product' && productInStockOnly ? 'stock' : 'all';
+    const counterpartyFilter = (kind === 'counterparty' || kind === 'filterCounterparty') && counterpartyManagerOnly ? 'manager' : 'all';
+    const signature = `${kind}|${contextSignature}|${search}|${offset}|${append ? 'append' : 'reset'}|${productFilter}|${counterpartyFilter}`;
     if ((append && pickerAppendLoadingRef.current) || pickerLoadSignatureRef.current === signature) return;
     if (append) pickerAppendLoadingRef.current = true;
     pickerLoadSignatureRef.current = signature;
@@ -1273,7 +1432,7 @@ export default function ClientOrdersWebScreen() {
       switch (kind) {
         case 'filterCounterparty':
         case 'counterparty':
-          result = await searchCounterparties({ search, limit: 25, offset });
+          result = await searchCounterparties({ search, limit: 25, offset, managerOnly: counterpartyManagerOnly });
           break;
         case 'agreement':
           result = await searchAgreements({ counterpartyGuid: draftCounterpartyGuid, search, limit: 25, offset });
@@ -1325,7 +1484,7 @@ export default function ClientOrdersWebScreen() {
         setPickerLoading(false);
       }
     }
-  }, [draftAgreementGuid, draftCounterpartyGuid, draftOrganizationGuid, draftPriceTypeGuid, draftWarehouseGuid, hasOrderContext, productInStockOnly, searchAgreements, searchContracts, searchCounterparties, searchDeliveryAddresses, searchPriceTypes, searchProducts, searchWarehouses, settings?.organizations]);
+  }, [counterpartyManagerOnly, draftAgreementGuid, draftCounterpartyGuid, draftOrganizationGuid, draftPriceTypeGuid, draftWarehouseGuid, hasOrderContext, productInStockOnly, searchAgreements, searchContracts, searchCounterparties, searchDeliveryAddresses, searchPriceTypes, searchProducts, searchWarehouses, settings?.organizations]);
 
   React.useEffect(() => {
     if (!pickerKind) return;
@@ -1377,14 +1536,60 @@ export default function ClientOrdersWebScreen() {
         setPickerKind(null);
         return;
       case 'product':
-        addProduct(item as ClientOrderProduct);
+        setSelectedProducts((current) => toggleProductSelection(current, item as ClientOrderProduct, draft.items));
         return;
     }
-  }, [addProduct, confirmHeaderPriceTypeChange, pickerKind, setAgreement, setContract, setCounterparty, setDeliveryAddress, setFilters, setOrganization, setWarehouse]);
+  }, [confirmHeaderPriceTypeChange, draft.items, pickerKind, setAgreement, setContract, setCounterparty, setDeliveryAddress, setFilters, setOrganization, setWarehouse]);
 
   const loadCounterpartyLookup = React.useCallback((args: { search: string; limit: number; offset: number }) => {
-    return searchCounterparties(args);
-  }, [searchCounterparties]);
+    return searchCounterparties({ ...args, managerOnly: counterpartyManagerOnly });
+  }, [counterpartyManagerOnly, searchCounterparties]);
+
+  const counterpartyManagerToggleAdornment = React.useMemo(() => (
+    <Box
+      role="checkbox"
+      tabIndex={0}
+      aria-checked={counterpartyManagerOnly}
+      onMouseDown={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setCounterpartyManagerOnly((prev) => !prev);
+      }}
+      onKeyDown={(event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        event.stopPropagation();
+        setCounterpartyManagerOnly((prev) => !prev);
+      }}
+      sx={{
+        height: 26,
+        minWidth: 62,
+        px: 0.35,
+        border: `1px solid ${counterpartyManagerOnly ? '#93C5FD' : '#CBD5E1'}`,
+        borderRadius: '7px',
+        bgcolor: counterpartyManagerOnly ? '#EFF6FF' : '#FFFFFF',
+        color: counterpartyManagerOnly ? '#1D4ED8' : '#334155',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 0.1,
+        cursor: 'pointer',
+      }}
+    >
+      <Checkbox
+        checked={counterpartyManagerOnly}
+        size="small"
+        tabIndex={-1}
+        inputProps={{ readOnly: true }}
+        sx={{ p: 0, color: '#64748B', '&.Mui-checked': { color: '#2563EB' } }}
+      />
+      <Typography sx={{ fontSize: 11, fontWeight: 900, lineHeight: 1 }}>Мои</Typography>
+    </Box>
+  ), [counterpartyManagerOnly]);
 
   const loadWarehouseLookup = React.useCallback((args: { search: string; limit: number; offset: number }) => {
     if (!workspace.draft.organizationGuid || !workspace.draft.counterpartyGuid) return Promise.resolve({ items: [], meta: { total: 0 } });
@@ -2157,6 +2362,7 @@ export default function ClientOrdersWebScreen() {
               placeholder="Все контрагенты"
               loadOptions={loadCounterpartyLookup}
               onSelect={selectFilterCounterparty}
+              beforeDetailsAdornment={counterpartyManagerToggleAdornment}
               onOpenDetails={() => void openReferenceDetails('counterparty', filterCounterparty?.guid)}
               detailsDisabled={!filterCounterparty?.guid}
             />
@@ -2406,6 +2612,7 @@ export default function ClientOrdersWebScreen() {
                       loadOptions={loadCounterpartyLookup}
                       onSelect={setCounterparty}
                       disabled={workspace.readOnly}
+                      beforeDetailsAdornment={counterpartyManagerToggleAdornment}
                       loadingAdornment={workspace.documentHeaderLoadingState.counterparty}
                       onOpenDetails={() => void openReferenceDetails('counterparty', workspace.selections.counterparty?.guid)}
                       detailsDisabled={!workspace.selections.counterparty?.guid}
@@ -2445,6 +2652,26 @@ export default function ClientOrdersWebScreen() {
                       ) : null}
                       onOpenDetails={() => void openReferenceDetails('price-type', workspace.draft.priceTypeGuid)}
                       detailsDisabled={!workspace.draft.priceTypeGuid}
+                    />
+                    <SegmentedChoiceField
+                      label="Форма оплаты"
+                      value={workspace.draft.paymentForm}
+                      choices={PAYMENT_FORM_CHOICES}
+                      disabled={workspace.readOnly || !hasOrderContext || workspace.loadingDefaults}
+                      onChange={(value) => workspace.patchDraft({ paymentForm: value })}
+                      sx={{
+                        bgcolor: 'transparent',
+                      }}
+                    />
+                    <SegmentedChoiceField
+                      label="Способ доставки"
+                      value={workspace.draft.deliveryMethod}
+                      choices={DELIVERY_METHOD_CHOICES}
+                      disabled={workspace.readOnly || !hasOrderContext || workspace.loadingDefaults}
+                      onChange={(value) => workspace.patchDraft({ deliveryMethod: value })}
+                      sx={{
+                        bgcolor: 'transparent',
+                      }}
                     />
                     <QuickLookupField
                       kind="warehouse"
@@ -2842,6 +3069,7 @@ export default function ClientOrdersWebScreen() {
                 loadOptions={loadCounterpartyLookup}
                 onSelect={setCounterparty}
                 disabled={workspace.readOnly}
+                beforeDetailsAdornment={counterpartyManagerToggleAdornment}
                 loadingAdornment={workspace.documentHeaderLoadingState.counterparty}
               />
               <Typography sx={{ color: '#64748B', fontSize: 11 }}>{workspace.documentHeaderDefaultsState.counterparty}</Typography>
@@ -2857,6 +3085,24 @@ export default function ClientOrdersWebScreen() {
               <Box>
                 <SelectionButton label="Вид цены" value={workspace.draft.priceTypeName} onClick={() => openPicker('priceType')} disabled={workspace.readOnly || !hasOrderContext} loading={workspace.documentHeaderLoadingState.priceType} />
                 <Typography sx={{ color: '#64748B', fontSize: 11, mt: 0.35 }}>из соглашения или вручную</Typography>
+              </Box>
+              <Box>
+                <SegmentedChoiceField
+                  label="Форма оплаты"
+                  value={workspace.draft.paymentForm}
+                  choices={PAYMENT_FORM_CHOICES}
+                  disabled={workspace.readOnly || !hasOrderContext || workspace.loadingDefaults}
+                  onChange={(value) => workspace.patchDraft({ paymentForm: value })}
+                />
+              </Box>
+              <Box>
+                <SegmentedChoiceField
+                  label="Способ доставки"
+                  value={workspace.draft.deliveryMethod}
+                  choices={DELIVERY_METHOD_CHOICES}
+                  disabled={workspace.readOnly || !hasOrderContext || workspace.loadingDefaults}
+                  onChange={(value) => workspace.patchDraft({ deliveryMethod: value })}
+                />
               </Box>
               <Box>
                 <QuickLookupField
@@ -2893,13 +3139,18 @@ export default function ClientOrdersWebScreen() {
         </Box>
       </Drawer>
 
-      <Drawer anchor={isPhoneDialog ? 'bottom' : 'right'} open={!!pickerKind} onClose={() => setPickerKind(null)}>
+      <Drawer anchor={isPhoneDialog ? 'bottom' : 'right'} open={!!pickerKind} onClose={requestClosePicker}>
         <Box sx={{ width: isPhoneDialog ? '100vw' : pickerKind === 'product' ? 860 : pickerKind === 'deliveryAddress' ? 620 : 380, maxWidth: '100vw', height: isPhoneDialog ? '96vh' : '100%', borderTopLeftRadius: isPhoneDialog ? '18px' : 0, borderTopRightRadius: isPhoneDialog ? '18px' : 0, display: 'flex', flexDirection: 'column', backgroundColor: '#FFFFFF' }}>
           <Box sx={{ p: 1.25, borderBottom: '1px solid #D8E2F0', backgroundColor: '#FFFFFF' }}>
             <Stack spacing={1.25}>
               <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
                 <Typography sx={{ fontSize: 18, fontWeight: 900 }}>{pickerTitle}</Typography>
-                {pickerLoading ? <CircularProgress size={18} /> : null}
+                <Stack direction="row" alignItems="center" spacing={0.5}>
+                  {pickerLoading ? <CircularProgress size={18} /> : null}
+                  <IconButton size="small" onClick={requestClosePicker} aria-label="Закрыть подбор">
+                    <Ionicons name="close" size={20} color="#475569" />
+                  </IconButton>
+                </Stack>
               </Stack>
               <Stack direction={isPhoneDialog ? 'column' : 'row'} spacing={0.8} alignItems={isPhoneDialog ? 'stretch' : 'center'}>
                 <TextField
@@ -2908,6 +3159,13 @@ export default function ClientOrdersWebScreen() {
                   value={pickerSearch}
                   onChange={(e) => setPickerSearch(e.target.value)}
                   disabled={pickerNeedsOrderContext(pickerKind) && !hasOrderContext}
+                  InputProps={pickerLoading ? {
+                    endAdornment: (
+                      <Box sx={{ width: 24, height: 24, display: 'grid', placeItems: 'center', mr: -0.4 }}>
+                        <CircularProgress size={16} thickness={4.5} />
+                      </Box>
+                    ),
+                  } : undefined}
                   sx={{ flex: 1 }}
                 />
                 {pickerKind === 'product' ? (
@@ -2920,6 +3178,42 @@ export default function ClientOrdersWebScreen() {
                     sx={{ height: 32, fontSize: 12, fontWeight: 900, borderRadius: '8px' }}
                   />
                 ) : null}
+                {pickerKind === 'counterparty' || pickerKind === 'filterCounterparty' ? (
+                  <Box
+                    role="checkbox"
+                    tabIndex={0}
+                    aria-checked={counterpartyManagerOnly}
+                    onClick={() => setCounterpartyManagerOnly((prev) => !prev)}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Enter' && event.key !== ' ') return;
+                      event.preventDefault();
+                      setCounterpartyManagerOnly((prev) => !prev);
+                    }}
+                    sx={{
+                      height: 32,
+                      minWidth: isPhoneDialog ? '100%' : 78,
+                      px: 0.75,
+                      border: `1px solid ${counterpartyManagerOnly ? '#93C5FD' : '#CBD5E1'}`,
+                      borderRadius: '8px',
+                      background: counterpartyManagerOnly ? '#EFF6FF' : '#FFFFFF',
+                      color: counterpartyManagerOnly ? '#1D4ED8' : '#334155',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 0.25,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <Checkbox
+                      checked={counterpartyManagerOnly}
+                      size="small"
+                      tabIndex={-1}
+                      inputProps={{ readOnly: true }}
+                      sx={{ p: 0, color: '#64748B', '&.Mui-checked': { color: '#2563EB' } }}
+                    />
+                    <Typography sx={{ fontSize: 12, fontWeight: 900, lineHeight: 1 }}>Мои</Typography>
+                  </Box>
+                ) : null}
               </Stack>
             </Stack>
           </Box>
@@ -2931,7 +3225,8 @@ export default function ClientOrdersWebScreen() {
               <Typography sx={{ px: 2, py: 1.5, color: '#64748B', borderBottom: '1px solid #D8E2F0' }}>Ничего не найдено.</Typography>
             ) : null}
             {pickerItems.map((item: any, index) => {
-              const alreadyInOrder = pickerKind === 'product' && workspace.draft.items.some((line) => line.productGuid === item.guid);
+              const alreadyInOrder = pickerKind === 'product' && isProductAlreadyInOrder(item as ClientOrderProduct, workspace.draft.items);
+              const selected = pickerKind === 'product' && !!item.guid && selectedProducts.has(item.guid);
               return (
                 <PickerListItem
                   key={getPickerItemKey(pickerKind, item, index)}
@@ -2940,15 +3235,41 @@ export default function ClientOrdersWebScreen() {
                   isFirst={index === 0}
                   disabled={alreadyInOrder}
                   note={alreadyInOrder ? 'Уже в заказе' : undefined}
+                  selected={selected}
                   onSelect={(nextItem) => void handlePickerSelect(nextItem)}
                   onOpenImages={openProductGallery}
                 />
               );
             })}
           </Box>
+          {pickerKind === 'product' && selectedProductCount > 0 ? (
+            <Box sx={{ flexShrink: 0, borderTop: '1px solid #D8E2F0', bgcolor: '#FFFFFF', p: 1.25 }}>
+              <Button
+                fullWidth
+                variant="contained"
+                onClick={transferSelectedProducts}
+                startIcon={<Ionicons name="arrow-down-circle-outline" size={18} color="#FFFFFF" />}
+                sx={{ minHeight: 42, borderRadius: '10px', fontWeight: 900, textTransform: 'none' }}
+              >
+                {formatProductTransferLabel(selectedProductCount)}
+              </Button>
+            </Box>
+          ) : null}
           {pickerLoading && pickerItems.length ? <Box sx={{ height: 3, bgcolor: '#2563EB', opacity: 0.18 }} /> : null}
         </Box>
       </Drawer>
+      <Dialog open={confirmCloseProductPickerOpen} onClose={() => setConfirmCloseProductPickerOpen(false)} maxWidth="xs" fullWidth fullScreen={isPhoneDialog}>
+        <DialogTitle>Выйти из подбора?</DialogTitle>
+        <DialogContent>
+          <Typography sx={{ color: '#475569', fontSize: 13 }}>
+            Выбрано {selectedProductCount} поз. Если выйти, они не будут перенесены в заказ.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmCloseProductPickerOpen(false)} sx={{ textTransform: 'none', fontWeight: 800 }}>Остаться</Button>
+          <Button color="error" onClick={closePickerImmediately} sx={{ textTransform: 'none', fontWeight: 800 }}>Выйти</Button>
+        </DialogActions>
+      </Dialog>
       <Dialog open={settingsOpen} onClose={() => setSettingsOpen(false)} maxWidth="sm" fullWidth fullScreen={isPhoneDialog}>
         <DialogTitle>Настройки даты отгрузки</DialogTitle>
         <DialogContent>

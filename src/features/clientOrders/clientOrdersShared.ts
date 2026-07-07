@@ -61,6 +61,8 @@ export type DraftOrder = {
   warehouseGuid: string;
   deliveryAddressGuid: string;
   deliveryDate?: string | null;
+  paymentForm?: string | null;
+  deliveryMethod?: string | null;
   comment: string;
   currency: string;
   priceTypeGuid?: string | null;
@@ -359,6 +361,8 @@ export function emptyDraft(): DraftOrder {
     warehouseGuid: '',
     deliveryAddressGuid: '',
     deliveryDate: null,
+    paymentForm: null,
+    deliveryMethod: null,
     comment: '',
     currency: DEFAULT_ORDER_CURRENCY,
     priceTypeGuid: null,
@@ -435,6 +439,8 @@ export function normalizeDraftOrder(draft: DraftOrder): DraftOrder {
     contractGuid: asInputString(draft.contractGuid),
     warehouseGuid: asInputString(draft.warehouseGuid),
     deliveryAddressGuid: asInputString(draft.deliveryAddressGuid),
+    paymentForm: asInputString(draft.paymentForm) || null,
+    deliveryMethod: asInputString(draft.deliveryMethod) || null,
     comment: asInputString(draft.comment),
     currency: asInputString(draft.currency) || DEFAULT_ORDER_CURRENCY,
     generalDiscountPercent: asInputString(draft.generalDiscountPercent),
@@ -695,6 +701,8 @@ export function orderToDraft(order: ClientOrder): DraftOrder {
     warehouseGuid: order.warehouse?.guid ?? '',
     deliveryAddressGuid: order.deliveryAddress?.guid ?? '',
     deliveryDate: order.deliveryDate ?? null,
+    paymentForm: order.paymentForm ?? null,
+    deliveryMethod: order.deliveryMethod ?? null,
     comment: order.comment ?? '',
     currency: DEFAULT_ORDER_CURRENCY,
     priceTypeGuid: headerPriceType?.guid ?? null,
@@ -948,6 +956,8 @@ export function buildPayload(draft: DraftOrder, saveReason: 'manual' | 'autosave
     deliveryAddressGuid: draft.deliveryAddressGuid || null,
     priceTypeGuid: draft.priceTypeGuid || null,
     deliveryDate: draft.deliveryDate || undefined,
+    paymentForm: draft.paymentForm || null,
+    deliveryMethod: draft.deliveryMethod || null,
     comment: draft.comment.trim() || undefined,
     currency: DEFAULT_ORDER_CURRENCY,
     saveReason,
@@ -1012,9 +1022,10 @@ export function applyReferenceDefaults(draft: DraftOrder, refs: ClientOrdersRefe
   return next;
 }
 
-export function buildNewItem(product: ClientOrderProduct): DraftItem {
+export function buildNewItem(product: ClientOrderProduct, options?: { quantity?: string | number }): DraftItem {
   const packages = getDraftPackagesForProduct(product);
   const pack = product.baseUnit ? null : packages.find((item) => item.isDefault) ?? packages[0] ?? null;
+  const quantity = options?.quantity === undefined ? '1' : String(options.quantity);
   return {
     key: makeKey(),
     lineGuid: makeLineGuid(),
@@ -1028,7 +1039,7 @@ export function buildNewItem(product: ClientOrderProduct): DraftItem {
     imagePreviewUrl: product.imagePreviewUrl ?? null,
     imageHash: product.imageHash ?? null,
     images: product.images ?? [],
-    quantity: '1',
+    quantity,
     packageGuid: pack?.guid ?? null,
     manualPrice: '',
     discountPercent: '',

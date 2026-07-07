@@ -54,6 +54,9 @@ export type ClientOrderCounterpartyOption = {
   phone?: string | null;
   email?: string | null;
   isActive?: boolean;
+  managerGuid?: string | null;
+  managerName?: string | null;
+  manager?: { guid?: string | null; name?: string | null } | null;
 };
 
 export type ClientOrderAgreementOption = {
@@ -64,6 +67,9 @@ export type ClientOrderAgreementOption = {
   counterpartyGuid?: string | null;
   organizationGuid?: string | null;
   organization?: ClientOrderOrganization | null;
+  managerGuid?: string | null;
+  managerName?: string | null;
+  manager?: { guid?: string | null; name?: string | null } | null;
   contractGuid?: string | null;
   warehouseGuid?: string | null;
   priceTypeGuid?: string | null;
@@ -86,6 +92,9 @@ export type ClientOrderContractOption = {
   counterpartyGuid?: string | null;
   organizationGuid?: string | null;
   organization?: ClientOrderOrganization | null;
+  managerGuid?: string | null;
+  managerName?: string | null;
+  manager?: { guid?: string | null; name?: string | null } | null;
   status?: string | null;
   currency?: string | null;
   isDefault?: boolean;
@@ -148,6 +157,12 @@ export type ClientOrderDeliveryAddressOption = {
   isActive?: boolean;
 };
 
+export type ClientOrderEnumOption = {
+  code?: string | null;
+  name?: string | null;
+  label?: string | null;
+};
+
 export type ClientOrderSettings = {
   organizations: ClientOrderOrganization[];
   preferredOrganization?: ClientOrderOrganization | null;
@@ -193,7 +208,13 @@ export type ClientOrderItem = {
   appliedDiscountPercent?: number | null;
   lineAmount?: number | null;
   comment?: string | null;
-  stock?: { quantity?: number | null; reserved?: number | null; available?: number | null } | null;
+  stock?: {
+    quantity?: number | null;
+    reserved?: number | null;
+    available?: number | null;
+    freeAvailable?: number | null;
+    myReserved?: number | null;
+  } | null;
 };
 
 export type ClientOrderProductImage = {
@@ -244,6 +265,8 @@ export type ClientOrder = {
   documentStatus1c?: string | null;
   comment?: string | null;
   deliveryDate?: string | null;
+  paymentForm?: string | null;
+  deliveryMethod?: string | null;
   totalAmount?: number | null;
   currency?: string | null;
   priceType?: { guid: string; name: string } | null;
@@ -296,6 +319,10 @@ export type ClientOrderDefaults = {
   warehouse?: ClientOrderWarehouseOption | null;
   deliveryAddress?: ClientOrderDeliveryAddressOption | null;
   priceType?: ClientOrderPriceTypeOption | null;
+  paymentForm?: string | null;
+  paymentForms?: ClientOrderEnumOption[];
+  deliveryMethod?: string | null;
+  deliveryMethods?: ClientOrderEnumOption[];
   currency?: string | null;
   deliveryDate?: string | null;
   deliveryDateIssue?: string | null;
@@ -323,7 +350,13 @@ export type ClientOrderProduct = {
   receiptPrice?: number | null;
   currency?: string | null;
   priceType?: { guid: string; name: string } | null;
-  stock?: { quantity?: number | null; reserved?: number | null; available?: number | null } | null;
+  stock?: {
+    quantity?: number | null;
+    reserved?: number | null;
+    available?: number | null;
+    freeAvailable?: number | null;
+    myReserved?: number | null;
+  } | null;
   priceMatch?: any;
   priceError?: string | null;
   imageThumbUrl?: string | null;
@@ -517,6 +550,7 @@ export function searchClientOrderCounterparties(params?: {
   limit?: number;
   offset?: number;
   includeInactive?: boolean;
+  managerOnly?: boolean;
 }) {
   return getPagedSelector<ClientOrderCounterpartyOption>(
     API_ENDPOINTS.CLIENT_ORDERS.COUNTERPARTIES,

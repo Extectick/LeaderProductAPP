@@ -35,14 +35,20 @@ import {
 } from './lib/clientOrdersShared';
 import {
   formatDateOnly,
-  formatStockLabel,
+  formatProductTransferLabel,
+  formatStockInlineLabel,
   getPackageDisplayText,
   getPickerItemMeta,
   getPickerItemTitle,
   getSelectedPickerGuid,
+  isProductAlreadyInOrder,
   packageLabel,
+  removeOrderItemsFromProductSelection,
   sortDeliveryAddressOptions,
+  toggleProductSelection,
+  transferSelectedProductsToOrder,
   type ClientOrdersPickerKind,
+  type ProductSelectionMap,
   unitLabel,
 } from './lib/clientOrdersUi';
 import { hasMorePage } from './lib/clientOrdersPaging';
@@ -103,11 +109,15 @@ type ConfirmDialogState = {
   onConfirm: () => void | Promise<void>;
   onAlternate?: () => void | Promise<void>;
 } | null;
+type SegmentedChoice = { value: string | null; label: string };
 
 const PAGE_SIZE = 25;
+const PRODUCT_PICKER_PAGE_SIZE = 50;
+const PRODUCT_PICKER_PREFETCH_DISTANCE = 1100;
 const ITEMS_SEARCH_PAGE_SIZE = 10;
 const ORDERS_PREFETCH_DISTANCE = 640;
 const IN_STOCK_KEY = 'clientOrders.productPicker.inStockOnly';
+const COUNTERPARTY_MANAGER_ONLY_KEY = 'clientOrders.counterpartyPicker.managerOnly';
 const SheetScrollView = (PickerBottomSheetScrollView || ScrollView) as any;
 const SheetTextInput = (PickerBottomSheetTextInput || TextInput) as any;
 const SEARCH_TEXT_INPUT_PROPS: Pick<
@@ -140,6 +150,23 @@ const SEARCH_TEXT_INPUT_PROPS: Pick<
   multiline: false,
   blurOnSubmit: true,
 };
+const PAYMENT_FORM_CHOICES: SegmentedChoice[] = [
+  { value: null, label: 'Любая' },
+  { value: 'Наличная', label: 'Наличная' },
+];
+const DELIVERY_METHOD_CHOICES: SegmentedChoice[] = [
+  { value: 'ДоКлиента', label: 'Наша доставка' },
+  { value: 'Самовывоз', label: 'Самовывоз' },
+];
+
+function choiceKey(value?: string | null) {
+  return value ?? '';
+}
+
+function unsupportedChoiceValue(choices: SegmentedChoice[], value?: string | null) {
+  if (!value) return null;
+  return choices.some((choice) => choice.value === value) ? null : value;
+}
 
 function assignComposedRef<T>(targetRef: React.Ref<T> | undefined, value: T | null) {
   if (!targetRef) return;
@@ -270,11 +297,29 @@ function productPickerMeta(item: any, context?: { hasPriceType?: boolean; hasWar
     receiptPrice: !canShowPrice || salePrice === null || salePrice === undefined
       ? '—'
       : formatMoney(salePrice, item.currency),
-    stock: canShowStock ? formatStockLabel(item?.stock, item?.baseUnit) || '—' : '—',
+    stock: canShowStock ? formatStockInlineLabel(item?.stock, item?.baseUnit) || '—' : '—',
   };
 }
 function getDraftItemImageUri(item: any) {
   return getProductGalleryImages(item)[0]?.thumbUrl || null;
+}
+function getProductImageCacheKey(item: any, imageUri?: string | null, kind = 'thumb') {
+  if (!imageUri) return null;
+  const ownerKey = item?.productGuid || item?.guid || item?.lineGuid || imageUri;
+  return item?.imageHash ? `${ownerKey}:${kind}:${item.imageHash}` : imageUri;
+}
+async function hasCachedProductImage(imageCacheKey?: string | null, imageUri?: string | null) {
+  const keys = [imageCacheKey, imageUri].filter(Boolean) as string[];
+  const uniqueKeys = Array.from(new Set(keys));
+  for (const key of uniqueKeys) {
+    try {
+      const path = await ExpoImage.getCachePathAsync(key);
+      if (path) return true;
+    } catch {
+      continue;
+    }
+  }
+  return false;
 }
 function hasProductImage(item: any) {
   return getProductGalleryImages(item).length > 0;
@@ -430,7 +475,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const background = useThemeColor({}, 'background');
   const card = useThemeColor({}, 'cardBackground');
   const { width, height } = useWindowDimensions();
-  const { bottom: safeBottom } = useSafeAreaInsets();
+  const { top: safeTop, bottom: safeBottom } = useSafeAreaInsets();
   const layoutTier = resolveClientOrdersLayoutTier(width);
   const editorTier = resolveClientOrdersEditorTier(width);
   const ui = getClientOrdersResponsiveMetrics(layoutTier, editorTier);
@@ -446,6 +491,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const [pickerHasMore, setPickerHasMore] = React.useState(false);
   const [pickerScrollOffset, setPickerScrollOffset] = React.useState(0);
   const [pickerLoading, setPickerLoading] = React.useState(false);
+  const [selectedProducts, setSelectedProducts] = React.useState<ProductSelectionMap>(() => new Map());
   const [filtersOpen, setFiltersOpen] = React.useState(false);
   const [inspectorOpen, setInspectorOpen] = React.useState(false);
   const [deleteDocumentOverlayVisible, setDeleteDocumentOverlayVisible] = React.useState(false);
@@ -462,6 +508,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const [itemsSearchOffset, setItemsSearchOffset] = React.useState(0);
   const [itemsSearchError, setItemsSearchError] = React.useState<string | null>(null);
   const [inStockOnly, setInStockOnly] = React.useState(false);
+  const [counterpartyManagerOnly, setCounterpartyManagerOnly] = React.useState(false);
   const [linePriceTarget, setLinePriceTarget] = React.useState<string | null>(null);
   const [actionsMenuOpen, setActionsMenuOpen] = React.useState(false);
   const [statusMenuOpen, setStatusMenuOpen] = React.useState(false);
@@ -515,6 +562,9 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     if (!selectedItem) return pickerItems;
     return [selectedItem, ...pickerItems.filter((item) => item?.guid !== selectedPickerGuid)];
   }, [pickerItems, selectedPickerGuid]);
+  React.useEffect(() => {
+    setSelectedProducts((current) => removeOrderItemsFromProductSelection(current, workspace.draft.items));
+  }, [workspace.draft.items]);
   const editorKeyboardPadding = Math.min(460, Math.max(320, Math.round(height * 0.42)));
   const showOrdersInitialLoading = !workspace.ordersInitialLoadDone && !workspace.orders.length;
   const showOrdersEmptyState = workspace.ordersInitialLoadDone && !workspace.loadingOrders && !workspace.orders.length;
@@ -719,6 +769,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
 
   React.useEffect(() => { AsyncStorage.getItem(IN_STOCK_KEY).then((v) => setInStockOnly(v === '1')).catch(() => undefined); }, []);
   React.useEffect(() => { void AsyncStorage.setItem(IN_STOCK_KEY, inStockOnly ? '1' : '0'); }, [inStockOnly]);
+  React.useEffect(() => { AsyncStorage.getItem(COUNTERPARTY_MANAGER_ONLY_KEY).then((v) => setCounterpartyManagerOnly(v === '1')).catch(() => undefined); }, []);
+  React.useEffect(() => { void AsyncStorage.setItem(COUNTERPARTY_MANAGER_ONLY_KEY, counterpartyManagerOnly ? '1' : '0'); }, [counterpartyManagerOnly]);
   React.useEffect(() => () => {
     if (itemsSearchBlurTimerRef.current) clearTimeout(itemsSearchBlurTimerRef.current);
   }, []);
@@ -758,6 +810,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     setPickerOffset(0);
     setPickerHasMore(false);
     setPickerScrollOffset(0);
+    setSelectedProducts(new Map());
     pickerAppendLoadingRef.current = false;
     pickerLoadSignatureRef.current = '';
     requestAnimationFrame(() => scrollPickerListToTop(false));
@@ -765,12 +818,16 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
 
   const handlePickerSearchChange = React.useCallback((value: string) => {
     setPickerSearch(value);
+    setPickerOffset(0);
+    setPickerHasMore(false);
     setPickerScrollOffset(0);
     pickerAppendLoadingRef.current = false;
+    pickerLoadSignatureRef.current = '';
     requestAnimationFrame(() => scrollPickerListToTop(false));
   }, [scrollPickerListToTop]);
 
   const loadPickerPage = React.useCallback(async (kind: PickerKind, search: string, offset = 0, append = false) => {
+    const pageSize = kind === 'product' ? PRODUCT_PICKER_PAGE_SIZE : PAGE_SIZE;
     const contextSignature = [
       workspace.draft.organizationGuid || '',
       workspace.draft.counterpartyGuid || '',
@@ -778,7 +835,9 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       workspace.draft.warehouseGuid || '',
       workspace.draft.priceTypeGuid || '',
     ].join(':');
-    const signature = `${kind}|${contextSignature}|${search}|${offset}|${append ? 'append' : 'reset'}|${kind === 'product' && inStockOnly ? 'stock' : 'all'}`;
+    const productFilter = kind === 'product' && inStockOnly ? 'stock' : 'all';
+    const counterpartyFilter = (kind === 'counterparty' || kind === 'filterCounterparty') && counterpartyManagerOnly ? 'manager' : 'all';
+    const signature = `${kind}|${contextSignature}|${search}|${offset}|${append ? 'append' : 'reset'}|${productFilter}|${counterpartyFilter}`;
     if ((append && pickerAppendLoadingRef.current) || pickerLoadSignatureRef.current === signature) return;
     if (append) pickerAppendLoadingRef.current = true;
     pickerLoadSignatureRef.current = signature;
@@ -797,14 +856,14 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       if (kind === 'organization') {
         const all = workspace.settings?.organizations || [];
         const filtered = all.filter((item) => matchesTokenSearch(item, search));
-        result = { items: filtered.slice(offset, offset + PAGE_SIZE), meta: { total: filtered.length } };
-      } else if (kind === 'filterCounterparty' || kind === 'counterparty') result = await workspace.searchCounterparties({ search, limit: PAGE_SIZE, offset });
-      else if (kind === 'agreement') result = await workspace.searchAgreements({ counterpartyGuid: workspace.draft.counterpartyGuid || undefined, search, limit: PAGE_SIZE, offset });
-      else if (kind === 'contract') result = await workspace.searchContracts({ counterpartyGuid: workspace.draft.counterpartyGuid || undefined, search, limit: PAGE_SIZE, offset });
-      else if (kind === 'warehouse') result = await workspace.searchWarehouses({ organizationGuid: workspace.draft.organizationGuid || undefined, counterpartyGuid: workspace.draft.counterpartyGuid || undefined, search, limit: PAGE_SIZE, offset });
-      else if (kind === 'deliveryAddress') result = await workspace.searchDeliveryAddresses({ organizationGuid: workspace.draft.organizationGuid || undefined, counterpartyGuid: workspace.draft.counterpartyGuid || undefined, search, limit: PAGE_SIZE, offset });
-      else if (kind === 'priceType') result = await workspace.searchPriceTypes({ search, limit: PAGE_SIZE, offset });
-      else result = await workspace.searchProducts({ search, organizationGuid: workspace.draft.organizationGuid || undefined, counterpartyGuid: workspace.draft.counterpartyGuid, agreementGuid: workspace.draft.agreementGuid || undefined, warehouseGuid: workspace.draft.warehouseGuid || undefined, priceTypeGuid: workspace.draft.priceTypeGuid || undefined, inStockOnly, limit: PAGE_SIZE, offset });
+        result = { items: filtered.slice(offset, offset + pageSize), meta: { total: filtered.length } };
+      } else if (kind === 'filterCounterparty' || kind === 'counterparty') result = await workspace.searchCounterparties({ search, limit: pageSize, offset, managerOnly: counterpartyManagerOnly });
+      else if (kind === 'agreement') result = await workspace.searchAgreements({ counterpartyGuid: workspace.draft.counterpartyGuid || undefined, search, limit: pageSize, offset });
+      else if (kind === 'contract') result = await workspace.searchContracts({ counterpartyGuid: workspace.draft.counterpartyGuid || undefined, search, limit: pageSize, offset });
+      else if (kind === 'warehouse') result = await workspace.searchWarehouses({ organizationGuid: workspace.draft.organizationGuid || undefined, counterpartyGuid: workspace.draft.counterpartyGuid || undefined, search, limit: pageSize, offset });
+      else if (kind === 'deliveryAddress') result = await workspace.searchDeliveryAddresses({ organizationGuid: workspace.draft.organizationGuid || undefined, counterpartyGuid: workspace.draft.counterpartyGuid || undefined, search, limit: pageSize, offset });
+      else if (kind === 'priceType') result = await workspace.searchPriceTypes({ search, limit: pageSize, offset });
+      else result = await workspace.searchProducts({ search, organizationGuid: workspace.draft.organizationGuid || undefined, counterpartyGuid: workspace.draft.counterpartyGuid, agreementGuid: workspace.draft.agreementGuid || undefined, warehouseGuid: workspace.draft.warehouseGuid || undefined, priceTypeGuid: workspace.draft.priceTypeGuid || undefined, inStockOnly, limit: pageSize, offset });
       if (pickerRequestIdRef.current !== requestId) return;
       const items = result?.items || [];
       if (append && items.length === 0) {
@@ -823,7 +882,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         return kind === 'deliveryAddress' ? sortDeliveryAddressOptions(merged) : merged;
       });
       setPickerOffset(offset + items.length);
-      setPickerHasMore(hasMorePage(items.length, PAGE_SIZE, offset, result?.meta?.total));
+      setPickerHasMore(hasMorePage(items.length, pageSize, offset, result?.meta?.total));
     } catch {
       if (pickerRequestIdRef.current === requestId) {
         setPickerHasMore(false);
@@ -834,6 +893,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       if (pickerRequestIdRef.current === requestId) setPickerLoading(false);
     }
   }, [
+    counterpartyManagerOnly,
     inStockOnly,
     workspace.draft.agreementGuid,
     workspace.draft.counterpartyGuid,
@@ -853,7 +913,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
 
   React.useEffect(() => {
     if (!pickerKind) return;
-    const timeout = setTimeout(() => void loadPickerPage(pickerKind, pickerSearch, 0, false), pickerSearch ? 650 : 0);
+    const searchDelay = pickerSearch && pickerKind !== 'product' ? 650 : 0;
+    const timeout = setTimeout(() => void loadPickerPage(pickerKind, pickerSearch, 0, false), searchDelay);
     return () => clearTimeout(timeout);
   }, [loadPickerPage, pickerKind, pickerSearch]);
   React.useEffect(() => {
@@ -893,7 +954,23 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     pickerLoadSignatureRef.current = '';
     setPickerKind(null);
     setLinePriceTarget(null);
+    setSelectedProducts(new Map());
   }, [suppressPickerAutoFocus]);
+  const requestClosePicker = React.useCallback(() => {
+    if (pickerKind === 'product' && selectedProducts.size > 0) {
+      setConfirmDialog({
+        title: 'Выйти из подбора?',
+        message: `Выбрано ${selectedProducts.size} поз. Если выйти, они не будут перенесены в заказ.`,
+        cancelLabel: 'Остаться',
+        confirmLabel: 'Выйти',
+        destructive: true,
+        onConfirm: closePicker,
+      });
+      return false;
+    }
+    closePicker();
+    return undefined;
+  }, [closePicker, pickerKind, selectedProducts.size]);
   const cancelOpeningOrder = React.useCallback(() => {
     if (!openingOrderGuid) return false;
     openingOrderRequestIdRef.current += 1;
@@ -934,7 +1011,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       return true;
     }
     if (pickerKind) {
-      closePicker();
+      requestClosePicker();
       return true;
     }
     if (filtersOpen) {
@@ -946,7 +1023,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       return true;
     }
     return false;
-  }, [cancelOpeningOrder, closeDocumentToOrders, closePicker, editingItemKey, filtersOpen, mode, pickerKind, productGallery, referenceOpen]);
+  }, [cancelOpeningOrder, closeDocumentToOrders, editingItemKey, filtersOpen, mode, pickerKind, productGallery, referenceOpen, requestClosePicker]);
 
   React.useEffect(() => {
     if (!registerBackOverlayHandler) return undefined;
@@ -960,7 +1037,10 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
     if (contentSize.height <= layoutMeasurement.height + 24) return;
     const remaining = contentSize.height - contentOffset.y - layoutMeasurement.height;
-    if (remaining > 320) return;
+    const prefetchDistance = pickerKind === 'product'
+      ? Math.max(PRODUCT_PICKER_PREFETCH_DISTANCE, layoutMeasurement.height * 1.5)
+      : 320;
+    if (remaining > prefetchDistance) return;
     void loadPickerPage(pickerKind, pickerSearch, pickerOffset, true);
   }, [loadPickerPage, pickerHasMore, pickerKind, pickerLoading, pickerOffset, pickerSearch]);
 
@@ -1113,11 +1193,25 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       } else {
         workspace.setHeaderPriceType(item);
       }
-    } else if (selectedKind === 'product' && !workspace.readOnly && !workspace.mutationLocked) {
-      closePicker();
-      openProductEditorForProduct(item as ClientOrderProduct);
     }
-  }, [closePicker, linePriceTarget, openProductEditorForProduct, pickerKind, workspace]);
+  }, [closePicker, linePriceTarget, pickerKind, workspace]);
+
+  const togglePickerProductSelection = React.useCallback((item: ClientOrderProduct) => {
+    if (workspace.readOnly || workspace.mutationLocked) return;
+    React.startTransition(() => {
+      setSelectedProducts((current) => toggleProductSelection(current, item, workspace.draft.items));
+    });
+  }, [workspace.draft.items, workspace.mutationLocked, workspace.readOnly]);
+
+  const transferSelectedProducts = React.useCallback(() => {
+    const firstNewIndex = workspace.draft.items.length;
+    const addedKeys = transferSelectedProductsToOrder(selectedProducts, workspace.draft.items, workspace.addProduct, { quantity: 0 });
+    closePicker();
+    setSection('items');
+    if (addedKeys.length) {
+      requestScrollToLineItem(addedKeys[0], firstNewIndex);
+    }
+  }, [closePicker, requestScrollToLineItem, selectedProducts, workspace]);
 
   const createDocument = React.useCallback(async () => {
     setOpeningDocument('new');
@@ -1770,19 +1864,21 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   React.useEffect(() => () => setHeaderOverride(null), [setHeaderOverride]);
   const PickerContentScrollView = SheetScrollView;
   const isProductPicker = pickerKind === 'product';
+  const isCounterpartyPicker = pickerKind === 'counterparty' || pickerKind === 'filterCounterparty';
   const pickerContent = (
     <>
       <View style={styles.pickerToolbar}>
         <View style={styles.pickerSearchRow}>
           <CompactSearchbar
             inputRef={pickerSearchInputRef}
-            style={[styles.pickerSearchFlat, isProductPicker && styles.productPickerSearchFlat]}
+            style={[styles.pickerSearchFlat, (isProductPicker || isCounterpartyPicker) && styles.productPickerSearchFlat]}
             inputStyle={styles.pickerSearchInputFlat}
             value={pickerSearch}
             onChangeText={handlePickerSearchChange}
             placeholder={isProductPicker ? 'Поиск товара' : 'Поиск'}
             inputComponent={SheetTextInput}
             autoFocus={pickerShouldAutofocusSearch(pickerKind)}
+            loading={pickerLoading}
           />
           {isProductPicker ? (
             <View
@@ -1803,6 +1899,29 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
               />
             </View>
           ) : null}
+          {isCounterpartyPicker ? (
+            <Pressable
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: counterpartyManagerOnly }}
+              accessibilityLabel="Показывать только моих контрагентов"
+              onPress={() => setCounterpartyManagerOnly((prev) => !prev)}
+              style={[
+                styles.counterpartyManagerToggle,
+                counterpartyManagerOnly && styles.counterpartyManagerToggleActive,
+              ]}
+            >
+              <Checkbox.Android
+                status={counterpartyManagerOnly ? 'checked' : 'unchecked'}
+                color="#2563EB"
+                uncheckedColor="#64748B"
+                rippleColor="rgba(37, 99, 235, 0.12)"
+              />
+              <Text style={[
+                styles.counterpartyManagerToggleText,
+                counterpartyManagerOnly && styles.counterpartyManagerToggleTextActive,
+              ]}>Мои</Text>
+            </Pressable>
+          ) : null}
         </View>
       </View>
       <PickerContentScrollView
@@ -1818,29 +1937,38 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       >
         {pickerNeedsOrderContext(pickerKind) && (!workspace.draft.organizationGuid || !workspace.draft.counterpartyGuid) ? <InfoText styles={styles} text="Сначала выберите организацию и контрагента." /> : null}
         {visiblePickerItems.map((item: any) => {
-          const disabled = pickerKind === 'product' && workspace.draft.items.some((line) => line.productGuid === item.guid);
+          const disabled = pickerKind === 'product' && isProductAlreadyInOrder(item as ClientOrderProduct, workspace.draft.items);
           const pickerMeta = pickerKind === 'product'
             ? productPickerMeta(item, {
                 hasPriceType: !!workspace.draft.priceTypeGuid,
                 hasWarehouse: !!workspace.draft.warehouseGuid,
               })
             : null;
-          const isSelected = !!selectedPickerGuid && selectedPickerGuid === item.guid;
+          const isProductRow = pickerKind === 'product';
+          const isSelected = isProductRow
+            ? !!item.guid && selectedProducts.has(item.guid)
+            : !!selectedPickerGuid && selectedPickerGuid === item.guid;
           const description = pickerKind === 'product'
-            ? [pickerMeta?.code, pickerMeta?.receiptPrice ? `Цена: ${pickerMeta.receiptPrice}` : '', pickerMeta?.stock ? `Остаток: ${pickerMeta.stock}` : ''].filter(Boolean).join(' • ')
+            ? [pickerMeta?.code, pickerMeta?.receiptPrice ? `Цена: ${pickerMeta.receiptPrice}` : '', pickerMeta?.stock].filter(Boolean).join(' • ')
             : getPickerItemMeta(pickerKind, item) || '';
           return (
             <Pressable
               key={`${pickerKind}-${item.guid || item.name || item.fullAddress}`}
               disabled={disabled}
               onPress={() => void selectPickerItem(item)}
-              style={({ pressed }) => [styles.pickerFlatRow, disabled && styles.disabled, pressed && styles.flatPressed]}
+              style={({ pressed }) => [
+                styles.pickerFlatRow,
+                isProductRow && styles.productPickerRow,
+                isSelected && styles.pickerFlatRowSelected,
+                disabled && styles.disabled,
+                pressed && styles.flatPressed,
+              ]}
             >
               {pickerKind === 'product' ? (
                 <ProductThumb
                   item={item}
                   style={[styles.productPickerThumb, disabled && styles.productPickerThumbDisabled]}
-                  iconSize={22}
+                  iconSize={26}
                   iconColor={disabled ? '#94A3B8' : '#2563EB'}
                   onPress={() => openProductGallery(item)}
                 />
@@ -1848,16 +1976,34 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
               <View style={styles.pickerFlatTextWrap}>
                 <Text style={styles.pickerFlatTitle} numberOfLines={2}>{pickerKind === 'product' ? (item.name || getPickerItemTitle(item)) : getPickerItemTitle(item)}</Text>
                 {description ? <Text style={[styles.pickerFlatMeta, disabled && styles.pickerRowDisabled]} numberOfLines={2}>{description}</Text> : null}
+                {isProductRow && disabled ? <Text style={styles.productPickerAlreadyText}>Уже в заказе</Text> : null}
+                {isProductRow && isSelected ? <Text style={styles.productPickerSelectedText}>Добавить в заказ</Text> : null}
               </View>
               {isSelected
                 ? <MaterialCommunityIcons name="check-circle" size={21} color="#16A34A" />
-                : <MaterialCommunityIcons name="chevron-right" size={22} color={disabled ? '#CBD5E1' : '#94A3B8'} />}
+                : <MaterialCommunityIcons name={isProductRow && !disabled ? 'plus-circle-outline' : 'chevron-right'} size={22} color={disabled ? '#CBD5E1' : '#94A3B8'} />}
             </Pressable>
           );
         })}
         {!pickerLoading && !visiblePickerItems.length && !(pickerNeedsOrderContext(pickerKind) && (!workspace.draft.organizationGuid || !workspace.draft.counterpartyGuid)) ? <InfoText styles={styles} text="Ничего не найдено." /> : null}
         {pickerLoading ? <View style={styles.pickerFooter}><ActivityIndicator size="small" color="#2563EB" /><Text style={styles.pickerFooterText}>Загружаю...</Text></View> : null}
       </PickerContentScrollView>
+      {isProductPicker && selectedProducts.size > 0 ? (
+        <Surface mode="flat" style={[styles.productPickerTransferFooter, { paddingBottom: Math.max(safeBottom, 10) + 8 }]}>
+          <PaperButton
+            mode="contained"
+            onPress={transferSelectedProducts}
+            buttonColor="#2563EB"
+            textColor="#FFFFFF"
+            icon="arrow-down-circle-outline"
+            style={styles.productPickerTransferButton}
+            labelStyle={styles.productPickerTransferLabel}
+            contentStyle={styles.productPickerTransferContent}
+          >
+            {formatProductTransferLabel(selectedProducts.size)}
+          </PaperButton>
+        </Surface>
+      ) : null}
     </>
   );
   const discardConfirmState = React.useMemo<ConfirmDialogState>(() => {
@@ -2041,16 +2187,32 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       />
 
       {pickerKind === 'product' ? (
-        <ProductPickerBottomSheet
+        <ProductPickerFullscreenPanel
           styles={styles}
           visible
-          topOffset={Math.max(88, topInset + 12)}
-          onClose={closePicker}
-          contentScrollOffset={pickerScrollOffset}
-          keyboardTopInset={Math.max(88, topInset + 12)}
-        >
-          {pickerContent}
-        </ProductPickerBottomSheet>
+          topInset={safeTop}
+          bottomInset={safeBottom}
+          onClose={requestClosePicker}
+          search={pickerSearch}
+          onSearchChange={handlePickerSearchChange}
+          searchInputRef={pickerSearchInputRef}
+          listRef={pickerListRef}
+          loading={pickerLoading}
+          inStockOnly={inStockOnly}
+          onToggleInStockOnly={() => setInStockOnly((prev) => !prev)}
+          items={visiblePickerItems as ClientOrderProduct[]}
+          selectedProducts={selectedProducts}
+          orderItems={workspace.draft.items}
+          hasOrderContext={!!workspace.draft.organizationGuid && !!workspace.draft.counterpartyGuid}
+          hasPriceType={!!workspace.draft.priceTypeGuid}
+          hasWarehouse={!!workspace.draft.warehouseGuid}
+          onSelect={togglePickerProductSelection}
+          onOpenImages={openProductGallery}
+          onScroll={handlePickerScroll}
+          onScrollBeginDrag={suppressPickerAutoFocus}
+          selectedCount={selectedProducts.size}
+          onTransfer={transferSelectedProducts}
+        />
       ) : (
         <PickerBottomSheet
           styles={styles}
@@ -2058,7 +2220,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
           topOffset={Math.max(88, topInset + 12)}
           title={pickerTitle(pickerKind)}
           titleIcon={pickerIcon(pickerKind)}
-          onClose={closePicker}
+          onClose={requestClosePicker}
           contentScrollOffset={pickerScrollOffset}
           enableContentDrag
           keyboardTopInset={Math.max(88, topInset + 12)}
@@ -2181,6 +2343,24 @@ function HeaderSection({
       loading={workspace.documentHeaderLoadingState.priceType}
       onDetails={() => openDetails('price-type', workspace.draft.priceTypeGuid || workspace.selections.agreement?.priceType?.guid)}
       onReset={workspace.isHeaderPriceTypeCustom ? onResetHeaderPriceType : undefined}
+    />
+    <FlatSegmentedField
+      label="Форма оплаты"
+      value={workspace.draft.paymentForm}
+      choices={PAYMENT_FORM_CHOICES}
+      icon="cash-multiple"
+      disabled={readOnly || missingOrderContext || workspace.loadingDefaults}
+      loading={workspace.loadingDefaults}
+      onChange={(value) => workspace.patchDraft({ paymentForm: value })}
+    />
+    <FlatSegmentedField
+      label="Способ доставки"
+      value={workspace.draft.deliveryMethod}
+      choices={DELIVERY_METHOD_CHOICES}
+      icon="truck-delivery-outline"
+      disabled={readOnly || missingOrderContext || workspace.loadingDefaults}
+      loading={workspace.loadingDefaults}
+      onChange={(value) => workspace.patchDraft({ deliveryMethod: value })}
     />
     <FlatDocumentField label="Склад" value={workspace.selections.warehouse?.name || 'Выбрать'} icon="warehouse" onPress={() => openPicker('warehouse')} disabled={readOnly || missingOrderContext} invalid={showRequiredErrors && !hasWarehouseValue} loading={workspace.documentHeaderLoadingState.warehouse} onDetails={() => openDetails('warehouse', workspace.draft.warehouseGuid || workspace.selections.warehouse?.guid)} />
     <FlatDocumentField label="Адрес доставки" value={workspace.selections.deliveryAddress?.fullAddress || workspace.selections.deliveryAddress?.name || 'Выбрать'} helperText={deliveryAddressComment} icon="map-marker-outline" onPress={() => openPicker('deliveryAddress')} disabled={readOnly || missingOrderContext} invalid={showRequiredErrors && !hasDeliveryAddressValue} loading={workspace.documentHeaderLoadingState.deliveryAddress} onDetails={() => openDetails('delivery-address', workspace.draft.deliveryAddressGuid || workspace.selections.deliveryAddress?.guid)} />
@@ -2363,6 +2543,66 @@ function FlatDocumentField({
         </View>
       ) : null}
     </Pressable>
+  );
+}
+
+function FlatSegmentedField({
+  label,
+  value,
+  choices,
+  icon,
+  disabled,
+  loading,
+  onChange,
+}: {
+  label: string;
+  value?: string | null;
+  choices: SegmentedChoice[];
+  icon: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
+  disabled?: boolean;
+  loading?: boolean;
+  onChange: (value: string | null) => void;
+}) {
+  const unsupported = unsupportedChoiceValue(choices, value);
+  const currentKey = choiceKey(value);
+
+  return (
+    <View style={[styles.flatSegmentedField, disabled && styles.readOnlyFieldSurface]}>
+      <View style={styles.flatFieldIcon}>
+        <MaterialCommunityIcons name={icon} size={20} color={disabled ? 'rgba(71, 85, 105, 0.48)' : '#475569'} />
+      </View>
+      <View style={styles.flatSegmentedContent}>
+        <View style={styles.flatSegmentedHeader}>
+          <Text style={[styles.flatFieldLabel, disabled && styles.readOnlyFieldLabel]}>{label}</Text>
+          {loading ? <ActivityIndicator size={15} color="#2563EB" /> : null}
+        </View>
+        <View style={styles.flatSegmentedControl}>
+          {choices.map((choice, index) => {
+            const selected = choiceKey(choice.value) === currentKey && !unsupported;
+            return (
+              <Pressable
+                key={choiceKey(choice.value) || '__default__'}
+                accessibilityRole="button"
+                disabled={disabled}
+                onPress={() => onChange(choice.value)}
+                style={({ pressed }) => [
+                  styles.flatSegmentedOption,
+                  index === choices.length - 1 && styles.flatSegmentedOptionLast,
+                  selected && styles.flatSegmentedOptionActive,
+                  disabled && styles.flatSegmentedOptionDisabled,
+                  pressed && !disabled && styles.flatPressed,
+                ]}
+              >
+                <Text style={[styles.flatSegmentedOptionText, selected && styles.flatSegmentedOptionTextActive, disabled && styles.readOnlyFieldValue]} numberOfLines={1}>
+                  {choice.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+        {unsupported ? <Text style={styles.flatSegmentedUnsupported} numberOfLines={2}>Текущее из 1С: {unsupported}</Text> : null}
+      </View>
+    </View>
   );
 }
 
@@ -2687,6 +2927,7 @@ function ItemsToolbar({
         onFocus={missingOrderContext ? undefined : onSearchFocus}
         onBlur={onSearchBlur}
         editable={!missingOrderContext}
+        loading={searchLoading}
       />
       <Pressable
         accessibilityRole="button"
@@ -2744,7 +2985,7 @@ function ItemsToolbar({
                 <View style={styles.itemsSearchResultTextWrap}>
                   <Text style={styles.itemsSearchResultTitle} numberOfLines={1}>{product.name || getPickerItemTitle(product)}</Text>
                   <Text style={styles.itemsSearchResultMeta} numberOfLines={1}>
-                    {[meta.code, `Цена: ${meta.receiptPrice}`, `Остаток: ${meta.stock}`].filter(Boolean).join(' • ')}
+                    {[meta.code, `Цена: ${meta.receiptPrice}`, meta.stock].filter(Boolean).join(' • ')}
                   </Text>
                 </View>
               </Pressable>
@@ -2839,7 +3080,7 @@ function ItemsSearchResultsOverlay({
                   <View style={styles.itemsSearchResultTextWrap}>
                     <Text style={styles.itemsSearchResultTitle} numberOfLines={1}>{product.name || getPickerItemTitle(product)}</Text>
                     <Text style={styles.itemsSearchResultMeta} numberOfLines={1}>
-                      {[meta.code, `Цена: ${meta.receiptPrice}`, `Остаток: ${meta.stock}`].filter(Boolean).join(' • ')}
+                      {[meta.code, `Цена: ${meta.receiptPrice}`, meta.stock].filter(Boolean).join(' • ')}
                     </Text>
                   </View>
                 </Pressable>
@@ -2884,39 +3125,224 @@ function InlineProductSearchThumb({
   );
 }
 
-function ProductPickerBottomSheet({
+const ProductPickerFullscreenRow = React.memo(function ProductPickerFullscreenRow({
+  styles,
+  item,
+  selected,
+  disabled,
+  hasPriceType,
+  hasWarehouse,
+  onSelect,
+  onOpenImages,
+}: {
+  styles: any;
+  item: ClientOrderProduct;
+  selected: boolean;
+  disabled: boolean;
+  hasPriceType: boolean;
+  hasWarehouse: boolean;
+  onSelect: (item: ClientOrderProduct) => void;
+  onOpenImages: (item: ClientOrderProduct) => void;
+}) {
+  const description = React.useMemo(() => {
+    const meta = productPickerMeta(item, { hasPriceType, hasWarehouse });
+    return [meta.code, meta.receiptPrice ? `Цена: ${meta.receiptPrice}` : '', meta.stock].filter(Boolean).join(' • ');
+  }, [hasPriceType, hasWarehouse, item]);
+  const handleSelect = React.useCallback(() => onSelect(item), [item, onSelect]);
+  const handleOpenImages = React.useCallback(() => onOpenImages(item), [item, onOpenImages]);
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      disabled={disabled}
+      onPress={handleSelect}
+      style={({ pressed }) => [
+        styles.pickerFlatRow,
+        styles.productPickerRow,
+        selected && styles.pickerFlatRowSelected,
+        pressed && styles.flatPressed,
+      ]}
+    >
+      <ProductThumb
+        item={item}
+        style={styles.productPickerThumb}
+        iconSize={26}
+        iconColor={disabled ? '#94A3B8' : '#2563EB'}
+        onPress={handleOpenImages}
+      />
+      <View style={styles.pickerFlatTextWrap}>
+        <Text style={styles.pickerFlatTitle} numberOfLines={2}>{item.name || getPickerItemTitle(item)}</Text>
+        {description ? <Text style={styles.pickerFlatMeta} numberOfLines={2}>{description}</Text> : null}
+        {disabled ? <Text style={styles.productPickerAlreadyText}>Уже в заказе</Text> : null}
+      </View>
+      {selected ? (
+        <MaterialCommunityIcons name="check-circle" size={21} color="#16A34A" />
+      ) : (
+        <MaterialCommunityIcons name={disabled ? 'check-circle-outline' : 'plus-circle-outline'} size={22} color={disabled ? '#CBD5E1' : '#94A3B8'} />
+      )}
+    </Pressable>
+  );
+});
+
+function ProductPickerFullscreenPanel({
   styles,
   visible,
-  topOffset,
+  topInset,
+  bottomInset,
   onClose,
-  contentScrollOffset,
-  keyboardTopInset,
-  children,
+  search,
+  onSearchChange,
+  searchInputRef,
+  listRef,
+  loading,
+  inStockOnly,
+  onToggleInStockOnly,
+  items,
+  selectedProducts,
+  orderItems,
+  hasOrderContext,
+  hasPriceType,
+  hasWarehouse,
+  onSelect,
+  onOpenImages,
+  onScroll,
+  onScrollBeginDrag,
+  selectedCount,
+  onTransfer,
 }: {
   styles: any;
   visible: boolean;
-  topOffset: number;
-  onClose: () => void;
-  contentScrollOffset: number;
-  keyboardTopInset: number;
-  children: React.ReactNode;
+  topInset: number;
+  bottomInset: number;
+  onClose: () => void | false;
+  search: string;
+  onSearchChange: (value: string) => void;
+  searchInputRef: React.Ref<any>;
+  listRef: React.Ref<any>;
+  loading: boolean;
+  inStockOnly: boolean;
+  onToggleInStockOnly: () => void;
+  items: ClientOrderProduct[];
+  selectedProducts: ReadonlyMap<string, ClientOrderProduct>;
+  orderItems: DraftItem[];
+  hasOrderContext: boolean;
+  hasPriceType: boolean;
+  hasWarehouse: boolean;
+  onSelect: (item: ClientOrderProduct) => void;
+  onOpenImages: (item: ClientOrderProduct) => void;
+  onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  onScrollBeginDrag: () => void;
+  selectedCount: number;
+  onTransfer: () => void;
 }) {
+  const orderProductGuids = React.useMemo(() => {
+    return new Set(orderItems.map((item) => item.productGuid).filter(Boolean) as string[]);
+  }, [orderItems]);
+  const hasSearch = !!search.trim();
+  const showInitialLoader = loading && hasOrderContext && !items.length && !hasSearch;
+  const showSearchLoader = loading && hasSearch;
+  const showFooterLoader = loading && !!items.length && !hasSearch;
+  if (!visible) return null;
+
   return (
-    <PickerBottomSheet
-      styles={styles}
-      visible={visible}
-      topOffset={topOffset}
-      title="Подбор товаров"
-      titleIcon="cube-outline"
-      onClose={onClose}
-      contentScrollOffset={contentScrollOffset}
-      enableContentDrag
-      keyboardTopInset={keyboardTopInset}
-      minHeight={420}
-      initialSnapIndex={1}
-    >
-      {children}
-    </PickerBottomSheet>
+    <View style={styles.filtersLookupOverlay}>
+      <Surface mode="flat" style={[styles.filtersFullscreenHeader, styles.productPickerFullscreenHeader, { paddingTop: Math.max(topInset, 10) + 8 }]}>
+        <View style={styles.filtersFullscreenHeaderRow}>
+          <View style={styles.filtersLookupTitleRow}>
+            <MaterialCommunityIcons name="cube-outline" size={20} color="#2563EB" />
+            <Text style={styles.filtersFullscreenTitle}>Подбор товаров</Text>
+          </View>
+          <View style={styles.productPickerFullscreenHeaderActions}>
+            <Pressable
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: inStockOnly }}
+              accessibilityLabel="Показывать только товары с остатком"
+              onPress={onToggleInStockOnly}
+              style={[
+                styles.productPickerFullscreenStockChip,
+                inStockOnly && styles.productPickerFullscreenStockChipActive,
+              ]}
+            >
+              <MaterialCommunityIcons
+                name={inStockOnly ? 'checkbox-marked' : 'checkbox-blank-outline'}
+                size={18}
+                color={inStockOnly ? '#16A34A' : '#64748B'}
+              />
+              <Text style={[styles.productPickerFullscreenStockText, inStockOnly && styles.productPickerFullscreenStockTextActive]}>
+                С остатками
+              </Text>
+            </Pressable>
+            <Pressable accessibilityRole="button" accessibilityLabel="Закрыть подбор товаров" onPress={onClose} style={({ pressed }) => [styles.filtersCloseButton, pressed && styles.flatPressed]}>
+              <MaterialCommunityIcons name="close" size={22} color="#0F172A" />
+            </Pressable>
+          </View>
+        </View>
+        <View style={styles.productPickerFullscreenSearchArea}>
+          <CompactSearchbar
+            inputRef={searchInputRef}
+            style={[styles.pickerSearchFlat, styles.productPickerSearchFlat, styles.productPickerFullscreenSearch]}
+            inputStyle={[styles.pickerSearchInputFlat, styles.productPickerFullscreenSearchInput]}
+            value={search}
+            onChangeText={onSearchChange}
+            placeholder="Поиск товара"
+            loading={showSearchLoader}
+            debounceMs={520}
+          />
+        </View>
+      </Surface>
+      <ScrollView
+        ref={listRef}
+        style={styles.productPickerFullscreenList}
+        contentContainerStyle={[styles.pickerListContent, { paddingBottom: Math.max(bottomInset, 10) + (selectedCount > 0 ? 92 : 22) }]}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        onScroll={onScroll}
+        onScrollBeginDrag={onScrollBeginDrag}
+        scrollEventThrottle={16}
+      >
+        {!hasOrderContext ? <InfoText styles={styles} text="Сначала выберите организацию и контрагента." /> : null}
+        {showInitialLoader ? (
+          <View style={styles.productPickerInitialLoader}>
+            <ActivityIndicator size="large" color="#2563EB" />
+          </View>
+        ) : null}
+        {items.map((item) => (
+          <ProductPickerFullscreenRow
+            key={item.guid || item.name}
+            styles={styles}
+            item={item}
+            selected={!!item.guid && selectedProducts.has(item.guid)}
+            disabled={!!item.guid && orderProductGuids.has(item.guid)}
+            hasPriceType={hasPriceType}
+            hasWarehouse={hasWarehouse}
+            onSelect={onSelect}
+            onOpenImages={onOpenImages}
+          />
+        ))}
+        {!loading && !items.length && hasOrderContext ? <Text style={styles.filtersLookupEmpty}>Ничего не найдено.</Text> : null}
+        {showFooterLoader ? (
+          <View style={styles.filtersLookupStateRow}>
+            <ActivityIndicator size="small" color="#2563EB" />
+          </View>
+        ) : null}
+      </ScrollView>
+      {selectedCount > 0 ? (
+        <Surface mode="flat" style={[styles.filtersFullscreenFooter, { paddingBottom: Math.max(bottomInset, 10) + 8 }]}>
+          <PaperButton
+            mode="contained"
+            onPress={onTransfer}
+            buttonColor="#2563EB"
+            textColor="#FFFFFF"
+            icon="arrow-down-circle-outline"
+            style={styles.filtersFullscreenFooterButton}
+            labelStyle={styles.filtersFullscreenFooterLabel}
+            contentStyle={styles.filtersFullscreenFooterContent}
+          >
+            {formatProductTransferLabel(selectedCount)}
+          </PaperButton>
+        </Surface>
+      ) : null}
+    </View>
   );
 }
 
@@ -3146,47 +3572,101 @@ function ProductThumb({
   onPress?: () => void;
 }) {
   const imageUri = getDraftItemImageUri(item);
-  const recyclingKey = item?.imageHash ? `${item.productGuid || item.guid}:${item.imageHash}` : item?.productGuid || item?.guid || imageUri;
-  const imageSource = React.useMemo(() => (imageUri ? { uri: imageUri } : null), [imageUri]);
-  const imageAlreadyLoaded = !!imageUri && loadedProductImageUris.has(imageUri);
-  const imageAlreadyFailed = !!imageUri && failedProductImageUris.has(imageUri);
-  const [loading, setLoading] = React.useState(!!imageUri && !imageAlreadyLoaded && !imageAlreadyFailed);
+  const imageCacheKey = React.useMemo(() => getProductImageCacheKey(item, imageUri, 'thumb'), [imageUri, item]);
+  const recyclingKey = imageCacheKey || item?.productGuid || item?.guid || imageUri;
+  const imageSource = React.useMemo(() => (imageUri ? { uri: imageUri, cacheKey: imageCacheKey || undefined } : null), [imageCacheKey, imageUri]);
+  const imageAlreadyFailed = !!imageCacheKey && failedProductImageUris.has(imageCacheKey);
+  const loadingDelayRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cacheCheckedRef = React.useRef(false);
+  const [loading, setLoading] = React.useState(false);
   const [failed, setFailed] = React.useState(imageAlreadyFailed);
 
-  React.useEffect(() => {
-    const nextFailed = !!imageUri && failedProductImageUris.has(imageUri);
-    const nextLoaded = !!imageUri && loadedProductImageUris.has(imageUri);
-    setLoading(!!imageUri && !nextLoaded && !nextFailed);
-    setFailed(nextFailed);
-  }, [imageUri]);
+  const clearLoadingDelay = React.useCallback(() => {
+    if (loadingDelayRef.current) {
+      clearTimeout(loadingDelayRef.current);
+      loadingDelayRef.current = null;
+    }
+  }, []);
+
+  const scheduleLoadingIndicator = React.useCallback(() => {
+    clearLoadingDelay();
+    if (!imageCacheKey || loadedProductImageUris.has(imageCacheKey) || failedProductImageUris.has(imageCacheKey)) return;
+    loadingDelayRef.current = setTimeout(() => {
+      loadingDelayRef.current = null;
+      if (cacheCheckedRef.current && !loadedProductImageUris.has(imageCacheKey) && !failedProductImageUris.has(imageCacheKey)) {
+        setLoading(true);
+      }
+    }, 180);
+  }, [clearLoadingDelay, imageCacheKey]);
 
   React.useEffect(() => {
-    if (!imageUri || !loading || failed) return undefined;
+    const nextFailed = !!imageCacheKey && failedProductImageUris.has(imageCacheKey);
+    const nextLoaded = !!imageCacheKey && loadedProductImageUris.has(imageCacheKey);
+    let cancelled = false;
+    cacheCheckedRef.current = false;
+    clearLoadingDelay();
+    setLoading(false);
+    setFailed(nextFailed);
+    if (!imageCacheKey || nextLoaded || nextFailed) {
+      cacheCheckedRef.current = true;
+      return () => {
+        cancelled = true;
+        clearLoadingDelay();
+      };
+    }
+    hasCachedProductImage(imageCacheKey, imageUri)
+      .then((cached) => {
+        if (cancelled) return;
+        cacheCheckedRef.current = true;
+        if (cached) {
+          loadedProductImageUris.add(imageCacheKey);
+          setLoading(false);
+          return;
+        }
+        scheduleLoadingIndicator();
+      })
+      .catch(() => {
+        if (cancelled) return;
+        cacheCheckedRef.current = true;
+        scheduleLoadingIndicator();
+      });
+    return () => {
+      cancelled = true;
+      clearLoadingDelay();
+    };
+  }, [clearLoadingDelay, imageCacheKey, imageUri, scheduleLoadingIndicator]);
+
+  React.useEffect(() => {
+    if (!imageCacheKey || !loading || failed) return undefined;
     const timeout = setTimeout(() => {
-      failedProductImageUris.add(imageUri);
+      failedProductImageUris.add(imageCacheKey);
       setFailed(true);
       setLoading(false);
     }, 12000);
     return () => clearTimeout(timeout);
-  }, [failed, imageUri, loading]);
+  }, [failed, imageCacheKey, loading]);
 
   const handleImageLoaded = React.useCallback(() => {
-    if (imageUri) {
-      loadedProductImageUris.add(imageUri);
-      failedProductImageUris.delete(imageUri);
+    clearLoadingDelay();
+    if (imageCacheKey) {
+      loadedProductImageUris.add(imageCacheKey);
+      failedProductImageUris.delete(imageCacheKey);
     }
+    cacheCheckedRef.current = true;
     setFailed(false);
     setLoading(false);
-  }, [imageUri]);
+  }, [clearLoadingDelay, imageCacheKey]);
 
   const handleImageError = React.useCallback(() => {
-    if (imageUri) {
-      failedProductImageUris.add(imageUri);
-      loadedProductImageUris.delete(imageUri);
+    clearLoadingDelay();
+    if (imageCacheKey) {
+      failedProductImageUris.add(imageCacheKey);
+      loadedProductImageUris.delete(imageCacheKey);
     }
+    cacheCheckedRef.current = true;
     setFailed(true);
     setLoading(false);
-  }, [imageUri]);
+  }, [clearLoadingDelay, imageCacheKey]);
 
   const content = (
     <>
@@ -3197,13 +3677,12 @@ function ProductThumb({
           contentFit="contain"
           cachePolicy="memory-disk"
           recyclingKey={recyclingKey}
-          onLoadStart={() => {
-            if (imageUri && !loadedProductImageUris.has(imageUri) && !failedProductImageUris.has(imageUri)) {
-              setLoading(true);
-            }
-          }}
+          onDisplay={handleImageLoaded}
           onLoad={handleImageLoaded}
-          onLoadEnd={() => setLoading(false)}
+          onLoadEnd={() => {
+            clearLoadingDelay();
+            setLoading(false);
+          }}
           onError={handleImageError}
         />
       ) : (
@@ -3283,6 +3762,12 @@ function CompactSearchbar({
     setForcedText(next);
     setForcedTextRevision((revision) => revision + 1);
     setInputText(next);
+    try {
+      if (next === '') innerInputRef.current?.clear?.();
+      innerInputRef.current?.setNativeProps?.({ text: next });
+    } catch {
+      return;
+    }
   }, []);
 
   React.useEffect(() => {
@@ -3310,11 +3795,7 @@ function CompactSearchbar({
 
   return (
     <View style={[styles.compactSearchShell, style]}>
-      {loading ? (
-        <ActivityIndicator size={16} color="#2563EB" />
-      ) : (
-        <MaterialCommunityIcons name="magnify" size={18} color="#475569" />
-      )}
+      <MaterialCommunityIcons name="magnify" size={18} color="#475569" />
       <StableSearchTextInput
         inputRef={setInputRef}
         inputComponent={inputComponent}
@@ -3333,6 +3814,11 @@ function CompactSearchbar({
         autoFocus={autoFocus}
         editable={editable}
       />
+      {loading ? (
+        <View style={styles.compactSearchLoading}>
+          <ActivityIndicator size={14} color="#2563EB" />
+        </View>
+      ) : null}
       {inputText ? (
         <Pressable
           accessibilityRole="button"
@@ -3383,6 +3869,7 @@ function StableSearchTextInput({
 
   const setNativeText = React.useCallback((next: string) => {
     nativeTextRef.current = next;
+    if (next === '') nativeRef.current?.clear?.();
     nativeRef.current?.setNativeProps?.({ text: next });
   }, []);
 
@@ -3411,8 +3898,10 @@ function StableSearchTextInput({
 
   React.useEffect(() => {
     if (externalTextRevision <= 0) return;
+    clearCommitTimer();
     setNativeText(externalText ?? '');
-  }, [externalText, externalTextRevision, setNativeText]);
+    onImmediateTextChange?.(externalText ?? '');
+  }, [clearCommitTimer, externalText, externalTextRevision, onImmediateTextChange, setNativeText]);
 
   React.useEffect(() => () => clearCommitTimer(), [clearCommitTimer]);
 
@@ -3580,7 +4069,7 @@ function ProductLineEditorSheet({
     displayedItem.currency || workspace.draft.currency
   );
   const article = displayedItem.productArticle || displayedItem.productSku || displayedItem.productCode || '—';
-  const stock = formatStockLabel(displayedItem.stock, displayedItem.baseUnit) || '—';
+  const stock = formatStockInlineLabel(displayedItem.stock, displayedItem.baseUnit) || '—';
   const receiptPrice = displayedItem.receiptPrice === null || displayedItem.receiptPrice === undefined
     ? '—'
     : formatMoney(displayedItem.receiptPrice, displayedItem.currency || workspace.draft.currency);
@@ -5690,6 +6179,7 @@ const styles = StyleSheet.create({
   flatPressed: { opacity: 0.78 },
   compactSearchShell: { height: 34, minHeight: 34, flexDirection: 'row', alignItems: 'center', paddingLeft: 8, paddingRight: 2, gap: 6, overflow: 'hidden' },
   compactSearchInputBase: { flex: 1, minWidth: 0, height: 32, paddingHorizontal: 0, paddingVertical: 0, margin: 0, color: '#0F172A', fontSize: 13, lineHeight: 16, fontWeight: '800', includeFontPadding: false, textAlignVertical: 'center' },
+  compactSearchLoading: { width: 24, height: 28, alignItems: 'center', justifyContent: 'center' },
   compactSearchClear: { width: 28, height: 28, marginRight: 0, alignItems: 'center', justifyContent: 'center' },
   flatField: { minHeight: 48, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#FFFFFF', borderRadius: 4, paddingLeft: 8, paddingRight: 5, paddingVertical: 5, flexDirection: 'row', alignItems: 'center' },
   flatFieldInvalid: { borderColor: '#FCA5A5', backgroundColor: '#FFF7F7' },
@@ -5700,6 +6190,17 @@ const styles = StyleSheet.create({
   flatFieldHelper: { marginTop: 2, fontSize: 11, lineHeight: 13, color: '#64748B', fontWeight: '700' },
   flatFieldActions: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   flatFieldAction: { width: 30, height: 30, borderRadius: 4, alignItems: 'center', justifyContent: 'center' },
+  flatSegmentedField: { minHeight: 58, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#FFFFFF', borderRadius: 4, paddingLeft: 8, paddingRight: 6, paddingVertical: 6, flexDirection: 'row', alignItems: 'center' },
+  flatSegmentedContent: { flex: 1, minWidth: 0, gap: 4 },
+  flatSegmentedHeader: { minHeight: 15, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6 },
+  flatSegmentedControl: { minHeight: 30, borderRadius: 5, borderWidth: 1, borderColor: '#D8E2F0', overflow: 'hidden', flexDirection: 'row', backgroundColor: '#F8FAFC' },
+  flatSegmentedOption: { flex: 1, minWidth: 0, minHeight: 28, paddingHorizontal: 5, alignItems: 'center', justifyContent: 'center', borderRightWidth: 1, borderRightColor: '#D8E2F0' },
+  flatSegmentedOptionLast: { borderRightWidth: 0 },
+  flatSegmentedOptionActive: { backgroundColor: '#DBEAFE' },
+  flatSegmentedOptionDisabled: { backgroundColor: 'rgba(248, 250, 252, 0.7)' },
+  flatSegmentedOptionText: { color: '#334155', fontSize: 11.5, lineHeight: 14, fontWeight: '900', includeFontPadding: false },
+  flatSegmentedOptionTextActive: { color: '#1D4ED8' },
+  flatSegmentedUnsupported: { color: '#B45309', fontSize: 10.5, lineHeight: 13, fontWeight: '800', includeFontPadding: false },
   flatResetButton: { width: 42, alignSelf: 'stretch', minHeight: 48, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#FFFFFF', borderRadius: 4, alignItems: 'center', justifyContent: 'center' },
   flatDateInput: { borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#FFFFFF', borderRadius: 4, paddingHorizontal: 8, paddingTop: 5, paddingBottom: 6, gap: 3 },
   flatCommentInput: { width: '100%', alignSelf: 'stretch', minHeight: 58, backgroundColor: '#FFFFFF', fontSize: 13 },
@@ -5804,6 +6305,17 @@ const styles = StyleSheet.create({
   filtersLookupTitleRow: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 8 },
   filtersLookupSearchArea: { paddingHorizontal: 14, paddingTop: 12, paddingBottom: 8, backgroundColor: '#F8FAFC' },
   filtersLookupSearch: { height: 40, borderRadius: 10, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF', elevation: 0 },
+  productPickerFullscreenHeader: { flexShrink: 0, minHeight: 140, paddingBottom: 16, gap: 10, overflow: 'visible', backgroundColor: '#FFFFFF' },
+  productPickerFullscreenSearchArea: { flexShrink: 0, width: '100%' },
+  productPickerFullscreenSearch: { height: 42, minHeight: 42, borderRadius: 8, backgroundColor: '#F8FAFC' },
+  productPickerFullscreenSearchInput: { height: 38, fontSize: 14 },
+  productPickerFullscreenHeaderActions: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  productPickerFullscreenStockChip: { height: 28, borderRadius: 8, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF', paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 5 },
+  productPickerFullscreenStockChipActive: { borderColor: '#86EFAC', backgroundColor: '#F0FDF4' },
+  productPickerFullscreenStockText: { color: '#475569', fontSize: 11, lineHeight: 14, fontWeight: '900' },
+  productPickerFullscreenStockTextActive: { color: '#166534' },
+  productPickerFullscreenList: { flex: 1, minHeight: 0, backgroundColor: '#FFFFFF' },
+  productPickerInitialLoader: { minHeight: 220, flexGrow: 1, alignItems: 'center', justifyContent: 'center' },
   filtersLookupList: { flex: 1 },
   filtersLookupListContent: { paddingHorizontal: 14, gap: 6 },
   filtersLookupStateRow: { minHeight: 42, alignItems: 'center', justifyContent: 'center' },
@@ -6181,7 +6693,7 @@ const styles = StyleSheet.create({
   itemsSearchResultRow: { minHeight: 42, paddingHorizontal: 8, paddingVertical: 5, borderTopWidth: 1, borderTopColor: '#EEF2F7', flexDirection: 'row', alignItems: 'center', gap: 8 },
   itemsSearchResultIcon: { width: 22, height: 22, alignItems: 'center', justifyContent: 'center' },
   itemsSearchResultThumbWrap: { width: 34, height: 34, flexShrink: 0, position: 'relative' },
-  itemsSearchResultThumb: { width: 34, height: 34, borderRadius: 8, borderWidth: 1, borderColor: '#DBEAFE', backgroundColor: '#F8FAFC' },
+  itemsSearchResultThumb: { width: 34, height: 34, borderRadius: 8, backgroundColor: 'transparent' },
   itemsSearchResultThumbBadge: { position: 'absolute', right: -3, bottom: -3, width: 15, height: 15, borderRadius: 999, borderWidth: 1.5, borderColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' },
   itemsSearchResultThumbBadgeAdd: { backgroundColor: '#2563EB' },
   itemsSearchResultThumbBadgeSelected: { backgroundColor: '#16A34A' },
@@ -6213,13 +6725,21 @@ const styles = StyleSheet.create({
   pickerSearchInputFlat: { fontSize: 13, color: '#0F172A', fontWeight: '800' },
   productStockToggle: { width: 34, height: 34, borderRadius: 9, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   productStockToggleActive: { borderColor: '#86EFAC', backgroundColor: '#F0FDF4' },
+  counterpartyManagerToggle: { height: 34, minWidth: 76, borderRadius: 9, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF', paddingRight: 9, paddingLeft: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  counterpartyManagerToggleActive: { borderColor: '#93C5FD', backgroundColor: '#EFF6FF' },
+  counterpartyManagerToggleText: { marginLeft: -5, color: '#334155', fontSize: 11, lineHeight: 14, fontWeight: '900' },
+  counterpartyManagerToggleTextActive: { color: '#1D4ED8' },
   pickerListContent: { paddingBottom: 20, flexGrow: 1 },
   pickerFlatRow: { minHeight: 54, borderBottomWidth: 1, borderBottomColor: '#E2E8F0', backgroundColor: '#FFFFFF', paddingLeft: 10, paddingRight: 8, paddingVertical: 6, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  productPickerThumb: { width: 42, height: 42, borderRadius: 8, borderWidth: 1, borderColor: '#DBEAFE', backgroundColor: '#F8FAFC' },
+  productPickerRow: { minHeight: 84, paddingLeft: 5, paddingRight: 10, paddingVertical: 2, gap: 8 },
+  pickerFlatRowSelected: { borderColor: '#BFDBFE', backgroundColor: '#EFF6FF' },
+  productPickerThumb: { width: 80, height: 80, borderRadius: 10, backgroundColor: 'transparent' },
   productPickerThumbDisabled: { opacity: 0.55 },
   pickerFlatTextWrap: { flex: 1, minWidth: 0 },
   pickerFlatTitle: { color: '#0F172A', fontSize: 12.5, fontWeight: '900', lineHeight: 15 },
   pickerFlatMeta: { marginTop: 1, color: '#64748B', fontSize: 10.5, fontWeight: '800', lineHeight: 12.5 },
+  productPickerSelectedText: { marginTop: 3, color: '#1D4ED8', fontSize: 11, lineHeight: 13, fontWeight: '900' },
+  productPickerAlreadyText: { marginTop: 3, color: '#B91C1C', fontSize: 11, lineHeight: 13, fontWeight: '900' },
   pickerRowSurface: { backgroundColor: '#FFFFFF' },
   pickerRowTitle: { color: '#111827', fontSize: 15, fontWeight: '800' },
   pickerRowMeta: { color: '#64748B', fontSize: 12, fontWeight: '600' },
@@ -6227,6 +6747,10 @@ const styles = StyleSheet.create({
   pickerRowChevron: { alignSelf: 'center', marginVertical: 10 },
   pickerFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14 },
   pickerFooterText: { color: '#64748B', fontSize: 12, fontWeight: '700' },
+  productPickerTransferFooter: { flexShrink: 0, paddingTop: 8, paddingHorizontal: 10, borderTopWidth: 1, borderTopColor: '#E2E8F0', backgroundColor: '#FFFFFF' },
+  productPickerTransferButton: { borderRadius: 12 },
+  productPickerTransferContent: { minHeight: 44 },
+  productPickerTransferLabel: { marginVertical: 0, fontSize: 13, fontWeight: '900' },
   productCard: { borderRadius: 14, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#FFFFFF', padding: 12, gap: 7 },
   disabled: { opacity: 0.55 },
   infoText: { color: '#64748B', fontWeight: '700', textAlign: 'center', padding: 16 },

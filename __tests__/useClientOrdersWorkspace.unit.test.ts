@@ -46,6 +46,7 @@ import { useClientOrdersWorkspace } from '../src/features/clientOrders/useClient
 import {
   createClientOrder,
   getClientOrder,
+  getClientOrderDefaults,
   getClientOrderSettings,
   getClientOrders,
   submitClientOrder,
@@ -248,6 +249,339 @@ describe('useClientOrdersWorkspace', () => {
       warehouseGuid: 'warehouse-a',
     }));
     expect(workspace!.orders.map((order) => order.guid)).toEqual(['draft-guid']);
+
+    await act(async () => {
+      renderer!.unmount();
+    });
+  });
+
+  it('applies restricted payment and delivery defaults after counterparty selection', async () => {
+    jest.mocked(getClientOrders).mockResolvedValue({
+      items: [],
+      meta: { total: 0, limit: 20, offset: 0, statusCounts: {}, liveSource: { status: 'ok' } },
+    } as any);
+    jest.mocked(getClientOrderDefaults).mockResolvedValue({
+      agreement: null,
+      contract: null,
+      warehouse: null,
+      deliveryAddress: null,
+      priceType: null,
+      paymentForm: null,
+      paymentForms: [
+        { code: null, name: 'Любая', label: 'Любая' },
+        { code: 'Наличная', name: 'Наличная', label: 'Наличная' },
+      ],
+      deliveryMethod: 'ДоКлиента',
+      deliveryMethods: [
+        { code: 'ДоКлиента', name: 'ДоКлиента', label: 'Наша доставка' },
+        { code: 'Самовывоз', name: 'Самовывоз', label: 'Самовывоз' },
+      ],
+      currency: 'RUB',
+      deliveryDate: '2026-06-30T00:00:00.000Z',
+      warnings: [],
+    } as any);
+
+    let workspace: ReturnType<typeof useClientOrdersWorkspace>;
+    function Harness() {
+      workspace = useClientOrdersWorkspace();
+      return null;
+    }
+
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        React.createElement(
+          AuthContext.Provider,
+          {
+            value: {
+              isLoading: false,
+              isAuthenticated: true,
+              profile: { id: 1 } as any,
+              setAuthenticated: jest.fn(),
+              setProfile: jest.fn(),
+              signOut: jest.fn(),
+            },
+          },
+          React.createElement(Harness)
+        )
+      );
+    });
+
+    await flush();
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(1_000);
+    });
+    await flush();
+
+    await act(async () => {
+      await workspace!.setCounterparty({ guid: 'counterparty-guid', name: 'Контрагент' } as any);
+    });
+    await flush();
+
+    expect(getClientOrderDefaults).toHaveBeenCalledWith(expect.objectContaining({
+      organizationGuid: 'org-guid',
+      counterpartyGuid: 'counterparty-guid',
+    }));
+    expect(workspace!.draft.paymentForm).toBeNull();
+    expect(workspace!.draft.deliveryMethod).toBe('ДоКлиента');
+
+    await act(async () => {
+      renderer!.unmount();
+    });
+  });
+
+  it('keeps legacy payment and delivery values from an opened 1C document', async () => {
+    jest.mocked(getClientOrders).mockResolvedValue({
+      items: [],
+      meta: { total: 0, limit: 20, offset: 0, statusCounts: {}, liveSource: { status: 'ok' } },
+    } as any);
+    jest.mocked(getClientOrderDefaults).mockResolvedValue({
+      paymentForm: null,
+      paymentForms: [
+        { code: null, name: 'Любая', label: 'Любая' },
+        { code: 'Наличная', name: 'Наличная', label: 'Наличная' },
+      ],
+      deliveryMethod: 'Самовывоз',
+      deliveryMethods: [
+        { code: 'ДоКлиента', name: 'ДоКлиента', label: 'Наша доставка' },
+        { code: 'Самовывоз', name: 'Самовывоз', label: 'Самовывоз' },
+      ],
+    } as any);
+    jest.mocked(getClientOrder).mockResolvedValue(queuedOrder(0, {
+      guid: 'legacy-order-guid',
+      origin: 'onec',
+      status: 'TO_SHIP',
+      syncState: 'SYNCED',
+      organization: { guid: 'org-guid', name: 'Организация' },
+      counterparty: { guid: 'counterparty-guid', name: 'Контрагент' },
+      paymentForm: 'Безналичная',
+      deliveryMethod: 'СиламиПеревозчика',
+      deliveryDate: '2026-06-30T00:00:00.000Z',
+      items: [
+        {
+          product: { guid: 'product-guid', name: 'Товар' },
+          quantity: 1,
+          basePrice: 100,
+        },
+      ],
+    }) as any);
+
+    let workspace: ReturnType<typeof useClientOrdersWorkspace>;
+    function Harness() {
+      workspace = useClientOrdersWorkspace();
+      return null;
+    }
+
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        React.createElement(
+          AuthContext.Provider,
+          {
+            value: {
+              isLoading: false,
+              isAuthenticated: true,
+              profile: { id: 1 } as any,
+              setAuthenticated: jest.fn(),
+              setProfile: jest.fn(),
+              signOut: jest.fn(),
+            },
+          },
+          React.createElement(Harness)
+        )
+      );
+    });
+
+    await flush();
+    await act(async () => {
+      await workspace!.selectOrder('legacy-order-guid');
+    });
+    await flush();
+
+    expect(workspace!.draft.paymentForm).toBe('Безналичная');
+    expect(workspace!.draft.deliveryMethod).toBe('СиламиПеревозчика');
+
+    await act(async () => {
+      renderer!.unmount();
+    });
+  });
+
+  it('does not overwrite a manually selected delivery address with late defaults', async () => {
+    const defaultAddress = { guid: 'address-default', fullAddress: 'Default address' };
+    const manualAddress = { guid: 'address-manual', fullAddress: 'Manual address' };
+    let resolveDefaults!: (value: any) => void;
+
+    jest.mocked(getClientOrders).mockResolvedValue({
+      items: [],
+      meta: { total: 0, limit: 20, offset: 0, statusCounts: {}, liveSource: { status: 'ok' } },
+    } as any);
+    jest.mocked(getClientOrderDefaults).mockImplementation(() => new Promise((resolve) => {
+      resolveDefaults = resolve;
+    }) as any);
+
+    let workspace: ReturnType<typeof useClientOrdersWorkspace>;
+    function Harness() {
+      workspace = useClientOrdersWorkspace();
+      return null;
+    }
+
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        React.createElement(
+          AuthContext.Provider,
+          {
+            value: {
+              isLoading: false,
+              isAuthenticated: true,
+              profile: { id: 1 } as any,
+              setAuthenticated: jest.fn(),
+              setProfile: jest.fn(),
+              signOut: jest.fn(),
+            },
+          },
+          React.createElement(Harness)
+        )
+      );
+    });
+
+    await flush();
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(1_000);
+    });
+    await flush();
+
+    act(() => {
+      void workspace!.setCounterparty({ guid: 'counterparty-guid', name: 'Counterparty' } as any);
+    });
+    await flush();
+
+    act(() => {
+      workspace!.setDeliveryAddress(manualAddress as any);
+    });
+
+    await act(async () => {
+      resolveDefaults({
+        agreement: null,
+        contract: null,
+        warehouse: null,
+        deliveryAddress: defaultAddress,
+        priceType: null,
+        paymentForm: null,
+        paymentForms: [],
+        deliveryMethod: 'Самовывоз',
+        deliveryMethods: [],
+        currency: 'RUB',
+        deliveryDate: '2026-06-30T00:00:00.000Z',
+        warnings: [],
+      });
+    });
+    await flush();
+
+    expect(workspace!.draft.deliveryAddressGuid).toBe('address-manual');
+    expect(workspace!.selections.deliveryAddress?.guid).toBe('address-manual');
+
+    await act(async () => {
+      renderer!.unmount();
+    });
+  });
+
+  it('keeps the selected delivery address visible after save when server returns another cached address', async () => {
+    const defaultAddress = { guid: 'address-default', fullAddress: 'Default address' };
+    const manualAddress = { guid: 'address-manual', fullAddress: 'Manual address' };
+    const savedOrder = queuedOrder(0, {
+      guid: 'new-order-guid',
+      revision: 1,
+      status: 'DRAFT',
+      syncState: 'DRAFT',
+      organization: { guid: 'org-guid', name: 'Organization' },
+      counterparty: { guid: 'counterparty-guid', name: 'Counterparty' },
+      deliveryAddress: defaultAddress,
+      deliveryDate: '2026-06-30T00:00:00.000Z',
+      items: [
+        {
+          product: { guid: 'product-guid', name: 'Product' },
+          quantity: 1,
+          basePrice: 100,
+        },
+      ],
+    });
+
+    jest.mocked(getClientOrders).mockResolvedValue({
+      items: [],
+      meta: { total: 0, limit: 20, offset: 0, statusCounts: {}, liveSource: { status: 'ok' } },
+    } as any);
+    jest.mocked(createClientOrder).mockResolvedValue(savedOrder as any);
+
+    let workspace: ReturnType<typeof useClientOrdersWorkspace>;
+    function Harness() {
+      workspace = useClientOrdersWorkspace();
+      return null;
+    }
+
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        React.createElement(
+          AuthContext.Provider,
+          {
+            value: {
+              isLoading: false,
+              isAuthenticated: true,
+              profile: { id: 1 } as any,
+              setAuthenticated: jest.fn(),
+              setProfile: jest.fn(),
+              signOut: jest.fn(),
+            },
+          },
+          React.createElement(Harness)
+        )
+      );
+    });
+
+    await flush();
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(1_000);
+    });
+    await flush();
+
+    await act(async () => {
+      workspace!.patchDraft({
+        organizationGuid: 'org-guid',
+        counterpartyGuid: 'counterparty-guid',
+        deliveryDate: '2026-06-30T00:00:00.000Z',
+        items: [
+          {
+            key: 'line-key',
+            lineGuid: 'line-guid',
+            productGuid: 'product-guid',
+            productName: 'Product',
+            quantity: '1',
+            packageGuid: null,
+            manualPrice: '',
+            discountPercent: '',
+            comment: '',
+            basePrice: 100,
+            receiptPrice: null,
+            baseUnit: { name: 'pcs', symbol: 'pcs' },
+            packages: [],
+          },
+        ],
+      });
+      workspace!.setDeliveryAddress(manualAddress as any);
+    });
+    await flush();
+
+    await act(async () => {
+      await workspace!.saveDraft({ reason: 'manual' });
+    });
+    await flush();
+
+    expect(createClientOrder).toHaveBeenCalledWith(expect.objectContaining({
+      deliveryAddressGuid: 'address-manual',
+    }));
+    expect(workspace!.draft.deliveryAddressGuid).toBe('address-manual');
+    expect(workspace!.selections.deliveryAddress?.guid).toBe('address-manual');
 
     await act(async () => {
       renderer!.unmount();

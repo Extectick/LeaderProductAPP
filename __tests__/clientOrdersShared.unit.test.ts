@@ -348,6 +348,8 @@ describe('clientOrdersShared validation and payload', () => {
   it('builds API payload with normalized quantity and manual price semantics', () => {
     const payload = buildPayload(draft({
       generalDiscountPercent: '5',
+      paymentForm: 'Наличная',
+      deliveryMethod: 'Самовывоз',
       items: [
         item({
           quantity: '2,5',
@@ -364,6 +366,8 @@ describe('clientOrdersShared validation and payload', () => {
       organizationGuid: 'organization-guid',
       counterpartyGuid: 'counterparty-guid',
       priceTypeGuid: 'price-type-guid',
+      paymentForm: 'Наличная',
+      deliveryMethod: 'Самовывоз',
       currency: 'RUB',
       generalDiscountPercent: 5,
       items: [

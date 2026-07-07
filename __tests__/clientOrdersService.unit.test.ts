@@ -3,6 +3,7 @@ import {
   getClientOrder,
   getClientOrderProductsBatch,
   getClientOrders,
+  searchClientOrderCounterparties,
   searchClientOrderProducts,
   submitClientOrder,
 } from '../utils/clientOrdersService';
@@ -114,6 +115,24 @@ describe('clientOrdersService', () => {
     });
 
     expect(apiClientMock).toHaveBeenCalledWith('/api/client-orders/products?search=%D0%BC%D0%BE%D0%BB%D0%BE%D0%BA%D0%BE&organizationGuid=org-guid&counterpartyGuid=counterparty-guid&agreementGuid=agreement-guid&warehouseGuid=warehouse-guid&priceTypeGuid=price-type-guid&inStockOnly=true&limit=25&offset=50');
+  });
+
+  it('passes managerOnly to counterparty picker API', async () => {
+    apiClientMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { items: [{ guid: 'counterparty-guid', name: 'Counterparty', managerGuid: 'manager-guid' }] },
+      meta: { total: 1 },
+    } as any);
+
+    await searchClientOrderCounterparties({
+      search: 'beer',
+      managerOnly: true,
+      limit: 25,
+      offset: 0,
+    });
+
+    expect(apiClientMock).toHaveBeenCalledWith('/api/client-orders/counterparties?search=beer&managerOnly=true&limit=25&offset=0');
   });
 
   it('deduplicates product batch requests independently of guid order', async () => {

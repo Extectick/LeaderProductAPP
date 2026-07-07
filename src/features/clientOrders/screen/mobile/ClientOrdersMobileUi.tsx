@@ -273,7 +273,7 @@ export function SheetModal({
   styles: any;
   visible: boolean;
   title: string;
-  onClose: () => void;
+  onClose: () => void | false;
   children: React.ReactNode;
   fullScreen?: boolean;
 }) {
@@ -299,14 +299,15 @@ type PickerBottomSheetProps = {
   topOffset: number;
   title: string;
   titleIcon?: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
-  onClose: () => void;
+  onClose: () => void | false;
   children: React.ReactNode;
   fullWidth?: boolean;
   showHeader?: boolean;
   sheetStyle?: any;
-  headerContent?: React.ReactNode | ((close: () => void) => React.ReactNode);
+  headerContent?: React.ReactNode | ((close: () => void | false) => React.ReactNode);
   overlayHandle?: boolean;
   closeOnBackdropPress?: boolean;
+  enablePanDownToClose?: boolean;
   contentScrollOffset?: number;
   enableContentDrag?: boolean;
   closeDragDistance?: number;
@@ -384,6 +385,7 @@ function NativePickerBottomSheet({
   headerContent,
   overlayHandle = false,
   closeOnBackdropPress = true,
+  enablePanDownToClose = true,
   preferredHeight,
   minHeight = 360,
   initialSnapIndex = 0,
@@ -438,7 +440,10 @@ function NativePickerBottomSheet({
     if (closeNotifiedRef.current) return;
     closeNotifiedRef.current = true;
     Keyboard.dismiss();
-    onClose();
+    const closeAccepted = onClose();
+    if (closeAccepted === false) {
+      closeNotifiedRef.current = false;
+    }
   }, [onClose]);
 
   const requestClose = React.useCallback(() => {
@@ -559,7 +564,7 @@ function NativePickerBottomSheet({
       ref={bottomSheetRef}
       index={startIndex}
       snapPoints={snapPoints}
-      enablePanDownToClose
+      enablePanDownToClose={enablePanDownToClose}
       enableDismissOnClose
       enableDynamicSizing={false}
       enableOverDrag
@@ -597,6 +602,7 @@ function LegacyPickerBottomSheet({
   headerContent,
   overlayHandle = false,
   closeOnBackdropPress = true,
+  enablePanDownToClose = true,
   contentScrollOffset = 0,
   enableContentDrag = false,
   closeDragDistance = 48,
@@ -618,8 +624,19 @@ function LegacyPickerBottomSheet({
 
   const closeWithAnimation = React.useCallback(() => {
     if (!visibleRef.current) return;
+    const closeAccepted = onClose();
+    if (closeAccepted === false) {
+      Animated.spring(anim, {
+        toValue: 1,
+        damping: 22,
+        stiffness: 240,
+        mass: 0.9,
+        overshootClamping: true,
+        useNativeDriver: false,
+      }).start();
+      return;
+    }
     visibleRef.current = false;
-    onClose();
     Animated.spring(anim, {
       toValue: 0,
       damping: 24,
@@ -674,7 +691,7 @@ function LegacyPickerBottomSheet({
         onPanResponderMove: (_evt, gestureState) => {
           if (dragClosingRef.current || !visibleRef.current) return;
           const downwardDistance = Math.max(0, gestureState.dy);
-          if (closeOnDragMove && downwardDistance > closeDragDistance) {
+          if (enablePanDownToClose && closeOnDragMove && downwardDistance > closeDragDistance) {
             dragClosingRef.current = true;
             closeWithAnimation();
             return;
@@ -684,7 +701,7 @@ function LegacyPickerBottomSheet({
         },
         onPanResponderRelease: (_evt, gestureState) => {
           if (dragClosingRef.current || !visibleRef.current) return;
-          if (gestureState.dy > closeDragDistance || gestureState.vy > 0.5) {
+          if (enablePanDownToClose && (gestureState.dy > closeDragDistance || gestureState.vy > 0.5)) {
             closeWithAnimation();
             return;
           }
@@ -709,7 +726,7 @@ function LegacyPickerBottomSheet({
           }).start();
         },
       }),
-    [anim, closeDragDistance, closeOnDragMove, closeWithAnimation, sheetHeight, visible]
+    [anim, closeDragDistance, closeOnDragMove, closeWithAnimation, enablePanDownToClose, sheetHeight, visible]
   );
   const headerPanResponder = React.useMemo(
     () => createPanResponder((gestureState) =>
