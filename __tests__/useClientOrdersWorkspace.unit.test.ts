@@ -177,6 +177,78 @@ describe('useClientOrdersWorkspace', () => {
     });
   });
 
+  it('allows retrying a synced 1C order with a posting error without local changes', async () => {
+    const orderWithPostingError = queuedOrder(0, {
+      status: 'SENT_TO_1C',
+      syncState: 'SYNCED',
+      number1c: 'LP-000001',
+      queuePosition: null,
+      last1cError: 'Не удалось провести документ: недостаточно остатка.',
+      agreement: { guid: 'agreement-guid', name: 'Agreement' },
+      contract: { guid: 'contract-guid', name: 'Contract' },
+      warehouse: { guid: 'warehouse-guid', name: 'Warehouse' },
+      deliveryAddress: { guid: 'address-guid', fullAddress: 'Address' },
+      deliveryDate: '2026-06-30T00:00:00.000Z',
+      items: [
+        {
+          product: { guid: 'product-guid', name: 'Product' },
+          quantity: 1,
+          basePrice: 100,
+        },
+      ],
+    });
+    jest.mocked(getClientOrders).mockResolvedValue({
+      items: [orderWithPostingError],
+      meta: { total: 1, limit: 20, offset: 0, statusCounts: { SENT_TO_1C: 1 }, liveSource: { status: 'ok' } },
+    } as any);
+    jest.mocked(getClientOrder).mockResolvedValue(orderWithPostingError as any);
+
+    let workspace: ReturnType<typeof useClientOrdersWorkspace>;
+    function Harness() {
+      workspace = useClientOrdersWorkspace();
+      return null;
+    }
+
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        React.createElement(
+          AuthContext.Provider,
+          {
+            value: {
+              isLoading: false,
+              isAuthenticated: true,
+              profile: { id: 1 } as any,
+              setAuthenticated: jest.fn(),
+              setProfile: jest.fn(),
+              signOut: jest.fn(),
+            },
+          },
+          React.createElement(Harness)
+        )
+      );
+    });
+
+    await flush();
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(0);
+    });
+    await flush();
+
+    await act(async () => {
+      await workspace!.selectOrder('order-guid');
+    });
+
+    expect(workspace!.dirty).toBe(false);
+    expect(workspace!.selectedOrderSynced).toBe(true);
+    expect(workspace!.selectedOrderHas1cError).toBe(true);
+    expect(workspace!.canSubmitOrder).toBe(true);
+
+    await act(async () => {
+      renderer!.unmount();
+    });
+  });
+
   it('passes and applies status and warehouse filters for loaded orders', async () => {
     const draftOrder = queuedOrder(0, {
       guid: 'draft-guid',

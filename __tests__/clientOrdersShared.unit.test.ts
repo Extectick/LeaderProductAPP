@@ -142,6 +142,20 @@ describe('clientOrdersShared item inputs and packages', () => {
     expect(displayedUnitPriceToBasePriceInput('1200', packed)).toBe('120');
   });
 
+  it('hides 1/1 packages when unit guid differs but unit label matches the base unit', () => {
+    const product = {
+      guid: 'product-guid',
+      name: 'Piece product',
+      baseUnit: { guid: 'base-pcs-unit', name: 'Штука', symbol: 'шт' },
+      packages: [
+        { guid: 'pce-pack', name: 'PCE', multiplier: 1, unit: { guid: 'package-pce-unit', name: 'PCE', symbol: 'PCE' } },
+        { guid: 'box-12', name: 'Box 12', multiplier: 12, unit: { guid: 'base-pcs-unit', name: 'Штука', symbol: 'шт' } },
+      ],
+    };
+
+    expect(getDraftPackagesForProduct(product as any).map((pack) => pack.guid)).toEqual(['box-12']);
+  });
+
   it('keeps selected package when converting an API order to draft and payload', () => {
     const orderDraft = orderToDraft({
       guid: 'order-guid',

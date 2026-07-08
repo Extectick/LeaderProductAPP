@@ -497,23 +497,44 @@ function priceInputString(value: number) {
   return String(roundMoneyValue(value));
 }
 
-function unitIdentity(unit?: DraftUnit | null) {
-  const guid = asInputString(unit?.guid).trim().toLowerCase();
-  if (guid) return `guid:${guid}`;
-  const label = `${unit?.symbol ?? ''} ${unit?.name ?? ''}`
+function normalizeUnitToken(value?: string | null) {
+  const token = asInputString(value)
     .trim()
     .toLocaleLowerCase('ru')
+    .replace(/[().]/g, '')
     .replace(/\s+/g, '');
-  return label ? `label:${label}` : '';
+  if (!token) return '';
+  if (['pce', 'pc', 'pcs', 'piece', 'pieces', 'шт', 'штука', 'штуки', 'штук'].includes(token)) return 'piece';
+  if (['kg', 'kgs', 'кг', 'килограмм', 'килограмма', 'килограммы'].includes(token)) return 'kg';
+  return token;
+}
+
+function unitLabelIdentities(unit?: DraftUnit | null) {
+  const labels = [
+    normalizeUnitToken(unit?.symbol),
+    normalizeUnitToken(unit?.name),
+    normalizeUnitToken(`${unit?.symbol ?? ''}${unit?.name ?? ''}`),
+  ].filter(Boolean);
+  return new Set(labels);
+}
+
+function sameUnitIdentity(left?: DraftUnit | null, right?: DraftUnit | null) {
+  const leftGuid = asInputString(left?.guid).trim().toLowerCase();
+  const rightGuid = asInputString(right?.guid).trim().toLowerCase();
+  if (leftGuid && rightGuid && leftGuid === rightGuid) return true;
+  const leftLabels = unitLabelIdentities(left);
+  const rightLabels = unitLabelIdentities(right);
+  for (const label of leftLabels) {
+    if (rightLabels.has(label)) return true;
+  }
+  return false;
 }
 
 export function isBaseUnitPackage(pack?: DraftPackage | null, baseUnit?: DraftUnit | null) {
   if (!pack) return false;
   const multiplier = Number(pack.multiplier ?? 1);
   const sameMultiplier = !Number.isFinite(multiplier) || multiplier <= 0 || Math.abs(multiplier - 1) < 0.000001;
-  const packUnit = unitIdentity(pack.unit);
-  const base = unitIdentity(baseUnit);
-  const sameUnit = !!packUnit && !!base && packUnit === base;
+  const sameUnit = sameUnitIdentity(pack.unit, baseUnit);
   return sameMultiplier && (!pack.unit || sameUnit);
 }
 

@@ -6,11 +6,10 @@ const OTA_CHECK_TIMEOUT_MS = 15000;
 const OTA_FETCH_TIMEOUT_MS = 90000;
 const OTA_NATIVE_IDLE_TIMEOUT_MS = 30000;
 const OTA_NATIVE_POLL_MS = 250;
+const OTA_PENDING_GRACE_MS = 2500;
 const OTA_RETRY_DELAY_MS = 1000;
 const OTA_MAX_CHECK_ATTEMPTS = 3;
 const RELOAD_DELAY_MS = 900;
-const RELOAD_CONFIRMATION_WAIT_MS = 1800;
-const RELOAD_MAX_ATTEMPTS = 3;
 const NATIVE_OTA_GATE_HANDLES_STARTUP = Platform.OS === 'android' && !__DEV__;
 const JS_OTA_CHECK_ENABLED = Platform.OS !== 'web' && !__DEV__ && !NATIVE_OTA_GATE_HANDLES_STARTUP;
 const OTA_PENDING_RELOAD_GUARD_ENABLED = Platform.OS !== 'web' && !__DEV__;
@@ -116,25 +115,31 @@ export function useStartupOtaUpdate(start: boolean): StartupOtaState {
       setManualProgress(0.96);
     }
     await sleep(RELOAD_DELAY_MS);
-    let lastError: unknown = null;
-    for (let attempt = 1; attempt <= RELOAD_MAX_ATTEMPTS; attempt += 1) {
-      try {
-        await Updates.reloadAsync();
-        await sleep(RELOAD_CONFIRMATION_WAIT_MS);
-      } catch (error) {
-        lastError = error;
-        await sleep(OTA_RETRY_DELAY_MS);
-      }
+    try {
+      await Updates.reloadAsync();
+    } catch (error) {
+      reloadTriggeredRef.current = false;
+      throw error;
     }
-    reloadTriggeredRef.current = false;
-    if (lastError) throw lastError;
-    throw new Error('OTA reload did not restart the JS runtime');
   }, []);
 
   const hasPendingDownloadedUpdate = useCallback(() => {
     const state = latestUpdatesStateRef.current;
     return Boolean(state.isUpdatePending || state.downloadedUpdate);
   }, []);
+
+  const waitForPendingDownloadedUpdate = useCallback(
+    async (isCancelled: () => boolean, timeoutMs = OTA_PENDING_GRACE_MS) => {
+      const deadline = Date.now() + timeoutMs;
+      while (!isCancelled() && mountedRef.current) {
+        if (hasPendingDownloadedUpdate()) return true;
+        if (Date.now() >= deadline) return false;
+        await sleep(OTA_NATIVE_POLL_MS);
+      }
+      return false;
+    },
+    [hasPendingDownloadedUpdate]
+  );
 
   const waitForNativeUpdatesIdle = useCallback(
     async (isCancelled: () => boolean) => {
@@ -208,8 +213,12 @@ export function useStartupOtaUpdate(start: boolean): StartupOtaState {
         const nativeState = await waitForNativeUpdatesIdle(() => cancelled);
         if (cancelled || !mountedRef.current || reloadTriggeredRef.current) return;
 
-        if (nativeState === 'pending' || hasPendingDownloadedUpdate()) {
-          finish('up-to-date');
+        if (
+          nativeState === 'pending' ||
+          hasPendingDownloadedUpdate() ||
+          await waitForPendingDownloadedUpdate(() => cancelled)
+        ) {
+          await applyDownloadedUpdate();
           return;
         }
 
@@ -226,7 +235,7 @@ export function useStartupOtaUpdate(start: boolean): StartupOtaState {
     return () => {
       cancelled = true;
     };
-  }, [applyDownloadedUpdate, finish, hasPendingDownloadedUpdate, start, waitForNativeUpdatesIdle]);
+  }, [applyDownloadedUpdate, finish, hasPendingDownloadedUpdate, start, waitForNativeUpdatesIdle, waitForPendingDownloadedUpdate]);
 
   useEffect(() => {
     if (!start || startedRef.current) return;

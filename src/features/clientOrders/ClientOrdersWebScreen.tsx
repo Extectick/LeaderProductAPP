@@ -1665,7 +1665,8 @@ export default function ClientOrdersWebScreen() {
   }, [workspace]);
   const isQueuedResubmit = workspace.selectedOrderQueued && workspace.dirty;
   const isSyncedResubmit = workspace.selectedOrderSynced && workspace.dirty;
-  const isResubmitTo1c = isQueuedResubmit || isSyncedResubmit;
+  const isErrorRetryTo1c = !!workspace.selectedOrderHas1cError && !workspace.dirty;
+  const isResubmitTo1c = isQueuedResubmit || isSyncedResubmit || isErrorRetryTo1c;
   const currentCancelTarget = pendingCancelOrder || workspace.selectedOrder;
   const currentCancelTargetQueued = !!currentCancelTarget && (currentCancelTarget.status === 'QUEUED' || currentCancelTarget.syncState === 'QUEUED');
   const currentCancelTargetCancelled = currentCancelTarget?.status === 'CANCELLED';
@@ -3342,13 +3343,15 @@ export default function ClientOrdersWebScreen() {
       </Dialog>
 
       <Dialog open={confirmSubmitOpen} onClose={() => setConfirmSubmitOpen(false)} maxWidth="xs" fullWidth fullScreen={isPhoneDialog}>
-        <DialogTitle>{isResubmitTo1c ? 'Переотправить в 1С?' : 'Отправить в 1С?'}</DialogTitle>
+        <DialogTitle>{isErrorRetryTo1c ? 'Повторить отправку в 1С?' : isResubmitTo1c ? 'Переотправить в 1С?' : 'Отправить в 1С?'}</DialogTitle>
         <DialogContent>
           <Typography sx={{ color: '#475569', fontSize: 13 }}>
             {isQueuedResubmit
               ? 'Документ будет сохранен и поставлен в конец очереди.'
               : isSyncedResubmit
                 ? 'Изменения будут сохранены и отправлены в 1С.'
+                : isErrorRetryTo1c
+                  ? 'Документ уже сохранен в 1С, но не проведен. Повторная отправка попробует провести его еще раз.'
               : 'Документ будет поставлен в очередь обмена. После отправки часть полей станет недоступна для редактирования.'}
           </Typography>
           {workspace.validation.warningMessage ? (
@@ -3360,7 +3363,7 @@ export default function ClientOrdersWebScreen() {
         <DialogActions>
           <Button onClick={() => setConfirmSubmitOpen(false)} sx={{ textTransform: 'none', fontWeight: 800 }}>Остаться</Button>
           <Button variant="contained" color="secondary" onClick={() => void submitWithConfirm()} disabled={workspace.submitting || !workspace.canSubmitOrder} sx={{ textTransform: 'none', fontWeight: 800 }}>
-            {workspace.submitting ? 'Отправляю...' : isQueuedResubmit ? 'В конец очереди' : 'Отправить'}
+            {workspace.submitting ? 'Отправляю...' : isQueuedResubmit ? 'В конец очереди' : isErrorRetryTo1c ? 'Повторить' : 'Отправить'}
           </Button>
         </DialogActions>
       </Dialog>

@@ -44,6 +44,7 @@ import {
   isProductAlreadyInOrder,
   packageLabel,
   removeOrderItemsFromProductSelection,
+  resolveProductPickerPressAction,
   sortDeliveryAddressOptions,
   toggleProductSelection,
   transferSelectedProductsToOrder,
@@ -60,7 +61,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
 import React from 'react';
-import { Animated, BackHandler, findNodeHandle, Keyboard, LayoutAnimation, PanResponder, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, UIManager, useWindowDimensions, View } from 'react-native';
+import { Animated, BackHandler, findNodeHandle, FlatList, Keyboard, LayoutAnimation, PanResponder, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, UIManager, useWindowDimensions, View } from 'react-native';
 import type { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent, TextInputProps } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -541,6 +542,10 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const pickerFocusTimersRef = React.useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const pickerAutoFocusSuppressedRef = React.useRef(false);
   const pickerListRef = React.useRef<any>(null);
+  const pickerSkipNextResetLoadRef = React.useRef(false);
+  const productPickerStateSignatureRef = React.useRef('');
+  const pickerScrollYRef = React.useRef(0);
+  const pickerScrollMetricsRef = React.useRef({ y: 0, contentHeight: 0, viewportHeight: 0 });
   const itemsSearchRequestIdRef = React.useRef(0);
   const itemsSearchLoadingMoreRef = React.useRef(false);
   const itemsSearchBlurTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -550,6 +555,21 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const ordersEntrance = React.useRef(new Animated.Value(0)).current;
   const ordersViewportHeightRef = React.useRef(0);
   const ordersContentHeightRef = React.useRef(0);
+  const productPickerContextSignature = React.useMemo(() => ([
+    workspace.draft.organizationGuid || '',
+    workspace.draft.counterpartyGuid || '',
+    workspace.draft.agreementGuid || '',
+    workspace.draft.warehouseGuid || '',
+    workspace.draft.priceTypeGuid || '',
+    inStockOnly ? 'stock' : 'all',
+  ].join(':')), [
+    inStockOnly,
+    workspace.draft.agreementGuid,
+    workspace.draft.counterpartyGuid,
+    workspace.draft.organizationGuid,
+    workspace.draft.priceTypeGuid,
+    workspace.draft.warehouseGuid,
+  ]);
   const selectedPickerGuid = React.useMemo(() => getSelectedPickerGuid({
     pickerKind,
     workspace,
@@ -788,6 +808,26 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     }
   }, []);
 
+  const restorePickerListScroll = React.useCallback((y: number) => {
+    const targetY = Math.max(0, y);
+    if (targetY <= 1) return;
+    const restore = () => {
+      const list = pickerListRef.current;
+      try {
+        if (typeof list?.scrollTo === 'function') {
+          list.scrollTo({ y: targetY, animated: false });
+        } else if (typeof list?.scrollToOffset === 'function') {
+          list.scrollToOffset({ offset: targetY, animated: false });
+        }
+      } catch {
+        return;
+      }
+    };
+    requestAnimationFrame(restore);
+    setTimeout(restore, 80);
+    setTimeout(restore, 220);
+  }, []);
+
   const clearPickerFocusTimers = React.useCallback(() => {
     pickerFocusTimersRef.current.forEach((timer) => clearTimeout(timer));
     pickerFocusTimersRef.current = [];
@@ -803,24 +843,49 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const openPicker = React.useCallback((kind: PickerKind, lineKey?: string) => {
     pickerAutoFocusSuppressedRef.current = false;
     clearPickerFocusTimers();
+    const shouldRestoreProductPicker = kind === 'product'
+      && productPickerStateSignatureRef.current === productPickerContextSignature
+      && (pickerItems.length > 0 || !!pickerSearch);
     setPickerKind(kind);
     setLinePriceTarget(kind === 'priceType' && lineKey ? lineKey : null);
+    setSelectedProducts(new Map());
+    if (shouldRestoreProductPicker) {
+      pickerAppendLoadingRef.current = false;
+      pickerLoadSignatureRef.current = '';
+      pickerSkipNextResetLoadRef.current = true;
+      restorePickerListScroll(pickerScrollYRef.current);
+      return;
+    }
     setPickerSearch('');
     setPickerItems([]);
     setPickerOffset(0);
     setPickerHasMore(false);
     setPickerScrollOffset(0);
-    setSelectedProducts(new Map());
+    pickerScrollYRef.current = 0;
+    pickerScrollMetricsRef.current = { y: 0, contentHeight: 0, viewportHeight: 0 };
     pickerAppendLoadingRef.current = false;
     pickerLoadSignatureRef.current = '';
+    pickerSkipNextResetLoadRef.current = false;
+    if (kind === 'product') {
+      productPickerStateSignatureRef.current = productPickerContextSignature;
+    }
     requestAnimationFrame(() => scrollPickerListToTop(false));
-  }, [clearPickerFocusTimers, scrollPickerListToTop]);
+  }, [
+    clearPickerFocusTimers,
+    pickerItems.length,
+    pickerSearch,
+    productPickerContextSignature,
+    restorePickerListScroll,
+    scrollPickerListToTop,
+  ]);
 
   const handlePickerSearchChange = React.useCallback((value: string) => {
     setPickerSearch(value);
     setPickerOffset(0);
     setPickerHasMore(false);
     setPickerScrollOffset(0);
+    pickerScrollYRef.current = 0;
+    pickerScrollMetricsRef.current = { y: 0, contentHeight: 0, viewportHeight: pickerScrollMetricsRef.current.viewportHeight };
     pickerAppendLoadingRef.current = false;
     pickerLoadSignatureRef.current = '';
     requestAnimationFrame(() => scrollPickerListToTop(false));
@@ -875,6 +940,9 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         requestAnimationFrame(() => scrollPickerListToTop(false));
       }
       const nextItems = kind === 'deliveryAddress' ? sortDeliveryAddressOptions(items) : items;
+      if (kind === 'product' && !append) {
+        productPickerStateSignatureRef.current = productPickerContextSignature;
+      }
       setPickerItems((prev) => {
         if (!append) return nextItems;
         const known = new Set(prev.map((item) => item?.guid || item?.id || `${item?.name || ''}|${item?.fullAddress || ''}`));
@@ -908,11 +976,16 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     workspace.searchProducts,
     workspace.searchWarehouses,
     workspace.settings?.organizations,
+    productPickerContextSignature,
     scrollPickerListToTop,
   ]);
 
   React.useEffect(() => {
     if (!pickerKind) return;
+    if (pickerSkipNextResetLoadRef.current) {
+      pickerSkipNextResetLoadRef.current = false;
+      return;
+    }
     const searchDelay = pickerSearch && pickerKind !== 'product' ? 650 : 0;
     const timeout = setTimeout(() => void loadPickerPage(pickerKind, pickerSearch, 0, false), searchDelay);
     return () => clearTimeout(timeout);
@@ -952,8 +1025,10 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     pickerRequestIdRef.current += 1;
     pickerAppendLoadingRef.current = false;
     pickerLoadSignatureRef.current = '';
+    pickerSkipNextResetLoadRef.current = false;
     setPickerKind(null);
     setLinePriceTarget(null);
+    setPickerLoading(false);
     setSelectedProducts(new Map());
   }, [suppressPickerAutoFocus]);
   const requestClosePicker = React.useCallback(() => {
@@ -1031,18 +1106,52 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     return () => registerBackOverlayHandler(null);
   }, [closeTopOverlay, registerBackOverlayHandler]);
 
-  const handlePickerScroll = React.useCallback((event: any) => {
-    setPickerScrollOffset(event.nativeEvent.contentOffset.y <= 1 ? 0 : 2);
-    if (!pickerKind || pickerLoading || !pickerHasMore) return;
-    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-    if (contentSize.height <= layoutMeasurement.height + 24) return;
-    const remaining = contentSize.height - contentOffset.y - layoutMeasurement.height;
+  const maybeLoadMorePickerItems = React.useCallback((metrics?: Partial<{ y: number; contentHeight: number; viewportHeight: number }>) => {
+    if (!pickerKind || pickerLoading || !pickerHasMore || pickerAppendLoadingRef.current) return;
+    const current = pickerScrollMetricsRef.current;
+    const y = Math.max(0, metrics?.y ?? current.y);
+    const contentHeight = Math.max(0, metrics?.contentHeight ?? current.contentHeight);
+    const viewportHeight = Math.max(0, metrics?.viewportHeight ?? current.viewportHeight);
+    if (!viewportHeight || !contentHeight) return;
+    const remaining = contentHeight - y - viewportHeight;
     const prefetchDistance = pickerKind === 'product'
-      ? Math.max(PRODUCT_PICKER_PREFETCH_DISTANCE, layoutMeasurement.height * 1.5)
+      ? Math.max(PRODUCT_PICKER_PREFETCH_DISTANCE, viewportHeight * 1.5)
       : 320;
     if (remaining > prefetchDistance) return;
     void loadPickerPage(pickerKind, pickerSearch, pickerOffset, true);
   }, [loadPickerPage, pickerHasMore, pickerKind, pickerLoading, pickerOffset, pickerSearch]);
+
+  const handlePickerScroll = React.useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+    const y = Math.max(0, contentOffset.y || 0);
+    const contentHeight = Math.max(0, contentSize.height || 0);
+    const viewportHeight = Math.max(0, layoutMeasurement.height || 0);
+    pickerScrollYRef.current = y;
+    pickerScrollMetricsRef.current = { y, contentHeight, viewportHeight };
+    setPickerScrollOffset(y <= 1 ? 0 : 2);
+    maybeLoadMorePickerItems({ y, contentHeight, viewportHeight });
+  }, [maybeLoadMorePickerItems]);
+
+  const handlePickerListLayout = React.useCallback((event: LayoutChangeEvent) => {
+    const viewportHeight = Math.max(0, event.nativeEvent.layout.height || 0);
+    pickerScrollMetricsRef.current = { ...pickerScrollMetricsRef.current, viewportHeight };
+    maybeLoadMorePickerItems({ viewportHeight });
+  }, [maybeLoadMorePickerItems]);
+
+  const handlePickerContentSizeChange = React.useCallback((_width: number, contentHeight: number) => {
+    const nextContentHeight = Math.max(0, contentHeight || 0);
+    pickerScrollMetricsRef.current = { ...pickerScrollMetricsRef.current, contentHeight: nextContentHeight };
+    maybeLoadMorePickerItems({ contentHeight: nextContentHeight });
+  }, [maybeLoadMorePickerItems]);
+
+  const handlePickerEndReached = React.useCallback(() => {
+    maybeLoadMorePickerItems();
+  }, [maybeLoadMorePickerItems]);
+
+  React.useEffect(() => {
+    if (!pickerKind || pickerLoading || !pickerHasMore) return;
+    maybeLoadMorePickerItems();
+  }, [maybeLoadMorePickerItems, pickerHasMore, pickerItems.length, pickerKind, pickerLoading]);
 
   const openReferenceDetails = React.useCallback(async (kind: ClientOrderReferenceKind, guid?: string | null) => {
     if (!guid) return;
@@ -1203,6 +1312,54 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     });
   }, [workspace.draft.items, workspace.mutationLocked, workspace.readOnly]);
 
+  const handleProductPickerPress = React.useCallback((item: ClientOrderProduct) => {
+    const action = resolveProductPickerPressAction({
+      product: item,
+      orderItems: workspace.draft.items,
+      selectedCount: selectedProducts.size,
+      readOnly: workspace.readOnly,
+      mutationLocked: workspace.mutationLocked,
+    });
+    if (action === 'toggleSelection') {
+      togglePickerProductSelection(item);
+      return;
+    }
+    if (action === 'openEditor') {
+      closePicker();
+      openProductEditorForProduct(item);
+    }
+  }, [
+    closePicker,
+    openProductEditorForProduct,
+    selectedProducts.size,
+    togglePickerProductSelection,
+    workspace.draft.items,
+    workspace.mutationLocked,
+    workspace.readOnly,
+  ]);
+
+  const handleProductPickerLongPress = React.useCallback((item: ClientOrderProduct) => {
+    const action = resolveProductPickerPressAction({
+      product: item,
+      orderItems: workspace.draft.items,
+      selectedCount: selectedProducts.size,
+      readOnly: workspace.readOnly,
+      mutationLocked: workspace.mutationLocked,
+      longPress: true,
+    });
+    if (action === 'toggleSelection') togglePickerProductSelection(item);
+  }, [
+    selectedProducts.size,
+    togglePickerProductSelection,
+    workspace.draft.items,
+    workspace.mutationLocked,
+    workspace.readOnly,
+  ]);
+
+  const clearPickerProductSelection = React.useCallback(() => {
+    setSelectedProducts(new Map());
+  }, []);
+
   const transferSelectedProducts = React.useCallback(() => {
     const firstNewIndex = workspace.draft.items.length;
     const addedKeys = transferSelectedProductsToOrder(selectedProducts, workspace.draft.items, workspace.addProduct, { quantity: 0 });
@@ -1329,18 +1486,21 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     setActionsMenuOpen(false);
     const isQueuedResubmit = workspace.selectedOrderQueued && workspace.dirty;
     const isSyncedResubmit = workspace.selectedOrderSynced && workspace.dirty;
-    const isResubmit = isQueuedResubmit || isSyncedResubmit;
+    const isErrorRetry = !!workspace.selectedOrderHas1cError && !workspace.dirty;
+    const isResubmit = isQueuedResubmit || isSyncedResubmit || isErrorRetry;
     const warningMessage = workspace.validation.warningMessage
       ? `\n${workspace.validation.warningMessage}`
       : '';
     setConfirmDialog({
-      title: isResubmit ? 'Переотправить в 1С?' : 'Отправить в 1С?',
+      title: isErrorRetry ? 'Повторить отправку в 1С?' : isResubmit ? 'Переотправить в 1С?' : 'Отправить в 1С?',
       message: `${isQueuedResubmit
         ? 'Документ будет сохранен и поставлен в конец очереди.'
         : isSyncedResubmit
           ? 'Изменения будут сохранены и отправлены в 1С.'
+          : isErrorRetry
+            ? 'Документ уже сохранен в 1С, но не проведен. Повторная отправка попробует провести его еще раз.'
           : ''}${warningMessage}`.trim(),
-      confirmLabel: isQueuedResubmit ? 'В конец очереди' : 'Отправить',
+      confirmLabel: isQueuedResubmit ? 'В конец очереди' : isErrorRetry ? 'Повторить' : 'Отправить',
       onConfirm: () => workspace.submitOrder(),
     });
   }, [workspace]);
@@ -2206,12 +2366,18 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
           hasOrderContext={!!workspace.draft.organizationGuid && !!workspace.draft.counterpartyGuid}
           hasPriceType={!!workspace.draft.priceTypeGuid}
           hasWarehouse={!!workspace.draft.warehouseGuid}
-          onSelect={togglePickerProductSelection}
+          onPressProduct={handleProductPickerPress}
+          onLongPressProduct={handleProductPickerLongPress}
           onOpenImages={openProductGallery}
           onScroll={handlePickerScroll}
+          onMomentumScrollEnd={handlePickerScroll}
+          onLayout={handlePickerListLayout}
+          onContentSizeChange={handlePickerContentSizeChange}
+          onEndReached={handlePickerEndReached}
           onScrollBeginDrag={suppressPickerAutoFocus}
           selectedCount={selectedProducts.size}
           onTransfer={transferSelectedProducts}
+          onClearSelection={clearPickerProductSelection}
         />
       ) : (
         <PickerBottomSheet
@@ -3132,7 +3298,8 @@ const ProductPickerFullscreenRow = React.memo(function ProductPickerFullscreenRo
   disabled,
   hasPriceType,
   hasWarehouse,
-  onSelect,
+  onPressProduct,
+  onLongPressProduct,
   onOpenImages,
 }: {
   styles: any;
@@ -3141,21 +3308,42 @@ const ProductPickerFullscreenRow = React.memo(function ProductPickerFullscreenRo
   disabled: boolean;
   hasPriceType: boolean;
   hasWarehouse: boolean;
-  onSelect: (item: ClientOrderProduct) => void;
+  onPressProduct: (item: ClientOrderProduct) => void;
+  onLongPressProduct: (item: ClientOrderProduct) => void;
   onOpenImages: (item: ClientOrderProduct) => void;
 }) {
   const description = React.useMemo(() => {
     const meta = productPickerMeta(item, { hasPriceType, hasWarehouse });
     return [meta.code, meta.receiptPrice ? `Цена: ${meta.receiptPrice}` : '', meta.stock].filter(Boolean).join(' • ');
   }, [hasPriceType, hasWarehouse, item]);
-  const handleSelect = React.useCallback(() => onSelect(item), [item, onSelect]);
+  const suppressNextPressRef = React.useRef(false);
+  const handlePress = React.useCallback(() => {
+    if (suppressNextPressRef.current) {
+      suppressNextPressRef.current = false;
+      return;
+    }
+    onPressProduct(item);
+  }, [item, onPressProduct]);
+  const handleLongPress = React.useCallback(() => {
+    suppressNextPressRef.current = true;
+    onLongPressProduct(item);
+  }, [item, onLongPressProduct]);
+  const handlePressOut = React.useCallback(() => {
+    if (!suppressNextPressRef.current) return;
+    setTimeout(() => {
+      suppressNextPressRef.current = false;
+    }, 0);
+  }, []);
   const handleOpenImages = React.useCallback(() => onOpenImages(item), [item, onOpenImages]);
 
   return (
     <Pressable
       accessibilityRole="button"
       disabled={disabled}
-      onPress={handleSelect}
+      onPress={handlePress}
+      onLongPress={handleLongPress}
+      onPressOut={handlePressOut}
+      delayLongPress={280}
       style={({ pressed }) => [
         styles.pickerFlatRow,
         styles.productPickerRow,
@@ -3203,12 +3391,18 @@ function ProductPickerFullscreenPanel({
   hasOrderContext,
   hasPriceType,
   hasWarehouse,
-  onSelect,
+  onPressProduct,
+  onLongPressProduct,
   onOpenImages,
   onScroll,
+  onMomentumScrollEnd,
+  onLayout,
+  onContentSizeChange,
+  onEndReached,
   onScrollBeginDrag,
   selectedCount,
   onTransfer,
+  onClearSelection,
 }: {
   styles: any;
   visible: boolean;
@@ -3228,12 +3422,18 @@ function ProductPickerFullscreenPanel({
   hasOrderContext: boolean;
   hasPriceType: boolean;
   hasWarehouse: boolean;
-  onSelect: (item: ClientOrderProduct) => void;
+  onPressProduct: (item: ClientOrderProduct) => void;
+  onLongPressProduct: (item: ClientOrderProduct) => void;
   onOpenImages: (item: ClientOrderProduct) => void;
   onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  onMomentumScrollEnd: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  onLayout: (event: LayoutChangeEvent) => void;
+  onContentSizeChange: (width: number, height: number) => void;
+  onEndReached: () => void;
   onScrollBeginDrag: () => void;
   selectedCount: number;
   onTransfer: () => void;
+  onClearSelection: () => void;
 }) {
   const orderProductGuids = React.useMemo(() => {
     return new Set(orderItems.map((item) => item.productGuid).filter(Boolean) as string[]);
@@ -3242,6 +3442,53 @@ function ProductPickerFullscreenPanel({
   const showInitialLoader = loading && hasOrderContext && !items.length && !hasSearch;
   const showSearchLoader = loading && hasSearch;
   const showFooterLoader = loading && !!items.length && !hasSearch;
+  const selectedProductGuidKey = React.useMemo(() => Array.from(selectedProducts.keys()).join('|'), [selectedProducts]);
+  const orderProductGuidKey = React.useMemo(() => Array.from(orderProductGuids).join('|'), [orderProductGuids]);
+  const keyExtractor = React.useCallback((item: ClientOrderProduct, index: number) => item.guid || item.code || item.name || `product-${index}`, []);
+  const renderProductItem = React.useCallback(({ item }: { item: ClientOrderProduct }) => (
+    <ProductPickerFullscreenRow
+      styles={styles}
+      item={item}
+      selected={!!item.guid && selectedProducts.has(item.guid)}
+      disabled={!!item.guid && orderProductGuids.has(item.guid)}
+      hasPriceType={hasPriceType}
+      hasWarehouse={hasWarehouse}
+      onPressProduct={onPressProduct}
+      onLongPressProduct={onLongPressProduct}
+      onOpenImages={onOpenImages}
+    />
+  ), [
+    hasPriceType,
+    hasWarehouse,
+    onLongPressProduct,
+    onOpenImages,
+    onPressProduct,
+    orderProductGuids,
+    selectedProducts,
+    styles,
+  ]);
+  const listHeader = React.useMemo(() => (
+    <>
+      {!hasOrderContext ? <InfoText styles={styles} text="Сначала выберите организацию и контрагента." /> : null}
+      {showInitialLoader ? (
+        <View style={styles.productPickerInitialLoader}>
+          <ActivityIndicator size="large" color="#2563EB" />
+        </View>
+      ) : null}
+    </>
+  ), [hasOrderContext, showInitialLoader, styles]);
+  const listEmpty = React.useMemo(() => {
+    if (loading || !hasOrderContext) return null;
+    return <Text style={styles.filtersLookupEmpty}>Ничего не найдено.</Text>;
+  }, [hasOrderContext, loading, styles]);
+  const listFooter = React.useMemo(() => {
+    if (!showFooterLoader) return null;
+    return (
+      <View style={styles.filtersLookupStateRow}>
+        <ActivityIndicator size="small" color="#2563EB" />
+      </View>
+    );
+  }, [showFooterLoader, styles]);
   if (!visible) return null;
 
   return (
@@ -3290,44 +3537,44 @@ function ProductPickerFullscreenPanel({
           />
         </View>
       </Surface>
-      <ScrollView
+      <FlatList
         ref={listRef}
         style={styles.productPickerFullscreenList}
         contentContainerStyle={[styles.pickerListContent, { paddingBottom: Math.max(bottomInset, 10) + (selectedCount > 0 ? 92 : 22) }]}
+        data={items}
+        extraData={`${selectedProductGuidKey}:${orderProductGuidKey}:${hasPriceType ? 'price' : 'noprice'}:${hasWarehouse ? 'warehouse' : 'nowarehouse'}`}
+        keyExtractor={keyExtractor}
+        renderItem={renderProductItem}
+        ListHeaderComponent={listHeader}
+        ListEmptyComponent={listEmpty}
+        ListFooterComponent={listFooter}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         onScroll={onScroll}
+        onMomentumScrollEnd={onMomentumScrollEnd}
+        onLayout={onLayout}
+        onContentSizeChange={onContentSizeChange}
         onScrollBeginDrag={onScrollBeginDrag}
+        onEndReached={onEndReached}
+        onEndReachedThreshold={0.8}
+        initialNumToRender={12}
+        maxToRenderPerBatch={8}
+        updateCellsBatchingPeriod={40}
+        windowSize={7}
+        removeClippedSubviews={Platform.OS === 'android'}
+        nestedScrollEnabled
         scrollEventThrottle={16}
-      >
-        {!hasOrderContext ? <InfoText styles={styles} text="Сначала выберите организацию и контрагента." /> : null}
-        {showInitialLoader ? (
-          <View style={styles.productPickerInitialLoader}>
-            <ActivityIndicator size="large" color="#2563EB" />
-          </View>
-        ) : null}
-        {items.map((item) => (
-          <ProductPickerFullscreenRow
-            key={item.guid || item.name}
-            styles={styles}
-            item={item}
-            selected={!!item.guid && selectedProducts.has(item.guid)}
-            disabled={!!item.guid && orderProductGuids.has(item.guid)}
-            hasPriceType={hasPriceType}
-            hasWarehouse={hasWarehouse}
-            onSelect={onSelect}
-            onOpenImages={onOpenImages}
-          />
-        ))}
-        {!loading && !items.length && hasOrderContext ? <Text style={styles.filtersLookupEmpty}>Ничего не найдено.</Text> : null}
-        {showFooterLoader ? (
-          <View style={styles.filtersLookupStateRow}>
-            <ActivityIndicator size="small" color="#2563EB" />
-          </View>
-        ) : null}
-      </ScrollView>
+      />
       {selectedCount > 0 ? (
         <Surface mode="flat" style={[styles.filtersFullscreenFooter, { paddingBottom: Math.max(bottomInset, 10) + 8 }]}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Очистить подборку"
+            onPress={onClearSelection}
+            style={({ pressed }) => [styles.productPickerClearSelectionButton, pressed && styles.flatPressed]}
+          >
+            <MaterialCommunityIcons name="trash-can-outline" size={20} color="#B91C1C" />
+          </Pressable>
           <PaperButton
             mode="contained"
             onPress={onTransfer}
@@ -3363,6 +3610,7 @@ function DocumentBottomBar({
   const borderColor = withColorOpacity(textColor, 0.18);
   const shouldSubmitChangedSyncedDocument = !!workspace.dirty && (!!workspace.selectedOrderQueued || !!workspace.selectedOrderSynced);
   const shouldSave = !!workspace.dirty && !shouldSubmitChangedSyncedDocument;
+  const shouldRetry1cError = !!workspace.selectedOrderHas1cError && !workspace.dirty;
   const busy = !!workspace.saving || !!workspace.submitting;
   const disabled = workspace.readOnly || busy || (shouldSave ? !workspace.validation.canSave : !workspace.canSubmitOrder);
   const label = workspace.saving
@@ -3371,6 +3619,8 @@ function DocumentBottomBar({
       ? 'Отправляю'
       : shouldSave
         ? 'Сохранить'
+        : shouldRetry1cError
+          ? 'Повторить'
         : 'Отправить';
   const deliveryDate = workspace.draft.deliveryDate ? formatDateOnly(workspace.draft.deliveryDate) : 'Дата не выбрана';
   const counterparty = workspace.selections.counterparty?.name || 'Контрагент не выбран';
@@ -6315,6 +6565,7 @@ const styles = StyleSheet.create({
   productPickerFullscreenStockText: { color: '#475569', fontSize: 11, lineHeight: 14, fontWeight: '900' },
   productPickerFullscreenStockTextActive: { color: '#166534' },
   productPickerFullscreenList: { flex: 1, minHeight: 0, backgroundColor: '#FFFFFF' },
+  productPickerClearSelectionButton: { width: 44, height: 44, borderRadius: 12, borderWidth: 1, borderColor: '#FCA5A5', backgroundColor: '#FEF2F2', alignItems: 'center', justifyContent: 'center' },
   productPickerInitialLoader: { minHeight: 220, flexGrow: 1, alignItems: 'center', justifyContent: 'center' },
   filtersLookupList: { flex: 1 },
   filtersLookupListContent: { paddingHorizontal: 14, gap: 6 },

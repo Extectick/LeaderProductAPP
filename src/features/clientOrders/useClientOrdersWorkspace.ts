@@ -850,6 +850,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     selectedOrder.status === 'SENT_TO_1C' ||
     selectedOrder.status === 'CONFIRMED'
   );
+  const selectedOrderHas1cError = !!(selectedOrder?.last1cError || selectedOrder?.lastExportError);
   const baseValidation = React.useMemo(() => validateDraft(draft), [draft]);
   const validation = React.useMemo(() => {
     let nextValidation = baseValidation;
@@ -906,7 +907,10 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     settings?.deliveryDateIssue,
     settings?.deliveryDateIssueMessage,
   ]);
-  const canSubmitOrder = validation.canSubmit && (!selectedOrderQueued || dirty) && (!selectedOrderSynced || dirty);
+  const canSubmitOrder =
+    validation.canSubmit &&
+    (!selectedOrderQueued || dirty || selectedOrderHas1cError) &&
+    (!selectedOrderSynced || dirty || selectedOrderHas1cError);
   const localTotal = React.useMemo(() => computeDraftTotal(draft), [draft]);
   const localProfit = React.useMemo(() => computeDraftProfit(draft), [draft]);
   const visibleDeviceOrders = React.useMemo(
@@ -2561,6 +2565,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     selectedOrder,
     selectedOrderQueued,
     selectedOrderSynced,
+    selectedOrderHas1cError,
     mutationLocked,
     unqueueOrder,
     restoreOrder,

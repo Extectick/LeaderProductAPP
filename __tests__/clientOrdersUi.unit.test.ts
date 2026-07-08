@@ -5,6 +5,7 @@ import {
   formatStockReserveLabel,
   getPickerItemMeta,
   isProductAlreadyInOrder,
+  resolveProductPickerPressAction,
   toggleProductSelection,
   transferSelectedProductsToOrder,
 } from '../src/features/clientOrders/lib/clientOrdersUi';
@@ -82,6 +83,17 @@ describe('clientOrdersUi', () => {
     }, { quantity: 0 });
 
     expect(quantities).toEqual([0]);
+  });
+
+  it('resolves product picker quick tap and long press actions', () => {
+    const product = { guid: 'product-1', name: 'Product 1' } as any;
+    const orderItems = [{ productGuid: 'product-2' }];
+
+    expect(resolveProductPickerPressAction({ product, orderItems, selectedCount: 0 })).toBe('openEditor');
+    expect(resolveProductPickerPressAction({ product, orderItems, selectedCount: 1 })).toBe('toggleSelection');
+    expect(resolveProductPickerPressAction({ product, orderItems, selectedCount: 0, longPress: true })).toBe('toggleSelection');
+    expect(resolveProductPickerPressAction({ product: { guid: 'product-2' } as any, orderItems, selectedCount: 0 })).toBe('ignore');
+    expect(resolveProductPickerPressAction({ product, orderItems, selectedCount: 0, readOnly: true })).toBe('ignore');
   });
 
   it('formats product transfer button label', () => {

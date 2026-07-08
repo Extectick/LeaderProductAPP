@@ -243,6 +243,22 @@ export function toggleProductSelection(
   return next;
 }
 
+export type ProductPickerPressAction = 'ignore' | 'openEditor' | 'toggleSelection';
+
+export function resolveProductPickerPressAction(args: {
+  product?: Partial<ClientOrderProduct> | null;
+  orderItems: Array<{ productGuid?: string | null }>;
+  selectedCount: number;
+  readOnly?: boolean;
+  mutationLocked?: boolean;
+  longPress?: boolean;
+}): ProductPickerPressAction {
+  const { product, orderItems, selectedCount, readOnly, mutationLocked, longPress } = args;
+  const guid = getProductGuid(product);
+  if (readOnly || mutationLocked || !guid || isProductAlreadyInOrder(guid, orderItems)) return 'ignore';
+  return longPress || selectedCount > 0 ? 'toggleSelection' : 'openEditor';
+}
+
 export function removeOrderItemsFromProductSelection(
   current: ProductSelectionMap,
   orderItems: Array<{ productGuid?: string | null }>
