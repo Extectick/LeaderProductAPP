@@ -304,6 +304,7 @@ type PickerBottomSheetProps = {
   fullWidth?: boolean;
   showHeader?: boolean;
   sheetStyle?: any;
+  headerRight?: React.ReactNode;
   headerContent?: React.ReactNode | ((close: () => void | false) => React.ReactNode);
   overlayHandle?: boolean;
   closeOnBackdropPress?: boolean;
@@ -382,6 +383,7 @@ function NativePickerBottomSheet({
   fullWidth = true,
   showHeader = true,
   sheetStyle,
+  headerRight,
   headerContent,
   overlayHandle = false,
   closeOnBackdropPress = true,
@@ -534,6 +536,7 @@ function NativePickerBottomSheet({
               {titleIcon ? <MaterialCommunityIcons name={titleIcon} size={18} color="#2563EB" /> : null}
               <Text style={ui.pickerBottomSheetTitle} numberOfLines={1}>{title}</Text>
             </View>
+            {headerRight ? <View style={ui.pickerBottomSheetHeaderActions}>{headerRight}</View> : null}
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Закрыть"
@@ -547,7 +550,7 @@ function NativePickerBottomSheet({
         ) : null}
       </View>
     ),
-    [overlayHandle, requestClose, showHeader, title, titleIcon, ui]
+    [headerRight, overlayHandle, requestClose, showHeader, title, titleIcon, ui]
   );
 
   const content = (
@@ -599,6 +602,7 @@ function LegacyPickerBottomSheet({
   fullWidth = true,
   showHeader = true,
   sheetStyle,
+  headerRight,
   headerContent,
   overlayHandle = false,
   closeOnBackdropPress = true,
@@ -810,6 +814,7 @@ function LegacyPickerBottomSheet({
                     {titleIcon ? <MaterialCommunityIcons name={titleIcon} size={18} color="#2563EB" /> : null}
                     <Text style={ui.pickerBottomSheetTitle} numberOfLines={1}>{title}</Text>
                   </View>
+                  {headerRight ? <View style={ui.pickerBottomSheetHeaderActions}>{headerRight}</View> : null}
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel="Закрыть"
@@ -855,6 +860,7 @@ const pickerBottomSheetDefaultStyles = StyleSheet.create({
   pickerBottomSheetHandle: { alignSelf: 'center', width: 36, height: 4, borderRadius: 999, backgroundColor: '#D0D5DD', marginBottom: 12 },
   pickerBottomSheetHeader: { minHeight: 44, paddingLeft: 16, paddingRight: 12, paddingBottom: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   pickerBottomSheetTitleRow: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  pickerBottomSheetHeaderActions: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 8, marginLeft: 8 },
   pickerBottomSheetTitle: { flex: 1, minWidth: 0, fontSize: 16, lineHeight: 20, fontWeight: '800', color: '#111827' },
   pickerBottomSheetClose: { width: 36, height: 36, borderRadius: 999, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center' },
   pickerBottomSheetBody: { flex: 1, minHeight: 0, gap: 0 },

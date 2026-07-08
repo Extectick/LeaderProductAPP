@@ -492,6 +492,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const [pickerHasMore, setPickerHasMore] = React.useState(false);
   const [pickerScrollOffset, setPickerScrollOffset] = React.useState(0);
   const [pickerLoading, setPickerLoading] = React.useState(false);
+  const [pickerAppendLoading, setPickerAppendLoading] = React.useState(false);
+  const [pickerHasLoadedOnce, setPickerHasLoadedOnce] = React.useState(false);
   const [selectedProducts, setSelectedProducts] = React.useState<ProductSelectionMap>(() => new Map());
   const [filtersOpen, setFiltersOpen] = React.useState(false);
   const [inspectorOpen, setInspectorOpen] = React.useState(false);
@@ -851,6 +853,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     setSelectedProducts(new Map());
     if (shouldRestoreProductPicker) {
       pickerAppendLoadingRef.current = false;
+      setPickerAppendLoading(false);
       pickerLoadSignatureRef.current = '';
       pickerSkipNextResetLoadRef.current = true;
       restorePickerListScroll(pickerScrollYRef.current);
@@ -864,6 +867,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     pickerScrollYRef.current = 0;
     pickerScrollMetricsRef.current = { y: 0, contentHeight: 0, viewportHeight: 0 };
     pickerAppendLoadingRef.current = false;
+    setPickerAppendLoading(false);
+    setPickerHasLoadedOnce(false);
     pickerLoadSignatureRef.current = '';
     pickerSkipNextResetLoadRef.current = false;
     if (kind === 'product') {
@@ -904,7 +909,12 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     const counterpartyFilter = (kind === 'counterparty' || kind === 'filterCounterparty') && counterpartyManagerOnly ? 'manager' : 'all';
     const signature = `${kind}|${contextSignature}|${search}|${offset}|${append ? 'append' : 'reset'}|${productFilter}|${counterpartyFilter}`;
     if ((append && pickerAppendLoadingRef.current) || pickerLoadSignatureRef.current === signature) return;
-    if (append) pickerAppendLoadingRef.current = true;
+    if (append) {
+      pickerAppendLoadingRef.current = true;
+      setPickerAppendLoading(true);
+    } else {
+      setPickerAppendLoading(false);
+    }
     pickerLoadSignatureRef.current = signature;
     const requestId = ++pickerRequestIdRef.current;
     setPickerLoading(true);
@@ -957,8 +967,14 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         pickerLoadSignatureRef.current = '';
       }
     } finally {
-      if (append) pickerAppendLoadingRef.current = false;
-      if (pickerRequestIdRef.current === requestId) setPickerLoading(false);
+      if (append) {
+        pickerAppendLoadingRef.current = false;
+        setPickerAppendLoading(false);
+      }
+      if (pickerRequestIdRef.current === requestId) {
+        if (!append && kind === 'product') setPickerHasLoadedOnce(true);
+        setPickerLoading(false);
+      }
     }
   }, [
     counterpartyManagerOnly,
@@ -1024,6 +1040,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     suppressPickerAutoFocus();
     pickerRequestIdRef.current += 1;
     pickerAppendLoadingRef.current = false;
+    setPickerAppendLoading(false);
     pickerLoadSignatureRef.current = '';
     pickerSkipNextResetLoadRef.current = false;
     setPickerKind(null);
@@ -2025,6 +2042,33 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const PickerContentScrollView = SheetScrollView;
   const isProductPicker = pickerKind === 'product';
   const isCounterpartyPicker = pickerKind === 'counterparty' || pickerKind === 'filterCounterparty';
+  const pickerMissingOrderContext = pickerNeedsOrderContext(pickerKind) && (!workspace.draft.organizationGuid || !workspace.draft.counterpartyGuid);
+  const pickerResetLoading = pickerLoading && !pickerAppendLoading;
+  const pickerSearchLoading = pickerResetLoading && !pickerMissingOrderContext;
+  const pickerFooterLoading = pickerAppendLoading && visiblePickerItems.length > 0;
+  const counterpartyHeaderAction = isCounterpartyPicker ? (
+    <Pressable
+      accessibilityRole="checkbox"
+      accessibilityState={{ checked: counterpartyManagerOnly }}
+      accessibilityLabel="Показывать только моих контрагентов"
+      onPress={() => setCounterpartyManagerOnly((prev) => !prev)}
+      style={({ pressed }) => [
+        styles.counterpartyManagerHeaderToggle,
+        counterpartyManagerOnly && styles.counterpartyManagerHeaderToggleActive,
+        pressed && styles.flatPressed,
+      ]}
+    >
+      <MaterialCommunityIcons
+        name={counterpartyManagerOnly ? 'checkbox-marked' : 'checkbox-blank-outline'}
+        size={18}
+        color={counterpartyManagerOnly ? '#2563EB' : '#64748B'}
+      />
+      <Text style={[
+        styles.counterpartyManagerHeaderToggleText,
+        counterpartyManagerOnly && styles.counterpartyManagerHeaderToggleTextActive,
+      ]}>Мои</Text>
+    </Pressable>
+  ) : null;
   const pickerContent = (
     <>
       <View style={styles.pickerToolbar}>
@@ -2038,7 +2082,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
             placeholder={isProductPicker ? 'Поиск товара' : 'Поиск'}
             inputComponent={SheetTextInput}
             autoFocus={pickerShouldAutofocusSearch(pickerKind)}
-            loading={pickerLoading}
+            loading={pickerSearchLoading}
           />
           {isProductPicker ? (
             <View
@@ -2059,29 +2103,6 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
               />
             </View>
           ) : null}
-          {isCounterpartyPicker ? (
-            <Pressable
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: counterpartyManagerOnly }}
-              accessibilityLabel="Показывать только моих контрагентов"
-              onPress={() => setCounterpartyManagerOnly((prev) => !prev)}
-              style={[
-                styles.counterpartyManagerToggle,
-                counterpartyManagerOnly && styles.counterpartyManagerToggleActive,
-              ]}
-            >
-              <Checkbox.Android
-                status={counterpartyManagerOnly ? 'checked' : 'unchecked'}
-                color="#2563EB"
-                uncheckedColor="#64748B"
-                rippleColor="rgba(37, 99, 235, 0.12)"
-              />
-              <Text style={[
-                styles.counterpartyManagerToggleText,
-                counterpartyManagerOnly && styles.counterpartyManagerToggleTextActive,
-              ]}>Мои</Text>
-            </Pressable>
-          ) : null}
         </View>
       </View>
       <PickerContentScrollView
@@ -2095,7 +2116,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
       >
-        {pickerNeedsOrderContext(pickerKind) && (!workspace.draft.organizationGuid || !workspace.draft.counterpartyGuid) ? <InfoText styles={styles} text="Сначала выберите организацию и контрагента." /> : null}
+        {pickerMissingOrderContext ? <InfoText styles={styles} text="Сначала выберите организацию и контрагента." /> : null}
         {visiblePickerItems.map((item: any) => {
           const disabled = pickerKind === 'product' && isProductAlreadyInOrder(item as ClientOrderProduct, workspace.draft.items);
           const pickerMeta = pickerKind === 'product'
@@ -2145,8 +2166,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
             </Pressable>
           );
         })}
-        {!pickerLoading && !visiblePickerItems.length && !(pickerNeedsOrderContext(pickerKind) && (!workspace.draft.organizationGuid || !workspace.draft.counterpartyGuid)) ? <InfoText styles={styles} text="Ничего не найдено." /> : null}
-        {pickerLoading ? <View style={styles.pickerFooter}><ActivityIndicator size="small" color="#2563EB" /><Text style={styles.pickerFooterText}>Загружаю...</Text></View> : null}
+        {!pickerResetLoading && !visiblePickerItems.length && !pickerMissingOrderContext ? <InfoText styles={styles} text="Ничего не найдено." /> : null}
+        {pickerFooterLoading ? <View style={styles.pickerFooter}><ActivityIndicator size="small" color="#2563EB" /><Text style={styles.pickerFooterText}>Загружаю...</Text></View> : null}
       </PickerContentScrollView>
       {isProductPicker && selectedProducts.size > 0 ? (
         <Surface mode="flat" style={[styles.productPickerTransferFooter, { paddingBottom: Math.max(safeBottom, 10) + 8 }]}>
@@ -2358,6 +2379,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
           searchInputRef={pickerSearchInputRef}
           listRef={pickerListRef}
           loading={pickerLoading}
+          appendLoading={pickerAppendLoading}
+          hasLoadedOnce={pickerHasLoadedOnce}
           inStockOnly={inStockOnly}
           onToggleInStockOnly={() => setInStockOnly((prev) => !prev)}
           items={visiblePickerItems as ClientOrderProduct[]}
@@ -2387,6 +2410,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
           title={pickerTitle(pickerKind)}
           titleIcon={pickerIcon(pickerKind)}
           onClose={requestClosePicker}
+          headerRight={counterpartyHeaderAction}
           contentScrollOffset={pickerScrollOffset}
           enableContentDrag
           keyboardTopInset={Math.max(88, topInset + 12)}
@@ -2473,7 +2497,11 @@ function HeaderSection({
   onCommentFocus: (targetOrEvent: any) => void;
   onResetHeaderPriceType: () => void;
 }) {
-  const today = React.useMemo(() => new Date(), []);
+  const today = React.useMemo(() => {
+    const next = new Date();
+    next.setHours(0, 0, 0, 0);
+    return next;
+  }, []);
   const maxDate = React.useMemo(() => { const next = new Date(); next.setMonth(next.getMonth() + 2); return next; }, []);
   const [commentHeight, setCommentHeight] = React.useState(58);
   const commentFocusedRef = React.useRef(false);
@@ -3126,12 +3154,6 @@ function ItemsToolbar({
           }}
           scrollEventThrottle={16}
         >
-          {searchLoading ? (
-            <View style={styles.itemsSearchStateRow}>
-              <ActivityIndicator size={14} color="#2563EB" />
-              <Text style={styles.itemsSearchStateText}>Ищу товары...</Text>
-            </View>
-          ) : null}
           {searchError ? <Text style={styles.itemsSearchErrorText}>{searchError}</Text> : null}
           {!searchLoading && !searchError && searchResults.map((product) => {
             const disabled = workspace.draft.items.some((line: any) => line.productGuid === product.guid);
@@ -3221,12 +3243,6 @@ function ItemsSearchResultsOverlay({
             }}
             scrollEventThrottle={16}
           >
-            {searchLoading ? (
-              <View style={styles.itemsSearchStateRow}>
-                <ActivityIndicator size={14} color="#2563EB" />
-                <Text style={styles.itemsSearchStateText}>Ищу товары...</Text>
-              </View>
-            ) : null}
             {searchError ? <Text style={styles.itemsSearchErrorText}>{searchError}</Text> : null}
             {!searchLoading && !searchError && searchResults.map((product) => {
               const disabled = workspace.draft.items.some((line: any) => line.productGuid === product.guid);
@@ -3383,6 +3399,8 @@ function ProductPickerFullscreenPanel({
   searchInputRef,
   listRef,
   loading,
+  appendLoading,
+  hasLoadedOnce,
   inStockOnly,
   onToggleInStockOnly,
   items,
@@ -3414,6 +3432,8 @@ function ProductPickerFullscreenPanel({
   searchInputRef: React.Ref<any>;
   listRef: React.Ref<any>;
   loading: boolean;
+  appendLoading: boolean;
+  hasLoadedOnce: boolean;
   inStockOnly: boolean;
   onToggleInStockOnly: () => void;
   items: ClientOrderProduct[];
@@ -3439,9 +3459,10 @@ function ProductPickerFullscreenPanel({
     return new Set(orderItems.map((item) => item.productGuid).filter(Boolean) as string[]);
   }, [orderItems]);
   const hasSearch = !!search.trim();
-  const showInitialLoader = loading && hasOrderContext && !items.length && !hasSearch;
-  const showSearchLoader = loading && hasSearch;
-  const showFooterLoader = loading && !!items.length && !hasSearch;
+  const isResetLoading = loading && !appendLoading;
+  const showInitialLoader = isResetLoading && hasOrderContext && !hasLoadedOnce && !items.length && !hasSearch;
+  const showSearchLoader = isResetLoading && hasOrderContext && !showInitialLoader;
+  const showFooterLoader = appendLoading && !!items.length;
   const selectedProductGuidKey = React.useMemo(() => Array.from(selectedProducts.keys()).join('|'), [selectedProducts]);
   const orderProductGuidKey = React.useMemo(() => Array.from(orderProductGuids).join('|'), [orderProductGuids]);
   const keyExtractor = React.useCallback((item: ClientOrderProduct, index: number) => item.guid || item.code || item.name || `product-${index}`, []);
@@ -3478,9 +3499,9 @@ function ProductPickerFullscreenPanel({
     </>
   ), [hasOrderContext, showInitialLoader, styles]);
   const listEmpty = React.useMemo(() => {
-    if (loading || !hasOrderContext) return null;
+    if (isResetLoading || !hasOrderContext) return null;
     return <Text style={styles.filtersLookupEmpty}>Ничего не найдено.</Text>;
-  }, [hasOrderContext, loading, styles]);
+  }, [hasOrderContext, isResetLoading, styles]);
   const listFooter = React.useMemo(() => {
     if (!showFooterLoader) return null;
     return (
@@ -6960,6 +6981,7 @@ const styles = StyleSheet.create({
   pickerBottomSheetHandle: { alignSelf: 'center', width: 36, height: 4, borderRadius: 999, backgroundColor: '#D0D5DD', marginBottom: 12 },
   pickerBottomSheetHeader: { minHeight: 44, paddingLeft: 16, paddingRight: 12, paddingBottom: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   pickerBottomSheetTitleRow: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  pickerBottomSheetHeaderActions: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 8, marginLeft: 8 },
   pickerBottomSheetTitle: { flex: 1, minWidth: 0, fontSize: 16, lineHeight: 20, fontWeight: '800', color: '#111827' },
   pickerBottomSheetClose: { width: 36, height: 36, borderRadius: 999, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center' },
   pickerBottomSheetBody: { flex: 1, minHeight: 0, gap: 0 },
@@ -6976,10 +6998,10 @@ const styles = StyleSheet.create({
   pickerSearchInputFlat: { fontSize: 13, color: '#0F172A', fontWeight: '800' },
   productStockToggle: { width: 34, height: 34, borderRadius: 9, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   productStockToggleActive: { borderColor: '#86EFAC', backgroundColor: '#F0FDF4' },
-  counterpartyManagerToggle: { height: 34, minWidth: 76, borderRadius: 9, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF', paddingRight: 9, paddingLeft: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
-  counterpartyManagerToggleActive: { borderColor: '#93C5FD', backgroundColor: '#EFF6FF' },
-  counterpartyManagerToggleText: { marginLeft: -5, color: '#334155', fontSize: 11, lineHeight: 14, fontWeight: '900' },
-  counterpartyManagerToggleTextActive: { color: '#1D4ED8' },
+  counterpartyManagerHeaderToggle: { height: 34, minWidth: 72, borderRadius: 9, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF', paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5 },
+  counterpartyManagerHeaderToggleActive: { borderColor: '#93C5FD', backgroundColor: '#EFF6FF' },
+  counterpartyManagerHeaderToggleText: { color: '#334155', fontSize: 11, lineHeight: 14, fontWeight: '900' },
+  counterpartyManagerHeaderToggleTextActive: { color: '#1D4ED8' },
   pickerListContent: { paddingBottom: 20, flexGrow: 1 },
   pickerFlatRow: { minHeight: 54, borderBottomWidth: 1, borderBottomColor: '#E2E8F0', backgroundColor: '#FFFFFF', paddingLeft: 10, paddingRight: 8, paddingVertical: 6, flexDirection: 'row', alignItems: 'center', gap: 8 },
   productPickerRow: { minHeight: 84, paddingLeft: 5, paddingRight: 10, paddingVertical: 2, gap: 8 },

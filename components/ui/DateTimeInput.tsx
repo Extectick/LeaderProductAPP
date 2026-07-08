@@ -225,9 +225,17 @@ function sameDay(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
+function startOfDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
+}
+
+function endOfDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
+}
+
 function dayAllowed(day: Date, min?: Date, max?: Date): boolean {
-  const dayStart = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0, 0, 0);
-  const dayEnd = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 23, 59, 59, 999);
+  const dayStart = startOfDay(day);
+  const dayEnd = endOfDay(day);
   if (min && dayEnd < min) return false;
   if (max && dayStart > max) return false;
   return true;
@@ -346,18 +354,20 @@ export default function DateTimeInput({
     (raw: Date): string | null => {
       const date = applyPrecision(raw, timePrecision, safeMinuteStep);
       const currentBounds = resolveBounds(minDate, maxDate, disabledPast, disabledFuture);
-      if (currentBounds.min && date < currentBounds.min) {
+      const minComparable = includeTime ? date : endOfDay(date);
+      const maxComparable = includeTime ? date : startOfDay(date);
+      if (currentBounds.min && minComparable < currentBounds.min) {
         if (disabledPast) return 'Дедлайн не может быть в прошлом.';
         return 'Дата раньше допустимой.';
       }
-      if (currentBounds.max && date > currentBounds.max) return 'Дата позже допустимой.';
+      if (currentBounds.max && maxComparable > currentBounds.max) return 'Дата позже допустимой.';
       if (onValidate) {
         const result = onValidate(date);
         if (result) return result;
       }
       return null;
     },
-    [disabledFuture, disabledPast, maxDate, minDate, onValidate, safeMinuteStep, timePrecision]
+    [disabledFuture, disabledPast, includeTime, maxDate, minDate, onValidate, safeMinuteStep, timePrecision]
   );
 
   const emitDate = useCallback(
@@ -410,6 +420,8 @@ export default function DateTimeInput({
 
     const current = applyPrecision(safeDate(value), timePrecision, safeMinuteStep);
     const currentBounds = resolveBounds(minDate, maxDate, disabledPast, disabledFuture);
+    const pickerMinimumDate = !includeTime && currentBounds.min ? startOfDay(currentBounds.min) : currentBounds.min;
+    const pickerMaximumDate = !includeTime && currentBounds.max ? endOfDay(currentBounds.max) : currentBounds.max;
 
     if (Platform.OS === 'android' && (module as any).DateTimePickerAndroid) {
       if (androidOpenRef.current) return;
@@ -420,8 +432,8 @@ export default function DateTimeInput({
         mode: 'date',
         value: current,
         is24Hour: true,
-        minimumDate: currentBounds.min,
-        maximumDate: currentBounds.max,
+        minimumDate: pickerMinimumDate,
+        maximumDate: pickerMaximumDate,
         onChange: (event: any, pickedDate?: Date) => {
           if (event?.type !== 'set' || !pickedDate) {
             androidOpenRef.current = false;
@@ -651,8 +663,8 @@ export default function DateTimeInput({
                   mode: includeTime ? 'datetime' : 'date',
                   display: 'spinner',
                   onChange: (_: any, next?: Date) => next && setTemp(next),
-                  minimumDate: bounds.min,
-                  maximumDate: bounds.max,
+                  minimumDate: !includeTime && bounds.min ? startOfDay(bounds.min) : bounds.min,
+                  maximumDate: !includeTime && bounds.max ? endOfDay(bounds.max) : bounds.max,
                   ...(Platform.OS === 'ios' ? { locale } : {}),
                   ...(includeTime && timePrecision === 'minute' && Platform.OS === 'ios'
                     ? { minuteInterval: Math.min(Math.max(1, safeMinuteStep), 30) }
