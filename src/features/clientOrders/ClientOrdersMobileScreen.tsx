@@ -53,6 +53,7 @@ import {
   unitLabel,
 } from './lib/clientOrdersUi';
 import { hasMorePage } from './lib/clientOrdersPaging';
+import { resolveStoredBooleanDefaultTrue, serializeStoredBoolean } from './lib/clientOrdersPrefs';
 import { useClientOrdersWorkspace } from './hooks/useClientOrdersWorkspace';
 import { getClientOrderProductsBatch, getClientOrderReferenceDetails } from '@/utils/clientOrdersService';
 import type { ClientOrder, ClientOrderCounterpartyOption, ClientOrderOrganization, ClientOrderPriceTypeOption, ClientOrderProduct, ClientOrderReferenceDetails, ClientOrderReferenceKind, ClientOrderWarehouseOption } from '@/utils/clientOrdersService';
@@ -510,8 +511,10 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const [itemsSearchHasMore, setItemsSearchHasMore] = React.useState(false);
   const [itemsSearchOffset, setItemsSearchOffset] = React.useState(0);
   const [itemsSearchError, setItemsSearchError] = React.useState<string | null>(null);
-  const [inStockOnly, setInStockOnly] = React.useState(false);
-  const [counterpartyManagerOnly, setCounterpartyManagerOnly] = React.useState(false);
+  const [inStockOnly, setInStockOnly] = React.useState(true);
+  const [inStockOnlyLoaded, setInStockOnlyLoaded] = React.useState(false);
+  const [counterpartyManagerOnly, setCounterpartyManagerOnly] = React.useState(true);
+  const [counterpartyManagerOnlyLoaded, setCounterpartyManagerOnlyLoaded] = React.useState(false);
   const [linePriceTarget, setLinePriceTarget] = React.useState<string | null>(null);
   const [actionsMenuOpen, setActionsMenuOpen] = React.useState(false);
   const [statusMenuOpen, setStatusMenuOpen] = React.useState(false);
@@ -789,10 +792,38 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     };
   }, [clearEditorFocusTimers, scheduleEditorInputScroll]);
 
-  React.useEffect(() => { AsyncStorage.getItem(IN_STOCK_KEY).then((v) => setInStockOnly(v === '1')).catch(() => undefined); }, []);
-  React.useEffect(() => { void AsyncStorage.setItem(IN_STOCK_KEY, inStockOnly ? '1' : '0'); }, [inStockOnly]);
-  React.useEffect(() => { AsyncStorage.getItem(COUNTERPARTY_MANAGER_ONLY_KEY).then((v) => setCounterpartyManagerOnly(v === '1')).catch(() => undefined); }, []);
-  React.useEffect(() => { void AsyncStorage.setItem(COUNTERPARTY_MANAGER_ONLY_KEY, counterpartyManagerOnly ? '1' : '0'); }, [counterpartyManagerOnly]);
+  React.useEffect(() => {
+    let cancelled = false;
+    AsyncStorage.getItem(IN_STOCK_KEY)
+      .then((value) => {
+        if (!cancelled) setInStockOnly(resolveStoredBooleanDefaultTrue(value));
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setInStockOnlyLoaded(true);
+      });
+    return () => { cancelled = true; };
+  }, []);
+  React.useEffect(() => {
+    if (!inStockOnlyLoaded) return;
+    void AsyncStorage.setItem(IN_STOCK_KEY, serializeStoredBoolean(inStockOnly));
+  }, [inStockOnly, inStockOnlyLoaded]);
+  React.useEffect(() => {
+    let cancelled = false;
+    AsyncStorage.getItem(COUNTERPARTY_MANAGER_ONLY_KEY)
+      .then((value) => {
+        if (!cancelled) setCounterpartyManagerOnly(resolveStoredBooleanDefaultTrue(value));
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setCounterpartyManagerOnlyLoaded(true);
+      });
+    return () => { cancelled = true; };
+  }, []);
+  React.useEffect(() => {
+    if (!counterpartyManagerOnlyLoaded) return;
+    void AsyncStorage.setItem(COUNTERPARTY_MANAGER_ONLY_KEY, serializeStoredBoolean(counterpartyManagerOnly));
+  }, [counterpartyManagerOnly, counterpartyManagerOnlyLoaded]);
   React.useEffect(() => () => {
     if (itemsSearchBlurTimerRef.current) clearTimeout(itemsSearchBlurTimerRef.current);
   }, []);

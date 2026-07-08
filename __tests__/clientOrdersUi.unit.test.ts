@@ -9,8 +9,21 @@ import {
   toggleProductSelection,
   transferSelectedProductsToOrder,
 } from '../src/features/clientOrders/lib/clientOrdersUi';
+import {
+  resolveStoredBooleanDefaultTrue,
+  serializeStoredBoolean,
+} from '../src/features/clientOrders/lib/clientOrdersPrefs';
 
 describe('clientOrdersUi', () => {
+  it('resolves saved picker flags with true as the missing-value default', () => {
+    expect(resolveStoredBooleanDefaultTrue(null)).toBe(true);
+    expect(resolveStoredBooleanDefaultTrue(undefined)).toBe(true);
+    expect(resolveStoredBooleanDefaultTrue('1')).toBe(true);
+    expect(resolveStoredBooleanDefaultTrue('0')).toBe(false);
+    expect(serializeStoredBoolean(true)).toBe('1');
+    expect(serializeStoredBoolean(false)).toBe('0');
+  });
+
   it('shows organization and manager in agreement and contract picker metadata', () => {
     const item = {
       organization: { guid: 'org-guid', name: 'Организация' },

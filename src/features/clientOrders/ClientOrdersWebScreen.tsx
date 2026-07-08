@@ -44,6 +44,7 @@ import {
   unitLabel,
 } from './lib/clientOrdersUi';
 import { hasMorePage } from './lib/clientOrdersPaging';
+import { resolveStoredBooleanDefaultTrue, serializeStoredBoolean } from './lib/clientOrdersPrefs';
 import { useClientOrdersWorkspace } from './hooks/useClientOrdersWorkspace';
 import type {
   ClientOrderAgreementOption,
@@ -1104,12 +1105,12 @@ export default function ClientOrdersWebScreen() {
   const [selectedProducts, setSelectedProducts] = React.useState<ProductSelectionMap>(() => new Map());
   const [confirmCloseProductPickerOpen, setConfirmCloseProductPickerOpen] = React.useState(false);
   const [productInStockOnly, setProductInStockOnly] = React.useState(() => {
-    if (typeof window === 'undefined') return false;
-    return window.localStorage.getItem(PRODUCT_IN_STOCK_ONLY_STORAGE_KEY) === '1';
+    if (typeof window === 'undefined') return true;
+    return resolveStoredBooleanDefaultTrue(window.localStorage.getItem(PRODUCT_IN_STOCK_ONLY_STORAGE_KEY));
   });
   const [counterpartyManagerOnly, setCounterpartyManagerOnly] = React.useState(() => {
-    if (typeof window === 'undefined') return false;
-    return window.localStorage.getItem(COUNTERPARTY_MANAGER_ONLY_STORAGE_KEY) === '1';
+    if (typeof window === 'undefined') return true;
+    return resolveStoredBooleanDefaultTrue(window.localStorage.getItem(COUNTERPARTY_MANAGER_ONLY_STORAGE_KEY));
   });
   const pickerRequestIdRef = React.useRef(0);
   const pickerAppendLoadingRef = React.useRef(false);
@@ -1304,12 +1305,12 @@ export default function ClientOrdersWebScreen() {
 
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
-    window.localStorage.setItem(PRODUCT_IN_STOCK_ONLY_STORAGE_KEY, productInStockOnly ? '1' : '0');
+    window.localStorage.setItem(PRODUCT_IN_STOCK_ONLY_STORAGE_KEY, serializeStoredBoolean(productInStockOnly));
   }, [productInStockOnly]);
 
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
-    window.localStorage.setItem(COUNTERPARTY_MANAGER_ONLY_STORAGE_KEY, counterpartyManagerOnly ? '1' : '0');
+    window.localStorage.setItem(COUNTERPARTY_MANAGER_ONLY_STORAGE_KEY, serializeStoredBoolean(counterpartyManagerOnly));
   }, [counterpartyManagerOnly]);
 
   const confirmHeaderPriceTypeChange = React.useCallback((priceType: ClientOrderPriceTypeOption | null) => {
