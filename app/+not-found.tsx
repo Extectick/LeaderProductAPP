@@ -4,10 +4,11 @@ import { ThemedView } from '@/components/ThemedView';
 import { IconSymbol } from '@/components/ui/IconSymbol';
 import { Colors } from '@/constants/Colors';
 import { useRouter } from 'expo-router';
-import { StyleSheet, View } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 
 export default function NotFoundScreen() {
   const router = useRouter();
+  const defaultMainRoute = Platform.OS === 'web' ? '/home' : '/services';
 
   return (
     <ThemedView style={styles.container}>
@@ -28,7 +29,7 @@ export default function NotFoundScreen() {
 
         <View style={styles.actions}>
           <AnimatedButton
-            onPress={() => router.replace('/home' as any)}
+            onPress={() => router.replace(defaultMainRoute as any)}
             style={StyleSheet.flatten([styles.button, styles.primary])}
             title="На главную"
           />

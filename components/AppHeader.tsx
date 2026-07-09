@@ -64,6 +64,8 @@ type Props = {
   horizontalPadding?: number;
   variant?: 'default' | 'document';
   showServerStatus?: boolean;
+  surfaceOverrideColor?: string;
+  borderOverrideColor?: string;
 };
 
 type HeaderOffsetOptions = {
@@ -102,6 +104,8 @@ export function AppHeader({
   horizontalPadding,
   variant = 'default',
   showServerStatus = true,
+  surfaceOverrideColor,
+  borderOverrideColor,
 }: Props) {
   const { top } = useSafeAreaInsets();
   const { width } = useWindowDimensions();
@@ -130,9 +134,11 @@ export function AppHeader({
     0.95
   );
   const surfaceOverlayColor = withOpacity(background, surfaceOverlayOpacity);
+  const resolvedSurfaceOverlayColor = surfaceOverrideColor ?? surfaceOverlayColor;
   const blurIntensity = BLUR_INTENSITY;
   const blurTint = isDark ? 'dark' : 'light';
   const borderColor = withOpacity(textColor, isDark ? 0.12 : 0.18);
+  const resolvedBorderColor = borderOverrideColor ?? borderColor;
   const backBg = withOpacity(textColor, isDark ? 0.16 : 0.08);
   const handleWrapLayout = React.useCallback(
     (event: LayoutChangeEvent) => {
@@ -216,8 +222,8 @@ export function AppHeader({
   const shellContent = isDocument ? (
     <View style={styles.documentShell}>
       <LiquidGlassSurface
-        borderColor={borderColor}
-        overlayColor={surfaceOverlayColor}
+        borderColor={resolvedBorderColor}
+        overlayColor={resolvedSurfaceOverlayColor}
         blurTint={blurTint}
         blurIntensity={blurIntensity}
         webBackdropFilter="blur(22px) saturate(160%)"
@@ -229,8 +235,8 @@ export function AppHeader({
   ) : surfaceVisible ? (
     <View style={[styles.shadowShell, dense && styles.shadowShellDense]}>
       <LiquidGlassSurface
-        borderColor={borderColor}
-        overlayColor={surfaceOverlayColor}
+        borderColor={resolvedBorderColor}
+        overlayColor={resolvedSurfaceOverlayColor}
         blurTint={blurTint}
         blurIntensity={blurIntensity}
         webBackdropFilter="blur(22px) saturate(160%)"
@@ -245,8 +251,8 @@ export function AppHeader({
         styles.plainShell,
         dense && styles.plainShellDense,
         {
-          borderColor,
-          backgroundColor: surfaceOverlayColor,
+          borderColor: resolvedBorderColor,
+          backgroundColor: resolvedSurfaceOverlayColor,
         },
       ]}
     >

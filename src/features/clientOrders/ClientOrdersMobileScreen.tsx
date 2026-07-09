@@ -61,6 +61,7 @@ import { useServerStatus } from '@/src/shared/network/useServerStatus';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
+import { useFocusEffect } from 'expo-router';
 import React from 'react';
 import { Animated, BackHandler, findNodeHandle, FlatList, Keyboard, LayoutAnimation, PanResponder, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, UIManager, useWindowDimensions, View } from 'react-native';
 import type { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent, TextInputProps } from 'react-native';
@@ -69,7 +70,6 @@ import {
   ActivityIndicator,
   Button as PaperButton,
   Checkbox,
-  IconButton as PaperIconButton,
   List,
   Menu,
   Portal,
@@ -557,9 +557,11 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const lineItemLayoutYRef = React.useRef<Record<string, number>>({});
   const pendingScrollItemKeyRef = React.useRef<string | null>(null);
   const openingOrderRequestIdRef = React.useRef(0);
+  const ordersOpenBusyRef = React.useRef(false);
   const ordersEntrance = React.useRef(new Animated.Value(0)).current;
   const ordersViewportHeightRef = React.useRef(0);
   const ordersContentHeightRef = React.useRef(0);
+  const ordersLastFocusRefreshRef = React.useRef(0);
   const productPickerContextSignature = React.useMemo(() => ([
     workspace.draft.organizationGuid || '',
     workspace.draft.counterpartyGuid || '',
@@ -688,14 +690,25 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     }
   }, [ordersRefreshing, workspace.refreshOrders]);
 
+  useFocusEffect(
+    React.useCallback(() => {
+      if (mode !== 'orders') return undefined;
+      const now = Date.now();
+      if (now - ordersLastFocusRefreshRef.current < 2500) return undefined;
+      ordersLastFocusRefreshRef.current = now;
+      void workspace.refreshOrders();
+      return undefined;
+    }, [mode, workspace.refreshOrders])
+  );
+
   React.useEffect(() => {
     setTabBarHidden?.(mode === 'editor');
     return () => setTabBarHidden?.(false);
   }, [mode, setTabBarHidden]);
   React.useEffect(() => {
-    if (mode !== 'orders' || showOrdersInitialLoading || !workspace.orders.length) return;
+    if (mode !== 'orders' || showOrdersInitialLoading || !workspace.ordersInitialLoadDone) return;
     restoreOrdersScrollPosition();
-  }, [mode, restoreOrdersScrollPosition, showOrdersInitialLoading, workspace.orders.length]);
+  }, [mode, restoreOrdersScrollPosition, showOrdersInitialLoading, workspace.ordersInitialLoadDone]);
   React.useEffect(() => {
     if (mode !== 'orders') return;
     void workspace.syncDeviceDrafts?.();
@@ -708,7 +721,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   React.useEffect(() => {
     if (!openingDocument) return undefined;
     if (openingDocument === 'new') {
-      if (mode !== 'editor' || workspace.loadingSettings || workspace.loadingDefaults) return undefined;
+      if (mode !== 'editor') return undefined;
       const timer = setTimeout(() => setOpeningDocument(null), 180);
       return () => clearTimeout(timer);
     }
@@ -1097,6 +1110,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const cancelOpeningOrder = React.useCallback(() => {
     if (!openingOrderGuid) return false;
     openingOrderRequestIdRef.current += 1;
+    ordersOpenBusyRef.current = false;
     workspace.cancelDetailLoading?.();
     setOpeningOrderGuid(null);
     setOpeningDocument(null);
@@ -1419,6 +1433,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   }, [closePicker, requestScrollToLineItem, selectedProducts, workspace]);
 
   const createDocument = React.useCallback(async () => {
+    if (ordersOpenBusyRef.current || openingOrderGuid || openingDocument) return;
+    ordersOpenBusyRef.current = true;
     setOpeningDocument('new');
     try {
       const opened = await workspace.createDocument();
@@ -1429,15 +1445,19 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       runDocumentHeaderTransition();
       setSection('header');
       setMode('editor');
+      setOpeningDocument(null);
     } catch (error) {
       setOpeningDocument(null);
       throw error;
+    } finally {
+      ordersOpenBusyRef.current = false;
     }
-  }, [workspace]);
+  }, [openingDocument, openingOrderGuid, workspace]);
 
   const selectOrder = React.useCallback(async (order: ClientOrder) => {
-    if (openingOrderGuid) return;
+    if (ordersOpenBusyRef.current || openingOrderGuid || openingDocument) return;
     const requestId = ++openingOrderRequestIdRef.current;
+    ordersOpenBusyRef.current = true;
     setOpeningOrderGuid(order.guid);
     try {
       const opened = await workspace.selectOrder(order.guid);
@@ -1455,8 +1475,12 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         setOpeningOrderGuid(null);
       }
       throw error;
+    } finally {
+      if (openingOrderRequestIdRef.current === requestId) {
+        ordersOpenBusyRef.current = false;
+      }
     }
-  }, [openingOrderGuid, workspace]);
+  }, [openingDocument, openingOrderGuid, workspace]);
 
   const removeOrCancel = React.useCallback(() => {
     if (workspace.selectedOrderQueued) {
@@ -2237,7 +2261,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const pageTopPadding = mode === 'editor' ? editorTopPadding : ordersTopPadding;
   const showItemsSearchOverlay = mode === 'editor' && !workspace.readOnly && !workspace.mutationLocked && section === 'items' && !!itemsSearch.trim() && itemsSearchFocused;
   const itemsSearchOverlayTop = Math.max(topInset + 96, headerBottomOffset + 6);
-  const showDocumentOpenLoader = mode === 'editor' && (!!openingDocument || workspace.loadingDetail);
+  const showDocumentOpenLoader = mode === 'editor' && (openingDocument === 'existing' || workspace.loadingDetail);
   const showDocumentDeleteOverlay = mode === 'editor' && deleteDocumentOverlayVisible;
   const documentOpenLabel = openingDocument === 'new' ? 'Готовлю новый документ' : 'Открываю документ';
 
@@ -2249,13 +2273,15 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
             <OrdersToolbar
               styles={styles}
               workspace={workspace}
+              disabled={!!openingOrderGuid || !!openingDocument}
+              refreshing={ordersRefreshing}
               onOpenFilters={() => setFiltersOpen(true)}
               onCreate={() => void createDocument()}
             />
           </View>
           <ScrollView
             ref={ordersScrollRef}
-            contentContainerStyle={[styles.ordersContent, width >= 720 && styles.contentTablet, { paddingHorizontal: ui.pageX, paddingTop: 7, maxWidth: layoutTier === 'tablet' ? 760 : undefined }]}
+            contentContainerStyle={[styles.ordersContent, width >= 720 && styles.contentTablet, { paddingHorizontal: ui.pageX, paddingTop: 4, maxWidth: layoutTier === 'tablet' ? 760 : undefined }]}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
             scrollEventThrottle={16}
@@ -4121,7 +4147,7 @@ function CompactSearchbar({
           <ActivityIndicator size={14} color="#2563EB" />
         </View>
       ) : null}
-      {inputText ? (
+      {editable && inputText ? (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Очистить поиск"
@@ -4985,7 +5011,6 @@ function OrdersListSkeleton({ styles }: { styles: any }) {
               <View style={styles.ordersSkeletonCounterparty} />
             </View>
             <View style={styles.ordersSkeletonAmount} />
-            <View style={styles.ordersSkeletonChevron} />
           </View>
           <View style={styles.ordersSkeletonMetaRow}>
             <View style={styles.ordersSkeletonPill} />
@@ -5270,11 +5295,15 @@ function ProductGallerySlide({
 function OrdersToolbar({
   styles,
   workspace,
+  disabled = false,
+  refreshing = false,
   onOpenFilters,
   onCreate,
 }: {
   styles: any;
   workspace: any;
+  disabled?: boolean;
+  refreshing?: boolean;
   onOpenFilters: () => void;
   onCreate: () => void;
 }) {
@@ -5306,28 +5335,39 @@ function OrdersToolbar({
           value={searchDraft}
           onChangeText={setSearchDraft}
           placeholder="Поиск по номеру или клиенту"
-          loading={workspace.loadingOrders && workspace.ordersInitialLoadDone}
+          editable={!disabled}
+          loading={!disabled && !refreshing && workspace.loadingOrders && workspace.ordersInitialLoadDone}
         />
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Открыть фильтры"
+          disabled={disabled}
           onPress={onOpenFilters}
-          style={({ pressed }) => [styles.ordersFilterButton, pressed && styles.flatPressed]}
+          hitSlop={4}
+          style={({ pressed }) => [styles.ordersFilterButton, disabled && styles.ordersToolbarButtonDisabled, pressed && !disabled && styles.ordersFilterButtonPressed]}
         >
-          <MaterialCommunityIcons name="filter-variant" size={19} color="#2563EB" />
+          <MaterialCommunityIcons name="filter-variant" size={22} color="#2563EB" />
           {activeFilters ? (
             <View style={styles.ordersFilterBadge}>
               <Text style={styles.ordersFilterBadgeText}>{activeFilters}</Text>
             </View>
           ) : null}
         </Pressable>
-        <PaperIconButton
-          icon="file-document-plus-outline"
-          size={19}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Создать заказ"
+          disabled={disabled}
           onPress={onCreate}
-          iconColor="#FFFFFF"
-          style={[styles.ordersIconButton, styles.ordersIconButtonPrimary]}
-        />
+          hitSlop={4}
+          style={({ pressed }) => [
+            styles.ordersIconButton,
+            styles.ordersIconButtonPrimary,
+            disabled && styles.ordersToolbarButtonDisabled,
+            pressed && !disabled && styles.ordersIconButtonPrimaryPressed,
+          ]}
+        >
+          <MaterialCommunityIcons name="file-document-plus-outline" size={22} color="#FFFFFF" />
+        </Pressable>
       </View>
     </Surface>
   );
@@ -6320,7 +6360,6 @@ function OrderCard({
   disabled?: boolean;
 }) {
   const scale = React.useRef(new Animated.Value(1)).current;
-  const activityAt = order.updatedAt || order.queuedAt || order.sentTo1cAt;
   const displayStatus = getOrderDisplayStatus(order);
   const isDeviceOrder = order.origin === 'device';
   const statusIcon = isDeviceOrder ? { name: 'cellphone-check', color: '#1D4ED8' } : orderStatusIcon(displayStatus);
@@ -6376,7 +6415,6 @@ function OrderCard({
             <View style={styles.orderAmountWrap}>
               <Text style={styles.orderAmount} numberOfLines={1}>{formatMoney(order.totalAmount || 0, order.currency)}</Text>
             </View>
-            <MaterialCommunityIcons name="chevron-right" size={18} color="#94A3B8" />
           </View>
           <View style={styles.orderCardBottomRow}>
             <View style={[styles.orderStatusPill, orderStatusTone(isDeviceOrder ? 'QUEUED' : displayStatus), hasProblem && styles.orderStatusProblem]}>
@@ -6393,10 +6431,6 @@ function OrderCard({
               <View style={styles.orderMetaItem}>
                 <MaterialCommunityIcons name="truck-outline" size={13} color="#64748B" />
                 <Text style={styles.orderMetaCompact} numberOfLines={1}>{formatDateOnly(order.deliveryDate)}</Text>
-              </View>
-              <View style={styles.orderMetaItemWide}>
-                <MaterialCommunityIcons name="clock-outline" size={13} color="#94A3B8" />
-                <Text style={styles.orderUpdated} numberOfLines={1}>{formatDateTime(activityAt)}</Text>
               </View>
             </View>
           </View>
@@ -6430,8 +6464,8 @@ const styles = StyleSheet.create({
   editorHeaderPane: { paddingTop: 8 },
   editorItemsContent: { flexGrow: 1 },
   ordersStage: { flex: 1 },
-  ordersContent: { padding: 8, gap: 7, paddingBottom: 150 },
-  ordersStickyToolbar: { flexShrink: 0, paddingTop: 2, paddingBottom: 5, backgroundColor: 'transparent', zIndex: 2 },
+  ordersContent: { paddingHorizontal: 0, paddingVertical: 4, gap: 0, paddingBottom: 150 },
+  ordersStickyToolbar: { flexShrink: 0, paddingTop: 12, paddingBottom: 8, backgroundColor: 'transparent', zIndex: 2 },
   contentTablet: { maxWidth: 760, alignSelf: 'center', width: '100%' },
   panelCard: { borderColor: '#DBEAFE', overflow: 'hidden' },
   cardContent: { paddingTop: 0, paddingBottom: 0 },
@@ -6646,14 +6680,17 @@ const styles = StyleSheet.create({
   ordersTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   ordersTitle: { fontSize: 16, fontWeight: '900', color: '#0F172A' },
   ordersSubtitle: { marginTop: 1, fontSize: 10.5, fontWeight: '700', color: '#64748B' },
-  ordersCompactToolbarRow: { minHeight: 36, flexDirection: 'row', gap: 6, alignItems: 'center' },
-  ordersSearchbar: { flex: 1, height: 36, backgroundColor: '#F8FAFC', borderRadius: 9, borderWidth: 1, borderColor: '#D8E2F0', elevation: 0 },
-  ordersSearchbarInput: { fontSize: 13, color: '#0F172A', fontWeight: '700' },
+  ordersCompactToolbarRow: { minHeight: 44, flexDirection: 'row', gap: 8, alignItems: 'center' },
+  ordersSearchbar: { flex: 1, height: 44, backgroundColor: '#F8FAFC', borderRadius: 12, borderWidth: 1, borderColor: '#D8E2F0', elevation: 0 },
+  ordersSearchbarInput: { height: 40, fontSize: 14, lineHeight: 18, color: '#0F172A', fontWeight: '800' },
   ordersActionRow: { flexDirection: 'row', gap: 6, alignItems: 'center' },
-  ordersIconButton: { width: 36, height: 36, margin: 0, borderRadius: 9, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF' },
+  ordersIconButton: { width: 44, height: 44, margin: 0, borderRadius: 12, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' },
   ordersIconButtonPrimary: { borderColor: '#16A34A', backgroundColor: '#16A34A' },
-  ordersFilterButton: { width: 36, height: 36, borderRadius: 9, borderWidth: 1, borderColor: '#BFDBFE', backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center' },
-  ordersFilterBadge: { position: 'absolute', top: -5, right: -5, minWidth: 18, height: 18, borderRadius: 999, paddingHorizontal: 4, backgroundColor: '#2563EB', borderWidth: 2, borderColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' },
+  ordersIconButtonPrimaryPressed: { backgroundColor: '#15803D', borderColor: '#15803D', transform: [{ scale: 0.96 }] },
+  ordersFilterButton: { width: 44, height: 44, borderRadius: 12, borderWidth: 1, borderColor: '#BFDBFE', backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center' },
+  ordersFilterButtonPressed: { backgroundColor: '#DBEAFE', borderColor: '#93C5FD', transform: [{ scale: 0.96 }] },
+  ordersToolbarButtonDisabled: { opacity: 0.56 },
+  ordersFilterBadge: { position: 'absolute', top: -6, right: -6, minWidth: 19, height: 19, borderRadius: 999, paddingHorizontal: 4, backgroundColor: '#2563EB', borderWidth: 2, borderColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' },
   ordersFilterBadgeText: { color: '#FFFFFF', fontSize: 9, lineHeight: 11, fontWeight: '900' },
   ordersInitialLoadingState: { minHeight: 160, alignItems: 'center', justifyContent: 'center', paddingVertical: 28 },
   ordersEmptyState: { minHeight: 148, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 18, paddingVertical: 22, gap: 6 },
@@ -6663,19 +6700,18 @@ const styles = StyleSheet.create({
   ordersPaginationLoading: { minHeight: 30, alignItems: 'center', justifyContent: 'center', paddingVertical: 4 },
   ordersPaginationRetry: { alignSelf: 'center', minHeight: 32, borderRadius: 999, borderWidth: 1, borderColor: '#BFDBFE', backgroundColor: '#FFFFFF', paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
   ordersPaginationRetryText: { color: '#2563EB', fontSize: 12, lineHeight: 15, fontWeight: '900', includeFontPadding: false },
-  ordersScreenSkeleton: { gap: 7 },
-  ordersSkeletonToolbar: { minHeight: 36, flexDirection: 'row', alignItems: 'center', gap: 6 },
-  ordersSkeletonSearch: { flex: 1, height: 36, borderRadius: 9, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#EEF4FB' },
-  ordersSkeletonAction: { width: 36, height: 36, borderRadius: 9, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#EEF4FB' },
+  ordersScreenSkeleton: { gap: 0 },
+  ordersSkeletonToolbar: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  ordersSkeletonSearch: { flex: 1, height: 44, borderRadius: 12, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#EEF4FB' },
+  ordersSkeletonAction: { width: 44, height: 44, borderRadius: 12, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#EEF4FB' },
   ordersSkeletonActionPrimary: { borderColor: '#BBF7D0', backgroundColor: '#DCFCE7' },
-  ordersSkeletonList: { gap: 7 },
-  ordersSkeletonCard: { minHeight: 116, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#FFFFFF', paddingHorizontal: 10, paddingVertical: 8, gap: 7 },
+  ordersSkeletonList: { gap: 0 },
+  ordersSkeletonCard: { minHeight: 104, borderRadius: 0, borderBottomWidth: 1, borderBottomColor: '#E2E8F0', backgroundColor: '#FFFFFF', paddingHorizontal: 12, paddingVertical: 10, gap: 7 },
   ordersSkeletonTopRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 7 },
   ordersSkeletonTitleBlock: { flex: 1, minWidth: 0, gap: 5 },
-  ordersSkeletonDocument: { width: 108, height: 23, borderRadius: 8, borderWidth: 1, borderColor: '#DBEAFE', backgroundColor: '#EFF6FF' },
-  ordersSkeletonCounterparty: { width: '76%', height: 23, borderRadius: 8, backgroundColor: '#F8FAFC' },
+  ordersSkeletonDocument: { width: 108, height: 17, borderRadius: 5, backgroundColor: '#DBEAFE' },
+  ordersSkeletonCounterparty: { width: '76%', height: 15, borderRadius: 5, backgroundColor: '#EEF2F7' },
   ordersSkeletonAmount: { width: 72, height: 16, borderRadius: 999, backgroundColor: '#DBEAFE', marginTop: 2 },
-  ordersSkeletonChevron: { width: 18, height: 18, borderRadius: 999, backgroundColor: '#F1F5F9' },
   ordersSkeletonMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   ordersSkeletonPill: { width: 100, height: 24, borderRadius: 999, backgroundColor: '#F1F5F9' },
   ordersSkeletonMeta: { width: 70, height: 13, borderRadius: 999, backgroundColor: '#EEF2F7' },
@@ -6702,27 +6738,27 @@ const styles = StyleSheet.create({
   orderStatValue: { fontSize: 13, fontWeight: '900', color: '#0F172A', lineHeight: 15 },
   orderStatLabel: { fontSize: 9.5, fontWeight: '800', color: '#64748B', textTransform: 'uppercase' },
   orderCardPressable: { width: '100%' },
-  orderCardPressed: { opacity: 0.96 },
-  orderCardPaper: { position: 'relative', borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#FFFFFF', borderRadius: 12, overflow: 'hidden' },
-  orderCardPaperLocal: { borderColor: '#BFDBFE', backgroundColor: '#F8FBFF' },
-  orderCardPaperProblem: { borderColor: '#FECACA', backgroundColor: '#FFFBFB' },
-  orderCardPaperLoading: { borderColor: '#BFDBFE' },
+  orderCardPressed: { opacity: 0.92 },
+  orderCardPaper: { position: 'relative', borderRadius: 0, borderWidth: 0, borderBottomWidth: 1, borderBottomColor: '#E2E8F0', backgroundColor: '#FFFFFF', overflow: 'hidden' },
+  orderCardPaperLocal: { borderBottomColor: '#BFDBFE', backgroundColor: '#F8FBFF' },
+  orderCardPaperProblem: { borderBottomColor: '#FECACA', backgroundColor: '#FFF7F7' },
+  orderCardPaperLoading: { borderBottomColor: '#BFDBFE' },
   orderCardContentPaper: { padding: 0, paddingHorizontal: 0, paddingVertical: 0 },
   orderStatusRail: { width: 3, backgroundColor: '#E2E8F0' },
   orderStatusRailSelected: { backgroundColor: '#2563EB' },
-  orderCardBody: { flex: 1, minWidth: 0, paddingHorizontal: 10, paddingVertical: 8, gap: 7 },
-  orderCardTopRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 7 },
-  orderTitleWrap: { flex: 1, minWidth: 0, gap: 5 },
+  orderCardBody: { flex: 1, minWidth: 0, paddingHorizontal: 12, paddingVertical: 10, gap: 7 },
+  orderCardTopRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  orderTitleWrap: { flex: 1, minWidth: 0, gap: 4 },
   orderAmountWrap: { maxWidth: 116, alignItems: 'flex-end', gap: 2 },
   orderCardBottomRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   orderCard: { borderRadius: 14, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#FFFFFF', padding: 12, gap: 7 },
-  orderDocumentRow: { alignSelf: 'flex-start', maxWidth: '100%', minHeight: 23, borderRadius: 8, borderWidth: 1, borderColor: '#DBEAFE', backgroundColor: '#EFF6FF', paddingHorizontal: 7, paddingVertical: 3, flexDirection: 'row', alignItems: 'center', gap: 4 },
-  orderTitle: { flexShrink: 1, minWidth: 0, fontSize: 13.5, fontWeight: '900', color: '#0F172A', lineHeight: 16 },
-  orderAmount: { fontSize: 13, lineHeight: 16, fontWeight: '900', color: '#2563EB' },
+  orderDocumentRow: { alignSelf: 'flex-start', maxWidth: '100%', minHeight: 20, paddingHorizontal: 0, paddingVertical: 0, flexDirection: 'row', alignItems: 'center', gap: 5 },
+  orderTitle: { flexShrink: 1, minWidth: 0, fontSize: 14.5, fontWeight: '900', color: '#0F172A', lineHeight: 18 },
+  orderAmount: { fontSize: 14, lineHeight: 17, fontWeight: '900', color: '#2563EB' },
   orderStatusBadge: { width: 18, height: 18, alignItems: 'center', justifyContent: 'center', borderRadius: 999, paddingHorizontal: 0, paddingVertical: 0 },
   orderStatusPill: { flexShrink: 0, minHeight: 24, borderRadius: 999, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 4 },
   orderStatusProblem: { backgroundColor: '#FEE2E2' },
-  orderStatusText: { fontSize: 10.5, lineHeight: 13, fontWeight: '900' },
+  orderStatusText: { fontSize: 11, lineHeight: 14, fontWeight: '900' },
   orderStatusNeutral: { backgroundColor: '#F1F5F9' },
   orderStatusNeutralText: { color: '#334155' },
   orderStatusInfo: { backgroundColor: '#DBEAFE' },
@@ -6731,18 +6767,16 @@ const styles = StyleSheet.create({
   orderStatusSuccessText: { color: '#166534' },
   orderStatusDanger: { backgroundColor: '#FEE2E2' },
   orderStatusDangerText: { color: '#B91C1C' },
-  orderCounterpartyRow: { minHeight: 23, borderRadius: 8, backgroundColor: '#F8FAFC', paddingLeft: 4, paddingRight: 7, flexDirection: 'row', alignItems: 'center', gap: 5 },
-  orderCounterpartyIcon: { width: 18, height: 18, borderRadius: 6, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E2E8F0', alignItems: 'center', justifyContent: 'center' },
-  orderCounterparty: { flex: 1, minWidth: 0, fontSize: 11.5, color: '#334155', fontWeight: '800', lineHeight: 14 },
+  orderCounterpartyRow: { minHeight: 20, paddingLeft: 0, paddingRight: 0, flexDirection: 'row', alignItems: 'center', gap: 5 },
+  orderCounterpartyIcon: { width: 17, height: 17, borderRadius: 5, alignItems: 'center', justifyContent: 'center' },
+  orderCounterparty: { flex: 1, minWidth: 0, fontSize: 12.5, color: '#334155', fontWeight: '800', lineHeight: 15 },
   orderMetaRow: { flex: 1, minWidth: 0, flexDirection: 'row', flexWrap: 'nowrap', gap: 6, alignItems: 'center' },
   orderMetaItem: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  orderMetaItemWide: { flex: 1, minWidth: 104, flexDirection: 'row', alignItems: 'center', gap: 3 },
-  orderMetaCompact: { fontSize: 10.5, color: '#64748B', fontWeight: '800', lineHeight: 13 },
+  orderMetaCompact: { fontSize: 11.5, color: '#64748B', fontWeight: '800', lineHeight: 14 },
   orderMetricsRow: { flexDirection: 'row', gap: 6 },
   orderMetric: { flex: 1, minWidth: 0, borderRadius: 6, backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', paddingHorizontal: 7, paddingVertical: 5 },
   orderMetricLabel: { fontSize: 9, fontWeight: '900', color: '#64748B', textTransform: 'uppercase' },
   orderMetricValue: { marginTop: 2, fontSize: 11.5, fontWeight: '900', color: '#0F172A' },
-  orderUpdated: { flex: 1, minWidth: 0, fontSize: 10.5, color: '#94A3B8', fontWeight: '700', lineHeight: 13 },
   orderProblemRow: { minHeight: 24, borderRadius: 8, backgroundColor: '#FEF2F2', paddingHorizontal: 7, flexDirection: 'row', alignItems: 'center', gap: 5 },
   orderProblemText: { flex: 1, minWidth: 0, fontSize: 11, lineHeight: 14, fontWeight: '800', color: '#B91C1C' },
   orderCardLoadingOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', zIndex: 4, elevation: 4 },

@@ -26,7 +26,10 @@ export default function ServicesScreen() {
     () => getServiceGridMetrics({ width, platform: Platform.OS === 'web' ? 'web' : 'native', isMobileLayout: true }),
     [width]
   );
-  const visibleServices = useMemo(() => getVisibleServices(services), [services]);
+  const visibleServices = useMemo(
+    () => getVisibleServices(services).filter((item) => item.key !== 'tasks'),
+    [services]
+  );
 
   useFocusEffect(
     React.useCallback(() => {

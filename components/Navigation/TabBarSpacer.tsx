@@ -1,5 +1,5 @@
 import React from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   FLOATING_TAB_BAR_BOTTOM_OFFSET,
@@ -8,6 +8,7 @@ import {
 
 export function useTabBarSpacerHeight() {
   const insets = useSafeAreaInsets();
+  if (Platform.OS !== 'web') return 0;
   return FLOATING_TAB_BAR_HEIGHT + FLOATING_TAB_BAR_BOTTOM_OFFSET + insets.bottom;
 }
 

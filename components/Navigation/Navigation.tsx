@@ -11,6 +11,21 @@ import {
 } from '@/src/features/navigation/LastServiceRouteContext';
 import { UnsavedChangesProvider } from '@/src/features/navigation/UnsavedChangesContext';
 
+const NATIVE_DEFAULT_ROUTE = '/services';
+const WEB_DEFAULT_ROUTE = '/home';
+
+const normalizeNavigationPath = (path: string | null | undefined) => {
+  const clean = String(path || '')
+    .split('?')[0]
+    .split('#')[0]
+    .trim()
+    .replace(/\/\([^/]+\)/g, '')
+    .replace(/\/+/g, '/');
+  return clean.length > 1 && clean.endsWith('/') ? clean.slice(0, -1) : clean;
+};
+
+const isNativeHiddenRootRoute = (path: string) => path === '/home' || path === '/tasks';
+
 function ServicesRouteGuard() {
   const pathname = usePathname();
   const router = useRouter();
@@ -18,18 +33,8 @@ function ServicesRouteGuard() {
   const previousPathRef = React.useRef<string | null>(null);
 
   React.useEffect(() => {
-    const normalizePath = (path: string | null | undefined) => {
-      const clean = String(path || '')
-        .split('?')[0]
-        .split('#')[0]
-        .trim()
-        .replace(/\/\([^/]+\)/g, '')
-        .replace(/\/+/g, '/');
-      return clean.length > 1 && clean.endsWith('/') ? clean.slice(0, -1) : clean;
-    };
-
-    const previousPath = normalizePath(previousPathRef.current);
-    const currentPath = normalizePath(pathname);
+    const previousPath = normalizeNavigationPath(previousPathRef.current);
+    const currentPath = normalizeNavigationPath(pathname);
     previousPathRef.current = currentPath || null;
     if (!lastService) return;
 
@@ -39,7 +44,13 @@ function ServicesRouteGuard() {
     }
 
     if (currentPath !== '/services') return;
-    if (!previousPath || previousPath.startsWith('/services')) return;
+    if (previousPath.startsWith('/services')) return;
+
+    const shouldRestoreLastService =
+      Platform.OS === 'web'
+        ? !!previousPath
+        : !previousPath || previousPath === '/' || isNativeHiddenRootRoute(previousPath);
+    if (!shouldRestoreLastService) return;
 
     if (lastService.lastServiceRoute) {
       router.replace(lastService.lastServiceRoute as any);
@@ -58,9 +69,11 @@ export default function Navigation() {
   const { width } = useWindowDimensions();
   const pathname = usePathname();
   const router = useRouter();
-  const useMobileLayout = !isWeb || width <= 820;
-  const currentPath = pathname && pathname.trim().length > 0 ? pathname : '/home';
-  const lastPathRef = React.useRef<string>('/home');
+  const useNativeLayout = !isWeb;
+  const useMobileLayout = useNativeLayout || width <= 820;
+  const defaultMainRoute = useNativeLayout ? NATIVE_DEFAULT_ROUTE : WEB_DEFAULT_ROUTE;
+  const currentPath = pathname && pathname.trim().length > 0 ? pathname : defaultMainRoute;
+  const lastPathRef = React.useRef<string>(defaultMainRoute);
   const lastLayoutRef = React.useRef<boolean>(useMobileLayout);
   const currentPathRef = React.useRef<string>(currentPath);
   const restoreTimersRef = React.useRef<Array<ReturnType<typeof setTimeout>>>([]);
@@ -76,7 +89,7 @@ export default function Navigation() {
     if (lastLayoutRef.current === useMobileLayout) return;
     lastLayoutRef.current = useMobileLayout;
     clearRestoreTimers();
-    const restorePath = lastPathRef.current || '/home';
+    const restorePath = lastPathRef.current || defaultMainRoute;
     const tryRestore = () => {
       if (currentPathRef.current === restorePath) return;
       router.replace(restorePath as any);
@@ -86,11 +99,21 @@ export default function Navigation() {
     restoreTimersRef.current.push(setTimeout(tryRestore, 40));
     restoreTimersRef.current.push(setTimeout(tryRestore, 160));
     restoreTimersRef.current.push(setTimeout(tryRestore, 340));
-  }, [clearRestoreTimers, router, useMobileLayout]);
+  }, [clearRestoreTimers, defaultMainRoute, router, useMobileLayout]);
 
   React.useEffect(() => {
-    lastPathRef.current = currentPath;
-  }, [currentPath]);
+    const cleanPath = normalizeNavigationPath(currentPath);
+    lastPathRef.current = useNativeLayout && isNativeHiddenRootRoute(cleanPath)
+      ? NATIVE_DEFAULT_ROUTE
+      : currentPath;
+  }, [currentPath, useNativeLayout]);
+
+  React.useEffect(() => {
+    if (!useNativeLayout) return;
+    const cleanPath = normalizeNavigationPath(currentPath);
+    if (!isNativeHiddenRootRoute(cleanPath)) return;
+    router.replace(NATIVE_DEFAULT_ROUTE as any);
+  }, [currentPath, router, useNativeLayout]);
 
   React.useEffect(() => {
     return () => {
@@ -104,7 +127,7 @@ export default function Navigation() {
         <UnsavedChangesProvider>
           <TabBarVisibilityProvider>
             <ServicesRouteGuard />
-            <MobileTabs />
+            {useNativeLayout ? <Slot /> : <MobileTabs />}
           </TabBarVisibilityProvider>
         </UnsavedChangesProvider>
       </LastServiceRouteProvider>

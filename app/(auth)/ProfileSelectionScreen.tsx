@@ -32,6 +32,7 @@ import CustomAlert from '@/components/CustomAlert';
 
 export default function ProfileSelectionScreen() {
   const router = useRouter();
+  const defaultMainRoute = (Platform.OS === 'web' ? '/home' : '/services') as RelativePathString;
   const auth = useContext(AuthContext);
   if (!auth) throw new Error('AuthContext is required');
   const { setProfile, profile, signOut } = auth;
@@ -195,7 +196,7 @@ export default function ProfileSelectionScreen() {
       setApiMessage({ text: 'Профиль сотрудника успешно создан', isError: false });
       const gate = getProfileGate(createdProfile);
       if (gate === 'active') {
-        router.replace('/home' as RelativePathString);
+        router.replace(defaultMainRoute);
       } else if (gate === 'pending') {
         router.replace('/(auth)/ProfilePendingScreen' as RelativePathString);
       } else if (gate === 'blocked') {
@@ -221,7 +222,7 @@ export default function ProfileSelectionScreen() {
             await setProfile(fresh);
             const gate = getProfileGate(fresh);
             if (gate === 'active') {
-              router.replace('/home' as RelativePathString);
+              router.replace(defaultMainRoute);
               return;
             }
             if (gate === 'pending') {
@@ -260,7 +261,7 @@ export default function ProfileSelectionScreen() {
         await setProfile(updated);
         const gate = getProfileGate(updated);
         if (gate === 'active') {
-          router.replace('/home' as RelativePathString);
+          router.replace(defaultMainRoute);
         } else if (gate === 'pending') {
           router.replace('/(auth)/ProfilePendingScreen' as RelativePathString);
         } else if (gate === 'blocked') {

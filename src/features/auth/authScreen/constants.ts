@@ -15,7 +15,7 @@ export const STORAGE_KEYS = {
 } as const;
 
 export const ROUTES = {
-  HOME: '/home' as Href,
+  HOME: (Platform.OS === 'web' ? '/home' : '/services') as Href,
   PROFILE: '/ProfileSelectionScreen' as Href,
   PENDING: '/(auth)/ProfilePendingScreen' as Href,
   BLOCKED: '/(auth)/ProfileBlockedScreen' as Href,

@@ -2,7 +2,7 @@ import {
   FLOATING_TAB_BAR_BOTTOM_OFFSET,
   FLOATING_TAB_BAR_HEIGHT,
 } from '@/components/Navigation/FloatingTabBar';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Keyboard, PanResponder, Platform, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { departurePrimaryText, routePointAddress } from '../lib/formatters';
@@ -119,6 +119,16 @@ export default function TransportTasksMobileSheet({
   useEffect(() => {
     setBodyContentHeight(0);
   }, [selectedTask?.guid]);
+
+  const handleHeaderHeightChange = useCallback((height: number) => {
+    const nextHeight = Math.ceil(height);
+    setHeaderHeight((current) => (Math.abs(current - nextHeight) <= 1 ? current : nextHeight));
+  }, []);
+
+  const handleBodyContentHeightChange = useCallback((height: number) => {
+    const nextHeight = Math.ceil(height);
+    setBodyContentHeight((current) => (Math.abs(current - nextHeight) <= 1 ? current : nextHeight));
+  }, []);
 
   useEffect(() => {
     if (collapseRequestId === lastCollapseRequestRef.current) return;
@@ -258,7 +268,7 @@ export default function TransportTasksMobileSheet({
           meta={meta}
           currentText={currentText}
           onToggle={() => setExpanded((current) => !current)}
-          onHeightChange={setHeaderHeight}
+          onHeightChange={handleHeaderHeightChange}
           panHandlers={panResponder.panHandlers}
         />
         <Animated.View style={[styles.body, animatedBodyStyle]}>
@@ -272,7 +282,7 @@ export default function TransportTasksMobileSheet({
             tasksHasMore={tasksHasMore}
             routeForView={routeForView}
             departurePoint={departurePoint}
-            onBodyContentHeightChange={setBodyContentHeight}
+            onBodyContentHeightChange={handleBodyContentHeightChange}
             onPositionEditFocusChange={handlePositionEditFocusChange}
             {...rest}
           />

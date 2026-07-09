@@ -1,6 +1,6 @@
 import { usePathname, useRouter } from 'expo-router';
 import React, { useEffect, useRef } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator, Platform, View } from 'react-native';
 
 import { AuthContext } from '@/context/AuthContext';
 import { useThemeColor } from '@/hooks/useThemeColor';
@@ -32,7 +32,9 @@ export default function RootRedirect() {
       : gateState === 'active'
       ? startAppealId
         ? `/(main)/services/appeals/${startAppealId}`
-        : '/home'
+        : Platform.OS === 'web'
+        ? '/home'
+        : '/services'
       : gateState === 'pending'
       ? '/(auth)/ProfilePendingScreen'
       : gateState === 'blocked'

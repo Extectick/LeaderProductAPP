@@ -14,6 +14,7 @@ import CustomAlert from '@/components/CustomAlert';
 
 export default function ProfilePendingScreen() {
   const router = useRouter();
+  const defaultMainRoute = (Platform.OS === 'web' ? '/home' : '/services') as RelativePathString;
   const auth = useContext(AuthContext);
   if (!auth) throw new Error('AuthContext is required');
   const { signOut, setProfile, profile } = auth;
@@ -32,9 +33,9 @@ export default function ProfilePendingScreen() {
 
   useEffect(() => {
     if (gate === 'active') {
-      router.replace('/home' as RelativePathString);
+      router.replace(defaultMainRoute);
     }
-  }, [gate, router]);
+  }, [defaultMainRoute, gate, router]);
 
   const handleRefresh = useCallback(
     async (opts?: { silent?: boolean }) => {
@@ -46,7 +47,7 @@ export default function ProfilePendingScreen() {
         if (fresh) await setProfile(fresh);
         const nextGate = getProfileGate(fresh);
         if (nextGate === 'active') {
-          router.replace('/home' as RelativePathString);
+          router.replace(defaultMainRoute);
         }
       } catch (e: any) {
         if (!opts?.silent) {
@@ -57,7 +58,7 @@ export default function ProfilePendingScreen() {
         if (!opts?.silent) setChecking(false);
       }
     },
-    [router, setProfile]
+    [defaultMainRoute, router, setProfile]
   );
 
   useEffect(() => {

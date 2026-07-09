@@ -14,6 +14,7 @@ import CustomAlert from '@/components/CustomAlert';
 
 export default function ProfileBlockedScreen() {
   const router = useRouter();
+  const defaultMainRoute = (Platform.OS === 'web' ? '/home' : '/services') as RelativePathString;
   const auth = useContext(AuthContext);
   if (!auth) throw new Error('AuthContext is required');
   const { signOut, setProfile, profile } = auth;
@@ -35,7 +36,7 @@ export default function ProfileBlockedScreen() {
       if (fresh) await setProfile(fresh);
       const nextGate = getProfileGate(fresh);
       if (nextGate === 'active') {
-        router.replace('/home' as RelativePathString);
+        router.replace(defaultMainRoute);
       } else if (nextGate === 'pending') {
         router.replace('/(auth)/ProfilePendingScreen' as RelativePathString);
       }

@@ -4,7 +4,7 @@ import { ThemedView } from '@/components/ThemedView';
 import { IconSymbol } from '@/components/ui/IconSymbol';
 import { Colors } from '@/constants/Colors';
 import { RelativePathString, useLocalSearchParams, useRouter } from 'expo-router';
-import { StyleSheet, View } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 
 const errorMessages = {
   profile_blocked: 'Ваш профиль заблокирован',
@@ -15,6 +15,7 @@ const errorMessages = {
 export default function AccessDeniedScreen() {
   const router = useRouter();
   const { reason } = useLocalSearchParams<{ reason?: keyof typeof errorMessages }>();
+  const defaultMainRoute = (Platform.OS === 'web' ? '/home' : '/services') as RelativePathString;
 
   const message = reason && errorMessages[reason] 
     ? errorMessages[reason] 
@@ -36,7 +37,7 @@ export default function AccessDeniedScreen() {
           {message}
         </ThemedText>
         <AnimatedButton 
-          onPress={() => router.replace('/home' as RelativePathString)}
+          onPress={() => router.replace(defaultMainRoute)}
           style={styles.button}
           title="Обновить"
         />

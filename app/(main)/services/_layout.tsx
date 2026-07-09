@@ -3,12 +3,15 @@ import { AppHeader } from '@/components/AppHeader';
 import React, { useEffect, useMemo, useRef } from 'react';
 import { useNotify } from '@/components/NotificationHost';
 import { Ionicons } from '@expo/vector-icons';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image as ExpoImage } from 'expo-image';
+import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { AuthContext } from '@/context/AuthContext';
+import type { Profile } from '@/src/entities/user/types';
 import { useServicesData } from '@/src/features/services/hooks/useServicesData';
 import { useOptionalLastServiceRoute } from '@/src/features/navigation/LastServiceRouteContext';
 import { useOptionalUnsavedChanges } from '@/src/features/navigation/UnsavedChangesContext';
 import { ServicesHeaderSlotProvider, type ServicesHeaderOverride } from '@/src/features/services/headerSlotContext';
-import ServicesCatalogStatusAction from '@/src/features/services/ui/ServicesCatalogStatusAction';
+import { useServerStatus } from '@/src/shared/network/useServerStatus';
 
 type HeaderMeta = {
   title: string;
@@ -17,6 +20,9 @@ type HeaderMeta = {
   parent?: string;
   subtitle?: string;
 };
+
+const loadedProfileAvatarKeys = new Set<string>();
+const visibleProfileAvatarUrls = new Map<string, string>();
 
 const headerMap: Record<string, HeaderMeta> = {
   index: { title: 'Каталог сервисов', icon: 'apps-outline', showBack: false, subtitle: 'Все доступные сервисы' },
@@ -45,17 +51,23 @@ const headerMap: Record<string, HeaderMeta> = {
 
 export default function ServicesLayout() {
   const router = useRouter();
+  const auth = React.useContext(AuthContext);
   const pathname = usePathname();
   const globalParams = useGlobalSearchParams<{ backTo?: string; from?: string }>();
   const notify = useNotify();
   const lastService = useOptionalLastServiceRoute();
   const unsavedChanges = useOptionalUnsavedChanges();
+  const serverStatus = useServerStatus();
   const { services, loading, loadServices } = useServicesData();
   const lastAlertRef = useRef<string | null>(null);
   const accessRefreshRef = useRef<string | null>(null);
   const [trackingHeaderBottomSlot, setTrackingHeaderBottomSlot] = React.useState<React.ReactNode | null>(null);
   const [trackingHeaderRightSlot, setTrackingHeaderRightSlot] = React.useState<React.ReactNode | null>(null);
   const [headerOverride, setHeaderOverride] = React.useState<ServicesHeaderOverride | null>(null);
+  const profileAvatarUrl = React.useMemo(() => resolveProfileAvatarUrl(auth?.profile), [auth?.profile]);
+  const profileInitials = React.useMemo(() => resolveProfileInitials(auth?.profile), [auth?.profile]);
+  const profileAvatarKey = auth?.profile?.id ? `user:${auth.profile.id}` : profileAvatarUrl || 'anonymous';
+  const catalogOffline = serverStatus.isReachable === false;
   const headerSlotContextValue = React.useMemo(
     () => ({
       setHeaderBottomSlot: setTrackingHeaderBottomSlot,
@@ -123,7 +135,7 @@ export default function ServicesLayout() {
           const isAppeals = name?.includes('appeals');
           const isAppealsList = name === 'appeals' || name === 'appeals/index' || name === 'appeals/index.web';
           const showCreateInHeader = /^\/services\/appeals\/?$/.test(currentPath);
-          const showCatalogStatusAction = isCatalogPath;
+          const showCatalogProfileAction = Platform.OS !== 'web' && isCatalogPath;
 
           if (!meta && isAppeals) {
             meta = {
@@ -185,11 +197,18 @@ export default function ServicesLayout() {
           const showTrackingBottomSlot = /^\/services\/tracking(?:\/.*)?$/.test(currentPath);
           const isClientOrdersPath = /^\/services\/client_orders(?:\/.*)?$/.test(currentPath);
           const showCloudInHeader = showCloudServiceInHeader && !showCreateInHeader && !isClientOrdersPath;
-          const shouldRenderRight = showCatalogStatusAction || showCreateInHeader || showCloudInHeader;
+          const shouldRenderRight = showCatalogProfileAction || showCreateInHeader || showCloudInHeader;
           const rightSlot = shouldRenderRight ? (
             <View style={styles.rightHeaderRow}>
-              {showCatalogStatusAction ? (
-                <ServicesCatalogStatusAction loadServices={loadServices} />
+              {showCatalogProfileAction ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Профиль"
+                  onPress={() => router.push('/profile')}
+                  style={({ pressed }) => [styles.profileHeaderAction, pressed ? styles.profileHeaderActionPressed : null]}
+                >
+                  <MemoCatalogProfileAvatar offline={catalogOffline} avatarUrl={profileAvatarUrl} avatarKey={profileAvatarKey} initials={profileInitials} />
+                </Pressable>
               ) : null}
               {showCloudInHeader ? (
                 <Pressable
@@ -250,6 +269,8 @@ export default function ServicesLayout() {
                 rightSlot={resolvedHeaderRightSlot}
                 bottomSlot={resolvedHeaderBottomSlot}
                 surfaceVisible={activeHeaderOverride?.surfaceVisible ?? !isCatalogPath}
+                surfaceOverrideColor={activeHeaderOverride ? undefined : (isCatalogPath && catalogOffline ? 'rgba(254, 226, 226, 0.94)' : undefined)}
+                borderOverrideColor={activeHeaderOverride ? undefined : (isCatalogPath && catalogOffline ? 'rgba(248, 113, 113, 0.28)' : undefined)}
                 entranceMotion={activeHeaderOverride?.entranceMotion ?? (isClientOrdersPath ? 'none' : isCatalogPath ? 'fade' : 'slide')}
                 variant={activeHeaderOverride?.variant ?? 'default'}
                 showServerStatus={activeHeaderOverride?.showServerStatus ?? !isCatalogPath}
@@ -263,11 +284,147 @@ export default function ServicesLayout() {
   );
 }
 
+function resolveProfileAvatarUrl(profile: Profile | null | undefined) {
+  return (
+    profile?.avatarUrl ||
+    profile?.employeeProfile?.avatarUrl ||
+    profile?.clientProfile?.avatarUrl ||
+    profile?.supplierProfile?.avatarUrl ||
+    null
+  );
+}
+
+function resolveProfileInitials(profile: Profile | null | undefined) {
+  const parts = [profile?.firstName, profile?.lastName]
+    .map((part) => String(part || '').trim())
+    .filter(Boolean);
+  if (parts.length) {
+    return parts.slice(0, 2).map((part) => part[0]?.toUpperCase()).join('');
+  }
+  const email = String(profile?.email || '').trim();
+  return email ? email[0]?.toUpperCase() || 'P' : 'P';
+}
+
+function CatalogProfileAvatar({
+  offline,
+  avatarUrl,
+  avatarKey,
+  initials,
+}: {
+  offline: boolean;
+  avatarUrl: string | null;
+  avatarKey: string;
+  initials: string;
+}) {
+  const [loading, setLoading] = React.useState(() => Boolean(avatarUrl && !loadedProfileAvatarKeys.has(avatarKey)));
+  const [failed, setFailed] = React.useState(false);
+  const [displayAvatarUrl, setDisplayAvatarUrl] = React.useState<string | null>(() => visibleProfileAvatarUrls.get(avatarKey) || avatarUrl);
+  const [pendingAvatarUrl, setPendingAvatarUrl] = React.useState<string | null>(null);
+  const displayAvatarSource = React.useMemo(() => (displayAvatarUrl ? { uri: displayAvatarUrl } : null), [displayAvatarUrl]);
+  const pendingAvatarSource = React.useMemo(() => (pendingAvatarUrl ? { uri: pendingAvatarUrl } : null), [pendingAvatarUrl]);
+
+  React.useEffect(() => {
+    setFailed(false);
+    if (!avatarUrl) {
+      visibleProfileAvatarUrls.delete(avatarKey);
+      setDisplayAvatarUrl(null);
+      setPendingAvatarUrl(null);
+      setLoading(false);
+      return;
+    }
+    if (!displayAvatarUrl) {
+      setDisplayAvatarUrl(avatarUrl);
+      setPendingAvatarUrl(null);
+      setLoading(!loadedProfileAvatarKeys.has(avatarKey));
+      return;
+    }
+    if (displayAvatarUrl !== avatarUrl) {
+      setPendingAvatarUrl(avatarUrl);
+      setLoading(false);
+      return;
+    }
+    setPendingAvatarUrl(null);
+    setLoading(false);
+  }, [avatarKey, avatarUrl, displayAvatarUrl]);
+
+  const showAvatar = Boolean(displayAvatarSource && !failed);
+
+  if (offline) {
+    return (
+      <View style={styles.profileHeaderOffline}>
+        <Ionicons name="cloud-offline-outline" size={24} color="#DC2626" />
+      </View>
+    );
+  }
+
+  return (
+    <>
+      {showAvatar ? (
+        <ExpoImage
+          source={displayAvatarSource}
+          style={styles.profileHeaderAvatar}
+          contentFit="cover"
+          cachePolicy="memory-disk"
+          recyclingKey={displayAvatarUrl || 'profile-avatar'}
+          transition={0}
+          onLoadStart={() => {
+            if (!displayAvatarUrl || loadedProfileAvatarKeys.has(avatarKey)) return;
+            setLoading((current) => (current ? current : true));
+          }}
+          onLoadEnd={() => {
+            if (displayAvatarUrl) {
+              loadedProfileAvatarKeys.add(avatarKey);
+              visibleProfileAvatarUrls.set(avatarKey, displayAvatarUrl);
+            }
+            setLoading((current) => (current ? false : current));
+          }}
+          onError={() => {
+            setFailed(true);
+            setLoading((current) => (current ? false : current));
+          }}
+        />
+      ) : (
+        <View style={styles.profileHeaderFallback}>
+          <Text style={styles.profileHeaderFallbackText}>{initials}</Text>
+        </View>
+      )}
+      {pendingAvatarSource ? (
+        <ExpoImage
+          pointerEvents="none"
+          source={pendingAvatarSource}
+          style={styles.profileHeaderAvatarPreload}
+          contentFit="cover"
+          cachePolicy="memory-disk"
+          recyclingKey={`pending-${pendingAvatarUrl}`}
+          onLoad={() => {
+            if (!pendingAvatarUrl) return;
+            loadedProfileAvatarKeys.add(avatarKey);
+            visibleProfileAvatarUrls.set(avatarKey, pendingAvatarUrl);
+            setDisplayAvatarUrl(pendingAvatarUrl);
+            setPendingAvatarUrl(null);
+          }}
+          onError={() => setPendingAvatarUrl(null)}
+        />
+      ) : null}
+      {showAvatar && loading ? (
+        <View pointerEvents="none" style={styles.profileHeaderAvatarLoader}>
+          <ActivityIndicator size="small" color="#FFFFFF" />
+        </View>
+      ) : null}
+    </>
+  );
+}
+
+const MemoCatalogProfileAvatar = React.memo(CatalogProfileAvatar);
+
 const styles = StyleSheet.create({
   rightHeaderRow: {
+    position: 'relative',
+    minWidth: 86,
+    minHeight: 46,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
   },
   cloudHeaderAction: {
     width: 32,
@@ -281,6 +438,58 @@ const styles = StyleSheet.create({
   },
   cloudHeaderActionPressed: {
     opacity: 0.78,
+  },
+  profileHeaderAction: {
+    position: 'absolute',
+    right: -12,
+    top: -12,
+    width: 64,
+    height: 70,
+    borderTopLeftRadius: 0,
+    borderBottomLeftRadius: 0,
+    borderTopRightRadius: 22,
+    borderBottomRightRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  profileHeaderActionPressed: {
+    opacity: 0.86,
+    transform: [{ scale: 0.97 }],
+  },
+  profileHeaderAvatar: {
+    width: '100%',
+    height: '100%',
+  },
+  profileHeaderAvatarPreload: {
+    ...StyleSheet.absoluteFillObject,
+    opacity: 0,
+  },
+  profileHeaderAvatarLoader: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(15, 23, 42, 0.24)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  profileHeaderFallback: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0F766E',
+  },
+  profileHeaderFallbackText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: '900',
+  },
+  profileHeaderOffline: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FEE2E2',
   },
   createBtn: {
     minHeight: 34,

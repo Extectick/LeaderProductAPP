@@ -75,6 +75,7 @@ export default function TransportTasksMobileSheetContent({
   const selectedTaskNotice = transportTaskStatusNotice(selectedTask?.status);
   const [toolbarBlockHeight, setToolbarBlockHeight] = React.useState(0);
   const [activePositionEditingIndex, setActivePositionEditingIndex] = React.useState<number | null>(null);
+  const lastReportedBodyContentHeightRef = React.useRef(0);
 
   const handleScroll = React.useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -94,6 +95,13 @@ export default function TransportTasksMobileSheetContent({
     const nextHeight = Math.ceil(event.nativeEvent.layout.height);
     setToolbarBlockHeight((current) => (current === nextHeight ? current : nextHeight));
   }, []);
+
+  const handleBodyContentSizeChange = React.useCallback((_width: number, height: number) => {
+    const nextHeight = Math.ceil(height + toolbarBlockHeight);
+    if (Math.abs(lastReportedBodyContentHeightRef.current - nextHeight) <= 1) return;
+    lastReportedBodyContentHeightRef.current = nextHeight;
+    onBodyContentHeightChange?.(nextHeight);
+  }, [onBodyContentHeightChange, toolbarBlockHeight]);
 
   const handlePositionEditFocus = React.useCallback((index: number) => {
     setActivePositionEditingIndex(index);
@@ -241,7 +249,7 @@ export default function TransportTasksMobileSheetContent({
         nestedScrollEnabled
         onScroll={handleScroll}
         scrollEventThrottle={120}
-        onContentSizeChange={(_width, height) => onBodyContentHeightChange?.(height + toolbarBlockHeight)}
+        onContentSizeChange={handleBodyContentSizeChange}
       >
         {selectedTask ? (
           <>
