@@ -522,6 +522,12 @@ function CredentialsSection({
   return (
     <>
       <View style={styles.credentialsCard}>
+        <View style={styles.settingsHeader}>
+          <View style={styles.settingsIcon}>
+            <Ionicons name="key-outline" size={17} color="#1E293B" />
+          </View>
+          <Text style={styles.settingsTitle}>Безопасность</Text>
+        </View>
         {error ? <Text style={styles.credentialsError}>{error}</Text> : null}
         {notice ? <Text style={styles.credentialsNotice}>{notice}</Text> : null}
 
@@ -1440,7 +1446,7 @@ function RefreshButton({ onPress, loading }: { onPress: () => void; loading: boo
 
   return (
     <Animated.View
-      style={[aStyle, { overflow: 'hidden', borderRadius: 12, alignItems: 'center', marginTop: 16 }]}
+      style={[aStyle, { overflow: 'hidden', borderRadius: 12, alignItems: 'center' }]}
     >
       <Pressable
         onPressIn={() => (scale.value = withSpring(0.97, { damping: 18, stiffness: 260 }))}
@@ -1473,7 +1479,6 @@ function LogoutButton() {
   const scale = useSharedValue(1);
   const aStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
   const router = useRouter();
-  const baseBg = '#6366F1';
 
   const signOut = useCallback(async () => {
     try {
@@ -1490,7 +1495,7 @@ function LogoutButton() {
   return (
     <>
       <Animated.View
-        style={[aStyle, { overflow: 'hidden', borderRadius: 12, alignItems: 'center', marginTop: 16 }]}
+        style={[aStyle, { overflow: 'hidden', borderRadius: 12, alignItems: 'center' }]}
       >
         <Pressable
           onPressIn={() => (scale.value = withSpring(0.97, { damping: 18, stiffness: 260 }))}
@@ -1501,10 +1506,10 @@ function LogoutButton() {
           android_ripple={{ color: '#5B21B6' }}
           style={({ pressed }) => [
             styles.logoutBtn,
-            pressed ? { backgroundColor: shadeColor(baseBg, 0.12) } : null,
+            pressed ? { backgroundColor: '#FEF2F2' } : null,
           ]}
         >
-          <Ionicons name="log-out-outline" size={18} color="#fff" />
+          <Ionicons name="log-out-outline" size={18} color="#B91C1C" />
           <Text style={styles.logoutText}>Выйти из аккаунта</Text>
         </Pressable>
       </Animated.View>
@@ -1548,6 +1553,9 @@ function TrackingToggle() {
 
   return (
     <View style={styles.trackingRow}>
+      <View style={styles.settingsIcon}>
+        <Ionicons name="navigate-outline" size={17} color="#1E293B" />
+      </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.trackingTitle}>Отслеживание маршрута</Text>
         <Text style={styles.trackingSubtitle}>
@@ -1562,8 +1570,10 @@ function TrackingToggle() {
 const styles = StyleSheet.create({
   scroll: { flex: 1, backgroundColor: Colors.leaderprod.background },
   scrollContent: {
-    padding: 16,
-    ...Platform.select({ web: { maxWidth: 900, marginHorizontal: 'auto' }, default: {} }),
+    paddingHorizontal: 14,
+    paddingBottom: 16,
+    gap: 12,
+    ...Platform.select({ web: { width: '100%', maxWidth: 920, marginHorizontal: 'auto' }, default: {} }),
   },
   loaderWrap: {
     flex: 1,
@@ -1572,14 +1582,14 @@ const styles = StyleSheet.create({
   },
   loaderCard: {
     marginTop: 8,
-    borderRadius: 12,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    backgroundColor: 'rgba(255,255,255,0.92)',
+    backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    paddingVertical: 18,
+    paddingVertical: 22,
   },
   loaderText: {
     color: '#475569',
@@ -1587,17 +1597,38 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   trackingRow: {
-    marginTop: 16,
-    padding: 16,
-    borderRadius: 12,
-    backgroundColor: '#EEF2FF',
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 12,
   },
-  trackingTitle: { fontWeight: '600', fontSize: 16, marginBottom: 4 },
-  trackingSubtitle: { fontSize: 12, color: '#4B5563' },
-  logoutSkeleton: { marginTop: 16 },
+  trackingTitle: { fontWeight: '800', fontSize: 14, color: '#0F172A', marginBottom: 3 },
+  trackingSubtitle: { fontSize: 12, color: '#64748B', lineHeight: 16 },
+  settingsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    marginBottom: 2,
+  },
+  settingsIcon: {
+    width: 26,
+    height: 26,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  settingsTitle: {
+    color: '#0F172A',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  logoutSkeleton: {},
   refreshBtn: {
     backgroundColor: Colors.leaderprod.button,
     paddingHorizontal: 16,
@@ -1771,13 +1802,13 @@ const styles = StyleSheet.create({
   saveBtnDisabled: { backgroundColor: Colors.leaderprod.buttonDisabled },
   saveBtnText: { color: '#fff', fontWeight: '800' },
   credentialsCard: {
-    marginTop: 16,
-    padding: 16,
-    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: '#E2E8F0',
     backgroundColor: '#FFFFFF',
-    gap: 10,
+    gap: 11,
   },
   credentialsTitle: { fontSize: 16, fontWeight: '800', color: '#0F172A' },
   credentialsSubtitle: { fontSize: 12, color: '#64748B' },
@@ -1881,14 +1912,18 @@ const styles = StyleSheet.create({
   cancelBtnDisabled: { opacity: 0.6 },
   cancelBtnText: { color: '#111827', fontWeight: '700' },
   logoutBtn: {
-    backgroundColor: '#6366F1',
+    backgroundColor: '#FFFFFF',
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FECACA',
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 8,
+    width: '100%',
   },
-  logoutText: { color: '#fff', fontWeight: '800' },
+  logoutText: { color: '#B91C1C', fontWeight: '800' },
 });
 

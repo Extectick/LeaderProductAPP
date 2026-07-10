@@ -51,6 +51,7 @@ import {
   mergeDraftPackagesForProduct,
   getOrderActivityAt,
   hasManualPrice,
+  getDefaultClientOrderDeliveryDate,
   normalizePackageGuid,
   normalizeDraftOrder,
   orderToDraft,
@@ -375,7 +376,7 @@ function emptySelections(): DraftSelections {
 function buildDraftBase(settings: ClientOrderSettings | null) {
   return {
     organizationGuid: settings?.preferredOrganization?.guid || '',
-    deliveryDate: settings?.resolvedDeliveryDate || null,
+    deliveryDate: getDefaultClientOrderDeliveryDate(),
     currency: DEFAULT_ORDER_CURRENCY,
     priceTypeGuid: null,
     priceTypeName: null,

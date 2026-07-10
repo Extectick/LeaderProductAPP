@@ -1,7 +1,9 @@
 import { API_BASE_URL } from '@/utils/config';
 import {
+  getLastRefreshFailure,
   getAccessToken,
   handleBackendUnavailable,
+  hasAuthSessionExpired,
   logout,
   refreshToken as refreshTokens,
 } from '@/utils/tokenService';
@@ -119,10 +121,39 @@ export async function httpRequest<Req = undefined, Res = any>(
       addMonitoringBreadcrumb('http_401_refresh_attempt', { path });
       const newToken = await refreshTokens();
       if (!newToken) {
-        await logout();
-        setServerUnavailable('Unauthorized');
         addMonitoringBreadcrumb('http_401_refresh_failed', { path });
-        return { ok: false, status: 401, message: 'Unauthorized - token expired', errorCode: 'UNAUTHORIZED' };
+        const failure = getLastRefreshFailure();
+        if (hasAuthSessionExpired() || failure?.kind === 'invalid') {
+          setServerReachable();
+          return {
+            ok: false,
+            status: 401,
+            message: 'Сессия истекла. Войдите заново.',
+            errorCode: 'UNAUTHORIZED',
+          };
+        }
+
+        if (failure?.kind === 'network') {
+          return {
+            ok: false,
+            status: 0,
+            message: failure.message || 'Не удалось обновить сессию: сервер недоступен.',
+            errorCode: 'NETWORK_UNAVAILABLE',
+          };
+        }
+
+        if (failure?.kind === 'server') {
+          return {
+            ok: false,
+            status: failure.status || 503,
+            message: failure.message || 'Не удалось обновить сессию: ошибка сервера.',
+            errorCode: 'SERVER_ERROR',
+          };
+        }
+
+        await logout();
+        setServerReachable();
+        return { ok: false, status: 401, message: 'Сессия истекла. Войдите заново.', errorCode: 'UNAUTHORIZED' };
       }
       token = newToken;
       response = await doFetch(token);

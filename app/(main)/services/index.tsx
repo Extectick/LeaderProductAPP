@@ -2,11 +2,13 @@ import TabBarSpacer from '@/components/Navigation/TabBarSpacer';
 import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 import { useThemeColor } from '@/hooks/useThemeColor';
 import { saveWebCachedLastServiceRoute } from '@/src/features/navigation/lastServiceRouteStorage';
+import { applyAdminCatalogService } from '@/src/features/services/lib/adminCatalogService';
 import { useServicesData } from '@/src/features/services/hooks/useServicesData';
 import { getServiceGridMetrics, getVisibleServices } from '@/src/features/services/lib/grid';
 import { useServerStatus } from '@/src/shared/network/useServerStatus';
 import { ServicesErrorView, ServicesLoadingView } from '@/src/features/services/ui/ServiceStateViews';
 import { servicesTokens } from '@/src/features/services/ui/servicesTokens';
+import { useIsAdmin } from '@/hooks/useIsAdmin';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useMemo } from 'react';
 import { FlatList, Platform, StyleSheet, useWindowDimensions, View } from 'react-native';
@@ -14,6 +16,7 @@ import ServiceCard from './ServiceCard';
 
 export default function ServicesScreen() {
   const { services, error, loading, loadServices } = useServicesData();
+  const { isAdmin, isCheckingAdmin } = useIsAdmin();
   const router = useRouter();
   const { isReachable } = useServerStatus();
   const { width } = useWindowDimensions();
@@ -26,9 +29,13 @@ export default function ServicesScreen() {
     () => getServiceGridMetrics({ width, platform: Platform.OS === 'web' ? 'web' : 'native', isMobileLayout: true }),
     [width]
   );
+  const catalogServices = useMemo(
+    () => applyAdminCatalogService(services, !isCheckingAdmin && isAdmin),
+    [isAdmin, isCheckingAdmin, services]
+  );
   const visibleServices = useMemo(
-    () => getVisibleServices(services).filter((item) => item.key !== 'tasks'),
-    [services]
+    () => getVisibleServices(catalogServices).filter((item) => item.key !== 'tasks'),
+    [catalogServices]
   );
 
   useFocusEffect(

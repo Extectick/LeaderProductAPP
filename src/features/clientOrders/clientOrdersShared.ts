@@ -351,6 +351,29 @@ export function makeLineGuid() {
   return makeKey();
 }
 
+function formatLocalDateOnly(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+export function normalizeClientOrderDateOnly(value?: string | Date | null) {
+  if (!value) return null;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : formatLocalDateOnly(value);
+  }
+  const raw = String(value).trim();
+  if (!raw) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : formatLocalDateOnly(parsed);
+}
+
+export function getDefaultClientOrderDeliveryDate(now = new Date()) {
+  return formatLocalDateOnly(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1));
+}
+
 export function emptyDraft(): DraftOrder {
   return {
     revision: 0,
@@ -439,6 +462,7 @@ export function normalizeDraftOrder(draft: DraftOrder): DraftOrder {
     contractGuid: asInputString(draft.contractGuid),
     warehouseGuid: asInputString(draft.warehouseGuid),
     deliveryAddressGuid: asInputString(draft.deliveryAddressGuid),
+    deliveryDate: normalizeClientOrderDateOnly(draft.deliveryDate),
     paymentForm: asInputString(draft.paymentForm) || null,
     deliveryMethod: asInputString(draft.deliveryMethod) || null,
     comment: asInputString(draft.comment),

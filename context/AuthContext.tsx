@@ -6,7 +6,7 @@ import isEqual from 'lodash.isequal';
 import React, { createContext, ReactNode, useCallback, useEffect, useState } from 'react';
 
 import { Profile } from '@/src/entities/user/types';
-import { handleBackendUnavailable, logout, refreshToken } from '@/utils/tokenService';
+import { getAccessToken, handleBackendUnavailable, hasAuthSessionExpired, logout, onAuthSessionExpired, refreshToken } from '@/utils/tokenService';
 import { getProfile } from '@/utils/userService';
 import { getProfileGate } from '@/utils/profileGate';
 import { syncPushToken, unregisterPushToken } from '@/utils/pushNotifications';
@@ -77,12 +77,24 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   useEffect(() => {
+    return onAuthSessionExpired((event) => {
+      addMonitoringBreadcrumb('auth_session_expired', {
+        status: event.status,
+        reason: event.reason,
+      });
+      setAuthenticated(false);
+      setProfileState(null);
+      setIsLoading(false);
+    });
+  }, []);
+
+  useEffect(() => {
     let isMounted = true;
 
     const init = async () => {
       try {
         addMonitoringBreadcrumb('auth_init_start');
-        let token = await AsyncStorage.getItem('accessToken');
+        let token = await getAccessToken();
         const profileJson = await AsyncStorage.getItem('profile');
 
         if (!isMounted) return;
@@ -92,8 +104,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           addMonitoringBreadcrumb('auth_refresh_attempt', { reason: 'no_access_token' });
           token = await refreshToken();
           if (!token) {
-            await handleBackendUnavailable('Не удалось получить новый токен (сервер недоступен)');
+            if (!hasAuthSessionExpired()) {
+              await handleBackendUnavailable('Не удалось получить новый токен (сервер недоступен)');
+            }
             addMonitoringBreadcrumb('auth_refresh_failed', { reason: 'no_access_token' });
+            if (hasAuthSessionExpired()) {
+              setAuthenticated(false);
+              setProfileState(null);
+              return;
+            }
           }
         }
 
@@ -117,7 +136,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             addMonitoringBreadcrumb('auth_refresh_attempt', { reason: 'token_expired' });
             const newToken = await refreshToken();
             if (!newToken) {
-              await handleBackendUnavailable('Не удалось обновить токен доступа');
+              if (!hasAuthSessionExpired()) {
+                await handleBackendUnavailable('Не удалось обновить токен доступа');
+              }
               setAuthenticated(false);
               addMonitoringBreadcrumb('auth_refresh_failed', { reason: 'token_expired' });
               return;

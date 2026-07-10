@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Switch, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import {
   getNotificationSettings,
   updateNotificationSettings,
@@ -65,7 +66,12 @@ export function NotificationSettingsSection() {
 
   return (
     <View style={styles.card}>
-      <Text style={styles.title}>Уведомления</Text>
+      <View style={styles.header}>
+        <View style={styles.icon}>
+          <Ionicons name="notifications-outline" size={17} color="#1E293B" />
+        </View>
+        <Text style={styles.title}>Уведомления</Text>
+      </View>
 
       {/* Push + in-app */}
       <View style={styles.row}>
@@ -116,32 +122,46 @@ export function NotificationSettingsSection() {
 
 const styles = StyleSheet.create({
   card: {
-    marginHorizontal: 16,
-    marginTop: 12,
-    padding: 16,
-    borderRadius: 16,
-    backgroundColor: '#EEF2FF',
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
     gap: 12,
   },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+  },
+  icon: {
+    width: 26,
+    height: 26,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   title: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '800',
-    color: '#1E293B',
-    marginBottom: 2,
+    color: '#0F172A',
   },
   row: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 12,
   },
   label: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#1E293B',
+    fontWeight: '800',
+    color: '#0F172A',
   },
   hint: {
     fontSize: 12,
     color: '#64748B',
     marginTop: 2,
+    lineHeight: 16,
   },
 });

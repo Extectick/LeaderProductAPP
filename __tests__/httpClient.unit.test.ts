@@ -1,5 +1,11 @@
 import { httpRequest } from '../src/shared/api/httpClient';
-import { handleBackendUnavailable, refreshToken } from '@/utils/tokenService';
+import {
+  getLastRefreshFailure,
+  handleBackendUnavailable,
+  hasAuthSessionExpired,
+  logout,
+  refreshToken,
+} from '@/utils/tokenService';
 import { setServerReachable, setServerUnavailable } from '@/src/shared/network/serverStatus';
 
 jest.mock('@/utils/config', () => ({
@@ -8,7 +14,9 @@ jest.mock('@/utils/config', () => ({
 
 jest.mock('@/utils/tokenService', () => ({
   getAccessToken: jest.fn(async () => null),
+  getLastRefreshFailure: jest.fn(() => null),
   handleBackendUnavailable: jest.fn(async () => undefined),
+  hasAuthSessionExpired: jest.fn(() => false),
   logout: jest.fn(async () => undefined),
   refreshToken: jest.fn(async () => null),
 }));
@@ -84,5 +92,33 @@ describe('httpRequest', () => {
       headers: expect.objectContaining({ Authorization: 'Bearer new-token' }),
     }));
     expect(setServerReachable).toHaveBeenCalled();
+  });
+
+  it('treats invalid refresh token as auth expiration, not network outage', async () => {
+    jest.mocked(refreshToken).mockResolvedValueOnce(null);
+    jest.mocked(hasAuthSessionExpired).mockReturnValueOnce(true);
+    jest.mocked(getLastRefreshFailure).mockReturnValueOnce({
+      kind: 'invalid',
+      status: 403,
+      message: 'Неверный refresh токен',
+      at: Date.now(),
+    });
+    const fetchMock = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify({ message: 'expired' }), {
+      status: 401,
+      headers: { 'content-type': 'application/json' },
+    }));
+    global.fetch = fetchMock as any;
+
+    const response = await httpRequest('/services');
+
+    expect(response).toMatchObject({
+      ok: false,
+      status: 401,
+      errorCode: 'UNAUTHORIZED',
+    });
+    expect(refreshToken).toHaveBeenCalledTimes(1);
+    expect(logout).not.toHaveBeenCalled();
+    expect(setServerReachable).toHaveBeenCalled();
+    expect(setServerUnavailable).not.toHaveBeenCalledWith('Unauthorized');
   });
 });

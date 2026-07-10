@@ -15,7 +15,6 @@ import {
   ViewStyle,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Skeleton } from 'moti/skeleton';
 import Animated, {
   FadeInDown,
@@ -23,14 +22,11 @@ import Animated, {
   Layout,
   useSharedValue,
   useAnimatedStyle,
-  withRepeat,
-  withTiming,
-  Easing,
   withSpring,
 } from 'react-native-reanimated';
 import QRCode from 'react-native-qrcode-svg';
 import { Colors } from '@/constants/Colors';
-import { Profile, ProfileType, ProfileStatus } from '@/src/entities/user/types';
+import { Profile } from '@/src/entities/user/types';
 import {
   cancelEmailChange,
   cancelPhoneVerification,
@@ -71,7 +67,6 @@ type NameFormState = { firstName: string; lastName: string; middleName: string }
 type PhoneMode = 'collapsed' | 'editing' | 'pending';
 type EmailMode = 'view' | 'editing' | 'pending_code';
 type NameMode = 'view' | 'editing';
-type HeroRoleTone = 'admin' | 'manager' | 'employee';
 
 const toMaskedPhoneValue = (value?: string | null) => formatPhoneInputMask(value || '');
 
@@ -87,12 +82,6 @@ export type ProfileViewProps = {
 };
 
 /* ---------- helpers ---------- */
-
-const profTypeName = (t?: ProfileType | null) =>
-  t === 'EMPLOYEE' ? 'Сотрудник' : t === 'CLIENT' ? 'Клиент' : t === 'SUPPLIER' ? 'Поставщик' : 'Неизвестно';
-
-const profStatusTone = (s?: ProfileStatus): Tone =>
-  s === 'ACTIVE' ? 'green' : s === 'PENDING' ? 'blue' : s === 'BLOCKED' ? 'red' : 'gray';
 
 function buildNameForm(profile: Profile | null): NameFormState {
   return {
@@ -138,6 +127,7 @@ export function ProfileView({
 
   const { width } = useWindowDimensions();
   const isDesktopWeb = Platform.OS === 'web' && width >= 768;
+  const isWideLayout = Platform.OS === 'web' && width >= 900;
   const [phoneMode, setPhoneMode] = useState<PhoneMode>('collapsed');
   const [phoneInput, setPhoneInput] = useState(toMaskedPhoneValue(profileOverride?.phone || ''));
   const [phoneSessionId, setPhoneSessionId] = useState<string | null>(null);
@@ -274,7 +264,7 @@ export function ProfileView({
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ['images'],
       allowsEditing: false,
       quality: 1,
     });
@@ -602,8 +592,6 @@ export function ProfileView({
     middleName,
     email,
     avatarUrl,
-    currentProfileType,
-    profileStatus,
     role,
     employeeProfile,
     departmentRoles,
@@ -623,21 +611,13 @@ export function ProfileView({
 
   const chips: Chip[] = [
     { icon: 'person-outline' as IoniconName, label: getRoleDisplayName(role), tone: 'blue' },
-    { icon: 'shield-checkmark-outline' as IoniconName, label: profileStatus ?? '—', tone: profStatusTone(profileStatus) },
     ...(deptName ? [{ icon: 'business-outline' as IoniconName, label: deptName, tone: 'gray' as Tone }] : []),
+    {
+      icon: 'link-outline' as IoniconName,
+      label: employeeProfile?.onecUserGuid ? '1С привязан' : '1С не привязан',
+      tone: employeeProfile?.onecUserGuid ? 'green' : 'gray',
+    },
   ];
-
-  const heroRoleTone: HeroRoleTone = (() => {
-    const rootRole = String(role?.name || '').toLowerCase();
-    const deptRoleNames = (departmentRoles || []).map((dr) => String(dr?.role?.name || '').toLowerCase());
-    if (rootRole === 'admin' || rootRole === 'administrator' || deptRoleNames.includes('admin') || deptRoleNames.includes('administrator')) {
-      return 'admin';
-    }
-    if (rootRole === 'department_manager' || deptRoleNames.includes('department_manager')) {
-      return 'manager';
-    }
-    return 'employee';
-  })();
 
   const facts: Array<{ icon: IoniconName; label: string; value?: string }> = [
     { icon: 'barcode-outline', label: 'ID пользователя', value: String(id) },
@@ -651,11 +631,19 @@ export function ProfileView({
       label: 'Обновлён',
       value: employeeProfile?.updatedAt ? new Date(employeeProfile.updatedAt).toLocaleString() : '—',
     },
+    ...(isSelf
+      ? [
+          {
+            icon: 'phone-portrait-outline' as IoniconName,
+            label: 'Версия приложения',
+            value: appVersionInfo.fullVersionLabel,
+          },
+        ]
+      : []),
   ];
 
   return (
-    <View style={style}>
-      {/* HERO */}
+    <View style={[styles.profileShell, style]}>
       <Hero
         avatarUrl={avatarUrl || undefined}
         initials={initials}
@@ -664,7 +652,6 @@ export function ProfileView({
         chips={chips}
         presenceLabel={!isSelf ? presenceLabel : null}
         presenceOnline={presence?.isOnline}
-        heroRoleTone={heroRoleTone}
         avatarEditable={isSelf}
         avatarBusy={uploadingAvatar}
         onEditAvatar={handlePickAvatar}
@@ -690,7 +677,6 @@ export function ProfileView({
         disableAppearAnimation={disableAppearAnimation}
       />
 
-      {/* Действия — не показываем для своего профиля */}
       {!isSelf && (
         <Animated.View entering={disableAppearAnimation ? undefined : FadeInUp.delay(120).duration(500)} style={styles.actionsRow}>
           <ActionButton
@@ -718,96 +704,97 @@ export function ProfileView({
         </Animated.View>
       )}
 
-      {/* Основные факты */}
       <Animated.View
         entering={disableAppearAnimation ? undefined : FadeInDown.delay(150).duration(600)}
         layout={disableAppearAnimation ? undefined : Layout.springify()}
-        style={styles.cardsWrap}
+        style={[styles.cardsWrap, isWideLayout ? styles.cardsWrapWide : null]}
       >
-        <EmailInfoCard
-          disableAppearAnimation={disableAppearAnimation}
-          email={email || ''}
-          verified={emailVerified}
-          canManage={isSelf}
-          mode={emailMode}
-          emailInput={emailInput}
-          codeInput={emailCode}
-          busy={emailSaving}
-          error={emailError}
-          notice={emailNotice}
-          onEmailInputChange={(value) => {
-            setEmailInput(value.replace(/\s+/g, ''));
-            setEmailError(null);
-          }}
-          onCodeInputChange={(value) => {
-            setEmailCode(value.replace(/\D+/g, '').slice(0, 6));
-            setEmailError(null);
-          }}
-          onStartEdit={() => {
-            setEmailMode('editing');
-            setEmailError(null);
-            setEmailNotice(null);
-            setEmailInput((profile.email || '').trim());
-          }}
-          onStartFlow={() => void handleStartEmailFlow()}
-          onVerify={() => void handleVerifyEmailCode()}
-          onResend={() => void handleResendEmailCode()}
-          onCancel={() => void handleCancelEmailFlow()}
-        />
-        <PhoneInfoCard
-          disableAppearAnimation={disableAppearAnimation}
-          phoneDisplay={phoneDisplay}
-          hasPhone={hasPhone}
-          verified={phoneVerified}
-          canManage={isSelf}
-          mode={phoneMode}
-          phoneInput={phoneInput}
-          busy={phoneBusy}
-          deepLinkUrl={phoneDeepLinkUrl}
-          qrPayload={phoneQrPayload}
-          provider={phoneProvider}
-          showDesktopQr={isDesktopWeb}
-          statusText={phoneStatusText}
-          error={phoneError}
-          onChangePhoneInput={(raw) => {
-            setPhoneInput(raw ?? '');
-            setPhoneError(null);
-          }}
-          onStartEdit={() => {
-            setPhoneMode('editing');
-            setPhoneError(null);
-            setPhoneStatusText(null);
-          }}
-          onCollapseEdit={() => {
-            setPhoneMode('collapsed');
-            setPhoneError(null);
-            setPhoneStatusText(null);
-            setPhoneInput(profilePhoneMasked);
-          }}
-          onStartFlow={() => void handleStartPhoneFlow()}
-          onOpenMessenger={() => void handleOpenTelegram()}
-          onCancelFlow={() => void handleCancelPhoneFlow()}
-        />
-        {facts.map((f, i) => (
-          <InfoCard
-            key={i}
-            icon={f.icon}
-            label={f.label}
-            value={f.value}
-            delay={(i + 1) * 60}
+        <ProfileSection title="Контакты" icon="chatbubble-ellipses-outline" style={isWideLayout ? styles.profileSectionHalf : null}>
+          <EmailInfoCard
             disableAppearAnimation={disableAppearAnimation}
+            email={email || ''}
+            verified={emailVerified}
+            canManage={isSelf}
+            mode={emailMode}
+            emailInput={emailInput}
+            codeInput={emailCode}
+            busy={emailSaving}
+            error={emailError}
+            notice={emailNotice}
+            onEmailInputChange={(value) => {
+              setEmailInput(value.replace(/\s+/g, ''));
+              setEmailError(null);
+            }}
+            onCodeInputChange={(value) => {
+              setEmailCode(value.replace(/\D+/g, '').slice(0, 6));
+              setEmailError(null);
+            }}
+            onStartEdit={() => {
+              setEmailMode('editing');
+              setEmailError(null);
+              setEmailNotice(null);
+              setEmailInput((profile.email || '').trim());
+            }}
+            onStartFlow={() => void handleStartEmailFlow()}
+            onVerify={() => void handleVerifyEmailCode()}
+            onResend={() => void handleResendEmailCode()}
+            onCancel={() => void handleCancelEmailFlow()}
           />
-        ))}
+          <PhoneInfoCard
+            disableAppearAnimation={disableAppearAnimation}
+            phoneDisplay={phoneDisplay}
+            hasPhone={hasPhone}
+            verified={phoneVerified}
+            canManage={isSelf}
+            mode={phoneMode}
+            phoneInput={phoneInput}
+            busy={phoneBusy}
+            deepLinkUrl={phoneDeepLinkUrl}
+            qrPayload={phoneQrPayload}
+            provider={phoneProvider}
+            showDesktopQr={isDesktopWeb}
+            statusText={phoneStatusText}
+            error={phoneError}
+            onChangePhoneInput={(raw) => {
+              setPhoneInput(raw ?? '');
+              setPhoneError(null);
+            }}
+            onStartEdit={() => {
+              setPhoneMode('editing');
+              setPhoneError(null);
+              setPhoneStatusText(null);
+            }}
+            onCollapseEdit={() => {
+              setPhoneMode('collapsed');
+              setPhoneError(null);
+              setPhoneStatusText(null);
+              setPhoneInput(profilePhoneMasked);
+            }}
+            onStartFlow={() => void handleStartPhoneFlow()}
+            onOpenMessenger={() => void handleOpenTelegram()}
+            onCancelFlow={() => void handleCancelPhoneFlow()}
+          />
+        </ProfileSection>
+        <ProfileSection title="Рабочая информация" icon="briefcase-outline" style={isWideLayout ? styles.profileSectionHalf : null}>
+          {facts.map((f, i) => (
+            <InfoCard
+              key={i}
+              icon={f.icon}
+              label={f.label}
+              value={f.value}
+              delay={(i + 1) * 60}
+              disableAppearAnimation={disableAppearAnimation}
+            />
+          ))}
+        </ProfileSection>
       </Animated.View>
 
-      {/* Роли по отделам */}
       {departmentRoles?.length ? (
         <Animated.View
           entering={disableAppearAnimation ? undefined : FadeInDown.delay(180).duration(600)}
           layout={disableAppearAnimation ? undefined : Layout.springify()}
         >
-          <Text style={styles.sectionTitle}>Роли по отделам</Text>
-          <View style={{ gap: 10 }}>
+          <ProfileSection title="Роли по отделам" icon="people-outline">
             {departmentRoles.map((dr, idx) => (
               <DepartmentRoleRow
                 key={`${dr.department?.id}-${dr.role?.id}-${idx}`}
@@ -817,14 +804,9 @@ export function ProfileView({
                 disableAppearAnimation={disableAppearAnimation}
               />
             ))}
-          </View>
+          </ProfileSection>
         </Animated.View>
         ) : null}
-      {isSelf ? (
-        <Text style={styles.versionFooter}>
-          Версия приложения: {appVersionInfo.fullVersionLabel}
-        </Text>
-      ) : null}
       <AvatarCropperModal
         visible={cropVisible}
         image={cropImage}
@@ -837,6 +819,30 @@ export function ProfileView({
 
 /* ---------- subcomponents ---------- */
 
+function ProfileSection({
+  title,
+  icon,
+  children,
+  style,
+}: {
+  title: string;
+  icon: IoniconName;
+  children: React.ReactNode;
+  style?: ViewStyle | null;
+}) {
+  return (
+    <View style={[styles.profileSection, style]}>
+      <View style={styles.profileSectionHeader}>
+        <View style={styles.profileSectionIcon}>
+          <Ionicons name={icon} size={16} color="#1E293B" />
+        </View>
+        <Text style={styles.profileSectionTitle}>{title}</Text>
+      </View>
+      <View style={styles.profileSectionBody}>{children}</View>
+    </View>
+  );
+}
+
 function Hero({
   avatarUrl,
   initials,
@@ -845,7 +851,6 @@ function Hero({
   chips,
   presenceLabel,
   presenceOnline,
-  heroRoleTone,
   avatarEditable,
   avatarBusy,
   onEditAvatar,
@@ -867,7 +872,6 @@ function Hero({
   chips: Chip[];
   presenceLabel?: string | null;
   presenceOnline?: boolean;
-  heroRoleTone?: HeroRoleTone;
   avatarEditable?: boolean;
   avatarBusy?: boolean;
   onEditAvatar?: () => void;
@@ -882,68 +886,51 @@ function Hero({
   onNameSave: () => void;
   disableAppearAnimation?: boolean;
 }) {
-  const float = useSharedValue(0);
-  useEffect(() => {
-    float.value = withRepeat(withTiming(1, { duration: 2600, easing: Easing.inOut(Easing.quad) }), -1, true);
-  }, []);
-  const avatarAnim = useAnimatedStyle(() => {
-    const y = (float.value - 0.5) * 8;
-    const s = 1 + (float.value - 0.5) * 0.04;
-    return { transform: [{ translateY: y }, { scale: s }] };
-  });
-
   return (
     <Animated.View entering={disableAppearAnimation ? undefined : FadeInDown.duration(600)} style={styles.heroWrap}>
-      <LinearGradient
-        colors={
-          heroRoleTone === 'admin'
-            ? ['#FDE68A', '#FCA5A5']
-            : heroRoleTone === 'manager'
-            ? ['#FFEDD5', '#FED7AA']
-            : ['#C7D2FE', '#E9D5FF']
-        }
-        start={{ x: 0, y: 0.4 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.heroBg}
-      />
       <View style={styles.heroInner}>
-        <View style={styles.avatarRow}>
+        {canManageName && nameMode !== 'editing' ? (
           <Pressable
-            onPress={avatarEditable ? onEditAvatar : undefined}
-            disabled={!avatarEditable || avatarBusy}
-            style={styles.avatarPressable}
+            onPress={onNameEdit}
+            accessibilityLabel="Изменить имя"
+            style={({ pressed }) => [styles.editActionButton, styles.heroEditButton, pressed ? styles.editActionButtonPressed : null]}
           >
-            <Animated.View style={[styles.avatarOuter, avatarAnim]}>
-              {avatarUrl ? (
-                <Image source={{ uri: avatarUrl }} style={styles.avatar} />
-              ) : (
-                <View style={[styles.avatar, styles.avatarFallback]}>
-                  <Text style={styles.avatarInitials}>{initials}</Text>
-                </View>
-              )}
-              {typeof presenceOnline === 'boolean' ? (
-                <View
-                  style={[
-                    styles.avatarPresenceDot,
-                    { backgroundColor: presenceOnline ? '#22c55e' : '#94a3b8' },
-                  ]}
-                />
-              ) : null}
-              {avatarEditable ? (
-                <View style={styles.avatarEditBadge}>
-                  {avatarBusy ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <Ionicons name="camera" size={16} color="#fff" />
-                  )}
-                </View>
-              ) : null}
-            </Animated.View>
+            <Ionicons name="create-outline" size={15} color="#475569" />
           </Pressable>
-          {!presenceOnline && presenceLabel && presenceLabel.startsWith('Был') ? (
-            <Text style={styles.avatarLastSeenText}>{presenceLabel}</Text>
-          ) : null}
-        </View>
+        ) : null}
+
+        <Pressable
+          onPress={avatarEditable ? onEditAvatar : undefined}
+          disabled={!avatarEditable || avatarBusy}
+          style={styles.avatarPressable}
+        >
+          <View style={styles.avatarOuter}>
+            {avatarUrl ? (
+              <Image source={{ uri: avatarUrl }} style={styles.avatar} />
+            ) : (
+              <View style={[styles.avatar, styles.avatarFallback]}>
+                <Text style={styles.avatarInitials}>{initials}</Text>
+              </View>
+            )}
+            {typeof presenceOnline === 'boolean' ? (
+              <View
+                style={[
+                  styles.avatarPresenceDot,
+                  { backgroundColor: presenceOnline ? '#22c55e' : '#94a3b8' },
+                ]}
+              />
+            ) : null}
+            {avatarEditable ? (
+              <View style={styles.avatarEditBadge}>
+                {avatarBusy ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Ionicons name="camera" size={16} color="#fff" />
+                )}
+              </View>
+            ) : null}
+          </View>
+        </Pressable>
 
         {nameMode === 'editing' ? (
           <View style={styles.inlineNameEditor}>
@@ -999,29 +986,32 @@ function Hero({
             {nameError ? <Text style={styles.inlineErrorText}>{nameError}</Text> : null}
           </View>
         ) : (
-          <View style={styles.heroTitleRow}>
-            <Text style={styles.heroTitle}>{title}</Text>
-            {canManageName ? (
-              <Pressable
-                onPress={onNameEdit}
-                style={({ pressed }) => [styles.yellowPillBtn, pressed ? styles.yellowPillBtnPressed : null]}
-              >
-                <Ionicons name="create-outline" size={14} color={Colors.leaderprod.tint} />
-                <Text style={styles.yellowPillBtnText}>Изменить</Text>
-              </Pressable>
+          <View style={styles.heroSummary}>
+            <Text style={styles.heroTitle} numberOfLines={2}>{title}</Text>
+            {subtitle ? <Text style={styles.heroSubtitle}>{subtitle}</Text> : null}
+            {!presenceOnline && presenceLabel && presenceLabel.startsWith('Был') ? (
+              <Text style={styles.avatarLastSeenText}>{presenceLabel}</Text>
             ) : null}
+            <View style={styles.chipsRow}>
+              {chips.map((c, idx) => (
+                <Chip key={idx} icon={c.icon} label={c.label} tone={c.tone} />
+              ))}
+            </View>
           </View>
         )}
-        {subtitle ? <Text style={styles.heroSubtitle}>{subtitle}</Text> : null}
-
-        <View style={styles.chipsRow}>
-          {chips.map((c, idx) => (
-            <Chip key={idx} icon={c.icon} label={c.label} tone={c.tone} />
-          ))}
         </View>
-      </View>
     </Animated.View>
   );
+}
+
+function signalTonePalette(tone: Tone = 'gray') {
+  return {
+    green: { bg: '#DCFCE7', bd: '#86EFAC', text: '#166534' },
+    violet: { bg: '#EDE9FE', bd: '#C4B5FD', text: '#4C1D95' },
+    gray: { bg: '#F1F5F9', bd: '#E2E8F0', text: '#475569' },
+    red: { bg: '#FEE2E2', bd: '#FCA5A5', text: '#991B1B' },
+    blue: { bg: '#DBEAFE', bd: '#93C5FD', text: '#1E3A8A' },
+  }[tone];
 }
 
 function Chip({
@@ -1033,13 +1023,7 @@ function Chip({
   icon: IoniconName;
   tone?: Tone;
 }) {
-  const palette = {
-    green: { bg: '#DCFCE7', bd: '#86EFAC', text: '#166534' },
-    violet: { bg: '#EDE9FE', bd: '#C4B5FD', text: '#4C1D95' },
-    gray: { bg: '#F3F4F6', bd: '#E5E7EB', text: '#374151' },
-    red: { bg: '#FEE2E2', bd: '#FCA5A5', text: '#991B1B' },
-    blue: { bg: '#DBEAFE', bd: '#93C5FD', text: '#1E3A8A' },
-  }[tone];
+  const palette = signalTonePalette(tone);
 
   return (
     <View style={[styles.chip, { backgroundColor: palette.bg, borderColor: palette.bd }]}>
@@ -1210,9 +1194,10 @@ function EmailInfoCard({
                   {canManage ? (
                     <Pressable
                       onPress={onStartEdit}
-                      style={({ pressed }) => [styles.editIconBtn, pressed ? styles.editIconBtnPressed : null]}
+                      accessibilityLabel="Изменить email"
+                      style={({ pressed }) => [styles.editActionButton, pressed ? styles.editActionButtonPressed : null]}
                     >
-                      <Ionicons name="pencil-outline" size={16} color={Colors.leaderprod.tint} />
+                      <Ionicons name="create-outline" size={15} color="#475569" />
                     </Pressable>
                   ) : null}
                 </View>
@@ -1365,12 +1350,13 @@ function PhoneInfoCard({
                     </View>
                     <View style={styles.valueActionsRight}>
                       <VerificationBadge verified={verified} />
-                      {canManage && verified ? (
+                      {canManage ? (
                         <Pressable
                           onPress={onStartEdit}
-                          style={({ pressed }) => [styles.editIconBtn, pressed ? styles.editIconBtnPressed : null]}
+                          accessibilityLabel={hasPhone ? 'Изменить телефон' : 'Привязать телефон'}
+                          style={({ pressed }) => [styles.editActionButton, pressed ? styles.editActionButtonPressed : null]}
                         >
-                          <Ionicons name="pencil-outline" size={16} color={Colors.leaderprod.tint} />
+                          <Ionicons name={hasPhone ? 'create-outline' : 'add-outline'} size={15} color="#475569" />
                         </Pressable>
                       ) : null}
                     </View>
@@ -1383,22 +1369,19 @@ function PhoneInfoCard({
                   ) : null}
                 </View>
               ) : (
-                <Text style={styles.fieldHintText}>Номер телефона не привязан</Text>
+                <View style={styles.phoneValueRow}>
+                  <Text style={[styles.fieldHintText, styles.infoValueFlex]}>Номер телефона не привязан</Text>
+                  {canManage ? (
+                    <Pressable
+                      onPress={onStartEdit}
+                      accessibilityLabel="Привязать телефон"
+                      style={({ pressed }) => [styles.editActionButton, pressed ? styles.editActionButtonPressed : null]}
+                    >
+                      <Ionicons name="add-outline" size={15} color="#475569" />
+                    </Pressable>
+                  ) : null}
+                </View>
               )}
-              {canManage && !(hasPhone && verified) ? (
-                <Pressable
-                  onPress={onStartEdit}
-                  style={({ pressed }) => [
-                    verified ? styles.yellowPillBtn : styles.phoneActionBtn,
-                    pressed ? (verified ? styles.yellowPillBtnPressed : styles.phoneActionBtnPressed) : null,
-                  ]}
-                >
-                  {verified ? <Ionicons name="pencil-outline" size={14} color={Colors.leaderprod.tint} /> : null}
-                  <Text style={verified ? styles.yellowPillBtnText : styles.phoneActionBtnText}>
-                    {!hasPhone ? 'Привязать телефон' : verified ? 'Изменить' : 'Подтвердить'}
-                  </Text>
-                </Pressable>
-              ) : null}
             </>
           )}
           {statusText ? <Text style={styles.inlineNoticeText}>{statusText}</Text> : null}
@@ -1589,43 +1572,55 @@ function ProfileSkeleton({ showActions }: { showActions?: boolean }) {
 
 const styles = StyleSheet.create({
   center: { justifyContent: 'center', alignItems: 'center' },
+  profileShell: {
+    gap: 14,
+  },
 
   heroWrap: {
-    borderRadius: 20,
-    overflow: 'hidden',
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#E0E7FF',
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 3,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
   },
-  heroBg: { ...StyleSheet.absoluteFillObject },
-  heroInner: { padding: 18, gap: 8 },
-  heroTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
-  avatarRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  avatarPressable: { alignSelf: 'flex-start' },
+  heroInner: {
+    position: 'relative',
+    paddingHorizontal: 16,
+    paddingTop: 18,
+    paddingBottom: 16,
+    alignItems: 'center',
+    gap: 12,
+  },
+  heroEditButton: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    zIndex: 2,
+  },
+  heroSummary: {
+    width: '100%',
+    minWidth: 0,
+    alignItems: 'center',
+    gap: 8,
+  },
+  avatarPressable: { alignSelf: 'center' },
   avatarOuter: {
-    alignSelf: 'flex-start',
-    width: 96,
-    height: 96,
-    borderRadius: 28,
-    backgroundColor: '#fff',
+    alignSelf: 'center',
+    width: 92,
+    height: 92,
+    borderRadius: 24,
+    backgroundColor: '#F8FAFC',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#EEF2FF',
-    marginBottom: 10,
+    borderColor: '#E2E8F0',
   },
-  avatar: { width: 88, height: 88, borderRadius: 24 },
-  avatarFallback: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#EEF2FF' },
-  avatarInitials: { fontSize: 28, fontWeight: '800', color: '#0F172A' },
+  avatar: { width: 90, height: 90, borderRadius: 23 },
+  avatarFallback: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#F1F5F9' },
+  avatarInitials: { fontSize: 30, fontWeight: '800', color: '#0F172A' },
   avatarPresenceDot: {
     position: 'absolute',
-    right: -4,
-    bottom: -4,
+    right: -3,
+    bottom: -3,
     width: 16,
     height: 16,
     borderRadius: 8,
@@ -1634,53 +1629,53 @@ const styles = StyleSheet.create({
   },
   avatarEditBadge: {
     position: 'absolute',
-    right: -6,
-    bottom: -6,
+    right: -5,
+    bottom: -5,
     width: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: '#0ea5e9',
+    backgroundColor: Colors.leaderprod.button,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
     borderColor: '#fff',
   },
   avatarLastSeenText: {
-    flex: 1,
-    color: '#334155',
+    color: '#64748B',
     fontSize: 12,
     fontWeight: '600',
     lineHeight: 16,
-    marginRight: 8,
+    textAlign: 'center',
   },
-  heroTitle: { fontSize: 22, fontWeight: '800', color: '#0F172A', flexShrink: 1 },
-  heroSubtitle: { marginTop: 6, color: '#334155' },
-  chipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
-
-  inlineNameEditor: { gap: 8 },
+  heroTitle: {
+    maxWidth: '86%',
+    fontSize: 21,
+    lineHeight: 25,
+    fontWeight: '800',
+    color: '#0F172A',
+    textAlign: 'center',
+  },
+  heroSubtitle: { marginTop: 6, color: '#334155', textAlign: 'center' },
+  chipsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  inlineNameEditor: {
+    width: '100%',
+    maxWidth: 520,
+    gap: 8,
+  },
   heroInput: {
-    backgroundColor: '#FFFFFF',
-    borderColor: '#E5E7EB',
+    backgroundColor: '#F8FAFC',
+    borderColor: '#CBD5E1',
     borderWidth: 1,
-    borderRadius: 10,
+    borderRadius: 9,
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingVertical: 9,
     color: '#111827',
   },
-  yellowPillBtn: {
-    alignSelf: 'flex-start',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#FBD38D',
-    backgroundColor: '#FFF7E6',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  yellowPillBtnPressed: { backgroundColor: '#FFE8C2' },
-  yellowPillBtnText: { fontWeight: '700', color: Colors.leaderprod.tint },
   inlineActionsRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   inlineActionsWrap: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   inlinePrimaryBtn: {
@@ -1727,14 +1722,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 6,
     alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
     borderRadius: 999,
     borderWidth: 1,
+    maxWidth: '100%',
   },
   chipText: { fontSize: 12, fontWeight: '700' },
 
-  actionsRow: { flexDirection: 'row', gap: 12, marginBottom: 12 },
+  actionsRow: { flexDirection: 'row', gap: 10 },
   actionBtn: { flex: 1, borderRadius: 12, overflow: 'hidden' },
   actionPressable: {
     backgroundColor: '#FFFFFF',
@@ -1749,31 +1745,71 @@ const styles = StyleSheet.create({
   actionLabel: { color: '#111827', fontWeight: '700', fontSize: 13 },
 
   cardsWrap: { gap: 12 },
-  infoCard: {
-    backgroundColor: '#FFFFFF',
+  cardsWrapWide: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'stretch',
+  },
+  profileSection: {
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    padding: 14,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+    overflow: 'hidden',
+  },
+  profileSectionHalf: {
+    flexGrow: 1,
+    flexBasis: 360,
+    minWidth: 320,
+  },
+  profileSectionHeader: {
+    minHeight: 44,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#E2E8F0',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    backgroundColor: '#FBFCFE',
+  },
+  profileSectionIcon: {
+    width: 24,
+    height: 24,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  profileSectionTitle: {
+    color: '#0F172A',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  profileSectionBody: {
+    paddingVertical: 4,
+  },
+  infoCard: {
+    backgroundColor: 'transparent',
+    borderRadius: 0,
+    borderWidth: 0,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 12,
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 5,
-    elevation: 2,
   },
   infoIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    backgroundColor: '#EEF2FF',
+    width: 32,
+    height: 32,
+    borderRadius: 9,
+    backgroundColor: '#F8FAFC',
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 1,
   },
   infoLabel: { color: '#6B7280', fontSize: 12, fontWeight: '700' },
-  infoValue: { color: '#111827', fontSize: 14, fontWeight: '700' },
+  infoValue: { color: '#111827', fontSize: 15, lineHeight: 20, fontWeight: '700' },
   infoValueFlex: { flex: 1, minWidth: 0 },
   infoValueActionRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   valueActionsRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
@@ -1793,17 +1829,15 @@ const styles = StyleSheet.create({
     backgroundColor: '#FEF3C7',
     borderColor: '#FCD34D',
   },
-  editIconBtn: {
-    width: 32,
-    height: 32,
+  editActionButton: {
+    width: 30,
+    height: 30,
     borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#FBD38D',
-    backgroundColor: '#FFF7E6',
+    backgroundColor: '#F1F5F9',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  editIconBtnPressed: { backgroundColor: '#FFE8C2' },
+  editActionButtonPressed: { backgroundColor: '#E2E8F0' },
   fieldInput: {
     backgroundColor: '#F9FAFB',
     borderColor: '#E5E7EB',
@@ -1818,17 +1852,6 @@ const styles = StyleSheet.create({
   phoneTop: { gap: 8 },
   phoneValueRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   phoneValueMain: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 },
-  phoneActionBtn: {
-    alignSelf: 'flex-start',
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    backgroundColor: '#fff',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  phoneActionBtnPressed: { backgroundColor: '#F8FAFC' },
-  phoneActionBtnText: { color: '#1E293B', fontWeight: '700', fontSize: 12 },
   phoneUnverifiedBadge: {
     alignSelf: 'flex-start',
     flexDirection: 'row',
@@ -1865,50 +1888,35 @@ const styles = StyleSheet.create({
   skeletonChipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
   skeletonCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 14,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: '#E2E8F0',
     padding: 14,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
   },
 
-  sectionTitle: {
-    marginTop: 16,
-    marginBottom: 8,
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
   deptRow: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    padding: 14,
+    backgroundColor: 'transparent',
+    borderRadius: 0,
+    borderWidth: 0,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
   },
   deptIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    backgroundColor: '#E0F2FE',
+    width: 32,
+    height: 32,
+    borderRadius: 9,
+    backgroundColor: '#F0F9FF',
     alignItems: 'center',
     justifyContent: 'center',
   },
   deptName: { color: '#0F172A', fontWeight: '800' },
   deptRole: { color: '#334155', marginTop: 2 },
-  versionFooter: {
-    marginTop: 18,
-    marginBottom: 6,
-    color: '#64748B',
-    fontSize: 12,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
 });
 
 export default ProfileView;
