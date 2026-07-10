@@ -19,6 +19,7 @@ import { NotificationViewportProvider } from '@/context/NotificationViewportCont
 import { NotificationHost } from '@/components/NotificationHost';
 import UpdateGate from '@/components/UpdateGate';
 import StartupSplash from '@/components/StartupSplash';
+import StartupLogoLoader from '@/components/StartupLogoLoader';
 import { OtaUpdateStatusProvider } from '@/src/shared/ota/OtaUpdateStatusContext';
 import { registerOtaBackgroundPrefetchTask } from '@/src/shared/ota/registerOtaBackgroundTask';
 import { initPushNotifications } from '@/utils/pushNotifications';
@@ -36,7 +37,7 @@ const nativeBottomSheetProvider = Platform.OS === 'web'
 const hideReactStartupLoader = Platform.OS === 'android' && !__DEV__;
 
 function EmptyStartupSurface() {
-  return <View style={{ flex: 1, backgroundColor: '#FFFFFF' }} />;
+  return <StartupLogoLoader />;
 }
 
 function InnerLayout() {

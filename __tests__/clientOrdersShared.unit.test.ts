@@ -1,6 +1,7 @@
 import {
   buildNewItem,
   buildPayload,
+  computeDraftWeight,
   computeLineTotal,
   displayedUnitPriceToBasePriceInput,
   getBelowCostWarning,
@@ -142,6 +143,25 @@ describe('clientOrdersShared item inputs and packages', () => {
     expect(displayedUnitPriceToBasePriceInput('1200', packed)).toBe('120');
   });
 
+  it('computes order weight from selected package weight or base unit fallback', () => {
+    const withPackageWeight = item({
+      quantity: '3',
+      packageGuid: 'box-10',
+      productWeight: 1,
+      packages: [{ guid: 'box-10', name: 'box', multiplier: 10, weight: 10 }],
+    });
+    const withFallbackWeight = item({
+      key: 'line-2',
+      quantity: '2',
+      packageGuid: 'box-10',
+      productWeight: 1.2,
+      packages: [{ guid: 'box-10', name: 'box', multiplier: 10 }],
+    });
+
+    expect(computeDraftWeight(draft({ items: [withPackageWeight] }))).toBe(30);
+    expect(computeDraftWeight(draft({ items: [withFallbackWeight] }))).toBe(24);
+  });
+
   it('hides 1/1 packages when unit guid differs but unit label matches the base unit', () => {
     const product = {
       guid: 'product-guid',
@@ -172,6 +192,8 @@ describe('clientOrdersShared item inputs and packages', () => {
             guid: 'product-guid',
             name: 'Товар',
             code: 'UT-1',
+            weight: 1.2,
+            weightUnit: { guid: 'kg', name: 'kg', symbol: 'kg' },
           },
           quantity: 2,
           basePrice: 100,
@@ -180,6 +202,8 @@ describe('clientOrdersShared item inputs and packages', () => {
             guid: 'box-10',
             name: 'кор (10 кг)',
             multiplier: 10,
+            weight: 12,
+            weightUnit: { guid: 'kg', name: 'kg', symbol: 'kg' },
             isDefault: false,
           },
           unit: { guid: 'kg', name: 'Килограмм', symbol: 'кг' },
@@ -191,11 +215,13 @@ describe('clientOrdersShared item inputs and packages', () => {
       lineGuid: 'line-guid-1',
       packageGuid: 'box-10',
       basePrice: 100,
+      productWeight: 1.2,
     });
     expect(orderDraft.items[0].packages).toEqual([
-      expect.objectContaining({ guid: 'box-10', multiplier: 10 }),
+      expect.objectContaining({ guid: 'box-10', multiplier: 10, weight: 12 }),
     ]);
     expect(computeLineTotal(orderDraft.items[0])).toBe(2000);
+    expect(computeDraftWeight(orderDraft)).toBe(24);
 
     const payload = buildPayload(orderDraft);
     expect(payload.items[0]).toMatchObject({

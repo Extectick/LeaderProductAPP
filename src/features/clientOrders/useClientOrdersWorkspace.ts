@@ -40,6 +40,7 @@ import {
   buildNewItem,
   buildPayload,
   computeDraftProfit,
+  computeDraftWeight,
   computeLineTotal,
   computeDraftTotal,
   DEFAULT_ORDER_CURRENCY,
@@ -659,12 +660,16 @@ function buildDeviceOrderFromDraft(args: {
         article: item.productArticle ?? null,
         sku: item.productSku ?? null,
         isWeight: item.productIsWeight ?? null,
+        weight: item.productWeight ?? null,
+        weightUnit: item.weightUnit ?? null,
       },
       package: pack
         ? {
             guid: pack.guid,
             name: pack.name,
             multiplier: pack.multiplier ?? null,
+            weight: pack.weight ?? null,
+            weightUnit: pack.weightUnit ?? null,
           }
         : null,
       unit: pack?.unit ?? item.baseUnit ?? null,
@@ -914,6 +919,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     (!selectedOrderSynced || dirty || selectedOrderHas1cError);
   const localTotal = React.useMemo(() => computeDraftTotal(draft), [draft]);
   const localProfit = React.useMemo(() => computeDraftProfit(draft), [draft]);
+  const localWeight = React.useMemo(() => computeDraftWeight(draft), [draft]);
   const visibleDeviceOrders = React.useMemo(
     () => deviceDraftEntries.map((entry) => entry.order).filter((order) => orderMatchesFilters(order, filters)),
     [deviceDraftEntries, filters]
@@ -1169,6 +1175,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
               packageGuid: normalizePackageGuid(item.packageGuid, packages),
               receiptPrice: item.receiptPrice ?? product.receiptPrice ?? product.basePrice ?? null,
               baseUnit: product.baseUnit ?? item.baseUnit ?? null,
+              productWeight: product.weight ?? item.productWeight ?? null,
+              weightUnit: product.weightUnit ?? item.weightUnit ?? null,
               stock: product.stock ?? item.stock ?? null,
               packages: hasProductPackages ? packages : item.packages,
               packagesLoaded: hasProductPackages ? true : item.packagesLoaded,
@@ -2043,6 +2051,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         priceTypeGuid: isManualPrice ? item.priceTypeGuid ?? null : priceType?.guid ?? product.priceType?.guid ?? null,
         priceTypeName: isManualPrice ? item.priceTypeName ?? null : priceType?.name ?? product.priceType?.name ?? null,
         baseUnit: product.baseUnit ?? item.baseUnit ?? null,
+        productWeight: product.weight ?? item.productWeight ?? null,
+        weightUnit: product.weightUnit ?? item.weightUnit ?? null,
         stock: product.stock ?? item.stock ?? null,
         packages: hasProductPackages ? packages : item.packages,
         packagesLoaded: hasProductPackages ? true : item.packagesLoaded,
@@ -2096,6 +2106,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
               ? item.priceTypeName ?? null
               : draft.priceTypeName ?? product.priceType?.name ?? null,
             baseUnit: product.baseUnit ?? item.baseUnit ?? null,
+            productWeight: product.weight ?? item.productWeight ?? null,
+            weightUnit: product.weightUnit ?? item.weightUnit ?? null,
             stock: product.stock ?? null,
             packages: hasProductPackages ? packages : item.packages,
             packagesLoaded: hasProductPackages ? true : item.packagesLoaded,
@@ -2639,6 +2651,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     canSubmitOrder,
     localTotal,
     localProfit,
+    localWeight,
     statusCounts,
     autosaveState,
     autosaveLabel,

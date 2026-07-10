@@ -50,6 +50,17 @@ function subscribe(listener: (snapshot: ServicesSnapshot) => void) {
   };
 }
 
+function getInitialSnapshotForRender() {
+  if (!state.services?.length && state.error && !state.loading) {
+    return {
+      services: null,
+      loading: true,
+      error: null,
+    };
+  }
+  return state;
+}
+
 async function loadServicesInternal(force = false) {
   if (inFlight) return inFlight;
 
@@ -93,7 +104,7 @@ async function loadServicesInternal(force = false) {
 }
 
 export function useServicesData() {
-  const [snapshot, setSnapshot] = useState<ServicesSnapshot>(state);
+  const [snapshot, setSnapshot] = useState<ServicesSnapshot>(() => getInitialSnapshotForRender());
 
   useEffect(() => subscribe(setSnapshot), []);
 

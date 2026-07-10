@@ -63,7 +63,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
 import { useFocusEffect } from 'expo-router';
 import React from 'react';
-import { Animated, BackHandler, findNodeHandle, FlatList, Keyboard, LayoutAnimation, PanResponder, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, UIManager, useWindowDimensions, View } from 'react-native';
+import { Alert, Animated, BackHandler, findNodeHandle, FlatList, Keyboard, LayoutAnimation, PanResponder, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, UIManager, useWindowDimensions, View } from 'react-native';
 import type { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent, TextInputProps } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -214,6 +214,13 @@ const withColorOpacity = (color: string, opacity: number) => {
   const b = int & 255;
   return `rgba(${r}, ${g}, ${b}, ${opacity})`;
 };
+
+function formatOrderWeight(value?: number | null) {
+  const weight = Number(value ?? 0);
+  if (!Number.isFinite(weight) || weight <= 0) return '-';
+  const maximumFractionDigits = weight >= 100 ? 0 : weight >= 10 ? 1 : 2;
+  return `${weight.toLocaleString('ru-RU', { maximumFractionDigits })} кг`;
+}
 
 function normalizeSearchText(value: unknown) {
   return String(value ?? '')
@@ -3700,8 +3707,45 @@ function DocumentBottomBar({
         : shouldRetry1cError
           ? 'Повторить'
         : 'Отправить';
-  const deliveryDate = workspace.draft.deliveryDate ? formatDateOnly(workspace.draft.deliveryDate) : 'Дата не выбрана';
-  const counterparty = workspace.selections.counterparty?.name || 'Контрагент не выбран';
+  const currency = workspace.draft.currency;
+  const metrics = [
+    {
+      key: 'total',
+      label: 'Сумма',
+      value: formatMoney(workspace.localTotal, currency),
+      icon: 'cash-multiple',
+      color: '#2563EB',
+      backgroundColor: '#EFF6FF',
+      description: 'Итоговая сумма по активным строкам заказа с учетом скидок.',
+    },
+    {
+      key: 'margin',
+      label: 'Наценка',
+      value: formatMoney(workspace.localProfit, currency),
+      icon: 'chart-line',
+      color: workspace.localProfit < 0 ? '#DC2626' : '#16A34A',
+      backgroundColor: workspace.localProfit < 0 ? '#FEF2F2' : '#F0FDF4',
+      description: 'Предварительная сумма наценки: сумма продажи минус себестоимость по активным строкам.',
+    },
+    {
+      key: 'weight',
+      label: 'Вес',
+      value: formatOrderWeight(workspace.localWeight),
+      icon: 'weight-kilogram',
+      color: '#7C3AED',
+      backgroundColor: '#F5F3FF',
+      description: 'Расчетный вес активных строк: количество умножается на вес выбранной упаковки или базовой единицы из 1С.',
+    },
+    {
+      key: 'netProfit',
+      label: 'Чистая прибыль',
+      value: '-',
+      icon: 'account-cash-outline',
+      color: '#D97706',
+      backgroundColor: '#FFFBEB',
+      description: 'Показатель пока не рассчитывается. Позже сюда можно добавить формулу чистой прибыли менеджера.',
+    },
+  ];
 
   return (
     <View style={styles.documentBottomBar}>
@@ -3715,23 +3759,27 @@ function DocumentBottomBar({
       >
         <View style={styles.documentBottomContent}>
           <View style={styles.documentBottomInfo}>
-            <View style={styles.documentBottomMetaRow}>
-              <View style={styles.documentBottomTotalPill} accessibilityLabel={`Сумма ${formatMoney(workspace.localTotal, workspace.draft.currency)}`}>
-                <MaterialCommunityIcons name="cash-multiple" size={13} color="#2563EB" />
-                <Text style={styles.documentBottomTotalText} numberOfLines={1}>{formatMoney(workspace.localTotal, workspace.draft.currency)}</Text>
-              </View>
-              <View style={styles.documentBottomProfitPill} accessibilityLabel={`Выручка ${formatMoney(workspace.localProfit, workspace.draft.currency)}`}>
-                <MaterialCommunityIcons name="chart-line" size={13} color={workspace.localProfit < 0 ? '#DC2626' : '#16A34A'} />
-                <Text style={[styles.documentBottomProfitText, workspace.localProfit < 0 && styles.documentBottomProfitTextNegative]} numberOfLines={1}>{formatMoney(workspace.localProfit, workspace.draft.currency)}</Text>
-              </View>
-            </View>
-            <View style={styles.documentBottomCounterpartyRow}>
-              <MaterialCommunityIcons name="account-outline" size={13} color="#64748B" />
-              <Text style={styles.documentBottomCounterpartyText} numberOfLines={1}>{counterparty}</Text>
-              <View style={styles.documentBottomDateInline}>
-                <MaterialCommunityIcons name="truck-outline" size={12} color="#64748B" />
-                <Text style={styles.documentBottomDateText} numberOfLines={1}>{deliveryDate}</Text>
-              </View>
+            <View style={styles.documentBottomMetricsGrid}>
+              {metrics.map((metric) => (
+                <Pressable
+                  key={metric.key}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${metric.label}: ${metric.value}`}
+                  onPress={() => Alert.alert(metric.label, metric.description)}
+                  style={({ pressed }) => [
+                    styles.documentBottomMetric,
+                    pressed && styles.flatPressed,
+                  ]}
+                >
+                  <View style={[styles.documentBottomMetricIcon, { backgroundColor: metric.backgroundColor }]}>
+                    <MaterialCommunityIcons name={metric.icon as any} size={15} color={metric.color} />
+                  </View>
+                  <View style={styles.documentBottomMetricTextWrap}>
+                    <Text style={styles.documentBottomMetricLabel} numberOfLines={1}>{metric.label}</Text>
+                    <Text style={[styles.documentBottomMetricValue, { color: metric.color }]} numberOfLines={1}>{metric.value}</Text>
+                  </View>
+                </Pressable>
+              ))}
             </View>
           </View>
           <Pressable
@@ -6497,19 +6545,15 @@ const styles = StyleSheet.create({
   documentHeaderDivider: { height: 1, marginHorizontal: -9, backgroundColor: '#E2E8F0' },
   documentBottomBar: { position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 80, elevation: 18, borderTopLeftRadius: 22, borderTopRightRadius: 22, shadowColor: '#0F172A', shadowOpacity: 0.16, shadowRadius: 18, shadowOffset: { width: 0, height: -6 } },
   documentBottomGlass: { borderTopLeftRadius: 22, borderTopRightRadius: 22, paddingHorizontal: 10, paddingTop: 8 },
-  documentBottomContent: { minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  documentBottomInfo: { flex: 1, minWidth: 0, gap: 6 },
-  documentBottomMetaRow: { minHeight: 25, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 },
-  documentBottomTotalPill: { flexGrow: 1, flexShrink: 0, flexBasis: 118, maxWidth: '100%', minHeight: 25, borderRadius: 999, borderWidth: 1, borderColor: '#BFDBFE', backgroundColor: '#EFF6FF', paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 4 },
-  documentBottomTotalText: { flex: 1, minWidth: 0, color: '#2563EB', fontSize: 12, lineHeight: 15, fontWeight: '900', includeFontPadding: false },
-  documentBottomProfitPill: { flexGrow: 1, flexShrink: 0, flexBasis: 118, maxWidth: '100%', minHeight: 25, borderRadius: 999, borderWidth: 1, borderColor: '#BBF7D0', backgroundColor: '#F0FDF4', paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 4 },
-  documentBottomProfitText: { flex: 1, minWidth: 0, color: '#16A34A', fontSize: 12, lineHeight: 15, fontWeight: '900', includeFontPadding: false },
-  documentBottomProfitTextNegative: { color: '#DC2626' },
-  documentBottomDateText: { flexShrink: 0, color: '#475569', fontSize: 11.5, lineHeight: 14, fontWeight: '800', includeFontPadding: false },
-  documentBottomCounterpartyRow: { minHeight: 24, borderRadius: 8, backgroundColor: '#F8FAFC', paddingHorizontal: 7, flexDirection: 'row', alignItems: 'center', gap: 5 },
-  documentBottomCounterpartyText: { flex: 1, minWidth: 0, color: '#334155', fontSize: 11.5, lineHeight: 14, fontWeight: '800', includeFontPadding: false },
-  documentBottomDateInline: { flexShrink: 0, maxWidth: 112, minHeight: 20, borderRadius: 999, backgroundColor: '#EEF2F7', paddingHorizontal: 6, flexDirection: 'row', alignItems: 'center', gap: 3 },
-  documentBottomPrimaryButton: { width: 106, height: 46, borderRadius: 13, backgroundColor: '#2563EB', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10 },
+  documentBottomContent: { minHeight: 72, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  documentBottomInfo: { flex: 1, minWidth: 0 },
+  documentBottomMetricsGrid: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 6, rowGap: 4 },
+  documentBottomMetric: { flexGrow: 1, flexShrink: 1, flexBasis: '47%', minWidth: 118, minHeight: 29, borderRadius: 8, paddingHorizontal: 2, paddingVertical: 2, flexDirection: 'row', alignItems: 'center', gap: 5 },
+  documentBottomMetricIcon: { width: 25, height: 25, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  documentBottomMetricTextWrap: { flex: 1, minWidth: 0 },
+  documentBottomMetricLabel: { color: '#64748B', fontSize: 9.5, lineHeight: 11, fontWeight: '900', textTransform: 'uppercase', includeFontPadding: false },
+  documentBottomMetricValue: { marginTop: 1, fontSize: 12.5, lineHeight: 15, fontWeight: '900', includeFontPadding: false },
+  documentBottomPrimaryButton: { width: 106, height: 56, borderRadius: 13, backgroundColor: '#2563EB', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10 },
   documentBottomPrimaryButtonSubmit: { backgroundColor: '#16A34A' },
   documentBottomPrimaryText: { color: '#FFFFFF', fontSize: 12.5, lineHeight: 16, fontWeight: '900', includeFontPadding: false },
   flatPressed: { opacity: 0.78 },

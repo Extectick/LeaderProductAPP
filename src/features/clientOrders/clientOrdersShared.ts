@@ -12,6 +12,8 @@ type DraftPackage = {
   guid: string;
   name: string;
   multiplier?: number | null;
+  weight?: number | null;
+  weightUnit?: DraftUnit | null;
   isDefault?: boolean;
   unit?: DraftUnit | null;
 };
@@ -25,6 +27,8 @@ export type DraftItem = {
   productArticle?: string | null;
   productSku?: string | null;
   productIsWeight?: boolean | null;
+  productWeight?: number | null;
+  weightUnit?: DraftUnit | null;
   imageThumbUrl?: string | null;
   imagePreviewUrl?: string | null;
   imageHash?: string | null;
@@ -764,6 +768,8 @@ export function orderToDraft(order: ClientOrder): DraftOrder {
             guid: item.package.guid,
             name: item.package.name ?? 'Упаковка',
             multiplier: item.package.multiplier ?? null,
+            weight: (item.package as any)?.weight ?? null,
+            weightUnit: (item.package as any)?.weightUnit ?? null,
             isDefault: true,
             unit: item.unit ?? null,
           }
@@ -787,6 +793,8 @@ export function orderToDraft(order: ClientOrder): DraftOrder {
         productArticle: item.product.article ?? null,
         productSku: item.product.sku ?? null,
         productIsWeight: item.product.isWeight ?? null,
+        productWeight: (item.product as any)?.weight ?? null,
+        weightUnit: (item.product as any)?.weightUnit ?? null,
         imageThumbUrl: item.product.imageThumbUrl ?? null,
         imagePreviewUrl: item.product.imagePreviewUrl ?? null,
         imageHash: item.product.imageHash ?? null,
@@ -841,12 +849,32 @@ export function computeLineProfit(item: DraftItem, generalDiscountPercent?: stri
   return computeLineTotal(item, generalDiscountPercent) - cost;
 }
 
+export function computeLineWeight(item: DraftItem) {
+  if (isCancelledDraftItem(item)) return 0;
+  const quantity = normalizeQuantityForPayload(item);
+  if (!Number.isFinite(quantity) || quantity <= 0) return 0;
+
+  const selectedPackage = getSelectedPackage(item);
+  const packageWeight = Number(selectedPackage?.weight ?? 0);
+  if (Number.isFinite(packageWeight) && packageWeight > 0) {
+    return quantity * packageWeight;
+  }
+
+  const productWeight = Number(item.productWeight ?? 0);
+  if (!Number.isFinite(productWeight) || productWeight <= 0) return 0;
+  return quantity * getPackageMultiplier(item) * productWeight;
+}
+
 export function computeDraftTotal(draft: DraftOrder) {
   return draft.items.reduce((sum, item) => sum + computeLineTotal(item, draft.generalDiscountPercent), 0);
 }
 
 export function computeDraftProfit(draft: DraftOrder) {
   return draft.items.reduce((sum, item) => sum + computeLineProfit(item, draft.generalDiscountPercent), 0);
+}
+
+export function computeDraftWeight(draft: DraftOrder) {
+  return draft.items.reduce((sum, item) => sum + computeLineWeight(item), 0);
 }
 
 export function validateDraft(draft: DraftOrder): DraftValidation {
@@ -1080,6 +1108,8 @@ export function buildNewItem(product: ClientOrderProduct, options?: { quantity?:
     productArticle: product.article ?? null,
     productSku: product.sku ?? null,
     productIsWeight: product.isWeight ?? null,
+    productWeight: product.weight ?? null,
+    weightUnit: product.weightUnit ?? null,
     imageThumbUrl: product.imageThumbUrl ?? null,
     imagePreviewUrl: product.imagePreviewUrl ?? null,
     imageHash: product.imageHash ?? null,

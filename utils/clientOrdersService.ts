@@ -184,12 +184,14 @@ export type ClientOrderItem = {
     article?: string | null;
     sku?: string | null;
     isWeight?: boolean | null;
+    weight?: number | null;
+    weightUnit?: { guid?: string | null; name?: string | null; symbol?: string | null } | null;
     imageThumbUrl?: string | null;
     imagePreviewUrl?: string | null;
     imageHash?: string | null;
     images?: ClientOrderProductImage[];
   };
-  package?: { guid?: string | null; name?: string | null; multiplier?: number | null } | null;
+  package?: { guid?: string | null; name?: string | null; multiplier?: number | null; weight?: number | null; weightUnit?: { guid?: string | null; name?: string | null; symbol?: string | null } | null } | null;
   unit?: { guid?: string | null; name?: string | null; symbol?: string | null } | null;
   quantity: number;
   quantityBase?: number | null;
@@ -339,10 +341,14 @@ export type ClientOrderProduct = {
   sku?: string | null;
   isWeight?: boolean | null;
   baseUnit?: { guid: string; name: string; symbol?: string | null } | null;
+  weight?: number | null;
+  weightUnit?: { guid: string; name: string; symbol?: string | null } | null;
   packages: {
     guid: string;
     name: string;
     multiplier?: number | null;
+    weight?: number | null;
+    weightUnit?: { guid: string; name: string; symbol?: string | null } | null;
     isDefault?: boolean;
     unit?: { guid: string; name: string; symbol?: string | null } | null;
   }[];

@@ -1,9 +1,9 @@
 import { usePathname, useRouter } from 'expo-router';
 import React, { useEffect, useRef } from 'react';
-import { ActivityIndicator, Platform, View } from 'react-native';
+import { Platform } from 'react-native';
 
 import { AuthContext } from '@/context/AuthContext';
-import { useThemeColor } from '@/hooks/useThemeColor';
+import StartupLogoLoader from '@/components/StartupLogoLoader';
 import { normalizeRoutePath } from '@/src/shared/lib/routePath';
 import { getProfileGate } from '@/utils/profileGate';
 import { getMaxStartAppealId, isMaxMiniAppLaunch } from '@/utils/maxAuthService';
@@ -13,8 +13,6 @@ export default function RootRedirect() {
   const router = useRouter();
   const pathname = usePathname();
   const auth = React.useContext(AuthContext);
-  const background = useThemeColor({}, 'background');
-  const textColor = useThemeColor({}, 'text');
   const lastRedirectRef = useRef('');
 
   useEffect(() => {
@@ -52,9 +50,5 @@ export default function RootRedirect() {
     router.replace(target as any);
   }, [auth, pathname, router]);
 
-  return (
-    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: background }}>
-      <ActivityIndicator color={textColor} />
-    </View>
-  );
+  return <StartupLogoLoader />;
 }
