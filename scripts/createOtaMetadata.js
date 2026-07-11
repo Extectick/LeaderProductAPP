@@ -60,10 +60,7 @@ function readExportMetadata(exportDir) {
 function getRuntimeVersion(args) {
   const runtimeVersion = String(args.runtimeVersion || '').trim();
   if (runtimeVersion) return runtimeVersion;
-  const appConfig = fs.readFileSync(path.resolve('app.config.ts'), 'utf8');
-  const versionName = appConfig.match(/version:\s*["']([^"']+)["']/)?.[1];
-  if (!versionName) throw new Error('Missing --runtimeVersion and cannot read app.config.ts version');
-  return versionName;
+  return readVersion().versionName;
 }
 
 function main() {

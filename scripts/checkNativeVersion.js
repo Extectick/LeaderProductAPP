@@ -23,31 +23,39 @@ function parseArgs(argv) {
 
 const args = parseArgs(process.argv.slice(2));
 const expectedName = String(args.versionName || args.version || args._[0] || '').trim();
-const expectedCode = Number.parseInt(String(args.versionCode || args._[1] || ''), 10);
+const expectedCodeRaw = String(args.versionCode || args._[1] || '').trim();
+const expectedCode = Number.parseInt(expectedCodeRaw, 10);
 
-if (!expectedName) throw new Error('Missing --versionName');
-if (!Number.isInteger(expectedCode) || expectedCode <= 0) throw new Error('Missing or invalid --versionCode');
+if (expectedName && (!Number.isInteger(expectedCode) || expectedCode <= 0)) {
+  throw new Error('Missing or invalid --versionCode');
+}
 
 const actual = readVersion();
 const errors = [];
 
-if (actual.versionName !== expectedName) {
-  errors.push(`app.config.ts version is ${actual.versionName}, expected ${expectedName}`);
+if (expectedName && actual.versionName !== expectedName) {
+  errors.push(`app.version.json versionName is ${actual.versionName}, expected ${expectedName}`);
 }
 
-if (actual.versionCode !== expectedCode) {
-  errors.push(`app.config.ts android.versionCode is ${actual.versionCode}, expected ${expectedCode}`);
+if (expectedName && actual.versionCode !== expectedCode) {
+  errors.push(`app.version.json versionCode is ${actual.versionCode}, expected ${expectedCode}`);
 }
 
-if (String(actual.buildNumber) !== String(expectedCode)) {
-  errors.push(`app.config.ts ios.buildNumber is ${actual.buildNumber}, expected ${expectedCode}`);
+if (String(actual.buildNumber) !== String(actual.versionCode)) {
+  errors.push(`app.version.json iosBuildNumber is ${actual.buildNumber}, expected ${actual.versionCode}`);
+}
+
+if (actual.minSupportedVersionCode > actual.versionCode) {
+  errors.push(
+    `app.version.json minSupportedVersionCode is ${actual.minSupportedVersionCode}, greater than versionCode ${actual.versionCode}`
+  );
 }
 
 if (errors.length) {
   console.error('Native version is not synchronized with release inputs.');
   console.error(errors.map((line) => `- ${line}`).join('\n'));
-  console.error('\nRun before starting the APK workflow:');
-  console.error(`node ./scripts/setNativeVersion.js --versionName ${expectedName} --versionCode ${expectedCode}`);
+  console.error('\nRun before starting the APK workflow, then commit app.version.json:');
+  console.error(`node ./scripts/setNativeVersion.js --versionName ${expectedName || actual.versionName} --versionCode ${expectedCode || actual.versionCode}`);
   process.exit(1);
 }
 

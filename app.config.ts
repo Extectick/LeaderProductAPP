@@ -1,9 +1,21 @@
 // app.config.ts
 import * as dotenv from "dotenv";
 import { ConfigContext, ExpoConfig } from "expo/config";
+import fs from "fs";
 import path from "path";
 
 dotenv.config({ path: path.resolve(__dirname, process.env.NODE_ENV === "production" ? ".env.production" : ".env") });
+
+type NativeVersionConfig = {
+  versionName: string;
+  versionCode: number;
+  iosBuildNumber?: string;
+};
+
+const nativeVersion = JSON.parse(
+  fs.readFileSync(path.resolve(__dirname, "app.version.json"), "utf8")
+) as NativeVersionConfig;
+const iosBuildNumber = nativeVersion.iosBuildNumber || String(nativeVersion.versionCode);
 
 const sentryRuntimeEnabled = String(process.env.EXPO_PUBLIC_SENTRY_ENABLED || "").trim().toLowerCase() === "true";
 const sentryUploadConfigured = !!(process.env.SENTRY_ORG && process.env.SENTRY_PROJECT && process.env.SENTRY_AUTH_TOKEN);
@@ -20,7 +32,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   name: "Лидер Продукт",
   slug: "leader-product",
   owner: "extectick",
-  version: "0.1.20",
+  version: nativeVersion.versionName,
   orientation: "portrait",
   userInterfaceStyle: "automatic",
   newArchEnabled: true,
@@ -42,10 +54,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     favicon: "./assets/images/favicon.png",
   },
 
-  ios: { bundleIdentifier: "com.leaderproduct.app", buildNumber: "19" },
+  ios: { bundleIdentifier: "com.leaderproduct.app", buildNumber: iosBuildNumber },
   android: {
     package: "com.leaderproduct.app",
-    versionCode: 19,
+    versionCode: nativeVersion.versionCode,
     edgeToEdgeEnabled: true,
     usesCleartextTraffic: true,
     adaptiveIcon: {

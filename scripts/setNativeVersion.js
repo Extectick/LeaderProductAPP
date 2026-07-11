@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-const fs = require('node:fs');
 const path = require('node:path');
+const fs = require('node:fs');
+const { readVersion, writeVersion } = require('./versionConfig');
 
 function parseArgs(argv) {
   const args = { _: [] };
@@ -41,43 +42,38 @@ if (!Number.isInteger(versionCode) || versionCode <= 0) {
 }
 
 const root = process.cwd();
-const appConfigPath = path.join(root, 'app.config.ts');
 const gradlePath = path.join(root, 'android', 'app', 'build.gradle');
 
-let appConfig = fs.readFileSync(appConfigPath, 'utf8');
-appConfig = replaceOrThrow(
-  appConfig,
-  /version:\s*["'][^"']+["']/,
-  `version: "${versionName}"`,
-  'Expo version'
-);
-appConfig = replaceOrThrow(
-  appConfig,
-  /buildNumber:\s*["']\d+["']/,
-  `buildNumber: "${versionCode}"`,
-  'iOS buildNumber'
-);
-appConfig = replaceOrThrow(
-  appConfig,
-  /versionCode:\s*\d+/,
-  `versionCode: ${versionCode}`,
-  'Android versionCode'
-);
-fs.writeFileSync(appConfigPath, appConfig);
+const current = readVersion(root);
+const minSupportedVersionCode = args.minSupportedVersionCode
+  ? Number.parseInt(String(args.minSupportedVersionCode), 10)
+  : Math.min(current.minSupportedVersionCode, versionCode);
 
-let gradle = fs.readFileSync(gradlePath, 'utf8');
-gradle = replaceOrThrow(
-  gradle,
-  /versionCode\s+\d+/,
-  `versionCode ${versionCode}`,
-  'Gradle versionCode'
+writeVersion(
+  {
+    versionName,
+    versionCode,
+    iosBuildNumber: String(versionCode),
+    minSupportedVersionCode,
+  },
+  root
 );
-gradle = replaceOrThrow(
-  gradle,
-  /versionName\s+["'][^"']+["']/,
-  `versionName "${versionName}"`,
-  'Gradle versionName'
-);
-fs.writeFileSync(gradlePath, gradle);
+
+if (fs.existsSync(gradlePath)) {
+  let gradle = fs.readFileSync(gradlePath, 'utf8');
+  gradle = replaceOrThrow(
+    gradle,
+    /versionCode\s+\d+/,
+    `versionCode ${versionCode}`,
+    'Gradle versionCode'
+  );
+  gradle = replaceOrThrow(
+    gradle,
+    /versionName\s+["'][^"']+["']/,
+    `versionName "${versionName}"`,
+    'Gradle versionName'
+  );
+  fs.writeFileSync(gradlePath, gradle);
+}
 
 console.log(`Updated native version to ${versionName} (${versionCode})`);

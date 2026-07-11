@@ -1,6 +1,8 @@
 name: Build Android APK Release
 
 on:
+  push:
+    branches: [main, production]
   workflow_dispatch:
     inputs:
       channel:
@@ -12,16 +14,19 @@ on:
           - dev
           - prod
       versionName:
-        description: App version name, for example 0.1.7
-        required: true
+        description: Optional safety check. Leave empty to use app.version.json.
+        required: false
+        default: ''
         type: string
       versionCode:
-        description: Android version code, for example 6
-        required: true
+        description: Optional safety check. Leave empty to use app.version.json.
+        required: false
+        default: ''
         type: string
       minSupportedVersionCode:
-        description: Minimum supported version code
-        required: true
+        description: Optional override. Leave empty to use app.version.json.
+        required: false
+        default: ''
         type: string
       isMandatory:
         description: Force users to update
@@ -55,7 +60,7 @@ on:
 jobs:
   build-upload:
     runs-on: ubuntu-latest
-    environment: ${{ inputs.channel == 'prod' && 'production' || 'development' }}
+    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.channel == 'dev' && 'development' || 'production' }}
 
     env:
       S3_ENDPOINT: ${{ secrets.BEGET_S3_ENDPOINT }}
@@ -63,18 +68,20 @@ jobs:
       S3_BUCKET: ${{ secrets.BEGET_S3_BUCKET }}
       AWS_ACCESS_KEY_ID: ${{ secrets.BEGET_S3_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.BEGET_S3_SECRET_ACCESS_KEY }}
-      EXPO_PUBLIC_UPDATE_CHANNEL: ${{ inputs.channel }}
-      EXPO_PUBLIC_API_URL_DEV: ${{ inputs.channel == 'prod' && 'https://api.leader-product.ru' || secrets.EXPO_PUBLIC_API_URL_DEV }}
-      EXPO_PUBLIC_OTA_UPDATE_URL: ${{ inputs.channel == 'prod' && 'https://api.leader-product.ru/ota/update' || format('{0}/ota/update', secrets.EXPO_PUBLIC_API_URL_DEV) }}
+      EXPO_PUBLIC_UPDATE_CHANNEL: ${{ github.event_name == 'workflow_dispatch' && inputs.channel || 'prod' }}
+      EXPO_PUBLIC_API_URL_DEV: ${{ (github.event_name != 'workflow_dispatch' || inputs.channel == 'prod') && 'https://api.leader-product.ru' || secrets.EXPO_PUBLIC_API_URL_DEV }}
+      EXPO_PUBLIC_OTA_UPDATE_URL: ${{ (github.event_name != 'workflow_dispatch' || inputs.channel == 'prod') && 'https://api.leader-product.ru/ota/update' || format('{0}/ota/update', secrets.EXPO_PUBLIC_API_URL_DEV) }}
       EXPO_PUBLIC_TELEGRAM_BOT_USERNAME: ${{ secrets.EXPO_PUBLIC_TELEGRAM_BOT_USERNAME }}
       EXPO_PUBLIC_MAX_BOT_USERNAME: ${{ secrets.EXPO_PUBLIC_MAX_BOT_USERNAME }}
       EXPO_PUBLIC_SENTRY_ENABLED: 'false'
-      EXPO_PUBLIC_SENTRY_ENVIRONMENT: ${{ inputs.channel == 'prod' && 'production' || 'development' }}
-      NODE_ENV: ${{ inputs.channel == 'prod' && 'production' || 'development' }}
+      EXPO_PUBLIC_SENTRY_ENVIRONMENT: ${{ (github.event_name != 'workflow_dispatch' || inputs.channel == 'prod') && 'production' || 'development' }}
+      NODE_ENV: ${{ (github.event_name != 'workflow_dispatch' || inputs.channel == 'prod') && 'production' || 'development' }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v5
@@ -82,25 +89,69 @@ jobs:
           node-version: 24
           cache: npm
 
+      - name: Detect APK release strategy
+        id: strategy
+        run: |
+          node ./scripts/checkReleaseStrategy.js \
+            --mode apk \
+            --base "${{ github.event.before }}" \
+            --head "${{ github.sha }}"
+
+      - name: Read committed native version
+        id: version
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const { readVersion } = require('./scripts/readNativeVersion');
+          const version = readVersion();
+          const expectedName = String(process.env.EXPECTED_VERSION_NAME || '').trim();
+          const expectedCode = String(process.env.EXPECTED_VERSION_CODE || '').trim();
+          if (expectedName && expectedName !== version.versionName) {
+            throw new Error(`workflow input versionName=${expectedName}, but app.version.json has ${version.versionName}`);
+          }
+          if (expectedCode && Number(expectedCode) !== version.versionCode) {
+            throw new Error(`workflow input versionCode=${expectedCode}, but app.version.json has ${version.versionCode}`);
+          }
+          const lines = [
+            `version_name=${version.versionName}`,
+            `version_code=${version.versionCode}`,
+            `min_supported_version_code=${version.minSupportedVersionCode}`,
+          ];
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `${lines.join('\n')}\n`);
+          console.log(`Using native version ${version.versionName} (${version.versionCode})`);
+          NODE
+        env:
+          EXPECTED_VERSION_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.versionName || '' }}
+          EXPECTED_VERSION_CODE: ${{ github.event_name == 'workflow_dispatch' && inputs.versionCode || '' }}
+
+      - name: APK build not required
+        if: ${{ steps.strategy.outputs.apk_required != 'true' }}
+        run: echo "No native runtime changes detected. Skipping APK build."
+
       - name: Setup Java
+        if: ${{ steps.strategy.outputs.apk_required == 'true' }}
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 17
 
       - name: Install dependencies
+        if: ${{ steps.strategy.outputs.apk_required == 'true' }}
         run: npm ci --include=dev
 
       - name: Verify release version is committed
+        if: ${{ steps.strategy.outputs.apk_required == 'true' }}
         run: |
           node ./scripts/checkNativeVersion.js \
-            --versionName "${{ inputs.versionName }}" \
-            --versionCode "${{ inputs.versionCode }}"
+            --versionName "${{ steps.version.outputs.version_name }}" \
+            --versionCode "${{ steps.version.outputs.version_code }}"
 
       - name: Generate Android native project
+        if: ${{ steps.strategy.outputs.apk_required == 'true' }}
         run: npx expo prebuild --platform android --clean --non-interactive
 
       - name: Configure Gradle memory
+        if: ${{ steps.strategy.outputs.apk_required == 'true' }}
         working-directory: android
         shell: bash
         run: |
@@ -118,23 +169,25 @@ jobs:
           fi
 
       - name: Build APK
+        if: ${{ steps.strategy.outputs.apk_required == 'true' }}
         working-directory: android
         run: |
           chmod +x ./gradlew
-          BUILD_TYPE="${{ inputs.buildType }}"
+          BUILD_TYPE="${{ github.event_name == 'workflow_dispatch' && inputs.buildType || 'release' }}"
           if [ "$BUILD_TYPE" = "debug" ]; then
-            ./gradlew --no-daemon :app:assembleDebug -PreactNativeArchitectures="${{ inputs.architectures }}"
+            ./gradlew --no-daemon :app:assembleDebug -PreactNativeArchitectures="${{ github.event_name == 'workflow_dispatch' && inputs.architectures || 'arm64-v8a' }}"
           else
-            ./gradlew --no-daemon :app:assembleRelease -x lintVitalRelease -x lintRelease -PreactNativeArchitectures="${{ inputs.architectures }}"
+            ./gradlew --no-daemon :app:assembleRelease -x lintVitalRelease -x lintRelease -PreactNativeArchitectures="${{ github.event_name == 'workflow_dispatch' && inputs.architectures || 'arm64-v8a' }}"
           fi
 
       - name: Prepare release metadata
+        if: ${{ steps.strategy.outputs.apk_required == 'true' }}
         id: metadata
         shell: bash
         run: |
           set -euo pipefail
 
-          BUILD_TYPE="${{ inputs.buildType }}"
+          BUILD_TYPE="${{ github.event_name == 'workflow_dispatch' && inputs.buildType || 'release' }}"
           if [ "$BUILD_TYPE" = "debug" ]; then
             APK_PATH="android/app/build/outputs/apk/debug/app-debug.apk"
           else
@@ -146,9 +199,9 @@ jobs:
             exit 1
           fi
 
-          CHANNEL="${{ inputs.channel }}"
-          VERSION_NAME="${{ inputs.versionName }}"
-          VERSION_CODE="${{ inputs.versionCode }}"
+          CHANNEL="${{ github.event_name == 'workflow_dispatch' && inputs.channel || 'prod' }}"
+          VERSION_NAME="${{ steps.version.outputs.version_name }}"
+          VERSION_CODE="${{ steps.version.outputs.version_code }}"
           APK_NAME="leader-product-${CHANNEL}-${VERSION_NAME}-${VERSION_CODE}.apk"
           APK_KEY="${CHANNEL}/updates/apk/${APK_NAME}"
           SHA256="$(sha256sum "$APK_PATH" | awk '{print $1}')"
@@ -186,28 +239,32 @@ jobs:
 
           echo "release_metadata_b64=$(base64 -w0 release-artifacts/release-metadata.json)" >> "$GITHUB_OUTPUT"
         env:
-          CHANNEL: ${{ inputs.channel }}
-          VERSION_NAME: ${{ inputs.versionName }}
-          VERSION_CODE: ${{ inputs.versionCode }}
-          MIN_SUPPORTED_VERSION_CODE: ${{ inputs.minSupportedVersionCode }}
-          IS_MANDATORY: ${{ inputs.isMandatory }}
-          ROLLOUT_PERCENT: ${{ inputs.rolloutPercent }}
-          RELEASE_NOTES: ${{ inputs.releaseNotes }}
-          BUILD_TYPE: ${{ inputs.buildType }}
-          ARCHITECTURES: ${{ inputs.architectures }}
+          CHANNEL: ${{ github.event_name == 'workflow_dispatch' && inputs.channel || 'prod' }}
+          VERSION_NAME: ${{ steps.version.outputs.version_name }}
+          VERSION_CODE: ${{ steps.version.outputs.version_code }}
+          MIN_SUPPORTED_VERSION_CODE: ${{ github.event_name == 'workflow_dispatch' && inputs.minSupportedVersionCode || steps.version.outputs.min_supported_version_code }}
+          IS_MANDATORY: ${{ github.event_name == 'workflow_dispatch' && inputs.isMandatory || false }}
+          ROLLOUT_PERCENT: ${{ github.event_name == 'workflow_dispatch' && inputs.rolloutPercent || '100' }}
+          RELEASE_NOTES: ${{ github.event_name == 'workflow_dispatch' && inputs.releaseNotes || format('Production Android APK {0}', steps.version.outputs.version_name) }}
+          BUILD_TYPE: ${{ github.event_name == 'workflow_dispatch' && inputs.buildType || 'release' }}
+          ARCHITECTURES: ${{ github.event_name == 'workflow_dispatch' && inputs.architectures || 'arm64-v8a' }}
 
       - name: Upload APK to S3
+        if: ${{ steps.strategy.outputs.apk_required == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
 
-          APK_NAME="leader-product-${{ inputs.channel }}-${{ inputs.versionName }}-${{ inputs.versionCode }}.apk"
-          APK_KEY="${{ inputs.channel }}/updates/apk/$APK_NAME"
+          CHANNEL="${{ github.event_name == 'workflow_dispatch' && inputs.channel || 'prod' }}"
+          VERSION_NAME="${{ steps.version.outputs.version_name }}"
+          VERSION_CODE="${{ steps.version.outputs.version_code }}"
+          APK_NAME="leader-product-${CHANNEL}-${VERSION_NAME}-${VERSION_CODE}.apk"
+          APK_KEY="${CHANNEL}/updates/apk/$APK_NAME"
 
           node ./scripts/uploadApkToS3.js "release-artifacts/$APK_NAME" "$APK_KEY"
 
       - name: Publish production AppUpdate in API
-        if: ${{ inputs.channel == 'prod' }}
+        if: ${{ steps.strategy.outputs.apk_required == 'true' && (github.event_name != 'workflow_dispatch' || inputs.channel == 'prod') }}
         uses: appleboy/ssh-action@v1
         env:
           RELEASE_METADATA_B64: ${{ steps.metadata.outputs.release_metadata_b64 }}
@@ -230,9 +287,9 @@ jobs:
             '
 
       - name: Upload release artifacts
-        if: ${{ always() && hashFiles('release-artifacts/*') != '' }}
+        if: ${{ always() && steps.strategy.outputs.apk_required == 'true' && hashFiles('release-artifacts/*') != '' }}
         uses: actions/upload-artifact@v7
         with:
-          name: android-apk-${{ inputs.channel }}-${{ inputs.versionName }}-${{ inputs.versionCode }}
+          name: android-apk-${{ github.event_name == 'workflow_dispatch' && inputs.channel || 'prod' }}-${{ steps.version.outputs.version_name }}-${{ steps.version.outputs.version_code }}
           path: release-artifacts/
           if-no-files-found: error

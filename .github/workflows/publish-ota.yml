@@ -62,6 +62,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Check OTA release strategy
+        if: ${{ github.event_name == 'push' }}
+        run: |
+          node ./scripts/checkReleaseStrategy.js \
+            --mode ota \
+            --base "${{ github.event.before }}" \
+            --head "${{ github.sha }}"
 
       - name: Setup Node
         uses: actions/setup-node@v5
