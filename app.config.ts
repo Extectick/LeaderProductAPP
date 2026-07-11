@@ -91,6 +91,14 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     "./plugins/with-android-cleartext-network",
     "expo-audio",
     "expo-font",
+    "expo-secure-store",
+    [
+      "expo-location",
+      {
+        isAndroidBackgroundLocationEnabled: true,
+        isAndroidForegroundServiceEnabled: true,
+      },
+    ],
     "@kesha-antonov/react-native-background-downloader",
     ...(enableSentryPlugin ? ["@sentry/react-native"] : []),
     "@react-native-community/datetimepicker",

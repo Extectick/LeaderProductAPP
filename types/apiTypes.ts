@@ -46,11 +46,17 @@ export interface QRCodeCache {
 export type AuthLoginRequest = {
   email: string;
   password: string;
+  installId?: string;
+  deviceSessionId?: string | null;
+  platform?: string;
+  appVersion?: string;
+  deviceName?: string;
 };
 
 export type AuthLoginResponseData = {
   accessToken: string;
   refreshToken: string;
+  deviceSessionId?: string | null;
   profile: Profile;
   message: string;
 };
@@ -72,11 +78,17 @@ export type AuthRegisterResponse = SuccessResponse<{
 export type AuthVerifyRequest = {
   email: string;
   code: string;
+  installId?: string;
+  deviceSessionId?: string | null;
+  platform?: string;
+  appVersion?: string;
+  deviceName?: string;
 };
 
 export type AuthVerifyResponseData = {
   accessToken: string;
   refreshToken: string;
+  deviceSessionId?: string | null;
   profile: Profile | null;
   message: string;
 };
@@ -85,11 +97,17 @@ export type AuthVerifyResponse = SuccessResponse<AuthVerifyResponseData> | Error
 
 export type AuthTokenRequest = {
   refreshToken: string;
+  installId?: string;
+  deviceSessionId?: string | null;
+  platform?: string;
+  appVersion?: string;
+  deviceName?: string;
 };
 
 export type AuthTokenResponse = SuccessResponse<{
   accessToken: string;
   refreshToken: string;
+  deviceSessionId?: string | null;
   profile: Profile | null;
 }> | ErrorResponse;
 

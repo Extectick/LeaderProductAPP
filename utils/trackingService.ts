@@ -9,6 +9,8 @@ export type RoutePointDto = {
   latitude: number;
   longitude: number;
   recordedAt: string;
+  recordedTimeZone?: string | null;
+  recordedTimezoneOffsetMinutes?: number | null;
   eventType: 'MOVE' | 'STOP';
   accuracy?: number | null;
   speed?: number | null;

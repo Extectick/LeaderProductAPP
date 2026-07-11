@@ -2,6 +2,7 @@ export type AppErrorCode =
   | 'NETWORK_UNAVAILABLE'
   | 'UNAUTHORIZED'
   | 'FORBIDDEN'
+  | 'CONFLICT'
   | 'NOT_FOUND'
   | 'VALIDATION_FAILED'
   | 'RATE_LIMITED'
@@ -29,6 +30,7 @@ export function mapHttpStatusToErrorCode(status: number): AppErrorCode {
   if (status === 0) return 'NETWORK_UNAVAILABLE';
   if (status === 401) return 'UNAUTHORIZED';
   if (status === 403) return 'FORBIDDEN';
+  if (status === 409) return 'CONFLICT';
   if (status === 404) return 'NOT_FOUND';
   if (status === 422 || status === 400) return 'VALIDATION_FAILED';
   if (status === 429) return 'RATE_LIMITED';
@@ -44,6 +46,8 @@ export function mapAppErrorToUserMessage(error: Pick<AppError, 'code' | 'message
       return 'Сессия истекла. Выполните вход повторно.';
     case 'FORBIDDEN':
       return 'Недостаточно прав для этого действия.';
+    case 'CONFLICT':
+      return error.message || 'Conflict. Retry the action.';
     case 'NOT_FOUND':
       return 'Запрошенные данные не найдены.';
     case 'VALIDATION_FAILED':

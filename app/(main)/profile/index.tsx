@@ -1532,7 +1532,16 @@ function LogoutButton() {
 }
 
 function TrackingToggle() {
-  const { trackingEnabled, startTracking, stopTracking } = useTracking();
+  const {
+    trackingEnabled,
+    trackingStatus,
+    trackingStatusText,
+    queueLength,
+    lastUploadAt,
+    lastError,
+    startTracking,
+    stopTracking,
+  } = useTracking();
   const [loading, setLoading] = useState(false);
 
   const onToggle = async () => {
@@ -1551,16 +1560,41 @@ function TrackingToggle() {
     }
   };
 
+  const lastUploadLabel = lastUploadAt
+    ? new Date(lastUploadAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+    : null;
+  const statusColor =
+    trackingStatus === 'tracking'
+      ? '#15803D'
+      : trackingStatus === 'uploading'
+        ? '#2563EB'
+        : trackingStatus === 'idle'
+          ? '#64748B'
+          : '#B45309';
+
   return (
     <View style={styles.trackingRow}>
       <View style={styles.settingsIcon}>
-        <Ionicons name="navigate-outline" size={17} color="#1E293B" />
+        <Ionicons name="navigate-outline" size={17} color={statusColor} />
       </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.trackingTitle}>Отслеживание маршрута</Text>
-        <Text style={styles.trackingSubtitle}>
-          При включении приложение будет отправлять координаты в фоне.
-        </Text>
+        <Text style={styles.trackingSubtitle}>{trackingStatusText}</Text>
+        <View style={styles.trackingMetaRow}>
+          <View style={styles.trackingChip}>
+            <Ionicons name="cloud-upload-outline" size={12} color="#475569" />
+            <Text style={styles.trackingChipText}>
+              {queueLength > 0 ? `Очередь: ${queueLength}` : 'Очередь пуста'}
+            </Text>
+          </View>
+          {lastUploadLabel ? (
+            <View style={styles.trackingChip}>
+              <Ionicons name="time-outline" size={12} color="#475569" />
+              <Text style={styles.trackingChipText}>Отправлено {lastUploadLabel}</Text>
+            </View>
+          ) : null}
+        </View>
+        {lastError ? <Text style={styles.trackingError}>{lastError}</Text> : null}
       </View>
       <Switch value={trackingEnabled} onValueChange={onToggle} disabled={loading} />
     </View>
@@ -1609,6 +1643,33 @@ const styles = StyleSheet.create({
   },
   trackingTitle: { fontWeight: '800', fontSize: 14, color: '#0F172A', marginBottom: 3 },
   trackingSubtitle: { fontSize: 12, color: '#64748B', lineHeight: 16 },
+  trackingMetaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 8,
+  },
+  trackingChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: '#F1F5F9',
+  },
+  trackingChipText: {
+    color: '#475569',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  trackingError: {
+    marginTop: 7,
+    color: '#B45309',
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '700',
+  },
   settingsHeader: {
     flexDirection: 'row',
     alignItems: 'center',

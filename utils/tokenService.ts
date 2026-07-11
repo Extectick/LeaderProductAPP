@@ -1,7 +1,10 @@
-// utils/tokenService.ts
+﻿// utils/tokenService.ts
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
 import { jwtDecode } from 'jwt-decode';
+import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
+import Constants from 'expo-constants';
 
 import { API_BASE_URL } from './config';
 import { setServerReachable, setServerUnavailable } from '@/src/shared/network/serverStatus';
@@ -11,6 +14,9 @@ const ACCESS_KEY = 'accessToken';
 const REFRESH_KEY = 'refreshToken';
 const PROFILE_KEY = 'profile';
 const AUTH_API_BASE_URL_KEY = 'authApiBaseUrl';
+const DEVICE_SESSION_KEY = 'deviceSessionId';
+const INSTALL_ID_KEY = 'authInstallId';
+const REFRESH_LOCK_KEY = 'authRefreshLock';
 
 const MAX_REFRESH_ATTEMPTS = 10;
 let refreshAttempts = 0;
@@ -20,8 +26,9 @@ let sessionExpiredActive = false;
 let lastRefreshFailure: RefreshFailure | null = null;
 
 const REFRESH_TIMEOUT_MS = 10_000;
+const REFRESH_LOCK_TTL_MS = 15_000;
 
-type RefreshFailureKind = 'invalid' | 'network' | 'server' | 'unknown';
+type RefreshFailureKind = 'invalid' | 'network' | 'server' | 'rotated' | 'unknown';
 
 export type RefreshFailure = {
   kind: RefreshFailureKind;
@@ -39,6 +46,133 @@ export type AuthSessionExpiredEvent = {
 type AuthSessionExpiredListener = (event: AuthSessionExpiredEvent) => void;
 
 const authSessionExpiredListeners = new Set<AuthSessionExpiredListener>();
+
+function canUseSecureStore() {
+  return Platform.OS !== 'web';
+}
+
+async function secureGet(key: string): Promise<string | null> {
+  if (!canUseSecureStore()) return AsyncStorage.getItem(key);
+  try {
+    return await SecureStore.getItemAsync(key);
+  } catch {
+    return AsyncStorage.getItem(key);
+  }
+}
+
+async function secureSet(key: string, value: string): Promise<void> {
+  if (!canUseSecureStore()) {
+    await AsyncStorage.setItem(key, value);
+    return;
+  }
+  try {
+    await SecureStore.setItemAsync(key, value);
+  } catch {
+    await AsyncStorage.setItem(key, value);
+  }
+}
+
+async function secureRemove(key: string): Promise<void> {
+  if (canUseSecureStore()) {
+    try {
+      await SecureStore.deleteItemAsync(key);
+    } catch {
+      // ignore and clear AsyncStorage fallback below
+    }
+  }
+  await AsyncStorage.removeItem(key);
+}
+
+async function migrateLegacyTokenIfNeeded(key: string): Promise<string | null> {
+  const secureValue = await secureGet(key);
+  if (secureValue) return secureValue;
+  const legacyValue = await AsyncStorage.getItem(key);
+  if (!legacyValue) return null;
+  await secureSet(key, legacyValue);
+  if (canUseSecureStore()) {
+    await AsyncStorage.removeItem(key);
+  }
+  return legacyValue;
+}
+
+function makeInstallId() {
+  return `lp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+export async function getInstallId(): Promise<string> {
+  const existing = await AsyncStorage.getItem(INSTALL_ID_KEY);
+  if (existing) return existing;
+  const next = makeInstallId();
+  await AsyncStorage.setItem(INSTALL_ID_KEY, next);
+  return next;
+}
+
+export async function getDeviceSessionId(): Promise<string | null> {
+  return secureGet(DEVICE_SESSION_KEY);
+}
+
+export async function getAuthDevicePayload() {
+  return {
+    installId: await getInstallId(),
+    deviceSessionId: await getDeviceSessionId(),
+    platform: Platform.OS,
+    appVersion: Constants.expoConfig?.version || Constants.manifest2?.extra?.expoClient?.version || undefined,
+    deviceName: Constants.deviceName || undefined,
+  };
+}
+
+async function delay(ms: number) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function readRefreshError(error: any) {
+  const data = error?.response?.data ?? error?.data;
+  const rawStatus = error?.response?.status ?? error?.status;
+  const parsedStatus =
+    typeof rawStatus === 'number'
+      ? rawStatus
+      : typeof rawStatus === 'string' && rawStatus.trim()
+        ? Number(rawStatus)
+        : undefined;
+  const message = data?.message || error?.message || 'Refresh error';
+  const reason = data?.error?.details?.reason || data?.error?.reason;
+  const code = data?.error?.code;
+  const status =
+    Number.isFinite(parsedStatus)
+      ? parsedStatus
+      : /status code 409/i.test(String(message))
+        ? 409
+        : undefined;
+  return { status, message, reason, code };
+}
+
+function isRefreshTokenRotatedConflict(errorInfo: ReturnType<typeof readRefreshError>) {
+  return (
+    errorInfo.status === 409 &&
+    (
+      errorInfo.reason === 'REFRESH_TOKEN_ROTATED' ||
+      errorInfo.code === 'CONFLICT' ||
+      /REFRESH_TOKEN_ROTATED|already rotated|status code 409|обнов/i.test(String(errorInfo.message || ''))
+    )
+  );
+}
+
+async function waitForRotatedTokenFromOtherRuntime(
+  previousRefreshToken: string,
+  previousAccessToken?: string | null
+): Promise<string | null> {
+  for (const waitMs of [250, 750, 1500]) {
+    await delay(waitMs);
+    const accessFromOtherRuntime = await getAccessTokenIfRefreshChanged(previousRefreshToken, previousAccessToken);
+    if (accessFromOtherRuntime) return accessFromOtherRuntime;
+
+    const currentRefresh = await getRefreshToken();
+    if (currentRefresh && currentRefresh !== previousRefreshToken) {
+      return postRefreshToken(currentRefresh);
+    }
+  }
+  return null;
+}
 
 function notifyAuthSessionExpired(event: AuthSessionExpiredEvent) {
   authSessionExpiredListeners.forEach((listener) => {
@@ -70,7 +204,12 @@ function rememberRefreshFailure(failure: Omit<RefreshFailure, 'at'>) {
 }
 
 async function clearStoredAuthState(): Promise<void> {
-  await AsyncStorage.multiRemove([ACCESS_KEY, REFRESH_KEY, PROFILE_KEY, AUTH_API_BASE_URL_KEY]);
+  await Promise.all([
+    secureRemove(ACCESS_KEY),
+    secureRemove(REFRESH_KEY),
+    secureRemove(DEVICE_SESSION_KEY),
+    AsyncStorage.multiRemove([PROFILE_KEY, AUTH_API_BASE_URL_KEY]),
+  ]);
   await clearServicesAccessCache();
   refreshAttempts = 0;
   lastWarnTs = 0;
@@ -86,9 +225,13 @@ async function invalidateAuthSession(reason: string, status?: number) {
 }
 
 async function ensureTokenStorageScope(): Promise<boolean> {
-  const entries = await AsyncStorage.multiGet([AUTH_API_BASE_URL_KEY, ACCESS_KEY, REFRESH_KEY]);
+  const entries = await AsyncStorage.multiGet([AUTH_API_BASE_URL_KEY]);
   const storedBaseUrl = entries[0]?.[1] || '';
-  const hasTokens = Boolean(entries[1]?.[1] || entries[2]?.[1]);
+  const [accessToken, refreshToken] = await Promise.all([
+    migrateLegacyTokenIfNeeded(ACCESS_KEY),
+    migrateLegacyTokenIfNeeded(REFRESH_KEY),
+  ]);
+  const hasTokens = Boolean(accessToken || refreshToken);
 
   if (!hasTokens) return true;
 
@@ -107,38 +250,37 @@ async function ensureTokenStorageScope(): Promise<boolean> {
 
 export async function getAccessToken(): Promise<string | null> {
   if (!(await ensureTokenStorageScope())) return null;
-  return AsyncStorage.getItem(ACCESS_KEY);
+  return secureGet(ACCESS_KEY);
 }
 
 export async function getRefreshToken(): Promise<string | null> {
   if (!(await ensureTokenStorageScope())) return null;
-  return AsyncStorage.getItem(REFRESH_KEY);
+  return secureGet(REFRESH_KEY);
 }
 
-export async function saveTokens(accessToken: string, refreshToken: string, profile?: any): Promise<void> {
-  const items: [string, string][] = [
-    [ACCESS_KEY, accessToken],
-    [REFRESH_KEY, refreshToken],
-    [AUTH_API_BASE_URL_KEY, API_BASE_URL],
-  ];
+export async function saveTokens(accessToken: string, refreshToken: string, profile?: any, deviceSessionId?: string | null): Promise<void> {
+  await Promise.all([
+    secureSet(ACCESS_KEY, accessToken),
+    secureSet(REFRESH_KEY, refreshToken),
+    deviceSessionId ? secureSet(DEVICE_SESSION_KEY, deviceSessionId) : Promise.resolve(),
+    AsyncStorage.setItem(AUTH_API_BASE_URL_KEY, API_BASE_URL),
+  ]);
 
   if (profile) {
-    items.push([PROFILE_KEY, JSON.stringify(profile)]);
-    await AsyncStorage.multiSet(items);
+    await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
   } else {
-    // Нет профиля в ответе — убираем возможный устаревший профиль
-    await AsyncStorage.multiSet(items);
+    // No profile in response, clear a possibly stale profile.
     await AsyncStorage.removeItem(PROFILE_KEY);
   }
 
-  refreshAttempts = 0; // сброс попыток при новом токене
+  refreshAttempts = 0;
   sessionExpiredActive = false;
   lastRefreshFailure = null;
 }
 
 export async function logout(): Promise<void> {
   await clearStoredAuthState();
-  // Сбрасываем бэкофф, чтобы не было дальнейшего спама предупреждений
+  // Reset backoff to avoid warning spam after explicit logout.
   refreshAttempts = 0;
   lastWarnTs = 0;
   sessionExpiredActive = false;
@@ -166,7 +308,7 @@ export async function isRefreshTokenExpired(): Promise<boolean> {
   const rt = await getRefreshToken();
   const exp = decodeExp(rt);
   if (!rt) return true;
-  if (!exp) return false; // если не удалось распарсить, считаем валидным
+  if (!exp) return false;
   const now = Math.floor(Date.now() / 1000);
   return exp <= now;
 }
@@ -180,20 +322,92 @@ export async function handleBackendUnavailable(reason?: string) {
   }
 }
 
+async function acquireRefreshLock(owner: string): Promise<boolean> {
+  const now = Date.now();
+  const raw = await AsyncStorage.getItem(REFRESH_LOCK_KEY);
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed?.until && Number(parsed.until) > now && parsed?.owner !== owner) {
+        return false;
+      }
+    } catch {
+      // broken lock, overwrite below
+    }
+  }
+  await AsyncStorage.setItem(REFRESH_LOCK_KEY, JSON.stringify({ owner, until: now + REFRESH_LOCK_TTL_MS }));
+  const confirmRaw = await AsyncStorage.getItem(REFRESH_LOCK_KEY);
+  try {
+    const confirm = JSON.parse(confirmRaw || '{}');
+    return confirm.owner === owner;
+  } catch {
+    return false;
+  }
+}
+
+async function releaseRefreshLock(owner: string) {
+  const raw = await AsyncStorage.getItem(REFRESH_LOCK_KEY);
+  if (!raw) return;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed?.owner === owner) {
+      await AsyncStorage.removeItem(REFRESH_LOCK_KEY);
+    }
+  } catch {
+    await AsyncStorage.removeItem(REFRESH_LOCK_KEY);
+  }
+}
+
+async function postRefreshToken(storedRefreshToken: string) {
+  const res = await axios.post(
+    `${API_BASE_URL}/auth/token`,
+    {
+      refreshToken: storedRefreshToken,
+      ...(await getAuthDevicePayload()),
+    },
+    { timeout: REFRESH_TIMEOUT_MS, headers: { 'Content-Type': 'application/json' } }
+  );
+  const payload = res.data?.data ?? res.data;
+  const accessToken: string | undefined = payload?.accessToken;
+  const newRefreshToken: string | undefined = payload?.refreshToken;
+  const profile = payload?.profile;
+  const deviceSessionId: string | undefined = payload?.deviceSessionId;
+
+  if (!accessToken) throw new Error('Missing accessToken in refresh response');
+
+  const refreshToStore = newRefreshToken ?? storedRefreshToken;
+  await saveTokens(accessToken, refreshToStore, profile, deviceSessionId);
+  refreshAttempts = 0;
+  lastWarnTs = 0;
+  setServerReachable();
+  return accessToken;
+}
+
+async function getAccessTokenIfRefreshChanged(
+  previousRefreshToken: string,
+  previousAccessToken?: string | null
+): Promise<string | null> {
+  const currentRefresh = await getRefreshToken();
+  if (!currentRefresh || currentRefresh === previousRefreshToken) return null;
+  const currentAccess = await secureGet(ACCESS_KEY);
+  if (!currentAccess || currentAccess === previousAccessToken) return null;
+  return currentAccess;
+}
+
 export async function refreshToken(): Promise<string | null> {
   if (refreshInFlight) return refreshInFlight;
 
-  // СНАЧАЛА проверяем, есть ли refreshToken в хранилище
   const storedRefreshToken = await getRefreshToken();
+  const storedAccessToken = await secureGet(ACCESS_KEY);
   if (!storedRefreshToken) {
-    refreshAttempts = 0; // на всякий случай сбросим бэкофф
+    refreshAttempts = 0;
     lastRefreshFailure = null;
     return null;
   }
 
   if (refreshAttempts >= MAX_REFRESH_ATTEMPTS) {
     const now = Date.now();
-    if (now - lastWarnTs > 10_000) { // не чаще раза в 10с
+    if (now - lastWarnTs > 10_000) {
       console.warn('Достигнут максимум попыток обновления токена');
       lastWarnTs = now;
     }
@@ -203,30 +417,59 @@ export async function refreshToken(): Promise<string | null> {
   refreshAttempts++;
 
   refreshInFlight = (async () => {
+    const lockOwner = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    let hasLock = false;
     try {
-      const res = await axios.post(
-        `${API_BASE_URL}/auth/token`,
-        { refreshToken: storedRefreshToken },
-        { timeout: REFRESH_TIMEOUT_MS, headers: { 'Content-Type': 'application/json' } }
-      );
-      const payload = res.data?.data ?? res.data;
-      const accessToken: string | undefined = payload?.accessToken;
-      const newRefreshToken: string | undefined = payload?.refreshToken;
-      const profile = payload?.profile;
+      hasLock = await acquireRefreshLock(lockOwner);
+      if (!hasLock) {
+        await delay(350);
+        const accessFromOtherRuntime = await getAccessTokenIfRefreshChanged(storedRefreshToken, storedAccessToken);
+        if (accessFromOtherRuntime) {
+          return accessFromOtherRuntime;
+        }
+        const currentRefresh = await getRefreshToken();
+        if (currentRefresh && currentRefresh !== storedRefreshToken) {
+          return postRefreshToken(currentRefresh);
+        }
+        hasLock = await acquireRefreshLock(lockOwner);
+        if (!hasLock) {
+          await delay(700);
+          const delayedAccessFromOtherRuntime = await getAccessTokenIfRefreshChanged(storedRefreshToken, storedAccessToken);
+          if (delayedAccessFromOtherRuntime) {
+            return delayedAccessFromOtherRuntime;
+          }
+          const delayedRefresh = await getRefreshToken();
+          if (delayedRefresh && delayedRefresh !== storedRefreshToken) {
+            return postRefreshToken(delayedRefresh);
+          }
+          rememberRefreshFailure({ kind: 'unknown', message: 'Refresh already in progress' });
+          return null;
+        }
+      }
 
-      if (!accessToken) throw new Error('Отсутствует accessToken в ответе');
-
-      const refreshToStore = newRefreshToken ?? storedRefreshToken;
-      await saveTokens(accessToken, refreshToStore, profile);
-      refreshAttempts = 0;
-      lastWarnTs = 0;
-      setServerReachable();
-      return accessToken;
+      return await postRefreshToken(storedRefreshToken);
     } catch (e: any) {
-      const status = e?.response?.status;
-      const msg = e?.response?.data?.message || e?.message || 'Refresh error';
+      const refreshError = readRefreshError(e);
+      const { status, message: msg } = refreshError;
+
+      if (isRefreshTokenRotatedConflict(refreshError)) {
+        const recovered = await waitForRotatedTokenFromOtherRuntime(storedRefreshToken, storedAccessToken);
+        if (recovered) return recovered;
+        rememberRefreshFailure({ kind: 'rotated', status, message: msg });
+        return null;
+      }
+
       console.error('[token] refresh error', { status, msg });
       if (status === 401 || status === 403) {
+        const latestRefresh = await getRefreshToken();
+        if (latestRefresh && latestRefresh !== storedRefreshToken) {
+          try {
+            const accessFromOtherRuntime = await secureGet(ACCESS_KEY);
+            return accessFromOtherRuntime || (await postRefreshToken(latestRefresh));
+          } catch {
+            // fall through to invalid session below
+          }
+        }
         rememberRefreshFailure({ kind: 'invalid', status, message: msg });
         await invalidateAuthSession(msg, status);
       } else if (!status) {
@@ -240,6 +483,9 @@ export async function refreshToken(): Promise<string | null> {
       }
       return null;
     } finally {
+      if (hasLock) {
+        await releaseRefreshLock(lockOwner);
+      }
       refreshInFlight = null;
     }
   })();

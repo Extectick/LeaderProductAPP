@@ -14,7 +14,8 @@ import type {
 } from '../types/apiTypes';
 import { apiClient } from './apiClient';
 import { API_ENDPOINTS } from './apiEndpoints';
-import { logout, saveTokens } from './tokenService';
+import { getAuthDevicePayload, logout, saveTokens } from './tokenService';
+import { flushTrackingQueue, resetTrackingUploadBackoff } from './trackingUploader';
 
 function throwIfError<T>(res: { ok: boolean; message?: string; data?: T }): T {
   if (!res.ok) throw new Error(res.message || 'Unknown error');
@@ -23,15 +24,18 @@ function throwIfError<T>(res: { ok: boolean; message?: string; data?: T }): T {
 }
 
 export async function login(email: string, password: string) {
+  const devicePayload = await getAuthDevicePayload();
   const res = await apiClient<AuthLoginRequest, AuthLoginResponseData>(API_ENDPOINTS.AUTH.LOGIN, {
     method: 'POST',
-    body: { email, password },
+    body: { email, password, ...devicePayload },
     skipAuth: true,
   });
   console.log('res:', res);
   const data = throwIfError(res);
   // console.log('После авторизации : '+data.accessToken)
-  await saveTokens(data.accessToken, data.refreshToken, data.profile);
+  await saveTokens(data.accessToken, data.refreshToken, data.profile, data.deviceSessionId);
+  await resetTrackingUploadBackoff();
+  void flushTrackingQueue('[tracking-login]');
 }
 
 export async function register(email: string, password: string, name: string) {
@@ -44,13 +48,16 @@ export async function register(email: string, password: string, name: string) {
 }
 
 export async function verify(email: string, code: string) {
+  const devicePayload = await getAuthDevicePayload();
   const res = await apiClient<AuthVerifyRequest, AuthVerifyResponseData>(API_ENDPOINTS.AUTH.VERIFY, {
     method: 'POST',
-    body: { email, code },
+    body: { email, code, ...devicePayload },
     skipAuth: true,
   });
   const data = throwIfError(res);
-  await saveTokens(data.accessToken, data.refreshToken, data.profile);
+  await saveTokens(data.accessToken, data.refreshToken, data.profile, data.deviceSessionId);
+  await resetTrackingUploadBackoff();
+  void flushTrackingQueue('[tracking-verify]');
   return data.profile ?? null;
 }
 

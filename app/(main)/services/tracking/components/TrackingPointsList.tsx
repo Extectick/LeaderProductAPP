@@ -2,12 +2,13 @@ import React from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import type { RoutePointDto } from '@/utils/trackingService';
 import { trackingStyles as styles } from '@/src/features/tracking/styles';
+import { getRoutePointDateTimeLabels } from '@/src/features/tracking/helpers';
 
 type Props = {
   points: RoutePointDto[];
   selectedPointIndex: number | null;
   onFocusPoint: (idx: number) => void;
-  formatDateTime: (value?: string | null) => string;
+  formatDateTime?: (value?: string | null) => string;
   maxHeight?: number;
 };
 
@@ -15,13 +16,13 @@ export default function TrackingPointsList({
   points,
   selectedPointIndex,
   onFocusPoint,
-  formatDateTime,
   maxHeight,
 }: Props) {
   const content = (
     <View style={styles.pointList}>
       {points.map((p, idx) => {
         const isActive = selectedPointIndex === idx;
+        const labels = getRoutePointDateTimeLabels(p);
         return (
           <Pressable
             key={`track-pt-${p.id}-${idx}`}
@@ -34,9 +35,10 @@ export default function TrackingPointsList({
             ]}
           >
             <View style={styles.pointMetaRow}>
-              <Text style={styles.pointTime}>{formatDateTime(p.recordedAt)}</Text>
+              <Text style={styles.pointTime}>{labels.primary}</Text>
               <Text style={styles.pointTag}>{p.eventType === 'STOP' ? 'стоп' : 'движение'}</Text>
             </View>
+            {labels.secondary ? <Text style={styles.pointTag}>{labels.secondary}</Text> : null}
             <Text style={styles.pointCoords}>
               {p.latitude.toFixed(5)}, {p.longitude.toFixed(5)}
             </Text>

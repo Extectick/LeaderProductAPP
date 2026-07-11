@@ -29,6 +29,9 @@ export type TrackingPointRow = {
   globalIdx: number;
   dateLabel: string;
   timeLabel: string;
+  primary: string;
+  secondary?: string;
+  timeZoneLabel?: string;
 };
 
 type TrackingPointsIslandProps = {
@@ -247,7 +250,7 @@ export default function TrackingPointsIsland({
     if (!collapsedCurrentRow) return 'Нет точек';
     const lat = collapsedCurrentRow.point.latitude.toFixed(5);
     const lng = collapsedCurrentRow.point.longitude.toFixed(5);
-    return `${collapsedCurrentRow.dateLabel} ${collapsedCurrentRow.timeLabel} · ${lat}, ${lng}`;
+    return `${collapsedCurrentRow.primary} · ${lat}, ${lng}`;
   }, [collapsedCurrentRow]);
 
   const desktopMeta = useMemo(
@@ -280,7 +283,13 @@ export default function TrackingPointsIsland({
           <View style={styles.pointsTableColTime}>
             <Text style={[styles.pointsTableCellText, styles.pointsTableCellTextRight]} numberOfLines={1}>
               {item.timeLabel}
+              {item.timeZoneLabel ? ` ${item.timeZoneLabel}` : ''}
             </Text>
+            {item.secondary ? (
+              <Text style={[styles.pointsTableCellText, styles.pointsTableCellTextRight, { fontSize: 10, opacity: 0.68 }]} numberOfLines={1}>
+                {item.secondary}
+              </Text>
+            ) : null}
           </View>
         </Pressable>
       );

@@ -5,7 +5,7 @@ import {
   DEFAULT_MAX_ACCURACY,
   DEFAULT_POINTS_LIMIT,
   filterNearbyPoints,
-  formatDateTime,
+  getRoutePointDateTimeLabels,
   humanName,
   parseLimitValue,
 } from '@/src/features/tracking/helpers';
@@ -232,37 +232,18 @@ export default function TrackingServiceScreen() {
       limitedPoints.map((point, idx) => ({
         latitude: point.latitude,
         longitude: point.longitude,
-        label: `${idx + 1}. ${formatDateTime(point.recordedAt)}`,
+        label: `${idx + 1}. ${getRoutePointDateTimeLabels(point).primary}`,
       })),
     [limitedPoints]
   );
 
-  const pointDateFormatter = useMemo(
-    () =>
-      new Intl.DateTimeFormat('ru-RU', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-      }),
-    []
-  );
-  const pointTimeFormatter = useMemo(
-    () =>
-      new Intl.DateTimeFormat('ru-RU', {
-        hour: '2-digit',
-        minute: '2-digit',
-      }),
-    []
-  );
   const filteredPointRows = useMemo<TrackingPointRow[]>(
     () =>
       limitedPoints.map((point, globalIdx) => {
-        const dt = new Date(point.recordedAt || 0);
-        const dateLabel = Number.isNaN(dt.getTime()) ? '-' : pointDateFormatter.format(dt);
-        const timeLabel = Number.isNaN(dt.getTime()) ? '-' : pointTimeFormatter.format(dt);
-        return { point, globalIdx, dateLabel, timeLabel };
+        const labels = getRoutePointDateTimeLabels(point);
+        return { point, globalIdx, ...labels };
       }),
-    [limitedPoints, pointDateFormatter, pointTimeFormatter]
+    [limitedPoints]
   );
 
   const pointsBatchSize = isMobileLayout ? POINTS_BATCH_SIZE_MOBILE : POINTS_BATCH_SIZE_DESKTOP;

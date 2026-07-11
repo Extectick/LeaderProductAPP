@@ -151,6 +151,15 @@ export async function httpRequest<Req = undefined, Res = any>(
           };
         }
 
+        if (failure?.kind === 'rotated') {
+          return {
+            ok: false,
+            status: failure.status || 409,
+            message: failure.message || 'Refresh token is being rotated by another runtime. Retry the request.',
+            errorCode: 'CONFLICT',
+          };
+        }
+
         await logout();
         setServerReachable();
         return { ok: false, status: 401, message: 'Сессия истекла. Войдите заново.', errorCode: 'UNAUTHORIZED' };

@@ -121,4 +121,29 @@ describe('httpRequest', () => {
     expect(setServerReachable).toHaveBeenCalled();
     expect(setServerUnavailable).not.toHaveBeenCalledWith('Unauthorized');
   });
+
+  it('returns a transient conflict when refresh token is being rotated elsewhere', async () => {
+    jest.mocked(refreshToken).mockResolvedValueOnce(null);
+    jest.mocked(getLastRefreshFailure).mockReturnValueOnce({
+      kind: 'rotated',
+      status: 409,
+      message: 'Request failed with status code 409',
+      at: Date.now(),
+    } as any);
+    const fetchMock = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify({ message: 'expired' }), {
+      status: 401,
+      headers: { 'content-type': 'application/json' },
+    }));
+    global.fetch = fetchMock as any;
+
+    const response = await httpRequest('/tracking/points', { method: 'POST', body: { points: [] } });
+
+    expect(response).toMatchObject({
+      ok: false,
+      status: 409,
+      errorCode: 'CONFLICT',
+    });
+    expect(logout).not.toHaveBeenCalled();
+    expect(setServerUnavailable).not.toHaveBeenCalled();
+  });
 });

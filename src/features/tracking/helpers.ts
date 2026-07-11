@@ -14,6 +14,119 @@ export const formatDateTime = (value?: string | null) => {
   }
 };
 
+function getViewerTimeZone(explicitTimeZone?: string) {
+  if (explicitTimeZone) return explicitTimeZone;
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function formatOffsetLabel(offsetMinutes?: number | null) {
+  if (typeof offsetMinutes !== 'number' || !Number.isFinite(offsetMinutes)) return undefined;
+  const sign = offsetMinutes >= 0 ? '+' : '-';
+  const abs = Math.abs(offsetMinutes);
+  const hours = Math.floor(abs / 60);
+  const minutes = abs % 60;
+  return minutes ? `UTC${sign}${hours}:${String(minutes).padStart(2, '0')}` : `UTC${sign}${hours}`;
+}
+
+function formatDateTimePartsInFixedOffset(date: Date, offsetMinutes: number) {
+  const shifted = new Date(date.getTime() + offsetMinutes * 60_000);
+  const dateLabel = new Intl.DateTimeFormat('ru-RU', {
+    timeZone: 'UTC',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).format(shifted);
+  const timeLabel = new Intl.DateTimeFormat('ru-RU', {
+    timeZone: 'UTC',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(shifted);
+  return { dateLabel, timeLabel };
+}
+
+function formatDateTimePartsInZone(date: Date, timeZone?: string | null) {
+  const options = timeZone ? { timeZone } : undefined;
+  const dateLabel = new Intl.DateTimeFormat('ru-RU', {
+    ...options,
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).format(date);
+  const timeLabel = new Intl.DateTimeFormat('ru-RU', {
+    ...options,
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+  return { dateLabel, timeLabel };
+}
+
+export function getRoutePointDateTimeLabels(
+  point: Pick<RoutePointDto, 'recordedAt' | 'recordedTimeZone' | 'recordedTimezoneOffsetMinutes'>,
+  options?: { viewerTimeZone?: string }
+) {
+  const date = isoToDate(point.recordedAt);
+  if (!date) {
+    return {
+      dateLabel: '-',
+      timeLabel: '-',
+      primary: '-',
+      secondary: undefined as string | undefined,
+      timeZoneLabel: undefined as string | undefined,
+    };
+  }
+
+  const viewerTimeZone = getViewerTimeZone(options?.viewerTimeZone);
+  let dateLabel: string;
+  let timeLabel: string;
+  let timeZoneLabel = formatOffsetLabel(point.recordedTimezoneOffsetMinutes);
+
+  if (point.recordedTimeZone) {
+    try {
+      const parts = formatDateTimePartsInZone(date, point.recordedTimeZone);
+      dateLabel = parts.dateLabel;
+      timeLabel = parts.timeLabel;
+      timeZoneLabel = timeZoneLabel || point.recordedTimeZone;
+    } catch {
+      const parts =
+        typeof point.recordedTimezoneOffsetMinutes === 'number'
+          ? formatDateTimePartsInFixedOffset(date, point.recordedTimezoneOffsetMinutes)
+          : formatDateTimePartsInZone(date);
+      dateLabel = parts.dateLabel;
+      timeLabel = parts.timeLabel;
+    }
+  } else if (typeof point.recordedTimezoneOffsetMinutes === 'number') {
+    const parts = formatDateTimePartsInFixedOffset(date, point.recordedTimezoneOffsetMinutes);
+    dateLabel = parts.dateLabel;
+    timeLabel = parts.timeLabel;
+  } else {
+    const parts = formatDateTimePartsInZone(date);
+    dateLabel = parts.dateLabel;
+    timeLabel = parts.timeLabel;
+  }
+
+  let secondary: string | undefined;
+  if (viewerTimeZone && point.recordedTimeZone && viewerTimeZone !== point.recordedTimeZone) {
+    try {
+      const viewer = formatDateTimePartsInZone(date, viewerTimeZone);
+      secondary = `у вас ${viewer.dateLabel} ${viewer.timeLabel}`;
+    } catch {
+      secondary = undefined;
+    }
+  }
+
+  return {
+    dateLabel,
+    timeLabel,
+    primary: `${dateLabel} ${timeLabel}${timeZoneLabel ? ` (${timeZoneLabel})` : ''}`,
+    secondary,
+    timeZoneLabel,
+  };
+}
+
 export const humanName = (u?: UserOption | null) => {
   if (!u) return 'Не выбрано';
   const parts = [u.lastName, u.firstName, u.middleName].filter(Boolean);
