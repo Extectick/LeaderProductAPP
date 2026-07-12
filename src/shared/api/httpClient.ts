@@ -1,7 +1,7 @@
 import { API_BASE_URL } from '@/utils/config';
 import {
   getLastRefreshFailure,
-  getAccessToken,
+  getAccessTokenForRequest,
   handleBackendUnavailable,
   hasAuthSessionExpired,
   logout,
@@ -88,7 +88,7 @@ export async function httpRequest<Req = undefined, Res = any>(
   const effectiveTimeoutMs = timeoutMs === undefined ? DEFAULT_REQUEST_TIMEOUT_MS : timeoutMs;
   const url = path.startsWith('http') ? path : `${API_BASE_URL}${path}`;
 
-  let token = !skipAuth ? await getAccessToken() : null;
+  let token = !skipAuth ? await getAccessTokenForRequest() : null;
   const isForm = isFormData(body);
   const isGetLike = method === 'GET';
 
@@ -157,6 +157,18 @@ export async function httpRequest<Req = undefined, Res = any>(
             status: failure.status || 409,
             message: failure.message || 'Refresh token is being rotated by another runtime. Retry the request.',
             errorCode: 'CONFLICT',
+          };
+        }
+
+        // A non-confirmed failure must not evict the user. It can be a
+        // temporary SecureStore/second-runtime race; tokenService only marks
+        // the session expired after a confirmed invalid refresh token.
+        if (!failure || failure.kind === 'unknown') {
+          return {
+            ok: false,
+            status: failure?.status || 503,
+            message: failure?.message || 'Session refresh is still in progress. Please retry the request.',
+            errorCode: failure?.status === 409 ? 'CONFLICT' : 'SERVER_ERROR',
           };
         }
 

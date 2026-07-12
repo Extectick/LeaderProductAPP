@@ -348,7 +348,9 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           routeId: nextRouteId,
           intervalMs: foregroundLocationOptions.timeInterval,
         });
-        nativeTrackingActiveRef.current = status.available !== false && status.enabled !== false && status.running !== false;
+        // The Android foreground service starts asynchronously. Its configuration is
+        // already durable when enabled=true, even if running has not flipped yet.
+        nativeTrackingActiveRef.current = status.available !== false && status.enabled !== false;
         if (nativeTrackingActiveRef.current) {
           stopForegroundWatch();
         }
@@ -636,9 +638,11 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           await hardDisableTracking('[tracking-auto]');
           return;
         }
-        const backgroundStarted = await ensureLocationTaskRunning('[tracking-auto]', true);
         const nativeStarted = await startNativeTrackingIfAvailable(storedRouteId, '[tracking-auto]');
-        if (AppState.currentState === 'active' && !nativeStarted) {
+        const backgroundStarted = nativeStarted
+          ? false
+          : await ensureLocationTaskRunning('[tracking-auto]', true);
+        if (AppState.currentState === 'active' && !nativeStarted && !backgroundStarted) {
           await startForegroundWatch('[tracking-fg]');
         }
         // пробуем выгрузить очередь, если что-то накопилось, используя сериализованную отправку
@@ -720,6 +724,8 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     let backgroundStarted = false;
     let nativeStarted = false;
     let backgroundStartError: string | undefined;
+    nativeStarted = await startNativeTrackingIfAvailable(startedRouteId, '[tracking-start]');
+    if (!nativeStarted) {
     try {
       backgroundStarted = await startBackgroundLocationTaskWithRepair('[tracking-start]');
     } catch (e) {
@@ -734,9 +740,9 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       setTrackingStatus('error');
       setLastError(backgroundStartError);
     }
-    nativeStarted = await startNativeTrackingIfAvailable(startedRouteId, '[tracking-start]');
+    }
 
-    try {
+    if (!nativeStarted) try {
       const current = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
       await enqueueLocations([current], '[tracking-start]');
     } catch (e) {
@@ -745,12 +751,12 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     // сразу пробуем отправить накопившуюся очередь
     await flushAndSync('[tracking]');
-    if (!backgroundStarted) {
+    if (!nativeStarted && !backgroundStarted) {
       backgroundStarted = await ensureLocationTaskRunning('[tracking-start]', true);
     }
     if (nativeStarted) {
       stopForegroundWatch();
-    } else {
+    } else if (!backgroundStarted) {
       await startForegroundWatch('[tracking-start]');
     }
     await refreshTrackingStatus();
@@ -769,8 +775,12 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active' || state === 'background') {
         flushAndSync('[tracking-appstate]');
-        void ensureLocationTaskRunning('[tracking-appstate]');
-        void ensureNativeTrackingRunning('[tracking-appstate]');
+        void (async () => {
+          const nativeOk = await ensureNativeTrackingRunning('[tracking-appstate]');
+          if (!nativeOk) {
+            await ensureLocationTaskRunning('[tracking-appstate]');
+          }
+        })();
       }
       if (state === 'active') {
         if (trackingEnabled) {
@@ -820,8 +830,12 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       return;
     }
     keepAliveTimer.current = setInterval(() => {
-      void ensureLocationTaskRunning('[tracking-keepalive]');
-      void ensureNativeTrackingRunning('[tracking-keepalive]');
+      void (async () => {
+        const nativeOk = await ensureNativeTrackingRunning('[tracking-keepalive]');
+        if (!nativeOk) {
+          await ensureLocationTaskRunning('[tracking-keepalive]');
+        }
+      })();
     }, 60_000);
     return () => {
       if (keepAliveTimer.current) {

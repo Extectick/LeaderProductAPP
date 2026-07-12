@@ -1,6 +1,7 @@
 import { httpRequest } from '../src/shared/api/httpClient';
 import {
   getLastRefreshFailure,
+  getAccessTokenForRequest,
   handleBackendUnavailable,
   hasAuthSessionExpired,
   logout,
@@ -13,7 +14,7 @@ jest.mock('@/utils/config', () => ({
 }));
 
 jest.mock('@/utils/tokenService', () => ({
-  getAccessToken: jest.fn(async () => null),
+  getAccessTokenForRequest: jest.fn(async () => null),
   getLastRefreshFailure: jest.fn(() => null),
   handleBackendUnavailable: jest.fn(async () => undefined),
   hasAuthSessionExpired: jest.fn(() => false),
@@ -94,6 +95,22 @@ describe('httpRequest', () => {
     expect(setServerReachable).toHaveBeenCalled();
   });
 
+  it('uses a proactively refreshed token before the first request', async () => {
+    jest.mocked(getAccessTokenForRequest).mockResolvedValueOnce('fresh-before-request');
+    const fetchMock = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify({ data: { ok: true } }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    global.fetch = fetchMock as any;
+
+    await expect(httpRequest('/tracking/status')).resolves.toMatchObject({ ok: true, status: 200 });
+
+    expect(refreshToken).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledWith('http://api.test/tracking/status', expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: 'Bearer fresh-before-request' }),
+    }));
+  });
+
   it('treats invalid refresh token as auth expiration, not network outage', async () => {
     jest.mocked(refreshToken).mockResolvedValueOnce(null);
     jest.mocked(hasAuthSessionExpired).mockReturnValueOnce(true);
@@ -145,5 +162,27 @@ describe('httpRequest', () => {
     });
     expect(logout).not.toHaveBeenCalled();
     expect(setServerUnavailable).not.toHaveBeenCalled();
+  });
+
+  it('keeps the session for an indeterminate refresh failure', async () => {
+    jest.mocked(refreshToken).mockResolvedValueOnce(null);
+    jest.mocked(getLastRefreshFailure).mockReturnValueOnce({
+      kind: 'unknown',
+      status: 503,
+      message: 'Refresh still in progress',
+      at: Date.now(),
+    } as any);
+    const fetchMock = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify({ message: 'expired' }), {
+      status: 401,
+      headers: { 'content-type': 'application/json' },
+    }));
+    global.fetch = fetchMock as any;
+
+    await expect(httpRequest('/services')).resolves.toMatchObject({
+      ok: false,
+      status: 503,
+      errorCode: 'SERVER_ERROR',
+    });
+    expect(logout).not.toHaveBeenCalled();
   });
 });

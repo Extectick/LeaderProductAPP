@@ -27,6 +27,7 @@ let lastRefreshFailure: RefreshFailure | null = null;
 
 const REFRESH_TIMEOUT_MS = 10_000;
 const REFRESH_LOCK_TTL_MS = 15_000;
+const ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 90;
 
 type RefreshFailureKind = 'invalid' | 'network' | 'server' | 'rotated' | 'unknown';
 
@@ -161,15 +162,13 @@ async function waitForRotatedTokenFromOtherRuntime(
   previousRefreshToken: string,
   previousAccessToken?: string | null
 ): Promise<string | null> {
-  for (const waitMs of [250, 750, 1500]) {
+  // A second JS runtime (or a request finishing just before us) may have
+  // already claimed the one-time refresh token. Wait for its atomic token
+  // pair write instead of rotating the newly issued refresh token again.
+  for (const waitMs of [250, 750, 1500, 2500]) {
     await delay(waitMs);
     const accessFromOtherRuntime = await getAccessTokenIfRefreshChanged(previousRefreshToken, previousAccessToken);
     if (accessFromOtherRuntime) return accessFromOtherRuntime;
-
-    const currentRefresh = await getRefreshToken();
-    if (currentRefresh && currentRefresh !== previousRefreshToken) {
-      return postRefreshToken(currentRefresh);
-    }
   }
   return null;
 }
@@ -251,6 +250,24 @@ async function ensureTokenStorageScope(): Promise<boolean> {
 export async function getAccessToken(): Promise<string | null> {
   if (!(await ensureTokenStorageScope())) return null;
   return secureGet(ACCESS_KEY);
+}
+
+/**
+ * Keeps normal foreground requests away from the access-token expiry edge.
+ * Native background tracking uses its own long-lived scoped token and does
+ * not depend on this application session after it has been started once.
+ */
+export async function getAccessTokenForRequest(): Promise<string | null> {
+  const accessToken = await getAccessToken();
+  const exp = decodeExp(accessToken);
+  if (!accessToken || !exp) return accessToken;
+
+  const now = Math.floor(Date.now() / 1000);
+  if (exp - now > ACCESS_TOKEN_REFRESH_SKEW_SECONDS) return accessToken;
+
+  const refreshed = await refreshToken();
+  if (refreshed) return refreshed;
+  return hasAuthSessionExpired() ? null : accessToken;
 }
 
 export async function getRefreshToken(): Promise<string | null> {
@@ -427,22 +444,15 @@ export async function refreshToken(): Promise<string | null> {
         if (accessFromOtherRuntime) {
           return accessFromOtherRuntime;
         }
-        const currentRefresh = await getRefreshToken();
-        if (currentRefresh && currentRefresh !== storedRefreshToken) {
-          return postRefreshToken(currentRefresh);
-        }
         hasLock = await acquireRefreshLock(lockOwner);
         if (!hasLock) {
-          await delay(700);
-          const delayedAccessFromOtherRuntime = await getAccessTokenIfRefreshChanged(storedRefreshToken, storedAccessToken);
-          if (delayedAccessFromOtherRuntime) {
-            return delayedAccessFromOtherRuntime;
-          }
-          const delayedRefresh = await getRefreshToken();
-          if (delayedRefresh && delayedRefresh !== storedRefreshToken) {
-            return postRefreshToken(delayedRefresh);
-          }
-          rememberRefreshFailure({ kind: 'unknown', message: 'Refresh already in progress' });
+          const recovered = await waitForRotatedTokenFromOtherRuntime(storedRefreshToken, storedAccessToken);
+          if (recovered) return recovered;
+          rememberRefreshFailure({
+            kind: 'rotated',
+            status: 409,
+            message: 'Refresh is being completed by another application runtime',
+          });
           return null;
         }
       }
@@ -463,12 +473,10 @@ export async function refreshToken(): Promise<string | null> {
       if (status === 401 || status === 403) {
         const latestRefresh = await getRefreshToken();
         if (latestRefresh && latestRefresh !== storedRefreshToken) {
-          try {
-            const accessFromOtherRuntime = await secureGet(ACCESS_KEY);
-            return accessFromOtherRuntime || (await postRefreshToken(latestRefresh));
-          } catch {
-            // fall through to invalid session below
-          }
+          const recovered = await waitForRotatedTokenFromOtherRuntime(storedRefreshToken, storedAccessToken);
+          if (recovered) return recovered;
+          rememberRefreshFailure({ kind: 'rotated', status: 409, message: 'Refresh token was rotated by another runtime' });
+          return null;
         }
         rememberRefreshFailure({ kind: 'invalid', status, message: msg });
         await invalidateAuthSession(msg, status);

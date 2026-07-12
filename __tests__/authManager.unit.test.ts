@@ -96,12 +96,13 @@ describe('auth token manager', () => {
     await expect(tokenService.getDeviceSessionId()).resolves.toBe('device-new');
   });
 
-  it('does not expire session when another runtime already rotated refresh token', async () => {
+  it('uses the token pair written by another runtime without rotating it again', async () => {
     const tokenService = await import('@/utils/tokenService');
     await tokenService.saveTokens('old-access', 'old-refresh', { id: 1 }, 'device-1');
 
     axiosPost.mockImplementationOnce(async () => {
       secureStorage.set('refreshToken', 'rotated-refresh');
+      secureStorage.set('accessToken', 'fresh-access-from-other-runtime');
       throw {
         response: {
           status: 409,
@@ -112,25 +113,11 @@ describe('auth token manager', () => {
         },
       };
     });
-    axiosPost.mockResolvedValueOnce({
-      data: {
-        data: {
-          accessToken: 'fresh-access',
-          refreshToken: 'fresh-refresh',
-          deviceSessionId: 'device-1',
-          profile: { id: 1 },
-        },
-      },
-    });
+    await expect(tokenService.refreshToken()).resolves.toBe('fresh-access-from-other-runtime');
 
-    await expect(tokenService.refreshToken()).resolves.toBe('fresh-access');
-
-    expect(axiosPost).toHaveBeenCalledTimes(2);
-    expect(axiosPost.mock.calls[1][1]).toEqual(expect.objectContaining({
-      refreshToken: 'rotated-refresh',
-    }));
+    expect(axiosPost).toHaveBeenCalledTimes(1);
     expect(tokenService.hasAuthSessionExpired()).toBe(false);
-    await expect(tokenService.getRefreshToken()).resolves.toBe('fresh-refresh');
+    await expect(tokenService.getRefreshToken()).resolves.toBe('rotated-refresh');
   });
 
   it('recovers when axios exposes refresh rotation conflict without response object', async () => {
@@ -151,5 +138,26 @@ describe('auth token manager', () => {
     expect(axiosPost).toHaveBeenCalledTimes(1);
     expect(tokenService.hasAuthSessionExpired()).toBe(false);
     await expect(tokenService.getRefreshToken()).resolves.toBe('fresh-refresh-from-other-runtime');
+  });
+
+  it('refreshes an access token shortly before it expires', async () => {
+    const tokenService = await import('@/utils/tokenService');
+    const soonExpiring = `header.${Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 30 }))
+      .toString('base64url')}.signature`;
+    await tokenService.saveTokens(soonExpiring, 'old-refresh', { id: 1 }, 'device-1');
+    axiosPost.mockResolvedValueOnce({
+      data: {
+        data: {
+          accessToken: 'fresh-access',
+          refreshToken: 'fresh-refresh',
+          deviceSessionId: 'device-1',
+          profile: { id: 1 },
+        },
+      },
+    });
+
+    await expect(tokenService.getAccessTokenForRequest()).resolves.toBe('fresh-access');
+    expect(axiosPost).toHaveBeenCalledTimes(1);
+    await expect(tokenService.getRefreshToken()).resolves.toBe('fresh-refresh');
   });
 });

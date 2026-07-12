@@ -150,6 +150,10 @@ jobs:
         if: ${{ steps.strategy.outputs.apk_required == 'true' }}
         run: npx expo prebuild --platform android --clean --non-interactive
 
+      - name: Verify generated native tracking
+        if: ${{ steps.strategy.outputs.apk_required == 'true' }}
+        run: npm run native:verify-prebuild
+
       - name: Configure Gradle memory
         if: ${{ steps.strategy.outputs.apk_required == 'true' }}
         working-directory: android

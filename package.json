@@ -17,6 +17,7 @@
     "release:read-version": "node ./scripts/readNativeVersion.js",
     "release:bump-apk": "node ./scripts/bumpNativeVersion.js",
     "release:check-strategy": "node ./scripts/checkReleaseStrategy.js",
+    "native:verify-prebuild": "node ./scripts/verifyLeaderNativeTrackingPrebuild.js",
     "updates:publish-local": "node ./scripts/publishApkUpdateLocal.js",
     "ota:create-metadata": "node ./scripts/createOtaMetadata.js",
     "ota:upload-s3": "node ./scripts/uploadOtaToS3.js",
