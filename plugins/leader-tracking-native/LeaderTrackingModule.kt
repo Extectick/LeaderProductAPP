@@ -21,6 +21,7 @@ class LeaderTrackingModule(
       val token = config.getString("token")?.trim().orEmpty()
       val routeId = if (config.hasKey("routeId") && !config.isNull("routeId")) config.getDouble("routeId").toLong() else 0L
       val intervalMs = if (config.hasKey("intervalMs") && !config.isNull("intervalMs")) config.getDouble("intervalMs").toLong() else LeaderTrackingService.DEFAULT_INTERVAL_MS
+      val tokenExpiresAt = if (config.hasKey("tokenExpiresAt") && !config.isNull("tokenExpiresAt")) config.getDouble("tokenExpiresAt").toLong() else 0L
 
       if (apiBaseUrl.isBlank()) {
         promise.reject("E_TRACKING_CONFIG", "apiBaseUrl is required")
@@ -31,7 +32,7 @@ class LeaderTrackingModule(
         return
       }
 
-      LeaderTrackingService.saveConfig(reactContext, apiBaseUrl, token, routeId, intervalMs)
+      LeaderTrackingService.saveConfig(reactContext, apiBaseUrl, token, routeId, intervalMs, tokenExpiresAt)
       ContextCompat.startForegroundService(
         reactContext,
         Intent(reactContext, LeaderTrackingService::class.java).setAction(LeaderTrackingService.ACTION_START)
@@ -52,6 +53,26 @@ class LeaderTrackingModule(
       promise.resolve(LeaderTrackingService.statusMap(reactContext))
     } catch (error: Throwable) {
       promise.reject("E_TRACKING_STOP", error)
+    }
+  }
+
+  @ReactMethod
+  fun resume(promise: Promise) {
+    try {
+      LeaderTrackingService.startIfEnabled(reactContext)
+      promise.resolve(LeaderTrackingService.statusMap(reactContext))
+    } catch (error: Throwable) {
+      promise.reject("E_TRACKING_RESUME", error)
+    }
+  }
+
+  @ReactMethod
+  fun updateRoute(routeId: Double, promise: Promise) {
+    try {
+      LeaderTrackingService.updateRoute(reactContext, routeId.toLong())
+      promise.resolve(LeaderTrackingService.statusMap(reactContext))
+    } catch (error: Throwable) {
+      promise.reject("E_TRACKING_ROUTE", error)
     }
   }
 

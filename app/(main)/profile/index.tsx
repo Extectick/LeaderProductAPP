@@ -44,6 +44,8 @@ import {
 } from '@/utils/userService';
 import type { Profile } from '@/src/entities/user/types';
 import { useTracking } from '@/context/TrackingContext';
+import { useIsAdmin } from '@/hooks/useIsAdmin';
+import { getTrackingAdminHealth, type TrackingAdminHealth } from '@/utils/trackingApi';
 import { NotificationSettingsSection } from '@/components/Profile/NotificationSettingsSection';
 import { Skeleton } from 'moti/skeleton';
 import { shadeColor } from '@/utils/color';
@@ -151,6 +153,7 @@ export default function ProfileScreen() {
         />
       )}
       {loading && !profile ? <TrackingSkeleton /> : <TrackingToggle />}
+      {loading && !profile ? null : <TrackingAdminHealthCard />}
       {loading && !profile ? null : <NotificationSettingsSection />}
       {loading && !profile ? <LogoutSkeleton /> : <LogoutButton />}
       <TabBarSpacer />
@@ -1539,6 +1542,8 @@ function TrackingToggle() {
     queueLength,
     lastUploadAt,
     lastError,
+    trackingMode,
+    nativeDiagnostics,
     startTracking,
     stopTracking,
   } = useTracking();
@@ -1563,6 +1568,15 @@ function TrackingToggle() {
   const lastUploadLabel = lastUploadAt
     ? new Date(lastUploadAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
     : null;
+  const lastRecordedLabel = nativeDiagnostics.lastRecordedAt
+    ? new Date(nativeDiagnostics.lastRecordedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+    : null;
+  const modeLabel =
+    trackingMode === 'native'
+      ? 'Фоновый сервис Android'
+      : trackingMode === 'fallback'
+        ? 'Резервный режим приложения'
+        : 'Не запущен';
   const statusColor =
     trackingStatus === 'tracking'
       ? '#15803D'
@@ -1581,6 +1595,12 @@ function TrackingToggle() {
         <Text style={styles.trackingTitle}>Отслеживание маршрута</Text>
         <Text style={styles.trackingSubtitle}>{trackingStatusText}</Text>
         <View style={styles.trackingMetaRow}>
+          {trackingEnabled ? (
+            <View style={styles.trackingChip}>
+              <Ionicons name={trackingMode === 'native' ? 'shield-checkmark-outline' : 'phone-portrait-outline'} size={12} color="#475569" />
+              <Text style={styles.trackingChipText}>{modeLabel}</Text>
+            </View>
+          ) : null}
           <View style={styles.trackingChip}>
             <Ionicons name="cloud-upload-outline" size={12} color="#475569" />
             <Text style={styles.trackingChipText}>
@@ -1593,10 +1613,88 @@ function TrackingToggle() {
               <Text style={styles.trackingChipText}>Отправлено {lastUploadLabel}</Text>
             </View>
           ) : null}
+          {lastRecordedLabel ? (
+            <View style={styles.trackingChip}>
+              <Ionicons name="locate-outline" size={12} color="#475569" />
+              <Text style={styles.trackingChipText}>Точка {lastRecordedLabel}</Text>
+            </View>
+          ) : null}
         </View>
+        {nativeDiagnostics.nextRetryAt ? (
+          <Text style={styles.trackingRetry}>
+            Следующая попытка отправки {new Date(nativeDiagnostics.nextRetryAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
+          </Text>
+        ) : null}
+        {nativeDiagnostics.discardedPoints > 0 ? (
+          <Text style={styles.trackingDetail}>
+            Отфильтровано неточных или повторных точек: {nativeDiagnostics.discardedPoints}
+          </Text>
+        ) : null}
         {lastError ? <Text style={styles.trackingError}>{lastError}</Text> : null}
       </View>
       <Switch value={trackingEnabled} onValueChange={onToggle} disabled={loading} />
+    </View>
+  );
+}
+
+function TrackingAdminHealthCard() {
+  const { isAdmin } = useIsAdmin();
+  const [health, setHealth] = useState<TrackingAdminHealth | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const loadingRef = useRef(false);
+
+  const refresh = useCallback(async () => {
+    if (loadingRef.current) return;
+    loadingRef.current = true;
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await getTrackingAdminHealth();
+      if (!response.ok || !response.data) {
+        setError(response.message || 'Не удалось получить состояние устройств');
+        return;
+      }
+      setHealth(response.data);
+    } finally {
+      loadingRef.current = false;
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isAdmin) void refresh();
+  }, [isAdmin, refresh]);
+
+  if (!isAdmin) return null;
+  const summary = health?.summary;
+  const tone = (summary?.staleDevices || 0) > 0 || (summary?.tokenIssuesLastHour || 0) > 3
+    ? '#B45309'
+    : '#15803D';
+
+  return (
+    <View style={styles.trackingAdminRow}>
+      <View style={[styles.settingsIcon, { backgroundColor: tone === '#15803D' ? '#ECFDF5' : '#FFFBEB' }]}>
+        <Ionicons name="pulse-outline" size={17} color={tone} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.trackingTitle}>Состояние трекинга</Text>
+        <Text style={styles.trackingSubtitle}>
+          {summary
+            ? `Устройств: ${summary.activeDevices} · без связи: ${summary.staleDevices} · выдач токена за час: ${summary.tokenIssuesLastHour}`
+            : error || 'Загружаем состояние устройств…'}
+        </Text>
+      </View>
+      <Pressable
+        onPress={() => void refresh()}
+        disabled={loading}
+        accessibilityRole="button"
+        accessibilityLabel="Обновить состояние трекинга"
+        hitSlop={8}
+        style={styles.trackingHealthRefresh}
+      >
+        {loading ? <ActivityIndicator size="small" color={tone} /> : <Ionicons name="refresh-outline" size={18} color={tone} />}
+      </Pressable>
     </View>
   );
 }
@@ -1641,6 +1739,23 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     gap: 12,
   },
+  trackingAdminRow: {
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  trackingHealthRefresh: {
+    width: 34,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   trackingTitle: { fontWeight: '800', fontSize: 14, color: '#0F172A', marginBottom: 3 },
   trackingSubtitle: { fontSize: 12, color: '#64748B', lineHeight: 16 },
   trackingMetaRow: {
@@ -1669,6 +1784,19 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 15,
     fontWeight: '700',
+  },
+  trackingRetry: {
+    marginTop: 7,
+    color: '#475569',
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '700',
+  },
+  trackingDetail: {
+    marginTop: 5,
+    color: '#64748B',
+    fontSize: 11,
+    lineHeight: 15,
   },
   settingsHeader: {
     flexDirection: 'row',

@@ -1436,7 +1436,7 @@ export default function ClientOrdersWebScreen() {
           result = await searchCounterparties({ search, limit: 25, offset, managerOnly: counterpartyManagerOnly });
           break;
         case 'agreement':
-          result = await searchAgreements({ counterpartyGuid: draftCounterpartyGuid, search, limit: 25, offset });
+          result = await searchAgreements({ organizationGuid: draftOrganizationGuid, counterpartyGuid: draftCounterpartyGuid, search, limit: 25, offset });
           break;
         case 'contract':
           result = await searchContracts({ counterpartyGuid: draftCounterpartyGuid, search, limit: 25, offset });
@@ -1615,7 +1615,7 @@ export default function ClientOrdersWebScreen() {
 
   const loadAgreementLookup = React.useCallback((args: { search: string; limit: number; offset: number }) => {
     if (!workspace.draft.organizationGuid || !workspace.draft.counterpartyGuid) return Promise.resolve({ items: [], meta: { total: 0 } });
-    return searchAgreements({ counterpartyGuid: workspace.draft.counterpartyGuid, search: args.search, limit: args.limit, offset: args.offset });
+    return searchAgreements({ organizationGuid: workspace.draft.organizationGuid, counterpartyGuid: workspace.draft.counterpartyGuid, search: args.search, limit: args.limit, offset: args.offset });
   }, [searchAgreements, workspace.draft.counterpartyGuid, workspace.draft.organizationGuid]);
 
   const loadContractLookup = React.useCallback((args: { search: string; limit: number; offset: number }) => {

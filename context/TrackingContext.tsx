@@ -18,8 +18,10 @@ import { getAuthDevicePayload } from '@/utils/tokenService';
 import {
   getNativeTrackingStatus,
   isNativeTrackingAvailable,
+  resumeNativeTracking,
   startNativeTracking,
   stopNativeTracking,
+  updateNativeTrackingRoute,
 } from '@/utils/nativeTrackingService';
 import {
   clearRouteIdIfIdle,
@@ -31,6 +33,7 @@ import {
   setTrackingRouteId,
 } from '@/utils/trackingUploader';
 import { addMonitoringBreadcrumb, captureException } from '@/src/shared/monitoring';
+import { resolveTrackingMode, shouldRenewNativeTrackingToken } from '@/utils/nativeTrackingLifecycle';
 
 const BACKGROUND_TASK_NAME = 'BACKGROUND_LOCATION_TRACKING';
 const BACKGROUND_TASK_REPAIR_COOLDOWN_MS = 5 * 60_000;
@@ -43,6 +46,20 @@ let backgroundTaskRetryAfter = 0;
 let lastBackgroundTaskWarnAt = 0;
 let backgroundTaskStartPromise: Promise<boolean> | null = null;
 let backgroundTaskEnsurePromise: Promise<boolean> | null = null;
+let nativeTrackingStartPromise: Promise<boolean> | null = null;
+
+type TrackingMode = 'native' | 'fallback' | 'inactive';
+
+type NativeTrackingDiagnostics = {
+  mode: TrackingMode;
+  lastRecordedAt?: string;
+  lastSentAt?: string;
+  nextRetryAt?: number;
+  retryAttempt: number;
+  discardedPoints: number;
+  secureStorage?: boolean;
+  tokenInvalid?: boolean;
+};
 
 function isExpoGo() {
   const ownership = (Constants as any).appOwnership;
@@ -72,6 +89,8 @@ type TrackingContextValue = {
   queueLength: number;
   lastUploadAt?: string;
   lastError?: string;
+  trackingMode: TrackingMode;
+  nativeDiagnostics: NativeTrackingDiagnostics;
   refreshTrackingStatus: () => Promise<void>;
   startTracking: () => Promise<void>;
   stopTracking: () => Promise<void>;
@@ -82,6 +101,7 @@ type TrackingStatusCode =
   | 'tracking'
   | 'uploading'
   | 'waitingNetwork'
+  | 'needsTrackingAuth'
   | 'needsAuth'
   | 'permissionDenied'
   | 'serviceDenied'
@@ -100,6 +120,7 @@ function getTrackingStatusText(
   if (status === 'stopping') return 'Останавливаем отслеживание...';
   if (status === 'uploading') return queueLength > 0 ? `Отправляем точки: ${queueLength}` : 'Отправляем координаты...';
   if (status === 'waitingNetwork') return 'Нет связи с сервером, точки сохраняются на устройстве';
+  if (status === 'needsTrackingAuth') return 'Откройте приложение: нужно обновить защищенный токен трекинга';
   if (status === 'needsAuth') return 'Нужно заново войти в аккаунт, чтобы отправлять координаты';
   if (status === 'permissionDenied') return 'Нет разрешения на постоянную геолокацию';
   if (status === 'serviceDenied') return 'Нет доступа к сервису отслеживания';
@@ -285,6 +306,12 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const keepAliveTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const foregroundSubscription = useRef<Location.LocationSubscription | null>(null);
   const nativeTrackingActiveRef = useRef(false);
+  const [trackingMode, setTrackingMode] = useState<TrackingMode>('inactive');
+  const [nativeDiagnostics, setNativeDiagnostics] = useState<NativeTrackingDiagnostics>({
+    mode: 'inactive',
+    retryAttempt: 0,
+    discardedPoints: 0,
+  });
 
   const stopForegroundWatch = useCallback(() => {
     if (foregroundSubscription.current) {
@@ -303,6 +330,7 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           const nativeStatus = await getNativeTrackingStatus();
           if (nativeStatus.enabled && nativeStatus.running) {
             nativeTrackingActiveRef.current = true;
+            setTrackingMode('native');
             stopForegroundWatch();
             return;
           }
@@ -321,6 +349,7 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             void enqueueLocations([loc], logPrefix);
           }
         );
+        setTrackingMode('fallback');
       } catch (e) {
         console.warn(`${logPrefix} foreground watch failed`, e);
       }
@@ -329,45 +358,90 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   );
 
   const startNativeTrackingIfAvailable = useCallback(
-    async (nextRouteId?: number, logPrefix = '[tracking-native]') => {
+    async (
+      nextRouteId?: number,
+      logPrefix = '[tracking-native]',
+      options: { forceTokenRenewal?: boolean; reason?: 'start' | 'repair' | 'token_invalid' } = {}
+    ) => {
       if (!isNativeTrackingAvailable()) {
         nativeTrackingActiveRef.current = false;
         return false;
       }
-      try {
-        const devicePayload = await getAuthDevicePayload();
-        const issued = await issueNativeTrackingToken(devicePayload);
-        if (!issued.ok || !issued.data?.token) {
-          console.warn(`${logPrefix} token issue failed`, issued.message || issued.status);
+      if (nativeTrackingStartPromise) return nativeTrackingStartPromise;
+
+      nativeTrackingStartPromise = (async () => {
+        try {
+          const existing = await getNativeTrackingStatus();
+          const needsToken = shouldRenewNativeTrackingToken(
+            existing,
+            Date.now(),
+            Boolean(options.forceTokenRenewal)
+          );
+
+          if (!needsToken) {
+            if (nextRouteId && existing.routeId !== nextRouteId) {
+              await updateNativeTrackingRoute(nextRouteId);
+            }
+            const resumed = await resumeNativeTracking();
+            nativeTrackingActiveRef.current = resumed.available !== false && resumed.enabled !== false;
+            if (nativeTrackingActiveRef.current) {
+              setTrackingMode('native');
+              stopForegroundWatch();
+              addMonitoringBreadcrumb('tracking_native_resumed', {
+                routeId: nextRouteId ?? existing.routeId,
+                running: Boolean(resumed.running),
+              });
+            }
+            return nativeTrackingActiveRef.current;
+          }
+
+          const devicePayload = await getAuthDevicePayload();
+          const issued = await issueNativeTrackingToken({
+            ...devicePayload,
+            reason: options.reason || (existing.tokenInvalid ? 'token_invalid' : 'repair'),
+          });
+          if (!issued.ok || !issued.data?.token) {
+            console.warn(`${logPrefix} token issue failed`, issued.message || issued.status);
+            nativeTrackingActiveRef.current = false;
+            return false;
+          }
+          const status = await startNativeTracking({
+            apiBaseUrl: API_BASE_URL,
+            token: issued.data.token,
+            routeId: nextRouteId,
+            intervalMs: foregroundLocationOptions.timeInterval,
+            tokenExpiresAt: Date.parse(issued.data.expiresAt) || undefined,
+          });
+          nativeTrackingActiveRef.current = status.available !== false && status.enabled !== false;
+          if (nativeTrackingActiveRef.current) {
+            setTrackingMode('native');
+            stopForegroundWatch();
+          }
+          addMonitoringBreadcrumb('tracking_native_started', {
+            routeId: nextRouteId,
+            reason: options.reason || 'repair',
+          });
+          return nativeTrackingActiveRef.current;
+        } catch (error) {
           nativeTrackingActiveRef.current = false;
+          captureException(error, { where: 'TrackingContext:startNativeTrackingIfAvailable' });
+          console.warn(`${logPrefix} native tracking start failed`, error);
           return false;
         }
-        const status = await startNativeTracking({
-          apiBaseUrl: API_BASE_URL,
-          token: issued.data.token,
-          routeId: nextRouteId,
-          intervalMs: foregroundLocationOptions.timeInterval,
-        });
-        // The Android foreground service starts asynchronously. Its configuration is
-        // already durable when enabled=true, even if running has not flipped yet.
-        nativeTrackingActiveRef.current = status.available !== false && status.enabled !== false;
-        if (nativeTrackingActiveRef.current) {
-          stopForegroundWatch();
-        }
-        addMonitoringBreadcrumb('tracking_native_started', { routeId: nextRouteId });
-        return nativeTrackingActiveRef.current;
-      } catch (error) {
-        nativeTrackingActiveRef.current = false;
-        captureException(error, { where: 'TrackingContext:startNativeTrackingIfAvailable' });
-        console.warn(`${logPrefix} native tracking start failed`, error);
-        return false;
-      }
+      })().finally(() => {
+        nativeTrackingStartPromise = null;
+      });
+
+      return nativeTrackingStartPromise;
     },
     [stopForegroundWatch]
   );
 
   const stopNativeTrackingIfAvailable = useCallback(async (logPrefix = '[tracking-native]') => {
     nativeTrackingActiveRef.current = false;
+    if (nativeTrackingStartPromise) {
+      await nativeTrackingStartPromise.catch(() => undefined);
+    }
     if (!isNativeTrackingAvailable()) return;
     try {
       await stopNativeTracking();
@@ -380,31 +454,36 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     } catch (error) {
       console.warn(`${logPrefix} native token revoke failed`, error);
     }
+    setTrackingMode('inactive');
   }, []);
 
   const ensureNativeTrackingRunning = useCallback(
     async (logPrefix = '[tracking-native]') => {
+      if (!trackingEnabled) return false;
       if (!isNativeTrackingAvailable()) {
         nativeTrackingActiveRef.current = false;
         return false;
       }
       try {
         const status = await getNativeTrackingStatus();
-        if (status.enabled && status.running) {
+        if (status.enabled && status.running && status.hasCredentials && !status.tokenInvalid) {
           nativeTrackingActiveRef.current = true;
+          setTrackingMode('native');
           stopForegroundWatch();
           return true;
         }
         nativeTrackingActiveRef.current = false;
         const storedRouteId = await getTrackingRouteId();
-        return startNativeTrackingIfAvailable(storedRouteId, logPrefix);
+        return startNativeTrackingIfAvailable(storedRouteId, logPrefix, {
+          reason: status.tokenInvalid ? 'token_invalid' : 'repair',
+        });
       } catch (error) {
         nativeTrackingActiveRef.current = false;
         console.warn(`${logPrefix} native tracking status failed`, error);
         return false;
       }
     },
-    [startNativeTrackingIfAvailable, stopForegroundWatch]
+    [startNativeTrackingIfAvailable, stopForegroundWatch, trackingEnabled]
   );
 
   const syncRouteId = useCallback(async () => {
@@ -418,8 +497,9 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     let nativeLastSentAt: string | undefined;
     let nativeRunning = false;
     let nativeLastError: string | undefined;
+    let nativeStatus: Awaited<ReturnType<typeof getNativeTrackingStatus>> | undefined;
     try {
-      const nativeStatus = await getNativeTrackingStatus();
+      nativeStatus = await getNativeTrackingStatus();
       nativeQueueLength = Number(nativeStatus.queueLength || 0);
       nativeLastSentAt = nativeStatus.lastSentAt || undefined;
       nativeRunning = Boolean(nativeStatus.enabled && nativeStatus.running);
@@ -429,7 +509,20 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
     setQueueLength(debug.length + nativeQueueLength);
     setLastUploadAt(nativeLastSentAt || debug.lastSuccessfulFlushAt);
-    return { ...debug, nativeRunning, nativeLastError };
+    setNativeDiagnostics({
+      mode: resolveTrackingMode({
+        nativeRunning,
+        fallbackRunning: Boolean(foregroundSubscription.current),
+      }),
+      lastRecordedAt: nativeStatus?.lastRecordedAt || undefined,
+      lastSentAt: nativeLastSentAt,
+      nextRetryAt: Number(nativeStatus?.nextRetryAt || 0) || undefined,
+      retryAttempt: Number(nativeStatus?.retryAttempt || 0),
+      discardedPoints: Number(nativeStatus?.discardedPoints || 0),
+      secureStorage: nativeStatus?.secureStorage,
+      tokenInvalid: Boolean(nativeStatus?.tokenInvalid),
+    });
+    return { ...debug, nativeRunning, nativeLastError, nativeStatus };
   }, []);
 
   const refreshTrackingStatus = useCallback(async () => {
@@ -457,6 +550,9 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setLastError(undefined);
         if (!trackingEnabled) {
           setTrackingStatus('idle');
+        } else if (debug.nativeStatus?.tokenInvalid) {
+          setTrackingStatus('needsTrackingAuth');
+          setLastError('Токен фонового трекинга требует обновления в открытом приложении.');
         } else if (debug.sending) {
           setTrackingStatus('uploading');
         } else if (debug.length > 0 || debug.pendingEndRoute) {
@@ -526,6 +622,7 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       await stopBackgroundLocationTaskIfRunning();
       stopForegroundWatch();
       setTrackingEnabled(false);
+      setTrackingMode('inactive');
       setTrackingStatus('idle');
       setLastError(undefined);
       await AsyncStorage.removeItem(STORAGE_KEYS.enabled);
@@ -638,7 +735,9 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           await hardDisableTracking('[tracking-auto]');
           return;
         }
-        const nativeStarted = await startNativeTrackingIfAvailable(storedRouteId, '[tracking-auto]');
+        const nativeStarted = await startNativeTrackingIfAvailable(storedRouteId, '[tracking-auto]', {
+          reason: 'repair',
+        });
         const backgroundStarted = nativeStarted
           ? false
           : await ensureLocationTaskRunning('[tracking-auto]', true);
@@ -724,7 +823,10 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     let backgroundStarted = false;
     let nativeStarted = false;
     let backgroundStartError: string | undefined;
-    nativeStarted = await startNativeTrackingIfAvailable(startedRouteId, '[tracking-start]');
+    nativeStarted = await startNativeTrackingIfAvailable(startedRouteId, '[tracking-start]', {
+      forceTokenRenewal: true,
+      reason: 'start',
+    });
     if (!nativeStarted) {
     try {
       backgroundStarted = await startBackgroundLocationTaskWithRepair('[tracking-start]');
@@ -922,6 +1024,8 @@ export const TrackingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         queueLength,
         lastUploadAt,
         lastError,
+        trackingMode,
+        nativeDiagnostics,
         refreshTrackingStatus,
         startTracking,
         stopTracking,

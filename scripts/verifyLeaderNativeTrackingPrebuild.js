@@ -22,6 +22,7 @@ function requireText(relativePath, text) {
 const kotlinRoot = path.join('android', 'app', 'src', 'main', 'java', ...packagePath);
 
 requireText(path.join(kotlinRoot, 'tracking', 'LeaderTrackingService.kt'), 'class LeaderTrackingService');
+requireText(path.join(kotlinRoot, 'tracking', 'LeaderTrackingSecureStore.kt'), 'object LeaderTrackingSecureStore');
 requireText(path.join(kotlinRoot, 'tracking', 'LeaderTrackingModule.kt'), 'class LeaderTrackingModule');
 requireText(path.join(kotlinRoot, 'tracking', 'LeaderTrackingPackage.kt'), 'class LeaderTrackingPackage');
 requireText(path.join(kotlinRoot, 'tracking', 'LeaderTrackingBootReceiver.kt'), 'class LeaderTrackingBootReceiver');
@@ -29,6 +30,7 @@ requireText(path.join(kotlinRoot, 'MainApplication.kt'), 'add(LeaderTrackingPack
 requireText('android/app/src/main/AndroidManifest.xml', '.tracking.LeaderTrackingService');
 requireText('android/app/src/main/AndroidManifest.xml', '.tracking.LeaderTrackingBootReceiver');
 requireText('android/app/src/main/AndroidManifest.xml', 'android.permission.RECEIVE_BOOT_COMPLETED');
+requireText('android/app/src/main/AndroidManifest.xml', 'android.permission.ACCESS_NETWORK_STATE');
 requireText('android/app/build.gradle', "implementation 'com.google.android.gms:play-services-location:21.3.0'");
 requireText('android/app/build.gradle', "implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'");
 

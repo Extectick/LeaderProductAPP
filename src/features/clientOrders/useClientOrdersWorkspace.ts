@@ -1579,9 +1579,9 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
       const agreement = overrides.agreement ?? defaults.agreement ?? null;
       const contract = overrides.contract ?? agreement?.contract ?? defaults.contract ?? null;
-      const warehouse = defaults.warehouse ?? agreement?.warehouse ?? null;
+      const warehouse = agreement?.warehouse ?? defaults.warehouse ?? null;
       const deliveryAddress = defaults.deliveryAddress ?? null;
-      const priceType = defaults.priceType ?? agreement?.priceType ?? null;
+      const priceType = agreement?.priceType ?? defaults.priceType ?? null;
       const shouldApplyDeliveryAddress = deliveryAddressManualVersionRef.current === deliveryAddressManualVersion;
       setPaymentFormOptions(defaults.paymentForms || []);
       setDeliveryMethodOptions(defaults.deliveryMethods || []);

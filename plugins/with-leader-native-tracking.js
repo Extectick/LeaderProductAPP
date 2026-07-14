@@ -88,6 +88,7 @@ function withLeaderNativeTracking(config) {
     ensurePermission(manifest, 'android.permission.RECEIVE_BOOT_COMPLETED');
     ensurePermission(manifest, 'android.permission.FOREGROUND_SERVICE');
     ensurePermission(manifest, 'android.permission.FOREGROUND_SERVICE_LOCATION');
+    ensurePermission(manifest, 'android.permission.ACCESS_NETWORK_STATE');
     ensureComponent(application, 'service', SERVICE_NAME, {
       'android:exported': 'false',
       'android:foregroundServiceType': 'location',
@@ -137,6 +138,7 @@ function withLeaderNativeTracking(config) {
         'LeaderTrackingModule.kt',
         'LeaderTrackingPackage.kt',
         'LeaderTrackingService.kt',
+        'LeaderTrackingSecureStore.kt',
         'LeaderTrackingBootReceiver.kt',
       ]) {
         writeFileIfChanged(path.join(sourceRoot, name), readTemplate(name, packageName));
