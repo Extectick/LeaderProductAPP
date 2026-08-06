@@ -5,6 +5,7 @@
   "scripts": {
     "start": "expo start",
     "start:dev": "cross-env NODE_ENV=development expo start",
+    "prestart:dev-client": "node ./scripts/freeExpoPort.js 8081",
     "start:dev-client": "cross-env NODE_ENV=development expo start --dev-client --host lan",
     "logs:android": "adb logcat ReactNativeJS:V ReactNative:V Expo:V AndroidRuntime:E *:S",
     "start:prod": "cross-env NODE_ENV=production expo start",
@@ -109,6 +110,7 @@
     "react-native-mask-input": "^1.2.3",
     "react-native-mask-text": "^0.15.0",
     "react-native-modal": "^14.0.0-rc.1",
+    "react-native-pager-view": "6.9.1",
     "react-native-paper": "^5.15.0",
     "react-native-qrcode-svg": "^6.3.15",
     "react-native-reanimated": "~4.1.1",

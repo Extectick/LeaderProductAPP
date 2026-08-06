@@ -10,6 +10,7 @@ const STORAGE_KEYS = {
 const UPDATE_CHANNEL = process.env.EXPO_PUBLIC_UPDATE_CHANNEL || 'prod';
 const UPDATE_CHECK_TIMEOUT_MS = 3500;
 const UPDATE_DEBUG_LOGS = process.env.EXPO_PUBLIC_UPDATE_DEBUG === 'true';
+const UPDATE_CHECK_MEMORY_CACHE_MS = 60_000;
 
 export type UpdateCheckResult = {
   updateAvailable: boolean;
@@ -34,7 +35,20 @@ type CheckParams = {
   deviceId?: string;
   channel?: string;
   ifNoneMatch?: string | null;
+  force?: boolean;
 };
+
+type UpdateCheckResponse = {
+  ok: boolean;
+  data?: UpdateCheckResult;
+  message?: string;
+  status?: number;
+  etag?: string;
+  notModified?: boolean;
+};
+
+const updateCheckCache = new Map<string, { expiresAt: number; result: UpdateCheckResponse }>();
+const updateCheckLoads = new Map<string, Promise<UpdateCheckResponse>>();
 
 type UpdateEventParams = {
   eventType:
@@ -70,16 +84,7 @@ export async function getInstallId(): Promise<string> {
   return next;
 }
 
-export async function checkForUpdate(
-  params: CheckParams
-): Promise<{
-  ok: boolean;
-  data?: UpdateCheckResult;
-  message?: string;
-  status?: number;
-  etag?: string;
-  notModified?: boolean;
-}> {
+async function checkForUpdateUncached(params: CheckParams): Promise<UpdateCheckResponse> {
   if (!API_BASE_URL) {
     return { ok: false, message: 'API_BASE_URL is missing' };
   }
@@ -146,6 +151,39 @@ export async function checkForUpdate(
     });
     return { ok: false, message, status };
   }
+}
+
+export async function checkForUpdate(params: CheckParams): Promise<UpdateCheckResponse> {
+  const cacheKey = JSON.stringify([
+    params.platform,
+    params.versionCode,
+    params.versionName || '',
+    params.channel || UPDATE_CHANNEL,
+    params.deviceId || '',
+    params.ifNoneMatch || '',
+  ]);
+
+  if (!params.force) {
+    const cached = updateCheckCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return cached.result;
+    const existingLoad = updateCheckLoads.get(cacheKey);
+    if (existingLoad) return existingLoad;
+  }
+
+  const load = checkForUpdateUncached(params).then((result) => {
+    if (!params.force) {
+      updateCheckCache.set(cacheKey, {
+        result,
+        expiresAt: Date.now() + UPDATE_CHECK_MEMORY_CACHE_MS,
+      });
+    }
+    return result;
+  }).finally(() => {
+    updateCheckLoads.delete(cacheKey);
+  });
+
+  if (!params.force) updateCheckLoads.set(cacheKey, load);
+  return load;
 }
 
 export async function logUpdateEvent(params: UpdateEventParams) {

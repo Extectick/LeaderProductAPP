@@ -7,6 +7,7 @@ import {
   deleteClientOrder,
   getClientOrderDefaults,
   getClientOrder,
+  getClientOrderInvoices,
   getClientOrderProductsBatch,
   getClientOrderSettings,
   getClientOrders,
@@ -23,6 +24,7 @@ import {
   updateClientOrder,
   updateClientOrderSettings,
   type ClientOrder,
+  type ClientOrderInvoice,
   type ClientOrderAgreementOption,
   type ClientOrderContractOption,
   type ClientOrderCounterpartyOption,
@@ -35,9 +37,10 @@ import {
   type ClientOrderWarehouseOption,
 } from '@/utils/clientOrdersService';
 import React from 'react';
-import { Alert, Platform } from 'react-native';
+import { Alert, AppState, Platform } from 'react-native';
 import {
   buildNewItem,
+  buildCopyPayload,
   buildPayload,
   computeDraftProfit,
   computeDraftWeight,
@@ -50,6 +53,8 @@ import {
   getOrderDisplayStatusLabel,
   getOrderDisplayStatus,
   mergeDraftPackagesForProduct,
+  makeKey,
+  makeLineGuid,
   getOrderActivityAt,
   hasManualPrice,
   getDefaultClientOrderDeliveryDate,
@@ -63,6 +68,11 @@ import {
   type DraftItem,
   type DraftOrder,
 } from './clientOrdersShared';
+import {
+  getClientOrderInvoiceIdentifier,
+  getClientOrderInvoicePresentation,
+  hasPendingClientOrderInvoice,
+} from './lib/clientOrderInvoices';
 
 type AutosaveState = 'idle' | 'saved' | 'error';
 type SaveOptions = { silent?: boolean; reason?: 'manual' | 'autosave' };
@@ -103,6 +113,8 @@ const ORDERS_CACHE_STORAGE_PREFIX = 'client_orders_list_cache_v1';
 const DEVICE_DRAFT_GUID_PREFIX = 'device-order-';
 const DEVICE_DRAFT_SYNC_BACKOFF_MS = [0, 15_000, 60_000, 180_000, 300_000, 600_000];
 const QUEUED_ORDERS_REFRESH_INTERVAL_MS = 15_000;
+const PENDING_INVOICES_REFRESH_INTERVAL_MS = 5_000;
+const OPEN_ORDER_INVOICES_REFRESH_INTERVAL_MS = 15_000;
 const ORDERS_PAGE_SIZE = 20;
 const ORDERS_CACHE_LIMIT = 80;
 
@@ -574,6 +586,8 @@ function isQueuedClientOrder(order?: Pick<ClientOrder, 'status' | 'syncState'> |
 }
 
 function mergeOrderListMetadata(current: ClientOrder, summary: ClientOrder): ClientOrder {
+  const serverFinishedInvoice = !!summary.invoiceDownloadAvailable
+    || ['AVAILABLE', 'SENT', 'PARTIAL', 'ERROR'].includes(summary.invoiceState || '');
   return {
     ...current,
     revision: Math.max(current.revision || 0, summary.revision || 0),
@@ -601,9 +615,60 @@ function mergeOrderListMetadata(current: ClientOrder, summary: ClientOrder): Cli
     isPostedIn1c: summary.isPostedIn1c ?? current.isPostedIn1c,
     hasRealization: summary.hasRealization ?? current.hasRealization,
     realizationDetectedAt: summary.realizationDetectedAt ?? current.realizationDetectedAt,
+    invoiceRequested: summary.invoiceRequested ?? current.invoiceRequested,
+    invoiceState: summary.invoiceState ?? current.invoiceState,
+    invoiceWaitReason: summary.invoiceWaitReason !== undefined ? summary.invoiceWaitReason : current.invoiceWaitReason,
+    latestInvoiceVersion: summary.latestInvoiceVersion !== undefined ? summary.latestInvoiceVersion : current.latestInvoiceVersion,
+    invoiceCount: summary.invoiceCount ?? current.invoiceCount,
+    invoiceDownloadAvailable: summary.invoiceDownloadAvailable ?? current.invoiceDownloadAvailable,
+    invoiceRequestPending: serverFinishedInvoice
+      ? false
+      : (summary.invoiceRequestPending ?? !!current.invoiceRequestPending),
+    invoices: Array.isArray(summary.invoices) && summary.invoices.length ? summary.invoices : current.invoices,
     readOnly: summary.readOnly ?? current.readOnly,
     readOnlyReason: summary.readOnlyReason ?? current.readOnlyReason,
   };
+}
+
+function preserveTransientInvoiceListState(current: ClientOrder, summary: ClientOrder): ClientOrder {
+  const serverFinishedInvoice = !!summary.invoiceDownloadAvailable
+    || ['AVAILABLE', 'SENT', 'PARTIAL', 'ERROR'].includes(summary.invoiceState || '');
+  if (serverFinishedInvoice) return { ...summary, invoiceRequestPending: false };
+  if (!current.invoiceRequestPending) return summary;
+  return {
+    ...summary,
+    invoiceState: 'WAITING',
+    invoiceWaitReason: current.invoiceWaitReason || 'Счёт формируется',
+    invoiceRequestPending: true,
+    invoices: current.invoices,
+  };
+}
+
+function mergeOrderInvoices(current: ClientOrder, invoices: NonNullable<ClientOrder['invoices']>): ClientOrder {
+  const active = invoices.filter((invoice) => !['SUPERSEDED', 'CANCELLED'].includes(invoice.state));
+  const latestVersion = active.reduce((max, invoice) => Math.max(max, Number(invoice.version || 0)), 0) || null;
+  const hasDownload = active.some((invoice) => !!invoice.downloadAvailable);
+  const hasTerminalState = active.some((invoice) => ['AVAILABLE', 'SENT', 'PARTIAL', 'ERROR'].includes(invoice.state));
+  const next: ClientOrder = {
+    ...current,
+    invoices: active,
+    latestInvoiceVersion: latestVersion,
+    invoiceCount: active.length,
+    invoiceDownloadAvailable: hasDownload,
+    invoiceRequestPending: !!current.invoiceRequestPending && !hasDownload && !hasTerminalState,
+  };
+  const presentation = getClientOrderInvoicePresentation(next);
+  return {
+    ...next,
+    invoiceState: presentation.state,
+    invoiceWaitReason: presentation.reason,
+  };
+}
+
+function orderMatchesInvoiceIdentifier(order: ClientOrder, identifier: string) {
+  const normalized = identifier.trim().toLowerCase();
+  return [order.guid, order.appGuid, order.documentGuid]
+    .some((value) => value?.trim().toLowerCase() === normalized);
 }
 
 function withDeviceDraftSyncFailure(entry: DeviceDraftEntry, message: string): DeviceDraftEntry {
@@ -719,6 +784,13 @@ function buildDeviceOrderFromDraft(args: {
     priceType: draft.priceTypeGuid ? { guid: draft.priceTypeGuid, name: draft.priceTypeName || 'Вид цены' } : null,
     generalDiscountPercent: draft.generalDiscountPercent.trim() ? parseDraftNumber(draft.generalDiscountPercent) : null,
     generalDiscountAmount: null,
+    invoiceRequested: !!draft.invoiceRequested,
+    invoiceState: draft.invoiceRequested ? 'WAITING' : 'NOT_REQUESTED',
+    invoiceWaitReason: draft.invoiceRequested ? 'Заказ ещё не закрыт' : null,
+    latestInvoiceVersion: null,
+    invoiceCount: 0,
+    invoiceDownloadAvailable: false,
+    invoices: [],
     queuedAt: null,
     sentTo1cAt: null,
     lastStatusSyncAt: null,
@@ -802,6 +874,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const [loadingOrders, setLoadingOrders] = React.useState(false);
   const [loadingMoreOrders, setLoadingMoreOrders] = React.useState(false);
   const [loadingDetail, setLoadingDetail] = React.useState(false);
+  const [loadingReceiptPrices, setLoadingReceiptPrices] = React.useState(false);
   const [loadingDefaults, setLoadingDefaults] = React.useState(false);
   const [loadingSettings, setLoadingSettings] = React.useState(false);
   const [savingSettings, setSavingSettings] = React.useState(false);
@@ -835,10 +908,12 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const enumOptionsRequestIdRef = React.useRef(0);
   const deliveryAddressManualVersionRef = React.useRef(0);
   const pricingRequestIdRef = React.useRef(0);
+  const receiptPriceLoadingRequestIdRef = React.useRef(0);
   const ordersAppendLoadingRef = React.useRef(false);
   const ordersNextOffsetRef = React.useRef(0);
   const ordersInitialLoadDoneRef = React.useRef(false);
   const deviceDraftSyncingRef = React.useRef(false);
+  const invoicePollingRef = React.useRef(false);
 
   const markOrdersInitialLoadDone = React.useCallback(() => {
     if (ordersInitialLoadDoneRef.current) return;
@@ -928,15 +1003,26 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     () => orders.filter((order) => orderMatchesFilters(order, filters)),
     [orders, filters]
   );
-  const mergedOrders = React.useMemo(() => {
-    const deviceGuids = new Set(visibleDeviceOrders.map((order) => order.guid));
-    return [...visibleDeviceOrders, ...visibleApiOrders.filter((order) => !deviceGuids.has(order.guid))];
+  const sortedOrders = React.useMemo(() => {
+    // The API already returns documents in their canonical pagination order.
+    // Re-sorting the entire accumulated window after every appended page can
+    // insert new rows above the current viewport and visibly move the list.
+    // Only device drafts need local ordering and pinning above server results.
+    const sortedDeviceOrders = sortClientOrdersForWorkspace(visibleDeviceOrders);
+    const deviceGuids = new Set(sortedDeviceOrders.map((order) => order.guid));
+    return [...sortedDeviceOrders, ...visibleApiOrders.filter((order) => !deviceGuids.has(order.guid))];
   }, [visibleApiOrders, visibleDeviceOrders]);
-  const sortedOrders = React.useMemo(() => sortClientOrdersForWorkspace(mergedOrders), [mergedOrders]);
   const latestDraftOrder = React.useMemo(() => sortedOrders.find((item) => item.status === 'DRAFT') || null, [sortedOrders]);
+  const hasPendingInvoices = React.useMemo(
+    () => sortedOrders.some((order) => hasPendingClientOrderInvoice(order))
+      || hasPendingClientOrderInvoice(selectedOrder),
+    [selectedOrder, sortedOrders]
+  );
   const hasQueuedOrders = React.useMemo(
-    () => sortedOrders.some(isQueuedClientOrder) || isQueuedClientOrder(selectedOrder),
-    [selectedOrder?.status, selectedOrder?.syncState, sortedOrders]
+    () => sortedOrders.some((order) => isQueuedClientOrder(order))
+      || isQueuedClientOrder(selectedOrder)
+      || hasPendingInvoices,
+    [hasPendingInvoices, selectedOrder, sortedOrders]
   );
   const hasEditableDocument = documentStarted || !!draft.guid || !!selectedGuid || !!selectedOrder;
   const statusCounts = React.useMemo(() => {
@@ -1140,13 +1226,24 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     }));
   }, [patchDraft]);
 
-  const enrichItemsMetadata = React.useCallback(async (sourceDraft: DraftOrder) => {
-    if (!sourceDraft.counterpartyGuid || !sourceDraft.items.length) return;
+  const enrichItemsMetadata = React.useCallback(async (
+    sourceDraft: DraftOrder,
+    options?: { refreshCommercialData?: boolean; receiptPriceAt?: string }
+  ) => {
+    const loadingRequestId = ++receiptPriceLoadingRequestIdRef.current;
+    if (!sourceDraft.counterpartyGuid || !sourceDraft.items.length) {
+      setLoadingReceiptPrices(false);
+      return;
+    }
     const productGuids = Array.from(new Set(sourceDraft.items.map((item) => item.productGuid).filter(Boolean)));
-    if (!productGuids.length) return;
+    if (!productGuids.length) {
+      setLoadingReceiptPrices(false);
+      return;
+    }
 
     const requestId = ++pricingRequestIdRef.current;
     const targetGuid = sourceDraft.guid || null;
+    setLoadingReceiptPrices(true);
     try {
       const products = await getClientOrderProductsBatch({
         productGuids,
@@ -1155,10 +1252,12 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         agreementGuid: sourceDraft.agreementGuid || undefined,
         warehouseGuid: sourceDraft.warehouseGuid || undefined,
         priceTypeGuid: sourceDraft.priceTypeGuid || undefined,
+        receiptPriceAt: options?.receiptPriceAt,
       });
       if (pricingRequestIdRef.current !== requestId) return;
 
       const productByGuid = new Map(products.map((product) => [product.guid, product]));
+      if (options?.refreshCommercialData) setDirty(true);
       setDraft((prev) => {
         if (targetGuid && prev.guid !== targetGuid) return prev;
         if (!targetGuid && prev.guid) return prev;
@@ -1168,12 +1267,31 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
           items: prev.items.map((item) => {
             const product = productByGuid.get(item.productGuid);
             if (!product) return item;
+            const isManualPrice = hasManualPrice(item);
+            const refreshCommercialData = options?.refreshCommercialData === true;
             const packages = mergeDraftPackagesForProduct(product, item.packages, item.baseUnit);
             const hasProductPackages = Array.isArray(product.packages);
             return {
               ...item,
               packageGuid: normalizePackageGuid(item.packageGuid, packages),
-              receiptPrice: item.receiptPrice ?? product.receiptPrice ?? product.basePrice ?? null,
+              basePrice: refreshCommercialData && !isManualPrice
+                ? product.basePrice ?? null
+                : item.basePrice,
+              // Себестоимость и цена продажи — разные величины. Всегда берем
+              // актуальную себестоимость товара; сохраненное значение оставляем
+              // только как резерв при недоступности коммерческих данных.
+              receiptPrice: product.receiptPrice ?? item.receiptPrice ?? null,
+              priceTypeGuid: refreshCommercialData && !isManualPrice
+                ? sourceDraft.priceTypeGuid ?? product.priceType?.guid ?? null
+                : item.priceTypeGuid,
+              priceTypeName: refreshCommercialData && !isManualPrice
+                ? sourceDraft.priceTypeName ?? product.priceType?.name ?? null
+                : item.priceTypeName,
+              priceSource: refreshCommercialData && !isManualPrice
+                ? product.priceMatch?.source
+                  ? `${product.priceMatch.source}:${product.priceMatch.level ?? ''}`
+                  : null
+                : item.priceSource,
               baseUnit: product.baseUnit ?? item.baseUnit ?? null,
               productWeight: product.weight ?? item.productWeight ?? null,
               weightUnit: product.weightUnit ?? item.weightUnit ?? null,
@@ -1190,14 +1308,21 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       });
     } catch {
       // Metadata is optional on open: keep saved document values intact.
+    } finally {
+      if (receiptPriceLoadingRequestIdRef.current === loadingRequestId) {
+        setLoadingReceiptPrices(false);
+      }
     }
   }, []);
 
   const enrichItemMetadata = React.useCallback((lineKey: string) => {
     const item = draft.items.find((next) => next.key === lineKey);
     if (!item) return Promise.resolve();
-    return enrichItemsMetadata({ ...draft, items: [item] });
-  }, [draft, enrichItemsMetadata]);
+    return enrichItemsMetadata(
+      { ...draft, items: [item] },
+      { receiptPriceAt: readOnly ? selectedOrder?.date1c ?? undefined : undefined }
+    );
+  }, [draft, enrichItemsMetadata, readOnly, selectedOrder?.date1c]);
 
   const mergeSavedOrderIntoDraft = React.useCallback((
     order: ClientOrder,
@@ -1219,6 +1344,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         ?? prev.deliveryAddressGuid,
       paymentForm: order.paymentForm ?? prev.paymentForm ?? null,
       deliveryMethod: order.deliveryMethod ?? prev.deliveryMethod ?? null,
+      invoiceRequested: order.invoiceRequested ?? prev.invoiceRequested,
     }));
   }, []);
 
@@ -1231,6 +1357,43 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       const serverRevision = Number(order.revision || 0);
       if (!Number.isFinite(serverRevision) || serverRevision <= (prev.revision || 0)) return prev;
       return normalizeDraftOrder({ ...prev, revision: serverRevision });
+    });
+  }, []);
+
+  const refreshSelectedOrderInvoices = React.useCallback(async () => {
+    const guid = selectedGuidRef.current;
+    if (!guid || isDeviceDraftGuid(guid) || invoicePollingRef.current) return;
+    const invoiceIdentifier = getClientOrderInvoiceIdentifier(selectedOrder) || guid;
+    invoicePollingRef.current = true;
+    try {
+      const invoices = await getClientOrderInvoices(invoiceIdentifier);
+      if (selectedGuidRef.current !== guid) return;
+      setSelectedOrder((prev) => (prev?.guid === guid ? mergeOrderInvoices(prev, invoices) : prev));
+      setOrders((prev) => prev.map((order) => (order.guid === guid ? mergeOrderInvoices(order, invoices) : order)));
+    } catch {
+      // Polling is opportunistic: regular detail refresh remains the fallback.
+    } finally {
+      invoicePollingRef.current = false;
+    }
+  }, [selectedOrder?.appGuid]);
+
+  const applyInvoiceRequestResult = React.useCallback((identifier: string, invoices: ClientOrderInvoice[]) => {
+    const apply = (order: ClientOrder | null) => {
+      if (!order || !orderMatchesInvoiceIdentifier(order, identifier)) return order;
+      return mergeOrderInvoices({
+        ...order,
+        invoiceState: 'WAITING',
+        invoiceWaitReason: 'Счёт формируется',
+        invoiceRequestPending: true,
+      }, invoices);
+    };
+    setSelectedOrder((current) => apply(current));
+    setOrders((current) => {
+      const next = current.map((order) => apply(order) ?? order);
+      // Keep the mutable read model in sync before a fast return to the list
+      // can start a server refresh with an older invoice snapshot.
+      apiOrdersRef.current = next;
+      return next;
     });
   }, []);
 
@@ -1251,14 +1414,20 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     }
   }, []);
 
-  const applyOrderDetail = React.useCallback((order: ClientOrder) => {
+  const applyOrderDetail = React.useCallback((
+    order: ClientOrder,
+    options?: { refreshCommercialData?: boolean }
+  ) => {
     const nextDraft = normalizeDraftOrder(orderToDraft(order));
     selectedGuidRef.current = order.guid;
     contextRefreshSignatureRef.current = buildPricingContextSignature(nextDraft);
     setSelectedGuid(order.guid);
     setSelectedOrder(order);
     setDraft(nextDraft);
-    void enrichItemsMetadata(nextDraft);
+    void enrichItemsMetadata(nextDraft, {
+      ...options,
+      receiptPriceAt: order.readOnly ? order.date1c ?? undefined : undefined,
+    });
     setDocumentStarted(true);
     setSelections({
       organization: order.organization || null,
@@ -1322,6 +1491,59 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     replaceDeviceDraftEntries([entry, ...withoutCurrent]);
     return entry.order;
   }, [draft, findDeviceDraftEntry, replaceDeviceDraftEntries, selectedOrder?.createdAt, selections]);
+
+  const createDeviceCopyFromCurrentDraft = React.useCallback(() => {
+    const nowIso = new Date().toISOString();
+    const localGuid = makeDeviceDraftGuid();
+    const copiedDraft = normalizeDraftOrder({
+      ...draft,
+      guid: localGuid,
+      revision: 1,
+      items: draft.items.map((item) => {
+        const keepsManualPrice = hasManualPrice(item);
+        return {
+          ...item,
+          key: makeKey(),
+          lineGuid: makeLineGuid(),
+          basePrice: keepsManualPrice ? item.basePrice : null,
+          priceSource: keepsManualPrice ? item.priceSource : null,
+          isCancelled: false,
+          cancelReasonGuid: null,
+          cancelReasonName: null,
+          cancelReason: null,
+          cancelledAmount: null,
+        };
+      }),
+    });
+    const order = buildDeviceOrderFromDraft({
+      draft: copiedDraft,
+      selections,
+      guid: localGuid,
+      revision: 1,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      lastSyncError: null,
+    });
+    const entry: DeviceDraftEntry = {
+      id: makeDeviceDraftGuid(),
+      serverGuid: null,
+      serverRevision: null,
+      order,
+      payload: buildCopyPayload(copiedDraft),
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      lastSyncError: null,
+      syncAttempts: 0,
+      nextSyncAt: null,
+    };
+    replaceDeviceDraftEntries([entry, ...deviceDraftEntriesRef.current]);
+    applySavedOrderToList(order);
+    applyOrderDetail(order, { refreshCommercialData: true });
+    // Preserve incomplete or malformed input exactly in the editable copy.
+    setDraft(copiedDraft);
+    setError(null);
+    return order;
+  }, [applyOrderDetail, applySavedOrderToList, draft, replaceDeviceDraftEntries, selections]);
 
   const syncDeviceDrafts = React.useCallback(async () => {
     if (!deviceDraftsHydrated || deviceDraftSyncingRef.current) return;
@@ -1441,16 +1663,30 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       if (!silent && liveSource?.status && liveSource.status !== 'ok' && liveSource.message) {
         setError(liveSource.message);
       }
-      const list = Array.isArray(result.items) ? result.items : [];
-      const nextOffset = offset + list.length;
+      const rawList = Array.isArray(result.items) ? result.items : [];
       const currentOrders = apiOrdersRef.current;
+      const list = rawList.map((summary) => {
+        const current = currentOrders.find((order) => orderMatchesInvoiceIdentifier(order, summary.guid));
+        return current ? preserveTransientInvoiceListState(current, summary) : summary;
+      });
+      const fetchedNextOffset = offset + list.length;
       const knownOrderGuids = new Set(currentOrders.map((known) => known.guid));
+      const preserveLoadedWindow = mode === 'reset' && silent && currentOrders.length > list.length;
+      const refreshedOrderGuids = new Set(list.map((item) => item.guid));
       const nextOrders = mode !== 'append'
-        ? list
+        ? preserveLoadedWindow
+          ? [
+              ...list,
+              ...currentOrders.filter((item) => !refreshedOrderGuids.has(item.guid)),
+            ]
+          : list
         : [
             ...currentOrders,
             ...list.filter((item) => !knownOrderGuids.has(item.guid)),
           ];
+      const nextOffset = preserveLoadedWindow
+        ? Math.max(ordersNextOffsetRef.current, fetchedNextOffset)
+        : fetchedNextOffset;
       ordersNextOffsetRef.current = nextOffset;
       apiOrdersRef.current = nextOrders;
       setOrders(nextOrders);
@@ -1598,6 +1834,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         deliveryDate: prev.deliveryDate ?? defaults.deliveryDate ?? settingsRef.current?.resolvedDeliveryDate ?? null,
         paymentForm: prev.paymentForm ?? defaults.paymentForm ?? null,
         deliveryMethod: prev.deliveryMethod ?? defaults.deliveryMethod ?? null,
+        invoiceRequested: !!defaults.invoiceRequested,
         currency: defaults.currency || DEFAULT_ORDER_CURRENCY,
         priceTypeGuid: priceType?.guid ?? null,
         priceTypeName: priceType?.name ?? null,
@@ -1647,11 +1884,12 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
   React.useEffect(() => {
     if (!filtersHydrated || !hasQueuedOrders) return undefined;
+    if (hasPendingInvoices) void refreshQueueState();
     const timer = setInterval(() => {
       void refreshQueueState();
-    }, QUEUED_ORDERS_REFRESH_INTERVAL_MS);
+    }, hasPendingInvoices ? PENDING_INVOICES_REFRESH_INTERVAL_MS : QUEUED_ORDERS_REFRESH_INTERVAL_MS);
     return () => clearInterval(timer);
-  }, [filtersHydrated, hasQueuedOrders, refreshQueueState]);
+  }, [filtersHydrated, hasPendingInvoices, hasQueuedOrders, refreshQueueState]);
 
   const refreshOrders = React.useCallback(() => loadOrders('reset'), [loadOrders]);
   const loadMoreOrders = React.useCallback(
@@ -1669,6 +1907,22 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     if (selectedOrder?.guid === selectedGuid) return;
     void loadDetail(selectedGuid);
   }, [loadDetail, selectedGuid, selectedOrder?.guid]);
+
+  React.useEffect(() => {
+    if (!selectedGuid || isDeviceDraftGuid(selectedGuid)) return undefined;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const poll = async () => {
+      if (cancelled) return;
+      if (!AppState?.currentState || AppState.currentState === 'active') await refreshSelectedOrderInvoices();
+      if (!cancelled) timer = setTimeout(poll, OPEN_ORDER_INVOICES_REFRESH_INTERVAL_MS);
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [refreshSelectedOrderInvoices, selectedGuid]);
 
   const saveUserSettings = React.useCallback(async (payload: Parameters<typeof updateClientOrderSettings>[0]) => {
     setSavingSettings(true);
@@ -1918,6 +2172,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       priceTypeName: null,
       paymentForm: null,
       deliveryMethod: null,
+      invoiceRequested: false,
       items: prev.items.map((item) => (
         hasManualPrice(item)
           ? item
@@ -2046,7 +2301,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       setItemPatch(item.key, {
         packageGuid: normalizePackageGuid(item.packageGuid, packages),
         basePrice: isManualPrice ? item.basePrice ?? product.basePrice ?? null : product.basePrice ?? null,
-        receiptPrice: product.receiptPrice ?? product.basePrice ?? item.receiptPrice ?? item.basePrice ?? null,
+        receiptPrice: product.receiptPrice ?? item.receiptPrice ?? null,
         currency: DEFAULT_ORDER_CURRENCY,
         priceTypeGuid: isManualPrice ? item.priceTypeGuid ?? null : priceType?.guid ?? product.priceType?.guid ?? null,
         priceTypeName: isManualPrice ? item.priceTypeName ?? null : priceType?.name ?? product.priceType?.name ?? null,
@@ -2097,7 +2352,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
             ...item,
             packageGuid: normalizePackageGuid(item.packageGuid, packages),
             basePrice: isManualPrice ? item.basePrice : product.basePrice ?? null,
-            receiptPrice: product.receiptPrice ?? product.basePrice ?? null,
+            receiptPrice: product.receiptPrice ?? item.receiptPrice ?? null,
             currency: DEFAULT_ORDER_CURRENCY,
             priceTypeGuid: isManualPrice
               ? item.priceTypeGuid ?? null
@@ -2446,29 +2701,26 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     }
   }, [applyOrderDetail, applySavedOrderToList, draft.guid, draft.revision, selectedGuid]);
 
-  const copyOrder = React.useCallback(async (options?: { saveFirst?: boolean }) => {
-    let targetGuid = draft.guid || selectedGuid;
-    let revision = draft.revision;
-    if (!targetGuid) return null;
-    if (options?.saveFirst && dirty) {
-      const saved = await saveDraft({ silent: true, reason: 'manual' });
-      if (!saved || isDeviceDraftGuid(saved.guid)) return null;
-      targetGuid = saved.guid;
-      revision = saved.revision;
+  const copyOrder = React.useCallback(async (_options?: { saveFirst?: boolean }) => {
+    const targetGuid = draft.guid || selectedGuid;
+    if (!targetGuid || dirty || isDeviceDraftGuid(targetGuid) || !!findDeviceDraftEntry(targetGuid)) {
+      return createDeviceCopyFromCurrentDraft();
     }
     try {
       setCopying(true);
-      const order = await copyClientOrder(targetGuid, revision);
+      const order = await copyClientOrder(targetGuid, draft.revision);
       applySavedOrderToList(order);
-      applyOrderDetail(order);
+      applyOrderDetail(order, { refreshCommercialData: true });
+      setError(null);
       return order;
-    } catch (e: any) {
-      setError(userErrorMessage(e, 'Не удалось скопировать заказ клиента.'));
-      return null;
+    } catch {
+      // Copying must remain available offline and when the source contains data
+      // that the API/1C can no longer validate. Keep it as an editable device draft.
+      return createDeviceCopyFromCurrentDraft();
     } finally {
       setCopying(false);
     }
-  }, [applyOrderDetail, applySavedOrderToList, dirty, draft.guid, draft.revision, saveDraft, selectedGuid]);
+  }, [applyOrderDetail, applySavedOrderToList, createDeviceCopyFromCurrentDraft, dirty, draft.guid, draft.revision, findDeviceDraftEntry, selectedGuid]);
 
   const runCancel = React.useCallback(async (target?: { guid: string; revision: number }) => {
     const targetGuid = target?.guid || draft.guid;
@@ -2571,6 +2823,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     ordersAppendError,
     loadMoreOrders,
     refreshOrders,
+    applyInvoiceRequestResult,
     filters,
     setFilters,
     clearFilters,
@@ -2624,6 +2877,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     ordersInitialLoadDone,
     loadingMoreOrders,
     loadingDetail,
+    loadingReceiptPrices,
     cancelDetailLoading,
     loadingDefaults,
     loadingSettings,

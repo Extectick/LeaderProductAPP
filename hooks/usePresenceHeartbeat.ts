@@ -4,42 +4,60 @@ import { AppState } from 'react-native';
 import { pingPresence } from '@/utils/presenceService';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
+const HEARTBEAT_FAILURE_MAX_INTERVAL_MS = 5 * 60_000;
 
 export function usePresenceHeartbeat(enabled: boolean) {
   useEffect(() => {
     if (!enabled) return;
-    let interval: ReturnType<typeof setInterval> | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     let cancelled = false;
+    let sending = false;
+    let failureCount = 0;
+
+    const stop = () => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+    };
+
+    const schedule = (delayMs: number) => {
+      stop();
+      if (cancelled || AppState.currentState !== 'active') return;
+      timer = setTimeout(() => void sendPing(), delayMs);
+    };
 
     const sendPing = async () => {
-      if (cancelled) return;
+      if (cancelled || sending || AppState.currentState !== 'active') return;
+      sending = true;
       try {
         await pingPresence();
+        failureCount = 0;
+        schedule(HEARTBEAT_INTERVAL_MS);
       } catch (e) {
-        console.warn('[presence] ping failed', (e as any)?.message || e);
+        failureCount += 1;
+        const retryDelay = Math.min(
+          HEARTBEAT_FAILURE_MAX_INTERVAL_MS,
+          HEARTBEAT_INTERVAL_MS * (2 ** failureCount)
+        );
+        if (failureCount === 1 || retryDelay === HEARTBEAT_FAILURE_MAX_INTERVAL_MS) {
+          console.warn('[presence] ping failed', (e as any)?.message || e);
+        }
+        schedule(retryDelay);
+      } finally {
+        sending = false;
       }
-    };
-
-    const start = () => {
-      if (interval) return;
-      interval = setInterval(sendPing, HEARTBEAT_INTERVAL_MS);
-    };
-    const stop = () => {
-      if (interval) clearInterval(interval);
-      interval = null;
     };
 
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
+        failureCount = 0;
+        stop();
         void sendPing();
-        start();
       } else {
         stop();
       }
     });
 
     void sendPing();
-    start();
 
     return () => {
       cancelled = true;

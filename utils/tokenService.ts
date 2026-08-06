@@ -18,16 +18,18 @@ const DEVICE_SESSION_KEY = 'deviceSessionId';
 const INSTALL_ID_KEY = 'authInstallId';
 const REFRESH_LOCK_KEY = 'authRefreshLock';
 
-const MAX_REFRESH_ATTEMPTS = 10;
 let refreshAttempts = 0;
 let refreshInFlight: Promise<string | null> | null = null;
 let lastWarnTs = 0;
+let nextRefreshAttemptAt = 0;
 let sessionExpiredActive = false;
 let lastRefreshFailure: RefreshFailure | null = null;
 
 const REFRESH_TIMEOUT_MS = 10_000;
 const REFRESH_LOCK_TTL_MS = 15_000;
 const ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 90;
+const REFRESH_RETRY_BASE_MS = 5_000;
+const REFRESH_RETRY_MAX_MS = 2 * 60_000;
 
 type RefreshFailureKind = 'invalid' | 'network' | 'server' | 'rotated' | 'unknown';
 
@@ -202,6 +204,11 @@ function rememberRefreshFailure(failure: Omit<RefreshFailure, 'at'>) {
   lastRefreshFailure = { ...failure, at: Date.now() };
 }
 
+function scheduleRefreshRetry() {
+  const exponent = Math.max(0, Math.min(refreshAttempts - 1, 6));
+  nextRefreshAttemptAt = Date.now() + Math.min(REFRESH_RETRY_MAX_MS, REFRESH_RETRY_BASE_MS * (2 ** exponent));
+}
+
 async function clearStoredAuthState(): Promise<void> {
   await Promise.all([
     secureRemove(ACCESS_KEY),
@@ -212,6 +219,7 @@ async function clearStoredAuthState(): Promise<void> {
   await clearServicesAccessCache();
   refreshAttempts = 0;
   lastWarnTs = 0;
+  nextRefreshAttemptAt = 0;
 }
 
 async function invalidateAuthSession(reason: string, status?: number) {
@@ -293,6 +301,7 @@ export async function saveTokens(accessToken: string, refreshToken: string, prof
   refreshAttempts = 0;
   sessionExpiredActive = false;
   lastRefreshFailure = null;
+  nextRefreshAttemptAt = 0;
 }
 
 export async function logout(): Promise<void> {
@@ -300,6 +309,7 @@ export async function logout(): Promise<void> {
   // Reset backoff to avoid warning spam after explicit logout.
   refreshAttempts = 0;
   lastWarnTs = 0;
+  nextRefreshAttemptAt = 0;
   sessionExpiredActive = false;
   lastRefreshFailure = null;
   // router.replace('/(auth)/AuthScreen');
@@ -308,6 +318,7 @@ export async function logout(): Promise<void> {
 export function resetRefreshBackoff() {
   refreshAttempts = 0;
   lastWarnTs = 0;
+  nextRefreshAttemptAt = 0;
 }
 
 function decodeExp(token?: string | null): number | null {
@@ -332,11 +343,6 @@ export async function isRefreshTokenExpired(): Promise<boolean> {
 
 export async function handleBackendUnavailable(reason?: string) {
   setServerUnavailable(reason || 'Network error');
-  const expired = await isRefreshTokenExpired();
-  if (expired) {
-    await invalidateAuthSession(reason || 'refresh_token_expired');
-    return;
-  }
 }
 
 async function acquireRefreshLock(owner: string): Promise<boolean> {
@@ -396,6 +402,7 @@ async function postRefreshToken(storedRefreshToken: string) {
   await saveTokens(accessToken, refreshToStore, profile, deviceSessionId);
   refreshAttempts = 0;
   lastWarnTs = 0;
+  nextRefreshAttemptAt = 0;
   setServerReachable();
   return accessToken;
 }
@@ -422,10 +429,10 @@ export async function refreshToken(): Promise<string | null> {
     return null;
   }
 
-  if (refreshAttempts >= MAX_REFRESH_ATTEMPTS) {
+  if (nextRefreshAttemptAt > Date.now()) {
     const now = Date.now();
     if (now - lastWarnTs > 10_000) {
-      console.warn('Достигнут максимум попыток обновления токена');
+      console.warn('Обновление токена отложено до восстановления соединения');
       lastWarnTs = now;
     }
     return null;
@@ -482,12 +489,15 @@ export async function refreshToken(): Promise<string | null> {
         await invalidateAuthSession(msg, status);
       } else if (!status) {
         rememberRefreshFailure({ kind: 'network', message: msg });
+        scheduleRefreshRetry();
         await handleBackendUnavailable(msg);
       } else if (status >= 500) {
         rememberRefreshFailure({ kind: 'server', status, message: msg });
+        scheduleRefreshRetry();
         setServerUnavailable(msg);
       } else {
         rememberRefreshFailure({ kind: 'unknown', status, message: msg });
+        scheduleRefreshRetry();
       }
       return null;
     } finally {

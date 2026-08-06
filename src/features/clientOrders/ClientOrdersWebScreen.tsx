@@ -46,12 +46,21 @@ import {
 import { hasMorePage } from './lib/clientOrdersPaging';
 import { resolveStoredBooleanDefaultTrue, serializeStoredBoolean } from './lib/clientOrdersPrefs';
 import { useClientOrdersWorkspace } from './hooks/useClientOrdersWorkspace';
+import {
+  getClientOrderInvoiceActionLabel,
+  getClientOrderInvoiceIdentifier,
+  getClientOrderInvoicePresentation,
+  getDownloadableClientOrderInvoices,
+  saveClientOrderInvoicePdf,
+  shareClientOrderInvoicePdf,
+} from './lib/clientOrderInvoices';
 import type {
   ClientOrderAgreementOption,
   ClientOrderContractOption,
   ClientOrderCounterpartyOption,
   ClientOrderDeliveryAddressOption,
   ClientOrder,
+  ClientOrderInvoice,
   ClientOrderOrganization,
   ClientOrderPriceTypeOption,
   ClientOrderProduct,
@@ -59,7 +68,7 @@ import type {
   ClientOrderReferenceKind,
   ClientOrderWarehouseOption,
 } from '@/utils/clientOrdersService';
-import { getClientOrderReferenceDetails } from '@/utils/clientOrdersService';
+import { getClientOrderInvoices, getClientOrderReferenceDetails, requestClientOrderInvoice } from '@/utils/clientOrdersService';
 import {
   Accordion,
   AccordionDetails,
@@ -131,6 +140,184 @@ const DELIVERY_METHOD_CHOICES: SegmentedChoice[] = [
   { value: 'ДоКлиента', label: 'Наша доставка' },
   { value: 'Самовывоз', label: 'Самовывоз' },
 ];
+
+function invoiceWebIcon(state: ReturnType<typeof getClientOrderInvoicePresentation>['state']) {
+  if (state === 'SENT' || state === 'AVAILABLE') return 'checkmark-circle-outline';
+  if (state === 'ERROR' || state === 'PARTIAL') return 'alert-circle-outline';
+  if (state === 'QUEUED' || state === 'SENDING') return 'send-outline';
+  return 'time-outline';
+}
+
+function InvoiceRequestWebField({ workspace, wide }: { workspace: any; wide: boolean }) {
+  const [downloadingId, setDownloadingId] = React.useState<string | null>(null);
+  const [downloadingAction, setDownloadingAction] = React.useState<'download' | 'share' | null>(null);
+  const [loadingInvoices, setLoadingInvoices] = React.useState(false);
+  const [requestingInvoice, setRequestingInvoice] = React.useState(false);
+  const [requestPending, setRequestPending] = React.useState(false);
+  const [loadedInvoices, setLoadedInvoices] = React.useState<{ orderGuid: string; items: ClientOrderInvoice[] } | null>(null);
+  const [invoiceMenuAnchor, setInvoiceMenuAnchor] = React.useState<HTMLElement | null>(null);
+  const selectedOrder = workspace.selectedOrder as ClientOrder | null;
+  const invoiceOrderGuid = getClientOrderInvoiceIdentifier(selectedOrder);
+  const currentInvoices = getDownloadableClientOrderInvoices(selectedOrder);
+  const invoices = currentInvoices.length || !loadedInvoices || loadedInvoices.orderGuid !== invoiceOrderGuid
+    ? currentInvoices
+    : getDownloadableClientOrderInvoices({ invoices: loadedInvoices.items });
+  const invoiceDownloadAvailable = invoices.length > 0 || !!selectedOrder?.invoiceDownloadAvailable;
+  const invoicePresentation = getClientOrderInvoicePresentation(selectedOrder);
+  const invoiceGenerationPending = requestPending || invoicePresentation.pending;
+  const readOnly = !!workspace.readOnly || !!workspace.mutationLocked;
+  React.useEffect(() => {
+    setLoadedInvoices(null);
+    setInvoiceMenuAnchor(null);
+    setRequestPending(false);
+  }, [invoiceOrderGuid]);
+  React.useEffect(() => {
+    if (invoiceDownloadAvailable) setRequestPending(false);
+  }, [invoiceDownloadAvailable]);
+  const download = async (invoice: ClientOrderInvoice, action: 'download' | 'share' = 'download') => {
+    if (!invoiceOrderGuid || downloadingId) return;
+    setInvoiceMenuAnchor(null);
+    setDownloadingId(invoice.id);
+    setDownloadingAction(action);
+    try {
+      if (action === 'share') await shareClientOrderInvoicePdf(invoiceOrderGuid, invoice);
+      else await saveClientOrderInvoicePdf(invoiceOrderGuid, invoice);
+    } catch (error: any) {
+      window.alert(error?.message || 'Не удалось скачать счёт');
+    } finally {
+      setDownloadingId(null);
+      setDownloadingAction(null);
+    }
+  };
+  const requestInvoice = async () => {
+    if (!invoiceOrderGuid || requestingInvoice || requestPending) return;
+    setRequestingInvoice(true);
+    try {
+      const result = await requestClientOrderInvoice(invoiceOrderGuid);
+      setLoadedInvoices({ orderGuid: invoiceOrderGuid, items: result.items });
+      workspace.applyInvoiceRequestResult(invoiceOrderGuid, result.items);
+      setRequestPending(!getDownloadableClientOrderInvoices({ invoices: result.items }).length);
+    } catch (error: any) {
+      window.alert(error?.message || 'Не удалось запросить счёт');
+    } finally {
+      setRequestingInvoice(false);
+    }
+  };
+  const openDownload = async (anchor: HTMLElement) => {
+    let available = invoices;
+    if (!available.length && invoiceOrderGuid && invoiceDownloadAvailable && !loadingInvoices) {
+      setLoadingInvoices(true);
+      try {
+        const loaded = await getClientOrderInvoices(invoiceOrderGuid);
+        setLoadedInvoices({ orderGuid: invoiceOrderGuid, items: loaded });
+        available = getDownloadableClientOrderInvoices({ invoices: loaded });
+      } catch (error: any) {
+        window.alert(error?.message || 'Не удалось загрузить счёт');
+        return;
+      } finally {
+        setLoadingInvoices(false);
+      }
+    }
+    if (available.length === 1) await download(available[0]);
+    else if (available.length > 1) setInvoiceMenuAnchor(anchor);
+    else window.alert('Счёт ещё не готов. Обновите документ и повторите попытку.');
+  };
+
+  if (invoiceDownloadAvailable) {
+    return (
+      <Box sx={{ gridColumn: wide ? 'span 2' : 'auto', minWidth: 0 }}>
+        <Stack direction="row" spacing={0}>
+        <Button
+          variant="text"
+          disabled={!!downloadingId || loadingInvoices}
+          onClick={(event) => {
+            void openDownload(event.currentTarget);
+          }}
+          startIcon={<Ionicons name="document-text-outline" size={16} color="#DC2626" />}
+          endIcon={downloadingAction === 'download' || loadingInvoices
+            ? <CircularProgress size={15} />
+            : <Ionicons name="download-outline" size={15} color="#1D4ED8" />}
+          sx={{
+            flex: 1,
+            height: 30,
+            justifyContent: 'flex-start',
+            borderRadius: 0,
+            border: 0,
+            color: '#0F172A',
+            bgcolor: 'transparent',
+            px: 1,
+            fontSize: 11,
+            fontWeight: 900,
+            textTransform: 'none',
+            '& .MuiButton-endIcon': { ml: 'auto' },
+          }}
+        >
+          Скачать счёт
+        </Button>
+        {invoices.length === 1 ? (
+          <IconButton aria-label="Поделиться счётом" disabled={!!downloadingId || loadingInvoices} onClick={() => void download(invoices[0], 'share')} sx={{ width: 34, height: 30, ml: 0, borderLeft: '1px solid rgba(148, 163, 184, 0.45)', borderRadius: 0 }}>
+            {downloadingAction === 'share'
+              ? <CircularProgress size={16} />
+              : <Ionicons name="share-outline" size={16} color="#1D4ED8" />}
+          </IconButton>
+        ) : null}
+        </Stack>
+        <Menu anchorEl={invoiceMenuAnchor} open={!!invoiceMenuAnchor} onClose={() => setInvoiceMenuAnchor(null)}>
+          {invoices.map((invoice) => (
+            <MenuItem key={invoice.id} onClick={() => void download(invoice)} disabled={!!downloadingId}>
+              <Stack direction="row" alignItems="center" spacing={0.8} sx={{ minWidth: 240 }}>
+                <Ionicons name="document-text-outline" size={17} color="#DC2626" />
+                <Box sx={{ minWidth: 0 }}>
+                  <Typography sx={{ fontSize: 11.5, fontWeight: 900 }}>{getClientOrderInvoiceActionLabel(invoice)}</Typography>
+                  <Typography sx={{ fontSize: 10, color: '#64748B', fontWeight: 700 }}>
+                    {invoice.realizationDate ? `от ${formatDateOnly(invoice.realizationDate)}` : 'Дата реализации не указана'}
+                  </Typography>
+                </Box>
+              </Stack>
+            </MenuItem>
+          ))}
+        </Menu>
+      </Box>
+    );
+  }
+
+  if (readOnly) {
+    const pending = invoiceGenerationPending;
+    return (
+      <Box sx={{ gridColumn: wide ? 'span 2' : 'auto', minWidth: 0 }}>
+        <Button
+          fullWidth
+          variant="outlined"
+          disabled={requestingInvoice || pending}
+          onClick={() => void requestInvoice()}
+          startIcon={requestingInvoice || pending ? <CircularProgress size={14} /> : <Ionicons name="cloud-download-outline" size={16} color="#1D4ED8" />}
+          sx={{ height: 30, justifyContent: 'flex-start', borderRadius: '7px', borderColor: '#D8E2F0', color: '#0F172A', bgcolor: '#F8FAFC', px: 1, fontSize: 11, fontWeight: 900, textTransform: 'none' }}
+        >
+          {pending ? 'Счёт формируется' : 'Запросить счёт'}
+        </Button>
+      </Box>
+    );
+  }
+
+  return (
+    <Box sx={{ gridColumn: wide ? 'span 2' : 'auto', minWidth: 0 }}>
+      <Box component="label" sx={{ height: 30, border: '1px solid #D8E2F0', borderRadius: '7px', bgcolor: readOnly ? '#F8FAFC' : '#FFFFFF', px: 0.8, display: 'flex', alignItems: 'center', gap: 0.65, cursor: readOnly ? 'default' : 'pointer' }}>
+        <Ionicons name="receipt-outline" size={16} color={readOnly ? '#94A3B8' : '#475569'} />
+        <Typography sx={{ minWidth: 0, flex: 1, fontSize: 11, fontWeight: 900, color: readOnly ? '#64748B' : '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          Отправить счёт автоматически
+        </Typography>
+        <Checkbox
+          checked={!!workspace.draft.invoiceRequested}
+          disabled={readOnly}
+          onChange={(event) => workspace.patchDraft({ invoiceRequested: event.target.checked })}
+          size="small"
+          sx={{ p: 0.15, color: '#94A3B8', '&.Mui-checked': { color: '#2563EB' } }}
+          inputProps={{ 'aria-label': 'Отправить счёт автоматически' }}
+        />
+      </Box>
+    </Box>
+  );
+}
 
 function getDraftItemImageUri(item: DraftItem | any) {
   return getProductGalleryImages(item)[0]?.thumbUrl || PRODUCT_IMAGE_PLACEHOLDER_URI;
@@ -1688,7 +1875,7 @@ export default function ClientOrdersWebScreen() {
     const mode = confirmCopyOpen;
     setConfirmCopyOpen(null);
     if (!mode) return;
-    const copied = await workspace.copyOrder({ saveFirst: mode === 'save-copy' });
+    const copied = await workspace.copyOrder();
     if (copied) {
       setWebEditorSection('header');
       if (isSinglePane) setResponsivePane('editor');
@@ -2403,6 +2590,7 @@ export default function ClientOrdersWebScreen() {
                 const selected = workspace.selectedGuid === order.guid;
                 const readOnlyOrder = !!order.readOnly || !!order.hasRealization || (order.origin === 'onec' && !order.appGuid);
                 const statusChip = orderStatusChipSx(order);
+                const invoice = getClientOrderInvoicePresentation(order);
                 return (
                   <Card
                     key={order.guid}
@@ -2450,6 +2638,16 @@ export default function ClientOrdersWebScreen() {
                           <Typography sx={{ fontSize: 9.5, color: '#475569', fontWeight: 900, borderRadius: '999px', bgcolor: '#F1F5F9', px: 0.65, py: 0.15, lineHeight: 1.25 }}>
                             Отгр. {formatDateOnly(order.deliveryDate)}
                           </Typography>
+                          {invoice.visible ? (
+                            <Tooltip title={invoice.label}>
+                              <Stack direction="row" spacing={0.25} alignItems="center" sx={{ borderRadius: '999px', bgcolor: '#F1F5F9', px: 0.65, py: 0.15 }}>
+                                <Ionicons name={invoiceWebIcon(invoice.state)} size={11} color={invoice.color} />
+                                <Typography sx={{ fontSize: 9.5, color: invoice.color, fontWeight: 900, lineHeight: 1.25 }}>
+                                  {invoice.listLabel}
+                                </Typography>
+                              </Stack>
+                            </Tooltip>
+                          ) : null}
                         </Stack>
                         <Typography sx={{ fontSize: 10.2, color: '#94A3B8', lineHeight: 1.05, fontWeight: 700 }}>
                           Изм. {formatDateTime(order.updatedAt || order.queuedAt || order.sentTo1cAt)}
@@ -2566,7 +2764,7 @@ export default function ClientOrdersWebScreen() {
                         <ToolbarIconButton title="Сохранить" icon="save-outline" color="#2563EB" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={saveWithConfirm} disabled={workspace.readOnly || workspace.saving || !workspace.validation.canSave} loading={workspace.saving} />
                       ) : null}
                       <ToolbarIconButton title="Отправить в 1С" icon="cloud-upload-outline" label={effectiveEditorPaneWidth >= 1180 ? 'В 1С' : undefined} color="#16A34A" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => setConfirmSubmitOpen(true)} disabled={workspace.readOnly || workspace.submitting || !workspace.canSubmitOrder} loading={workspace.submitting} />
-                      <ToolbarIconButton title="Копировать" icon="copy-outline" color="#475569" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={copyWithConfirm} disabled={workspace.copying || workspace.saving || workspace.submitting || (!workspace.draft.guid && !workspace.selectedGuid)} loading={workspace.copying} />
+                        <ToolbarIconButton title="Копировать" icon="copy-outline" color="#475569" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={copyWithConfirm} disabled={workspace.copying || workspace.saving || workspace.submitting || !workspace.hasEditableDocument} loading={workspace.copying} />
                     </Stack>
                   </Stack>
                   {showSectionSwitcher ? (
@@ -2655,6 +2853,7 @@ export default function ClientOrdersWebScreen() {
                       onOpenDetails={() => void openReferenceDetails('price-type', workspace.draft.priceTypeGuid)}
                       detailsDisabled={!workspace.draft.priceTypeGuid}
                     />
+                    <InvoiceRequestWebField workspace={workspace} wide={!isSinglePane && useWideEditorGrid} />
                     <SegmentedChoiceField
                       label="Форма оплаты"
                       value={workspace.draft.paymentForm}
@@ -3088,6 +3287,7 @@ export default function ClientOrdersWebScreen() {
                 <SelectionButton label="Вид цены" value={workspace.draft.priceTypeName} onClick={() => openPicker('priceType')} disabled={workspace.readOnly || !hasOrderContext} loading={workspace.documentHeaderLoadingState.priceType} />
                 <Typography sx={{ color: '#64748B', fontSize: 11, mt: 0.35 }}>из соглашения или вручную</Typography>
               </Box>
+              <InvoiceRequestWebField workspace={workspace} wide={false} />
               <Box>
                 <SegmentedChoiceField
                   label="Форма оплаты"
@@ -3391,18 +3591,18 @@ export default function ClientOrdersWebScreen() {
       </Dialog>
 
       <Dialog open={!!confirmCopyOpen} onClose={() => setConfirmCopyOpen(null)} maxWidth="xs" fullWidth fullScreen={isPhoneDialog}>
-        <DialogTitle>{confirmCopyOpen === 'save-copy' ? 'Сохранить и скопировать?' : 'Скопировать документ?'}</DialogTitle>
+        <DialogTitle>{confirmCopyOpen === 'save-copy' ? 'Скопировать с изменениями?' : 'Скопировать документ?'}</DialogTitle>
         <DialogContent>
           <Typography sx={{ color: '#475569', fontSize: 13 }}>
             {confirmCopyOpen === 'save-copy'
-              ? 'Сначала сохраним текущие изменения, затем откроем новый черновик-копию.'
+              ? 'Будет создан отдельный редактируемый черновик. Ошибки исходного документа не помешают копированию.'
               : 'Будет создан новый черновик-копия, и он сразу откроется.'}
           </Typography>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setConfirmCopyOpen(null)} sx={{ textTransform: 'none', fontWeight: 800 }}>Отмена</Button>
           <Button variant="contained" onClick={() => void runCopyConfirm()} disabled={workspace.copying || workspace.saving} sx={{ textTransform: 'none', fontWeight: 800 }}>
-            {workspace.copying ? 'Копирую...' : confirmCopyOpen === 'save-copy' ? 'Сохранить и скопировать' : 'Скопировать'}
+            {workspace.copying ? 'Копирую...' : 'Скопировать'}
           </Button>
         </DialogActions>
       </Dialog>

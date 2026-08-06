@@ -1,6 +1,7 @@
 import React from 'react';
 
 export type ServicesHeaderOverride = {
+  hidden?: boolean;
   title?: string;
   subtitle?: string;
   icon?: string;

@@ -196,6 +196,7 @@ export type ClientOrderItem = {
   quantity: number;
   quantityBase?: number | null;
   basePrice?: number | null;
+  receiptPrice?: number | null;
   price?: number | null;
   isManualPrice?: boolean;
   manualPrice?: number | null;
@@ -243,6 +244,31 @@ export type ClientOrderExportValidation = {
   itemErrors?: ClientOrderExportItemError[];
 };
 
+export type ClientOrderInvoiceState =
+  | 'NOT_REQUESTED'
+  | 'WAITING'
+  | 'QUEUED'
+  | 'SENDING'
+  | 'AVAILABLE'
+  | 'PARTIAL'
+  | 'SENT'
+  | 'ERROR';
+
+export type ClientOrderInvoice = {
+  id: string;
+  realizationGuid?: string | null;
+  realizationNumber?: string | null;
+  realizationDate?: string | null;
+  version: number;
+  state: ClientOrderInvoiceState;
+  waitReason?: string | null;
+  downloadAvailable?: boolean;
+  fileName?: string | null;
+  createdAt?: string | null;
+  sentAt?: string | null;
+  updatedAt?: string | null;
+};
+
 export type ClientOrder = {
   guid: string;
   appGuid?: string | null;
@@ -254,6 +280,15 @@ export type ClientOrder = {
   readOnly?: boolean;
   readOnlyReason?: string | null;
   hasRealization?: boolean;
+  invoiceRequested?: boolean;
+  invoiceState?: ClientOrderInvoiceState;
+  invoiceWaitReason?: string | null;
+  latestInvoiceVersion?: number | null;
+  invoiceCount?: number;
+  invoiceDownloadAvailable?: boolean;
+  /** Client-only optimistic marker used until the invoice queue appears in API summaries. */
+  invoiceRequestPending?: boolean;
+  invoices?: ClientOrderInvoice[];
   realizationDetectedAt?: string | null;
   createdAt?: string;
   updatedAt?: string;
@@ -330,6 +365,7 @@ export type ClientOrderDefaults = {
   deliveryDateIssue?: string | null;
   deliveryDateIssueMessage?: string | null;
   discountsEnabled?: boolean;
+  invoiceRequested?: boolean;
   warnings?: string[];
 };
 
@@ -434,10 +470,16 @@ function mapPagedResponse<T>(res: { ok: boolean; data?: { items?: T[] } | T[]; m
 function normalizeClientOrder(order: ClientOrder): ClientOrder {
   const items = Array.isArray((order as any).items) ? order.items : [];
   const events = Array.isArray((order as any).events) ? order.events : [];
+  const invoices: ClientOrderInvoice[] = Array.isArray(order.invoices) ? order.invoices : [];
   return {
     ...order,
     items,
     events,
+    invoices,
+    invoiceRequested: !!order.invoiceRequested,
+    invoiceState: order.invoiceState || (order.invoiceRequested ? 'WAITING' : 'NOT_REQUESTED'),
+    invoiceCount: Math.max(Number(order.invoiceCount || 0), invoices.length),
+    invoiceDownloadAvailable: !!order.invoiceDownloadAvailable || invoices.some((invoice) => !!invoice?.downloadAvailable),
     itemsCount: order.itemsCount ?? items.length,
   };
 }
@@ -486,6 +528,37 @@ export async function getClientOrder(guid: string) {
     if (!res.ok || !res.data) throw new Error(getErrorMessage('Не удалось загрузить заказ клиента', res.message));
     return normalizeClientOrder(res.data);
   });
+}
+
+export async function getClientOrderInvoices(guid: string) {
+  const path = API_ENDPOINTS.CLIENT_ORDERS.INVOICES(guid);
+  const res = await apiClient<void, { items?: ClientOrderInvoice[] } | ClientOrderInvoice[]>(path);
+  if (!res.ok || !res.data) throwApiError('Не удалось загрузить счета заказа', res);
+  const items = Array.isArray(res.data) ? res.data : res.data.items;
+  return Array.isArray(items) ? items : [];
+}
+
+export async function requestClientOrderInvoice(guid: string) {
+  const path = API_ENDPOINTS.CLIENT_ORDERS.INVOICE_REQUEST(guid);
+  const res = await apiClient<Record<string, never>, { requested?: boolean; message?: string | null; items?: ClientOrderInvoice[] }>(path, {
+    method: 'POST',
+    body: {},
+  });
+  if (!res.ok || !res.data) throwApiError('Не удалось запросить счёт', res);
+  return {
+    requested: res.data.requested !== false,
+    message: res.data.message ?? null,
+    items: Array.isArray(res.data.items) ? res.data.items : [],
+  };
+}
+
+export async function downloadClientOrderInvoice(guid: string, invoiceId: string) {
+  const res = await apiClient<void, Blob>(API_ENDPOINTS.CLIENT_ORDERS.INVOICE_DOWNLOAD(guid, invoiceId), {
+    timeoutMs: 60_000,
+    headers: { Accept: 'application/pdf' },
+  });
+  if (!res.ok || !res.data) throwApiError('Не удалось скачать счёт', res);
+  return res.data;
 }
 
 export async function getClientOrdersReferenceData(counterpartyGuid?: string) {
@@ -659,6 +732,7 @@ export async function getClientOrderProductsBatch(payload: {
   agreementGuid?: string;
   warehouseGuid?: string;
   priceTypeGuid?: string;
+  receiptPriceAt?: string;
 }) {
   const productGuids = [...new Set(payload.productGuids)].sort();
   const key = `POST ${API_ENDPOINTS.CLIENT_ORDERS.PRODUCTS_BATCH} ${JSON.stringify({ ...payload, productGuids })}`;

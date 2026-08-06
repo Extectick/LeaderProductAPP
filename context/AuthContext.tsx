@@ -4,9 +4,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { jwtDecode } from 'jwt-decode';
 import isEqual from 'lodash.isequal';
 import React, { createContext, ReactNode, useCallback, useEffect, useState } from 'react';
+import { AppState } from 'react-native';
 
 import { Profile } from '@/src/entities/user/types';
-import { getAccessToken, handleBackendUnavailable, hasAuthSessionExpired, logout, onAuthSessionExpired, refreshToken } from '@/utils/tokenService';
+import { getAccessToken, getRefreshToken, handleBackendUnavailable, hasAuthSessionExpired, logout, onAuthSessionExpired, refreshToken } from '@/utils/tokenService';
 import { getProfile } from '@/utils/userService';
 import { getProfileGate } from '@/utils/profileGate';
 import { syncPushToken, unregisterPushToken } from '@/utils/pushNotifications';
@@ -32,6 +33,9 @@ interface DecodedToken {
   exp?: number;
   [key: string]: any;
 }
+
+const PROFILE_REFRESH_INTERVAL_MS = 5 * 60_000;
+const INITIAL_PROFILE_REFRESH_DELAY_MS = 10_000;
 
 export const isValidProfile = (profile: Profile | null): boolean => {
   if (!profile) return false;
@@ -92,39 +96,38 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     let isMounted = true;
 
     const init = async () => {
+      let cachedProfile: Profile | null = null;
+      let storedRefreshToken: string | null = null;
       try {
         addMonitoringBreadcrumb('auth_init_start');
         let token = await getAccessToken();
+        storedRefreshToken = await getRefreshToken();
         const profileJson = await AsyncStorage.getItem('profile');
 
         if (!isMounted) return;
 
-        // Если нет токена - попробовать обновить
-        if (!token) {
+        if (profileJson) {
+          cachedProfile = JSON.parse(profileJson) as Profile;
+          await setProfile(cachedProfile);
+        }
+
+        if (!token && storedRefreshToken) {
           addMonitoringBreadcrumb('auth_refresh_attempt', { reason: 'no_access_token' });
           token = await refreshToken();
           if (!token) {
-            if (!hasAuthSessionExpired()) {
-              await handleBackendUnavailable('Не удалось получить новый токен (сервер недоступен)');
-            }
             addMonitoringBreadcrumb('auth_refresh_failed', { reason: 'no_access_token' });
             if (hasAuthSessionExpired()) {
               setAuthenticated(false);
               setProfileState(null);
               return;
             }
+            await handleBackendUnavailable('Не удалось обновить сессию: API недоступен.');
+            if (cachedProfile) {
+              setAuthenticated(true);
+              addMonitoringBreadcrumb('auth_offline_session_restored', { reason: 'no_access_token' });
+              return;
+            }
           }
-        }
-
-        // Всегда проверяем профиль, даже если нет токена
-        if (profileJson) {
-          const parsedProfile = JSON.parse(profileJson);
-          // if (!isValidProfile(parsedProfile)) {
-          //   await logoutFn();
-          //   setAuthenticated(false);
-          //   return;
-          // }
-          await setProfile(parsedProfile);
         }
 
         if (token) {
@@ -136,42 +139,40 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             addMonitoringBreadcrumb('auth_refresh_attempt', { reason: 'token_expired' });
             const newToken = await refreshToken();
             if (!newToken) {
-              if (!hasAuthSessionExpired()) {
-                await handleBackendUnavailable('Не удалось обновить токен доступа');
+              addMonitoringBreadcrumb('auth_refresh_failed', { reason: 'token_expired' });
+              if (hasAuthSessionExpired()) {
+                setAuthenticated(false);
+                setProfileState(null);
+                return;
+              }
+              await handleBackendUnavailable('Не удалось обновить сессию: API недоступен.');
+              if (cachedProfile && storedRefreshToken) {
+                setAuthenticated(true);
+                addMonitoringBreadcrumb('auth_offline_session_restored', { reason: 'token_expired' });
+                return;
               }
               setAuthenticated(false);
-              addMonitoringBreadcrumb('auth_refresh_failed', { reason: 'token_expired' });
               return;
             }
-            // Токен обновлен - продолжаем с новым токеном
             token = newToken;
           }
           setAuthenticated(true);
           addMonitoringBreadcrumb('auth_authenticated');
 
-          // Если нет профиля в AsyncStorage, но есть токен - получаем профиль
-          if (!profileJson) {
+          if (!cachedProfile) {
             try {
               await getProfile();
-              const profileJson = await AsyncStorage.getItem('profile')
-              if (profileJson) {
-                const parsedProfile = JSON.parse(profileJson);
-                // if (!isValidProfile(parsedProfile)) {
-                //     await logoutFn();
-                //     setAuthenticated(false);
-                //     return;
-                // }
+              const refreshedProfileJson = await AsyncStorage.getItem('profile');
+              if (refreshedProfileJson) {
+                const parsedProfile = JSON.parse(refreshedProfileJson);
                 await setProfile(parsedProfile);
               }
-              
             } catch (e) {
               captureException(e, { where: 'AuthProvider:init:getProfile' });
               console.warn('Ошибка получения профиля:', e);
             }
           }
         } else {
-          // Если нет токена - проверим refreshToken и покажем алерт при недоступности бэка
-          await handleBackendUnavailable('Требуется подключение к серверу');
           setAuthenticated(false);
           addMonitoringBreadcrumb('auth_guest_mode');
         }
@@ -180,8 +181,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         console.warn('Ошибка инициализации:', e);
         await handleBackendUnavailable((e as any)?.message || 'Ошибка инициализации');
         if (!isMounted) return;
-        setAuthenticated(false);
-        setProfileState(null);
+        if (cachedProfile && storedRefreshToken && !hasAuthSessionExpired()) {
+          await setProfile(cachedProfile);
+          setAuthenticated(true);
+          addMonitoringBreadcrumb('auth_offline_session_restored', { reason: 'init_error' });
+        } else {
+          setAuthenticated(false);
+          if (hasAuthSessionExpired()) setProfileState(null);
+        }
       } finally {
         if (!isMounted) return;
         setIsLoading(false);
@@ -199,19 +206,36 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   useEffect(() => {
     if (!isAuthenticated) return;
     let cancelled = false;
+    let refreshing = false;
+    let lastRefreshAt = 0;
     const refresh = async () => {
+      if (cancelled || refreshing || AppState.currentState !== 'active') return;
+      const now = Date.now();
+      if (now - lastRefreshAt < PROFILE_REFRESH_INTERVAL_MS) return;
+      lastRefreshAt = now;
+      refreshing = true;
       try {
         const freshProfile = await getProfile();
         if (!cancelled && freshProfile) {
           await setProfile(freshProfile);
         }
-      } catch {}
+      } catch {
+        // The cached profile remains valid while the API is unavailable.
+      } finally {
+        refreshing = false;
+      }
     };
 
-    const interval = setInterval(refresh, 25000);
+    const initialTimer = setTimeout(() => void refresh(), INITIAL_PROFILE_REFRESH_DELAY_MS);
+    const interval = setInterval(() => void refresh(), PROFILE_REFRESH_INTERVAL_MS);
+    const appStateSubscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void refresh();
+    });
     return () => {
       cancelled = true;
+      clearTimeout(initialTimer);
       clearInterval(interval);
+      appStateSubscription.remove();
     };
   }, [isAuthenticated, setProfile]);
 

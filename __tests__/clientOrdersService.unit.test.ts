@@ -1,10 +1,13 @@
 import {
   copyClientOrder,
+  downloadClientOrderInvoice,
   getClientOrder,
+  getClientOrderInvoices,
   getClientOrderProductsBatch,
   getClientOrders,
   searchClientOrderCounterparties,
   searchClientOrderProducts,
+  requestClientOrderInvoice,
   submitClientOrder,
 } from '../utils/clientOrdersService';
 import { apiClient } from '../utils/apiClient';
@@ -94,6 +97,62 @@ describe('clientOrdersService', () => {
     expect(apiClientMock).toHaveBeenCalledWith('/api/client-orders/order-guid');
   });
 
+  it('normalizes invoice summary fields and embedded invoices', async () => {
+    apiClientMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: {
+        guid: 'order-guid',
+        invoiceRequested: true,
+        invoiceState: 'SENT',
+        latestInvoiceVersion: 2,
+        invoices: [{ id: 'invoice-2', version: 2, state: 'SENT', downloadAvailable: true }],
+      },
+    } as any);
+
+    await expect(getClientOrder('order-guid')).resolves.toMatchObject({
+      invoiceRequested: true,
+      invoiceState: 'SENT',
+      invoiceCount: 1,
+      invoiceDownloadAvailable: true,
+      invoices: [{ id: 'invoice-2', version: 2 }],
+    });
+  });
+
+  it('loads invoice versions and downloads PDF with a long timeout', async () => {
+    const pdf = new Blob(['pdf'], { type: 'application/pdf' });
+    apiClientMock
+      .mockResolvedValueOnce({ ok: true, status: 200, data: { items: [{ id: 'invoice-1', version: 1 }] } } as any)
+      .mockResolvedValueOnce({ ok: true, status: 200, data: pdf } as any);
+
+    await expect(getClientOrderInvoices('order-guid')).resolves.toEqual([{ id: 'invoice-1', version: 1 }]);
+    await expect(downloadClientOrderInvoice('order-guid', 'invoice-1')).resolves.toBe(pdf);
+
+    expect(apiClientMock).toHaveBeenNthCalledWith(1, '/api/client-orders/order-guid/invoices');
+    expect(apiClientMock).toHaveBeenNthCalledWith(2, '/api/client-orders/order-guid/invoices/invoice-1/download', {
+      timeoutMs: 60_000,
+      headers: { Accept: 'application/pdf' },
+    });
+  });
+
+  it('requests invoice generation for an existing application order', async () => {
+    apiClientMock.mockResolvedValueOnce({
+      ok: true,
+      status: 202,
+      data: { requested: true, message: 'Формирование счёта запрошено', items: [{ id: 'invoice-1', version: 1 }] },
+    } as any);
+
+    await expect(requestClientOrderInvoice('order-guid')).resolves.toEqual({
+      requested: true,
+      message: 'Формирование счёта запрошено',
+      items: [{ id: 'invoice-1', version: 1 }],
+    });
+    expect(apiClientMock).toHaveBeenCalledWith('/api/client-orders/order-guid/invoices/request', {
+      method: 'POST',
+      body: {},
+    });
+  });
+
   it('passes product picker context and inStockOnly to API', async () => {
     apiClientMock.mockResolvedValueOnce({
       ok: true,
@@ -142,14 +201,26 @@ describe('clientOrdersService', () => {
       data: { items: [{ guid: 'a', name: 'A' }, { guid: 'b', name: 'B' }] },
     } as any);
 
-    const first = getClientOrderProductsBatch({ productGuids: ['b', 'a', 'a'], warehouseGuid: 'warehouse-guid' });
-    const second = getClientOrderProductsBatch({ productGuids: ['a', 'b'], warehouseGuid: 'warehouse-guid' });
+    const first = getClientOrderProductsBatch({
+      productGuids: ['b', 'a', 'a'],
+      warehouseGuid: 'warehouse-guid',
+      receiptPriceAt: '2026-07-10T14:30:00',
+    });
+    const second = getClientOrderProductsBatch({
+      productGuids: ['a', 'b'],
+      warehouseGuid: 'warehouse-guid',
+      receiptPriceAt: '2026-07-10T14:30:00',
+    });
 
     await expect(Promise.all([first, second])).resolves.toHaveLength(2);
     expect(apiClientMock).toHaveBeenCalledTimes(1);
     expect(apiClientMock).toHaveBeenCalledWith('/api/client-orders/products/batch', {
       method: 'POST',
-      body: { productGuids: ['b', 'a', 'a'], warehouseGuid: 'warehouse-guid' },
+      body: {
+        productGuids: ['b', 'a', 'a'],
+        warehouseGuid: 'warehouse-guid',
+        receiptPriceAt: '2026-07-10T14:30:00',
+      },
     });
   });
 

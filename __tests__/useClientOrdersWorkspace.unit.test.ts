@@ -14,7 +14,14 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
 
 jest.mock('react-native', () => ({
   Alert: { alert: jest.fn() },
+  AppState: { currentState: 'active' },
   Platform: { OS: 'ios' },
+}));
+
+jest.mock('expo-file-system/legacy', () => ({}));
+jest.mock('expo-sharing', () => ({}));
+jest.mock('@/utils/androidFileDownload', () => ({
+  enqueueAuthenticatedAndroidDownload: jest.fn(),
 }));
 
 jest.mock('@/utils/clientOrdersService', () => ({
@@ -24,6 +31,7 @@ jest.mock('@/utils/clientOrdersService', () => ({
   deleteClientOrder: jest.fn(),
   getClientOrderDefaults: jest.fn(),
   getClientOrder: jest.fn(),
+  getClientOrderInvoices: jest.fn(),
   getClientOrderProductsBatch: jest.fn(),
   getClientOrderSettings: jest.fn(),
   getClientOrders: jest.fn(),
@@ -46,7 +54,9 @@ import { useClientOrdersWorkspace } from '../src/features/clientOrders/useClient
 import {
   createClientOrder,
   getClientOrder,
+  getClientOrderInvoices,
   getClientOrderDefaults,
+  getClientOrderProductsBatch,
   getClientOrderSettings,
   getClientOrders,
   submitClientOrder,
@@ -95,6 +105,7 @@ describe('useClientOrdersWorkspace', () => {
     jest.clearAllMocks();
     jest.useFakeTimers();
     jest.mocked(getClientOrderSettings).mockResolvedValue(settings as any);
+    jest.mocked(getClientOrderInvoices).mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -120,6 +131,14 @@ describe('useClientOrdersWorkspace', () => {
         },
       ],
     }) as any);
+    jest.mocked(getClientOrderInvoices).mockResolvedValue([{
+      id: 'invoice-1',
+      realizationGuid: 'realization-1',
+      realizationNumber: 'НОУТ-H04002',
+      version: 1,
+      state: 'AVAILABLE',
+      downloadAvailable: true,
+    }] as any);
 
     let workspace: ReturnType<typeof useClientOrdersWorkspace>;
     function Harness() {
@@ -156,8 +175,12 @@ describe('useClientOrdersWorkspace', () => {
     await act(async () => {
       await workspace!.selectOrder('order-guid');
     });
+    await flush();
 
     expect(getClientOrder).toHaveBeenCalledTimes(1);
+    expect(getClientOrderInvoices).toHaveBeenCalledWith('order-guid');
+    expect(workspace!.selectedOrder?.invoiceDownloadAvailable).toBe(true);
+    expect(workspace!.selectedOrder?.invoiceState).toBe('AVAILABLE');
     expect(workspace!.selectedOrder?.queuePosition).toBe(1);
     expect(workspace!.draft.items).toHaveLength(1);
 
@@ -171,6 +194,101 @@ describe('useClientOrdersWorkspace', () => {
     expect(workspace!.selectedOrder?.queuePosition).toBe(2);
     expect(workspace!.draft.items).toHaveLength(1);
     expect(workspace!.loadingDetail).toBe(false);
+
+    await act(async () => {
+      renderer!.unmount();
+    });
+  });
+
+  it('keeps a manual invoice request in the list and replaces it with the ready PDF state', async () => {
+    const baseOrder = queuedOrder(0, {
+      status: 'SENT_TO_1C',
+      syncState: 'SYNCED',
+      invoiceRequested: false,
+      invoiceState: 'NOT_REQUESTED',
+      invoiceCount: 0,
+      invoiceDownloadAvailable: false,
+    });
+    const readyResult = {
+      items: [{
+        ...baseOrder,
+        invoiceState: 'AVAILABLE',
+        invoiceCount: 1,
+        invoiceDownloadAvailable: true,
+        latestInvoiceVersion: 1,
+      }],
+      meta: { total: 1, limit: 20, offset: 0, statusCounts: {}, liveSource: { status: 'ok' } },
+    } as any;
+    jest.mocked(getClientOrders)
+      .mockResolvedValueOnce({
+        items: [baseOrder],
+        meta: { total: 1, limit: 20, offset: 0, statusCounts: {}, liveSource: { status: 'ok' } },
+      } as any)
+      // The first refresh may still return the pre-request list snapshot.
+      .mockResolvedValueOnce({
+        items: [baseOrder],
+        meta: { total: 1, limit: 20, offset: 0, statusCounts: {}, liveSource: { status: 'ok' } },
+      } as any)
+      .mockResolvedValueOnce(readyResult);
+
+    let workspace: ReturnType<typeof useClientOrdersWorkspace>;
+    function Harness() {
+      workspace = useClientOrdersWorkspace();
+      return null;
+    }
+
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        React.createElement(
+          AuthContext.Provider,
+          {
+            value: {
+              isLoading: false,
+              isAuthenticated: true,
+              profile: { id: 1 } as any,
+              setAuthenticated: jest.fn(),
+              setProfile: jest.fn(),
+              signOut: jest.fn(),
+            },
+          },
+          React.createElement(Harness)
+        )
+      );
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(1_000);
+    });
+    await flush();
+
+    await act(async () => {
+      workspace!.applyInvoiceRequestResult('order-guid', [{
+        id: 'invoice-pending',
+        realizationGuid: 'realization-guid',
+        version: 1,
+        state: 'WAITING',
+        downloadAvailable: false,
+      }]);
+    });
+    await flush();
+    expect(workspace!.orders[0]).toMatchObject({
+      invoiceState: 'WAITING',
+      invoiceRequestPending: true,
+      invoiceDownloadAvailable: false,
+    });
+    expect(getClientOrders).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(5_000);
+    });
+    await flush();
+    expect(getClientOrders).toHaveBeenCalledTimes(3);
+    expect(workspace!.orders[0]).toMatchObject({
+      invoiceState: 'AVAILABLE',
+      invoiceRequestPending: false,
+      invoiceDownloadAvailable: true,
+      latestInvoiceVersion: 1,
+    });
 
     await act(async () => {
       renderer!.unmount();
@@ -344,6 +462,7 @@ describe('useClientOrdersWorkspace', () => {
         { code: 'Наличная', name: 'Наличная', label: 'Наличная' },
       ],
       deliveryMethod: 'ДоКлиента',
+      invoiceRequested: true,
       deliveryMethods: [
         { code: 'ДоКлиента', name: 'ДоКлиента', label: 'Наша доставка' },
         { code: 'Самовывоз', name: 'Самовывоз', label: 'Самовывоз' },
@@ -396,13 +515,14 @@ describe('useClientOrdersWorkspace', () => {
     }));
     expect(workspace!.draft.paymentForm).toBeNull();
     expect(workspace!.draft.deliveryMethod).toBe('ДоКлиента');
+    expect(workspace!.draft.invoiceRequested).toBe(true);
 
     await act(async () => {
       renderer!.unmount();
     });
   });
 
-  it('keeps legacy payment and delivery values from an opened 1C document', async () => {
+  it('maps legacy payment and delivery values from an opened 1C document', async () => {
     jest.mocked(getClientOrders).mockResolvedValue({
       items: [],
       meta: { total: 0, limit: 20, offset: 0, statusCounts: {}, liveSource: { status: 'ok' } },
@@ -422,6 +542,9 @@ describe('useClientOrdersWorkspace', () => {
     jest.mocked(getClientOrder).mockResolvedValue(queuedOrder(0, {
       guid: 'legacy-order-guid',
       origin: 'onec',
+      date1c: '2026-06-15T12:30:00',
+      readOnly: true,
+      hasRealization: true,
       status: 'TO_SHIP',
       syncState: 'SYNCED',
       organization: { guid: 'org-guid', name: 'Организация' },
@@ -437,6 +560,12 @@ describe('useClientOrdersWorkspace', () => {
         },
       ],
     }) as any);
+    jest.mocked(getClientOrderProductsBatch).mockResolvedValue([{
+      guid: 'product-guid',
+      name: 'Товар',
+      receiptPrice: 80,
+      packages: [],
+    }] as any);
 
     let workspace: ReturnType<typeof useClientOrdersWorkspace>;
     function Harness() {
@@ -470,8 +599,13 @@ describe('useClientOrdersWorkspace', () => {
     });
     await flush();
 
-    expect(workspace!.draft.paymentForm).toBe('Безналичная');
-    expect(workspace!.draft.deliveryMethod).toBe('СиламиПеревозчика');
+    expect(workspace!.draft.paymentForm).toBeNull();
+    expect(workspace!.draft.deliveryMethod).toBe('ДоКлиента');
+    expect(getClientOrderProductsBatch).toHaveBeenCalledWith(expect.objectContaining({
+      productGuids: ['product-guid'],
+      receiptPriceAt: '2026-06-15T12:30:00',
+    }));
+    expect(workspace!.draft.items[0].receiptPrice).toBe(80);
 
     await act(async () => {
       renderer!.unmount();

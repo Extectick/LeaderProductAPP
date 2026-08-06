@@ -237,6 +237,10 @@ export default function ServicesLayout() {
             ? (trackingHeaderRightSlot ?? rightSlot)
             : rightSlot;
           const activeHeaderOverride = isClientOrdersPath ? headerOverride : null;
+          const clientOrdersHeaderHidden = isClientOrdersPath && (
+            activeHeaderOverride?.hidden === true
+            || (Platform.OS !== 'web' && !activeHeaderOverride)
+          );
           const overrideHasRightSlot = !!activeHeaderOverride && Object.prototype.hasOwnProperty.call(activeHeaderOverride, 'rightSlot');
           const overrideHasBottomSlot = !!activeHeaderOverride && Object.prototype.hasOwnProperty.call(activeHeaderOverride, 'bottomSlot');
           const resolvedHeaderRightSlot = overrideHasRightSlot ? activeHeaderOverride?.rightSlot : resolvedRightSlot;
@@ -247,6 +251,7 @@ export default function ServicesLayout() {
               : undefined;
 
           return {
+            headerShown: !clientOrdersHeaderHidden,
             headerTransparent: true,
             headerShadowVisible: false,
             headerStatusBarHeight: 0,
@@ -272,8 +277,8 @@ export default function ServicesLayout() {
                 surfaceOverrideColor={activeHeaderOverride ? undefined : (isCatalogPath && catalogOffline ? 'rgba(254, 226, 226, 0.94)' : undefined)}
                 borderOverrideColor={activeHeaderOverride ? undefined : (isCatalogPath && catalogOffline ? 'rgba(248, 113, 113, 0.28)' : undefined)}
                 entranceMotion={activeHeaderOverride?.entranceMotion ?? (isClientOrdersPath ? 'none' : isCatalogPath ? 'fade' : 'slide')}
-                variant={activeHeaderOverride?.variant ?? 'default'}
-                showServerStatus={activeHeaderOverride?.showServerStatus ?? !isCatalogPath}
+                variant={activeHeaderOverride?.variant ?? (isClientOrdersPath ? 'document' : 'default')}
+                showServerStatus={activeHeaderOverride?.showServerStatus ?? (!isCatalogPath && !isClientOrdersPath)}
               />
             ),
             animation: isClientOrdersPath ? 'fade' : 'ios_from_left',

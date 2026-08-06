@@ -4,11 +4,15 @@ import * as Application from 'expo-application';
 import Constants from 'expo-constants';
 import * as Updates from 'expo-updates';
 import { checkForUpdate, getInstallId, logUpdateEvent } from '@/utils/updateService';
+import {
+  areAutomaticUpdateChecksPaused,
+  AUTOMATIC_UPDATE_CHECK_INTERVAL_MS,
+} from '@/src/shared/appUpdate/automaticUpdateChecks';
 
 const RESUME_BACKGROUND_MIN_MS = 60_000;
-const RESUME_CHECK_INTERVAL_MS = 5 * 60_000;
-const ACTIVE_CHECK_INTERVAL_MS = 60_000;
-const INITIAL_ACTIVE_CHECK_DELAY_MS = 2_000;
+const RESUME_CHECK_INTERVAL_MS = AUTOMATIC_UPDATE_CHECK_INTERVAL_MS;
+const ACTIVE_CHECK_INTERVAL_MS = AUTOMATIC_UPDATE_CHECK_INTERVAL_MS;
+const INITIAL_ACTIVE_CHECK_DELAY_MS = 30_000;
 const OTA_CHECK_TIMEOUT_MS = 15_000;
 const OTA_FETCH_TIMEOUT_MS = 90_000;
 const OTA_ERROR_BACKOFF_BASE_MS = 2 * 60_000;
@@ -205,7 +209,7 @@ export function OtaUpdateStatusProvider({
     setErrorMessage(null);
   }, []);
 
-  const checkBinaryUpdateBeforeOta = React.useCallback(async () => {
+  const checkBinaryUpdateBeforeOta = React.useCallback(async (force = false) => {
     if (!versionCode) return false;
     try {
       const deviceId = await getInstallId();
@@ -215,6 +219,7 @@ export function OtaUpdateStatusProvider({
         versionName,
         deviceId,
         channel: UPDATE_CHANNEL,
+        force,
       });
       const available = Boolean(result.ok && result.data?.updateAvailable);
       markBlockedByBinaryUpdate(available);
@@ -292,6 +297,9 @@ export function OtaUpdateStatusProvider({
       }
 
       const isManual = source === 'manual' || source === 'catalog';
+      if (!isManual && areAutomaticUpdateChecksPaused()) {
+        return false;
+      }
       if (!isManual && nextAutoCheckAtRef.current > Date.now()) {
         return false;
       }
@@ -305,7 +313,7 @@ export function OtaUpdateStatusProvider({
       setManualProgress(0.12);
 
       try {
-        const binaryUpdateAvailable = await checkBinaryUpdateBeforeOta();
+        const binaryUpdateAvailable = await checkBinaryUpdateBeforeOta(isManual);
         if (binaryUpdateAvailable) {
           failureCountRef.current = 0;
           nextAutoCheckAtRef.current = 0;

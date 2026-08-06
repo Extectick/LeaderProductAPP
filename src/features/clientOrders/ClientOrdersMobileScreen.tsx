@@ -10,7 +10,11 @@ import DateTimeInput from '@/components/ui/DateTimeInput';
 import { LiquidGlassSurface } from '@/components/ui/LiquidGlassSurface';
 import { useThemeColor } from '@/hooks/useThemeColor';
 import { useServicesHeaderSlot } from '@/src/features/services/headerSlotContext';
+import { useOptionalLastServiceRoute } from '@/src/features/navigation/LastServiceRouteContext';
 import {
+  canComputeDraftProfit,
+  canComputeLineProfit,
+  computeLineProfit,
   computeLineTotal,
   formatDateTime,
   formatMoney,
@@ -20,6 +24,7 @@ import {
   getOrderDisplayStatus,
   getOrderDisplayStatusLabelWithQueue,
   getDraftItemCancelReason,
+  getPackageMultiplier,
   hasManualPrice,
   buildNewItem,
   isCancelledDraftItem,
@@ -29,13 +34,16 @@ import {
   displayedUnitPriceToBasePriceInput,
   normalizePriceInput,
   normalizeQuantityInput,
+  resolveClientOrdersDocumentBottomBarLayout,
   resolveClientOrdersEditorTier,
   resolveClientOrdersLayoutTier,
+  type ClientOrdersDocumentBottomBarLayout,
   type DraftItem,
 } from './lib/clientOrdersShared';
 import {
   formatDateOnly,
   formatProductTransferLabel,
+  formatStockQuantity,
   formatStockInlineLabel,
   getPackageDisplayText,
   getPickerItemMeta,
@@ -46,6 +54,7 @@ import {
   removeOrderItemsFromProductSelection,
   resolveProductPickerPressAction,
   sortDeliveryAddressOptions,
+  stockAvailableValue,
   toggleProductSelection,
   transferSelectedProductsToOrder,
   type ClientOrdersPickerKind,
@@ -54,22 +63,33 @@ import {
 } from './lib/clientOrdersUi';
 import { hasMorePage } from './lib/clientOrdersPaging';
 import { resolveStoredBooleanDefaultTrue, serializeStoredBoolean } from './lib/clientOrdersPrefs';
+import { getClientOrdersSearchTextInputProps } from './lib/clientOrdersSearchInput';
+import {
+  getClientOrderInvoiceActionLabel,
+  getClientOrderInvoiceIdentifier,
+  getClientOrderInvoicePresentation,
+  getDownloadableClientOrderInvoices,
+  saveClientOrderInvoicePdf,
+  shareClientOrderInvoicePdf,
+} from './lib/clientOrderInvoices';
 import { useClientOrdersWorkspace } from './hooks/useClientOrdersWorkspace';
-import { getClientOrderProductsBatch, getClientOrderReferenceDetails } from '@/utils/clientOrdersService';
-import type { ClientOrder, ClientOrderCounterpartyOption, ClientOrderOrganization, ClientOrderPriceTypeOption, ClientOrderProduct, ClientOrderReferenceDetails, ClientOrderReferenceKind, ClientOrderWarehouseOption } from '@/utils/clientOrdersService';
+import { getClientOrderInvoices, getClientOrderProductsBatch, getClientOrderReferenceDetails, requestClientOrderInvoice } from '@/utils/clientOrdersService';
+import type { ClientOrder, ClientOrderCounterpartyOption, ClientOrderInvoice, ClientOrderOrganization, ClientOrderPriceTypeOption, ClientOrderProduct, ClientOrderReferenceDetails, ClientOrderReferenceKind, ClientOrderWarehouseOption } from '@/utils/clientOrdersService';
 import { useServerStatus } from '@/src/shared/network/useServerStatus';
+import { setAutomaticUpdateChecksPaused } from '@/src/shared/appUpdate/automaticUpdateChecks';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import React from 'react';
-import { Alert, Animated, BackHandler, findNodeHandle, FlatList, Keyboard, LayoutAnimation, PanResponder, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, UIManager, useWindowDimensions, View } from 'react-native';
-import type { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent, TextInputProps } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import PagerView, { type PagerViewOnPageSelectedEvent } from 'react-native-pager-view';
+import { Alert, Animated, BackHandler, findNodeHandle, FlatList, InteractionManager, Keyboard, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, UIManager, useWindowDimensions, View } from 'react-native';
+import type { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ActivityIndicator,
   Button as PaperButton,
-  Checkbox,
   List,
   Menu,
   Portal,
@@ -86,11 +106,16 @@ import {
   PickerBottomSheetTextInput,
   SheetModal,
 } from './screen/mobile/ClientOrdersMobileUi';
+import {
+  SearchPickerScreen,
+  type SearchPickerFilter,
+} from './screen/mobile/SearchPickerScreen';
 
 type ScreenMode = 'orders' | 'editor';
 type EditorSection = 'header' | 'items';
 type DocumentOpeningState = 'new' | 'existing' | null;
 type PickerKind = ClientOrdersPickerKind;
+type InvoiceFileAction = 'download' | 'share';
 type ProductGalleryImage = {
   key: string;
   thumbUrl: string;
@@ -118,40 +143,13 @@ const PRODUCT_PICKER_PAGE_SIZE = 50;
 const PRODUCT_PICKER_PREFETCH_DISTANCE = 1100;
 const ITEMS_SEARCH_PAGE_SIZE = 10;
 const ORDERS_PREFETCH_DISTANCE = 640;
+const DOCUMENT_HEADER_TABS_RESERVE = 34;
 const IN_STOCK_KEY = 'clientOrders.productPicker.inStockOnly';
 const COUNTERPARTY_MANAGER_ONLY_KEY = 'clientOrders.counterpartyPicker.managerOnly';
 const SheetScrollView = (PickerBottomSheetScrollView || ScrollView) as any;
 const SheetTextInput = (PickerBottomSheetTextInput || TextInput) as any;
-const SEARCH_TEXT_INPUT_PROPS: Pick<
-  TextInputProps,
-  | 'autoCapitalize'
-  | 'autoCorrect'
-  | 'spellCheck'
-  | 'autoComplete'
-  | 'textContentType'
-  | 'importantForAutofill'
-  | 'keyboardType'
-  | 'returnKeyType'
-  | 'inputMode'
-  | 'disableFullscreenUI'
-  | 'multiline'
-  | 'blurOnSubmit'
-> = {
-  autoCapitalize: 'none',
-  autoCorrect: false,
-  spellCheck: false,
-  autoComplete: 'off',
-  textContentType: 'none',
-  importantForAutofill: Platform.OS === 'android' ? 'noExcludeDescendants' : 'no',
-  // Android keyboards can ignore autoCorrect=false for normal text/search inputs.
-  // visible-password keeps the field readable but disables IME suggestions/autofill.
-  keyboardType: Platform.OS === 'android' ? 'visible-password' : 'web-search',
-  returnKeyType: 'search',
-  inputMode: Platform.OS === 'android' ? undefined : 'search',
-  disableFullscreenUI: true,
-  multiline: false,
-  blurOnSubmit: true,
-};
+const SEARCH_TEXT_INPUT_PROPS = getClientOrdersSearchTextInputProps(Platform.OS);
+const NativeAnimatedPagerView = Animated.createAnimatedComponent(PagerView);
 const PAYMENT_FORM_CHOICES: SegmentedChoice[] = [
   { value: null, label: 'Любая' },
   { value: 'Наличная', label: 'Наличная' },
@@ -182,15 +180,9 @@ function assignComposedRef<T>(targetRef: React.Ref<T> | undefined, value: T | nu
     // Some refs are read-only wrappers; ignoring keeps the input usable.
   }
 }
-const DOCUMENT_HEADER_TRANSITION = {
-  duration: 320,
-  create: { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
-  update: { type: LayoutAnimation.Types.easeInEaseOut },
-  delete: { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
-};
-const DOCUMENT_ITEMS_TOOLBAR_HEIGHT_DELTA = 51;
 const LINE_ITEM_SCROLL_ESTIMATE = 116;
-const IS_NEW_ARCHITECTURE = !!(globalThis as any).nativeFabricUIManager;
+const CLIENT_ORDER_UPDATE_CHECK_BLOCKER = 'client-order-document';
+const EMPTY_LINE_MESSAGES: string[] = [];
 const loadedProductImageUris = new Set<string>();
 const failedProductImageUris = new Set<string>();
 let lastClientOrdersListScrollY = 0;
@@ -433,10 +425,6 @@ function normalizeClientOrderUserErrorMessage(value: unknown, fallback = 'Док
   return message;
 }
 
-function runDocumentHeaderTransition() {
-  LayoutAnimation.configureNext(DOCUMENT_HEADER_TRANSITION);
-}
-
 function pickerNeedsOrderContext(kind: PickerKind | null) {
   return kind === 'agreement'
     || kind === 'contract'
@@ -448,6 +436,12 @@ function pickerNeedsOrderContext(kind: PickerKind | null) {
 
 function pickerShouldAutofocusSearch(kind: PickerKind | null) {
   return kind === 'organization' || kind === 'counterparty' || kind === 'priceType' || kind === 'product';
+}
+
+function waitForUiPaint() {
+  return new Promise<void>((resolve) => {
+    requestAnimationFrame(() => setTimeout(resolve, 0));
+  });
 }
 
 
@@ -475,6 +469,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     resolve?.(result);
   }, []);
   const workspace = useClientOrdersWorkspace({ confirmDiscard: requestDiscardConfirm });
+  const router = useRouter();
+  const lastService = useOptionalLastServiceRoute();
   const { isReachable } = useServerStatus();
   const topInset = useHeaderContentTopInset({ compact: true, hasSubtitle: false, extraGap: 2 });
   const { headerBottomOffset, setHeaderBottomOffset } = useNotificationViewport();
@@ -483,13 +479,38 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const setTabBarHidden = tabBarVisibility?.setHidden;
   const background = useThemeColor({}, 'background');
   const card = useThemeColor({}, 'cardBackground');
-  const { width, height } = useWindowDimensions();
+  const { width, height, fontScale } = useWindowDimensions();
   const { top: safeTop, bottom: safeBottom } = useSafeAreaInsets();
   const layoutTier = resolveClientOrdersLayoutTier(width);
   const editorTier = resolveClientOrdersEditorTier(width);
   const ui = getClientOrdersResponsiveMetrics(layoutTier, editorTier);
+  const documentBottomBarLayout = resolveClientOrdersDocumentBottomBarLayout(width, fontScale);
   const [mode, setMode] = React.useState<ScreenMode>('orders');
+  const modeRef = React.useRef<ScreenMode>(mode);
+  modeRef.current = mode;
+  const [editorMounted, setEditorMounted] = React.useState(false);
   const [section, setSection] = React.useState<EditorSection>('header');
+  React.useEffect(() => {
+    setAutomaticUpdateChecksPaused(CLIENT_ORDER_UPDATE_CHECK_BLOCKER, mode === 'editor');
+    return () => setAutomaticUpdateChecksPaused(CLIENT_ORDER_UPDATE_CHECK_BLOCKER, false);
+  }, [mode]);
+  React.useEffect(() => {
+    if (mode === 'editor') {
+      setEditorMounted(true);
+      return undefined;
+    }
+
+    let interactionTask: ReturnType<typeof InteractionManager.runAfterInteractions> | null = null;
+    const frame = requestAnimationFrame(() => {
+      interactionTask = InteractionManager.runAfterInteractions(() => {
+        setEditorMounted(false);
+      });
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      interactionTask?.cancel();
+    };
+  }, [mode]);
   const [openingDocument, setOpeningDocument] = React.useState<DocumentOpeningState>(null);
   const [openingOrderGuid, setOpeningOrderGuid] = React.useState<string | null>(null);
   const [ordersRefreshing, setOrdersRefreshing] = React.useState(false);
@@ -524,6 +545,14 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const [counterpartyManagerOnlyLoaded, setCounterpartyManagerOnlyLoaded] = React.useState(false);
   const [linePriceTarget, setLinePriceTarget] = React.useState<string | null>(null);
   const [actionsMenuOpen, setActionsMenuOpen] = React.useState(false);
+  const [invoicePickerOpen, setInvoicePickerOpen] = React.useState(false);
+  const [invoiceSharingId, setInvoiceSharingId] = React.useState<string | null>(null);
+  const [invoiceSharingAction, setInvoiceSharingAction] = React.useState<InvoiceFileAction | null>(null);
+  const [invoiceListLoading, setInvoiceListLoading] = React.useState(false);
+  const [invoiceListLoadingAction, setInvoiceListLoadingAction] = React.useState<InvoiceFileAction | null>(null);
+  const [loadedInvoiceItems, setLoadedInvoiceItems] = React.useState<{ orderGuid: string; items: ClientOrderInvoice[] } | null>(null);
+  const [invoiceRequesting, setInvoiceRequesting] = React.useState(false);
+  const [invoiceRequestPendingGuid, setInvoiceRequestPendingGuid] = React.useState<string | null>(null);
   const [statusMenuOpen, setStatusMenuOpen] = React.useState(false);
   const [confirmDialog, setConfirmDialog] = React.useState<ConfirmDialogState>(null);
   const [editingItemKey, setEditingItemKey] = React.useState<string | null>(null);
@@ -543,7 +572,29 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const [editorKeyboardVisible, setEditorKeyboardVisible] = React.useState(false);
   const ordersScrollRef = React.useRef<any>(null);
   const editorScrollRef = React.useRef<any>(null);
+  const editorItemsScrollRef = React.useRef<any>(null);
+  const editorPagerRef = React.useRef<PagerView | null>(null);
+  const ordersBottomBarEntrance = React.useRef(new Animated.Value(0)).current;
+  const editorPagerOffset = React.useRef(new Animated.Value(0)).current;
+  const editorPagerPosition = React.useRef(new Animated.Value(0)).current;
+  const editorPagerProgress = React.useMemo(
+    () => Animated.add<number>(editorPagerPosition, editorPagerOffset),
+    [editorPagerOffset, editorPagerPosition]
+  );
+  const editorPagerTargetRef = React.useRef<0 | 1>(0);
+  const editorPagerScrollHandler = React.useMemo(
+    () => Animated.event(
+      [{ nativeEvent: { position: editorPagerPosition, offset: editorPagerOffset } }],
+      { useNativeDriver: true }
+    ),
+    [editorPagerOffset, editorPagerPosition]
+  );
+  const editorScrollYRef = React.useRef(0);
+  const editorScrollBeforePickerRef = React.useRef(0);
+  const editorScrollRestorePendingRef = React.useRef(false);
+  const editorScrollRestoreTimersRef = React.useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const ordersScrollRestoreRequestRef = React.useRef(0);
+  const ordersScrollRestoredOnceRef = React.useRef(false);
   const editorKeyboardTopRef = React.useRef<number | null>(null);
   const editorFocusedTargetRef = React.useRef<unknown>(null);
   const editorFocusTimersRef = React.useRef<Array<ReturnType<typeof setTimeout>>>([]);
@@ -564,8 +615,107 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const lineItemLayoutYRef = React.useRef<Record<string, number>>({});
   const pendingScrollItemKeyRef = React.useRef<string | null>(null);
   const openingOrderRequestIdRef = React.useRef(0);
+  const selectedInvoiceOrder = workspace.selectedOrder as ClientOrder | null;
+  const selectedInvoiceOrderGuid = getClientOrderInvoiceIdentifier(selectedInvoiceOrder);
+  const downloadableInvoices = React.useMemo(() => {
+    const current = getDownloadableClientOrderInvoices(selectedInvoiceOrder);
+    if (current.length || !loadedInvoiceItems || loadedInvoiceItems.orderGuid !== selectedInvoiceOrderGuid) return current;
+    return getDownloadableClientOrderInvoices({ invoices: loadedInvoiceItems.items });
+  }, [loadedInvoiceItems, selectedInvoiceOrder, selectedInvoiceOrderGuid]);
+  const selectedInvoicePresentation = React.useMemo(
+    () => getClientOrderInvoicePresentation(selectedInvoiceOrder),
+    [selectedInvoiceOrder]
+  );
+  const invoiceDownloadAvailable = !!selectedInvoiceOrder?.invoiceDownloadAvailable || downloadableInvoices.length > 0;
+  const invoiceGenerationPending = selectedInvoicePresentation.pending;
+  React.useEffect(() => {
+    setLoadedInvoiceItems(null);
+    setInvoicePickerOpen(false);
+    setInvoiceRequestPendingGuid(null);
+    setInvoiceSharingId(null);
+    setInvoiceSharingAction(null);
+    setInvoiceListLoadingAction(null);
+  }, [selectedInvoiceOrderGuid]);
+  React.useEffect(() => {
+    if (invoiceDownloadAvailable && invoiceRequestPendingGuid === selectedInvoiceOrderGuid) {
+      setInvoiceRequestPendingGuid(null);
+    }
+  }, [invoiceDownloadAvailable, invoiceRequestPendingGuid, selectedInvoiceOrderGuid]);
+  const runInvoiceFileAction = React.useCallback(async (invoice: ClientOrderInvoice, action: InvoiceFileAction) => {
+    const orderGuid = selectedInvoiceOrderGuid;
+    if (!orderGuid || invoiceSharingId) return;
+    setInvoiceSharingId(invoice.id);
+    setInvoiceSharingAction(action);
+    try {
+      const result = action === 'share'
+        ? await shareClientOrderInvoicePdf(orderGuid, invoice)
+        : await saveClientOrderInvoicePdf(orderGuid, invoice);
+      if (action === 'download' && result && Platform.OS === 'android') {
+        Alert.alert('Скачивание началось', 'PDF будет сохранён в системную папку «Загрузки».');
+      }
+      setInvoicePickerOpen(false);
+    } catch (error: any) {
+      Alert.alert(action === 'share' ? 'Не удалось поделиться счётом' : 'Не удалось скачать счёт', error?.message || 'Повторите попытку позже.');
+    } finally {
+      setInvoiceSharingId(null);
+      setInvoiceSharingAction(null);
+    }
+  }, [invoiceSharingId, selectedInvoiceOrderGuid]);
+  const openInvoiceActions = React.useCallback(async (action: InvoiceFileAction = 'download') => {
+    setActionsMenuOpen(false);
+    let invoices = downloadableInvoices;
+    const orderGuid = selectedInvoiceOrderGuid;
+    if (!invoices.length && orderGuid && invoiceDownloadAvailable && !invoiceListLoading) {
+      setInvoiceListLoadingAction(action);
+      setInvoiceListLoading(true);
+      try {
+        const loaded = await getClientOrderInvoices(orderGuid);
+        setLoadedInvoiceItems({ orderGuid, items: loaded });
+        invoices = getDownloadableClientOrderInvoices({ invoices: loaded });
+      } catch (error: any) {
+        Alert.alert('Не удалось загрузить счёт', error?.message || 'Повторите попытку позже.');
+        return;
+      } finally {
+        setInvoiceListLoading(false);
+        setInvoiceListLoadingAction(null);
+      }
+    }
+    if (invoices.length === 1) {
+      await runInvoiceFileAction(invoices[0], action);
+      return;
+    }
+    if (invoices.length > 1) setInvoicePickerOpen(true);
+    else if (invoiceDownloadAvailable) Alert.alert('Счёт ещё не готов', 'Обновите документ и повторите попытку.');
+  }, [downloadableInvoices, invoiceDownloadAvailable, invoiceListLoading, runInvoiceFileAction, selectedInvoiceOrderGuid]);
+  const requestInvoiceNow = React.useCallback(async () => {
+    const orderGuid = selectedInvoiceOrderGuid;
+    if (!orderGuid || invoiceRequesting) return;
+    setActionsMenuOpen(false);
+    setInvoiceRequesting(true);
+    try {
+      const result = await requestClientOrderInvoice(orderGuid);
+      setLoadedInvoiceItems({ orderGuid, items: result.items });
+      workspace.applyInvoiceRequestResult(orderGuid, result.items);
+      if (!getDownloadableClientOrderInvoices({ invoices: result.items }).length) {
+        setInvoiceRequestPendingGuid(orderGuid);
+      }
+    } catch (error: any) {
+      setInvoiceRequestPendingGuid(null);
+      Alert.alert('Не удалось запросить счёт', error?.message || 'Проверьте готовность реализации в 1С.');
+    } finally {
+      setInvoiceRequesting(false);
+    }
+  }, [invoiceRequesting, selectedInvoiceOrderGuid, workspace.applyInvoiceRequestResult]);
+  const downloadInvoiceFromDocument = React.useCallback(() => {
+    void openInvoiceActions('download');
+  }, [openInvoiceActions]);
+  const shareInvoiceFromDocument = React.useCallback(() => {
+    void openInvoiceActions('share');
+  }, [openInvoiceActions]);
+  const requestInvoiceFromDocument = React.useCallback(() => {
+    void requestInvoiceNow();
+  }, [requestInvoiceNow]);
   const ordersOpenBusyRef = React.useRef(false);
-  const ordersEntrance = React.useRef(new Animated.Value(0)).current;
   const ordersViewportHeightRef = React.useRef(0);
   const ordersContentHeightRef = React.useRef(0);
   const ordersLastFocusRefreshRef = React.useRef(0);
@@ -600,35 +750,39 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     setSelectedProducts((current) => removeOrderItemsFromProductSelection(current, workspace.draft.items));
   }, [workspace.draft.items]);
   const editorKeyboardPadding = Math.min(460, Math.max(320, Math.round(height * 0.42)));
+  React.useEffect(() => {
+    const nextProgress = section === 'items' ? 1 : 0;
+    if (editorPagerTargetRef.current !== nextProgress) {
+      editorPagerTargetRef.current = nextProgress;
+      editorPagerPosition.setValue(nextProgress);
+      editorPagerOffset.setValue(0);
+      editorPagerRef.current?.setPageWithoutAnimation(nextProgress);
+    }
+  }, [editorPagerOffset, editorPagerPosition, section]);
   const showOrdersInitialLoading = !workspace.ordersInitialLoadDone && !workspace.orders.length;
   const showOrdersEmptyState = workspace.ordersInitialLoadDone && !workspace.loadingOrders && !workspace.orders.length;
   const showOrdersFooter = !showOrdersInitialLoading && !!workspace.orders.length && (workspace.loadingMoreOrders || !!workspace.ordersAppendError);
+  const showOrdersBottomBar = mode === 'orders' && workspace.ordersInitialLoadDone;
+  const ordersBottomMetricsLoading = workspace.loadingOrders || ordersRefreshing;
+  const ordersVisibleCount = Number.isFinite(Number(workspace.ordersMeta?.total))
+    ? Number(workspace.ordersMeta.total)
+    : workspace.orders.length;
   const hasActiveOrderFilters = countActiveOrderFilters(workspace.filters) > 0;
-  const ordersEntranceStyle = React.useMemo(
-    () => ({
-      opacity: ordersEntrance,
-      transform: [
-        {
-          translateY: ordersEntrance.interpolate({
-            inputRange: [0, 1],
-            outputRange: [8, 0],
-          }),
-        },
-      ],
-    }),
-    [ordersEntrance]
-  );
-
   React.useEffect(() => {
-    if (mode !== 'orders') return;
-    ordersEntrance.setValue(0);
-    Animated.timing(ordersEntrance, {
+    ordersBottomBarEntrance.stopAnimation();
+    if (!showOrdersBottomBar) {
+      ordersBottomBarEntrance.setValue(0);
+      return;
+    }
+    ordersBottomBarEntrance.setValue(0);
+    Animated.spring(ordersBottomBarEntrance, {
       toValue: 1,
-      duration: 180,
+      damping: 18,
+      stiffness: 190,
+      mass: 0.82,
       useNativeDriver: true,
     }).start();
-  }, [mode, ordersEntrance]);
-
+  }, [ordersBottomBarEntrance, showOrdersBottomBar]);
   const prefetchMoreOrders = React.useCallback(() => {
     if (
       mode !== 'orders' ||
@@ -666,7 +820,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     const requestId = ++ordersScrollRestoreRequestRef.current;
     const restore = () => {
       if (ordersScrollRestoreRequestRef.current !== requestId || mode !== 'orders') return;
-      ordersScrollRef.current?.scrollTo?.({ y: targetY, animated: false });
+      ordersScrollRef.current?.scrollToOffset?.({ offset: targetY, animated: false });
     };
     requestAnimationFrame(restore);
     setTimeout(restore, 80);
@@ -699,61 +853,73 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
 
   useFocusEffect(
     React.useCallback(() => {
-      if (mode !== 'orders') return undefined;
+      if (modeRef.current !== 'orders' || !workspace.ordersInitialLoadDone) return undefined;
       const now = Date.now();
+      // The workspace already performs its initial cache hydration and API
+      // request. Starting another request before hydration can briefly render
+      // an unrelated result set and then replace it again.
+      if (!ordersLastFocusRefreshRef.current) {
+        ordersLastFocusRefreshRef.current = now;
+        return undefined;
+      }
       if (now - ordersLastFocusRefreshRef.current < 2500) return undefined;
       ordersLastFocusRefreshRef.current = now;
       void workspace.refreshOrders();
       return undefined;
-    }, [mode, workspace.refreshOrders])
+    }, [workspace.ordersInitialLoadDone, workspace.refreshOrders])
   );
 
   React.useEffect(() => {
-    setTabBarHidden?.(mode === 'editor');
+    setTabBarHidden?.(true);
     return () => setTabBarHidden?.(false);
-  }, [mode, setTabBarHidden]);
+  }, [setTabBarHidden]);
   React.useEffect(() => {
     if (mode !== 'orders' || showOrdersInitialLoading || !workspace.ordersInitialLoadDone) return;
+    if (ordersScrollRestoredOnceRef.current) return;
+    ordersScrollRestoredOnceRef.current = true;
     restoreOrdersScrollPosition();
   }, [mode, restoreOrdersScrollPosition, showOrdersInitialLoading, workspace.ordersInitialLoadDone]);
   React.useEffect(() => {
     if (mode !== 'orders') return;
-    void workspace.syncDeviceDrafts?.();
-  }, [mode, workspace.syncDeviceDrafts]);
-  React.useEffect(() => {
-    if (Platform.OS === 'android' && !IS_NEW_ARCHITECTURE) {
-      UIManager.setLayoutAnimationEnabledExperimental?.(true);
-    }
-  }, []);
-  React.useEffect(() => {
-    if (!openingDocument) return undefined;
-    if (openingDocument === 'new') {
-      if (mode !== 'editor') return undefined;
-      const timer = setTimeout(() => setOpeningDocument(null), 180);
-      return () => clearTimeout(timer);
-    }
-    if (
-      mode === 'editor' &&
-      !workspace.loadingDetail &&
-      (!workspace.selectedGuid || workspace.selectedOrder?.guid === workspace.selectedGuid)
-    ) {
-      setOpeningDocument(null);
-    }
-    return undefined;
-  }, [
-    mode,
-    openingDocument,
-    workspace.loadingDefaults,
-    workspace.loadingDetail,
-    workspace.loadingSettings,
-    workspace.selectedGuid,
-    workspace.selectedOrder?.guid,
-  ]);
+    const task = InteractionManager.runAfterInteractions(() => {
+      const now = Date.now();
+      if (workspace.ordersInitialLoadDone && !ordersLastFocusRefreshRef.current) {
+        ordersLastFocusRefreshRef.current = now;
+      } else if (workspace.ordersInitialLoadDone && now - ordersLastFocusRefreshRef.current >= 2500) {
+        ordersLastFocusRefreshRef.current = now;
+        void workspace.refreshOrders();
+      }
+      void workspace.syncDeviceDrafts?.();
+    });
+    return () => task.cancel();
+  }, [mode, workspace.ordersInitialLoadDone, workspace.refreshOrders, workspace.syncDeviceDrafts]);
 
   const clearEditorFocusTimers = React.useCallback(() => {
     editorFocusTimersRef.current.forEach((timer) => clearTimeout(timer));
     editorFocusTimersRef.current = [];
   }, []);
+
+  const clearEditorScrollRestoreTimers = React.useCallback(() => {
+    editorScrollRestoreTimersRef.current.forEach((timer) => clearTimeout(timer));
+    editorScrollRestoreTimersRef.current = [];
+  }, []);
+
+  const restoreEditorAfterPickerClose = React.useCallback(() => {
+    if (!editorScrollRestorePendingRef.current) return;
+    editorScrollRestorePendingRef.current = false;
+    const targetY = Math.max(0, editorScrollBeforePickerRef.current);
+    editorFocusedTargetRef.current = null;
+    clearEditorFocusTimers();
+    clearEditorScrollRestoreTimers();
+    setEditorKeyboardVisible(false);
+
+    const restore = () => {
+      Keyboard.dismiss();
+      editorScrollRef.current?.scrollTo?.({ y: targetY, animated: false });
+    };
+    requestAnimationFrame(restore);
+    editorScrollRestoreTimersRef.current = [80, 220, 420].map((delay) => setTimeout(restore, delay));
+  }, [clearEditorFocusTimers, clearEditorScrollRestoreTimers]);
 
   const scrollEditorInputIntoView = React.useCallback((target: unknown) => {
     const keyboardTop = editorKeyboardTopRef.current;
@@ -809,8 +975,9 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       showSubscription.remove();
       hideSubscription.remove();
       clearEditorFocusTimers();
+      clearEditorScrollRestoreTimers();
     };
-  }, [clearEditorFocusTimers, scheduleEditorInputScroll]);
+  }, [clearEditorFocusTimers, clearEditorScrollRestoreTimers, scheduleEditorInputScroll]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -894,6 +1061,13 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   }, [clearPickerFocusTimers]);
 
   const openPicker = React.useCallback((kind: PickerKind, lineKey?: string) => {
+    clearEditorScrollRestoreTimers();
+    editorScrollRestorePendingRef.current = mode === 'editor' && kind !== 'product';
+    if (editorScrollRestorePendingRef.current) {
+      editorScrollBeforePickerRef.current = editorScrollYRef.current;
+      editorFocusedTargetRef.current = null;
+      clearEditorFocusTimers();
+    }
     pickerAutoFocusSuppressedRef.current = false;
     clearPickerFocusTimers();
     const shouldRestoreProductPicker = kind === 'product'
@@ -927,7 +1101,10 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     }
     requestAnimationFrame(() => scrollPickerListToTop(false));
   }, [
+    clearEditorFocusTimers,
     clearPickerFocusTimers,
+    clearEditorScrollRestoreTimers,
+    mode,
     pickerItems.length,
     pickerSearch,
     productPickerContextSignature,
@@ -1053,9 +1230,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       pickerSkipNextResetLoadRef.current = false;
       return;
     }
-    const searchDelay = pickerSearch && pickerKind !== 'product' ? 650 : 0;
-    const timeout = setTimeout(() => void loadPickerPage(pickerKind, pickerSearch, 0, false), searchDelay);
-    return () => clearTimeout(timeout);
+    void loadPickerPage(pickerKind, pickerSearch, 0, false);
   }, [loadPickerPage, pickerKind, pickerSearch]);
   React.useEffect(() => {
     if (!pickerKind) return undefined;
@@ -1098,7 +1273,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     setLinePriceTarget(null);
     setPickerLoading(false);
     setSelectedProducts(new Map());
-  }, [suppressPickerAutoFocus]);
+    restoreEditorAfterPickerClose();
+  }, [restoreEditorAfterPickerClose, suppressPickerAutoFocus]);
   const requestClosePicker = React.useCallback(() => {
     if (pickerKind === 'product' && selectedProducts.size > 0) {
       setConfirmDialog({
@@ -1121,12 +1297,18 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     workspace.cancelDetailLoading?.();
     setOpeningOrderGuid(null);
     setOpeningDocument(null);
+    setHeaderOverride({ hidden: true });
+    setMode('orders');
     return true;
-  }, [openingOrderGuid, workspace]);
+  }, [openingOrderGuid, setHeaderOverride, workspace]);
   const closeDocumentToOrders = React.useCallback(() => {
     const leaveDocument = () => {
+      Keyboard.dismiss();
       setOpeningDocument(null);
-      runDocumentHeaderTransition();
+      // Update the navigation header in the same batch as the local screen.
+      // Waiting for the mode-driven effect left one visible frame where the
+      // orders list was already shown under the old document header.
+      setHeaderOverride({ hidden: true });
       setMode('orders');
     };
     if (!workspace.dirty || workspace.readOnly) {
@@ -1137,8 +1319,17 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       if (!canLeave) return;
       leaveDocument();
     });
-  }, [workspace]);
+  }, [setHeaderOverride, workspace]);
+  const closeOrdersService = React.useCallback(() => {
+    Keyboard.dismiss();
+    lastService?.clearLastServiceRoute();
+    router.replace('/services');
+  }, [lastService, router]);
   const closeTopOverlay = React.useCallback(() => {
+    if (invoicePickerOpen) {
+      setInvoicePickerOpen(false);
+      return true;
+    }
     if (productGallery) {
       setProductGallery(null);
       return true;
@@ -1167,7 +1358,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       return true;
     }
     return false;
-  }, [cancelOpeningOrder, closeDocumentToOrders, editingItemKey, filtersOpen, mode, pickerKind, productGallery, referenceOpen, requestClosePicker]);
+  }, [cancelOpeningOrder, closeDocumentToOrders, editingItemKey, filtersOpen, invoicePickerOpen, mode, pickerKind, productGallery, referenceOpen, requestClosePicker]);
 
   React.useEffect(() => {
     if (!registerBackOverlayHandler) return undefined;
@@ -1253,7 +1444,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     const measuredY = lineItemLayoutYRef.current[key];
     const fallbackY = typeof fallbackIndex === 'number' ? fallbackIndex * LINE_ITEM_SCROLL_ESTIMATE : 0;
     const targetY = typeof measuredY === 'number' ? measuredY : fallbackY;
-    editorScrollRef.current?.scrollTo?.({ y: Math.max(0, targetY - 8), animated: true });
+    editorItemsScrollRef.current?.scrollTo?.({ y: Math.max(0, targetY - 8), animated: true });
   }, []);
 
   const requestScrollToLineItem = React.useCallback((key: string, fallbackIndex?: number) => {
@@ -1443,43 +1634,59 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     if (ordersOpenBusyRef.current || openingOrderGuid || openingDocument) return;
     ordersOpenBusyRef.current = true;
     setOpeningDocument('new');
+    setEditorMounted(true);
+    editorPagerTargetRef.current = 0;
+    editorPagerPosition.setValue(0);
+    editorPagerOffset.setValue(0);
+    setSection('header');
+    setMode('editor');
     try {
+      await waitForUiPaint();
       const opened = await workspace.createDocument();
       if (!opened) {
         setOpeningDocument(null);
+        setMode('orders');
         return;
       }
-      runDocumentHeaderTransition();
-      setSection('header');
-      setMode('editor');
       setOpeningDocument(null);
     } catch (error) {
       setOpeningDocument(null);
+      setMode('orders');
       throw error;
     } finally {
       ordersOpenBusyRef.current = false;
     }
-  }, [openingDocument, openingOrderGuid, workspace]);
+  }, [editorPagerOffset, editorPagerPosition, openingDocument, openingOrderGuid, workspace]);
 
   const selectOrder = React.useCallback(async (order: ClientOrder) => {
     if (ordersOpenBusyRef.current || openingOrderGuid || openingDocument) return;
     const requestId = ++openingOrderRequestIdRef.current;
     ordersOpenBusyRef.current = true;
     setOpeningOrderGuid(order.guid);
+    setOpeningDocument('existing');
+    setEditorMounted(true);
+    editorPagerTargetRef.current = 1;
+    editorPagerPosition.setValue(1);
+    editorPagerOffset.setValue(0);
+    setSection('items');
+    setMode('editor');
     try {
+      await waitForUiPaint();
       const opened = await workspace.selectOrder(order.guid);
       if (openingOrderRequestIdRef.current !== requestId) return;
       if (!opened) {
         setOpeningOrderGuid(null);
+        setOpeningDocument(null);
+        setMode('orders');
         return;
       }
-      runDocumentHeaderTransition();
-      setSection('items');
-      setMode('editor');
       setOpeningOrderGuid(null);
+      setOpeningDocument(null);
     } catch (error) {
       if (openingOrderRequestIdRef.current === requestId) {
         setOpeningOrderGuid(null);
+        setOpeningDocument(null);
+        setMode('orders');
       }
       throw error;
     } finally {
@@ -1487,7 +1694,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         ordersOpenBusyRef.current = false;
       }
     }
-  }, [openingDocument, openingOrderGuid, workspace]);
+  }, [editorPagerOffset, editorPagerPosition, openingDocument, openingOrderGuid, workspace.selectOrder]);
 
   const removeOrCancel = React.useCallback(() => {
     if (workspace.selectedOrderQueued) {
@@ -1520,7 +1727,6 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
           try {
             await workspace.deleteDraft();
             setOpeningDocument(null);
-            runDocumentHeaderTransition();
             setMode('orders');
           } finally {
             setDeleteDocumentOverlayVisible(false);
@@ -1551,7 +1757,6 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         try {
           await workspace.deleteDraft();
           setOpeningDocument(null);
-          runDocumentHeaderTransition();
           setMode('orders');
         } finally {
           setDeleteDocumentOverlayVisible(false);
@@ -1595,19 +1800,18 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       return;
     }
     void workspace.saveDraft({ reason: 'manual' });
-  }, [workspace]);
+  }, [workspace.saveDraft, workspace.validation.warningMessage]);
   const copyFromMenu = React.useCallback(() => {
-    if (!workspace.draft.guid && !workspace.selectedGuid) return;
+    if (!workspace.hasEditableDocument) return;
     setActionsMenuOpen(false);
     if (workspace.dirty) {
       setConfirmDialog({
-        title: 'Сохранить и скопировать?',
-        message: '',
-        confirmLabel: 'Сохранить и скопировать',
+        title: 'Скопировать с изменениями?',
+        message: 'Будет создан отдельный редактируемый черновик. Ошибки исходного документа не помешают копированию.',
+        confirmLabel: 'Скопировать',
         onConfirm: async () => {
-          const copied = await workspace.copyOrder({ saveFirst: true });
+          const copied = await workspace.copyOrder();
           if (copied) {
-            runDocumentHeaderTransition();
             setMode('editor');
           }
         },
@@ -1621,7 +1825,6 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       onConfirm: async () => {
         const copied = await workspace.copyOrder();
         if (copied) {
-          runDocumentHeaderTransition();
           setMode('editor');
         }
       },
@@ -1639,16 +1842,6 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     submitFromMenu();
   }, [saveDraftFromMenu, submitFromMenu, workspace]);
 
-  const confirmClearItems = React.useCallback(() => {
-    if (workspace.readOnly || workspace.mutationLocked) return;
-    setConfirmDialog({
-      title: 'Удалить все товары?',
-      message: '',
-      confirmLabel: 'Удалить',
-      destructive: true,
-      onConfirm: workspace.clearItems,
-    });
-  }, [workspace.clearItems, workspace.mutationLocked, workspace.readOnly]);
   const confirmResetHeaderPriceType = React.useCallback(() => {
     if (workspace.readOnly || workspace.mutationLocked) return;
     setConfirmDialog({
@@ -1657,7 +1850,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       confirmLabel: 'Сбросить',
       onConfirm: () => workspace.resetHeaderPriceTypeToDefault(),
     });
-  }, [workspace]);
+  }, [workspace.mutationLocked, workspace.readOnly, workspace.resetHeaderPriceTypeToDefault]);
 
   const documentNumber = workspace.draftMode
     ? 'Новый заказ'
@@ -1689,16 +1882,18 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     || workspace.selections.deliveryAddress?.fullAddress
     || workspace.selections.deliveryAddress?.name
   );
+  const dependentHeaderValidationReady = hasCounterpartyValue && !workspace.loadingDefaults;
   const headerRequiredState = React.useMemo(() => ({
     organization: !hasOrganizationValue,
     counterparty: !hasCounterpartyValue,
-    agreement: !hasAgreementValue,
-    contract: !hasContractValue,
-    priceType: !hasPriceTypeValue,
-    warehouse: !hasWarehouseValue,
-    deliveryAddress: !hasDeliveryAddressValue,
+    agreement: dependentHeaderValidationReady && !hasAgreementValue,
+    contract: dependentHeaderValidationReady && !hasContractValue,
+    priceType: dependentHeaderValidationReady && !hasPriceTypeValue,
+    warehouse: dependentHeaderValidationReady && !hasWarehouseValue,
+    deliveryAddress: dependentHeaderValidationReady && !hasDeliveryAddressValue,
     deliveryDate: !workspace.draft.deliveryDate,
   }), [
+    dependentHeaderValidationReady,
     hasAgreementValue,
     hasContractValue,
     hasCounterpartyValue,
@@ -1709,7 +1904,9 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     workspace.draft.deliveryDate,
   ]);
   const muteDocumentValidation = !!workspace.readOnly;
-  const hasHeaderErrors = !muteDocumentValidation && Object.values(headerRequiredState).some(Boolean);
+  const hasHeaderErrors = !muteDocumentValidation
+    && dependentHeaderValidationReady
+    && Object.values(headerRequiredState).some(Boolean);
   const hasItemsErrors = !muteDocumentValidation && (
     !workspace.draft.items.length
     || Object.keys(workspace.validation.itemMessages || {}).length > 0
@@ -1944,7 +2141,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         return next;
       });
     });
-  }, [workspace]);
+  }, [workspace.enrichItemMetadata]);
   const openLineEditor = React.useCallback((lineKey: string) => {
     requestLineMetadata(lineKey);
     setEditingItemKey(lineKey);
@@ -1954,8 +2151,16 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   React.useEffect(() => {
     if (editingItemKey && !editingItem && !pendingProductItem) setEditingItemKey(null);
   }, [editingItem, editingItemKey, pendingProductItem]);
+  const documentContentLoading = mode === 'editor' && (!!openingDocument || workspace.loadingDetail);
   const documentHeaderRightSlot = React.useMemo(() => {
     if (mode !== 'editor') return undefined;
+    if (documentContentLoading) {
+      return (
+        <View style={styles.documentHeaderRightActions}>
+          <View style={styles.documentTopActionSkeleton} />
+        </View>
+      );
+    }
     return (
       <View style={styles.documentHeaderRightActions}>
         {!isReachable ? (
@@ -1974,24 +2179,51 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
           copyFromMenu={copyFromMenu}
           removeOrCancel={removeOrCancel}
           deleteDocumentFromMenu={deleteDocumentFromMenu}
+          invoiceCount={downloadableInvoices.length || (invoiceDownloadAvailable ? 1 : 0)}
+          invoiceActionBusy={!!invoiceSharingId || invoiceListLoading}
+          onDownloadInvoice={() => { void openInvoiceActions('download'); }}
+          onShareInvoice={() => { void openInvoiceActions('share'); }}
+          canRequestInvoice={!!workspace.readOnly && !invoiceDownloadAvailable}
+          invoiceRequestBusy={invoiceRequesting || invoiceGenerationPending || invoiceRequestPendingGuid === selectedInvoiceOrderGuid}
+          onRequestInvoice={() => { void requestInvoiceNow(); }}
           compact
         />
       </View>
     );
-  }, [actionsMenuOpen, copyFromMenu, deleteDocumentFromMenu, isReachable, mode, removeOrCancel, saveDraftFromMenu, submitFromMenu, workspace]);
+  }, [actionsMenuOpen, copyFromMenu, deleteDocumentFromMenu, documentContentLoading, downloadableInvoices.length, invoiceDownloadAvailable, invoiceGenerationPending, invoiceListLoading, invoiceRequestPendingGuid, invoiceRequesting, invoiceSharingId, isReachable, mode, openInvoiceActions, removeOrCancel, requestInvoiceNow, saveDraftFromMenu, selectedInvoiceOrderGuid, submitFromMenu, workspace]);
   const handleEditorSectionChange = React.useCallback((nextSection: EditorSection) => {
-    if (nextSection === section) return;
-    runDocumentHeaderTransition();
+    const nextTarget = nextSection === 'items' ? 1 : 0;
+    const sectionChanged = nextTarget !== editorPagerTargetRef.current;
+    if (!sectionChanged) return;
+    Keyboard.dismiss();
+    editorFocusedTargetRef.current = null;
+    setEditorKeyboardVisible(false);
 
-    const currentHasToolbar = section === 'items' && !workspace.readOnly && !workspace.mutationLocked;
-    const nextHasToolbar = nextSection === 'items' && !workspace.readOnly && !workspace.mutationLocked;
-    if (currentHasToolbar !== nextHasToolbar && headerBottomOffset > 0) {
-      const delta = nextHasToolbar ? DOCUMENT_ITEMS_TOOLBAR_HEIGHT_DELTA : -DOCUMENT_ITEMS_TOOLBAR_HEIGHT_DELTA;
-      setHeaderBottomOffset(Math.max(topInset, headerBottomOffset + delta));
+    editorPagerTargetRef.current = nextTarget;
+    if (editorPagerRef.current) {
+      // Keep the native page animation isolated from the expensive document
+      // render. React state is committed by onPageSelected after the motion.
+      editorPagerRef.current.setPage(nextTarget);
+    } else {
+      editorPagerPosition.setValue(nextTarget);
+      editorPagerOffset.setValue(0);
+      setSection(nextSection);
     }
-
-    setSection(nextSection);
-  }, [headerBottomOffset, section, setHeaderBottomOffset, topInset, workspace.mutationLocked, workspace.readOnly]);
+  }, [editorPagerOffset, editorPagerPosition]);
+  const handleEditorPageSelected = React.useCallback((event: PagerViewOnPageSelectedEvent) => {
+    const nextTarget: 0 | 1 = event.nativeEvent.position >= 1 ? 1 : 0;
+    const sectionChanged = editorPagerTargetRef.current !== nextTarget;
+    editorPagerTargetRef.current = nextTarget;
+    editorPagerPosition.setValue(nextTarget);
+    editorPagerOffset.setValue(0);
+    const nextSection: EditorSection = nextTarget === 1 ? 'items' : 'header';
+    setSection((current) => current === nextSection ? current : nextSection);
+    if (sectionChanged) {
+      Keyboard.dismiss();
+      editorFocusedTargetRef.current = null;
+      setEditorKeyboardVisible(false);
+    }
+  }, [editorPagerOffset, editorPagerPosition]);
   const documentHeaderSlot = React.useMemo(() => {
     if (mode !== 'editor') return null;
     return (
@@ -2000,43 +2232,19 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         workspace={workspace}
         section={section}
         setSection={handleEditorSectionChange}
-        itemsSearch={itemsSearch}
-        setItemsSearch={setItemsSearch}
-        searchFocused={itemsSearchFocused}
-        onSearchFocus={handleItemsSearchFocus}
-        onSearchBlur={handleItemsSearchBlur}
-        searchResults={itemsSearchResults}
-        searchLoading={itemsSearchLoading}
-        searchLoadingMore={itemsSearchLoadingMore}
-        searchHasMore={itemsSearchHasMore}
-        searchError={itemsSearchError}
-        onSelectSearchResult={addProductFromItemsSearch}
-        onLoadMoreSearchResults={loadMoreItemsSearchResults}
-        openPicker={openPicker}
-        onClearItems={confirmClearItems}
+        pagerProgress={editorPagerProgress}
+        loading={documentContentLoading}
         hasHeaderErrors={hasHeaderErrors}
         hasItemsErrors={hasItemsErrors}
       />
     );
   }, [
-    addProductFromItemsSearch,
-    confirmClearItems,
-    handleItemsSearchBlur,
-    handleItemsSearchFocus,
-    dismissItemsSearch,
     handleEditorSectionChange,
     hasHeaderErrors,
     hasItemsErrors,
-    itemsSearch,
-    itemsSearchError,
-    itemsSearchFocused,
-    itemsSearchHasMore,
-    itemsSearchLoading,
-    itemsSearchLoadingMore,
-    itemsSearchResults,
-    loadMoreItemsSearchResults,
+    editorPagerProgress,
+    documentContentLoading,
     mode,
-    openPicker,
     section,
     workspace,
   ]);
@@ -2045,6 +2253,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     return (
       <DocumentHeaderTitleSlot
         styles={styles}
+        loading={documentContentLoading}
         documentNumber={documentDisplayTitle}
         status={documentStatusCode}
         statusText={documentStatusFullText}
@@ -2061,6 +2270,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     );
   }, [
     documentDisplayTitle,
+    documentContentLoading,
     documentStatusCode,
     documentStatusFullText,
     mode,
@@ -2073,7 +2283,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     workspace.selectedOrder?.syncState,
   ]);
   const documentHeaderOverride = React.useMemo(() => {
-    if (mode !== 'editor') return null;
+    if (mode !== 'editor') return { hidden: true as const };
     return {
       title: 'Заказы клиентов',
       icon: 'receipt-outline',
@@ -2091,164 +2301,62 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       showServerStatus: false,
     };
   }, [closeDocumentToOrders, documentHeaderRightSlot, documentHeaderSlot, documentHeaderTitleSlot, mode]);
-  const previousHeaderModeRef = React.useRef(mode);
-  React.useEffect(() => {
-    if (previousHeaderModeRef.current === mode) return;
-    previousHeaderModeRef.current = mode;
-    runDocumentHeaderTransition();
-  }, [mode]);
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     setHeaderOverride(documentHeaderOverride);
   }, [documentHeaderOverride, setHeaderOverride]);
   React.useEffect(() => () => setHeaderOverride(null), [setHeaderOverride]);
-  const PickerContentScrollView = SheetScrollView;
-  const isProductPicker = pickerKind === 'product';
   const isCounterpartyPicker = pickerKind === 'counterparty' || pickerKind === 'filterCounterparty';
   const pickerMissingOrderContext = pickerNeedsOrderContext(pickerKind) && (!workspace.draft.organizationGuid || !workspace.draft.counterpartyGuid);
   const pickerResetLoading = pickerLoading && !pickerAppendLoading;
   const pickerSearchLoading = pickerResetLoading && !pickerMissingOrderContext;
   const pickerFooterLoading = pickerAppendLoading && visiblePickerItems.length > 0;
-  const counterpartyHeaderAction = isCounterpartyPicker ? (
-    <Pressable
-      accessibilityRole="checkbox"
-      accessibilityState={{ checked: counterpartyManagerOnly }}
-      accessibilityLabel="Показывать только моих контрагентов"
-      onPress={() => setCounterpartyManagerOnly((prev) => !prev)}
-      style={({ pressed }) => [
-        styles.counterpartyManagerHeaderToggle,
-        counterpartyManagerOnly && styles.counterpartyManagerHeaderToggleActive,
-        pressed && styles.flatPressed,
-      ]}
-    >
-      <MaterialCommunityIcons
-        name={counterpartyManagerOnly ? 'checkbox-marked' : 'checkbox-blank-outline'}
-        size={18}
-        color={counterpartyManagerOnly ? '#2563EB' : '#64748B'}
-      />
-      <Text style={[
-        styles.counterpartyManagerHeaderToggleText,
-        counterpartyManagerOnly && styles.counterpartyManagerHeaderToggleTextActive,
-      ]}>Мои</Text>
-    </Pressable>
-  ) : null;
-  const pickerContent = (
-    <>
-      <View style={styles.pickerToolbar}>
-        <View style={styles.pickerSearchRow}>
-          <CompactSearchbar
-            inputRef={pickerSearchInputRef}
-            style={[styles.pickerSearchFlat, (isProductPicker || isCounterpartyPicker) && styles.productPickerSearchFlat]}
-            inputStyle={styles.pickerSearchInputFlat}
-            value={pickerSearch}
-            onChangeText={handlePickerSearchChange}
-            placeholder={isProductPicker ? 'Поиск товара' : 'Поиск'}
-            inputComponent={SheetTextInput}
-            autoFocus={pickerShouldAutofocusSearch(pickerKind)}
-            loading={pickerSearchLoading}
-          />
-          {isProductPicker ? (
-            <View
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: inStockOnly }}
-              accessibilityLabel="Показывать только товары с остатком"
-              style={[
-                styles.productStockToggle,
-                inStockOnly && styles.productStockToggleActive,
-              ]}
-            >
-              <Checkbox.Android
-                status={inStockOnly ? 'checked' : 'unchecked'}
-                onPress={() => setInStockOnly((prev) => !prev)}
-                color="#16A34A"
-                uncheckedColor="#64748B"
-                rippleColor="rgba(22, 163, 74, 0.12)"
-              />
-            </View>
-          ) : null}
-        </View>
-      </View>
-      <PickerContentScrollView
-        ref={pickerListRef}
-        style={styles.pickerScroll}
-        onScroll={handlePickerScroll}
-        onScrollBeginDrag={suppressPickerAutoFocus}
-        scrollEventThrottle={16}
-        nestedScrollEnabled
-        contentContainerStyle={styles.pickerListContent}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
+  const pickerFilters = React.useMemo<SearchPickerFilter[]>(() => (
+    isCounterpartyPicker
+      ? [{
+          key: 'my-clients',
+          label: 'Мои клиенты',
+          selected: counterpartyManagerOnly,
+          onPress: () => setCounterpartyManagerOnly((prev) => !prev),
+          accessibilityLabel: 'Показывать только моих клиентов',
+        }]
+      : []
+  ), [counterpartyManagerOnly, isCounterpartyPicker]);
+  const renderReferencePickerItem = React.useCallback(({ item }: { item: any }) => {
+    const isSelected = !!selectedPickerGuid && selectedPickerGuid === item.guid;
+    const description = getPickerItemMeta(pickerKind, item) || '';
+    return (
+      <Pressable
+        onPress={() => void selectPickerItem(item)}
+        style={({ pressed }) => [
+          styles.pickerFlatRow,
+          isSelected && styles.pickerFlatRowSelected,
+          pressed && styles.flatPressed,
+        ]}
       >
-        {pickerMissingOrderContext ? <InfoText styles={styles} text="Сначала выберите организацию и контрагента." /> : null}
-        {visiblePickerItems.map((item: any) => {
-          const disabled = pickerKind === 'product' && isProductAlreadyInOrder(item as ClientOrderProduct, workspace.draft.items);
-          const pickerMeta = pickerKind === 'product'
-            ? productPickerMeta(item, {
-                hasPriceType: !!workspace.draft.priceTypeGuid,
-                hasWarehouse: !!workspace.draft.warehouseGuid,
-              })
-            : null;
-          const isProductRow = pickerKind === 'product';
-          const isSelected = isProductRow
-            ? !!item.guid && selectedProducts.has(item.guid)
-            : !!selectedPickerGuid && selectedPickerGuid === item.guid;
-          const description = pickerKind === 'product'
-            ? [pickerMeta?.code, pickerMeta?.receiptPrice ? `Цена: ${pickerMeta.receiptPrice}` : '', pickerMeta?.stock].filter(Boolean).join(' • ')
-            : getPickerItemMeta(pickerKind, item) || '';
-          return (
-            <Pressable
-              key={`${pickerKind}-${item.guid || item.name || item.fullAddress}`}
-              disabled={disabled}
-              onPress={() => void selectPickerItem(item)}
-              style={({ pressed }) => [
-                styles.pickerFlatRow,
-                isProductRow && styles.productPickerRow,
-                isSelected && styles.pickerFlatRowSelected,
-                disabled && styles.disabled,
-                pressed && styles.flatPressed,
-              ]}
-            >
-              {pickerKind === 'product' ? (
-                <ProductThumb
-                  item={item}
-                  style={[styles.productPickerThumb, disabled && styles.productPickerThumbDisabled]}
-                  iconSize={26}
-                  iconColor={disabled ? '#94A3B8' : '#2563EB'}
-                  onPress={() => openProductGallery(item)}
-                />
-              ) : null}
-              <View style={styles.pickerFlatTextWrap}>
-                <Text style={styles.pickerFlatTitle} numberOfLines={2}>{pickerKind === 'product' ? (item.name || getPickerItemTitle(item)) : getPickerItemTitle(item)}</Text>
-                {description ? <Text style={[styles.pickerFlatMeta, disabled && styles.pickerRowDisabled]} numberOfLines={2}>{description}</Text> : null}
-                {isProductRow && disabled ? <Text style={styles.productPickerAlreadyText}>Уже в заказе</Text> : null}
-                {isProductRow && isSelected ? <Text style={styles.productPickerSelectedText}>Добавить в заказ</Text> : null}
-              </View>
-              {isSelected
-                ? <MaterialCommunityIcons name="check-circle" size={21} color="#16A34A" />
-                : <MaterialCommunityIcons name={isProductRow && !disabled ? 'plus-circle-outline' : 'chevron-right'} size={22} color={disabled ? '#CBD5E1' : '#94A3B8'} />}
-            </Pressable>
-          );
-        })}
-        {!pickerResetLoading && !visiblePickerItems.length && !pickerMissingOrderContext ? <InfoText styles={styles} text="Ничего не найдено." /> : null}
-        {pickerFooterLoading ? <View style={styles.pickerFooter}><ActivityIndicator size="small" color="#2563EB" /><Text style={styles.pickerFooterText}>Загружаю...</Text></View> : null}
-      </PickerContentScrollView>
-      {isProductPicker && selectedProducts.size > 0 ? (
-        <Surface mode="flat" style={[styles.productPickerTransferFooter, { paddingBottom: Math.max(safeBottom, 10) + 8 }]}>
-          <PaperButton
-            mode="contained"
-            onPress={transferSelectedProducts}
-            buttonColor="#2563EB"
-            textColor="#FFFFFF"
-            icon="arrow-down-circle-outline"
-            style={styles.productPickerTransferButton}
-            labelStyle={styles.productPickerTransferLabel}
-            contentStyle={styles.productPickerTransferContent}
-          >
-            {formatProductTransferLabel(selectedProducts.size)}
-          </PaperButton>
-        </Surface>
-      ) : null}
-    </>
-  );
+        <View style={styles.pickerFlatTextWrap}>
+          <Text style={styles.pickerFlatTitle} numberOfLines={2}>{getPickerItemTitle(item)}</Text>
+          {description ? <Text style={styles.pickerFlatMeta} numberOfLines={2}>{description}</Text> : null}
+        </View>
+        {isSelected
+          ? <MaterialCommunityIcons name="check-circle" size={21} color="#16A34A" />
+          : <MaterialCommunityIcons name="chevron-right" size={22} color="#94A3B8" />}
+      </Pressable>
+    );
+  }, [pickerKind, selectPickerItem, selectedPickerGuid]);
+  const referencePickerHeader = React.useMemo(() => (
+    pickerMissingOrderContext
+      ? <InfoText styles={styles} text="Сначала выберите организацию и контрагента." />
+      : null
+  ), [pickerMissingOrderContext]);
+  const referencePickerEmpty = React.useMemo(() => {
+    if (pickerResetLoading || pickerMissingOrderContext) return null;
+    return <Text style={styles.filtersLookupEmpty}>Ничего не найдено.</Text>;
+  }, [pickerMissingOrderContext, pickerResetLoading]);
+  const referencePickerFooter = React.useMemo(() => (
+    pickerFooterLoading
+      ? <View style={styles.pickerFooter}><ActivityIndicator size="small" color="#2563EB" /><Text style={styles.pickerFooterText}>Загружаю...</Text></View>
+      : null
+  ), [pickerFooterLoading]);
   const discardConfirmState = React.useMemo<ConfirmDialogState>(() => {
     if (!discardConfirm.open) return null;
     return {
@@ -2263,38 +2371,138 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     };
   }, [closeDiscardConfirm, discardConfirm.mode, discardConfirm.open]);
 
-  const editorTopPadding = Math.max(topInset, headerBottomOffset || 0);
-  const ordersTopPadding = Math.max(0, topInset - 24);
+  // The document header is taller than the list header because it contains
+  // the section tabs. Reserve that height synchronously; onLayout replaces it
+  // with the exact offset on the next render. Without this reserve the first
+  // skeleton frame briefly appeared underneath the header.
+  const editorTopPadding = Math.max(topInset + DOCUMENT_HEADER_TABS_RESERVE, headerBottomOffset || 0);
+  const ordersTopPadding = Platform.OS === 'web' ? 10 : Math.max(8, safeTop + 6);
   const pageTopPadding = mode === 'editor' ? editorTopPadding : ordersTopPadding;
+  const ordersBottomPanelReserve = Math.max(safeBottom, 8) + 150;
   const showItemsSearchOverlay = mode === 'editor' && !workspace.readOnly && !workspace.mutationLocked && section === 'items' && !!itemsSearch.trim() && itemsSearchFocused;
   const itemsSearchOverlayTop = Math.max(topInset + 96, headerBottomOffset + 6);
-  const showDocumentOpenLoader = mode === 'editor' && (openingDocument === 'existing' || workspace.loadingDetail);
+  const showDocumentOpenLoader = documentContentLoading;
   const showDocumentDeleteOverlay = mode === 'editor' && deleteDocumentOverlayVisible;
-  const documentOpenLabel = openingDocument === 'new' ? 'Готовлю новый документ' : 'Открываю документ';
+  const productPickerBottomInset = !workspace.readOnly && !workspace.mutationLocked ? 50 : 0;
+  const editorHeaderBottomPadding = editorKeyboardVisible
+    ? Math.max(16, editorKeyboardPadding)
+    : 16;
+  const editorItemsBottomPadding = productPickerBottomInset + 16;
+  const editorPagerScrollEnabled = !pickerKind
+    && !editingItemKey
+    && !pendingProductItem
+    && !productGallery
+    && !invoicePickerOpen
+    && !referenceOpen
+    && !filtersOpen
+    && !inspectorOpen
+    && !confirmDialog;
+  const editorPageSwipeGesture = React.useMemo(() => Gesture.Pan()
+    .enabled(editorPagerScrollEnabled)
+    // A vertical move of 11 dp cancels the page gesture before a horizontal
+    // move of 28 dp can activate it. This keeps ordinary list scrolling on the
+    // current page while preserving an intentional horizontal swipe.
+    .activeOffsetX([-28, 28])
+    .failOffsetY([-11, 11])
+    .onEnd((event) => {
+      const horizontalDistance = Math.abs(event.translationX);
+      const verticalDistance = Math.abs(event.translationY);
+      const horizontalVelocity = Math.abs(event.velocityX);
+      const verticalVelocity = Math.abs(event.velocityY);
+      const deliberateDistance = horizontalDistance >= 46 && horizontalDistance >= verticalDistance * 1.8;
+      const deliberateFling = horizontalVelocity >= 720 && horizontalVelocity >= verticalVelocity * 1.55;
+      if (!deliberateDistance && !deliberateFling) return;
+
+      const currentPage = editorPagerTargetRef.current;
+      if (event.translationX < 0 && currentPage === 0) {
+        handleEditorSectionChange('items');
+      } else if (event.translationX > 0 && currentPage === 1) {
+        handleEditorSectionChange('header');
+      }
+    })
+    .runOnJS(true), [editorPagerScrollEnabled, handleEditorSectionChange]);
+  const handleOrderListItemPress = React.useCallback((order: ClientOrder) => {
+    void selectOrder(order);
+  }, [selectOrder]);
+  const renderOrderListItem = React.useCallback(({ item }: { item: ClientOrder }) => (
+    <OrderCard
+      order={item}
+      loading={openingOrderGuid === item.guid}
+      disabled={!!openingOrderGuid}
+      onPressOrder={handleOrderListItemPress}
+    />
+  ), [handleOrderListItemPress, openingOrderGuid]);
+  const orderListKeyExtractor = React.useCallback((item: ClientOrder) => item.guid, []);
+  const orderListEmptyComponent = React.useMemo(() => (
+    showOrdersInitialLoading
+      ? <OrdersInitialLoadingState styles={styles} />
+      : showOrdersEmptyState
+        ? <OrdersEmptyState styles={styles} filtered={hasActiveOrderFilters} />
+        : null
+  ), [hasActiveOrderFilters, showOrdersEmptyState, showOrdersInitialLoading]);
+  const orderListFooterComponent = React.useMemo(() => (
+    <>
+      {showOrdersFooter ? (
+        <OrdersPaginationFooter
+          styles={styles}
+          loading={workspace.loadingMoreOrders}
+          error={workspace.ordersAppendError}
+          onRetry={() => void workspace.loadMoreOrders()}
+        />
+      ) : null}
+      <TabBarSpacer />
+    </>
+  ), [showOrdersFooter, workspace.loadMoreOrders, workspace.loadingMoreOrders, workspace.ordersAppendError]);
 
   return (
     <View style={[styles.screen, { backgroundColor: background, paddingTop: pageTopPadding }]}>
-      {mode === 'orders' ? (
-        <Animated.View style={[styles.ordersStage, ordersEntranceStyle]}>
+      <View
+        pointerEvents={mode === 'orders' ? 'auto' : 'none'}
+        accessibilityElementsHidden={mode !== 'orders'}
+        importantForAccessibility={mode === 'orders' ? 'auto' : 'no-hide-descendants'}
+        style={[styles.ordersStage, mode !== 'orders' && styles.ordersStageHidden]}
+      >
           <View style={[styles.ordersStickyToolbar, width >= 720 && styles.contentTablet, { paddingHorizontal: ui.pageX, maxWidth: layoutTier === 'tablet' ? 760 : undefined }]}>
             <OrdersToolbar
               styles={styles}
               workspace={workspace}
               disabled={!!openingOrderGuid || !!openingDocument}
               refreshing={ordersRefreshing}
+              onBack={closeOrdersService}
               onOpenFilters={() => setFiltersOpen(true)}
-              onCreate={() => void createDocument()}
             />
           </View>
-          <ScrollView
+          <FlatList
             ref={ordersScrollRef}
-            contentContainerStyle={[styles.ordersContent, width >= 720 && styles.contentTablet, { paddingHorizontal: ui.pageX, paddingTop: 4, maxWidth: layoutTier === 'tablet' ? 760 : undefined }]}
+            data={workspace.orders}
+            renderItem={renderOrderListItem}
+            keyExtractor={orderListKeyExtractor}
+            contentContainerStyle={[
+              styles.ordersContent,
+              width >= 720 && styles.contentTablet,
+              {
+                paddingHorizontal: ui.pageX,
+                paddingTop: 4,
+                paddingBottom: ordersBottomPanelReserve,
+                maxWidth: layoutTier === 'tablet' ? 760 : undefined,
+              },
+            ]}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
             scrollEventThrottle={16}
             onScroll={handleOrdersScroll}
             onLayout={handleOrdersListLayout}
             onContentSizeChange={handleOrdersContentSizeChange}
+            onEndReached={prefetchMoreOrders}
+            onEndReachedThreshold={0.55}
+            ListEmptyComponent={orderListEmptyComponent}
+            ListFooterComponent={orderListFooterComponent}
+            maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+            initialNumToRender={10}
+            maxToRenderPerBatch={8}
+            updateCellsBatchingPeriod={40}
+            windowSize={7}
+            removeClippedSubviews={Platform.OS === 'android'}
             refreshControl={
               <RefreshControl
                 refreshing={ordersRefreshing}
@@ -2304,70 +2512,149 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
                 progressBackgroundColor="#FFFFFF"
               />
             }
-          >
-            {showOrdersInitialLoading ? (
-              <OrdersInitialLoadingState styles={styles} />
-            ) : (
-              <>
-                {workspace.orders.map((order) => (
-                  <OrderCard
-                    key={order.guid}
-                    order={order}
-                    loading={openingOrderGuid === order.guid}
-                    disabled={!!openingOrderGuid}
-                    onPress={() => void selectOrder(order)}
-                  />
-                ))}
-                {showOrdersEmptyState ? <OrdersEmptyState styles={styles} filtered={hasActiveOrderFilters} /> : null}
-                {showOrdersFooter ? (
-                  <OrdersPaginationFooter
-                    styles={styles}
-                    loading={workspace.loadingMoreOrders}
-                    error={workspace.ordersAppendError}
-                    onRetry={() => void workspace.loadMoreOrders()}
-                  />
-                ) : null}
-              </>
-            )}
-            <TabBarSpacer />
-          </ScrollView>
-        </Animated.View>
-      ) : (
-        <ScrollView
-          ref={editorScrollRef}
-          contentContainerStyle={[
-            styles.content,
-            section === 'items' && styles.editorItemsContent,
-            width >= 720 && styles.contentTablet,
-            { paddingHorizontal: ui.pageX, paddingTop: 0, gap: 6, maxWidth: layoutTier === 'tablet' ? 760 : undefined },
-            section === 'header' && editorKeyboardVisible && { paddingBottom: editorKeyboardPadding },
-          ]}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag"
+          />
+          {showOrdersBottomBar ? (
+            <OrdersBottomBar
+              styles={styles}
+              entranceProgress={ordersBottomBarEntrance}
+              safeBottom={safeBottom}
+              count={ordersVisibleCount}
+              loadingMetrics={ordersBottomMetricsLoading}
+              disabled={!!openingOrderGuid || !!openingDocument}
+              onCreate={() => void createDocument()}
+            />
+          ) : null}
+      </View>
+      {editorMounted ? (
+        <View
+          pointerEvents={mode === 'editor' ? 'auto' : 'none'}
+          accessibilityElementsHidden={mode !== 'editor'}
+          importantForAccessibility={mode === 'editor' ? 'auto' : 'no-hide-descendants'}
+          style={[styles.editorStage, mode !== 'editor' && styles.editorStageHidden]}
         >
           {showDocumentOpenLoader ? (
-            <DocumentOpenLoader styles={styles} label={documentOpenLabel} />
+            <ScrollView
+              style={styles.editorPageScroll}
+              contentContainerStyle={[
+                styles.content,
+                width >= 720 && styles.contentTablet,
+                {
+                  paddingHorizontal: ui.pageX,
+                  paddingTop: 0,
+                  paddingBottom: 16,
+                  gap: 6,
+                  maxWidth: layoutTier === 'tablet' ? 760 : undefined,
+                },
+              ]}
+            >
+              <DocumentOpenSkeleton styles={styles} section={section} />
+            </ScrollView>
           ) : (
-            <>
-              <View style={[styles.editorPane, styles.editorHeaderPane, section !== 'header' && styles.editorPaneHidden]}>
-                <HeaderSection workspace={workspace} openPicker={openPicker} openDetails={openReferenceDetails} onCommentFocus={handleHeaderCommentFocus} onResetHeaderPriceType={confirmResetHeaderPriceType} />
-              </View>
-              <View style={[styles.editorPane, section !== 'items' && styles.editorPaneHidden]}>
-                <ItemsSection
-                  workspace={workspace}
-                  filteredItems={filteredItems}
-                  ui={ui}
-                  onEditItem={openLineEditor}
-                  onAddItem={() => openPicker('product')}
-                  onItemLayout={handleLineItemLayout}
-                  onOpenImages={openProductGallery}
-                />
-              </View>
-            </>
+            <GestureDetector gesture={editorPageSwipeGesture}>
+              <NativeAnimatedPagerView
+                ref={editorPagerRef as any}
+                style={styles.editorPager}
+                initialPage={section === 'items' ? 1 : 0}
+                orientation="horizontal"
+                layoutDirection="ltr"
+                pageMargin={0}
+                offscreenPageLimit={1}
+                overScrollMode="never"
+                keyboardDismissMode="on-drag"
+                scrollEnabled={false}
+                onPageScroll={editorPagerScrollHandler}
+                onPageSelected={handleEditorPageSelected}
+              >
+                <View
+                  key="header"
+                  collapsable={false}
+                  accessibilityElementsHidden={section !== 'header'}
+                  importantForAccessibility={section === 'header' ? 'auto' : 'no-hide-descendants'}
+                  style={styles.editorPagerPage}
+                >
+                  <ScrollView
+                    ref={editorScrollRef}
+                    style={styles.editorPageScroll}
+                    contentContainerStyle={[
+                      styles.content,
+                      width >= 720 && styles.contentTablet,
+                      {
+                        paddingHorizontal: ui.pageX,
+                        paddingTop: 8,
+                        paddingBottom: editorHeaderBottomPadding,
+                        gap: 6,
+                        maxWidth: layoutTier === 'tablet' ? 760 : undefined,
+                      },
+                    ]}
+                    keyboardShouldPersistTaps="handled"
+                    keyboardDismissMode="on-drag"
+                    scrollEventThrottle={16}
+                    onScroll={(event) => {
+                      editorScrollYRef.current = Math.max(0, event.nativeEvent.contentOffset.y);
+                    }}
+                  >
+                    <HeaderSection
+                      workspace={workspace}
+                      pickerVisible={!!pickerKind}
+                      openPicker={openPicker}
+                      openDetails={openReferenceDetails}
+                      onCommentFocus={handleHeaderCommentFocus}
+                      onResetHeaderPriceType={confirmResetHeaderPriceType}
+                      onDownloadInvoice={downloadInvoiceFromDocument}
+                      onShareInvoice={shareInvoiceFromDocument}
+                      onRequestInvoice={requestInvoiceFromDocument}
+                      invoiceDownloadBusy={(invoiceSharingAction === 'download' && !!invoiceSharingId) || (invoiceListLoading && invoiceListLoadingAction === 'download')}
+                      invoiceShareBusy={(invoiceSharingAction === 'share' && !!invoiceSharingId) || (invoiceListLoading && invoiceListLoadingAction === 'share')}
+                      invoiceRequesting={invoiceRequesting}
+                      invoiceRequestPending={invoiceGenerationPending || invoiceRequestPendingGuid === selectedInvoiceOrderGuid}
+                    />
+                  </ScrollView>
+                </View>
+                <View
+                  key="items"
+                  collapsable={false}
+                  accessibilityElementsHidden={section !== 'items'}
+                  importantForAccessibility={section === 'items' ? 'auto' : 'no-hide-descendants'}
+                  style={styles.editorPagerPage}
+                >
+                  <ScrollView
+                    ref={editorItemsScrollRef}
+                    style={styles.editorPageScroll}
+                    contentContainerStyle={[
+                      styles.content,
+                      styles.editorItemsContent,
+                      width >= 720 && styles.contentTablet,
+                      {
+                        paddingHorizontal: ui.pageX,
+                        paddingTop: 0,
+                        paddingBottom: editorItemsBottomPadding,
+                        gap: 6,
+                        maxWidth: layoutTier === 'tablet' ? 760 : undefined,
+                      },
+                    ]}
+                    keyboardShouldPersistTaps="handled"
+                    keyboardDismissMode="on-drag"
+                  >
+                    <ItemsSection
+                      filteredItems={filteredItems}
+                      generalDiscountPercent={workspace.draft.generalDiscountPercent}
+                      currency={workspace.draft.currency}
+                      readOnly={!!workspace.readOnly}
+                      mutationLocked={!!workspace.mutationLocked}
+                      itemMessages={workspace.validation.itemMessages}
+                      itemWarnings={workspace.validation.itemWarnings}
+                      onEditItem={openLineEditor}
+                      onRemoveItem={workspace.removeItem}
+                      onItemLayout={handleLineItemLayout}
+                      onOpenImages={openProductGallery}
+                    />
+                  </ScrollView>
+                </View>
+              </NativeAnimatedPagerView>
+            </GestureDetector>
           )}
-          <TabBarSpacer extra={54} />
-        </ScrollView>
-      )}
+        </View>
+      ) : null}
 
       <ItemsSearchResultsOverlay
         styles={styles}
@@ -2389,7 +2676,11 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         <DocumentBottomBar
           styles={styles}
           workspace={workspace}
+          section={section}
+          pagerProgress={editorPagerProgress}
           safeBottom={safeBottom}
+          layout={documentBottomBarLayout}
+          onAddProduct={() => openPicker('product')}
           onPrimaryAction={handleDocumentPrimaryAction}
         />
       ) : null}
@@ -2467,21 +2758,102 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
           onClearSelection={clearPickerProductSelection}
         />
       ) : (
-        <PickerBottomSheet
-          styles={styles}
+        <SearchPickerScreen<any>
           visible={!!pickerKind}
-          topOffset={Math.max(88, topInset + 12)}
+          pickerKey={pickerKind || 'reference'}
+          topInset={safeTop}
           title={pickerTitle(pickerKind)}
           titleIcon={pickerIcon(pickerKind)}
           onClose={requestClosePicker}
-          headerRight={counterpartyHeaderAction}
-          contentScrollOffset={pickerScrollOffset}
-          enableContentDrag
-          keyboardTopInset={Math.max(88, topInset + 12)}
-        >
-          {pickerContent}
-        </PickerBottomSheet>
+          search={pickerSearch}
+          onSearchChange={handlePickerSearchChange}
+          searchPlaceholder="Поиск"
+          searchAccessibilityLabel={`Поиск: ${pickerTitle(pickerKind)}`}
+          searchInputRef={pickerSearchInputRef}
+          autoFocus={pickerShouldAutofocusSearch(pickerKind) && !pickerMissingOrderContext}
+          searchLoading={pickerSearchLoading}
+          filters={pickerFilters}
+          data={visiblePickerItems}
+          extraData={`${pickerKind}:${selectedPickerGuid || ''}:${counterpartyManagerOnly ? 'my-clients' : 'all-clients'}`}
+          keyExtractor={(item, index) => String(item?.guid || item?.id || item?.name || item?.fullAddress || `${pickerKind}-${index}`)}
+          renderItem={renderReferencePickerItem}
+          listRef={pickerListRef}
+          contentContainerStyle={[styles.pickerListContent, { paddingBottom: Math.max(safeBottom, 10) + 22 }]}
+          ListHeaderComponent={referencePickerHeader}
+          ListEmptyComponent={referencePickerEmpty}
+          ListFooterComponent={referencePickerFooter}
+          onScroll={handlePickerScroll}
+          onMomentumScrollEnd={handlePickerScroll}
+          onLayout={handlePickerListLayout}
+          onContentSizeChange={handlePickerContentSizeChange}
+          onScrollBeginDrag={suppressPickerAutoFocus}
+          onEndReached={handlePickerEndReached}
+          listProps={{
+            initialNumToRender: 18,
+            maxToRenderPerBatch: 12,
+            windowSize: 7,
+            removeClippedSubviews: Platform.OS === 'android',
+            nestedScrollEnabled: true,
+          }}
+        />
       )}
+
+      <PickerBottomSheet
+        styles={styles}
+        visible={invoicePickerOpen}
+        topOffset={Math.max(topInset + 12, Math.round(height * 0.36))}
+        title="Счета"
+        titleIcon="file-pdf-box"
+        onClose={() => setInvoicePickerOpen(false)}
+        preferredHeight={Math.min(430, 112 + downloadableInvoices.length * 66)}
+      >
+        <View style={styles.invoicePickerList}>
+          {downloadableInvoices.map((invoice) => (
+            <View
+              key={invoice.id}
+              style={styles.invoicePickerItem}
+            >
+              <View style={styles.invoicePickerIcon}>
+                <MaterialCommunityIcons name="file-pdf-box" size={22} color="#DC2626" />
+              </View>
+              <View style={styles.invoicePickerText}>
+                <Text style={styles.invoicePickerTitle} numberOfLines={1}>{getClientOrderInvoiceActionLabel(invoice)}</Text>
+                <Text style={styles.invoicePickerMeta} numberOfLines={1}>
+                  {invoice.realizationDate ? `от ${formatDateOnly(invoice.realizationDate)}` : 'Дата реализации не указана'}
+                </Text>
+              </View>
+              <View style={styles.invoiceFileActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Скачать счёт"
+                  disabled={!!invoiceSharingId}
+                  onPress={() => void runInvoiceFileAction(invoice, 'download')}
+                  style={({ pressed }) => [styles.invoiceFileAction, pressed && !invoiceSharingId && styles.flatPressed]}
+                >
+                  {invoiceSharingId === invoice.id && invoiceSharingAction === 'download' ? (
+                    <ActivityIndicator size={24} color="#1D4ED8" />
+                  ) : (
+                    <MaterialCommunityIcons name="download-outline" size={24} color="#1D4ED8" />
+                  )}
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Поделиться счётом"
+                  disabled={!!invoiceSharingId}
+                  onPress={() => void runInvoiceFileAction(invoice, 'share')}
+                  style={({ pressed }) => [styles.invoiceFileAction, styles.invoiceFileActionDivider, pressed && !invoiceSharingId && styles.flatPressed]}
+                >
+                  {invoiceSharingId === invoice.id && invoiceSharingAction === 'share' ? (
+                    <ActivityIndicator size={24} color="#1D4ED8" />
+                  ) : (
+                    <MaterialCommunityIcons name="share-variant-outline" size={24} color="#1D4ED8" />
+                  )}
+                </Pressable>
+              </View>
+            </View>
+          ))}
+        </View>
+      </PickerBottomSheet>
 
       <SheetModal styles={styles} visible={inspectorOpen} onClose={() => setInspectorOpen(false)} title="Инспектор">
         <Text style={styles.orderMeta}>Revision: {workspace.draft.revision || '—'}</Text>
@@ -2548,18 +2920,34 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   );
 }
 
-function HeaderSection({
+const HeaderSection = React.memo(function HeaderSection({
   workspace,
+  pickerVisible,
   openPicker,
   openDetails,
   onCommentFocus,
   onResetHeaderPriceType,
+  onDownloadInvoice,
+  onShareInvoice,
+  onRequestInvoice,
+  invoiceDownloadBusy,
+  invoiceShareBusy,
+  invoiceRequesting,
+  invoiceRequestPending,
 }: {
   workspace: any;
+  pickerVisible: boolean;
   openPicker: (kind: PickerKind, lineKey?: string) => void;
   openDetails: (kind: ClientOrderReferenceKind, guid?: string | null) => void;
   onCommentFocus: (targetOrEvent: any) => void;
   onResetHeaderPriceType: () => void;
+  onDownloadInvoice: () => void;
+  onShareInvoice: () => void;
+  onRequestInvoice: () => void;
+  invoiceDownloadBusy: boolean;
+  invoiceShareBusy: boolean;
+  invoiceRequesting: boolean;
+  invoiceRequestPending: boolean;
 }) {
   const today = React.useMemo(() => {
     const next = new Date();
@@ -2568,8 +2956,11 @@ function HeaderSection({
   }, []);
   const maxDate = React.useMemo(() => { const next = new Date(); next.setMonth(next.getMonth() + 2); return next; }, []);
   const [commentHeight, setCommentHeight] = React.useState(58);
+  const [commentFocusReleaseBlocked, setCommentFocusReleaseBlocked] = React.useState(false);
   const commentFocusedRef = React.useRef(false);
   const commentTargetRef = React.useRef<unknown>(null);
+  const commentInputRef = React.useRef<any>(null);
+  const commentFocusBlocked = pickerVisible || commentFocusReleaseBlocked;
   const readOnly = !!workspace.readOnly || !!workspace.mutationLocked;
   const missingOrderContext = !workspace.draft.organizationGuid || !workspace.draft.counterpartyGuid;
   const showRequiredErrors = !readOnly;
@@ -2585,22 +2976,50 @@ function HeaderSection({
     || workspace.selections.deliveryAddress?.fullAddress
     || workspace.selections.deliveryAddress?.name
   );
+  const showDependentRequiredErrors = showRequiredErrors
+    && hasCounterpartyValue
+    && !workspace.loadingDefaults;
   const deliveryAddressComment = workspace.selections.deliveryAddress?.deliveryComment || workspace.selections.deliveryAddress?.comment || '';
+
+  React.useEffect(() => {
+    if (pickerVisible) {
+      setCommentFocusReleaseBlocked(true);
+      commentFocusedRef.current = false;
+      commentTargetRef.current = null;
+      commentInputRef.current?.blur?.();
+      return undefined;
+    }
+    if (!commentFocusReleaseBlocked) return undefined;
+    const timer = setTimeout(() => setCommentFocusReleaseBlocked(false), 450);
+    return () => clearTimeout(timer);
+  }, [commentFocusReleaseBlocked, pickerVisible]);
+
   return <View style={styles.cardStack}>
     <FlatDocumentField label="Организация" value={workspace.selections.organization?.name || 'Выбрать'} icon="office-building-outline" onPress={() => openPicker('organization')} disabled={readOnly} invalid={showRequiredErrors && !hasOrganizationValue} loading={workspace.documentHeaderLoadingState.organization} onDetails={() => openDetails('organization', workspace.draft.organizationGuid || workspace.selections.organization?.guid)} />
     <FlatDocumentField label="Контрагент" value={workspace.selections.counterparty?.name || 'Выбрать'} icon="account-outline" onPress={() => openPicker('counterparty')} disabled={readOnly} invalid={showRequiredErrors && !hasCounterpartyValue} loading={workspace.documentHeaderLoadingState.counterparty} onDetails={() => openDetails('counterparty', workspace.draft.counterpartyGuid || workspace.selections.counterparty?.guid)} />
-    <FlatDocumentField label="Соглашение" value={workspace.selections.agreement?.name || 'Выбрать'} icon="file-document-outline" onPress={() => openPicker('agreement')} disabled={readOnly || missingOrderContext} invalid={showRequiredErrors && !hasAgreementValue} loading={workspace.documentHeaderLoadingState.agreement} onDetails={() => openDetails('agreement', workspace.draft.agreementGuid || workspace.selections.agreement?.guid)} />
-    <FlatDocumentField label="Договор" value={workspace.selections.contract?.name || workspace.selections.contract?.number || 'Выбрать'} icon="file-sign" onPress={() => openPicker('contract')} disabled={readOnly || missingOrderContext} invalid={showRequiredErrors && !hasContractValue} loading={workspace.documentHeaderLoadingState.contract} onDetails={() => openDetails('contract', workspace.draft.contractGuid || workspace.selections.contract?.guid)} />
+    <FlatDocumentField label="Соглашение" value={workspace.selections.agreement?.name || 'Выбрать'} icon="file-document-outline" onPress={() => openPicker('agreement')} disabled={readOnly || missingOrderContext} invalid={showDependentRequiredErrors && !hasAgreementValue} loading={workspace.documentHeaderLoadingState.agreement} onDetails={() => openDetails('agreement', workspace.draft.agreementGuid || workspace.selections.agreement?.guid)} />
+    <FlatDocumentField label="Договор" value={workspace.selections.contract?.name || workspace.selections.contract?.number || 'Выбрать'} icon="file-sign" onPress={() => openPicker('contract')} disabled={readOnly || missingOrderContext} invalid={showDependentRequiredErrors && !hasContractValue} loading={workspace.documentHeaderLoadingState.contract} onDetails={() => openDetails('contract', workspace.draft.contractGuid || workspace.selections.contract?.guid)} />
     <FlatDocumentField
       label="Вид цены"
       value={workspace.draft.priceTypeName || workspace.selections.agreement?.priceType?.name || 'Выбрать'}
       icon="tag-outline"
       onPress={() => openPicker('priceType')}
       disabled={readOnly || missingOrderContext}
-      invalid={showRequiredErrors && !hasPriceTypeValue}
+      invalid={showDependentRequiredErrors && !hasPriceTypeValue}
       loading={workspace.documentHeaderLoadingState.priceType}
       onDetails={() => openDetails('price-type', workspace.draft.priceTypeGuid || workspace.selections.agreement?.priceType?.guid)}
       onReset={workspace.isHeaderPriceTypeCustom ? onResetHeaderPriceType : undefined}
+    />
+    <InvoiceRequestField
+      workspace={workspace}
+      readOnly={readOnly}
+      onDownload={onDownloadInvoice}
+      onShare={onShareInvoice}
+      onRequestInvoice={onRequestInvoice}
+      downloadBusy={invoiceDownloadBusy}
+      shareBusy={invoiceShareBusy}
+      requestBusy={invoiceRequesting}
+      requestPending={invoiceRequestPending}
     />
     <FlatSegmentedField
       label="Форма оплаты"
@@ -2620,8 +3039,8 @@ function HeaderSection({
       loading={workspace.loadingDefaults}
       onChange={(value) => workspace.patchDraft({ deliveryMethod: value })}
     />
-    <FlatDocumentField label="Склад" value={workspace.selections.warehouse?.name || 'Выбрать'} icon="warehouse" onPress={() => openPicker('warehouse')} disabled={readOnly || missingOrderContext} invalid={showRequiredErrors && !hasWarehouseValue} loading={workspace.documentHeaderLoadingState.warehouse} onDetails={() => openDetails('warehouse', workspace.draft.warehouseGuid || workspace.selections.warehouse?.guid)} />
-    <FlatDocumentField label="Адрес доставки" value={workspace.selections.deliveryAddress?.fullAddress || workspace.selections.deliveryAddress?.name || 'Выбрать'} helperText={deliveryAddressComment} icon="map-marker-outline" onPress={() => openPicker('deliveryAddress')} disabled={readOnly || missingOrderContext} invalid={showRequiredErrors && !hasDeliveryAddressValue} loading={workspace.documentHeaderLoadingState.deliveryAddress} onDetails={() => openDetails('delivery-address', workspace.draft.deliveryAddressGuid || workspace.selections.deliveryAddress?.guid)} />
+    <FlatDocumentField label="Склад" value={workspace.selections.warehouse?.name || 'Выбрать'} icon="warehouse" onPress={() => openPicker('warehouse')} disabled={readOnly || missingOrderContext} invalid={showDependentRequiredErrors && !hasWarehouseValue} loading={workspace.documentHeaderLoadingState.warehouse} onDetails={() => openDetails('warehouse', workspace.draft.warehouseGuid || workspace.selections.warehouse?.guid)} />
+    <FlatDocumentField label="Адрес доставки" value={workspace.selections.deliveryAddress?.fullAddress || workspace.selections.deliveryAddress?.name || 'Выбрать'} helperText={deliveryAddressComment} icon="map-marker-outline" onPress={() => openPicker('deliveryAddress')} disabled={readOnly || missingOrderContext} invalid={showDependentRequiredErrors && !hasDeliveryAddressValue} loading={workspace.documentHeaderLoadingState.deliveryAddress} onDetails={() => openDetails('delivery-address', workspace.draft.deliveryAddressGuid || workspace.selections.deliveryAddress?.guid)} />
     <FlatDateField
       label="Дата отгрузки"
       value={workspace.draft.deliveryDate || undefined}
@@ -2632,6 +3051,7 @@ function HeaderSection({
       onChange={(iso) => workspace.patchDraft({ deliveryDate: iso })}
     />
     <PaperTextInput
+      ref={commentInputRef}
       mode="outlined"
       label="Комментарий"
       value={workspace.draft.comment || ''}
@@ -2639,8 +3059,13 @@ function HeaderSection({
       multiline
       scrollEnabled={false}
       dense
-      editable={!readOnly}
+      editable={!readOnly && !commentFocusBlocked}
       onFocus={(event) => {
+        if (commentFocusBlocked) {
+          commentInputRef.current?.blur?.();
+          Keyboard.dismiss();
+          return;
+        }
         commentFocusedRef.current = true;
         commentTargetRef.current = event.nativeEvent.target;
         onCommentFocus(event.nativeEvent.target);
@@ -2663,6 +3088,32 @@ function HeaderSection({
       activeOutlineColor={readOnly ? 'rgba(216, 226, 240, 0.7)' : '#D8E2F0'}
     />
   </View>;
+}, areHeaderSectionPropsEqual);
+
+function areHeaderSectionPropsEqual(previous: any, next: any) {
+  const a = previous.workspace;
+  const b = next.workspace;
+  return previous.pickerVisible === next.pickerVisible
+    && previous.openPicker === next.openPicker
+    && previous.openDetails === next.openDetails
+    && previous.onCommentFocus === next.onCommentFocus
+    && previous.onResetHeaderPriceType === next.onResetHeaderPriceType
+    && previous.onDownloadInvoice === next.onDownloadInvoice
+    && previous.onShareInvoice === next.onShareInvoice
+    && previous.onRequestInvoice === next.onRequestInvoice
+    && previous.invoiceDownloadBusy === next.invoiceDownloadBusy
+    && previous.invoiceShareBusy === next.invoiceShareBusy
+    && previous.invoiceRequesting === next.invoiceRequesting
+    && previous.invoiceRequestPending === next.invoiceRequestPending
+    && a.draft === b.draft
+    && a.selections === b.selections
+    && a.selectedOrder === b.selectedOrder
+    && a.documentHeaderLoadingState === b.documentHeaderLoadingState
+    && a.loadingDefaults === b.loadingDefaults
+    && a.readOnly === b.readOnly
+    && a.mutationLocked === b.mutationLocked
+    && a.isHeaderPriceTypeCustom === b.isHeaderPriceTypeCustom
+    && a.patchDraft === b.patchDraft;
 }
 
 function FlatDateField({
@@ -2875,6 +3326,13 @@ function DocumentActionsMenu({
   copyFromMenu,
   removeOrCancel,
   deleteDocumentFromMenu,
+  invoiceCount,
+  invoiceActionBusy,
+  onDownloadInvoice,
+  onShareInvoice,
+  canRequestInvoice,
+  invoiceRequestBusy,
+  onRequestInvoice,
   compact = false,
 }: {
   styles: any;
@@ -2887,6 +3345,13 @@ function DocumentActionsMenu({
   copyFromMenu: () => void;
   removeOrCancel: () => void;
   deleteDocumentFromMenu: () => void;
+  invoiceCount: number;
+  invoiceActionBusy: boolean;
+  onDownloadInvoice: () => void;
+  onShareInvoice: () => void;
+  canRequestInvoice: boolean;
+  invoiceRequestBusy: boolean;
+  onRequestInvoice: () => void;
   compact?: boolean;
 }) {
   const hideSave = (workspace.selectedOrderQueued || workspace.selectedOrderSynced) && workspace.dirty;
@@ -2926,7 +3391,20 @@ function DocumentActionsMenu({
         <Menu.Item leadingIcon="content-save-outline" title={workspace.saving ? 'Сохраняю...' : 'Сохранить'} onPress={saveDraftFromMenu} disabled={workspace.readOnly || workspace.mutationLocked || !workspace.validation.canSave} />
       ) : null}
       <Menu.Item leadingIcon="cloud-upload-outline" title={workspace.submitting ? 'Отправляю...' : 'Отправить в 1С'} onPress={submitFromMenu} disabled={workspace.readOnly || workspace.mutationLocked || !workspace.canSubmitOrder} />
-      <Menu.Item leadingIcon="content-copy" title={workspace.copying ? 'Копирую...' : 'Копировать'} onPress={copyFromMenu} disabled={workspace.mutationLocked || (!workspace.draft.guid && !workspace.selectedGuid)} />
+      <Menu.Item leadingIcon="content-copy" title={workspace.copying ? 'Копирую...' : 'Копировать'} onPress={copyFromMenu} disabled={workspace.mutationLocked || !workspace.hasEditableDocument} />
+      {invoiceCount > 0 ? (
+        <>
+          <Menu.Item leadingIcon="download-outline" title="Скачать счёт" onPress={onDownloadInvoice} disabled={invoiceActionBusy} />
+          <Menu.Item leadingIcon="share-variant-outline" title="Поделиться счётом" onPress={onShareInvoice} disabled={invoiceActionBusy} />
+        </>
+      ) : canRequestInvoice ? (
+        <Menu.Item
+          leadingIcon="file-download-outline"
+          title={invoiceRequestBusy ? 'Счёт формируется...' : 'Запросить счёт'}
+          onPress={onRequestInvoice}
+          disabled={invoiceRequestBusy}
+        />
+      ) : null}
       {canDeleteLocal ? (
         <Menu.Item leadingIcon="trash-can-outline" title="Удалить документ" disabled={workspace.mutationLocked} onPress={deleteDocumentFromMenu} />
       ) : null}
@@ -2940,6 +3418,7 @@ function DocumentActionsMenu({
 
 function DocumentHeaderTitleSlot({
   styles,
+  loading = false,
   documentNumber,
   status,
   statusText,
@@ -2954,6 +3433,7 @@ function DocumentHeaderTitleSlot({
   onClose,
 }: {
   styles: any;
+  loading?: boolean;
   documentNumber: string;
   status: string;
   statusText: string;
@@ -2967,6 +3447,15 @@ function DocumentHeaderTitleSlot({
   onOpen: () => void;
   onClose: () => void;
 }) {
+  if (loading) {
+    return (
+      <View style={styles.documentTopTitleRow} accessibilityLabel="Загрузка документа">
+        <View style={styles.documentTopStatusSkeleton} />
+        <View style={styles.documentTopNumberSkeleton} />
+      </View>
+    );
+  }
+
   const statusIcon = orderStatusIcon(status);
   const position = Number(queuePosition || 0);
   const queueError = lastExportError || last1cError || null;
@@ -2992,7 +3481,7 @@ function DocumentHeaderTitleSlot({
               pressed && styles.flatPressed,
             ]}
           >
-            <MaterialCommunityIcons name={statusIcon.name as any} size={17} color={statusIcon.color} />
+            <MaterialCommunityIcons name={statusIcon.name as any} size={21} color={statusIcon.color} />
             {position > 0 ? (
               <View style={styles.documentTopQueueBadge}>
                 <Text style={styles.documentTopQueueBadgeText}>{position > 99 ? '99+' : position}</Text>
@@ -3038,20 +3527,8 @@ function DocumentHeaderSlot({
   workspace,
   section,
   setSection,
-  itemsSearch,
-  setItemsSearch,
-  searchFocused,
-  onSearchFocus,
-  onSearchBlur,
-  searchResults,
-  searchLoading,
-  searchLoadingMore,
-  searchHasMore,
-  searchError,
-  onSelectSearchResult,
-  onLoadMoreSearchResults,
-  openPicker,
-  onClearItems,
+  pagerProgress,
+  loading = false,
   hasHeaderErrors,
   hasItemsErrors,
 }: {
@@ -3059,72 +3536,122 @@ function DocumentHeaderSlot({
   workspace: any;
   section: EditorSection;
   setSection: (section: EditorSection) => void;
-  itemsSearch: string;
-  setItemsSearch: (value: string) => void;
-  searchFocused: boolean;
-  onSearchFocus: () => void;
-  onSearchBlur: () => void;
-  searchResults: ClientOrderProduct[];
-  searchLoading: boolean;
-  searchLoadingMore: boolean;
-  searchHasMore: boolean;
-  searchError: string | null;
-  onSelectSearchResult: (product: ClientOrderProduct) => void;
-  onLoadMoreSearchResults: () => void;
-  openPicker: (kind: PickerKind, lineKey?: string) => void;
-  onClearItems: () => void;
+  pagerProgress: Animated.AnimatedAddition<number>;
+  loading?: boolean;
   hasHeaderErrors?: boolean;
   hasItemsErrors?: boolean;
 }) {
-  const headerIconColor = hasHeaderErrors ? '#DC2626' : section === 'header' ? '#1D4ED8' : '#64748B';
-  const itemsIconColor = hasItemsErrors ? '#DC2626' : section === 'items' ? '#1D4ED8' : '#64748B';
+  const [tabsWidth, setTabsWidth] = React.useState(0);
+  const headerHasErrors = !loading && !!hasHeaderErrors;
+  const itemsHaveErrors = !loading && !!hasItemsErrors;
+  const tabIndicatorWidth = Math.max(0, (tabsWidth - 9) / 2);
+  const tabIndicatorTranslateX = pagerProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, tabIndicatorWidth + 3],
+    extrapolate: 'clamp',
+  });
+  const headerTabOpacity = pagerProgress.interpolate({ inputRange: [0, 1], outputRange: [1, 0.68], extrapolate: 'clamp' });
+  const itemsTabOpacity = pagerProgress.interpolate({ inputRange: [0, 1], outputRange: [0.68, 1], extrapolate: 'clamp' });
+  const headerTextColor = headerHasErrors
+    ? '#DC2626'
+    : pagerProgress.interpolate({ inputRange: [0, 1], outputRange: ['#1D4ED8', '#64748B'], extrapolate: 'clamp' });
+  const itemsTextColor = itemsHaveErrors
+    ? '#DC2626'
+    : pagerProgress.interpolate({ inputRange: [0, 1], outputRange: ['#64748B', '#1D4ED8'], extrapolate: 'clamp' });
+  const itemsBadgeColor = pagerProgress.interpolate({ inputRange: [0, 1], outputRange: ['#E2E8F0', '#BFDBFE'], extrapolate: 'clamp' });
+  const headerIconActiveOpacity = pagerProgress.interpolate({ inputRange: [0, 1], outputRange: [1, 0], extrapolate: 'clamp' });
+  const headerIconInactiveOpacity = pagerProgress.interpolate({ inputRange: [0, 1], outputRange: [0, 1], extrapolate: 'clamp' });
+  const itemsIconActiveOpacity = headerIconInactiveOpacity;
+  const itemsIconInactiveOpacity = headerIconActiveOpacity;
   return (
-    <View style={[styles.documentHeaderSlot, section === 'items' && !workspace.readOnly && !workspace.mutationLocked && styles.documentHeaderSlotItems]}>
-      {workspace.error ? <Text style={styles.error}>{normalizeClientOrderUserErrorMessage(workspace.error, 'Не удалось выполнить действие')}</Text> : null}
-      <View style={styles.documentTabsRow}>
+    <View style={styles.documentHeaderSlot}>
+      {!loading && workspace.error ? (
+        <View accessibilityLiveRegion="polite" style={styles.documentErrorBanner}>
+          <MaterialCommunityIcons name="alert-circle-outline" size={18} color="#B91C1C" />
+          <Text selectable style={styles.documentErrorBannerText}>
+            {normalizeClientOrderUserErrorMessage(workspace.error, 'Не удалось выполнить действие')}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Закрыть сообщение об ошибке"
+            hitSlop={6}
+            onPress={() => workspace.setError(null)}
+            style={({ pressed }) => [styles.documentErrorDismissButton, pressed && styles.flatPressed]}
+          >
+            <MaterialCommunityIcons name="close" size={18} color="#991B1B" />
+          </Pressable>
+        </View>
+      ) : null}
+      <View
+        style={styles.documentTabsRow}
+        onLayout={(event) => setTabsWidth(Math.round(event.nativeEvent.layout.width))}
+      >
+        {tabIndicatorWidth > 0 ? (
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.documentTabIndicator,
+              { width: tabIndicatorWidth },
+              { transform: [{ translateX: tabIndicatorTranslateX }] },
+            ]}
+          />
+        ) : null}
         <Pressable
           accessibilityRole="button"
+          accessibilityState={{ selected: section === 'header' }}
           onPress={() => setSection('header')}
-          style={({ pressed }) => [styles.documentTab, section === 'header' && styles.documentTabActive, pressed && styles.flatPressed]}
+          style={({ pressed }) => [styles.documentTab, pressed && styles.flatPressed]}
         >
-          <MaterialCommunityIcons name="clipboard-text-outline" size={16} color={headerIconColor} />
-          <Text style={[styles.documentTabText, section === 'header' && styles.documentTabTextActive]}>Шапка</Text>
+          <Animated.View style={[styles.documentTabContent, { opacity: headerTabOpacity }]}>
+            <View style={styles.documentTabIcon}>
+              {headerHasErrors ? (
+                <MaterialCommunityIcons name="clipboard-text-outline" size={16} color="#DC2626" />
+              ) : (
+                <>
+                  <Animated.View style={[styles.documentTabIconLayer, { opacity: headerIconActiveOpacity }]}>
+                    <MaterialCommunityIcons name="clipboard-text-outline" size={16} color="#1D4ED8" />
+                  </Animated.View>
+                  <Animated.View style={[styles.documentTabIconLayer, { opacity: headerIconInactiveOpacity }]}>
+                    <MaterialCommunityIcons name="clipboard-text-outline" size={16} color="#64748B" />
+                  </Animated.View>
+                </>
+              )}
+            </View>
+            <Animated.Text style={[styles.documentTabText, { color: headerTextColor }]}>Шапка</Animated.Text>
+          </Animated.View>
         </Pressable>
         <Pressable
           accessibilityRole="button"
+          accessibilityState={{ selected: section === 'items' }}
           onPress={() => setSection('items')}
-          style={({ pressed }) => [styles.documentTab, section === 'items' && styles.documentTabActive, pressed && styles.flatPressed]}
+          style={({ pressed }) => [styles.documentTab, pressed && styles.flatPressed]}
         >
-          <MaterialCommunityIcons name="cube-outline" size={16} color={itemsIconColor} />
-          <Text style={[styles.documentTabText, section === 'items' && styles.documentTabTextActive]}>Товары</Text>
-          <View style={[styles.documentTabCountBadge, section === 'items' && styles.documentTabCountBadgeActive]}>
-            <Text style={[styles.documentTabCountText, section === 'items' && styles.documentTabCountTextActive]}>{workspace.draft.items.length}</Text>
-          </View>
+          <Animated.View style={[styles.documentTabContent, { opacity: itemsTabOpacity }]}>
+            <View style={styles.documentTabIcon}>
+              {itemsHaveErrors ? (
+                <MaterialCommunityIcons name="cube-outline" size={16} color="#DC2626" />
+              ) : (
+                <>
+                  <Animated.View style={[styles.documentTabIconLayer, { opacity: itemsIconActiveOpacity }]}>
+                    <MaterialCommunityIcons name="cube-outline" size={16} color="#1D4ED8" />
+                  </Animated.View>
+                  <Animated.View style={[styles.documentTabIconLayer, { opacity: itemsIconInactiveOpacity }]}>
+                    <MaterialCommunityIcons name="cube-outline" size={16} color="#64748B" />
+                  </Animated.View>
+                </>
+              )}
+            </View>
+            <Animated.Text style={[styles.documentTabText, { color: itemsTextColor }]}>Товары</Animated.Text>
+            {loading ? (
+              <View style={styles.documentTabCountSkeleton} />
+            ) : (
+              <Animated.View style={[styles.documentTabCountBadge, { backgroundColor: itemsBadgeColor }]}>
+                <Animated.Text style={[styles.documentTabCountText, { color: itemsTextColor }]}>{workspace.draft.items.length}</Animated.Text>
+              </Animated.View>
+            )}
+          </Animated.View>
         </Pressable>
       </View>
-      {section === 'items' && !workspace.readOnly && !workspace.mutationLocked ? (
-        <>
-          <View style={styles.documentHeaderDivider} />
-          <ItemsToolbar
-            workspace={workspace}
-            itemsSearch={itemsSearch}
-            setItemsSearch={setItemsSearch}
-            searchFocused={searchFocused}
-            onSearchFocus={onSearchFocus}
-            onSearchBlur={onSearchBlur}
-            searchResults={searchResults}
-            searchLoading={searchLoading}
-            searchLoadingMore={searchLoadingMore}
-            searchHasMore={searchHasMore}
-            searchError={searchError}
-            onSelectSearchResult={onSelectSearchResult}
-            onLoadMoreSearchResults={onLoadMoreSearchResults}
-            openPicker={openPicker}
-            onClearItems={onClearItems}
-            embedded
-          />
-        </>
-      ) : null}
     </View>
   );
 }
@@ -3574,130 +4101,128 @@ function ProductPickerFullscreenPanel({
       </View>
     );
   }, [showFooterLoader, styles]);
+  const filters = React.useMemo<SearchPickerFilter[]>(() => ([
+    {
+      key: 'in-stock',
+      label: 'С остатками',
+      selected: inStockOnly,
+      onPress: onToggleInStockOnly,
+      accessibilityLabel: 'Показывать только товары с остатком',
+      tone: 'success',
+    },
+  ]), [inStockOnly, onToggleInStockOnly]);
+  const footer = selectedCount > 0 ? (
+    <Surface mode="flat" style={[styles.filtersFullscreenFooter, { paddingBottom: Math.max(bottomInset, 10) + 8 }]}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Очистить подборку"
+        onPress={onClearSelection}
+        style={({ pressed }) => [styles.productPickerClearSelectionButton, pressed && styles.flatPressed]}
+      >
+        <MaterialCommunityIcons name="trash-can-outline" size={20} color="#B91C1C" />
+      </Pressable>
+      <PaperButton
+        mode="contained"
+        onPress={onTransfer}
+        buttonColor="#2563EB"
+        textColor="#FFFFFF"
+        icon="arrow-down-circle-outline"
+        style={styles.filtersFullscreenFooterButton}
+        labelStyle={styles.filtersFullscreenFooterLabel}
+        contentStyle={styles.filtersFullscreenFooterContent}
+      >
+        {formatProductTransferLabel(selectedCount)}
+      </PaperButton>
+    </Surface>
+  ) : null;
   if (!visible) return null;
 
   return (
-    <View style={styles.filtersLookupOverlay}>
-      <Surface mode="flat" style={[styles.filtersFullscreenHeader, styles.productPickerFullscreenHeader, { paddingTop: Math.max(topInset, 10) + 8 }]}>
-        <View style={styles.filtersFullscreenHeaderRow}>
-          <View style={styles.filtersLookupTitleRow}>
-            <MaterialCommunityIcons name="cube-outline" size={20} color="#2563EB" />
-            <Text style={styles.filtersFullscreenTitle}>Подбор товаров</Text>
-          </View>
-          <View style={styles.productPickerFullscreenHeaderActions}>
-            <Pressable
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: inStockOnly }}
-              accessibilityLabel="Показывать только товары с остатком"
-              onPress={onToggleInStockOnly}
-              style={[
-                styles.productPickerFullscreenStockChip,
-                inStockOnly && styles.productPickerFullscreenStockChipActive,
-              ]}
-            >
-              <MaterialCommunityIcons
-                name={inStockOnly ? 'checkbox-marked' : 'checkbox-blank-outline'}
-                size={18}
-                color={inStockOnly ? '#16A34A' : '#64748B'}
-              />
-              <Text style={[styles.productPickerFullscreenStockText, inStockOnly && styles.productPickerFullscreenStockTextActive]}>
-                С остатками
-              </Text>
-            </Pressable>
-            <Pressable accessibilityRole="button" accessibilityLabel="Закрыть подбор товаров" onPress={onClose} style={({ pressed }) => [styles.filtersCloseButton, pressed && styles.flatPressed]}>
-              <MaterialCommunityIcons name="close" size={22} color="#0F172A" />
-            </Pressable>
-          </View>
-        </View>
-        <View style={styles.productPickerFullscreenSearchArea}>
-          <CompactSearchbar
-            inputRef={searchInputRef}
-            style={[styles.pickerSearchFlat, styles.productPickerSearchFlat, styles.productPickerFullscreenSearch]}
-            inputStyle={[styles.pickerSearchInputFlat, styles.productPickerFullscreenSearchInput]}
-            value={search}
-            onChangeText={onSearchChange}
-            placeholder="Поиск товара"
-            loading={showSearchLoader}
-            debounceMs={520}
-          />
-        </View>
-      </Surface>
-      <FlatList
-        ref={listRef}
-        style={styles.productPickerFullscreenList}
-        contentContainerStyle={[styles.pickerListContent, { paddingBottom: Math.max(bottomInset, 10) + (selectedCount > 0 ? 92 : 22) }]}
-        data={items}
-        extraData={`${selectedProductGuidKey}:${orderProductGuidKey}:${hasPriceType ? 'price' : 'noprice'}:${hasWarehouse ? 'warehouse' : 'nowarehouse'}`}
-        keyExtractor={keyExtractor}
-        renderItem={renderProductItem}
-        ListHeaderComponent={listHeader}
-        ListEmptyComponent={listEmpty}
-        ListFooterComponent={listFooter}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
-        onScroll={onScroll}
-        onMomentumScrollEnd={onMomentumScrollEnd}
-        onLayout={onLayout}
-        onContentSizeChange={onContentSizeChange}
-        onScrollBeginDrag={onScrollBeginDrag}
-        onEndReached={onEndReached}
-        onEndReachedThreshold={0.8}
-        initialNumToRender={12}
-        maxToRenderPerBatch={8}
-        updateCellsBatchingPeriod={40}
-        windowSize={7}
-        removeClippedSubviews={Platform.OS === 'android'}
-        nestedScrollEnabled
-        scrollEventThrottle={16}
-      />
-      {selectedCount > 0 ? (
-        <Surface mode="flat" style={[styles.filtersFullscreenFooter, { paddingBottom: Math.max(bottomInset, 10) + 8 }]}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Очистить подборку"
-            onPress={onClearSelection}
-            style={({ pressed }) => [styles.productPickerClearSelectionButton, pressed && styles.flatPressed]}
-          >
-            <MaterialCommunityIcons name="trash-can-outline" size={20} color="#B91C1C" />
-          </Pressable>
-          <PaperButton
-            mode="contained"
-            onPress={onTransfer}
-            buttonColor="#2563EB"
-            textColor="#FFFFFF"
-            icon="arrow-down-circle-outline"
-            style={styles.filtersFullscreenFooterButton}
-            labelStyle={styles.filtersFullscreenFooterLabel}
-            contentStyle={styles.filtersFullscreenFooterContent}
-          >
-            {formatProductTransferLabel(selectedCount)}
-          </PaperButton>
-        </Surface>
-      ) : null}
-    </View>
+    <SearchPickerScreen<ClientOrderProduct>
+      visible
+      pickerKey="product"
+      topInset={topInset}
+      title="Подбор товаров"
+      titleIcon="cube-outline"
+      onClose={onClose}
+      search={search}
+      onSearchChange={onSearchChange}
+      searchPlaceholder="Поиск товара"
+      searchAccessibilityLabel="Поиск товара"
+      searchInputRef={searchInputRef}
+      autoFocus={hasOrderContext}
+      searchLoading={showSearchLoader}
+      filters={filters}
+      data={items}
+      extraData={`${selectedProductGuidKey}:${orderProductGuidKey}:${hasPriceType ? 'price' : 'noprice'}:${hasWarehouse ? 'warehouse' : 'nowarehouse'}`}
+      keyExtractor={keyExtractor}
+      renderItem={renderProductItem}
+      listRef={listRef}
+      listStyle={styles.productPickerFullscreenList}
+      contentContainerStyle={[styles.pickerListContent, { paddingBottom: Math.max(bottomInset, 10) + (selectedCount > 0 ? 92 : 22) }]}
+      ListHeaderComponent={listHeader}
+      ListEmptyComponent={listEmpty}
+      ListFooterComponent={listFooter}
+      onScroll={onScroll}
+      onMomentumScrollEnd={onMomentumScrollEnd}
+      onLayout={onLayout}
+      onContentSizeChange={onContentSizeChange}
+      onScrollBeginDrag={onScrollBeginDrag}
+      onEndReached={onEndReached}
+      listProps={{
+        initialNumToRender: 12,
+        maxToRenderPerBatch: 8,
+        updateCellsBatchingPeriod: 40,
+        windowSize: 7,
+        removeClippedSubviews: Platform.OS === 'android',
+        nestedScrollEnabled: true,
+      }}
+      footer={footer}
+    />
   );
 }
 
 function DocumentBottomBar({
   styles,
   workspace,
+  section,
+  pagerProgress,
   safeBottom,
+  layout,
+  onAddProduct,
   onPrimaryAction,
 }: {
   styles: any;
   workspace: any;
+  section: EditorSection;
+  pagerProgress: Animated.AnimatedAddition<number>;
   safeBottom: number;
+  layout: ClientOrdersDocumentBottomBarLayout;
+  onAddProduct: () => void;
   onPrimaryAction: () => void;
 }) {
   const backgroundColor = useThemeColor({}, 'background');
   const textColor = useThemeColor({}, 'text');
   const surfaceColor = withColorOpacity(backgroundColor, 0.9);
   const borderColor = withColorOpacity(textColor, 0.18);
+  const compact = layout === 'compact';
+  const stacked = layout === 'stacked';
   const shouldSubmitChangedSyncedDocument = !!workspace.dirty && (!!workspace.selectedOrderQueued || !!workspace.selectedOrderSynced);
   const shouldSave = !!workspace.dirty && !shouldSubmitChangedSyncedDocument;
   const shouldRetry1cError = !!workspace.selectedOrderHas1cError && !workspace.dirty;
   const busy = !!workspace.saving || !!workspace.submitting;
   const disabled = workspace.readOnly || busy || (shouldSave ? !workspace.validation.canSave : !workspace.canSubmitOrder);
+  const showProductPickerButton = !workspace.readOnly && !workspace.mutationLocked;
+  const productPickerOpacity = pagerProgress.interpolate({
+    inputRange: [0, 0.12, 0.65, 1],
+    outputRange: [0, 0.2, 1, 1],
+    extrapolate: 'clamp',
+  });
+  const productPickerTranslateY = pagerProgress.interpolate({
+    inputRange: [0, 0.65, 1],
+    outputRange: [50, 0, 0],
+    extrapolate: 'clamp',
+  });
   const label = workspace.saving
     ? 'Сохраняю'
     : workspace.submitting
@@ -3708,6 +4233,12 @@ function DocumentBottomBar({
           ? 'Повторить'
         : 'Отправить';
   const currency = workspace.draft.currency;
+  const profitAvailable = canComputeDraftProfit(workspace.draft);
+  const profitLoading = !!workspace.loadingReceiptPrices
+    && workspace.draft.items.some((item: DraftItem) => !isCancelledDraftItem(item));
+  const profitValue = profitAvailable && Math.abs(Number(workspace.localProfit) || 0) >= 0.005
+    ? formatMoney(workspace.localProfit, currency)
+    : '-';
   const metrics = [
     {
       key: 'total',
@@ -3715,17 +4246,19 @@ function DocumentBottomBar({
       value: formatMoney(workspace.localTotal, currency),
       icon: 'cash-multiple',
       color: '#2563EB',
-      backgroundColor: '#EFF6FF',
+      loading: false,
       description: 'Итоговая сумма по активным строкам заказа с учетом скидок.',
     },
     {
       key: 'margin',
       label: 'Наценка',
-      value: formatMoney(workspace.localProfit, currency),
+      value: profitValue,
       icon: 'chart-line',
-      color: workspace.localProfit < 0 ? '#DC2626' : '#16A34A',
-      backgroundColor: workspace.localProfit < 0 ? '#FEF2F2' : '#F0FDF4',
-      description: 'Предварительная сумма наценки: сумма продажи минус себестоимость по активным строкам.',
+      color: !profitAvailable ? '#64748B' : workspace.localProfit < 0 ? '#DC2626' : '#16A34A',
+      loading: profitLoading,
+      description: profitAvailable
+        ? 'Предварительная сумма наценки: сумма продажи минус себестоимость по активным строкам.'
+        : 'Наценка появится после загрузки себестоимости всех активных строк.',
     },
     {
       key: 'weight',
@@ -3733,7 +4266,7 @@ function DocumentBottomBar({
       value: formatOrderWeight(workspace.localWeight),
       icon: 'weight-kilogram',
       color: '#7C3AED',
-      backgroundColor: '#F5F3FF',
+      loading: false,
       description: 'Расчетный вес активных строк: количество умножается на вес выбранной упаковки или базовой единицы из 1С.',
     },
     {
@@ -3742,13 +4275,34 @@ function DocumentBottomBar({
       value: '-',
       icon: 'account-cash-outline',
       color: '#D97706',
-      backgroundColor: '#FFFBEB',
+      loading: false,
       description: 'Показатель пока не рассчитывается. Позже сюда можно добавить формулу чистой прибыли менеджера.',
     },
   ];
 
   return (
     <View style={styles.documentBottomBar}>
+      {showProductPickerButton ? (
+        <Animated.View
+          pointerEvents={section === 'items' ? 'auto' : 'none'}
+          accessibilityElementsHidden={section !== 'items'}
+          importantForAccessibility={section === 'items' ? 'auto' : 'no-hide-descendants'}
+          style={[
+            styles.documentBottomProductPickerWrap,
+            { opacity: productPickerOpacity, transform: [{ translateY: productPickerTranslateY }] },
+          ]}
+        >
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Открыть подбор товаров"
+            onPress={onAddProduct}
+            style={({ pressed }) => [styles.documentBottomProductPickerButton, pressed && styles.flatPressed]}
+          >
+            <MaterialCommunityIcons name="plus-circle-outline" size={20} color="#2563EB" />
+            <Text style={styles.documentBottomProductPickerText}>Подбор товаров</Text>
+          </Pressable>
+        </Animated.View>
+      ) : null}
       <LiquidGlassSurface
         borderColor={borderColor}
         overlayColor={surfaceColor}
@@ -3757,26 +4311,39 @@ function DocumentBottomBar({
         webBackdropFilter="blur(22px) saturate(160%)"
         style={[styles.documentBottomGlass, { paddingBottom: Math.max(safeBottom, 8) + 8 }]}
       >
-        <View style={styles.documentBottomContent}>
-          <View style={styles.documentBottomInfo}>
+        <View style={[
+          styles.documentBottomContent,
+          compact && styles.documentBottomContentCompact,
+          stacked && styles.documentBottomContentStacked,
+        ]}>
+          <View style={[styles.documentBottomInfo, stacked && styles.documentBottomInfoStacked]}>
             <View style={styles.documentBottomMetricsGrid}>
               {metrics.map((metric) => (
                 <Pressable
                   key={metric.key}
                   accessibilityRole="button"
-                  accessibilityLabel={`${metric.label}: ${metric.value}`}
+                  accessibilityLabel={metric.loading ? `${metric.label}: загрузка` : `${metric.label}: ${metric.value}`}
                   onPress={() => Alert.alert(metric.label, metric.description)}
                   style={({ pressed }) => [
                     styles.documentBottomMetric,
+                    compact && styles.documentBottomMetricCompact,
+                    stacked && styles.documentBottomMetricStacked,
                     pressed && styles.flatPressed,
                   ]}
                 >
-                  <View style={[styles.documentBottomMetricIcon, { backgroundColor: metric.backgroundColor }]}>
-                    <MaterialCommunityIcons name={metric.icon as any} size={15} color={metric.color} />
+                  <View style={styles.documentBottomMetricIcon}>
+                    <MaterialCommunityIcons name={metric.icon as any} size={19} color={metric.color} />
                   </View>
                   <View style={styles.documentBottomMetricTextWrap}>
-                    <Text style={styles.documentBottomMetricLabel} numberOfLines={1}>{metric.label}</Text>
-                    <Text style={[styles.documentBottomMetricValue, { color: metric.color }]} numberOfLines={1}>{metric.value}</Text>
+                    <Text
+                      style={[styles.documentBottomMetricLabel, compact && styles.documentBottomMetricLabelCompact]}
+                      numberOfLines={1}
+                    >
+                      {compact && metric.key === 'netProfit' ? 'Прибыль' : metric.label}
+                    </Text>
+                    {metric.loading
+                      ? <View style={styles.documentBottomMetricValueSkeleton} />
+                      : <Text style={[styles.documentBottomMetricValue, { color: metric.color }]} numberOfLines={1}>{metric.value}</Text>}
                   </View>
                 </Pressable>
               ))}
@@ -3789,6 +4356,8 @@ function DocumentBottomBar({
             onPress={onPrimaryAction}
             style={({ pressed }) => [
               styles.documentBottomPrimaryButton,
+              compact && styles.documentBottomPrimaryButtonCompact,
+              stacked && styles.documentBottomPrimaryButtonStacked,
               !shouldSave && styles.documentBottomPrimaryButtonSubmit,
               disabled && styles.disabled,
               pressed && !disabled && styles.flatPressed,
@@ -3806,94 +4375,263 @@ function DocumentBottomBar({
   );
 }
 
-function ItemsSection({
-  workspace,
+const ItemsSection = React.memo(function ItemsSection({
   filteredItems,
-  ui,
+  generalDiscountPercent,
+  currency,
+  readOnly,
+  mutationLocked,
+  itemMessages,
+  itemWarnings,
   onEditItem,
-  onAddItem,
+  onRemoveItem,
   onItemLayout,
   onOpenImages,
 }: {
-  workspace: any;
   filteredItems: any[];
-  ui: ReturnType<typeof getClientOrdersResponsiveMetrics>;
+  generalDiscountPercent: any;
+  currency: string;
+  readOnly: boolean;
+  mutationLocked: boolean;
+  itemMessages: Record<string, string[]>;
+  itemWarnings: Record<string, string[]>;
   onEditItem: (key: string) => void;
-  onAddItem: () => void;
+  onRemoveItem: (key: string) => void;
   onItemLayout: (key: string, y: number) => void;
   onOpenImages: (item: any) => void;
 }) {
   return <View style={styles.itemsFlatSection}>
     {filteredItems.length ? (
-      <View style={[styles.lineList, { paddingBottom: ui.itemsBottomInset }]}>
+      <View style={styles.lineList}>
         {filteredItems.map((item, index) => (
           <View key={item.key} onLayout={(event) => onItemLayout(item.key, event.nativeEvent.layout.y)}>
             <LineItemCard
               item={item}
               index={index}
-              workspace={workspace}
-              onPress={() => onEditItem(item.key)}
-              onRemove={() => workspace.removeItem(item.key)}
-              onOpenImages={() => onOpenImages(item)}
+              generalDiscountPercent={generalDiscountPercent}
+              currency={currency}
+              readOnly={readOnly}
+              mutationLocked={mutationLocked}
+              lineMessages={itemMessages[item.key] || EMPTY_LINE_MESSAGES}
+              lineWarnings={itemWarnings?.[item.key] || EMPTY_LINE_MESSAGES}
+              onEditItem={onEditItem}
+              onRemoveItem={onRemoveItem}
+              onOpenImages={onOpenImages}
             />
           </View>
         ))}
-        {!workspace.readOnly && !workspace.mutationLocked ? <AddProductListCard onPress={onAddItem} /> : null}
       </View>
     ) : (
-      <View style={[styles.lineList, { paddingBottom: ui.itemsBottomInset }]}>
-        {!workspace.readOnly && !workspace.mutationLocked ? <AddProductListCard onPress={onAddItem} /> : null}
-      </View>
+      <View style={styles.lineList} />
     )}
   </View>;
-}
+});
 
-function AddProductListCard({ onPress }: { onPress: () => void }) {
+function InvoiceRequestField({
+  workspace,
+  readOnly,
+  onDownload,
+  onShare,
+  onRequestInvoice,
+  downloadBusy,
+  shareBusy,
+  requestBusy,
+  requestPending,
+}: {
+  workspace: any;
+  readOnly: boolean;
+  onDownload: () => void;
+  onShare: () => void;
+  onRequestInvoice: () => void;
+  downloadBusy: boolean;
+  shareBusy: boolean;
+  requestBusy: boolean;
+  requestPending: boolean;
+}) {
+  const selectedOrder = workspace.selectedOrder as ClientOrder | null;
+  const invoices = getDownloadableClientOrderInvoices(selectedOrder);
+  const invoiceDownloadAvailable = invoices.length > 0 || !!selectedOrder?.invoiceDownloadAvailable;
+  const hasPendingInvoice = requestPending || getClientOrderInvoicePresentation(selectedOrder).pending;
+  const hasCounterparty = !!(
+    workspace.draft.counterpartyGuid
+    || workspace.selections.counterparty?.guid
+  );
+  const preferenceLoading = hasCounterparty && workspace.loadingDefaults;
+  const autoSendDisabled = readOnly || !hasCounterparty || preferenceLoading;
+  const toggle = () => {
+    if (autoSendDisabled) return;
+    workspace.patchDraft({ invoiceRequested: !workspace.draft.invoiceRequested });
+  };
+
+  if (invoiceDownloadAvailable) {
+    return (
+      <View style={[styles.flatField, styles.invoiceReadyField, readOnly && styles.readOnlyFieldSurface]}>
+        <View style={styles.flatFieldIcon}>
+          <MaterialCommunityIcons name="file-pdf-box" size={20} color="#16A34A" />
+        </View>
+        <View style={styles.flatFieldTextWrap}>
+          <Text style={styles.flatFieldValue} numberOfLines={1}>Скачать счёт</Text>
+        </View>
+        <View style={styles.invoiceFileActions}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Скачать счёт"
+            disabled={downloadBusy || shareBusy}
+            onPress={onDownload}
+            style={({ pressed }) => [styles.invoiceFileAction, pressed && !downloadBusy && !shareBusy && styles.flatPressed]}
+          >
+            {downloadBusy ? (
+              <ActivityIndicator size={24} color="#1D4ED8" />
+            ) : (
+              <MaterialCommunityIcons name="download-outline" size={24} color="#1D4ED8" />
+            )}
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Поделиться счётом"
+            disabled={downloadBusy || shareBusy}
+            onPress={onShare}
+            style={({ pressed }) => [styles.invoiceFileAction, styles.invoiceFileActionDivider, pressed && !downloadBusy && !shareBusy && styles.flatPressed]}
+          >
+            {shareBusy ? (
+              <ActivityIndicator size={24} color="#1D4ED8" />
+            ) : (
+              <MaterialCommunityIcons name="share-variant-outline" size={24} color="#1D4ED8" />
+            )}
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
+
+  if (readOnly) {
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={hasPendingInvoice ? 'Счёт формируется' : 'Запросить счёт'}
+        disabled={requestBusy || hasPendingInvoice}
+        onPress={onRequestInvoice}
+        style={({ pressed }) => [styles.flatField, styles.invoiceReadyField, styles.readOnlyFieldSurface, pressed && !requestBusy && !hasPendingInvoice && styles.flatPressed]}
+      >
+        <View style={styles.flatFieldIcon}>
+          <MaterialCommunityIcons name="file-download-outline" size={20} color="#1D4ED8" />
+        </View>
+        <View style={styles.flatFieldTextWrap}>
+          <Text style={styles.flatFieldValue} numberOfLines={1}>{hasPendingInvoice ? 'Счёт формируется' : 'Запросить счёт'}</Text>
+        </View>
+        <View style={[styles.invoiceFileAction, styles.invoiceFileActionDivider]}>
+          {requestBusy || hasPendingInvoice ? (
+            <ActivityIndicator size={24} color="#1D4ED8" />
+          ) : (
+            <MaterialCommunityIcons name="cloud-download-outline" size={24} color="#1D4ED8" />
+          )}
+        </View>
+      </Pressable>
+    );
+  }
+
   return (
-    <Pressable accessibilityRole="button" accessibilityLabel="Добавить товар" onPress={onPress} style={({ pressed }) => [styles.addProductListCard, pressed && styles.flatPressed]}>
-      <MaterialCommunityIcons name="plus-circle-outline" size={22} color="#2563EB" />
-      <Text style={styles.addProductListText}>Добавить товар</Text>
+    <Pressable
+      accessibilityRole="checkbox"
+      accessibilityState={{ checked: !!workspace.draft.invoiceRequested, disabled: autoSendDisabled, busy: preferenceLoading }}
+      disabled={autoSendDisabled}
+      onPress={toggle}
+      style={({ pressed }) => [
+        styles.flatField,
+        autoSendDisabled && styles.readOnlyFieldSurface,
+        pressed && !autoSendDisabled && styles.flatPressed,
+      ]}
+    >
+      <View style={styles.flatFieldIcon}>
+        <MaterialCommunityIcons name="receipt-text-outline" size={20} color={autoSendDisabled ? 'rgba(71, 85, 105, 0.48)' : '#475569'} />
+      </View>
+      <View style={styles.flatFieldTextWrap}>
+        <Text style={[styles.flatFieldValue, autoSendDisabled && styles.readOnlyFieldValue]} numberOfLines={2}>
+          Отправлять счёт автоматически
+        </Text>
+      </View>
+      {preferenceLoading ? (
+        <View style={styles.flatFieldAction}>
+          <ActivityIndicator size={17} color="#2563EB" />
+        </View>
+      ) : (
+        <MaterialCommunityIcons
+          name={workspace.draft.invoiceRequested ? 'checkbox-marked' : 'checkbox-blank-outline'}
+          size={24}
+          color={workspace.draft.invoiceRequested ? '#2563EB' : '#94A3B8'}
+        />
+      )}
     </Pressable>
   );
 }
 
-function LineItemCard({
+const LineItemCard = React.memo(function LineItemCard({
   item,
   index,
-  workspace,
-  onPress,
-  onRemove,
+  generalDiscountPercent,
+  currency,
+  readOnly: documentReadOnly,
+  mutationLocked,
+  lineMessages,
+  lineWarnings,
+  onEditItem,
+  onRemoveItem,
   onOpenImages,
 }: {
   item: any;
   index: number;
-  workspace: any;
-  onPress: () => void;
-  onRemove: () => void;
-  onOpenImages: () => void;
+  generalDiscountPercent: any;
+  currency: string;
+  readOnly: boolean;
+  mutationLocked: boolean;
+  lineMessages: string[];
+  lineWarnings: string[];
+  onEditItem: (key: string) => void;
+  onRemoveItem: (key: string) => void;
+  onOpenImages: (item: any) => void;
 }) {
   const displayedPrice = getDisplayedUnitPriceValue(item);
-  const lineTotal = formatMoney(computeLineTotal(item, workspace.draft.generalDiscountPercent), workspace.draft.currency);
+  const lineTotal = formatMoney(computeLineTotal(item, generalDiscountPercent), currency);
+  const lineProfitAvailable = canComputeLineProfit(item);
+  const lineProfitAmount = lineProfitAvailable
+    ? computeLineProfit(item, generalDiscountPercent)
+    : 0;
+  const lineProfit = formatMoney(lineProfitAmount, currency);
+  const lineProfitColor = lineProfitAmount < 0 ? '#DC2626' : '#16A34A';
   const packageLabelText = linePackageShortLabel(item);
-  const muteValidation = !!workspace.readOnly;
-  const lineMessages = muteValidation ? [] : (workspace.validation.itemMessages[item.key] || []);
-  const lineWarnings = muteValidation ? [] : (workspace.validation.itemWarnings?.[item.key] || []);
-  const hasErrors = lineMessages.length > 0;
-  const hasWarnings = lineWarnings.length > 0;
+  const muteValidation = documentReadOnly;
+  const visibleLineMessages = muteValidation ? [] : lineMessages;
+  const visibleLineWarnings = muteValidation ? [] : lineWarnings;
+  const hasErrors = visibleLineMessages.length > 0;
+  const hasWarnings = visibleLineWarnings.length > 0;
   const cancelled = isCancelledDraftItem(item);
   const cancelReason = getDraftItemCancelReason(item);
-  const issueText = cancelled ? `Отменено${cancelReason ? `: ${cancelReason}` : ''}` : ([...lineMessages, ...lineWarnings][0] || '');
+  const issueText = cancelled ? `Отменено${cancelReason ? `: ${cancelReason}` : ''}` : ([...visibleLineMessages, ...visibleLineWarnings][0] || '');
   const manualPrice = hasManualPrice(item);
-  const readOnly = !!workspace.readOnly || !!workspace.mutationLocked || cancelled;
+  const readOnly = documentReadOnly || mutationLocked || cancelled;
+  const stockAvailable = stockAvailableValue(item.stock);
+  const stockValue = stockAvailable === null
+    ? '—'
+    : (formatStockQuantity(stockAvailable, item.baseUnit) || '—');
+  const receiptPrice = item.receiptPrice === null || item.receiptPrice === undefined
+    ? null
+    : Number(item.receiptPrice);
+  const receiptPriceValue = receiptPrice === null || !Number.isFinite(receiptPrice)
+    ? '—'
+    : formatMoney(receiptPrice * getPackageMultiplier(item), item.currency || currency);
+  const handlePress = React.useCallback(() => onEditItem(item.key), [item.key, onEditItem]);
+  const handleRemove = React.useCallback(() => onRemoveItem(item.key), [item.key, onRemoveItem]);
+  const handleOpenImages = React.useCallback(() => onOpenImages(item), [item, onOpenImages]);
+  const metricIconColor = readOnly ? 'rgba(71, 85, 105, 0.58)' : '#475569';
   return (
-    <Pressable accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.productPreviewCard, cancelled && styles.productPreviewCardCancelled, !cancelled && (hasErrors || hasWarnings) && styles.productPreviewCardInvalid, issueText && styles.productPreviewCardWithIssue, readOnly && styles.productPreviewCardReadOnly, pressed && styles.flatPressed]}>
+    <Pressable accessibilityRole="button" onPress={handlePress} style={({ pressed }) => [styles.productPreviewCard, cancelled && styles.productPreviewCardCancelled, !cancelled && (hasErrors || hasWarnings) && styles.productPreviewCardInvalid, issueText && styles.productPreviewCardWithIssue, readOnly && styles.productPreviewCardReadOnly, pressed && styles.flatPressed]}>
       <View style={[styles.productPreviewMedia, readOnly && styles.productPreviewMediaReadOnly]}>
         <ProductThumb
           item={item}
           style={[styles.productPreviewImage, readOnly && styles.productPreviewImageReadOnly]}
           iconSize={34}
           iconColor={readOnly ? 'rgba(37, 99, 235, 0.42)' : '#2563EB'}
-          onPress={onOpenImages}
+          onPress={handleOpenImages}
         />
         <View style={[styles.productPreviewIndexBadge, readOnly && styles.productPreviewIndexBadgeReadOnly]}>
           <Text style={[styles.productPreviewIndex, readOnly && styles.productPreviewIndexReadOnly]}>{index + 1}</Text>
@@ -3906,7 +4644,7 @@ function LineItemCard({
             accessibilityLabel="Удалить товар"
             onPress={(event) => {
               event.stopPropagation();
-              onRemove();
+              handleRemove();
             }}
             hitSlop={8}
             style={({ pressed }) => [styles.productPreviewRemoveButton, pressed && styles.flatPressed]}
@@ -3915,7 +4653,22 @@ function LineItemCard({
           </Pressable>
         ) : null}
         <Text style={[styles.productPreviewTitle, readOnly && styles.productPreviewTitleReadOnly]} numberOfLines={2}>{item.productName}</Text>
-        <Text style={[styles.productPreviewMeta, readOnly && styles.productPreviewMetaReadOnly]} numberOfLines={1}>{item.productCode ? `Артикул: ${item.productCode}` : 'Без артикула'}</Text>
+        <View style={styles.productPreviewMetrics}>
+          <View style={styles.productPreviewMetric}>
+            <MaterialCommunityIcons name="warehouse" size={13} color={metricIconColor} />
+            <Text style={[styles.productPreviewMetricValue, readOnly && styles.productPreviewMetaReadOnly]} numberOfLines={1}>{stockValue}</Text>
+          </View>
+          <View style={styles.productPreviewMetric}>
+            <MaterialCommunityIcons name="cash-multiple" size={13} color={metricIconColor} />
+            <Text style={[styles.productPreviewMetricValue, readOnly && styles.productPreviewMetaReadOnly]} numberOfLines={1}>{receiptPriceValue}</Text>
+          </View>
+          {lineProfitAvailable ? (
+            <View style={[styles.productPreviewProfitRow, readOnly && styles.productPreviewProfitReadOnly]}>
+              <MaterialCommunityIcons name={lineProfitAmount < 0 ? 'trending-down' : 'trending-up'} size={12} color={lineProfitColor} />
+              <Text style={[styles.productPreviewProfit, { color: lineProfitColor }]} numberOfLines={1}>{lineProfit}</Text>
+            </View>
+          ) : null}
+        </View>
         <View style={styles.productPreviewBottomRow}>
           <View style={styles.productPreviewFormulaRow}>
             <Text style={[styles.productPreviewQuantity, readOnly && styles.productPreviewQuantityReadOnly]} numberOfLines={1}>{item.quantity}</Text>
@@ -3924,7 +4677,9 @@ function LineItemCard({
             {manualPrice ? <MaterialCommunityIcons name="pencil-outline" size={12} color={hasErrors || hasWarnings ? '#DC2626' : '#64748B'} /> : null}
             <Text style={[styles.productPreviewPrice, readOnly && styles.productPreviewPriceReadOnly]} numberOfLines={1}>{displayedPrice || '0'} ₽</Text>
           </View>
-          <Text style={[styles.productPreviewTotal, readOnly && styles.productPreviewTotalReadOnly]} numberOfLines={1}>{lineTotal}</Text>
+          <View style={styles.productPreviewTotals}>
+            <Text style={[styles.productPreviewTotal, readOnly && styles.productPreviewTotalReadOnly]} numberOfLines={1}>{lineTotal}</Text>
+          </View>
         </View>
         {issueText ? (
           <Text style={[styles.productPreviewIssueText, cancelled && styles.productPreviewCancelledText]} numberOfLines={1}>{issueText}</Text>
@@ -3932,7 +4687,7 @@ function LineItemCard({
       </View>
     </Pressable>
   );
-}
+});
 
 function ProductThumb({
   item,
@@ -4107,6 +4862,7 @@ function CompactSearchbar({
   editable = true,
   loading = false,
   debounceMs = 260,
+  trailingAction,
 }: {
   inputRef?: React.Ref<any>;
   style: any;
@@ -4121,43 +4877,55 @@ function CompactSearchbar({
   editable?: boolean;
   loading?: boolean;
   debounceMs?: number;
+  trailingAction?: React.ReactNode;
 }) {
+  const InputComponent = (inputComponent || TextInput) as any;
   const innerInputRef = React.useRef<any>(null);
   const focusedRef = React.useRef(false);
-  const lastExternalValueRef = React.useRef(value);
+  const commitTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const [inputText, setInputText] = React.useState(value);
-  const [forcedText, setForcedText] = React.useState(value);
-  const [forcedTextRevision, setForcedTextRevision] = React.useState(0);
 
   const setInputRef = React.useCallback((node: any) => {
     innerInputRef.current = node;
     assignComposedRef(inputRef, node);
   }, [inputRef]);
 
-  const forceInputText = React.useCallback((next: string) => {
-    setForcedText(next);
-    setForcedTextRevision((revision) => revision + 1);
-    setInputText(next);
-    try {
-      if (next === '') innerInputRef.current?.clear?.();
-      innerInputRef.current?.setNativeProps?.({ text: next });
-    } catch {
-      return;
-    }
+  const clearCommitTimer = React.useCallback(() => {
+    if (!commitTimerRef.current) return;
+    clearTimeout(commitTimerRef.current);
+    commitTimerRef.current = null;
   }, []);
 
   React.useEffect(() => {
-    if (value === lastExternalValueRef.current) return;
-    lastExternalValueRef.current = value;
-    if (!focusedRef.current || value === '') {
-      forceInputText(value);
+    if (value === inputText) return;
+    if (!focusedRef.current || value === '') setInputText(value);
+  }, [inputText, value]);
+
+  React.useEffect(() => () => clearCommitTimer(), [clearCommitTimer]);
+
+  const commitText = React.useCallback((next: string, immediate = false) => {
+    clearCommitTimer();
+    if (immediate || debounceMs <= 0) {
+      onChangeText(next);
+      return;
     }
-  }, [forceInputText, value]);
+    commitTimerRef.current = setTimeout(() => {
+      commitTimerRef.current = null;
+      onChangeText(next);
+    }, debounceMs);
+  }, [clearCommitTimer, debounceMs, onChangeText]);
+
+  const handleChangeText = React.useCallback((next: string) => {
+    // Android IMEs own composing text. Keep the visible value in sync immediately,
+    // and debounce only the expensive search request.
+    setInputText(next);
+    commitText(next);
+  }, [commitText]);
 
   const clearSearch = React.useCallback(() => {
-    forceInputText('');
-    onChangeText('');
-  }, [forceInputText, onChangeText]);
+    setInputText('');
+    commitText('', true);
+  }, [commitText]);
 
   const handleFocus = React.useCallback(() => {
     focusedRef.current = true;
@@ -4166,22 +4934,19 @@ function CompactSearchbar({
 
   const handleBlur = React.useCallback(() => {
     focusedRef.current = false;
+    commitText(inputText, true);
     onBlur?.();
-  }, [onBlur]);
+  }, [commitText, inputText, onBlur]);
 
   return (
     <View style={[styles.compactSearchShell, style]}>
       <MaterialCommunityIcons name="magnify" size={18} color="#475569" />
-      <StableSearchTextInput
-        inputRef={setInputRef}
-        inputComponent={inputComponent}
+      <InputComponent
+        ref={setInputRef}
         style={[styles.compactSearchInputBase, inputStyle]}
-        initialText={value}
-        externalText={forcedText}
-        externalTextRevision={forcedTextRevision}
-        onChangeText={onChangeText}
-        onImmediateTextChange={setInputText}
-        commitDebounceMs={debounceMs}
+        value={inputText}
+        onChangeText={handleChangeText}
+        onSubmitEditing={() => commitText(inputText, true)}
         placeholder={placeholder}
         onFocus={handleFocus}
         onBlur={handleBlur}
@@ -4206,151 +4971,8 @@ function CompactSearchbar({
           <MaterialCommunityIcons name="close" size={16} color="#475569" />
         </Pressable>
       ) : null}
+      {trailingAction ? <View style={styles.compactSearchTrailing}>{trailingAction}</View> : null}
     </View>
-  );
-}
-
-function StableSearchTextInput({
-  inputRef,
-  inputComponent,
-  initialText,
-  externalText,
-  externalTextRevision = 0,
-  onChangeText,
-  onImmediateTextChange,
-  commitDebounceMs = Platform.OS === 'android' ? 260 : 0,
-  onFocus,
-  onBlur,
-  onKeyPress,
-  ...props
-}: TextInputProps & {
-  inputRef?: React.Ref<any>;
-  inputComponent?: React.ComponentType<any>;
-  initialText: string;
-  externalText?: string;
-  externalTextRevision?: number;
-  onChangeText: (value: string) => void;
-  onImmediateTextChange?: (value: string) => void;
-  commitDebounceMs?: number;
-}) {
-  const isAndroid = Platform.OS === 'android';
-  const InputComponent = (isAndroid ? TextInput : (inputComponent || TextInput)) as any;
-  const initialTextRef = React.useRef(initialText);
-  const nativeRef = React.useRef<any>(null);
-  const nativeTextRef = React.useRef(initialTextRef.current);
-  const focusedRef = React.useRef(false);
-  const recentKeyRef = React.useRef<string | null>(null);
-  const recentKeyAtRef = React.useRef(0);
-  const commitTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const setNativeText = React.useCallback((next: string) => {
-    nativeTextRef.current = next;
-    if (next === '') nativeRef.current?.clear?.();
-    nativeRef.current?.setNativeProps?.({ text: next });
-  }, []);
-
-  const setRef = React.useCallback((node: any) => {
-    nativeRef.current = node;
-    assignComposedRef(inputRef, node);
-  }, [inputRef]);
-
-  const clearCommitTimer = React.useCallback(() => {
-    if (!commitTimerRef.current) return;
-    clearTimeout(commitTimerRef.current);
-    commitTimerRef.current = null;
-  }, []);
-
-  const commitText = React.useCallback((next: string, immediate = false) => {
-    clearCommitTimer();
-    if (immediate || commitDebounceMs <= 0) {
-      onChangeText(next);
-      return;
-    }
-    commitTimerRef.current = setTimeout(() => {
-      commitTimerRef.current = null;
-      onChangeText(next);
-    }, commitDebounceMs);
-  }, [clearCommitTimer, commitDebounceMs, onChangeText]);
-
-  React.useEffect(() => {
-    if (externalTextRevision <= 0) return;
-    clearCommitTimer();
-    setNativeText(externalText ?? '');
-    onImmediateTextChange?.(externalText ?? '');
-  }, [clearCommitTimer, externalText, externalTextRevision, onImmediateTextChange, setNativeText]);
-
-  React.useEffect(() => () => clearCommitTimer(), [clearCommitTimer]);
-
-  const normalizeAndroidSearchText = React.useCallback((next: string) => {
-    if (!isAndroid || !focusedRef.current) return next;
-    const prev = nativeTextRef.current;
-    if (next === prev) return next;
-
-    const key = recentKeyRef.current;
-    const keyIsFresh = !!key && Date.now() - recentKeyAtRef.current < 900;
-    recentKeyRef.current = null;
-
-    if (keyIsFresh && key) {
-      if (key === 'Backspace') {
-        const expected = prev.slice(0, -1);
-        if (next !== expected && next.length >= expected.length) return expected;
-        return next;
-      }
-      if (key === 'Enter') return prev;
-      if (key.length <= 2) {
-        const expected = `${prev}${key}`;
-        const addedLength = next.length - prev.length;
-        if (next !== expected && addedLength > 1) return expected;
-      }
-    }
-
-    if (prev.length > 0 && next.startsWith(prev) && next.length - prev.length > 1) {
-      return `${prev}${Array.from(next.slice(prev.length))[0] || ''}`;
-    }
-
-    return next;
-  }, [isAndroid]);
-
-  const handleChangeText = React.useCallback((next: string) => {
-    const accepted = normalizeAndroidSearchText(next);
-    nativeTextRef.current = accepted;
-    if (accepted !== next) {
-      requestAnimationFrame(() => setNativeText(accepted));
-    }
-    onImmediateTextChange?.(accepted);
-    commitText(accepted);
-  }, [commitText, normalizeAndroidSearchText, onImmediateTextChange, setNativeText]);
-
-  const handleKeyPress = React.useCallback((event: any) => {
-    const key = event?.nativeEvent?.key;
-    if (isAndroid && typeof key === 'string' && key) {
-      recentKeyRef.current = key;
-      recentKeyAtRef.current = Date.now();
-    }
-    onKeyPress?.(event);
-  }, [isAndroid, onKeyPress]);
-
-  const handleFocus = React.useCallback((event: any) => {
-    focusedRef.current = true;
-    onFocus?.(event);
-  }, [onFocus]);
-
-  const handleBlur = React.useCallback((event: any) => {
-    focusedRef.current = false;
-    commitText(nativeTextRef.current, true);
-    onBlur?.(event);
-  }, [commitText, onBlur]);
-
-  return (
-    <InputComponent
-      ref={setRef}
-      {...props}
-      defaultValue={initialTextRef.current}
-      onChangeText={handleChangeText}
-      onKeyPress={handleKeyPress}
-      onFocus={handleFocus}
-      onBlur={handleBlur}
-    />
   );
 }
 
@@ -4444,6 +5066,15 @@ function ProductLineEditorSheet({
     computeLineTotal(displayedItem, workspace.draft.generalDiscountPercent),
     displayedItem.currency || workspace.draft.currency
   );
+  const lineProfitAvailable = canComputeLineProfit(displayedItem);
+  const lineProfitAmount = lineProfitAvailable
+    ? computeLineProfit(displayedItem, workspace.draft.generalDiscountPercent)
+    : 0;
+  const lineProfit = formatMoney(
+    lineProfitAmount,
+    displayedItem.currency || workspace.draft.currency
+  );
+  const lineProfitColor = lineProfitAmount < 0 ? '#DC2626' : '#16A34A';
   const article = displayedItem.productArticle || displayedItem.productSku || displayedItem.productCode || '—';
   const stock = formatStockInlineLabel(displayedItem.stock, displayedItem.baseUnit) || '—';
   const receiptPrice = displayedItem.receiptPrice === null || displayedItem.receiptPrice === undefined
@@ -4624,6 +5255,12 @@ function ProductLineEditorSheet({
           <Text style={styles.productEditorFooterTotalLabel}>Сумма позиции</Text>
           <View style={styles.productEditorFooterTotalRow}>
             <Text style={styles.productEditorFooterTotal}>{lineTotal}</Text>
+            {lineProfitAvailable ? (
+              <View style={styles.productEditorFooterProfitRow}>
+                <MaterialCommunityIcons name={lineProfitAmount < 0 ? 'trending-down' : 'trending-up'} size={13} color={lineProfitColor} />
+                <Text style={[styles.productEditorFooterProfit, { color: lineProfitColor }]} numberOfLines={1}>{lineProfit}</Text>
+              </View>
+            ) : null}
           </View>
         </View>
         <View style={[styles.productEditorFooterQuantity, { width: halfControlWidth }]}>
@@ -4852,27 +5489,16 @@ function FilterLookupField<T extends { guid: string; name: string }>({
   onFieldLayout?: (event: LayoutChangeEvent) => void;
 }) {
   const inputRef = React.useRef<any>(null);
-  const [query, setQuery] = React.useState(selected?.name || '');
   const [queryText, setQueryText] = React.useState(selected?.name || '');
-  const [forcedText, setForcedText] = React.useState(selected?.name || '');
-  const [forcedTextRevision, setForcedTextRevision] = React.useState(0);
   const [items, setItems] = React.useState<T[]>([]);
   const [loading, setLoading] = React.useState(false);
 
-  const forceLookupText = React.useCallback((next: string) => {
-    setForcedText(next);
-    setForcedTextRevision((revision) => revision + 1);
-    setQuery(next);
-    setQueryText(next);
-  }, []);
+  React.useEffect(() => {
+    setQueryText(selected?.name || '');
+  }, [selected?.guid, selected?.name]);
 
   React.useEffect(() => {
-    const next = selected?.name || '';
-    forceLookupText(next);
-  }, [forceLookupText, selected?.guid, selected?.name]);
-
-  React.useEffect(() => {
-    const normalized = query.trim();
+    const normalized = queryText.trim();
     if (!normalized || normalized === (selected?.name || '')) {
       setItems([]);
       setLoading(false);
@@ -4881,7 +5507,7 @@ function FilterLookupField<T extends { guid: string; name: string }>({
     let cancelled = false;
     const timer = setTimeout(() => {
       if (!cancelled) setLoading(true);
-    }, 320);
+    }, 180);
     const requestTimer = setTimeout(() => {
       void search({ search: normalized, limit: 8, offset: 0 })
         .then((result) => {
@@ -4893,14 +5519,14 @@ function FilterLookupField<T extends { guid: string; name: string }>({
         .finally(() => {
           if (!cancelled) setLoading(false);
         });
-    }, 650);
+    }, 300);
     return () => {
       cancelled = true;
       clearTimeout(timer);
       clearTimeout(requestTimer);
       setLoading(false);
     };
-  }, [query, search, selected?.name]);
+  }, [queryText, search, selected?.name]);
 
   return (
     <View onLayout={onFieldLayout}>
@@ -4911,7 +5537,7 @@ function FilterLookupField<T extends { guid: string; name: string }>({
         right={
           selected || queryText.trim()
             ? (
-              <Pressable hitSlop={8} style={styles.filtersInlineClear} onPress={() => { forceLookupText(''); setItems([]); onChange(null); }}>
+              <Pressable hitSlop={8} style={styles.filtersInlineClear} onPress={() => { setQueryText(''); setItems([]); onChange(null); }}>
                 <MaterialCommunityIcons name="close" size={18} color="#475569" />
               </Pressable>
             )
@@ -4920,17 +5546,13 @@ function FilterLookupField<T extends { guid: string; name: string }>({
               : undefined
         }
       >
-        <StableSearchTextInput
-          inputRef={inputRef}
-          initialText={selected?.name || ''}
-          externalText={forcedText}
-          externalTextRevision={forcedTextRevision}
+        <TextInput
+          ref={inputRef}
+          value={queryText}
           onChangeText={(value: string) => {
-            setQuery(value);
+            setQueryText(value);
             if (!value.trim()) onChange(null);
           }}
-          onImmediateTextChange={setQueryText}
-          commitDebounceMs={260}
           placeholder={placeholder}
           placeholderTextColor="#64748B"
           style={styles.filtersInnerTextInputContent}
@@ -4947,7 +5569,7 @@ function FilterLookupField<T extends { guid: string; name: string }>({
               titleNumberOfLines={1}
               titleStyle={styles.filtersSuggestionTitle}
               onPress={() => {
-                forceLookupText(item.name);
+                setQueryText(item.name);
                 onChange(item);
                 setItems([]);
               }}
@@ -5011,60 +5633,21 @@ function FilterInputField({
 }
 
 function OrdersScreenSkeleton({ styles }: { styles: any }) {
-  const pulse = React.useRef(new Animated.Value(0)).current;
-  const pulseStyle = React.useMemo(
-    () => ({
-      opacity: pulse.interpolate({
-        inputRange: [0, 1],
-        outputRange: [0.72, 1],
-      }),
-    }),
-    [pulse]
-  );
-
-  React.useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulse, {
-          toValue: 1,
-          duration: 720,
-          useNativeDriver: true,
-        }),
-        Animated.timing(pulse, {
-          toValue: 0,
-          duration: 720,
-          useNativeDriver: true,
-        }),
-      ])
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [pulse]);
-
   return (
-    <Animated.View style={[styles.ordersScreenSkeleton, pulseStyle]}>
+    <View style={styles.ordersScreenSkeleton}>
       <OrdersListSkeleton styles={styles} />
-    </Animated.View>
+    </View>
   );
 }
 
 function OrdersListSkeleton({ styles }: { styles: any }) {
   return (
     <View style={styles.ordersSkeletonList}>
-      {Array.from({ length: 5 }).map((_, index) => (
+      {Array.from({ length: 6 }).map((_, index) => (
         <Surface key={index} mode="flat" style={styles.ordersSkeletonCard}>
-          <View style={styles.ordersSkeletonTopRow}>
-            <View style={styles.ordersSkeletonTitleBlock}>
-              <View style={styles.ordersSkeletonDocument} />
-              <View style={styles.ordersSkeletonCounterparty} />
-            </View>
-            <View style={styles.ordersSkeletonAmount} />
-          </View>
-          <View style={styles.ordersSkeletonMetaRow}>
-            <View style={styles.ordersSkeletonPill} />
-            <View style={styles.ordersSkeletonMeta} />
-            <View style={styles.ordersSkeletonMetaShort} />
-          </View>
+          <View style={[styles.ordersSkeletonLine, styles.ordersSkeletonLineTitle, index % 2 === 1 && styles.ordersSkeletonLineTitleShort]} />
+          <View style={[styles.ordersSkeletonLine, styles.ordersSkeletonLineWide]} />
+          <View style={[styles.ordersSkeletonLine, styles.ordersSkeletonLineMeta]} />
         </Surface>
       ))}
     </View>
@@ -5072,11 +5655,7 @@ function OrdersListSkeleton({ styles }: { styles: any }) {
 }
 
 function OrdersInitialLoadingState({ styles }: { styles: any }) {
-  return (
-    <View style={styles.ordersInitialLoadingState}>
-      <ActivityIndicator size="small" color="#2563EB" />
-    </View>
-  );
+  return <OrdersScreenSkeleton styles={styles} />;
 }
 
 function OrdersEmptyState({ styles, filtered }: { styles: any; filtered: boolean }) {
@@ -5130,22 +5709,47 @@ function OrdersPaginationFooter({
   );
 }
 
-function DocumentOpenLoader({ styles, label }: { styles: any; label: string }) {
+function DocumentOpenSkeleton({ styles, section }: { styles: any; section: EditorSection }) {
+  if (section === 'items') {
+    return (
+      <View style={styles.documentSkeleton} accessibilityLabel="Загрузка товаров">
+        <View style={styles.documentItemsSkeletonList}>
+          {[0, 1, 2, 3].map((index) => (
+            <View key={index} style={styles.documentItemSkeletonRow}>
+              <View style={styles.documentItemImageSkeleton} />
+              <View style={styles.documentItemBodySkeleton}>
+                <View style={[styles.documentSkeletonLine, { width: index % 2 ? '82%' : '68%' }]} />
+                <View style={styles.documentItemMetaSkeletonRow}>
+                  <View style={styles.documentItemMetaSkeleton} />
+                  <View style={styles.documentItemMetaSkeletonShort} />
+                </View>
+                <View style={styles.documentItemBottomSkeletonRow}>
+                  <View style={styles.documentItemQuantitySkeleton} />
+                  <View style={styles.documentItemAmountSkeleton} />
+                </View>
+              </View>
+            </View>
+          ))}
+        </View>
+      </View>
+    );
+  }
+
   return (
-    <View style={styles.documentOpenLoader}>
-      <Surface mode="flat" style={styles.documentOpenLoaderCard}>
-        <View style={styles.documentOpenLoaderHeader}>
-          <ActivityIndicator size={18} color="#2563EB" />
-          <Text style={styles.documentOpenLoaderTitle}>{label}</Text>
+    <View style={styles.documentSkeleton} accessibilityLabel="Загрузка шапки документа">
+      <View style={styles.documentHeaderSkeletonGrid}>
+        {[0, 1, 2, 3, 4, 5].map((index) => (
+          <View key={index} style={styles.documentHeaderFieldSkeleton}>
+            <View style={[styles.documentSkeletonLabel, { width: index % 3 === 0 ? '38%' : '28%' }]} />
+            <View style={[styles.documentSkeletonLine, { width: index % 2 === 0 ? '76%' : '62%' }]} />
+          </View>
+        ))}
+        <View style={styles.documentHeaderFieldSkeletonWide}>
+          <View style={[styles.documentSkeletonLabel, { width: '24%' }]} />
+          <View style={[styles.documentSkeletonLine, { width: '86%' }]} />
+          <View style={[styles.documentSkeletonLine, styles.documentSkeletonLineShort]} />
         </View>
-        <View style={styles.documentOpenLoaderLine} />
-        <View style={[styles.documentOpenLoaderLine, styles.documentOpenLoaderLineShort]} />
-        <View style={styles.documentOpenLoaderGrid}>
-          <View style={styles.documentOpenLoaderField} />
-          <View style={styles.documentOpenLoaderField} />
-          <View style={styles.documentOpenLoaderFieldWide} />
-        </View>
-      </Surface>
+      </View>
     </View>
   );
 }
@@ -5345,15 +5949,15 @@ function OrdersToolbar({
   workspace,
   disabled = false,
   refreshing = false,
+  onBack,
   onOpenFilters,
-  onCreate,
 }: {
   styles: any;
   workspace: any;
   disabled?: boolean;
   refreshing?: boolean;
+  onBack: () => void;
   onOpenFilters: () => void;
-  onCreate: () => void;
 }) {
   const filters = workspace.filters;
   const setFilters = workspace.setFilters;
@@ -5377,6 +5981,20 @@ function OrdersToolbar({
   return (
     <Surface mode="flat" style={styles.ordersToolbar}>
       <View style={styles.ordersCompactToolbarRow}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Назад к сервисам"
+          disabled={disabled}
+          onPress={onBack}
+          hitSlop={4}
+          style={({ pressed }) => [
+            styles.ordersBackButton,
+            disabled && styles.ordersToolbarButtonDisabled,
+            pressed && !disabled && styles.ordersBackButtonPressed,
+          ]}
+        >
+          <MaterialCommunityIcons name="arrow-left" size={23} color="#334155" />
+        </Pressable>
         <CompactSearchbar
           style={styles.ordersSearchbar}
           inputStyle={styles.ordersSearchbarInput}
@@ -5385,39 +6003,148 @@ function OrdersToolbar({
           placeholder="Поиск по номеру или клиенту"
           editable={!disabled}
           loading={!disabled && !refreshing && workspace.loadingOrders && workspace.ordersInitialLoadDone}
+          trailingAction={(
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={activeFilters ? `Открыть фильтры, применено: ${activeFilters}` : 'Открыть фильтры'}
+              disabled={disabled}
+              onPress={onOpenFilters}
+              hitSlop={4}
+              style={({ pressed }) => [
+                styles.ordersSearchFilterButton,
+                disabled && styles.ordersToolbarButtonDisabled,
+                pressed && !disabled && styles.ordersSearchFilterButtonPressed,
+              ]}
+            >
+              <MaterialCommunityIcons name="tune-variant" size={20} color={activeFilters ? '#2563EB' : '#475569'} />
+              {activeFilters ? (
+                <View style={styles.ordersFilterBadge}>
+                  <Text style={styles.ordersFilterBadgeText}>{activeFilters}</Text>
+                </View>
+              ) : null}
+            </Pressable>
+          )}
         />
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Открыть фильтры"
-          disabled={disabled}
-          onPress={onOpenFilters}
-          hitSlop={4}
-          style={({ pressed }) => [styles.ordersFilterButton, disabled && styles.ordersToolbarButtonDisabled, pressed && !disabled && styles.ordersFilterButtonPressed]}
-        >
-          <MaterialCommunityIcons name="filter-variant" size={22} color="#2563EB" />
-          {activeFilters ? (
-            <View style={styles.ordersFilterBadge}>
-              <Text style={styles.ordersFilterBadgeText}>{activeFilters}</Text>
-            </View>
-          ) : null}
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Создать заказ"
-          disabled={disabled}
-          onPress={onCreate}
-          hitSlop={4}
-          style={({ pressed }) => [
-            styles.ordersIconButton,
-            styles.ordersIconButtonPrimary,
-            disabled && styles.ordersToolbarButtonDisabled,
-            pressed && !disabled && styles.ordersIconButtonPrimaryPressed,
-          ]}
-        >
-          <MaterialCommunityIcons name="file-document-plus-outline" size={22} color="#FFFFFF" />
-        </Pressable>
       </View>
     </Surface>
+  );
+}
+
+function OrdersBottomBar({
+  styles,
+  entranceProgress,
+  safeBottom,
+  count,
+  loadingMetrics,
+  disabled,
+  onCreate,
+}: {
+  styles: any;
+  entranceProgress: Animated.Value;
+  safeBottom: number;
+  count: number;
+  loadingMetrics: boolean;
+  disabled: boolean;
+  onCreate: () => void;
+}) {
+  const backgroundColor = useThemeColor({}, 'background');
+  const textColor = useThemeColor({}, 'text');
+  const surfaceColor = withColorOpacity(backgroundColor, 0.9);
+  const borderColor = withColorOpacity(textColor, 0.18);
+  const createOpacity = entranceProgress.interpolate({
+    inputRange: [0, 0.12, 0.65, 1],
+    outputRange: [0, 0.2, 1, 1],
+    extrapolate: 'clamp',
+  });
+  const createTranslateY = entranceProgress.interpolate({
+    inputRange: [0, 0.65, 1],
+    outputRange: [50, 0, 0],
+    extrapolate: 'clamp',
+  });
+
+  return (
+    <View style={styles.ordersBottomBar}>
+      <Animated.View
+        style={[
+          styles.ordersBottomCreateWrap,
+          { opacity: createOpacity, transform: [{ translateY: createTranslateY }] },
+        ]}
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Создать новый заказ клиента"
+          disabled={disabled}
+          onPress={onCreate}
+          style={({ pressed }) => [
+            styles.ordersBottomCreateButton,
+            disabled && styles.ordersToolbarButtonDisabled,
+            pressed && !disabled && styles.flatPressed,
+          ]}
+        >
+          <MaterialCommunityIcons name="plus-circle-outline" size={20} color="#2563EB" />
+          <Text style={styles.ordersBottomCreateText}>Новый заказ клиента</Text>
+        </Pressable>
+      </Animated.View>
+      <LiquidGlassSurface
+        borderColor={borderColor}
+        overlayColor={surfaceColor}
+        blurTint="light"
+        blurIntensity={36}
+        webBackdropFilter="blur(22px) saturate(160%)"
+        style={[styles.ordersBottomGlass, { paddingBottom: Math.max(safeBottom, 8) + 8 }]}
+      >
+        <View style={styles.ordersBottomMetrics}>
+          <OrdersBottomMetric
+            styles={styles}
+            icon="file-document-outline"
+            label="Заказы"
+            value={String(Math.max(0, count))}
+            color="#2563EB"
+            loading={loadingMetrics}
+          />
+          <OrdersBottomMetric
+            styles={styles}
+            icon="cash-multiple"
+            label="Выручка"
+            value="—"
+            color="#16A34A"
+            loading={loadingMetrics}
+          />
+        </View>
+      </LiquidGlassSurface>
+    </View>
+  );
+}
+
+function OrdersBottomMetric({
+  styles,
+  icon,
+  label,
+  value,
+  color,
+  loading,
+}: {
+  styles: any;
+  icon: string;
+  label: string;
+  value: string;
+  color: string;
+  loading: boolean;
+}) {
+  return (
+    <View style={styles.ordersBottomMetric}>
+      <View style={styles.ordersBottomMetricIcon}>
+        <MaterialCommunityIcons name={icon as any} size={22} color={color} />
+      </View>
+      <View style={styles.ordersBottomMetricText}>
+        <Text style={styles.ordersBottomMetricLabel} numberOfLines={1}>{label}</Text>
+        {loading
+          ? <View style={styles.ordersBottomMetricValueSkeleton} />
+          : (
+            <Text style={[styles.ordersBottomMetricValue, { color }]} numberOfLines={1}>{value}</Text>
+          )}
+      </View>
+    </View>
   );
 }
 
@@ -6396,14 +7123,14 @@ function OrdersFiltersBottomSheet({
   );
 }
 
-function OrderCard({
+const OrderCard = React.memo(function OrderCard({
   order,
-  onPress,
+  onPressOrder,
   loading = false,
   disabled = false,
 }: {
   order: ClientOrder;
-  onPress: () => void;
+  onPressOrder: (order: ClientOrder) => void;
   loading?: boolean;
   disabled?: boolean;
 }) {
@@ -6415,6 +7142,7 @@ function OrderCard({
   const isLocalOrder = order.origin !== 'onec';
   const itemsCount = getClientOrderItemsCount(order);
   const statusLabel = isDeviceOrder ? 'На устройстве' : getOrderDisplayStatusLabelWithQueue(order);
+  const invoice = getClientOrderInvoicePresentation(order);
   const interactionDisabled = disabled || loading;
   const animateScale = React.useCallback((value: number) => {
     Animated.spring(scale, {
@@ -6429,7 +7157,7 @@ function OrderCard({
       <Pressable
         accessibilityRole="button"
         disabled={interactionDisabled}
-        onPress={onPress}
+        onPress={() => onPressOrder(order)}
         onPressIn={() => {
           if (!interactionDisabled) animateScale(0.986);
         }}
@@ -6480,6 +7208,14 @@ function OrderCard({
                 <MaterialCommunityIcons name="truck-outline" size={13} color="#64748B" />
                 <Text style={styles.orderMetaCompact} numberOfLines={1}>{formatDateOnly(order.deliveryDate)}</Text>
               </View>
+              {invoice.visible ? (
+                <View style={styles.orderMetaItem}>
+                  <MaterialCommunityIcons name={invoice.icon as any} size={13} color={invoice.color} />
+                  <Text style={[styles.orderMetaCompact, { color: invoice.color }]} numberOfLines={1}>
+                    {invoice.listLabel}
+                  </Text>
+                </View>
+              ) : null}
             </View>
           </View>
           {hasProblem ? (
@@ -6502,16 +7238,19 @@ function OrderCard({
       </Pressable>
     </Animated.View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  content: { padding: 12, gap: 10, paddingBottom: 110 },
-  editorPane: { width: '100%' },
-  editorPaneHidden: { display: 'none' },
-  editorHeaderPane: { paddingTop: 8 },
+  content: { padding: 12, gap: 10 },
+  editorStage: { flex: 1, minHeight: 0, zIndex: 1 },
+  editorStageHidden: { ...StyleSheet.absoluteFillObject, opacity: 0 },
+  editorPager: { flex: 1, minHeight: 0, width: '100%' },
+  editorPagerPage: { flex: 1, minHeight: 0 },
+  editorPageScroll: { flex: 1, minHeight: 0 },
   editorItemsContent: { flexGrow: 1 },
   ordersStage: { flex: 1 },
+  ordersStageHidden: { ...StyleSheet.absoluteFillObject, opacity: 0 },
   ordersContent: { paddingHorizontal: 0, paddingVertical: 4, gap: 0, paddingBottom: 150 },
   ordersStickyToolbar: { flexShrink: 0, paddingTop: 12, paddingBottom: 8, backgroundColor: 'transparent', zIndex: 2 },
   contentTablet: { maxWidth: 760, alignSelf: 'center', width: '100%' },
@@ -6520,12 +7259,14 @@ const styles = StyleSheet.create({
   panel: { borderRadius: 18, borderWidth: 1, borderColor: '#DBEAFE', padding: 12, gap: 10, shadowColor: '#0F172A', shadowOpacity: 0.06, shadowRadius: 12, elevation: 2 },
   cardStack: { gap: 4 },
   documentHeaderSlot: { gap: 7 },
-  documentHeaderSlotItems: { minHeight: 0 },
   documentTopTitleRow: { flex: 1, minWidth: 0, minHeight: 32, flexDirection: 'row', alignItems: 'center', gap: 7 },
-  documentTopStatusButton: { width: 32, height: 32, borderRadius: 10, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#F8FAFC', alignItems: 'center', justifyContent: 'center' },
+  documentTopStatusButton: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   documentTopQueueBadge: { position: 'absolute', top: -5, right: -7, minWidth: 18, height: 18, borderRadius: 999, paddingHorizontal: 4, backgroundColor: '#2563EB', borderWidth: 1.5, borderColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' },
   documentTopQueueBadgeText: { color: '#FFFFFF', fontSize: 9.5, lineHeight: 11, fontWeight: '900', includeFontPadding: false },
   documentTopTitle: { flex: 1, minWidth: 0, color: '#0F172A', fontSize: 15.5, lineHeight: 19, fontWeight: '900', includeFontPadding: false },
+  documentTopStatusSkeleton: { width: 36, height: 36, borderRadius: 10, backgroundColor: '#E2E8F0' },
+  documentTopNumberSkeleton: { flex: 1, maxWidth: 190, height: 17, borderRadius: 6, backgroundColor: '#E2E8F0' },
+  documentTopActionSkeleton: { width: 32, height: 32, borderRadius: 10, backgroundColor: '#E2E8F0' },
   documentStatusMenuPaper: { borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#FFFFFF' },
   documentStatusMenuText: { fontSize: 13, lineHeight: 17, fontWeight: '900' },
   documentStatusMenuErrorText: { color: '#B91C1C' },
@@ -6533,27 +7274,48 @@ const styles = StyleSheet.create({
   documentHeaderOfflineBadge: { width: 32, height: 32, borderRadius: 10, borderWidth: 1, borderColor: '#FECACA', backgroundColor: '#FEF2F2', alignItems: 'center', justifyContent: 'center' },
   documentHeaderMoreButton: { width: 40, height: 40, borderRadius: 12, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#F8FAFC', alignItems: 'center', justifyContent: 'center' },
   documentHeaderTopMoreButton: { width: 32, height: 32, borderRadius: 10, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#F8FAFC', alignItems: 'center', justifyContent: 'center' },
-  documentTabsRow: { minHeight: 38, borderRadius: 12, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#F8FAFC', padding: 3, flexDirection: 'row', alignItems: 'center', gap: 3 },
-  documentTab: { flex: 1, minHeight: 30, borderRadius: 9, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 5, position: 'relative' },
-  documentTabActive: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#BFDBFE' },
+  documentTabsRow: { minHeight: 38, borderRadius: 12, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#EEF2F7', padding: 3, flexDirection: 'row', alignItems: 'center', gap: 3, position: 'relative', overflow: 'hidden' },
+  documentTabIndicator: { position: 'absolute', left: 3, top: 3, bottom: 3, borderRadius: 9, backgroundColor: '#DBEAFE', shadowColor: '#1D4ED8', shadowOpacity: 0.14, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
+  documentTab: { flex: 1, minHeight: 30, borderRadius: 9, alignItems: 'center', justifyContent: 'center', position: 'relative', zIndex: 1 },
+  documentTabContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5 },
+  documentTabIcon: { width: 16, height: 16, position: 'relative', alignItems: 'center', justifyContent: 'center' },
+  documentTabIconLayer: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
   documentTabText: { fontSize: 12.5, fontWeight: '900', color: '#334155' },
-  documentTabTextActive: { color: '#1D4ED8' },
   documentTabCountBadge: { minWidth: 22, height: 20, borderRadius: 999, paddingHorizontal: 6, backgroundColor: '#E2E8F0', alignItems: 'center', justifyContent: 'center' },
-  documentTabCountBadgeActive: { backgroundColor: '#DBEAFE' },
+  documentTabCountSkeleton: { width: 22, height: 20, borderRadius: 999, backgroundColor: '#D5DEE9' },
   documentTabCountText: { fontSize: 11, lineHeight: 13, fontWeight: '900', color: '#475569', includeFontPadding: false },
-  documentTabCountTextActive: { color: '#1D4ED8' },
-  documentHeaderDivider: { height: 1, marginHorizontal: -9, backgroundColor: '#E2E8F0' },
-  documentBottomBar: { position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 80, elevation: 18, borderTopLeftRadius: 22, borderTopRightRadius: 22, shadowColor: '#0F172A', shadowOpacity: 0.16, shadowRadius: 18, shadowOffset: { width: 0, height: -6 } },
-  documentBottomGlass: { borderTopLeftRadius: 22, borderTopRightRadius: 22, paddingHorizontal: 10, paddingTop: 8 },
+  documentErrorBanner: { minHeight: 40, borderRadius: 10, borderWidth: 1, borderColor: '#FECACA', backgroundColor: '#FEF2F2', paddingLeft: 10, paddingRight: 4, paddingVertical: 6, flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  documentErrorBannerText: { flex: 1, minWidth: 0, color: '#B91C1C', fontSize: 12.5, lineHeight: 17, fontWeight: '800' },
+  documentErrorDismissButton: { width: 30, height: 30, marginTop: -1, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  invoicePickerList: { paddingHorizontal: 10, paddingVertical: 8, gap: 6 },
+  invoicePickerItem: { minHeight: 58, borderRadius: 8, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#FFFFFF', paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 9 },
+  invoicePickerIcon: { width: 32, height: 32, borderRadius: 8, backgroundColor: '#FEF2F2', alignItems: 'center', justifyContent: 'center' },
+  invoicePickerText: { flex: 1, minWidth: 0 },
+  invoicePickerTitle: { color: '#0F172A', fontSize: 13, lineHeight: 17, fontWeight: '900' },
+  invoicePickerMeta: { marginTop: 2, color: '#64748B', fontSize: 11, lineHeight: 14, fontWeight: '700' },
+  documentBottomBar: { flexShrink: 0, width: '100%', zIndex: 80, elevation: 18, borderTopLeftRadius: 22, borderTopRightRadius: 22, shadowColor: '#0F172A', shadowOpacity: 0.16, shadowRadius: 18, shadowOffset: { width: 0, height: -6 } },
+  documentBottomGlass: { position: 'relative', zIndex: 2, elevation: 2, borderTopLeftRadius: 22, borderTopRightRadius: 22, paddingHorizontal: 10, paddingTop: 8 },
+  documentBottomProductPickerWrap: { position: 'absolute', left: 10, right: 10, top: -50, height: 42, zIndex: 1, elevation: 0 },
+  documentBottomProductPickerButton: { width: '100%', height: 42, borderRadius: 12, borderWidth: 1, borderColor: '#93C5FD', backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8, shadowColor: '#0F172A', shadowOpacity: 0.1, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 0 },
+  documentBottomProductPickerText: { color: '#1D4ED8', fontSize: 13.5, lineHeight: 17, fontWeight: '900', includeFontPadding: false },
   documentBottomContent: { minHeight: 72, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  documentBottomContentCompact: { gap: 6 },
+  documentBottomContentStacked: { minHeight: 0, flexDirection: 'column', alignItems: 'stretch', gap: 8 },
   documentBottomInfo: { flex: 1, minWidth: 0 },
+  documentBottomInfoStacked: { flex: 0, width: '100%' },
   documentBottomMetricsGrid: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 6, rowGap: 4 },
-  documentBottomMetric: { flexGrow: 1, flexShrink: 1, flexBasis: '47%', minWidth: 118, minHeight: 29, borderRadius: 8, paddingHorizontal: 2, paddingVertical: 2, flexDirection: 'row', alignItems: 'center', gap: 5 },
-  documentBottomMetricIcon: { width: 25, height: 25, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  documentBottomMetric: { flexGrow: 1, flexShrink: 1, flexBasis: '47%', minWidth: 0, minHeight: 29, paddingHorizontal: 1, paddingVertical: 1, flexDirection: 'row', alignItems: 'center', gap: 5 },
+  documentBottomMetricCompact: { paddingHorizontal: 0, gap: 4 },
+  documentBottomMetricStacked: { minHeight: 36 },
+  documentBottomMetricIcon: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
   documentBottomMetricTextWrap: { flex: 1, minWidth: 0 },
-  documentBottomMetricLabel: { color: '#64748B', fontSize: 9.5, lineHeight: 11, fontWeight: '900', textTransform: 'uppercase', includeFontPadding: false },
-  documentBottomMetricValue: { marginTop: 1, fontSize: 12.5, lineHeight: 15, fontWeight: '900', includeFontPadding: false },
+  documentBottomMetricLabel: { color: '#64748B', fontSize: 10.5, lineHeight: 12, fontWeight: '900', textTransform: 'uppercase', includeFontPadding: false },
+  documentBottomMetricLabelCompact: { fontSize: 10, lineHeight: 11 },
+  documentBottomMetricValue: { fontSize: 13.5, lineHeight: 15, fontWeight: '900', includeFontPadding: false },
+  documentBottomMetricValueSkeleton: { width: '54%', height: 14, marginTop: 1, borderRadius: 5, backgroundColor: '#DCE4ED' },
   documentBottomPrimaryButton: { width: 106, height: 56, borderRadius: 13, backgroundColor: '#2563EB', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10 },
+  documentBottomPrimaryButtonCompact: { width: 96, height: 54 },
+  documentBottomPrimaryButtonStacked: { width: '100%', height: 48, alignSelf: 'stretch' },
   documentBottomPrimaryButtonSubmit: { backgroundColor: '#16A34A' },
   documentBottomPrimaryText: { color: '#FFFFFF', fontSize: 12.5, lineHeight: 16, fontWeight: '900', includeFontPadding: false },
   flatPressed: { opacity: 0.78 },
@@ -6561,6 +7323,7 @@ const styles = StyleSheet.create({
   compactSearchInputBase: { flex: 1, minWidth: 0, height: 32, paddingHorizontal: 0, paddingVertical: 0, margin: 0, color: '#0F172A', fontSize: 13, lineHeight: 16, fontWeight: '800', includeFontPadding: false, textAlignVertical: 'center' },
   compactSearchLoading: { width: 24, height: 28, alignItems: 'center', justifyContent: 'center' },
   compactSearchClear: { width: 28, height: 28, marginRight: 0, alignItems: 'center', justifyContent: 'center' },
+  compactSearchTrailing: { height: 32, flexShrink: 0, alignItems: 'center', justifyContent: 'center' },
   flatField: { minHeight: 48, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#FFFFFF', borderRadius: 4, paddingLeft: 8, paddingRight: 5, paddingVertical: 5, flexDirection: 'row', alignItems: 'center' },
   flatFieldInvalid: { borderColor: '#FCA5A5', backgroundColor: '#FFF7F7' },
   flatFieldIcon: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center', marginRight: 7 },
@@ -6570,6 +7333,10 @@ const styles = StyleSheet.create({
   flatFieldHelper: { marginTop: 2, fontSize: 11, lineHeight: 13, color: '#64748B', fontWeight: '700' },
   flatFieldActions: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   flatFieldAction: { width: 30, height: 30, borderRadius: 4, alignItems: 'center', justifyContent: 'center' },
+  invoiceReadyField: { minHeight: 58, paddingRight: 0 },
+  invoiceFileActions: { flexDirection: 'row', alignItems: 'stretch', alignSelf: 'stretch', gap: 0, marginLeft: 0 },
+  invoiceFileAction: { width: 48, minHeight: 44, borderRadius: 0, borderWidth: 0, backgroundColor: 'transparent', alignItems: 'center', justifyContent: 'center' },
+  invoiceFileActionDivider: { borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: 'rgba(148, 163, 184, 0.55)' },
   flatSegmentedField: { minHeight: 58, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#FFFFFF', borderRadius: 4, paddingLeft: 8, paddingRight: 6, paddingVertical: 6, flexDirection: 'row', alignItems: 'center' },
   flatSegmentedContent: { flex: 1, minWidth: 0, gap: 4 },
   flatSegmentedHeader: { minHeight: 15, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6 },
@@ -6685,15 +7452,6 @@ const styles = StyleSheet.create({
   filtersLookupTitleRow: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 8 },
   filtersLookupSearchArea: { paddingHorizontal: 14, paddingTop: 12, paddingBottom: 8, backgroundColor: '#F8FAFC' },
   filtersLookupSearch: { height: 40, borderRadius: 10, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF', elevation: 0 },
-  productPickerFullscreenHeader: { flexShrink: 0, minHeight: 140, paddingBottom: 16, gap: 10, overflow: 'visible', backgroundColor: '#FFFFFF' },
-  productPickerFullscreenSearchArea: { flexShrink: 0, width: '100%' },
-  productPickerFullscreenSearch: { height: 42, minHeight: 42, borderRadius: 8, backgroundColor: '#F8FAFC' },
-  productPickerFullscreenSearchInput: { height: 38, fontSize: 14 },
-  productPickerFullscreenHeaderActions: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  productPickerFullscreenStockChip: { height: 28, borderRadius: 8, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF', paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 5 },
-  productPickerFullscreenStockChipActive: { borderColor: '#86EFAC', backgroundColor: '#F0FDF4' },
-  productPickerFullscreenStockText: { color: '#475569', fontSize: 11, lineHeight: 14, fontWeight: '900' },
-  productPickerFullscreenStockTextActive: { color: '#166534' },
   productPickerFullscreenList: { flex: 1, minHeight: 0, backgroundColor: '#FFFFFF' },
   productPickerClearSelectionButton: { width: 44, height: 44, borderRadius: 12, borderWidth: 1, borderColor: '#FCA5A5', backgroundColor: '#FEF2F2', alignItems: 'center', justifyContent: 'center' },
   productPickerInitialLoader: { minHeight: 220, flexGrow: 1, alignItems: 'center', justifyContent: 'center' },
@@ -6724,19 +7482,29 @@ const styles = StyleSheet.create({
   ordersTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   ordersTitle: { fontSize: 16, fontWeight: '900', color: '#0F172A' },
   ordersSubtitle: { marginTop: 1, fontSize: 10.5, fontWeight: '700', color: '#64748B' },
-  ordersCompactToolbarRow: { minHeight: 44, flexDirection: 'row', gap: 8, alignItems: 'center' },
-  ordersSearchbar: { flex: 1, height: 44, backgroundColor: '#F8FAFC', borderRadius: 12, borderWidth: 1, borderColor: '#D8E2F0', elevation: 0 },
+  ordersCompactToolbarRow: { minHeight: 44, flexDirection: 'row', gap: 7, alignItems: 'center' },
+  ordersSearchbar: { flex: 1, height: 44, backgroundColor: '#F4F6F8', borderRadius: 14, borderWidth: 1, borderColor: '#E5EAF0', elevation: 0 },
   ordersSearchbarInput: { height: 40, fontSize: 14, lineHeight: 18, color: '#0F172A', fontWeight: '800' },
   ordersActionRow: { flexDirection: 'row', gap: 6, alignItems: 'center' },
-  ordersIconButton: { width: 44, height: 44, margin: 0, borderRadius: 12, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' },
-  ordersIconButtonPrimary: { borderColor: '#16A34A', backgroundColor: '#16A34A' },
-  ordersIconButtonPrimaryPressed: { backgroundColor: '#15803D', borderColor: '#15803D', transform: [{ scale: 0.96 }] },
-  ordersFilterButton: { width: 44, height: 44, borderRadius: 12, borderWidth: 1, borderColor: '#BFDBFE', backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center' },
-  ordersFilterButtonPressed: { backgroundColor: '#DBEAFE', borderColor: '#93C5FD', transform: [{ scale: 0.96 }] },
+  ordersBackButton: { width: 44, height: 44, borderRadius: 14, borderWidth: 1, borderColor: '#E5EAF0', backgroundColor: '#F4F6F8', alignItems: 'center', justifyContent: 'center' },
+  ordersBackButtonPressed: { backgroundColor: '#E9EDF2', transform: [{ scale: 0.97 }] },
+  ordersSearchFilterButton: { width: 38, height: 36, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  ordersSearchFilterButtonPressed: { backgroundColor: '#E5EAF0' },
   ordersToolbarButtonDisabled: { opacity: 0.56 },
-  ordersFilterBadge: { position: 'absolute', top: -6, right: -6, minWidth: 19, height: 19, borderRadius: 999, paddingHorizontal: 4, backgroundColor: '#2563EB', borderWidth: 2, borderColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' },
+  ordersFilterBadge: { position: 'absolute', top: 1, right: 0, minWidth: 17, height: 17, borderRadius: 999, paddingHorizontal: 3, backgroundColor: '#2563EB', borderWidth: 1.5, borderColor: '#F4F6F8', alignItems: 'center', justifyContent: 'center' },
   ordersFilterBadgeText: { color: '#FFFFFF', fontSize: 9, lineHeight: 11, fontWeight: '900' },
-  ordersInitialLoadingState: { minHeight: 160, alignItems: 'center', justifyContent: 'center', paddingVertical: 28 },
+  ordersBottomBar: { position: 'absolute', left: 0, right: 0, bottom: 0, width: '100%', zIndex: 30, elevation: 16, borderTopLeftRadius: 22, borderTopRightRadius: 22, shadowColor: '#0F172A', shadowOpacity: 0.16, shadowRadius: 18, shadowOffset: { width: 0, height: -6 } },
+  ordersBottomGlass: { position: 'relative', zIndex: 2, elevation: 2, borderTopLeftRadius: 22, borderTopRightRadius: 22, paddingHorizontal: 10, paddingTop: 8 },
+  ordersBottomCreateWrap: { position: 'absolute', left: 10, right: 10, top: -50, height: 42, zIndex: 1, elevation: 0 },
+  ordersBottomCreateButton: { width: '100%', height: 42, borderRadius: 12, borderWidth: 1, borderColor: '#93C5FD', backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8, shadowColor: '#0F172A', shadowOpacity: 0.09, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 0 },
+  ordersBottomCreateText: { color: '#1D4ED8', fontSize: 13.5, lineHeight: 17, fontWeight: '900', includeFontPadding: false },
+  ordersBottomMetrics: { minHeight: 72, flexDirection: 'row', alignItems: 'center', columnGap: 12 },
+  ordersBottomMetric: { flex: 1, minWidth: 0, minHeight: 42, paddingHorizontal: 6, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  ordersBottomMetricIcon: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
+  ordersBottomMetricText: { flex: 1, minWidth: 0, gap: 2 },
+  ordersBottomMetricLabel: { color: '#64748B', fontSize: 11.5, lineHeight: 13, fontWeight: '900', textTransform: 'uppercase', includeFontPadding: false },
+  ordersBottomMetricValue: { fontSize: 15, lineHeight: 17, fontWeight: '900', includeFontPadding: false },
+  ordersBottomMetricValueSkeleton: { width: '52%', height: 15, borderRadius: 5, backgroundColor: '#DCE4ED' },
   ordersEmptyState: { minHeight: 148, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 18, paddingVertical: 22, gap: 6 },
   ordersEmptyIcon: { width: 42, height: 42, borderRadius: 999, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
   ordersEmptyTitle: { color: '#334155', fontSize: 14, lineHeight: 18, fontWeight: '900', includeFontPadding: false },
@@ -6750,25 +7518,29 @@ const styles = StyleSheet.create({
   ordersSkeletonAction: { width: 44, height: 44, borderRadius: 12, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#EEF4FB' },
   ordersSkeletonActionPrimary: { borderColor: '#BBF7D0', backgroundColor: '#DCFCE7' },
   ordersSkeletonList: { gap: 0 },
-  ordersSkeletonCard: { minHeight: 104, borderRadius: 0, borderBottomWidth: 1, borderBottomColor: '#E2E8F0', backgroundColor: '#FFFFFF', paddingHorizontal: 12, paddingVertical: 10, gap: 7 },
-  ordersSkeletonTopRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 7 },
-  ordersSkeletonTitleBlock: { flex: 1, minWidth: 0, gap: 5 },
-  ordersSkeletonDocument: { width: 108, height: 17, borderRadius: 5, backgroundColor: '#DBEAFE' },
-  ordersSkeletonCounterparty: { width: '76%', height: 15, borderRadius: 5, backgroundColor: '#EEF2F7' },
-  ordersSkeletonAmount: { width: 72, height: 16, borderRadius: 999, backgroundColor: '#DBEAFE', marginTop: 2 },
-  ordersSkeletonMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  ordersSkeletonPill: { width: 100, height: 24, borderRadius: 999, backgroundColor: '#F1F5F9' },
-  ordersSkeletonMeta: { width: 70, height: 13, borderRadius: 999, backgroundColor: '#EEF2F7' },
-  ordersSkeletonMetaShort: { flex: 1, height: 13, borderRadius: 999, backgroundColor: '#F1F5F9' },
-  documentOpenLoader: { flex: 1, minHeight: 360, justifyContent: 'flex-start', paddingTop: 12 },
-  documentOpenLoaderCard: { borderRadius: 14, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#FFFFFF', paddingHorizontal: 12, paddingVertical: 12, gap: 10 },
-  documentOpenLoaderHeader: { minHeight: 28, flexDirection: 'row', alignItems: 'center', gap: 9 },
-  documentOpenLoaderTitle: { flex: 1, minWidth: 0, color: '#0F172A', fontSize: 13, lineHeight: 17, fontWeight: '900' },
-  documentOpenLoaderLine: { width: '78%', height: 22, borderRadius: 8, backgroundColor: '#F1F5F9' },
-  documentOpenLoaderLineShort: { width: '54%', backgroundColor: '#EEF4FB' },
-  documentOpenLoaderGrid: { gap: 8, paddingTop: 2 },
-  documentOpenLoaderField: { height: 48, borderRadius: 10, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#F8FAFC' },
-  documentOpenLoaderFieldWide: { height: 76, borderRadius: 10, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#F8FAFC' },
+  ordersSkeletonCard: { minHeight: 95, borderRadius: 0, borderBottomWidth: 1, borderBottomColor: '#E2E8F0', backgroundColor: '#FFFFFF', paddingHorizontal: 12, paddingVertical: 13, justifyContent: 'center', gap: 9 },
+  ordersSkeletonLine: { borderRadius: 5, backgroundColor: '#EEF2F7' },
+  ordersSkeletonLineTitle: { width: '46%', height: 14, backgroundColor: '#E2E8F0' },
+  ordersSkeletonLineTitleShort: { width: '38%' },
+  ordersSkeletonLineWide: { width: '72%', height: 12 },
+  ordersSkeletonLineMeta: { width: '54%', height: 11, backgroundColor: '#F1F5F9' },
+  documentSkeleton: { flex: 1, minHeight: 360, paddingTop: 8 },
+  documentHeaderSkeletonGrid: { gap: 6 },
+  documentHeaderFieldSkeleton: { minHeight: 58, borderRadius: 4, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#FFFFFF', paddingHorizontal: 10, paddingVertical: 8, justifyContent: 'center', gap: 7 },
+  documentHeaderFieldSkeletonWide: { minHeight: 88, borderRadius: 4, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#FFFFFF', paddingHorizontal: 10, paddingVertical: 10, justifyContent: 'center', gap: 8 },
+  documentSkeletonLabel: { height: 9, borderRadius: 4, backgroundColor: '#E2E8F0' },
+  documentSkeletonLine: { height: 15, borderRadius: 5, backgroundColor: '#EEF2F7' },
+  documentSkeletonLineShort: { width: '58%' },
+  documentItemsSkeletonList: { gap: 0, backgroundColor: '#FFFFFF' },
+  documentItemSkeletonRow: { minHeight: 104, borderBottomWidth: 1, borderBottomColor: '#E2E8F0', paddingVertical: 9, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  documentItemImageSkeleton: { width: 78, height: 78, borderRadius: 8, backgroundColor: '#E2E8F0' },
+  documentItemBodySkeleton: { flex: 1, minWidth: 0, gap: 9 },
+  documentItemMetaSkeletonRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  documentItemMetaSkeleton: { width: 82, height: 12, borderRadius: 5, backgroundColor: '#EEF2F7' },
+  documentItemMetaSkeletonShort: { width: 58, height: 12, borderRadius: 5, backgroundColor: '#F1F5F9' },
+  documentItemBottomSkeletonRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  documentItemQuantitySkeleton: { width: 92, height: 15, borderRadius: 5, backgroundColor: '#EEF2F7' },
+  documentItemAmountSkeleton: { width: 74, height: 17, borderRadius: 5, backgroundColor: '#DBEAFE' },
   documentBusyOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 260, elevation: 260, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 22 },
   documentBusyBlur: { ...StyleSheet.absoluteFillObject, borderWidth: 0 },
   documentBusyCard: { minWidth: 164, minHeight: 92, borderRadius: 18, borderWidth: 1, borderColor: 'rgba(191, 219, 254, 0.82)', backgroundColor: 'rgba(255, 255, 255, 0.86)', alignItems: 'center', justifyContent: 'center', gap: 10, paddingHorizontal: 18, paddingVertical: 16, shadowColor: '#0F172A', shadowOpacity: 0.13, shadowRadius: 22, shadowOffset: { width: 0, height: 12 }, elevation: 18 },
@@ -6894,6 +7666,9 @@ const styles = StyleSheet.create({
   productPreviewRemoveButton: { position: 'absolute', top: 6, right: 6, width: 24, height: 24, borderRadius: 8, backgroundColor: '#F8FAFC', alignItems: 'center', justifyContent: 'center', zIndex: 2 },
   productPreviewMeta: { color: '#64748B', fontSize: 11, fontWeight: '700', lineHeight: 14, paddingRight: 2 },
   productPreviewMetaReadOnly: { color: 'rgba(100, 116, 139, 0.58)' },
+  productPreviewMetrics: { minHeight: 14, flexDirection: 'row', alignItems: 'center', gap: 10, paddingRight: 2 },
+  productPreviewMetric: { minWidth: 0, flexShrink: 1, flexDirection: 'row', alignItems: 'center', gap: 4 },
+  productPreviewMetricValue: { minWidth: 0, flexShrink: 1, color: '#475569', fontSize: 11, fontWeight: '700', lineHeight: 14 },
   productPreviewBottomRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   productPreviewFormulaRow: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'baseline', gap: 3 },
   productPreviewQuantity: { color: '#334155', fontSize: 13, fontWeight: '900', lineHeight: 16, includeFontPadding: false },
@@ -6903,12 +7678,14 @@ const styles = StyleSheet.create({
   productPreviewFormulaSeparatorReadOnly: { color: 'rgba(148, 163, 184, 0.54)' },
   productPreviewPrice: { flexShrink: 1, minWidth: 0, color: '#334155', fontSize: 13, fontWeight: '900', lineHeight: 16, includeFontPadding: false },
   productPreviewPriceReadOnly: { color: 'rgba(15, 23, 42, 0.62)' },
+  productPreviewTotals: { flexShrink: 0, maxWidth: 118, alignItems: 'flex-end', justifyContent: 'center' },
+  productPreviewProfitRow: { minWidth: 0, maxWidth: '46%', marginLeft: 'auto', flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 3 },
+  productPreviewProfit: { flexShrink: 1, fontSize: 10.5, fontWeight: '900', lineHeight: 12, textAlign: 'right', includeFontPadding: false },
+  productPreviewProfitReadOnly: { opacity: 0.68 },
   productPreviewTotal: { maxWidth: 112, color: '#2563EB', fontSize: 14, fontWeight: '900', lineHeight: 17, textAlign: 'right', includeFontPadding: false },
   productPreviewTotalReadOnly: { color: 'rgba(37, 99, 235, 0.58)' },
   productPreviewIssueText: { color: '#DC2626', fontSize: 10.5, fontWeight: '800', lineHeight: 13, marginTop: 2 },
   productPreviewCancelledText: { color: '#64748B' },
-  addProductListCard: { minHeight: 60, borderRadius: 12, borderWidth: 1, borderStyle: 'dashed', borderColor: '#93C5FD', backgroundColor: '#F8FBFF', alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8 },
-  addProductListText: { color: '#2563EB', fontSize: 13, fontWeight: '800' },
   productEditorSheet: { borderTopLeftRadius: 18, borderTopRightRadius: 18, borderWidth: 0, paddingTop: 0, overflow: 'hidden', shadowOpacity: 0.08, shadowRadius: 20, shadowOffset: { width: 0, height: -4 } },
   productEditorScroll: { flex: 1, minHeight: 0 },
   productEditorContent: { flexShrink: 0, paddingTop: 12, paddingBottom: 10, gap: 10 },
@@ -6963,8 +7740,10 @@ const styles = StyleSheet.create({
   productEditorReadOnlyTotalText: { color: 'rgba(15, 23, 42, 0.66)' },
   productEditorFooterTotalWrap: { flex: 1, minWidth: 0, gap: 4 },
   productEditorFooterTotalLabel: { color: '#2563EB', fontSize: 11, lineHeight: 14, fontWeight: '900', textTransform: 'uppercase' },
-  productEditorFooterTotalRow: { height: 44, justifyContent: 'center' },
-  productEditorFooterTotal: { color: '#0F172A', fontSize: 24, lineHeight: 28, fontWeight: '900' },
+  productEditorFooterTotalRow: { height: 52, justifyContent: 'center', alignItems: 'flex-start', gap: 1 },
+  productEditorFooterTotal: { color: '#0F172A', fontSize: 22, lineHeight: 25, fontWeight: '900' },
+  productEditorFooterProfitRow: { flexDirection: 'row', alignItems: 'center', gap: 4, minHeight: 15 },
+  productEditorFooterProfit: { flexShrink: 1, fontSize: 11.5, lineHeight: 14, fontWeight: '900', includeFontPadding: false },
   productEditorFooterQuantity: { flexGrow: 0, flexShrink: 0, marginLeft: 'auto', gap: 4 },
   lineHeaderRow: { minHeight: 24, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 6, paddingVertical: 4, backgroundColor: '#F8FAFC', borderBottomWidth: 1, borderBottomColor: '#E2E8F0' },
   lineHeaderText: { fontSize: 9, color: '#64748B', fontWeight: '900', textTransform: 'uppercase' },
@@ -7105,12 +7884,6 @@ const styles = StyleSheet.create({
   pickerSearchFlat: { flex: 1, minWidth: 0, height: 34, backgroundColor: '#FFFFFF', borderRadius: 4, borderWidth: 1, borderColor: '#CBD5E1', elevation: 0 },
   productPickerSearchFlat: { flex: 1, minWidth: 0 },
   pickerSearchInputFlat: { fontSize: 13, color: '#0F172A', fontWeight: '800' },
-  productStockToggle: { width: 34, height: 34, borderRadius: 9, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
-  productStockToggleActive: { borderColor: '#86EFAC', backgroundColor: '#F0FDF4' },
-  counterpartyManagerHeaderToggle: { height: 34, minWidth: 72, borderRadius: 9, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF', paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5 },
-  counterpartyManagerHeaderToggleActive: { borderColor: '#93C5FD', backgroundColor: '#EFF6FF' },
-  counterpartyManagerHeaderToggleText: { color: '#334155', fontSize: 11, lineHeight: 14, fontWeight: '900' },
-  counterpartyManagerHeaderToggleTextActive: { color: '#1D4ED8' },
   pickerListContent: { paddingBottom: 20, flexGrow: 1 },
   pickerFlatRow: { minHeight: 54, borderBottomWidth: 1, borderBottomColor: '#E2E8F0', backgroundColor: '#FFFFFF', paddingLeft: 10, paddingRight: 8, paddingVertical: 6, flexDirection: 'row', alignItems: 'center', gap: 8 },
   productPickerRow: { minHeight: 84, paddingLeft: 5, paddingRight: 10, paddingVertical: 2, gap: 8 },
@@ -7129,10 +7902,6 @@ const styles = StyleSheet.create({
   pickerRowChevron: { alignSelf: 'center', marginVertical: 10 },
   pickerFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14 },
   pickerFooterText: { color: '#64748B', fontSize: 12, fontWeight: '700' },
-  productPickerTransferFooter: { flexShrink: 0, paddingTop: 8, paddingHorizontal: 10, borderTopWidth: 1, borderTopColor: '#E2E8F0', backgroundColor: '#FFFFFF' },
-  productPickerTransferButton: { borderRadius: 12 },
-  productPickerTransferContent: { minHeight: 44 },
-  productPickerTransferLabel: { marginVertical: 0, fontSize: 13, fontWeight: '900' },
   productCard: { borderRadius: 14, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#FFFFFF', padding: 12, gap: 7 },
   disabled: { opacity: 0.55 },
   infoText: { color: '#64748B', fontWeight: '700', textAlign: 'center', padding: 16 },

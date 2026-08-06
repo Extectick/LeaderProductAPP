@@ -1,8 +1,13 @@
 import {
   buildNewItem,
+  buildCopyPayload,
   buildPayload,
+  canComputeDraftProfit,
+  canComputeLineProfit,
   computeDraftWeight,
+  computeLineProfit,
   computeLineTotal,
+  estimateClientOrdersDocumentBottomBarHeight,
   displayedUnitPriceToBasePriceInput,
   getBelowCostWarning,
   getDisplayedReceiptPriceValue,
@@ -14,9 +19,12 @@ import {
   getStockShortageMessage,
   mapOnecOrderStatus,
   normalizeDraftOrder,
+  normalizeClientOrderDeliveryMethod,
+  normalizeClientOrderPaymentForm,
   normalizePriceInput,
   normalizeQuantityInput,
   orderToDraft,
+  resolveClientOrdersDocumentBottomBarLayout,
   validateDraft,
   type DraftItem,
   type DraftOrder,
@@ -64,6 +72,7 @@ function draft(patch: Partial<DraftOrder> = {}): DraftOrder {
     priceTypeGuid: 'price-type-guid',
     priceTypeName: 'Прайс',
     generalDiscountPercent: '',
+    invoiceRequested: false,
     items: [item()],
     ...patch,
   });
@@ -100,6 +109,33 @@ describe('clientOrdersShared statuses', () => {
       number1c: 'НОУТ-1',
       origin: 'onec',
     } as any)).toBe('Закрыт');
+  });
+});
+
+describe('clientOrdersShared document bottom bar layout', () => {
+  it('keeps a two-column inline summary on Realme C53-sized logical widths', () => {
+    expect(resolveClientOrdersDocumentBottomBarLayout(360, 1)).toBe('compact');
+    expect(resolveClientOrdersDocumentBottomBarLayout(389, 1)).toBe('compact');
+    expect(resolveClientOrdersDocumentBottomBarLayout(390, 1)).toBe('regular');
+  });
+
+  it('stacks controls only for very narrow windows or accessibility font scaling', () => {
+    expect(resolveClientOrdersDocumentBottomBarLayout(339, 1)).toBe('stacked');
+    expect(resolveClientOrdersDocumentBottomBarLayout(360, 1.3)).toBe('stacked');
+    expect(resolveClientOrdersDocumentBottomBarLayout(Number.NaN, 1)).toBe('stacked');
+  });
+
+  it('includes the Android navigation inset in the initial scroll reserve', () => {
+    expect(estimateClientOrdersDocumentBottomBarHeight({
+      layout: 'compact',
+      safeBottom: 48,
+      fontScale: 1,
+    })).toBe(138);
+    expect(estimateClientOrdersDocumentBottomBarHeight({
+      layout: 'stacked',
+      safeBottom: 48,
+      fontScale: 1.3,
+    })).toBeGreaterThan(138);
   });
 });
 
@@ -197,6 +233,7 @@ describe('clientOrdersShared item inputs and packages', () => {
           },
           quantity: 2,
           basePrice: 100,
+          receiptPrice: 80,
           manualPrice: null,
           package: {
             guid: 'box-10',
@@ -215,12 +252,14 @@ describe('clientOrdersShared item inputs and packages', () => {
       lineGuid: 'line-guid-1',
       packageGuid: 'box-10',
       basePrice: 100,
+      receiptPrice: 80,
       productWeight: 1.2,
     });
     expect(orderDraft.items[0].packages).toEqual([
       expect.objectContaining({ guid: 'box-10', multiplier: 10, weight: 12 }),
     ]);
     expect(computeLineTotal(orderDraft.items[0])).toBe(2000);
+    expect(computeLineProfit(orderDraft.items[0])).toBe(400);
     expect(computeDraftWeight(orderDraft)).toBe(24);
 
     const payload = buildPayload(orderDraft);
@@ -343,6 +382,41 @@ describe('clientOrdersShared validation and payload', () => {
     expect(result.blockingMessage).toBe('Исправьте строки с недоступной упаковкой.');
   });
 
+  it('does not substitute the sale price when a reopened order has no receipt price', () => {
+    const orderDraft = orderToDraft({
+      guid: 'order-guid',
+      revision: 1,
+      organization: { guid: 'organization-guid', name: 'Организация' },
+      counterparty: { guid: 'counterparty-guid', name: 'Контрагент' },
+      currency: 'RUB',
+      items: [{
+        product: { guid: 'product-guid', name: 'Товар' },
+        quantity: 1,
+        basePrice: 100,
+      }],
+    } as any);
+
+    expect(orderDraft.items[0].basePrice).toBe(100);
+    expect(orderDraft.items[0].receiptPrice).toBeNull();
+  });
+
+  it('builds a structural copy payload even when price and package are invalid', () => {
+    const source = draft({
+      items: [item({
+        packageGuid: 'missing-package',
+        basePrice: null,
+        stock: { available: 0 },
+      })],
+    });
+
+    expect(validateDraft(source).canSave).toBe(false);
+    expect(() => buildCopyPayload(source)).not.toThrow();
+    expect(buildCopyPayload(source).items[0]).toMatchObject({
+      packageGuid: 'missing-package',
+      basePrice: undefined,
+    });
+  });
+
   it('allows saving draft but blocks submit without delivery date', () => {
     const result = validateDraft(draft({ deliveryDate: null }));
 
@@ -388,6 +462,7 @@ describe('clientOrdersShared validation and payload', () => {
   it('builds API payload with normalized quantity and manual price semantics', () => {
     const payload = buildPayload(draft({
       generalDiscountPercent: '5',
+      invoiceRequested: true,
       paymentForm: 'Наличная',
       deliveryMethod: 'Самовывоз',
       items: [
@@ -410,6 +485,7 @@ describe('clientOrdersShared validation and payload', () => {
       deliveryMethod: 'Самовывоз',
       currency: 'RUB',
       generalDiscountPercent: 5,
+      invoiceRequested: true,
       items: [
         {
           lineGuid: 'line-guid-1',
@@ -427,6 +503,43 @@ describe('clientOrdersShared validation and payload', () => {
 
   it('computes totals using package multiplier and discount', () => {
     expect(computeLineTotal(item({ quantity: '2', packageGuid: 'box-10', basePrice: 100 }), '10')).toBe(1800);
+  });
+
+  it('maps read-only 1C payment and delivery values to application choices', () => {
+    expect(normalizeClientOrderPaymentForm('Безналичная')).toBeNull();
+    expect(normalizeClientOrderPaymentForm('Наличная')).toBe('Наличная');
+    expect(normalizeClientOrderDeliveryMethod('СиламиПеревозчика')).toBe('ДоКлиента');
+    expect(normalizeClientOrderDeliveryMethod('Силами перевозчика по адресу')).toBe('ДоКлиента');
+    expect(normalizeClientOrderDeliveryMethod('Самовывоз')).toBe('Самовывоз');
+
+    expect(normalizeDraftOrder(draft({
+      paymentForm: 'Безналичная',
+      deliveryMethod: 'СиламиПеревозчика',
+    }))).toMatchObject({
+      paymentForm: null,
+      deliveryMethod: 'ДоКлиента',
+    });
+  });
+
+  it('does not expose line profit until receipt price is known', () => {
+    expect(canComputeLineProfit(item({ receiptPrice: null }))).toBe(false);
+    expect(canComputeLineProfit(item({ receiptPrice: 0 }))).toBe(false);
+    expect(canComputeLineProfit(item({ receiptPrice: 80 }))).toBe(true);
+  });
+
+  it('exposes document profit only when every active line has a receipt price', () => {
+    const priced = item({ receiptPrice: 80 });
+    const pending = item({ key: 'line-2', lineGuid: 'line-guid-2', receiptPrice: null });
+    const cancelled = item({
+      key: 'line-3',
+      lineGuid: 'line-guid-3',
+      receiptPrice: null,
+      isCancelled: true,
+    });
+
+    expect(canComputeDraftProfit(draft({ items: [priced, pending] }))).toBe(false);
+    expect(canComputeDraftProfit(draft({ items: [priced, cancelled] }))).toBe(true);
+    expect(canComputeDraftProfit(draft({ items: [cancelled] }))).toBe(false);
   });
 
   it('does not count cancelled lines as active editable order lines', () => {

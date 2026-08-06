@@ -102,6 +102,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     "expo-background-task",
     "./plugins/with-android-cleartext-network",
     "./plugins/with-leader-native-tracking",
+    "./plugins/with-android-file-download",
     "expo-audio",
     "expo-font",
     "expo-secure-store",

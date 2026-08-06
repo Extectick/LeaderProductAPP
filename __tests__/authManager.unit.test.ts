@@ -160,4 +160,21 @@ describe('auth token manager', () => {
     expect(axiosPost).toHaveBeenCalledTimes(1);
     await expect(tokenService.getRefreshToken()).resolves.toBe('fresh-refresh');
   });
+
+  it('keeps the local session and backs off refresh attempts while the API is unavailable', async () => {
+    const tokenService = await import('@/utils/tokenService');
+    const expiredRefresh = `header.${Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) - 60 }))
+      .toString('base64url')}.signature`;
+    await tokenService.saveTokens('expired-access', expiredRefresh, { id: 1 }, 'device-1');
+    axiosPost.mockRejectedValueOnce(new Error('Network Error'));
+
+    await expect(tokenService.refreshToken()).resolves.toBeNull();
+    await expect(tokenService.refreshToken()).resolves.toBeNull();
+
+    expect(axiosPost).toHaveBeenCalledTimes(1);
+    expect(tokenService.hasAuthSessionExpired()).toBe(false);
+    expect(tokenService.getLastRefreshFailure()).toMatchObject({ kind: 'network' });
+    await expect(tokenService.getRefreshToken()).resolves.toBe(expiredRefresh);
+    expect(asyncStorage.get('profile')).toBe(JSON.stringify({ id: 1 }));
+  });
 });

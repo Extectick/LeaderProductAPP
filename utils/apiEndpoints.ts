@@ -117,6 +117,10 @@ export const API_ENDPOINTS = {
     RESTORE: (guid: string) => `/api/client-orders/${encodeURIComponent(guid)}/restore`,
     COPY: (guid: string) => `/api/client-orders/${encodeURIComponent(guid)}/copy`,
     CANCEL: (guid: string) => `/api/client-orders/${encodeURIComponent(guid)}/cancel`,
+    INVOICES: (guid: string) => `/api/client-orders/${encodeURIComponent(guid)}/invoices`,
+    INVOICE_REQUEST: (guid: string) => `/api/client-orders/${encodeURIComponent(guid)}/invoices/request`,
+    INVOICE_DOWNLOAD: (guid: string, invoiceId: string) =>
+      `/api/client-orders/${encodeURIComponent(guid)}/invoices/${encodeURIComponent(invoiceId)}/download`,
   },
   ONEC_LP_APP: {
     PING: '/api/1c/lp-app/ping',

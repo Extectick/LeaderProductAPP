@@ -72,6 +72,7 @@ export type DraftOrder = {
   priceTypeGuid?: string | null;
   priceTypeName?: string | null;
   generalDiscountPercent: string;
+  invoiceRequested: boolean;
   items: DraftItem[];
 };
 
@@ -152,6 +153,43 @@ export function resolveClientOrdersEditorTier(width: number): EditorPaneTier {
   if (width < 1180) return 'compact';
   if (width < 1440) return 'medium';
   return 'wide';
+}
+
+export type ClientOrdersDocumentBottomBarLayout = 'regular' | 'compact' | 'stacked';
+
+export function resolveClientOrdersDocumentBottomBarLayout(
+  width: number,
+  fontScale = 1,
+): ClientOrdersDocumentBottomBarLayout {
+  const safeWidth = Number.isFinite(width) ? Math.max(0, width) : 0;
+  const safeFontScale = Number.isFinite(fontScale) ? Math.max(1, fontScale) : 1;
+
+  if (safeWidth < 340 || safeFontScale >= 1.3) return 'stacked';
+  if (safeWidth < 390) return 'compact';
+  return 'regular';
+}
+
+export function estimateClientOrdersDocumentBottomBarHeight({
+  layout,
+  safeBottom,
+  fontScale = 1,
+}: {
+  layout: ClientOrdersDocumentBottomBarLayout;
+  safeBottom: number;
+  fontScale?: number;
+}) {
+  const normalizedSafeBottom = Number.isFinite(safeBottom) ? Math.max(0, safeBottom) : 0;
+  const normalizedFontScale = Number.isFinite(fontScale) ? Math.max(1, fontScale) : 1;
+  const bottomPadding = Math.max(normalizedSafeBottom, 8) + 8;
+
+  if (layout !== 'stacked') {
+    return 8 + 72 + bottomPadding + 2;
+  }
+
+  const metricRowHeight = Math.max(36, Math.ceil(29 * normalizedFontScale));
+  const buttonHeight = Math.max(48, Math.ceil(40 * normalizedFontScale));
+  const contentHeight = metricRowHeight * 2 + 4 + 8 + buttonHeight;
+  return 8 + contentHeight + bottomPadding + 2;
 }
 
 export function getClientOrdersResponsiveMetrics(
@@ -395,6 +433,7 @@ export function emptyDraft(): DraftOrder {
     priceTypeGuid: null,
     priceTypeName: null,
     generalDiscountPercent: '',
+    invoiceRequested: false,
     items: [],
   };
 }
@@ -416,6 +455,34 @@ export function asString(value?: number | null) {
 export function asInputString(value: unknown) {
   if (value === null || value === undefined) return '';
   return typeof value === 'string' ? value : String(value);
+}
+
+function clientOrderEnumKey(value: unknown) {
+  return asInputString(value).trim().toLowerCase().replace(/[\s_-]+/g, '');
+}
+
+export function normalizeClientOrderPaymentForm(value: unknown): string | null {
+  const normalized = asInputString(value).trim();
+  const key = clientOrderEnumKey(normalized);
+  if (!key || key === 'любая' || key === 'безналичная') return null;
+  if (key === 'наличная') return 'Наличная';
+  return normalized;
+}
+
+export function normalizeClientOrderDeliveryMethod(value: unknown): string | null {
+  const normalized = asInputString(value).trim();
+  const key = clientOrderEnumKey(normalized);
+  if (!key) return null;
+  if (key === 'самовывоз') return 'Самовывоз';
+  if (
+    key === 'доклиента'
+    || key === 'нашадоставка'
+    || key === 'силамиперевозчика'
+    || key === 'силамиперевозчикапоадресу'
+  ) {
+    return 'ДоКлиента';
+  }
+  return normalized;
 }
 
 export function manualPriceInput(item?: Pick<DraftItem, 'manualPrice'> | null) {
@@ -467,11 +534,12 @@ export function normalizeDraftOrder(draft: DraftOrder): DraftOrder {
     warehouseGuid: asInputString(draft.warehouseGuid),
     deliveryAddressGuid: asInputString(draft.deliveryAddressGuid),
     deliveryDate: normalizeClientOrderDateOnly(draft.deliveryDate),
-    paymentForm: asInputString(draft.paymentForm) || null,
-    deliveryMethod: asInputString(draft.deliveryMethod) || null,
+    paymentForm: normalizeClientOrderPaymentForm(draft.paymentForm),
+    deliveryMethod: normalizeClientOrderDeliveryMethod(draft.deliveryMethod),
     comment: asInputString(draft.comment),
     currency: asInputString(draft.currency) || DEFAULT_ORDER_CURRENCY,
     generalDiscountPercent: asInputString(draft.generalDiscountPercent),
+    invoiceRequested: !!draft.invoiceRequested,
     items,
   };
 }
@@ -757,6 +825,7 @@ export function orderToDraft(order: ClientOrder): DraftOrder {
     priceTypeGuid: headerPriceType?.guid ?? null,
     priceTypeName: headerPriceType?.name ?? null,
     generalDiscountPercent: asString(order.generalDiscountPercent),
+    invoiceRequested: !!order.invoiceRequested,
     items: orderItems.map((item: ClientOrderItem) => {
       const productPackages = Array.isArray((item.product as any)?.packages)
         ? (item.product as any).packages
@@ -805,7 +874,7 @@ export function orderToDraft(order: ClientOrder): DraftOrder {
         discountPercent: asString(item.discountPercent),
         comment: item.comment ?? '',
         basePrice: item.basePrice ?? null,
-        receiptPrice: item.basePrice ?? null,
+        receiptPrice: item.receiptPrice ?? null,
         currency: DEFAULT_ORDER_CURRENCY,
         priceSource: item.priceSource ?? null,
         priceTypeGuid: item.priceType?.guid ?? headerPriceType?.guid ?? null,
@@ -849,6 +918,12 @@ export function computeLineProfit(item: DraftItem, generalDiscountPercent?: stri
   return computeLineTotal(item, generalDiscountPercent) - cost;
 }
 
+export function canComputeLineProfit(item: DraftItem) {
+  if (isCancelledDraftItem(item)) return false;
+  const receiptPrice = Number(item.receiptPrice);
+  return Number.isFinite(receiptPrice) && receiptPrice > 0;
+}
+
 export function computeLineWeight(item: DraftItem) {
   if (isCancelledDraftItem(item)) return 0;
   const quantity = normalizeQuantityForPayload(item);
@@ -871,6 +946,11 @@ export function computeDraftTotal(draft: DraftOrder) {
 
 export function computeDraftProfit(draft: DraftOrder) {
   return draft.items.reduce((sum, item) => sum + computeLineProfit(item, draft.generalDiscountPercent), 0);
+}
+
+export function canComputeDraftProfit(draft: DraftOrder) {
+  const activeItems = draft.items.filter((item) => !isCancelledDraftItem(item));
+  return activeItems.length > 0 && activeItems.every(canComputeLineProfit);
 }
 
 export function computeDraftWeight(draft: DraftOrder) {
@@ -1012,12 +1092,7 @@ export function validateDraft(draft: DraftOrder): DraftValidation {
   };
 }
 
-export function buildPayload(draft: DraftOrder, saveReason: 'manual' | 'autosave' = 'manual') {
-  const validation = validateDraft(draft);
-  if (!validation.canSave) {
-    throw new Error(validation.blockingMessage || 'Проверьте заполнение заказа.');
-  }
-
+function mapDraftToPayload(draft: DraftOrder, saveReason: 'manual' | 'autosave') {
   const generalDiscountPercent = draft.generalDiscountPercent.trim() ? asNumber(draft.generalDiscountPercent) : undefined;
 
   return {
@@ -1035,6 +1110,7 @@ export function buildPayload(draft: DraftOrder, saveReason: 'manual' | 'autosave
     currency: DEFAULT_ORDER_CURRENCY,
     saveReason,
     generalDiscountPercent,
+    invoiceRequested: !!draft.invoiceRequested,
     items: draft.items.map((item) => ({
       lineGuid: item.lineGuid || item.key,
       productGuid: item.productGuid,
@@ -1052,6 +1128,20 @@ export function buildPayload(draft: DraftOrder, saveReason: 'manual' | 'autosave
       cancelledAmount: item.cancelledAmount ?? undefined,
     })),
   };
+}
+
+export function buildPayload(draft: DraftOrder, saveReason: 'manual' | 'autosave' = 'manual') {
+  const validation = validateDraft(draft);
+  if (!validation.canSave) {
+    throw new Error(validation.blockingMessage || 'Проверьте заполнение заказа.');
+  }
+  return mapDraftToPayload(draft, saveReason);
+}
+
+// Copying is structural: validation belongs to saving/submitting the new draft,
+// not to creating it. Invalid values remain visible and editable in the copy.
+export function buildCopyPayload(draft: DraftOrder) {
+  return mapDraftToPayload(draft, 'manual');
 }
 
 export function pickDefaultWarehouse(refs: ClientOrdersReferenceData) {
@@ -1120,7 +1210,7 @@ export function buildNewItem(product: ClientOrderProduct, options?: { quantity?:
     discountPercent: '',
     comment: '',
     basePrice: product.basePrice ?? null,
-    receiptPrice: product.receiptPrice ?? product.basePrice ?? null,
+    receiptPrice: product.receiptPrice ?? null,
     currency: DEFAULT_ORDER_CURRENCY,
     priceSource: product.priceMatch?.source ? `${product.priceMatch.source}:${product.priceMatch.level ?? ''}` : null,
     priceTypeGuid: product.priceType?.guid ?? null,

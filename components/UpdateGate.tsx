@@ -39,6 +39,10 @@ import {
   AppBinaryUpdateStatusContextValue,
   AppUpdateStatusProvider,
 } from '@/src/shared/appUpdate/AppUpdateStatusContext';
+import {
+  areAutomaticUpdateChecksPaused,
+  AUTOMATIC_UPDATE_CHECK_INTERVAL_MS,
+} from '@/src/shared/appUpdate/automaticUpdateChecks';
 
 const STORAGE_KEYS = {
   dismissedVersionCode: 'update:dismissedVersionCode',
@@ -46,7 +50,7 @@ const STORAGE_KEYS = {
   androidDownload: 'update:androidDownload',
 };
 
-const CHECK_INTERVAL_MS = 30 * 60 * 1000;
+const CHECK_INTERVAL_MS = AUTOMATIC_UPDATE_CHECK_INTERVAL_MS;
 const CHECK_FAILURE_COOLDOWN_MS = 5 * 60 * 1000;
 const CHECK_FAILURE_SKIP_AFTER = 2;
 const UPDATE_CHANNEL = process.env.EXPO_PUBLIC_UPDATE_CHANNEL || 'prod';
@@ -323,6 +327,7 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
 
   const runCheck = useCallback(
     async (source: string): Promise<AppUpdateCheckRequestResult> => {
+      const isManual = source === 'manual';
       if (!shouldCheck) {
         return { handled: true, ok: false, updateAvailable: false, message: 'Проверка обновлений недоступна на этой платформе.' };
       }
@@ -332,10 +337,12 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
       if (!versionCode) {
         return { handled: true, ok: false, updateAvailable: false, message: 'Не удалось определить текущую версию приложения.' };
       }
+      if (!isManual && areAutomaticUpdateChecksPaused()) {
+        return { handled: true, ok: false, updateAvailable: false, message: 'Automatic update check is paused while a document is open.' };
+      }
 
       checkingRef.current = true;
       try {
-        const isManual = source === 'manual';
         if (!isManual && await shouldSkipAfterFailures()) {
           lastCheckAtRef.current = Date.now();
           return { handled: true, ok: false, updateAvailable: false, message: 'Проверка временно пропущена после ошибок соединения.' };
@@ -356,6 +363,7 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
           deviceId,
           channel: UPDATE_CHANNEL,
           ifNoneMatch: updateInfo ? storedEtag : null,
+          force: isManual,
         });
 
         if (result.etag) {

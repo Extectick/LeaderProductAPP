@@ -51,7 +51,10 @@ function subscribe(listener: (snapshot: ServicesSnapshot) => void) {
 }
 
 function getInitialSnapshotForRender() {
-  if (!state.services?.length && state.error && !state.loading) {
+  // An empty snapshot is not authoritative on a newly mounted catalog until
+  // the access list has been refreshed. Rendering it as final for one frame
+  // caused the recurring "no services" flash before every successful load.
+  if (!state.services?.length && !state.loading) {
     return {
       services: null,
       loading: true,
