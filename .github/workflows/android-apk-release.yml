@@ -164,13 +164,7 @@ jobs:
           if grep -q '^org.gradle.jvmargs=' gradle.properties; then
             sed -i 's/^org.gradle.jvmargs=.*/org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8/' gradle.properties
           else
-            echo 'org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8' >> gradle.properties
-          fi
-
-          if grep -q '^org.gradle.workers.max=' gradle.properties; then
-            sed -i 's/^org.gradle.workers.max=.*/org.gradle.workers.max=1/' gradle.properties
-          else
-            echo 'org.gradle.workers.max=1' >> gradle.properties
+            printf '\norg.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8\n' >> gradle.properties
           fi
 
       - name: Build APK
@@ -180,9 +174,9 @@ jobs:
           chmod +x ./gradlew
           BUILD_TYPE="${{ github.event_name == 'workflow_dispatch' && inputs.buildType || 'release' }}"
           if [ "$BUILD_TYPE" = "debug" ]; then
-            ./gradlew --no-daemon :app:assembleDebug -PreactNativeArchitectures="${{ github.event_name == 'workflow_dispatch' && inputs.architectures || 'arm64-v8a' }}" --stacktrace --info
+            ./gradlew --no-daemon --max-workers=1 :app:assembleDebug -PreactNativeArchitectures="${{ github.event_name == 'workflow_dispatch' && inputs.architectures || 'arm64-v8a' }}" --stacktrace
           else
-            ./gradlew --no-daemon :app:assembleRelease -x lintVitalRelease -x lintRelease -PreactNativeArchitectures="${{ github.event_name == 'workflow_dispatch' && inputs.architectures || 'arm64-v8a' }}" --stacktrace --info
+            ./gradlew --no-daemon --max-workers=1 :app:assembleRelease -x lintVitalRelease -x lintRelease -PreactNativeArchitectures="${{ github.event_name == 'workflow_dispatch' && inputs.architectures || 'arm64-v8a' }}" --stacktrace
           fi
 
       - name: Prepare release metadata
