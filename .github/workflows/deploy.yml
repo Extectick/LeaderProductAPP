@@ -128,4 +128,29 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           envs: GHCR_TOKEN,GHCR_USER,IMAGE_TAG,GIT_REF
           script: |
-            /opt/leader-deploy/deploy.sh app "$IMAGE_TAG" "$GIT_REF"
+            set -euo pipefail
+
+            image="ghcr.io/extectick/leaderproductapp:$IMAGE_TAG"
+            printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
+            docker pull "$image"
+
+            if docker container inspect leader_app >/dev/null 2>&1; then
+              docker rm -f leader_app
+            fi
+
+            docker run -d \
+              --name leader_app \
+              --restart unless-stopped \
+              --publish 127.0.0.1:8088:80 \
+              "$image"
+
+            for attempt in $(seq 1 20); do
+              if curl --fail --silent --show-error http://127.0.0.1:8088/ >/dev/null; then
+                docker ps --filter name=leader_app
+                exit 0
+              fi
+              sleep 2
+            done
+
+            docker logs leader_app
+            exit 1

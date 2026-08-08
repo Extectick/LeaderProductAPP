@@ -127,7 +127,7 @@ jobs:
           envs: OTA_METADATA_B64
           script: |
             set -euo pipefail
-            cd /opt/leader-api/LeaderProductAPI
+            cd /opt/leader-api
             printf '%s' "$OTA_METADATA_B64" | base64 -d | docker compose exec -T api sh -lc '
               set -eu
               tmp_file="$(mktemp /tmp/leader-product-ota-release.XXXXXX)"

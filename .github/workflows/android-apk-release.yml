@@ -76,6 +76,7 @@ jobs:
       EXPO_PUBLIC_SENTRY_ENABLED: 'false'
       EXPO_PUBLIC_SENTRY_ENVIRONMENT: ${{ (github.event_name != 'workflow_dispatch' || inputs.channel == 'prod') && 'production' || 'development' }}
       NODE_ENV: ${{ (github.event_name != 'workflow_dispatch' || inputs.channel == 'prod') && 'production' || 'development' }}
+      NODE_OPTIONS: --max-old-space-size=4096
 
     steps:
       - name: Checkout
@@ -161,15 +162,15 @@ jobs:
         run: |
           set -euo pipefail
           if grep -q '^org.gradle.jvmargs=' gradle.properties; then
-            sed -i 's/^org.gradle.jvmargs=.*/org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1536m -Dfile.encoding=UTF-8/' gradle.properties
+            sed -i 's/^org.gradle.jvmargs=.*/org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8/' gradle.properties
           else
-            echo 'org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1536m -Dfile.encoding=UTF-8' >> gradle.properties
+            echo 'org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8' >> gradle.properties
           fi
 
           if grep -q '^org.gradle.workers.max=' gradle.properties; then
-            sed -i 's/^org.gradle.workers.max=.*/org.gradle.workers.max=2/' gradle.properties
+            sed -i 's/^org.gradle.workers.max=.*/org.gradle.workers.max=1/' gradle.properties
           else
-            echo 'org.gradle.workers.max=2' >> gradle.properties
+            echo 'org.gradle.workers.max=1' >> gradle.properties
           fi
 
       - name: Build APK
@@ -179,9 +180,9 @@ jobs:
           chmod +x ./gradlew
           BUILD_TYPE="${{ github.event_name == 'workflow_dispatch' && inputs.buildType || 'release' }}"
           if [ "$BUILD_TYPE" = "debug" ]; then
-            ./gradlew --no-daemon :app:assembleDebug -PreactNativeArchitectures="${{ github.event_name == 'workflow_dispatch' && inputs.architectures || 'arm64-v8a' }}"
+            ./gradlew --no-daemon :app:assembleDebug -PreactNativeArchitectures="${{ github.event_name == 'workflow_dispatch' && inputs.architectures || 'arm64-v8a' }}" --stacktrace --info
           else
-            ./gradlew --no-daemon :app:assembleRelease -x lintVitalRelease -x lintRelease -PreactNativeArchitectures="${{ github.event_name == 'workflow_dispatch' && inputs.architectures || 'arm64-v8a' }}"
+            ./gradlew --no-daemon :app:assembleRelease -x lintVitalRelease -x lintRelease -PreactNativeArchitectures="${{ github.event_name == 'workflow_dispatch' && inputs.architectures || 'arm64-v8a' }}" --stacktrace --info
           fi
 
       - name: Prepare release metadata
@@ -279,7 +280,7 @@ jobs:
           envs: RELEASE_METADATA_B64
           script: |
             set -euo pipefail
-            cd /opt/leader-api/LeaderProductAPI
+            cd /opt/leader-api
             git fetch origin main
             git checkout -B main origin/main
             printf '%s' "$RELEASE_METADATA_B64" | base64 -d | docker compose exec -T api sh -lc '
