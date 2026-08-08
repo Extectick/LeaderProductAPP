@@ -32,9 +32,11 @@ jest.mock('@/utils/clientOrdersService', () => ({
   getClientOrderDefaults: jest.fn(),
   getClientOrder: jest.fn(),
   getClientOrderInvoices: jest.fn(),
+  getClientOrderInvoiceStatuses: jest.fn(),
   getClientOrderProductsBatch: jest.fn(),
   getClientOrderSettings: jest.fn(),
   getClientOrders: jest.fn(),
+  getClientOrdersTodaySummary: jest.fn(),
   searchClientOrderAgreements: jest.fn(),
   searchClientOrderContracts: jest.fn(),
   searchClientOrderCounterparties: jest.fn(),
@@ -55,10 +57,12 @@ import {
   createClientOrder,
   getClientOrder,
   getClientOrderInvoices,
+  getClientOrderInvoiceStatuses,
   getClientOrderDefaults,
   getClientOrderProductsBatch,
   getClientOrderSettings,
   getClientOrders,
+  getClientOrdersTodaySummary,
   submitClientOrder,
 } from '@/utils/clientOrdersService';
 
@@ -73,6 +77,17 @@ const settings = {
   deliveryDateIssueMessage: null,
   currency: 'RUB',
 };
+
+function currentOmskDate() {
+  const parts = new Intl.DateTimeFormat('ru-RU', {
+    timeZone: 'Asia/Omsk',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const value = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value;
+  return `${value('year')}-${value('month')}-${value('day')}`;
+}
 
 function queuedOrder(queuePosition: number, patch: Record<string, unknown> = {}) {
   return {
@@ -102,10 +117,22 @@ async function flush() {
 
 describe('useClientOrdersWorkspace', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    jest.resetAllMocks();
     jest.useFakeTimers();
     jest.mocked(getClientOrderSettings).mockResolvedValue(settings as any);
     jest.mocked(getClientOrderInvoices).mockResolvedValue([]);
+    jest.mocked(getClientOrderInvoiceStatuses).mockResolvedValue([]);
+    jest.mocked(getClientOrdersTodaySummary).mockResolvedValue({
+      date: currentOmskDate(),
+      ordersCount: 0,
+      clientsCount: 0,
+      totalAmount: 0,
+      profit: 0,
+      profitAvailable: true,
+      missingReceiptPriceCount: 0,
+      currency: 'RUB',
+      calculatedAt: new Date().toISOString(),
+    });
   });
 
   afterEach(() => {
@@ -230,6 +257,21 @@ describe('useClientOrdersWorkspace', () => {
         meta: { total: 1, limit: 20, offset: 0, statusCounts: {}, liveSource: { status: 'ok' } },
       } as any)
       .mockResolvedValueOnce(readyResult);
+    jest.mocked(getClientOrderInvoiceStatuses)
+      .mockResolvedValueOnce([{
+        identifier: 'order-guid',
+        invoices: [],
+      }] as any)
+      .mockResolvedValueOnce([{
+        identifier: 'order-guid',
+        invoices: [{
+          id: 'invoice-ready',
+          realizationGuid: 'realization-guid',
+          version: 1,
+          state: 'AVAILABLE',
+          downloadAvailable: true,
+        }],
+      }] as any);
 
     let workspace: ReturnType<typeof useClientOrdersWorkspace>;
     function Harness() {
@@ -276,13 +318,15 @@ describe('useClientOrdersWorkspace', () => {
       invoiceRequestPending: true,
       invoiceDownloadAvailable: false,
     });
-    expect(getClientOrders).toHaveBeenCalledTimes(2);
+    expect(getClientOrders).toHaveBeenCalledTimes(1);
+    expect(getClientOrderInvoiceStatuses).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       await jest.advanceTimersByTimeAsync(5_000);
     });
     await flush();
-    expect(getClientOrders).toHaveBeenCalledTimes(3);
+    expect(getClientOrders).toHaveBeenCalledTimes(1);
+    expect(getClientOrderInvoiceStatuses).toHaveBeenCalledTimes(2);
     expect(workspace!.orders[0]).toMatchObject({
       invoiceState: 'AVAILABLE',
       invoiceRequestPending: false,
@@ -420,6 +464,11 @@ describe('useClientOrdersWorkspace', () => {
     });
     await flush();
 
+    await act(async () => {
+      await workspace!.refreshOrders();
+    });
+    await flush();
+
     expect(workspace!.orders.map((order) => order.guid).sort()).toEqual(['draft-guid', 'ship-guid']);
 
     await act(async () => {
@@ -429,8 +478,9 @@ describe('useClientOrdersWorkspace', () => {
         warehouseGuid: 'warehouse-a',
       }));
     });
+    await flush();
     await act(async () => {
-      await jest.advanceTimersByTimeAsync(1_000);
+      await workspace!.refreshOrders();
     });
     await flush();
 
@@ -451,6 +501,13 @@ describe('useClientOrdersWorkspace', () => {
       meta: { total: 0, limit: 20, offset: 0, statusCounts: {}, liveSource: { status: 'ok' } },
     } as any);
     jest.mocked(getClientOrderDefaults).mockResolvedValue({
+      counterparty: {
+        guid: 'counterparty-guid',
+        name: 'Контрагент',
+        hasDebt: true,
+        shipmentProhibited: true,
+        debtReason: 'Просрочена оплата по договору',
+      },
       agreement: null,
       contract: null,
       warehouse: null,
@@ -470,6 +527,9 @@ describe('useClientOrdersWorkspace', () => {
       currency: 'RUB',
       deliveryDate: '2026-06-30T00:00:00.000Z',
       warnings: [],
+      hasDebt: true,
+      shipmentProhibited: true,
+      debtReason: 'Просрочена оплата по договору',
     } as any);
 
     let workspace: ReturnType<typeof useClientOrdersWorkspace>;
@@ -516,6 +576,8 @@ describe('useClientOrdersWorkspace', () => {
     expect(workspace!.draft.paymentForm).toBeNull();
     expect(workspace!.draft.deliveryMethod).toBe('ДоКлиента');
     expect(workspace!.draft.invoiceRequested).toBe(true);
+    expect(workspace!.shipmentProhibited).toBe(true);
+    expect(workspace!.debtReason).toBe('Просрочена оплата по договору');
 
     await act(async () => {
       renderer!.unmount();
@@ -528,6 +590,13 @@ describe('useClientOrdersWorkspace', () => {
       meta: { total: 0, limit: 20, offset: 0, statusCounts: {}, liveSource: { status: 'ok' } },
     } as any);
     jest.mocked(getClientOrderDefaults).mockResolvedValue({
+      counterparty: {
+        guid: 'counterparty-guid',
+        name: 'Контрагент',
+        hasDebt: true,
+        shipmentProhibited: true,
+        debtReason: 'Просроченная задолженность из актуальных данных 1С',
+      },
       paymentForm: null,
       paymentForms: [
         { code: null, name: 'Любая', label: 'Любая' },
@@ -538,6 +607,9 @@ describe('useClientOrdersWorkspace', () => {
         { code: 'ДоКлиента', name: 'ДоКлиента', label: 'Наша доставка' },
         { code: 'Самовывоз', name: 'Самовывоз', label: 'Самовывоз' },
       ],
+      hasDebt: true,
+      shipmentProhibited: true,
+      debtReason: 'Просроченная задолженность из актуальных данных 1С',
     } as any);
     jest.mocked(getClientOrder).mockResolvedValue(queuedOrder(0, {
       guid: 'legacy-order-guid',
@@ -606,6 +678,8 @@ describe('useClientOrdersWorkspace', () => {
       receiptPriceAt: '2026-06-15T12:30:00',
     }));
     expect(workspace!.draft.items[0].receiptPrice).toBe(80);
+    expect(workspace!.shipmentProhibited).toBe(true);
+    expect(workspace!.debtReason).toBe('Просроченная задолженность из актуальных данных 1С');
 
     await act(async () => {
       renderer!.unmount();
@@ -915,6 +989,76 @@ describe('useClientOrdersWorkspace', () => {
     expect(workspace!.draft.counterpartyGuid).toBe('other-counterparty-guid');
     expect(workspace!.draft.items).toHaveLength(1);
     expect(workspace!.draftMode).toBe(false);
+
+    await act(async () => {
+      renderer!.unmount();
+    });
+  });
+
+  it('refreshes today summary only while the orders screen is active', async () => {
+    jest.mocked(getClientOrders).mockResolvedValue({
+      items: [],
+      meta: { total: 0, limit: 20, offset: 0, statusCounts: {} },
+    } as any);
+    jest.mocked(getClientOrdersTodaySummary).mockResolvedValue({
+      date: currentOmskDate(),
+      ordersCount: 3,
+      clientsCount: 2,
+      totalAmount: 5000,
+      profit: 700,
+      profitAvailable: true,
+      missingReceiptPriceCount: 0,
+      currency: 'RUB',
+      calculatedAt: new Date().toISOString(),
+    });
+
+    let workspace: ReturnType<typeof useClientOrdersWorkspace>;
+    function Harness({ mode }: { mode: 'orders' | 'editor' }) {
+      workspace = useClientOrdersWorkspace({ screenMode: mode, isScreenActive: true });
+      return null;
+    }
+    const renderTree = (mode: 'orders' | 'editor') => React.createElement(
+      AuthContext.Provider,
+      {
+        value: {
+          isLoading: false,
+          isAuthenticated: true,
+          profile: { id: 1 } as any,
+          setAuthenticated: jest.fn(),
+          setProfile: jest.fn(),
+          signOut: jest.fn(),
+        },
+      },
+      React.createElement(Harness, { mode })
+    );
+
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(renderTree('orders'));
+    });
+    await flush();
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(0);
+    });
+    await flush();
+
+    expect(getClientOrdersTodaySummary).toHaveBeenCalledTimes(1);
+    expect(workspace!.todaySummary).toMatchObject({ ordersCount: 3, clientsCount: 2 });
+
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(60_000);
+    });
+    await flush();
+    expect(getClientOrdersTodaySummary).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      renderer!.update(renderTree('editor'));
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(60_000);
+    });
+    await flush();
+    expect(getClientOrdersTodaySummary).toHaveBeenCalledTimes(2);
 
     await act(async () => {
       renderer!.unmount();

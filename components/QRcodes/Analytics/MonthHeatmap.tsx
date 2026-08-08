@@ -458,7 +458,7 @@ const styles = StyleSheet.create({
   eventRow: { paddingVertical: 10, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
   eventTitle: { fontWeight: '700' },
   overlay: {
-    ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.35)',
+    ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.35)',
     alignItems: 'center', justifyContent: 'center', padding: 16,
   },
   pickerCard: {

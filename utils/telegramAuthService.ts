@@ -3,17 +3,12 @@ import type {
   TelegramContactResponseData,
   TelegramInitResponseData,
 } from '@/src/shared/types/api';
+import { Platform } from 'react-native';
 import { normalizePhoneInputToDigits11 } from './phone';
-import {
-  init as initTmaSdk,
-  isTMA,
-  requestContact as sdkRequestContact,
-  retrieveLaunchParams,
-  retrieveRawInitData,
-  retrieveRawLaunchParams,
-} from '@tma.js/sdk';
 import { apiClient } from './apiClient';
 import { API_ENDPOINTS } from './apiEndpoints';
+
+type TmaSdkModule = typeof import('@tma.js/sdk');
 
 type TgWebApp = {
   initData?: string;
@@ -24,6 +19,7 @@ type TgWebApp = {
 
 const TG_WEBAPP_SCRIPT_SRC = 'https://telegram.org/js/telegram-web-app.js';
 let sdkInitialized = false;
+let tmaSdkModule: TmaSdkModule | null | undefined;
 
 type TgInitialLaunch = {
   href?: string;
@@ -50,10 +46,28 @@ function safeCall<T>(fn: () => T, fallback: T): T {
   }
 }
 
-function ensureSdkInit() {
-  if (typeof window === 'undefined' || sdkInitialized) return;
+function getTmaSdk(): TmaSdkModule | null {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return null;
+  if (tmaSdkModule !== undefined) return tmaSdkModule;
+
   try {
-    initTmaSdk();
+    // The Telegram Mini App SDK uses browser-only Performance APIs. Loading it
+    // lazily prevents those APIs from running inside the native Android app.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    tmaSdkModule = require('@tma.js/sdk') as TmaSdkModule;
+  } catch {
+    tmaSdkModule = null;
+  }
+
+  return tmaSdkModule;
+}
+
+function ensureSdkInit() {
+  if (sdkInitialized) return;
+  const sdk = getTmaSdk();
+  if (!sdk) return;
+  try {
+    sdk.init();
     sdkInitialized = true;
   } catch {
     // SDK can throw outside Telegram environment.
@@ -122,7 +136,8 @@ function ensureTelegramWebAppScript() {
 export function getTelegramInitDataRaw() {
   ensureSdkInit();
 
-  const rawSdk = safeCall(() => String(retrieveRawInitData() || '').trim(), '');
+  const sdk = getTmaSdk();
+  const rawSdk = safeCall(() => String(sdk?.retrieveRawInitData() || '').trim(), '');
   if (rawSdk) return rawSdk;
 
   const tg = getTgWebApp();
@@ -142,13 +157,15 @@ export function getTelegramInitDataRaw() {
 export function isTelegramMiniApp() {
   if (getTelegramInitDataRaw()) return true;
   ensureSdkInit();
-  return safeCall(() => isTMA(), false);
+  const sdk = getTmaSdk();
+  return safeCall(() => sdk?.isTMA() ?? false, false);
 }
 
 export function isTelegramMiniAppLaunch() {
   if (isTelegramMiniApp() || hasTelegramLaunchHints() || isTelegramUserAgentHint()) return true;
   ensureSdkInit();
-  const launchParams = safeCall(() => retrieveLaunchParams() as any, null as any);
+  const sdk = getTmaSdk();
+  const launchParams = safeCall(() => sdk?.retrieveLaunchParams() as any, null as any);
   return Boolean(
     launchParams &&
       (launchParams.tgWebAppVersion ||
@@ -160,7 +177,8 @@ export function isTelegramMiniAppLaunch() {
 
 export function getTelegramStartParam(): string {
   ensureSdkInit();
-  const launchParams = safeCall(() => retrieveLaunchParams() as any, null as any);
+  const sdk = getTmaSdk();
+  const launchParams = safeCall(() => sdk?.retrieveLaunchParams() as any, null as any);
   const fromSdk = String(launchParams?.tgWebAppStartParam || '').trim();
   if (fromSdk) return fromSdk;
 
@@ -189,6 +207,12 @@ export function getTelegramStartAppealId(): number | null {
   return appealId;
 }
 
+export function getTelegramStartClientOrderGuid(): string | null {
+  const raw = getTelegramStartParam();
+  const match = raw.match(/^client_order_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+  return match ? match[1].toLowerCase() : null;
+}
+
 export function prepareTelegramWebApp() {
   ensureTelegramWebAppScript();
   ensureSdkInit();
@@ -213,13 +237,16 @@ export type TelegramContactRequestResult = {
 
 export async function requestTelegramContact(): Promise<TelegramContactRequestResult> {
   ensureSdkInit();
-  try {
-    const requested = await sdkRequestContact({ timeout: 10000 });
-    const phoneRaw = String(requested?.contact?.phone_number || '').trim();
-    const phoneE164 = normalizePhoneForApi(phoneRaw) || null;
-    return { ok: true, phoneE164, source: 'sdk' };
-  } catch {
-    // Continue to legacy fallback.
+  const sdk = getTmaSdk();
+  if (sdk) {
+    try {
+      const requested = await sdk.requestContact({ timeout: 10000 });
+      const phoneRaw = String(requested?.contact?.phone_number || '').trim();
+      const phoneE164 = normalizePhoneForApi(phoneRaw) || null;
+      return { ok: true, phoneE164, source: 'sdk' };
+    } catch {
+      // Continue to legacy fallback.
+    }
   }
 
   const tg = getTgWebApp();
@@ -251,13 +278,14 @@ export async function requestTelegramContact(): Promise<TelegramContactRequestRe
 
 export function getTelegramSdkDiagnostics() {
   ensureSdkInit();
-  const rawInitData = safeCall(() => String(retrieveRawInitData() || ''), '');
-  const rawLaunchParams = safeCall(() => String(retrieveRawLaunchParams() || ''), '');
-  const launchParams = safeCall(() => retrieveLaunchParams() as any, null as any);
+  const sdk = getTmaSdk();
+  const rawInitData = safeCall(() => String(sdk?.retrieveRawInitData() || ''), '');
+  const rawLaunchParams = safeCall(() => String(sdk?.retrieveRawLaunchParams() || ''), '');
+  const launchParams = safeCall(() => sdk?.retrieveLaunchParams() as any, null as any);
   return {
     sdk: {
       sdkInitialized,
-      isTma: safeCall(() => isTMA(), false),
+      isTma: safeCall(() => sdk?.isTMA() ?? false, false),
       rawInitDataLength: rawInitData.length,
       rawInitData,
       rawLaunchParamsLength: rawLaunchParams.length,

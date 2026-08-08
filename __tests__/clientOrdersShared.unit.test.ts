@@ -4,6 +4,7 @@ import {
   buildPayload,
   canComputeDraftProfit,
   canComputeLineProfit,
+  computeDraftMetrics,
   computeDraftWeight,
   computeLineProfit,
   computeLineTotal,
@@ -136,6 +137,26 @@ describe('clientOrdersShared document bottom bar layout', () => {
       safeBottom: 48,
       fontScale: 1.3,
     })).toBeGreaterThan(138);
+  });
+
+  it('shows debt instead of shipment status only while the 1C document is not posted', () => {
+    expect(getOrderDisplayStatusLabelWithQueue({
+      status: 'SENT_TO_1C',
+      syncState: 'ERROR',
+      origin: 'device',
+      currentState1c: 'К отгрузке',
+      shipmentProhibited: true,
+      isPostedIn1c: false,
+    } as any)).toBe('Долг');
+
+    expect(getOrderDisplayStatusLabel({
+      status: 'CONFIRMED',
+      currentState1c: 'Закрыт',
+      shipmentProhibited: true,
+      isPostedIn1c: true,
+      number1c: 'НОУТ-1',
+      origin: 'onec',
+    } as any)).toBe('Закрыт');
   });
 });
 
@@ -503,6 +524,39 @@ describe('clientOrdersShared validation and payload', () => {
 
   it('computes totals using package multiplier and discount', () => {
     expect(computeLineTotal(item({ quantity: '2', packageGuid: 'box-10', basePrice: 100 }), '10')).toBe(1800);
+  });
+
+  it('computes document metrics in one aggregate pass', () => {
+    expect(computeDraftMetrics(draft({
+      generalDiscountPercent: '10',
+      items: [item({ quantity: '2', packageGuid: 'box-10', basePrice: 100, receiptPrice: 80 })],
+    }))).toEqual({ total: 1800, profit: 200, weight: 0, activeItems: 1, profitAvailable: true });
+  });
+
+  it('preserves item references when normalizing a header-only change', () => {
+    const previous = draft({ items: [item(), item({ key: 'line-2', lineGuid: 'line-guid-2' })] });
+    const next = normalizeDraftOrder({ ...previous, comment: 'updated' }, previous);
+
+    expect(next.items).toBe(previous.items);
+    expect(next.items[0]).toBe(previous.items[0]);
+    expect(next.items[1]).toBe(previous.items[1]);
+  });
+
+  it('returns the same draft when normalization makes no change', () => {
+    const previous = draft();
+    expect(normalizeDraftOrder(previous, previous)).toBe(previous);
+  });
+
+  it('reuses unchanged lines when one item is patched', () => {
+    const previous = draft({ items: [item(), item({ key: 'line-2', lineGuid: 'line-guid-2' })] });
+    const next = normalizeDraftOrder({
+      ...previous,
+      items: previous.items.map((line) => line.key === 'line-1' ? { ...line, quantity: '3' } : line),
+    }, previous);
+
+    expect(next.items).not.toBe(previous.items);
+    expect(next.items[0]).not.toBe(previous.items[0]);
+    expect(next.items[1]).toBe(previous.items[1]);
   });
 
   it('maps read-only 1C payment and delivery values to application choices', () => {

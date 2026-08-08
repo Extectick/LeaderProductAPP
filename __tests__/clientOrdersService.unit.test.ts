@@ -3,8 +3,10 @@ import {
   downloadClientOrderInvoice,
   getClientOrder,
   getClientOrderInvoices,
+  getClientOrderInvoiceStatuses,
   getClientOrderProductsBatch,
   getClientOrders,
+  getClientOrdersTodaySummary,
   searchClientOrderCounterparties,
   searchClientOrderProducts,
   requestClientOrderInvoice,
@@ -80,6 +82,24 @@ describe('clientOrdersService', () => {
     expect(apiClientMock).toHaveBeenCalledWith('/api/client-orders?limit=20&offset=0&statuses=QUEUED%2CTO_SHIP%2CSHIPPING_IN_PROGRESS');
   });
 
+  it('loads today summary independently from the paginated order list', async () => {
+    const summary = {
+      date: '2026-08-07',
+      ordersCount: 12,
+      clientsCount: 7,
+      totalAmount: 153400.5,
+      profit: 21400.25,
+      profitAvailable: true,
+      missingReceiptPriceCount: 0,
+      currency: 'RUB',
+      calculatedAt: '2026-08-07T08:00:00.000Z',
+    };
+    apiClientMock.mockResolvedValueOnce({ ok: true, status: 200, data: summary } as any);
+
+    await expect(getClientOrdersTodaySummary()).resolves.toEqual(summary);
+    expect(apiClientMock).toHaveBeenCalledWith('/api/client-orders/today-summary');
+  });
+
   it('deduplicates concurrent order detail reads', async () => {
     let resolve!: (value: any) => void;
     apiClientMock.mockReturnValueOnce(new Promise((next) => { resolve = next; }) as any);
@@ -135,6 +155,28 @@ describe('clientOrdersService', () => {
     });
   });
 
+  it('loads invoice states for the visible list in one lightweight batch', async () => {
+    apiClientMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: {
+        items: [{
+          identifier: 'order-guid',
+          invoices: [{ id: 'invoice-1', version: 1, state: 'QUEUED' }],
+        }],
+      },
+    } as any);
+
+    await expect(getClientOrderInvoiceStatuses(['order-guid', 'order-guid', ''])).resolves.toEqual([{
+      identifier: 'order-guid',
+      invoices: [{ id: 'invoice-1', version: 1, state: 'QUEUED' }],
+    }]);
+    expect(apiClientMock).toHaveBeenCalledWith('/api/client-orders/invoice-statuses', {
+      method: 'POST',
+      body: { identifiers: ['order-guid'] },
+    });
+  });
+
   it('requests invoice generation for an existing application order', async () => {
     apiClientMock.mockResolvedValueOnce({
       ok: true,
@@ -187,11 +229,13 @@ describe('clientOrdersService', () => {
     await searchClientOrderCounterparties({
       search: 'beer',
       managerOnly: true,
+      organizationGuid: 'org-guid',
       limit: 25,
       offset: 0,
     });
 
-    expect(apiClientMock).toHaveBeenCalledWith('/api/client-orders/counterparties?search=beer&managerOnly=true&limit=25&offset=0');
+    expect(apiClientMock).toHaveBeenCalledTimes(1);
+    expect(apiClientMock).toHaveBeenCalledWith('/api/client-orders/counterparties?search=beer&managerOnly=true&organizationGuid=org-guid&limit=25&offset=0&debtStatus=all');
   });
 
   it('deduplicates product batch requests independently of guid order', async () => {

@@ -61,7 +61,7 @@ export default function HomeHero({ userName, updatedAt, onOpenServices }: Props)
         colors={['#0EA5E9', '#2563EB', '#4F46E5']}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
-        style={StyleSheet.absoluteFillObject}
+        style={StyleSheet.absoluteFill}
       />
       <Animated.View style={[styles.orb, orbStyle]} />
       <View style={styles.content}>

@@ -715,7 +715,7 @@ const styles = StyleSheet.create({
   hiddenList: { opacity: 0 },
   container: { paddingVertical: 2 },
   initialLoadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     paddingTop: 12,
     paddingHorizontal: 8,
     gap: 10,

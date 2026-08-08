@@ -63,16 +63,6 @@ patchFile('node_modules/expo-task-manager/android/src/main/java/expo/modules/tas
   },
 ]);
 
-patchFile('node_modules/expo-task-manager/android/build.gradle', [
-  {
-    name: 'use maven app loader when building task manager from source',
-    before: `  implementation project(':unimodules-app-loader')
-`,
-    after: `  implementation "host.exp.exponent:org.unimodules.apploader:6.0.8"
-`,
-  },
-]);
-
 patchFile('node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/repository/TasksPersistence.java', [
   {
     name: 'guard clear null preferences',

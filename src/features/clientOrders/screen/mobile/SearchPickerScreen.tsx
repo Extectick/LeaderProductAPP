@@ -320,7 +320,7 @@ export function SearchPickerScreen<T>({
 
 const styles = StyleSheet.create({
   root: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 380,
     elevation: 380,
     backgroundColor: '#FFFFFF',

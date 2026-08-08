@@ -12,7 +12,6 @@ import {
 
 const DEFAULT_WEB_BACKDROP_FILTER = 'blur(20px) saturate(160%)';
 const DEFAULT_BLUR_INTENSITY = 36;
-const DEFAULT_ANDROID_BLUR_REDUCTION = 2;
 
 type LiquidGlassSurfaceProps = {
   children?: React.ReactNode;
@@ -24,8 +23,6 @@ type LiquidGlassSurfaceProps = {
   specularOpacity?: number;
   depthOpacity?: number;
   webBackdropFilter?: string;
-  androidBlurReductionFactor?: number;
-  useAndroidExperimentalBlur?: boolean;
   pointerEvents?: 'auto' | 'none' | 'box-none' | 'box-only';
   onLayout?: (event: LayoutChangeEvent) => void;
 };
@@ -40,13 +37,10 @@ export function LiquidGlassSurface({
   specularOpacity,
   depthOpacity,
   webBackdropFilter = DEFAULT_WEB_BACKDROP_FILTER,
-  androidBlurReductionFactor = DEFAULT_ANDROID_BLUR_REDUCTION,
-  useAndroidExperimentalBlur = true,
   pointerEvents = 'auto',
   onLayout,
 }: LiquidGlassSurfaceProps) {
   const isWeb = Platform.OS === 'web';
-  const isAndroid = Platform.OS === 'android';
 
   const webBlurStyle = useMemo(() => {
     if (!isWeb) return undefined;
@@ -66,7 +60,7 @@ export function LiquidGlassSurface({
         <View
           pointerEvents="none"
           style={[
-            StyleSheet.absoluteFillObject,
+            StyleSheet.absoluteFill,
             styles.webBlur,
             { backgroundColor: overlayColor },
             webBlurStyle,
@@ -77,18 +71,12 @@ export function LiquidGlassSurface({
           <BlurView
             tint={blurTint}
             intensity={blurIntensity}
-            {...(isAndroid && useAndroidExperimentalBlur
-              ? {
-                  experimentalBlurMethod: 'dimezisBlurView' as const,
-                  blurReductionFactor: androidBlurReductionFactor,
-                }
-              : {})}
             style={StyleSheet.absoluteFill}
             pointerEvents="none"
           />
           <View
             pointerEvents="none"
-            style={[StyleSheet.absoluteFillObject, { backgroundColor: overlayColor }]}
+            style={[StyleSheet.absoluteFill, { backgroundColor: overlayColor }]}
           />
         </>
       )}
@@ -123,6 +111,6 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   webBlur: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
 });

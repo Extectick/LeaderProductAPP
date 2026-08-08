@@ -838,10 +838,10 @@ const getStyles = (colors: {
       padding: 20,
     },
     modalOverlayPress: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
     },
     modalCenter: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       alignItems: 'center',
       justifyContent: 'center',
       padding: 20,

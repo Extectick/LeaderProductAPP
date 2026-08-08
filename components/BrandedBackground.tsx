@@ -125,6 +125,6 @@ const styles = StyleSheet.create({
     // opacity управляется анимированным стилем; это поле можно оставить пустым
   },
   content: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
 });

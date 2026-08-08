@@ -1,8 +1,7 @@
 // V:\lp\components\CustomAlert.tsx
 import React, { useCallback, useMemo } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { MotiView } from 'moti';
-import RNModal from 'react-native-modal';
 import { useThemeColor } from '@/hooks/useThemeColor';
 
 interface Props {
@@ -42,20 +41,15 @@ export default function CustomAlert({
   const confirmTextColor = useMemo(() => readableText(confirmColor), [confirmColor, readableText]);
 
   return (
-    <RNModal
-      isVisible={visible}
-      coverScreen
-      style={styles.modal}
-      onBackButtonPress={onCancel}
-      useNativeDriver={false}
-      backdropOpacity={0}
-      backdropColor="transparent"
-      animationIn="fadeIn"
-      animationOut="fadeOut"
-      animationInTiming={160}
-      animationOutTiming={140}
+    <Modal
+      visible={visible}
+      transparent
+      animationType="none"
+      presentationStyle="overFullScreen"
+      onRequestClose={onCancel}
       statusBarTranslucent
-      avoidKeyboard={false}
+      navigationBarTranslucent
+      hardwareAccelerated
     >
       <View style={styles.center}>
         <Pressable style={styles.backdropPress} onPress={onCancel}>
@@ -94,7 +88,7 @@ export default function CustomAlert({
           </View>
         </MotiView>
       </View>
-    </RNModal>
+    </Modal>
   );
 }
 
@@ -142,11 +136,7 @@ function AlertButton({
 }
 
 const styles = StyleSheet.create({
-  // Контейнер RNModal: убираем отступы и не используем его флекс-центрирование вовсе
-  modal: {
-    margin: 0,
-  },
-  // Отдельный слой-центрер, чтобы карточка точно оказалась в центре
+  // Отдельный слой-центрер, чтобы карточка точно оказалась в центре.
   center: {
     flex: 1,
     justifyContent: 'center',
@@ -154,10 +144,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   backdropPress: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: '#000',
   },
   card: {

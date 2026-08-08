@@ -21,6 +21,19 @@ export type PagedResult<T> = {
   meta: PaginationMeta;
 };
 
+export type ClientOrdersTodaySummary = {
+  date: string;
+  ordersCount: number;
+  clientsCount: number;
+  totalAmount: number;
+  profit: number | null;
+  profitAvailable: boolean;
+  missingReceiptPriceCount: number;
+  currency: 'RUB';
+  calculatedAt: string;
+  stale?: boolean;
+};
+
 export type ClientOrderEvent = {
   id: string;
   revision: number;
@@ -57,7 +70,12 @@ export type ClientOrderCounterpartyOption = {
   managerGuid?: string | null;
   managerName?: string | null;
   manager?: { guid?: string | null; name?: string | null } | null;
+  hasDebt?: boolean;
+  shipmentProhibited?: boolean;
+  debtReason?: string | null;
 };
+
+export type ClientOrderDebtStatus = 'all' | 'with_debt' | 'without_debt';
 
 export type ClientOrderAgreementOption = {
   guid: string;
@@ -320,8 +338,11 @@ export type ClientOrder = {
   cancelRequestedAt?: string | null;
   cancelReason?: string | null;
   last1cError?: string | null;
+  hasDebt?: boolean;
+  shipmentProhibited?: boolean;
+  debtReason?: string | null;
   last1cSnapshot?: any;
-  counterparty?: { guid: string; name: string } | null;
+  counterparty?: ClientOrderCounterpartyOption | null;
   agreement?: ClientOrderAgreementOption | null;
   contract?: { guid: string; number: string } | null;
   warehouse?: { guid: string; name: string; code?: string | null } | null;
@@ -367,6 +388,9 @@ export type ClientOrderDefaults = {
   discountsEnabled?: boolean;
   invoiceRequested?: boolean;
   warnings?: string[];
+  hasDebt?: boolean;
+  shipmentProhibited?: boolean;
+  debtReason?: string | null;
 };
 
 export type ClientOrderProduct = {
@@ -521,6 +545,17 @@ export async function getClientOrders(params?: {
   });
 }
 
+export async function getClientOrdersTodaySummary() {
+  const path = API_ENDPOINTS.CLIENT_ORDERS.TODAY_SUMMARY;
+  return dedupeRead(`GET ${path}`, async () => {
+    const res = await apiClient<void, ClientOrdersTodaySummary>(path);
+    if (!res.ok || !res.data) {
+      throwApiError('Не удалось загрузить статистику заказов за сегодня', res);
+    }
+    return res.data;
+  });
+}
+
 export async function getClientOrder(guid: string) {
   const path = API_ENDPOINTS.CLIENT_ORDERS.DETAIL(guid);
   return dedupeRead(`GET ${path}`, async () => {
@@ -536,6 +571,28 @@ export async function getClientOrderInvoices(guid: string) {
   if (!res.ok || !res.data) throwApiError('Не удалось загрузить счета заказа', res);
   const items = Array.isArray(res.data) ? res.data : res.data.items;
   return Array.isArray(items) ? items : [];
+}
+
+export type ClientOrderInvoiceStatus = {
+  identifier: string;
+  invoices: ClientOrderInvoice[];
+};
+
+export async function getClientOrderInvoiceStatuses(identifiers: string[]) {
+  const uniqueIdentifiers = Array.from(new Set(
+    identifiers.map((value) => value.trim()).filter(Boolean)
+  ));
+  if (!uniqueIdentifiers.length) return [];
+
+  const res = await apiClient<{ identifiers: string[] }, { items?: ClientOrderInvoiceStatus[] }>(
+    API_ENDPOINTS.CLIENT_ORDERS.INVOICE_STATUSES,
+    {
+      method: 'POST',
+      body: { identifiers: uniqueIdentifiers },
+    }
+  );
+  if (!res.ok || !res.data) throwApiError('Не удалось обновить статусы счетов', res);
+  return Array.isArray(res.data.items) ? res.data.items : [];
 }
 
 export async function requestClientOrderInvoice(guid: string) {
@@ -630,10 +687,12 @@ export function searchClientOrderCounterparties(params?: {
   offset?: number;
   includeInactive?: boolean;
   managerOnly?: boolean;
+  organizationGuid?: string;
+  debtStatus?: ClientOrderDebtStatus;
 }) {
   return getPagedSelector<ClientOrderCounterpartyOption>(
     API_ENDPOINTS.CLIENT_ORDERS.COUNTERPARTIES,
-    params || {},
+    { ...(params || {}), debtStatus: params?.debtStatus ?? 'all' },
     'Не удалось загрузить контрагентов'
   );
 }

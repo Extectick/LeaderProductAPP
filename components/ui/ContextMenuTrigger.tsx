@@ -4,6 +4,8 @@ import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 
 type TriggerRenderProps = {
   onContextMenu?: (event: any) => void;
+  onLongPress?: (event: any) => void;
+  delayLongPress?: number;
 };
 
 type Props<TAction = string> = {
@@ -55,9 +57,27 @@ export default function ContextMenuTrigger<TAction = string>({
     [disabled]
   );
 
+  const handleLongPress = React.useCallback(
+    (event: any) => {
+      if (Platform.OS === 'web' || disabled) return;
+      const nativeEvent = event?.nativeEvent ?? event;
+      const x = typeof nativeEvent?.pageX === 'number' ? nativeEvent.pageX : 0;
+      const y = typeof nativeEvent?.pageY === 'number' ? nativeEvent.pageY : 0;
+      setPosition({ x, y });
+      setVisible(true);
+    },
+    [disabled]
+  );
+
+  const triggerProps = React.useMemo<TriggerRenderProps>(() => {
+    if (disabled) return {};
+    if (Platform.OS === 'web') return { onContextMenu: handleContextMenu };
+    return { onLongPress: handleLongPress, delayLongPress: 420 };
+  }, [disabled, handleContextMenu, handleLongPress]);
+
   return (
     <>
-      {children(Platform.OS === 'web' && !disabled ? { onContextMenu: handleContextMenu } : {})}
+      {children(triggerProps)}
       <ContextMenu
         visible={visible}
         position={position}

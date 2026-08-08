@@ -251,6 +251,12 @@ export function getMaxStartAppealId(): number | null {
   return appealId;
 }
 
+export function getMaxStartClientOrderGuid(): string | null {
+  const raw = getMaxStartParam();
+  const match = raw.match(/^client_order_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+  return match ? match[1].toLowerCase() : null;
+}
+
 export function prepareMaxWebApp() {
   ensureMaxWebAppScript();
   const webApp = getMaxWebApp();

@@ -108,6 +108,7 @@ import {
   type ColumnSizingState,
 } from '@tanstack/react-table';
 import React from 'react';
+import { useLocalSearchParams } from 'expo-router';
 import { useWindowDimensions } from 'react-native';
 import {
   DeliveryDateField,
@@ -1236,6 +1237,12 @@ function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookup
 }
 
 export default function ClientOrdersWebScreen() {
+  const { orderGuid: startOrderGuidParam } = useLocalSearchParams<{ orderGuid?: string | string[] }>();
+  const startOrderGuid = React.useMemo(() => {
+    const value = Array.isArray(startOrderGuidParam) ? startOrderGuidParam[0] : startOrderGuidParam;
+    return String(value || '').trim().toLowerCase();
+  }, [startOrderGuidParam]);
+  const handledStartOrderGuidRef = React.useRef<string | null>(null);
   const { width: viewportWidth } = useWindowDimensions();
   const layoutTier = resolveClientOrdersLayoutTier(viewportWidth);
   const isSinglePane = viewportWidth < 980;
@@ -1960,6 +1967,12 @@ export default function ClientOrdersWebScreen() {
     }
   }, [isSinglePane, workspace]);
 
+  React.useEffect(() => {
+    if (!startOrderGuid || handledStartOrderGuidRef.current === startOrderGuid) return;
+    handledStartOrderGuidRef.current = startOrderGuid;
+    void selectOrderFromList(startOrderGuid);
+  }, [selectOrderFromList, startOrderGuid]);
+
   const renderDraftItemCard = React.useCallback((item: any, rowNumber: number) => {
     const packageValue = packageSelectValue(item);
     const lineErrors = workspace.validation.itemMessages[item.key] || [];
@@ -2535,6 +2548,15 @@ export default function ClientOrdersWebScreen() {
               placeholder="Поиск"
               onChange={(value) => workspace.setFilters((prev) => ({ ...prev, search: value }))}
             />
+            {workspace.ordersError ? (
+              <Alert
+                severity="error"
+                onClose={() => workspace.setOrdersError(null)}
+                sx={{ py: 0, px: 0.6, '& .MuiAlert-message': { py: 0.45, fontSize: 11.5, fontWeight: 800 } }}
+              >
+                {workspace.ordersError}
+              </Alert>
+            ) : null}
             <CompactSelectField
               label="Статус"
               value={workspace.filters.statuses[0] || ''}

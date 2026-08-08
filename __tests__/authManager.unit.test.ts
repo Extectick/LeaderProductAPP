@@ -1,30 +1,30 @@
-const asyncStorage = new Map<string, string>();
-const secureStorage = new Map<string, string>();
+const mockAsyncStorage = new Map<string, string>();
+const mockSecureStorage = new Map<string, string>();
 
 jest.mock('@react-native-async-storage/async-storage', () => ({
-  getItem: jest.fn(async (key: string) => asyncStorage.get(key) ?? null),
+  getItem: jest.fn(async (key: string) => mockAsyncStorage.get(key) ?? null),
   setItem: jest.fn(async (key: string, value: string) => {
-    asyncStorage.set(key, value);
+    mockAsyncStorage.set(key, value);
   }),
   removeItem: jest.fn(async (key: string) => {
-    asyncStorage.delete(key);
+    mockAsyncStorage.delete(key);
   }),
-  multiGet: jest.fn(async (keys: string[]) => keys.map((key) => [key, asyncStorage.get(key) ?? null])),
+  multiGet: jest.fn(async (keys: string[]) => keys.map((key) => [key, mockAsyncStorage.get(key) ?? null])),
   multiSet: jest.fn(async (items: [string, string][]) => {
-    items.forEach(([key, value]) => asyncStorage.set(key, value));
+    items.forEach(([key, value]) => mockAsyncStorage.set(key, value));
   }),
   multiRemove: jest.fn(async (keys: string[]) => {
-    keys.forEach((key) => asyncStorage.delete(key));
+    keys.forEach((key) => mockAsyncStorage.delete(key));
   }),
 }));
 
 jest.mock('expo-secure-store', () => ({
-  getItemAsync: jest.fn(async (key: string) => secureStorage.get(key) ?? null),
+  getItemAsync: jest.fn(async (key: string) => mockSecureStorage.get(key) ?? null),
   setItemAsync: jest.fn(async (key: string, value: string) => {
-    secureStorage.set(key, value);
+    mockSecureStorage.set(key, value);
   }),
   deleteItemAsync: jest.fn(async (key: string) => {
-    secureStorage.delete(key);
+    mockSecureStorage.delete(key);
   }),
 }));
 
@@ -51,24 +51,26 @@ jest.mock('@/src/features/services/storage/servicesAccessCache', () => ({
   clearServicesAccessCache: jest.fn(async () => undefined),
 }));
 
-const axiosPost = jest.fn();
+const mockAxiosPost = jest.fn();
 jest.mock('axios', () => ({
-  post: (...args: any[]) => axiosPost(...args),
+  post: (...args: any[]) => mockAxiosPost(...args),
 }));
 
 describe('auth token manager', () => {
   beforeEach(() => {
     jest.resetModules();
     jest.clearAllMocks();
-    asyncStorage.clear();
-    secureStorage.clear();
+    jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    mockAsyncStorage.clear();
+    mockSecureStorage.clear();
   });
 
   it('refreshes token with device metadata and stores returned device session', async () => {
-    const tokenService = await import('@/utils/tokenService');
+    const tokenService = require('@/utils/tokenService');
     await tokenService.saveTokens('old-access', 'old-refresh', { id: 1 }, 'device-old');
 
-    axiosPost.mockResolvedValueOnce({
+    mockAxiosPost.mockResolvedValueOnce({
       data: {
         data: {
           accessToken: 'new-access',
@@ -81,7 +83,7 @@ describe('auth token manager', () => {
 
     await expect(tokenService.refreshToken()).resolves.toBe('new-access');
 
-    expect(axiosPost).toHaveBeenCalledWith(
+    expect(mockAxiosPost).toHaveBeenCalledWith(
       'http://api.test/auth/token',
       expect.objectContaining({
         refreshToken: 'old-refresh',
@@ -97,12 +99,12 @@ describe('auth token manager', () => {
   });
 
   it('uses the token pair written by another runtime without rotating it again', async () => {
-    const tokenService = await import('@/utils/tokenService');
+    const tokenService = require('@/utils/tokenService');
     await tokenService.saveTokens('old-access', 'old-refresh', { id: 1 }, 'device-1');
 
-    axiosPost.mockImplementationOnce(async () => {
-      secureStorage.set('refreshToken', 'rotated-refresh');
-      secureStorage.set('accessToken', 'fresh-access-from-other-runtime');
+    mockAxiosPost.mockImplementationOnce(async () => {
+      mockSecureStorage.set('refreshToken', 'rotated-refresh');
+      mockSecureStorage.set('accessToken', 'fresh-access-from-other-runtime');
       throw {
         response: {
           status: 409,
@@ -115,18 +117,18 @@ describe('auth token manager', () => {
     });
     await expect(tokenService.refreshToken()).resolves.toBe('fresh-access-from-other-runtime');
 
-    expect(axiosPost).toHaveBeenCalledTimes(1);
+    expect(mockAxiosPost).toHaveBeenCalledTimes(1);
     expect(tokenService.hasAuthSessionExpired()).toBe(false);
     await expect(tokenService.getRefreshToken()).resolves.toBe('rotated-refresh');
   });
 
   it('recovers when axios exposes refresh rotation conflict without response object', async () => {
-    const tokenService = await import('@/utils/tokenService');
+    const tokenService = require('@/utils/tokenService');
     await tokenService.saveTokens('old-access', 'old-refresh', { id: 1 }, 'device-1');
 
-    axiosPost.mockImplementationOnce(async () => {
-      secureStorage.set('accessToken', 'fresh-access-from-other-runtime');
-      secureStorage.set('refreshToken', 'fresh-refresh-from-other-runtime');
+    mockAxiosPost.mockImplementationOnce(async () => {
+      mockSecureStorage.set('accessToken', 'fresh-access-from-other-runtime');
+      mockSecureStorage.set('refreshToken', 'fresh-refresh-from-other-runtime');
       throw {
         status: 409,
         message: 'Request failed with status code 409',
@@ -135,17 +137,17 @@ describe('auth token manager', () => {
 
     await expect(tokenService.refreshToken()).resolves.toBe('fresh-access-from-other-runtime');
 
-    expect(axiosPost).toHaveBeenCalledTimes(1);
+    expect(mockAxiosPost).toHaveBeenCalledTimes(1);
     expect(tokenService.hasAuthSessionExpired()).toBe(false);
     await expect(tokenService.getRefreshToken()).resolves.toBe('fresh-refresh-from-other-runtime');
   });
 
   it('refreshes an access token shortly before it expires', async () => {
-    const tokenService = await import('@/utils/tokenService');
+    const tokenService = require('@/utils/tokenService');
     const soonExpiring = `header.${Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 30 }))
       .toString('base64url')}.signature`;
     await tokenService.saveTokens(soonExpiring, 'old-refresh', { id: 1 }, 'device-1');
-    axiosPost.mockResolvedValueOnce({
+    mockAxiosPost.mockResolvedValueOnce({
       data: {
         data: {
           accessToken: 'fresh-access',
@@ -157,24 +159,24 @@ describe('auth token manager', () => {
     });
 
     await expect(tokenService.getAccessTokenForRequest()).resolves.toBe('fresh-access');
-    expect(axiosPost).toHaveBeenCalledTimes(1);
+    expect(mockAxiosPost).toHaveBeenCalledTimes(1);
     await expect(tokenService.getRefreshToken()).resolves.toBe('fresh-refresh');
   });
 
   it('keeps the local session and backs off refresh attempts while the API is unavailable', async () => {
-    const tokenService = await import('@/utils/tokenService');
+    const tokenService = require('@/utils/tokenService');
     const expiredRefresh = `header.${Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) - 60 }))
       .toString('base64url')}.signature`;
     await tokenService.saveTokens('expired-access', expiredRefresh, { id: 1 }, 'device-1');
-    axiosPost.mockRejectedValueOnce(new Error('Network Error'));
+    mockAxiosPost.mockRejectedValueOnce(new Error('Network Error'));
 
     await expect(tokenService.refreshToken()).resolves.toBeNull();
     await expect(tokenService.refreshToken()).resolves.toBeNull();
 
-    expect(axiosPost).toHaveBeenCalledTimes(1);
+    expect(mockAxiosPost).toHaveBeenCalledTimes(1);
     expect(tokenService.hasAuthSessionExpired()).toBe(false);
     expect(tokenService.getLastRefreshFailure()).toMatchObject({ kind: 'network' });
     await expect(tokenService.getRefreshToken()).resolves.toBe(expiredRefresh);
-    expect(asyncStorage.get('profile')).toBe(JSON.stringify({ id: 1 }));
+    expect(mockAsyncStorage.get('profile')).toBe(JSON.stringify({ id: 1 }));
   });
 });

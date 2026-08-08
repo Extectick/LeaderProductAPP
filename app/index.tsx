@@ -6,8 +6,8 @@ import { AuthContext } from '@/context/AuthContext';
 import StartupLogoLoader from '@/components/StartupLogoLoader';
 import { normalizeRoutePath } from '@/src/shared/lib/routePath';
 import { getProfileGate } from '@/utils/profileGate';
-import { getMaxStartAppealId, isMaxMiniAppLaunch } from '@/utils/maxAuthService';
-import { getTelegramStartAppealId, isTelegramMiniAppLaunch } from '@/utils/telegramAuthService';
+import { getMaxStartAppealId, getMaxStartClientOrderGuid, isMaxMiniAppLaunch } from '@/utils/maxAuthService';
+import { getTelegramStartAppealId, getTelegramStartClientOrderGuid, isTelegramMiniAppLaunch } from '@/utils/telegramAuthService';
 
 export default function RootRedirect() {
   const router = useRouter();
@@ -21,6 +21,7 @@ export default function RootRedirect() {
 
     const gateState = getProfileGate(auth.profile);
     const startAppealId = getTelegramStartAppealId() || getMaxStartAppealId();
+    const startClientOrderGuid = getTelegramStartClientOrderGuid() || getMaxStartClientOrderGuid();
     const target = !auth.isAuthenticated
       ? isMaxMiniAppLaunch()
         ? '/(auth)/max'
@@ -30,6 +31,8 @@ export default function RootRedirect() {
       : gateState === 'active'
       ? startAppealId
         ? `/(main)/services/appeals/${startAppealId}`
+        : startClientOrderGuid
+        ? `/(main)/services/client_orders?orderGuid=${encodeURIComponent(startClientOrderGuid)}`
         : Platform.OS === 'web'
         ? '/home'
         : '/services'

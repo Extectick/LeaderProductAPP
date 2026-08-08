@@ -177,7 +177,7 @@ const ActionSheet: React.FC<ActionSheetProps> = ({ visible, buttons, onClose }) 
 };
 
 const styles = StyleSheet.create({
-  overlay: { ...StyleSheet.absoluteFillObject },
+  overlay: { ...StyleSheet.absoluteFill },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
 
   sheetWrap: {

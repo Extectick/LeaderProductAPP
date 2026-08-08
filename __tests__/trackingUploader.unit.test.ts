@@ -1,13 +1,13 @@
-const storage = new Map<string, string>();
+const mockStorage = new Map<string, string>();
 
 jest.mock('@react-native-async-storage/async-storage', () => ({
-  getItem: jest.fn((key: string) => Promise.resolve(storage.get(key) ?? null)),
+  getItem: jest.fn((key: string) => Promise.resolve(mockStorage.get(key) ?? null)),
   setItem: jest.fn((key: string, value: string) => {
-    storage.set(key, value);
+    mockStorage.set(key, value);
     return Promise.resolve();
   }),
   removeItem: jest.fn((key: string) => {
-    storage.delete(key);
+    mockStorage.delete(key);
     return Promise.resolve();
   }),
 }));
@@ -28,7 +28,7 @@ describe('tracking uploader', () => {
     jest.useFakeTimers();
     jest.resetModules();
     jest.spyOn(console, 'warn').mockImplementation(() => undefined);
-    storage.clear();
+    mockStorage.clear();
   });
 
   afterEach(() => {
@@ -62,11 +62,11 @@ describe('tracking uploader', () => {
       pendingEndRoute: false,
       sending: false,
     });
-    expect(storage.get('tracking:routeId')).toBe('123');
+    expect(mockStorage.get('tracking:routeId')).toBe('123');
   });
 
   it('marks route ending and sends next batch with endRoute=true', async () => {
-    storage.set('tracking:routeId', '44');
+    mockStorage.set('tracking:routeId', '44');
     const { apiClient } = require('../utils/apiClient');
     apiClient.mockResolvedValue({
       ok: true,
@@ -80,7 +80,7 @@ describe('tracking uploader', () => {
     } = require('../utils/trackingUploader');
 
     await markTrackingRouteEnding('[test]');
-    expect(storage.get('tracking:pendingEndRoute')).toBe('true');
+    expect(mockStorage.get('tracking:pendingEndRoute')).toBe('true');
 
     await enqueueTrackingPoints([{ ...basePoint, eventType: 'STOP' }], '[test]');
 
@@ -95,8 +95,8 @@ describe('tracking uploader', () => {
       pendingEndRoute: false,
       sending: false,
     });
-    expect(storage.has('tracking:routeId')).toBe(false);
-    expect(storage.has('tracking:pendingEndRoute')).toBe(false);
+    expect(mockStorage.has('tracking:routeId')).toBe(false);
+    expect(mockStorage.has('tracking:pendingEndRoute')).toBe(false);
   });
 
   it('exposes upload errors in queue debug and keeps points queued', async () => {

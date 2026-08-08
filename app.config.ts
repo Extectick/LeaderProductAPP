@@ -4,7 +4,10 @@ import { ConfigContext, ExpoConfig } from "expo/config";
 import fs from "fs";
 import path from "path";
 
-dotenv.config({ path: path.resolve(__dirname, process.env.NODE_ENV === "production" ? ".env.production" : ".env") });
+dotenv.config({
+  path: path.resolve(__dirname, process.env.NODE_ENV === "production" ? ".env.production" : ".env"),
+  quiet: true,
+});
 
 type NativeVersionConfig = {
   versionName: string;
@@ -35,7 +38,6 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   version: nativeVersion.versionName,
   orientation: "portrait",
   userInterfaceStyle: "automatic",
-  newArchEnabled: true,
   scheme: "leaderproduct",
   icon: "./assets/images/icon.png",
   runtimeVersion: {
@@ -58,7 +60,6 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   android: {
     package: "com.leaderproduct.app",
     versionCode: nativeVersion.versionCode,
-    edgeToEdgeEnabled: true,
     usesCleartextTraffic: true,
     adaptiveIcon: {
       foregroundImage: "./assets/images/adaptive-foreground.png",
@@ -99,6 +100,11 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   plugins: [
     "expo-router",
     "expo-updates",
+    "expo-asset",
+    "expo-image",
+    "expo-sharing",
+    "expo-status-bar",
+    "expo-web-browser",
     "expo-background-task",
     "./plugins/with-android-cleartext-network",
     "./plugins/with-leader-native-tracking",

@@ -261,7 +261,7 @@ export const getAuthScreenStyles = (colors: AuthScreenColors) =>
       padding: 18,
     },
     qrModalBackdrop: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       backgroundColor: 'rgba(15, 23, 42, 0.56)',
     },
     qrModalCard: {

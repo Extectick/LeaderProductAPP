@@ -111,7 +111,7 @@ export default function PresetsModal({ visible, onClose, onApply, onDeletePreset
 const getStyles = (colors: any) =>
   StyleSheet.create({
     overlay: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       backgroundColor: 'rgba(0,0,0,0.35)',
       alignItems: 'center',
       justifyContent: 'center',

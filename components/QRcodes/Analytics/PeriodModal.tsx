@@ -278,7 +278,7 @@ export default function PeriodModal({
 const getStyles = (colors: any) =>
   StyleSheet.create({
     overlay: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       alignItems: 'center',
       justifyContent: 'center',
       padding: 16,
@@ -417,7 +417,7 @@ const getStyles = (colors: any) =>
 
     // всплывающее окошко с нативным пикером (внутри общей модалки)
     pickerSheet: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       alignItems: 'center',
       justifyContent: 'center',
       padding: 16,

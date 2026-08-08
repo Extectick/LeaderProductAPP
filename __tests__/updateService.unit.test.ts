@@ -1,15 +1,15 @@
-const storage = new Map<string, string>();
-const axiosGet = jest.fn();
+const mockStorage = new Map<string, string>();
+const mockAxiosGet = jest.fn();
 
 jest.mock('@react-native-async-storage/async-storage', () => ({
-  getItem: jest.fn(async (key: string) => storage.get(key) ?? null),
+  getItem: jest.fn(async (key: string) => mockStorage.get(key) ?? null),
   setItem: jest.fn(async (key: string, value: string) => {
-    storage.set(key, value);
+    mockStorage.set(key, value);
   }),
 }));
 
 jest.mock('axios', () => ({
-  get: (...args: unknown[]) => axiosGet(...args),
+  get: (...args: unknown[]) => mockAxiosGet(...args),
   post: jest.fn(),
 }));
 
@@ -21,16 +21,17 @@ describe('update service polling cache', () => {
   beforeEach(() => {
     jest.resetModules();
     jest.clearAllMocks();
-    storage.clear();
+    jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    mockStorage.clear();
   });
 
   it('deduplicates automatic checks but lets a manual check bypass the cache', async () => {
-    axiosGet.mockResolvedValue({
+    mockAxiosGet.mockResolvedValue({
       status: 200,
       data: { data: { updateAvailable: false, mandatory: false } },
       headers: { etag: 'test-etag' },
     });
-    const { checkForUpdate } = await import('@/utils/updateService');
+    const { checkForUpdate } = require('@/utils/updateService');
     const params = {
       platform: 'android' as const,
       versionCode: 22,
@@ -41,15 +42,15 @@ describe('update service polling cache', () => {
 
     await checkForUpdate(params);
     await checkForUpdate(params);
-    expect(axiosGet).toHaveBeenCalledTimes(1);
+    expect(mockAxiosGet).toHaveBeenCalledTimes(1);
 
     await checkForUpdate({ ...params, force: true });
-    expect(axiosGet).toHaveBeenCalledTimes(2);
+    expect(mockAxiosGet).toHaveBeenCalledTimes(2);
   });
 
   it('briefly caches network failures to avoid request storms', async () => {
-    axiosGet.mockRejectedValue(new Error('Network Error'));
-    const { checkForUpdate } = await import('@/utils/updateService');
+    mockAxiosGet.mockRejectedValue(new Error('Network Error'));
+    const { checkForUpdate } = require('@/utils/updateService');
     const params = {
       platform: 'android' as const,
       versionCode: 22,
@@ -60,6 +61,6 @@ describe('update service polling cache', () => {
     await checkForUpdate(params);
     await checkForUpdate(params);
 
-    expect(axiosGet).toHaveBeenCalledTimes(1);
+    expect(mockAxiosGet).toHaveBeenCalledTimes(1);
   });
 });

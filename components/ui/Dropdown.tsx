@@ -331,7 +331,7 @@ const styles = StyleSheet.create({
   pressed: { backgroundColor: 'rgba(0,0,0,0.04)' },
   errorBorder: { borderColor: '#EF4444' },
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0,0,0,0.12)',
   },
   menu: {

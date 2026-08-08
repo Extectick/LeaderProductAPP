@@ -365,7 +365,7 @@ function PickerBottomSheetNativeBackdrop({
           accessibilityRole="button"
           accessibilityLabel="Закрыть панель"
           onPressIn={onClose}
-          style={StyleSheet.absoluteFillObject}
+          style={StyleSheet.absoluteFill}
         />
       ) : null}
     </Reanimated.View>
@@ -778,7 +778,7 @@ function LegacyPickerBottomSheet({
               accessibilityRole="button"
               accessibilityLabel="Закрыть панель"
               onPress={closeWithAnimation}
-              style={StyleSheet.absoluteFillObject}
+              style={StyleSheet.absoluteFill}
             />
           ) : null}
         </Animated.View>
@@ -837,9 +837,9 @@ function LegacyPickerBottomSheet({
 }
 
 const pickerBottomSheetDefaultStyles = StyleSheet.create({
-  pickerBottomSheetOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 14 },
-  pickerBottomSheetBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(15,23,42,0.18)' },
-  pickerBottomSheetNativeBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(15,23,42,0.18)' },
+  pickerBottomSheetOverlay: { ...StyleSheet.absoluteFill, zIndex: 14 },
+  pickerBottomSheetBackdrop: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(15,23,42,0.18)' },
+  pickerBottomSheetNativeBackdrop: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(15,23,42,0.18)' },
   pickerBottomSheetWrap: { position: 'absolute', zIndex: 14, bottom: 0 },
   pickerBottomSheet: {
     width: '100%',

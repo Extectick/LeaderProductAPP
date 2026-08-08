@@ -1,8 +1,8 @@
 // context/AuthContext.tsx
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import isEqual from 'fast-deep-equal';
 import { jwtDecode } from 'jwt-decode';
-import isEqual from 'lodash.isequal';
 import React, { createContext, ReactNode, useCallback, useEffect, useState } from 'react';
 import { AppState } from 'react-native';
 

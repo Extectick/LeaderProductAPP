@@ -121,13 +121,13 @@ const FormInput = forwardRef<TextInput, FormInputProps>((props, ref) => {
           overflow: 'visible',
         },
         inputBg: {
-          ...StyleSheet.absoluteFillObject,
+          ...StyleSheet.absoluteFill,
           borderRadius: cfg.r,
           backgroundColor: colors.inputBackground,
           zIndex: 0,
         },
         borderOverlay: {
-          ...StyleSheet.absoluteFillObject,
+          ...StyleSheet.absoluteFill,
           borderRadius: cfg.r,
           borderWidth: 1,
           borderStyle: 'solid',

@@ -7,12 +7,13 @@ import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderConte
 import { useOptionalTabBarVisibility } from '@/components/Navigation/TabBarVisibilityContext';
 import { useNotificationViewport } from '@/context/NotificationViewportContext';
 import DateTimeInput from '@/components/ui/DateTimeInput';
+import ContextMenuTrigger from '@/components/ui/ContextMenuTrigger';
+import type { ContextMenuItem } from '@/components/ui/ContextMenu';
 import { LiquidGlassSurface } from '@/components/ui/LiquidGlassSurface';
 import { useThemeColor } from '@/hooks/useThemeColor';
 import { useServicesHeaderSlot } from '@/src/features/services/headerSlotContext';
 import { useOptionalLastServiceRoute } from '@/src/features/navigation/LastServiceRouteContext';
 import {
-  canComputeDraftProfit,
   canComputeLineProfit,
   computeLineProfit,
   computeLineTotal,
@@ -74,17 +75,20 @@ import {
 } from './lib/clientOrderInvoices';
 import { useClientOrdersWorkspace } from './hooks/useClientOrdersWorkspace';
 import { getClientOrderInvoices, getClientOrderProductsBatch, getClientOrderReferenceDetails, requestClientOrderInvoice } from '@/utils/clientOrdersService';
-import type { ClientOrder, ClientOrderCounterpartyOption, ClientOrderInvoice, ClientOrderOrganization, ClientOrderPriceTypeOption, ClientOrderProduct, ClientOrderReferenceDetails, ClientOrderReferenceKind, ClientOrderWarehouseOption } from '@/utils/clientOrdersService';
+import type { ClientOrder, ClientOrderCounterpartyOption, ClientOrderInvoice, ClientOrderOrganization, ClientOrderPriceTypeOption, ClientOrderProduct, ClientOrderReferenceDetails, ClientOrderReferenceKind, ClientOrdersTodaySummary, ClientOrderWarehouseOption } from '@/utils/clientOrdersService';
 import { useServerStatus } from '@/src/shared/network/useServerStatus';
 import { setAutomaticUpdateChecksPaused } from '@/src/shared/appUpdate/automaticUpdateChecks';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React from 'react';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import PagerView, { type PagerViewOnPageSelectedEvent } from 'react-native-pager-view';
-import { Alert, Animated, BackHandler, findNodeHandle, FlatList, InteractionManager, Keyboard, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, UIManager, useWindowDimensions, View } from 'react-native';
+import PagerView, {
+  type ClientOrdersPagerRef,
+  type PagerViewOnPageSelectedEvent,
+} from './ClientOrdersPager';
+import { Alert, Animated, BackHandler, findNodeHandle, FlatList, Keyboard, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, UIManager, useWindowDimensions, View } from 'react-native';
 import type { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -93,6 +97,7 @@ import {
   List,
   Menu,
   Portal,
+  Searchbar,
   Surface,
   Text,
   TextInput as PaperTextInput,
@@ -110,12 +115,14 @@ import {
   SearchPickerScreen,
   type SearchPickerFilter,
 } from './screen/mobile/SearchPickerScreen';
+import OneCCompanyLogo from './assets/onec-company-logo.svg';
 
 type ScreenMode = 'orders' | 'editor';
 type EditorSection = 'header' | 'items';
 type DocumentOpeningState = 'new' | 'existing' | null;
 type PickerKind = ClientOrdersPickerKind;
 type InvoiceFileAction = 'download' | 'share';
+type OrderListContextAction = 'submit' | 'unqueue' | 'copy' | 'invoice-request' | 'invoice-download' | 'invoice-share';
 type ProductGalleryImage = {
   key: string;
   thumbUrl: string;
@@ -137,6 +144,43 @@ type ConfirmDialogState = {
   onAlternate?: () => void | Promise<void>;
 } | null;
 type SegmentedChoice = { value: string | null; label: string };
+
+type IdleCallbackApi = typeof globalThis & {
+  requestIdleCallback?: (
+    callback: (deadline: { didTimeout: boolean; timeRemaining: () => number }) => void,
+    options?: { timeout?: number }
+  ) => number;
+  cancelIdleCallback?: (handle: number) => void;
+};
+
+type ScheduledIdleTask = { cancel: () => void };
+
+function scheduleIdleTask(callback: () => void, timeout = 250): ScheduledIdleTask {
+  const idleApi = globalThis as IdleCallbackApi;
+  let cancelled = false;
+
+  if (typeof idleApi.requestIdleCallback === 'function') {
+    const handle = idleApi.requestIdleCallback(() => {
+      if (!cancelled) callback();
+    }, { timeout });
+    return {
+      cancel: () => {
+        cancelled = true;
+        idleApi.cancelIdleCallback?.(handle);
+      },
+    };
+  }
+
+  const handle = setTimeout(() => {
+    if (!cancelled) callback();
+  }, 0);
+  return {
+    cancel: () => {
+      cancelled = true;
+      clearTimeout(handle);
+    },
+  };
+}
 
 const PAGE_SIZE = 25;
 const PRODUCT_PICKER_PAGE_SIZE = 50;
@@ -446,6 +490,12 @@ function waitForUiPaint() {
 
 
 export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }: ClientOrdersMobileScreenProps = {}) {
+  const { orderGuid: startOrderGuidParam } = useLocalSearchParams<{ orderGuid?: string | string[] }>();
+  const startOrderGuid = React.useMemo(() => {
+    const value = Array.isArray(startOrderGuidParam) ? startOrderGuidParam[0] : startOrderGuidParam;
+    return String(value || '').trim().toLowerCase();
+  }, [startOrderGuidParam]);
+  const handledStartOrderGuidRef = React.useRef<string | null>(null);
   const [discardConfirm, setDiscardConfirm] = React.useState<{
     open: boolean;
     mode: 'create' | 'edit';
@@ -468,7 +518,19 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     setDiscardConfirm((prev) => ({ ...prev, open: false }));
     resolve?.(result);
   }, []);
-  const workspace = useClientOrdersWorkspace({ confirmDiscard: requestDiscardConfirm });
+  const [mode, setMode] = React.useState<ScreenMode>('orders');
+  const modeRef = React.useRef<ScreenMode>(mode);
+  modeRef.current = mode;
+  const [screenFocused, setScreenFocused] = React.useState(true);
+  useFocusEffect(React.useCallback(() => {
+    setScreenFocused(true);
+    return () => setScreenFocused(false);
+  }, []));
+  const workspace = useClientOrdersWorkspace({
+    confirmDiscard: requestDiscardConfirm,
+    screenMode: mode,
+    isScreenActive: screenFocused,
+  });
   const router = useRouter();
   const lastService = useOptionalLastServiceRoute();
   const { isReachable } = useServerStatus();
@@ -485,9 +547,6 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const editorTier = resolveClientOrdersEditorTier(width);
   const ui = getClientOrdersResponsiveMetrics(layoutTier, editorTier);
   const documentBottomBarLayout = resolveClientOrdersDocumentBottomBarLayout(width, fontScale);
-  const [mode, setMode] = React.useState<ScreenMode>('orders');
-  const modeRef = React.useRef<ScreenMode>(mode);
-  modeRef.current = mode;
   const [editorMounted, setEditorMounted] = React.useState(false);
   const [section, setSection] = React.useState<EditorSection>('header');
   React.useEffect(() => {
@@ -500,15 +559,15 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       return undefined;
     }
 
-    let interactionTask: ReturnType<typeof InteractionManager.runAfterInteractions> | null = null;
+    let idleTask: ScheduledIdleTask | null = null;
     const frame = requestAnimationFrame(() => {
-      interactionTask = InteractionManager.runAfterInteractions(() => {
+      idleTask = scheduleIdleTask(() => {
         setEditorMounted(false);
       });
     });
     return () => {
       cancelAnimationFrame(frame);
-      interactionTask?.cancel();
+      idleTask?.cancel();
     };
   }, [mode]);
   const [openingDocument, setOpeningDocument] = React.useState<DocumentOpeningState>(null);
@@ -546,6 +605,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const [linePriceTarget, setLinePriceTarget] = React.useState<string | null>(null);
   const [actionsMenuOpen, setActionsMenuOpen] = React.useState(false);
   const [invoicePickerOpen, setInvoicePickerOpen] = React.useState(false);
+  const [invoicePickerContext, setInvoicePickerContext] = React.useState<{ orderGuid: string; invoices: ClientOrderInvoice[] } | null>(null);
   const [invoiceSharingId, setInvoiceSharingId] = React.useState<string | null>(null);
   const [invoiceSharingAction, setInvoiceSharingAction] = React.useState<InvoiceFileAction | null>(null);
   const [invoiceListLoading, setInvoiceListLoading] = React.useState(false);
@@ -573,7 +633,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const ordersScrollRef = React.useRef<any>(null);
   const editorScrollRef = React.useRef<any>(null);
   const editorItemsScrollRef = React.useRef<any>(null);
-  const editorPagerRef = React.useRef<PagerView | null>(null);
+  const editorPagerRef = React.useRef<ClientOrdersPagerRef | null>(null);
   const ordersBottomBarEntrance = React.useRef(new Animated.Value(0)).current;
   const editorPagerOffset = React.useRef(new Animated.Value(0)).current;
   const editorPagerPosition = React.useRef(new Animated.Value(0)).current;
@@ -612,8 +672,6 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const itemsSearchRequestIdRef = React.useRef(0);
   const itemsSearchLoadingMoreRef = React.useRef(false);
   const itemsSearchBlurTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lineItemLayoutYRef = React.useRef<Record<string, number>>({});
-  const pendingScrollItemKeyRef = React.useRef<string | null>(null);
   const openingOrderRequestIdRef = React.useRef(0);
   const selectedInvoiceOrder = workspace.selectedOrder as ClientOrder | null;
   const selectedInvoiceOrderGuid = getClientOrderInvoiceIdentifier(selectedInvoiceOrder);
@@ -628,9 +686,11 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   );
   const invoiceDownloadAvailable = !!selectedInvoiceOrder?.invoiceDownloadAvailable || downloadableInvoices.length > 0;
   const invoiceGenerationPending = selectedInvoicePresentation.pending;
+  const invoicePickerInvoices = invoicePickerContext?.invoices ?? downloadableInvoices;
   React.useEffect(() => {
     setLoadedInvoiceItems(null);
     setInvoicePickerOpen(false);
+    setInvoicePickerContext(null);
     setInvoiceRequestPendingGuid(null);
     setInvoiceSharingId(null);
     setInvoiceSharingAction(null);
@@ -641,8 +701,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       setInvoiceRequestPendingGuid(null);
     }
   }, [invoiceDownloadAvailable, invoiceRequestPendingGuid, selectedInvoiceOrderGuid]);
-  const runInvoiceFileAction = React.useCallback(async (invoice: ClientOrderInvoice, action: InvoiceFileAction) => {
-    const orderGuid = selectedInvoiceOrderGuid;
+  const runInvoiceFileAction = React.useCallback(async (invoice: ClientOrderInvoice, action: InvoiceFileAction, targetOrderGuid?: string | null) => {
+    const orderGuid = targetOrderGuid || invoicePickerContext?.orderGuid || selectedInvoiceOrderGuid;
     if (!orderGuid || invoiceSharingId) return;
     setInvoiceSharingId(invoice.id);
     setInvoiceSharingAction(action);
@@ -654,23 +714,28 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         Alert.alert('Скачивание началось', 'PDF будет сохранён в системную папку «Загрузки».');
       }
       setInvoicePickerOpen(false);
+      setInvoicePickerContext(null);
     } catch (error: any) {
       Alert.alert(action === 'share' ? 'Не удалось поделиться счётом' : 'Не удалось скачать счёт', error?.message || 'Повторите попытку позже.');
     } finally {
       setInvoiceSharingId(null);
       setInvoiceSharingAction(null);
     }
-  }, [invoiceSharingId, selectedInvoiceOrderGuid]);
-  const openInvoiceActions = React.useCallback(async (action: InvoiceFileAction = 'download') => {
+  }, [invoicePickerContext?.orderGuid, invoiceSharingId, selectedInvoiceOrderGuid]);
+  const openInvoiceActions = React.useCallback(async (action: InvoiceFileAction = 'download', targetOrder?: ClientOrder | null) => {
     setActionsMenuOpen(false);
-    let invoices = downloadableInvoices;
-    const orderGuid = selectedInvoiceOrderGuid;
-    if (!invoices.length && orderGuid && invoiceDownloadAvailable && !invoiceListLoading) {
+    const targetIsSelectedOrder = !targetOrder;
+    let invoices = targetOrder ? getDownloadableClientOrderInvoices(targetOrder) : downloadableInvoices;
+    const orderGuid = targetOrder ? getClientOrderInvoiceIdentifier(targetOrder) : selectedInvoiceOrderGuid;
+    const downloadAvailable = targetOrder
+      ? !!targetOrder.invoiceDownloadAvailable || invoices.length > 0
+      : invoiceDownloadAvailable;
+    if (!invoices.length && orderGuid && downloadAvailable && !invoiceListLoading) {
       setInvoiceListLoadingAction(action);
       setInvoiceListLoading(true);
       try {
         const loaded = await getClientOrderInvoices(orderGuid);
-        setLoadedInvoiceItems({ orderGuid, items: loaded });
+        if (targetIsSelectedOrder) setLoadedInvoiceItems({ orderGuid, items: loaded });
         invoices = getDownloadableClientOrderInvoices({ invoices: loaded });
       } catch (error: any) {
         Alert.alert('Не удалось загрузить счёт', error?.message || 'Повторите попытку позже.');
@@ -681,14 +746,18 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       }
     }
     if (invoices.length === 1) {
-      await runInvoiceFileAction(invoices[0], action);
+      await runInvoiceFileAction(invoices[0], action, orderGuid);
       return;
     }
-    if (invoices.length > 1) setInvoicePickerOpen(true);
-    else if (invoiceDownloadAvailable) Alert.alert('Счёт ещё не готов', 'Обновите документ и повторите попытку.');
+    if (invoices.length > 1 && orderGuid) {
+      setInvoicePickerContext({ orderGuid, invoices });
+      setInvoicePickerOpen(true);
+    } else if (downloadAvailable) {
+      Alert.alert('Счёт ещё не готов', 'Обновите список и повторите попытку.');
+    }
   }, [downloadableInvoices, invoiceDownloadAvailable, invoiceListLoading, runInvoiceFileAction, selectedInvoiceOrderGuid]);
-  const requestInvoiceNow = React.useCallback(async () => {
-    const orderGuid = selectedInvoiceOrderGuid;
+  const requestInvoiceNow = React.useCallback(async (targetOrder?: ClientOrder | null) => {
+    const orderGuid = targetOrder ? getClientOrderInvoiceIdentifier(targetOrder) : selectedInvoiceOrderGuid;
     if (!orderGuid || invoiceRequesting) return;
     setActionsMenuOpen(false);
     setInvoiceRequesting(true);
@@ -762,11 +831,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const showOrdersInitialLoading = !workspace.ordersInitialLoadDone && !workspace.orders.length;
   const showOrdersEmptyState = workspace.ordersInitialLoadDone && !workspace.loadingOrders && !workspace.orders.length;
   const showOrdersFooter = !showOrdersInitialLoading && !!workspace.orders.length && (workspace.loadingMoreOrders || !!workspace.ordersAppendError);
-  const showOrdersBottomBar = mode === 'orders' && workspace.ordersInitialLoadDone;
-  const ordersBottomMetricsLoading = workspace.loadingOrders || ordersRefreshing;
-  const ordersVisibleCount = Number.isFinite(Number(workspace.ordersMeta?.total))
-    ? Number(workspace.ordersMeta.total)
-    : workspace.orders.length;
+  const showOrdersBottomBar = mode === 'orders';
+  const ordersBottomMetricsLoading = workspace.loadingTodaySummary && !workspace.todaySummary;
   const hasActiveOrderFilters = countActiveOrderFilters(workspace.filters) > 0;
   React.useEffect(() => {
     ordersBottomBarEntrance.stopAnimation();
@@ -881,7 +947,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   }, [mode, restoreOrdersScrollPosition, showOrdersInitialLoading, workspace.ordersInitialLoadDone]);
   React.useEffect(() => {
     if (mode !== 'orders') return;
-    const task = InteractionManager.runAfterInteractions(() => {
+    const task = scheduleIdleTask(() => {
       const now = Date.now();
       if (workspace.ordersInitialLoadDone && !ordersLastFocusRefreshRef.current) {
         ordersLastFocusRefreshRef.current = now;
@@ -1300,7 +1366,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     setHeaderOverride({ hidden: true });
     setMode('orders');
     return true;
-  }, [openingOrderGuid, setHeaderOverride, workspace]);
+  }, [openingOrderGuid, setHeaderOverride, workspace.cancelDetailLoading]);
   const closeDocumentToOrders = React.useCallback(() => {
     const leaveDocument = () => {
       Keyboard.dismiss();
@@ -1319,7 +1385,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       if (!canLeave) return;
       leaveDocument();
     });
-  }, [setHeaderOverride, workspace]);
+  }, [setHeaderOverride, workspace.confirmDiscardIfNeeded, workspace.dirty, workspace.readOnly]);
   const closeOrdersService = React.useCallback(() => {
     Keyboard.dismiss();
     lastService?.clearLastServiceRoute();
@@ -1328,6 +1394,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const closeTopOverlay = React.useCallback(() => {
     if (invoicePickerOpen) {
       setInvoicePickerOpen(false);
+      setInvoicePickerContext(null);
       return true;
     }
     if (productGallery) {
@@ -1440,24 +1507,19 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     });
   }, []);
 
-  const scrollToLineItem = React.useCallback((key: string, fallbackIndex?: number) => {
-    const measuredY = lineItemLayoutYRef.current[key];
+  const scrollToLineItem = React.useCallback((_key: string, fallbackIndex?: number) => {
     const fallbackY = typeof fallbackIndex === 'number' ? fallbackIndex * LINE_ITEM_SCROLL_ESTIMATE : 0;
-    const targetY = typeof measuredY === 'number' ? measuredY : fallbackY;
-    editorItemsScrollRef.current?.scrollTo?.({ y: Math.max(0, targetY - 8), animated: true });
+    const offset = Math.max(0, fallbackY - 8);
+    if (typeof editorItemsScrollRef.current?.scrollToOffset === 'function') {
+      editorItemsScrollRef.current.scrollToOffset({ offset, animated: true });
+      return;
+    }
+    editorItemsScrollRef.current?.scrollTo?.({ y: offset, animated: true });
   }, []);
 
   const requestScrollToLineItem = React.useCallback((key: string, fallbackIndex?: number) => {
-    pendingScrollItemKeyRef.current = key;
     requestAnimationFrame(() => scrollToLineItem(key, fallbackIndex));
     setTimeout(() => scrollToLineItem(key, fallbackIndex), 140);
-  }, [scrollToLineItem]);
-
-  const handleLineItemLayout = React.useCallback((key: string, y: number) => {
-    lineItemLayoutYRef.current[key] = y;
-    if (pendingScrollItemKeyRef.current !== key) return;
-    pendingScrollItemKeyRef.current = null;
-    requestAnimationFrame(() => scrollToLineItem(key));
   }, [scrollToLineItem]);
 
   const openProductEditorForProduct = React.useCallback((product: ClientOrderProduct) => {
@@ -1658,11 +1720,11 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     }
   }, [editorPagerOffset, editorPagerPosition, openingDocument, openingOrderGuid, workspace]);
 
-  const selectOrder = React.useCallback(async (order: ClientOrder) => {
+  const selectOrderByGuid = React.useCallback(async (guid: string) => {
     if (ordersOpenBusyRef.current || openingOrderGuid || openingDocument) return;
     const requestId = ++openingOrderRequestIdRef.current;
     ordersOpenBusyRef.current = true;
-    setOpeningOrderGuid(order.guid);
+    setOpeningOrderGuid(guid);
     setOpeningDocument('existing');
     setEditorMounted(true);
     editorPagerTargetRef.current = 1;
@@ -1672,7 +1734,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     setMode('editor');
     try {
       await waitForUiPaint();
-      const opened = await workspace.selectOrder(order.guid);
+      const opened = await workspace.selectOrder(guid);
       if (openingOrderRequestIdRef.current !== requestId) return;
       if (!opened) {
         setOpeningOrderGuid(null);
@@ -1695,6 +1757,17 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       }
     }
   }, [editorPagerOffset, editorPagerPosition, openingDocument, openingOrderGuid, workspace.selectOrder]);
+
+  const selectOrder = React.useCallback(
+    (order: ClientOrder) => selectOrderByGuid(order.guid),
+    [selectOrderByGuid]
+  );
+
+  React.useEffect(() => {
+    if (!startOrderGuid || handledStartOrderGuidRef.current === startOrderGuid) return;
+    handledStartOrderGuidRef.current = startOrderGuid;
+    void selectOrderByGuid(startOrderGuid);
+  }, [selectOrderByGuid, startOrderGuid]);
 
   const removeOrCancel = React.useCallback(() => {
     if (workspace.selectedOrderQueued) {
@@ -1775,16 +1848,21 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     const warningMessage = workspace.validation.warningMessage
       ? `\n${workspace.validation.warningMessage}`
       : '';
+    const debtWarning = workspace.shipmentProhibited
+      ? `${workspace.debtReason ? `Причина: ${workspace.debtReason}\n\n` : ''}У контрагента есть просроченная задолженность. 1С может сохранить заказ без проведения. Отправить документ всё равно?`
+      : '';
     setConfirmDialog({
-      title: isErrorRetry ? 'Повторить отправку в 1С?' : isResubmit ? 'Переотправить в 1С?' : 'Отправить в 1С?',
-      message: `${isQueuedResubmit
+      title: workspace.shipmentProhibited
+        ? 'Контрагент имеет задолженность'
+        : isErrorRetry ? 'Повторить отправку в 1С?' : isResubmit ? 'Переотправить в 1С?' : 'Отправить в 1С?',
+      message: `${debtWarning || (isQueuedResubmit
         ? 'Документ будет сохранен и поставлен в конец очереди.'
         : isSyncedResubmit
           ? 'Изменения будут сохранены и отправлены в 1С.'
           : isErrorRetry
             ? 'Документ уже сохранен в 1С, но не проведен. Повторная отправка попробует провести его еще раз.'
-          : ''}${warningMessage}`.trim(),
-      confirmLabel: isQueuedResubmit ? 'В конец очереди' : isErrorRetry ? 'Повторить' : 'Отправить',
+          : '')}${warningMessage}`.trim(),
+      confirmLabel: workspace.shipmentProhibited ? 'Всё равно отправить' : isQueuedResubmit ? 'В конец очереди' : isErrorRetry ? 'Повторить' : 'Отправить',
       onConfirm: () => workspace.submitOrder(),
     });
   }, [workspace]);
@@ -1801,6 +1879,10 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     }
     void workspace.saveDraft({ reason: 'manual' });
   }, [workspace.saveDraft, workspace.validation.warningMessage]);
+  const saveDraftImmediately = React.useCallback(() => {
+    setActionsMenuOpen(false);
+    void workspace.saveDraft({ reason: 'manual' });
+  }, [workspace.saveDraft]);
   const copyFromMenu = React.useCallback(() => {
     if (!workspace.hasEditableDocument) return;
     setActionsMenuOpen(false);
@@ -1830,18 +1912,6 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       },
     });
   }, [workspace]);
-  const handleDocumentPrimaryAction = React.useCallback(() => {
-    if ((workspace.selectedOrderQueued || workspace.selectedOrderSynced) && workspace.dirty) {
-      submitFromMenu();
-      return;
-    }
-    if (workspace.dirty) {
-      saveDraftFromMenu();
-      return;
-    }
-    submitFromMenu();
-  }, [saveDraftFromMenu, submitFromMenu, workspace]);
-
   const confirmResetHeaderPriceType = React.useCallback(() => {
     if (workspace.readOnly || workspace.mutationLocked) return;
     setConfirmDialog({
@@ -1907,6 +1977,9 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const hasHeaderErrors = !muteDocumentValidation
     && dependentHeaderValidationReady
     && Object.values(headerRequiredState).some(Boolean);
+  const highlightHeaderDebt = workspace.shipmentProhibited
+    && !workspace.readOnly
+    && !workspace.selectedOrder?.isPostedIn1c;
   const hasItemsErrors = !muteDocumentValidation && (
     !workspace.draft.items.length
     || Object.keys(workspace.validation.itemMessages || {}).length > 0
@@ -2058,6 +2131,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   React.useEffect(() => {
     if (!productImageRefreshCandidates.length || !workspace.draft.counterpartyGuid) return undefined;
     let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
     const refreshImages = async () => {
       try {
         const products = await getClientOrderProductsBatch({
@@ -2080,19 +2154,27 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
           if (!prev) return prev;
           return mergeProductImageData(prev, byGuid.get(prev.productGuid));
         });
+        const metadataPatches: Array<{ lineKey: string; patch: Partial<DraftItem> }> = [];
         workspace.draft.items.forEach((item: DraftItem) => {
           const patch = productImagePatchFromSource(byGuid.get(item.productGuid));
           if (!patch) return;
-          workspace.setItemPatch(item.key, patch);
+          metadataPatches.push({ lineKey: item.key, patch });
         });
+        workspace.setItemMetadataPatches(metadataPatches);
       } catch {
         // Image availability is opportunistic; product search must remain usable.
       }
     };
-    const timers = [700, 2400, 5200].map((delay) => setTimeout(() => void refreshImages(), delay));
+    const runAttempt = async (attempt: number) => {
+      await refreshImages();
+      if (cancelled || attempt >= 1) return;
+      retryTimer = setTimeout(() => void runAttempt(attempt + 1), 3400);
+    };
+    const initialTimer = setTimeout(() => void runAttempt(0), 1600);
     return () => {
       cancelled = true;
-      timers.forEach(clearTimeout);
+      clearTimeout(initialTimer);
+      if (retryTimer) clearTimeout(retryTimer);
     };
   }, [
     productImageRefreshSignature,
@@ -2101,7 +2183,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     workspace.draft.organizationGuid,
     workspace.draft.priceTypeGuid,
     workspace.draft.warehouseGuid,
-    workspace.setItemPatch,
+    workspace.setItemMetadataPatches,
     pickerKind,
   ]);
   const resetItemsSearch = React.useCallback(() => {
@@ -2152,6 +2234,37 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     if (editingItemKey && !editingItem && !pendingProductItem) setEditingItemKey(null);
   }, [editingItem, editingItemKey, pendingProductItem]);
   const documentContentLoading = mode === 'editor' && (!!openingDocument || workspace.loadingDetail);
+  const documentActionsWorkspace = React.useMemo(() => ({
+    selectedOrderQueued: workspace.selectedOrderQueued,
+    selectedOrderSynced: workspace.selectedOrderSynced,
+    dirty: workspace.dirty,
+    selectedOrder: workspace.selectedOrder
+      ? { status: workspace.selectedOrder.status }
+      : null,
+    draftMode: workspace.draftMode,
+    saving: workspace.saving,
+    readOnly: workspace.readOnly,
+    mutationLocked: workspace.mutationLocked,
+    validation: { canSave: workspace.validation.canSave },
+    submitting: workspace.submitting,
+    canSubmitOrder: workspace.canSubmitOrder,
+    copying: workspace.copying,
+    hasEditableDocument: workspace.hasEditableDocument,
+  }), [
+    workspace.canSubmitOrder,
+    workspace.copying,
+    workspace.dirty,
+    workspace.draftMode,
+    workspace.hasEditableDocument,
+    workspace.mutationLocked,
+    workspace.readOnly,
+    workspace.saving,
+    workspace.selectedOrder?.status,
+    workspace.selectedOrderQueued,
+    workspace.selectedOrderSynced,
+    workspace.submitting,
+    workspace.validation.canSave,
+  ]);
   const documentHeaderRightSlot = React.useMemo(() => {
     if (mode !== 'editor') return undefined;
     if (documentContentLoading) {
@@ -2170,7 +2283,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         ) : null}
         <DocumentActionsMenu
           styles={styles}
-          workspace={workspace}
+          workspace={documentActionsWorkspace}
           actionsMenuOpen={actionsMenuOpen}
           setActionsMenuOpen={setActionsMenuOpen}
           setInspectorOpen={setInspectorOpen}
@@ -2190,7 +2303,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         />
       </View>
     );
-  }, [actionsMenuOpen, copyFromMenu, deleteDocumentFromMenu, documentContentLoading, downloadableInvoices.length, invoiceDownloadAvailable, invoiceGenerationPending, invoiceListLoading, invoiceRequestPendingGuid, invoiceRequesting, invoiceSharingId, isReachable, mode, openInvoiceActions, removeOrCancel, requestInvoiceNow, saveDraftFromMenu, selectedInvoiceOrderGuid, submitFromMenu, workspace]);
+  }, [actionsMenuOpen, copyFromMenu, deleteDocumentFromMenu, documentActionsWorkspace, documentContentLoading, downloadableInvoices.length, invoiceDownloadAvailable, invoiceGenerationPending, invoiceListLoading, invoiceRequestPendingGuid, invoiceRequesting, invoiceSharingId, isReachable, mode, openInvoiceActions, removeOrCancel, requestInvoiceNow, saveDraftFromMenu, selectedInvoiceOrderGuid, submitFromMenu]);
   const handleEditorSectionChange = React.useCallback((nextSection: EditorSection) => {
     const nextTarget = nextSection === 'items' ? 1 : 0;
     const sectionChanged = nextTarget !== editorPagerTargetRef.current;
@@ -2224,29 +2337,35 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       setEditorKeyboardVisible(false);
     }
   }, [editorPagerOffset, editorPagerPosition]);
+  const dismissWorkspaceError = React.useCallback(() => workspace.setError(null), [workspace.setError]);
   const documentHeaderSlot = React.useMemo(() => {
     if (mode !== 'editor') return null;
     return (
       <DocumentHeaderSlot
         styles={styles}
-        workspace={workspace}
+        error={workspace.error}
+        onDismissError={dismissWorkspaceError}
+        itemsCount={workspace.draft.items.length}
         section={section}
         setSection={handleEditorSectionChange}
         pagerProgress={editorPagerProgress}
         loading={documentContentLoading}
-        hasHeaderErrors={hasHeaderErrors}
+        hasHeaderErrors={hasHeaderErrors || highlightHeaderDebt}
         hasItemsErrors={hasItemsErrors}
       />
     );
   }, [
     handleEditorSectionChange,
     hasHeaderErrors,
+    highlightHeaderDebt,
     hasItemsErrors,
     editorPagerProgress,
     documentContentLoading,
+    dismissWorkspaceError,
     mode,
     section,
-    workspace,
+    workspace.draft.items.length,
+    workspace.error,
   ]);
   const documentHeaderTitleSlot = React.useMemo(() => {
     if (mode !== 'editor') return null;
@@ -2281,6 +2400,58 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     workspace.selectedOrder?.queuePosition,
     workspace.selectedOrder?.queuedAt,
     workspace.selectedOrder?.syncState,
+  ]);
+  const headerDraft = React.useMemo(() => ({
+    organizationGuid: workspace.draft.organizationGuid,
+    counterpartyGuid: workspace.draft.counterpartyGuid,
+    agreementGuid: workspace.draft.agreementGuid,
+    contractGuid: workspace.draft.contractGuid,
+    priceTypeGuid: workspace.draft.priceTypeGuid,
+    priceTypeName: workspace.draft.priceTypeName,
+    invoiceRequested: workspace.draft.invoiceRequested,
+    paymentForm: workspace.draft.paymentForm,
+    deliveryMethod: workspace.draft.deliveryMethod,
+    warehouseGuid: workspace.draft.warehouseGuid,
+    deliveryAddressGuid: workspace.draft.deliveryAddressGuid,
+    deliveryDate: workspace.draft.deliveryDate,
+    comment: workspace.draft.comment,
+  }), [
+    workspace.draft.agreementGuid,
+    workspace.draft.comment,
+    workspace.draft.contractGuid,
+    workspace.draft.counterpartyGuid,
+    workspace.draft.deliveryAddressGuid,
+    workspace.draft.deliveryDate,
+    workspace.draft.deliveryMethod,
+    workspace.draft.invoiceRequested,
+    workspace.draft.organizationGuid,
+    workspace.draft.paymentForm,
+    workspace.draft.priceTypeGuid,
+    workspace.draft.priceTypeName,
+    workspace.draft.warehouseGuid,
+  ]);
+  const headerWorkspace = React.useMemo(() => ({
+    draft: headerDraft,
+    selections: workspace.selections,
+    selectedOrder: workspace.selectedOrder,
+    documentHeaderLoadingState: workspace.documentHeaderLoadingState,
+    loadingDefaults: workspace.loadingDefaults,
+    hasDebt: workspace.hasDebt,
+    readOnly: workspace.readOnly,
+    mutationLocked: workspace.mutationLocked,
+    isHeaderPriceTypeCustom: workspace.isHeaderPriceTypeCustom,
+    patchDraft: workspace.patchDraft,
+  }), [
+    headerDraft,
+    workspace.documentHeaderLoadingState,
+    workspace.isHeaderPriceTypeCustom,
+    workspace.hasDebt,
+    workspace.loadingDefaults,
+    workspace.mutationLocked,
+    workspace.patchDraft,
+    workspace.readOnly,
+    workspace.selectedOrder,
+    workspace.selections,
   ]);
   const documentHeaderOverride = React.useMemo(() => {
     if (mode !== 'editor') return { hidden: true as const };
@@ -2334,7 +2505,10 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         ]}
       >
         <View style={styles.pickerFlatTextWrap}>
-          <Text style={styles.pickerFlatTitle} numberOfLines={2}>{getPickerItemTitle(item)}</Text>
+          <View style={styles.pickerFlatTitleRow}>
+            <Text style={[styles.pickerFlatTitle, item.shipmentProhibited && styles.pickerFlatTitleDebt]} numberOfLines={2}>{getPickerItemTitle(item)}</Text>
+            {item.shipmentProhibited ? <Text style={styles.pickerDebtBadge}>Долг</Text> : null}
+          </View>
           {description ? <Text style={styles.pickerFlatMeta} numberOfLines={2}>{description}</Text> : null}
         </View>
         {isSelected
@@ -2378,7 +2552,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const editorTopPadding = Math.max(topInset + DOCUMENT_HEADER_TABS_RESERVE, headerBottomOffset || 0);
   const ordersTopPadding = Platform.OS === 'web' ? 10 : Math.max(8, safeTop + 6);
   const pageTopPadding = mode === 'editor' ? editorTopPadding : ordersTopPadding;
-  const ordersBottomPanelReserve = Math.max(safeBottom, 8) + 150;
+  const ordersBottomPanelReserve = Math.max(safeBottom, 8) + 166;
   const showItemsSearchOverlay = mode === 'editor' && !workspace.readOnly && !workspace.mutationLocked && section === 'items' && !!itemsSearch.trim() && itemsSearchFocused;
   const itemsSearchOverlayTop = Math.max(topInset + 96, headerBottomOffset + 6);
   const showDocumentOpenLoader = documentContentLoading;
@@ -2388,6 +2562,39 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     ? Math.max(16, editorKeyboardPadding)
     : 16;
   const editorItemsBottomPadding = productPickerBottomInset + 16;
+  const ordersListContentStyle = React.useMemo(() => [
+    styles.ordersContent,
+    width >= 720 && styles.contentTablet,
+    {
+      paddingHorizontal: ui.pageX,
+      paddingTop: 4,
+      paddingBottom: ordersBottomPanelReserve,
+      maxWidth: layoutTier === 'tablet' ? 760 : undefined,
+    },
+  ], [layoutTier, ordersBottomPanelReserve, ui.pageX, width]);
+  const editorHeaderContentStyle = React.useMemo(() => [
+    styles.content,
+    width >= 720 && styles.contentTablet,
+    {
+      paddingHorizontal: ui.pageX,
+      paddingTop: 8,
+      paddingBottom: editorHeaderBottomPadding,
+      gap: 6,
+      maxWidth: layoutTier === 'tablet' ? 760 : undefined,
+    },
+  ], [editorHeaderBottomPadding, layoutTier, ui.pageX, width]);
+  const editorItemsContentStyle = React.useMemo(() => [
+    styles.content,
+    styles.editorItemsContent,
+    width >= 720 && styles.contentTablet,
+    {
+      paddingHorizontal: ui.pageX,
+      paddingTop: 0,
+      paddingBottom: editorItemsBottomPadding,
+      gap: 0,
+      maxWidth: layoutTier === 'tablet' ? 760 : undefined,
+    },
+  ], [editorItemsBottomPadding, layoutTier, ui.pageX, width]);
   const editorPagerScrollEnabled = !pickerKind
     && !editingItemKey
     && !pendingProductItem
@@ -2424,14 +2631,69 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const handleOrderListItemPress = React.useCallback((order: ClientOrder) => {
     void selectOrder(order);
   }, [selectOrder]);
+  const handleOrderListContextAction = React.useCallback((order: ClientOrder, action: OrderListContextAction) => {
+    const isRetry = !!(
+      (order.last1cError || order.lastExportError)
+      && (order.number1c || order.sentTo1cAt || Number(order.exportAttempts || 0) > 0)
+    );
+
+    if (action === 'submit') {
+      setConfirmDialog({
+        title: isRetry ? 'Повторить отправку?' : 'Отправить заказ в 1С?',
+        message: isRetry
+          ? 'Приложение повторит отправку документа в 1С.'
+          : 'Черновик будет проверен и поставлен в очередь отправки.',
+        confirmLabel: isRetry ? 'Повторить' : 'Отправить',
+        onConfirm: async () => { await workspace.submitOrderFromList(order); },
+      });
+      return;
+    }
+
+    if (action === 'unqueue') {
+      setConfirmDialog({
+        title: 'Отменить отправку?',
+        message: 'Документ будет снят с очереди и останется черновиком.',
+        confirmLabel: 'Отменить отправку',
+        destructive: true,
+        onConfirm: async () => { await workspace.unqueueOrder({ guid: order.guid, revision: order.revision }); },
+      });
+      return;
+    }
+
+    if (action === 'copy') {
+      void workspace.copyOrderFromList(order);
+      return;
+    }
+
+    if (action === 'invoice-download') {
+      void openInvoiceActions('download', order);
+      return;
+    }
+
+    if (action === 'invoice-share') {
+      void openInvoiceActions('share', order);
+      return;
+    }
+
+    void requestInvoiceNow(order);
+  }, [openInvoiceActions, requestInvoiceNow, workspace.copyOrderFromList, workspace.submitOrderFromList, workspace.unqueueOrder]);
+  const orderListContextMenuDisabled = !!openingOrderGuid
+    || !!openingDocument
+    || workspace.submitting
+    || workspace.copying
+    || workspace.cancelling
+    || invoiceRequesting
+    || invoiceListLoading
+    || !!invoiceSharingId;
   const renderOrderListItem = React.useCallback(({ item }: { item: ClientOrder }) => (
     <OrderCard
       order={item}
       loading={openingOrderGuid === item.guid}
-      disabled={!!openingOrderGuid}
+      disabled={orderListContextMenuDisabled}
       onPressOrder={handleOrderListItemPress}
+      onContextAction={handleOrderListContextAction}
     />
-  ), [handleOrderListItemPress, openingOrderGuid]);
+  ), [handleOrderListContextAction, handleOrderListItemPress, openingOrderGuid, orderListContextMenuDisabled]);
   const orderListKeyExtractor = React.useCallback((item: ClientOrder) => item.guid, []);
   const orderListEmptyComponent = React.useMemo(() => (
     showOrdersInitialLoading
@@ -2477,16 +2739,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
             data={workspace.orders}
             renderItem={renderOrderListItem}
             keyExtractor={orderListKeyExtractor}
-            contentContainerStyle={[
-              styles.ordersContent,
-              width >= 720 && styles.contentTablet,
-              {
-                paddingHorizontal: ui.pageX,
-                paddingTop: 4,
-                paddingBottom: ordersBottomPanelReserve,
-                maxWidth: layoutTier === 'tablet' ? 760 : undefined,
-              },
-            ]}
+            contentContainerStyle={ordersListContentStyle}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
             scrollEventThrottle={16}
@@ -2518,7 +2771,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
               styles={styles}
               entranceProgress={ordersBottomBarEntrance}
               safeBottom={safeBottom}
-              count={ordersVisibleCount}
+              summary={workspace.todaySummary}
               loadingMetrics={ordersBottomMetricsLoading}
               disabled={!!openingOrderGuid || !!openingDocument}
               onCreate={() => void createDocument()}
@@ -2575,17 +2828,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
                   <ScrollView
                     ref={editorScrollRef}
                     style={styles.editorPageScroll}
-                    contentContainerStyle={[
-                      styles.content,
-                      width >= 720 && styles.contentTablet,
-                      {
-                        paddingHorizontal: ui.pageX,
-                        paddingTop: 8,
-                        paddingBottom: editorHeaderBottomPadding,
-                        gap: 6,
-                        maxWidth: layoutTier === 'tablet' ? 760 : undefined,
-                      },
-                    ]}
+                    contentContainerStyle={editorHeaderContentStyle}
                     keyboardShouldPersistTaps="handled"
                     keyboardDismissMode="on-drag"
                     scrollEventThrottle={16}
@@ -2594,7 +2837,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
                     }}
                   >
                     <HeaderSection
-                      workspace={workspace}
+                      workspace={headerWorkspace}
                       pickerVisible={!!pickerKind}
                       openPicker={openPicker}
                       openDetails={openReferenceDetails}
@@ -2617,38 +2860,20 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
                   importantForAccessibility={section === 'items' ? 'auto' : 'no-hide-descendants'}
                   style={styles.editorPagerPage}
                 >
-                  <ScrollView
-                    ref={editorItemsScrollRef}
-                    style={styles.editorPageScroll}
-                    contentContainerStyle={[
-                      styles.content,
-                      styles.editorItemsContent,
-                      width >= 720 && styles.contentTablet,
-                      {
-                        paddingHorizontal: ui.pageX,
-                        paddingTop: 0,
-                        paddingBottom: editorItemsBottomPadding,
-                        gap: 6,
-                        maxWidth: layoutTier === 'tablet' ? 760 : undefined,
-                      },
-                    ]}
-                    keyboardShouldPersistTaps="handled"
-                    keyboardDismissMode="on-drag"
-                  >
-                    <ItemsSection
-                      filteredItems={filteredItems}
-                      generalDiscountPercent={workspace.draft.generalDiscountPercent}
-                      currency={workspace.draft.currency}
-                      readOnly={!!workspace.readOnly}
-                      mutationLocked={!!workspace.mutationLocked}
-                      itemMessages={workspace.validation.itemMessages}
-                      itemWarnings={workspace.validation.itemWarnings}
-                      onEditItem={openLineEditor}
-                      onRemoveItem={workspace.removeItem}
-                      onItemLayout={handleLineItemLayout}
-                      onOpenImages={openProductGallery}
-                    />
-                  </ScrollView>
+                  <ItemsSection
+                    listRef={editorItemsScrollRef}
+                    contentContainerStyle={editorItemsContentStyle}
+                    filteredItems={filteredItems}
+                    generalDiscountPercent={workspace.draft.generalDiscountPercent}
+                    currency={workspace.draft.currency}
+                    readOnly={!!workspace.readOnly}
+                    mutationLocked={!!workspace.mutationLocked}
+                    itemMessages={workspace.validation.itemMessages}
+                    itemWarnings={workspace.validation.itemWarnings}
+                    onEditItem={openLineEditor}
+                    onRemoveItem={workspace.removeItem}
+                    onOpenImages={openProductGallery}
+                  />
                 </View>
               </NativeAnimatedPagerView>
             </GestureDetector>
@@ -2681,7 +2906,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
           safeBottom={safeBottom}
           layout={documentBottomBarLayout}
           onAddProduct={() => openPicker('product')}
-          onPrimaryAction={handleDocumentPrimaryAction}
+          onSave={saveDraftImmediately}
+          onSubmit={submitFromMenu}
         />
       ) : null}
 
@@ -2804,11 +3030,11 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         topOffset={Math.max(topInset + 12, Math.round(height * 0.36))}
         title="Счета"
         titleIcon="file-pdf-box"
-        onClose={() => setInvoicePickerOpen(false)}
-        preferredHeight={Math.min(430, 112 + downloadableInvoices.length * 66)}
+        onClose={() => { setInvoicePickerOpen(false); setInvoicePickerContext(null); }}
+        preferredHeight={Math.min(430, 112 + invoicePickerInvoices.length * 66)}
       >
         <View style={styles.invoicePickerList}>
-          {downloadableInvoices.map((invoice) => (
+          {invoicePickerInvoices.map((invoice) => (
             <View
               key={invoice.id}
               style={styles.invoicePickerItem}
@@ -2979,6 +3205,8 @@ const HeaderSection = React.memo(function HeaderSection({
   const showDependentRequiredErrors = showRequiredErrors
     && hasCounterpartyValue
     && !workspace.loadingDefaults;
+  const showCounterpartyDebt = workspace.hasDebt
+    && !workspace.selectedOrder?.isPostedIn1c;
   const deliveryAddressComment = workspace.selections.deliveryAddress?.deliveryComment || workspace.selections.deliveryAddress?.comment || '';
 
   React.useEffect(() => {
@@ -2996,7 +3224,7 @@ const HeaderSection = React.memo(function HeaderSection({
 
   return <View style={styles.cardStack}>
     <FlatDocumentField label="Организация" value={workspace.selections.organization?.name || 'Выбрать'} icon="office-building-outline" onPress={() => openPicker('organization')} disabled={readOnly} invalid={showRequiredErrors && !hasOrganizationValue} loading={workspace.documentHeaderLoadingState.organization} onDetails={() => openDetails('organization', workspace.draft.organizationGuid || workspace.selections.organization?.guid)} />
-    <FlatDocumentField label="Контрагент" value={workspace.selections.counterparty?.name || 'Выбрать'} icon="account-outline" onPress={() => openPicker('counterparty')} disabled={readOnly} invalid={showRequiredErrors && !hasCounterpartyValue} loading={workspace.documentHeaderLoadingState.counterparty} onDetails={() => openDetails('counterparty', workspace.draft.counterpartyGuid || workspace.selections.counterparty?.guid)} />
+    <FlatDocumentField label="Контрагент" value={workspace.selections.counterparty?.name || 'Выбрать'} labelBadgeText={showCounterpartyDebt ? 'долг' : null} icon="account-outline" onPress={() => openPicker('counterparty')} disabled={readOnly} invalid={(showRequiredErrors && !hasCounterpartyValue) || showCounterpartyDebt} loading={workspace.documentHeaderLoadingState.counterparty} onDetails={() => openDetails('counterparty', workspace.draft.counterpartyGuid || workspace.selections.counterparty?.guid)} />
     <FlatDocumentField label="Соглашение" value={workspace.selections.agreement?.name || 'Выбрать'} icon="file-document-outline" onPress={() => openPicker('agreement')} disabled={readOnly || missingOrderContext} invalid={showDependentRequiredErrors && !hasAgreementValue} loading={workspace.documentHeaderLoadingState.agreement} onDetails={() => openDetails('agreement', workspace.draft.agreementGuid || workspace.selections.agreement?.guid)} />
     <FlatDocumentField label="Договор" value={workspace.selections.contract?.name || workspace.selections.contract?.number || 'Выбрать'} icon="file-sign" onPress={() => openPicker('contract')} disabled={readOnly || missingOrderContext} invalid={showDependentRequiredErrors && !hasContractValue} loading={workspace.documentHeaderLoadingState.contract} onDetails={() => openDetails('contract', workspace.draft.contractGuid || workspace.selections.contract?.guid)} />
     <FlatDocumentField
@@ -3052,8 +3280,9 @@ const HeaderSection = React.memo(function HeaderSection({
     />
     <PaperTextInput
       ref={commentInputRef}
-      mode="outlined"
-      label="Комментарий"
+      mode="flat"
+      placeholder="Комментарий"
+      placeholderTextColor="#64748B"
       value={workspace.draft.comment || ''}
       onChangeText={(value) => workspace.patchDraft({ comment: value })}
       multiline
@@ -3082,10 +3311,9 @@ const HeaderSection = React.memo(function HeaderSection({
       }}
       style={[styles.flatCommentInput, readOnly && styles.readOnlyFieldSurface, { height: commentHeight }]}
       contentStyle={[styles.flatCommentInputContent, readOnly && styles.readOnlyInputContent]}
-      outlineStyle={[styles.flatInputOutline, readOnly && styles.readOnlyInputOutline]}
       textColor={readOnly ? 'rgba(15, 23, 42, 0.62)' : '#0F172A'}
-      outlineColor={readOnly ? 'rgba(216, 226, 240, 0.7)' : '#D8E2F0'}
-      activeOutlineColor={readOnly ? 'rgba(216, 226, 240, 0.7)' : '#D8E2F0'}
+      underlineColor={readOnly ? 'rgba(203, 213, 225, 0.72)' : '#E2E8F0'}
+      activeUnderlineColor={readOnly ? 'rgba(203, 213, 225, 0.72)' : '#94A3B8'}
     />
   </View>;
 }, areHeaderSectionPropsEqual);
@@ -3110,6 +3338,7 @@ function areHeaderSectionPropsEqual(previous: any, next: any) {
     && a.selectedOrder === b.selectedOrder
     && a.documentHeaderLoadingState === b.documentHeaderLoadingState
     && a.loadingDefaults === b.loadingDefaults
+    && a.hasDebt === b.hasDebt
     && a.readOnly === b.readOnly
     && a.mutationLocked === b.mutationLocked
     && a.isHeaderPriceTypeCustom === b.isHeaderPriceTypeCustom
@@ -3179,6 +3408,8 @@ function FlatDocumentField({
   onReset,
   resetIcon,
   loading,
+  danger,
+  labelBadgeText,
 }: {
   label: string;
   value: string;
@@ -3191,6 +3422,8 @@ function FlatDocumentField({
   onReset?: () => void;
   resetIcon?: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
   loading?: boolean;
+  danger?: boolean;
+  labelBadgeText?: string | null;
 }) {
   const showDetailsAction = false;
   return (
@@ -3204,10 +3437,13 @@ function FlatDocumentField({
         <MaterialCommunityIcons name={icon} size={20} color={disabled ? 'rgba(71, 85, 105, 0.48)' : '#475569'} />
       </View>
       <View style={styles.flatFieldTextWrap}>
-        <Text style={[styles.flatFieldLabel, disabled && styles.readOnlyFieldLabel]}>{label}</Text>
-        <Text style={[styles.flatFieldValue, disabled && styles.readOnlyFieldValue]} numberOfLines={2}>{value}</Text>
+        <View style={styles.flatFieldLabelRow}>
+          <Text style={[styles.flatFieldLabel, disabled && styles.readOnlyFieldLabel, danger && styles.flatFieldDebtText]}>{label}</Text>
+          {labelBadgeText ? <Text style={styles.flatFieldLabelDebtBadge}>{labelBadgeText}</Text> : null}
+        </View>
+        <Text style={[styles.flatFieldValue, disabled && styles.readOnlyFieldValue, danger && styles.flatFieldDebtText]} numberOfLines={2}>{value}</Text>
         {helperText ? (
-          <Text style={[styles.flatFieldHelper, disabled && styles.readOnlyFieldLabel]} numberOfLines={2}>
+          <Text style={[styles.flatFieldHelper, disabled && styles.readOnlyFieldLabel, danger && styles.flatFieldDebtText]} numberOfLines={2}>
             {helperText}
           </Text>
         ) : null}
@@ -3283,7 +3519,6 @@ function FlatSegmentedField({
       <View style={styles.flatSegmentedContent}>
         <View style={styles.flatSegmentedHeader}>
           <Text style={[styles.flatFieldLabel, disabled && styles.readOnlyFieldLabel]}>{label}</Text>
-          {loading ? <ActivityIndicator size={15} color="#2563EB" /> : null}
         </View>
         <View style={styles.flatSegmentedControl}>
           {choices.map((choice, index) => {
@@ -3297,12 +3532,13 @@ function FlatSegmentedField({
                 style={({ pressed }) => [
                   styles.flatSegmentedOption,
                   index === choices.length - 1 && styles.flatSegmentedOptionLast,
-                  selected && styles.flatSegmentedOptionActive,
                   disabled && styles.flatSegmentedOptionDisabled,
+                  selected && styles.flatSegmentedOptionActive,
+                  selected && disabled && styles.flatSegmentedOptionActiveReadOnly,
                   pressed && !disabled && styles.flatPressed,
                 ]}
               >
-                <Text style={[styles.flatSegmentedOptionText, selected && styles.flatSegmentedOptionTextActive, disabled && styles.readOnlyFieldValue]} numberOfLines={1}>
+                <Text style={[styles.flatSegmentedOptionText, disabled && styles.readOnlyFieldValue, selected && styles.flatSegmentedOptionTextActive, selected && disabled && styles.flatSegmentedOptionTextActiveReadOnly]} numberOfLines={1}>
                   {choice.label}
                 </Text>
               </Pressable>
@@ -3311,6 +3547,13 @@ function FlatSegmentedField({
         </View>
         {unsupported ? <Text style={styles.flatSegmentedUnsupported} numberOfLines={2}>Текущее из 1С: {unsupported}</Text> : null}
       </View>
+      {loading ? (
+        <View style={styles.flatFieldActions}>
+          <View style={styles.flatFieldAction}>
+            <ActivityIndicator size={17} color="#2563EB" />
+          </View>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -3524,7 +3767,9 @@ function DocumentHeaderTitleSlot({
 
 function DocumentHeaderSlot({
   styles,
-  workspace,
+  error,
+  onDismissError,
+  itemsCount,
   section,
   setSection,
   pagerProgress,
@@ -3533,7 +3778,9 @@ function DocumentHeaderSlot({
   hasItemsErrors,
 }: {
   styles: any;
-  workspace: any;
+  error: string | null;
+  onDismissError: () => void;
+  itemsCount: number;
   section: EditorSection;
   setSection: (section: EditorSection) => void;
   pagerProgress: Animated.AnimatedAddition<number>;
@@ -3544,10 +3791,13 @@ function DocumentHeaderSlot({
   const [tabsWidth, setTabsWidth] = React.useState(0);
   const headerHasErrors = !loading && !!hasHeaderErrors;
   const itemsHaveErrors = !loading && !!hasItemsErrors;
-  const tabIndicatorWidth = Math.max(0, (tabsWidth - 9) / 2);
+  // Keep the moving fill a touch farther from the right edge. Fractional
+  // layout rounding on Android otherwise makes that side look tighter.
+  const tabIndicatorWidth = Math.max(0, (tabsWidth - 11) / 2);
+  const tabIndicatorTranslateStep = Math.max(0, (tabsWidth - 9) / 2 + 3);
   const tabIndicatorTranslateX = pagerProgress.interpolate({
     inputRange: [0, 1],
-    outputRange: [0, tabIndicatorWidth + 3],
+    outputRange: [0, tabIndicatorTranslateStep],
     extrapolate: 'clamp',
   });
   const headerTabOpacity = pagerProgress.interpolate({ inputRange: [0, 1], outputRange: [1, 0.68], extrapolate: 'clamp' });
@@ -3565,17 +3815,17 @@ function DocumentHeaderSlot({
   const itemsIconInactiveOpacity = headerIconActiveOpacity;
   return (
     <View style={styles.documentHeaderSlot}>
-      {!loading && workspace.error ? (
+      {!loading && error ? (
         <View accessibilityLiveRegion="polite" style={styles.documentErrorBanner}>
           <MaterialCommunityIcons name="alert-circle-outline" size={18} color="#B91C1C" />
           <Text selectable style={styles.documentErrorBannerText}>
-            {normalizeClientOrderUserErrorMessage(workspace.error, 'Не удалось выполнить действие')}
+            {normalizeClientOrderUserErrorMessage(error, 'Не удалось выполнить действие')}
           </Text>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Закрыть сообщение об ошибке"
             hitSlop={6}
-            onPress={() => workspace.setError(null)}
+            onPress={onDismissError}
             style={({ pressed }) => [styles.documentErrorDismissButton, pressed && styles.flatPressed]}
           >
             <MaterialCommunityIcons name="close" size={18} color="#991B1B" />
@@ -3646,7 +3896,7 @@ function DocumentHeaderSlot({
               <View style={styles.documentTabCountSkeleton} />
             ) : (
               <Animated.View style={[styles.documentTabCountBadge, { backgroundColor: itemsBadgeColor }]}>
-                <Animated.Text style={[styles.documentTabCountText, { color: itemsTextColor }]}>{workspace.draft.items.length}</Animated.Text>
+                <Animated.Text style={[styles.documentTabCountText, { color: itemsTextColor }]}>{itemsCount}</Animated.Text>
               </Animated.View>
             )}
           </Animated.View>
@@ -4190,7 +4440,8 @@ function DocumentBottomBar({
   safeBottom,
   layout,
   onAddProduct,
-  onPrimaryAction,
+  onSave,
+  onSubmit,
 }: {
   styles: any;
   workspace: any;
@@ -4199,7 +4450,8 @@ function DocumentBottomBar({
   safeBottom: number;
   layout: ClientOrdersDocumentBottomBarLayout;
   onAddProduct: () => void;
-  onPrimaryAction: () => void;
+  onSave: () => void;
+  onSubmit: () => void;
 }) {
   const backgroundColor = useThemeColor({}, 'background');
   const textColor = useThemeColor({}, 'text');
@@ -4207,11 +4459,11 @@ function DocumentBottomBar({
   const borderColor = withColorOpacity(textColor, 0.18);
   const compact = layout === 'compact';
   const stacked = layout === 'stacked';
-  const shouldSubmitChangedSyncedDocument = !!workspace.dirty && (!!workspace.selectedOrderQueued || !!workspace.selectedOrderSynced);
-  const shouldSave = !!workspace.dirty && !shouldSubmitChangedSyncedDocument;
+  const has1cDocument = !!workspace.selectedOrder?.number1c;
   const shouldRetry1cError = !!workspace.selectedOrderHas1cError && !workspace.dirty;
   const busy = !!workspace.saving || !!workspace.submitting;
-  const disabled = workspace.readOnly || busy || (shouldSave ? !workspace.validation.canSave : !workspace.canSubmitOrder);
+  const saveDisabled = workspace.readOnly || workspace.mutationLocked || busy || !workspace.validation.canSave;
+  const submitDisabled = workspace.readOnly || workspace.mutationLocked || busy || !workspace.canSubmitOrder;
   const showProductPickerButton = !workspace.readOnly && !workspace.mutationLocked;
   const productPickerOpacity = pagerProgress.interpolate({
     inputRange: [0, 0.12, 0.65, 1],
@@ -4223,17 +4475,8 @@ function DocumentBottomBar({
     outputRange: [50, 0, 0],
     extrapolate: 'clamp',
   });
-  const label = workspace.saving
-    ? 'Сохраняю'
-    : workspace.submitting
-      ? 'Отправляю'
-      : shouldSave
-        ? 'Сохранить'
-        : shouldRetry1cError
-          ? 'Повторить'
-        : 'Отправить';
   const currency = workspace.draft.currency;
-  const profitAvailable = canComputeDraftProfit(workspace.draft);
+  const profitAvailable = !!workspace.localProfitAvailable;
   const profitLoading = !!workspace.loadingReceiptPrices
     && workspace.draft.items.some((item: DraftItem) => !isCancelledDraftItem(item));
   const profitValue = profitAvailable && Math.abs(Number(workspace.localProfit) || 0) >= 0.005
@@ -4349,26 +4592,50 @@ function DocumentBottomBar({
               ))}
             </View>
           </View>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={label}
-            disabled={disabled}
-            onPress={onPrimaryAction}
-            style={({ pressed }) => [
-              styles.documentBottomPrimaryButton,
-              compact && styles.documentBottomPrimaryButtonCompact,
-              stacked && styles.documentBottomPrimaryButtonStacked,
-              !shouldSave && styles.documentBottomPrimaryButtonSubmit,
-              disabled && styles.disabled,
-              pressed && !disabled && styles.flatPressed,
-            ]}
-          >
-            {busy ? (
-              <ActivityIndicator size={18} color="#FFFFFF" />
-            ) : (
-              <Text style={styles.documentBottomPrimaryText} numberOfLines={1}>{label}</Text>
-            )}
-          </Pressable>
+          <View style={[
+            styles.documentBottomActions,
+            compact && styles.documentBottomActionsCompact,
+            stacked && styles.documentBottomActionsStacked,
+          ]}>
+            {!has1cDocument ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Сохранить черновик"
+                disabled={saveDisabled}
+                onPress={onSave}
+                style={({ pressed }) => [
+                  styles.documentBottomSaveButton,
+                  saveDisabled && styles.disabled,
+                  pressed && !saveDisabled && styles.flatPressed,
+                ]}
+              >
+                {workspace.saving
+                  ? <ActivityIndicator size={22} color="#FFFFFF" />
+                  : <MaterialCommunityIcons name="content-save-outline" size={28} color="#FFFFFF" />}
+              </Pressable>
+            ) : null}
+            {!has1cDocument ? <View pointerEvents="none" style={styles.documentBottomActionDivider} /> : null}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={shouldRetry1cError ? 'Повторить отправку в 1С' : 'Сохранить и отправить в 1С'}
+              disabled={submitDisabled}
+              onPress={onSubmit}
+              style={({ pressed }) => [
+                styles.documentBottomSubmitButton,
+                submitDisabled && styles.disabled,
+                pressed && !submitDisabled && styles.flatPressed,
+              ]}
+            >
+              {workspace.submitting ? (
+                <ActivityIndicator size={20} color="#D91920" />
+              ) : (
+                <OneCCompanyLogo
+                  width={has1cDocument ? 48 : 39}
+                  height={has1cDocument ? 24 : 20}
+                />
+              )}
+            </Pressable>
+          </View>
         </View>
       </LiquidGlassSurface>
     </View>
@@ -4376,6 +4643,8 @@ function DocumentBottomBar({
 }
 
 const ItemsSection = React.memo(function ItemsSection({
+  listRef,
+  contentContainerStyle,
   filteredItems,
   generalDiscountPercent,
   currency,
@@ -4385,9 +4654,10 @@ const ItemsSection = React.memo(function ItemsSection({
   itemWarnings,
   onEditItem,
   onRemoveItem,
-  onItemLayout,
   onOpenImages,
 }: {
+  listRef: React.RefObject<any>;
+  contentContainerStyle: any;
   filteredItems: any[];
   generalDiscountPercent: any;
   currency: string;
@@ -4397,34 +4667,42 @@ const ItemsSection = React.memo(function ItemsSection({
   itemWarnings: Record<string, string[]>;
   onEditItem: (key: string) => void;
   onRemoveItem: (key: string) => void;
-  onItemLayout: (key: string, y: number) => void;
   onOpenImages: (item: any) => void;
 }) {
-  return <View style={styles.itemsFlatSection}>
-    {filteredItems.length ? (
-      <View style={styles.lineList}>
-        {filteredItems.map((item, index) => (
-          <View key={item.key} onLayout={(event) => onItemLayout(item.key, event.nativeEvent.layout.y)}>
-            <LineItemCard
-              item={item}
-              index={index}
-              generalDiscountPercent={generalDiscountPercent}
-              currency={currency}
-              readOnly={readOnly}
-              mutationLocked={mutationLocked}
-              lineMessages={itemMessages[item.key] || EMPTY_LINE_MESSAGES}
-              lineWarnings={itemWarnings?.[item.key] || EMPTY_LINE_MESSAGES}
-              onEditItem={onEditItem}
-              onRemoveItem={onRemoveItem}
-              onOpenImages={onOpenImages}
-            />
-          </View>
-        ))}
-      </View>
-    ) : (
-      <View style={styles.lineList} />
-    )}
-  </View>;
+  const renderItem = React.useCallback(({ item, index }: { item: any; index: number }) => (
+    <LineItemCard
+      item={item}
+      index={index}
+      generalDiscountPercent={generalDiscountPercent}
+      currency={currency}
+      readOnly={readOnly}
+      mutationLocked={mutationLocked}
+      lineMessages={itemMessages[item.key] || EMPTY_LINE_MESSAGES}
+      lineWarnings={itemWarnings?.[item.key] || EMPTY_LINE_MESSAGES}
+      onEditItem={onEditItem}
+      onRemoveItem={onRemoveItem}
+      onOpenImages={onOpenImages}
+    />
+  ), [currency, generalDiscountPercent, itemMessages, itemWarnings, mutationLocked, onEditItem, onOpenImages, onRemoveItem, readOnly]);
+  const keyExtractor = React.useCallback((item: any) => String(item.key), []);
+
+  return (
+    <FlatList
+      ref={listRef}
+      style={[styles.editorPageScroll, styles.itemsFlatSection]}
+      contentContainerStyle={contentContainerStyle}
+      data={filteredItems}
+      renderItem={renderItem}
+      keyExtractor={keyExtractor}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="on-drag"
+      initialNumToRender={9}
+      maxToRenderPerBatch={7}
+      updateCellsBatchingPeriod={36}
+      windowSize={7}
+      removeClippedSubviews={Platform.OS === 'android'}
+    />
+  );
 });
 
 function InvoiceRequestField({
@@ -4449,6 +4727,9 @@ function InvoiceRequestField({
   requestPending: boolean;
 }) {
   const selectedOrder = workspace.selectedOrder as ClientOrder | null;
+  const committedAutoSend = !!workspace.draft.invoiceRequested;
+  const [optimisticAutoSend, setOptimisticAutoSend] = React.useState(committedAutoSend);
+  const optimisticAutoSendRef = React.useRef(committedAutoSend);
   const invoices = getDownloadableClientOrderInvoices(selectedOrder);
   const invoiceDownloadAvailable = invoices.length > 0 || !!selectedOrder?.invoiceDownloadAvailable;
   const hasPendingInvoice = requestPending || getClientOrderInvoicePresentation(selectedOrder).pending;
@@ -4458,9 +4739,22 @@ function InvoiceRequestField({
   );
   const preferenceLoading = hasCounterparty && workspace.loadingDefaults;
   const autoSendDisabled = readOnly || !hasCounterparty || preferenceLoading;
+
+  React.useEffect(() => {
+    optimisticAutoSendRef.current = committedAutoSend;
+    setOptimisticAutoSend(committedAutoSend);
+  }, [committedAutoSend]);
+
   const toggle = () => {
     if (autoSendDisabled) return;
-    workspace.patchDraft({ invoiceRequested: !workspace.draft.invoiceRequested });
+    const nextValue = !optimisticAutoSendRef.current;
+    optimisticAutoSendRef.current = nextValue;
+    // Keep the control responsive even when recalculating the full draft is expensive.
+    // The draft update (and its later persistence) is deliberately low priority.
+    setOptimisticAutoSend(nextValue);
+    React.startTransition(() => {
+      workspace.patchDraft({ invoiceRequested: nextValue });
+    });
   };
 
   if (invoiceDownloadAvailable) {
@@ -4533,7 +4827,7 @@ function InvoiceRequestField({
   return (
     <Pressable
       accessibilityRole="checkbox"
-      accessibilityState={{ checked: !!workspace.draft.invoiceRequested, disabled: autoSendDisabled, busy: preferenceLoading }}
+      accessibilityState={{ checked: optimisticAutoSend, disabled: autoSendDisabled, busy: preferenceLoading }}
       disabled={autoSendDisabled}
       onPress={toggle}
       style={({ pressed }) => [
@@ -4556,13 +4850,34 @@ function InvoiceRequestField({
         </View>
       ) : (
         <MaterialCommunityIcons
-          name={workspace.draft.invoiceRequested ? 'checkbox-marked' : 'checkbox-blank-outline'}
+          name={optimisticAutoSend ? 'checkbox-marked' : 'checkbox-blank-outline'}
           size={24}
-          color={workspace.draft.invoiceRequested ? '#2563EB' : '#94A3B8'}
+          color={optimisticAutoSend ? '#2563EB' : '#94A3B8'}
         />
       )}
     </Pressable>
   );
+}
+
+function equalStringLists(left: string[], right: string[]) {
+  return left === right || (
+    left.length === right.length
+    && left.every((value, index) => value === right[index])
+  );
+}
+
+function areLineItemCardPropsEqual(previous: any, next: any) {
+  return previous.item === next.item
+    && previous.index === next.index
+    && previous.generalDiscountPercent === next.generalDiscountPercent
+    && previous.currency === next.currency
+    && previous.readOnly === next.readOnly
+    && previous.mutationLocked === next.mutationLocked
+    && previous.onEditItem === next.onEditItem
+    && previous.onRemoveItem === next.onRemoveItem
+    && previous.onOpenImages === next.onOpenImages
+    && equalStringLists(previous.lineMessages, next.lineMessages)
+    && equalStringLists(previous.lineWarnings, next.lineWarnings);
 }
 
 const LineItemCard = React.memo(function LineItemCard({
@@ -4687,7 +5002,7 @@ const LineItemCard = React.memo(function LineItemCard({
       </View>
     </Pressable>
   );
-});
+}, areLineItemCardPropsEqual);
 
 function ProductThumb({
   item,
@@ -5013,9 +5328,46 @@ function ProductLineEditorSheet({
   const [scrollContentHeight, setScrollContentHeight] = React.useState(0);
   const [footerHeight, setFooterHeight] = React.useState(0);
   const [keyboardVisible, setKeyboardVisible] = React.useState(false);
+  const [quantityInputValue, setQuantityInputValue] = React.useState(() => String(item?.quantity ?? ''));
   const priceInputRef = React.useRef<any>(null);
   const currentDisplayedPrice = getDisplayedUnitPriceValue(displayedItem);
   const displayedItemKey = displayedItem?.key || displayedItem?.productGuid || '';
+  const sourceQuantityValue = String(displayedItem?.quantity ?? '');
+  const quantityValueRef = React.useRef(quantityInputValue);
+  const quantityItemKeyRef = React.useRef(displayedItemKey);
+  const quantitySourceValueRef = React.useRef(sourceQuantityValue);
+  const quantityCommitTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const setItemPatchRef = React.useRef(workspace.setItemPatch);
+  setItemPatchRef.current = workspace.setItemPatch;
+
+  const commitQuantity = React.useCallback(() => {
+    if (quantityCommitTimerRef.current) {
+      clearTimeout(quantityCommitTimerRef.current);
+      quantityCommitTimerRef.current = null;
+    }
+    const targetKey = quantityItemKeyRef.current;
+    const nextValue = quantityValueRef.current;
+    if (!targetKey || nextValue === quantitySourceValueRef.current) return;
+    setItemPatchRef.current(targetKey, { quantity: nextValue });
+  }, []);
+
+  const scheduleQuantityCommit = React.useCallback(() => {
+    if (quantityCommitTimerRef.current) clearTimeout(quantityCommitTimerRef.current);
+    quantityCommitTimerRef.current = setTimeout(() => {
+      quantityCommitTimerRef.current = null;
+      const targetKey = quantityItemKeyRef.current;
+      const nextValue = quantityValueRef.current;
+      if (!targetKey || nextValue === quantitySourceValueRef.current) return;
+      setItemPatchRef.current(targetKey, { quantity: nextValue });
+    }, 180);
+  }, []);
+
+  const updateQuantityLocally = React.useCallback((nextValue: string) => {
+    quantityValueRef.current = nextValue;
+    setQuantityInputValue(nextValue);
+    scheduleQuantityCommit();
+  }, [scheduleQuantityCommit]);
+
   const previousDisplayedItemKeyRef = React.useRef(displayedItemKey);
   const visibleRef = React.useRef(false);
   React.useEffect(() => {
@@ -5024,9 +5376,29 @@ function ProductLineEditorSheet({
       previousDisplayedItemKeyRef.current = displayedItemKey;
       setPriceFocused(false);
       setPriceInputValue(currentDisplayedPrice);
+      quantityItemKeyRef.current = displayedItemKey;
+      quantitySourceValueRef.current = sourceQuantityValue;
+      quantityValueRef.current = sourceQuantityValue;
+      setQuantityInputValue(sourceQuantityValue);
     }
     visibleRef.current = visible;
-  }, [currentDisplayedPrice, displayedItemKey, visible]);
+  }, [currentDisplayedPrice, displayedItemKey, sourceQuantityValue, visible]);
+  React.useEffect(() => {
+    if (quantityItemKeyRef.current !== displayedItemKey) {
+      commitQuantity();
+      quantityItemKeyRef.current = displayedItemKey;
+      quantitySourceValueRef.current = sourceQuantityValue;
+      quantityValueRef.current = sourceQuantityValue;
+      setQuantityInputValue(sourceQuantityValue);
+      return;
+    }
+    if (!quantityCommitTimerRef.current && quantityValueRef.current !== sourceQuantityValue) {
+      quantityValueRef.current = sourceQuantityValue;
+      setQuantityInputValue(sourceQuantityValue);
+    }
+    quantitySourceValueRef.current = sourceQuantityValue;
+  }, [commitQuantity, displayedItemKey, sourceQuantityValue]);
+  React.useEffect(() => () => commitQuantity(), [commitQuantity]);
   React.useEffect(() => {
     if (!visible) {
       setKeyboardVisible(false);
@@ -5052,10 +5424,13 @@ function ProductLineEditorSheet({
 
   if (!displayedItem) return null;
 
-  const readOnly = !!workspace.readOnly || !!workspace.mutationLocked || isCancelledDraftItem(displayedItem);
-  const qtyValid = readOnly || (allowZeroQuantity && !hasPositiveQuantity(displayedItem))
+  const displayedItemWithLocalQuantity = quantityInputValue === sourceQuantityValue
+    ? displayedItem
+    : { ...displayedItem, quantity: quantityInputValue };
+  const readOnly = !!workspace.readOnly || !!workspace.mutationLocked || isCancelledDraftItem(displayedItemWithLocalQuantity);
+  const qtyValid = readOnly || (allowZeroQuantity && !hasPositiveQuantity(displayedItemWithLocalQuantity))
     ? true
-    : isValidQuantityValue(displayedItem);
+    : isValidQuantityValue(displayedItemWithLocalQuantity);
   const currentManualPrice = displayedItem.manualPrice || '';
   const priceValid = readOnly || !currentManualPrice || isValidManualPriceValue(currentManualPrice);
   const displayedPrice = currentDisplayedPrice;
@@ -5063,12 +5438,12 @@ function ProductLineEditorSheet({
     ? priceInputValue
     : displayedPrice;
   const lineTotal = formatMoney(
-    computeLineTotal(displayedItem, workspace.draft.generalDiscountPercent),
+    computeLineTotal(displayedItemWithLocalQuantity, workspace.draft.generalDiscountPercent),
     displayedItem.currency || workspace.draft.currency
   );
-  const lineProfitAvailable = canComputeLineProfit(displayedItem);
+  const lineProfitAvailable = canComputeLineProfit(displayedItemWithLocalQuantity);
   const lineProfitAmount = lineProfitAvailable
-    ? computeLineProfit(displayedItem, workspace.draft.generalDiscountPercent)
+    ? computeLineProfit(displayedItemWithLocalQuantity, workspace.draft.generalDiscountPercent)
     : 0;
   const lineProfit = formatMoney(
     lineProfitAmount,
@@ -5104,7 +5479,10 @@ function ProductLineEditorSheet({
       visible={visible}
       topOffset={topOffset}
       title="Позиция"
-      onClose={onClose}
+      onClose={() => {
+        commitQuantity();
+        onClose();
+      }}
       showHeader={false}
       sheetStyle={styles.productEditorSheet}
       overlayHandle
@@ -5266,18 +5644,18 @@ function ProductLineEditorSheet({
         <View style={[styles.productEditorFooterQuantity, { width: halfControlWidth }]}>
           <Text style={[styles.productEditorLabel, readOnly && styles.productEditorLabelReadOnly]}>Количество</Text>
           <View style={[styles.productEditorQtyStepper, !qtyValid && styles.invalidInputOutline, readOnly && styles.productEditorReadOnlySurface]}>
-            <Pressable disabled={readOnly} onPress={() => workspace.setItemPatch(displayedItem.key, { quantity: quantityStep(displayedItem, -1) })} style={({ pressed }) => [styles.productEditorQtyButton, readOnly && styles.productEditorReadOnlyStepButton, pressed && !readOnly && styles.flatPressed]}>
+            <Pressable disabled={readOnly} onPress={() => updateQuantityLocally(quantityStep(displayedItemWithLocalQuantity, -1))} style={({ pressed }) => [styles.productEditorQtyButton, readOnly && styles.productEditorReadOnlyStepButton, pressed && !readOnly && styles.flatPressed]}>
               <MaterialCommunityIcons name="minus" size={21} color={readOnly ? 'rgba(37, 99, 235, 0.42)' : '#2563EB'} />
             </Pressable>
             <SheetTextInput
-              value={String(displayedItem.quantity)}
+              value={quantityInputValue}
               keyboardType="decimal-pad"
               selectTextOnFocus
               editable={!readOnly}
-              onChangeText={(value: string) => workspace.setItemPatch(displayedItem.key, { quantity: normalizeQuantityInput(displayedItem, value) })}
+              onChangeText={(value: string) => updateQuantityLocally(normalizeQuantityInput(displayedItemWithLocalQuantity, value))}
               style={[styles.productEditorQtyInput, styles.productEditorQtyInputContent, readOnly && styles.productEditorReadOnlyInputSurface, readOnly && styles.productEditorReadOnlyInputText]}
             />
-            <Pressable disabled={readOnly} onPress={() => workspace.setItemPatch(displayedItem.key, { quantity: quantityStep(displayedItem, 1) })} style={({ pressed }) => [styles.productEditorQtyButton, readOnly && styles.productEditorReadOnlyStepButton, pressed && !readOnly && styles.flatPressed]}>
+            <Pressable disabled={readOnly} onPress={() => updateQuantityLocally(quantityStep(displayedItemWithLocalQuantity, 1))} style={({ pressed }) => [styles.productEditorQtyButton, readOnly && styles.productEditorReadOnlyStepButton, pressed && !readOnly && styles.flatPressed]}>
               <MaterialCommunityIcons name="plus" size={22} color={readOnly ? 'rgba(37, 99, 235, 0.42)' : '#2563EB'} />
             </Pressable>
           </View>
@@ -5288,6 +5666,7 @@ function ProductLineEditorSheet({
 }
 
 function orderStatusTone(status: string) {
+  if (status === 'DEBT') return styles.orderStatusDanger;
   if (status === 'CANCELLED' || status === 'REJECTED') return styles.orderStatusDanger;
   if (status === 'SENT' || status === 'SENT_TO_1C' || status === 'POSTED' || status === 'COMPLETED' || status === 'CLOSED' || status === 'CONFIRMED') return styles.orderStatusSuccess;
   if (
@@ -5310,6 +5689,7 @@ function orderStatusTone(status: string) {
 }
 
 function orderStatusIcon(status: string) {
+  if (status === 'DEBT') return { name: 'cash-remove', color: '#B91C1C' };
   if (status === 'CANCELLED') return { name: 'close-circle', color: '#B91C1C' };
   if (status === 'REJECTED') return { name: 'alert-circle-outline', color: '#B91C1C' };
   if (status === 'QUEUED') return { name: 'clock-outline', color: '#1D4ED8' };
@@ -5335,7 +5715,8 @@ function orderStatusIcon(status: string) {
 
 function orderHasVisibleProblem(order: ClientOrder) {
   return Boolean(
-    order.lastExportError ||
+    (order.shipmentProhibited && !order.isPostedIn1c) ||
+      order.lastExportError ||
       order.last1cError ||
       order.syncState === 'ERROR' ||
       order.syncState === 'CONFLICT' ||
@@ -5974,9 +6355,15 @@ function OrdersToolbar({
       setFilters((prev: any) => (
         prev.search === searchDraft ? prev : { ...prev, search: searchDraft }
       ));
-    }, 520);
+    }, 280);
     return () => clearTimeout(timer);
   }, [filters.search, searchDraft, setFilters]);
+
+  const commitSearch = React.useCallback((value: string) => {
+    setFilters((prev: any) => (
+      prev.search === value ? prev : { ...prev, search: value }
+    ));
+  }, [setFilters]);
 
   return (
     <Surface mode="flat" style={styles.ordersToolbar}>
@@ -5993,17 +6380,30 @@ function OrdersToolbar({
             pressed && !disabled && styles.ordersBackButtonPressed,
           ]}
         >
-          <MaterialCommunityIcons name="arrow-left" size={23} color="#334155" />
+          <MaterialCommunityIcons name="arrow-left" size={22} color="#334155" />
         </Pressable>
-        <CompactSearchbar
+        <Searchbar
+          mode="bar"
           style={styles.ordersSearchbar}
           inputStyle={styles.ordersSearchbarInput}
           value={searchDraft}
           onChangeText={setSearchDraft}
+          onClearIconPress={() => {
+            setSearchDraft('');
+            commitSearch('');
+          }}
+          onSubmitEditing={() => commitSearch(searchDraft)}
           placeholder="Поиск по номеру или клиенту"
           editable={!disabled}
           loading={!disabled && !refreshing && workspace.loadingOrders && workspace.ordersInitialLoadDone}
-          trailingAction={(
+          elevation={0}
+          iconColor="#475569"
+          icon={({ color }) => <MaterialCommunityIcons name="magnify" size={22} color={color} />}
+          placeholderTextColor="#64748B"
+          searchAccessibilityLabel="Поиск по номеру или клиенту"
+          clearAccessibilityLabel="Очистить поиск"
+          {...SEARCH_TEXT_INPUT_PROPS}
+          right={() => (
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={activeFilters ? `Открыть фильтры, применено: ${activeFilters}` : 'Открыть фильтры'}
@@ -6016,7 +6416,7 @@ function OrdersToolbar({
                 pressed && !disabled && styles.ordersSearchFilterButtonPressed,
               ]}
             >
-              <MaterialCommunityIcons name="tune-variant" size={20} color={activeFilters ? '#2563EB' : '#475569'} />
+              <MaterialCommunityIcons name="tune-variant" size={22} color={activeFilters ? '#2563EB' : '#475569'} />
               {activeFilters ? (
                 <View style={styles.ordersFilterBadge}>
                   <Text style={styles.ordersFilterBadgeText}>{activeFilters}</Text>
@@ -6026,6 +6426,23 @@ function OrdersToolbar({
           )}
         />
       </View>
+      {workspace.ordersError ? (
+        <View accessibilityLiveRegion="polite" style={styles.ordersErrorBanner}>
+          <MaterialCommunityIcons name="alert-circle-outline" size={17} color="#B91C1C" />
+          <Text selectable style={styles.ordersErrorBannerText}>
+            {normalizeClientOrderUserErrorMessage(workspace.ordersError, 'Не удалось загрузить список документов')}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Закрыть сообщение об ошибке"
+            hitSlop={6}
+            onPress={() => workspace.setOrdersError(null)}
+            style={({ pressed }) => [styles.ordersErrorDismissButton, pressed && styles.flatPressed]}
+          >
+            <MaterialCommunityIcons name="close" size={17} color="#991B1B" />
+          </Pressable>
+        </View>
+      ) : null}
     </Surface>
   );
 }
@@ -6034,7 +6451,7 @@ function OrdersBottomBar({
   styles,
   entranceProgress,
   safeBottom,
-  count,
+  summary,
   loadingMetrics,
   disabled,
   onCreate,
@@ -6042,7 +6459,7 @@ function OrdersBottomBar({
   styles: any;
   entranceProgress: Animated.Value;
   safeBottom: number;
-  count: number;
+  summary: ClientOrdersTodaySummary | null;
   loadingMetrics: boolean;
   disabled: boolean;
   onCreate: () => void;
@@ -6061,6 +6478,15 @@ function OrdersBottomBar({
     outputRange: [50, 0, 0],
     extrapolate: 'clamp',
   });
+  const currency = summary?.currency || 'RUB';
+  const ordersCount = summary ? String(Math.max(0, Math.trunc(Number(summary.ordersCount) || 0))) : '—';
+  const clientsCount = summary ? String(Math.max(0, Math.trunc(Number(summary.clientsCount) || 0))) : '—';
+  const totalAmount = summary && Number.isFinite(Number(summary.totalAmount))
+    ? formatMoney(Number(summary.totalAmount), currency)
+    : '—';
+  const profit = summary?.profitAvailable && Number.isFinite(Number(summary.profit))
+    ? formatMoney(Number(summary.profit), currency)
+    : '—';
 
   return (
     <View style={styles.ordersBottomBar}>
@@ -6081,7 +6507,7 @@ function OrdersBottomBar({
             pressed && !disabled && styles.flatPressed,
           ]}
         >
-          <MaterialCommunityIcons name="plus-circle-outline" size={20} color="#2563EB" />
+          <MaterialCommunityIcons name="file-document-plus-outline" size={23} color="#2563EB" />
           <Text style={styles.ordersBottomCreateText}>Новый заказ клиента</Text>
         </Pressable>
       </Animated.View>
@@ -6094,22 +6520,46 @@ function OrdersBottomBar({
         style={[styles.ordersBottomGlass, { paddingBottom: Math.max(safeBottom, 8) + 8 }]}
       >
         <View style={styles.ordersBottomMetrics}>
-          <OrdersBottomMetric
-            styles={styles}
-            icon="file-document-outline"
-            label="Заказы"
-            value={String(Math.max(0, count))}
-            color="#2563EB"
-            loading={loadingMetrics}
-          />
-          <OrdersBottomMetric
-            styles={styles}
-            icon="cash-multiple"
-            label="Выручка"
-            value="—"
-            color="#16A34A"
-            loading={loadingMetrics}
-          />
+          <View style={styles.ordersBottomMetricsRow}>
+            <OrdersBottomMetric
+              styles={styles}
+              icon="file-document-outline"
+              label="Заказы"
+              value={ordersCount}
+              loading={loadingMetrics}
+              color="#2563EB"
+            />
+            <OrdersBottomMetric
+              styles={styles}
+              icon="cash-multiple"
+              label="Сумма"
+              value={totalAmount}
+              loading={loadingMetrics}
+              color="#2563EB"
+            />
+          </View>
+          <View style={styles.ordersBottomMetricsRow}>
+            <OrdersBottomMetric
+              styles={styles}
+              icon="account-multiple-outline"
+              label="Клиенты"
+              value={clientsCount}
+              loading={loadingMetrics}
+              color="#7C3AED"
+            />
+            <OrdersBottomMetric
+              styles={styles}
+              icon="chart-line"
+              label="Прибыль"
+              value={profit}
+              loading={loadingMetrics}
+              color={!summary?.profitAvailable
+                ? '#64748B'
+                : Number(summary.profit) < 0
+                  ? '#DC2626'
+                  : '#16A34A'}
+            />
+          </View>
         </View>
       </LiquidGlassSurface>
     </View>
@@ -6121,27 +6571,34 @@ function OrdersBottomMetric({
   icon,
   label,
   value,
-  color,
   loading,
+  color,
 }: {
   styles: any;
   icon: string;
   label: string;
   value: string;
-  color: string;
   loading: boolean;
+  color: string;
 }) {
   return (
     <View style={styles.ordersBottomMetric}>
       <View style={styles.ordersBottomMetricIcon}>
-        <MaterialCommunityIcons name={icon as any} size={22} color={color} />
+        <MaterialCommunityIcons name={icon as any} size={20} color={color} />
       </View>
       <View style={styles.ordersBottomMetricText}>
         <Text style={styles.ordersBottomMetricLabel} numberOfLines={1}>{label}</Text>
         {loading
           ? <View style={styles.ordersBottomMetricValueSkeleton} />
           : (
-            <Text style={[styles.ordersBottomMetricValue, { color }]} numberOfLines={1}>{value}</Text>
+            <Text
+              style={[styles.ordersBottomMetricValue, { color }]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.72}
+            >
+              {value}
+            </Text>
           )}
       </View>
     </View>
@@ -7126,24 +7583,96 @@ function OrdersFiltersBottomSheet({
 const OrderCard = React.memo(function OrderCard({
   order,
   onPressOrder,
+  onContextAction,
   loading = false,
   disabled = false,
 }: {
   order: ClientOrder;
   onPressOrder: (order: ClientOrder) => void;
+  onContextAction: (order: ClientOrder, action: OrderListContextAction) => void;
   loading?: boolean;
   disabled?: boolean;
 }) {
   const scale = React.useRef(new Animated.Value(1)).current;
   const displayStatus = getOrderDisplayStatus(order);
   const isDeviceOrder = order.origin === 'device';
-  const statusIcon = isDeviceOrder ? { name: 'cellphone-check', color: '#1D4ED8' } : orderStatusIcon(displayStatus);
-  const hasProblem = !isDeviceOrder && orderHasVisibleProblem(order);
-  const isLocalOrder = order.origin !== 'onec';
+  const isApplicationOnlyDraft = !order.number1c;
+  const hasDebtProblem = displayStatus === 'DEBT';
+  const statusIcon = isDeviceOrder && !hasDebtProblem
+    ? { name: 'cellphone-check', color: '#1D4ED8' }
+    : orderStatusIcon(displayStatus);
+  const hasProblem = hasDebtProblem || (!isDeviceOrder && orderHasVisibleProblem(order));
   const itemsCount = getClientOrderItemsCount(order);
-  const statusLabel = isDeviceOrder ? 'На устройстве' : getOrderDisplayStatusLabelWithQueue(order);
+  const statusLabel = isDeviceOrder && !hasDebtProblem ? 'На устройстве' : getOrderDisplayStatusLabelWithQueue(order);
   const invoice = getClientOrderInvoicePresentation(order);
   const interactionDisabled = disabled || loading;
+  const queuedForSending = order.syncState === 'QUEUED';
+  const sendFailed = !!(
+    (order.last1cError || order.lastExportError)
+    && (order.number1c || order.sentTo1cAt || Number(order.exportAttempts || 0) > 0)
+  );
+  const isDraft = order.status === 'DRAFT' || (!order.number1c && (order.origin === 'device' || order.origin === 'local'));
+  const canSend = !queuedForSending
+    && !order.hasRealization
+    && order.status !== 'CANCELLED'
+    && ((isDraft && !order.readOnly) || sendFailed);
+  const invoiceAvailable = !!order.invoiceDownloadAvailable || getDownloadableClientOrderInvoices(order).length > 0;
+  const canRequestInvoice = !isDraft
+    && !queuedForSending
+    && order.status !== 'CANCELLED'
+    && !!getClientOrderInvoiceIdentifier(order)
+    && !invoiceAvailable;
+  const contextItems = React.useMemo<ContextMenuItem<OrderListContextAction>[]>(() => [
+    {
+      key: 'submit',
+      label: sendFailed ? 'Повторить отправку' : 'Отправить в 1С',
+      action: 'submit',
+      icon: sendFailed ? 'refresh-outline' : 'cloud-upload-outline',
+      visible: canSend,
+      onSelect: () => onContextAction(order, 'submit'),
+    },
+    {
+      key: 'unqueue',
+      label: 'Отменить отправку',
+      action: 'unqueue',
+      icon: 'close-circle-outline',
+      visible: queuedForSending,
+      destructive: true,
+      onSelect: () => onContextAction(order, 'unqueue'),
+    },
+    {
+      key: 'copy',
+      label: 'Копировать',
+      action: 'copy',
+      icon: 'copy-outline',
+      onSelect: () => onContextAction(order, 'copy'),
+    },
+    {
+      key: 'invoice-download',
+      label: 'Скачать счёт',
+      action: 'invoice-download',
+      icon: 'download-outline',
+      visible: invoiceAvailable,
+      onSelect: () => onContextAction(order, 'invoice-download'),
+    },
+    {
+      key: 'invoice-share',
+      label: 'Отправить счёт',
+      action: 'invoice-share',
+      icon: 'share-social-outline',
+      visible: invoiceAvailable,
+      onSelect: () => onContextAction(order, 'invoice-share'),
+    },
+    {
+      key: 'invoice-request',
+      label: 'Запросить счёт',
+      action: 'invoice-request',
+      icon: 'document-text-outline',
+      visible: canRequestInvoice,
+      disabled: invoice.pending || !!order.invoiceRequestPending,
+      onSelect: () => onContextAction(order, 'invoice-request'),
+    },
+  ], [canRequestInvoice, canSend, invoice.pending, invoiceAvailable, onContextAction, order, queuedForSending, sendFailed]);
   const animateScale = React.useCallback((value: number) => {
     Animated.spring(scale, {
       toValue: value,
@@ -7153,22 +7682,26 @@ const OrderCard = React.memo(function OrderCard({
     }).start();
   }, [scale]);
   return (
-    <Animated.View style={[styles.orderCardPressable, { transform: [{ scale }] }]}>
-      <Pressable
-        accessibilityRole="button"
-        disabled={interactionDisabled}
-        onPress={() => onPressOrder(order)}
-        onPressIn={() => {
-          if (!interactionDisabled) animateScale(0.986);
-        }}
-        onPressOut={() => animateScale(1)}
-        style={({ pressed }) => [pressed && !interactionDisabled && styles.orderCardPressed]}
-      >
+    <ContextMenuTrigger items={contextItems} disabled={interactionDisabled}>
+      {(contextTriggerProps) => (
+        <Animated.View style={[styles.orderCardPressable, { transform: [{ scale }] }]}>
+          <Pressable
+            {...(contextTriggerProps as any)}
+            accessibilityRole="button"
+            accessibilityLabel={`${orderTitle(order)}. Удерживайте для действий`}
+            disabled={interactionDisabled}
+            onPress={() => onPressOrder(order)}
+            onPressIn={() => {
+              if (!interactionDisabled) animateScale(0.986);
+            }}
+            onPressOut={() => animateScale(1)}
+            style={({ pressed }) => [pressed && !interactionDisabled && styles.orderCardPressed]}
+          >
         <Surface
           mode="flat"
           style={[
             styles.orderCardPaper,
-            isLocalOrder && styles.orderCardPaperLocal,
+            isApplicationOnlyDraft && styles.orderCardPaperLocal,
             hasProblem && styles.orderCardPaperProblem,
             loading && styles.orderCardPaperLoading,
           ]}
@@ -7193,7 +7726,7 @@ const OrderCard = React.memo(function OrderCard({
             </View>
           </View>
           <View style={styles.orderCardBottomRow}>
-            <View style={[styles.orderStatusPill, orderStatusTone(isDeviceOrder ? 'QUEUED' : displayStatus), hasProblem && styles.orderStatusProblem]}>
+            <View style={[styles.orderStatusPill, orderStatusTone(isDeviceOrder && !hasDebtProblem ? 'QUEUED' : displayStatus), hasProblem && styles.orderStatusProblem]}>
               <MaterialCommunityIcons name={statusIcon.name as any} size={14} color={statusIcon.color} />
               <Text style={[styles.orderStatusText, { color: statusIcon.color }]} numberOfLines={1}>
                 {statusLabel}
@@ -7221,8 +7754,10 @@ const OrderCard = React.memo(function OrderCard({
           {hasProblem ? (
             <View style={styles.orderProblemRow}>
               <MaterialCommunityIcons name="alert-circle-outline" size={14} color="#B91C1C" />
-              <Text style={styles.orderProblemText} numberOfLines={1}>
-                {normalizeClientOrderUserErrorMessage(order.lastExportError || order.last1cError, 'Документ требует проверки')}
+              <Text style={styles.orderProblemText} numberOfLines={2}>
+                {order.shipmentProhibited && !order.isPostedIn1c
+                  ? (order.debtReason || 'Контрагент имеет просроченную задолженность')
+                  : normalizeClientOrderUserErrorMessage(order.lastExportError || order.last1cError, 'Документ требует проверки')}
               </Text>
             </View>
           ) : null}
@@ -7235,8 +7770,10 @@ const OrderCard = React.memo(function OrderCard({
             </View>
           ) : null}
         </Surface>
-      </Pressable>
-    </Animated.View>
+          </Pressable>
+        </Animated.View>
+      )}
+    </ContextMenuTrigger>
   );
 });
 
@@ -7244,20 +7781,20 @@ const styles = StyleSheet.create({
   screen: { flex: 1 },
   content: { padding: 12, gap: 10 },
   editorStage: { flex: 1, minHeight: 0, zIndex: 1 },
-  editorStageHidden: { ...StyleSheet.absoluteFillObject, opacity: 0 },
+  editorStageHidden: { ...StyleSheet.absoluteFill, opacity: 0 },
   editorPager: { flex: 1, minHeight: 0, width: '100%' },
   editorPagerPage: { flex: 1, minHeight: 0 },
   editorPageScroll: { flex: 1, minHeight: 0 },
   editorItemsContent: { flexGrow: 1 },
   ordersStage: { flex: 1 },
-  ordersStageHidden: { ...StyleSheet.absoluteFillObject, opacity: 0 },
+  ordersStageHidden: { ...StyleSheet.absoluteFill, opacity: 0 },
   ordersContent: { paddingHorizontal: 0, paddingVertical: 4, gap: 0, paddingBottom: 150 },
-  ordersStickyToolbar: { flexShrink: 0, paddingTop: 12, paddingBottom: 8, backgroundColor: 'transparent', zIndex: 2 },
+  ordersStickyToolbar: { flexShrink: 0, paddingTop: 8, paddingBottom: 8, backgroundColor: 'transparent', zIndex: 2 },
   contentTablet: { maxWidth: 760, alignSelf: 'center', width: '100%' },
   panelCard: { borderColor: '#DBEAFE', overflow: 'hidden' },
   cardContent: { paddingTop: 0, paddingBottom: 0 },
   panel: { borderRadius: 18, borderWidth: 1, borderColor: '#DBEAFE', padding: 12, gap: 10, shadowColor: '#0F172A', shadowOpacity: 0.06, shadowRadius: 12, elevation: 2 },
-  cardStack: { gap: 4 },
+  cardStack: { gap: 0 },
   documentHeaderSlot: { gap: 7 },
   documentTopTitleRow: { flex: 1, minWidth: 0, minHeight: 32, flexDirection: 'row', alignItems: 'center', gap: 7 },
   documentTopStatusButton: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
@@ -7279,7 +7816,7 @@ const styles = StyleSheet.create({
   documentTab: { flex: 1, minHeight: 30, borderRadius: 9, alignItems: 'center', justifyContent: 'center', position: 'relative', zIndex: 1 },
   documentTabContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5 },
   documentTabIcon: { width: 16, height: 16, position: 'relative', alignItems: 'center', justifyContent: 'center' },
-  documentTabIconLayer: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+  documentTabIconLayer: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center' },
   documentTabText: { fontSize: 12.5, fontWeight: '900', color: '#334155' },
   documentTabCountBadge: { minWidth: 22, height: 20, borderRadius: 999, paddingHorizontal: 6, backgroundColor: '#E2E8F0', alignItems: 'center', justifyContent: 'center' },
   documentTabCountSkeleton: { width: 22, height: 20, borderRadius: 999, backgroundColor: '#D5DEE9' },
@@ -7313,51 +7850,57 @@ const styles = StyleSheet.create({
   documentBottomMetricLabelCompact: { fontSize: 10, lineHeight: 11 },
   documentBottomMetricValue: { fontSize: 13.5, lineHeight: 15, fontWeight: '900', includeFontPadding: false },
   documentBottomMetricValueSkeleton: { width: '54%', height: 14, marginTop: 1, borderRadius: 5, backgroundColor: '#DCE4ED' },
-  documentBottomPrimaryButton: { width: 106, height: 56, borderRadius: 13, backgroundColor: '#2563EB', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10 },
-  documentBottomPrimaryButtonCompact: { width: 96, height: 54 },
-  documentBottomPrimaryButtonStacked: { width: '100%', height: 48, alignSelf: 'stretch' },
-  documentBottomPrimaryButtonSubmit: { backgroundColor: '#16A34A' },
-  documentBottomPrimaryText: { color: '#FFFFFF', fontSize: 12.5, lineHeight: 16, fontWeight: '900', includeFontPadding: false },
+  documentBottomActions: { width: 106, height: 56, borderRadius: 13, overflow: 'hidden', flexDirection: 'row', alignItems: 'stretch' },
+  documentBottomActionsCompact: { width: 96, height: 54 },
+  documentBottomActionsStacked: { width: '100%', height: 48, alignSelf: 'stretch' },
+  documentBottomSaveButton: { flex: 1, minWidth: 0, height: '100%', backgroundColor: '#2563EB', alignItems: 'center', justifyContent: 'center' },
+  documentBottomActionDivider: { width: 1, height: '100%', backgroundColor: 'rgba(15, 23, 42, 0.18)' },
+  documentBottomSubmitButton: { flex: 1, minWidth: 0, height: '100%', backgroundColor: '#FFF7F7', paddingHorizontal: 7, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
   flatPressed: { opacity: 0.78 },
   compactSearchShell: { height: 34, minHeight: 34, flexDirection: 'row', alignItems: 'center', paddingLeft: 8, paddingRight: 2, gap: 6, overflow: 'hidden' },
   compactSearchInputBase: { flex: 1, minWidth: 0, height: 32, paddingHorizontal: 0, paddingVertical: 0, margin: 0, color: '#0F172A', fontSize: 13, lineHeight: 16, fontWeight: '800', includeFontPadding: false, textAlignVertical: 'center' },
   compactSearchLoading: { width: 24, height: 28, alignItems: 'center', justifyContent: 'center' },
   compactSearchClear: { width: 28, height: 28, marginRight: 0, alignItems: 'center', justifyContent: 'center' },
   compactSearchTrailing: { height: 32, flexShrink: 0, alignItems: 'center', justifyContent: 'center' },
-  flatField: { minHeight: 48, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#FFFFFF', borderRadius: 4, paddingLeft: 8, paddingRight: 5, paddingVertical: 5, flexDirection: 'row', alignItems: 'center' },
-  flatFieldInvalid: { borderColor: '#FCA5A5', backgroundColor: '#FFF7F7' },
+  flatField: { minHeight: 52, borderWidth: 0, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#E2E8F0', backgroundColor: 'transparent', borderRadius: 0, paddingLeft: 8, paddingRight: 5, paddingVertical: 6, flexDirection: 'row', alignItems: 'center' },
+  flatFieldInvalid: { borderBottomWidth: 1.5, borderBottomColor: '#F87171', backgroundColor: '#FFF8F8' },
   flatFieldIcon: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center', marginRight: 7 },
   flatFieldTextWrap: { flex: 1, minWidth: 0, justifyContent: 'center' },
+  flatFieldLabelRow: { minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6 },
   flatFieldLabel: { marginBottom: 1, fontSize: 10.5, color: '#64748B', fontWeight: '900', textTransform: 'uppercase' },
   flatFieldValue: { fontSize: 13, lineHeight: 16, color: '#0F172A', fontWeight: '900' },
+  flatFieldLabelDebtBadge: { marginBottom: 1, flexShrink: 0, color: '#B91C1C', fontSize: 10.5, lineHeight: 13, fontWeight: '900' },
   flatFieldHelper: { marginTop: 2, fontSize: 11, lineHeight: 13, color: '#64748B', fontWeight: '700' },
+  flatFieldDebtText: { color: '#B91C1C' },
   flatFieldActions: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   flatFieldAction: { width: 30, height: 30, borderRadius: 4, alignItems: 'center', justifyContent: 'center' },
   invoiceReadyField: { minHeight: 58, paddingRight: 0 },
   invoiceFileActions: { flexDirection: 'row', alignItems: 'stretch', alignSelf: 'stretch', gap: 0, marginLeft: 0 },
   invoiceFileAction: { width: 48, minHeight: 44, borderRadius: 0, borderWidth: 0, backgroundColor: 'transparent', alignItems: 'center', justifyContent: 'center' },
   invoiceFileActionDivider: { borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: 'rgba(148, 163, 184, 0.55)' },
-  flatSegmentedField: { minHeight: 58, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#FFFFFF', borderRadius: 4, paddingLeft: 8, paddingRight: 6, paddingVertical: 6, flexDirection: 'row', alignItems: 'center' },
+  flatSegmentedField: { minHeight: 58, borderWidth: 0, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#E2E8F0', backgroundColor: 'transparent', borderRadius: 0, paddingLeft: 8, paddingRight: 6, paddingVertical: 6, flexDirection: 'row', alignItems: 'center' },
   flatSegmentedContent: { flex: 1, minWidth: 0, gap: 4 },
   flatSegmentedHeader: { minHeight: 15, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6 },
-  flatSegmentedControl: { minHeight: 30, borderRadius: 5, borderWidth: 1, borderColor: '#D8E2F0', overflow: 'hidden', flexDirection: 'row', backgroundColor: '#F8FAFC' },
-  flatSegmentedOption: { flex: 1, minWidth: 0, minHeight: 28, paddingHorizontal: 5, alignItems: 'center', justifyContent: 'center', borderRightWidth: 1, borderRightColor: '#D8E2F0' },
+  flatSegmentedControl: { minHeight: 30, borderRadius: 0, borderWidth: 0, overflow: 'hidden', flexDirection: 'row', gap: 3, backgroundColor: 'transparent' },
+  flatSegmentedOption: { flex: 1, minWidth: 0, minHeight: 28, borderRadius: 7, paddingHorizontal: 5, alignItems: 'center', justifyContent: 'center', borderWidth: 0 },
   flatSegmentedOptionLast: { borderRightWidth: 0 },
   flatSegmentedOptionActive: { backgroundColor: '#DBEAFE' },
-  flatSegmentedOptionDisabled: { backgroundColor: 'rgba(248, 250, 252, 0.7)' },
+  flatSegmentedOptionDisabled: { backgroundColor: 'transparent' },
+  flatSegmentedOptionActiveReadOnly: { backgroundColor: 'rgba(219, 234, 254, 0.58)' },
   flatSegmentedOptionText: { color: '#334155', fontSize: 11.5, lineHeight: 14, fontWeight: '900', includeFontPadding: false },
   flatSegmentedOptionTextActive: { color: '#1D4ED8' },
+  flatSegmentedOptionTextActiveReadOnly: { color: 'rgba(29, 78, 216, 0.72)' },
   flatSegmentedUnsupported: { color: '#B45309', fontSize: 10.5, lineHeight: 13, fontWeight: '800', includeFontPadding: false },
   flatResetButton: { width: 42, alignSelf: 'stretch', minHeight: 48, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#FFFFFF', borderRadius: 4, alignItems: 'center', justifyContent: 'center' },
   flatDateInput: { borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#FFFFFF', borderRadius: 4, paddingHorizontal: 8, paddingTop: 5, paddingBottom: 6, gap: 3 },
-  flatCommentInput: { width: '100%', alignSelf: 'stretch', minHeight: 58, backgroundColor: '#FFFFFF', fontSize: 13 },
+  flatCommentInput: { width: '100%', alignSelf: 'stretch', minHeight: 58, backgroundColor: 'transparent', fontSize: 13 },
   flatCommentInputContent: { width: '100%', minHeight: 58, paddingTop: 8, paddingBottom: 8, textAlignVertical: 'top' },
   flatInputOutline: { borderRadius: 4, borderColor: '#D8E2F0' },
-  readOnlyFieldSurface: { borderColor: 'rgba(216, 226, 240, 0.7)', backgroundColor: 'rgba(255, 255, 255, 0.64)' },
+  readOnlyFieldSurface: { borderBottomColor: 'rgba(203, 213, 225, 0.64)', backgroundColor: 'transparent' },
   readOnlyFieldLabel: { color: 'rgba(100, 116, 139, 0.6)' },
   readOnlyFieldValue: { color: 'rgba(15, 23, 42, 0.62)' },
   readOnlyInputContent: { color: 'rgba(15, 23, 42, 0.62)' },
-  readOnlyInputOutline: { borderColor: 'rgba(216, 226, 240, 0.7)' },
+  readOnlyInputOutline: { borderColor: 'transparent' },
   title: { fontSize: 19, fontWeight: '900', color: '#1F2937' },
   subtitle: { color: '#64748B', fontSize: 12, fontWeight: '700' },
   input: { minHeight: 42, borderRadius: 9, borderWidth: 1, borderColor: '#CBD5E1', paddingHorizontal: 12, color: '#0F172A', fontWeight: '800', backgroundColor: '#FFFFFF' },
@@ -7399,6 +7942,9 @@ const styles = StyleSheet.create({
   statusChipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   filterChip: { backgroundColor: '#F8FAFC' },
   ordersToolbar: { backgroundColor: 'transparent', borderRadius: 0, borderWidth: 0, padding: 0, gap: 0, marginBottom: 1 },
+  ordersErrorBanner: { minHeight: 38, marginTop: 7, borderRadius: 10, borderWidth: 1, borderColor: '#FECACA', backgroundColor: '#FEF2F2', paddingLeft: 9, paddingRight: 3, paddingVertical: 6, flexDirection: 'row', alignItems: 'flex-start', gap: 7 },
+  ordersErrorBannerText: { flex: 1, minWidth: 0, color: '#B91C1C', fontSize: 12, lineHeight: 16, fontWeight: '800' },
+  ordersErrorDismissButton: { width: 28, height: 26, alignItems: 'center', justifyContent: 'center' },
   filtersPickerSheet: { paddingHorizontal: 0, paddingBottom: 0 },
   filtersScroll: { flex: 1, minHeight: 0 },
   filtersForm: { gap: 7, paddingHorizontal: 8, paddingBottom: 10 },
@@ -7436,7 +7982,7 @@ const styles = StyleSheet.create({
   filtersSheetActionButton: { flex: 1, borderRadius: 4, borderColor: '#CBD5E1' },
   filtersSheetActionContent: { height: 34 },
   filtersSheetActionLabel: { fontSize: 12, fontWeight: '900', marginVertical: 0 },
-  filtersFullscreenRoot: { ...StyleSheet.absoluteFillObject, zIndex: 360, elevation: 360, backgroundColor: '#F8FAFC' },
+  filtersFullscreenRoot: { ...StyleSheet.absoluteFill, zIndex: 360, elevation: 360, backgroundColor: '#F8FAFC' },
   filtersFullscreenHeader: { borderBottomWidth: 1, borderBottomColor: '#E2E8F0', backgroundColor: '#FFFFFF', paddingHorizontal: 14, paddingBottom: 10 },
   filtersFullscreenHeaderRow: { minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   filtersFullscreenTitle: { flex: 1, color: '#0F172A', fontSize: 18, lineHeight: 22, fontWeight: '900' },
@@ -7448,7 +7994,7 @@ const styles = StyleSheet.create({
   filtersFullscreenFooterContent: { minHeight: 44 },
   filtersFullscreenFooterLabel: { fontSize: 13, fontWeight: '900', marginVertical: 0 },
   filtersDocumentFieldsBlock: { gap: 8 },
-  filtersLookupOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 380, elevation: 380, backgroundColor: '#F8FAFC' },
+  filtersLookupOverlay: { ...StyleSheet.absoluteFill, zIndex: 380, elevation: 380, backgroundColor: '#F8FAFC' },
   filtersLookupTitleRow: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 8 },
   filtersLookupSearchArea: { paddingHorizontal: 14, paddingTop: 12, paddingBottom: 8, backgroundColor: '#F8FAFC' },
   filtersLookupSearch: { height: 40, borderRadius: 10, borderWidth: 1, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF', elevation: 0 },
@@ -7483,28 +8029,29 @@ const styles = StyleSheet.create({
   ordersTitle: { fontSize: 16, fontWeight: '900', color: '#0F172A' },
   ordersSubtitle: { marginTop: 1, fontSize: 10.5, fontWeight: '700', color: '#64748B' },
   ordersCompactToolbarRow: { minHeight: 44, flexDirection: 'row', gap: 7, alignItems: 'center' },
-  ordersSearchbar: { flex: 1, height: 44, backgroundColor: '#F4F6F8', borderRadius: 14, borderWidth: 1, borderColor: '#E5EAF0', elevation: 0 },
-  ordersSearchbarInput: { height: 40, fontSize: 14, lineHeight: 18, color: '#0F172A', fontWeight: '800' },
+  ordersSearchbar: { flex: 1, height: 44, minHeight: 44, maxHeight: 44, backgroundColor: '#F4F6F8', borderRadius: 14, borderWidth: 1, borderColor: '#E5EAF0', elevation: 0 },
+  ordersSearchbarInput: { height: 42, minHeight: 0, maxHeight: 42, paddingVertical: 0, marginVertical: 0, fontSize: 14, lineHeight: 18, color: '#0F172A', fontWeight: '800', includeFontPadding: false, textAlignVertical: 'center' },
   ordersActionRow: { flexDirection: 'row', gap: 6, alignItems: 'center' },
   ordersBackButton: { width: 44, height: 44, borderRadius: 14, borderWidth: 1, borderColor: '#E5EAF0', backgroundColor: '#F4F6F8', alignItems: 'center', justifyContent: 'center' },
   ordersBackButtonPressed: { backgroundColor: '#E9EDF2', transform: [{ scale: 0.97 }] },
-  ordersSearchFilterButton: { width: 38, height: 36, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  ordersSearchFilterButton: { width: 40, height: 40, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   ordersSearchFilterButtonPressed: { backgroundColor: '#E5EAF0' },
   ordersToolbarButtonDisabled: { opacity: 0.56 },
   ordersFilterBadge: { position: 'absolute', top: 1, right: 0, minWidth: 17, height: 17, borderRadius: 999, paddingHorizontal: 3, backgroundColor: '#2563EB', borderWidth: 1.5, borderColor: '#F4F6F8', alignItems: 'center', justifyContent: 'center' },
   ordersFilterBadgeText: { color: '#FFFFFF', fontSize: 9, lineHeight: 11, fontWeight: '900' },
   ordersBottomBar: { position: 'absolute', left: 0, right: 0, bottom: 0, width: '100%', zIndex: 30, elevation: 16, borderTopLeftRadius: 22, borderTopRightRadius: 22, shadowColor: '#0F172A', shadowOpacity: 0.16, shadowRadius: 18, shadowOffset: { width: 0, height: -6 } },
   ordersBottomGlass: { position: 'relative', zIndex: 2, elevation: 2, borderTopLeftRadius: 22, borderTopRightRadius: 22, paddingHorizontal: 10, paddingTop: 8 },
-  ordersBottomCreateWrap: { position: 'absolute', left: 10, right: 10, top: -50, height: 42, zIndex: 1, elevation: 0 },
-  ordersBottomCreateButton: { width: '100%', height: 42, borderRadius: 12, borderWidth: 1, borderColor: '#93C5FD', backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8, shadowColor: '#0F172A', shadowOpacity: 0.09, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 0 },
-  ordersBottomCreateText: { color: '#1D4ED8', fontSize: 13.5, lineHeight: 17, fontWeight: '900', includeFontPadding: false },
-  ordersBottomMetrics: { minHeight: 72, flexDirection: 'row', alignItems: 'center', columnGap: 12 },
-  ordersBottomMetric: { flex: 1, minWidth: 0, minHeight: 42, paddingHorizontal: 6, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  ordersBottomMetricIcon: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
+  ordersBottomCreateWrap: { position: 'absolute', left: 10, right: 10, top: -52, height: 44, zIndex: 1, elevation: 0 },
+  ordersBottomCreateButton: { width: '100%', height: 44, borderRadius: 12, borderWidth: 1, borderColor: '#93C5FD', backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8, shadowColor: '#0F172A', shadowOpacity: 0.09, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 0 },
+  ordersBottomCreateText: { color: '#1D4ED8', fontSize: 14.5, lineHeight: 18, fontWeight: '900', includeFontPadding: false },
+  ordersBottomMetrics: { minHeight: 88, justifyContent: 'center', rowGap: 2 },
+  ordersBottomMetricsRow: { flexDirection: 'row', alignItems: 'center', columnGap: 10 },
+  ordersBottomMetric: { flex: 1, minWidth: 0, minHeight: 42, paddingHorizontal: 6, flexDirection: 'row', alignItems: 'center', gap: 7 },
+  ordersBottomMetricIcon: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
   ordersBottomMetricText: { flex: 1, minWidth: 0, gap: 2 },
-  ordersBottomMetricLabel: { color: '#64748B', fontSize: 11.5, lineHeight: 13, fontWeight: '900', textTransform: 'uppercase', includeFontPadding: false },
-  ordersBottomMetricValue: { fontSize: 15, lineHeight: 17, fontWeight: '900', includeFontPadding: false },
-  ordersBottomMetricValueSkeleton: { width: '52%', height: 15, borderRadius: 5, backgroundColor: '#DCE4ED' },
+  ordersBottomMetricLabel: { color: '#64748B', fontSize: 10.5, lineHeight: 12, fontWeight: '900', textTransform: 'uppercase', includeFontPadding: false },
+  ordersBottomMetricValue: { color: '#0F172A', fontSize: 14.5, lineHeight: 17, fontWeight: '900', includeFontPadding: false },
+  ordersBottomMetricValueSkeleton: { width: '58%', height: 14, borderRadius: 5, backgroundColor: '#DCE4ED' },
   ordersEmptyState: { minHeight: 148, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 18, paddingVertical: 22, gap: 6 },
   ordersEmptyIcon: { width: 42, height: 42, borderRadius: 999, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
   ordersEmptyTitle: { color: '#334155', fontSize: 14, lineHeight: 18, fontWeight: '900', includeFontPadding: false },
@@ -7525,9 +8072,9 @@ const styles = StyleSheet.create({
   ordersSkeletonLineWide: { width: '72%', height: 12 },
   ordersSkeletonLineMeta: { width: '54%', height: 11, backgroundColor: '#F1F5F9' },
   documentSkeleton: { flex: 1, minHeight: 360, paddingTop: 8 },
-  documentHeaderSkeletonGrid: { gap: 6 },
-  documentHeaderFieldSkeleton: { minHeight: 58, borderRadius: 4, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#FFFFFF', paddingHorizontal: 10, paddingVertical: 8, justifyContent: 'center', gap: 7 },
-  documentHeaderFieldSkeletonWide: { minHeight: 88, borderRadius: 4, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#FFFFFF', paddingHorizontal: 10, paddingVertical: 10, justifyContent: 'center', gap: 8 },
+  documentHeaderSkeletonGrid: { gap: 0 },
+  documentHeaderFieldSkeleton: { minHeight: 58, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#E2E8F0', backgroundColor: 'transparent', paddingHorizontal: 10, paddingVertical: 8, justifyContent: 'center', gap: 7 },
+  documentHeaderFieldSkeletonWide: { minHeight: 88, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#E2E8F0', backgroundColor: 'transparent', paddingHorizontal: 10, paddingVertical: 10, justifyContent: 'center', gap: 8 },
   documentSkeletonLabel: { height: 9, borderRadius: 4, backgroundColor: '#E2E8F0' },
   documentSkeletonLine: { height: 15, borderRadius: 5, backgroundColor: '#EEF2F7' },
   documentSkeletonLineShort: { width: '58%' },
@@ -7541,8 +8088,8 @@ const styles = StyleSheet.create({
   documentItemBottomSkeletonRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
   documentItemQuantitySkeleton: { width: 92, height: 15, borderRadius: 5, backgroundColor: '#EEF2F7' },
   documentItemAmountSkeleton: { width: 74, height: 17, borderRadius: 5, backgroundColor: '#DBEAFE' },
-  documentBusyOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 260, elevation: 260, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 22 },
-  documentBusyBlur: { ...StyleSheet.absoluteFillObject, borderWidth: 0 },
+  documentBusyOverlay: { ...StyleSheet.absoluteFill, zIndex: 260, elevation: 260, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 22 },
+  documentBusyBlur: { ...StyleSheet.absoluteFill, borderWidth: 0 },
   documentBusyCard: { minWidth: 164, minHeight: 92, borderRadius: 18, borderWidth: 1, borderColor: 'rgba(191, 219, 254, 0.82)', backgroundColor: 'rgba(255, 255, 255, 0.86)', alignItems: 'center', justifyContent: 'center', gap: 10, paddingHorizontal: 18, paddingVertical: 16, shadowColor: '#0F172A', shadowOpacity: 0.13, shadowRadius: 22, shadowOffset: { width: 0, height: 12 }, elevation: 18 },
   documentBusyTitle: { color: '#0F172A', fontSize: 13, lineHeight: 17, fontWeight: '900', textAlign: 'center' },
   ordersPrimaryButton: { width: 30, minWidth: 30, borderRadius: 4 },
@@ -7595,8 +8142,8 @@ const styles = StyleSheet.create({
   orderMetricValue: { marginTop: 2, fontSize: 11.5, fontWeight: '900', color: '#0F172A' },
   orderProblemRow: { minHeight: 24, borderRadius: 8, backgroundColor: '#FEF2F2', paddingHorizontal: 7, flexDirection: 'row', alignItems: 'center', gap: 5 },
   orderProblemText: { flex: 1, minWidth: 0, fontSize: 11, lineHeight: 14, fontWeight: '800', color: '#B91C1C' },
-  orderCardLoadingOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', zIndex: 4, elevation: 4 },
-  orderCardLoadingScrim: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(248, 250, 252, 0.78)' },
+  orderCardLoadingOverlay: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', zIndex: 4, elevation: 4 },
+  orderCardLoadingScrim: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(248, 250, 252, 0.78)' },
   orderMeta: { fontSize: 12, color: '#64748B', fontWeight: '700' },
   loadMoreButton: { marginTop: 2, borderRadius: 12, borderColor: '#CBD5E1', backgroundColor: '#FFFFFF' },
   pillPaper: { backgroundColor: '#F1F5F9' },
@@ -7615,33 +8162,33 @@ const styles = StyleSheet.create({
   selectionValueRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   detailsButton: { width: 30, height: 30, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   detailsButtonPaper: { margin: 0 },
-  lineList: { backgroundColor: '#F8FAFC', paddingTop: 8, gap: 8 },
-  productPreviewCard: { height: 96, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#FFFFFF', overflow: 'hidden', flexDirection: 'row', alignItems: 'stretch' },
-  productPreviewCardReadOnly: { borderColor: 'rgba(216, 226, 240, 0.7)', backgroundColor: 'rgba(255, 255, 255, 0.64)' },
-  productPreviewCardCancelled: { borderColor: '#CBD5E1', backgroundColor: '#F8FAFC' },
-  productPreviewCardInvalid: { borderColor: '#EF4444', backgroundColor: '#FFF7F7' },
+  lineList: { backgroundColor: 'transparent', paddingTop: 0, gap: 0 },
+  productPreviewCard: { height: 96, borderRadius: 0, borderWidth: 0, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#E2E8F0', backgroundColor: 'transparent', overflow: 'hidden', flexDirection: 'row', alignItems: 'stretch' },
+  productPreviewCardReadOnly: { borderBottomColor: 'rgba(203, 213, 225, 0.64)', backgroundColor: 'transparent' },
+  productPreviewCardCancelled: { borderBottomColor: '#CBD5E1', backgroundColor: 'rgba(248, 250, 252, 0.58)' },
+  productPreviewCardInvalid: { borderBottomWidth: 1.5, borderBottomColor: '#EF4444', backgroundColor: '#FFF8F8' },
   productPreviewCardWithIssue: { height: 114 },
-  productPreviewMedia: { width: 78, height: '100%', backgroundColor: '#F1F5F9', overflow: 'hidden', borderRightWidth: 1, borderRightColor: '#E2E8F0' },
-  productPreviewMediaReadOnly: { backgroundColor: 'rgba(241, 245, 249, 0.56)', borderRightColor: 'rgba(226, 232, 240, 0.66)' },
-  productPreviewIndexBadge: { position: 'absolute', top: 5, left: 5, minWidth: 24, height: 22, borderRadius: 7, backgroundColor: 'rgba(255,255,255,0.9)', borderWidth: 1, borderColor: '#DBEAFE', alignItems: 'center', justifyContent: 'center' },
-  productPreviewIndexBadgeReadOnly: { backgroundColor: 'rgba(255, 255, 255, 0.62)', borderColor: 'rgba(191, 219, 254, 0.62)' },
+  productPreviewMedia: { width: 84, height: '100%', backgroundColor: 'transparent', overflow: 'visible', alignItems: 'center', justifyContent: 'center' },
+  productPreviewMediaReadOnly: { backgroundColor: 'transparent' },
+  productPreviewIndexBadge: { position: 'absolute', top: 7, left: 7, minWidth: 22, height: 20, borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.88)', alignItems: 'center', justifyContent: 'center' },
+  productPreviewIndexBadgeReadOnly: { backgroundColor: 'rgba(255, 255, 255, 0.64)' },
   productPreviewIndex: { color: '#2563EB', fontSize: 11, fontWeight: '900', textAlign: 'center', lineHeight: 14 },
   productPreviewIndexReadOnly: { color: 'rgba(37, 99, 235, 0.58)' },
-  productPreviewImage: { width: 78, height: '100%', backgroundColor: '#F1F5F9' },
+  productPreviewImage: { width: 72, height: 72, borderRadius: 8, backgroundColor: '#F1F5F9' },
   productPreviewImageReadOnly: { backgroundColor: 'rgba(241, 245, 249, 0.5)', opacity: 0.72 },
   productImagePlaceholder: { alignItems: 'center', justifyContent: 'center' },
   productImageFrame: { position: 'relative', overflow: 'hidden', alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF' },
-  productImageObject: { ...StyleSheet.absoluteFillObject },
-  productImagePlaceholderFill: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+  productImageObject: { ...StyleSheet.absoluteFill },
+  productImagePlaceholderFill: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center' },
   productImageLoadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(248, 250, 252, 0.74)',
   },
   productImagePressed: { opacity: 0.82 },
-  productGalleryOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 80, elevation: 80, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 14 },
-  productGalleryBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(15, 23, 42, 0.58)' },
+  productGalleryOverlay: { ...StyleSheet.absoluteFill, zIndex: 80, elevation: 80, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 14 },
+  productGalleryBackdrop: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(15, 23, 42, 0.58)' },
   productGalleryCard: { maxWidth: '100%', maxHeight: '88%', borderRadius: 18, borderWidth: 1, borderColor: 'rgba(226, 232, 240, 0.72)', backgroundColor: '#FFFFFF', overflow: 'hidden' },
   productGalleryHeader: { minHeight: 58, paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#E2E8F0', flexDirection: 'row', alignItems: 'center', gap: 10 },
   productGalleryTitleWrap: { flex: 1, minWidth: 0 },
@@ -7651,8 +8198,8 @@ const styles = StyleSheet.create({
   productGalleryCounter: { minWidth: 38, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 999, backgroundColor: '#EFF6FF', color: '#2563EB', fontSize: 11, lineHeight: 14, fontWeight: '900', textAlign: 'center' },
   productGalleryCloseButton: { width: 36, height: 36, borderRadius: 12, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center' },
   productGallerySlide: { position: 'relative', backgroundColor: '#F8FAFC', alignItems: 'center', justifyContent: 'center' },
-  productGalleryImage: { ...StyleSheet.absoluteFillObject },
-  productGalleryLoader: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(248, 250, 252, 0.72)' },
+  productGalleryImage: { ...StyleSheet.absoluteFill },
+  productGalleryLoader: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(248, 250, 252, 0.72)' },
   productGalleryEmpty: { alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 18 },
   productGalleryEmptyText: { color: '#64748B', fontSize: 12, lineHeight: 16, fontWeight: '800', textAlign: 'center' },
   productGalleryThumbs: { paddingHorizontal: 10, paddingVertical: 10, gap: 8, borderTopWidth: 1, borderTopColor: '#E2E8F0' },
@@ -7663,7 +8210,7 @@ const styles = StyleSheet.create({
   productPreviewTitleRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
   productPreviewTitle: { color: '#0F172A', fontSize: 13, fontWeight: '900', lineHeight: 16, paddingRight: 28 },
   productPreviewTitleReadOnly: { color: 'rgba(15, 23, 42, 0.62)' },
-  productPreviewRemoveButton: { position: 'absolute', top: 6, right: 6, width: 24, height: 24, borderRadius: 8, backgroundColor: '#F8FAFC', alignItems: 'center', justifyContent: 'center', zIndex: 2 },
+  productPreviewRemoveButton: { position: 'absolute', top: 6, right: 6, width: 26, height: 26, alignItems: 'center', justifyContent: 'center', zIndex: 2 },
   productPreviewMeta: { color: '#64748B', fontSize: 11, fontWeight: '700', lineHeight: 14, paddingRight: 2 },
   productPreviewMetaReadOnly: { color: 'rgba(100, 116, 139, 0.58)' },
   productPreviewMetrics: { minHeight: 14, flexDirection: 'row', alignItems: 'center', gap: 10, paddingRight: 2 },
@@ -7835,7 +8382,7 @@ const styles = StyleSheet.create({
   priceInput: { height: 42 },
   invalidInput: { borderColor: '#DC2626', backgroundColor: '#FEF2F2' },
   total: { fontSize: 18, color: '#111827', fontWeight: '900' },
-  itemsFlatSection: { backgroundColor: '#F8FAFC' },
+  itemsFlatSection: { backgroundColor: 'transparent' },
   itemsToolbarWrap: { position: 'relative', backgroundColor: '#FFFFFF', zIndex: 30, paddingHorizontal: 10, paddingTop: 7, paddingBottom: 9, borderBottomLeftRadius: 18, borderBottomRightRadius: 18 },
   itemsToolbarHeaderWrap: { position: 'relative', backgroundColor: '#FFFFFF', zIndex: 2 },
   itemsFlatToolbar: { minHeight: 36, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#FFFFFF', zIndex: 2 },
@@ -7892,6 +8439,9 @@ const styles = StyleSheet.create({
   productPickerThumbDisabled: { opacity: 0.55 },
   pickerFlatTextWrap: { flex: 1, minWidth: 0 },
   pickerFlatTitle: { color: '#0F172A', fontSize: 12.5, fontWeight: '900', lineHeight: 15 },
+  pickerFlatTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  pickerFlatTitleDebt: { color: '#991B1B', flexShrink: 1 },
+  pickerDebtBadge: { color: '#B91C1C', fontSize: 10, lineHeight: 14, fontWeight: '900', backgroundColor: '#FEE2E2', borderRadius: 999, paddingHorizontal: 7, paddingVertical: 1 },
   pickerFlatMeta: { marginTop: 1, color: '#64748B', fontSize: 10.5, fontWeight: '800', lineHeight: 12.5 },
   productPickerSelectedText: { marginTop: 3, color: '#1D4ED8', fontSize: 11, lineHeight: 13, fontWeight: '900' },
   productPickerAlreadyText: { marginTop: 3, color: '#B91C1C', fontSize: 11, lineHeight: 13, fontWeight: '900' },

@@ -1,9 +1,6 @@
 module.exports = {
-  preset: 'ts-jest',
+  preset: 'jest-expo',
   testEnvironment: 'node',
-  transform: {
-    '^.+\\.tsx?$': ['ts-jest', { tsconfig: 'tsconfig.jest.json' }],
-  },
   testMatch: ['**/__tests__/**/*.unit.test.ts'],
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/$1',

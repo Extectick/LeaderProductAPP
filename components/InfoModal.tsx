@@ -87,7 +87,7 @@ export default function InfoModal({ visible, title, message, onClose }: Props) {
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.overlay}>
-        <Pressable style={StyleSheet.absoluteFillObject} onPress={onClose} />
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <View style={[styles.card, { maxWidth, maxHeight, marginTop: insets.top + 12, marginBottom: insets.bottom + 12 }]}>
           <View style={styles.header}>
             <Text style={styles.title}>{title}</Text>

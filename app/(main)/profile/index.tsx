@@ -635,7 +635,7 @@ function CredentialsSection({
 
       <Modal visible={resetModalVisible} transparent animationType="fade" onRequestClose={onCloseResetModal}>
         <View style={styles.resetModalOverlay}>
-          <Pressable style={StyleSheet.absoluteFillObject} onPress={onCloseResetModal} />
+          <Pressable style={StyleSheet.absoluteFill} onPress={onCloseResetModal} />
           <View style={styles.resetModalCard}>
             <Text style={styles.credentialsTitle}>Сброс пароля</Text>
             <Text style={styles.credentialsSubtitle}>

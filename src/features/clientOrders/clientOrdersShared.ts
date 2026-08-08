@@ -292,6 +292,7 @@ export type DraftValidation = {
 };
 
 export const STATUS_LABELS: Record<string, string> = {
+  DEBT: 'Долг',
   DRAFT: 'Черновик',
   QUEUED: 'В очереди',
   SENT_TO_1C: 'Создан в 1С',
@@ -343,8 +344,9 @@ export function mapOnecOrderStatus(value?: string | null) {
   return null;
 }
 
-export function getOrderDisplayStatus(order?: Pick<ClientOrder, 'status' | 'number1c' | 'origin' | 'status1c' | 'currentState1c' | 'documentStatus1c'> | null) {
+export function getOrderDisplayStatus(order?: Pick<ClientOrder, 'status' | 'number1c' | 'origin' | 'status1c' | 'currentState1c' | 'documentStatus1c' | 'shipmentProhibited' | 'isPostedIn1c'> | null) {
   if (!order) return 'DRAFT';
+  if (order.shipmentProhibited && !order.isPostedIn1c) return 'DEBT';
   const onecText = order.currentState1c || order.status1c;
   const isOnecBacked = Boolean(order.number1c || order.origin === 'onec' || order.origin === 'merged');
   if (isOnecBacked && onecText) {
@@ -353,7 +355,7 @@ export function getOrderDisplayStatus(order?: Pick<ClientOrder, 'status' | 'numb
   return order.status || mapOnecOrderStatus(onecText) || 'DRAFT';
 }
 
-export function getOrderDisplayStatusLabel(order?: Pick<ClientOrder, 'status' | 'number1c' | 'origin' | 'status1c' | 'currentState1c' | 'documentStatus1c'> | null) {
+export function getOrderDisplayStatusLabel(order?: Pick<ClientOrder, 'status' | 'number1c' | 'origin' | 'status1c' | 'currentState1c' | 'documentStatus1c' | 'shipmentProhibited' | 'isPostedIn1c'> | null) {
   if (!order) return STATUS_LABELS.DRAFT;
   const displayStatus = getOrderDisplayStatus(order);
   const onecText = order.currentState1c || order.status1c;
@@ -361,14 +363,15 @@ export function getOrderDisplayStatusLabel(order?: Pick<ClientOrder, 'status' | 
 }
 
 export function getOrderDisplayStatusLabelWithQueue(
-  order?: Pick<ClientOrder, 'status' | 'syncState' | 'number1c' | 'origin' | 'status1c' | 'currentState1c' | 'documentStatus1c' | 'queuePosition'> | null
+  order?: Pick<ClientOrder, 'status' | 'syncState' | 'number1c' | 'origin' | 'status1c' | 'currentState1c' | 'documentStatus1c' | 'queuePosition' | 'shipmentProhibited' | 'isPostedIn1c'> | null
 ) {
   if (!order) return STATUS_LABELS.DRAFT;
+  const displayStatus = getOrderDisplayStatus(order);
+  if (displayStatus === 'DEBT') return STATUS_LABELS.DEBT;
   if (order.syncState === 'ERROR') return SYNC_LABELS.ERROR;
   if (order.syncState === 'CONFLICT') return SYNC_LABELS.CONFLICT;
   if (order.syncState === 'CANCEL_REQUESTED') return SYNC_LABELS.CANCEL_REQUESTED;
   const position = Number(order.queuePosition || 0);
-  const displayStatus = getOrderDisplayStatus(order);
   if (position > 0 && order.syncState === 'QUEUED') {
     return `В очереди: ${position}`;
   }
@@ -502,30 +505,64 @@ export function getDraftItemCancelReason(item?: Pick<DraftItem, 'cancelReason' |
 }
 
 export function normalizeDraftItem(item: DraftItem): DraftItem {
+  const key = asInputString(item.key) || makeKey();
+  const lineGuid = asInputString(item.lineGuid) || makeLineGuid();
+  const productGuid = asInputString(item.productGuid);
+  const productName = asInputString(item.productName);
+  const quantity = asInputString(item.quantity).replace(/\./g, ',');
+  const manualPrice = asInputString(item.manualPrice);
+  const discountPercent = asInputString(item.discountPercent);
+  const comment = asInputString(item.comment);
+  const isCancelled = !!item.isCancelled;
+  const packagesLoaded = !!item.packagesLoaded;
+  const packages = Array.isArray(item.packages) ? item.packages : [];
+
+  if (
+    item.key === key
+    && item.lineGuid === lineGuid
+    && item.productGuid === productGuid
+    && item.productName === productName
+    && item.quantity === quantity
+    && item.manualPrice === manualPrice
+    && item.discountPercent === discountPercent
+    && item.comment === comment
+    && item.isCancelled === isCancelled
+    && item.packagesLoaded === packagesLoaded
+    && item.packages === packages
+  ) {
+    return item;
+  }
+
   return {
     ...item,
-    key: asInputString(item.key) || makeKey(),
-    lineGuid: asInputString(item.lineGuid) || makeLineGuid(),
-    productGuid: asInputString(item.productGuid),
-    productName: asInputString(item.productName),
-    quantity: asInputString(item.quantity).replace(/\./g, ','),
-    manualPrice: asInputString(item.manualPrice),
-    discountPercent: asInputString(item.discountPercent),
-    comment: asInputString(item.comment),
-    isCancelled: !!item.isCancelled,
-    packagesLoaded: !!item.packagesLoaded,
-    packages: Array.isArray(item.packages) ? item.packages : [],
+    key,
+    lineGuid,
+    productGuid,
+    productName,
+    quantity,
+    manualPrice,
+    discountPercent,
+    comment,
+    isCancelled,
+    packagesLoaded,
+    packages,
   };
 }
 
-export function normalizeDraftOrder(draft: DraftOrder): DraftOrder {
-  const items = Array.isArray(draft.items)
-    ? draft.items
-        .filter((item): item is DraftItem => !!item && typeof item === 'object')
-        .map(normalizeDraftItem)
-    : [];
+export function normalizeDraftOrder(draft: DraftOrder, previousDraft?: DraftOrder): DraftOrder {
+  let items: DraftItem[];
+  if (previousDraft && draft.items === previousDraft.items) {
+    items = previousDraft.items;
+  } else {
+    const sourceItems = Array.isArray(draft.items) ? draft.items : [];
+    const validItems = sourceItems.filter((item): item is DraftItem => !!item && typeof item === 'object');
+    const normalizedItems = validItems.map(normalizeDraftItem);
+    const canReuseSource = validItems.length === sourceItems.length
+      && normalizedItems.every((item, index) => item === sourceItems[index]);
+    items = canReuseSource ? sourceItems : normalizedItems;
+  }
 
-  return {
+  const normalized: DraftOrder = {
     ...draft,
     organizationGuid: asInputString(draft.organizationGuid),
     counterpartyGuid: asInputString(draft.counterpartyGuid),
@@ -542,6 +579,19 @@ export function normalizeDraftOrder(draft: DraftOrder): DraftOrder {
     invoiceRequested: !!draft.invoiceRequested,
     items,
   };
+
+  if (previousDraft) {
+    const normalizedKeys = Object.keys(normalized) as Array<keyof DraftOrder>;
+    const previousKeys = Object.keys(previousDraft);
+    if (
+      normalizedKeys.length === previousKeys.length
+      && normalizedKeys.every((key) => normalized[key] === previousDraft[key])
+    ) {
+      return previousDraft;
+    }
+  }
+
+  return normalized;
 }
 
 export function asNumber(value: string) {
@@ -908,14 +958,15 @@ export function computeLineTotal(item: DraftItem, generalDiscountPercent?: strin
   return quantity * getPackageMultiplier(item) * price * (1 - (Number.isNaN(discount) ? 0 : discount) / 100);
 }
 
-export function computeLineProfit(item: DraftItem, generalDiscountPercent?: string) {
+export function computeLineProfit(item: DraftItem, generalDiscountPercent?: string, computedLineTotal?: number) {
   if (isCancelledDraftItem(item)) return 0;
   const quantity = normalizeQuantityForPayload(item);
   if (Number.isNaN(quantity)) return 0;
 
   const receiptPrice = item.receiptPrice ?? 0;
   const cost = receiptPrice > 0 ? quantity * getPackageMultiplier(item) * receiptPrice : 0;
-  return computeLineTotal(item, generalDiscountPercent) - cost;
+  const lineTotal = computedLineTotal ?? computeLineTotal(item, generalDiscountPercent);
+  return lineTotal - cost;
 }
 
 export function canComputeLineProfit(item: DraftItem) {
@@ -955,6 +1006,20 @@ export function canComputeDraftProfit(draft: DraftOrder) {
 
 export function computeDraftWeight(draft: DraftOrder) {
   return draft.items.reduce((sum, item) => sum + computeLineWeight(item), 0);
+}
+
+export function computeDraftMetrics(draft: DraftOrder) {
+  return draft.items.reduce((metrics, item) => {
+    const lineTotal = computeLineTotal(item, draft.generalDiscountPercent);
+    metrics.total += lineTotal;
+    metrics.profit += computeLineProfit(item, draft.generalDiscountPercent, lineTotal);
+    metrics.weight += computeLineWeight(item);
+    if (!isCancelledDraftItem(item)) {
+      metrics.activeItems += 1;
+      metrics.profitAvailable = metrics.profitAvailable && canComputeLineProfit(item);
+    }
+    return metrics;
+  }, { total: 0, profit: 0, weight: 0, activeItems: 0, profitAvailable: true });
 }
 
 export function validateDraft(draft: DraftOrder): DraftValidation {

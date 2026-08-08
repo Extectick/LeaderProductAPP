@@ -467,11 +467,11 @@ const styles = StyleSheet.create({
     height: '100%',
   },
   profileHeaderAvatarPreload: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     opacity: 0,
   },
   profileHeaderAvatarLoader: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(15, 23, 42, 0.24)',
     alignItems: 'center',
     justifyContent: 'center',

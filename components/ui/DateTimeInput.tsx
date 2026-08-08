@@ -845,7 +845,7 @@ const styles = StyleSheet.create({
   iconBtnPressed: { transform: [{ scale: 0.98 }], opacity: 0.95 },
   clearBtn: { position: 'absolute', right: 44, top: '50%', marginTop: -9 },
   errorText: { color: '#EF4444', fontSize: 12 },
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.2)' },
+  backdrop: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.2)' },
   backdropDark: {
     flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.45)',
@@ -854,7 +854,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   backdropHitArea: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   modalCard: {
     position: 'absolute',

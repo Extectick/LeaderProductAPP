@@ -564,7 +564,7 @@ export const createAdminStyles = (colors: any) =>
       shadowOffset: { width: 0, height: 2 },
       elevation: 3,
     },
-    heroBg: { ...StyleSheet.absoluteFillObject },
+    heroBg: { ...StyleSheet.absoluteFill },
     heroInner: { padding: 18 },
     avatarOuter: {
       alignSelf: 'flex-start',
@@ -639,7 +639,7 @@ export const createAdminStyles = (colors: any) =>
     optionText: { color: '#111827', fontWeight: '700' },
     optionTextActive: { color: '#1D4ED8' },
     pickerOverlay: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       alignItems: 'center',
       justifyContent: 'center',
     },

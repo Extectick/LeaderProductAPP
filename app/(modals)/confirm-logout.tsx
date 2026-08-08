@@ -55,14 +55,14 @@ export default function ConfirmLogoutModal() {
 
 const styles = StyleSheet.create({
   root: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 20,
     ...Platform.select({ web: { position: 'fixed' as any, inset: 0 } }),
   },
-  backdropPress: { ...StyleSheet.absoluteFillObject },
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.35)' },
+  backdropPress: { ...StyleSheet.absoluteFill },
+  backdrop: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.35)' },
   card: {
     width: '100%', maxWidth: 420, borderRadius: 16, padding: 20,
     ...Platform.select({

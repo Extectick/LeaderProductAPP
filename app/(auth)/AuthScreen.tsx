@@ -1161,7 +1161,7 @@ export default function AuthScreen() {
           {!preloadReady && (
             <View
               pointerEvents="none"
-              style={[StyleSheet.absoluteFillObject, { alignItems: 'center', justifyContent: 'center', zIndex: 10 }]}
+              style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center', zIndex: 10 }]}
             >
               <ThemedLoader size={72} stroke={3} />
             </View>

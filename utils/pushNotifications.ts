@@ -56,7 +56,6 @@ export async function initPushNotifications() {
       importance: Notifications.AndroidImportance.MAX,
       vibrationPattern: [0, 250, 200, 250],
       lightColor: '#22C55E',
-      sound: 'default',
       enableVibrate: true,
     });
     await Notifications.setNotificationChannelAsync(APPEAL_MESSAGE_CHANNEL_ID, {
@@ -64,7 +63,6 @@ export async function initPushNotifications() {
       importance: Notifications.AndroidImportance.HIGH,
       vibrationPattern: [0, 250, 200, 250],
       lightColor: '#2563EB',
-      sound: 'default',
       enableVibrate: true,
     });
   }

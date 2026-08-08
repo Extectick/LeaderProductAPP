@@ -529,7 +529,7 @@ describe('OTA status indicator', () => {
     expect(mockCheckForUpdateAsync).not.toHaveBeenCalled();
 
     await act(async () => {
-      await jest.advanceTimersByTimeAsync(2_000);
+      await jest.advanceTimersByTimeAsync(30_000);
     });
 
     expect(mockCheckForUpdateAsync).toHaveBeenCalledTimes(1);

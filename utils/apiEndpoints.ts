@@ -97,6 +97,7 @@ export const API_ENDPOINTS = {
   },
   CLIENT_ORDERS: {
     LIST: '/api/client-orders',
+    TODAY_SUMMARY: '/api/client-orders/today-summary',
     DETAIL: (guid: string) => `/api/client-orders/${encodeURIComponent(guid)}`,
     SETTINGS: '/api/client-orders/settings',
     DEFAULTS: '/api/client-orders/defaults',
@@ -117,6 +118,7 @@ export const API_ENDPOINTS = {
     RESTORE: (guid: string) => `/api/client-orders/${encodeURIComponent(guid)}/restore`,
     COPY: (guid: string) => `/api/client-orders/${encodeURIComponent(guid)}/copy`,
     CANCEL: (guid: string) => `/api/client-orders/${encodeURIComponent(guid)}/cancel`,
+    INVOICE_STATUSES: '/api/client-orders/invoice-statuses',
     INVOICES: (guid: string) => `/api/client-orders/${encodeURIComponent(guid)}/invoices`,
     INVOICE_REQUEST: (guid: string) => `/api/client-orders/${encodeURIComponent(guid)}/invoices/request`,
     INVOICE_DOWNLOAD: (guid: string, invoiceId: string) =>

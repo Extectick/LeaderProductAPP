@@ -1228,7 +1228,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#6EE7B7',
   },
   scopeLoaderOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(255,255,255,0.9)',
     alignItems: 'center',
     justifyContent: 'center',

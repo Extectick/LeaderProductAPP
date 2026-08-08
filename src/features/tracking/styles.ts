@@ -10,21 +10,21 @@ export const trackingStyles = StyleSheet.create({
     backgroundColor: '#020617',
   },
   fullMapLayer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 1,
   },
   fullMapTint: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 2,
     backgroundColor: 'rgba(15, 23, 42, 0.12)',
   },
   mobileFiltersBackdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 6,
     backgroundColor: 'transparent',
   },
   mobilePointsBackdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 3,
     backgroundColor: 'transparent',
   },
@@ -269,7 +269,7 @@ export const trackingStyles = StyleSheet.create({
     fontWeight: '700',
   },
   pointsIslandBackdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 3,
     backgroundColor: 'transparent',
   },

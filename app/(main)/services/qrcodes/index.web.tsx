@@ -645,7 +645,7 @@ const getStyles = (colors: any) =>
       pointerEvents: 'box-none',
     } as any,
     backdrop: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       backgroundColor: 'rgba(0,0,0,0.45)',
       transitionDuration: '200ms',
       opacity: 1,
@@ -803,13 +803,13 @@ const stylesMobile = StyleSheet.create({
     marginTop: 16,
   },
   overlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0,0,0,0.35)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 14,
   },
-  backdrop: { ...StyleSheet.absoluteFillObject },
+  backdrop: { ...StyleSheet.absoluteFill },
   formCard: {
     width: '100%',
     maxWidth: 520,

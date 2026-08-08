@@ -189,9 +189,9 @@ export default function ShimmerButton({
           colors={[...gradientColors] as [string, string]}
           start={{ x: 0, y: 0.5 }}
           end={{ x: 1, y: 0.5 }}
-          style={StyleSheet.absoluteFillObject as any}
+          style={StyleSheet.absoluteFill as any}
         />
-        <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFillObject, interactionOverlayStyle]} />
+        <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, interactionOverlayStyle]} />
 
         {/* ВОЛНА — плитка 2×w, внутри два одинаковых «тайла» шириной w */}
         <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, overlayStyle]}>
@@ -204,7 +204,7 @@ export default function ShimmerButton({
                 locations={[0, 0.5, 1]}
                 start={{ x: 0, y: 0.5 }}
                 end={{ x: 1, y: 0.5 }}
-                style={StyleSheet.absoluteFillObject as any}
+                style={StyleSheet.absoluteFill as any}
               />
             </Animated.View>
             {/* crest B */}
@@ -214,7 +214,7 @@ export default function ShimmerButton({
                 locations={[0.2, 0.5, 0.8]}
                 start={{ x: 0, y: 0.5 }}
                 end={{ x: 1, y: 0.5 }}
-                style={StyleSheet.absoluteFillObject as any}
+                style={StyleSheet.absoluteFill as any}
               />
             </Animated.View>
           </Animated.View>
@@ -227,7 +227,7 @@ export default function ShimmerButton({
                 locations={[0, 0.5, 1]}
                 start={{ x: 0, y: 0.5 }}
                 end={{ x: 1, y: 0.5 }}
-                style={StyleSheet.absoluteFillObject as any}
+                style={StyleSheet.absoluteFill as any}
               />
             </Animated.View>
             <Animated.View style={[styles.crestWrap, { transform: [{ rotateZ: '-12deg' }] }, crestBStyle]}>
@@ -236,7 +236,7 @@ export default function ShimmerButton({
                 locations={[0.2, 0.5, 0.8]}
                 start={{ x: 0, y: 0.5 }}
                 end={{ x: 1, y: 0.5 }}
-                style={StyleSheet.absoluteFillObject as any}
+                style={StyleSheet.absoluteFill as any}
               />
             </Animated.View>
           </Animated.View>

@@ -1,4 +1,4 @@
-const { AndroidConfig, withAndroidManifest, withDangerousMod } = require('@expo/config-plugins');
+const { AndroidConfig, withAndroidManifest, withDangerousMod } = require('expo/config-plugins');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -218,7 +218,7 @@ class UpdateGateActivity : Activity(), IUpdatesEventManagerObserver {
         showStatus("Запускаем приложение", "Подготавливаем рабочее пространство.", 1.0)
 
         controller = withContext(Dispatchers.IO) {
-          UpdatesController.initializeWithoutStarting(applicationContext)
+          UpdatesController.initializeWithoutStarting(applicationContext, BuildConfig.DEBUG)
           UpdatesController.instance
         }
 
@@ -274,7 +274,7 @@ class UpdateGateActivity : Activity(), IUpdatesEventManagerObserver {
     withContext(Dispatchers.IO) {
       runCatching {
         val activeController = controller ?: run {
-          UpdatesController.initializeWithoutStarting(applicationContext)
+          UpdatesController.initializeWithoutStarting(applicationContext, BuildConfig.DEBUG)
           UpdatesController.instance
         }
         activeController.start()

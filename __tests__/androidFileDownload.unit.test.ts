@@ -1,14 +1,14 @@
-const enqueue = jest.fn();
-const getAccessTokenForRequest = jest.fn();
+const mockEnqueue = jest.fn();
+const mockGetAccessTokenForRequest = jest.fn();
 
 jest.mock('@/utils/config', () => ({
   API_BASE_URL: 'http://192.168.1.96:3000',
 }));
 jest.mock('@/utils/tokenService', () => ({
-  getAccessTokenForRequest: (...args: unknown[]) => getAccessTokenForRequest(...args),
+  getAccessTokenForRequest: (...args: unknown[]) => mockGetAccessTokenForRequest(...args),
 }));
 jest.mock('react-native', () => ({
-  NativeModules: { LeaderDownloads: { enqueue: (...args: unknown[]) => enqueue(...args) } },
+  NativeModules: { LeaderDownloads: { enqueue: (...args: unknown[]) => mockEnqueue(...args) } },
   PermissionsAndroid: {
     PERMISSIONS: { WRITE_EXTERNAL_STORAGE: 'android.permission.WRITE_EXTERNAL_STORAGE' },
     RESULTS: { GRANTED: 'granted' },
@@ -22,13 +22,13 @@ import { enqueueAuthenticatedAndroidDownload } from '../utils/androidFileDownloa
 
 describe('Android system file download', () => {
   beforeEach(() => {
-    enqueue.mockReset();
-    getAccessTokenForRequest.mockReset();
+    mockEnqueue.mockReset();
+    mockGetAccessTokenForRequest.mockReset();
   });
 
   it('queues an authenticated PDF in Android DownloadManager', async () => {
-    getAccessTokenForRequest.mockResolvedValue('access-token');
-    enqueue.mockResolvedValue({
+    mockGetAccessTokenForRequest.mockResolvedValue('access-token');
+    mockEnqueue.mockResolvedValue({
       downloadId: '42',
       fileName: 'Счет.pdf',
       relativePath: 'Download/Счет.pdf',
@@ -40,7 +40,7 @@ describe('Android system file download', () => {
       mimeType: 'application/pdf',
     });
 
-    expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mockEnqueue).toHaveBeenCalledWith(expect.objectContaining({
       url: 'http://192.168.1.96:3000/api/client-orders/order-1/invoices/invoice-1/download',
       fileName: 'Счет.pdf',
       mimeType: 'application/pdf',

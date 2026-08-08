@@ -42,7 +42,7 @@ export const styles = StyleSheet.create({
     zIndex: 2,
   },
   desktopMapTint: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.12)',
   },
@@ -76,11 +76,11 @@ export const styles = StyleSheet.create({
     elevation: 20,
   },
   mobileFullMapLayer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 1,
   },
   mobileFullMapTint: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 2,
     backgroundColor: 'rgba(15, 23, 42, 0.05)',
   },

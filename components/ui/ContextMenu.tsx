@@ -5,6 +5,7 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  Modal,
   StyleProp,
   StyleSheet,
   Text,
@@ -93,7 +94,7 @@ export default function ContextMenu<TAction = string>({
     };
   }, [maxHeight, menuSize.height, menuSize.width, position?.x, position?.y, viewportHeight, viewportWidth, visibleItems.length]);
 
-  if (!visible || Platform.OS !== 'web' || typeof document === 'undefined') {
+  if (!visible) {
     return null;
   }
 
@@ -113,8 +114,8 @@ export default function ContextMenu<TAction = string>({
         } as any)
       : {};
 
-  const node = (
-    <View pointerEvents="box-none" style={styles.portalRoot as any}>
+  const menuContent = (
+    <View pointerEvents="box-none" style={Platform.OS === 'web' ? styles.portalRoot as any : styles.nativePortalRoot}>
       <Pressable style={styles.backdrop} onPress={onClose} {...backdropWebProps} />
       <View
         onLayout={(event) => {
@@ -182,7 +183,22 @@ export default function ContextMenu<TAction = string>({
     </View>
   );
 
-  return ReactDOM.createPortal(node as any, document.body);
+  if (Platform.OS !== 'web') {
+    return (
+      <Modal
+        transparent
+        visible
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={onClose}
+      >
+        {menuContent}
+      </Modal>
+    );
+  }
+
+  if (typeof document === 'undefined') return null;
+  return ReactDOM.createPortal(menuContent as any, document.body);
 }
 
 const styles = StyleSheet.create({
@@ -194,8 +210,11 @@ const styles = StyleSheet.create({
     left: 0,
     zIndex: 9999,
   } as any,
+  nativePortalRoot: {
+    flex: 1,
+  },
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'transparent',
   },
   menu: {
