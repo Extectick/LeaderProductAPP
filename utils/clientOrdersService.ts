@@ -56,6 +56,7 @@ export type ClientOrderOrganization = {
   name: string;
   code?: string | null;
   isActive?: boolean;
+  isSelectable?: boolean;
 };
 
 export type ClientOrderCounterpartyOption = {
@@ -127,6 +128,12 @@ export type ClientOrderWarehouseOption = {
   isDefault?: boolean;
   isPickup?: boolean;
   isActive?: boolean;
+  parentGuid?: string | null;
+  parentName?: string | null;
+  cityGuid?: string | null;
+  cityName?: string | null;
+  sortOrder?: number | null;
+  isSelectable?: boolean;
 };
 
 export type ClientOrderPriceTypeOption = {

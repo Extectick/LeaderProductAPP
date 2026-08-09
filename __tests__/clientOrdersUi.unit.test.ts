@@ -1,10 +1,12 @@
 import {
+  buildWarehousePickerRows,
   formatProductTransferLabel,
   formatStockInlineLabel,
   formatStockLabel,
   formatStockReserveLabel,
   getPickerItemMeta,
   isProductAlreadyInOrder,
+  isWarehousePickerGroupRow,
   resolveProductPickerPressAction,
   toggleProductSelection,
   transferSelectedProductsToOrder,
@@ -112,5 +114,29 @@ describe('clientOrdersUi', () => {
   it('formats product transfer button label', () => {
     expect(formatProductTransferLabel(1)).toBe('Перенести · 1 поз.');
     expect(formatProductTransferLabel(5)).toBe('Перенести · 5 поз.');
+  });
+
+  it('keeps the legacy flat warehouse list when hierarchy fields are absent', () => {
+    const items = [
+      { guid: 'warehouse-1', name: 'Склад 1' },
+      { guid: 'warehouse-2', name: 'Склад 2' },
+    ];
+
+    expect(buildWarehousePickerRows(items)).toEqual(items);
+  });
+
+  it('renders warehouse cities as expanded groups without changing warehouse names', () => {
+    const rows = buildWarehousePickerRows([
+      { guid: 'nsk-2', name: 'Склад Новосибирск Б', cityGuid: 'nsk', cityName: 'Новосибирск', sortOrder: 2 },
+      { guid: 'omsk-1', name: 'Склад Омск', cityGuid: 'omsk', cityName: 'Омск', sortOrder: 1 },
+      { guid: 'nsk-1', name: 'Склад Новосибирск А', cityGuid: 'nsk', cityName: 'Новосибирск', sortOrder: 1 },
+    ]);
+
+    expect(rows.filter(isWarehousePickerGroupRow).map((item) => item.name)).toEqual(['Омск', 'Новосибирск']);
+    expect(rows.filter((item) => !isWarehousePickerGroupRow(item)).map((item) => item.name)).toEqual([
+      'Склад Омск',
+      'Склад Новосибирск А',
+      'Склад Новосибирск Б',
+    ]);
   });
 });

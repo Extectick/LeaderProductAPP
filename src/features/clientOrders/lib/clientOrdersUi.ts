@@ -2,6 +2,7 @@ import type {
   ClientOrderCounterpartyOption,
   ClientOrderDeliveryAddressOption,
   ClientOrderProduct,
+  ClientOrderWarehouseOption,
 } from '@/utils/clientOrdersService';
 
 export type ClientOrdersPickerKind =
@@ -14,6 +15,67 @@ export type ClientOrdersPickerKind =
   | 'deliveryAddress'
   | 'priceType'
   | 'product';
+
+export type ClientOrderWarehouseGroupRow = {
+  __warehouseGroup: true;
+  __warehouseGroupKey: string;
+  name: string;
+  cityGuid: string | null;
+};
+
+export function isWarehousePickerGroupRow(item: unknown): item is ClientOrderWarehouseGroupRow {
+  return !!item && typeof item === 'object' && (item as ClientOrderWarehouseGroupRow).__warehouseGroup === true;
+}
+
+function warehouseGroupPriority(name: string) {
+  const normalized = name.trim().toLocaleLowerCase('ru');
+  if (normalized === 'омск') return 0;
+  if (normalized === 'новосибирск') return 1;
+  if (normalized === 'другие склады') return 1000;
+  return 100;
+}
+
+/**
+ * New API/1C versions add cityName/cityGuid while keeping the old flat items
+ * contract. If the fields are absent, return the original flat list so the
+ * updated app also works against an older backend during rolling deployment.
+ */
+export function buildWarehousePickerRows(
+  items: readonly ClientOrderWarehouseOption[]
+): Array<ClientOrderWarehouseOption | ClientOrderWarehouseGroupRow> {
+  if (!items.some((item) => !!item.cityName)) return [...items];
+
+  const groups = new Map<string, {
+    name: string;
+    cityGuid: string | null;
+    items: ClientOrderWarehouseOption[];
+  }>();
+  for (const item of items) {
+    const name = item.cityName?.trim() || 'Другие склады';
+    const key = (item.cityGuid?.trim() || `name:${name.toLocaleLowerCase('ru')}`).toLowerCase();
+    const group = groups.get(key) || { name, cityGuid: item.cityGuid || null, items: [] };
+    group.items.push(item);
+    groups.set(key, group);
+  }
+
+  return [...groups.entries()]
+    .sort(([, left], [, right]) => (
+      warehouseGroupPriority(left.name) - warehouseGroupPriority(right.name)
+      || left.name.localeCompare(right.name, 'ru', { sensitivity: 'base' })
+    ))
+    .flatMap(([key, group]) => [
+      {
+        __warehouseGroup: true as const,
+        __warehouseGroupKey: `warehouse-group:${key}`,
+        name: group.name,
+        cityGuid: group.cityGuid,
+      },
+      ...group.items.sort((left, right) => (
+        Number(left.sortOrder || 0) - Number(right.sortOrder || 0)
+        || left.name.localeCompare(right.name, 'ru', { numeric: true, sensitivity: 'base' })
+      )),
+    ]);
+}
 
 export function getPickerItemTitle(item: any) {
   return item?.name || item?.fullAddress || item?.number || item?.code || 'Без названия';

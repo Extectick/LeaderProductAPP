@@ -46,6 +46,7 @@ import {
   formatProductTransferLabel,
   formatStockQuantity,
   formatStockInlineLabel,
+  buildWarehousePickerRows,
   getPackageDisplayText,
   getPickerItemMeta,
   getPickerItemTitle,
@@ -53,6 +54,7 @@ import {
   isProductAlreadyInOrder,
   packageLabel,
   removeOrderItemsFromProductSelection,
+  isWarehousePickerGroupRow,
   resolveProductPickerPressAction,
   sortDeliveryAddressOptions,
   stockAvailableValue,
@@ -810,11 +812,14 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     linePriceTarget,
   }), [filterCounterparty, linePriceTarget, pickerKind, workspace]);
   const visiblePickerItems = React.useMemo(() => {
+    if (pickerKind === 'warehouse') {
+      return buildWarehousePickerRows(pickerItems as ClientOrderWarehouseOption[]);
+    }
     if (!pickerItems.length || !selectedPickerGuid) return pickerItems;
     const selectedItem = pickerItems.find((item) => item?.guid === selectedPickerGuid);
     if (!selectedItem) return pickerItems;
     return [selectedItem, ...pickerItems.filter((item) => item?.guid !== selectedPickerGuid)];
-  }, [pickerItems, selectedPickerGuid]);
+  }, [pickerItems, pickerKind, selectedPickerGuid]);
   React.useEffect(() => {
     setSelectedProducts((current) => removeOrderItemsFromProductSelection(current, workspace.draft.items));
   }, [workspace.draft.items]);
@@ -1191,7 +1196,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   }, [scrollPickerListToTop]);
 
   const loadPickerPage = React.useCallback(async (kind: PickerKind, search: string, offset = 0, append = false) => {
-    const pageSize = kind === 'product' ? PRODUCT_PICKER_PAGE_SIZE : PAGE_SIZE;
+    const pageSize = kind === 'product' ? PRODUCT_PICKER_PAGE_SIZE : kind === 'warehouse' ? 100 : PAGE_SIZE;
     const contextSignature = [
       workspace.draft.organizationGuid || '',
       workspace.draft.counterpartyGuid || '',
@@ -2493,6 +2498,14 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       : []
   ), [counterpartyManagerOnly, isCounterpartyPicker]);
   const renderReferencePickerItem = React.useCallback(({ item }: { item: any }) => {
+    if (isWarehousePickerGroupRow(item)) {
+      return (
+        <View style={styles.warehouseGroupHeader} accessibilityRole="header">
+          <MaterialCommunityIcons name="map-marker-outline" size={16} color="#475569" />
+          <Text style={styles.warehouseGroupHeaderText}>{item.name}</Text>
+        </View>
+      );
+    }
     const isSelected = !!selectedPickerGuid && selectedPickerGuid === item.guid;
     const description = getPickerItemMeta(pickerKind, item) || '';
     return (
@@ -3001,7 +3014,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
           filters={pickerFilters}
           data={visiblePickerItems}
           extraData={`${pickerKind}:${selectedPickerGuid || ''}:${counterpartyManagerOnly ? 'my-clients' : 'all-clients'}`}
-          keyExtractor={(item, index) => String(item?.guid || item?.id || item?.name || item?.fullAddress || `${pickerKind}-${index}`)}
+          keyExtractor={(item, index) => String(item?.__warehouseGroupKey || item?.guid || item?.id || item?.name || item?.fullAddress || `${pickerKind}-${index}`)}
           renderItem={renderReferencePickerItem}
           listRef={pickerListRef}
           contentContainerStyle={[styles.pickerListContent, { paddingBottom: Math.max(safeBottom, 10) + 22 }]}
@@ -8433,6 +8446,8 @@ const styles = StyleSheet.create({
   pickerSearchInputFlat: { fontSize: 13, color: '#0F172A', fontWeight: '800' },
   pickerListContent: { paddingBottom: 20, flexGrow: 1 },
   pickerFlatRow: { minHeight: 54, borderBottomWidth: 1, borderBottomColor: '#E2E8F0', backgroundColor: '#FFFFFF', paddingLeft: 10, paddingRight: 8, paddingVertical: 6, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  warehouseGroupHeader: { minHeight: 38, paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#D8E2F0', backgroundColor: '#F1F5F9', flexDirection: 'row', alignItems: 'center', gap: 7 },
+  warehouseGroupHeaderText: { color: '#334155', fontSize: 12, lineHeight: 16, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 0.35 },
   productPickerRow: { minHeight: 84, paddingLeft: 5, paddingRight: 10, paddingVertical: 2, gap: 8 },
   pickerFlatRowSelected: { borderColor: '#BFDBFE', backgroundColor: '#EFF6FF' },
   productPickerThumb: { width: 80, height: 80, borderRadius: 10, backgroundColor: 'transparent' },

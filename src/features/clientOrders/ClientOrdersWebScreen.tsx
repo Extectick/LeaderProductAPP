@@ -26,6 +26,7 @@ import {
   formatDateOnly,
   formatProductTransferLabel,
   formatStockLabel,
+  buildWarehousePickerRows,
   getCounterpartyTaxMeta,
   getPackageDisplayText,
   getPickerItemMeta,
@@ -33,6 +34,7 @@ import {
   getQuantityInputWidthPx,
   hasSinglePackage,
   isProductAlreadyInOrder,
+  isWarehousePickerGroupRow,
   packageLabel,
   pickerNeedsOrderContext,
   removeOrderItemsFromProductSelection,
@@ -1367,6 +1369,11 @@ export default function ClientOrdersWebScreen() {
   const hasOrderContext = !!draftOrganizationGuid && !!draftCounterpartyGuid;
   const canLoadMorePickerItems = !!pickerKind && pickerHasMore && !pickerLoading;
   const selectedProductCount = selectedProducts.size;
+  const pickerDisplayItems = React.useMemo(() => (
+    pickerKind === 'warehouse'
+      ? buildWarehousePickerRows(pickerItems as ClientOrderWarehouseOption[])
+      : pickerItems
+  ), [pickerItems, pickerKind]);
   const showOrdersPane = !isSinglePane || responsivePane === 'orders';
   const showEditorPane = !isSinglePane || responsivePane === 'editor';
 
@@ -1589,6 +1596,7 @@ export default function ClientOrdersWebScreen() {
   }, []);
 
   const loadPickerPage = React.useCallback(async (kind: PickerKind, search: string, offset = 0, append = false) => {
+    const pageSize = kind === 'warehouse' ? 100 : 25;
     const contextSignature = [
       draftOrganizationGuid || '',
       draftCounterpartyGuid || '',
@@ -1616,33 +1624,33 @@ export default function ClientOrdersWebScreen() {
       if (kind === 'organization') {
         const all = settings?.organizations || [];
         const filtered = all.filter((item) => !search || item.name.toLowerCase().includes(search.toLowerCase()) || (item.code || '').toLowerCase().includes(search.toLowerCase()));
-        const slice = filtered.slice(offset, offset + 25);
+        const slice = filtered.slice(offset, offset + pageSize);
         if (pickerRequestIdRef.current !== requestId) return;
         setPickerItems((prev) => (append ? [...prev, ...slice] : slice));
         setPickerOffset(offset + slice.length);
-        setPickerHasMore(hasMorePage(slice.length, 25, offset, filtered.length));
+        setPickerHasMore(hasMorePage(slice.length, pageSize, offset, filtered.length));
         return;
       }
       let result;
       switch (kind) {
         case 'filterCounterparty':
         case 'counterparty':
-          result = await searchCounterparties({ search, limit: 25, offset, managerOnly: counterpartyManagerOnly });
+          result = await searchCounterparties({ search, limit: pageSize, offset, managerOnly: counterpartyManagerOnly });
           break;
         case 'agreement':
-          result = await searchAgreements({ organizationGuid: draftOrganizationGuid, counterpartyGuid: draftCounterpartyGuid, search, limit: 25, offset });
+          result = await searchAgreements({ organizationGuid: draftOrganizationGuid, counterpartyGuid: draftCounterpartyGuid, search, limit: pageSize, offset });
           break;
         case 'contract':
-          result = await searchContracts({ counterpartyGuid: draftCounterpartyGuid, search, limit: 25, offset });
+          result = await searchContracts({ counterpartyGuid: draftCounterpartyGuid, search, limit: pageSize, offset });
           break;
         case 'warehouse':
-          result = await searchWarehouses({ organizationGuid: draftOrganizationGuid, counterpartyGuid: draftCounterpartyGuid, search, limit: 25, offset });
+          result = await searchWarehouses({ organizationGuid: draftOrganizationGuid, counterpartyGuid: draftCounterpartyGuid, search, limit: pageSize, offset });
           break;
         case 'deliveryAddress':
-          result = await searchDeliveryAddresses({ organizationGuid: draftOrganizationGuid, counterpartyGuid: draftCounterpartyGuid, search, limit: 25, offset });
+          result = await searchDeliveryAddresses({ organizationGuid: draftOrganizationGuid, counterpartyGuid: draftCounterpartyGuid, search, limit: pageSize, offset });
           break;
         case 'priceType':
-          result = await searchPriceTypes({ search, limit: 25, offset });
+          result = await searchPriceTypes({ search, limit: pageSize, offset });
           break;
         case 'product':
           result = await searchProducts({
@@ -1653,7 +1661,7 @@ export default function ClientOrdersWebScreen() {
             warehouseGuid: draftWarehouseGuid || undefined,
             priceTypeGuid: draftPriceTypeGuid || undefined,
             inStockOnly: productInStockOnly,
-            limit: 25,
+            limit: pageSize,
             offset,
           });
           break;
@@ -1667,7 +1675,7 @@ export default function ClientOrdersWebScreen() {
         return kind === 'deliveryAddress' ? sortDeliveryAddressOptions(merged as any[]) : merged;
       });
       setPickerOffset(offset + nextItems.length);
-      setPickerHasMore(hasMorePage(nextItems.length, 25, offset, result?.meta?.total));
+      setPickerHasMore(hasMorePage(nextItems.length, pageSize, offset, result?.meta?.total));
     } catch {
       if (pickerRequestIdRef.current === requestId) {
         setPickerHasMore(false);
@@ -3448,7 +3456,28 @@ export default function ClientOrdersWebScreen() {
             {!pickerLoading && pickerItems.length === 0 && !(pickerNeedsOrderContext(pickerKind) && !hasOrderContext) ? (
               <Typography sx={{ px: 2, py: 1.5, color: '#64748B', borderBottom: '1px solid #D8E2F0' }}>Ничего не найдено.</Typography>
             ) : null}
-            {pickerItems.map((item: any, index) => {
+            {pickerDisplayItems.map((item: any, index) => {
+              if (isWarehousePickerGroupRow(item)) {
+                return (
+                  <Box
+                    key={item.__warehouseGroupKey}
+                    sx={{
+                      minHeight: 38,
+                      px: 1.5,
+                      py: 0.8,
+                      borderBottom: '1px solid #D8E2F0',
+                      bgcolor: '#F1F5F9',
+                      color: '#334155',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 0.75,
+                    }}
+                  >
+                    <Ionicons name="location-outline" size={16} color="#475569" />
+                    <Typography sx={{ fontSize: 12, fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.035em' }}>{item.name}</Typography>
+                  </Box>
+                );
+              }
               const alreadyInOrder = pickerKind === 'product' && isProductAlreadyInOrder(item as ClientOrderProduct, workspace.draft.items);
               const selected = pickerKind === 'product' && !!item.guid && selectedProducts.has(item.guid);
               return (
