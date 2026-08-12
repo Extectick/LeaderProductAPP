@@ -85,10 +85,10 @@ export default function AdminScreen() {
     <View style={[styles.root, { backgroundColor: background }]}>
       <View
         style={[
-          styles.container,
+          isDesktop ? styles.container : styles.mobileContainer,
           {
             paddingTop: topInset,
-            paddingBottom: isDesktop ? 0 : tabBarSpacer + 16,
+            paddingBottom: isDesktop ? 0 : tabBarSpacer,
           },
         ]}
       >

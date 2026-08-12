@@ -13,7 +13,7 @@ type Props = {
 
 export default function AdminTabsBar({ activeKey, tabs, compact, onChange }: Props) {
   return (
-    <Surface mode="flat" style={styles.tabsSurface}>
+    <Surface mode="flat" style={[styles.tabsSurface, compact ? styles.tabsSurfaceCompact : null]}>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -24,11 +24,11 @@ export default function AdminTabsBar({ activeKey, tabs, compact, onChange }: Pro
           return (
             <Button
               key={tab.key}
-              mode={active ? 'contained-tonal' : 'outlined'}
-              icon={compact ? undefined : tab.icon}
+              mode={active ? 'contained-tonal' : compact ? 'text' : 'outlined'}
+              icon={tab.icon}
               compact={compact}
               onPress={() => onChange(tab.key)}
-              style={styles.tabButton}
+              style={[styles.tabButton, compact ? styles.tabButtonCompact : null]}
               labelStyle={compact ? styles.tabButtonLabelCompact : undefined}
             >
               {tab.label}

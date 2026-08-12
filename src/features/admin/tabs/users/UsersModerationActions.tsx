@@ -11,6 +11,7 @@ type Props = {
   onApprove: () => void;
   onReject: () => void;
   onEdit: () => void;
+  showEdit?: boolean;
 };
 
 export function UsersModerationActions({
@@ -20,6 +21,7 @@ export function UsersModerationActions({
   onApprove,
   onReject,
   onEdit,
+  showEdit = true,
 }: Props) {
   return (
     <View style={styles.actions}>
@@ -49,9 +51,11 @@ export function UsersModerationActions({
       ) : (
         <Text variant="bodySmall" style={styles.actionHint}>Модерация не требуется</Text>
       )}
-      <Button compact mode="outlined" icon="pencil-outline" onPress={onEdit}>
-        Редактировать
-      </Button>
+      {showEdit ? (
+        <Button compact mode="outlined" icon="pencil-outline" onPress={onEdit}>
+          Редактировать
+        </Button>
+      ) : null}
     </View>
   );
 }

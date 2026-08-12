@@ -27,6 +27,11 @@ export const styles = StyleSheet.create({
       default: {},
     }),
   },
+  mobileContainer: {
+    flex: 1,
+    width: '100%',
+    minHeight: 0,
+  },
   panel: {
     flex: 1,
     minHeight: 0,
@@ -45,6 +50,13 @@ export const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 6,
   },
+  tabsSurfaceCompact: {
+    borderRadius: 0,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#E2E8F0',
+  },
   tabsContent: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -52,6 +64,9 @@ export const styles = StyleSheet.create({
   },
   tabButton: {
     borderRadius: 999,
+  },
+  tabButtonCompact: {
+    borderRadius: 10,
   },
   tabButtonLabelCompact: {
     fontSize: 12,
@@ -64,7 +79,14 @@ export const styles = StyleSheet.create({
   mobileLayout: {
     flex: 1,
     minHeight: 0,
-    gap: 10,
+  },
+  mobilePanelContent: {
+    flex: 1,
+    minHeight: 0,
+  },
+  mobilePanelContentPadded: {
+    paddingHorizontal: 10,
+    paddingTop: 10,
   },
   sectionCard: {
     borderRadius: 14,

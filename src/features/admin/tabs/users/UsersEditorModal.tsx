@@ -1,10 +1,15 @@
 import React from 'react';
 import {
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Dropdown from '@/components/ui/Dropdown';
 import {
   listOnecLpAppPhysicalPersons,
@@ -389,6 +394,9 @@ export function UsersEditorModal({
   onSave,
   onChangeEditor,
 }: Props) {
+  const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const isMobile = Platform.OS !== 'web' || width < 980;
   const handleClose = React.useCallback(() => {
     if (saving) return;
     onClose();
@@ -457,18 +465,33 @@ export function UsersEditorModal({
     [styles.userEditorReadonly, styles.userEditorReadonlyText]
   );
 
-  return (
-    <Portal>
-      <Dialog visible={visible} onDismiss={handleClose} style={styles.userEditorPaperDialog}>
-        {!editor ? (
-          <Dialog.Content>
-            <PaperActivityIndicator style={{ marginVertical: 20 }} />
-          </Dialog.Content>
-        ) : (
+  const editorContent = !editor ? (
+    <View style={styles.userEditorLoading}>
+      <PaperActivityIndicator />
+      <Text style={styles.userEditorMuted}>Загружаем пользователя</Text>
+    </View>
+  ) : (
           <View style={styles.userEditorModalCard}>
-              <View style={styles.userEditorHeader}>
-                <Text style={styles.sectionTitle}>Редактирование пользователя #{editorUserId}</Text>
-                <Text style={styles.sub}>{activeProfileTypeLabel(editor.currentProfileType)}</Text>
+              <View
+                style={[
+                  styles.userEditorHeader,
+                  isMobile
+                    ? {
+                        paddingTop: Math.max(insets.top, 8),
+                        minHeight: 58 + Math.max(insets.top - 8, 0),
+                      }
+                    : null,
+                ]}
+              >
+                <View style={styles.userEditorHeaderText}>
+                  <Text style={styles.sectionTitle}>Пользователь #{editorUserId}</Text>
+                  <Text numberOfLines={1} style={styles.sub}>{activeProfileTypeLabel(editor.currentProfileType)}</Text>
+                </View>
+                {isMobile ? (
+                  <PaperButton compact icon="close" disabled={saving} onPress={handleClose}>
+                    Закрыть
+                  </PaperButton>
+                ) : null}
               </View>
 
               <ScrollView
@@ -742,26 +765,53 @@ export function UsersEditorModal({
                 </View>
               </ScrollView>
 
-              <View style={styles.userEditorFooter}>
-                <PaperButton disabled={saving} onPress={handleClose} mode="outlined">
+              <View
+                style={[
+                  styles.userEditorFooter,
+                  isMobile ? { paddingBottom: Math.max(insets.bottom, 10) } : null,
+                ]}
+              >
+                {!isMobile ? <PaperButton disabled={saving} onPress={handleClose} mode="outlined">
                   <Text style={styles.btnText}>Закрыть</Text>
-                </PaperButton>
+                </PaperButton> : null}
 
                 <PaperButton
                   disabled={saving}
                   onPress={onSave}
                   mode="contained"
                   loading={saving}
+                  icon={saving ? undefined : 'content-save-outline'}
+                  style={isMobile ? styles.userEditorSaveButtonMobile : undefined}
                 >
-                  {saving ? (
-                    <PaperActivityIndicator size="small" />
-                  ) : (
-                    <Text style={[styles.btnText, styles.userEditorSaveText]}>Сохранить</Text>
-                  )}
+                  Сохранить
                 </PaperButton>
               </View>
           </View>
-        )}
+  );
+
+  if (isMobile) {
+    return (
+      <Modal
+        visible={visible}
+        animationType="slide"
+        presentationStyle="fullScreen"
+        statusBarTranslucent={false}
+        onRequestClose={handleClose}
+      >
+        <KeyboardAvoidingView
+          style={[styles.userEditorFullscreen, { backgroundColor: colors.cardBackground }]}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          {editorContent}
+        </KeyboardAvoidingView>
+      </Modal>
+    );
+  }
+
+  return (
+    <Portal>
+      <Dialog visible={visible} onDismiss={handleClose} style={styles.userEditorPaperDialog}>
+        {editorContent}
       </Dialog>
     </Portal>
   );

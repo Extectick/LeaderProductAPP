@@ -1,12 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  FlatList,
+  Modal,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   ScrollView,
   useWindowDimensions,
   View,
 } from 'react-native';
-import { ActivityIndicator, Button, Chip, Dialog, IconButton, Portal, Text, TextInput } from 'react-native-paper';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ActivityIndicator, Button, Chip, IconButton, Text, TextInput } from 'react-native-paper';
 
 import { useTabBarSpacerHeight } from '@/components/Navigation/TabBarSpacer';
 import { useNotify } from '@/components/NotificationHost';
@@ -50,6 +53,7 @@ type ConfirmAction = {
 export default function UsersTab({ active, colors, queuedUserId, onConsumeQueuedUser }: Props) {
   const { width } = useWindowDimensions();
   const tabBarSpacer = useTabBarSpacerHeight();
+  const insets = useSafeAreaInsets();
   const notify = useNotify();
   const desktop = width >= 1200;
   const {
@@ -199,7 +203,7 @@ export default function UsersTab({ active, colors, queuedUserId, onConsumeQueued
   if (!active) return <View style={{ display: 'none' }} />;
 
   return (
-    <View style={styles.root}>
+    <View style={[styles.root, !desktop ? styles.rootMobile : null]}>
       <View style={[styles.toolbar, !desktop && styles.toolbarCompact]}>
         <View style={[styles.toolbarTopRow, !desktop && styles.toolbarTopRowCompact]}>
           <View style={styles.toolbarSearchCol}>
@@ -296,47 +300,68 @@ export default function UsersTab({ active, colors, queuedUserId, onConsumeQueued
           </View>
         </View>
       ) : (
-        <ScrollView
-          contentContainerStyle={{ paddingBottom: tabBarSpacer + 12 }}
-          onScroll={handleListScroll}
-          scrollEventThrottle={16}
-        >
-          {loading ? <ActivityIndicator style={{ marginVertical: 20 }} /> : null}
-          {!loading && !items.length ? <Text style={styles.empty}>Пользователи не найдены</Text> : null}
-          <View style={styles.mobileList}>
-            {items.map((item) => (
-              <View key={item.id} style={styles.mobileCard}>
-                <UsersListItemCard
-                  item={item}
-                  styles={styles}
-                  selectable={false}
-                  actionBusy={actionBusyId === item.id}
-                  onApprove={() => setConfirmAction({ item, action: 'APPROVE' })}
-                  onReject={() => openRejectModal(item)}
-                  onEdit={() => void openEditor(item.id)}
-                  onAvatarPress={() => void openEditor(item.id)}
-                />
-              </View>
-            ))}
-          </View>
-          {loadingMore ? <ActivityIndicator style={styles.loadMoreInlineIndicator} /> : null}
-        </ScrollView>
+        <FlatList
+          style={styles.mobileList}
+          data={items}
+          keyExtractor={(item) => String(item.id)}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{ paddingBottom: tabBarSpacer + 12, flexGrow: items.length ? 0 : 1 }}
+          onEndReachedThreshold={0.35}
+          onEndReached={() => {
+            if (!hasNextPage || loading || loadingMore || loadMoreLockRef.current) return;
+            loadMoreLockRef.current = true;
+            void loadMore();
+          }}
+          ListHeaderComponent={loading ? <ActivityIndicator style={{ marginVertical: 20 }} /> : null}
+          ListEmptyComponent={!loading ? <Text style={styles.empty}>Пользователи не найдены</Text> : null}
+          ListFooterComponent={loadingMore ? <ActivityIndicator style={styles.loadMoreInlineIndicator} /> : null}
+          renderItem={({ item }) => (
+            <View style={styles.mobileCard}>
+              <UsersListItemCard
+                item={item}
+                styles={styles}
+                selectable={false}
+                flat
+                actionBusy={actionBusyId === item.id}
+                onApprove={() => setConfirmAction({ item, action: 'APPROVE' })}
+                onReject={() => openRejectModal(item)}
+                onEdit={() => void openEditor(item.id)}
+                onAvatarPress={() => void openEditor(item.id)}
+              />
+            </View>
+          )}
+        />
       )}
 
-      <Portal>
-        <Dialog visible={!desktop && mobileFiltersVisible} onDismiss={() => setMobileFiltersVisible(false)}>
-          <Dialog.Title>Фильтры пользователей</Dialog.Title>
-          <Dialog.ScrollArea>
-            <ScrollView contentContainerStyle={styles.filtersModalContent}>
-              {renderFilters(true)}
-            </ScrollView>
-          </Dialog.ScrollArea>
-          <Dialog.Actions>
+      <Modal
+        visible={!desktop && mobileFiltersVisible}
+        animationType="slide"
+        presentationStyle="fullScreen"
+        onRequestClose={() => setMobileFiltersVisible(false)}
+      >
+        <View
+          style={[
+            styles.filtersFullscreen,
+            {
+              backgroundColor: colors.cardBackground,
+              paddingTop: Math.max(insets.top, 10),
+              paddingBottom: Math.max(insets.bottom, 10),
+            },
+          ]}
+        >
+          <View style={styles.filtersFullscreenHeader}>
+            <Text variant="titleLarge" style={styles.sectionTitle}>Фильтры</Text>
+            <IconButton icon="close" onPress={() => setMobileFiltersVisible(false)} />
+          </View>
+          <ScrollView contentContainerStyle={styles.filtersModalContent}>
+            {renderFilters(true)}
+          </ScrollView>
+          <View style={styles.filtersFullscreenFooter}>
             <Button icon="refresh" disabled={!hasActiveFilters} onPress={resetFilters}>Сбросить</Button>
-            <Button mode="contained" onPress={() => setMobileFiltersVisible(false)}>Готово</Button>
-          </Dialog.Actions>
-        </Dialog>
-      </Portal>
+            <Button mode="contained" onPress={() => setMobileFiltersVisible(false)}>Применить</Button>
+          </View>
+        </View>
+      </Modal>
 
       <UsersRejectReasonModal
         visible={!!rejectTarget}

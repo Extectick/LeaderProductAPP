@@ -1,6 +1,6 @@
 import React from 'react';
 import { View } from 'react-native';
-import { Avatar, Card, Chip, Text, TouchableRipple } from 'react-native-paper';
+import { Avatar, Card, Chip, IconButton, Text, TouchableRipple } from 'react-native-paper';
 import { getRoleDisplayName } from '@/utils/rbacLabels';
 import type { AdminUsersListItem } from '@/utils/userService';
 import {
@@ -11,6 +11,7 @@ import {
   moderationLabel,
   moderationTone,
   nameOf,
+  needsModeration,
   onlineTone,
   shortTime,
 } from './usersTab.helpers';
@@ -31,6 +32,7 @@ type Props = {
   showChannels?: boolean;
   showActions?: boolean;
   footerSlot?: React.ReactNode;
+  flat?: boolean;
 };
 
 export function UsersListItemCard({
@@ -48,6 +50,7 @@ export function UsersListItemCard({
   showChannels = true,
   showActions = true,
   footerSlot,
+  flat = false,
 }: Props) {
   const moderation = moderationTone(item.moderationState);
   const online = onlineTone(item.isOnline);
@@ -57,15 +60,84 @@ export function UsersListItemCard({
   const emailOrPhone = item.email || formatPhone(item.phone) || 'Нет контактов';
   const activityText = item.isOnline ? 'Онлайн сейчас' : formatLastSeen(item.lastSeenAt);
 
+  if (flat) {
+    return (
+      <View style={styles.flatUserItem}>
+        <TouchableRipple onPress={onEdit ?? onSelect}>
+          <View style={styles.flatUserMain}>
+            <View style={styles.flatUserAvatar}>
+              {item.avatarUrl ? (
+                <Avatar.Image source={{ uri: item.avatarUrl }} size={42} />
+              ) : (
+                <Avatar.Text label={initialsOf(item)} size={42} />
+              )}
+              <View style={[styles.onlineDot, { backgroundColor: item.isOnline ? '#22C55E' : '#94A3B8' }]} />
+            </View>
+
+            <View style={styles.flatUserInfo}>
+              <View style={styles.flatUserTitleRow}>
+                <Text numberOfLines={1} variant="titleSmall" style={styles.rowName}>
+                  {displayName}
+                </Text>
+                <Text style={styles.flatUserId}>#{item.id}</Text>
+              </View>
+              <Text numberOfLines={1} style={styles.rowMetaLine}>
+                {roleName} · {departmentName}
+              </Text>
+              <Text numberOfLines={1} style={styles.rowMetaLine}>
+                {emailOrPhone} · {activityText}
+              </Text>
+              <View style={styles.flatUserBadges}>
+                <Text style={[styles.flatUserBadgeText, { color: moderation.text }]}>
+                  {moderationLabel(item.moderationState)}
+                </Text>
+                <Text style={[styles.flatUserBadgeText, { color: online.text }]}>{online.textValue}</Text>
+              </View>
+            </View>
+
+            <IconButton
+              icon="pencil-outline"
+              size={20}
+              onPress={(event) => {
+                event.stopPropagation?.();
+                onEdit?.();
+              }}
+              accessibilityLabel={`Редактировать пользователя ${displayName}`}
+              style={styles.flatUserEditButton}
+            />
+          </View>
+        </TouchableRipple>
+
+        {showActions && needsModeration(item) && onApprove && onReject && onEdit ? (
+          <View style={styles.flatUserModeration}>
+            <UsersModerationActions
+              item={item}
+              styles={styles}
+              actionBusy={actionBusy}
+              onApprove={onApprove}
+              onReject={onReject}
+              onEdit={onEdit}
+              showEdit={false}
+            />
+          </View>
+        ) : null}
+      </View>
+    );
+  }
+
   return (
-    <View style={styles.rowWrap}>
+    <View style={[styles.rowWrap, flat ? styles.rowWrapFlat : null]}>
       <Card
         mode="outlined"
         onPress={selectable ? onSelect : undefined}
-        style={[styles.paperUserCard, selectable && isSelected ? styles.paperUserCardSelected : null]}
-        contentStyle={styles.paperUserCardInner}
+        style={[
+          styles.paperUserCard,
+          flat ? styles.paperUserCardFlat : null,
+          selectable && isSelected ? styles.paperUserCardSelected : null,
+        ]}
+        contentStyle={[styles.paperUserCardInner, flat ? styles.paperUserCardInnerFlat : null]}
       >
-        <Card.Content style={styles.paperUserCardInner}>
+        <Card.Content style={[styles.paperUserCardInner, flat ? styles.paperUserCardInnerFlat : null]}>
           <View style={styles.rowHeader}>
             <Text variant="labelMedium" style={styles.rowId}>#{item.id}</Text>
             <Text variant="labelSmall" style={styles.rowTime}>{shortTime(item.lastSeenAt)}</Text>
