@@ -57,6 +57,8 @@ export type DraftItem = {
 
 export type DraftOrder = {
   guid?: string | null;
+  clientOrderId?: string | null;
+  clientRevision: number;
   revision: number;
   organizationGuid: string;
   counterpartyGuid: string;
@@ -396,6 +398,14 @@ export function makeLineGuid() {
   return makeKey();
 }
 
+export function makeClientOrderId() {
+  const bytes = Array.from({ length: 16 }, () => Math.floor(Math.random() * 256));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.map((value) => value.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 function formatLocalDateOnly(date: Date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -421,6 +431,8 @@ export function getDefaultClientOrderDeliveryDate(now = new Date()) {
 
 export function emptyDraft(): DraftOrder {
   return {
+    clientOrderId: makeClientOrderId(),
+    clientRevision: 0,
     revision: 0,
     organizationGuid: '',
     counterpartyGuid: '',
@@ -564,6 +576,8 @@ export function normalizeDraftOrder(draft: DraftOrder, previousDraft?: DraftOrde
 
   const normalized: DraftOrder = {
     ...draft,
+    clientOrderId: draft.clientOrderId ? asInputString(draft.clientOrderId) : null,
+    clientRevision: Number.isFinite(Number(draft.clientRevision)) ? Math.max(0, Number(draft.clientRevision)) : 0,
     organizationGuid: asInputString(draft.organizationGuid),
     counterpartyGuid: asInputString(draft.counterpartyGuid),
     agreementGuid: asInputString(draft.agreementGuid),
@@ -860,6 +874,8 @@ export function orderToDraft(order: ClientOrder): DraftOrder {
   const headerPriceType = order.priceType ?? orderItems.find((item) => item.priceType?.guid)?.priceType ?? order.agreement?.priceType ?? null;
   return {
     guid: order.guid,
+    clientOrderId: order.clientOrderId ?? null,
+    clientRevision: Number(order.clientRevision ?? 0),
     revision: order.revision,
     organizationGuid: order.organization?.guid ?? '',
     counterpartyGuid: order.counterparty?.guid ?? '',

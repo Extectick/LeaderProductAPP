@@ -296,6 +296,8 @@ export type ClientOrderInvoice = {
 
 export type ClientOrder = {
   guid: string;
+  clientOrderId?: string | null;
+  clientRevision?: number | null;
   appGuid?: string | null;
   documentGuid?: string | null;
   number1c?: string | null;
@@ -820,6 +822,26 @@ export async function createClientOrder(payload: any) {
     body: payload,
   });
   if (!res.ok || !res.data) throwApiError('Не удалось создать заказ клиента', res);
+  return normalizeClientOrder(res.data);
+}
+
+export async function putClientOrderByClientId(
+  clientOrderId: string,
+  payload: any,
+  options: { clientRevision: number; intent: 'SAVE' | 'SUBMIT' }
+) {
+  const body = { ...payload, ...options };
+  const res = await apiClient<typeof body, ClientOrder>(
+    API_ENDPOINTS.CLIENT_ORDERS.BY_CLIENT_ID(clientOrderId),
+    {
+      method: 'PUT',
+      body,
+      timeoutMs: CLIENT_ORDERS_REQUEST_TIMEOUT_MS,
+    }
+  );
+  if (!res.ok || !res.data) {
+    throwApiError('Не удалось сохранить заказ клиента', res);
+  }
   return normalizeClientOrder(res.data);
 }
 

@@ -13,6 +13,7 @@ import {
   getClientOrderSettings,
   getClientOrders,
   getClientOrdersTodaySummary,
+  putClientOrderByClientId,
   searchClientOrderAgreements,
   searchClientOrderContracts,
   searchClientOrderCounterparties,
@@ -56,6 +57,7 @@ import {
   getOrderDisplayStatus,
   mergeDraftPackagesForProduct,
   makeKey,
+  makeClientOrderId,
   makeLineGuid,
   getOrderActivityAt,
   hasManualPrice,
@@ -77,7 +79,7 @@ import {
 } from './lib/clientOrderInvoices';
 
 type AutosaveState = 'idle' | 'saved' | 'error';
-type SaveOptions = { silent?: boolean; reason?: 'manual' | 'autosave' };
+type SaveOptions = { silent?: boolean; reason?: 'manual' | 'autosave'; intent?: 'SAVE' | 'SUBMIT' };
 type DiscardDecision = 'save' | 'discard' | 'cancel';
 type DiscardConfirmContext = {
   draftMode: boolean;
@@ -101,6 +103,9 @@ type DraftSelections = {
 type ClientOrderSavePayload = ReturnType<typeof buildPayload>;
 type DeviceDraftEntry = {
   id: string;
+  clientOrderId: string;
+  clientRevision: number;
+  intent: 'SAVE' | 'SUBMIT';
   serverGuid: string | null;
   serverRevision: number | null;
   order: ClientOrder;
@@ -387,6 +392,17 @@ function sanitizeDeviceDraftEntries(value: unknown): DeviceDraftEntry[] {
     if (!raw.payload || typeof raw.payload !== 'object') return [];
     return [{
       id: raw.id,
+      clientOrderId:
+        typeof raw.clientOrderId === 'string' && raw.clientOrderId
+          ? raw.clientOrderId
+          : typeof (raw.order as ClientOrder).clientOrderId === 'string' && (raw.order as ClientOrder).clientOrderId
+            ? (raw.order as ClientOrder).clientOrderId!
+            : `legacy:${raw.id}`,
+      clientRevision:
+        typeof raw.clientRevision === 'number' && Number.isFinite(raw.clientRevision)
+          ? Math.max(1, raw.clientRevision)
+          : Math.max(1, Number((raw.order as ClientOrder).clientRevision || 1)),
+      intent: raw.intent === 'SUBMIT' ? 'SUBMIT' : 'SAVE',
       serverGuid: typeof raw.serverGuid === 'string' && raw.serverGuid ? raw.serverGuid : null,
       serverRevision: typeof raw.serverRevision === 'number' ? raw.serverRevision : null,
       order: {
@@ -938,6 +954,8 @@ function buildDeviceOrderFromDraft(args: {
 
   return {
     guid,
+    clientOrderId: draft.clientOrderId ?? null,
+    clientRevision: draft.clientRevision,
     appGuid: guid,
     documentGuid: guid,
     number1c: null,
@@ -1251,7 +1269,16 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     // Only device drafts need local ordering and pinning above server results.
     const sortedDeviceOrders = sortClientOrdersForWorkspace(visibleDeviceOrders);
     const deviceGuids = new Set(sortedDeviceOrders.map((order) => order.guid));
-    return [...sortedDeviceOrders, ...visibleApiOrders.filter((order) => !deviceGuids.has(order.guid))];
+    const deviceClientOrderIds = new Set(
+      sortedDeviceOrders.map((order) => order.clientOrderId).filter(Boolean)
+    );
+    return [
+      ...sortedDeviceOrders,
+      ...visibleApiOrders.filter((order) => (
+        !deviceGuids.has(order.guid)
+        && (!order.clientOrderId || !deviceClientOrderIds.has(order.clientOrderId))
+      )),
+    ];
   }, [visibleApiOrders, visibleDeviceOrders]);
   const latestDraftOrder = React.useMemo(() => sortedOrders.find((item) => item.status === 'DRAFT') || null, [sortedOrders]);
   const pendingInvoiceIdentifiers = React.useMemo(
@@ -1625,6 +1652,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     setDraft((prev) => normalizeDraftOrder({
       ...prev,
       guid: order.guid,
+      clientOrderId: order.clientOrderId ?? prev.clientOrderId ?? null,
+      clientRevision: Number(order.clientRevision ?? prev.clientRevision ?? 0),
       revision: order.revision,
       deliveryDate: order.deliveryDate ?? prev.deliveryDate ?? null,
       comment: order.comment ?? prev.comment,
@@ -1806,26 +1835,44 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     replaceDeviceDraftEntries(next);
   }, [replaceDeviceDraftEntries]);
 
-  const saveDraftOnDevice = React.useCallback((payload: ClientOrderSavePayload, syncError?: string | null) => {
+  const saveDraftOnDevice = React.useCallback((
+    payload: ClientOrderSavePayload,
+    syncError?: string | null,
+    operation?: { clientOrderId: string; clientRevision: number; intent: 'SAVE' | 'SUBMIT' }
+  ) => {
     const nowIso = new Date().toISOString();
     const existing = findDeviceDraftEntry(draft.guid);
     const serverGuid = existing?.serverGuid ?? (draft.guid && !isDeviceDraftGuid(draft.guid) ? draft.guid : null);
+    const clientOrderId = operation?.clientOrderId
+      ?? existing?.clientOrderId
+      ?? draft.clientOrderId
+      ?? (serverGuid ? `legacy-server:${serverGuid}` : makeClientOrderId());
+    const clientRevision = operation?.clientRevision
+      ?? existing?.clientRevision
+      ?? Math.max(1, draft.clientRevision || 0);
+    const intent = operation?.intent === 'SUBMIT' || existing?.intent === 'SUBMIT' ? 'SUBMIT' : 'SAVE';
     const localGuid = existing?.order.guid ?? draft.guid ?? makeDeviceDraftGuid();
     const createdAt = existing?.createdAt ?? selectedOrder?.createdAt ?? nowIso;
     const revision = Math.max(1, existing?.order.revision ?? draft.revision ?? 0);
     const entry: DeviceDraftEntry = {
       id: existing?.id ?? makeDeviceDraftGuid(),
+      clientOrderId,
+      clientRevision,
+      intent,
       serverGuid,
       serverRevision: existing?.serverRevision ?? (serverGuid ? draft.revision : null),
-      order: buildDeviceOrderFromDraft({
-        draft: { ...draft, guid: localGuid, revision },
-        selections,
-        guid: localGuid,
-        revision,
-        createdAt,
-        updatedAt: nowIso,
-        lastSyncError: syncError ?? null,
-      }),
+      order: {
+        ...buildDeviceOrderFromDraft({
+          draft: { ...draft, guid: localGuid, clientOrderId, clientRevision, revision },
+          selections,
+          guid: localGuid,
+          revision,
+          createdAt,
+          updatedAt: nowIso,
+          lastSyncError: syncError ?? null,
+        }),
+        ...(intent === 'SUBMIT' ? { status: 'QUEUED', syncState: 'QUEUED' } : {}),
+      },
       payload,
       createdAt,
       updatedAt: nowIso,
@@ -1844,6 +1891,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     const copiedDraft = normalizeDraftOrder({
       ...draft,
       guid: localGuid,
+      clientOrderId: makeClientOrderId(),
+      clientRevision: 1,
       revision: 1,
       items: draft.items.map((item) => {
         const keepsManualPrice = hasManualPrice(item);
@@ -1872,6 +1921,9 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     });
     const entry: DeviceDraftEntry = {
       id: makeDeviceDraftGuid(),
+      clientOrderId: copiedDraft.clientOrderId!,
+      clientRevision: copiedDraft.clientRevision,
+      intent: 'SAVE',
       serverGuid: null,
       serverRevision: null,
       order,
@@ -1904,12 +1956,24 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     try {
       for (const entry of dueEntries) {
         try {
-          const order = entry.serverGuid
-            ? await updateClientOrder(entry.serverGuid, {
-                ...entry.payload,
-                revision: entry.serverRevision ?? entry.order.revision,
-              })
-            : await createClientOrder(entry.payload);
+          let order: ClientOrder;
+          if (entry.clientOrderId.startsWith('legacy-server:')) {
+            order = entry.serverGuid
+              ? await updateClientOrder(entry.serverGuid, {
+                  ...entry.payload,
+                  revision: entry.serverRevision ?? entry.order.revision,
+                })
+              : await createClientOrder(entry.payload);
+            if (entry.intent === 'SUBMIT') {
+              order = await submitClientOrder(order.guid, order.revision);
+            }
+          } else {
+            order = await putClientOrderByClientId(
+              entry.clientOrderId,
+              entry.payload,
+              { clientRevision: entry.clientRevision, intent: entry.intent }
+            );
+          }
           nextEntries = nextEntries.filter((item) => item.id !== entry.id);
           replaceDeviceDraftEntries(nextEntries);
           applySavedOrderToList(order);
@@ -2400,28 +2464,49 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const saveDraft = React.useCallback(async (options?: SaveOptions) => {
     if (readOnly) return null;
     let payload: ClientOrderSavePayload | null = null;
+    let stagedDeviceOrder: ClientOrder | null = null;
     const deviceEntry = findDeviceDraftEntry(draft.guid);
     try {
       setSaving(true);
       setAutosaveError(null);
 
       payload = buildPayload(draft, options?.reason || 'manual');
+      const intent = options?.intent === 'SUBMIT' || deviceEntry?.intent === 'SUBMIT' ? 'SUBMIT' : 'SAVE';
+      const clientOrderId = deviceEntry?.clientOrderId ?? draft.clientOrderId ?? null;
+      const clientRevision = clientOrderId
+        ? Math.max(
+            0,
+            draft.clientRevision || 0,
+            deviceEntry?.clientRevision || 0,
+            Number(selectedOrder?.clientRevision || 0)
+          ) + 1
+        : 0;
       const updateTargetGuid = deviceEntry?.serverGuid
         ?? (draft.guid && !isDeviceDraftGuid(draft.guid) && !deviceEntry ? draft.guid : null);
       const initialRevision = updateTargetGuid === deviceEntry?.serverGuid
         ? deviceEntry.serverRevision ?? draft.revision
         : draft.revision;
-      const saveToApi = (revision: number) => (
-        updateTargetGuid
+      const saveToApi = (revision: number) => {
+        if (clientOrderId) {
+          return putClientOrderByClientId(clientOrderId, payload, { clientRevision, intent });
+        }
+        return updateTargetGuid
           ? updateClientOrder(updateTargetGuid, { ...payload, revision })
-          : createClientOrder(payload)
-      );
+          : createClientOrder(payload);
+      };
+
+      // Persist the exact operation before sending it. If the server commits but
+      // the response is lost, every retry carries the same client identity.
+      if (clientOrderId) {
+        stagedDeviceOrder = saveDraftOnDevice(payload, null, { clientOrderId, clientRevision, intent });
+        await writeStoredDeviceDrafts(deviceDraftsStorageKey, deviceDraftEntriesRef.current);
+      }
 
       let order: ClientOrder;
       try {
         order = await saveToApi(initialRevision);
       } catch (e) {
-        if (!updateTargetGuid || !isRevisionConflictError(e)) {
+        if (clientOrderId || !updateTargetGuid || !isRevisionConflictError(e)) {
           throw e;
         }
 
@@ -2436,7 +2521,9 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         order = await saveToApi(freshOrder.revision);
       }
 
-      removeDeviceDraftEntry(draft.guid || deviceEntry?.order.guid || deviceEntry?.serverGuid);
+      removeDeviceDraftEntry(
+        draft.guid || deviceEntry?.order.guid || deviceEntry?.serverGuid || stagedDeviceOrder?.guid
+      );
       const savedDeliveryAddressGuid = order.deliveryAddress?.guid ?? null;
       const requestedDeliveryAddressGuid = payload.deliveryAddressGuid ?? null;
       const selectedDeliveryAddressForSave =
@@ -2469,13 +2556,16 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       return order;
     } catch (e: any) {
       if (payload && isNetworkUnavailableError(e)) {
-        const localOrder = saveDraftOnDevice(payload);
+        const localOrder = stagedDeviceOrder ?? saveDraftOnDevice(payload);
         applyOrderDetail(localOrder);
         setError(null);
         setDirty(false);
         setLastSavedAt(new Date().toISOString());
         setAutosaveState('saved');
         return localOrder;
+      }
+      if (stagedDeviceOrder) {
+        removeDeviceDraftEntry(stagedDeviceOrder.guid);
       }
       const message = userErrorMessage(e, 'Не удалось сохранить заказ. Проверьте данные и повторите попытку.');
       setError(message);
@@ -2495,7 +2585,9 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     readOnly,
     removeDeviceDraftEntry,
     saveDraftOnDevice,
+    selectedOrder?.clientRevision,
     selections,
+    deviceDraftsStorageKey,
   ]);
 
   const saveAndResubmitQueuedDraft = React.useCallback(async () => {
@@ -3083,6 +3175,21 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       setError(message);
       return;
     }
+    if (draft.clientOrderId) {
+      try {
+        setSubmitting(true);
+        const saved = await saveDraft({ silent: true, reason: 'manual', intent: 'SUBMIT' });
+        if (saved && saved.origin !== 'device') {
+          applySavedOrderToList(saved);
+          applyOrderDetail(saved);
+          void loadOrders('reset', { silent: true });
+        }
+        setError(null);
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
     let targetGuid = draft.guid || selectedGuid;
     let revision = draft.revision;
     const deviceEntry = findDeviceDraftEntry(targetGuid);
@@ -3124,7 +3231,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     } finally {
       setSubmitting(false);
     }
-  }, [applyOrderDetail, applySavedOrderToList, canSubmitOrder, dirty, draft.guid, draft.revision, findDeviceDraftEntry, loadOrders, mergeServerRevisionIntoOpenDraft, saveDraft, selectedGuid, selectedOrderQueued, validation.blockingMessage]);
+  }, [applyOrderDetail, applySavedOrderToList, canSubmitOrder, dirty, draft.clientOrderId, draft.guid, draft.revision, findDeviceDraftEntry, loadOrders, mergeServerRevisionIntoOpenDraft, saveDraft, selectedGuid, selectedOrderQueued, validation.blockingMessage]);
 
   const submitOrderFromList = React.useCallback(async (target: ClientOrder) => {
     if (!target?.guid || submitting) return null;
@@ -3137,18 +3244,28 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
       const deviceEntry = findDeviceDraftEntry(target.guid);
       if (deviceEntry) {
-        const saved = deviceEntry.serverGuid
-          ? await updateClientOrder(deviceEntry.serverGuid, {
-              ...deviceEntry.payload,
-              revision: deviceEntry.serverRevision ?? deviceEntry.order.revision,
-            })
-          : await createClientOrder(deviceEntry.payload);
+        let saved: ClientOrder;
+        if (deviceEntry.clientOrderId.startsWith('legacy-server:')) {
+          const persisted = deviceEntry.serverGuid
+            ? await updateClientOrder(deviceEntry.serverGuid, {
+                ...deviceEntry.payload,
+                revision: deviceEntry.serverRevision ?? deviceEntry.order.revision,
+              })
+            : await createClientOrder(deviceEntry.payload);
+          saved = await submitClientOrder(persisted.guid, persisted.revision);
+        } else {
+          saved = await putClientOrderByClientId(
+            deviceEntry.clientOrderId,
+            deviceEntry.payload,
+            { clientRevision: deviceEntry.clientRevision, intent: 'SUBMIT' }
+          );
+        }
         replaceDeviceDraftEntries(
           deviceDraftEntriesRef.current.filter((entry) => entry.id !== deviceEntry.id)
         );
         applySavedOrderToList(saved);
-        targetGuid = saved.guid;
-        targetRevision = saved.revision;
+        void loadOrders('reset', { silent: true });
+        return saved;
       }
 
       let submitted: ClientOrder;
@@ -3260,6 +3377,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         const copiedDraft = normalizeDraftOrder({
           ...sourceDraft,
           guid: localGuid,
+          clientOrderId: makeClientOrderId(),
+          clientRevision: 1,
           revision: 1,
           items: sourceDraft.items.map((item) => {
             const keepsManualPrice = hasManualPrice(item);
@@ -3296,6 +3415,9 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         });
         const copiedEntry: DeviceDraftEntry = {
           id: makeDeviceDraftGuid(),
+          clientOrderId: copiedDraft.clientOrderId!,
+          clientRevision: copiedDraft.clientRevision,
+          intent: 'SAVE',
           serverGuid: null,
           serverRevision: null,
           order: copiedOrder,

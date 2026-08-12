@@ -37,6 +37,7 @@ jest.mock('@/utils/clientOrdersService', () => ({
   getClientOrderSettings: jest.fn(),
   getClientOrders: jest.fn(),
   getClientOrdersTodaySummary: jest.fn(),
+  putClientOrderByClientId: jest.fn(),
   searchClientOrderAgreements: jest.fn(),
   searchClientOrderContracts: jest.fn(),
   searchClientOrderCounterparties: jest.fn(),
@@ -63,6 +64,7 @@ import {
   getClientOrderSettings,
   getClientOrders,
   getClientOrdersTodaySummary,
+  putClientOrderByClientId,
   submitClientOrder,
 } from '@/utils/clientOrdersService';
 
@@ -791,7 +793,7 @@ describe('useClientOrdersWorkspace', () => {
       items: [],
       meta: { total: 0, limit: 20, offset: 0, statusCounts: {}, liveSource: { status: 'ok' } },
     } as any);
-    jest.mocked(createClientOrder).mockResolvedValue(savedOrder as any);
+    jest.mocked(putClientOrderByClientId).mockResolvedValue(savedOrder as any);
 
     let workspace: ReturnType<typeof useClientOrdersWorkspace>;
     function Harness() {
@@ -857,9 +859,11 @@ describe('useClientOrdersWorkspace', () => {
     });
     await flush();
 
-    expect(createClientOrder).toHaveBeenCalledWith(expect.objectContaining({
-      deliveryAddressGuid: 'address-manual',
-    }));
+    expect(putClientOrderByClientId).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ deliveryAddressGuid: 'address-manual' }),
+      expect.objectContaining({ intent: 'SAVE' })
+    );
     expect(workspace!.draft.deliveryAddressGuid).toBe('address-manual');
     expect(workspace!.selections.deliveryAddress?.guid).toBe('address-manual');
 
@@ -900,8 +904,7 @@ describe('useClientOrdersWorkspace', () => {
       items: [],
       meta: { total: 0, limit: 20, offset: 0, statusCounts: {}, liveSource: { status: 'ok' } },
     } as any);
-    jest.mocked(createClientOrder).mockResolvedValue(savedOrder as any);
-    jest.mocked(submitClientOrder).mockResolvedValue(submittedOrder as any);
+    jest.mocked(putClientOrderByClientId).mockResolvedValue(submittedOrder as any);
 
     let workspace: ReturnType<typeof useClientOrdersWorkspace>;
     function Harness() {
@@ -980,8 +983,13 @@ describe('useClientOrdersWorkspace', () => {
     });
     await flush();
 
-    expect(createClientOrder).toHaveBeenCalledTimes(1);
-    expect(submitClientOrder).toHaveBeenCalledWith('new-order-guid', 1);
+    expect(putClientOrderByClientId).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Object),
+      expect.objectContaining({ intent: 'SUBMIT' })
+    );
+    expect(createClientOrder).not.toHaveBeenCalled();
+    expect(submitClientOrder).not.toHaveBeenCalled();
     expect(workspace!.orders).toEqual([]);
     expect(workspace!.selectedGuid).toBe('new-order-guid');
     expect(workspace!.selectedOrder?.guid).toBe('new-order-guid');

@@ -7,6 +7,7 @@ import {
   getClientOrderProductsBatch,
   getClientOrders,
   getClientOrdersTodaySummary,
+  putClientOrderByClientId,
   searchClientOrderCounterparties,
   searchClientOrderProducts,
   requestClientOrderInvoice,
@@ -284,6 +285,32 @@ describe('clientOrdersService', () => {
     expect(apiClientMock).toHaveBeenNthCalledWith(2, '/api/client-orders/order-guid/copy', {
       method: 'POST',
       body: { revision: 2 },
+      timeoutMs: 10_000,
+    });
+  });
+
+  it('sends idempotent mobile mutations through the client id endpoint', async () => {
+    apiClientMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { guid: 'order-guid', clientOrderId: 'client-order-id', clientRevision: 3, items: [], events: [] },
+    } as any);
+
+    await putClientOrderByClientId(
+      'client-order-id',
+      { organizationGuid: 'org', counterpartyGuid: 'counterparty', items: [] },
+      { clientRevision: 3, intent: 'SUBMIT' }
+    );
+
+    expect(apiClientMock).toHaveBeenCalledWith('/api/client-orders/by-client-id/client-order-id', {
+      method: 'PUT',
+      body: {
+        organizationGuid: 'org',
+        counterpartyGuid: 'counterparty',
+        items: [],
+        clientRevision: 3,
+        intent: 'SUBMIT',
+      },
       timeoutMs: 10_000,
     });
   });

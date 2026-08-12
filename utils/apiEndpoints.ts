@@ -97,6 +97,8 @@ export const API_ENDPOINTS = {
   },
   CLIENT_ORDERS: {
     LIST: '/api/client-orders',
+    BY_CLIENT_ID: (clientOrderId: string) =>
+      `/api/client-orders/by-client-id/${encodeURIComponent(clientOrderId)}`,
     TODAY_SUMMARY: '/api/client-orders/today-summary',
     DETAIL: (guid: string) => `/api/client-orders/${encodeURIComponent(guid)}`,
     SETTINGS: '/api/client-orders/settings',
