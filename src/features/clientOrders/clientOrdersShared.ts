@@ -985,6 +985,19 @@ export function computeLineProfit(item: DraftItem, generalDiscountPercent?: stri
   return lineTotal - cost;
 }
 
+export function computeLineProfitabilityPercent(
+  item: DraftItem,
+  generalDiscountPercent?: string,
+  computedLineTotal?: number
+) {
+  if (!canComputeLineProfit(item)) return null;
+  const lineTotal = computedLineTotal ?? computeLineTotal(item, generalDiscountPercent);
+  if (!Number.isFinite(lineTotal) || lineTotal === 0) return null;
+  const profit = computeLineProfit(item, generalDiscountPercent, lineTotal);
+  const profitabilityPercent = profit / lineTotal * 100;
+  return Number.isFinite(profitabilityPercent) ? profitabilityPercent : null;
+}
+
 export function canComputeLineProfit(item: DraftItem) {
   if (isCancelledDraftItem(item)) return false;
   const receiptPrice = Number(item.receiptPrice);
@@ -1017,7 +1030,7 @@ export function computeDraftProfit(draft: DraftOrder) {
 
 export function canComputeDraftProfit(draft: DraftOrder) {
   const activeItems = draft.items.filter((item) => !isCancelledDraftItem(item));
-  return activeItems.length > 0 && activeItems.every(canComputeLineProfit);
+  return activeItems.some(canComputeLineProfit);
 }
 
 export function computeDraftWeight(draft: DraftOrder) {
@@ -1028,14 +1041,29 @@ export function computeDraftMetrics(draft: DraftOrder) {
   return draft.items.reduce((metrics, item) => {
     const lineTotal = computeLineTotal(item, draft.generalDiscountPercent);
     metrics.total += lineTotal;
-    metrics.profit += computeLineProfit(item, draft.generalDiscountPercent, lineTotal);
     metrics.weight += computeLineWeight(item);
     if (!isCancelledDraftItem(item)) {
       metrics.activeItems += 1;
-      metrics.profitAvailable = metrics.profitAvailable && canComputeLineProfit(item);
+      if (canComputeLineProfit(item)) {
+        metrics.profit += computeLineProfit(item, draft.generalDiscountPercent, lineTotal);
+        metrics.profitBasisAmount += lineTotal;
+        metrics.profitItems += 1;
+        metrics.profitAvailable = true;
+      } else {
+        metrics.skippedProfitItems += 1;
+      }
     }
     return metrics;
-  }, { total: 0, profit: 0, weight: 0, activeItems: 0, profitAvailable: true });
+  }, {
+    total: 0,
+    profit: 0,
+    profitBasisAmount: 0,
+    weight: 0,
+    activeItems: 0,
+    profitItems: 0,
+    skippedProfitItems: 0,
+    profitAvailable: false,
+  });
 }
 
 export function validateDraft(draft: DraftOrder): DraftValidation {

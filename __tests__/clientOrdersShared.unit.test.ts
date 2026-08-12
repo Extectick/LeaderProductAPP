@@ -530,7 +530,16 @@ describe('clientOrdersShared validation and payload', () => {
     expect(computeDraftMetrics(draft({
       generalDiscountPercent: '10',
       items: [item({ quantity: '2', packageGuid: 'box-10', basePrice: 100, receiptPrice: 80 })],
-    }))).toEqual({ total: 1800, profit: 200, weight: 0, activeItems: 1, profitAvailable: true });
+    }))).toEqual({
+      total: 1800,
+      profit: 200,
+      profitBasisAmount: 1800,
+      weight: 0,
+      activeItems: 1,
+      profitItems: 1,
+      skippedProfitItems: 0,
+      profitAvailable: true,
+    });
   });
 
   it('preserves item references when normalizing a header-only change', () => {
@@ -581,7 +590,7 @@ describe('clientOrdersShared validation and payload', () => {
     expect(canComputeLineProfit(item({ receiptPrice: 80 }))).toBe(true);
   });
 
-  it('exposes document profit only when every active line has a receipt price', () => {
+  it('exposes document profit when at least one active line has a receipt price', () => {
     const priced = item({ receiptPrice: 80 });
     const pending = item({ key: 'line-2', lineGuid: 'line-guid-2', receiptPrice: null });
     const cancelled = item({
@@ -591,7 +600,7 @@ describe('clientOrdersShared validation and payload', () => {
       isCancelled: true,
     });
 
-    expect(canComputeDraftProfit(draft({ items: [priced, pending] }))).toBe(false);
+    expect(canComputeDraftProfit(draft({ items: [priced, pending] }))).toBe(true);
     expect(canComputeDraftProfit(draft({ items: [priced, cancelled] }))).toBe(true);
     expect(canComputeDraftProfit(draft({ items: [cancelled] }))).toBe(false);
   });

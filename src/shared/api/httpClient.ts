@@ -8,6 +8,7 @@ import {
   refreshToken as refreshTokens,
 } from '@/utils/tokenService';
 import { mapHttpStatusToErrorCode, type AppErrorCode } from '@/src/shared/errors/appError';
+import { SERVER_CONNECTION_UNAVAILABLE_MESSAGE } from '@/src/shared/errors/userErrorMessage';
 import { setServerReachable, setServerUnavailable } from '@/src/shared/network/serverStatus';
 import { addMonitoringBreadcrumb } from '@/src/shared/monitoring';
 
@@ -15,6 +16,7 @@ type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
 
 type BodyLike = any; // JSON | FormData | string | Blob | ArrayBuffer
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+const DEFAULT_GET_NETWORK_RETRY_DELAYS_MS = [350, 1_000] as const;
 
 export interface HttpResponse<T> {
   ok: boolean;
@@ -31,6 +33,8 @@ export interface HttpRequestOptions<Req> {
   headers?: Record<string, string>;
   skipAuth?: boolean;
   timeoutMs?: number;
+  /** Network-only retries. Mutating requests are never retried by default. */
+  networkRetryCount?: number;
 }
 
 function isFormData(val: any): val is FormData {
@@ -91,6 +95,10 @@ export async function httpRequest<Req = undefined, Res = any>(
   let token = !skipAuth ? await getAccessTokenForRequest() : null;
   const isForm = isFormData(body);
   const isGetLike = method === 'GET';
+  const networkRetryCount = Math.max(0, Math.min(
+    options.networkRetryCount ?? (isGetLike ? DEFAULT_GET_NETWORK_RETRY_DELAYS_MS.length : 0),
+    DEFAULT_GET_NETWORK_RETRY_DELAYS_MS.length
+  ));
 
   async function doFetch(tk: string | null): Promise<Response> {
     const h = buildHeaders(headers, tk, isForm);
@@ -114,8 +122,26 @@ export async function httpRequest<Req = undefined, Res = any>(
     }
   }
 
+  async function doFetchWithNetworkRetry(tk: string | null): Promise<Response> {
+    let attempt = 0;
+    while (true) {
+      try {
+        return await doFetch(tk);
+      } catch (error: any) {
+        // A timeout already consumed the complete request budget. Repeating it
+        // would turn a 10 second timeout into a long frozen screen.
+        const canRetry = error?.name !== 'AbortError' && attempt < networkRetryCount;
+        if (!canRetry) throw error;
+        const retryDelay = DEFAULT_GET_NETWORK_RETRY_DELAYS_MS[attempt] ?? 1_000;
+        addMonitoringBreadcrumb('http_network_retry', { path, attempt: attempt + 1, retryDelay });
+        attempt += 1;
+        await new Promise((resolve) => setTimeout(resolve, retryDelay));
+      }
+    }
+  }
+
   try {
-    let response = await doFetch(token);
+    let response = await doFetchWithNetworkRetry(token);
 
     if (response.status === 401 && !skipAuth) {
       addMonitoringBreadcrumb('http_401_refresh_attempt', { path });
@@ -134,10 +160,11 @@ export async function httpRequest<Req = undefined, Res = any>(
         }
 
         if (failure?.kind === 'network') {
+          setServerUnavailable(SERVER_CONNECTION_UNAVAILABLE_MESSAGE);
           return {
             ok: false,
             status: 0,
-            message: failure.message || 'Не удалось обновить сессию: сервер недоступен.',
+            message: SERVER_CONNECTION_UNAVAILABLE_MESSAGE,
             errorCode: 'NETWORK_UNAVAILABLE',
           };
         }
@@ -177,7 +204,7 @@ export async function httpRequest<Req = undefined, Res = any>(
         return { ok: false, status: 401, message: 'Сессия истекла. Войдите заново.', errorCode: 'UNAUTHORIZED' };
       }
       token = newToken;
-      response = await doFetch(token);
+      response = await doFetchWithNetworkRetry(token);
     }
 
     setServerReachable();
@@ -196,16 +223,16 @@ export async function httpRequest<Req = undefined, Res = any>(
 
     return { ok: true, status, data, meta };
   } catch (error: any) {
-    const message = error?.name === 'AbortError'
+    const technicalMessage = error?.name === 'AbortError'
       ? 'Request timeout'
       : error?.message || 'Network error';
-    addMonitoringBreadcrumb('http_network_error', { path, message });
-    setServerUnavailable(message);
-    await handleBackendUnavailable(message);
+    addMonitoringBreadcrumb('http_network_error', { path, message: technicalMessage });
+    setServerUnavailable(SERVER_CONNECTION_UNAVAILABLE_MESSAGE);
+    await handleBackendUnavailable(SERVER_CONNECTION_UNAVAILABLE_MESSAGE);
     return {
       ok: false,
       status: 0,
-      message,
+      message: SERVER_CONNECTION_UNAVAILABLE_MESSAGE,
       errorCode: 'NETWORK_UNAVAILABLE',
     };
   }

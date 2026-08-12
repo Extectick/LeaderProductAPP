@@ -98,7 +98,7 @@ describe('clientOrdersService', () => {
     apiClientMock.mockResolvedValueOnce({ ok: true, status: 200, data: summary } as any);
 
     await expect(getClientOrdersTodaySummary()).resolves.toEqual(summary);
-    expect(apiClientMock).toHaveBeenCalledWith('/api/client-orders/today-summary');
+    expect(apiClientMock).toHaveBeenCalledWith('/api/client-orders/today-summary', { timeoutMs: 10_000 });
   });
 
   it('deduplicates concurrent order detail reads', async () => {

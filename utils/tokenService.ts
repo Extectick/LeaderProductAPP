@@ -9,6 +9,7 @@ import Constants from 'expo-constants';
 import { API_BASE_URL } from './config';
 import { setServerReachable, setServerUnavailable } from '@/src/shared/network/serverStatus';
 import { clearServicesAccessCache } from '@/src/features/services/storage/servicesAccessCache';
+import { SERVER_CONNECTION_UNAVAILABLE_MESSAGE } from '@/src/shared/errors/userErrorMessage';
 
 const ACCESS_KEY = 'accessToken';
 const REFRESH_KEY = 'refreshToken';
@@ -342,7 +343,8 @@ export async function isRefreshTokenExpired(): Promise<boolean> {
 }
 
 export async function handleBackendUnavailable(reason?: string) {
-  setServerUnavailable(reason || 'Network error');
+  void reason;
+  setServerUnavailable(SERVER_CONNECTION_UNAVAILABLE_MESSAGE);
 }
 
 async function acquireRefreshLock(owner: string): Promise<boolean> {
@@ -494,7 +496,7 @@ export async function refreshToken(): Promise<string | null> {
       } else if (status >= 500) {
         rememberRefreshFailure({ kind: 'server', status, message: msg });
         scheduleRefreshRetry();
-        setServerUnavailable(msg);
+        setServerUnavailable(SERVER_CONNECTION_UNAVAILABLE_MESSAGE);
       } else {
         rememberRefreshFailure({ kind: 'unknown', status, message: msg });
         scheduleRefreshRetry();

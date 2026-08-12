@@ -42,6 +42,12 @@ import {
 } from '@/utils/clientOrdersService';
 import React from 'react';
 import { Alert, AppState, Platform } from 'react-native';
+import { useServerStatus } from '@/src/shared/network/useServerStatus';
+import { getServerStatus } from '@/src/shared/network/serverStatus';
+import {
+  isNetworkUnavailableError as isSharedNetworkUnavailableError,
+  toUserErrorMessage,
+} from '@/src/shared/errors/userErrorMessage';
 import {
   buildNewItem,
   buildCopyPayload,
@@ -177,6 +183,14 @@ function sanitizeTodaySummary(value: unknown, expectedDate: string): ClientOrder
     typeof raw.missingReceiptPriceCount !== 'number' || !Number.isFinite(raw.missingReceiptPriceCount) ||
     (raw.profit !== null && (typeof raw.profit !== 'number' || !Number.isFinite(raw.profit)))
   ) return null;
+  const profitBasisAmount = typeof raw.profitBasisAmount === 'number' && Number.isFinite(raw.profitBasisAmount)
+    ? raw.profitBasisAmount
+    : raw.profitAvailable ? raw.totalAmount : 0;
+  const profitabilityPercent = typeof raw.profitabilityPercent === 'number' && Number.isFinite(raw.profitabilityPercent)
+    ? raw.profitabilityPercent
+    : raw.profitAvailable && raw.profit !== null && profitBasisAmount !== 0
+      ? raw.profit / profitBasisAmount * 100
+      : null;
   return {
     date: raw.date,
     ordersCount: Math.max(0, raw.ordersCount),
@@ -184,7 +198,12 @@ function sanitizeTodaySummary(value: unknown, expectedDate: string): ClientOrder
     totalAmount: raw.totalAmount,
     profit: raw.profit,
     profitAvailable: raw.profitAvailable,
+    profitBasisAmount,
+    profitabilityPercent,
     missingReceiptPriceCount: Math.max(0, raw.missingReceiptPriceCount),
+    skippedReceiptPriceCount: typeof raw.skippedReceiptPriceCount === 'number' && Number.isFinite(raw.skippedReceiptPriceCount)
+      ? Math.max(0, raw.skippedReceiptPriceCount)
+      : Math.max(0, raw.missingReceiptPriceCount),
     currency: 'RUB',
     calculatedAt: raw.calculatedAt,
     stale: raw.stale === true,
@@ -442,6 +461,7 @@ async function writeStoredDeviceDrafts(storageKey: string, entries: DeviceDraftE
 }
 
 function userErrorMessage(error: unknown, fallback: string) {
+  if (isSharedNetworkUnavailableError(error)) return toUserErrorMessage(error, fallback);
   const message = error instanceof Error ? error.message.trim() : '';
   const lower = message.toLocaleLowerCase('ru');
   const looksTechnical =
@@ -659,6 +679,7 @@ function isDeviceDraftGuid(guid?: string | null) {
 }
 
 function isNetworkUnavailableError(error: unknown) {
+  if (isSharedNetworkUnavailableError(error)) return true;
   const record = error as { status?: number; errorCode?: string; message?: string } | null;
   const message = String(record?.message || '').toLowerCase();
   return (
@@ -1036,6 +1057,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const invoicePollingEnabled = options.isScreenActive !== false
     && (!options.screenMode || options.screenMode === 'editor');
   const auth = React.useContext(AuthContext);
+  const serverStatus = useServerStatus();
   const filtersStorageKey = React.useMemo(
     () => `${FILTERS_STORAGE_PREFIX}:${auth?.profile?.id ?? 'anonymous'}`,
     [auth?.profile?.id]
@@ -1072,6 +1094,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const [todaySummary, setTodaySummary] = React.useState<ClientOrdersTodaySummary | null>(null);
   const [todaySummaryHydrated, setTodaySummaryHydrated] = React.useState(false);
   const [loadingTodaySummary, setLoadingTodaySummary] = React.useState(true);
+  const [calculatingTodayProfit, setCalculatingTodayProfit] = React.useState(false);
   const [todaySummaryError, setTodaySummaryError] = React.useState<string | null>(null);
   const [selectedGuid, setSelectedGuid] = React.useState<string | null>(null);
   const [selectedOrder, setSelectedOrder] = React.useState<ClientOrder | null>(null);
@@ -1127,6 +1150,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const todaySummaryRequestIdRef = React.useRef(0);
   const todaySummaryInFlightRef = React.useRef<Promise<ClientOrdersTodaySummary | null> | null>(null);
   const todaySummaryRef = React.useRef<ClientOrdersTodaySummary | null>(null);
+  const previousServerReachableRef = React.useRef(serverStatus.isReachable);
 
   React.useEffect(() => {
     todaySummaryRef.current = todaySummary;
@@ -1138,15 +1162,16 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     setOrdersInitialLoadDone(true);
   }, []);
 
-  const refreshTodaySummary = React.useCallback((): Promise<ClientOrdersTodaySummary | null> => {
+  const refreshTodaySummary = React.useCallback((options: { force?: boolean } = {}): Promise<ClientOrdersTodaySummary | null> => {
     if (todaySummaryInFlightRef.current) return todaySummaryInFlightRef.current;
     const requestId = ++todaySummaryRequestIdRef.current;
     if (!todaySummaryRef.current) setLoadingTodaySummary(true);
+    if (options.force) setCalculatingTodayProfit(true);
     setTodaySummaryError(null);
 
     const task = (async () => {
       try {
-        const result = await getClientOrdersTodaySummary();
+        const result = await getClientOrdersTodaySummary(options);
         const currentDate = getOmskDateKey();
         if (currentDate !== todayDateKey) {
           setTodayDateKey(currentDate);
@@ -1168,6 +1193,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         return null;
       } finally {
         if (todaySummaryRequestIdRef.current === requestId) setLoadingTodaySummary(false);
+        if (todaySummaryRequestIdRef.current === requestId) setCalculatingTodayProfit(false);
         todaySummaryInFlightRef.current = null;
       }
     })();
@@ -1252,8 +1278,12 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   );
   const localTotal = draftMetrics.total;
   const localProfit = draftMetrics.profit;
+  const localProfitBasisAmount = draftMetrics.profitBasisAmount;
+  const localProfitabilityPercent = draftMetrics.profitBasisAmount !== 0
+    ? draftMetrics.profit / draftMetrics.profitBasisAmount * 100
+    : null;
   const localWeight = draftMetrics.weight;
-  const localProfitAvailable = draftMetrics.activeItems > 0 && draftMetrics.profitAvailable;
+  const localProfitAvailable = draftMetrics.profitItems > 0;
   const visibleDeviceOrders = React.useMemo(
     () => deviceDraftEntries.map((entry) => entry.order).filter((order) => orderMatchesFilters(order, filters)),
     [deviceDraftEntries, filters]
@@ -1645,6 +1675,14 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     );
   }, [draft, enrichItemsMetadata, readOnly, selectedOrder?.date1c]);
 
+  const refreshDocumentProfit = React.useCallback(() => {
+    if (loadingReceiptPrices) return Promise.resolve();
+    return enrichItemsMetadata(
+      draft,
+      { receiptPriceAt: readOnly ? selectedOrder?.date1c ?? undefined : undefined }
+    );
+  }, [draft, enrichItemsMetadata, loadingReceiptPrices, readOnly, selectedOrder?.date1c]);
+
   const mergeSavedOrderIntoDraft = React.useCallback((
     order: ClientOrder,
     options?: { preservedDeliveryAddressGuid?: string | null }
@@ -1943,11 +1981,11 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     return order;
   }, [applyOrderDetail, applySavedOrderToList, draft, replaceDeviceDraftEntries, selections]);
 
-  const syncDeviceDrafts = React.useCallback(async () => {
+  const syncDeviceDrafts = React.useCallback(async (syncOptions: { force?: boolean } = {}) => {
     if (!deviceDraftsHydrated || deviceDraftSyncingRef.current) return;
     const entries = deviceDraftEntriesRef.current;
     if (!entries.length) return;
-    const dueEntries = entries.filter((entry) => isDeviceDraftSyncDue(entry));
+    const dueEntries = syncOptions.force ? entries : entries.filter((entry) => isDeviceDraftSyncDue(entry));
     if (!dueEntries.length) return;
 
     deviceDraftSyncingRef.current = true;
@@ -2071,7 +2109,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       if (requestIsStale) return;
       const liveSource = result.meta.liveSource;
       if (liveSource?.status && liveSource.status !== 'ok' && liveSource.message) {
-        setOrdersError(liveSource.message);
+        setOrdersError(userErrorMessage(liveSource.message, 'Нет связи с 1С. Повторите попытку позже.'));
       } else if (liveSource?.status === 'ok') {
         setOrdersError(null);
       }
@@ -2420,6 +2458,70 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     if (!filtersHydrated || !deviceDraftsHydrated) return;
     void syncDeviceDrafts();
   }, [deviceDraftsHydrated, filtersHydrated, syncDeviceDrafts]);
+
+  React.useEffect(() => {
+    const wasReachable = previousServerReachableRef.current;
+    previousServerReachableRef.current = serverStatus.isReachable;
+    if (!ordersPollingEnabled || !serverStatus.isReachable || wasReachable) return;
+
+    // Resume durable writes only after a successful read proved that the API
+    // is reachable. The PUT by clientOrderId remains idempotent.
+    void syncDeviceDrafts({ force: true });
+    void loadSettings();
+    void refreshTodaySummary();
+  }, [loadSettings, ordersPollingEnabled, refreshTodaySummary, serverStatus.isReachable, syncDeviceDrafts]);
+
+  React.useEffect(() => {
+    const connectionUnavailable = !!ordersError && isSharedNetworkUnavailableError(ordersError);
+    if (
+      !filtersHydrated
+      || !ordersCacheHydrated
+      || !ordersPollingEnabled
+      || (serverStatus.isReachable && !connectionUnavailable)
+    ) return undefined;
+
+    const delays = [3_000, 10_000, 30_000, 60_000] as const;
+    let cancelled = false;
+    let attempt = 0;
+    let retrying = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const schedule = (delay: number) => {
+      if (cancelled) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => void retry(), delay);
+    };
+    const retry = async () => {
+      if (cancelled || retrying || (AppState?.currentState && AppState.currentState !== 'active')) return;
+      retrying = true;
+      try {
+        await loadOrders('reset', { silent: true });
+      } finally {
+        retrying = false;
+      }
+      if (cancelled || (getServerStatus().isReachable && !connectionUnavailable)) return;
+      attempt = Math.min(attempt + 1, delays.length - 1);
+      schedule(delays[attempt]);
+    };
+
+    schedule(delays[0]);
+    const subscription = typeof AppState?.addEventListener === 'function'
+      ? AppState.addEventListener('change', (state) => {
+          if (state === 'active') {
+            attempt = 0;
+            schedule(500);
+          } else if (timer) {
+            clearTimeout(timer);
+            timer = null;
+          }
+        })
+      : null;
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      subscription?.remove();
+    };
+  }, [filtersHydrated, loadOrders, ordersCacheHydrated, ordersError, ordersPollingEnabled, serverStatus.isReachable]);
 
   React.useEffect(() => {
     if (!selectedGuid) return;
@@ -3542,6 +3644,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     ordersMeta,
     todaySummary,
     loadingTodaySummary,
+    calculatingTodayProfit,
     todaySummaryError,
     refreshTodaySummary,
     latestDraftOrder,
@@ -3615,6 +3718,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     loadingMoreOrders,
     loadingDetail,
     loadingReceiptPrices,
+    refreshDocumentProfit,
     cancelDetailLoading,
     loadingDefaults,
     loadingSettings,
@@ -3656,6 +3760,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     canSubmitOrder,
     localTotal,
     localProfit,
+    localProfitBasisAmount,
+    localProfitabilityPercent,
     localWeight,
     localProfitAvailable,
     statusCounts,

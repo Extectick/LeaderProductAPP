@@ -64,11 +64,53 @@ describe('httpRequest', () => {
     expect(response).toMatchObject({
       ok: false,
       status: 0,
-      message: 'Request timeout',
+      message: 'Нет связи с сервером. Проверьте интернет-соединение. Подключение восстановится автоматически.',
       errorCode: 'NETWORK_UNAVAILABLE',
     });
-    expect(setServerUnavailable).toHaveBeenCalledWith('Request timeout');
-    expect(handleBackendUnavailable).toHaveBeenCalledWith('Request timeout');
+    expect(setServerUnavailable).toHaveBeenCalledWith(
+      'Нет связи с сервером. Проверьте интернет-соединение. Подключение восстановится автоматически.'
+    );
+    expect(handleBackendUnavailable).toHaveBeenCalledWith(
+      'Нет связи с сервером. Проверьте интернет-соединение. Подключение восстановится автоматически.'
+    );
+  });
+
+  it('retries a GET after a short network disconnect and recovers transparently', async () => {
+    jest.useFakeTimers();
+    const fetchMock = jest
+      .fn()
+      .mockRejectedValueOnce(new Error('fetch failed: java.net.ConnectException: 155.212.144.191:443'))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { ok: true } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+    global.fetch = fetchMock as any;
+
+    const request = httpRequest('/client-orders');
+    await jest.advanceTimersByTimeAsync(350);
+
+    await expect(request).resolves.toMatchObject({ ok: true, status: 200, data: { ok: true } });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(setServerUnavailable).not.toHaveBeenCalled();
+  });
+
+  it('never retries a mutating request after an unknown network outcome', async () => {
+    const fetchMock = jest.fn().mockRejectedValueOnce(
+      new Error('fetch failed: java.net.ConnectException: 155.212.144.191:443')
+    );
+    global.fetch = fetchMock as any;
+
+    const response = await httpRequest('/client-orders', { method: 'POST', body: { id: 'stable-id' } });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(response).toMatchObject({
+      ok: false,
+      status: 0,
+      message: 'Нет связи с сервером. Проверьте интернет-соединение. Подключение восстановится автоматически.',
+      errorCode: 'NETWORK_UNAVAILABLE',
+    });
+    expect(JSON.stringify(response)).not.toContain('155.212.144.191');
+    expect(JSON.stringify(response)).not.toContain('java.net');
   });
 
   it('retries once with refreshed token after 401', async () => {
@@ -137,6 +179,31 @@ describe('httpRequest', () => {
     expect(logout).not.toHaveBeenCalled();
     expect(setServerReachable).toHaveBeenCalled();
     expect(setServerUnavailable).not.toHaveBeenCalledWith('Unauthorized');
+  });
+
+  it('keeps authentication and hides refresh network internals after a 401', async () => {
+    jest.mocked(refreshToken).mockResolvedValueOnce(null);
+    jest.mocked(getLastRefreshFailure).mockReturnValueOnce({
+      kind: 'network',
+      message: 'connect ECONNREFUSED 155.212.144.191:443',
+      at: Date.now(),
+    });
+    const fetchMock = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify({ message: 'expired' }), {
+      status: 401,
+      headers: { 'content-type': 'application/json' },
+    }));
+    global.fetch = fetchMock as any;
+
+    const response = await httpRequest('/services');
+
+    expect(response).toMatchObject({
+      ok: false,
+      status: 0,
+      message: 'Нет связи с сервером. Проверьте интернет-соединение. Подключение восстановится автоматически.',
+      errorCode: 'NETWORK_UNAVAILABLE',
+    });
+    expect(logout).not.toHaveBeenCalled();
+    expect(JSON.stringify(response)).not.toContain('155.212.144.191');
   });
 
   it('returns a transient conflict when refresh token is being rotated elsewhere', async () => {

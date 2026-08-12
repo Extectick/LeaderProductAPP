@@ -16,6 +16,7 @@ import { useOptionalLastServiceRoute } from '@/src/features/navigation/LastServi
 import {
   canComputeLineProfit,
   computeLineProfit,
+  computeLineProfitabilityPercent,
   computeLineTotal,
   formatDateTime,
   formatMoney,
@@ -79,6 +80,7 @@ import { useClientOrdersWorkspace } from './hooks/useClientOrdersWorkspace';
 import { getClientOrderInvoices, getClientOrderProductsBatch, getClientOrderReferenceDetails, requestClientOrderInvoice } from '@/utils/clientOrdersService';
 import type { ClientOrder, ClientOrderCounterpartyOption, ClientOrderInvoice, ClientOrderOrganization, ClientOrderPriceTypeOption, ClientOrderProduct, ClientOrderReferenceDetails, ClientOrderReferenceKind, ClientOrdersTodaySummary, ClientOrderWarehouseOption } from '@/utils/clientOrdersService';
 import { useServerStatus } from '@/src/shared/network/useServerStatus';
+import { toUserErrorMessage } from '@/src/shared/errors/userErrorMessage';
 import { setAutomaticUpdateChecksPaused } from '@/src/shared/appUpdate/automaticUpdateChecks';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -347,6 +349,39 @@ function productPickerMeta(item: any, context?: { hasPriceType?: boolean; hasWar
     stock: canShowStock ? formatStockInlineLabel(item?.stock, item?.baseUnit) || '—' : '—',
   };
 }
+
+function ProductPickerMetadata({
+  styles,
+  item,
+  hasPriceType,
+  hasWarehouse,
+  compact = false,
+}: {
+  styles: any;
+  item: any;
+  hasPriceType: boolean;
+  hasWarehouse: boolean;
+  compact?: boolean;
+}) {
+  const meta = productPickerMeta(item, { hasPriceType, hasWarehouse });
+  const metrics = [
+    { key: 'stock', icon: 'warehouse' as const, value: meta.stock },
+    { key: 'price', icon: 'cash-multiple' as const, value: meta.receiptPrice },
+    { key: 'article', icon: 'barcode-scan' as const, value: meta.code },
+  ];
+  return (
+    <View style={[styles.productPickerMetaRow, compact && styles.productPickerMetaRowCompact]}>
+      {metrics.map((metric) => (
+        <View key={metric.key} style={styles.productPickerMetaItem}>
+          <MaterialCommunityIcons name={metric.icon} size={compact ? 11 : 12} color="#64748B" />
+          <Text style={[styles.productPickerMetaValue, compact && styles.productPickerMetaValueCompact]} numberOfLines={1}>
+            {metric.value}
+          </Text>
+        </View>
+      ))}
+    </View>
+  );
+}
 function getDraftItemImageUri(item: any) {
   return getProductGalleryImages(item)[0]?.thumbUrl || null;
 }
@@ -446,6 +481,8 @@ function orderTitle(order: ClientOrder) {
 }
 
 function normalizeClientOrderUserErrorMessage(value: unknown, fallback = 'Документ требует проверки') {
+  const safeMessage = toUserErrorMessage(value, fallback);
+  if (safeMessage !== String(value || '').trim()) return safeMessage;
   const message = String(value || '').trim();
   if (!message) return fallback;
   const lower = message.toLocaleLowerCase('ru');
@@ -482,6 +519,11 @@ function pickerNeedsOrderContext(kind: PickerKind | null) {
 
 function pickerShouldAutofocusSearch(kind: PickerKind | null) {
   return kind === 'organization' || kind === 'counterparty' || kind === 'priceType' || kind === 'product';
+}
+
+function formatProfitabilityPercent(value: number) {
+  if (!Number.isFinite(value)) return '';
+  return `${value.toLocaleString('ru-RU', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
 }
 
 function waitForUiPaint() {
@@ -661,6 +703,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const editorFocusedTargetRef = React.useRef<unknown>(null);
   const editorFocusTimersRef = React.useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const pickerRequestIdRef = React.useRef(0);
+  const pickerKindRef = React.useRef<PickerKind | null>(null);
   const pickerLoadSignatureRef = React.useRef('');
   const pickerAppendLoadingRef = React.useRef(false);
   const pickerSearchInputRef = React.useRef<any>(null);
@@ -1132,6 +1175,11 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   }, [clearPickerFocusTimers]);
 
   const openPicker = React.useCallback((kind: PickerKind, lineKey?: string) => {
+    // Invalidate the previous picker request synchronously. Without this an
+    // organization response can arrive between the tap on "Подбор товаров"
+    // and the next effect, replacing the product rows with stale data.
+    pickerRequestIdRef.current += 1;
+    pickerKindRef.current = kind;
     clearEditorScrollRestoreTimers();
     editorScrollRestorePendingRef.current = mode === 'editor' && kind !== 'product';
     if (editorScrollRestorePendingRef.current) {
@@ -1220,7 +1268,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     try {
       const hasOrderContext = !!workspace.draft.organizationGuid && !!workspace.draft.counterpartyGuid;
       if (pickerNeedsOrderContext(kind) && !hasOrderContext) {
-        if (pickerRequestIdRef.current !== requestId) return;
+        if (pickerRequestIdRef.current !== requestId || pickerKindRef.current !== kind) return;
         setPickerItems([]);
         setPickerOffset(offset);
         setPickerHasMore(false);
@@ -1238,7 +1286,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       else if (kind === 'deliveryAddress') result = await workspace.searchDeliveryAddresses({ organizationGuid: workspace.draft.organizationGuid || undefined, counterpartyGuid: workspace.draft.counterpartyGuid || undefined, search, limit: pageSize, offset });
       else if (kind === 'priceType') result = await workspace.searchPriceTypes({ search, limit: pageSize, offset });
       else result = await workspace.searchProducts({ search, organizationGuid: workspace.draft.organizationGuid || undefined, counterpartyGuid: workspace.draft.counterpartyGuid, agreementGuid: workspace.draft.agreementGuid || undefined, warehouseGuid: workspace.draft.warehouseGuid || undefined, priceTypeGuid: workspace.draft.priceTypeGuid || undefined, inStockOnly, limit: pageSize, offset });
-      if (pickerRequestIdRef.current !== requestId) return;
+      if (pickerRequestIdRef.current !== requestId || pickerKindRef.current !== kind) return;
       const items = result?.items || [];
       if (append && items.length === 0) {
         setPickerHasMore(false);
@@ -1261,7 +1309,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       setPickerOffset(offset + items.length);
       setPickerHasMore(hasMorePage(items.length, pageSize, offset, result?.meta?.total));
     } catch {
-      if (pickerRequestIdRef.current === requestId) {
+      if (pickerRequestIdRef.current === requestId && pickerKindRef.current === kind) {
         setPickerHasMore(false);
         pickerLoadSignatureRef.current = '';
       }
@@ -1270,7 +1318,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         pickerAppendLoadingRef.current = false;
         setPickerAppendLoading(false);
       }
-      if (pickerRequestIdRef.current === requestId) {
+      if (pickerRequestIdRef.current === requestId && pickerKindRef.current === kind) {
         if (!append && kind === 'product') setPickerHasLoadedOnce(true);
         setPickerLoading(false);
       }
@@ -1336,6 +1384,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const closePicker = React.useCallback(() => {
     suppressPickerAutoFocus();
     pickerRequestIdRef.current += 1;
+    pickerKindRef.current = null;
     pickerAppendLoadingRef.current = false;
     setPickerAppendLoading(false);
     pickerLoadSignatureRef.current = '';
@@ -2786,7 +2835,9 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
               safeBottom={safeBottom}
               summary={workspace.todaySummary}
               loadingMetrics={ordersBottomMetricsLoading}
+              calculatingProfit={workspace.calculatingTodayProfit}
               disabled={!!openingOrderGuid || !!openingDocument}
+              onCalculateProfit={() => void workspace.refreshTodaySummary({ force: true })}
               onCreate={() => void createDocument()}
             />
           ) : null}
@@ -4011,10 +4062,6 @@ function ItemsToolbar({
           {searchError ? <Text style={styles.itemsSearchErrorText}>{searchError}</Text> : null}
           {!searchLoading && !searchError && searchResults.map((product) => {
             const disabled = workspace.draft.items.some((line: any) => line.productGuid === product.guid);
-            const meta = productPickerMeta(product, {
-              hasPriceType: !!workspace.draft.priceTypeGuid,
-              hasWarehouse: !!workspace.draft.warehouseGuid,
-            });
             return (
               <Pressable
                 key={product.guid}
@@ -4026,9 +4073,13 @@ function ItemsToolbar({
                 <InlineProductSearchThumb styles={styles} item={product} selected={disabled} />
                 <View style={styles.itemsSearchResultTextWrap}>
                   <Text style={styles.itemsSearchResultTitle} numberOfLines={1}>{product.name || getPickerItemTitle(product)}</Text>
-                  <Text style={styles.itemsSearchResultMeta} numberOfLines={1}>
-                    {[meta.code, `Цена: ${meta.receiptPrice}`, meta.stock].filter(Boolean).join(' • ')}
-                  </Text>
+                  <ProductPickerMetadata
+                    styles={styles}
+                    item={product}
+                    hasPriceType={!!workspace.draft.priceTypeGuid}
+                    hasWarehouse={!!workspace.draft.warehouseGuid}
+                    compact
+                  />
                 </View>
               </Pressable>
             );
@@ -4100,10 +4151,6 @@ function ItemsSearchResultsOverlay({
             {searchError ? <Text style={styles.itemsSearchErrorText}>{searchError}</Text> : null}
             {!searchLoading && !searchError && searchResults.map((product) => {
               const disabled = workspace.draft.items.some((line: any) => line.productGuid === product.guid);
-              const meta = productPickerMeta(product, {
-                hasPriceType: !!workspace.draft.priceTypeGuid,
-                hasWarehouse: !!workspace.draft.warehouseGuid,
-              });
               return (
                 <Pressable
                   key={product.guid}
@@ -4115,9 +4162,13 @@ function ItemsSearchResultsOverlay({
                   <InlineProductSearchThumb styles={styles} item={product} selected={disabled} />
                   <View style={styles.itemsSearchResultTextWrap}>
                     <Text style={styles.itemsSearchResultTitle} numberOfLines={1}>{product.name || getPickerItemTitle(product)}</Text>
-                    <Text style={styles.itemsSearchResultMeta} numberOfLines={1}>
-                      {[meta.code, `Цена: ${meta.receiptPrice}`, meta.stock].filter(Boolean).join(' • ')}
-                    </Text>
+                    <ProductPickerMetadata
+                      styles={styles}
+                      item={product}
+                      hasPriceType={!!workspace.draft.priceTypeGuid}
+                      hasWarehouse={!!workspace.draft.warehouseGuid}
+                      compact
+                    />
                   </View>
                 </Pressable>
               );
@@ -4182,10 +4233,6 @@ const ProductPickerFullscreenRow = React.memo(function ProductPickerFullscreenRo
   onLongPressProduct: (item: ClientOrderProduct) => void;
   onOpenImages: (item: ClientOrderProduct) => void;
 }) {
-  const description = React.useMemo(() => {
-    const meta = productPickerMeta(item, { hasPriceType, hasWarehouse });
-    return [meta.code, meta.receiptPrice ? `Цена: ${meta.receiptPrice}` : '', meta.stock].filter(Boolean).join(' • ');
-  }, [hasPriceType, hasWarehouse, item]);
   const suppressNextPressRef = React.useRef(false);
   const handlePress = React.useCallback(() => {
     if (suppressNextPressRef.current) {
@@ -4230,7 +4277,12 @@ const ProductPickerFullscreenRow = React.memo(function ProductPickerFullscreenRo
       />
       <View style={styles.pickerFlatTextWrap}>
         <Text style={styles.pickerFlatTitle} numberOfLines={2}>{item.name || getPickerItemTitle(item)}</Text>
-        {description ? <Text style={styles.pickerFlatMeta} numberOfLines={2}>{description}</Text> : null}
+        <ProductPickerMetadata
+          styles={styles}
+          item={item}
+          hasPriceType={hasPriceType}
+          hasWarehouse={hasWarehouse}
+        />
         {disabled ? <Text style={styles.productPickerAlreadyText}>Уже в заказе</Text> : null}
       </View>
       {selected ? (
@@ -4492,30 +4544,14 @@ function DocumentBottomBar({
   const profitAvailable = !!workspace.localProfitAvailable;
   const profitLoading = !!workspace.loadingReceiptPrices
     && workspace.draft.items.some((item: DraftItem) => !isCancelledDraftItem(item));
-  const profitValue = profitAvailable && Math.abs(Number(workspace.localProfit) || 0) >= 0.005
+  const profitValue = profitAvailable
     ? formatMoney(workspace.localProfit, currency)
     : '-';
+  const profitabilityPercent = profitAvailable && Number.isFinite(Number(workspace.localProfitabilityPercent))
+    ? Number(workspace.localProfitabilityPercent)
+    : null;
+  const profitColor = !profitAvailable ? '#64748B' : workspace.localProfit < 0 ? '#DC2626' : '#16A34A';
   const metrics = [
-    {
-      key: 'total',
-      label: 'Сумма',
-      value: formatMoney(workspace.localTotal, currency),
-      icon: 'cash-multiple',
-      color: '#2563EB',
-      loading: false,
-      description: 'Итоговая сумма по активным строкам заказа с учетом скидок.',
-    },
-    {
-      key: 'margin',
-      label: 'Наценка',
-      value: profitValue,
-      icon: 'chart-line',
-      color: !profitAvailable ? '#64748B' : workspace.localProfit < 0 ? '#DC2626' : '#16A34A',
-      loading: profitLoading,
-      description: profitAvailable
-        ? 'Предварительная сумма наценки: сумма продажи минус себестоимость по активным строкам.'
-        : 'Наценка появится после загрузки себестоимости всех активных строк.',
-    },
     {
       key: 'weight',
       label: 'Вес',
@@ -4526,13 +4562,36 @@ function DocumentBottomBar({
       description: 'Расчетный вес активных строк: количество умножается на вес выбранной упаковки или базовой единицы из 1С.',
     },
     {
-      key: 'netProfit',
-      label: 'Чистая прибыль',
-      value: '-',
-      icon: 'account-cash-outline',
-      color: '#D97706',
+      key: 'total',
+      label: 'Сумма',
+      value: formatMoney(workspace.localTotal, currency),
+      icon: 'cash-multiple',
+      color: '#2563EB',
       loading: false,
-      description: 'Показатель пока не рассчитывается. Позже сюда можно добавить формулу чистой прибыли менеджера.',
+      description: 'Итоговая сумма по активным строкам заказа с учетом скидок.',
+    },
+    {
+      key: 'empty',
+      label: '',
+      value: '',
+      icon: null,
+      color: '#64748B',
+      loading: false,
+      description: '',
+      empty: true,
+    },
+    {
+      key: 'profit',
+      label: 'Прибыль',
+      labelSuffix: profitabilityPercent === null ? null : `${formatProfitabilityPercent(profitabilityPercent)}`,
+      value: profitAvailable ? profitValue : 'Рассчитать',
+      icon: 'chart-line',
+      color: profitColor,
+      loading: profitLoading,
+      action: !profitAvailable && !profitLoading ? workspace.refreshDocumentProfit : undefined,
+      description: profitAvailable
+        ? 'Прибыль рассчитана по активным строкам с известной ценой поступления. Строки без себестоимости пропущены.'
+        : 'Прибыль появится после получения хотя бы одной цены поступления.',
     },
   ];
 
@@ -4579,7 +4638,8 @@ function DocumentBottomBar({
                   key={metric.key}
                   accessibilityRole="button"
                   accessibilityLabel={metric.loading ? `${metric.label}: загрузка` : `${metric.label}: ${metric.value}`}
-                  onPress={() => Alert.alert(metric.label, metric.description)}
+                  disabled={metric.empty || metric.loading}
+                  onPress={() => metric.action ? void metric.action() : !metric.empty && Alert.alert(metric.label, metric.description)}
                   style={({ pressed }) => [
                     styles.documentBottomMetric,
                     compact && styles.documentBottomMetricCompact,
@@ -4587,19 +4647,24 @@ function DocumentBottomBar({
                     pressed && styles.flatPressed,
                   ]}
                 >
-                  <View style={styles.documentBottomMetricIcon}>
+                  {metric.icon ? <View style={styles.documentBottomMetricIcon}>
                     <MaterialCommunityIcons name={metric.icon as any} size={19} color={metric.color} />
-                  </View>
+                  </View> : <View style={styles.documentBottomMetricIcon} />}
                   <View style={styles.documentBottomMetricTextWrap}>
-                    <Text
-                      style={[styles.documentBottomMetricLabel, compact && styles.documentBottomMetricLabelCompact]}
-                      numberOfLines={1}
-                    >
-                      {compact && metric.key === 'netProfit' ? 'Прибыль' : metric.label}
-                    </Text>
+                    {!metric.empty ? <View style={styles.metricLabelRow}>
+                      <Text
+                        style={[styles.documentBottomMetricLabel, compact && styles.documentBottomMetricLabelCompact]}
+                        numberOfLines={1}
+                      >
+                        {metric.label}
+                      </Text>
+                      {metric.labelSuffix ? <Text style={[styles.metricLabelSuffix, { color: metric.color }]} numberOfLines={1}>
+                        {metric.labelSuffix}
+                      </Text> : null}
+                    </View> : null}
                     {metric.loading
                       ? <View style={styles.documentBottomMetricValueSkeleton} />
-                      : <Text style={[styles.documentBottomMetricValue, { color: metric.color }]} numberOfLines={1}>{metric.value}</Text>}
+                      : !metric.empty ? <Text style={[styles.documentBottomMetricValue, metric.action && styles.documentBottomMetricAction, { color: metric.color }]} numberOfLines={1}>{metric.value}</Text> : null}
                   </View>
                 </Pressable>
               ))}
@@ -4919,12 +4984,17 @@ const LineItemCard = React.memo(function LineItemCard({
   onOpenImages: (item: any) => void;
 }) {
   const displayedPrice = getDisplayedUnitPriceValue(item);
-  const lineTotal = formatMoney(computeLineTotal(item, generalDiscountPercent), currency);
+  const lineTotalAmount = computeLineTotal(item, generalDiscountPercent);
+  const lineTotal = formatMoney(lineTotalAmount, currency);
   const lineProfitAvailable = canComputeLineProfit(item);
   const lineProfitAmount = lineProfitAvailable
-    ? computeLineProfit(item, generalDiscountPercent)
+    ? computeLineProfit(item, generalDiscountPercent, lineTotalAmount)
     : 0;
   const lineProfit = formatMoney(lineProfitAmount, currency);
+  const lineProfitabilityPercent = computeLineProfitabilityPercent(item, generalDiscountPercent, lineTotalAmount);
+  const lineProfitLabel = lineProfitabilityPercent === null
+    ? lineProfit
+    : `${lineProfit} (${formatProfitabilityPercent(lineProfitabilityPercent)})`;
   const lineProfitColor = lineProfitAmount < 0 ? '#DC2626' : '#16A34A';
   const packageLabelText = linePackageShortLabel(item);
   const muteValidation = documentReadOnly;
@@ -4993,7 +5063,7 @@ const LineItemCard = React.memo(function LineItemCard({
           {lineProfitAvailable ? (
             <View style={[styles.productPreviewProfitRow, readOnly && styles.productPreviewProfitReadOnly]}>
               <MaterialCommunityIcons name={lineProfitAmount < 0 ? 'trending-down' : 'trending-up'} size={12} color={lineProfitColor} />
-              <Text style={[styles.productPreviewProfit, { color: lineProfitColor }]} numberOfLines={1}>{lineProfit}</Text>
+              <Text style={[styles.productPreviewProfit, { color: lineProfitColor }]} numberOfLines={1}>{lineProfitLabel}</Text>
             </View>
           ) : null}
         </View>
@@ -5450,18 +5520,27 @@ function ProductLineEditorSheet({
   const priceInputDisplayValue = priceFocused && previousDisplayedItemKeyRef.current === displayedItemKey
     ? priceInputValue
     : displayedPrice;
+  const lineTotalAmount = computeLineTotal(displayedItemWithLocalQuantity, workspace.draft.generalDiscountPercent);
   const lineTotal = formatMoney(
-    computeLineTotal(displayedItemWithLocalQuantity, workspace.draft.generalDiscountPercent),
+    lineTotalAmount,
     displayedItem.currency || workspace.draft.currency
   );
   const lineProfitAvailable = canComputeLineProfit(displayedItemWithLocalQuantity);
   const lineProfitAmount = lineProfitAvailable
-    ? computeLineProfit(displayedItemWithLocalQuantity, workspace.draft.generalDiscountPercent)
+    ? computeLineProfit(displayedItemWithLocalQuantity, workspace.draft.generalDiscountPercent, lineTotalAmount)
     : 0;
   const lineProfit = formatMoney(
     lineProfitAmount,
     displayedItem.currency || workspace.draft.currency
   );
+  const lineProfitabilityPercent = computeLineProfitabilityPercent(
+    displayedItemWithLocalQuantity,
+    workspace.draft.generalDiscountPercent,
+    lineTotalAmount
+  );
+  const lineProfitLabel = lineProfitabilityPercent === null
+    ? lineProfit
+    : `${lineProfit} (${formatProfitabilityPercent(lineProfitabilityPercent)})`;
   const lineProfitColor = lineProfitAmount < 0 ? '#DC2626' : '#16A34A';
   const article = displayedItem.productArticle || displayedItem.productSku || displayedItem.productCode || '—';
   const stock = formatStockInlineLabel(displayedItem.stock, displayedItem.baseUnit) || '—';
@@ -5649,7 +5728,7 @@ function ProductLineEditorSheet({
             {lineProfitAvailable ? (
               <View style={styles.productEditorFooterProfitRow}>
                 <MaterialCommunityIcons name={lineProfitAmount < 0 ? 'trending-down' : 'trending-up'} size={13} color={lineProfitColor} />
-                <Text style={[styles.productEditorFooterProfit, { color: lineProfitColor }]} numberOfLines={1}>{lineProfit}</Text>
+                <Text style={[styles.productEditorFooterProfit, { color: lineProfitColor }]} numberOfLines={1}>{lineProfitLabel}</Text>
               </View>
             ) : null}
           </View>
@@ -6179,11 +6258,12 @@ function ProductImageGalleryModal({
   onClose: () => void;
 }) {
   const { width, height } = useWindowDimensions();
+  const { top: safeTop, bottom: safeBottom } = useSafeAreaInsets();
   const scrollRef = React.useRef<any>(null);
   const [activeIndex, setActiveIndex] = React.useState(gallery?.index || 0);
   const images = gallery?.images || [];
-  const stageWidth = Math.max(240, Math.min(width - 28, 720));
-  const stageHeight = Math.max(260, Math.min(Math.round(height * 0.62), Math.round(stageWidth * 0.9)));
+  const stageWidth = width;
+  const stageHeight = height;
 
   React.useEffect(() => {
     if (!gallery) return;
@@ -6204,8 +6284,8 @@ function ProductImageGalleryModal({
     <Portal>
       <View style={styles.productGalleryOverlay}>
         <Pressable accessibilityRole="button" accessibilityLabel="Закрыть просмотр изображения" style={styles.productGalleryBackdrop} onPress={onClose} />
-        <Surface mode="flat" style={[styles.productGalleryCard, { width: stageWidth }]}>
-          <View style={styles.productGalleryHeader}>
+        <Surface mode="flat" style={[styles.productGalleryCard, { width: stageWidth, height: stageHeight }]}>
+          <View style={[styles.productGalleryHeader, { top: Math.max(safeTop, 8) + 4 }]}>
             <View style={styles.productGalleryTitleWrap}>
               <Text style={styles.productGalleryTitle} numberOfLines={1}>{gallery.title}</Text>
               <Text style={styles.productGallerySubtitle} numberOfLines={1}>
@@ -6215,7 +6295,7 @@ function ProductImageGalleryModal({
             <View style={styles.productGalleryHeaderActions}>
               {images.length > 1 ? <Text style={styles.productGalleryCounter}>{activeIndex + 1}/{images.length}</Text> : null}
               <Pressable accessibilityRole="button" accessibilityLabel="Закрыть" onPress={onClose} style={({ pressed }) => [styles.productGalleryCloseButton, pressed && styles.flatPressed]}>
-                <MaterialCommunityIcons name="close" size={22} color="#0F172A" />
+                <MaterialCommunityIcons name="close" size={22} color="#FFFFFF" />
               </Pressable>
             </View>
           </View>
@@ -6236,7 +6316,12 @@ function ProductImageGalleryModal({
             ))}
           </ScrollView>
           {images.length > 1 ? (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.productGalleryThumbs}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={[styles.productGalleryThumbsScroll, { bottom: Math.max(safeBottom, 8) + 8 }]}
+              contentContainerStyle={styles.productGalleryThumbs}
+            >
               {images.map((image, index) => (
                 <Pressable
                   key={`thumb-${image.key}`}
@@ -6466,7 +6551,9 @@ function OrdersBottomBar({
   safeBottom,
   summary,
   loadingMetrics,
+  calculatingProfit,
   disabled,
+  onCalculateProfit,
   onCreate,
 }: {
   styles: any;
@@ -6474,7 +6561,9 @@ function OrdersBottomBar({
   safeBottom: number;
   summary: ClientOrdersTodaySummary | null;
   loadingMetrics: boolean;
+  calculatingProfit: boolean;
   disabled: boolean;
+  onCalculateProfit: () => void;
   onCreate: () => void;
 }) {
   const backgroundColor = useThemeColor({}, 'background');
@@ -6499,7 +6588,15 @@ function OrdersBottomBar({
     : '—';
   const profit = summary?.profitAvailable && Number.isFinite(Number(summary.profit))
     ? formatMoney(Number(summary.profit), currency)
-    : '—';
+    : null;
+  const profitabilityPercent = summary?.profitAvailable && Number.isFinite(Number(summary.profitabilityPercent))
+    ? Number(summary.profitabilityPercent)
+    : null;
+  const profitColor = !summary?.profitAvailable
+    ? '#64748B'
+    : Number(summary.profit) < 0
+      ? '#DC2626'
+      : '#16A34A';
 
   return (
     <View style={styles.ordersBottomBar}>
@@ -6564,13 +6661,11 @@ function OrdersBottomBar({
               styles={styles}
               icon="chart-line"
               label="Прибыль"
-              value={profit}
-              loading={loadingMetrics}
-              color={!summary?.profitAvailable
-                ? '#64748B'
-                : Number(summary.profit) < 0
-                  ? '#DC2626'
-                  : '#16A34A'}
+              labelSuffix={profitabilityPercent === null ? null : formatProfitabilityPercent(profitabilityPercent)}
+              value={profit ?? 'Рассчитать'}
+              loading={loadingMetrics || calculatingProfit}
+              color={profitColor}
+              action={profit === null && !loadingMetrics && !calculatingProfit ? onCalculateProfit : undefined}
             />
           </View>
         </View>
@@ -6583,29 +6678,36 @@ function OrdersBottomMetric({
   styles,
   icon,
   label,
+  labelSuffix,
   value,
   loading,
   color,
+  action,
 }: {
   styles: any;
   icon: string;
   label: string;
+  labelSuffix?: string | null;
   value: string;
   loading: boolean;
   color: string;
+  action?: () => void;
 }) {
-  return (
-    <View style={styles.ordersBottomMetric}>
+  const content = (
+    <View style={[styles.ordersBottomMetric, action && styles.ordersBottomMetricPressable]}>
       <View style={styles.ordersBottomMetricIcon}>
         <MaterialCommunityIcons name={icon as any} size={20} color={color} />
       </View>
       <View style={styles.ordersBottomMetricText}>
-        <Text style={styles.ordersBottomMetricLabel} numberOfLines={1}>{label}</Text>
+        <View style={styles.metricLabelRow}>
+          <Text style={styles.ordersBottomMetricLabel} numberOfLines={1}>{label}</Text>
+          {labelSuffix ? <Text style={[styles.metricLabelSuffix, { color }]} numberOfLines={1}>{labelSuffix}</Text> : null}
+        </View>
         {loading
           ? <View style={styles.ordersBottomMetricValueSkeleton} />
           : (
             <Text
-              style={[styles.ordersBottomMetricValue, { color }]}
+              style={[styles.ordersBottomMetricValue, action && styles.ordersBottomMetricAction, { color }]}
               numberOfLines={1}
               adjustsFontSizeToFit
               minimumFontScale={0.72}
@@ -6616,6 +6718,11 @@ function OrdersBottomMetric({
       </View>
     </View>
   );
+  return action ? (
+    <Pressable accessibilityRole="button" accessibilityLabel="Рассчитать прибыль" onPress={action} style={({ pressed }) => [styles.ordersBottomMetricActionWrap, pressed && styles.flatPressed]}>
+      {content}
+    </Pressable>
+  ) : content;
 }
 
 const PRIMARY_ORDER_FILTER_STATUSES = ['DRAFT', 'QUEUED', 'TO_SHIP', 'SHIPPING_IN_PROGRESS', 'IN_RESERVE', 'CLOSED', 'CANCELLED'];
@@ -7618,6 +7725,15 @@ const OrderCard = React.memo(function OrderCard({
   const itemsCount = getClientOrderItemsCount(order);
   const statusLabel = isDeviceOrder && !hasDebtProblem ? 'На устройстве' : getOrderDisplayStatusLabelWithQueue(order);
   const invoice = getClientOrderInvoicePresentation(order);
+  const profitAvailable = order.profitAvailable === true
+    && order.profit !== null
+    && order.profit !== undefined
+    && Number.isFinite(Number(order.profit));
+  const profit = profitAvailable ? Number(order.profit) : null;
+  const profitabilityPercent = profitAvailable && Number.isFinite(Number(order.profitabilityPercent))
+    ? Number(order.profitabilityPercent)
+    : null;
+  const profitColor = profit !== null && profit < 0 ? '#DC2626' : '#16A34A';
   const interactionDisabled = disabled || loading;
   const queuedForSending = order.syncState === 'QUEUED';
   const sendFailed = !!(
@@ -7736,6 +7852,19 @@ const OrderCard = React.memo(function OrderCard({
             </View>
             <View style={styles.orderAmountWrap}>
               <Text style={styles.orderAmount} numberOfLines={1}>{formatMoney(order.totalAmount || 0, order.currency)}</Text>
+              {profit !== null ? (
+                <View style={styles.orderProfitRow}>
+                  <MaterialCommunityIcons
+                    name={profit < 0 ? 'trending-down' : 'trending-up'}
+                    size={11}
+                    color={profitColor}
+                  />
+                  <Text style={[styles.orderProfit, { color: profitColor }]} numberOfLines={1}>
+                    {formatMoney(profit, order.currency)}
+                    {profitabilityPercent === null ? '' : ` (${formatProfitabilityPercent(profitabilityPercent)})`}
+                  </Text>
+                </View>
+              ) : null}
             </View>
           </View>
           <View style={styles.orderCardBottomRow}>
@@ -7862,7 +7991,10 @@ const styles = StyleSheet.create({
   documentBottomMetricLabel: { color: '#64748B', fontSize: 10.5, lineHeight: 12, fontWeight: '900', textTransform: 'uppercase', includeFontPadding: false },
   documentBottomMetricLabelCompact: { fontSize: 10, lineHeight: 11 },
   documentBottomMetricValue: { fontSize: 13.5, lineHeight: 15, fontWeight: '900', includeFontPadding: false },
+  documentBottomMetricAction: { textDecorationLine: 'underline' },
   documentBottomMetricValueSkeleton: { width: '54%', height: 14, marginTop: 1, borderRadius: 5, backgroundColor: '#DCE4ED' },
+  metricLabelRow: { minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 5 },
+  metricLabelSuffix: { flexShrink: 1, fontSize: 10.5, lineHeight: 12, fontWeight: '900', includeFontPadding: false },
   documentBottomActions: { width: 106, height: 56, borderRadius: 13, overflow: 'hidden', flexDirection: 'row', alignItems: 'stretch' },
   documentBottomActionsCompact: { width: 96, height: 54 },
   documentBottomActionsStacked: { width: '100%', height: 48, alignSelf: 'stretch' },
@@ -8060,10 +8192,13 @@ const styles = StyleSheet.create({
   ordersBottomMetrics: { minHeight: 88, justifyContent: 'center', rowGap: 2 },
   ordersBottomMetricsRow: { flexDirection: 'row', alignItems: 'center', columnGap: 10 },
   ordersBottomMetric: { flex: 1, minWidth: 0, minHeight: 42, paddingHorizontal: 6, flexDirection: 'row', alignItems: 'center', gap: 7 },
+  ordersBottomMetricPressable: { width: '100%' },
+  ordersBottomMetricActionWrap: { flex: 1, minWidth: 0 },
   ordersBottomMetricIcon: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
   ordersBottomMetricText: { flex: 1, minWidth: 0, gap: 2 },
   ordersBottomMetricLabel: { color: '#64748B', fontSize: 10.5, lineHeight: 12, fontWeight: '900', textTransform: 'uppercase', includeFontPadding: false },
   ordersBottomMetricValue: { color: '#0F172A', fontSize: 14.5, lineHeight: 17, fontWeight: '900', includeFontPadding: false },
+  ordersBottomMetricAction: { textDecorationLine: 'underline' },
   ordersBottomMetricValueSkeleton: { width: '58%', height: 14, borderRadius: 5, backgroundColor: '#DCE4ED' },
   ordersEmptyState: { minHeight: 148, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 18, paddingVertical: 22, gap: 6 },
   ordersEmptyIcon: { width: 42, height: 42, borderRadius: 999, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
@@ -8125,12 +8260,14 @@ const styles = StyleSheet.create({
   orderCardBody: { flex: 1, minWidth: 0, paddingHorizontal: 12, paddingVertical: 10, gap: 7 },
   orderCardTopRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   orderTitleWrap: { flex: 1, minWidth: 0, gap: 4 },
-  orderAmountWrap: { maxWidth: 116, alignItems: 'flex-end', gap: 2 },
+  orderAmountWrap: { maxWidth: 138, alignItems: 'flex-end', gap: 2 },
   orderCardBottomRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   orderCard: { borderRadius: 14, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#FFFFFF', padding: 12, gap: 7 },
   orderDocumentRow: { alignSelf: 'flex-start', maxWidth: '100%', minHeight: 20, paddingHorizontal: 0, paddingVertical: 0, flexDirection: 'row', alignItems: 'center', gap: 5 },
   orderTitle: { flexShrink: 1, minWidth: 0, fontSize: 14.5, fontWeight: '900', color: '#0F172A', lineHeight: 18 },
   orderAmount: { fontSize: 14, lineHeight: 17, fontWeight: '900', color: '#2563EB' },
+  orderProfitRow: { maxWidth: '100%', flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 2 },
+  orderProfit: { flexShrink: 1, fontSize: 10.5, lineHeight: 13, fontWeight: '900' },
   orderStatusBadge: { width: 18, height: 18, alignItems: 'center', justifyContent: 'center', borderRadius: 999, paddingHorizontal: 0, paddingVertical: 0 },
   orderStatusPill: { flexShrink: 0, minHeight: 24, borderRadius: 999, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 4 },
   orderStatusProblem: { backgroundColor: '#FEE2E2' },
@@ -8200,23 +8337,24 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(248, 250, 252, 0.74)',
   },
   productImagePressed: { opacity: 0.82 },
-  productGalleryOverlay: { ...StyleSheet.absoluteFill, zIndex: 80, elevation: 80, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 14 },
-  productGalleryBackdrop: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(15, 23, 42, 0.58)' },
-  productGalleryCard: { maxWidth: '100%', maxHeight: '88%', borderRadius: 18, borderWidth: 1, borderColor: 'rgba(226, 232, 240, 0.72)', backgroundColor: '#FFFFFF', overflow: 'hidden' },
-  productGalleryHeader: { minHeight: 58, paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#E2E8F0', flexDirection: 'row', alignItems: 'center', gap: 10 },
+  productGalleryOverlay: { ...StyleSheet.absoluteFill, zIndex: 80, elevation: 80, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0B1220' },
+  productGalleryBackdrop: { ...StyleSheet.absoluteFill, backgroundColor: '#0B1220' },
+  productGalleryCard: { maxWidth: '100%', maxHeight: '100%', borderRadius: 0, borderWidth: 0, backgroundColor: '#0B1220', overflow: 'hidden' },
+  productGalleryHeader: { position: 'absolute', left: 10, right: 10, zIndex: 3, minHeight: 50, paddingLeft: 13, paddingRight: 7, paddingVertical: 6, borderRadius: 16, backgroundColor: 'rgba(15, 23, 42, 0.82)', flexDirection: 'row', alignItems: 'center', gap: 10 },
   productGalleryTitleWrap: { flex: 1, minWidth: 0 },
-  productGalleryTitle: { color: '#0F172A', fontSize: 14, lineHeight: 18, fontWeight: '900' },
-  productGallerySubtitle: { marginTop: 2, color: '#64748B', fontSize: 11, lineHeight: 14, fontWeight: '800' },
+  productGalleryTitle: { color: '#FFFFFF', fontSize: 14, lineHeight: 18, fontWeight: '900' },
+  productGallerySubtitle: { marginTop: 1, color: '#CBD5E1', fontSize: 11, lineHeight: 14, fontWeight: '800' },
   productGalleryHeaderActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  productGalleryCounter: { minWidth: 38, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 999, backgroundColor: '#EFF6FF', color: '#2563EB', fontSize: 11, lineHeight: 14, fontWeight: '900', textAlign: 'center' },
-  productGalleryCloseButton: { width: 36, height: 36, borderRadius: 12, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center' },
-  productGallerySlide: { position: 'relative', backgroundColor: '#F8FAFC', alignItems: 'center', justifyContent: 'center' },
+  productGalleryCounter: { minWidth: 38, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.12)', color: '#FFFFFF', fontSize: 11, lineHeight: 14, fontWeight: '900', textAlign: 'center' },
+  productGalleryCloseButton: { width: 36, height: 36, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.14)', alignItems: 'center', justifyContent: 'center' },
+  productGallerySlide: { position: 'relative', backgroundColor: '#0B1220', alignItems: 'center', justifyContent: 'center' },
   productGalleryImage: { ...StyleSheet.absoluteFill },
-  productGalleryLoader: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(248, 250, 252, 0.72)' },
+  productGalleryLoader: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(11, 18, 32, 0.66)' },
   productGalleryEmpty: { alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 18 },
   productGalleryEmptyText: { color: '#64748B', fontSize: 12, lineHeight: 16, fontWeight: '800', textAlign: 'center' },
-  productGalleryThumbs: { paddingHorizontal: 10, paddingVertical: 10, gap: 8, borderTopWidth: 1, borderTopColor: '#E2E8F0' },
-  productGalleryThumb: { width: 54, height: 54, borderRadius: 10, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#F8FAFC', overflow: 'hidden' },
+  productGalleryThumbsScroll: { position: 'absolute', left: 0, right: 0, zIndex: 3, maxHeight: 70 },
+  productGalleryThumbs: { paddingHorizontal: 12, paddingVertical: 8, gap: 8, borderRadius: 16, backgroundColor: 'rgba(15, 23, 42, 0.72)' },
+  productGalleryThumb: { width: 54, height: 54, borderRadius: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)', backgroundColor: '#FFFFFF', overflow: 'hidden' },
   productGalleryThumbActive: { borderColor: '#2563EB', borderWidth: 2 },
   productGalleryThumbImage: { width: '100%', height: '100%' },
   productPreviewBody: { flex: 1, minWidth: 0, justifyContent: 'center', paddingLeft: 10, paddingRight: 10, paddingVertical: 8, gap: 4 },
@@ -8458,6 +8596,11 @@ const styles = StyleSheet.create({
   pickerFlatTitleDebt: { color: '#991B1B', flexShrink: 1 },
   pickerDebtBadge: { color: '#B91C1C', fontSize: 10, lineHeight: 14, fontWeight: '900', backgroundColor: '#FEE2E2', borderRadius: 999, paddingHorizontal: 7, paddingVertical: 1 },
   pickerFlatMeta: { marginTop: 1, color: '#64748B', fontSize: 10.5, fontWeight: '800', lineHeight: 12.5 },
+  productPickerMetaRow: { marginTop: 3, minWidth: 0, flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', columnGap: 10, rowGap: 2 },
+  productPickerMetaRowCompact: { marginTop: 1, columnGap: 7, flexWrap: 'nowrap' },
+  productPickerMetaItem: { minWidth: 0, flexShrink: 1, flexDirection: 'row', alignItems: 'center', gap: 3 },
+  productPickerMetaValue: { minWidth: 0, flexShrink: 1, color: '#64748B', fontSize: 10.5, lineHeight: 13, fontWeight: '800', includeFontPadding: false },
+  productPickerMetaValueCompact: { fontSize: 10, lineHeight: 12 },
   productPickerSelectedText: { marginTop: 3, color: '#1D4ED8', fontSize: 11, lineHeight: 13, fontWeight: '900' },
   productPickerAlreadyText: { marginTop: 3, color: '#B91C1C', fontSize: 11, lineHeight: 13, fontWeight: '900' },
   pickerRowSurface: { backgroundColor: '#FFFFFF' },

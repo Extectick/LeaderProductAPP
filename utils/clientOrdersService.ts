@@ -1,5 +1,6 @@
 import { API_ENDPOINTS } from './apiEndpoints';
 import { apiClient } from './apiClient';
+import { toUserErrorMessage } from '@/src/shared/errors/userErrorMessage';
 
 const CLIENT_ORDERS_REQUEST_TIMEOUT_MS = 10_000;
 
@@ -28,7 +29,10 @@ export type ClientOrdersTodaySummary = {
   totalAmount: number;
   profit: number | null;
   profitAvailable: boolean;
+  profitBasisAmount: number;
+  profitabilityPercent: number | null;
   missingReceiptPriceCount: number;
+  skippedReceiptPriceCount: number;
   currency: 'RUB';
   calculatedAt: string;
   stale?: boolean;
@@ -332,6 +336,11 @@ export type ClientOrder = {
   paymentForm?: string | null;
   deliveryMethod?: string | null;
   totalAmount?: number | null;
+  profit?: number | null;
+  profitAvailable?: boolean;
+  profitBasisAmount?: number | null;
+  profitabilityPercent?: number | null;
+  missingReceiptPriceCount?: number;
   currency?: string | null;
   priceType?: { guid: string; name: string } | null;
   generalDiscountPercent?: number | null;
@@ -467,22 +476,11 @@ function dedupeRead<T>(key: string, loader: () => Promise<T>): Promise<T> {
 }
 
 function getErrorMessage(fallback: string, message?: string) {
-  if (!message) return fallback;
-  const normalized = String(message).trim();
-  const looksTechnical =
-    normalized.startsWith('{') ||
-    normalized.startsWith('[') ||
-    normalized.startsWith('<!DOCTYPE') ||
-    normalized.includes('"path"') ||
-    normalized.includes('"code"') ||
-    normalized.includes('ZodError') ||
-    normalized.includes('expected number') ||
-    normalized.includes('\n    at ');
-  return looksTechnical ? fallback : normalized.slice(0, 240);
+  return toUserErrorMessage(message, fallback);
 }
 
 function throwApiError(fallback: string, res: { message?: string; status?: number; errorCode?: string }): never {
-  const error = new Error(getErrorMessage(fallback, res.message)) as Error & {
+  const error = new Error(toUserErrorMessage(res, fallback)) as Error & {
     status?: number;
     errorCode?: string;
   };
@@ -554,15 +552,20 @@ export async function getClientOrders(params?: {
   });
 }
 
-export async function getClientOrdersTodaySummary() {
-  const path = API_ENDPOINTS.CLIENT_ORDERS.TODAY_SUMMARY;
-  return dedupeRead(`GET ${path}`, async () => {
-    const res = await apiClient<void, ClientOrdersTodaySummary>(path);
+export async function getClientOrdersTodaySummary(options: { force?: boolean } = {}) {
+  const path = options.force
+    ? `${API_ENDPOINTS.CLIENT_ORDERS.TODAY_SUMMARY}?force=1`
+    : API_ENDPOINTS.CLIENT_ORDERS.TODAY_SUMMARY;
+  const load = async () => {
+    const res = await apiClient<void, ClientOrdersTodaySummary>(path, {
+      timeoutMs: CLIENT_ORDERS_REQUEST_TIMEOUT_MS,
+    });
     if (!res.ok || !res.data) {
       throwApiError('Не удалось загрузить статистику заказов за сегодня', res);
     }
     return res.data;
-  });
+  };
+  return options.force ? load() : dedupeRead(`GET ${path}`, load);
 }
 
 export async function getClientOrder(guid: string) {
