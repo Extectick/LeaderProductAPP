@@ -1189,6 +1189,10 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     }
     pickerAutoFocusSuppressedRef.current = false;
     clearPickerFocusTimers();
+    // Full-screen pickers have their own header. Hide the document header in
+    // the same event as opening the picker so it cannot remain visible for a
+    // frame (or be restored by a stale document-header layout effect).
+    setHeaderOverride({ hidden: true });
     const shouldRestoreProductPicker = kind === 'product'
       && productPickerStateSignatureRef.current === productPickerContextSignature
       && (pickerItems.length > 0 || !!pickerSearch);
@@ -1229,6 +1233,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     productPickerContextSignature,
     restorePickerListScroll,
     scrollPickerListToTop,
+    setHeaderOverride,
   ]);
 
   const handlePickerSearchChange = React.useCallback((value: string) => {
@@ -2520,6 +2525,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     workspace.selections,
   ]);
   const documentHeaderOverride = React.useMemo(() => {
+    if (pickerKind) return { hidden: true as const };
     if (mode !== 'editor') return { hidden: true as const };
     return {
       title: 'Заказы клиентов',
@@ -2537,7 +2543,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       variant: 'document' as const,
       showServerStatus: false,
     };
-  }, [closeDocumentToOrders, documentHeaderRightSlot, documentHeaderSlot, documentHeaderTitleSlot, mode]);
+  }, [closeDocumentToOrders, documentHeaderRightSlot, documentHeaderSlot, documentHeaderTitleSlot, mode, pickerKind]);
   React.useLayoutEffect(() => {
     if (screenFocused) setHeaderOverride(documentHeaderOverride);
   }, [documentHeaderOverride, screenFocused, setHeaderOverride]);
