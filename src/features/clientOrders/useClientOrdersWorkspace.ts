@@ -1145,12 +1145,15 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const ordersInitialLoadDoneRef = React.useRef(false);
   const deviceDraftSyncingRef = React.useRef(false);
   const invoicePollingRef = React.useRef(false);
+  const invoiceSettledPollGuidRef = React.useRef<string | null>(null);
   const queueRefreshInFlightRef = React.useRef(false);
   const invoiceStatusesInFlightRef = React.useRef(false);
   const todaySummaryRequestIdRef = React.useRef(0);
   const todaySummaryInFlightRef = React.useRef<Promise<ClientOrdersTodaySummary | null> | null>(null);
   const todaySummaryRef = React.useRef<ClientOrdersTodaySummary | null>(null);
   const previousServerReachableRef = React.useRef(serverStatus.isReachable);
+
+  const selectedInvoicePending = hasPendingClientOrderInvoice(selectedOrder);
 
   React.useEffect(() => {
     todaySummaryRef.current = todaySummary;
@@ -1850,7 +1853,12 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       warehouse: normalizedOrder.warehouse || null,
       deliveryAddress: normalizedOrder.deliveryAddress || null,
     });
-    void loadEnumOptionsForContext(nextDraft.organizationGuid, nextDraft.counterpartyGuid);
+    // A read-only document already contains the saved enum values. Loading
+    // editable defaults here only adds a slow 1C round-trip and cannot change
+    // anything the user is allowed to edit.
+    if (!normalizedOrder.readOnly) {
+      void loadEnumOptionsForContext(nextDraft.organizationGuid, nextDraft.counterpartyGuid);
+    }
     setDirty(false);
     setAutosaveState('idle');
     setAutosaveError(null);
@@ -2530,20 +2538,31 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [loadDetail, selectedGuid, selectedOrder?.guid]);
 
   React.useEffect(() => {
-    if (!invoicePollingEnabled || !selectedGuid || isDeviceDraftGuid(selectedGuid)) return undefined;
+    if (!selectedGuid) {
+      invoiceSettledPollGuidRef.current = null;
+      return undefined;
+    }
+    if (!invoicePollingEnabled || isDeviceDraftGuid(selectedGuid)) return undefined;
+    const invoicePending = selectedInvoicePending;
+    // Always reconcile once when a document is opened. Continue polling only
+    // while 1C/API is actually preparing a requested invoice.
+    if (!invoicePending && invoiceSettledPollGuidRef.current === selectedGuid) return undefined;
+    if (!invoicePending) invoiceSettledPollGuidRef.current = selectedGuid;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const poll = async () => {
       if (cancelled) return;
       if (!AppState?.currentState || AppState.currentState === 'active') await refreshSelectedOrderInvoices();
-      if (!cancelled) timer = setTimeout(poll, OPEN_ORDER_INVOICES_REFRESH_INTERVAL_MS);
+      if (!cancelled && invoicePending) {
+        timer = setTimeout(poll, OPEN_ORDER_INVOICES_REFRESH_INTERVAL_MS);
+      }
     };
     void poll();
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [invoicePollingEnabled, refreshSelectedOrderInvoices, selectedGuid]);
+  }, [invoicePollingEnabled, refreshSelectedOrderInvoices, selectedGuid, selectedInvoicePending]);
 
   const saveUserSettings = React.useCallback(async (payload: Parameters<typeof updateClientOrderSettings>[0]) => {
     setSavingSettings(true);

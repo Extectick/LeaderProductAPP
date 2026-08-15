@@ -2,7 +2,7 @@ import { API_ENDPOINTS } from './apiEndpoints';
 import { apiClient } from './apiClient';
 import { toUserErrorMessage } from '@/src/shared/errors/userErrorMessage';
 
-const CLIENT_ORDERS_REQUEST_TIMEOUT_MS = 10_000;
+const CLIENT_ORDERS_REQUEST_TIMEOUT_MS = 65_000;
 
 export type PaginationMeta = {
   total?: number;
@@ -547,7 +547,9 @@ export async function getClientOrders(params?: {
   const query = buildQuery(params || {});
   const path = query ? `${API_ENDPOINTS.CLIENT_ORDERS.LIST}?${query}` : API_ENDPOINTS.CLIENT_ORDERS.LIST;
   return dedupeRead(`GET ${path}`, async () => {
-    const res = await apiClient<void, { items: ClientOrder[] }>(path);
+    const res = await apiClient<void, { items: ClientOrder[] }>(path, {
+      timeoutMs: CLIENT_ORDERS_REQUEST_TIMEOUT_MS,
+    });
     return normalizeClientOrderPage(mapPagedResponse(res, 'Не удалось загрузить заказы клиентов'));
   });
 }
@@ -571,7 +573,9 @@ export async function getClientOrdersTodaySummary(options: { force?: boolean } =
 export async function getClientOrder(guid: string) {
   const path = API_ENDPOINTS.CLIENT_ORDERS.DETAIL(guid);
   return dedupeRead(`GET ${path}`, async () => {
-    const res = await apiClient<void, ClientOrder>(path);
+    const res = await apiClient<void, ClientOrder>(path, {
+      timeoutMs: CLIENT_ORDERS_REQUEST_TIMEOUT_MS,
+    });
     if (!res.ok || !res.data) throw new Error(getErrorMessage('Не удалось загрузить заказ клиента', res.message));
     return normalizeClientOrder(res.data);
   });
@@ -636,7 +640,9 @@ export async function getClientOrdersReferenceData(counterpartyGuid?: string) {
   const path = query
     ? `${API_ENDPOINTS.CLIENT_ORDERS.REFERENCE_DATA}?${query}`
     : API_ENDPOINTS.CLIENT_ORDERS.REFERENCE_DATA;
-  const res = await apiClient<void, ClientOrdersReferenceData>(path);
+  const res = await apiClient<void, ClientOrdersReferenceData>(path, {
+    timeoutMs: CLIENT_ORDERS_REQUEST_TIMEOUT_MS,
+  });
   if (!res.ok || !res.data) throw new Error(getErrorMessage('Не удалось загрузить справочники заказа', res.message));
   return res.data;
 }
@@ -648,7 +654,9 @@ export async function getClientOrderDefaults(params: {
   const query = buildQuery(params);
   const path = `${API_ENDPOINTS.CLIENT_ORDERS.DEFAULTS}?${query}`;
   return dedupeRead(`GET ${path}`, async () => {
-    const res = await apiClient<void, ClientOrderDefaults>(path);
+    const res = await apiClient<void, ClientOrderDefaults>(path, {
+      timeoutMs: CLIENT_ORDERS_REQUEST_TIMEOUT_MS,
+    });
     if (!res.ok || !res.data) throw new Error(getErrorMessage('Не удалось получить значения по умолчанию', res.message));
     return res.data;
   });
@@ -688,7 +696,9 @@ async function getPagedSelector<T>(
   const query = buildQuery(params);
   const path = query ? `${endpoint}?${query}` : endpoint;
   return dedupeRead(`GET ${path}`, async () => {
-    const res = await apiClient<void, { items: T[] }>(path);
+    const res = await apiClient<void, { items: T[] }>(path, {
+      timeoutMs: CLIENT_ORDERS_REQUEST_TIMEOUT_MS,
+    });
     return mapPagedResponse(res, fallbackMessage);
   });
 }
@@ -810,7 +820,7 @@ export async function getClientOrderProductsBatch(payload: {
   return dedupeRead(key, async () => {
     const res = await apiClient<typeof payload, { items: ClientOrderProduct[] }>(
       API_ENDPOINTS.CLIENT_ORDERS.PRODUCTS_BATCH,
-      { method: 'POST', body: payload }
+      { method: 'POST', body: payload, timeoutMs: CLIENT_ORDERS_REQUEST_TIMEOUT_MS }
     );
     if (!res.ok || !res.data) {
       throw new Error(getErrorMessage('Не удалось обновить цены и остатки товаров', res.message));

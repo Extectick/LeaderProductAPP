@@ -110,7 +110,7 @@ import {
   type ColumnSizingState,
 } from '@tanstack/react-table';
 import React from 'react';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useWindowDimensions } from 'react-native';
 import {
   DeliveryDateField,
@@ -1283,6 +1283,7 @@ export default function ClientOrdersWebScreen() {
     resolve?.(result);
   }, []);
   const workspace = useClientOrdersWorkspace({ confirmDiscard: requestDiscardConfirm });
+  const router = useRouter();
   const workspaceRef = React.useRef(workspace);
   workspaceRef.current = workspace;
   const topInset = useHeaderContentTopInset({ compact: true, hasSubtitle: false, extraGap: 2 });
@@ -1848,6 +1849,17 @@ export default function ClientOrdersWebScreen() {
 
   const openReferenceDetails = React.useCallback(async (kind: ClientOrderReferenceKind, guid?: string | null) => {
     if (!guid) return;
+    if (kind === 'counterparty') {
+      router.push({
+        pathname: '/services/client_orders/counterparty',
+        params: {
+          counterpartyGuid: guid,
+          organizationGuid: workspace.draft.organizationGuid || undefined,
+          sourceOrderGuid: workspace.selectedOrder?.guid || workspace.draft.guid || undefined,
+        },
+      } as any);
+      return;
+    }
     setReferenceDetailsOpen(true);
     setReferenceDetailsLoading(true);
     setReferenceDetailsError(null);
@@ -1860,7 +1872,7 @@ export default function ClientOrdersWebScreen() {
     } finally {
       setReferenceDetailsLoading(false);
     }
-  }, []);
+  }, [router, workspace.draft.guid, workspace.draft.organizationGuid, workspace.selectedOrder?.guid]);
 
   const submitWithConfirm = React.useCallback(async () => {
     setConfirmSubmitOpen(false);

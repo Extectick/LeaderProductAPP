@@ -223,6 +223,15 @@ export async function httpRequest<Req = undefined, Res = any>(
 
     return { ok: true, status, data, meta };
   } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      addMonitoringBreadcrumb('http_request_timeout', { path, timeoutMs: effectiveTimeoutMs });
+      return {
+        ok: false,
+        status: 408,
+        message: 'Операция выполняется дольше обычного. Повторите запрос.',
+        errorCode: 'REQUEST_TIMEOUT',
+      };
+    }
     const technicalMessage = error?.name === 'AbortError'
       ? 'Request timeout'
       : error?.message || 'Network error';

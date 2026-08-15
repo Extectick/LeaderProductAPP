@@ -1,5 +1,6 @@
 export type AppErrorCode =
   | 'NETWORK_UNAVAILABLE'
+  | 'REQUEST_TIMEOUT'
   | 'UNAUTHORIZED'
   | 'FORBIDDEN'
   | 'CONFLICT'
@@ -28,6 +29,7 @@ export class AppError extends Error {
 
 export function mapHttpStatusToErrorCode(status: number): AppErrorCode {
   if (status === 0) return 'NETWORK_UNAVAILABLE';
+  if (status === 408) return 'REQUEST_TIMEOUT';
   if (status === 401) return 'UNAUTHORIZED';
   if (status === 403) return 'FORBIDDEN';
   if (status === 409) return 'CONFLICT';
@@ -40,6 +42,8 @@ export function mapHttpStatusToErrorCode(status: number): AppErrorCode {
 
 export function mapAppErrorToUserMessage(error: Pick<AppError, 'code' | 'message'>): string {
   switch (error.code) {
+    case 'REQUEST_TIMEOUT':
+      return 'Операция выполняется дольше обычного. Повторите запрос.';
     case 'NETWORK_UNAVAILABLE':
       return 'Сервер недоступен. Проверьте соединение.';
     case 'UNAUTHORIZED':

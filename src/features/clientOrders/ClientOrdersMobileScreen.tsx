@@ -1536,6 +1536,18 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
 
   const openReferenceDetails = React.useCallback(async (kind: ClientOrderReferenceKind, guid?: string | null) => {
     if (!guid) return;
+    if (kind === 'counterparty') {
+      Keyboard.dismiss();
+      router.push({
+        pathname: '/services/client_orders/counterparty',
+        params: {
+          counterpartyGuid: guid,
+          organizationGuid: workspace.draft.organizationGuid || workspace.selections.organization?.guid || undefined,
+          sourceOrderGuid: workspace.selectedOrder?.guid || workspace.draft.guid || undefined,
+        },
+      } as any);
+      return;
+    }
     setReferenceScrollOffset(0);
     setReferenceOpen(true);
     setReferenceLoading(true);
@@ -1548,7 +1560,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     } finally {
       setReferenceLoading(false);
     }
-  }, []);
+  }, [router, workspace.draft.guid, workspace.draft.organizationGuid, workspace.selectedOrder?.guid, workspace.selections.organization?.guid]);
 
   const openProductGallery = React.useCallback((item: any, index = 0) => {
     const images = getProductGalleryImages(item);
@@ -2527,8 +2539,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     };
   }, [closeDocumentToOrders, documentHeaderRightSlot, documentHeaderSlot, documentHeaderTitleSlot, mode]);
   React.useLayoutEffect(() => {
-    setHeaderOverride(documentHeaderOverride);
-  }, [documentHeaderOverride, setHeaderOverride]);
+    if (screenFocused) setHeaderOverride(documentHeaderOverride);
+  }, [documentHeaderOverride, screenFocused, setHeaderOverride]);
   React.useEffect(() => () => setHeaderOverride(null), [setHeaderOverride]);
   const isCounterpartyPicker = pickerKind === 'counterparty' || pickerKind === 'filterCounterparty';
   const pickerMissingOrderContext = pickerNeedsOrderContext(pickerKind) && (!workspace.draft.organizationGuid || !workspace.draft.counterpartyGuid);
@@ -3288,7 +3300,7 @@ const HeaderSection = React.memo(function HeaderSection({
 
   return <View style={styles.cardStack}>
     <FlatDocumentField label="Организация" value={workspace.selections.organization?.name || 'Выбрать'} icon="office-building-outline" onPress={() => openPicker('organization')} disabled={readOnly} invalid={showRequiredErrors && !hasOrganizationValue} loading={workspace.documentHeaderLoadingState.organization} onDetails={() => openDetails('organization', workspace.draft.organizationGuid || workspace.selections.organization?.guid)} />
-    <FlatDocumentField label="Контрагент" value={workspace.selections.counterparty?.name || 'Выбрать'} labelBadgeText={showCounterpartyDebt ? 'долг' : null} icon="account-outline" onPress={() => openPicker('counterparty')} disabled={readOnly} invalid={(showRequiredErrors && !hasCounterpartyValue) || showCounterpartyDebt} loading={workspace.documentHeaderLoadingState.counterparty} onDetails={() => openDetails('counterparty', workspace.draft.counterpartyGuid || workspace.selections.counterparty?.guid)} />
+    <FlatDocumentField label="Контрагент" value={workspace.selections.counterparty?.name || 'Выбрать'} labelBadgeText={showCounterpartyDebt ? 'долг' : null} icon="account-outline" onPress={() => openPicker('counterparty')} disabled={readOnly} invalid={(showRequiredErrors && !hasCounterpartyValue) || showCounterpartyDebt} loading={workspace.documentHeaderLoadingState.counterparty} detailsVisible={hasCounterpartyValue} onDetails={() => openDetails('counterparty', workspace.draft.counterpartyGuid || workspace.selections.counterparty?.guid)} />
     <FlatDocumentField label="Соглашение" value={workspace.selections.agreement?.name || 'Выбрать'} icon="file-document-outline" onPress={() => openPicker('agreement')} disabled={readOnly || missingOrderContext} invalid={showDependentRequiredErrors && !hasAgreementValue} loading={workspace.documentHeaderLoadingState.agreement} onDetails={() => openDetails('agreement', workspace.draft.agreementGuid || workspace.selections.agreement?.guid)} />
     <FlatDocumentField label="Договор" value={workspace.selections.contract?.name || workspace.selections.contract?.number || 'Выбрать'} icon="file-sign" onPress={() => openPicker('contract')} disabled={readOnly || missingOrderContext} invalid={showDependentRequiredErrors && !hasContractValue} loading={workspace.documentHeaderLoadingState.contract} onDetails={() => openDetails('contract', workspace.draft.contractGuid || workspace.selections.contract?.guid)} />
     <FlatDocumentField
@@ -3469,6 +3481,7 @@ function FlatDocumentField({
   disabled,
   invalid,
   onDetails,
+  detailsVisible,
   onReset,
   resetIcon,
   loading,
@@ -3483,18 +3496,21 @@ function FlatDocumentField({
   disabled?: boolean;
   invalid?: boolean;
   onDetails?: () => void;
+  detailsVisible?: boolean;
   onReset?: () => void;
   resetIcon?: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
   loading?: boolean;
   danger?: boolean;
   labelBadgeText?: string | null;
 }) {
-  const showDetailsAction = false;
+  const showDetailsAction = Boolean(detailsVisible && onDetails);
   return (
     <Pressable
       accessibilityRole="button"
-      disabled={disabled}
-      onPress={onPress}
+      disabled={disabled && !showDetailsAction}
+      onPress={() => {
+        if (!disabled) onPress();
+      }}
       style={({ pressed }) => [styles.flatField, disabled && styles.readOnlyFieldSurface, invalid && styles.flatFieldInvalid, pressed && !disabled && styles.flatPressed]}
     >
       <View style={styles.flatFieldIcon}>
@@ -3538,15 +3554,14 @@ function FlatDocumentField({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={`Открыть карточку: ${label}`}
-              disabled={disabled}
               onPress={(event) => {
                 event.stopPropagation();
                 onDetails?.();
               }}
               hitSlop={8}
-              style={({ pressed }) => [styles.flatFieldAction, pressed && !disabled && styles.flatPressed]}
+              style={({ pressed }) => [styles.flatFieldAction, pressed && styles.flatPressed]}
             >
-              <MaterialCommunityIcons name="magnify" size={19} color={disabled ? 'rgba(71, 85, 105, 0.48)' : '#475569'} />
+              <MaterialCommunityIcons name="magnify" size={20} color="#2563EB" />
             </Pressable>
           ) : null}
         </View>
