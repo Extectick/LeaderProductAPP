@@ -39,13 +39,13 @@ import {
   AppBinaryUpdateStatusContextValue,
   AppUpdateStatusProvider,
 } from '@/src/shared/appUpdate/AppUpdateStatusContext';
+import GlobalUpdateBanner from '@/src/shared/appUpdate/GlobalUpdateBanner';
 import {
   areAutomaticUpdateChecksPaused,
   AUTOMATIC_UPDATE_CHECK_INTERVAL_MS,
 } from '@/src/shared/appUpdate/automaticUpdateChecks';
 
 const STORAGE_KEYS = {
-  dismissedVersionCode: 'update:dismissedVersionCode',
   etag: 'update:etag',
   androidDownload: 'update:androidDownload',
 };
@@ -283,10 +283,6 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
     return `${STORAGE_KEYS.etag}:${Platform.OS}:${UPDATE_CHANNEL}`;
   }, []);
 
-  const getDismissKey = useCallback(() => {
-    return `${STORAGE_KEYS.dismissedVersionCode}:${Platform.OS}:${UPDATE_CHANNEL}`;
-  }, []);
-
   const getFailureKey = useCallback(() => {
     return `update:checkFailures:${Platform.OS}:${UPDATE_CHANNEL}`;
   }, []);
@@ -444,7 +440,6 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
     [
       clearCheckFailures,
       completeStartup,
-      getDismissKey,
       getEtagKey,
       recordCheckFailure,
       shouldCheck,
@@ -1011,12 +1006,6 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
   ]);
 
   const handleClose = useCallback(async () => {
-    if (downloadRef.current) {
-      try {
-        await downloadRef.current.pauseAsync();
-      } catch {}
-      downloadRef.current = null;
-    }
     const deviceId = await getInstallId();
     await logUpdateEvent({
       eventType: 'DISMISS',
@@ -1029,19 +1018,9 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
     });
     setMandatoryVisible(false);
     setOptionalVisible(false);
-    setStage('idle');
-    setProgress(0);
-    setErrorMessage(null);
   }, [updateInfo, versionCode, versionName]);
 
   const handleLater = useCallback(async () => {
-    if (!mandatoryVisible && updateInfo?.latestVersionCode) {
-      await AsyncStorage.setItem(
-        getDismissKey(),
-        String(updateInfo.latestVersionCode)
-      );
-    }
-
     const deviceId = await getInstallId();
     await logUpdateEvent({
       eventType: 'DISMISS',
@@ -1058,9 +1037,7 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
     } else {
       setOptionalVisible(false);
     }
-    setStage('idle');
-    setProgress(0);
-  }, [getDismissKey, mandatoryVisible, updateInfo, versionCode, versionName]);
+  }, [mandatoryVisible, updateInfo, versionCode, versionName]);
 
   const showChecking = showCheckingOverlay && checkingVisible && !modalVisible;
   const isMandatory = mandatoryVisible;
@@ -1082,12 +1059,7 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
   const dismissAppUpdateStatus = useCallback(async () => {
     setMandatoryVisible(false);
     setOptionalVisible(false);
-    if (stage === 'available' || stage === 'error') {
-      setStage('idle');
-      setProgress(0);
-      setErrorMessage(null);
-    }
-  }, [stage]);
+  }, []);
 
   const appUpdateStatusValue = useMemo<AppBinaryUpdateStatusContextValue>(() => ({
     phase: appUpdatePhase,
@@ -1156,11 +1128,21 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
   }, [updateInfo, isMandatory]);
 
   const sizeLabel = formatBytes(updateInfo?.fileSize ?? undefined);
+  const openUpdateModal = useCallback(() => {
+    if (!updateInfo?.updateAvailable) return;
+    if (updateInfo.mandatory) {
+      setMandatoryVisible(true);
+      return;
+    }
+    setOptionalVisible(true);
+  }, [updateInfo]);
 
   return (
     <AppUpdateStatusProvider value={appUpdateStatusValue}>
       <View style={{ flex: 1 }}>
-        {children}
+        <GlobalUpdateBanner onOpenApkUpdate={openUpdateModal}>
+          {children}
+        </GlobalUpdateBanner>
       <Modal
         visible={modalVisible}
         transparent
