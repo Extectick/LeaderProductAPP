@@ -1,6 +1,7 @@
 import { API_ENDPOINTS } from './apiEndpoints';
 import { apiClient } from './apiClient';
 import { toUserErrorMessage } from '@/src/shared/errors/userErrorMessage';
+import { scheduleProductCatalogSync, searchCatalogProducts } from '@/src/features/productCatalog';
 
 const CLIENT_ORDERS_REQUEST_TIMEOUT_MS = 65_000;
 
@@ -594,6 +595,10 @@ export type ClientOrderInvoiceStatus = {
   invoices: ClientOrderInvoice[];
 };
 
+const PRODUCT_BATCH_VALUE_TTL_MS = 15_000;
+const PRODUCT_BATCH_VALUE_CACHE_MAX = 1_500;
+const productBatchValueCache = new Map<string, { item: ClientOrderProduct; cachedAt: number }>();
+
 export async function getClientOrderInvoiceStatuses(identifiers: string[]) {
   const uniqueIdentifiers = Array.from(new Set(
     identifiers.map((value) => value.trim()).filter(Boolean)
@@ -803,6 +808,29 @@ export async function searchClientOrderProducts(params: {
   limit?: number;
   offset?: number;
 }) {
+  scheduleProductCatalogSync();
+  // Точный фильтр наличия зависит от склада и собственного резерва менеджера.
+  // Поэтому только этот режим остаётся живым запросом, обычный поиск идёт из SQLite.
+  if (!params.inStockOnly) {
+    try {
+      const local = await searchCatalogProducts(params.search || '', params.limit || 50, params.offset || 0);
+      if (local) {
+        return {
+          items: local.items,
+          meta: {
+            total: local.total,
+            count: local.items.length,
+            limit: params.limit || 50,
+            offset: params.offset || 0,
+            hasMore: local.hasMore,
+          },
+          localCatalog: true as const,
+        };
+      }
+    } catch (error) {
+      console.warn('[catalog] local search failed, using API fallback', error);
+    }
+  }
   return getPagedSelector<ClientOrderProduct>(API_ENDPOINTS.CLIENT_ORDERS.PRODUCTS, params, 'Не удалось загрузить номенклатуру');
 }
 
@@ -816,17 +844,49 @@ export async function getClientOrderProductsBatch(payload: {
   receiptPriceAt?: string;
 }) {
   const productGuids = [...new Set(payload.productGuids)].sort();
-  const key = `POST ${API_ENDPOINTS.CLIENT_ORDERS.PRODUCTS_BATCH} ${JSON.stringify({ ...payload, productGuids })}`;
-  return dedupeRead(key, async () => {
-    const res = await apiClient<typeof payload, { items: ClientOrderProduct[] }>(
+  const contextKey = JSON.stringify({
+    organizationGuid: payload.organizationGuid || '',
+    counterpartyGuid: payload.counterpartyGuid || '',
+    agreementGuid: payload.agreementGuid || '',
+    warehouseGuid: payload.warehouseGuid || '',
+    priceTypeGuid: payload.priceTypeGuid || '',
+    receiptPriceAt: payload.receiptPriceAt || '',
+  });
+  const now = Date.now();
+  const cachedByGuid = new Map<string, ClientOrderProduct>();
+  const missingGuids: string[] = [];
+  for (const guid of productGuids) {
+    const cached = productBatchValueCache.get(`${contextKey}|${guid}`);
+    if (cached && now - cached.cachedAt <= PRODUCT_BATCH_VALUE_TTL_MS) {
+      cachedByGuid.set(guid, cached.item);
+    } else {
+      missingGuids.push(guid);
+    }
+  }
+  if (!missingGuids.length) return productGuids.map((guid) => cachedByGuid.get(guid)!).filter(Boolean);
+
+  const requestPayload = { ...payload, productGuids: missingGuids };
+  const key = `POST ${API_ENDPOINTS.CLIENT_ORDERS.PRODUCTS_BATCH} ${JSON.stringify(requestPayload)}`;
+  const freshItems = await dedupeRead(key, async () => {
+    const res = await apiClient<typeof requestPayload, { items: ClientOrderProduct[] }>(
       API_ENDPOINTS.CLIENT_ORDERS.PRODUCTS_BATCH,
-      { method: 'POST', body: payload, timeoutMs: CLIENT_ORDERS_REQUEST_TIMEOUT_MS }
+      { method: 'POST', body: requestPayload, timeoutMs: CLIENT_ORDERS_REQUEST_TIMEOUT_MS }
     );
     if (!res.ok || !res.data) {
       throw new Error(getErrorMessage('Не удалось обновить цены и остатки товаров', res.message));
     }
     return Array.isArray(res.data.items) ? res.data.items : [];
   });
+  for (const item of freshItems) {
+    cachedByGuid.set(item.guid, item);
+    productBatchValueCache.set(`${contextKey}|${item.guid}`, { item, cachedAt: Date.now() });
+  }
+  while (productBatchValueCache.size > PRODUCT_BATCH_VALUE_CACHE_MAX) {
+    const oldest = productBatchValueCache.keys().next().value;
+    if (!oldest) break;
+    productBatchValueCache.delete(oldest);
+  }
+  return productGuids.map((guid) => cachedByGuid.get(guid)).filter((item): item is ClientOrderProduct => !!item);
 }
 
 export async function createClientOrder(payload: any) {

@@ -6,6 +6,49 @@ const snapshots = new Map<string, CounterpartyCardBootstrap>();
 const latestSnapshots = new Map<string, CounterpartyCardBootstrap>();
 const snapshotUpdatedAt = new Map<string, number>();
 const SNAPSHOT_FRESH_MS = 60_000;
+const MAX_PERIOD_SNAPSHOTS = 48;
+const MAX_COUNTERPARTY_SNAPSHOTS = 24;
+const PERIOD_REQUEST_DEBOUNCE_MS = 180;
+
+function readSnapshot(key: string) {
+  const snapshot = snapshots.get(key) || null;
+  if (snapshot) {
+    snapshots.delete(key);
+    snapshots.set(key, snapshot);
+  }
+  return snapshot;
+}
+
+function readLatestSnapshot(key: string) {
+  const snapshot = latestSnapshots.get(key) || null;
+  if (snapshot) {
+    latestSnapshots.delete(key);
+    latestSnapshots.set(key, snapshot);
+  }
+  return snapshot;
+}
+
+function storeSnapshot(key: string, value: CounterpartyCardBootstrap) {
+  snapshots.delete(key);
+  snapshots.set(key, value);
+  snapshotUpdatedAt.set(key, Date.now());
+  while (snapshots.size > MAX_PERIOD_SNAPSHOTS) {
+    const oldestKey = snapshots.keys().next().value as string | undefined;
+    if (!oldestKey) break;
+    snapshots.delete(oldestKey);
+    snapshotUpdatedAt.delete(oldestKey);
+  }
+}
+
+function storeLatestSnapshot(key: string, value: CounterpartyCardBootstrap) {
+  latestSnapshots.delete(key);
+  latestSnapshots.set(key, value);
+  while (latestSnapshots.size > MAX_COUNTERPARTY_SNAPSHOTS) {
+    const oldestKey = latestSnapshots.keys().next().value as string | undefined;
+    if (!oldestKey) break;
+    latestSnapshots.delete(oldestKey);
+  }
+}
 
 function cacheKey(counterpartyGuid: string, organizationGuid?: string | null) {
   return `${counterpartyGuid.toLowerCase()}:${String(organizationGuid || 'all').toLowerCase()}`;
@@ -28,23 +71,29 @@ export function useCounterpartyCard(
     [customFrom, customTo, identityKey, period]
   );
   const [data, setData] = React.useState<CounterpartyCardBootstrap | null>(
-    () => snapshots.get(key) || latestSnapshots.get(identityKey) || null
+    () => readSnapshot(key) || readLatestSnapshot(identityKey) || null
   );
   const [loading, setLoading] = React.useState(() => !snapshots.has(key));
   const [refreshing, setRefreshing] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const requestIdRef = React.useRef(0);
+  const abortRef = React.useRef<AbortController | null>(null);
 
   const load = React.useCallback(async (force = false) => {
     if (!counterpartyGuid) return;
     const requestId = ++requestIdRef.current;
-    const hasSnapshot = Boolean(snapshots.get(key));
+    abortRef.current?.abort();
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    abortRef.current = controller;
+    const cachedSnapshot = readSnapshot(key);
+    const hasSnapshot = Boolean(cachedSnapshot);
     const snapshotAge = Date.now() - (snapshotUpdatedAt.get(key) || 0);
     if (!force && hasSnapshot && snapshotAge < SNAPSHOT_FRESH_MS) {
-      setData(snapshots.get(key) || null);
+      setData(cachedSnapshot);
       setLoading(false);
       setRefreshing(false);
       setError(null);
+      if (abortRef.current === controller) abortRef.current = null;
       return;
     }
     setError(null);
@@ -59,11 +108,10 @@ export function useCounterpartyCard(
         periodFrom: customFrom || null,
         periodTo: customTo || null,
         refresh: force,
-      });
+      }, controller?.signal);
       if (requestId !== requestIdRef.current) return;
-      snapshots.set(key, next);
-      snapshotUpdatedAt.set(key, Date.now());
-      latestSnapshots.set(identityKey, next);
+      storeSnapshot(key, next);
+      storeLatestSnapshot(identityKey, next);
       setData(next);
     } catch (caught) {
       if (requestId !== requestIdRef.current) return;
@@ -73,19 +121,27 @@ export function useCounterpartyCard(
         setLoading(false);
         setRefreshing(false);
       }
+      if (abortRef.current === controller) abortRef.current = null;
     }
   }, [counterpartyGuid, customFrom, customTo, identityKey, key, organizationGuid, period]);
 
   React.useEffect(() => {
     requestIdRef.current += 1;
-    const snapshot = snapshots.get(key) || null;
-    const stableSnapshot = snapshot || latestSnapshots.get(identityKey) || null;
+    abortRef.current?.abort();
+    abortRef.current = null;
+    const snapshot = readSnapshot(key);
+    const stableSnapshot = snapshot || readLatestSnapshot(identityKey);
     setData(stableSnapshot);
     setLoading(!snapshot);
     setRefreshing(Boolean(snapshot));
     setError(null);
-    void load(false);
-    return () => { requestIdRef.current += 1; };
+    const timer = setTimeout(() => { void load(false); }, snapshot ? 0 : PERIOD_REQUEST_DEBOUNCE_MS);
+    return () => {
+      clearTimeout(timer);
+      requestIdRef.current += 1;
+      abortRef.current?.abort();
+      abortRef.current = null;
+    };
   }, [identityKey, key, load]);
 
   return { data, loading, refreshing, error, retry: () => load(false), refresh: () => load(true) };

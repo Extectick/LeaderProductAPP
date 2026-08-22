@@ -82,6 +82,7 @@ import type { ClientOrder, ClientOrderCounterpartyOption, ClientOrderInvoice, Cl
 import { useServerStatus } from '@/src/shared/network/useServerStatus';
 import { toUserErrorMessage } from '@/src/shared/errors/userErrorMessage';
 import { setAutomaticUpdateChecksPaused } from '@/src/shared/appUpdate/automaticUpdateChecks';
+import { scheduleProductCatalogSync } from '@/src/features/productCatalog';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
@@ -706,6 +707,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const pickerKindRef = React.useRef<PickerKind | null>(null);
   const pickerLoadSignatureRef = React.useRef('');
   const pickerAppendLoadingRef = React.useRef(false);
+  const pickerProductHydrationTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const pickerSearchInputRef = React.useRef<any>(null);
   const pickerFocusTimersRef = React.useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const pickerAutoFocusSuppressedRef = React.useRef(false);
@@ -988,6 +990,10 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     return () => setTabBarHidden?.(false);
   }, [setTabBarHidden]);
   React.useEffect(() => {
+    const task = scheduleIdleTask(() => scheduleProductCatalogSync());
+    return () => task.cancel();
+  }, []);
+  React.useEffect(() => {
     if (mode !== 'orders' || showOrdersInitialLoading || !workspace.ordersInitialLoadDone) return;
     if (ordersScrollRestoredOnceRef.current) return;
     ordersScrollRestoredOnceRef.current = true;
@@ -1237,6 +1243,10 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   ]);
 
   const handlePickerSearchChange = React.useCallback((value: string) => {
+    if (pickerProductHydrationTimerRef.current) {
+      clearTimeout(pickerProductHydrationTimerRef.current);
+      pickerProductHydrationTimerRef.current = null;
+    }
     setPickerSearch(value);
     setPickerOffset(0);
     setPickerHasMore(false);
@@ -1311,6 +1321,29 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         const merged = [...prev, ...nextItems.filter((item: any) => !known.has(item?.guid || item?.id || `${item?.name || ''}|${item?.fullAddress || ''}`))];
         return kind === 'deliveryAddress' ? sortDeliveryAddressOptions(merged) : merged;
       });
+      if (kind === 'product' && result?.localCatalog === true && items.length > 0) {
+        const hydrationContextSignature = productPickerContextSignature;
+        const productGuids = items.slice(0, 24).map((item: any) => item?.guid).filter(Boolean);
+        if (pickerProductHydrationTimerRef.current) clearTimeout(pickerProductHydrationTimerRef.current);
+        pickerProductHydrationTimerRef.current = setTimeout(() => {
+          pickerProductHydrationTimerRef.current = null;
+          void getClientOrderProductsBatch({
+            productGuids,
+            organizationGuid: workspace.draft.organizationGuid || undefined,
+            counterpartyGuid: workspace.draft.counterpartyGuid || undefined,
+            agreementGuid: workspace.draft.agreementGuid || undefined,
+            warehouseGuid: workspace.draft.warehouseGuid || undefined,
+            priceTypeGuid: workspace.draft.priceTypeGuid || undefined,
+          }).then((freshItems) => {
+            if (pickerKindRef.current !== 'product') return;
+            if (productPickerStateSignatureRef.current !== hydrationContextSignature) return;
+            const freshByGuid = new Map(freshItems.map((item) => [item.guid, item]));
+            setPickerItems((current) => current.map((item: any) => freshByGuid.get(item?.guid) || item));
+          }).catch(() => {
+            // Локальный каталог уже показан. Ошибка актуализации не должна очищать список.
+          });
+        }, 350);
+      }
       setPickerOffset(offset + items.length);
       setPickerHasMore(hasMorePage(items.length, pageSize, offset, result?.meta?.total));
     } catch {
@@ -1356,6 +1389,9 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     }
     void loadPickerPage(pickerKind, pickerSearch, 0, false);
   }, [loadPickerPage, pickerKind, pickerSearch]);
+  React.useEffect(() => () => {
+    if (pickerProductHydrationTimerRef.current) clearTimeout(pickerProductHydrationTimerRef.current);
+  }, []);
   React.useEffect(() => {
     if (!pickerKind) return undefined;
     if (!pickerShouldAutofocusSearch(pickerKind)) return undefined;
@@ -1387,6 +1423,10 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   }, [clearPickerFocusTimers, pickerKind]);
 
   const closePicker = React.useCallback(() => {
+    if (pickerProductHydrationTimerRef.current) {
+      clearTimeout(pickerProductHydrationTimerRef.current);
+      pickerProductHydrationTimerRef.current = null;
+    }
     suppressPickerAutoFocus();
     pickerRequestIdRef.current += 1;
     pickerKindRef.current = null;
@@ -4505,14 +4545,7 @@ function ProductPickerFullscreenPanel({
       onContentSizeChange={onContentSizeChange}
       onScrollBeginDrag={onScrollBeginDrag}
       onEndReached={onEndReached}
-      listProps={{
-        initialNumToRender: 12,
-        maxToRenderPerBatch: 8,
-        updateCellsBatchingPeriod: 40,
-        windowSize: 7,
-        removeClippedSubviews: Platform.OS === 'android',
-        nestedScrollEnabled: true,
-      }}
+      listProps={{ nestedScrollEnabled: true }}
       footer={footer}
     />
   );
@@ -5441,6 +5474,8 @@ function ProductLineEditorSheet({
   const quantityItemKeyRef = React.useRef(displayedItemKey);
   const quantitySourceValueRef = React.useRef(sourceQuantityValue);
   const quantityCommitTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const priceCommitTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingPricePatchRef = React.useRef<{ key: string; patch: Record<string, unknown> } | null>(null);
   const setItemPatchRef = React.useRef(workspace.setItemPatch);
   setItemPatchRef.current = workspace.setItemPatch;
 
@@ -5472,6 +5507,27 @@ function ProductLineEditorSheet({
     scheduleQuantityCommit();
   }, [scheduleQuantityCommit]);
 
+  const commitPrice = React.useCallback(() => {
+    if (priceCommitTimerRef.current) {
+      clearTimeout(priceCommitTimerRef.current);
+      priceCommitTimerRef.current = null;
+    }
+    const pending = pendingPricePatchRef.current;
+    pendingPricePatchRef.current = null;
+    if (pending?.key) setItemPatchRef.current(pending.key, pending.patch);
+  }, []);
+
+  const schedulePriceCommit = React.useCallback((key: string, patch: Record<string, unknown>) => {
+    pendingPricePatchRef.current = { key, patch };
+    if (priceCommitTimerRef.current) clearTimeout(priceCommitTimerRef.current);
+    priceCommitTimerRef.current = setTimeout(() => {
+      priceCommitTimerRef.current = null;
+      const pending = pendingPricePatchRef.current;
+      pendingPricePatchRef.current = null;
+      if (pending?.key) setItemPatchRef.current(pending.key, pending.patch);
+    }, 180);
+  }, []);
+
   const previousDisplayedItemKeyRef = React.useRef(displayedItemKey);
   const visibleRef = React.useRef(false);
   React.useEffect(() => {
@@ -5490,6 +5546,7 @@ function ProductLineEditorSheet({
   React.useEffect(() => {
     if (quantityItemKeyRef.current !== displayedItemKey) {
       commitQuantity();
+      commitPrice();
       quantityItemKeyRef.current = displayedItemKey;
       quantitySourceValueRef.current = sourceQuantityValue;
       quantityValueRef.current = sourceQuantityValue;
@@ -5501,8 +5558,11 @@ function ProductLineEditorSheet({
       setQuantityInputValue(sourceQuantityValue);
     }
     quantitySourceValueRef.current = sourceQuantityValue;
-  }, [commitQuantity, displayedItemKey, sourceQuantityValue]);
-  React.useEffect(() => () => commitQuantity(), [commitQuantity]);
+  }, [commitPrice, commitQuantity, displayedItemKey, sourceQuantityValue]);
+  React.useEffect(() => () => {
+    commitQuantity();
+    commitPrice();
+  }, [commitPrice, commitQuantity]);
   React.useEffect(() => {
     if (!visible) {
       setKeyboardVisible(false);
@@ -5528,34 +5588,37 @@ function ProductLineEditorSheet({
 
   if (!displayedItem) return null;
 
-  const displayedItemWithLocalQuantity = quantityInputValue === sourceQuantityValue
+  const localManualPrice = priceFocused
+    ? (priceInputValue === '' ? '0' : displayedUnitPriceToBasePriceInput(priceInputValue, displayedItem))
+    : displayedItem.manualPrice;
+  const displayedItemWithLocalEdits = quantityInputValue === sourceQuantityValue && !priceFocused
     ? displayedItem
-    : { ...displayedItem, quantity: quantityInputValue };
-  const readOnly = !!workspace.readOnly || !!workspace.mutationLocked || isCancelledDraftItem(displayedItemWithLocalQuantity);
-  const qtyValid = readOnly || (allowZeroQuantity && !hasPositiveQuantity(displayedItemWithLocalQuantity))
+    : { ...displayedItem, quantity: quantityInputValue, manualPrice: localManualPrice };
+  const readOnly = !!workspace.readOnly || !!workspace.mutationLocked || isCancelledDraftItem(displayedItemWithLocalEdits);
+  const qtyValid = readOnly || (allowZeroQuantity && !hasPositiveQuantity(displayedItemWithLocalEdits))
     ? true
-    : isValidQuantityValue(displayedItemWithLocalQuantity);
-  const currentManualPrice = displayedItem.manualPrice || '';
+    : isValidQuantityValue(displayedItemWithLocalEdits);
+  const currentManualPrice = displayedItemWithLocalEdits.manualPrice || '';
   const priceValid = readOnly || !currentManualPrice || isValidManualPriceValue(currentManualPrice);
   const displayedPrice = currentDisplayedPrice;
   const priceInputDisplayValue = priceFocused && previousDisplayedItemKeyRef.current === displayedItemKey
     ? priceInputValue
     : displayedPrice;
-  const lineTotalAmount = computeLineTotal(displayedItemWithLocalQuantity, workspace.draft.generalDiscountPercent);
+  const lineTotalAmount = computeLineTotal(displayedItemWithLocalEdits, workspace.draft.generalDiscountPercent);
   const lineTotal = formatMoney(
     lineTotalAmount,
     displayedItem.currency || workspace.draft.currency
   );
-  const lineProfitAvailable = canComputeLineProfit(displayedItemWithLocalQuantity);
+  const lineProfitAvailable = canComputeLineProfit(displayedItemWithLocalEdits);
   const lineProfitAmount = lineProfitAvailable
-    ? computeLineProfit(displayedItemWithLocalQuantity, workspace.draft.generalDiscountPercent, lineTotalAmount)
+    ? computeLineProfit(displayedItemWithLocalEdits, workspace.draft.generalDiscountPercent, lineTotalAmount)
     : 0;
   const lineProfit = formatMoney(
     lineProfitAmount,
     displayedItem.currency || workspace.draft.currency
   );
   const lineProfitabilityPercent = computeLineProfitabilityPercent(
-    displayedItemWithLocalQuantity,
+    displayedItemWithLocalEdits,
     workspace.draft.generalDiscountPercent,
     lineTotalAmount
   );
@@ -5594,6 +5657,7 @@ function ProductLineEditorSheet({
       title="Позиция"
       onClose={() => {
         commitQuantity();
+        commitPrice();
         onClose();
       }}
       showHeader={false}
@@ -5703,6 +5767,7 @@ function ProductLineEditorSheet({
                   setPriceFocused(true);
                 }}
                 onBlur={() => {
+                  commitPrice();
                   setPriceFocused(false);
                   if (!priceInputValue.trim()) setPriceInputValue('0');
                 }}
@@ -5711,7 +5776,7 @@ function ProductLineEditorSheet({
                   const nextValue = normalizePriceInput(value, priceInputValue);
                   setPriceInputValue(nextValue);
                   const manualPrice = nextValue === '' ? '0' : displayedUnitPriceToBasePriceInput(nextValue, displayedItem);
-                  workspace.setItemPatch(displayedItem.key, {
+                  schedulePriceCommit(displayedItem.key, {
                     manualPrice,
                     priceTypeGuid: manualPrice.trim() ? null : workspace.draft.priceTypeGuid ?? null,
                     priceTypeName: manualPrice.trim() ? 'Произвольный' : workspace.draft.priceTypeName ?? null,
@@ -5725,6 +5790,9 @@ function ProductLineEditorSheet({
                 accessibilityLabel="Вернуть цену из прайса документа"
                 disabled={readOnly}
                 onPress={() => {
+                  if (priceCommitTimerRef.current) clearTimeout(priceCommitTimerRef.current);
+                  priceCommitTimerRef.current = null;
+                  pendingPricePatchRef.current = null;
                   priceInputRef.current?.blur?.();
                   setPriceFocused(false);
                   setPriceInputValue('');
@@ -5757,7 +5825,7 @@ function ProductLineEditorSheet({
         <View style={[styles.productEditorFooterQuantity, { width: halfControlWidth }]}>
           <Text style={[styles.productEditorLabel, readOnly && styles.productEditorLabelReadOnly]}>Количество</Text>
           <View style={[styles.productEditorQtyStepper, !qtyValid && styles.invalidInputOutline, readOnly && styles.productEditorReadOnlySurface]}>
-            <Pressable disabled={readOnly} onPress={() => updateQuantityLocally(quantityStep(displayedItemWithLocalQuantity, -1))} style={({ pressed }) => [styles.productEditorQtyButton, readOnly && styles.productEditorReadOnlyStepButton, pressed && !readOnly && styles.flatPressed]}>
+            <Pressable disabled={readOnly} onPress={() => updateQuantityLocally(quantityStep(displayedItemWithLocalEdits, -1))} style={({ pressed }) => [styles.productEditorQtyButton, readOnly && styles.productEditorReadOnlyStepButton, pressed && !readOnly && styles.flatPressed]}>
               <MaterialCommunityIcons name="minus" size={21} color={readOnly ? 'rgba(37, 99, 235, 0.42)' : '#2563EB'} />
             </Pressable>
             <SheetTextInput
@@ -5765,10 +5833,10 @@ function ProductLineEditorSheet({
               keyboardType="decimal-pad"
               selectTextOnFocus
               editable={!readOnly}
-              onChangeText={(value: string) => updateQuantityLocally(normalizeQuantityInput(displayedItemWithLocalQuantity, value))}
+              onChangeText={(value: string) => updateQuantityLocally(normalizeQuantityInput(displayedItemWithLocalEdits, value))}
               style={[styles.productEditorQtyInput, styles.productEditorQtyInputContent, readOnly && styles.productEditorReadOnlyInputSurface, readOnly && styles.productEditorReadOnlyInputText]}
             />
-            <Pressable disabled={readOnly} onPress={() => updateQuantityLocally(quantityStep(displayedItemWithLocalQuantity, 1))} style={({ pressed }) => [styles.productEditorQtyButton, readOnly && styles.productEditorReadOnlyStepButton, pressed && !readOnly && styles.flatPressed]}>
+            <Pressable disabled={readOnly} onPress={() => updateQuantityLocally(quantityStep(displayedItemWithLocalEdits, 1))} style={({ pressed }) => [styles.productEditorQtyButton, readOnly && styles.productEditorReadOnlyStepButton, pressed && !readOnly && styles.flatPressed]}>
               <MaterialCommunityIcons name="plus" size={22} color={readOnly ? 'rgba(37, 99, 235, 0.42)' : '#2563EB'} />
             </Pressable>
           </View>

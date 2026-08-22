@@ -42,6 +42,12 @@ jest.mock('@expo/vector-icons', () => {
   };
 });
 
+jest.mock('@shopify/flash-list', () => {
+  const React = require('react');
+  const FlashList = ({ children, ...props }: any) => React.createElement('FlashList', props, children);
+  return { FlashList };
+});
+
 describe('SearchPickerScreen', () => {
   beforeEach(() => {
     jest.useFakeTimers();

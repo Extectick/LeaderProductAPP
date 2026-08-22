@@ -170,6 +170,27 @@ export type CounterpartyFinancialDocumentsSummary = {
   awaitingShipmentCount: number;
 };
 
+export type CounterpartyFinancialDocumentsPage = {
+  items: CounterpartyFinancialDocument[];
+  summary: CounterpartyFinancialDocumentsSummary;
+  hasMore: boolean;
+  nextCursor: string | null;
+  asOf: string;
+  stale: boolean;
+  sourceVersion: string;
+};
+
+export type CounterpartyFinancialDocumentsParams = {
+  counterpartyGuid: string;
+  organizationGuid: string;
+  preset: CounterpartySalesPeriod;
+  periodFrom?: string | null;
+  periodTo?: string | null;
+  status?: CounterpartyFinancialDocumentStatus | null;
+  cursor?: string | null;
+  limit?: number;
+};
+
 export type CounterpartyCommercialTerms = {
   agreementGuid: string | null;
   agreementName: string | null;

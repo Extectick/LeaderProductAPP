@@ -10,8 +10,8 @@ import { formatCounterpartyDate, formatCounterpartyMoney } from '../../model/cou
 import { CounterpartyFinanceSkeleton, SectionCard, SectionUnavailable } from '../CounterpartyCardPrimitives';
 import { CounterpartyPeriodSelector, type CounterpartyPeriodRange } from '../CounterpartyPeriodSelector';
 import { InfoIcon } from '../MetricInfoDialog';
+import { useCounterpartyFinancialDocuments } from '../../hooks/useCounterpartyFinancialDocuments';
 
-const LOAD_BATCH_SIZE = 10;
 const FINANCE_CHART_SIZE = 206;
 
 echarts.use([PieChart, SVGRenderer]);
@@ -197,39 +197,46 @@ function FinancialDocumentRow({ document, index }: { document: CounterpartyFinan
   </View>;
 }
 
-export function CounterpartyFinanceTab({ data, refreshing, loading, onRefresh, onRetry, organizationSelected, period, customRange, onPeriodChange, onCustomPeriodApply }: { data: CounterpartyCardBootstrap; refreshing: boolean; loading: boolean; onRefresh: () => void; onRetry: () => void; organizationSelected: boolean; period: CounterpartySalesPeriod; customRange: CounterpartyPeriodRange | null; onPeriodChange: (period: CounterpartySalesPeriod) => void; onCustomPeriodApply: (range: CounterpartyPeriodRange) => void }) {
+export function CounterpartyFinanceTab({ data, refreshing, loading, onRefresh, onRetry, organizationSelected, renderChart, period, customRange, onPeriodChange, onCustomPeriodApply }: { data: CounterpartyCardBootstrap; refreshing: boolean; loading: boolean; onRefresh: () => void; onRetry: () => void; organizationSelected: boolean; renderChart: boolean; period: CounterpartySalesPeriod; customRange: CounterpartyPeriodRange | null; onPeriodChange: (period: CounterpartySalesPeriod) => void; onCustomPeriodApply: (range: CounterpartyPeriodRange) => void }) {
   const [filter, setFilter] = React.useState<DocumentFilter>('ALL');
   const [filterOpen, setFilterOpen] = React.useState(false);
   const [filterMenu, setFilterMenu] = React.useState({ left: 12, top: 0, width: 220 });
   const filterAnchorRef = React.useRef<View>(null);
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
-  const [visibleCount, setVisibleCount] = React.useState(LOAD_BATCH_SIZE);
-  React.useEffect(() => { setVisibleCount(LOAD_BATCH_SIZE); }, [data.financialDocuments, filter]);
+  const periodFrom = period === 'custom' ? customRange?.from || null : null;
+  const periodTo = period === 'custom' ? customRange?.to || null : null;
+  const financialDocuments = useCounterpartyFinancialDocuments({
+    counterpartyGuid: data.identity.counterpartyGuid,
+    organizationGuid: data.context.organizationGuid || '',
+    preset: period,
+    periodFrom,
+    periodTo,
+    status: filter === 'ALL' ? null : filter,
+  }, renderChart && organizationSelected);
   const finance = data.financeSummary;
   if (!organizationSelected) return <SectionUnavailable organizationRequired />;
   if (data.availability.finance !== 'available' || !finance) return <SectionUnavailable forbidden={data.availability.finance === 'forbidden'} onRetry={data.availability.finance === 'unavailable' ? onRetry : undefined} />;
 
   const currency = finance.currency || 'RUB';
   const paid = finance.paidAmount ?? data.paymentDiscipline?.totalSettledAmount ?? (data.incomingPayments?.length ? data.incomingPayments.reduce((sum, item) => sum + (item.amount || 0), 0) : null);
-  const periodFrom = data.salesSummary?.periodFrom || data.paymentDiscipline?.periodFrom;
-  const periodTo = data.salesSummary?.periodTo || data.paymentDiscipline?.periodTo;
-  const paidPeriod = periodFrom && periodTo ? `${formatCounterpartyDate(periodFrom)} — ${formatCounterpartyDate(periodTo)}` : null;
-  const documents = legacyDocuments(data);
-  const filtered = filter === 'ALL' ? documents : documents.filter((document) => document.status === filter);
-  const visible = filtered.slice(0, visibleCount);
-  const remaining = Math.max(0, filtered.length - visible.length);
-  const summary = data.financialDocumentsSummary || {
-    totalCount: documents.length,
-    overdueCount: documents.filter((item) => item.status === 'OVERDUE').length,
-    pendingCount: documents.filter((item) => item.status === 'EXPECTED' || item.status === 'OVERDUE').length,
-    awaitingShipmentCount: documents.filter((item) => item.status === 'AWAITING_SHIPMENT').length,
+  const selectedPeriodFrom = data.salesSummary?.periodFrom || data.paymentDiscipline?.periodFrom;
+  const selectedPeriodTo = data.salesSummary?.periodTo || data.paymentDiscipline?.periodTo;
+  const paidPeriod = selectedPeriodFrom && selectedPeriodTo ? `${formatCounterpartyDate(selectedPeriodFrom)} — ${formatCounterpartyDate(selectedPeriodTo)}` : null;
+  const legacy = legacyDocuments(data);
+  const fallbackDocuments = filter === 'ALL' ? legacy : legacy.filter((document) => document.status === filter);
+  const documents = financialDocuments.page?.items || fallbackDocuments;
+  const summary = financialDocuments.page?.summary || data.financialDocumentsSummary || {
+    totalCount: legacy.length,
+    overdueCount: legacy.filter((item) => item.status === 'OVERDUE').length,
+    pendingCount: legacy.filter((item) => item.status === 'EXPECTED' || item.status === 'OVERDUE').length,
+    awaitingShipmentCount: legacy.filter((item) => item.status === 'AWAITING_SHIPMENT').length,
   };
   const paymentTerm = finance.paymentTermDays != null
     ? `${finance.paymentTermDays} дн.`
     : data.commercialTerms?.paymentTerms || '—';
   const agreementName = finance.agreementName || data.commercialTerms?.agreementName;
 
-  const selectFilter = (next: DocumentFilter) => { setFilter(next); setVisibleCount(LOAD_BATCH_SIZE); setFilterOpen(false); };
+  const selectFilter = (next: DocumentFilter) => { setFilter(next); setFilterOpen(false); };
   const openFilter = () => {
     filterAnchorRef.current?.measureInWindow((x, y, width, height) => {
       const menuWidth = Math.min(228, screenWidth - 24);
@@ -244,7 +251,7 @@ export function CounterpartyFinanceTab({ data, refreshing, loading, onRefresh, o
     <CounterpartyPeriodSelector period={period} customRange={customRange} onPeriodChange={onPeriodChange} onCustomPeriodApply={onCustomPeriodApply} />
     {loading ? <CounterpartyFinanceSkeleton contentOnly /> : <>
     <SectionCard title="Финансовое состояние" icon="chart-donut">
-      <FinanceDonut paid={paid} debt={finance.debtTotal} overdue={finance.overdueDebt} prepayment={finance.prepayment} currency={currency} />
+      {renderChart ? <FinanceDonut paid={paid} debt={finance.debtTotal} overdue={finance.overdueDebt} prepayment={finance.prepayment} currency={currency} /> : <View style={styles.diagramPlaceholder} />}
       {paidPeriod ? <View style={styles.financePeriod}><MaterialCommunityIcons name="calendar-range" size={19} color="#64748B" /><Text style={styles.financePeriodValue}>{paidPeriod}</Text></View> : null}
     </SectionCard>
     <SectionCard title="Условия оплаты" icon="calendar-check-outline">
@@ -262,8 +269,9 @@ export function CounterpartyFinanceTab({ data, refreshing, loading, onRefresh, o
         {summary.awaitingShipmentCount > 0 ? <View style={styles.documentSummaryItem}><Text style={[styles.documentSummaryValue, styles.info]}>{summary.awaitingShipmentCount}</Text><Text style={styles.documentSummaryLabel}>к отгрузке</Text></View> : null}
       </View>
       <View style={styles.filterControlRow}><Text style={styles.filterControlLabel}>Показывать</Text><View ref={filterAnchorRef} collapsable={false}><Pressable accessibilityRole="button" accessibilityState={{ expanded: filterOpen }} onPress={openFilter} style={({ pressed }) => [styles.filterTrigger, pressed && styles.filterTriggerPressed]}><MaterialCommunityIcons name="filter-variant" size={18} color="#2563EB" /><Text style={styles.filterTriggerText}>{activeFilter.label}</Text><MaterialCommunityIcons name={filterOpen ? 'chevron-up' : 'chevron-down'} size={18} color="#64748B" /></Pressable></View></View>
-      {visible.length ? visible.map((document, index) => <FinancialDocumentRow key={document.documentGuid || `${document.number}:${index}`} document={document} index={index} />) : <View style={styles.empty}><MaterialCommunityIcons name="file-check-outline" size={26} color="#94A3B8" /><Text style={styles.emptyText}>Документы не найдены</Text></View>}
-      {remaining > 0 ? <Pressable onPress={() => setVisibleCount((count) => count + LOAD_BATCH_SIZE)} style={styles.loadMore}><MaterialCommunityIcons name="chevron-down" size={20} color="#2563EB" /><Text style={styles.loadMoreText}>Показать ещё {Math.min(LOAD_BATCH_SIZE, remaining)}</Text></Pressable> : null}
+      {financialDocuments.loading && !financialDocuments.page && (filter !== 'ALL' || fallbackDocuments.length === 0) ? <View style={styles.documentsSkeleton}>{[0, 1, 2].map((item) => <View key={item} style={styles.documentSkeletonRow}><View style={styles.documentSkeletonIcon} /><View style={styles.documentSkeletonBody}><View style={styles.documentSkeletonTitle} /><View style={styles.documentSkeletonMeta} /></View><View style={styles.documentSkeletonAmount} /></View>)}</View> : documents.length ? documents.map((document, index) => <FinancialDocumentRow key={document.documentGuid || `${document.number}:${index}`} document={document} index={index} />) : <View style={styles.empty}><MaterialCommunityIcons name="file-check-outline" size={26} color="#94A3B8" /><Text style={styles.emptyText}>Документы не найдены</Text></View>}
+      {financialDocuments.error ? <Text style={styles.documentsError}>{financialDocuments.error}</Text> : null}
+      {financialDocuments.page?.hasMore ? <Pressable disabled={financialDocuments.loadingMore} onPress={financialDocuments.loadMore} style={({ pressed }) => [styles.loadMore, pressed && styles.filterTriggerPressed]}><MaterialCommunityIcons name={financialDocuments.loadingMore ? 'progress-clock' : 'chevron-down'} size={20} color="#2563EB" /><Text style={styles.loadMoreText}>{financialDocuments.loadingMore ? 'Загружаем…' : 'Показать ещё'}</Text></Pressable> : null}
     </SectionCard>
     <Modal visible={filterOpen} transparent animationType="fade" onRequestClose={() => setFilterOpen(false)}><Pressable style={styles.filterOverlay} onPress={() => setFilterOpen(false)}><View style={[styles.filterMenu, filterMenu]}>{FILTERS.map((item) => <Pressable key={item.key} onPress={() => selectFilter(item.key)} style={({ pressed }) => [styles.filterOption, item.key === filter && styles.filterOptionActive, pressed && styles.filterOptionPressed]}><MaterialCommunityIcons name={item.key === filter ? 'check-circle' : 'circle-outline'} size={18} color={item.key === filter ? '#2563EB' : '#94A3B8'} /><Text style={[styles.filterOptionText, item.key === filter && styles.filterOptionTextActive]}>{item.label}</Text></Pressable>)}</View></Pressable></Modal>
     </>}
@@ -273,6 +281,7 @@ export function CounterpartyFinanceTab({ data, refreshing, loading, onRefresh, o
 const styles = StyleSheet.create({
   scroll: { flex: 1, backgroundColor: '#FFFFFF' }, content: { flexGrow: 1, backgroundColor: '#FFFFFF', paddingBottom: 34, gap: 1 },
   diagram: { minHeight: FINANCE_CHART_SIZE, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', gap: 4 }, donutWrap: { width: FINANCE_CHART_SIZE, height: FINANCE_CHART_SIZE, alignItems: 'center', justifyContent: 'center' }, donutCenter: { position: 'absolute', width: 112, height: 112, alignItems: 'center', justifyContent: 'center', gap: 3, borderRadius: 56, paddingHorizontal: 4 }, donutCenterSelected: { backgroundColor: 'rgba(248,250,252,0.94)' }, donutCenterPressed: { opacity: 0.6 }, donutCaption: { color: '#64748B', fontSize: 10, fontWeight: '700', textAlign: 'center' }, donutTotal: { width: 106, color: '#0F172A', fontSize: 15, fontWeight: '900', textAlign: 'center' }, donutPercent: { color: '#2563EB', fontSize: 9, fontWeight: '900', textAlign: 'center' }, donutHint: { color: '#94A3B8', fontSize: 8.5, fontWeight: '700', textAlign: 'center' },
+  diagramPlaceholder: { minHeight: FINANCE_CHART_SIZE },
   financePeriod: { minHeight: 28, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: -7 }, financePeriodValue: { color: '#475569', fontSize: 12, fontWeight: '800' },
   legend: { flex: 1, minWidth: 108, gap: 4 }, legendItem: { minHeight: 42, flexDirection: 'row', alignItems: 'center', gap: 7, borderRadius: 8, paddingHorizontal: 6, paddingVertical: 4 }, legendItemSelected: { backgroundColor: '#F1F5F9' }, legendItemPressed: { opacity: 0.65 }, legendDot: { width: 9, height: 9, borderRadius: 5 }, legendText: { flex: 1, minWidth: 0, gap: 2 }, legendLabelRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 5 }, legendLabel: { flexShrink: 1, color: '#64748B', fontSize: 10, fontWeight: '700' }, legendLabelSelected: { color: '#334155', fontWeight: '900' }, legendPercent: { color: '#94A3B8', fontSize: 9, fontWeight: '800' }, legendPercentSelected: { color: '#2563EB' }, legendValue: { color: '#0F172A', fontSize: 12, fontWeight: '900' },
   rowBorder: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#E2E8F0' }, danger: { color: '#DC2626' }, success: { color: '#0F9F6E' },
@@ -281,4 +290,5 @@ const styles = StyleSheet.create({
   documentSummary: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#E2E8F0', paddingBottom: 9 }, documentSummaryItem: { minWidth: 70, flex: 1, alignItems: 'center', gap: 1, paddingHorizontal: 5 }, documentSummaryValue: { color: '#0F172A', fontSize: 16, fontWeight: '900' }, documentSummaryLabel: { color: '#64748B', fontSize: 9.5, fontWeight: '700' }, warning: { color: '#D97706' }, info: { color: '#2563EB' },
   documentRow: { minHeight: 62, flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 }, documentIcon: { width: 32, height: 32, borderRadius: 9, alignItems: 'center', justifyContent: 'center' }, documentBody: { flex: 1, minWidth: 0, gap: 3 }, documentTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 }, documentTitle: { flex: 1, color: '#1E293B', fontSize: 12.5, fontWeight: '800' }, documentMeta: { color: '#64748B', fontSize: 9.5, fontWeight: '600' }, documentAmount: { maxWidth: '31%', color: '#0F172A', fontSize: 12.5, fontWeight: '900', textAlign: 'right' },
   empty: { minHeight: 90, alignItems: 'center', justifyContent: 'center', gap: 7 }, emptyText: { color: '#64748B', fontSize: 12, fontWeight: '600' }, loadMore: { minHeight: 42, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, marginTop: 6 }, loadMoreText: { color: '#2563EB', fontSize: 11.5, fontWeight: '900' },
+  documentsSkeleton: { gap: 1 }, documentSkeletonRow: { minHeight: 62, flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 }, documentSkeletonIcon: { width: 32, height: 32, borderRadius: 9, backgroundColor: '#E8EEF6' }, documentSkeletonBody: { flex: 1, gap: 6 }, documentSkeletonTitle: { width: '58%', height: 12, borderRadius: 6, backgroundColor: '#E8EEF6' }, documentSkeletonMeta: { width: '82%', height: 9, borderRadius: 5, backgroundColor: '#F1F5F9' }, documentSkeletonAmount: { width: 72, height: 13, borderRadius: 6, backgroundColor: '#E8EEF6' }, documentsError: { color: '#DC2626', fontSize: 10.5, fontWeight: '700', textAlign: 'center', paddingVertical: 8 },
 });

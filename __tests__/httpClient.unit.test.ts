@@ -44,7 +44,7 @@ describe('httpRequest', () => {
     jest.useRealTimers();
   });
 
-  it('aborts requests after the default 10 second timeout', async () => {
+  it('returns a distinct response after the default 10 second timeout', async () => {
     jest.useFakeTimers();
     const fetchMock = jest.fn((_url: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
       init?.signal?.addEventListener('abort', () => {
@@ -63,16 +63,12 @@ describe('httpRequest', () => {
     }));
     expect(response).toMatchObject({
       ok: false,
-      status: 0,
-      message: 'Нет связи с сервером. Проверьте интернет-соединение. Подключение восстановится автоматически.',
-      errorCode: 'NETWORK_UNAVAILABLE',
+      status: 408,
+      message: 'Операция выполняется дольше обычного. Повторите запрос.',
+      errorCode: 'REQUEST_TIMEOUT',
     });
-    expect(setServerUnavailable).toHaveBeenCalledWith(
-      'Нет связи с сервером. Проверьте интернет-соединение. Подключение восстановится автоматически.'
-    );
-    expect(handleBackendUnavailable).toHaveBeenCalledWith(
-      'Нет связи с сервером. Проверьте интернет-соединение. Подключение восстановится автоматически.'
-    );
+    expect(setServerUnavailable).not.toHaveBeenCalled();
+    expect(handleBackendUnavailable).not.toHaveBeenCalled();
   });
 
   it('retries a GET after a short network disconnect and recovers transparently', async () => {

@@ -35,6 +35,8 @@ export interface HttpRequestOptions<Req> {
   timeoutMs?: number;
   /** Network-only retries. Mutating requests are never retried by default. */
   networkRetryCount?: number;
+  /** Cancels a request that is no longer useful (for example, after changing a filter). */
+  signal?: AbortSignal;
 }
 
 function isFormData(val: any): val is FormData {
@@ -88,7 +90,7 @@ export async function httpRequest<Req = undefined, Res = any>(
   path: string,
   options: HttpRequestOptions<Req> = {}
 ): Promise<HttpResponse<Res>> {
-  const { method = 'GET', body, headers = {}, skipAuth = false, timeoutMs } = options;
+  const { method = 'GET', body, headers = {}, skipAuth = false, timeoutMs, signal } = options;
   const effectiveTimeoutMs = timeoutMs === undefined ? DEFAULT_REQUEST_TIMEOUT_MS : timeoutMs;
   const url = path.startsWith('http') ? path : `${API_BASE_URL}${path}`;
 
@@ -110,15 +112,26 @@ export async function httpRequest<Req = undefined, Res = any>(
         reqBody = JSON.stringify(body);
       }
     }
-    if (!effectiveTimeoutMs || effectiveTimeoutMs <= 0 || typeof AbortController === 'undefined') {
-      return fetch(url, { method, headers: h, body: reqBody });
+    if (signal?.aborted) {
+      const error = new Error('Request aborted');
+      error.name = 'AbortError';
+      throw error;
     }
+    if (typeof AbortController === 'undefined') {
+      return fetch(url, { method, headers: h, body: reqBody, signal });
+    }
+
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), effectiveTimeoutMs);
+    const abortFromCaller = () => controller.abort();
+    signal?.addEventListener('abort', abortFromCaller, { once: true });
+    const timer = effectiveTimeoutMs && effectiveTimeoutMs > 0
+      ? setTimeout(() => controller.abort(), effectiveTimeoutMs)
+      : null;
     try {
       return await fetch(url, { method, headers: h, body: reqBody, signal: controller.signal });
     } finally {
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
+      signal?.removeEventListener('abort', abortFromCaller);
     }
   }
 
@@ -224,6 +237,13 @@ export async function httpRequest<Req = undefined, Res = any>(
     return { ok: true, status, data, meta };
   } catch (error: any) {
     if (error?.name === 'AbortError') {
+      if (signal?.aborted) {
+        return {
+          ok: false,
+          status: 499,
+          message: 'Запрос отменён.',
+        };
+      }
       addMonitoringBreadcrumb('http_request_timeout', { path, timeoutMs: effectiveTimeoutMs });
       return {
         ok: false,

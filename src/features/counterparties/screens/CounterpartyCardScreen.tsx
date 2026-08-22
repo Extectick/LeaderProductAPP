@@ -128,6 +128,7 @@ export default function CounterpartyCardScreen() {
     });
   }, [navigation, organizationMenuOpen]);
   const title = card.data?.identity.name || 'Контрагент';
+  const financeVisited = activeTab === 'finance' || visitedRef.current.has('finance');
   const organizationOptions = card.data?.organizationOptions || card.data?.context.availableOrganizations || [];
   const selectOrganization = React.useCallback((organization: CounterpartyOrganizationSummary) => {
     setOrganizationGuid(organization.guid);
@@ -204,7 +205,7 @@ export default function CounterpartyCardScreen() {
               />
             </View>
             <View key="finance" collapsable={false} style={styles.page}>
-              <CounterpartyFinanceTab data={card.data} refreshing={card.refreshing} loading={card.loading} onRefresh={card.refresh} onRetry={card.retry} organizationSelected={Boolean(organizationGuid)} period={period} customRange={customRange} onPeriodChange={setPeriod} onCustomPeriodApply={(range) => { setCustomRange(range); setPeriod('custom'); }} />
+              <CounterpartyFinanceTab data={card.data} refreshing={card.refreshing} loading={card.loading} onRefresh={card.refresh} onRetry={card.retry} organizationSelected={Boolean(organizationGuid)} renderChart={financeVisited} period={period} customRange={customRange} onPeriodChange={setPeriod} onCustomPeriodApply={(range) => { setCustomRange(range); setPeriod('custom'); }} />
             </View>
             <View key="activity" collapsable={false} style={styles.page}>
               {visitedRef.current.has('activity') || activeTab === 'activity' ? <CounterpartyActivityTab data={card.data} refreshing={card.refreshing} onRefresh={card.refresh} onRetry={card.retry} /> : null}

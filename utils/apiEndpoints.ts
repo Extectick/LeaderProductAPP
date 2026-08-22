@@ -126,6 +126,11 @@ export const API_ENDPOINTS = {
     INVOICE_DOWNLOAD: (guid: string, invoiceId: string) =>
       `/api/client-orders/${encodeURIComponent(guid)}/invoices/${encodeURIComponent(invoiceId)}/download`,
   },
+  CATALOG: {
+    MANIFEST: '/api/catalog/manifest',
+    SNAPSHOT: '/api/catalog/snapshot',
+    CHANGES: '/api/catalog/changes',
+  },
   ONEC_LP_APP: {
     PING: '/api/1c/lp-app/ping',
     USERS: '/api/1c/lp-app/users',

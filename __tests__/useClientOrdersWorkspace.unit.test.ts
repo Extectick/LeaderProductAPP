@@ -680,8 +680,8 @@ describe('useClientOrdersWorkspace', () => {
       receiptPriceAt: '2026-06-15T12:30:00',
     }));
     expect(workspace!.draft.items[0].receiptPrice).toBe(80);
-    expect(workspace!.shipmentProhibited).toBe(true);
-    expect(workspace!.debtReason).toBe('Просроченная задолженность из актуальных данных 1С');
+    expect(workspace!.shipmentProhibited).toBe(false);
+    expect(workspace!.debtReason).toBeNull();
 
     await act(async () => {
       renderer!.unmount();

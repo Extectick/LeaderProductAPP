@@ -1,4 +1,5 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { FlashList } from '@shopify/flash-list';
 import React from 'react';
 import {
   FlatList,
@@ -289,13 +290,13 @@ export function SearchPickerScreen<T>({
 
       </Surface>
 
-      <FlatList
-        ref={listRef}
-        {...listProps}
+      <FlashList
+        ref={listRef as any}
+        {...(listProps as any)}
         style={[styles.list, listStyle]}
         contentContainerStyle={contentContainerStyle}
         data={data as T[]}
-        renderItem={renderItem}
+        renderItem={renderItem as any}
         keyExtractor={keyExtractor}
         extraData={extraData}
         ListHeaderComponent={ListHeaderComponent}
