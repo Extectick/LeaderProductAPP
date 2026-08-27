@@ -1296,7 +1296,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         result = { items: filtered.slice(offset, offset + pageSize), meta: { total: filtered.length } };
       } else if (kind === 'filterCounterparty' || kind === 'counterparty') result = await workspace.searchCounterparties({ search, limit: pageSize, offset, managerOnly: counterpartyManagerOnly });
       else if (kind === 'agreement') result = await workspace.searchAgreements({ organizationGuid: workspace.draft.organizationGuid || undefined, counterpartyGuid: workspace.draft.counterpartyGuid || undefined, search, limit: pageSize, offset });
-      else if (kind === 'contract') result = await workspace.searchContracts({ counterpartyGuid: workspace.draft.counterpartyGuid || undefined, search, limit: pageSize, offset });
+      else if (kind === 'contract') result = await workspace.searchContracts({ organizationGuid: workspace.draft.organizationGuid || undefined, counterpartyGuid: workspace.draft.counterpartyGuid || undefined, search, limit: pageSize, offset });
       else if (kind === 'warehouse') result = await workspace.searchWarehouses({ organizationGuid: workspace.draft.organizationGuid || undefined, counterpartyGuid: workspace.draft.counterpartyGuid || undefined, search, limit: pageSize, offset });
       else if (kind === 'deliveryAddress') result = await workspace.searchDeliveryAddresses({ organizationGuid: workspace.draft.organizationGuid || undefined, counterpartyGuid: workspace.draft.counterpartyGuid || undefined, search, limit: pageSize, offset });
       else if (kind === 'priceType') result = await workspace.searchPriceTypes({ search, limit: pageSize, offset });

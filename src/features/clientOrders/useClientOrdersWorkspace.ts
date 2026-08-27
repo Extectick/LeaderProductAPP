@@ -2906,16 +2906,15 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
   const setAgreement = React.useCallback(async (agreement: ClientOrderAgreementOption | null) => {
     const organization = resolveEntityOrganization(agreement);
-    const organizationGuid = organization?.guid || agreement?.organizationGuid || draft.organizationGuid;
-    if (agreement && organizationGuid && draft.counterpartyGuid) {
-      await applyResolvedDefaults(organizationGuid, draft.counterpartyGuid, { organization, agreement });
-      return;
-    }
-
+    // Do not let an older defaults request overwrite the user's explicit pair.
+    defaultsRequestIdRef.current += 1;
+    setLoadingDefaults(false);
     patchDraft((prev) => ({
       ...prev,
       agreementGuid: agreement?.guid || '',
-      contractGuid: agreement?.contract?.guid || prev.contractGuid,
+      // Agreement and contract are independent dimensions in UT. Preserve an
+      // already selected contract; use the agreement hint only for an empty one.
+      contractGuid: prev.contractGuid || agreement?.contract?.guid || '',
       warehouseGuid: agreement?.warehouse?.guid || prev.warehouseGuid,
       priceTypeGuid: agreement?.priceType?.guid || prev.priceTypeGuid || null,
       priceTypeName: agreement?.priceType?.name || prev.priceTypeName || null,
@@ -2929,22 +2928,19 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       ...prev,
       organization: organization ?? prev.organization,
       agreement,
-      contract: agreement?.contract || prev.contract,
+      contract: prev.contract || agreement?.contract || null,
       warehouse: agreement?.warehouse || prev.warehouse,
     }));
-  }, [applyResolvedDefaults, draft.counterpartyGuid, draft.organizationGuid, patchDraft, resolveEntityOrganization]);
+  }, [patchDraft, resolveEntityOrganization]);
 
   const setContract = React.useCallback(async (contract: ClientOrderContractOption | null) => {
     const organization = resolveEntityOrganization(contract);
-    const organizationGuid = organization?.guid || contract?.organizationGuid || draft.organizationGuid;
-    if (contract && organizationGuid && draft.counterpartyGuid) {
-      await applyResolvedDefaults(organizationGuid, draft.counterpartyGuid, { organization, contract });
-      return;
-    }
-
+    // A manual contract choice must not re-apply defaults and reset agreement.
+    defaultsRequestIdRef.current += 1;
+    setLoadingDefaults(false);
     patchDraft({ contractGuid: contract?.guid || '' });
     setSelections((prev) => ({ ...prev, organization: organization ?? prev.organization, contract }));
-  }, [applyResolvedDefaults, draft.counterpartyGuid, draft.organizationGuid, patchDraft, resolveEntityOrganization]);
+  }, [patchDraft, resolveEntityOrganization]);
 
   const setWarehouse = React.useCallback((warehouse: ClientOrderWarehouseOption | null) => {
     patchDraft({ warehouseGuid: warehouse?.guid || '' });

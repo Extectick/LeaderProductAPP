@@ -1642,7 +1642,7 @@ export default function ClientOrdersWebScreen() {
           result = await searchAgreements({ organizationGuid: draftOrganizationGuid, counterpartyGuid: draftCounterpartyGuid, search, limit: pageSize, offset });
           break;
         case 'contract':
-          result = await searchContracts({ counterpartyGuid: draftCounterpartyGuid, search, limit: pageSize, offset });
+          result = await searchContracts({ organizationGuid: draftOrganizationGuid, counterpartyGuid: draftCounterpartyGuid, search, limit: pageSize, offset });
           break;
         case 'warehouse':
           result = await searchWarehouses({ organizationGuid: draftOrganizationGuid, counterpartyGuid: draftCounterpartyGuid, search, limit: pageSize, offset });
@@ -1823,7 +1823,7 @@ export default function ClientOrdersWebScreen() {
 
   const loadContractLookup = React.useCallback((args: { search: string; limit: number; offset: number }) => {
     if (!workspace.draft.organizationGuid || !workspace.draft.counterpartyGuid) return Promise.resolve({ items: [], meta: { total: 0 } });
-    return searchContracts({ counterpartyGuid: workspace.draft.counterpartyGuid, search: args.search, limit: args.limit, offset: args.offset });
+    return searchContracts({ organizationGuid: workspace.draft.organizationGuid, counterpartyGuid: workspace.draft.counterpartyGuid, search: args.search, limit: args.limit, offset: args.offset });
   }, [searchContracts, workspace.draft.counterpartyGuid, workspace.draft.organizationGuid]);
 
   const loadDeliveryAddressLookup = React.useCallback((args: { search: string; limit: number; offset: number }) => {
