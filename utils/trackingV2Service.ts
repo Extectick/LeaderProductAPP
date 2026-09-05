@@ -3,11 +3,15 @@ import Constants from 'expo-constants';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 import * as SecureStore from 'expo-secure-store';
-import { Platform } from 'react-native';
+import { PermissionsAndroid, Platform } from 'react-native';
 
 import { apiClient } from './apiClient';
 import { API_BASE_URL } from './config';
-import { stopNativeTracking } from './nativeTrackingService';
+import {
+  getNativeTrackingStatus,
+  resumeNativeTracking,
+  stopNativeTracking,
+} from './nativeTrackingService';
 import { getAuthDevicePayload } from './tokenService';
 import { flushTrackingQueue } from './trackingUploader';
 
@@ -26,6 +30,7 @@ const SECURE_KEYS = {
 };
 const LEGACY_EXPO_TASK = 'BACKGROUND_LOCATION_TRACKING';
 const LEGACY_ENABLED_KEY = 'tracking:enabled';
+const LEGACY_QUEUE_DRAIN_TIMEOUT_MS = 15_000;
 
 export type TrackingV2Diagnostics = {
   available: boolean;
@@ -33,6 +38,7 @@ export type TrackingV2Diagnostics = {
   running: boolean;
   permission: 'granted' | 'denied' | 'undetermined';
   backgroundPermission: 'granted' | 'denied' | 'undetermined';
+  activityRecognitionPermission: 'granted' | 'denied' | 'unavailable';
   locationServicesEnabled: boolean;
   lastRecordedAt?: string;
   lastSentAt?: string;
@@ -125,10 +131,40 @@ async function flushPendingRevocation() {
   await setPendingRevocation(null);
 }
 
+const wait = (durationMs: number) => new Promise<void>((resolve) => setTimeout(resolve, durationMs));
+
+async function drainLegacyNativeQueue() {
+  let status = await getNativeTrackingStatus().catch(() => ({
+    available: false,
+    queueLength: 0,
+    tokenInvalid: false,
+  }));
+  if (!status.available || !status.queueLength) return;
+  if (status.tokenInvalid) {
+    throw new Error('Старые точки маршрута ожидают отправки, но ключ устройства недействителен');
+  }
+
+  await resumeNativeTracking();
+  const deadline = Date.now() + LEGACY_QUEUE_DRAIN_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    await wait(750);
+    status = await getNativeTrackingStatus().catch(() => status);
+    if (!status.queueLength) return;
+    if (status.tokenInvalid) {
+      throw new Error('Не удалось отправить старые точки: ключ устройства недействителен');
+    }
+  }
+  throw new Error('Старые точки маршрута ещё не отправлены. Подключитесь к интернету и повторите включение');
+}
+
 async function migrateLegacyTracking() {
   if (await AsyncStorage.getItem(KEYS.migration)) return;
   const legacyEnabled = await AsyncStorage.getItem(LEGACY_ENABLED_KEY);
   await flushTrackingQueue('[tracking-v2:migration]').catch(() => undefined);
+  // The legacy native collector owns a separate encrypted queue. Do not stop
+  // it (which removes its credentials and queue) until pending fixes have
+  // actually reached the API.
+  await drainLegacyNativeQueue();
   await stopNativeTracking().catch(() => undefined);
   await Location.stopLocationUpdatesAsync(LEGACY_EXPO_TASK).catch(() => undefined);
   if (legacyEnabled === 'true') await AsyncStorage.setItem(KEYS.enabled, 'true');
@@ -179,7 +215,10 @@ async function configureTraccar(options: { requireBootstrap?: boolean } = {}) {
       stationaryRadiusMeters: 35,
       heartbeatIntervalSeconds: 120,
     },
-    wakeLock: false,
+    // The tracker stops GPS while stationary, so keeping the short-lived
+    // processing/upload pipeline awake has a small cost but prevents queued
+    // fixes from being stranded when Android puts the CPU to sleep.
+    wakeLock: true,
     buffer: true,
     preferPlatformProviders: false,
     notification: { text: 'Геомаршрут записывается' },
@@ -198,6 +237,14 @@ export async function requestTrackingPermissions() {
   }
   const foreground = await Location.requestForegroundPermissionsAsync();
   if (foreground.status !== 'granted') return false;
+  if (Platform.OS === 'android' && Number(Platform.Version) >= 29) {
+    const activity = await PermissionsAndroid.request(
+      PermissionsAndroid.PERMISSIONS.ACTIVITY_RECOGNITION,
+    );
+    if (activity !== PermissionsAndroid.RESULTS.GRANTED) {
+      throw new Error('Разрешите распознавание физической активности для возобновления GPS после остановки');
+    }
+  }
   const background = await Location.requestBackgroundPermissionsAsync();
   return background.status === 'granted';
 }
@@ -207,9 +254,11 @@ export async function startTrackingV2() {
   operation = (async () => {
     if (!(await requestTrackingPermissions())) throw new Error('Разрешите постоянный доступ к геопозиции');
     await migrateLegacyTracking();
+    // Persist intent before starting the native service. If Android interrupts
+    // the startup sequence, the next authenticated launch repairs it.
+    await AsyncStorage.setItem(KEYS.enabled, 'true');
     const Traccar = await configureTraccar({ requireBootstrap: true });
     await Traccar.start();
-    await AsyncStorage.setItem(KEYS.enabled, 'true');
     const device = await getAuthDevicePayload();
     await apiClient('/tracking/device/status', {
       method: 'PATCH',
@@ -250,7 +299,10 @@ export async function restoreTrackingV2() {
   await migrateLegacyTracking();
   const enabled = (await AsyncStorage.getItem(KEYS.enabled)) === 'true';
   if (!enabled || Platform.OS !== 'android') return false;
-  const Traccar = await configureTraccar();
+  // Revalidate the durable credential whenever an authenticated app session
+  // becomes available. The endpoint reuses a valid credential and replaces a
+  // stale/unknown one, preventing an endless native 401 retry loop.
+  const Traccar = await configureTraccar({ requireBootstrap: true });
   if (!(await Traccar.isTracking())) await Traccar.start();
   return true;
 }
@@ -262,11 +314,16 @@ export async function requestTrackingPosition(requestId?: string) {
 }
 
 export async function getTrackingV2Diagnostics(): Promise<TrackingV2Diagnostics> {
-  const [foreground, background, locationServicesEnabled, enabled] = await Promise.all([
+  const [foreground, background, locationServicesEnabled, enabled, activityRecognitionPermission] = await Promise.all([
     Location.getForegroundPermissionsAsync(),
     Location.getBackgroundPermissionsAsync(),
     Location.hasServicesEnabledAsync().catch(() => false),
     AsyncStorage.getItem(KEYS.enabled),
+    Platform.OS === 'android' && Number(Platform.Version) >= 29
+      ? PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.ACTIVITY_RECOGNITION)
+        .then((granted) => granted ? 'granted' as const : 'denied' as const)
+        .catch(() => 'denied' as const)
+      : Promise.resolve('unavailable' as const),
   ]);
   let running = false;
   let lastRecordedAt: string | undefined;
@@ -293,6 +350,7 @@ export async function getTrackingV2Diagnostics(): Promise<TrackingV2Diagnostics>
     running,
     permission: foreground.status,
     backgroundPermission: background.status,
+    activityRecognitionPermission,
     locationServicesEnabled,
     lastRecordedAt,
     lastSentAt,

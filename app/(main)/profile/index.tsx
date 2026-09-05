@@ -1602,12 +1602,14 @@ function TrackingToggle() {
               <Text style={styles.trackingChipText}>{modeLabel}</Text>
             </View>
           ) : null}
-          <View style={styles.trackingChip}>
-            <Ionicons name="cloud-upload-outline" size={12} color="#475569" />
-            <Text style={styles.trackingChipText}>
-              {queueLength > 0 ? `Очередь: ${queueLength}` : 'Очередь пуста'}
-            </Text>
-          </View>
+          {queueLength !== null ? (
+            <View style={styles.trackingChip}>
+              <Ionicons name="cloud-upload-outline" size={12} color="#475569" />
+              <Text style={styles.trackingChipText}>
+                {queueLength > 0 ? `Очередь: ${queueLength}` : 'Очередь пуста'}
+              </Text>
+            </View>
+          ) : null}
           {lastUploadLabel ? (
             <View style={styles.trackingChip}>
               <Ionicons name="time-outline" size={12} color="#475569" />
@@ -1632,7 +1634,7 @@ function TrackingToggle() {
           </Text>
         ) : null}
         {lastError ? <Text style={styles.trackingError}>{lastError}</Text> : null}
-        {(trackingStatus === 'permissionDenied' || trackingStatus === 'error') ? (
+        {(trackingStatus === 'permissionDenied' || trackingStatus === 'serviceDenied' || trackingStatus === 'error') ? (
           <Pressable
             style={styles.trackingSettingsButton}
             onPress={() => void Linking.openSettings()}

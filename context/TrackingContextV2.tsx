@@ -40,7 +40,7 @@ type TrackingContextValue = {
   routeId?: number;
   trackingStatus: TrackingStatusCode;
   trackingStatusText: string;
-  queueLength: number;
+  queueLength: number | null;
   lastUploadAt?: string;
   lastError?: string;
   trackingMode: TrackingMode;
@@ -56,6 +56,7 @@ const emptyDiagnostics: TrackingV2Diagnostics = {
   running: false,
   permission: 'undetermined',
   backgroundPermission: 'undetermined',
+  activityRecognitionPermission: 'unavailable',
   locationServicesEnabled: false,
 };
 
@@ -63,15 +64,26 @@ const TrackingContext = createContext<TrackingContextValue | undefined>(undefine
 
 function statusFromDiagnostics(diagnostics: TrackingV2Diagnostics): TrackingStatusCode {
   if (diagnostics.lastError && diagnostics.enabled && !diagnostics.running) return 'error';
-  if (diagnostics.permission === 'denied' || diagnostics.backgroundPermission === 'denied') return 'permissionDenied';
+  if (
+    diagnostics.permission === 'denied'
+    || diagnostics.backgroundPermission === 'denied'
+    || diagnostics.activityRecognitionPermission === 'denied'
+  ) return 'permissionDenied';
   if (diagnostics.enabled && diagnostics.running) return 'tracking';
+  if (diagnostics.enabled && !diagnostics.running) return 'serviceDenied';
   return 'idle';
 }
 
 function statusText(status: TrackingStatusCode, diagnostics: TrackingV2Diagnostics) {
   if (status === 'starting') return 'Запускаем надёжное фоновое отслеживание…';
   if (status === 'stopping') return 'Останавливаем отслеживание…';
-  if (status === 'permissionDenied') return 'Разрешите геопозицию всегда в настройках Android';
+  if (status === 'permissionDenied') {
+    if (diagnostics.activityRecognitionPermission === 'denied') {
+      return 'Разрешите физическую активность, чтобы GPS возобновлялся после остановки';
+    }
+    return 'Разрешите геопозицию всегда в настройках Android';
+  }
+  if (status === 'serviceDenied') return 'Android остановил отслеживание — откройте настройки и запустите его снова';
   if (!diagnostics.locationServicesEnabled) return 'Геолокация телефона выключена';
   if (status === 'error') return diagnostics.lastError || 'Не удалось запустить геотрекинг';
   if (status === 'tracking') return 'Геомаршрут записывается в фоне';
@@ -140,7 +152,10 @@ export const TrackingProvider = ({ children }: { children: React.ReactNode }) =>
     trackingEnabled: diagnostics.enabled,
     trackingStatus,
     trackingStatusText: statusText(trackingStatus, diagnostics),
-    queueLength: 0,
+    // Traccar keeps its durable queue inside the native SDK and does not
+    // expose its size through the React Native bridge. Null avoids reporting
+    // the misleading "queue is empty" state.
+    queueLength: null,
     lastUploadAt: diagnostics.lastSentAt,
     lastError: diagnostics.lastError,
     trackingMode: diagnostics.available ? 'native' : 'inactive',
