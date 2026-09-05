@@ -116,11 +116,15 @@ const mode = String(args.mode || 'ota').trim();
 const eventName = process.env.GITHUB_EVENT_NAME || '';
 const base = args.base || process.env.GITHUB_EVENT_BEFORE || '';
 const head = args.head || process.env.GITHUB_SHA || 'HEAD';
+// A first push of a newly-created branch has an all-zero `before` SHA. Use
+// the parent commit so release checks still recognize a committed version
+// bump instead of rejecting a valid first dev APK release.
+const comparisonBase = normalizeSha(base) || safeGit(['rev-parse', `${normalizeSha(head) || 'HEAD'}~1`]);
 const files = listChangedFiles(base, head);
 const nativeRequired = eventName === 'workflow_dispatch' && mode === 'apk'
   ? true
   : hasNativeRuntimeChange(files);
-const versionBumped = hasVersionBump(base, head);
+const versionBumped = hasVersionBump(comparisonBase, head);
 
 writeOutput({
   native_required: nativeRequired ? 'true' : 'false',
