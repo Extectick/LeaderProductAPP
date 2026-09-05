@@ -1009,10 +1009,9 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         ordersLastFocusRefreshRef.current = now;
         void workspace.refreshOrders();
       }
-      void workspace.syncDeviceDrafts?.();
     });
     return () => task.cancel();
-  }, [mode, workspace.ordersInitialLoadDone, workspace.refreshOrders, workspace.syncDeviceDrafts]);
+  }, [mode, workspace.ordersInitialLoadDone, workspace.refreshOrders]);
 
   const clearEditorFocusTimers = React.useCallback(() => {
     editorFocusTimersRef.current.forEach((timer) => clearTimeout(timer));
@@ -2758,6 +2757,32 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     );
 
     if (action === 'submit') {
+      if (order.origin === 'device' && (order as any).offlineDraftStatus === 'PRICE_REVIEW') {
+        Alert.alert(
+          'Цены изменились',
+          'Выберите, с какими ценами отправить заказ после повторной проверки.',
+          [
+            { text: 'Отмена', style: 'cancel' },
+            {
+              text: 'Актуальные цены',
+              onPress: () => void workspace.syncDeviceDrafts({
+                force: true,
+                orderGuid: order.guid,
+                pricePolicy: 'USE_CURRENT',
+              }),
+            },
+            {
+              text: 'Цены черновика',
+              onPress: () => void workspace.syncDeviceDrafts({
+                force: true,
+                orderGuid: order.guid,
+                pricePolicy: 'KEEP_DRAFT',
+              }),
+            },
+          ]
+        );
+        return;
+      }
       setConfirmDialog({
         title: isRetry ? 'Повторить отправку?' : 'Отправить заказ в 1С?',
         message: isRetry
@@ -2796,7 +2821,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     }
 
     void requestInvoiceNow(order);
-  }, [openInvoiceActions, requestInvoiceNow, workspace.copyOrderFromList, workspace.submitOrderFromList, workspace.unqueueOrder]);
+  }, [openInvoiceActions, requestInvoiceNow, workspace.copyOrderFromList, workspace.submitOrderFromList, workspace.syncDeviceDrafts, workspace.unqueueOrder]);
   const orderListContextMenuDisabled = !!openingOrderGuid
     || !!openingDocument
     || workspace.submitting
@@ -3092,6 +3117,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
           hasOrderContext={!!workspace.draft.organizationGuid && !!workspace.draft.counterpartyGuid}
           hasPriceType={!!workspace.draft.priceTypeGuid}
           hasWarehouse={!!workspace.draft.warehouseGuid}
+          offlineDataSyncedAt={workspace.offlineDataSyncedAt}
           onPressProduct={handleProductPickerPress}
           onLongPressProduct={handleProductPickerLongPress}
           onOpenImages={openProductGallery}
@@ -4376,6 +4402,7 @@ function ProductPickerFullscreenPanel({
   hasOrderContext,
   hasPriceType,
   hasWarehouse,
+  offlineDataSyncedAt,
   onPressProduct,
   onLongPressProduct,
   onOpenImages,
@@ -4409,6 +4436,7 @@ function ProductPickerFullscreenPanel({
   hasOrderContext: boolean;
   hasPriceType: boolean;
   hasWarehouse: boolean;
+  offlineDataSyncedAt: string | null;
   onPressProduct: (item: ClientOrderProduct) => void;
   onLongPressProduct: (item: ClientOrderProduct) => void;
   onOpenImages: (item: ClientOrderProduct) => void;
@@ -4458,13 +4486,19 @@ function ProductPickerFullscreenPanel({
   const listHeader = React.useMemo(() => (
     <>
       {!hasOrderContext ? <InfoText styles={styles} text="Сначала выберите организацию и контрагента." /> : null}
+      {offlineDataSyncedAt ? (
+        <InfoText
+          styles={styles}
+          text={`Цены и остатки обновлены ${new Date(offlineDataSyncedAt).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' })}`}
+        />
+      ) : null}
       {showInitialLoader ? (
         <View style={styles.productPickerInitialLoader}>
           <ActivityIndicator size="large" color="#2563EB" />
         </View>
       ) : null}
     </>
-  ), [hasOrderContext, showInitialLoader, styles]);
+  ), [hasOrderContext, offlineDataSyncedAt, showInitialLoader, styles]);
   const listEmpty = React.useMemo(() => {
     if (isResetLoading || !hasOrderContext) return null;
     return <Text style={styles.filtersLookupEmpty}>Ничего не найдено.</Text>;
@@ -6630,6 +6664,39 @@ function OrdersToolbar({
           </Pressable>
         </View>
       ) : null}
+      {!workspace.offlineDataReady ? (
+        <View style={[styles.ordersErrorBanner, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
+          <MaterialCommunityIcons name="database-clock-outline" size={17} color="#1D4ED8" />
+          <Text style={[styles.ordersErrorBannerText, { color: '#1E3A8A' }]}>Офлайн-данные ещё не загружены</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Загрузить офлайн-данные"
+            disabled={workspace.syncingOfflineData}
+            onPress={() => void workspace.refreshOfflineData(true)}
+            style={({ pressed }) => [pressed && styles.flatPressed]}
+          >
+            {workspace.syncingOfflineData
+              ? <ActivityIndicator size="small" color="#2563EB" />
+              : <MaterialCommunityIcons name="refresh" size={19} color="#2563EB" />}
+          </Pressable>
+        </View>
+      ) : null}
+      {workspace.readyDeviceDraftsCount > 0 ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Проверить и отправить все готовые черновики"
+          disabled={disabled || workspace.submitting}
+          onPress={() => void workspace.syncDeviceDrafts({ force: true })}
+          style={({ pressed }) => [
+            styles.ordersErrorBanner,
+            { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0' },
+            pressed && styles.flatPressed,
+          ]}
+        >
+          <MaterialCommunityIcons name="cloud-upload-outline" size={18} color="#15803D" />
+          <Text style={[styles.ordersErrorBannerText, { color: '#166534' }]}>Отправить все готовые: {workspace.readyDeviceDraftsCount}</Text>
+        </Pressable>
+      ) : null}
     </Surface>
   );
 }
@@ -7805,6 +7872,7 @@ const OrderCard = React.memo(function OrderCard({
   const scale = React.useRef(new Animated.Value(1)).current;
   const displayStatus = getOrderDisplayStatus(order);
   const isDeviceOrder = order.origin === 'device';
+  const offlineDraftStatus = String((order as any).offlineDraftStatus || 'ON_DEVICE');
   const isApplicationOnlyDraft = !order.number1c;
   const hasDebtProblem = displayStatus === 'DEBT';
   const statusIcon = isDeviceOrder && !hasDebtProblem
@@ -7812,7 +7880,17 @@ const OrderCard = React.memo(function OrderCard({
     : orderStatusIcon(displayStatus);
   const hasProblem = hasDebtProblem || (!isDeviceOrder && orderHasVisibleProblem(order));
   const itemsCount = getClientOrderItemsCount(order);
-  const statusLabel = isDeviceOrder && !hasDebtProblem ? 'На устройстве' : getOrderDisplayStatusLabelWithQueue(order);
+  const offlineStatusLabel: Record<string, string> = {
+    ON_DEVICE: 'На устройстве',
+    READY_TO_SEND: 'Готов к отправке',
+    PRICE_REVIEW: 'Цены изменились',
+    NEEDS_EDIT: 'Требует исправления',
+    SENDING: 'Отправляется',
+    SEND_ERROR: 'Ошибка отправки',
+  };
+  const statusLabel = isDeviceOrder && !hasDebtProblem
+    ? offlineStatusLabel[offlineDraftStatus] || 'На устройстве'
+    : getOrderDisplayStatusLabelWithQueue(order);
   const invoice = getClientOrderInvoicePresentation(order);
   const profitAvailable = order.profitAvailable === true
     && order.profit !== null

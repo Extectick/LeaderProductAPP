@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
+import * as TaskManager from 'expo-task-manager';
 import { Platform } from 'react-native';
 
 import { apiClient } from './apiClient';
@@ -8,10 +9,27 @@ import { API_ENDPOINTS } from './apiEndpoints';
 const PUSH_TOKEN_KEY = 'pushToken';
 const PROFILE_CHANNEL_ID = 'profile-status';
 const APPEAL_MESSAGE_CHANNEL_ID = 'appeal-message';
+const TRACKING_PUSH_TASK = 'TRACKING_V2_LOCATION_REQUEST';
 
 let notificationsModule: typeof import('expo-notifications') | null = null;
 let handlerInitialized = false;
 let responseListener: { remove: () => void } | null = null;
+
+if (Platform.OS !== 'web' && !TaskManager.isTaskDefined(TRACKING_PUSH_TASK)) {
+  TaskManager.defineTask(TRACKING_PUSH_TASK, async ({ data, error }) => {
+    if (error) return;
+    const payload = (data as any)?.data || (data as any)?.notification?.request?.content?.data || data;
+    if (String(payload?.type || '') !== 'TRACKING_LOCATION_REQUEST') return;
+    const expiresAt = Date.parse(String(payload?.expiresAt || ''));
+    if (Number.isFinite(expiresAt) && expiresAt < Date.now()) return;
+    try {
+      const { requestTrackingPosition } = await import('./trackingV2Service');
+      await requestTrackingPosition(String(payload?.requestId || ''));
+    } catch (taskError) {
+      console.warn('[tracking-v2] location request failed', taskError);
+    }
+  });
+}
 
 function isExpoGo() {
   const ownership = (Constants as any).appOwnership;
@@ -36,6 +54,12 @@ async function getNotificationsModule() {
 export async function initPushNotifications() {
   const Notifications = await getNotificationsModule();
   if (!Notifications) return;
+
+  try {
+    await Notifications.registerTaskAsync(TRACKING_PUSH_TASK);
+  } catch (error) {
+    console.warn('[tracking-v2] push background task unavailable', error);
+  }
 
   if (!handlerInitialized) {
     Notifications.setNotificationHandler({

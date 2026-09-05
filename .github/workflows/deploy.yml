@@ -101,6 +101,7 @@ jobs:
           tags: ${{ steps.vars.outputs.tags }}
           build-args: |
             EXPO_PUBLIC_API_URL_DEV=${{ secrets.EXPO_PUBLIC_API_URL_DEV }}
+            EXPO_PUBLIC_MAP_STYLE_URL=https://tiles.openfreemap.org/styles/liberty
             EXPO_PUBLIC_TELEGRAM_BOT_USERNAME=${{ secrets.EXPO_PUBLIC_TELEGRAM_BOT_USERNAME }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

@@ -2,7 +2,7 @@ name: Publish OTA Update
 
 on:
   push:
-    branches: [main, production]
+    branches: [dev, main, production]
   workflow_dispatch:
     inputs:
       channel:
@@ -38,26 +38,27 @@ on:
 jobs:
   export-upload:
     runs-on: ubuntu-latest
-    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.channel == 'dev' && 'development' || 'production' }}
+    environment: ${{ ((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || github.ref_name == 'dev') && 'development' || 'production' }}
 
     env:
-      OTA_CHANNEL: ${{ github.event_name == 'workflow_dispatch' && inputs.channel || 'prod' }}
+      OTA_CHANNEL: ${{ github.event_name == 'workflow_dispatch' && inputs.channel || github.ref_name == 'dev' && 'dev' || 'prod' }}
       OTA_PLATFORM: ${{ github.event_name == 'workflow_dispatch' && inputs.platform || 'android' }}
       OTA_ROLLOUT_PERCENT: ${{ github.event_name == 'workflow_dispatch' && inputs.rolloutPercent || '100' }}
-      OTA_RELEASE_NOTES: ${{ github.event_name == 'workflow_dispatch' && inputs.releaseNotes || 'Production OTA update' }}
+      OTA_RELEASE_NOTES: ${{ github.event_name == 'workflow_dispatch' && inputs.releaseNotes || format('{0} OTA update', github.ref_name == 'dev' && 'Development' || 'Production') }}
       S3_ENDPOINT: ${{ secrets.BEGET_S3_ENDPOINT }}
       S3_REGION: ${{ secrets.BEGET_S3_REGION }}
       S3_BUCKET: ${{ secrets.BEGET_S3_BUCKET }}
       AWS_ACCESS_KEY_ID: ${{ secrets.BEGET_S3_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.BEGET_S3_SECRET_ACCESS_KEY }}
-      EXPO_PUBLIC_UPDATE_CHANNEL: ${{ github.event_name == 'workflow_dispatch' && inputs.channel || 'prod' }}
-      EXPO_PUBLIC_API_URL_DEV: ${{ (github.event_name != 'workflow_dispatch' || inputs.channel == 'prod') && 'https://api.leader-product.ru' || secrets.EXPO_PUBLIC_API_URL_DEV }}
-      EXPO_PUBLIC_OTA_UPDATE_URL: ${{ (github.event_name != 'workflow_dispatch' || inputs.channel == 'prod') && 'https://api.leader-product.ru/ota/update' || format('{0}/ota/update', secrets.EXPO_PUBLIC_API_URL_DEV) }}
+      EXPO_PUBLIC_UPDATE_CHANNEL: ${{ github.event_name == 'workflow_dispatch' && inputs.channel || github.ref_name == 'dev' && 'dev' || 'prod' }}
+      EXPO_PUBLIC_API_URL_DEV: ${{ ((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || github.ref_name == 'dev') && 'https://dev.leader-product.ru' || 'https://api.leader-product.ru' }}
+      EXPO_PUBLIC_OTA_UPDATE_URL: ${{ ((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || github.ref_name == 'dev') && 'https://dev.leader-product.ru/ota/update' || 'https://api.leader-product.ru/ota/update' }}
+      EXPO_PUBLIC_MAP_STYLE_URL: https://tiles.openfreemap.org/styles/liberty
       EXPO_PUBLIC_TELEGRAM_BOT_USERNAME: ${{ secrets.EXPO_PUBLIC_TELEGRAM_BOT_USERNAME }}
       EXPO_PUBLIC_MAX_BOT_USERNAME: ${{ secrets.EXPO_PUBLIC_MAX_BOT_USERNAME }}
       EXPO_PUBLIC_SENTRY_ENABLED: 'false'
-      EXPO_PUBLIC_SENTRY_ENVIRONMENT: ${{ (github.event_name != 'workflow_dispatch' || inputs.channel == 'prod') && 'production' || 'development' }}
-      NODE_ENV: ${{ (github.event_name != 'workflow_dispatch' || inputs.channel == 'prod') && 'production' || 'development' }}
+      EXPO_PUBLIC_SENTRY_ENVIRONMENT: ${{ ((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || github.ref_name == 'dev') && 'development' || 'production' }}
+      NODE_ENV: production
 
     steps:
       - name: Checkout
@@ -115,26 +116,38 @@ jobs:
       - name: Upload OTA files to S3
         run: node ./scripts/uploadOtaToS3.js release-artifacts/ota-metadata.json
 
-      - name: Publish production OTA in API
-        if: ${{ env.OTA_CHANNEL == 'prod' }}
+      - name: Publish OTA metadata in the target API
         uses: appleboy/ssh-action@v1
         env:
           OTA_METADATA_B64: ${{ steps.metadata.outputs.ota_metadata_b64 }}
+          OTA_CHANNEL: ${{ env.OTA_CHANNEL }}
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          envs: OTA_METADATA_B64
+          envs: OTA_METADATA_B64,OTA_CHANNEL
           script: |
             set -euo pipefail
-            cd /opt/leader-api
-            printf '%s' "$OTA_METADATA_B64" | base64 -d | docker compose exec -T api sh -lc '
-              set -eu
-              tmp_file="$(mktemp /tmp/leader-product-ota-release.XXXXXX)"
-              cat > "$tmp_file"
-              node scripts/publish-ota-update-db.js "$tmp_file"
-              rm -f "$tmp_file"
-            '
+
+            if [ "$OTA_CHANNEL" = "dev" ]; then
+              cd /opt/leader-api-dev
+              printf '%s' "$OTA_METADATA_B64" | base64 -d | docker compose -f docker-compose.server-dev.yml exec -T api sh -lc '
+                set -eu
+                tmp_file="$(mktemp /tmp/leader-product-ota-release.XXXXXX)"
+                cat > "$tmp_file"
+                node scripts/publish-ota-update-db.js "$tmp_file"
+                rm -f "$tmp_file"
+              '
+            else
+              cd /opt/leader-api
+              printf '%s' "$OTA_METADATA_B64" | base64 -d | docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T api sh -lc '
+                set -eu
+                tmp_file="$(mktemp /tmp/leader-product-ota-release.XXXXXX)"
+                cat > "$tmp_file"
+                node scripts/publish-ota-update-db.js "$tmp_file"
+                rm -f "$tmp_file"
+              '
+            fi
 
       - name: Upload OTA artifacts
         uses: actions/upload-artifact@v7

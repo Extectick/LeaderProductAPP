@@ -1,890 +1,352 @@
-import { AuthContext } from '@/context/AuthContext';
-import { useNotificationViewport } from '@/context/NotificationViewportContext';
-import { AppHeader } from '@/components/AppHeader';
-import {
-  DEFAULT_MAX_ACCURACY,
-  DEFAULT_POINTS_LIMIT,
-  filterNearbyPoints,
-  getRoutePointDateTimeLabels,
-  humanName,
-  parseLimitValue,
-} from '@/src/features/tracking/helpers';
-import type { Filters, PointLabel, UserOption } from '@/src/features/tracking/types';
-import { getUsers } from '@/utils/userService';
-import { fetchUserRoutesWithPoints, type RouteWithPoints } from '@/utils/trackingService';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation, useRouter } from 'expo-router';
-import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import { useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Animated,
-  Easing,
-  Image,
+  Modal,
   Platform,
   Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
   Text,
   TextInput,
   View,
   useWindowDimensions,
 } from 'react-native';
-import LeafletMap from './LeafletMap';
-import { trackingStyles as styles } from '@/src/features/tracking/styles';
-import TrackingPeriodRangeModal from './components/TrackingPeriodRangeModal';
-import TrackingUserPickerModal from './components/TrackingUserPickerModal';
-import TrackingPointsIsland, { type TrackingPointRow } from './components/TrackingPointsIsland';
-import { useServicesHeaderSlot } from '@/src/features/services/headerSlotContext';
 
-const defaultFilters: Filters = {
-  from: '',
-  to: '',
-  maxAccuracy: DEFAULT_MAX_ACCURACY.toString(),
-  maxPoints: DEFAULT_POINTS_LIMIT.toString(),
-};
+import {
+  fetchLocationRequest,
+  fetchTrackingDay,
+  fetchTrackingLive,
+  fetchTrackingUsers,
+  requestLiveLocation,
+  type TrackingDayData,
+  type TrackingLiveData,
+  type TrackingV2User,
+} from '@/utils/trackingService';
+import TrackingMap from './TrackingMap';
 
-const POINTS_BATCH_SIZE_DESKTOP = 12;
-const POINTS_BATCH_SIZE_MOBILE = 8;
+const OMSK_OFFSET_MS = 6 * 60 * 60 * 1000;
+
+function dayKey(date: Date) {
+  return new Date(date.getTime() + OMSK_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+function displayName(user?: TrackingV2User | null) {
+  if (!user) return 'Сотрудник';
+  return [user.lastName, user.firstName, user.middleName].filter(Boolean).join(' ') || user.email || `Сотрудник ${user.id}`;
+}
+
+function time(value?: string | null) {
+  if (!value) return '—';
+  return new Date(value).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+}
+
+function currency(value?: string | null) {
+  const number = Number(value);
+  return Number.isFinite(number) ? `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(number)} ₽` : '—';
+}
+
+function distance(meters = 0) {
+  return meters >= 1000 ? `${(meters / 1000).toFixed(1)} км` : `${meters} м`;
+}
+
+function duration(seconds = 0) {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.round((seconds % 3600) / 60);
+  return hours ? `${hours} ч ${minutes} мин` : `${minutes} мин`;
+}
+
+function ageLabel(seconds?: number | null) {
+  if (seconds == null) return 'Нет координат';
+  if (seconds < 60) return 'Получена сейчас';
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} мин назад`;
+  return `${Math.floor(seconds / 3600)} ч назад`;
+}
 
 export default function TrackingServiceScreen() {
-  const { width, height } = useWindowDimensions();
-  const { headerBottomOffset } = useNotificationViewport();
-  const { setHeaderBottomSlot, setHeaderRightSlot } = useServicesHeaderSlot();
-  const navigation = useNavigation();
+  const { width } = useWindowDimensions();
   const router = useRouter();
-  const auth = useContext(AuthContext);
-  const profile = auth?.profile;
-
-  const canViewOthers = useMemo(() => {
-    const role = (profile?.role?.name || '').toLowerCase();
-    return role.includes('admin') || role.includes('manager');
-  }, [profile]);
-
-  const isWeb = Platform.OS === 'web';
-  const isMobileLayout = width < 920;
-  const isMobileWeb = isWeb && isMobileLayout;
-  const isCompactWeb = isWeb && width < 720;
-  const useNativeOverlayHeader = Platform.OS !== 'web' && isMobileLayout;
-  const headerFilterSizing = useMemo(() => {
-    if (isMobileLayout) {
-      return {
-        wrapMaxWidth: 0,
-        gap: 8,
-        metricWidth: 0,
-        periodWidth: 0,
-        iconButtonWidth: 52,
-        userMinWidth: 72,
-        userMaxWidth: 0,
-        periodClearWidth: 40,
-        periodFontSize: 14,
-        showLastSeen: true,
-        showMetricLabels: true,
-      };
-    }
-    const slotSpace = Math.max(520, Math.min(1280, width - 500));
-    const t = Math.max(0, Math.min(1, (slotSpace - 520) / 760));
-    return {
-      wrapMaxWidth: slotSpace,
-      gap: Math.round(4 + t * 4),
-      metricWidth: Math.round(104 + t * 72),
-      periodWidth: Math.round(150 + t * 138),
-      iconButtonWidth: Math.round(40 + t * 12),
-      userMinWidth: Math.round(48 + t * 24),
-      periodClearWidth: Math.round(30 + t * 10),
-      periodFontSize: t > 0.35 ? 13 : 12,
-      showLastSeen: t > 0.55,
-      showMetricLabels: t > 0.28,
-    };
-  }, [isMobileLayout, width]);
-
-  const [selectedUser, setSelectedUser] = useState<UserOption | null>(null);
-  const [userQuery, setUserQuery] = useState('');
-  const [userOptions, setUserOptions] = useState<UserOption[]>([]);
-  const [userSearchLoading, setUserSearchLoading] = useState(false);
-  const [userPickerVisible, setUserPickerVisible] = useState(false);
-  const userSearchRequestIdRef = useRef(0);
-  const lastLoadedUserQueryRef = useRef<string>('');
-
-  const [filters, setFilters] = useState<Filters>(defaultFilters);
-  const filtersRef = useRef<Filters>(defaultFilters);
-
-  const [routes, setRoutes] = useState<RouteWithPoints[]>([]);
-  const [loadingRoutes, setLoadingRoutes] = useState(false);
+  const wide = width >= 920;
+  const [users, setUsers] = useState<TrackingV2User[]>([]);
+  const [selectedUser, setSelectedUser] = useState<TrackingV2User | null>(null);
+  const [selectedDay, setSelectedDay] = useState(dayKey(new Date()));
+  const [data, setData] = useState<TrackingDayData | null>(null);
+  const [live, setLive] = useState<TrackingLiveData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [requesting, setRequesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pickerVisible, setPickerVisible] = useState(false);
+  const [calendarVisible, setCalendarVisible] = useState(false);
+  const [query, setQuery] = useState('');
+  const [mapFocus, setMapFocus] = useState<{ key: string; latitude: number; longitude: number } | null>(null);
 
-  const [periodCalendarVisible, setPeriodCalendarVisible] = useState(false);
-  const [mobileFiltersExpanded, setMobileFiltersExpanded] = useState(false);
-  const [mobilePointsExpanded, setMobilePointsExpanded] = useState(false);
-  const [mobilePointsCollapseRequestId, setMobilePointsCollapseRequestId] = useState(0);
-  const [selectedPointIndex, setSelectedPointIndex] = useState<number | null>(null);
-  const [visiblePointsCount, setVisiblePointsCount] = useState(POINTS_BATCH_SIZE_DESKTOP);
-  const mobileFiltersAnim = useRef(new Animated.Value(0)).current;
+  const loadUsers = useCallback(async () => {
+    const result = await fetchTrackingUsers(query);
+    setUsers(result);
+    setSelectedUser((current) => current && result.some((user) => user.id === current.id) ? current : result[0] || null);
+  }, [query]);
 
-  useEffect(() => {
-    if (!profile) return;
-    const profileAny = profile as any;
-    setSelectedUser({
-      id: profile.id,
-      email: profile.email || '',
-      firstName: profile.firstName ?? null,
-      lastName: profile.lastName ?? null,
-      middleName: profile.middleName ?? null,
-      phone: profile.phone ?? null,
-      avatarUrl: profileAny?.avatarUrl ?? null,
-      departmentName: profileAny?.department?.name ?? null,
-      isOnline: profileAny?.isOnline ?? false,
-      lastSeenAt: profileAny?.lastSeenAt ?? null,
-      role: profileAny?.role ?? null,
-    });
-  }, [profile]);
-
-  const searchUsers = useCallback(async () => {
-    if (!canViewOthers) return;
-    const requestId = ++userSearchRequestIdRef.current;
-    const query = userQuery.trim();
-    setUserSearchLoading(true);
+  const loadDay = useCallback(async (background = false) => {
+    if (!selectedUser) return;
+    if (background) setRefreshing(true); else setLoading(true);
+    setError(null);
     try {
-      const list = await getUsers(query);
-      if (requestId !== userSearchRequestIdRef.current) return;
-      setUserOptions(list);
-      lastLoadedUserQueryRef.current = query;
-    } catch (e: any) {
-      console.error('Не удалось получить список пользователей', e);
+      const [day, current] = await Promise.all([
+        fetchTrackingDay(selectedUser.id, selectedDay),
+        fetchTrackingLive(selectedUser.id),
+      ]);
+      setData(day);
+      setLive(current);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Не удалось загрузить геомаршрут');
     } finally {
-      if (requestId === userSearchRequestIdRef.current) {
-        setUserSearchLoading(false);
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [selectedDay, selectedUser]);
+
+  useEffect(() => { void loadUsers().catch((e) => setError(e instanceof Error ? e.message : String(e))); }, []);
+  useEffect(() => { if (selectedUser) void loadDay(); }, [loadDay, selectedUser]);
+  useEffect(() => { setMapFocus(null); }, [selectedDay, selectedUser?.id]);
+
+  const requestPosition = useCallback(async () => {
+    if (!selectedUser || requesting) return;
+    setRequesting(true);
+    setError(null);
+    try {
+      const request = await requestLiveLocation(selectedUser.id);
+      const deadline = Date.parse(request.expiresAt) || Date.now() + 30_000;
+      let result = await fetchLocationRequest(request.id);
+      while (result.status === 'PENDING' && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+        result = await fetchLocationRequest(request.id);
       }
+      if (result.status === 'SUCCEEDED') await loadDay(true);
+      else if (result.status === 'TIMED_OUT') setError('Телефон не ответил. Показаны последние доступные координаты.');
+      else if (result.status === 'FAILED') setError('Не удалось получить свежую геопозицию сотрудника.');
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Не удалось запросить геопозицию');
+    } finally {
+      setRequesting(false);
     }
-  }, [canViewOthers, userQuery]);
+  }, [loadDay, requesting, selectedUser]);
 
-  useEffect(() => {
-    if (!userPickerVisible || !canViewOthers) return;
-    const query = userQuery.trim();
-    const hasSameLoadedQuery =
-      lastLoadedUserQueryRef.current === query && userOptions.length > 0;
-    if (hasSameLoadedQuery) return;
-    const timer = setTimeout(() => {
-      void searchUsers();
-    }, 280);
-    return () => clearTimeout(timer);
-  }, [canViewOthers, searchUsers, userOptions.length, userPickerVisible, userQuery]);
-
-  useEffect(() => {
-    filtersRef.current = filters;
-  }, [filters]);
-
-  const loadRoutes = useCallback(
-    async (params?: Filters) => {
-      if (!selectedUser) {
-        setError('Выберите пользователя');
-        return;
-      }
-      setLoadingRoutes(true);
-      setError(null);
-      try {
-        const current = params ?? filtersRef.current;
-        const data = await fetchUserRoutesWithPoints(selectedUser.id, {
-          from: current.from || undefined,
-          to: current.to || undefined,
-          maxAccuracy: current.maxAccuracy || undefined,
-          maxPoints: current.maxPoints || undefined,
-        });
-        setRoutes(data.routes || []);
-        setSelectedPointIndex(null);
-      } catch (e: any) {
-        setError(e?.message || 'Не удалось загрузить маршруты');
-      } finally {
-        setLoadingRoutes(false);
-      }
-    },
-    [selectedUser]
-  );
-
-  useEffect(() => {
-    if (selectedUser) {
-      loadRoutes();
-    }
-  }, [selectedUser, loadRoutes]);
-
-  const activeRoute = useMemo(() => routes[0] || null, [routes]);
-
-  const points = useMemo(() => {
-    const pts = activeRoute?.points ?? [];
-    return [...pts].sort((a, b) => {
-      const ta = new Date(a.recordedAt || 0).getTime();
-      const tb = new Date(b.recordedAt || 0).getTime();
-      return tb - ta;
-    });
-  }, [activeRoute]);
-
-  const spacedPoints = useMemo(() => filterNearbyPoints(points), [points]);
-
-  const displayLimit = useMemo(
-    () => parseLimitValue(filters.maxPoints, DEFAULT_POINTS_LIMIT),
-    [filters.maxPoints]
-  );
-
-  const limitedPoints = useMemo(
-    () => spacedPoints.slice(0, displayLimit),
-    [spacedPoints, displayLimit]
-  );
-
-  const pointLabels = useMemo<PointLabel[]>(
-    () =>
-      limitedPoints.map((point, idx) => ({
-        latitude: point.latitude,
-        longitude: point.longitude,
-        label: `${idx + 1}. ${getRoutePointDateTimeLabels(point).primary}`,
-      })),
-    [limitedPoints]
-  );
-
-  const filteredPointRows = useMemo<TrackingPointRow[]>(
-    () =>
-      limitedPoints.map((point, globalIdx) => {
-        const labels = getRoutePointDateTimeLabels(point);
-        return { point, globalIdx, ...labels };
-      }),
-    [limitedPoints]
-  );
-
-  const pointsBatchSize = isMobileLayout ? POINTS_BATCH_SIZE_MOBILE : POINTS_BATCH_SIZE_DESKTOP;
-  const visiblePoints = useMemo(
-    () => filteredPointRows.slice(0, visiblePointsCount),
-    [filteredPointRows, visiblePointsCount]
-  );
-  const hasMoreVisiblePoints = visiblePoints.length < filteredPointRows.length;
-  const selectedPointPosition = useMemo(() => {
-    if (filteredPointRows.length === 0) return -1;
-    if (selectedPointIndex == null) return 0;
-    return filteredPointRows.findIndex((row) => row.globalIdx === selectedPointIndex);
-  }, [filteredPointRows, selectedPointIndex]);
-  const hasPrevPoint = selectedPointPosition > 0;
-  const hasNextPoint =
-    selectedPointPosition >= 0 && selectedPointPosition < filteredPointRows.length - 1;
-
-  useEffect(() => {
-    setVisiblePointsCount(pointsBatchSize);
-  }, [filteredPointRows.length, pointsBatchSize]);
-
-  const mapHeight = useMemo(() => Math.max(height, 360), [height]);
-  const desktopPointPanelTop = useMemo(
-    () => Math.max(headerBottomOffset + 4, 92),
-    [headerBottomOffset]
-  );
-  const selectedUserInitials = useMemo(() => {
-    const first = String(selectedUser?.firstName || '').trim();
-    const last = String(selectedUser?.lastName || '').trim();
-    if (first || last) {
-      return `${first[0] || ''}${last[0] || first[1] || ''}`.toUpperCase();
-    }
-    const local = String(selectedUser?.email || '').split('@')[0];
-    if (local.length >= 2) return local.slice(0, 2).toUpperCase();
-    if (local.length === 1) return `${local}${local}`.toUpperCase();
-    return 'U';
-  }, [selectedUser?.email, selectedUser?.firstName, selectedUser?.lastName]);
-  const selectedUserLastSeenLabel = useMemo(() => {
-    if (selectedUser?.isOnline) return 'В сети сейчас';
-    if (!selectedUser?.lastSeenAt) return 'Последний визит: нет данных';
-    const parsed = new Date(selectedUser.lastSeenAt);
-    if (Number.isNaN(parsed.getTime())) return 'Последний визит: нет данных';
-    return `Был(а) в сети: ${parsed.toLocaleString('ru-RU')}`;
-  }, [selectedUser?.isOnline, selectedUser?.lastSeenAt]);
-  const rangeLabel = useMemo(() => {
-    const formatRangeDate = (iso?: string) => {
-      if (!iso) return '—';
-      const parsed = new Date(iso);
-      if (Number.isNaN(parsed.getTime())) return '—';
-      return parsed.toLocaleDateString('ru-RU');
-    };
-    return `${formatRangeDate(filters.from)} - ${formatRangeDate(filters.to)}`;
-  }, [filters.from, filters.to]);
-
-  const focusPoint = useCallback(
-    (idx: number) => {
-      if (!limitedPoints[idx]) return;
-      setSelectedPointIndex(idx);
-    },
-    [limitedPoints]
-  );
-
-  const clearPeriod = useCallback(() => {
-    const next = {
-      ...filtersRef.current,
-      from: '',
-      to: '',
-    };
-    setFilters(next);
-    filtersRef.current = next;
-  }, []);
-
-  const primaryBtnStyle = useCallback(
-    (state: any) => [
-      styles.primaryBtn,
-      state?.hovered && styles.primaryBtnHover,
-      state?.pressed && styles.primaryBtnPressed,
-    ],
-    []
-  );
-  const secondaryBtnStyle = useCallback(
-    (state: any) => [
-      styles.secondaryBtn,
-      state?.hovered && styles.secondaryBtnHover,
-      state?.pressed && styles.secondaryBtnPressed,
-    ],
-    []
-  );
-
-  const loadMoreVisiblePoints = useCallback(() => {
-    if (!hasMoreVisiblePoints) return;
-    setVisiblePointsCount((prev) => Math.min(prev + pointsBatchSize, filteredPointRows.length));
-  }, [filteredPointRows.length, hasMoreVisiblePoints, pointsBatchSize]);
-  const focusPrevMobilePoint = useCallback(() => {
-    if (!hasPrevPoint || selectedPointPosition < 1) return;
-    const prevRow = filteredPointRows[selectedPointPosition - 1];
-    if (!prevRow) return;
-    focusPoint(prevRow.globalIdx);
-  }, [filteredPointRows, focusPoint, hasPrevPoint, selectedPointPosition]);
-  const focusNextMobilePoint = useCallback(() => {
-    if (!hasNextPoint || selectedPointPosition < 0) return;
-    const nextRow = filteredPointRows[selectedPointPosition + 1];
-    if (!nextRow) return;
-    focusPoint(nextRow.globalIdx);
-  }, [filteredPointRows, focusPoint, hasNextPoint, selectedPointPosition]);
-
-  useEffect(() => {
-    if (!isMobileLayout && mobileFiltersExpanded) {
-      setMobileFiltersExpanded(false);
-    }
-  }, [isMobileLayout, mobileFiltersExpanded]);
-  useEffect(() => {
-    if (!isMobileLayout && mobilePointsExpanded) {
-      setMobilePointsExpanded(false);
-    }
-  }, [isMobileLayout, mobilePointsExpanded]);
-  useEffect(() => {
-    if (!isMobileLayout || !mobilePointsExpanded) return;
-    if (selectedPointIndex != null) return;
-    const first = filteredPointRows[0];
-    if (!first) return;
-    setSelectedPointIndex(first.globalIdx);
-  }, [filteredPointRows, isMobileLayout, mobilePointsExpanded, selectedPointIndex]);
-
-  useEffect(() => {
-    if (!isMobileLayout) {
-      mobileFiltersAnim.setValue(0);
-      return;
-    }
-    Animated.timing(mobileFiltersAnim, {
-      toValue: mobileFiltersExpanded ? 1 : 0,
-      duration: mobileFiltersExpanded ? 220 : 180,
-      easing: mobileFiltersExpanded ? Easing.out(Easing.cubic) : Easing.inOut(Easing.quad),
-      useNativeDriver: false,
-    }).start();
-  }, [isMobileLayout, mobileFiltersAnim, mobileFiltersExpanded]);
-  const headerFiltersSlot = useMemo(
-    () => (
-      <View
-        style={[
-          styles.headerFiltersWrap,
-          !isMobileLayout && styles.headerFiltersWrapDesktop,
-          !isMobileLayout && { maxWidth: headerFilterSizing.wrapMaxWidth },
-        ]}
-      >
-        {isMobileLayout ? (
-          <Animated.View
-            pointerEvents={mobileFiltersExpanded ? 'auto' : 'none'}
-            style={[
-              styles.mobileFiltersAnimatedWrap,
-              {
-                opacity: mobileFiltersAnim,
-                maxHeight: mobileFiltersAnim.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [0, 240],
-                }),
-                transform: [
-                  {
-                    translateY: mobileFiltersAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [-8, 0],
-                    }),
-                  },
-                ],
-              },
-            ]}
-          >
-            <View style={styles.mobileFiltersStack}>
-            <Pressable
-              onPress={() => canViewOthers && setUserPickerVisible(true)}
-              disabled={!canViewOthers}
-              style={(state: any) => [
-                styles.topOverlayField,
-                styles.topOverlayUserField,
-                styles.mobileUserField,
-                !canViewOthers && { opacity: 0.65 },
-                state?.hovered && canViewOthers && { borderColor: '#93C5FD' },
-                state?.pressed && { opacity: 0.95, transform: [{ scale: 0.99 }] },
-              ]}
-            >
-              <View style={styles.topOverlayUserInfo}>
-                <View style={styles.topOverlayUserAvatarWrap}>
-                  {selectedUser?.avatarUrl ? (
-                    <Image source={{ uri: selectedUser.avatarUrl }} style={styles.topOverlayUserAvatar} />
-                  ) : (
-                    <View style={styles.topOverlayUserAvatarFallback}>
-                      <Text style={styles.topOverlayUserAvatarFallbackText}>{selectedUserInitials}</Text>
-                    </View>
-                  )}
-                  <View
-                    style={[
-                      styles.topOverlayUserPresenceDot,
-                      { backgroundColor: selectedUser?.isOnline ? '#22C55E' : '#94A3B8' },
-                    ]}
-                  />
-                </View>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={styles.inputValue} numberOfLines={1}>
-                    {humanName(selectedUser)}
-                  </Text>
-                  <Text style={styles.topOverlayUserLastSeen} numberOfLines={1}>
-                    {selectedUserLastSeenLabel}
-                  </Text>
-                </View>
-              </View>
-              <Ionicons name="chevron-down" size={16} color="#64748B" />
-            </Pressable>
-
-            <View style={[styles.topOverlayPeriodControl, styles.topOverlayPeriodControlMobile]}>
-              <Pressable
-                onPress={() => setPeriodCalendarVisible(true)}
-                style={(state: any) => [
-                  styles.topOverlayPeriodMainBtn,
-                  state?.hovered && { backgroundColor: '#DBEAFE' },
-                  state?.pressed && { opacity: 0.95 },
-                ]}
-              >
-                <Ionicons name="calendar-clear-outline" size={16} color="#1D4ED8" />
-                <Text style={styles.secondaryBtnText} numberOfLines={1}>
-                  {rangeLabel}
-                </Text>
-              </Pressable>
-              <Pressable
-                onPress={clearPeriod}
-                accessibilityLabel="Очистить период"
-                disabled={!filters.from && !filters.to}
-                style={(state: any) => [
-                  styles.topOverlayPeriodClearBtn,
-                  (!filters.from && !filters.to) && { opacity: 0.45 },
-                  state?.hovered && (filters.from || filters.to) && { backgroundColor: '#DBEAFE' },
-                  state?.pressed && (filters.from || filters.to) && { opacity: 0.9 },
-                ]}
-              >
-                <Ionicons name="close-outline" size={16} color="#1D4ED8" />
-              </Pressable>
-            </View>
-
-            <View style={styles.mobileMetricsRow}>
-              <View style={[styles.topOverlayField, styles.topOverlayLabeledField, styles.mobileMetricField]}>
-                <Text style={styles.topOverlayFieldLabel}>Точность, м</Text>
-                <View style={styles.topOverlayInputRow}>
-                  <Ionicons name="locate-outline" size={16} color="#64748B" />
-                  <TextInput
-                    value={filters.maxAccuracy}
-                    onChangeText={(value) => setFilters((prev) => ({ ...prev, maxAccuracy: value }))}
-                    keyboardType="numeric"
-                    placeholder="Напр. 20"
-                    placeholderTextColor="#94A3B8"
-                    style={styles.textInput}
-                  />
-                </View>
-              </View>
-
-              <View style={[styles.topOverlayField, styles.topOverlayLabeledField, styles.mobileMetricField]}>
-                <Text style={styles.topOverlayFieldLabel}>Количество точек</Text>
-                <View style={styles.topOverlayInputRow}>
-                  <Ionicons name="list-outline" size={16} color="#64748B" />
-                  <TextInput
-                    value={filters.maxPoints}
-                    onChangeText={(value) => setFilters((prev) => ({ ...prev, maxPoints: value }))}
-                    keyboardType="numeric"
-                    placeholder="Напр. 100"
-                    placeholderTextColor="#94A3B8"
-                    style={styles.textInput}
-                  />
-                </View>
-              </View>
-            </View>
-            </View>
-          </Animated.View>
-        ) : (
-          <View style={[styles.topOverlayGrid, { gap: headerFilterSizing.gap }]}>
-            <Pressable
-              onPress={() => canViewOthers && setUserPickerVisible(true)}
-              disabled={!canViewOthers}
-              style={(state: any) => [
-                styles.topOverlayField,
-                styles.topOverlayUserField,
-                { minWidth: headerFilterSizing.userMinWidth },
-                !canViewOthers && { opacity: 0.65 },
-                state?.hovered && canViewOthers && { borderColor: '#93C5FD' },
-                state?.pressed && { opacity: 0.95, transform: [{ scale: 0.99 }] },
-              ]}
-            >
-              <View style={styles.topOverlayUserInfo}>
-                <View style={styles.topOverlayUserAvatarWrap}>
-                  {selectedUser?.avatarUrl ? (
-                    <Image source={{ uri: selectedUser.avatarUrl }} style={styles.topOverlayUserAvatar} />
-                  ) : (
-                    <View style={styles.topOverlayUserAvatarFallback}>
-                      <Text style={styles.topOverlayUserAvatarFallbackText}>{selectedUserInitials}</Text>
-                    </View>
-                  )}
-                  <View
-                    style={[
-                      styles.topOverlayUserPresenceDot,
-                      { backgroundColor: selectedUser?.isOnline ? '#22C55E' : '#94A3B8' },
-                    ]}
-                  />
-                </View>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={styles.inputValue} numberOfLines={1}>
-                    {humanName(selectedUser)}
-                  </Text>
-                  {headerFilterSizing.showLastSeen ? (
-                    <Text style={styles.topOverlayUserLastSeen} numberOfLines={1}>
-                      {selectedUserLastSeenLabel}
-                    </Text>
-                  ) : null}
-                </View>
-              </View>
-              <Ionicons name="chevron-down" size={16} color="#64748B" />
-            </Pressable>
-
-            <View
-              style={[
-                styles.topOverlayField,
-                styles.topOverlayLabeledField,
-                styles.topOverlayAccuracyField,
-                {
-                  width: headerFilterSizing.metricWidth,
-                  minWidth: headerFilterSizing.metricWidth,
-                },
-                !headerFilterSizing.showMetricLabels && styles.topOverlayFieldCompact,
-              ]}
-            >
-              {headerFilterSizing.showMetricLabels ? (
-                <Text style={styles.topOverlayFieldLabel}>Точность, м</Text>
-              ) : null}
-              <View
-                style={[
-                  styles.topOverlayInputRow,
-                  !headerFilterSizing.showMetricLabels && styles.topOverlayInputRowCompact,
-                ]}
-              >
-                <Ionicons name="locate-outline" size={16} color="#64748B" />
-                <TextInput
-                  value={filters.maxAccuracy}
-                  onChangeText={(value) => setFilters((prev) => ({ ...prev, maxAccuracy: value }))}
-                  keyboardType="numeric"
-                  placeholder="Напр. 20"
-                  placeholderTextColor="#94A3B8"
-                  style={styles.textInput}
-                />
-              </View>
-            </View>
-
-            <View
-              style={[
-                styles.topOverlayField,
-                styles.topOverlayLabeledField,
-                styles.topOverlayPointsField,
-                {
-                  width: headerFilterSizing.metricWidth,
-                  minWidth: headerFilterSizing.metricWidth,
-                },
-                !headerFilterSizing.showMetricLabels && styles.topOverlayFieldCompact,
-              ]}
-            >
-              {headerFilterSizing.showMetricLabels ? (
-                <Text style={styles.topOverlayFieldLabel}>Количество точек</Text>
-              ) : null}
-              <View
-                style={[
-                  styles.topOverlayInputRow,
-                  !headerFilterSizing.showMetricLabels && styles.topOverlayInputRowCompact,
-                ]}
-              >
-                <Ionicons name="list-outline" size={16} color="#64748B" />
-                <TextInput
-                  value={filters.maxPoints}
-                  onChangeText={(value) => setFilters((prev) => ({ ...prev, maxPoints: value }))}
-                  keyboardType="numeric"
-                  placeholder="Напр. 100"
-                  placeholderTextColor="#94A3B8"
-                  style={styles.textInput}
-                />
-              </View>
-            </View>
-
-            <View
-              style={[
-                styles.topOverlayPeriodControl,
-                {
-                  width: headerFilterSizing.periodWidth,
-                  minWidth: headerFilterSizing.periodWidth,
-                  maxWidth: headerFilterSizing.periodWidth,
-                },
-              ]}
-            >
-              <Pressable
-                onPress={() => setPeriodCalendarVisible(true)}
-                style={(state: any) => [
-                  styles.topOverlayPeriodMainBtn,
-                  state?.hovered && { backgroundColor: '#DBEAFE' },
-                  state?.pressed && { opacity: 0.95 },
-                ]}
-              >
-                <Ionicons name="calendar-clear-outline" size={16} color="#1D4ED8" />
-                <Text
-                  style={[styles.secondaryBtnText, { fontSize: headerFilterSizing.periodFontSize }]}
-                  numberOfLines={1}
-                >
-                  {rangeLabel}
-                </Text>
-              </Pressable>
-              <Pressable
-                onPress={clearPeriod}
-                accessibilityLabel="Очистить период"
-                disabled={!filters.from && !filters.to}
-                style={(state: any) => [
-                  styles.topOverlayPeriodClearBtn,
-                  { width: headerFilterSizing.periodClearWidth },
-                  (!filters.from && !filters.to) && { opacity: 0.45 },
-                  state?.hovered && (filters.from || filters.to) && { backgroundColor: '#DBEAFE' },
-                  state?.pressed && (filters.from || filters.to) && { opacity: 0.9 },
-                ]}
-              >
-                <Ionicons name="close-outline" size={16} color="#1D4ED8" />
-              </Pressable>
-            </View>
-
-            <Pressable
-              onPress={() => loadRoutes(filters)}
-              accessibilityLabel="Обновить маршруты"
-              style={(state: any) => [
-                ...primaryBtnStyle(state),
-                styles.topOverlayActionBtn,
-                styles.topOverlayIconOnlyBtn,
-                {
-                  width: headerFilterSizing.iconButtonWidth,
-                  minWidth: headerFilterSizing.iconButtonWidth,
-                },
-              ]}
-            >
-              {loadingRoutes ? (
-                <ActivityIndicator color="#FFFFFF" />
-              ) : (
-                <Ionicons name="sync-outline" size={18} color="#FFFFFF" />
-              )}
-            </Pressable>
-          </View>
-        )}
-        {error ? <Text style={styles.topOverlayError}>{error}</Text> : null}
-      </View>
-    ),
-    [
-      canViewOthers,
-      error,
-      filters,
-      isMobileLayout,
-      mobileFiltersAnim,
-      mobileFiltersExpanded,
-      loadingRoutes,
-      rangeLabel,
-      clearPeriod,
-      headerFilterSizing,
-      selectedUser,
-      selectedUserInitials,
-      selectedUserLastSeenLabel,
-      loadRoutes,
-      primaryBtnStyle,
-    ]
-  );
-
-  const mobileHeaderControlsSlot = useMemo(
-    () => (
-      <View style={styles.mobileHeaderControlsRow}>
-        <Pressable
-          onPress={() => loadRoutes(filters)}
-          accessibilityLabel="Обновить маршруты"
-          style={(state: any) => [
-            ...primaryBtnStyle(state),
-            styles.topOverlayActionBtn,
-            styles.mobileHeaderIconBtn,
-          ]}
-        >
-          {loadingRoutes ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <Ionicons name="sync-outline" size={16} color="#FFFFFF" />
-          )}
-        </Pressable>
-        <Pressable
-          onPress={() => setMobileFiltersExpanded((prev) => !prev)}
-          accessibilityLabel={mobileFiltersExpanded ? 'Свернуть фильтры' : 'Открыть фильтры'}
-          style={(state: any) => [
-            ...secondaryBtnStyle(state),
-            styles.topOverlayActionBtn,
-            styles.mobileHeaderIconBtn,
-            mobileFiltersExpanded && styles.mobileHeaderIconBtnActive,
-          ]}
-        >
-          <Ionicons name="options-outline" size={16} color="#1D4ED8" />
-        </Pressable>
-      </View>
-    ),
-    [
-      filters,
-      loadRoutes,
-      loadingRoutes,
-      mobileFiltersExpanded,
-      primaryBtnStyle,
-      secondaryBtnStyle,
-    ]
-  );
-
-  useEffect(() => {
-    navigation.setOptions?.({ headerShown: !useNativeOverlayHeader });
-    return () => {
-      navigation.setOptions?.({ headerShown: true });
-    };
-  }, [navigation, useNativeOverlayHeader]);
-
-  useEffect(() => {
-    if (isMobileLayout) {
-      if (useNativeOverlayHeader) {
-        setHeaderBottomSlot(null);
-        setHeaderRightSlot(null);
-        return () => {
-          setHeaderBottomSlot(null);
-          setHeaderRightSlot(null);
-        };
-      }
-      setHeaderRightSlot(mobileHeaderControlsSlot);
-      setHeaderBottomSlot(headerFiltersSlot);
-      return () => {
-        setHeaderBottomSlot(null);
-        setHeaderRightSlot(null);
-      };
-    }
-    setHeaderBottomSlot(null);
-    setHeaderRightSlot(headerFiltersSlot);
-    return () => setHeaderRightSlot(null);
-  }, [
-      headerFiltersSlot,
-      isMobileLayout,
-      mobileHeaderControlsSlot,
-      setHeaderBottomSlot,
-      setHeaderRightSlot,
-      useNativeOverlayHeader,
-  ]);
+  const dateValue = useMemo(() => new Date(`${selectedDay}T06:00:00+06:00`), [selectedDay]);
+  const today = dayKey(new Date());
+  const yesterday = dayKey(new Date(Date.now() - 24 * 60 * 60 * 1000));
+  const events = useMemo(() => {
+    const stopEvents = (data?.stops || []).map((stop, index) => ({
+      key: `stop-${index}`,
+      at: stop.startedAt,
+      icon: 'pause-circle-outline' as const,
+      color: '#F59E0B',
+      title: `Остановка ${Math.max(1, Math.round(stop.durationSeconds / 60))} мин`,
+      subtitle: `${time(stop.startedAt)}–${time(stop.endedAt)}`,
+      orderGuid: null as string | null,
+      latitude: stop.latitude,
+      longitude: stop.longitude,
+    }));
+    const orderEvents = (data?.orderEvents || []).map((event) => ({
+      key: event.id,
+      at: event.capturedAt,
+      icon: event.eventType === 'CREATED' ? 'document-text-outline' as const : 'cloud-upload-outline' as const,
+      color: event.status === 'CAPTURED' ? '#16A34A' : '#94A3B8',
+      title: event.eventType === 'CREATED' ? 'Создан заказ' : 'Заказ отправлен',
+      subtitle: `${event.order.number || 'Черновик'} · ${event.order.counterpartyName} · ${currency(event.order.totalAmount)}`,
+      orderGuid: event.order.guid || null,
+      latitude: event.latitude,
+      longitude: event.longitude,
+    }));
+    return [...stopEvents, ...orderEvents].sort((left, right) => Date.parse(left.at) - Date.parse(right.at));
+  }, [data]);
 
   return (
-    <View style={styles.fullMapRoot}>
-      {useNativeOverlayHeader ? (
-        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 20, elevation: 20 }} pointerEvents="box-none">
-          <AppHeader
-            title="Геомаршруты"
-            subtitle="Маршруты и точки на карте"
-            icon="map-outline"
-            showBack
-            onBack={() => router.replace('/services')}
-            tight
-            rightSlot={mobileHeaderControlsSlot}
-            bottomSlot={headerFiltersSlot}
-          />
-        </View>
-      ) : null}
-      {isMobileLayout && mobileFiltersExpanded ? (
-        <Pressable
-          style={styles.mobileFiltersBackdrop}
-          onPress={() => setMobileFiltersExpanded(false)}
-        />
-      ) : null}
-      <View style={styles.fullMapLayer}>
-        <LeafletMap
-          points={pointLabels}
-          selectedIndex={selectedPointIndex}
-          selectedVerticalOffsetPx={
-            isMobileLayout && mobilePointsExpanded && selectedPointIndex != null
-              ? Math.max(48, Math.round(mapHeight * 0.18))
-              : 0
-          }
-          onMapTap={() => {
-            if (!isMobileLayout || !mobilePointsExpanded) return;
-            setMobilePointsExpanded(false);
-            setMobilePointsCollapseRequestId((prev) => prev + 1);
-          }}
-          height={mapHeight}
-        />
+    <View style={styles.root}>
+      <View style={[styles.toolbar, wide && styles.toolbarWide]}>
+        <Pressable style={styles.userButton} onPress={() => setPickerVisible(true)}>
+          <View style={styles.userIcon}><Ionicons name="person" size={18} color="#2563EB" /></View>
+          <View style={styles.flex}>
+            <Text style={styles.userName} numberOfLines={1}>{displayName(selectedUser)}</Text>
+            <Text style={styles.caption} numberOfLines={1}>
+              {selectedUser?.department?.name || 'Без отдела'} · {ageLabel(live?.point?.ageSeconds)}
+            </Text>
+          </View>
+          <Ionicons name="chevron-down" size={18} color="#64748B" />
+        </Pressable>
+        <Pressable style={[styles.liveButton, requesting && styles.disabled]} onPress={requestPosition} disabled={requesting || !selectedUser}>
+          {requesting ? <ActivityIndicator size="small" color="#FFFFFF" /> : <Ionicons name="locate" size={18} color="#FFFFFF" />}
+          <Text style={styles.liveButtonText}>{requesting ? 'Запрашиваем…' : 'Запросить геопозицию'}</Text>
+        </Pressable>
       </View>
 
-      <View pointerEvents="none" style={styles.fullMapTint} />
-      <TrackingPointsIsland
-        isMobileLayout={isMobileLayout}
-        rows={filteredPointRows}
-        visibleRows={visiblePoints}
-        selectedPointIndex={selectedPointIndex}
-        onSelectPoint={focusPoint}
-        onPrev={focusPrevMobilePoint}
-        onNext={focusNextMobilePoint}
-        hasPrev={hasPrevPoint}
-        hasNext={hasNextPoint}
-        onLoadMore={loadMoreVisiblePoints}
-        hasMore={hasMoreVisiblePoints}
-        desktopTop={desktopPointPanelTop}
-        onExpandedChange={setMobilePointsExpanded}
-        collapseRequestId={mobilePointsCollapseRequestId}
-      />
+      <View style={styles.dayRow}>
+        <Pressable onPress={() => setSelectedDay(today)} style={[styles.dayChip, selectedDay === today && styles.dayChipActive]}>
+          <Text style={[styles.dayChipText, selectedDay === today && styles.dayChipTextActive]}>Сегодня</Text>
+        </Pressable>
+        <Pressable onPress={() => setSelectedDay(yesterday)} style={[styles.dayChip, selectedDay === yesterday && styles.dayChipActive]}>
+          <Text style={[styles.dayChipText, selectedDay === yesterday && styles.dayChipTextActive]}>Вчера</Text>
+        </Pressable>
+        <Pressable onPress={() => setCalendarVisible(true)} style={[styles.dayChip, selectedDay !== today && selectedDay !== yesterday && styles.dayChipActive]}>
+          <Ionicons name="calendar-outline" size={16} color={selectedDay !== today && selectedDay !== yesterday ? '#FFFFFF' : '#475569'} />
+          <Text style={[styles.dayChipText, selectedDay !== today && selectedDay !== yesterday && styles.dayChipTextActive]}>{dateValue.toLocaleDateString('ru-RU')}</Text>
+        </Pressable>
+      </View>
 
-      <TrackingUserPickerModal
-        visible={userPickerVisible}
-        userQuery={userQuery}
-        userSearchLoading={userSearchLoading}
-        userOptions={userOptions}
-        selectedUserId={selectedUser?.id}
-        onClose={() => setUserPickerVisible(false)}
-        onChangeQuery={setUserQuery}
-        onSubmitSearch={searchUsers}
-        onSelectUser={(user) => {
-          setSelectedUser(user);
-          setUserPickerVisible(false);
-        }}
-      />
+      {error ? <View style={styles.error}><Ionicons name="alert-circle-outline" size={18} color="#B91C1C" /><Text style={styles.errorText}>{error}</Text></View> : null}
 
-      <TrackingPeriodRangeModal
-        visible={periodCalendarVisible}
-        compact={isCompactWeb}
-        initialFrom={filtersRef.current.from || null}
-        initialTo={filtersRef.current.to || null}
-        onClose={() => setPeriodCalendarVisible(false)}
-        onApply={(from, to) => {
-          const next = {
-            ...filtersRef.current,
-            from: from.toISOString(),
-            to: to.toISOString(),
-          };
-          filtersRef.current = next;
-          setFilters(next);
-        }}
-        onReset={() => {
-          const next = {
-            ...filtersRef.current,
-            from: '',
-            to: '',
-          };
-          filtersRef.current = next;
-          setFilters(next);
-        }}
-      />
+      <View style={[styles.content, wide && styles.contentWide]}>
+        <View style={styles.mapPane}>
+          <TrackingMap
+            key={`${selectedUser?.id || 0}:${selectedDay}:${mapFocus?.key || 'route'}`}
+            data={data}
+            live={live}
+            focus={mapFocus}
+          />
+          {loading ? <View style={styles.loadingOverlay}><ActivityIndicator size="large" color="#2563EB" /></View> : null}
+          <View style={styles.legend}>
+            <Legend color="#DC2626" text="Сейчас" /><Legend color="#16A34A" text="Заказ" /><Legend color="#F59E0B" text="Остановка" />
+          </View>
+        </View>
+
+        <ScrollView
+          style={styles.detailsPane}
+          contentContainerStyle={styles.detailsContent}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => loadDay(true)} />}
+        >
+          <Text style={styles.sectionTitle}>Итоги дня</Text>
+          <View style={styles.metrics}>
+            <Metric icon="navigate-outline" label="Маршрут" value={distance(data?.summary.distanceMeters)} />
+            <Metric icon="walk-outline" label="В движении" value={duration(data?.summary.movingSeconds)} />
+            <Metric icon="time-outline" label="Первая точка" value={time(data?.summary.startedAt)} />
+            <Metric icon="flag-outline" label="Последняя точка" value={time(data?.summary.endedAt)} />
+            <Metric icon="pause-outline" label="Остановки" value={String(data?.summary.stopsCount ?? 0)} />
+            <Metric icon="document-text-outline" label="Заказы" value={String(data?.summary.ordersCount ?? 0)} />
+            <Metric icon="battery-half-outline" label="Батарея" value={live?.point?.batteryLevel != null ? `${Math.round(live.point.batteryLevel)}%` : '—'} />
+          </View>
+
+          <Text style={styles.sectionTitle}>Хронология</Text>
+          {!events.length && !loading ? <Text style={styles.empty}>За этот день остановок и заказов пока нет</Text> : null}
+          {events.map((event) => (
+            <Pressable
+              key={event.key}
+              disabled={event.latitude == null || event.longitude == null}
+              onPress={() => event.latitude != null && event.longitude != null && setMapFocus({
+                key: event.key,
+                latitude: event.latitude,
+                longitude: event.longitude,
+              })}
+              style={styles.timelineRow}
+            >
+              <View style={[styles.timelineIcon, { borderColor: event.color }]}><Ionicons name={event.icon} size={19} color={event.color} /></View>
+              <View style={styles.flex}>
+                <View style={styles.timelineTitleRow}><Text style={styles.timelineTitle}>{event.title}</Text><Text style={styles.timelineTime}>{time(event.at)}</Text></View>
+                <Text style={styles.timelineSubtitle}>{event.subtitle}</Text>
+              </View>
+              {event.orderGuid ? (
+                <Pressable
+                  hitSlop={10}
+                  accessibilityRole="button"
+                  accessibilityLabel="Открыть заказ"
+                  onPress={() => router.push({ pathname: '/services/client_orders', params: { orderGuid: event.orderGuid! } })}
+                >
+                  <Ionicons name="chevron-forward" size={20} color="#64748B" />
+                </Pressable>
+              ) : null}
+            </Pressable>
+          ))}
+        </ScrollView>
+      </View>
+
+      <Modal visible={pickerVisible} transparent animationType="fade" onRequestClose={() => setPickerVisible(false)}>
+        <Pressable style={styles.modalBackdrop} onPress={() => setPickerVisible(false)}>
+          <Pressable style={styles.modalCard} onPress={(event) => event.stopPropagation()}>
+            <Text style={styles.modalTitle}>Сотрудник</Text>
+            <View style={styles.search}><Ionicons name="search" size={18} color="#64748B" /><TextInput value={query} onChangeText={setQuery} onSubmitEditing={() => loadUsers()} placeholder="Поиск сотрудника" style={styles.searchInput} /></View>
+            <ScrollView style={{ maxHeight: 420 }}>
+              {users.map((user) => (
+                <Pressable key={user.id} style={styles.userRow} onPress={() => { setSelectedUser(user); setPickerVisible(false); }}>
+                  <View style={styles.flex}><Text style={styles.userName}>{displayName(user)}</Text><Text style={styles.caption}>{user.department?.name || 'Без отдела'}</Text></View>
+                  {user.id === selectedUser?.id ? <Ionicons name="checkmark-circle" size={22} color="#16A34A" /> : null}
+                </Pressable>
+              ))}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {calendarVisible ? (
+        Platform.OS === 'web' ? (
+          <Modal transparent visible animationType="fade" onRequestClose={() => setCalendarVisible(false)}>
+            <Pressable style={styles.modalBackdrop} onPress={() => setCalendarVisible(false)}>
+              <Pressable style={styles.modalCard} onPress={(event) => event.stopPropagation()}>
+                <input type="date" value={selectedDay} onChange={(event) => { setSelectedDay(event.target.value); setCalendarVisible(false); }} style={{ fontSize: 18, padding: 12 }} />
+              </Pressable>
+            </Pressable>
+          </Modal>
+        ) : (
+          <DateTimePicker value={dateValue} mode="date" maximumDate={new Date()} onChange={(_, value) => { setCalendarVisible(false); if (value) setSelectedDay(dayKey(value)); }} />
+        )
+      ) : null}
     </View>
   );
 }
+
+function Legend({ color, text }: { color: string; text: string }) {
+  return <View style={styles.legendItem}><View style={[styles.legendDot, { backgroundColor: color }]} /><Text style={styles.legendText}>{text}</Text></View>;
+}
+
+function Metric({ icon, label, value }: { icon: React.ComponentProps<typeof Ionicons>['name']; label: string; value: string }) {
+  return <View style={styles.metric}><Ionicons name={icon} size={22} color="#2563EB" /><View><Text style={styles.caption}>{label}</Text><Text style={styles.metricValue}>{value}</Text></View></View>;
+}
+
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: '#F8FAFC' },
+  flex: { flex: 1, minWidth: 0 },
+  toolbar: { gap: 8, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: '#FFFFFF', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#E2E8F0' },
+  toolbarWide: { flexDirection: 'row', alignItems: 'center' },
+  userButton: { minHeight: 54, flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, backgroundColor: '#F8FAFC', borderRadius: 12 },
+  userIcon: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: '#DBEAFE' },
+  userName: { fontSize: 15, fontWeight: '800', color: '#0F172A' },
+  caption: { fontSize: 12, color: '#64748B', marginTop: 2 },
+  liveButton: { minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 18, borderRadius: 12, backgroundColor: '#2563EB' },
+  liveButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
+  disabled: { opacity: 0.6 },
+  dayRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#FFFFFF' },
+  dayChip: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, minHeight: 38, paddingHorizontal: 14, borderRadius: 10, backgroundColor: '#F1F5F9' },
+  dayChipActive: { backgroundColor: '#2563EB' },
+  dayChipText: { fontSize: 13, fontWeight: '700', color: '#475569' },
+  dayChipTextActive: { color: '#FFFFFF' },
+  error: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: '#FEF2F2' },
+  errorText: { flex: 1, color: '#B91C1C', fontSize: 13 },
+  content: { flex: 1 },
+  contentWide: { flexDirection: 'row' },
+  mapPane: { flex: 1.25, minHeight: 300, position: 'relative', overflow: 'hidden' },
+  detailsPane: { flex: 1, backgroundColor: '#FFFFFF' },
+  detailsContent: { padding: 16, paddingBottom: 40 },
+  loadingOverlay: { position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(248,250,252,0.66)' } as any,
+  legend: { position: 'absolute', left: 12, bottom: 12, flexDirection: 'row', gap: 10, backgroundColor: 'rgba(255,255,255,0.94)', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 7 },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  legendDot: { width: 9, height: 9, borderRadius: 5 },
+  legendText: { color: '#334155', fontSize: 11, fontWeight: '700' },
+  sectionTitle: { fontSize: 17, fontWeight: '900', color: '#0F172A', marginBottom: 10, marginTop: 4 },
+  metrics: { flexDirection: 'row', flexWrap: 'wrap', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#E2E8F0', marginBottom: 18 },
+  metric: { width: '50%', minHeight: 66, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#E2E8F0' },
+  metricValue: { fontSize: 18, lineHeight: 22, fontWeight: '900', color: '#0F172A' },
+  empty: { color: '#64748B', textAlign: 'center', paddingVertical: 28 },
+  timelineRow: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 68, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#E2E8F0' },
+  timelineIcon: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5 },
+  timelineTitleRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
+  timelineTitle: { fontSize: 14, fontWeight: '800', color: '#0F172A' },
+  timelineTime: { fontSize: 12, color: '#64748B' },
+  timelineSubtitle: { fontSize: 12, color: '#64748B', marginTop: 4 },
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(15,23,42,0.36)', alignItems: 'center', justifyContent: 'center', padding: 20 },
+  modalCard: { width: '100%', maxWidth: 520, maxHeight: '80%', borderRadius: 18, backgroundColor: '#FFFFFF', padding: 16 },
+  modalTitle: { fontSize: 20, fontWeight: '900', color: '#0F172A', marginBottom: 12 },
+  search: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, minHeight: 46, borderRadius: 12, backgroundColor: '#F1F5F9', marginBottom: 10 },
+  searchInput: { flex: 1, fontSize: 15, color: '#0F172A', outlineStyle: 'none' } as any,
+  userRow: { flexDirection: 'row', alignItems: 'center', minHeight: 62, paddingHorizontal: 4, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#E2E8F0' },
+});

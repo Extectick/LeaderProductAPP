@@ -2,7 +2,7 @@ name: Build Android APK Release
 
 on:
   push:
-    branches: [main, production]
+    branches: [dev, main, production]
   workflow_dispatch:
     inputs:
       channel:
@@ -60,7 +60,7 @@ on:
 jobs:
   build-upload:
     runs-on: ubuntu-latest
-    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.channel == 'dev' && 'development' || 'production' }}
+    environment: ${{ ((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || github.ref_name == 'dev') && 'development' || 'production' }}
 
     env:
       S3_ENDPOINT: ${{ secrets.BEGET_S3_ENDPOINT }}
@@ -68,14 +68,15 @@ jobs:
       S3_BUCKET: ${{ secrets.BEGET_S3_BUCKET }}
       AWS_ACCESS_KEY_ID: ${{ secrets.BEGET_S3_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.BEGET_S3_SECRET_ACCESS_KEY }}
-      EXPO_PUBLIC_UPDATE_CHANNEL: ${{ github.event_name == 'workflow_dispatch' && inputs.channel || 'prod' }}
-      EXPO_PUBLIC_API_URL_DEV: ${{ (github.event_name != 'workflow_dispatch' || inputs.channel == 'prod') && 'https://api.leader-product.ru' || secrets.EXPO_PUBLIC_API_URL_DEV }}
-      EXPO_PUBLIC_OTA_UPDATE_URL: ${{ (github.event_name != 'workflow_dispatch' || inputs.channel == 'prod') && 'https://api.leader-product.ru/ota/update' || format('{0}/ota/update', secrets.EXPO_PUBLIC_API_URL_DEV) }}
+      EXPO_PUBLIC_UPDATE_CHANNEL: ${{ github.event_name == 'workflow_dispatch' && inputs.channel || github.ref_name == 'dev' && 'dev' || 'prod' }}
+      EXPO_PUBLIC_API_URL_DEV: ${{ ((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || github.ref_name == 'dev') && 'https://dev.leader-product.ru' || 'https://api.leader-product.ru' }}
+      EXPO_PUBLIC_OTA_UPDATE_URL: ${{ ((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || github.ref_name == 'dev') && 'https://dev.leader-product.ru/ota/update' || 'https://api.leader-product.ru/ota/update' }}
+      EXPO_PUBLIC_MAP_STYLE_URL: https://tiles.openfreemap.org/styles/liberty
       EXPO_PUBLIC_TELEGRAM_BOT_USERNAME: ${{ secrets.EXPO_PUBLIC_TELEGRAM_BOT_USERNAME }}
       EXPO_PUBLIC_MAX_BOT_USERNAME: ${{ secrets.EXPO_PUBLIC_MAX_BOT_USERNAME }}
       EXPO_PUBLIC_SENTRY_ENABLED: 'false'
-      EXPO_PUBLIC_SENTRY_ENVIRONMENT: ${{ (github.event_name != 'workflow_dispatch' || inputs.channel == 'prod') && 'production' || 'development' }}
-      NODE_ENV: ${{ (github.event_name != 'workflow_dispatch' || inputs.channel == 'prod') && 'production' || 'development' }}
+      EXPO_PUBLIC_SENTRY_ENVIRONMENT: ${{ ((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || github.ref_name == 'dev') && 'development' || 'production' }}
+      NODE_ENV: production
       NODE_OPTIONS: --max-old-space-size=4096
 
     steps:
@@ -198,7 +199,7 @@ jobs:
             exit 1
           fi
 
-          CHANNEL="${{ github.event_name == 'workflow_dispatch' && inputs.channel || 'prod' }}"
+          CHANNEL="${{ env.EXPO_PUBLIC_UPDATE_CHANNEL }}"
           VERSION_NAME="${{ steps.version.outputs.version_name }}"
           VERSION_CODE="${{ steps.version.outputs.version_code }}"
           APK_NAME="leader-product-${CHANNEL}-${VERSION_NAME}-${VERSION_CODE}.apk"
@@ -238,13 +239,13 @@ jobs:
 
           echo "release_metadata_b64=$(base64 -w0 release-artifacts/release-metadata.json)" >> "$GITHUB_OUTPUT"
         env:
-          CHANNEL: ${{ github.event_name == 'workflow_dispatch' && inputs.channel || 'prod' }}
+          CHANNEL: ${{ env.EXPO_PUBLIC_UPDATE_CHANNEL }}
           VERSION_NAME: ${{ steps.version.outputs.version_name }}
           VERSION_CODE: ${{ steps.version.outputs.version_code }}
           MIN_SUPPORTED_VERSION_CODE: ${{ github.event_name == 'workflow_dispatch' && inputs.minSupportedVersionCode || steps.version.outputs.min_supported_version_code }}
           IS_MANDATORY: ${{ github.event_name == 'workflow_dispatch' && inputs.isMandatory || false }}
           ROLLOUT_PERCENT: ${{ github.event_name == 'workflow_dispatch' && inputs.rolloutPercent || '100' }}
-          RELEASE_NOTES: ${{ github.event_name == 'workflow_dispatch' && inputs.releaseNotes || format('Production Android APK {0}', steps.version.outputs.version_name) }}
+          RELEASE_NOTES: ${{ github.event_name == 'workflow_dispatch' && inputs.releaseNotes || format('{0} Android APK {1}', env.EXPO_PUBLIC_UPDATE_CHANNEL, steps.version.outputs.version_name) }}
           BUILD_TYPE: ${{ github.event_name == 'workflow_dispatch' && inputs.buildType || 'release' }}
           ARCHITECTURES: ${{ github.event_name == 'workflow_dispatch' && inputs.architectures || 'arm64-v8a' }}
 
@@ -254,7 +255,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          CHANNEL="${{ github.event_name == 'workflow_dispatch' && inputs.channel || 'prod' }}"
+          CHANNEL="${{ env.EXPO_PUBLIC_UPDATE_CHANNEL }}"
           VERSION_NAME="${{ steps.version.outputs.version_name }}"
           VERSION_CODE="${{ steps.version.outputs.version_code }}"
           APK_NAME="leader-product-${CHANNEL}-${VERSION_NAME}-${VERSION_CODE}.apk"
@@ -262,33 +263,44 @@ jobs:
 
           node ./scripts/uploadApkToS3.js "release-artifacts/$APK_NAME" "$APK_KEY"
 
-      - name: Publish production AppUpdate in API
-        if: ${{ steps.strategy.outputs.apk_required == 'true' && (github.event_name != 'workflow_dispatch' || inputs.channel == 'prod') }}
+      - name: Publish AppUpdate metadata in the target API
+        if: ${{ steps.strategy.outputs.apk_required == 'true' }}
         uses: appleboy/ssh-action@v1
         env:
           RELEASE_METADATA_B64: ${{ steps.metadata.outputs.release_metadata_b64 }}
+          RELEASE_CHANNEL: ${{ env.EXPO_PUBLIC_UPDATE_CHANNEL }}
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          envs: RELEASE_METADATA_B64
+          envs: RELEASE_METADATA_B64,RELEASE_CHANNEL
           script: |
             set -euo pipefail
-            cd /opt/leader-api
-            git fetch origin main
-            git checkout -B main origin/main
-            printf '%s' "$RELEASE_METADATA_B64" | base64 -d | docker compose exec -T api sh -lc '
-              set -eu
-              tmp_file="$(mktemp /tmp/leader-product-apk-release.XXXXXX)"
-              cat > "$tmp_file"
-              node scripts/publish-apk-update-db.js "$tmp_file"
-              rm -f "$tmp_file"
-            '
+
+            if [ "$RELEASE_CHANNEL" = "dev" ]; then
+              cd /opt/leader-api-dev
+              printf '%s' "$RELEASE_METADATA_B64" | base64 -d | docker compose -f docker-compose.server-dev.yml exec -T api sh -lc '
+                set -eu
+                tmp_file="$(mktemp /tmp/leader-product-apk-release.XXXXXX)"
+                cat > "$tmp_file"
+                node scripts/publish-apk-update-db.js "$tmp_file"
+                rm -f "$tmp_file"
+              '
+            else
+              cd /opt/leader-api
+              printf '%s' "$RELEASE_METADATA_B64" | base64 -d | docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T api sh -lc '
+                set -eu
+                tmp_file="$(mktemp /tmp/leader-product-apk-release.XXXXXX)"
+                cat > "$tmp_file"
+                node scripts/publish-apk-update-db.js "$tmp_file"
+                rm -f "$tmp_file"
+              '
+            fi
 
       - name: Upload release artifacts
         if: ${{ always() && steps.strategy.outputs.apk_required == 'true' && hashFiles('release-artifacts/*') != '' }}
         uses: actions/upload-artifact@v7
         with:
-          name: android-apk-${{ github.event_name == 'workflow_dispatch' && inputs.channel || 'prod' }}-${{ steps.version.outputs.version_name }}-${{ steps.version.outputs.version_code }}
+          name: android-apk-${{ env.EXPO_PUBLIC_UPDATE_CHANNEL }}-${{ steps.version.outputs.version_name }}-${{ steps.version.outputs.version_code }}
           path: release-artifacts/
           if-no-files-found: error

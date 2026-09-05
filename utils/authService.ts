@@ -100,6 +100,8 @@ export async function changePassword(email: string, code: string, newPassword: s
 
 export async function logoutUser() {
   try {
+    const { stopTrackingV2 } = await import('./trackingV2Service');
+    await stopTrackingV2({ revoke: true });
     await apiClient(API_ENDPOINTS.AUTH.LOGOUT, { method: 'POST' });
   } catch {
     // игнорировать ошибку

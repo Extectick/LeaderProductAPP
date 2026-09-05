@@ -4,6 +4,7 @@ import {
   type ClientOrderProduct,
   type ClientOrdersReferenceData,
 } from '@/utils/clientOrdersService';
+import type { OrderGeoEventInput } from '@/utils/orderGeo';
 
 export const DEFAULT_ORDER_CURRENCY = 'RUB';
 
@@ -59,6 +60,7 @@ export type DraftOrder = {
   guid?: string | null;
   clientOrderId?: string | null;
   clientRevision: number;
+  geoEvents?: OrderGeoEventInput[];
   revision: number;
   organizationGuid: string;
   counterpartyGuid: string;
@@ -433,6 +435,7 @@ export function emptyDraft(): DraftOrder {
   return {
     clientOrderId: makeClientOrderId(),
     clientRevision: 0,
+    geoEvents: [],
     revision: 0,
     organizationGuid: '',
     counterpartyGuid: '',
@@ -876,6 +879,7 @@ export function orderToDraft(order: ClientOrder): DraftOrder {
     guid: order.guid,
     clientOrderId: order.clientOrderId ?? null,
     clientRevision: Number(order.clientRevision ?? 0),
+    geoEvents: order.geoEvents ?? [],
     revision: order.revision,
     organizationGuid: order.organization?.guid ?? '',
     counterpartyGuid: order.counterparty?.guid ?? '',
@@ -1220,6 +1224,7 @@ function mapDraftToPayload(draft: DraftOrder, saveReason: 'manual' | 'autosave')
     saveReason,
     generalDiscountPercent,
     invoiceRequested: !!draft.invoiceRequested,
+    geoEvents: draft.geoEvents,
     items: draft.items.map((item) => ({
       lineGuid: item.lineGuid || item.key,
       productGuid: item.productGuid,

@@ -4,7 +4,7 @@ import type { ClientOrderProduct } from '@/utils/clientOrdersService';
 import type { CatalogChange, CatalogProduct, CatalogSearchResult } from '../model/catalog.types';
 
 const DATABASE_NAME = 'leader-product-catalog.db';
-const DATABASE_VERSION = 1;
+const DATABASE_VERSION = 3;
 
 type CatalogMeta = {
   epoch: string | null;
@@ -66,6 +66,96 @@ async function migrate(db: SQLite.SQLiteDatabase) {
       sku,
       barcodes,
       tokenize='unicode61 remove_diacritics 2'
+    );
+    CREATE TABLE IF NOT EXISTS offline_dataset_meta (
+      user_id TEXT NOT NULL,
+      entity TEXT NOT NULL,
+      epoch TEXT NOT NULL,
+      revision TEXT NOT NULL DEFAULT '0',
+      schema_version INTEGER NOT NULL DEFAULT 1,
+      item_count INTEGER NOT NULL DEFAULT 0,
+      last_source_update_at TEXT,
+      last_synced_at TEXT,
+      PRIMARY KEY(user_id, entity)
+    );
+    CREATE TABLE IF NOT EXISTS offline_entities (
+      user_id TEXT NOT NULL,
+      entity TEXT NOT NULL,
+      item_key TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      source_updated_at TEXT,
+      PRIMARY KEY(user_id, entity, item_key)
+    );
+    CREATE INDEX IF NOT EXISTS offline_entities_lookup_idx ON offline_entities(user_id, entity);
+    CREATE TABLE IF NOT EXISTS offline_selling_prices (
+      user_id TEXT NOT NULL,
+      item_key TEXT NOT NULL,
+      product_guid TEXT NOT NULL,
+      price_type_guid TEXT NOT NULL,
+      price REAL NOT NULL,
+      currency TEXT,
+      package_guid TEXT,
+      min_qty REAL,
+      priority INTEGER NOT NULL DEFAULT 0,
+      source_updated_at TEXT,
+      PRIMARY KEY(user_id, item_key)
+    );
+    CREATE INDEX IF NOT EXISTS offline_selling_prices_lookup_idx
+      ON offline_selling_prices(user_id, product_guid, price_type_guid, priority DESC);
+    CREATE TABLE IF NOT EXISTS offline_stock (
+      user_id TEXT NOT NULL,
+      item_key TEXT NOT NULL,
+      product_guid TEXT NOT NULL,
+      warehouse_guid TEXT NOT NULL,
+      organization_guid TEXT,
+      quantity REAL NOT NULL DEFAULT 0,
+      free_available REAL NOT NULL DEFAULT 0,
+      own_reserve REAL NOT NULL DEFAULT 0,
+      available REAL NOT NULL DEFAULT 0,
+      receipt_price REAL,
+      source_updated_at TEXT,
+      PRIMARY KEY(user_id, item_key)
+    );
+    CREATE INDEX IF NOT EXISTS offline_stock_lookup_idx
+      ON offline_stock(user_id, product_guid, warehouse_guid, organization_guid);
+    CREATE TABLE IF NOT EXISTS offline_manager_stock (
+      user_id TEXT NOT NULL,
+      item_key TEXT NOT NULL,
+      product_guid TEXT NOT NULL,
+      warehouse_guid TEXT NOT NULL,
+      organization_guid TEXT,
+      reserved REAL NOT NULL DEFAULT 0,
+      source_updated_at TEXT,
+      PRIMARY KEY(user_id, item_key)
+    );
+    CREATE INDEX IF NOT EXISTS offline_manager_stock_lookup_idx
+      ON offline_manager_stock(user_id, product_guid, warehouse_guid, organization_guid);
+    CREATE TABLE IF NOT EXISTS offline_drafts (
+      user_id TEXT NOT NULL,
+      id TEXT NOT NULL,
+      client_order_id TEXT NOT NULL,
+      client_revision INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      intent TEXT NOT NULL,
+      server_guid TEXT,
+      server_revision INTEGER,
+      order_json TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_send_error TEXT,
+      PRIMARY KEY(user_id, id),
+      UNIQUE(user_id, client_order_id)
+    );
+    CREATE INDEX IF NOT EXISTS offline_drafts_status_idx ON offline_drafts(user_id, status, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS offline_draft_lines (
+      user_id TEXT NOT NULL,
+      draft_id TEXT NOT NULL,
+      line_guid TEXT NOT NULL,
+      product_guid TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      PRIMARY KEY(user_id, draft_id, line_guid),
+      FOREIGN KEY(user_id, draft_id) REFERENCES offline_drafts(user_id, id) ON DELETE CASCADE
     );
     PRAGMA user_version = ${DATABASE_VERSION};
   `);
@@ -283,7 +373,82 @@ function buildFtsQuery(search: string) {
   return tokens.map((token) => `"${token.replace(/"/g, '""')}"*`).join(' AND ');
 }
 
-export async function searchCatalogProducts(search: string, limit: number, offset: number): Promise<CatalogSearchResult | null> {
+export type CatalogCommercialContext = {
+  priceTypeGuid?: string;
+  warehouseGuid?: string;
+  organizationGuid?: string;
+  inStockOnly?: boolean;
+};
+
+async function loadOfflineStockByProduct(
+  db: SQLite.SQLiteDatabase,
+  userId: string,
+  productGuids: string[],
+  context: CatalogCommercialContext
+) {
+  if (!productGuids.length) return new Map<string, any>();
+  const placeholders = productGuids.map(() => '?').join(',');
+  const stockClauses = ['user_id = ?', `product_guid IN (${placeholders})`];
+  const stockArgs: any[] = [userId, ...productGuids];
+  if (context.warehouseGuid) {
+    stockClauses.push('warehouse_guid = ?');
+    stockArgs.push(context.warehouseGuid);
+  }
+  if (context.organizationGuid) {
+    stockClauses.push('(organization_guid = ? OR organization_guid IS NULL)');
+    stockArgs.push(context.organizationGuid);
+  }
+  const groupedByOrganization = context.organizationGuid ? ', organization_guid' : '';
+  const organizationOrder = context.organizationGuid
+    ? 'ORDER BY product_guid, CASE WHEN organization_guid = ? THEN 0 ELSE 1 END'
+    : 'ORDER BY product_guid';
+  const stocks = await db.getAllAsync<any>(`
+    SELECT product_guid, organization_guid,
+           SUM(quantity) AS quantity, SUM(free_available) AS free_available,
+           MAX(receipt_price) AS receipt_price
+    FROM offline_stock
+    WHERE ${stockClauses.join(' AND ')}
+    GROUP BY product_guid${groupedByOrganization}
+    ${organizationOrder}
+  `, ...stockArgs, ...(context.organizationGuid ? [context.organizationGuid] : []));
+  const reserves = await db.getAllAsync<any>(`
+    SELECT product_guid, organization_guid, SUM(reserved) AS own_reserve
+    FROM offline_manager_stock
+    WHERE ${stockClauses.join(' AND ')}
+    GROUP BY product_guid${groupedByOrganization}
+    ${organizationOrder}
+  `, ...stockArgs, ...(context.organizationGuid ? [context.organizationGuid] : []));
+  const stockByProduct = new Map<string, any>();
+  stocks.forEach((item) => {
+    if (!stockByProduct.has(item.product_guid)) stockByProduct.set(item.product_guid, item);
+  });
+  const reserveByProduct = new Map<string, number>();
+  reserves.forEach((item) => {
+    if (!reserveByProduct.has(item.product_guid)) {
+      reserveByProduct.set(item.product_guid, Number(item.own_reserve || 0));
+    }
+  });
+  productGuids.forEach((guid) => {
+    const stock = stockByProduct.get(guid) ?? {};
+    const freeAvailable = Number(stock.free_available || 0);
+    const ownReserve = reserveByProduct.get(guid) ?? 0;
+    stockByProduct.set(guid, {
+      ...stock,
+      quantity: Number(stock.quantity || 0),
+      free_available: freeAvailable,
+      own_reserve: ownReserve,
+      available: Math.max(freeAvailable, 0) + Math.max(ownReserve, 0),
+    });
+  });
+  return stockByProduct;
+}
+
+export async function searchCatalogProducts(
+  search: string,
+  limit: number,
+  offset: number,
+  context: CatalogCommercialContext = {}
+): Promise<CatalogSearchResult | null> {
   const db = await getCatalogDatabase();
   if (!db) return null;
   const meta = await readCatalogMeta();
@@ -313,10 +478,109 @@ export async function searchCatalogProducts(search: string, limit: number, offse
     `, fetchSize, Math.max(0, offset));
   }
   const hasMore = rows.length > pageSize;
-  const page = hasMore ? rows.slice(0, pageSize) : rows;
+  let page = hasMore ? rows.slice(0, pageSize) : rows;
+  const activeUserId = await readMetaValue(db, 'offlineActiveUserId');
+  const commercialByProduct = new Map<string, {
+    basePrice: number | null;
+    receiptPrice: number | null;
+    currency: string | null;
+    priceType: { guid: string; name: string } | null;
+    stock: ClientOrderProduct['stock'];
+  }>();
+  if (activeUserId && page.length) {
+    const placeholders = page.map(() => '?').join(',');
+    const guids = page.map((row) => row.guid);
+    const prices = context.priceTypeGuid
+      ? await db.getAllAsync<any>(`
+          SELECT product_guid, price, currency, price_type_guid
+          FROM offline_selling_prices
+          WHERE user_id = ? AND price_type_guid = ? AND product_guid IN (${placeholders})
+          ORDER BY priority DESC, source_updated_at DESC
+        `, activeUserId, context.priceTypeGuid, ...guids)
+      : [];
+    const priceByProduct = new Map<string, any>();
+    prices.forEach((item) => { if (!priceByProduct.has(item.product_guid)) priceByProduct.set(item.product_guid, item); });
+    const stockByProduct = await loadOfflineStockByProduct(db, activeUserId, guids, context);
+    let priceTypeName = context.priceTypeGuid || '';
+    if (context.priceTypeGuid) {
+      const row = await db.getFirstAsync<{ payload_json: string }>(
+        "SELECT payload_json FROM offline_entities WHERE user_id = ? AND entity = 'price-types' AND item_key = ?",
+        activeUserId,
+        context.priceTypeGuid
+      );
+      priceTypeName = parseJson<any>(row?.payload_json, {}).name || context.priceTypeGuid;
+    }
+    guids.forEach((guid) => {
+      const price = priceByProduct.get(guid);
+      const stock = stockByProduct.get(guid);
+      commercialByProduct.set(guid, {
+        basePrice: price ? Number(price.price) : null,
+        receiptPrice: stock?.receipt_price == null ? null : Number(stock.receipt_price),
+        currency: price?.currency ?? null,
+        priceType: price ? { guid: price.price_type_guid, name: priceTypeName } : null,
+        stock: stock ? {
+          quantity: Number(stock.quantity || 0),
+          freeAvailable: Number(stock.free_available || 0),
+          myReserved: Number(stock.own_reserve || 0),
+          available: Number(stock.available || 0),
+        } : { quantity: 0, freeAvailable: 0, myReserved: 0, available: 0 },
+      });
+    });
+    if (context.inStockOnly) {
+      page = page.filter((row) => Number(commercialByProduct.get(row.guid)?.stock?.available || 0) > 0);
+    }
+  }
   return {
-    items: page.map(rowToProduct),
+    items: page.map((row) => ({ ...rowToProduct(row), ...(commercialByProduct.get(row.guid) ?? {}) })),
     total: Math.max(0, offset) + page.length + (hasMore ? 1 : 0),
     hasMore,
   };
+}
+
+export async function getCatalogProductsByGuids(
+  productGuids: string[],
+  context: CatalogCommercialContext = {}
+): Promise<ClientOrderProduct[]> {
+  const db = await getCatalogDatabase();
+  if (!db || !productGuids.length) return [];
+  const guids = [...new Set(productGuids)];
+  const placeholders = guids.map(() => '?').join(',');
+  const rows = await db.getAllAsync<ProductRow>(`
+    SELECT guid, name, code, article, sku, is_weight, base_unit_json, packages_json, image_hash
+    FROM catalog_products
+    WHERE is_active = 1 AND guid IN (${placeholders})
+  `, ...guids);
+  const activeUserId = await readMetaValue(db, 'offlineActiveUserId');
+  if (!activeUserId) return rows.map(rowToProduct);
+  const prices = context.priceTypeGuid
+    ? await db.getAllAsync<any>(`
+        SELECT product_guid, price, currency, price_type_guid
+        FROM offline_selling_prices
+        WHERE user_id = ? AND price_type_guid = ? AND product_guid IN (${placeholders})
+        ORDER BY priority DESC, source_updated_at DESC
+      `, activeUserId, context.priceTypeGuid, ...guids)
+    : [];
+  const priceByProduct = new Map<string, any>();
+  prices.forEach((item) => { if (!priceByProduct.has(item.product_guid)) priceByProduct.set(item.product_guid, item); });
+  const stockByProduct = await loadOfflineStockByProduct(db, activeUserId, guids, context);
+  const byGuid = new Map(rows.map((row) => [row.guid, row]));
+  return guids.flatMap((guid) => {
+    const row = byGuid.get(guid);
+    if (!row) return [];
+    const price = priceByProduct.get(guid);
+    const stock = stockByProduct.get(guid);
+    return [{
+      ...rowToProduct(row),
+      basePrice: price ? Number(price.price) : null,
+      receiptPrice: stock?.receipt_price == null ? null : Number(stock.receipt_price),
+      currency: price?.currency ?? null,
+      priceType: price ? { guid: price.price_type_guid, name: price.price_type_guid } : null,
+      stock: stock ? {
+        quantity: Number(stock.quantity || 0),
+        freeAvailable: Number(stock.free_available || 0),
+        myReserved: Number(stock.own_reserve || 0),
+        available: Number(stock.available || 0),
+      } : { quantity: 0, freeAvailable: 0, myReserved: 0, available: 0 },
+    }];
+  });
 }

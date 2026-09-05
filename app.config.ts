@@ -60,6 +60,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   android: {
     package: "com.leaderproduct.app",
     versionCode: nativeVersion.versionCode,
+    allowBackup: false,
     usesCleartextTraffic: true,
     adaptiveIcon: {
       foregroundImage: "./assets/images/adaptive-foreground.png",
@@ -69,6 +70,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       "ACCESS_COARSE_LOCATION",
       "ACCESS_FINE_LOCATION",
       "ACCESS_BACKGROUND_LOCATION",
+      "ACTIVITY_RECOGNITION",
+      "RECEIVE_BOOT_COMPLETED",
       // foreground service для фонового трекинга (Android 10+ / SDK 34)
       "FOREGROUND_SERVICE",
       "FOREGROUND_SERVICE_LOCATION",
@@ -99,6 +102,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
 
   plugins: [
     "expo-router",
+    "@maplibre/maplibre-react-native",
+    "./plugins/with-traccar-kotlin-compat",
     "expo-updates",
     "expo-asset",
     "expo-image",

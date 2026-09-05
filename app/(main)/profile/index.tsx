@@ -5,6 +5,7 @@ import {
   AppState,
   Alert,
   LayoutAnimation,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -43,7 +44,7 @@ import {
   type UpdateMyProfilePayload,
 } from '@/utils/userService';
 import type { Profile } from '@/src/entities/user/types';
-import { useTracking } from '@/context/TrackingContext';
+import { useTracking } from '@/context/TrackingContextV2';
 import { useIsAdmin } from '@/hooks/useIsAdmin';
 import { getTrackingAdminHealth, type TrackingAdminHealth } from '@/utils/trackingApi';
 import { NotificationSettingsSection } from '@/components/Profile/NotificationSettingsSection';
@@ -1631,6 +1632,17 @@ function TrackingToggle() {
           </Text>
         ) : null}
         {lastError ? <Text style={styles.trackingError}>{lastError}</Text> : null}
+        {(trackingStatus === 'permissionDenied' || trackingStatus === 'error') ? (
+          <Pressable
+            style={styles.trackingSettingsButton}
+            onPress={() => void Linking.openSettings()}
+            accessibilityRole="button"
+            accessibilityLabel="Открыть системные настройки приложения"
+          >
+            <Ionicons name="settings-outline" size={15} color="#2563EB" />
+            <Text style={styles.trackingSettingsButtonText}>Открыть настройки Android</Text>
+          </Pressable>
+        ) : null}
       </View>
       <Switch value={trackingEnabled} onValueChange={onToggle} disabled={loading} />
     </View>
@@ -1749,6 +1761,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+  },
+  trackingSettingsButton: {
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 5,
+  },
+  trackingSettingsButtonText: {
+    color: '#2563EB',
+    fontSize: 12,
+    fontWeight: '700',
   },
   trackingHealthRefresh: {
     width: 34,

@@ -14,7 +14,7 @@ import { ThemeProvider } from '@/context/ThemeContext';
 import { useAuthRedirect } from '@/hooks/useAuthRedirect';
 import { useStartupOtaUpdate } from '@/hooks/useStartupOtaUpdate';
 import { useTelegramBackButton } from '@/hooks/useTelegramBackButton';
-import { TrackingProvider } from '@/context/TrackingContext';
+import { TrackingProvider } from '@/context/TrackingContextV2';
 import { NotificationViewportProvider } from '@/context/NotificationViewportContext';
 import { NotificationHost } from '@/components/NotificationHost';
 import UpdateGate from '@/components/UpdateGate';

@@ -24,6 +24,29 @@ jest.mock('@/utils/androidFileDownload', () => ({
   enqueueAuthenticatedAndroidDownload: jest.fn(),
 }));
 
+jest.mock('../src/features/clientOrders/offline/offlineOrdersDatabase', () => ({
+  isOfflineDataReady: jest.fn(async () => false),
+  readOfflineDatasetMeta: jest.fn(async () => null),
+  readOfflineDrafts: jest.fn(async () => []),
+  replaceOfflineDrafts: jest.fn(async () => true),
+}));
+
+jest.mock('../src/features/clientOrders/offline/offlineOrdersSync', () => ({
+  scheduleOfflineOrderDataSync: jest.fn(),
+  syncOfflineOrderData: jest.fn(async () => false),
+}));
+
+jest.mock('@/utils/orderGeo', () => ({
+  captureOrderGeoEvent: jest.fn(async (type: 'CREATED' | 'SUBMITTED') => ({
+    clientEventId: `test-${type.toLowerCase()}`,
+    type,
+    status: 'UNAVAILABLE',
+    capturedAt: '2026-09-04T00:00:00.000Z',
+    source: 'test',
+    reason: 'TEST_ENVIRONMENT',
+  })),
+}));
+
 jest.mock('@/utils/clientOrdersService', () => ({
   cancelClientOrder: jest.fn(),
   copyClientOrder: jest.fn(),
@@ -54,6 +77,7 @@ jest.mock('@/utils/clientOrdersService', () => ({
 
 import { AuthContext } from '@/context/AuthContext';
 import { useClientOrdersWorkspace } from '../src/features/clientOrders/useClientOrdersWorkspace';
+import { captureOrderGeoEvent } from '@/utils/orderGeo';
 import {
   createClientOrder,
   getClientOrder,
@@ -121,6 +145,14 @@ describe('useClientOrdersWorkspace', () => {
   beforeEach(() => {
     jest.resetAllMocks();
     jest.useFakeTimers();
+    jest.mocked(captureOrderGeoEvent).mockImplementation(async (type) => ({
+      clientEventId: `test-${type.toLowerCase()}`,
+      type,
+      status: 'UNAVAILABLE',
+      capturedAt: '2026-09-04T00:00:00.000Z',
+      source: 'test',
+      reason: 'TEST_ENVIRONMENT',
+    }));
     jest.mocked(getClientOrderSettings).mockResolvedValue(settings as any);
     jest.mocked(getClientOrderInvoices).mockResolvedValue([]);
     jest.mocked(getClientOrderInvoiceStatuses).mockResolvedValue([]);

@@ -25,6 +25,8 @@ export interface HttpResponse<T> {
   message?: string;
   status: number;
   errorCode?: AppErrorCode;
+  backendErrorCode?: string;
+  errorDetails?: any;
 }
 
 export interface HttpRequestOptions<Req> {
@@ -60,7 +62,7 @@ function buildHeaders(base: Record<string, string>, token: string | null, isForm
 
 async function parseResponse<Res>(
   response: Response
-): Promise<{ data: Res | undefined; meta?: any; message?: string }> {
+): Promise<{ data: Res | undefined; meta?: any; message?: string; backendErrorCode?: string; errorDetails?: any }> {
   const ct = response.headers.get('content-type') || '';
   const contentDisposition = response.headers.get('content-disposition') || '';
   const isBinaryAttachment =
@@ -78,8 +80,10 @@ async function parseResponse<Res>(
     const json = await response.clone().json();
     const data = json && typeof json === 'object' && 'data' in json ? (json.data as Res) : (json as Res);
     const meta = json && typeof json === 'object' && 'meta' in json ? json.meta : undefined;
-    const message = (json && (json.message || json.error)) as string | undefined;
-    return { data, meta, message };
+    const message = (json && (json.message || (typeof json.error === 'string' ? json.error : undefined))) as string | undefined;
+    const backendErrorCode = json && typeof json.error === 'object' ? json.error?.code : undefined;
+    const errorDetails = json && typeof json.error === 'object' ? json.error?.details : undefined;
+    return { data, meta, message, backendErrorCode, errorDetails };
   } catch {
     const text = await response.text();
     return { data: undefined, message: text || undefined };
@@ -222,7 +226,7 @@ export async function httpRequest<Req = undefined, Res = any>(
 
     setServerReachable();
     const status = response.status;
-    const { data, meta, message } = await parseResponse<Res>(response);
+    const { data, meta, message, backendErrorCode, errorDetails } = await parseResponse<Res>(response);
 
     if (!response.ok) {
       addMonitoringBreadcrumb('http_error_response', { path, status });
@@ -231,6 +235,8 @@ export async function httpRequest<Req = undefined, Res = any>(
         status,
         message: message || `HTTP error ${status}`,
         errorCode: mapHttpStatusToErrorCode(status),
+        backendErrorCode,
+        errorDetails,
       };
     }
 

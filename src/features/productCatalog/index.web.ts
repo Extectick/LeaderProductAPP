@@ -5,9 +5,14 @@ import type { CatalogSearchResult } from './model/catalog.types';
 export async function searchCatalogProducts(
   _search: string,
   _limit: number,
-  _offset: number
+  _offset: number,
+  _context?: unknown
 ): Promise<CatalogSearchResult | null> {
   return null;
+}
+
+export async function getCatalogProductsByGuids() {
+  return [];
 }
 
 export async function syncProductCatalog() {
