@@ -6,7 +6,7 @@ import type { TrackingDayPanelProps } from './TrackingDayPanel.types';
 
 export default function TrackingDayPanel({ children, summary, expanded, onExpandedChange, bottomInset }: TrackingDayPanelProps) {
   const sheet = useRef<BottomSheet>(null);
-  const snapPoints = useMemo(() => [64 + bottomInset, '68%'], [bottomInset]);
+  const snapPoints = useMemo(() => [64, '68%'], []);
   useEffect(() => { sheet.current?.snapToIndex(expanded ? 1 : 0); }, [expanded]);
   useEffect(() => {
     if (!expanded) return;
@@ -20,7 +20,7 @@ export default function TrackingDayPanel({ children, summary, expanded, onExpand
     <TrackingDayPanelHeader summary={summary} expanded={expanded} onPress={() => onExpandedChange(!expanded)} />
   ), [expanded, onExpandedChange, summary]);
   return (
-    <BottomSheet ref={sheet} index={0} snapPoints={snapPoints} enableDynamicSizing={false} enablePanDownToClose={false} animateOnMount={false} topInset={8} handleComponent={handle} onChange={(index) => onExpandedChange(index > 0)} backgroundStyle={styles.background} style={styles.shadow}>
+    <BottomSheet ref={sheet} index={0} snapPoints={snapPoints} bottomInset={bottomInset} enableDynamicSizing={false} enablePanDownToClose={false} animateOnMount={false} topInset={8} handleComponent={handle} onChange={(index) => onExpandedChange(index > 0)} backgroundStyle={styles.background} style={styles.shadow}>
       <BottomSheetScrollView contentContainerStyle={[styles.content, { paddingBottom: bottomInset + 24 }]}>
         {children}
       </BottomSheetScrollView>
