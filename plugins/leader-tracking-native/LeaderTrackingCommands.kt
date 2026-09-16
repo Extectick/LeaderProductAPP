@@ -4,6 +4,9 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.location.LocationManager
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.os.PowerManager
 import androidx.core.content.ContextCompat
 import androidx.core.location.LocationManagerCompat
@@ -19,6 +22,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.channels.Channel
 import org.json.JSONObject
 import org.traccar.client.sharedTracker
 import java.net.HttpURLConnection
@@ -31,20 +35,48 @@ import java.net.URL
 object LeaderTrackingCommands {
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
   private var job: Job? = null
+  @Volatile private var activeConnection: HttpURLConnection? = null
+  @Volatile var lastPollAt: Long = 0
+    private set
+  @Volatile var nextRetryAt: Long = 0
+    private set
+  @Volatile var lastError: String? = null
+    private set
+  val running: Boolean get() = job?.isActive == true
   private const val PREFERENCES = "leader_tracking_commands"
+  fun requiresAuth(context: Context): Boolean = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).getBoolean("authRejected", false)
 
   @Synchronized
   fun configure(context: Context, enabled: Boolean) {
     // Intent only; the credential remains owned by the existing SDK.
     context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit().putBoolean("enabled", enabled).commit()
-    if (enabled) start(context) else { job?.cancel(); job = null }
+    if (enabled) {
+      context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit().putBoolean("authRejected", false).commit()
+      lastError = null
+      start(context)
+    } else {
+      job?.cancel()
+      activeConnection?.disconnect()
+      job = null
+      nextRetryAt = 0
+      lastPollAt = 0
+      lastError = null
+    }
   }
 
   @Synchronized
   fun start(context: Context) {
-    if (job?.isActive == true || !context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).getBoolean("enabled", false)) return
+    if (job?.isActive == true || requiresAuth(context) || !context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).getBoolean("enabled", false)) return
     val app = context.applicationContext
     job = scope.launch {
+      val connectivity = app.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+      val networkWake = Channel<Unit>(Channel.CONFLATED)
+      val callback = object : ConnectivityManager.NetworkCallback() {
+        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+          if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) networkWake.trySend(Unit)
+        }
+      }
+      val registered = runCatching { connectivity.registerDefaultNetworkCallback(callback) }.isSuccess
       val wakeLock = (app.getSystemService(Context.POWER_SERVICE) as PowerManager)
         .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "leader:tracking-commands")
         .apply { setReferenceCounted(false) }
@@ -52,14 +84,16 @@ object LeaderTrackingCommands {
       var lastCredential: String? = null
       var lastRequest: String? = null
       var failure: JSONObject? = null
-      try { while (isActive) {
+      try { while (isActive && app.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).getBoolean("enabled", false)) {
         var waitMs = 15_000L
         try {
           val tracker = sharedTracker()
           if (tracker == null || !tracker.state.value.enabled) {
-            // Do not repeatedly bootstrap an unconfigured SDK or revive a
-            // paused tracker. Explicit configure(true) repairs it after login.
-            return@launch
+            // Application.onCreate can precede the SDK's service restoration.
+            // Wait without starting GPS or overriding a user's pause.
+            if (wakeLock.isHeld) wakeLock.release()
+            delay(5_000)
+            continue
           }
           val credential = tracker.config.deviceId
           if (credential != lastCredential) {
@@ -72,14 +106,20 @@ object LeaderTrackingCommands {
           val suffix = "/tracking/native/osmand"
           val server = tracker.config.serverUrl
           if (!credential.startsWith("lpt_") || !server.endsWith(suffix)) {
+            lastError = "CONFIGURATION_REQUIRED"
             if (wakeLock.isHeld) wakeLock.release()
             delay(60_000)
             continue
+          }
+          val capabilities = connectivity.getNetworkCapabilities(connectivity.activeNetwork)
+          if (capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) != true) {
+            throw IllegalStateException("Network unavailable")
           }
           // Traccar releases its own lock when stationary. Keep command delivery
           // alive too, but bound each lease and release on pause/network failure.
           wakeLock.acquire(90_000)
           val connection = URL(server.removeSuffix(suffix) + "/tracking/native/commands").openConnection() as HttpURLConnection
+          activeConnection = connection
           val response: JSONObject
           try {
             connection.requestMethod = "POST"
@@ -95,18 +135,25 @@ object LeaderTrackingCommands {
               401, 403 -> {
                 // No endless auth retries. The authenticated app bootstrap can
                 // provision a replacement credential and restart the tracker.
+                lastError = "DEVICE_AUTH_REQUIRED"
+                app.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit().putBoolean("authRejected", true).commit()
                 tracker.stop()
                 if (wakeLock.isHeld) wakeLock.release()
-                continue
+                return@launch
               }
               200 -> response = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
               else -> throw IllegalStateException("Command channel unavailable")
             }
           } finally {
             connection.disconnect()
+            if (activeConnection === connection) activeConnection = null
           }
+          if (!isActive || !app.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).getBoolean("enabled", false)) return@launch
+          lastPollAt = System.currentTimeMillis()
+          lastError = null
           failure = null
           backoff = 15_000L
+          waitMs = (response.optLong("pollAfterSeconds", 15) * 1000).coerceIn(5_000, 60_000)
           val command = response.optJSONObject("command")
           val requestId = command?.optString("id").orEmpty()
           val remainingMs = ((command?.optLong("validForSeconds") ?: 0) * 1000).coerceAtMost(35_000)
@@ -155,12 +202,25 @@ object LeaderTrackingCommands {
           if (wakeLock.isHeld) wakeLock.release()
         } catch (_: Exception) {
           // Network/Doze outages are expected; no sensitive URL/body logging.
+          lastError = "COMMAND_CHANNEL_UNAVAILABLE"
           waitMs = backoff
           backoff = (backoff * 2).coerceAtMost(120_000)
           if (wakeLock.isHeld) wakeLock.release()
         }
-        delay(waitMs)
-      } } finally { if (wakeLock.isHeld) wakeLock.release() }
+        nextRetryAt = System.currentTimeMillis() + waitMs
+        // Network events only shorten error backoff, never create a fast poll loop.
+        if (lastError == "COMMAND_CHANNEL_UNAVAILABLE") {
+          withTimeoutOrNull(waitMs) { networkWake.receive() }
+          delay(2_100)
+        } else {
+          networkWake.tryReceive()
+          delay(waitMs)
+        }
+      } } finally {
+        if (wakeLock.isHeld) wakeLock.release()
+        if (registered) runCatching { connectivity.unregisterNetworkCallback(callback) }
+        networkWake.close()
+      }
     }
   }
 }

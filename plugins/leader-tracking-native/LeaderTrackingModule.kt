@@ -1,6 +1,12 @@
 package __LEADER_APP_PACKAGE__.tracking
 
 import android.content.Intent
+import android.content.Context
+import android.net.Uri
+import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
@@ -13,6 +19,39 @@ class LeaderTrackingModule(
   private val reactContext: ReactApplicationContext
 ) : ReactContextBaseJavaModule(reactContext) {
   override fun getName(): String = "LeaderTracking"
+
+  @ReactMethod
+  fun getReliabilityStatus(promise: Promise) {
+    val power = reactContext.getSystemService(Context.POWER_SERVICE) as PowerManager
+    promise.resolve(mapOf(
+      "batteryOptimizationExempt" to (Build.VERSION.SDK_INT < 23 || power.isIgnoringBatteryOptimizations(reactContext.packageName)),
+      "powerSaveMode" to power.isPowerSaveMode,
+      "notificationsEnabled" to NotificationManagerCompat.from(reactContext).areNotificationsEnabled(),
+      "commandsRunning" to LeaderTrackingCommands.running,
+      "lastCommandPollAt" to LeaderTrackingCommands.lastPollAt,
+      "nextRetryAt" to LeaderTrackingCommands.nextRetryAt,
+      "commandError" to (if (LeaderTrackingCommands.requiresAuth(reactContext)) "DEVICE_AUTH_REQUIRED" else LeaderTrackingCommands.lastError)
+    ))
+  }
+
+  @ReactMethod
+  fun openTrackingSettings(kind: String, promise: Promise) {
+    // Only invoked by a visible user action, never from a background command.
+    val intent = when (kind) {
+      "battery" -> Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+      "location" -> Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)
+      else -> Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${reactContext.packageName}"))
+    }.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    try {
+      reactContext.startActivity(intent)
+      promise.resolve(true)
+    } catch (_: Exception) {
+      try {
+        reactContext.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${reactContext.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        promise.resolve(true)
+      } catch (error: Exception) { promise.reject("E_TRACKING_SETTINGS", error) }
+    }
+  }
 
   @ReactMethod
   fun setCommandsEnabled(enabled: Boolean, promise: Promise) {

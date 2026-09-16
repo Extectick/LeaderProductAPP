@@ -45,6 +45,8 @@ import {
 } from '@/utils/userService';
 import type { Profile } from '@/src/entities/user/types';
 import { useTracking } from '@/context/TrackingContextV2';
+import { openTrackingSettings, restoreTrackingV2 } from '@/utils/trackingV2Service';
+import { Button as PaperButton } from 'react-native-paper';
 import { useIsAdmin } from '@/hooks/useIsAdmin';
 import { getTrackingAdminHealth, type TrackingAdminHealth } from '@/utils/trackingApi';
 import { NotificationSettingsSection } from '@/components/Profile/NotificationSettingsSection';
@@ -1545,10 +1547,26 @@ function TrackingToggle() {
     lastError,
     trackingMode,
     nativeDiagnostics,
+    reliability,
+    refreshTrackingStatus,
     startTracking,
     stopTracking,
   } = useTracking();
   const [loading, setLoading] = useState(false);
+
+  const openSettings = async (kind: 'battery' | 'location' | 'app') => {
+    try { await openTrackingSettings(kind); }
+    catch { Alert.alert('Настройки', 'Откройте настройки приложения вручную в настройках Android'); }
+  };
+  const repair = async () => {
+    if (loading) return;
+    setLoading(true);
+    try {
+      await restoreTrackingV2();
+      await refreshTrackingStatus();
+    } catch (error) { Alert.alert('Отслеживание', error instanceof Error ? error.message : 'Не удалось восстановить сервис'); }
+    finally { setLoading(false); }
+  };
 
   const onToggle = async () => {
     if (loading) return;
@@ -1613,7 +1631,7 @@ function TrackingToggle() {
           {lastUploadLabel ? (
             <View style={styles.trackingChip}>
               <Ionicons name="time-outline" size={12} color="#475569" />
-              <Text style={styles.trackingChipText}>Отправлено {lastUploadLabel}</Text>
+              <Text style={styles.trackingChipText}>Связь с API {lastUploadLabel}</Text>
             </View>
           ) : null}
           {lastRecordedLabel ? (
@@ -1623,7 +1641,7 @@ function TrackingToggle() {
             </View>
           ) : null}
         </View>
-        {nativeDiagnostics.nextRetryAt ? (
+        {trackingStatus === 'waitingNetwork' && nativeDiagnostics.nextRetryAt ? (
           <Text style={styles.trackingRetry}>
             Следующая попытка отправки {new Date(nativeDiagnostics.nextRetryAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
           </Text>
@@ -1634,6 +1652,26 @@ function TrackingToggle() {
           </Text>
         ) : null}
         {lastError ? <Text style={styles.trackingError}>{lastError}</Text> : null}
+        {trackingEnabled && Platform.OS === 'android' ? (
+          <>
+            <Text style={styles.trackingDetail}>
+              {reliability.batteryOptimizationExempt === true ? 'Батарея: ограничения Android сняты' : reliability.batteryOptimizationExempt === false ? 'Батарея: Android может задерживать геопозицию' : 'Проверка батареи доступна в новом APK'}
+              {reliability.powerSaveMode ? '\nВключён режим энергосбережения телефона' : ''}
+              {reliability.notificationsEnabled === false ? '\nУведомление скрыто — разрешите уведомления приложения' : ''}
+              {reliability.preciseLocation === false ? '\nРазрешена только приблизительная геопозиция' : ''}
+            </Text>
+            {reliability.lastCommandPollAt ? (
+              <Text style={styles.trackingDetail}>Команды API: {new Date(reliability.lastCommandPollAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} · это не время координаты</Text>
+            ) : <Text style={styles.trackingDetail}>Канал команд: {reliability.commandsRunning ? 'соединяемся' : 'соединение не подтверждено'}</Text>}
+            {reliability.batteryOptimizationExempt !== true || reliability.powerSaveMode ? (
+              <PaperButton compact icon="battery-outline" onPress={() => void openSettings('battery')}>Настроить батарею</PaperButton>
+            ) : null}
+            {!reliability.locationServicesEnabled ? <PaperButton compact icon="crosshairs-gps" onPress={() => void openSettings('location')}>Включить геолокацию</PaperButton> : null}
+            {reliability.notificationsEnabled === false || reliability.preciseLocation === false || trackingStatus === 'permissionDenied' ? <PaperButton compact icon="cog-outline" onPress={() => void openSettings('app')}>Разрешения приложения</PaperButton> : null}
+            <PaperButton compact icon="refresh" disabled={loading} loading={loading} onPress={() => void repair()}>Проверить и восстановить</PaperButton>
+            <Text style={styles.trackingDetail}>Для работы в фоне выберите батарею «Без ограничений». Если в телефоне есть настройка автозапуска — разрешите её. После принудительной остановки нужно снова открыть приложение.</Text>
+          </>
+        ) : null}
         {(trackingStatus === 'permissionDenied' || trackingStatus === 'serviceDenied' || trackingStatus === 'error') ? (
           <Pressable
             style={styles.trackingSettingsButton}

@@ -141,6 +141,8 @@ export type TrackingLiveData = {
   device?: {
     enabled: boolean;
     lastUploadAt?: string | null;
+    lastCommandPollAt?: string | null;
+    commandChannelOnline?: boolean;
     stale: boolean;
     platform?: string | null;
     appVersion?: string | null;

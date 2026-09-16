@@ -29,6 +29,15 @@ requireText(path.join(kotlinRoot, 'tracking', 'LeaderTrackingBootReceiver.kt'), 
 requireText(path.join(kotlinRoot, 'MainApplication.kt'), 'add(LeaderTrackingPackage())');
 requireText(path.join(kotlinRoot, 'MainApplication.kt'), 'LeaderTrackingCommands.start(this)');
 requireText(path.join(kotlinRoot, 'tracking', 'LeaderTrackingCommands.kt'), 'object LeaderTrackingCommands');
+requireText(path.join(kotlinRoot, 'tracking', 'LeaderTrackingCommands.kt'), 'registerDefaultNetworkCallback');
+requireText(path.join(kotlinRoot, 'tracking', 'LeaderTrackingModule.kt'), 'fun getReliabilityStatus');
+requireText(path.join(kotlinRoot, 'tracking', 'LeaderTrackingModule.kt'), 'fun openTrackingSettings');
+for (const name of ['LeaderTrackingCommands.kt', 'LeaderTrackingModule.kt']) {
+  const template = read(path.join('plugins', 'leader-tracking-native', name))
+    .replaceAll('__LEADER_APP_PACKAGE__', packageName).replace(/\r\n/g, '\n');
+  const generated = read(path.join(kotlinRoot, 'tracking', name)).replace(/\r\n/g, '\n');
+  if (template !== generated) throw new Error(`Native template is not applied: ${name}. Run Android prebuild before building.`);
+}
 requireText('android/app/src/main/AndroidManifest.xml', '.tracking.LeaderTrackingService');
 requireText('android/app/src/main/AndroidManifest.xml', '.tracking.LeaderTrackingBootReceiver');
 requireText('android/app/src/main/AndroidManifest.xml', 'android.permission.RECEIVE_BOOT_COMPLETED');

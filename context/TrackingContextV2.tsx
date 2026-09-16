@@ -45,6 +45,7 @@ type TrackingContextValue = {
   lastError?: string;
   trackingMode: TrackingMode;
   nativeDiagnostics: NativeTrackingDiagnostics;
+  reliability: TrackingV2Diagnostics;
   refreshTrackingStatus: () => Promise<void>;
   startTracking: () => Promise<void>;
   stopTracking: () => Promise<void>;
@@ -63,12 +64,16 @@ const emptyDiagnostics: TrackingV2Diagnostics = {
 const TrackingContext = createContext<TrackingContextValue | undefined>(undefined);
 
 function statusFromDiagnostics(diagnostics: TrackingV2Diagnostics): TrackingStatusCode {
-  if (diagnostics.lastError && diagnostics.enabled && !diagnostics.running) return 'error';
+  if (!diagnostics.enabled) return 'idle';
+  if (diagnostics.commandError === 'DEVICE_AUTH_REQUIRED') return 'needsTrackingAuth';
   if (
     diagnostics.permission === 'denied'
     || diagnostics.backgroundPermission === 'denied'
     || diagnostics.activityRecognitionPermission === 'denied'
   ) return 'permissionDenied';
+  if (!diagnostics.locationServicesEnabled) return 'serviceDenied';
+  if (diagnostics.lastError && !diagnostics.running) return 'error';
+  if (diagnostics.commandError === 'COMMAND_CHANNEL_UNAVAILABLE') return 'waitingNetwork';
   if (diagnostics.enabled && diagnostics.running) return 'tracking';
   if (diagnostics.enabled && !diagnostics.running) return 'serviceDenied';
   return 'idle';
@@ -77,14 +82,17 @@ function statusFromDiagnostics(diagnostics: TrackingV2Diagnostics): TrackingStat
 function statusText(status: TrackingStatusCode, diagnostics: TrackingV2Diagnostics) {
   if (status === 'starting') return 'Запускаем надёжное фоновое отслеживание…';
   if (status === 'stopping') return 'Останавливаем отслеживание…';
+  if (status === 'idle') return 'Отслеживание приостановлено';
+  if (status === 'needsTrackingAuth') return 'Ключ устройства отклонён — восстановите отслеживание при наличии интернета';
+  if (status === 'waitingNetwork') return 'Нет связи с API. Собранные точки остаются в очереди на телефоне';
   if (status === 'permissionDenied') {
     if (diagnostics.activityRecognitionPermission === 'denied') {
       return 'Разрешите физическую активность, чтобы GPS возобновлялся после остановки';
     }
     return 'Разрешите геопозицию всегда в настройках Android';
   }
-  if (status === 'serviceDenied') return 'Android остановил отслеживание — откройте настройки и запустите его снова';
   if (!diagnostics.locationServicesEnabled) return 'Геолокация телефона выключена';
+  if (status === 'serviceDenied') return 'Фоновый сервис не запущен — восстановите отслеживание';
   if (status === 'error') return diagnostics.lastError || 'Не удалось запустить геотрекинг';
   if (status === 'tracking') return 'Геомаршрут записывается в фоне';
   return 'Отслеживание приостановлено';
@@ -121,31 +129,44 @@ export const TrackingProvider = ({ children }: { children: React.ReactNode }) =>
   }, [refreshTrackingStatus]);
 
   useEffect(() => {
-    if (!auth?.isAuthenticated || !auth.profile) return;
+    if (!auth?.isAuthenticated || !auth.profile) { setDiagnostics(emptyDiagnostics); return; }
     let cancelled = false;
-    void restoreTrackingV2()
-      .catch(() => false)
-      .finally(() => { if (!cancelled) void refreshTrackingStatus(); });
-    const timer = setInterval(() => { if (!cancelled) void refreshTrackingStatus(); }, 60_000);
+    let repairing = false;
+    const repair = async () => {
+      if (cancelled || repairing || (AppState.currentState && AppState.currentState !== 'active')) return;
+      repairing = true;
+      try { await restoreTrackingV2(); }
+      catch { /* Offline/revoked key: diagnostics explains the next user action. */ }
+      finally {
+        try {
+          const next = await getTrackingV2Diagnostics();
+          if (!cancelled) setDiagnostics(next);
+        } catch { /* A native bridge failure must not become an unhandled rejection. */ }
+        repairing = false;
+      }
+    };
+    void repair();
+    const timer = setInterval(() => { void repair(); }, 60_000);
     const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active' && !cancelled) void refreshTrackingStatus();
+      if (state === 'active') void repair();
     });
     return () => {
       cancelled = true;
       clearInterval(timer);
       subscription.remove();
     };
-  }, [auth?.isAuthenticated, auth?.profile, refreshTrackingStatus]);
+  }, [auth?.isAuthenticated, auth?.profile?.id]);
 
   const trackingStatus = transientStatus || statusFromDiagnostics(diagnostics);
   const nativeDiagnostics = useMemo<NativeTrackingDiagnostics>(() => ({
     mode: diagnostics.available ? 'native' : 'inactive',
     lastRecordedAt: diagnostics.lastRecordedAt,
     lastSentAt: diagnostics.lastSentAt,
+    nextRetryAt: diagnostics.nextRetryAt,
     retryAttempt: 0,
     discardedPoints: 0,
     secureStorage: true,
-    tokenInvalid: false,
+    tokenInvalid: diagnostics.commandError === 'DEVICE_AUTH_REQUIRED',
   }), [diagnostics]);
 
   const value = useMemo<TrackingContextValue>(() => ({
@@ -160,6 +181,7 @@ export const TrackingProvider = ({ children }: { children: React.ReactNode }) =>
     lastError: diagnostics.lastError,
     trackingMode: diagnostics.available ? 'native' : 'inactive',
     nativeDiagnostics,
+    reliability: diagnostics,
     refreshTrackingStatus,
     startTracking,
     stopTracking,

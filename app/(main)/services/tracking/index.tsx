@@ -16,6 +16,7 @@ import { SearchPickerScreen } from '@/src/features/clientOrders/screen/mobile/Se
 import { getRoleDisplayName } from '@/utils/rbacLabels';
 import { getAuthDevicePayload } from '@/utils/tokenService';
 import { requestTrackingPosition } from '@/utils/trackingV2Service';
+import { trackingCommandConnectionLabel } from '@/utils/trackingReliability';
 import { trackingCalendarDate, trackingDayFromCalendar, trackingDayKey, trackingDayLabel, trackingShiftDay, trackingTime as time } from '@/src/features/tracking/trackingPresentation';
 import { fetchLocationRequest, fetchTrackingDay, fetchTrackingDayEvents, fetchTrackingLive, fetchTrackingUsers, requestLiveLocation, type TrackingDayData, type TrackingLiveData, type TrackingV2User } from '@/utils/trackingService';
 import TrackingMap from './TrackingMap';
@@ -83,6 +84,7 @@ export default function TrackingServiceScreen() {
   const usersPageInFlight = useRef(false);
   const [mapFocus, setMapFocus] = useState<{ key: string; latitude: number; longitude: number } | null>(null);
   const [fitRevision, setFitRevision] = useState(0);
+  const [, setClock] = useState(0);
   const mounted = useRef(true);
   const loadSequence = useRef(0);
   const requestInFlight = useRef(false);
@@ -91,6 +93,7 @@ export default function TrackingServiceScreen() {
   selectionRef.current = selectionKey;
   const currentData = loadedKey === selectionKey ? data : null;
   const currentLive = loadedKey === selectionKey ? live : null;
+  const connectionLabel = currentLive?.device?.enabled ? trackingCommandConnectionLabel(currentLive.device.lastCommandPollAt) : null;
   const today = trackingDayKey(new Date());
   const dateLabel = selectedDay >= trackingShiftDay(today, -1)
     ? `${trackingDayLabel(selectedDay)} · ${trackingCalendarDate(selectedDay).toLocaleDateString('ru-RU')}`
@@ -100,7 +103,9 @@ export default function TrackingServiceScreen() {
 
   useFocusEffect(useCallback(() => {
     setTabBarHidden?.(true);
-    return () => setTabBarHidden?.(false);
+    // Age labels must keep aging even if the manager leaves the map untouched.
+    const timer = setInterval(() => setClock((value) => value + 1), 30_000);
+    return () => { clearInterval(timer); setTabBarHidden?.(false); };
   }, [setTabBarHidden]));
   useEffect(() => {
     mounted.current = true;
@@ -311,7 +316,7 @@ export default function TrackingServiceScreen() {
             <IconButton icon="refresh" size={20} accessibilityLabel="Повторить загрузку" onPress={() => selectedUser ? void loadDay() : setInitialRetry((value) => value + 1)} />
           </Surface> : <Surface elevation={1} style={styles.status}>
             {loading || initialLoading || requesting ? <ActivityIndicator size={15} /> : <Icon source={currentLive?.device?.enabled ? 'crosshairs-gps' : 'crosshairs-off'} size={16} color={currentLive?.device?.enabled ? '#2563EB' : '#64748B'} />}
-            <Text style={styles.statusText}>{requesting ? 'Запрашиваем геопозицию…' : loading || initialLoading ? 'Загружаем маршрут…' : !selectedUser ? 'Выберите сотрудника' : currentLive?.device?.enabled === false ? 'Отслеживание выключено' : `Позиция: ${ageLabel(currentLive?.point?.recordedAt)}`}</Text>
+            <Text style={styles.statusText}>{requesting ? 'Запрашиваем геопозицию…' : loading || initialLoading ? 'Загружаем маршрут…' : !selectedUser ? 'Выберите сотрудника' : currentLive?.device?.enabled === false ? 'Отслеживание выключено' : `Позиция: ${ageLabel(currentLive?.point?.recordedAt)}${connectionLabel ? `\n${connectionLabel}` : ''}`}</Text>
           </Surface>}
           <View pointerEvents="box-none" style={styles.mapActions}>
             <IconButton mode="contained" containerColor="#FFFFFF" icon="fit-to-screen-outline" iconColor="#475569" accessibilityLabel="Показать весь маршрут" onPress={fitRoute} disabled={!currentData?.polyline.length} />
