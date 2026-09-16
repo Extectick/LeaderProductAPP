@@ -3,7 +3,7 @@ import Constants from 'expo-constants';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 import * as SecureStore from 'expo-secure-store';
-import { PermissionsAndroid, Platform } from 'react-native';
+import { NativeModules, PermissionsAndroid, Platform } from 'react-native';
 
 import { apiClient } from './apiClient';
 import { API_BASE_URL } from './config';
@@ -52,6 +52,13 @@ type BootstrapResponse = {
 };
 
 let operation: Promise<void> | null = null;
+
+async function setNativeCommandsEnabled(enabled: boolean) {
+  // Additive bridge: older APKs can still use the direct foreground request.
+  if (Platform.OS === 'android' && NativeModules.LeaderTracking?.setCommandsEnabled) {
+    await NativeModules.LeaderTracking.setCommandsEnabled(enabled);
+  }
+}
 
 function trackingServerUrl(endpoint = '/tracking/native/osmand') {
   if (!API_BASE_URL) throw new Error('Не настроен адрес API для геотрекинга');
@@ -259,6 +266,7 @@ export async function startTrackingV2() {
     await AsyncStorage.setItem(KEYS.enabled, 'true');
     const Traccar = await configureTraccar({ requireBootstrap: true });
     await Traccar.start();
+    await setNativeCommandsEnabled(true);
     const device = await getAuthDevicePayload();
     await apiClient('/tracking/device/status', {
       method: 'PATCH',
@@ -269,6 +277,7 @@ export async function startTrackingV2() {
 }
 
 export async function stopTrackingV2(options: { revoke?: boolean } = {}) {
+  await setNativeCommandsEnabled(false);
   if (Platform.OS === 'android') {
     const Traccar = await import('react-native-traccar-client-sdk');
     await Traccar.stop().catch(() => undefined);
@@ -304,6 +313,7 @@ export async function restoreTrackingV2() {
   // stale/unknown one, preventing an endless native 401 retry loop.
   const Traccar = await configureTraccar({ requireBootstrap: true });
   if (!(await Traccar.isTracking())) await Traccar.start();
+  await setNativeCommandsEnabled(true);
   return true;
 }
 

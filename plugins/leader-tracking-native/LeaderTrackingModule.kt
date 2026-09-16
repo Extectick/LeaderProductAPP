@@ -15,6 +15,16 @@ class LeaderTrackingModule(
   override fun getName(): String = "LeaderTracking"
 
   @ReactMethod
+  fun setCommandsEnabled(enabled: Boolean, promise: Promise) {
+    try {
+      LeaderTrackingCommands.configure(reactContext, enabled)
+      promise.resolve(true)
+    } catch (error: Throwable) {
+      promise.reject("E_TRACKING_COMMANDS", error)
+    }
+  }
+
+  @ReactMethod
   fun start(config: ReadableMap, promise: Promise) {
     try {
       val apiBaseUrl = config.getString("apiBaseUrl")?.trim().orEmpty()

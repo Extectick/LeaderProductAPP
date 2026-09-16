@@ -13,6 +13,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.first
@@ -29,14 +30,21 @@ import java.net.URL
  */
 object LeaderTrackingCommands {
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-  private var started = false
+  private var job: Job? = null
+  private const val PREFERENCES = "leader_tracking_commands"
+
+  @Synchronized
+  fun configure(context: Context, enabled: Boolean) {
+    // Intent only; the credential remains owned by the existing SDK.
+    context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit().putBoolean("enabled", enabled).commit()
+    if (enabled) start(context) else { job?.cancel(); job = null }
+  }
 
   @Synchronized
   fun start(context: Context) {
-    if (started) return
-    started = true
+    if (job?.isActive == true || !context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).getBoolean("enabled", false)) return
     val app = context.applicationContext
-    scope.launch {
+    job = scope.launch {
       val wakeLock = (app.getSystemService(Context.POWER_SERVICE) as PowerManager)
         .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "leader:tracking-commands")
         .apply { setReferenceCounted(false) }
@@ -49,9 +57,9 @@ object LeaderTrackingCommands {
         try {
           val tracker = sharedTracker()
           if (tracker == null || !tracker.state.value.enabled) {
-            if (wakeLock.isHeld) wakeLock.release()
-            delay(5_000)
-            continue
+            // Do not repeatedly bootstrap an unconfigured SDK or revive a
+            // paused tracker. Explicit configure(true) repairs it after login.
+            return@launch
           }
           val credential = tracker.config.deviceId
           if (credential != lastCredential) {
