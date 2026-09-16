@@ -78,6 +78,9 @@ export type TrackingV2User = {
   lastName?: string | null;
   middleName?: string | null;
   email?: string | null;
+  avatarUrl?: string | null;
+  role?: { id: number; name: string; displayName?: string } | null;
+  roles?: Array<{ id: number; name: string; displayName?: string }>;
   department?: { id: number; name: string } | null;
   tracking?: { enabled: boolean; lastUploadAt?: string | null; stale: boolean } | null;
 };
@@ -144,8 +147,13 @@ export type TrackingLiveData = {
   } | null;
 };
 
-export async function fetchTrackingUsers(query = '') {
-  const suffix = query.trim() ? `?q=${encodeURIComponent(query.trim())}` : '';
+export async function fetchTrackingUsers(query = '', options: { self?: boolean; offset?: number } = {}) {
+  const params = new URLSearchParams();
+  if (query.trim()) params.set('q', query.trim());
+  if (options.self) params.set('self', 'true');
+  if (options.offset) params.set('offset', String(options.offset));
+  const queryString = params.toString();
+  const suffix = queryString ? `?${queryString}` : '';
   const response = await apiClient<void, TrackingV2User[]>(`/tracking/users${suffix}`);
   if (!response.ok || !response.data) throw new Error(response.message || 'Не удалось загрузить сотрудников');
   return response.data;

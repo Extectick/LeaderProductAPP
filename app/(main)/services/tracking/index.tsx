@@ -2,20 +2,26 @@ import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, Platform, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
-import { ActivityIndicator, Button, Dialog, Divider, Icon, IconButton, List, Menu, Portal, Searchbar, SegmentedButtons, Surface, Text, TouchableRipple } from 'react-native-paper';
+import { Modal, Platform, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Avatar, Button, Dialog, Divider, Icon, IconButton, List, Menu, Portal, Surface, Text, TouchableRipple } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppHeader } from '@/components/AppHeader';
 import { useOptionalTabBarVisibility } from '@/components/Navigation/TabBarVisibilityContext';
 import { useOptionalLastServiceRoute } from '@/src/features/navigation/LastServiceRouteContext';
 import TrackingDayPanel from '@/src/features/tracking/TrackingDayPanel';
-import { trackingCalendarDate, trackingDayFromCalendar, trackingDayKey, trackingDayLabel, trackingTime as time } from '@/src/features/tracking/trackingPresentation';
+import { SearchPickerScreen } from '@/src/features/clientOrders/screen/mobile/SearchPickerScreen';
+import { getRoleDisplayName } from '@/utils/rbacLabels';
+import { trackingCalendarDate, trackingDayFromCalendar, trackingDayKey, trackingDayLabel, trackingShiftDay, trackingTime as time } from '@/src/features/tracking/trackingPresentation';
 import { fetchLocationRequest, fetchTrackingDay, fetchTrackingLive, fetchTrackingUsers, requestLiveLocation, type TrackingDayData, type TrackingLiveData, type TrackingV2User } from '@/utils/trackingService';
 import TrackingMap from './TrackingMap';
 
 function displayName(user?: TrackingV2User | null) {
   return user ? [user.lastName, user.firstName, user.middleName].filter(Boolean).join(' ') || user.email || `Сотрудник ${user.id}` : 'Выбрать сотрудника';
+}
+function employeeDescription(user: TrackingV2User) {
+  const roles = user.roles?.length ? user.roles : user.role ? [user.role] : [];
+  return `${user.department?.name || 'Без отдела'} · ${[...new Set(roles.map(getRoleDisplayName))].join(', ') || 'Роль не указана'}`;
 }
 function currency(value?: string | null) {
   const number = Number(value);
@@ -43,8 +49,11 @@ export default function TrackingServiceScreen() {
   const setTabBarHidden = useOptionalTabBarVisibility()?.setHidden;
   const wide = width >= 920;
   const [users, setUsers] = useState<TrackingV2User[]>([]);
-  const [usersLoading, setUsersLoading] = useState(true);
+  const [usersLoading, setUsersLoading] = useState(false);
   const [usersError, setUsersError] = useState<string | null>(null);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [initialError, setInitialError] = useState<string | null>(null);
+  const [initialRetry, setInitialRetry] = useState(0);
   const [selectedUser, setSelectedUser] = useState<TrackingV2User | null>(null);
   const [selectedDay, setSelectedDay] = useState(() => trackingDayKey(new Date()));
   const [dateDraft, setDateDraft] = useState(selectedDay);
@@ -56,11 +65,13 @@ export default function TrackingServiceScreen() {
   const [error, setError] = useState<string | null>(null);
   const [pickerVisible, setPickerVisible] = useState(false);
   const [dateVisible, setDateVisible] = useState(false);
-  const [calendarVisible, setCalendarVisible] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
   const [detailsExpanded, setDetailsExpanded] = useState(false);
   const [query, setQuery] = useState('');
   const [usersRetry, setUsersRetry] = useState(0);
+  const [usersOffset, setUsersOffset] = useState(0);
+  const [usersHasMore, setUsersHasMore] = useState(false);
+  const usersPageInFlight = useRef(false);
   const [mapFocus, setMapFocus] = useState<{ key: string; latitude: number; longitude: number } | null>(null);
   const [fitRevision, setFitRevision] = useState(0);
   const mounted = useRef(true);
@@ -72,7 +83,9 @@ export default function TrackingServiceScreen() {
   const currentData = loadedKey === selectionKey ? data : null;
   const currentLive = loadedKey === selectionKey ? live : null;
   const today = trackingDayKey(new Date());
-  const yesterday = trackingDayKey(new Date(Date.now() - 86_400_000));
+  const dateLabel = selectedDay >= trackingShiftDay(today, -1)
+    ? `${trackingDayLabel(selectedDay)} · ${trackingCalendarDate(selectedDay).toLocaleDateString('ru-RU')}`
+    : trackingCalendarDate(selectedDay).toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' });
   const bottomInset = Math.max(insets.bottom, 8);
   const modalStyle = { maxHeight: Math.max(200, height - insets.top - insets.bottom - 40) };
 
@@ -86,20 +99,31 @@ export default function TrackingServiceScreen() {
   }, []);
   useEffect(() => {
     let cancelled = false;
+    setInitialLoading(true);
+    setInitialError(null);
+    // A dedicated self query is not affected by alphabetical pagination/search.
+    void fetchTrackingUsers('', { self: true }).then((result) => {
+      if (!cancelled) setSelectedUser((current) => current || result[0] || null);
+    }).catch((reason) => {
+      if (!cancelled) setInitialError(reason instanceof Error ? reason.message : 'Не удалось загрузить свой профиль');
+    }).finally(() => { if (!cancelled) setInitialLoading(false); });
+    return () => { cancelled = true; };
+  }, [initialRetry]);
+  useEffect(() => {
+    if (!pickerVisible) return;
+    let cancelled = false;
+    usersPageInFlight.current = true;
     setUsersLoading(true);
     setUsersError(null);
-    const timer = setTimeout(() => {
-      void fetchTrackingUsers(query).then((result) => {
-        if (cancelled) return;
-        setUsers(result);
-        // Searching the picker must never change the route behind the dialog.
-        if (!query.trim()) setSelectedUser((current) => current || result[0] || null);
-      }).catch((reason) => {
-        if (!cancelled) setUsersError(reason instanceof Error ? reason.message : 'Не удалось загрузить сотрудников');
-      }).finally(() => { if (!cancelled) setUsersLoading(false); });
-    }, query ? 300 : 0);
-    return () => { cancelled = true; clearTimeout(timer); };
-  }, [query, usersRetry]);
+    void fetchTrackingUsers(query, { offset: usersOffset }).then((result) => {
+      if (cancelled) return;
+      setUsers((current) => usersOffset ? [...current, ...result.filter((user) => !current.some((existing) => existing.id === user.id))] : result);
+      setUsersHasMore(result.length === 100);
+    }).catch((reason) => {
+      if (!cancelled) setUsersError(reason instanceof Error ? reason.message : 'Не удалось загрузить сотрудников');
+    }).finally(() => { if (!cancelled) { setUsersLoading(false); usersPageInFlight.current = false; } });
+    return () => { cancelled = true; };
+  }, [pickerVisible, query, usersOffset, usersRetry]);
 
   const selectedUserId = selectedUser?.id;
   const loadDay = useCallback(async () => {
@@ -160,13 +184,16 @@ export default function TrackingServiceScreen() {
       orderGuid: event.order.guid || null, latitude: event.latitude, longitude: event.longitude,
     })),
   ].sort((left, right) => Date.parse(left.at) - Date.parse(right.at)), [currentData]);
-  const summary = currentData ? `${distance(currentData.summary.distanceMeters)} · остановки: ${currentData.summary.stopsCount} · заказы: ${currentData.summary.ordersCount}` : loading || usersLoading ? 'Загружаем маршрут…' : 'Нет данных за этот день';
+  const summary = currentData ? `${distance(currentData.summary.distanceMeters)} · остановки: ${currentData.summary.stopsCount} · заказы: ${currentData.summary.ordersCount}` : loading || initialLoading ? 'Загружаем маршрут…' : 'Нет данных за этот день';
   const closeService = () => { lastService?.clearLastServiceRoute(); router.replace('/services'); };
   const fitRoute = () => { setMapFocus(null); setFitRevision((value) => value + 1); setDetailsExpanded(false); };
+  const selectDay = (day: string) => {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(day) && day <= trackingDayKey(new Date()) && trackingDayFromCalendar(trackingCalendarDate(day)) === day) setSelectedDay(day);
+  };
   const openCalendar = () => {
     if (Platform.OS === 'android') {
-      DateTimePickerAndroid.open({ value: trackingCalendarDate(dateDraft), mode: 'date', maximumDate: trackingCalendarDate(today), onChange: (event, value) => { if (event.type === 'set' && value) setDateDraft(trackingDayFromCalendar(value)); } });
-    } else setCalendarVisible(true);
+      DateTimePickerAndroid.open({ value: trackingCalendarDate(selectedDay), mode: 'date', maximumDate: trackingCalendarDate(today), onChange: (event, value) => { if (event.type === 'set' && value) selectDay(trackingDayFromCalendar(value)); } });
+    } else { setDateDraft(selectedDay); setDateVisible(true); }
   };
 
   const details = <>
@@ -191,18 +218,17 @@ export default function TrackingServiceScreen() {
   </>;
 
   return <View style={styles.root}>
-    <AppHeader title="" icon="map-outline" variant="document" compact dense tight showBack onBack={closeService} entranceMotion="none" horizontalPadding={6} showServerStatus={false}
-      titleSlot={<TouchableRipple accessibilityRole="button" accessibilityLabel={`Выбрать сотрудника. ${displayName(selectedUser)}`} onPress={() => { setQuery(''); setPickerVisible(true); }} style={styles.userButton}>
+    <AppHeader title="" icon="map-outline" variant="flat" compact dense tight showBack onBack={closeService} entranceMotion="none" showServerStatus={false}
+      titleSlot={<TouchableRipple accessibilityRole="button" accessibilityLabel={`Выбрать сотрудника. ${displayName(selectedUser)}`} onPress={() => { setQuery(''); setUsersOffset(0); setUsers([]); setUsersHasMore(false); setPickerVisible(true); }} style={styles.userButton}>
         <View style={styles.userRow}>
           <View style={styles.flex}>
             <Text style={styles.userName} numberOfLines={1}>{displayName(selectedUser)}</Text>
-            <Text style={styles.caption} numberOfLines={1}>{trackingDayLabel(selectedDay)}{selectedUser?.department?.name ? ` · ${selectedUser.department.name}` : ''}</Text>
+            <Text style={styles.caption} numberOfLines={1}>{selectedUser ? employeeDescription(selectedUser) : 'Выберите активного сотрудника'}</Text>
           </View>
           <Icon source="chevron-down" size={18} color="#64748B" />
         </View>
       </TouchableRipple>}
       rightSlot={<View style={styles.headerActions}>
-        <IconButton icon="calendar-month-outline" size={22} iconColor={selectedDay === today ? '#475569' : '#2563EB'} accessibilityLabel="Фильтр по дате" onPress={() => { setDateDraft(selectedDay); setCalendarVisible(false); setDateVisible(true); }} style={styles.iconButton} />
         <Menu visible={menuVisible} onDismiss={() => setMenuVisible(false)} anchor={<IconButton icon="dots-horizontal" size={22} accessibilityLabel="Меню геомаршрута" onPress={() => setMenuVisible(true)} style={styles.iconButton} />}>
           <Menu.Item leadingIcon="crosshairs-gps" title={requesting ? 'Запрашиваем геопозицию…' : 'Запросить геопозицию'} disabled={requesting || !selectedUser} onPress={() => { setMenuVisible(false); void requestPosition(); }} />
           <Menu.Item leadingIcon="refresh" title="Обновить данные" disabled={loading || !selectedUser} onPress={() => { setMenuVisible(false); void loadDay(); }} />
@@ -211,16 +237,23 @@ export default function TrackingServiceScreen() {
         </Menu>
       </View>}
     />
+    <Surface mode="flat" style={styles.dateRow}>
+      <IconButton icon="chevron-left" size={24} accessibilityLabel="Предыдущий день" onPress={() => selectDay(trackingShiftDay(selectedDay, -1))} style={styles.dateArrow} />
+      <TouchableRipple accessibilityRole="button" accessibilityLabel="Выбрать дату маршрута" onPress={openCalendar} style={styles.dateField}>
+        <View style={styles.dateValue}><Icon source="calendar-month-outline" size={19} color="#2563EB" /><Text style={styles.dateText}>{dateLabel}</Text><Icon source="chevron-down" size={16} color="#64748B" /></View>
+      </TouchableRipple>
+      <IconButton icon="chevron-right" size={24} accessibilityLabel="Следующий день" disabled={selectedDay >= today} onPress={() => selectDay(trackingShiftDay(selectedDay, 1))} style={styles.dateArrow} />
+    </Surface>
     <View style={[styles.stage, wide && styles.wideStage]}>
       <View style={styles.mapPane}>
         <TrackingMap data={currentData} live={currentLive} focus={mapFocus} fitRevision={fitRevision} bottomInset={wide ? bottomInset : bottomInset + 72} />
         <View pointerEvents="box-none" style={styles.mapTop}>
-          {error || (!selectedUser && usersError) ? <Surface elevation={1} style={styles.error}>
-            <Icon source="alert-circle-outline" size={20} color="#B91C1C" /><Text style={styles.errorText}>{error || usersError}</Text>
-            <IconButton icon="refresh" size={20} accessibilityLabel="Повторить загрузку" onPress={() => selectedUser ? void loadDay() : setUsersRetry((value) => value + 1)} />
+          {error || (!selectedUser && initialError) ? <Surface elevation={1} style={styles.error}>
+            <Icon source="alert-circle-outline" size={20} color="#B91C1C" /><Text style={styles.errorText}>{error || initialError}</Text>
+            <IconButton icon="refresh" size={20} accessibilityLabel="Повторить загрузку" onPress={() => selectedUser ? void loadDay() : setInitialRetry((value) => value + 1)} />
           </Surface> : <Surface elevation={1} style={styles.status}>
-            {loading || usersLoading || requesting ? <ActivityIndicator size={15} /> : <Icon source={currentLive?.device?.enabled ? 'crosshairs-gps' : 'crosshairs-off'} size={16} color={currentLive?.device?.enabled ? '#2563EB' : '#64748B'} />}
-            <Text style={styles.statusText}>{requesting ? 'Запрашиваем геопозицию…' : loading || usersLoading ? 'Загружаем маршрут…' : !selectedUser ? 'Нет доступных сотрудников' : currentLive?.device?.enabled === false ? 'Отслеживание выключено' : `Позиция: ${ageLabel(currentLive?.point?.recordedAt)}`}</Text>
+            {loading || initialLoading || requesting ? <ActivityIndicator size={15} /> : <Icon source={currentLive?.device?.enabled ? 'crosshairs-gps' : 'crosshairs-off'} size={16} color={currentLive?.device?.enabled ? '#2563EB' : '#64748B'} />}
+            <Text style={styles.statusText}>{requesting ? 'Запрашиваем геопозицию…' : loading || initialLoading ? 'Загружаем маршрут…' : !selectedUser ? 'Выберите сотрудника' : currentLive?.device?.enabled === false ? 'Отслеживание выключено' : `Позиция: ${ageLabel(currentLive?.point?.recordedAt)}`}</Text>
           </Surface>}
           <View pointerEvents="box-none" style={styles.mapActions}>
             <IconButton mode="contained" containerColor="#FFFFFF" icon="fit-to-screen-outline" iconColor="#475569" accessibilityLabel="Показать весь маршрут" onPress={fitRoute} disabled={!currentData?.polyline.length} />
@@ -238,26 +271,39 @@ export default function TrackingServiceScreen() {
       </Surface> : <TrackingDayPanel summary={summary} expanded={detailsExpanded} onExpandedChange={setDetailsExpanded} bottomInset={bottomInset}>{details}</TrackingDayPanel>}
     </View>
 
+    <Modal visible={pickerVisible} onRequestClose={() => setPickerVisible(false)} animationType="slide" statusBarTranslucent>
+      <View style={styles.root}>
+        <SearchPickerScreen<TrackingV2User>
+          visible={pickerVisible} pickerKey="tracking-employees" topInset={insets.top} title="Сотрудники" titleIcon="account-group-outline"
+          onClose={() => setPickerVisible(false)} search={query} searchPlaceholder="ФИО, отдел или роль" searchLoading={usersLoading}
+          onSearchChange={(value) => { setQuery(value); setUsersOffset(0); setUsers([]); setUsersHasMore(false); }}
+          data={users} keyExtractor={(user) => String(user.id)} extraData={selectedUser?.id}
+          contentContainerStyle={{ paddingBottom: bottomInset }}
+          renderItem={({ item }) => <List.Item
+            title={displayName(item)} titleNumberOfLines={2} description={employeeDescription(item)} descriptionNumberOfLines={2}
+            titleStyle={styles.employeeName} descriptionStyle={styles.employeeDescription}
+            style={[styles.employeeRow, item.id === selectedUser?.id && styles.employeeSelected]}
+            accessibilityLabel={`${displayName(item)}. ${employeeDescription(item)}`} accessibilityState={{ selected: item.id === selectedUser?.id }}
+            onPress={() => { setSelectedUser(item); setPickerVisible(false); }}
+            left={() => <View style={styles.employeeAvatar}>{item.avatarUrl ? <Avatar.Image size={42} source={{ uri: item.avatarUrl }} /> : <Avatar.Text size={42} label={[item.lastName, item.firstName].filter(Boolean).map((part) => part![0]).join('').slice(0, 2) || '?'} style={styles.avatarFallback} color="#2563EB" />}</View>}
+            right={(props) => <List.Icon {...props} icon={item.id === selectedUser?.id ? 'check-circle' : 'chevron-right'} color={item.id === selectedUser?.id ? '#16A34A' : '#94A3B8'} />}
+          />}
+          ListEmptyComponent={<View style={styles.empty}>{usersLoading ? <ActivityIndicator /> : <Text style={styles.emptyText}>{usersError || 'Сотрудники не найдены'}</Text>}</View>}
+          ListFooterComponent={usersError ? <Button onPress={() => setUsersRetry((value) => value + 1)}>Повторить загрузку</Button> : usersLoading && users.length ? <ActivityIndicator style={styles.empty} /> : null}
+          onEndReached={() => { if (usersHasMore && !usersPageInFlight.current && !usersLoading && !usersError) { usersPageInFlight.current = true; setUsersOffset((value) => value + 100); } }}
+        />
+      </View>
+    </Modal>
     <Portal>
-      <Dialog visible={pickerVisible} onDismiss={() => setPickerVisible(false)} style={[styles.dialog, modalStyle]}>
-        <Dialog.Title>Сотрудник</Dialog.Title>
-        <Dialog.Content style={styles.searchContent}><Searchbar value={query} onChangeText={setQuery} placeholder="Имя или отдел" loading={usersLoading} style={styles.search} inputStyle={styles.searchInput} /></Dialog.Content>
-        <Dialog.ScrollArea style={styles.userList}>
-          <FlatList data={usersLoading ? [] : users} keyboardShouldPersistTaps="handled" keyExtractor={(user) => String(user.id)} renderItem={({ item }) => <List.Item title={displayName(item)} titleNumberOfLines={2} description={item.department?.name || 'Без отдела'} onPress={() => { setSelectedUser(item); setPickerVisible(false); }} right={(props) => item.id === selectedUser?.id ? <List.Icon {...props} icon="check-circle" color="#16A34A" /> : <List.Icon {...props} icon="chevron-right" />} />} ListEmptyComponent={<View style={styles.empty}>{usersLoading ? <ActivityIndicator /> : <Text>{usersError || 'Сотрудники не найдены'}</Text>}</View>} />
-        </Dialog.ScrollArea>
-        <Dialog.Actions>{usersError ? <Button onPress={() => setUsersRetry((value) => value + 1)}>Повторить</Button> : null}<Button onPress={() => setPickerVisible(false)}>Закрыть</Button></Dialog.Actions>
-      </Dialog>
       <Dialog visible={dateVisible} onDismiss={() => setDateVisible(false)} style={[styles.dialog, modalStyle]}>
         <Dialog.Title>Дата маршрута</Dialog.Title>
         <Dialog.ScrollArea style={styles.dateScroll}>
           <ScrollView contentContainerStyle={styles.dateContent}>
-            <SegmentedButtons value={dateDraft === today ? 'today' : dateDraft === yesterday ? 'yesterday' : 'custom'} onValueChange={(value) => { if (value === 'today') setDateDraft(today); else if (value === 'yesterday') setDateDraft(yesterday); else openCalendar(); }} buttons={[{ value: 'today', label: 'Сегодня' }, { value: 'yesterday', label: 'Вчера' }, { value: 'custom', label: 'Дата', icon: 'calendar' }]} />
-            <List.Item title={trackingCalendarDate(dateDraft).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })} description="Маршрут за один день · время Омска" titleNumberOfLines={2} descriptionNumberOfLines={2} left={(props) => <List.Icon {...props} icon="calendar-month-outline" />} right={(props) => <List.Icon {...props} icon="chevron-right" />} onPress={openCalendar} />
-            {calendarVisible && Platform.OS === 'web' ? <input aria-label="Дата маршрута" type="date" value={dateDraft} max={today} onChange={(event) => { if (/^\d{4}-\d{2}-\d{2}$/.test(event.target.value) && event.target.value <= today) setDateDraft(event.target.value); }} style={{ width: '100%', boxSizing: 'border-box', fontSize: 16, padding: 12 }} /> : null}
-            {calendarVisible && Platform.OS === 'ios' ? <DateTimePicker value={trackingCalendarDate(dateDraft)} mode="date" display="inline" maximumDate={trackingCalendarDate(today)} onChange={(_, value) => { if (value) setDateDraft(trackingDayFromCalendar(value)); }} /> : null}
+            {Platform.OS === 'web' ? <input aria-label="Дата маршрута" type="date" value={dateDraft} max={today} onChange={(event) => { if (/^\d{4}-\d{2}-\d{2}$/.test(event.target.value) && event.target.value <= today) setDateDraft(event.target.value); }} style={{ width: '100%', boxSizing: 'border-box', fontSize: 16, padding: 12 }} /> : null}
+            {Platform.OS === 'ios' ? <DateTimePicker value={trackingCalendarDate(dateDraft)} mode="date" display="inline" maximumDate={trackingCalendarDate(today)} onChange={(_, value) => { if (value) setDateDraft(trackingDayFromCalendar(value)); }} /> : null}
           </ScrollView>
         </Dialog.ScrollArea>
-        <Dialog.Actions><Button onPress={() => setDateVisible(false)}>Отмена</Button><Button mode="contained" onPress={() => { setSelectedDay(dateDraft); setDateVisible(false); }}>Показать</Button></Dialog.Actions>
+        <Dialog.Actions><Button onPress={() => setDateVisible(false)}>Отмена</Button><Button mode="contained" onPress={() => { selectDay(dateDraft); setDateVisible(false); }}>Показать</Button></Dialog.Actions>
       </Dialog>
     </Portal>
   </View>;
@@ -273,12 +319,24 @@ function Metric({ icon, label, value }: { icon: string; label: string; value: st
 const styles = StyleSheet.create({
   root: { flex: 1, minHeight: 0, backgroundColor: '#F8FAFC' },
   flex: { flex: 1, minWidth: 0 },
-  userButton: { minHeight: 44, justifyContent: 'center', borderRadius: 12, overflow: 'hidden' },
+  userButton: { minHeight: 48, justifyContent: 'center' },
   userRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   userName: { fontSize: 14, lineHeight: 19, fontWeight: '800', color: '#0F172A' },
   caption: { fontSize: 11, lineHeight: 16, color: '#64748B' },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 0 },
   iconButton: { margin: 0, width: 42, height: 44, borderRadius: 12 },
+  dateRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, backgroundColor: '#FFFFFF', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#E2E8F0' },
+  dateArrow: { margin: 0, width: 42, height: 42 },
+  dateField: { flex: 1, minHeight: 42, justifyContent: 'center' },
+  dateValue: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 },
+  dateText: { fontSize: 13, color: '#334155', fontWeight: '700', flexShrink: 1, textAlign: 'center' },
+  employeeRow: { paddingVertical: 4, paddingHorizontal: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#E2E8F0', backgroundColor: '#FFFFFF' },
+  employeeSelected: { backgroundColor: '#EFF6FF' },
+  employeeName: { fontSize: 15, fontWeight: '700', color: '#0F172A' },
+  employeeDescription: { fontSize: 12, color: '#64748B' },
+  employeeAvatar: { justifyContent: 'center' },
+  avatarFallback: { backgroundColor: '#EFF6FF' },
+  emptyText: { textAlign: 'center', color: '#64748B' },
   stage: { flex: 1, minHeight: 0, position: 'relative' },
   wideStage: { flexDirection: 'row' },
   mapPane: { flex: 1, minHeight: 0, overflow: 'hidden' },
@@ -300,10 +358,6 @@ const styles = StyleSheet.create({
   empty: { paddingVertical: 24, textAlign: 'center', color: '#64748B' },
   refreshButton: { marginTop: 16 },
   dialog: { width: '92%', maxWidth: 480, alignSelf: 'center', marginHorizontal: 0, backgroundColor: '#FFFFFF' },
-  searchContent: { paddingBottom: 12 },
-  search: { backgroundColor: '#F1F5F9', borderRadius: 14 },
-  searchInput: { fontSize: 14 },
-  userList: { flexShrink: 1, paddingHorizontal: 12, minHeight: 80 },
   dateScroll: { flexShrink: 1, paddingHorizontal: 16 },
   dateContent: { paddingVertical: 12 },
 });

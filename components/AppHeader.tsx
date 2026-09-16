@@ -62,7 +62,7 @@ type Props = {
   surfaceVisible?: boolean;
   entranceMotion?: 'slide' | 'fade' | 'none';
   horizontalPadding?: number;
-  variant?: 'default' | 'document';
+  variant?: 'default' | 'document' | 'flat';
   showServerStatus?: boolean;
   surfaceOverrideColor?: string;
   borderOverrideColor?: string;
@@ -115,13 +115,14 @@ export function AppHeader({
   const isAndroid = Platform.OS === 'android';
   const isMobileWidth = width < 720;
   const isDocument = variant === 'document';
+  const isFlat = variant === 'flat';
 
   const background = useThemeColor({}, 'background');
   const textColor = useThemeColor({}, 'text');
   const secondary = useThemeColor({}, 'secondaryText' as any);
 
-  const sidePadding = horizontalPadding ?? (Platform.OS === 'web' ? (tight ? 12 : 16) : 12);
-  const topPadding = Platform.OS === 'web' ? HEADER_TOP_PADDING_WEB : top + HEADER_TOP_PADDING_NATIVE_EXTRA;
+  const sidePadding = isFlat ? 0 : horizontalPadding ?? (Platform.OS === 'web' ? (tight ? 12 : 16) : 12);
+  const topPadding = isFlat ? (Platform.OS === 'web' ? 0 : top) : Platform.OS === 'web' ? HEADER_TOP_PADDING_WEB : top + HEADER_TOP_PADDING_NATIVE_EXTRA;
   const useCompactHeaderText = tight || compact || dense || isMobileWidth;
   const titleSize = isDocument ? 15 : dense ? 15 : useCompactHeaderText ? 16 : Platform.OS === 'web' ? 18 : 19;
   const subtitleSize = useCompactHeaderText ? 11 : 12;
@@ -155,7 +156,7 @@ export function AppHeader({
   }, [setHeaderBottomOffset]);
 
   const headerContent = (
-    <View style={[styles.card, compact && styles.cardCompact, tight && styles.cardTight, dense && styles.cardDense, isDocument && styles.cardDocument]}>
+    <View style={[styles.card, compact && styles.cardCompact, tight && styles.cardTight, dense && styles.cardDense, isDocument && styles.cardDocument, isFlat && styles.cardFlat]}>
       <View style={[styles.row, tight && styles.rowTight, dense && styles.rowDense, isDocument && styles.rowDocument]}>
         {showBack ? (
           <Pressable
@@ -219,7 +220,9 @@ export function AppHeader({
     </View>
   );
 
-  const shellContent = isDocument ? (
+  const shellContent = isFlat ? (
+    <View style={{ backgroundColor: background }}>{headerContent}</View>
+  ) : isDocument ? (
     <View style={styles.documentShell}>
       <LiquidGlassSurface
         borderColor={resolvedBorderColor}
@@ -277,7 +280,7 @@ export function AppHeader({
     <View
       pointerEvents="box-none"
       onLayout={handleWrapLayout}
-      style={[styles.wrap, tight && styles.wrapTight, isDocument && styles.wrapDocument, { paddingTop: topPadding, paddingHorizontal: sidePadding }]}
+      style={[styles.wrap, tight && styles.wrapTight, (isDocument || isFlat) && styles.wrapDocument, { paddingTop: topPadding, paddingHorizontal: sidePadding }, isFlat && { backgroundColor: background }]}
     >
       {animatedShell}
     </View>
@@ -360,6 +363,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 9,
     paddingTop: 6,
     paddingBottom: 9,
+  },
+  cardFlat: {
+    paddingHorizontal: 12,
+    paddingVertical: 0,
+    minHeight: 48,
+    justifyContent: 'center',
   },
   row: {
     flexDirection: 'row',

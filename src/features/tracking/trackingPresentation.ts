@@ -14,6 +14,12 @@ export function trackingDayFromCalendar(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
+export function trackingShiftDay(day: string, delta: number) {
+  const date = trackingCalendarDate(day);
+  date.setDate(date.getDate() + delta);
+  return trackingDayFromCalendar(date);
+}
+
 export function trackingDayLabel(day: string, now = new Date()) {
   if (day === trackingDayKey(now)) return 'Сегодня';
   if (day === trackingDayKey(new Date(now.getTime() - 86_400_000))) return 'Вчера';
