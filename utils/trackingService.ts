@@ -116,6 +116,7 @@ export type TrackingDayData = {
     endedAt: string;
     durationSeconds: number;
   }>;
+  orderEventsNextCursor?: string | null;
   orderEvents: Array<{
     id: string;
     eventType: 'CREATED' | 'SUBMITTED';
@@ -161,9 +162,17 @@ export async function fetchTrackingUsers(query = '', options: { self?: boolean; 
 
 export async function fetchTrackingDay(userId: number, date: string) {
   const response = await apiClient<void, TrackingDayData>(
-    `/tracking/users/${userId}/day?date=${encodeURIComponent(date)}`
+    `/tracking/users/${userId}/day?date=${encodeURIComponent(date)}&eventLimit=30`
   );
   if (!response.ok || !response.data) throw new Error(response.message || 'Не удалось загрузить маршрут за день');
+  return response.data;
+}
+
+export async function fetchTrackingDayEvents(userId: number, date: string, cursor: string) {
+  const response = await apiClient<void, Pick<TrackingDayData, 'orderEvents' | 'orderEventsNextCursor'>>(
+    `/tracking/users/${userId}/day/events?date=${encodeURIComponent(date)}&eventLimit=30&eventCursor=${encodeURIComponent(cursor)}`
+  );
+  if (!response.ok || !response.data) throw new Error(response.message || 'Не удалось загрузить события');
   return response.data;
 }
 
@@ -173,14 +182,16 @@ export async function fetchTrackingLive(userId: number) {
   return response.data;
 }
 
-export async function requestLiveLocation(userId: number) {
-  const response = await apiClient<Record<string, never>, {
+export async function requestLiveLocation(userId: number, localInstallId?: string) {
+  const response = await apiClient<{ localInstallId?: string }, {
     id: string;
     status: string;
     requestedAt: string;
     expiresAt: string;
+    delivery?: string;
+    failureReason?: string | null;
     lastKnown?: TrackingDayPoint | null;
-  }>(`/tracking/users/${userId}/location-requests`, { method: 'POST', body: {} });
+  }>(`/tracking/users/${userId}/location-requests`, { method: 'POST', body: localInstallId ? { localInstallId } : {} });
   if (!response.ok || !response.data) throw new Error(response.message || 'Не удалось запросить геопозицию');
   return response.data;
 }

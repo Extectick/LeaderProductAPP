@@ -308,9 +308,14 @@ export async function restoreTrackingV2() {
 }
 
 export async function requestTrackingPosition(requestId?: string) {
-  if (Platform.OS !== 'android') return false;
+  if (Platform.OS !== 'android') throw new Error('Запрос позиции на этом устройстве не поддерживается');
+  if (!(await isTrackingV2Enabled()) || !(await getCredential())) throw new Error('Включите отслеживание маршрута в профиле');
+  if ((await Location.getForegroundPermissionsAsync()).status !== 'granted') throw new Error('Нет разрешения на геопозицию');
+  if (!(await Location.hasServicesEnabledAsync())) throw new Error('На телефоне выключена геолокация');
   const Traccar = await configureTraccar();
-  return Traccar.requestPosition(requestId ? `lp:${requestId}` : undefined);
+  const sent = await Traccar.requestPosition(requestId ? `lp:${requestId}` : undefined);
+  if (!sent) throw new Error('Телефон не смог определить или отправить координаты. Проверьте GPS и интернет');
+  return true;
 }
 
 export async function getTrackingV2Diagnostics(): Promise<TrackingV2Diagnostics> {

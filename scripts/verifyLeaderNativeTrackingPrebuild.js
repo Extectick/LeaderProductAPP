@@ -27,6 +27,8 @@ requireText(path.join(kotlinRoot, 'tracking', 'LeaderTrackingModule.kt'), 'class
 requireText(path.join(kotlinRoot, 'tracking', 'LeaderTrackingPackage.kt'), 'class LeaderTrackingPackage');
 requireText(path.join(kotlinRoot, 'tracking', 'LeaderTrackingBootReceiver.kt'), 'class LeaderTrackingBootReceiver');
 requireText(path.join(kotlinRoot, 'MainApplication.kt'), 'add(LeaderTrackingPackage())');
+requireText(path.join(kotlinRoot, 'MainApplication.kt'), 'LeaderTrackingCommands.start(this)');
+requireText(path.join(kotlinRoot, 'tracking', 'LeaderTrackingCommands.kt'), 'object LeaderTrackingCommands');
 requireText('android/app/src/main/AndroidManifest.xml', '.tracking.LeaderTrackingService');
 requireText('android/app/src/main/AndroidManifest.xml', '.tracking.LeaderTrackingBootReceiver');
 requireText('android/app/src/main/AndroidManifest.xml', 'android.permission.RECEIVE_BOOT_COMPLETED');

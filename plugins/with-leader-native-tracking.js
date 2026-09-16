@@ -12,6 +12,7 @@ const TRACKING_PACKAGE = 'tracking';
 const SERVICE_NAME = '.tracking.LeaderTrackingService';
 const RECEIVER_NAME = '.tracking.LeaderTrackingBootReceiver';
 const KOTLIN_DEPENDENCIES = [
+  "implementation 'org.traccar:traccar-client-sdk:1.0.10'",
   "implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'",
   "implementation 'com.google.android.gms:play-services-location:21.3.0'",
 ];
@@ -60,6 +61,11 @@ function addNativePackage(contents, packageName) {
       throw new Error('with-leader-native-tracking could not find PackageList in MainApplication.kt');
     }
     next = next.replace(packageListPattern, '$1\n              add(LeaderTrackingPackage())');
+  }
+  const commandStart = `${packageName}.tracking.LeaderTrackingCommands.start(this)`;
+  if (!next.includes(commandStart)) {
+    if (!next.includes('super.onCreate()')) throw new Error('Missing Application.onCreate for native tracking commands');
+    next = next.replace('super.onCreate()', `super.onCreate()\n    ${commandStart}`);
   }
   return next;
 }
@@ -136,6 +142,7 @@ function withLeaderNativeTracking(config) {
       );
       for (const name of [
         'LeaderTrackingModule.kt',
+        'LeaderTrackingCommands.kt',
         'LeaderTrackingPackage.kt',
         'LeaderTrackingService.kt',
         'LeaderTrackingSecureStore.kt',
