@@ -1,6 +1,6 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
-import { Camera, GeoJSONSource, Layer, Map } from '@maplibre/maplibre-react-native';
+import { Camera, GeoJSONSource, Layer, Map, type CameraRef } from '@maplibre/maplibre-react-native';
 
 import type { TrackingDayData, TrackingLiveData } from '@/utils/trackingService';
 
@@ -11,12 +11,16 @@ const EMPTY_STYLE = {
 };
 type TrackingMapFocus = { key: string; latitude: number; longitude: number } | null;
 
-export default function TrackingMap({ data, live, focus }: {
+export default function TrackingMap({ data, live, focus, fitRevision = 0, bottomInset = 0 }: {
   data?: TrackingDayData | null;
   live?: TrackingLiveData | null;
   focus?: TrackingMapFocus;
+  fitRevision?: number;
+  bottomInset?: number;
 }) {
-  const points = data?.polyline || [];
+  const camera = useRef<CameraRef>(null);
+  const [ready, setReady] = useState(false);
+  const points = useMemo(() => data?.polyline || [], [data?.polyline]);
   const center = focus
     ? [focus.longitude, focus.latitude] as [number, number]
     : live?.point
@@ -30,6 +34,14 @@ export default function TrackingMap({ data, live, focus }: {
     const lat = points.map((point) => point.latitude);
     return [Math.min(...lng), Math.min(...lat), Math.max(...lng), Math.max(...lat)];
   }, [points]);
+  const centerLng = center[0];
+  const centerLat = center[1];
+  useEffect(() => {
+    if (!ready) return;
+    const padding = { top: 70, right: 60, bottom: bottomInset + 46, left: 30 };
+    if (!focus && bounds) camera.current?.fitBounds(bounds, { padding, duration: 350 });
+    else camera.current?.easeTo({ center: [centerLng, centerLat], zoom: focus ? 15 : 12, padding, duration: 350 });
+  }, [ready, bounds, focus, fitRevision, bottomInset, centerLng, centerLat]);
   const line = useMemo(() => ({
     type: 'Feature' as const,
     properties: {},
@@ -62,8 +74,10 @@ export default function TrackingMap({ data, live, focus }: {
   const configuredStyle = process.env.EXPO_PUBLIC_MAP_STYLE_URL?.trim();
   return (
     <View style={styles.root}>
-      <Map style={StyleSheet.absoluteFill} mapStyle={configuredStyle || EMPTY_STYLE}>
+      <Map style={StyleSheet.absoluteFill} mapStyle={configuredStyle || EMPTY_STYLE} onDidFinishLoadingMap={() => setReady(true)} attributionPosition={{ bottom: bottomInset + 6, right: 8 }} logoPosition={{ bottom: bottomInset + 6, left: 8 }} compassPosition={{ top: 164, right: 16 }}>
         <Camera
+          ref={camera}
+          maxZoom={18}
           initialViewState={!focus && bounds ? { bounds, padding: { top: 36, right: 36, bottom: 36, left: 36 } } : { center, zoom: focus ? 15 : 12 }}
         />
         {points.length > 1 ? (
@@ -87,4 +101,4 @@ export default function TrackingMap({ data, live, focus }: {
   );
 }
 
-const styles = StyleSheet.create({ root: { flex: 1, minHeight: 280, backgroundColor: '#EEF2F7' } });
+const styles = StyleSheet.create({ root: { flex: 1, minHeight: 0, backgroundColor: '#EEF2F7' } });

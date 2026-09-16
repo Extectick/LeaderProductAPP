@@ -1,352 +1,309 @@
 import { Ionicons } from '@expo/vector-icons';
-import DateTimePicker from '@react-native-community/datetimepicker';
-import { useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  Modal,
-  Platform,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-  useWindowDimensions,
-} from 'react-native';
+import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
+import { useFocusEffect, useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FlatList, Platform, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Button, Dialog, Divider, Icon, IconButton, List, Menu, Portal, Searchbar, SegmentedButtons, Surface, Text, TouchableRipple } from 'react-native-paper';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import {
-  fetchLocationRequest,
-  fetchTrackingDay,
-  fetchTrackingLive,
-  fetchTrackingUsers,
-  requestLiveLocation,
-  type TrackingDayData,
-  type TrackingLiveData,
-  type TrackingV2User,
-} from '@/utils/trackingService';
+import { AppHeader } from '@/components/AppHeader';
+import { useOptionalTabBarVisibility } from '@/components/Navigation/TabBarVisibilityContext';
+import { useOptionalLastServiceRoute } from '@/src/features/navigation/LastServiceRouteContext';
+import TrackingDayPanel from '@/src/features/tracking/TrackingDayPanel';
+import { trackingCalendarDate, trackingDayFromCalendar, trackingDayKey, trackingDayLabel, trackingTime as time } from '@/src/features/tracking/trackingPresentation';
+import { fetchLocationRequest, fetchTrackingDay, fetchTrackingLive, fetchTrackingUsers, requestLiveLocation, type TrackingDayData, type TrackingLiveData, type TrackingV2User } from '@/utils/trackingService';
 import TrackingMap from './TrackingMap';
 
-const OMSK_OFFSET_MS = 6 * 60 * 60 * 1000;
-
-function dayKey(date: Date) {
-  return new Date(date.getTime() + OMSK_OFFSET_MS).toISOString().slice(0, 10);
-}
-
 function displayName(user?: TrackingV2User | null) {
-  if (!user) return 'Сотрудник';
-  return [user.lastName, user.firstName, user.middleName].filter(Boolean).join(' ') || user.email || `Сотрудник ${user.id}`;
+  return user ? [user.lastName, user.firstName, user.middleName].filter(Boolean).join(' ') || user.email || `Сотрудник ${user.id}` : 'Выбрать сотрудника';
 }
-
-function time(value?: string | null) {
-  if (!value) return '—';
-  return new Date(value).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-}
-
 function currency(value?: string | null) {
   const number = Number(value);
   return Number.isFinite(number) ? `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(number)} ₽` : '—';
 }
-
-function distance(meters = 0) {
-  return meters >= 1000 ? `${(meters / 1000).toFixed(1)} км` : `${meters} м`;
-}
-
+function distance(meters = 0) { return meters >= 1000 ? `${(meters / 1000).toFixed(1)} км` : `${meters} м`; }
 function duration(seconds = 0) {
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.round((seconds % 3600) / 60);
-  return hours ? `${hours} ч ${minutes} мин` : `${minutes} мин`;
+  const totalMinutes = Math.round(seconds / 60);
+  return totalMinutes >= 60 ? `${Math.floor(totalMinutes / 60)} ч ${totalMinutes % 60} мин` : `${totalMinutes} мин`;
 }
-
-function ageLabel(seconds?: number | null) {
-  if (seconds == null) return 'Нет координат';
+function ageLabel(value?: string | null) {
+  if (!value) return 'Нет координат';
+  const seconds = Math.max(0, (Date.now() - Date.parse(value)) / 1000);
   if (seconds < 60) return 'Получена сейчас';
   if (seconds < 3600) return `${Math.floor(seconds / 60)} мин назад`;
-  return `${Math.floor(seconds / 3600)} ч назад`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} ч назад`;
+  return `${Math.floor(seconds / 86400)} дн. назад`;
 }
 
 export default function TrackingServiceScreen() {
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const router = useRouter();
+  const lastService = useOptionalLastServiceRoute();
+  const setTabBarHidden = useOptionalTabBarVisibility()?.setHidden;
   const wide = width >= 920;
   const [users, setUsers] = useState<TrackingV2User[]>([]);
+  const [usersLoading, setUsersLoading] = useState(true);
+  const [usersError, setUsersError] = useState<string | null>(null);
   const [selectedUser, setSelectedUser] = useState<TrackingV2User | null>(null);
-  const [selectedDay, setSelectedDay] = useState(dayKey(new Date()));
+  const [selectedDay, setSelectedDay] = useState(() => trackingDayKey(new Date()));
+  const [dateDraft, setDateDraft] = useState(selectedDay);
   const [data, setData] = useState<TrackingDayData | null>(null);
   const [live, setLive] = useState<TrackingLiveData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [loadedKey, setLoadedKey] = useState('');
+  const [loading, setLoading] = useState(false);
   const [requesting, setRequesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pickerVisible, setPickerVisible] = useState(false);
+  const [dateVisible, setDateVisible] = useState(false);
   const [calendarVisible, setCalendarVisible] = useState(false);
+  const [menuVisible, setMenuVisible] = useState(false);
+  const [detailsExpanded, setDetailsExpanded] = useState(false);
   const [query, setQuery] = useState('');
+  const [usersRetry, setUsersRetry] = useState(0);
   const [mapFocus, setMapFocus] = useState<{ key: string; latitude: number; longitude: number } | null>(null);
+  const [fitRevision, setFitRevision] = useState(0);
+  const mounted = useRef(true);
+  const loadSequence = useRef(0);
+  const requestInFlight = useRef(false);
+  const selectionKey = `${selectedUser?.id ?? 0}:${selectedDay}`;
+  const selectionRef = useRef(selectionKey);
+  selectionRef.current = selectionKey;
+  const currentData = loadedKey === selectionKey ? data : null;
+  const currentLive = loadedKey === selectionKey ? live : null;
+  const today = trackingDayKey(new Date());
+  const yesterday = trackingDayKey(new Date(Date.now() - 86_400_000));
+  const bottomInset = Math.max(insets.bottom, 8);
+  const modalStyle = { maxHeight: Math.max(200, height - insets.top - insets.bottom - 40) };
 
-  const loadUsers = useCallback(async () => {
-    const result = await fetchTrackingUsers(query);
-    setUsers(result);
-    setSelectedUser((current) => current && result.some((user) => user.id === current.id) ? current : result[0] || null);
-  }, [query]);
+  useFocusEffect(useCallback(() => {
+    setTabBarHidden?.(true);
+    return () => setTabBarHidden?.(false);
+  }, [setTabBarHidden]));
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; loadSequence.current += 1; };
+  }, []);
+  useEffect(() => {
+    let cancelled = false;
+    setUsersLoading(true);
+    setUsersError(null);
+    const timer = setTimeout(() => {
+      void fetchTrackingUsers(query).then((result) => {
+        if (cancelled) return;
+        setUsers(result);
+        // Searching the picker must never change the route behind the dialog.
+        if (!query.trim()) setSelectedUser((current) => current || result[0] || null);
+      }).catch((reason) => {
+        if (!cancelled) setUsersError(reason instanceof Error ? reason.message : 'Не удалось загрузить сотрудников');
+      }).finally(() => { if (!cancelled) setUsersLoading(false); });
+    }, query ? 300 : 0);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [query, usersRetry]);
 
-  const loadDay = useCallback(async (background = false) => {
-    if (!selectedUser) return;
-    if (background) setRefreshing(true); else setLoading(true);
+  const selectedUserId = selectedUser?.id;
+  const loadDay = useCallback(async () => {
+    if (!selectedUserId) return;
+    const sequence = ++loadSequence.current;
+    const key = `${selectedUserId}:${selectedDay}`;
+    setLoading(true);
     setError(null);
     try {
-      const [day, current] = await Promise.all([
-        fetchTrackingDay(selectedUser.id, selectedDay),
-        fetchTrackingLive(selectedUser.id),
-      ]);
+      const [day, current] = await Promise.all([fetchTrackingDay(selectedUserId, selectedDay), fetchTrackingLive(selectedUserId)]);
+      if (!mounted.current || sequence !== loadSequence.current || key !== selectionRef.current) return;
       setData(day);
       setLive(current);
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'Не удалось загрузить геомаршрут');
+      setLoadedKey(key);
+    } catch (reason) {
+      if (mounted.current && sequence === loadSequence.current && key === selectionRef.current) setError(reason instanceof Error ? reason.message : 'Не удалось загрузить геомаршрут');
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (mounted.current && sequence === loadSequence.current) setLoading(false);
     }
-  }, [selectedDay, selectedUser]);
+  }, [selectedDay, selectedUserId]);
+  useEffect(() => { void loadDay(); }, [loadDay]);
+  useEffect(() => { setMapFocus(null); setDetailsExpanded(false); }, [selectionKey]);
 
-  useEffect(() => { void loadUsers().catch((e) => setError(e instanceof Error ? e.message : String(e))); }, []);
-  useEffect(() => { if (selectedUser) void loadDay(); }, [loadDay, selectedUser]);
-  useEffect(() => { setMapFocus(null); }, [selectedDay, selectedUser?.id]);
-
-  const requestPosition = useCallback(async () => {
-    if (!selectedUser || requesting) return;
+  const requestPosition = async () => {
+    if (!selectedUser || requestInFlight.current) return;
+    requestInFlight.current = true;
     setRequesting(true);
     setError(null);
+    const key = selectionKey;
     try {
       const request = await requestLiveLocation(selectedUser.id);
-      const deadline = Date.parse(request.expiresAt) || Date.now() + 30_000;
+      const deadline = Math.min(Date.parse(request.expiresAt) || Date.now() + 30_000, Date.now() + 30_000);
       let result = await fetchLocationRequest(request.id);
-      while (result.status === 'PENDING' && Date.now() < deadline) {
+      while (result.status === 'PENDING' && Date.now() < deadline && mounted.current && selectionRef.current === key) {
         await new Promise((resolve) => setTimeout(resolve, 2_000));
+        if (!mounted.current || selectionRef.current !== key) return;
         result = await fetchLocationRequest(request.id);
       }
-      if (result.status === 'SUCCEEDED') await loadDay(true);
-      else if (result.status === 'TIMED_OUT') setError('Телефон не ответил. Показаны последние доступные координаты.');
-      else if (result.status === 'FAILED') setError('Не удалось получить свежую геопозицию сотрудника.');
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'Не удалось запросить геопозицию');
+      if (!mounted.current || selectionRef.current !== key) return;
+      if (result.status === 'SUCCEEDED') await loadDay();
+      else setError(result.status === 'FAILED' ? 'Не удалось получить свежую геопозицию сотрудника.' : 'Телефон не ответил. Доступна последняя полученная позиция.');
+    } catch (reason) {
+      if (mounted.current && selectionRef.current === key) setError(reason instanceof Error ? reason.message : 'Не удалось запросить геопозицию');
     } finally {
-      setRequesting(false);
+      requestInFlight.current = false;
+      if (mounted.current) setRequesting(false);
     }
-  }, [loadDay, requesting, selectedUser]);
+  };
+  const events = useMemo(() => [
+    ...(currentData?.stops || []).map((stop, index) => ({
+      key: `stop-${index}`, at: stop.startedAt, icon: 'pause-circle-outline', color: '#D97706',
+      title: `Остановка ${Math.max(1, Math.round(stop.durationSeconds / 60))} мин`, subtitle: `${time(stop.startedAt)}–${time(stop.endedAt)}`,
+      orderGuid: null as string | null, latitude: stop.latitude, longitude: stop.longitude,
+    })),
+    ...(currentData?.orderEvents || []).map((event) => ({
+      key: event.id, at: event.capturedAt, icon: event.eventType === 'CREATED' ? 'file-document-outline' : 'cloud-upload-outline', color: event.status === 'CAPTURED' ? '#16A34A' : '#94A3B8',
+      title: event.eventType === 'CREATED' ? 'Создан заказ' : 'Заказ отправлен', subtitle: `${event.order.number || 'Черновик'} · ${event.order.counterpartyName} · ${currency(event.order.totalAmount)}`,
+      orderGuid: event.order.guid || null, latitude: event.latitude, longitude: event.longitude,
+    })),
+  ].sort((left, right) => Date.parse(left.at) - Date.parse(right.at)), [currentData]);
+  const summary = currentData ? `${distance(currentData.summary.distanceMeters)} · остановки: ${currentData.summary.stopsCount} · заказы: ${currentData.summary.ordersCount}` : loading || usersLoading ? 'Загружаем маршрут…' : 'Нет данных за этот день';
+  const closeService = () => { lastService?.clearLastServiceRoute(); router.replace('/services'); };
+  const fitRoute = () => { setMapFocus(null); setFitRevision((value) => value + 1); setDetailsExpanded(false); };
+  const openCalendar = () => {
+    if (Platform.OS === 'android') {
+      DateTimePickerAndroid.open({ value: trackingCalendarDate(dateDraft), mode: 'date', maximumDate: trackingCalendarDate(today), onChange: (event, value) => { if (event.type === 'set' && value) setDateDraft(trackingDayFromCalendar(value)); } });
+    } else setCalendarVisible(true);
+  };
 
-  const dateValue = useMemo(() => new Date(`${selectedDay}T06:00:00+06:00`), [selectedDay]);
-  const today = dayKey(new Date());
-  const yesterday = dayKey(new Date(Date.now() - 24 * 60 * 60 * 1000));
-  const events = useMemo(() => {
-    const stopEvents = (data?.stops || []).map((stop, index) => ({
-      key: `stop-${index}`,
-      at: stop.startedAt,
-      icon: 'pause-circle-outline' as const,
-      color: '#F59E0B',
-      title: `Остановка ${Math.max(1, Math.round(stop.durationSeconds / 60))} мин`,
-      subtitle: `${time(stop.startedAt)}–${time(stop.endedAt)}`,
-      orderGuid: null as string | null,
-      latitude: stop.latitude,
-      longitude: stop.longitude,
-    }));
-    const orderEvents = (data?.orderEvents || []).map((event) => ({
-      key: event.id,
-      at: event.capturedAt,
-      icon: event.eventType === 'CREATED' ? 'document-text-outline' as const : 'cloud-upload-outline' as const,
-      color: event.status === 'CAPTURED' ? '#16A34A' : '#94A3B8',
-      title: event.eventType === 'CREATED' ? 'Создан заказ' : 'Заказ отправлен',
-      subtitle: `${event.order.number || 'Черновик'} · ${event.order.counterpartyName} · ${currency(event.order.totalAmount)}`,
-      orderGuid: event.order.guid || null,
-      latitude: event.latitude,
-      longitude: event.longitude,
-    }));
-    return [...stopEvents, ...orderEvents].sort((left, right) => Date.parse(left.at) - Date.parse(right.at));
-  }, [data]);
+  const details = <>
+    <Text variant="labelMedium" style={styles.muted}>Время Омска · {trackingCalendarDate(selectedDay).toLocaleDateString('ru-RU')}</Text>
+    <View style={styles.metrics}>
+      <Metric icon="map-marker-distance" label="Маршрут" value={currentData ? distance(currentData.summary.distanceMeters) : '—'} />
+      <Metric icon="walk" label="В движении" value={currentData ? duration(currentData.summary.movingSeconds) : '—'} />
+      <Metric icon="clock-start" label="Первая точка" value={time(currentData?.summary.startedAt)} />
+      <Metric icon="flag-outline" label="Последняя точка" value={time(currentData?.summary.endedAt)} />
+      <Metric icon="pause-circle-outline" label="Остановки" value={currentData ? String(currentData.summary.stopsCount) : '—'} />
+      <Metric icon="file-document-outline" label="Заказы" value={currentData ? String(currentData.summary.ordersCount) : '—'} />
+    </View>
+    <List.Item title="Последняя позиция" description={`${ageLabel(currentLive?.point?.recordedAt)}${currentLive?.point?.accuracy != null ? ` · точность ±${Math.round(currentLive.point.accuracy)} м` : ''}${currentLive?.point?.batteryLevel != null ? ` · заряд ${Math.round(currentLive.point.batteryLevel)}%` : ''}`} descriptionNumberOfLines={3} left={(props) => <List.Icon {...props} icon="crosshairs-gps" color="#DC2626" />} />
+    <Divider />
+    <List.Subheader>Хронология</List.Subheader>
+    {!events.length ? <Text style={styles.empty}>{loading ? 'Загружаем события…' : 'За этот день остановок и заказов нет'}</Text> : null}
+    {events.map((event) => <React.Fragment key={event.key}>
+      <List.Item title={`${time(event.at)} · ${event.title}`} description={event.subtitle} titleNumberOfLines={2} descriptionNumberOfLines={3} left={(props) => <List.Icon {...props} icon={event.icon} color={event.color} />} onPress={event.latitude != null && event.longitude != null ? () => { setMapFocus({ key: event.key, latitude: event.latitude!, longitude: event.longitude! }); setDetailsExpanded(false); } : undefined} right={event.orderGuid ? (props) => <IconButton {...props} icon="chevron-right" accessibilityLabel="Открыть заказ" onPress={() => router.push({ pathname: '/services/client_orders', params: { orderGuid: event.orderGuid! } })} /> : undefined} />
+      <Divider />
+    </React.Fragment>)}
+    <Button icon="refresh" loading={loading} disabled={loading || !selectedUser} onPress={() => void loadDay()} style={styles.refreshButton}>Обновить данные</Button>
+  </>;
 
-  return (
-    <View style={styles.root}>
-      <View style={[styles.toolbar, wide && styles.toolbarWide]}>
-        <Pressable style={styles.userButton} onPress={() => setPickerVisible(true)}>
-          <View style={styles.userIcon}><Ionicons name="person" size={18} color="#2563EB" /></View>
+  return <View style={styles.root}>
+    <AppHeader title="" icon="map-outline" variant="document" compact dense tight showBack onBack={closeService} entranceMotion="none" horizontalPadding={6} showServerStatus={false}
+      titleSlot={<TouchableRipple accessibilityRole="button" accessibilityLabel={`Выбрать сотрудника. ${displayName(selectedUser)}`} onPress={() => { setQuery(''); setPickerVisible(true); }} style={styles.userButton}>
+        <View style={styles.userRow}>
           <View style={styles.flex}>
             <Text style={styles.userName} numberOfLines={1}>{displayName(selectedUser)}</Text>
-            <Text style={styles.caption} numberOfLines={1}>
-              {selectedUser?.department?.name || 'Без отдела'} · {ageLabel(live?.point?.ageSeconds)}
-            </Text>
+            <Text style={styles.caption} numberOfLines={1}>{trackingDayLabel(selectedDay)}{selectedUser?.department?.name ? ` · ${selectedUser.department.name}` : ''}</Text>
           </View>
-          <Ionicons name="chevron-down" size={18} color="#64748B" />
-        </Pressable>
-        <Pressable style={[styles.liveButton, requesting && styles.disabled]} onPress={requestPosition} disabled={requesting || !selectedUser}>
-          {requesting ? <ActivityIndicator size="small" color="#FFFFFF" /> : <Ionicons name="locate" size={18} color="#FFFFFF" />}
-          <Text style={styles.liveButtonText}>{requesting ? 'Запрашиваем…' : 'Запросить геопозицию'}</Text>
-        </Pressable>
-      </View>
-
-      <View style={styles.dayRow}>
-        <Pressable onPress={() => setSelectedDay(today)} style={[styles.dayChip, selectedDay === today && styles.dayChipActive]}>
-          <Text style={[styles.dayChipText, selectedDay === today && styles.dayChipTextActive]}>Сегодня</Text>
-        </Pressable>
-        <Pressable onPress={() => setSelectedDay(yesterday)} style={[styles.dayChip, selectedDay === yesterday && styles.dayChipActive]}>
-          <Text style={[styles.dayChipText, selectedDay === yesterday && styles.dayChipTextActive]}>Вчера</Text>
-        </Pressable>
-        <Pressable onPress={() => setCalendarVisible(true)} style={[styles.dayChip, selectedDay !== today && selectedDay !== yesterday && styles.dayChipActive]}>
-          <Ionicons name="calendar-outline" size={16} color={selectedDay !== today && selectedDay !== yesterday ? '#FFFFFF' : '#475569'} />
-          <Text style={[styles.dayChipText, selectedDay !== today && selectedDay !== yesterday && styles.dayChipTextActive]}>{dateValue.toLocaleDateString('ru-RU')}</Text>
-        </Pressable>
-      </View>
-
-      {error ? <View style={styles.error}><Ionicons name="alert-circle-outline" size={18} color="#B91C1C" /><Text style={styles.errorText}>{error}</Text></View> : null}
-
-      <View style={[styles.content, wide && styles.contentWide]}>
-        <View style={styles.mapPane}>
-          <TrackingMap
-            key={`${selectedUser?.id || 0}:${selectedDay}:${mapFocus?.key || 'route'}`}
-            data={data}
-            live={live}
-            focus={mapFocus}
-          />
-          {loading ? <View style={styles.loadingOverlay}><ActivityIndicator size="large" color="#2563EB" /></View> : null}
-          <View style={styles.legend}>
-            <Legend color="#DC2626" text="Сейчас" /><Legend color="#16A34A" text="Заказ" /><Legend color="#F59E0B" text="Остановка" />
+          <Icon source="chevron-down" size={18} color="#64748B" />
+        </View>
+      </TouchableRipple>}
+      rightSlot={<View style={styles.headerActions}>
+        <IconButton icon="calendar-month-outline" size={22} iconColor={selectedDay === today ? '#475569' : '#2563EB'} accessibilityLabel="Фильтр по дате" onPress={() => { setDateDraft(selectedDay); setCalendarVisible(false); setDateVisible(true); }} style={styles.iconButton} />
+        <Menu visible={menuVisible} onDismiss={() => setMenuVisible(false)} anchor={<IconButton icon="dots-horizontal" size={22} accessibilityLabel="Меню геомаршрута" onPress={() => setMenuVisible(true)} style={styles.iconButton} />}>
+          <Menu.Item leadingIcon="crosshairs-gps" title={requesting ? 'Запрашиваем геопозицию…' : 'Запросить геопозицию'} disabled={requesting || !selectedUser} onPress={() => { setMenuVisible(false); void requestPosition(); }} />
+          <Menu.Item leadingIcon="refresh" title="Обновить данные" disabled={loading || !selectedUser} onPress={() => { setMenuVisible(false); void loadDay(); }} />
+          <Menu.Item leadingIcon="fit-to-screen-outline" title="Показать весь маршрут" disabled={!currentData?.polyline.length} onPress={() => { setMenuVisible(false); fitRoute(); }} />
+          <Menu.Item leadingIcon="chart-timeline-variant" title="Итоги дня и хронология" onPress={() => { setMenuVisible(false); setDetailsExpanded(true); }} />
+        </Menu>
+      </View>}
+    />
+    <View style={[styles.stage, wide && styles.wideStage]}>
+      <View style={styles.mapPane}>
+        <TrackingMap data={currentData} live={currentLive} focus={mapFocus} fitRevision={fitRevision} bottomInset={wide ? bottomInset : bottomInset + 72} />
+        <View pointerEvents="box-none" style={styles.mapTop}>
+          {error || (!selectedUser && usersError) ? <Surface elevation={1} style={styles.error}>
+            <Icon source="alert-circle-outline" size={20} color="#B91C1C" /><Text style={styles.errorText}>{error || usersError}</Text>
+            <IconButton icon="refresh" size={20} accessibilityLabel="Повторить загрузку" onPress={() => selectedUser ? void loadDay() : setUsersRetry((value) => value + 1)} />
+          </Surface> : <Surface elevation={1} style={styles.status}>
+            {loading || usersLoading || requesting ? <ActivityIndicator size={15} /> : <Icon source={currentLive?.device?.enabled ? 'crosshairs-gps' : 'crosshairs-off'} size={16} color={currentLive?.device?.enabled ? '#2563EB' : '#64748B'} />}
+            <Text style={styles.statusText}>{requesting ? 'Запрашиваем геопозицию…' : loading || usersLoading ? 'Загружаем маршрут…' : !selectedUser ? 'Нет доступных сотрудников' : currentLive?.device?.enabled === false ? 'Отслеживание выключено' : `Позиция: ${ageLabel(currentLive?.point?.recordedAt)}`}</Text>
+          </Surface>}
+          <View pointerEvents="box-none" style={styles.mapActions}>
+            <IconButton mode="contained" containerColor="#FFFFFF" icon="fit-to-screen-outline" iconColor="#475569" accessibilityLabel="Показать весь маршрут" onPress={fitRoute} disabled={!currentData?.polyline.length} />
+            <IconButton mode="contained" containerColor="#FFFFFF" icon="crosshairs-gps" iconColor="#2563EB" accessibilityLabel="Показать последнюю позицию" disabled={!currentLive?.point} onPress={() => { if (currentLive?.point) { setMapFocus({ key: `live-${Date.now()}`, latitude: currentLive.point.latitude, longitude: currentLive.point.longitude }); setDetailsExpanded(false); } }} />
           </View>
         </View>
-
-        <ScrollView
-          style={styles.detailsPane}
-          contentContainerStyle={styles.detailsContent}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => loadDay(true)} />}
-        >
-          <Text style={styles.sectionTitle}>Итоги дня</Text>
-          <View style={styles.metrics}>
-            <Metric icon="navigate-outline" label="Маршрут" value={distance(data?.summary.distanceMeters)} />
-            <Metric icon="walk-outline" label="В движении" value={duration(data?.summary.movingSeconds)} />
-            <Metric icon="time-outline" label="Первая точка" value={time(data?.summary.startedAt)} />
-            <Metric icon="flag-outline" label="Последняя точка" value={time(data?.summary.endedAt)} />
-            <Metric icon="pause-outline" label="Остановки" value={String(data?.summary.stopsCount ?? 0)} />
-            <Metric icon="document-text-outline" label="Заказы" value={String(data?.summary.ordersCount ?? 0)} />
-            <Metric icon="battery-half-outline" label="Батарея" value={live?.point?.batteryLevel != null ? `${Math.round(live.point.batteryLevel)}%` : '—'} />
-          </View>
-
-          <Text style={styles.sectionTitle}>Хронология</Text>
-          {!events.length && !loading ? <Text style={styles.empty}>За этот день остановок и заказов пока нет</Text> : null}
-          {events.map((event) => (
-            <Pressable
-              key={event.key}
-              disabled={event.latitude == null || event.longitude == null}
-              onPress={() => event.latitude != null && event.longitude != null && setMapFocus({
-                key: event.key,
-                latitude: event.latitude,
-                longitude: event.longitude,
-              })}
-              style={styles.timelineRow}
-            >
-              <View style={[styles.timelineIcon, { borderColor: event.color }]}><Ionicons name={event.icon} size={19} color={event.color} /></View>
-              <View style={styles.flex}>
-                <View style={styles.timelineTitleRow}><Text style={styles.timelineTitle}>{event.title}</Text><Text style={styles.timelineTime}>{time(event.at)}</Text></View>
-                <Text style={styles.timelineSubtitle}>{event.subtitle}</Text>
-              </View>
-              {event.orderGuid ? (
-                <Pressable
-                  hitSlop={10}
-                  accessibilityRole="button"
-                  accessibilityLabel="Открыть заказ"
-                  onPress={() => router.push({ pathname: '/services/client_orders', params: { orderGuid: event.orderGuid! } })}
-                >
-                  <Ionicons name="chevron-forward" size={20} color="#64748B" />
-                </Pressable>
-              ) : null}
-            </Pressable>
-          ))}
-        </ScrollView>
+        {!loading && selectedUser && currentData && !currentData.summary.pointsCount ? <Surface elevation={1} style={[styles.noPoints, { bottom: wide ? 52 + bottomInset : 132 + bottomInset }]}><Text variant="bodySmall">За выбранный день маршрут не записан</Text></Surface> : null}
+        <Surface elevation={0} pointerEvents="none" style={[styles.legend, { bottom: wide ? 30 + bottomInset : 98 + bottomInset }]}>
+          <Legend color="#DC2626" text="Позиция" /><Legend color="#16A34A" text="Заказ" /><Legend color="#D97706" text="Остановка" />
+        </Surface>
       </View>
-
-      <Modal visible={pickerVisible} transparent animationType="fade" onRequestClose={() => setPickerVisible(false)}>
-        <Pressable style={styles.modalBackdrop} onPress={() => setPickerVisible(false)}>
-          <Pressable style={styles.modalCard} onPress={(event) => event.stopPropagation()}>
-            <Text style={styles.modalTitle}>Сотрудник</Text>
-            <View style={styles.search}><Ionicons name="search" size={18} color="#64748B" /><TextInput value={query} onChangeText={setQuery} onSubmitEditing={() => loadUsers()} placeholder="Поиск сотрудника" style={styles.searchInput} /></View>
-            <ScrollView style={{ maxHeight: 420 }}>
-              {users.map((user) => (
-                <Pressable key={user.id} style={styles.userRow} onPress={() => { setSelectedUser(user); setPickerVisible(false); }}>
-                  <View style={styles.flex}><Text style={styles.userName}>{displayName(user)}</Text><Text style={styles.caption}>{user.department?.name || 'Без отдела'}</Text></View>
-                  {user.id === selectedUser?.id ? <Ionicons name="checkmark-circle" size={22} color="#16A34A" /> : null}
-                </Pressable>
-              ))}
-            </ScrollView>
-          </Pressable>
-        </Pressable>
-      </Modal>
-
-      {calendarVisible ? (
-        Platform.OS === 'web' ? (
-          <Modal transparent visible animationType="fade" onRequestClose={() => setCalendarVisible(false)}>
-            <Pressable style={styles.modalBackdrop} onPress={() => setCalendarVisible(false)}>
-              <Pressable style={styles.modalCard} onPress={(event) => event.stopPropagation()}>
-                <input type="date" value={selectedDay} onChange={(event) => { setSelectedDay(event.target.value); setCalendarVisible(false); }} style={{ fontSize: 18, padding: 12 }} />
-              </Pressable>
-            </Pressable>
-          </Modal>
-        ) : (
-          <DateTimePicker value={dateValue} mode="date" maximumDate={new Date()} onChange={(_, value) => { setCalendarVisible(false); if (value) setSelectedDay(dayKey(value)); }} />
-        )
-      ) : null}
+      {wide ? <Surface elevation={1} style={styles.sidebar}>
+        <List.Subheader>Итоги дня</List.Subheader>
+        <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: bottomInset + 24 }}>{details}</ScrollView>
+      </Surface> : <TrackingDayPanel summary={summary} expanded={detailsExpanded} onExpandedChange={setDetailsExpanded} bottomInset={bottomInset}>{details}</TrackingDayPanel>}
     </View>
-  );
+
+    <Portal>
+      <Dialog visible={pickerVisible} onDismiss={() => setPickerVisible(false)} style={[styles.dialog, modalStyle]}>
+        <Dialog.Title>Сотрудник</Dialog.Title>
+        <Dialog.Content style={styles.searchContent}><Searchbar value={query} onChangeText={setQuery} placeholder="Имя или отдел" loading={usersLoading} style={styles.search} inputStyle={styles.searchInput} /></Dialog.Content>
+        <Dialog.ScrollArea style={styles.userList}>
+          <FlatList data={usersLoading ? [] : users} keyboardShouldPersistTaps="handled" keyExtractor={(user) => String(user.id)} renderItem={({ item }) => <List.Item title={displayName(item)} titleNumberOfLines={2} description={item.department?.name || 'Без отдела'} onPress={() => { setSelectedUser(item); setPickerVisible(false); }} right={(props) => item.id === selectedUser?.id ? <List.Icon {...props} icon="check-circle" color="#16A34A" /> : <List.Icon {...props} icon="chevron-right" />} />} ListEmptyComponent={<View style={styles.empty}>{usersLoading ? <ActivityIndicator /> : <Text>{usersError || 'Сотрудники не найдены'}</Text>}</View>} />
+        </Dialog.ScrollArea>
+        <Dialog.Actions>{usersError ? <Button onPress={() => setUsersRetry((value) => value + 1)}>Повторить</Button> : null}<Button onPress={() => setPickerVisible(false)}>Закрыть</Button></Dialog.Actions>
+      </Dialog>
+      <Dialog visible={dateVisible} onDismiss={() => setDateVisible(false)} style={[styles.dialog, modalStyle]}>
+        <Dialog.Title>Дата маршрута</Dialog.Title>
+        <Dialog.ScrollArea style={styles.dateScroll}>
+          <ScrollView contentContainerStyle={styles.dateContent}>
+            <SegmentedButtons value={dateDraft === today ? 'today' : dateDraft === yesterday ? 'yesterday' : 'custom'} onValueChange={(value) => { if (value === 'today') setDateDraft(today); else if (value === 'yesterday') setDateDraft(yesterday); else openCalendar(); }} buttons={[{ value: 'today', label: 'Сегодня' }, { value: 'yesterday', label: 'Вчера' }, { value: 'custom', label: 'Дата', icon: 'calendar' }]} />
+            <List.Item title={trackingCalendarDate(dateDraft).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })} description="Маршрут за один день · время Омска" titleNumberOfLines={2} descriptionNumberOfLines={2} left={(props) => <List.Icon {...props} icon="calendar-month-outline" />} right={(props) => <List.Icon {...props} icon="chevron-right" />} onPress={openCalendar} />
+            {calendarVisible && Platform.OS === 'web' ? <input aria-label="Дата маршрута" type="date" value={dateDraft} max={today} onChange={(event) => { if (/^\d{4}-\d{2}-\d{2}$/.test(event.target.value) && event.target.value <= today) setDateDraft(event.target.value); }} style={{ width: '100%', boxSizing: 'border-box', fontSize: 16, padding: 12 }} /> : null}
+            {calendarVisible && Platform.OS === 'ios' ? <DateTimePicker value={trackingCalendarDate(dateDraft)} mode="date" display="inline" maximumDate={trackingCalendarDate(today)} onChange={(_, value) => { if (value) setDateDraft(trackingDayFromCalendar(value)); }} /> : null}
+          </ScrollView>
+        </Dialog.ScrollArea>
+        <Dialog.Actions><Button onPress={() => setDateVisible(false)}>Отмена</Button><Button mode="contained" onPress={() => { setSelectedDay(dateDraft); setDateVisible(false); }}>Показать</Button></Dialog.Actions>
+      </Dialog>
+    </Portal>
+  </View>;
 }
 
 function Legend({ color, text }: { color: string; text: string }) {
-  return <View style={styles.legendItem}><View style={[styles.legendDot, { backgroundColor: color }]} /><Text style={styles.legendText}>{text}</Text></View>;
+  return <View style={styles.legendItem}><Ionicons name="ellipse" size={8} color={color} /><Text style={styles.legendText}>{text}</Text></View>;
 }
-
-function Metric({ icon, label, value }: { icon: React.ComponentProps<typeof Ionicons>['name']; label: string; value: string }) {
-  return <View style={styles.metric}><Ionicons name={icon} size={22} color="#2563EB" /><View><Text style={styles.caption}>{label}</Text><Text style={styles.metricValue}>{value}</Text></View></View>;
+function Metric({ icon, label, value }: { icon: string; label: string; value: string }) {
+  return <View style={styles.metric}><Icon source={icon} size={22} color="#2563EB" /><View style={styles.flex}><Text style={styles.caption}>{label}</Text><Text variant="titleMedium" style={styles.metricValue}>{value}</Text></View></View>;
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#F8FAFC' },
+  root: { flex: 1, minHeight: 0, backgroundColor: '#F8FAFC' },
   flex: { flex: 1, minWidth: 0 },
-  toolbar: { gap: 8, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: '#FFFFFF', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#E2E8F0' },
-  toolbarWide: { flexDirection: 'row', alignItems: 'center' },
-  userButton: { minHeight: 54, flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, backgroundColor: '#F8FAFC', borderRadius: 12 },
-  userIcon: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: '#DBEAFE' },
-  userName: { fontSize: 15, fontWeight: '800', color: '#0F172A' },
-  caption: { fontSize: 12, color: '#64748B', marginTop: 2 },
-  liveButton: { minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 18, borderRadius: 12, backgroundColor: '#2563EB' },
-  liveButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
-  disabled: { opacity: 0.6 },
-  dayRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#FFFFFF' },
-  dayChip: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, minHeight: 38, paddingHorizontal: 14, borderRadius: 10, backgroundColor: '#F1F5F9' },
-  dayChipActive: { backgroundColor: '#2563EB' },
-  dayChipText: { fontSize: 13, fontWeight: '700', color: '#475569' },
-  dayChipTextActive: { color: '#FFFFFF' },
-  error: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: '#FEF2F2' },
-  errorText: { flex: 1, color: '#B91C1C', fontSize: 13 },
-  content: { flex: 1 },
-  contentWide: { flexDirection: 'row' },
-  mapPane: { flex: 1.25, minHeight: 300, position: 'relative', overflow: 'hidden' },
-  detailsPane: { flex: 1, backgroundColor: '#FFFFFF' },
-  detailsContent: { padding: 16, paddingBottom: 40 },
-  loadingOverlay: { position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(248,250,252,0.66)' } as any,
-  legend: { position: 'absolute', left: 12, bottom: 12, flexDirection: 'row', gap: 10, backgroundColor: 'rgba(255,255,255,0.94)', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 7 },
-  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  legendDot: { width: 9, height: 9, borderRadius: 5 },
-  legendText: { color: '#334155', fontSize: 11, fontWeight: '700' },
-  sectionTitle: { fontSize: 17, fontWeight: '900', color: '#0F172A', marginBottom: 10, marginTop: 4 },
-  metrics: { flexDirection: 'row', flexWrap: 'wrap', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#E2E8F0', marginBottom: 18 },
-  metric: { width: '50%', minHeight: 66, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#E2E8F0' },
-  metricValue: { fontSize: 18, lineHeight: 22, fontWeight: '900', color: '#0F172A' },
-  empty: { color: '#64748B', textAlign: 'center', paddingVertical: 28 },
-  timelineRow: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 68, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#E2E8F0' },
-  timelineIcon: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5 },
-  timelineTitleRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
-  timelineTitle: { fontSize: 14, fontWeight: '800', color: '#0F172A' },
-  timelineTime: { fontSize: 12, color: '#64748B' },
-  timelineSubtitle: { fontSize: 12, color: '#64748B', marginTop: 4 },
-  modalBackdrop: { flex: 1, backgroundColor: 'rgba(15,23,42,0.36)', alignItems: 'center', justifyContent: 'center', padding: 20 },
-  modalCard: { width: '100%', maxWidth: 520, maxHeight: '80%', borderRadius: 18, backgroundColor: '#FFFFFF', padding: 16 },
-  modalTitle: { fontSize: 20, fontWeight: '900', color: '#0F172A', marginBottom: 12 },
-  search: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, minHeight: 46, borderRadius: 12, backgroundColor: '#F1F5F9', marginBottom: 10 },
-  searchInput: { flex: 1, fontSize: 15, color: '#0F172A', outlineStyle: 'none' } as any,
-  userRow: { flexDirection: 'row', alignItems: 'center', minHeight: 62, paddingHorizontal: 4, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#E2E8F0' },
+  userButton: { minHeight: 44, justifyContent: 'center', borderRadius: 12, overflow: 'hidden' },
+  userRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  userName: { fontSize: 14, lineHeight: 19, fontWeight: '800', color: '#0F172A' },
+  caption: { fontSize: 11, lineHeight: 16, color: '#64748B' },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 0 },
+  iconButton: { margin: 0, width: 42, height: 44, borderRadius: 12 },
+  stage: { flex: 1, minHeight: 0, position: 'relative' },
+  wideStage: { flexDirection: 'row' },
+  mapPane: { flex: 1, minHeight: 0, overflow: 'hidden' },
+  mapTop: { position: 'absolute', top: 10, left: 10, right: 10, alignItems: 'flex-start', gap: 4 },
+  mapActions: { alignSelf: 'flex-end' },
+  status: { borderRadius: 16, paddingVertical: 6, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 7, maxWidth: '100%', backgroundColor: '#FFFFFF' },
+  statusText: { fontSize: 12, lineHeight: 17, color: '#475569', flexShrink: 1 },
+  error: { borderRadius: 12, flexDirection: 'row', alignItems: 'center', paddingLeft: 12, gap: 6, backgroundColor: '#FEF2F2', width: '100%' },
+  errorText: { flex: 1, color: '#B91C1C', fontSize: 12 },
+  noPoints: { position: 'absolute', alignSelf: 'center', borderRadius: 12, padding: 10, backgroundColor: '#FFFFFF', maxWidth: '90%' },
+  legend: { position: 'absolute', left: 10, flexDirection: 'row', flexWrap: 'wrap', gap: 10, borderRadius: 10, paddingVertical: 5, paddingHorizontal: 8, backgroundColor: 'rgba(255,255,255,0.94)' },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  legendText: { fontSize: 10, lineHeight: 15, color: '#475569' },
+  sidebar: { width: 320, backgroundColor: '#FFFFFF' },
+  metrics: { flexDirection: 'row', flexWrap: 'wrap', marginVertical: 8 },
+  metric: { width: '50%', minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  metricValue: { fontWeight: '800', color: '#0F172A' },
+  muted: { color: '#64748B', marginTop: 8 },
+  empty: { paddingVertical: 24, textAlign: 'center', color: '#64748B' },
+  refreshButton: { marginTop: 16 },
+  dialog: { width: '92%', maxWidth: 480, alignSelf: 'center', marginHorizontal: 0, backgroundColor: '#FFFFFF' },
+  searchContent: { paddingBottom: 12 },
+  search: { backgroundColor: '#F1F5F9', borderRadius: 14 },
+  searchInput: { fontSize: 14 },
+  userList: { flexShrink: 1, paddingHorizontal: 12, minHeight: 80 },
+  dateScroll: { flexShrink: 1, paddingHorizontal: 16 },
+  dateContent: { paddingVertical: 12 },
 });
