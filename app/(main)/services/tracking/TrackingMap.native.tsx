@@ -96,6 +96,10 @@ export default function TrackingMap({ data, live, focus, fitRevision = 0, bottom
             <Layer id="live-point" type="circle" paint={{ 'circle-color': '#DC2626', 'circle-radius': 9, 'circle-stroke-color': '#FFFFFF', 'circle-stroke-width': 3 }} />
           </GeoJSONSource>
         ) : null}
+        {focus ? <GeoJSONSource id="selected-event" data={{ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [focus.longitude, focus.latitude] } }}>
+          <Layer id="selected-event-halo" type="circle" paint={{ 'circle-radius': 16, 'circle-color': '#2563EB', 'circle-opacity': 0.18, 'circle-stroke-color': '#2563EB', 'circle-stroke-width': 2 }} />
+          <Layer id="selected-event-center" type="circle" paint={{ 'circle-radius': 5, 'circle-color': '#2563EB', 'circle-stroke-color': '#FFFFFF', 'circle-stroke-width': 2 }} />
+        </GeoJSONSource> : null}
       </Map>
     </View>
   );

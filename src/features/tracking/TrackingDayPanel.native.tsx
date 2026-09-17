@@ -4,7 +4,7 @@ import { BackHandler, StyleSheet, View } from 'react-native';
 import TrackingDayPanelHeader from './TrackingDayPanelHeader';
 import type { TrackingDayPanelProps } from './TrackingDayPanel.types';
 
-export default function TrackingDayPanel({ listProps, summary, expanded, onExpandedChange, bottomInset, dateControls, onRefresh, refreshing, refreshDisabled }: TrackingDayPanelProps) {
+export default function TrackingDayPanel({ listProps, summary, expanded, onExpandedChange, bottomInset, dateControls, navigation, onHeaderHeightChange, onRefresh, refreshing, refreshDisabled }: TrackingDayPanelProps) {
   const sheet = useRef<BottomSheet>(null);
   const [headerHeight, setHeaderHeight] = useState(92);
   const snapPoints = useMemo(() => [headerHeight + bottomInset, '78%'], [headerHeight, bottomInset]);
@@ -19,9 +19,9 @@ export default function TrackingDayPanel({ listProps, summary, expanded, onExpan
   }, [expanded, onExpandedChange]);
   const handle = useCallback(() => (
     <View style={{ paddingBottom: expanded ? 0 : bottomInset }}>
-      <TrackingDayPanelHeader summary={summary} expanded={expanded} onPress={() => onExpandedChange(!expanded)} dateControls={dateControls} onRefresh={onRefresh} refreshing={refreshing} refreshDisabled={refreshDisabled} onLayout={(event) => setHeaderHeight(Math.ceil(event.nativeEvent.layout.height))} />
+      <TrackingDayPanelHeader summary={summary} expanded={expanded} onPress={() => onExpandedChange(!expanded)} dateControls={dateControls} navigation={navigation} onRefresh={onRefresh} refreshing={refreshing} refreshDisabled={refreshDisabled} onLayout={(event) => { const next = Math.ceil(event.nativeEvent.layout.height); setHeaderHeight(next); onHeaderHeightChange?.(next); }} />
     </View>
-  ), [expanded, onExpandedChange, summary, bottomInset, dateControls, onRefresh, refreshing, refreshDisabled]);
+  ), [expanded, onExpandedChange, summary, bottomInset, dateControls, navigation, onHeaderHeightChange, onRefresh, refreshing, refreshDisabled]);
   return (
     <BottomSheet ref={sheet} index={0} snapPoints={snapPoints} bottomInset={0} enableHandlePanningGesture={false} enableDynamicSizing={false} enablePanDownToClose={false} animateOnMount={false} topInset={8} handleComponent={handle} onChange={(index) => onExpandedChange(index > 0)} backgroundStyle={styles.background} style={styles.shadow}>
       <BottomSheetFlatList {...listProps} contentContainerStyle={[listProps.contentContainerStyle, { paddingBottom: bottomInset + 12 }]} />

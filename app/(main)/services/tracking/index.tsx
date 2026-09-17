@@ -11,6 +11,8 @@ import { useOptionalTabBarVisibility } from '@/components/Navigation/TabBarVisib
 import { useOptionalLastServiceRoute } from '@/src/features/navigation/LastServiceRouteContext';
 import TrackingDayPanel from '@/src/features/tracking/TrackingDayPanel';
 import TrackingDayPanelHeader from '@/src/features/tracking/TrackingDayPanelHeader';
+import TrackingPointNavigation from '@/src/features/tracking/TrackingPointNavigation';
+import { buildTrackingTimeline } from '@/src/features/tracking/trackingTimeline';
 import type { TrackingTimelineItem } from '@/src/features/tracking/TrackingDayPanel.types';
 import { SearchPickerScreen } from '@/src/features/clientOrders/screen/mobile/SearchPickerScreen';
 import { getRoleDisplayName } from '@/utils/rbacLabels';
@@ -27,10 +29,6 @@ function displayName(user?: TrackingV2User | null) {
 function employeeDescription(user: TrackingV2User) {
   const roles = user.roles?.length ? user.roles : user.role ? [user.role] : [];
   return `${user.department?.name || 'Без отдела'} · ${[...new Set(roles.map(getRoleDisplayName))].join(', ') || 'Роль не указана'}`;
-}
-function currency(value?: string | null) {
-  const number = Number(value);
-  return Number.isFinite(number) ? `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(number)} ₽` : '—';
 }
 function distance(meters = 0) { return meters >= 1000 ? `${(meters / 1000).toFixed(1)} км` : `${meters} м`; }
 function duration(seconds = 0) {
@@ -77,6 +75,8 @@ export default function TrackingServiceScreen() {
   const [dateVisible, setDateVisible] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
   const [detailsExpanded, setDetailsExpanded] = useState(false);
+  const [selectedEventKey, setSelectedEventKey] = useState<string | null>(null);
+  const [panelHeaderHeight, setPanelHeaderHeight] = useState(92);
   const [query, setQuery] = useState('');
   const [usersRetry, setUsersRetry] = useState(0);
   const [usersOffset, setUsersOffset] = useState(0);
@@ -163,7 +163,7 @@ export default function TrackingServiceScreen() {
     }
   }, [selectedDay, selectedUserId]);
   useEffect(() => { void loadDay(); }, [loadDay]);
-  useEffect(() => { setMapFocus(null); setEventsError(null); setVisibleEvents(40); }, [selectionKey]);
+  useEffect(() => { setMapFocus(null); setSelectedEventKey(null); setEventsError(null); setVisibleEvents(40); }, [selectionKey]);
   useEffect(() => { setDetailsExpanded(false); }, [selectedUserId]);
 
   const requestPosition = async () => {
@@ -203,23 +203,25 @@ export default function TrackingServiceScreen() {
       if (mounted.current) setRequesting(false);
     }
   };
-  const events = useMemo<TrackingTimelineItem[]>(() => [
-    // Do not expose later stops before the next page of orders is loaded, or
-    // appending earlier orders would move rows already on screen.
-    ...(currentData?.stops || []).filter((stop) => !currentData?.orderEventsNextCursor || stop.startedAt < (currentData.orderEvents[currentData.orderEvents.length - 1]?.capturedAt || '')).map((stop) => ({
-      key: `stop-${stop.startedAt}`, at: stop.startedAt, icon: 'pause-circle-outline', color: '#D97706',
-      title: `Остановка ${Math.max(1, Math.round(stop.durationSeconds / 60))} мин`, subtitle: `${time(stop.startedAt)}–${time(stop.endedAt)}`,
-      orderGuid: null as string | null, latitude: stop.latitude, longitude: stop.longitude,
-    })),
-    ...(currentData?.orderEvents || []).map((event) => ({
-      key: event.id, at: event.capturedAt, icon: event.eventType === 'CREATED' ? 'file-document-outline' : 'cloud-upload-outline', color: event.status === 'CAPTURED' ? '#16A34A' : '#94A3B8',
-      title: event.eventType === 'CREATED' ? 'Создан заказ' : 'Заказ отправлен', subtitle: `${event.order.number || 'Черновик'} · ${event.order.counterpartyName} · ${currency(event.order.totalAmount)}`,
-      orderGuid: event.order.guid || null, latitude: event.latitude, longitude: event.longitude,
-    })),
-  ].sort((left, right) => Date.parse(left.at) - Date.parse(right.at) || left.key.localeCompare(right.key)), [currentData]);
-  const loadMoreEvents = async () => {
+  const events = useMemo(() => buildTrackingTimeline(currentData), [currentData]);
+  const selectedEventIndex = Math.max(0, events.findIndex((event) => event.key === selectedEventKey));
+  const selectedEvent = events[selectedEventIndex];
+  const selectedEventRef = useRef<string | undefined>(undefined);
+  selectedEventRef.current = selectedEvent?.key;
+  const focusEvent = useCallback((event: TrackingTimelineItem) => {
+    selectedEventRef.current = event.key;
+    setSelectedEventKey(event.key);
+    setMapFocus(event.latitude != null && event.longitude != null
+      ? { key: event.key, latitude: event.latitude, longitude: event.longitude } : null);
+    setDetailsExpanded(false);
+  }, []);
+  useEffect(() => {
+    if (selectedEvent) setMapFocus(selectedEvent.latitude != null && selectedEvent.longitude != null
+      ? { key: selectedEvent.key, latitude: selectedEvent.latitude, longitude: selectedEvent.longitude } : null);
+  }, [selectedEvent?.key, selectedEvent?.latitude, selectedEvent?.longitude]);
+  const loadMoreEvents = async (advanceFrom?: string) => {
     if (loading || eventsRequest.current || !currentData || !selectedUserId) return;
-    if (visibleEvents < events.length) { setVisibleEvents((value) => value + 40); return; }
+    if (!advanceFrom && visibleEvents < events.length) { setVisibleEvents((value) => value + 40); return; }
     const cursor = currentData.orderEventsNextCursor;
     if (!cursor) return;
     const pending = {};
@@ -231,14 +233,26 @@ export default function TrackingServiceScreen() {
     try {
       const page = await fetchTrackingDayEvents(selectedUserId, selectedDay, cursor);
       if (!mounted.current || selectionRef.current !== key || sequence !== loadSequence.current) return;
-      setData((current) => current ? { ...current, orderEventsNextCursor: page.orderEventsNextCursor,
-        orderEvents: [...current.orderEvents, ...page.orderEvents.filter((event) => !current.orderEvents.some((old) => old.id === event.id))] } : current);
+      const nextData = { ...currentData, orderEventsNextCursor: page.orderEventsNextCursor,
+        orderEvents: [...currentData.orderEvents, ...page.orderEvents.filter((event) => !currentData.orderEvents.some((old) => old.id === event.id))] };
+      setData(nextData);
       setVisibleEvents((value) => value + 40);
+      if (advanceFrom && selectedEventRef.current === advanceFrom) {
+        const nextEvents = buildTrackingTimeline(nextData);
+        const next = nextEvents[nextEvents.findIndex((event) => event.key === advanceFrom) + 1];
+        if (next) focusEvent(next);
+      }
     } catch (reason) {
       if (mounted.current && selectionRef.current === key && sequence === loadSequence.current) setEventsError(reason instanceof Error ? reason.message : 'Не удалось загрузить события');
     } finally {
       if (eventsRequest.current === pending) { eventsRequest.current = null; if (mounted.current) setEventsLoading(false); }
     }
+  };
+  const nextEvent = () => {
+    if (loading || eventsLoading) return;
+    const next = events[selectedEventIndex + 1];
+    if (next) focusEvent(next);
+    else void loadMoreEvents(selectedEvent?.key);
   };
   const summary = currentData ? `${distance(currentData.summary.distanceMeters)} · остановки: ${currentData.summary.stopsCount} · заказы: ${currentData.summary.ordersCount}` : loading || initialLoading ? 'Загружаем маршрут…' : 'Нет данных за этот день';
   const closeService = () => { lastService?.clearLastServiceRoute(); router.replace('/services'); };
@@ -272,13 +286,18 @@ export default function TrackingServiceScreen() {
     ListHeaderComponent: details, initialNumToRender: 12, maxToRenderPerBatch: 12, windowSize: 7,
     onEndReachedThreshold: 0.4, onEndReached: () => { if (!eventsError) void loadMoreEvents(); },
     ItemSeparatorComponent: Divider,
-    ListEmptyComponent: <Text style={styles.empty}>{loading ? 'Загружаем события…' : 'За этот день остановок и заказов нет'}</Text>,
+    ListEmptyComponent: <Text style={styles.empty}>{loading ? 'Загружаем события…' : 'За этот день точек и событий нет'}</Text>,
     ListFooterComponent: eventsLoading ? <ActivityIndicator style={styles.empty} /> : eventsError ? <View style={styles.eventRetry}><Text style={styles.errorText}>{eventsError}</Text><IconButton icon="refresh" accessibilityLabel="Повторить загрузку событий" onPress={() => void loadMoreEvents()} /></View> : null,
-    renderItem: ({ item: event }) => <List.Item title={`${time(event.at)} · ${event.title}`} description={event.subtitle} titleNumberOfLines={1} descriptionNumberOfLines={2} style={styles.eventRow} titleStyle={styles.eventTitle} descriptionStyle={styles.eventDescription}
+    extraData: selectedEvent?.key,
+    renderItem: ({ item: event }) => <List.Item title={`${time(event.at)} · ${event.title}`} description={event.subtitle} titleNumberOfLines={1} descriptionNumberOfLines={2} style={[styles.eventRow, event.key === selectedEvent?.key && styles.employeeSelected]} titleStyle={styles.eventTitle} descriptionStyle={styles.eventDescription}
       left={() => <View style={styles.eventIcon}><Icon source={event.icon} color={event.color} size={18} /></View>}
-      onPress={event.latitude != null && event.longitude != null ? () => { setMapFocus({ key: event.key, latitude: event.latitude!, longitude: event.longitude! }); setDetailsExpanded(false); } : undefined}
+      accessibilityState={{ selected: event.key === selectedEvent?.key }} onPress={() => focusEvent(event)}
       right={event.orderGuid ? () => <IconButton style={styles.eventAction} icon="chevron-right" size={20} accessibilityLabel="Открыть заказ" onPress={() => router.push({ pathname: '/services/client_orders', params: { orderGuid: event.orderGuid! } })} /> : undefined} />,
   };
+  const navigation = <TrackingPointNavigation item={selectedEvent} index={selectedEventIndex} count={events.length} hasMore={Boolean(currentData?.orderEventsNextCursor)} loading={loading || eventsLoading} error={eventsError}
+    onPrevious={() => { if (!loading && !eventsLoading && selectedEventIndex > 0) focusEvent(events[selectedEventIndex - 1]); }}
+    onNext={nextEvent} onFocus={() => { if (selectedEvent) focusEvent(selectedEvent); }}
+    onOpenOrder={() => { if (selectedEvent?.orderGuid) router.push({ pathname: '/services/client_orders', params: { orderGuid: selectedEvent.orderGuid } }); }} />;
   const dateControls = <Surface mode="flat" style={styles.dateRow}>
     <IconButton icon="chevron-left" size={24} accessibilityLabel="Предыдущий день" onPress={() => selectDay(trackingShiftDay(selectedDay, -1))} style={styles.dateArrow} />
     <TouchableRipple accessibilityRole="button" accessibilityLabel="Выбрать дату маршрута" onPress={openCalendar} style={styles.dateField}>
@@ -309,7 +328,7 @@ export default function TrackingServiceScreen() {
     />
     <View style={[styles.stage, wide && styles.wideStage]}>
       <View style={styles.mapPane}>
-        <TrackingMap data={currentData} live={currentLive} focus={mapFocus} fitRevision={fitRevision} bottomInset={wide ? bottomInset : bottomInset + 104} />
+        <TrackingMap data={currentData} live={currentLive} focus={mapFocus} fitRevision={fitRevision} bottomInset={wide ? bottomInset : bottomInset + panelHeaderHeight} />
         <View pointerEvents="box-none" style={styles.mapTop}>
           {error || (!selectedUser && initialError) ? <Surface elevation={1} style={styles.error}>
             <Icon source="alert-circle-outline" size={20} color="#B91C1C" /><Text style={styles.errorText}>{error || initialError}</Text>
@@ -323,22 +342,22 @@ export default function TrackingServiceScreen() {
             <IconButton mode="contained" containerColor="#FFFFFF" icon="crosshairs-gps" iconColor="#2563EB" accessibilityLabel="Показать последнюю позицию" disabled={!currentLive?.point} onPress={() => { if (currentLive?.point) { setMapFocus({ key: `live-${Date.now()}`, latitude: currentLive.point.latitude, longitude: currentLive.point.longitude }); setDetailsExpanded(false); } }} />
           </View>
         </View>
-        {!loading && selectedUser && currentData && !currentData.summary.pointsCount ? <Surface elevation={1} style={[styles.noPoints, { bottom: wide ? 52 + bottomInset : 164 + bottomInset }]}><Text variant="bodySmall">За выбранный день маршрут не записан</Text></Surface> : null}
-        <Surface elevation={0} pointerEvents="none" style={[styles.legend, { bottom: wide ? 30 + bottomInset : 130 + bottomInset }]}>
+        {!loading && selectedUser && currentData && !currentData.summary.pointsCount ? <Surface elevation={1} style={[styles.noPoints, { bottom: bottomInset + (wide ? 52 : panelHeaderHeight + 54) }]}><Text variant="bodySmall">За выбранный день маршрут не записан</Text></Surface> : null}
+        <Surface elevation={0} pointerEvents="none" style={[styles.legend, { bottom: bottomInset + (wide ? 30 : panelHeaderHeight + 16) }]}>
           <Legend color="#DC2626" text="Позиция" /><Legend color="#16A34A" text="Заказ" /><Legend color="#D97706" text="Остановка" />
         </Surface>
       </View>
       {wide ? <Surface elevation={1} style={styles.sidebar}>
-        <TrackingDayPanelHeader summary={summary} expanded dateControls={dateControls} onRefresh={() => void loadDay()} refreshing={loading} refreshDisabled={!selectedUser} />
+        <TrackingDayPanelHeader summary={summary} expanded dateControls={dateControls} navigation={navigation} onRefresh={() => void loadDay()} refreshing={loading} refreshDisabled={!selectedUser} />
         <FlatList {...eventListProps} contentContainerStyle={{ paddingBottom: bottomInset + 12 }} />
-      </Surface> : <TrackingDayPanel summary={summary} expanded={detailsExpanded} onExpandedChange={setDetailsExpanded} bottomInset={bottomInset} dateControls={dateControls} onRefresh={() => void loadDay()} refreshing={loading} refreshDisabled={!selectedUser} listProps={eventListProps} />}
+      </Surface> : <TrackingDayPanel summary={summary} expanded={detailsExpanded} onExpandedChange={setDetailsExpanded} bottomInset={bottomInset} dateControls={dateControls} navigation={navigation} onHeaderHeightChange={setPanelHeaderHeight} onRefresh={() => void loadDay()} refreshing={loading} refreshDisabled={!selectedUser} listProps={eventListProps} />}
     </View>
 
     <Modal visible={pickerVisible} onRequestClose={() => setPickerVisible(false)} animationType="slide" statusBarTranslucent>
       <View style={styles.root}>
         <SearchPickerScreen<TrackingV2User>
           visible={pickerVisible} pickerKey="tracking-employees" topInset={insets.top} title="Сотрудники" titleIcon="account-group-outline"
-          onClose={() => setPickerVisible(false)} search={query} searchPlaceholder="ФИО, отдел или роль" searchLoading={usersLoading}
+          onClose={() => setPickerVisible(false)} search={query} searchPlaceholder="ФИО, отдел или роль" searchLoading={usersLoading && usersOffset === 0}
           onSearchChange={(value) => { setQuery(value); setUsersOffset(0); setUsers([]); setUsersHasMore(false); }}
           data={users} keyExtractor={(user) => String(user.id)} extraData={selectedUser?.id}
           contentContainerStyle={{ paddingBottom: bottomInset }}
@@ -351,8 +370,8 @@ export default function TrackingServiceScreen() {
             left={() => <View style={styles.employeeAvatar}>{item.avatarUrl ? <Avatar.Image size={42} source={{ uri: item.avatarUrl }} /> : <Avatar.Text size={42} label={[item.lastName, item.firstName].filter(Boolean).map((part) => part![0]).join('').slice(0, 2) || '?'} style={styles.avatarFallback} color="#2563EB" />}</View>}
             right={(props) => <List.Icon {...props} icon={item.id === selectedUser?.id ? 'check-circle' : 'chevron-right'} color={item.id === selectedUser?.id ? '#16A34A' : '#94A3B8'} />}
           />}
-          ListEmptyComponent={<View style={styles.empty}>{usersLoading ? <ActivityIndicator /> : <Text style={styles.emptyText}>{usersError || 'Сотрудники не найдены'}</Text>}</View>}
-          ListFooterComponent={usersError ? <Button onPress={() => setUsersRetry((value) => value + 1)}>Повторить загрузку</Button> : usersLoading && users.length ? <ActivityIndicator style={styles.empty} /> : null}
+          ListEmptyComponent={usersLoading ? null : <View style={styles.empty}><Text style={styles.emptyText}>{usersError || 'Сотрудники не найдены'}</Text></View>}
+          ListFooterComponent={usersError ? <Button onPress={() => setUsersRetry((value) => value + 1)}>Повторить загрузку</Button> : usersLoading && usersOffset > 0 ? <ActivityIndicator style={styles.empty} /> : null}
           onEndReached={() => { if (usersHasMore && !usersPageInFlight.current && !usersLoading && !usersError) { usersPageInFlight.current = true; setUsersOffset((value) => value + 100); } }}
         />
       </View>

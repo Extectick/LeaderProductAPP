@@ -41,6 +41,15 @@ export default function TrackingMap({ data, live, focus, fitRevision = 0, bottom
 
   useEffect(() => {
     const map = mapRef.current;
+    if (!map || !ready || !focus) return;
+    const element = document.createElement('div');
+    Object.assign(element.style, { width: '28px', height: '28px', borderRadius: '50%', background: 'rgba(37,99,235,0.18)', border: '3px solid #2563EB', boxShadow: '0 0 0 2px white', pointerEvents: 'none' });
+    const marker = new maplibregl.Marker({ element }).setLngLat([focus.longitude, focus.latitude]).addTo(map);
+    return () => { marker.remove(); };
+  }, [ready, focus]);
+
+  useEffect(() => {
+    const map = mapRef.current;
     if (!map || !ready) return;
     const points = data?.polyline || [];
     (map.getSource('route') as maplibregl.GeoJSONSource).setData({

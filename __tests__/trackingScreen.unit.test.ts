@@ -8,15 +8,16 @@ import { requestTrackingPosition } from '../utils/trackingV2Service';
 import { trackingCalendarDate, trackingDayFromCalendar, trackingDayKey, trackingShiftDay } from '../src/features/tracking/trackingPresentation';
 
 const mockReplace = jest.fn();
+const mockPush = jest.fn();
 const mockClearLastService = jest.fn();
 jest.mock('expo-router', () => ({
-  useRouter: () => ({ replace: mockReplace, push: jest.fn() }),
+  useRouter: () => ({ replace: mockReplace, push: mockPush }),
   useFocusEffect: (callback: () => void) => require('react').useEffect(callback, [callback]),
 }));
 jest.mock('../components/AppHeader', () => ({ AppHeader: (props: any) => require('react').createElement('AppHeader', props, props.titleSlot, props.rightSlot) }));
 jest.mock('../components/Navigation/TabBarVisibilityContext', () => ({ useOptionalTabBarVisibility: () => null }));
 jest.mock('../src/features/navigation/LastServiceRouteContext', () => ({ useOptionalLastServiceRoute: () => ({ clearLastServiceRoute: mockClearLastService }) }));
-jest.mock('../src/features/tracking/TrackingDayPanel', () => (props: any) => require('react').createElement('DayPanel', props, props.dateControls, props.listProps.ListHeaderComponent));
+jest.mock('../src/features/tracking/TrackingDayPanel', () => (props: any) => require('react').createElement('DayPanel', props, props.dateControls, props.navigation, props.listProps.ListHeaderComponent));
 jest.mock('../src/features/clientOrders/screen/mobile/SearchPickerScreen', () => ({ SearchPickerScreen: (props: any) => props.visible ? require('react').createElement('SearchPicker', props, props.data.map((item: any, index: number) => require('react').createElement(require('react').Fragment, { key: item.id }, props.renderItem({ item, index })))) : null }));
 jest.mock('../app/(main)/services/tracking/TrackingMap', () => (props: any) => require('react').createElement('TrackingMap', props));
 jest.mock('../utils/trackingService', () => ({ fetchTrackingUsers: jest.fn(), fetchTrackingDay: jest.fn(), fetchTrackingDayEvents: jest.fn(), fetchTrackingLive: jest.fn(), requestLiveLocation: jest.fn(), fetchLocationRequest: jest.fn() }));
@@ -185,4 +186,79 @@ it('does not launch a duplicate JS fix when the native command channel handles i
   await press(() => button('Меню геомаршрута').props.onPress());
   await press(() => screen.root.findAllByType('MenuItem' as any).find((node) => node.props.title === 'Запросить геопозицию')!.props.onPress());
   expect(requestTrackingPosition).not.toHaveBeenCalled();
+});
+
+it('shows only the search spinner on first load and only the footer spinner when paging employees', async () => {
+  await renderScreen();
+  let resolveUsers: (value: unknown) => void = () => {};
+  (fetchTrackingUsers as jest.Mock).mockImplementation(() => new Promise((resolve) => { resolveUsers = resolve; }));
+  await press(() => ripple('Выбрать сотрудника').props.onPress());
+  expect(host('SearchPicker').props.searchLoading).toBe(true);
+  expect(host('SearchPicker').props.ListEmptyComponent).toBeNull();
+  expect(host('SearchPicker').props.ListFooterComponent).toBeNull();
+  await act(async () => resolveUsers(Array.from({ length: 100 }, (_, index) => ({ id: index + 10 }))));
+  await press(() => host('SearchPicker').props.onEndReached());
+  expect(host('SearchPicker').props.searchLoading).toBe(false);
+  expect(host('SearchPicker').props.ListFooterComponent).not.toBeNull();
+  expect(host('SearchPicker').props.data).toHaveLength(100);
+  await act(async () => resolveUsers([]));
+});
+
+const routeEvent = (id: string, hour: number, latitude: number | null = 55) => ({
+  id, eventType: 'CREATED', status: 'CAPTURED', capturedAt: `2026-09-16T0${hour}:00:00Z`, latitude, longitude: latitude == null ? null : 73,
+  order: { guid: id, number: id, counterpartyName: 'Клиент', totalAmount: '100' },
+});
+
+it('navigates chronologically, clears the marker for missing coordinates and opens the selected order', async () => {
+  (fetchTrackingDay as jest.Mock).mockResolvedValue({ ...dayData(today, 2), orderEvents: [routeEvent('a', 6), routeEvent('b', 7, null), routeEvent('c', 8, 56)] });
+  await renderScreen();
+  expect(host('TrackingMap').props.focus.key).toBe('a');
+  expect(button('Предыдущее событие маршрута').props.disabled).toBe(true);
+  await press(() => button('Следующее событие маршрута').props.onPress());
+  expect(host('TrackingMap').props.focus).toBeNull();
+  await press(() => button('Следующее событие маршрута').props.onPress());
+  expect(host('TrackingMap').props.focus.latitude).toBe(56);
+  expect(button('Следующее событие маршрута').props.disabled).toBe(true);
+  await press(() => button('Открыть выбранный заказ').props.onPress());
+  expect(mockPush).toHaveBeenCalledWith({ pathname: '/services/client_orders', params: { orderGuid: 'c' } });
+  await press(() => button('Предыдущее событие маршрута').props.onPress());
+  expect(host('TrackingMap').props.focus).toBeNull();
+});
+
+it('loads the next events page once from the navigator and advances to its first event', async () => {
+  (fetchTrackingDay as jest.Mock).mockResolvedValue({ ...dayData(today, 2), orderEvents: [routeEvent('a', 6)], orderEventsNextCursor: 'next' });
+  (fetchTrackingDayEvents as jest.Mock).mockResolvedValue({ orderEvents: [routeEvent('b', 7), routeEvent('c', 8)], orderEventsNextCursor: null });
+  await renderScreen();
+  await press(() => { button('Следующее событие маршрута').props.onPress(); button('Следующее событие маршрута').props.onPress(); });
+  expect(fetchTrackingDayEvents).toHaveBeenCalledTimes(1);
+  expect(host('TrackingMap').props.focus.key).toBe('b');
+  expect(host('DayPanel').props.listProps.data).toHaveLength(3);
+  expect(fetchTrackingDay).toHaveBeenCalledTimes(1);
+});
+
+it('ignores a delayed navigator page after changing the day', async () => {
+  (fetchTrackingDay as jest.Mock).mockImplementation((_: number, day: string) => Promise.resolve({ ...dayData(day, 2), orderEvents: [routeEvent(day, 6)], orderEventsNextCursor: 'next' }));
+  let resolvePage: (value: unknown) => void = () => {};
+  (fetchTrackingDayEvents as jest.Mock).mockImplementation(() => new Promise((resolve) => { resolvePage = resolve; }));
+  await renderScreen();
+  await press(() => button('Следующее событие маршрута').props.onPress());
+  await press(() => button('Предыдущий день').props.onPress());
+  await act(async () => resolvePage({ orderEvents: [routeEvent('late', 8)], orderEventsNextCursor: null }));
+  expect(host('TrackingMap').props.data.day).toBe(yesterday);
+  expect(host('TrackingMap').props.focus.key).toBe(yesterday);
+});
+
+it('does not steal selection when a row is selected while the next page is loading', async () => {
+  (fetchTrackingDay as jest.Mock).mockResolvedValue({ ...dayData(today, 2), orderEvents: [routeEvent('a', 6), routeEvent('b', 7)], orderEventsNextCursor: 'next' });
+  let resolvePage: (value: unknown) => void = () => {};
+  (fetchTrackingDayEvents as jest.Mock).mockImplementation(() => new Promise((resolve) => { resolvePage = resolve; }));
+  await renderScreen();
+  await press(() => button('Следующее событие маршрута').props.onPress());
+  await press(() => button('Следующее событие маршрута').props.onPress());
+  await press(() => {
+    const list = host('DayPanel').props.listProps;
+    list.renderItem({ item: list.data[0] }).props.onPress();
+  });
+  await act(async () => resolvePage({ orderEvents: [routeEvent('c', 8)], orderEventsNextCursor: null }));
+  expect(host('TrackingMap').props.focus.key).toBe('a');
 });

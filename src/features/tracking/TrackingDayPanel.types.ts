@@ -9,6 +9,8 @@ export type TrackingTimelineItem = {
 export type TrackingDayPanelProps = {
   listProps: FlatListProps<TrackingTimelineItem>;
   dateControls: React.ReactNode;
+  navigation?: React.ReactNode;
+  onHeaderHeightChange?: (height: number) => void;
   onRefresh: () => void;
   refreshing: boolean;
   refreshDisabled: boolean;

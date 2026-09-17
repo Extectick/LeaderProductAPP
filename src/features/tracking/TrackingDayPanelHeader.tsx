@@ -2,11 +2,12 @@ import React from 'react';
 import { StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 import { IconButton, Text, TouchableRipple } from 'react-native-paper';
 
-export default function TrackingDayPanelHeader({ summary, expanded, onPress, dateControls, onRefresh, refreshing, refreshDisabled, onLayout }: {
+export default function TrackingDayPanelHeader({ summary, expanded, onPress, dateControls, navigation, onRefresh, refreshing, refreshDisabled, onLayout }: {
   summary: string;
   expanded: boolean;
   onPress?: () => void;
   dateControls: React.ReactNode;
+  navigation?: React.ReactNode;
   onRefresh: () => void;
   refreshing: boolean;
   refreshDisabled: boolean;
@@ -22,6 +23,7 @@ export default function TrackingDayPanelHeader({ summary, expanded, onPress, dat
         {onPress ? <IconButton icon={expanded ? 'chevron-down' : 'chevron-up'} size={24} accessibilityLabel={expanded ? 'Свернуть список событий' : 'Развернуть список событий'} onPress={onPress} style={styles.action} /> : null}
       </View>
       {dateControls}
+      {navigation}
     </View>
   );
 }
