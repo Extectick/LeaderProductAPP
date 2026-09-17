@@ -34,8 +34,10 @@ it('keeps the date and refresh action after completion or a failed refresh', asy
   expect(screen.root.findByType('TouchableRipple' as any).props.accessibilityLabel).toContain('10.09.');
   expect(screen.root.findByType('TouchableRipple' as any).props.disabled).toBe(false);
   await act(async () => { screen.update(React.createElement(OfflineDataBanner, { ...props, ready: true, syncedAt: '2026-09-10T10:00:00Z', error: 'Нет сети' })); });
-  expect(screen.root.findByType('TouchableRipple' as any).props.accessibilityLabel).toContain('Не обновлено');
-  expect(screen.root.findByType('TouchableRipple' as any).props.accessibilityLabel).toContain('10.09.');
+  expect(screen.root.findByType('TouchableRipple' as any).props.accessibilityLabel).toBe('Нет сети');
+  expect(screen.root.findByType('TouchableRipple' as any).props.accessibilityHint).toContain('10.09.');
+  expect(screen.root.findByType('PaperText' as any).props.children).toBe('Нет сети');
+  expect(screen.root.findByType('PaperText' as any).props.numberOfLines).toBe(2);
 });
 it('hides product freshness online and restores the compact note offline', async () => {
   await render(React.createElement(OfflineProductDataNote, { online: true, syncedAt: '2026-09-10T10:00:00Z' }));

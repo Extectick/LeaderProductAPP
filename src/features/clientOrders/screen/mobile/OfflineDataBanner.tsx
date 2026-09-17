@@ -29,7 +29,7 @@ type Props = {
 export function OfflineDataBanner({ ready, syncedAt, loading, progress, error, disabled, onRefresh }: Props) {
   const date = ready ? timestamp(syncedAt) : null;
   const label = loading ? 'Загружаем данные на телефон'
-    : error ? date ? `Не обновлено · на телефоне ${date}` : error
+    : error ? error
       : date ? `Данные на телефоне: ${date}` : 'Загрузить данные для офлайна';
   const value = typeof progress === 'number' && Number.isFinite(progress) ? Math.max(0, Math.min(1, progress)) : null;
   return (
@@ -37,7 +37,9 @@ export function OfflineDataBanner({ ready, syncedAt, loading, progress, error, d
       testID="offline-data-banner"
       accessibilityRole="button"
       accessibilityLabel={label}
-      accessibilityHint={error || 'Скачать номенклатуру, справочники, цены и остатки для работы без сети'}
+      accessibilityHint={error
+        ? `${date ? `На телефоне сохранены данные: ${date}. ` : ''}Нажмите, чтобы повторить загрузку`
+        : 'Скачать номенклатуру, справочники, цены и остатки для работы без сети'}
       accessibilityState={{ disabled: !!disabled || loading, busy: loading }}
       disabled={!!disabled || loading}
       onPress={onRefresh}
@@ -46,7 +48,7 @@ export function OfflineDataBanner({ ready, syncedAt, loading, progress, error, d
     >
       <View style={styles.row}>
         <Icon source={error && !loading ? 'alert-circle-outline' : 'database-sync-outline'} size={18} color="#6D28D9" />
-        <Text numberOfLines={1} style={styles.label}>{label}</Text>
+        <Text numberOfLines={error && !loading ? 2 : 1} style={styles.label}>{label}</Text>
         {loading && value !== null ? <Text style={styles.percent}>{Math.floor(value * 100)}%</Text> : null}
         {!loading ? <Icon source={ready ? 'refresh' : 'download'} size={18} color="#6D28D9" /> : null}
         {loading ? <ProgressBar
