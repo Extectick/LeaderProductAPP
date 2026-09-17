@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, Modal, Platform, ScrollView, StyleSheet, View, useWindowDimensions, type FlatListProps } from 'react-native';
+import { BackHandler, FlatList, Modal, Platform, ScrollView, StyleSheet, View, useWindowDimensions, type FlatListProps } from 'react-native';
 import { ActivityIndicator, Avatar, Button, Dialog, Divider, Icon, IconButton, List, Menu, Portal, Surface, Text, TouchableRipple } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -255,7 +255,24 @@ export default function TrackingServiceScreen() {
     else void loadMoreEvents(selectedEvent?.key);
   };
   const summary = currentData ? `${distance(currentData.summary.distanceMeters)} · остановки: ${currentData.summary.stopsCount} · заказы: ${currentData.summary.ordersCount}` : loading || initialLoading ? 'Загружаем маршрут…' : 'Нет данных за этот день';
-  const closeService = () => { lastService?.clearLastServiceRoute(); router.replace('/services'); };
+  const closeService = useCallback(() => {
+    lastService?.clearLastServiceRoute();
+    router.replace('/services');
+  }, [lastService, router]);
+  useFocusEffect(useCallback(() => {
+    if (Platform.OS !== 'android') return;
+    // A restored service replaces the catalog and may have no back stack.
+    // Consume Android Back just like the header, only while this screen is active.
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (pickerVisible) setPickerVisible(false);
+      else if (menuVisible) setMenuVisible(false);
+      else if (dateVisible) setDateVisible(false);
+      else if (detailsExpanded && !wide) setDetailsExpanded(false);
+      else closeService();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [closeService, dateVisible, detailsExpanded, menuVisible, pickerVisible, wide]));
   const fitRoute = () => { setMapFocus(null); setFitRevision((value) => value + 1); setDetailsExpanded(false); };
   const selectDay = (day: string) => {
     if (/^\d{4}-\d{2}-\d{2}$/.test(day) && day <= trackingDayKey(new Date()) && trackingDayFromCalendar(trackingCalendarDate(day)) === day) setSelectedDay(day);

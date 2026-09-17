@@ -1,7 +1,7 @@
 import { API_ENDPOINTS } from './apiEndpoints';
 import { apiClient } from './apiClient';
 import type { OrderGeoEventInput } from './orderGeo';
-import { toUserErrorMessage } from '@/src/shared/errors/userErrorMessage';
+import { isNetworkUnavailableError, toUserErrorMessage } from '@/src/shared/errors/userErrorMessage';
 import { getCatalogProductsByGuids, scheduleProductCatalogSync, searchCatalogProducts } from '@/src/features/productCatalog';
 import { getServerStatus } from '@/src/shared/network/serverStatus';
 import {
@@ -806,8 +806,37 @@ async function getPagedSelector<T>(
     const res = await apiClient<void, { items: T[] }>(path, {
       timeoutMs: CLIENT_ORDERS_REQUEST_TIMEOUT_MS,
     });
+    if (!res.ok || !res.data) throwApiError(fallbackMessage, res);
     return mapPagedResponse(res, fallbackMessage);
   });
+}
+
+async function getReferenceSelector<T>(
+  loadOnline: () => Promise<PagedResult<T>>,
+  loadOffline: () => Promise<PagedResult<T> | null>
+): Promise<PagedResult<T>> {
+  const readOffline = async () => {
+    try { return await loadOffline(); }
+    catch { return null; } // SQLite is a fallback, never a prerequisite for an API read.
+  };
+  if (!getServerStatus().isReachable) {
+    const local = await readOffline();
+    if (local) return local;
+    // An earlier network failure is not proof that the device is still offline.
+    // Without usable local data, try the API rather than returning an empty list.
+  }
+  try {
+    return await loadOnline();
+  } catch (error) {
+    const status = (error as { status?: number } | null)?.status;
+    const transientStatus = status === 0 || status === 408 || status === 502 || status === 503 || status === 504;
+    // Never hide authorization, validation or cancellation failures behind cached data.
+    if (transientStatus || (status === undefined && isNetworkUnavailableError(error))) {
+      const local = await readOffline();
+      if (local) return local;
+    }
+    throw error;
+  }
 }
 
 async function getOfflineSelector<T>(
@@ -816,8 +845,10 @@ async function getOfflineSelector<T>(
   mapper: (item: any) => T
 ) {
   if (!(await hasActiveOfflineEntity(entity))) return null;
+  const stored = await readActiveOfflineEntityItems<any>(entity);
+  if (!stored.length) return null;
   const search = (params.search || '').trim().toLocaleLowerCase('ru');
-  const all = (await readActiveOfflineEntityItems<any>(entity)).filter((item) => {
+  const all = stored.filter((item) => {
     const counterpartyGuid = item.counterpartyGuid ?? item.counterparty?.guid;
     const organizationGuid = item.organizationGuid ?? item.organization?.guid;
     if (params.counterpartyGuid && counterpartyGuid !== params.counterpartyGuid) return false;
@@ -846,14 +877,16 @@ export async function searchClientOrderCounterparties(params?: {
   debtStatus?: ClientOrderDebtStatus;
 }) {
   const input = params || {};
-  const local = await getOfflineSelector<ClientOrderCounterpartyOption>('counterparties', input, (item) => ({
-    ...item, hasDebt: false, shipmentProhibited: false, debtReason: null,
-  }));
-  if (local && input.debtStatus !== 'with_debt') return local;
-  return getPagedSelector<ClientOrderCounterpartyOption>(
-    API_ENDPOINTS.CLIENT_ORDERS.COUNTERPARTIES,
-    { ...(params || {}), debtStatus: params?.debtStatus ?? 'all' },
-    'Не удалось загрузить контрагентов'
+  return getReferenceSelector(
+    () => getPagedSelector<ClientOrderCounterpartyOption>(
+      API_ENDPOINTS.CLIENT_ORDERS.COUNTERPARTIES,
+      { ...input, debtStatus: input.debtStatus ?? 'all' },
+      'Не удалось загрузить контрагентов'
+    ),
+    () => input.debtStatus && input.debtStatus !== 'all' ? Promise.resolve(null)
+      : getOfflineSelector<ClientOrderCounterpartyOption>('counterparties', input, (item) => ({
+        ...item, hasDebt: false, shipmentProhibited: false, debtReason: null,
+      }))
   );
 }
 
@@ -866,19 +899,18 @@ export async function searchClientOrderAgreements(params?: {
   includeInactive?: boolean;
 }) {
   const input = params || {};
-  const local = await getOfflineSelector<ClientOrderAgreementOption>('agreements', input, (item) => ({
-    ...item,
-    counterpartyGuid: item.counterparty?.guid ?? item.counterpartyGuid ?? null,
-    organizationGuid: item.organization?.guid ?? item.organizationGuid ?? null,
-    contractGuid: item.contract?.guid ?? item.contractGuid ?? null,
-    warehouseGuid: item.warehouse?.guid ?? item.warehouseGuid ?? null,
-    priceTypeGuid: item.priceType?.guid ?? item.priceTypeGuid ?? null,
-  }));
-  if (local) return local;
-  return getPagedSelector<ClientOrderAgreementOption>(
-    API_ENDPOINTS.CLIENT_ORDERS.AGREEMENTS,
-    params || {},
-    'Не удалось загрузить соглашения'
+  return getReferenceSelector(
+    () => getPagedSelector<ClientOrderAgreementOption>(
+      API_ENDPOINTS.CLIENT_ORDERS.AGREEMENTS, input, 'Не удалось загрузить соглашения'
+    ),
+    () => getOfflineSelector<ClientOrderAgreementOption>('agreements', input, (item) => ({
+      ...item,
+      counterpartyGuid: item.counterparty?.guid ?? item.counterpartyGuid ?? null,
+      organizationGuid: item.organization?.guid ?? item.organizationGuid ?? null,
+      contractGuid: item.contract?.guid ?? item.contractGuid ?? null,
+      warehouseGuid: item.warehouse?.guid ?? item.warehouseGuid ?? null,
+      priceTypeGuid: item.priceType?.guid ?? item.priceTypeGuid ?? null,
+    }))
   );
 }
 
@@ -891,16 +923,15 @@ export async function searchClientOrderContracts(params?: {
   includeInactive?: boolean;
 }) {
   const input = params || {};
-  const local = await getOfflineSelector<ClientOrderContractOption>('contracts', input, (item) => ({
-    ...item,
-    counterpartyGuid: item.counterparty?.guid ?? item.counterpartyGuid ?? null,
-    organizationGuid: item.organization?.guid ?? item.organizationGuid ?? null,
-  }));
-  if (local) return local;
-  return getPagedSelector<ClientOrderContractOption>(
-    API_ENDPOINTS.CLIENT_ORDERS.CONTRACTS,
-    params || {},
-    'Не удалось загрузить договоры'
+  return getReferenceSelector(
+    () => getPagedSelector<ClientOrderContractOption>(
+      API_ENDPOINTS.CLIENT_ORDERS.CONTRACTS, input, 'Не удалось загрузить договоры'
+    ),
+    () => getOfflineSelector<ClientOrderContractOption>('contracts', input, (item) => ({
+      ...item,
+      counterpartyGuid: item.counterparty?.guid ?? item.counterpartyGuid ?? null,
+      organizationGuid: item.organization?.guid ?? item.organizationGuid ?? null,
+    }))
   );
 }
 
@@ -913,12 +944,11 @@ export async function searchClientOrderWarehouses(params?: {
   includeInactive?: boolean;
 }) {
   const input = params || {};
-  const local = await getOfflineSelector<ClientOrderWarehouseOption>('warehouses', input, (item) => item);
-  if (local) return local;
-  return getPagedSelector<ClientOrderWarehouseOption>(
-    API_ENDPOINTS.CLIENT_ORDERS.WAREHOUSES,
-    params || {},
-    'Не удалось загрузить склады'
+  return getReferenceSelector(
+    () => getPagedSelector<ClientOrderWarehouseOption>(
+      API_ENDPOINTS.CLIENT_ORDERS.WAREHOUSES, input, 'Не удалось загрузить склады'
+    ),
+    () => getOfflineSelector<ClientOrderWarehouseOption>('warehouses', input, (item) => item)
   );
 }
 
@@ -929,12 +959,11 @@ export async function searchClientOrderPriceTypes(params?: {
   includeInactive?: boolean;
 }) {
   const input = params || {};
-  const local = await getOfflineSelector<ClientOrderPriceTypeOption>('price-types', input, (item) => item);
-  if (local) return local;
-  return getPagedSelector<ClientOrderPriceTypeOption>(
-    API_ENDPOINTS.CLIENT_ORDERS.PRICE_TYPES,
-    params || {},
-    'Не удалось загрузить виды цен'
+  return getReferenceSelector(
+    () => getPagedSelector<ClientOrderPriceTypeOption>(
+      API_ENDPOINTS.CLIENT_ORDERS.PRICE_TYPES, input, 'Не удалось загрузить виды цен'
+    ),
+    () => getOfflineSelector<ClientOrderPriceTypeOption>('price-types', input, (item) => item)
   );
 }
 
@@ -947,15 +976,14 @@ export async function searchClientOrderDeliveryAddresses(params?: {
   includeInactive?: boolean;
 }) {
   const input = params || {};
-  const local = await getOfflineSelector<ClientOrderDeliveryAddressOption>('delivery-addresses', input, (item) => ({
-    ...item,
-    counterpartyGuid: item.counterparty?.guid ?? item.counterpartyGuid ?? null,
-  }));
-  if (local) return local;
-  return getPagedSelector<ClientOrderDeliveryAddressOption>(
-    API_ENDPOINTS.CLIENT_ORDERS.DELIVERY_ADDRESSES,
-    params || {},
-    'Не удалось загрузить адреса доставки'
+  return getReferenceSelector(
+    () => getPagedSelector<ClientOrderDeliveryAddressOption>(
+      API_ENDPOINTS.CLIENT_ORDERS.DELIVERY_ADDRESSES, input, 'Не удалось загрузить адреса доставки'
+    ),
+    () => getOfflineSelector<ClientOrderDeliveryAddressOption>('delivery-addresses', input, (item) => ({
+      ...item,
+      counterpartyGuid: item.counterparty?.guid ?? item.counterpartyGuid ?? null,
+    }))
   );
 }
 

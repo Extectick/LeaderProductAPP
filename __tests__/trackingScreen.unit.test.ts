@@ -1,6 +1,6 @@
 import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { Platform } from 'react-native';
+import { BackHandler, Platform } from 'react-native';
 import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import TrackingServiceScreen from '../app/(main)/services/tracking';
 import { fetchTrackingDay, fetchTrackingDayEvents, fetchTrackingLive, fetchTrackingUsers, requestLiveLocation, fetchLocationRequest } from '../utils/trackingService';
@@ -10,9 +10,10 @@ import { trackingCalendarDate, trackingDayFromCalendar, trackingDayKey, tracking
 const mockReplace = jest.fn();
 const mockPush = jest.fn();
 const mockClearLastService = jest.fn();
+let mockFocused = true;
 jest.mock('expo-router', () => ({
   useRouter: () => ({ replace: mockReplace, push: mockPush }),
-  useFocusEffect: (callback: () => void) => require('react').useEffect(callback, [callback]),
+  useFocusEffect: (callback: () => void) => require('react').useEffect(() => mockFocused ? callback() : undefined, [callback, mockFocused]),
 }));
 jest.mock('../components/AppHeader', () => ({ AppHeader: (props: any) => require('react').createElement('AppHeader', props, props.titleSlot, props.rightSlot) }));
 jest.mock('../components/Navigation/TabBarVisibilityContext', () => ({ useOptionalTabBarVisibility: () => null }));
@@ -43,9 +44,17 @@ const host = (name: string) => screen.root.findByType(name as any);
 const button = (label: string) => screen.root.findAllByType('IconButton' as any).find((node) => node.props.accessibilityLabel === label)!;
 const ripple = (label: string) => screen.root.findAllByType('TouchableRipple' as any).find((node) => node.props.accessibilityLabel?.startsWith(label))!;
 const press = async (action: () => void) => { await act(async () => { action(); }); };
+const hardwareBackHandlers = new Set<() => boolean | null | undefined>();
+const hardwareBack = () => [...hardwareBackHandlers].reverse().some((handler) => handler() === true);
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockFocused = true;
+  hardwareBackHandlers.clear();
+  jest.spyOn(BackHandler, 'addEventListener').mockImplementation((_, handler) => {
+    hardwareBackHandlers.add(handler);
+    return { remove: () => { hardwareBackHandlers.delete(handler); } };
+  });
   Platform.OS = 'android';
   (fetchTrackingUsers as jest.Mock).mockImplementation((_: string, options: any) => Promise.resolve(options?.self ? [users[1]] : users));
   (fetchTrackingDay as jest.Mock).mockImplementation((_: number, day: string) => Promise.resolve(dayData(day, 10)));
@@ -54,6 +63,7 @@ beforeEach(() => {
 });
 afterEach(async () => {
   if (screen) await act(async () => screen.unmount());
+  jest.restoreAllMocks();
   jest.useRealTimers();
 });
 async function renderScreen() {
@@ -135,6 +145,58 @@ it('returns to the services catalog and clears the automatic return route', asyn
   await press(() => host('AppHeader').props.onBack());
   expect(mockClearLastService).toHaveBeenCalledTimes(1);
   expect(mockReplace).toHaveBeenCalledWith('/services');
+});
+
+it('consumes Android Back and returns to services even when restored without navigation history', async () => {
+  await renderScreen();
+  await press(() => { expect(hardwareBack()).toBe(true); });
+  expect(mockClearLastService).toHaveBeenCalledTimes(1);
+  expect(mockReplace).toHaveBeenCalledWith('/services');
+});
+
+it('closes the menu, then collapses day details before leaving the service on Android Back', async () => {
+  await renderScreen();
+  await press(() => host('DayPanel').props.onExpandedChange(true));
+  await press(() => button('Меню геомаршрута').props.onPress());
+  await press(() => { expect(hardwareBack()).toBe(true); });
+  expect(host('Menu').props.visible).toBe(false);
+  expect(host('DayPanel').props.expanded).toBe(true);
+  expect(mockReplace).not.toHaveBeenCalled();
+  await press(() => { expect(hardwareBack()).toBe(true); });
+  expect(host('DayPanel').props.expanded).toBe(false);
+  expect(mockReplace).not.toHaveBeenCalled();
+  await press(() => { expect(hardwareBack()).toBe(true); });
+  expect(mockReplace).toHaveBeenCalledWith('/services');
+});
+
+it('keeps the service open when Android Back dismisses the native employee picker', async () => {
+  await renderScreen();
+  await press(() => ripple('Выбрать сотрудника').props.onPress());
+  const modal = screen.root.findAll((node) => node.props.visible === true && typeof node.props.onRequestClose === 'function')[0];
+  await press(() => modal.props.onRequestClose());
+  expect(screen.root.findAllByType('SearchPicker' as any)).toHaveLength(0);
+  expect(mockReplace).not.toHaveBeenCalled();
+});
+
+it('removes the Android Back handler on blur and unmount, and restores it on refocus', async () => {
+  await renderScreen();
+  expect(hardwareBackHandlers.size).toBe(1);
+  mockFocused = false;
+  await act(async () => screen.update(React.createElement(TrackingServiceScreen)));
+  expect(hardwareBackHandlers.size).toBe(0);
+  expect(hardwareBack()).toBe(false);
+  expect(mockReplace).not.toHaveBeenCalled();
+  mockFocused = true;
+  await act(async () => screen.update(React.createElement(TrackingServiceScreen)));
+  expect(hardwareBackHandlers.size).toBe(1);
+  await act(async () => screen.unmount());
+  expect(hardwareBackHandlers.size).toBe(0);
+});
+
+it('does not install an Android Back handler on web', async () => {
+  Platform.OS = 'web';
+  await renderScreen();
+  expect(hardwareBackHandlers.size).toBe(0);
 });
 
 it('preserves a calendar selection near timezone and month boundaries', () => {
