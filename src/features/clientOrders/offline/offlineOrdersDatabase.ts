@@ -375,6 +375,26 @@ export async function isOfflineDataReady(userId: string) {
   );
 }
 
+// One timestamp for a completely checked local dataset, not a partially loaded page.
+export async function readOfflineDataSyncTime(userId: string) {
+  const db = await getCatalogDatabase();
+  if (!db) return null;
+  const row = await db.getFirstAsync<{ value: string }>(
+    'SELECT value FROM catalog_meta WHERE key = ?', `offlineLastSyncedAt:${userId}`
+  );
+  return row?.value ?? null;
+}
+
+export async function markOfflineDataSynced(userId: string) {
+  const db = await getCatalogDatabase();
+  if (!db) return false;
+  await db.runAsync(
+    'INSERT INTO catalog_meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+    `offlineLastSyncedAt:${userId}`, new Date().toISOString()
+  );
+  return true;
+}
+
 export async function readOfflineDrafts(userId: string): Promise<StoredOfflineDraft[]> {
   const db = await getCatalogDatabase();
   if (!db) return [];

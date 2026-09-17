@@ -87,11 +87,12 @@ import {
 import {
   isOfflineDataReady,
   readOfflineDatasetMeta,
+  readOfflineDataSyncTime,
   readOfflineDrafts,
   replaceOfflineDrafts,
   type OfflineDraftStatus,
 } from './offline/offlineOrdersDatabase';
-import { scheduleOfflineOrderDataSync, syncOfflineOrderData } from './offline/offlineOrdersSync';
+import { isOfflineOrderDataSyncing, syncOfflineOrderData } from './offline/offlineOrdersSync';
 import { captureOrderGeoEvent, type OrderGeoEventInput } from '@/utils/orderGeo';
 
 type AutosaveState = 'idle' | 'saved' | 'error';
@@ -1156,6 +1157,12 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const [offlineDataReady, setOfflineDataReady] = React.useState(false);
   const [offlineDataSyncedAt, setOfflineDataSyncedAt] = React.useState<string | null>(null);
   const [syncingOfflineData, setSyncingOfflineData] = React.useState(false);
+  const [offlineDataLoadedAt, setOfflineDataLoadedAt] = React.useState<string | null>(null);
+  const [offlineDataProgress, setOfflineDataProgress] = React.useState<number | null>(null);
+  const [offlineDataError, setOfflineDataError] = React.useState<string | null>(null);
+  const offlineRefreshRef = React.useRef<{ userId: string; promise: Promise<boolean> } | null>(null);
+  const activeOfflineUserRef = React.useRef<string | null>(offlineUserId);
+  activeOfflineUserRef.current = offlineUserId;
   const [ordersMeta, setOrdersMeta] = React.useState<{
     total: number;
     limit: number;
@@ -2609,42 +2616,87 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     [hasMoreOrders, loadOrders]
   );
 
-  const refreshOfflineData = React.useCallback(async (force = false) => {
-    if (Platform.OS === 'web' || offlineUserId === 'anonymous') return false;
-    setSyncingOfflineData(true);
-    try {
-      const result = await syncOfflineOrderData(offlineUserId, { force, silent: !force });
-      const [ready, stockMeta, priceMeta] = await Promise.all([
-        isOfflineDataReady(offlineUserId),
-        readOfflineDatasetMeta(offlineUserId, 'stock'),
-        readOfflineDatasetMeta(offlineUserId, 'selling-prices'),
-      ]);
-      setOfflineDataReady(ready);
-      setOfflineDataSyncedAt(stockMeta?.lastSyncedAt ?? priceMeta?.lastSyncedAt ?? null);
-      return result;
-    } finally {
-      setSyncingOfflineData(false);
-    }
-  }, [offlineUserId]);
-
-  React.useEffect(() => {
-    if (!filtersHydrated || !deviceDraftsHydrated || offlineUserId === 'anonymous') return;
-    void Promise.all([
+  const readOfflineStatus = React.useCallback(async () => {
+    const [ready, stockMeta, priceMeta, loadedAt] = await Promise.all([
       isOfflineDataReady(offlineUserId),
       readOfflineDatasetMeta(offlineUserId, 'stock'),
       readOfflineDatasetMeta(offlineUserId, 'selling-prices'),
-    ]).then(([ready, stockMeta, priceMeta]) => {
+      readOfflineDataSyncTime(offlineUserId),
+    ]);
+    if (activeOfflineUserRef.current === offlineUserId) {
       setOfflineDataReady(ready);
-      setOfflineDataSyncedAt(stockMeta?.lastSyncedAt ?? priceMeta?.lastSyncedAt ?? null);
-    });
-    scheduleOfflineOrderDataSync(offlineUserId);
-    const subscription = Platform.OS !== 'web' && typeof AppState?.addEventListener === 'function'
+      // Show the older source timestamp: a recent download cannot make old prices fresh.
+      const sourceTimes = [stockMeta, priceMeta].map((meta) => meta?.lastSourceUpdateAt ?? meta?.lastSyncedAt)
+        .filter((value): value is string => !!value && Number.isFinite(Date.parse(value)));
+      setOfflineDataSyncedAt(sourceTimes.length ? sourceTimes.sort((a, b) => Date.parse(a) - Date.parse(b))[0] : null);
+      setOfflineDataLoadedAt(loadedAt ?? (ready ? stockMeta?.lastSyncedAt ?? priceMeta?.lastSyncedAt ?? null : null));
+    }
+    return ready;
+  }, [offlineUserId]);
+
+  const refreshOfflineData = React.useCallback((force = false): Promise<boolean> => {
+    if (Platform.OS === 'web' || offlineUserId === 'anonymous') return Promise.resolve(false);
+    if (offlineRefreshRef.current?.userId === offlineUserId) return offlineRefreshRef.current.promise;
+    setSyncingOfflineData(true);
+    setOfflineDataProgress(null);
+    setOfflineDataError(null);
+    const promise = (async () => {
+      try {
+        const result = await syncOfflineOrderData(offlineUserId, {
+          force, silent: !force,
+          onProgress: ({ progress, error }) => {
+            if (activeOfflineUserRef.current !== offlineUserId) return;
+            setOfflineDataProgress(progress);
+            setOfflineDataError(error);
+          },
+        });
+        await readOfflineStatus();
+        return result;
+      } catch (error) {
+        if (activeOfflineUserRef.current === offlineUserId) {
+          setOfflineDataError(toUserErrorMessage(error, 'Не удалось обновить данные. Нажмите, чтобы повторить'));
+        }
+        return false;
+      } finally {
+        if (activeOfflineUserRef.current === offlineUserId) setSyncingOfflineData(false);
+        if (offlineRefreshRef.current?.userId === offlineUserId) offlineRefreshRef.current = null;
+      }
+    })();
+    offlineRefreshRef.current = { userId: offlineUserId, promise };
+    return promise;
+  }, [offlineUserId, readOfflineStatus]);
+
+  React.useEffect(() => {
+    activeOfflineUserRef.current = offlineUserId;
+    setOfflineDataReady(false);
+    setOfflineDataSyncedAt(null);
+    setOfflineDataLoadedAt(null);
+    setOfflineDataError(null);
+    setOfflineDataProgress(null);
+    setSyncingOfflineData(false);
+    return () => { activeOfflineUserRef.current = null; };
+  }, [offlineUserId]);
+
+  React.useEffect(() => {
+    if (Platform.OS === 'web' || !filtersHydrated || !deviceDraftsHydrated || offlineUserId === 'anonymous') return;
+    let cancelled = false;
+    const refreshPreparedData = async () => {
+      try {
+        const ready = await readOfflineStatus();
+        // The first preparation is explicit; subsequent checks retain the existing background behavior.
+        if (!cancelled && (isOfflineOrderDataSyncing(offlineUserId) || (ready && getServerStatus().isReachable))) {
+          await refreshOfflineData();
+        }
+      } catch { /* A local database failure must not block online orders. */ }
+    };
+    void refreshPreparedData();
+    const subscription = typeof AppState?.addEventListener === 'function'
       ? AppState.addEventListener('change', (state) => {
-          if (state === 'active') void refreshOfflineData();
+          if (state === 'active') void refreshPreparedData();
         })
       : null;
-    return () => subscription?.remove();
-  }, [deviceDraftsHydrated, filtersHydrated, offlineUserId, refreshOfflineData]);
+    return () => { cancelled = true; subscription?.remove(); };
+  }, [deviceDraftsHydrated, filtersHydrated, offlineUserId, readOfflineStatus, refreshOfflineData]);
 
   React.useEffect(() => {
     const wasReachable = previousServerReachableRef.current;
@@ -2653,10 +2705,10 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
     // Connectivity refreshes the offline reference snapshot only. Durable
     // documents are deliberately never submitted without an explicit action.
-    void refreshOfflineData();
+    if (offlineDataReady) void refreshOfflineData();
     void loadSettings();
     void refreshTodaySummary();
-  }, [loadSettings, ordersPollingEnabled, refreshOfflineData, refreshTodaySummary, serverStatus.isReachable]);
+  }, [loadSettings, offlineDataReady, ordersPollingEnabled, refreshOfflineData, refreshTodaySummary, serverStatus.isReachable]);
 
   React.useEffect(() => {
     const connectionUnavailable = !!ordersError && isSharedNetworkUnavailableError(ordersError);
@@ -3916,6 +3968,9 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     offlineDataReady,
     offlineDataSyncedAt,
     syncingOfflineData,
+    offlineDataLoadedAt,
+    offlineDataProgress,
+    offlineDataError,
     refreshOfflineData,
     syncDeviceDrafts,
     openLatestDraftIfAny: () => latestDraftOrder ? selectOrder(latestDraftOrder.guid) : Promise.resolve(),

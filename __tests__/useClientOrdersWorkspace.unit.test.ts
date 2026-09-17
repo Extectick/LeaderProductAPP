@@ -27,12 +27,14 @@ jest.mock('@/utils/androidFileDownload', () => ({
 jest.mock('../src/features/clientOrders/offline/offlineOrdersDatabase', () => ({
   isOfflineDataReady: jest.fn(async () => false),
   readOfflineDatasetMeta: jest.fn(async () => null),
+  readOfflineDataSyncTime: jest.fn(async () => null),
   readOfflineDrafts: jest.fn(async () => []),
   replaceOfflineDrafts: jest.fn(async () => true),
 }));
 
 jest.mock('../src/features/clientOrders/offline/offlineOrdersSync', () => ({
   scheduleOfflineOrderDataSync: jest.fn(),
+  isOfflineOrderDataSyncing: jest.fn(() => false),
   syncOfflineOrderData: jest.fn(async () => false),
 }));
 
@@ -78,6 +80,8 @@ jest.mock('@/utils/clientOrdersService', () => ({
 import { AuthContext } from '@/context/AuthContext';
 import { useClientOrdersWorkspace } from '../src/features/clientOrders/useClientOrdersWorkspace';
 import { captureOrderGeoEvent } from '@/utils/orderGeo';
+import { isOfflineDataReady, readOfflineDataSyncTime, readOfflineDatasetMeta } from '../src/features/clientOrders/offline/offlineOrdersDatabase';
+import { syncOfflineOrderData } from '../src/features/clientOrders/offline/offlineOrdersSync';
 import {
   createClientOrder,
   getClientOrder,
@@ -171,6 +175,48 @@ describe('useClientOrdersWorkspace', () => {
 
   afterEach(() => {
     jest.useRealTimers();
+  });
+
+  it('prepares offline data on tap, shares progress and keeps the last date after a failed refresh', async () => {
+    jest.mocked(getClientOrders).mockResolvedValue({ items: [], meta: { total: 0, limit: 20, offset: 0, statusCounts: {} } } as any);
+    jest.mocked(isOfflineDataReady).mockResolvedValue(false);
+    jest.mocked(readOfflineDataSyncTime).mockResolvedValue(null);
+    jest.mocked(readOfflineDatasetMeta).mockResolvedValue(null);
+    let workspace!: ReturnType<typeof useClientOrdersWorkspace>;
+    const Harness = () => { workspace = useClientOrdersWorkspace(); return null; };
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = TestRenderer.create(React.createElement(AuthContext.Provider, {
+      value: { isLoading: false, isAuthenticated: true, profile: { id: 1 }, setAuthenticated: jest.fn(), setProfile: jest.fn(), signOut: jest.fn() } as any,
+    }, React.createElement(Harness))); });
+    await flush();
+    expect(syncOfflineOrderData).not.toHaveBeenCalled();
+    let finish!: (value: boolean) => void;
+    jest.mocked(syncOfflineOrderData).mockImplementation((_, options) => {
+      options?.onProgress?.({ progress: 0.4, error: null });
+      return new Promise((resolve) => { finish = resolve; });
+    });
+    let pending!: Promise<boolean>;
+    await act(async () => {
+      pending = workspace.refreshOfflineData(true);
+      expect(workspace.refreshOfflineData(true)).toBe(pending);
+    });
+    expect(workspace.syncingOfflineData).toBe(true);
+    expect(workspace.offlineDataProgress).toBe(0.4);
+    jest.mocked(isOfflineDataReady).mockResolvedValue(true);
+    jest.mocked(readOfflineDataSyncTime).mockResolvedValue('2026-09-17T06:00:00Z');
+    jest.mocked(readOfflineDatasetMeta).mockResolvedValue({ lastSourceUpdateAt: '2026-09-10T06:00:00Z', lastSyncedAt: '2026-09-17T06:00:00Z' } as any);
+    await act(async () => { finish(true); await pending; });
+    expect(workspace.syncingOfflineData).toBe(false);
+    expect(workspace.offlineDataLoadedAt).toBe('2026-09-17T06:00:00Z');
+    expect(workspace.offlineDataSyncedAt).toBe('2026-09-10T06:00:00Z');
+    jest.mocked(syncOfflineOrderData).mockImplementation(async (_, options) => {
+      options?.onProgress?.({ progress: null, error: 'Нет сети' });
+      return false;
+    });
+    await act(async () => { await workspace.refreshOfflineData(true); });
+    expect(workspace.offlineDataLoadedAt).toBe('2026-09-17T06:00:00Z');
+    expect(workspace.offlineDataError).toBe('Нет сети');
+    await act(async () => { renderer.unmount(); });
   });
 
   it('refreshes queued order metadata without reloading selected document detail', async () => {

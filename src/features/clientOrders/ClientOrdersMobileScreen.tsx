@@ -121,6 +121,7 @@ import {
   type SearchPickerFilter,
 } from './screen/mobile/SearchPickerScreen';
 import OneCCompanyLogo from './assets/onec-company-logo.svg';
+import { OfflineDataBanner, OfflineProductDataNote } from './screen/mobile/OfflineDataBanner';
 
 type ScreenMode = 'orders' | 'editor';
 type EditorSection = 'header' | 'items';
@@ -2869,6 +2870,15 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         importantForAccessibility={mode === 'orders' ? 'auto' : 'no-hide-descendants'}
         style={[styles.ordersStage, mode !== 'orders' && styles.ordersStageHidden]}
       >
+          {Platform.OS !== 'web' ? <OfflineDataBanner
+            ready={workspace.offlineDataReady}
+            syncedAt={workspace.offlineDataLoadedAt}
+            loading={workspace.syncingOfflineData}
+            progress={workspace.offlineDataProgress}
+            error={workspace.offlineDataError}
+            disabled={!!openingOrderGuid || !!openingDocument}
+            onRefresh={() => void workspace.refreshOfflineData(true)}
+          /> : null}
           <View style={[styles.ordersStickyToolbar, width >= 720 && styles.contentTablet, { paddingHorizontal: ui.pageX, maxWidth: layoutTier === 'tablet' ? 760 : undefined }]}>
             <OrdersToolbar
               styles={styles}
@@ -3118,6 +3128,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
           hasPriceType={!!workspace.draft.priceTypeGuid}
           hasWarehouse={!!workspace.draft.warehouseGuid}
           offlineDataSyncedAt={workspace.offlineDataSyncedAt}
+          online={isReachable}
           onPressProduct={handleProductPickerPress}
           onLongPressProduct={handleProductPickerLongPress}
           onOpenImages={openProductGallery}
@@ -4403,6 +4414,7 @@ function ProductPickerFullscreenPanel({
   hasPriceType,
   hasWarehouse,
   offlineDataSyncedAt,
+  online,
   onPressProduct,
   onLongPressProduct,
   onOpenImages,
@@ -4437,6 +4449,7 @@ function ProductPickerFullscreenPanel({
   hasPriceType: boolean;
   hasWarehouse: boolean;
   offlineDataSyncedAt: string | null;
+  online: boolean;
   onPressProduct: (item: ClientOrderProduct) => void;
   onLongPressProduct: (item: ClientOrderProduct) => void;
   onOpenImages: (item: ClientOrderProduct) => void;
@@ -4486,19 +4499,14 @@ function ProductPickerFullscreenPanel({
   const listHeader = React.useMemo(() => (
     <>
       {!hasOrderContext ? <InfoText styles={styles} text="Сначала выберите организацию и контрагента." /> : null}
-      {offlineDataSyncedAt ? (
-        <InfoText
-          styles={styles}
-          text={`Цены и остатки обновлены ${new Date(offlineDataSyncedAt).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' })}`}
-        />
-      ) : null}
+      <OfflineProductDataNote online={online} syncedAt={offlineDataSyncedAt} />
       {showInitialLoader ? (
         <View style={styles.productPickerInitialLoader}>
           <ActivityIndicator size="large" color="#2563EB" />
         </View>
       ) : null}
     </>
-  ), [hasOrderContext, offlineDataSyncedAt, showInitialLoader, styles]);
+  ), [hasOrderContext, offlineDataSyncedAt, online, showInitialLoader, styles]);
   const listEmpty = React.useMemo(() => {
     if (isResetLoading || !hasOrderContext) return null;
     return <Text style={styles.filtersLookupEmpty}>Ничего не найдено.</Text>;
@@ -6661,23 +6669,6 @@ function OrdersToolbar({
             style={({ pressed }) => [styles.ordersErrorDismissButton, pressed && styles.flatPressed]}
           >
             <MaterialCommunityIcons name="close" size={17} color="#991B1B" />
-          </Pressable>
-        </View>
-      ) : null}
-      {!workspace.offlineDataReady ? (
-        <View style={[styles.ordersErrorBanner, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
-          <MaterialCommunityIcons name="database-clock-outline" size={17} color="#1D4ED8" />
-          <Text style={[styles.ordersErrorBannerText, { color: '#1E3A8A' }]}>Офлайн-данные ещё не загружены</Text>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Загрузить офлайн-данные"
-            disabled={workspace.syncingOfflineData}
-            onPress={() => void workspace.refreshOfflineData(true)}
-            style={({ pressed }) => [pressed && styles.flatPressed]}
-          >
-            {workspace.syncingOfflineData
-              ? <ActivityIndicator size="small" color="#2563EB" />
-              : <MaterialCommunityIcons name="refresh" size={19} color="#2563EB" />}
           </Pressable>
         </View>
       ) : null}
