@@ -25,3 +25,13 @@ Remaining QA: physical device confirmation/cancellation, simultaneous edits duri
 - Dev retains manual-only offline submission. Reconciliation requires the same client identity/revision and an accepted submission state.
 - Dev persists the submission geo event before HTTP and reuses it on retry.
 - Local branches: hotfix/order-integrity-prod and integration/order-integrity-dev. No push or OTA publication.
+
+## Production release, 2026-09-18 (subsequent user approval)
+
+- Published main commit 2b865b4e7cb6b33217f4caed95cf2eebb1a0a0ec after API fb45be0 became healthy.
+- OTA 0.1.26.4, Android runtime 0.1.26; updateId 810d73e8-fe05-48ca-9c3e-b602862e521e.
+- OTA workflow 35330170252 and web workflow 35330170313 succeeded.
+- APK workflow 35330170309 succeeded; native build correctly skipped.
+- Public manifest and bundle SHA-256 verified; already installed update is not offered again (204).
+- This publication targets prod only. Older incompatible runtimes must first install APK 0.1.26; dev runtime is not changed.
+- No device installation or WMS15 end-to-end QA claimed. See companion API release notes for backup and rollback details.
