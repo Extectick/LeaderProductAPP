@@ -307,6 +307,7 @@ export type ClientOrderInvoice = {
 };
 
 export type ClientOrder = {
+  contentToken?: string;
   guid: string;
   clientOrderId?: string | null;
   clientRevision?: number | null;
@@ -494,11 +495,13 @@ function throwApiError(fallback: string, res: { message?: string; status?: numbe
     errorCode?: string;
     backendErrorCode?: string;
     details?: any;
+    errorDetails?: any;
   };
   error.status = res.status;
   error.errorCode = res.errorCode;
   error.backendErrorCode = res.backendErrorCode;
   error.details = res.errorDetails;
+  error.errorDetails = res.errorDetails;
   throw error;
 }
 

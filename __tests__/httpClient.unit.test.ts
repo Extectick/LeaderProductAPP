@@ -44,6 +44,16 @@ describe('httpRequest', () => {
     jest.useRealTimers();
   });
 
+  it('preserves the structured order review instead of losing confirmation details', async () => {
+    const details = { kind: 'ORDER_CHANGE_REVIEW_REQUIRED', confirmationToken: 'signed', baseContentToken: 'base', changes: [] };
+    const json = { ok: false, message: 'Подтвердите изменение', error: { code: 'CONFLICT', details } };
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 409,
+      headers: { get: () => 'application/json' }, clone: () => ({ json: async () => json }) }) as any;
+    const response = await httpRequest('/client-orders/by-client-id/id', { method: 'PUT', body: {} });
+    expect(response.errorDetails).toEqual(details);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
   it('returns a distinct response after the default 10 second timeout', async () => {
     jest.useFakeTimers();
     const fetchMock = jest.fn((_url: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {

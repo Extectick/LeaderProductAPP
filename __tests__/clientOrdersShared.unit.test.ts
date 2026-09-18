@@ -79,6 +79,13 @@ function draft(patch: Partial<DraftOrder> = {}): DraftOrder {
   });
 }
 
+describe('order edit base token', () => {
+  it('keeps the server content identity in save requests', () => {
+    const value = draft({ contentToken: 'a'.repeat(64), items: [item()] });
+    expect(buildPayload(value).integrity?.baseContentToken).toBe('a'.repeat(64));
+  });
+});
+
 describe('clientOrdersShared statuses', () => {
   it('maps 1C current state before legacy app status', () => {
     expect(mapOnecOrderStatus('В процессе отгрузки')).toBe('SHIPPING_IN_PROGRESS');
