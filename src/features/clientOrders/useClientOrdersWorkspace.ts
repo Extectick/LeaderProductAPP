@@ -2718,7 +2718,12 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         return localOrder;
       }
       if (stagedDeviceOrder) {
-        removeDeviceDraftEntry(stagedDeviceOrder.guid, stagedDeviceOrder.clientRevision ?? undefined);
+        const failedEntry = findDeviceDraftEntry(stagedDeviceOrder.guid);
+        if (failedEntry && failedEntry.clientRevision === stagedDeviceOrder.clientRevision) {
+          const message = userErrorMessage(e, 'Не удалось сохранить заказ. Требуется проверка.');
+          replaceDeviceDraftEntries(deviceDraftEntriesRef.current.map(entry => isSameOrderOperation(entry, failedEntry)
+            ? { ...withDeviceDraftSyncFailure(entry, message), requiresReview: true } : entry));
+        }
       }
       const message = userErrorMessage(e, 'Не удалось сохранить заказ. Проверьте данные и повторите попытку.');
       setError(message);

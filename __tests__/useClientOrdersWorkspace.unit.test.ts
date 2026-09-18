@@ -118,6 +118,85 @@ async function flush() {
 }
 
 describe('useClientOrdersWorkspace', () => {
+  async function editableWorkspace() {
+    jest.mocked(getClientOrders).mockResolvedValue({ items: [], meta: { total: 0, limit: 20, offset: 0, statusCounts: {} } } as any);
+    let current!: ReturnType<typeof useClientOrdersWorkspace>;
+    const Harness = () => { current = useClientOrdersWorkspace(); return null; };
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(React.createElement(AuthContext.Provider, {
+        value: { isLoading: false, isAuthenticated: true, profile: { id: 1 },
+          setAuthenticated: jest.fn(), setProfile: jest.fn(), signOut: jest.fn() } as any,
+      }, React.createElement(Harness)));
+    });
+    await flush();
+    await act(async () => {
+      current.patchDraft({
+        organizationGuid: 'org-guid', counterpartyGuid: 'counterparty-guid',
+        deliveryDate: '2026-06-30T00:00:00.000Z', contentToken: 'initial-content-token',
+        items: [{ key: 'line-key', lineGuid: 'line-guid', productGuid: 'product-guid', productName: 'Product',
+          quantity: '2', packageGuid: null, manualPrice: '', discountPercent: '', comment: '',
+          basePrice: 100, receiptPrice: null, baseUnit: { name: 'pcs', symbol: 'pcs' }, packages: [] }],
+      });
+    });
+    await flush();
+    return { get current() { return current; }, renderer };
+  }
+
+  it('does not retry an ordinary conflict with a freshly fetched revision', async () => {
+    const harness = await editableWorkspace();
+    jest.mocked(putClientOrderByClientId).mockRejectedValue(Object.assign(new Error('conflict'), {
+      status: 409, errorDetails: { kind: 'ORDER_CONTENT_CONFLICT' },
+    }));
+    await act(async () => { await harness.current.saveDraft({ reason: 'manual' }); });
+    expect(putClientOrderByClientId).toHaveBeenCalledTimes(1);
+    expect(getClientOrder).not.toHaveBeenCalled();
+    expect(harness.current.draft.items[0].quantity).toBe('2');
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('keeps edits made while a save is pending and blocks a second simultaneous save', async () => {
+    const harness = await editableWorkspace();
+    let finish!: (value: any) => void;
+    jest.mocked(putClientOrderByClientId).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    let pending!: ReturnType<typeof harness.current.saveDraft>;
+    await act(async () => { pending = harness.current.saveDraft({ reason: 'manual' }); });
+    await flush();
+    expect(putClientOrderByClientId).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      harness.current.patchDraft(prev => ({ ...prev, items: prev.items.map(item => ({ ...item, quantity: '5' })) }));
+    });
+    await act(async () => { await harness.current.saveDraft({ reason: 'manual' }); });
+    expect(putClientOrderByClientId).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      finish(queuedOrder(0, { status: 'DRAFT', syncState: 'DRAFT', clientRevision: 1,
+        contentToken: 'saved-token', items: [{ lineGuid: 'line-guid', product: { guid: 'product-guid', name: 'Product' }, quantity: 2, basePrice: 100 }] }));
+      expect(await pending).toBeNull();
+    });
+    expect(harness.current.draft.items[0].quantity).toBe('5');
+    expect(harness.current.draft.contentToken).toBe('initial-content-token');
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('retries a reduction only after confirmation with the exact same client revision', async () => {
+    const harness = await editableWorkspace();
+    const challenge = Object.assign(new Error('review'), { status: 409,
+      errorDetails: { kind: 'ORDER_CHANGE_REVIEW_REQUIRED', baseContentToken: 'confirmed-base',
+        confirmationToken: 'signed-challenge', changes: [{ productName: 'Product', reason: 'Удаление строки', before: 2, after: null }] } });
+    jest.mocked(putClientOrderByClientId).mockRejectedValueOnce(challenge)
+      .mockResolvedValueOnce(queuedOrder(0, { status: 'DRAFT', syncState: 'DRAFT', items: [] }) as any);
+    jest.requireMock('react-native').Alert.alert.mockImplementation((_title: string, _message: string, buttons: any[]) => {
+      buttons.find(button => button.text === 'Подтвердить').onPress();
+    });
+    await act(async () => { await harness.current.saveDraft({ reason: 'manual' }); });
+    expect(putClientOrderByClientId).toHaveBeenCalledTimes(2);
+    const calls = jest.mocked(putClientOrderByClientId).mock.calls;
+    expect(calls[1][0]).toBe(calls[0][0]);
+    expect(calls[1][2].clientRevision).toBe(calls[0][2].clientRevision);
+    expect(calls[1][1].integrity).toEqual({ baseContentToken: 'confirmed-base', confirmationToken: 'signed-challenge' });
+    await act(async () => harness.renderer.unmount());
+  });
+
   beforeEach(() => {
     jest.resetAllMocks();
     jest.useFakeTimers();
