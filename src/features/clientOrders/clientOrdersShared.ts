@@ -56,6 +56,7 @@ export type DraftItem = {
 };
 
 export type DraftOrder = {
+  contentToken?: string;
   guid?: string | null;
   clientOrderId?: string | null;
   clientRevision: number;
@@ -873,6 +874,7 @@ export function orderToDraft(order: ClientOrder): DraftOrder {
   const orderItems = getClientOrderItems(order);
   const headerPriceType = order.priceType ?? orderItems.find((item) => item.priceType?.guid)?.priceType ?? order.agreement?.priceType ?? null;
   return {
+    contentToken: order.contentToken,
     guid: order.guid,
     clientOrderId: order.clientOrderId ?? null,
     clientRevision: Number(order.clientRevision ?? 0),
@@ -1205,6 +1207,7 @@ function mapDraftToPayload(draft: DraftOrder, saveReason: 'manual' | 'autosave')
   const generalDiscountPercent = draft.generalDiscountPercent.trim() ? asNumber(draft.generalDiscountPercent) : undefined;
 
   return {
+    integrity: draft.contentToken ? { baseContentToken: draft.contentToken, confirmationToken: undefined as string | undefined } : undefined,
     organizationGuid: draft.organizationGuid,
     counterpartyGuid: draft.counterpartyGuid,
     agreementGuid: draft.agreementGuid || null,

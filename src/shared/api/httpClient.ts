@@ -25,6 +25,7 @@ export interface HttpResponse<T> {
   message?: string;
   status: number;
   errorCode?: AppErrorCode;
+  errorDetails?: any;
 }
 
 export interface HttpRequestOptions<Req> {
@@ -60,7 +61,7 @@ function buildHeaders(base: Record<string, string>, token: string | null, isForm
 
 async function parseResponse<Res>(
   response: Response
-): Promise<{ data: Res | undefined; meta?: any; message?: string }> {
+): Promise<{ data: Res | undefined; meta?: any; message?: string; errorDetails?: any }> {
   const ct = response.headers.get('content-type') || '';
   const contentDisposition = response.headers.get('content-disposition') || '';
   const isBinaryAttachment =
@@ -79,7 +80,7 @@ async function parseResponse<Res>(
     const data = json && typeof json === 'object' && 'data' in json ? (json.data as Res) : (json as Res);
     const meta = json && typeof json === 'object' && 'meta' in json ? json.meta : undefined;
     const message = (json && (json.message || json.error)) as string | undefined;
-    return { data, meta, message };
+    return { data, meta, message, errorDetails: json?.error?.details };
   } catch {
     const text = await response.text();
     return { data: undefined, message: text || undefined };
@@ -222,7 +223,7 @@ export async function httpRequest<Req = undefined, Res = any>(
 
     setServerReachable();
     const status = response.status;
-    const { data, meta, message } = await parseResponse<Res>(response);
+    const { data, meta, message, errorDetails } = await parseResponse<Res>(response);
 
     if (!response.ok) {
       addMonitoringBreadcrumb('http_error_response', { path, status });
@@ -231,6 +232,7 @@ export async function httpRequest<Req = undefined, Res = any>(
         status,
         message: message || `HTTP error ${status}`,
         errorCode: mapHttpStatusToErrorCode(status),
+        errorDetails,
       };
     }
 

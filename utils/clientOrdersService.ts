@@ -300,6 +300,7 @@ export type ClientOrderInvoice = {
 };
 
 export type ClientOrder = {
+  contentToken?: string;
   guid: string;
   clientOrderId?: string | null;
   clientRevision?: number | null;
@@ -480,13 +481,15 @@ function getErrorMessage(fallback: string, message?: string) {
   return toUserErrorMessage(message, fallback);
 }
 
-function throwApiError(fallback: string, res: { message?: string; status?: number; errorCode?: string }): never {
+function throwApiError(fallback: string, res: { message?: string; status?: number; errorCode?: string; errorDetails?: any }): never {
   const error = new Error(toUserErrorMessage(res, fallback)) as Error & {
     status?: number;
     errorCode?: string;
+    errorDetails?: any;
   };
   error.status = res.status;
   error.errorCode = res.errorCode;
+  error.errorDetails = res.errorDetails;
   throw error;
 }
 
