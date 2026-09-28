@@ -34,3 +34,11 @@ Read-only production compatibility checks covered the actual affected document a
 ## Publish
 
 Commit with `[skip ci]` and fast-forward main; explicitly dispatch only `publish-ota.yml` for prod/android/runtime 0.1.26. This avoids the unrelated automatic web/APK workflows. Verify the successful workflow and the production manifest's updateId, displayVersion and commitSha.
+
+## Published and verified
+
+- Code commit: `7fc2422bd28b85aec6bbad91bdcf5dbddb5e1f0b`.
+- Workflow: https://github.com/Extectick/LeaderProductAPP/actions/runs/36410814383 — success; TypeScript and 106 gated tests passed.
+- Production Android OTA: **0.1.26.5**, runtime **0.1.26**, updateId `8636eb62-45e9-4498-9c44-eb80b53c6794`.
+- Public manifest returned HTTP 200 and the expected commit/runtime/channel. Bundle downloaded successfully (20,004,460 bytes); SHA-256 matched its manifest. Check with the new current-update-id returned HTTP 204.
+- Dev worktree was not modified. No APK build, API deployment or 1C extension update was performed.
