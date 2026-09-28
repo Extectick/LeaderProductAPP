@@ -1,5 +1,7 @@
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { buildCopyPayload, orderToDraft } from '../src/features/clientOrders/clientOrdersShared';
 
 jest.mock('@/context/AuthContext', () => {
   const React = require('react');
@@ -152,6 +154,163 @@ describe('useClientOrdersWorkspace', () => {
     expect(putClientOrderByClientId).toHaveBeenCalledTimes(1);
     expect(getClientOrder).not.toHaveBeenCalled();
     expect(harness.current.draft.items[0].quantity).toBe('2');
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('keeps one local operation across five server failures and removes it after success', async () => {
+    const harness = await editableWorkspace();
+    jest.mocked(putClientOrderByClientId).mockRejectedValue(Object.assign(new Error('Agreement validation failed'), { status: 502 }));
+    const stored = () => jest.mocked(AsyncStorage.setItem).mock.calls.filter(([key]) => key === 'client_orders_device_drafts_v1:1');
+    for (let i = 0; i < 5; i++) {
+      await act(async () => { await harness.current.saveDraft({ reason: 'manual', intent: 'SUBMIT' }); });
+      await flush();
+      expect(JSON.parse(stored().at(-1)![1])).toHaveLength(1);
+    }
+    const calls = jest.mocked(putClientOrderByClientId).mock.calls;
+    expect(new Set(calls.map(call => call[0])).size).toBe(1);
+    expect(calls.map(call => call[2].clientRevision)).toEqual([1, 2, 3, 4, 5]);
+    jest.mocked(putClientOrderByClientId).mockResolvedValue(queuedOrder(0, { clientOrderId: calls[0][0], clientRevision: 6 }) as any);
+    await act(async () => { await harness.current.saveDraft({ reason: 'manual', intent: 'SUBMIT' }); });
+    await flush();
+    expect(JSON.parse(stored().at(-1)![1])).toEqual([]);
+    expect(harness.current.orders.filter(order => order.origin === 'device')).toHaveLength(0);
+    await act(async () => harness.renderer.unmount());
+  });
+
+  function recoveryFixture() {
+    const server = queuedOrder(0, { status: 'CONFIRMED', syncState: 'SYNCED', number1c: 'САУТ-011451',
+      clientOrderId: 'recovery-id', clientRevision: 1, createdByUser: { id: 1 },
+      deliveryDate: '2026-09-25T00:00:00.000Z', totalAmount: 0.01,
+      items: [{ lineGuid: 'line', product: { guid: 'product', name: 'Товар' }, quantity: 1,
+        isManualPrice: true, manualPrice: 0.01, basePrice: 0.01 }],
+    });
+    const payload = buildCopyPayload(orderToDraft(server as any));
+    const entries = Array.from({ length: 5 }, (_, i) => ({ id: `entry-${i}`, clientOrderId: 'recovery-id',
+      clientRevision: 1, intent: i === 4 ? 'SAVE' : 'SUBMIT', payload, requiresReview: true,
+      createdAt: server.createdAt, updatedAt: server.updatedAt,
+      order: { ...server, guid: `device-order-${i}`, origin: 'device', number1c: null },
+    }));
+    // Match the old production list shape, which omits identity fields on merged rows.
+    const summary = { ...server, origin: 'merged', clientOrderId: undefined, clientRevision: undefined, totalAmount: 0.02, items: [] };
+    return { server, entries, summary };
+  }
+
+  async function mountRecovery(entries: any[], summary: any, owner = 1) {
+    jest.mocked(AsyncStorage.getItem).mockImplementation(async key => key === `client_orders_device_drafts_v1:${owner}` ? JSON.stringify(entries) : null);
+    jest.mocked(getClientOrders).mockResolvedValue({ items: [summary], meta: { total: 1, limit: 100, offset: 0, hasMore: false, statusCounts: {} } } as any);
+    let current!: ReturnType<typeof useClientOrdersWorkspace>;
+    const Harness = () => { current = useClientOrdersWorkspace({ screenMode: 'orders' }); return null; };
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = TestRenderer.create(React.createElement(AuthContext.Provider, {
+      value: { isLoading: false, isAuthenticated: true, profile: { id: owner }, setAuthenticated: jest.fn(), setProfile: jest.fn(), signOut: jest.fn() } as any,
+    }, React.createElement(Harness))); });
+    await flush(); await flush();
+    return { get current() { return current; }, renderer };
+  }
+
+  it('recovers five old rejected copies through GET reads only, persists and shows the real document', async () => {
+    const { server, entries, summary } = recoveryFixture();
+    jest.mocked(getClientOrder).mockResolvedValue(server as any);
+    const harness = await mountRecovery(entries, summary);
+    expect(getClientOrder).toHaveBeenCalledWith(server.guid);
+    expect(harness.current.orders.filter(order => order.origin === 'device')).toHaveLength(0);
+    expect(harness.current.orders.some(order => order.number1c === 'САУТ-011451')).toBe(true);
+    const writes = jest.mocked(AsyncStorage.setItem).mock.calls.filter(([key]) => key === 'client_orders_device_drafts_v1:1');
+    expect(JSON.parse(writes.at(-1)![1])).toEqual([]);
+    expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    expect(submitClientOrder).not.toHaveBeenCalled();
+    expect(createClientOrder).not.toHaveBeenCalled();
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it.each(['newer', 'different-content', 'other-user', 'unavailable'])('keeps the local copy when recovery is unsafe: %s', async reason => {
+    const { server, entries, summary } = recoveryFixture();
+    if (reason === 'newer') entries.forEach(entry => { entry.clientRevision = 2; });
+    if (reason === 'different-content') entries.forEach(entry => { entry.payload.items[0].quantity = 3; });
+    if (reason === 'other-user') server.createdByUser = { id: 2 };
+    if (reason === 'unavailable') jest.mocked(getClientOrder).mockRejectedValue(new Error('No network'));
+    else jest.mocked(getClientOrder).mockResolvedValue(server as any);
+    const harness = await mountRecovery(entries, summary);
+    expect(harness.current.orders.filter(order => order.origin === 'device')).toHaveLength(5);
+    expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    expect(submitClientOrder).not.toHaveBeenCalled();
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('does not apply a late recovery after the user starts editing', async () => {
+    const { server, entries, summary } = recoveryFixture();
+    let finish!: (value: any) => void;
+    jest.mocked(getClientOrder).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const harness = await mountRecovery(entries, summary);
+    await act(async () => { harness.current.patchDraft({ comment: 'New unsaved text' }); });
+    await act(async () => { finish(server); });
+    await flush();
+    expect(harness.current.orders.filter(order => order.origin === 'device')).toHaveLength(5);
+    expect(harness.current.draft.comment).toBe('New unsaved text');
+    expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('removes only confirmed legacy copies and keeps the newer local revision', async () => {
+    const { server, entries, summary } = recoveryFixture();
+    entries[0].clientRevision = 2;
+    jest.mocked(getClientOrder).mockResolvedValue(server as any);
+    const harness = await mountRecovery(entries, summary);
+    const writes = jest.mocked(AsyncStorage.setItem).mock.calls.filter(([key]) => key === 'client_orders_device_drafts_v1:1');
+    expect(JSON.parse(writes.at(-1)![1]).map((entry: any) => entry.id)).toEqual(['entry-0']);
+    expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('ignores a recovery response after the workspace is unmounted', async () => {
+    const { server, entries, summary } = recoveryFixture();
+    let finish!: (value: any) => void;
+    jest.mocked(getClientOrder).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const harness = await mountRecovery(entries, summary);
+    await act(async () => harness.renderer.unmount());
+    await act(async () => { finish(server); });
+    await flush();
+    expect(jest.mocked(AsyncStorage.setItem).mock.calls.filter(([key]) => key === 'client_orders_device_drafts_v1:1')).toHaveLength(0);
+    expect(putClientOrderByClientId).not.toHaveBeenCalled();
+  });
+
+  it('waits for durable staging and serializes the later removal behind pending writes', async () => {
+    const harness = await editableWorkspace();
+    let finishWrite!: () => void;
+    const completed: string[] = [];
+    let delayed = false;
+    jest.mocked(AsyncStorage.setItem).mockImplementation(async (key, value) => {
+      if (key !== 'client_orders_device_drafts_v1:1') return;
+      if (!delayed) { delayed = true; await new Promise<void>(resolve => { finishWrite = resolve; }); }
+      completed.push(value);
+    });
+    jest.mocked(putClientOrderByClientId).mockResolvedValue(queuedOrder(0) as any);
+    let pending!: ReturnType<typeof harness.current.saveDraft>;
+    await act(async () => { pending = harness.current.saveDraft({ reason: 'manual', intent: 'SUBMIT' }); });
+    await flush();
+    expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    await act(async () => { finishWrite(); await pending; });
+    expect(putClientOrderByClientId).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(completed.at(-1)!)).toEqual([]);
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('preserves an edit made while successful local removal is being persisted', async () => {
+    const harness = await editableWorkspace();
+    let finishRemoval!: () => void;
+    jest.mocked(AsyncStorage.setItem).mockImplementation(async (key, value) => {
+      if (key === 'client_orders_device_drafts_v1:1' && value === '[]') {
+        await new Promise<void>(resolve => { finishRemoval = resolve; });
+      }
+    });
+    jest.mocked(putClientOrderByClientId).mockResolvedValue(queuedOrder(0, { status: 'DRAFT', syncState: 'DRAFT' }) as any);
+    let pending!: ReturnType<typeof harness.current.saveDraft>;
+    await act(async () => { pending = harness.current.saveDraft({ reason: 'manual' }); });
+    await flush();
+    expect(finishRemoval).toBeDefined();
+    await act(async () => { harness.current.patchDraft({ comment: 'Keep this new edit' }); });
+    await act(async () => { finishRemoval(); expect(await pending).toBeNull(); });
+    expect(harness.current.draft.comment).toBe('Keep this new edit');
     await act(async () => harness.renderer.unmount());
   });
 

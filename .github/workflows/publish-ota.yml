@@ -46,7 +46,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx tsc --noEmit
-      - run: npm run test:unit -- --runInBand __tests__/orderOperationIntegrity.unit.test.ts __tests__/clientOrdersShared.unit.test.ts __tests__/clientOrdersService.unit.test.ts __tests__/httpClient.unit.test.ts __tests__/useClientOrdersWorkspace.unit.test.ts
+      - run: npm run test:unit -- --runInBand __tests__/deviceDraftRecovery.unit.test.ts __tests__/orderOperationIntegrity.unit.test.ts __tests__/clientOrdersShared.unit.test.ts __tests__/clientOrdersService.unit.test.ts __tests__/httpClient.unit.test.ts __tests__/useClientOrdersWorkspace.unit.test.ts
 
   export-upload:
     needs: order-integrity-check

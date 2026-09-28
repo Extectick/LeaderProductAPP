@@ -477,7 +477,9 @@ function orderTitle(order: ClientOrder) {
     return date === '—' ? order.number1c : `${order.number1c} от ${date}`;
   }
   const date = formatDateOnly(order.updatedAt || order.createdAt || order.deliveryDate);
-  const shortGuid = order.guid.slice(0, 8);
+  const shortGuid = order.origin === 'device'
+    ? (order.clientOrderId || order.guid.replace(/^device-order-/, '')).slice(0, 8)
+    : order.guid.slice(0, 8);
   return date === '—' ? shortGuid : `${shortGuid} от ${date}`;
 }
 
