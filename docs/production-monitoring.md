@@ -78,14 +78,19 @@ bundle and is insufficient for GlitchTip symbolication.
   SHA-256 `29e9b91f2efe2bec369ad4fa0ac80f4d03463bed4ab667d44af88c42a0a54ee7`.
   Local APK verifier passed: existing certificate, prod API/OTA, both ABIs,
   release mode, metadata checksum, map and private-credential exclusion.
-- **Not published to AppUpdate yet.** The permanent download page still offers
-  the previously published APK, not this staged candidate.
-- `TRACKING_V2_ENABLED=true`. `CLIENT_ORDERS_OFFLINE_ENABLED=false` until initial
-  production exchange is explicitly authorized and verified. At staging time,
+- **Published after source-data verification on 2026-10-08.** AppUpdate id 14,
+  production APK 0.1.33/build32, optional update, rollout 100%. Permanent link:
+  `https://api.leader-product.ru/download`. Full file download, size and SHA-256
+  verified against the staged artifact. No additional APK build or OTA needed.
+- `TRACKING_V2_ENABLED=true`. `CLIENT_ORDERS_OFFLINE_ENABLED=true` after the user
+  authorized the initial outgoing production exchange. At staging time,
   selling prices, manager reserves, manager-counterparty links and offline export
   policy were absent. Do not mark an incomplete dataset ready or import dev data.
-- Next: obtain authorization for initial `torg2026 -> production API` reference,
-  price and stock exchange (no extension/business document modifications), verify
-  all offline entities under a real manager, enable the offline flag, publish the
-  verified metadata using `scripts/publish-apk-update-db.js` in the production API
-  container, then run `deploy/public-apk-download/verify-live.cjs` from API source.
+- Source coverage, 11 offline HTTP datasets under three authorized managers,
+  complete delivery-address import, catalog scope and unchanged deltas verified.
+  Actual outgoing queue and stock schedules ran successfully. Details and backup
+  evidence: API `docs/production-reference-exchange.md`. Production extension and
+  business documents unchanged; recurring order import was not enabled.
+- Remaining acceptance is on a physical phone: install over the existing app,
+  download data, create an offline draft, restore network, and verify tracking.
+  Do not uninstall or clear app data; local unsent drafts must be retained.
