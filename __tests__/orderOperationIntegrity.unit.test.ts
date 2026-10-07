@@ -1,6 +1,16 @@
-import { isSameOrderOperation, orderChangeReview } from '../src/features/clientOrders/lib/orderOperationIntegrity';
+import { isReconciledOrderOperation, isSameOrderOperation, orderChangeReview } from '../src/features/clientOrders/lib/orderOperationIntegrity';
 
 describe('local order operation integrity', () => {
+  it('reconciles only the submitted client revision, never an earlier save or a newer edit', () => {
+    const sent = { clientOrderId: 'draft-1', clientRevision: 3, intent: 'SUBMIT' };
+    const received = { clientOrderId: 'draft-1', clientRevision: 3, syncState: 'SYNCED' };
+    expect(isReconciledOrderOperation(received, sent)).toBe(true);
+    expect(isReconciledOrderOperation({ ...received, syncState: 'QUEUED' }, sent)).toBe(true);
+    expect(isReconciledOrderOperation({ ...received, syncState: 'DRAFT' }, sent)).toBe(false);
+    expect(isReconciledOrderOperation({ ...received, clientRevision: 2 }, sent)).toBe(false);
+    expect(isReconciledOrderOperation({ ...received, clientRevision: 4 }, sent)).toBe(false);
+    expect(isReconciledOrderOperation({ ...received, clientOrderId: 'another' }, sent)).toBe(false);
+  });
   it('keeps a newer operation when an old request completes', () => {
     const sent = { id: 'draft', clientRevision: 1 };
     const pending = [{ id: 'draft', clientRevision: 2 }, { id: 'other', clientRevision: 1 }];

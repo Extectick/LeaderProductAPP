@@ -46,8 +46,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   updates: {
     enabled: Boolean(otaUpdateUrl),
     url: otaUpdateUrl,
-    checkAutomatically: "NEVER",
-    fallbackToCacheTimeout: 30000,
+    checkAutomatically: "ON_LOAD",
+    // Maximum network wait, not a minimum splash duration. Slow downloads
+    // continue in the background and are exposed by the in-app update banner.
+    fallbackToCacheTimeout: 8000,
     requestHeaders: {
       "expo-channel-name": updateChannel,
     },
@@ -60,6 +62,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   android: {
     package: "com.leaderproduct.app",
     versionCode: nativeVersion.versionCode,
+    allowBackup: false,
     usesCleartextTraffic: true,
     adaptiveIcon: {
       foregroundImage: "./assets/images/adaptive-foreground.png",
@@ -69,6 +72,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       "ACCESS_COARSE_LOCATION",
       "ACCESS_FINE_LOCATION",
       "ACCESS_BACKGROUND_LOCATION",
+      "ACTIVITY_RECOGNITION",
+      "RECEIVE_BOOT_COMPLETED",
       // foreground service для фонового трекинга (Android 10+ / SDK 34)
       "FOREGROUND_SERVICE",
       "FOREGROUND_SERVICE_LOCATION",
@@ -98,7 +103,11 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   } as any,
 
   plugins: [
+    // MainApplication mods run in reverse order: initialize before tracking/React.
+    "./plugins/with-dev-crash-reporting",
     "expo-router",
+    "@maplibre/maplibre-react-native",
+    "./plugins/with-traccar-kotlin-compat",
     "expo-updates",
     "expo-asset",
     "expo-image",
@@ -120,9 +129,16 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       },
     ],
     "@kesha-antonov/react-native-background-downloader",
-    ...(enableSentryPlugin ? ["@sentry/react-native"] : []),
+    ...(enableSentryPlugin ? [["@sentry/react-native/expo", {
+      url: process.env.SENTRY_URL,
+      organization: process.env.SENTRY_ORG,
+      project: process.env.SENTRY_PROJECT,
+    }] as [string, Record<string, unknown>]] : []),
     "@react-native-community/datetimepicker",
     "expo-notifications",
+    // MainActivity mods execute in reverse registration order: our cleanup must
+    // run after Expo adds its splash registration, leaving one splash owner.
+    "./plugins/with-android-native-ota-loader",
     [
       "expo-splash-screen",
       {
@@ -132,7 +148,6 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         backgroundColor: "#ffffff",
       },
     ],
-    "./plugins/with-android-native-ota-loader",
     // 👇 указываем модуль плагина как строку пути + опции
     // ["./plugins/with-cpp-flags", {
     //   createCMakeIfMissing: true,

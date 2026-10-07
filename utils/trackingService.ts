@@ -71,3 +71,140 @@ export async function fetchUserRoutesWithPoints(
   }
   return res.data;
 }
+
+export type TrackingV2User = {
+  id: number;
+  firstName?: string | null;
+  lastName?: string | null;
+  middleName?: string | null;
+  email?: string | null;
+  avatarUrl?: string | null;
+  role?: { id: number; name: string; displayName?: string } | null;
+  roles?: Array<{ id: number; name: string; displayName?: string }>;
+  department?: { id: number; name: string } | null;
+  tracking?: { enabled: boolean; lastUploadAt?: string | null; stale: boolean } | null;
+};
+
+export type TrackingDayPoint = {
+  id: number;
+  latitude: number;
+  longitude: number;
+  recordedAt: string;
+  accuracy?: number | null;
+  speed?: number | null;
+  batteryLevel?: number | null;
+};
+
+export type TrackingDayData = {
+  day: string;
+  timezoneOffsetMinutes: number;
+  summary: {
+    pointsCount: number;
+    distanceMeters: number;
+    movingSeconds: number;
+    startedAt?: string | null;
+    endedAt?: string | null;
+    stopsCount: number;
+    ordersCount: number;
+    truncated: boolean;
+  };
+  polyline: TrackingDayPoint[];
+  stops: Array<{
+    latitude: number;
+    longitude: number;
+    startedAt: string;
+    endedAt: string;
+    durationSeconds: number;
+  }>;
+  orderEventsNextCursor?: string | null;
+  orderEvents: Array<{
+    id: string;
+    eventType: 'CREATED' | 'SUBMITTED';
+    status: string;
+    capturedAt: string;
+    latitude?: number | null;
+    longitude?: number | null;
+    accuracy?: number | null;
+    failureReason?: string | null;
+    order: {
+      guid?: string | null;
+      number?: string | null;
+      date?: string | null;
+      totalAmount?: string | null;
+      counterpartyName: string;
+    };
+  }>;
+};
+
+export type TrackingLiveData = {
+  point?: (TrackingDayPoint & { ageSeconds: number; source?: string | null; isCharging?: boolean | null }) | null;
+  device?: {
+    enabled: boolean;
+    lastUploadAt?: string | null;
+    lastCommandPollAt?: string | null;
+    commandChannelOnline?: boolean;
+    stale: boolean;
+    platform?: string | null;
+    appVersion?: string | null;
+    deviceName?: string | null;
+  } | null;
+};
+
+export async function fetchTrackingUsers(query = '', options: { self?: boolean; offset?: number } = {}) {
+  const params = new URLSearchParams();
+  if (query.trim()) params.set('q', query.trim());
+  if (options.self) params.set('self', 'true');
+  if (options.offset) params.set('offset', String(options.offset));
+  const queryString = params.toString();
+  const suffix = queryString ? `?${queryString}` : '';
+  const response = await apiClient<void, TrackingV2User[]>(`/tracking/users${suffix}`);
+  if (!response.ok || !response.data) throw new Error(response.message || 'Не удалось загрузить сотрудников');
+  return response.data;
+}
+
+export async function fetchTrackingDay(userId: number, date: string) {
+  const response = await apiClient<void, TrackingDayData>(
+    `/tracking/users/${userId}/day?date=${encodeURIComponent(date)}&eventLimit=30`
+  );
+  if (!response.ok || !response.data) throw new Error(response.message || 'Не удалось загрузить маршрут за день');
+  return response.data;
+}
+
+export async function fetchTrackingDayEvents(userId: number, date: string, cursor: string) {
+  const response = await apiClient<void, Pick<TrackingDayData, 'orderEvents' | 'orderEventsNextCursor'>>(
+    `/tracking/users/${userId}/day/events?date=${encodeURIComponent(date)}&eventLimit=30&eventCursor=${encodeURIComponent(cursor)}`
+  );
+  if (!response.ok || !response.data) throw new Error(response.message || 'Не удалось загрузить события');
+  return response.data;
+}
+
+export async function fetchTrackingLive(userId: number) {
+  const response = await apiClient<void, TrackingLiveData>(`/tracking/users/${userId}/live`);
+  if (!response.ok || !response.data) throw new Error(response.message || 'Не удалось получить текущую позицию');
+  return response.data;
+}
+
+export async function requestLiveLocation(userId: number, localInstallId?: string) {
+  const response = await apiClient<{ localInstallId?: string }, {
+    id: string;
+    status: string;
+    requestedAt: string;
+    expiresAt: string;
+    delivery?: string;
+    failureReason?: string | null;
+    lastKnown?: TrackingDayPoint | null;
+  }>(`/tracking/users/${userId}/location-requests`, { method: 'POST', body: localInstallId ? { localInstallId } : {} });
+  if (!response.ok || !response.data) throw new Error(response.message || 'Не удалось запросить геопозицию');
+  return response.data;
+}
+
+export async function fetchLocationRequest(requestId: string) {
+  const response = await apiClient<void, {
+    id: string;
+    status: 'PENDING' | 'SUCCEEDED' | 'TIMED_OUT' | 'FAILED';
+    failureReason?: string | null;
+    point?: TrackingDayPoint | null;
+  }>(`/tracking/location-requests/${encodeURIComponent(requestId)}`);
+  if (!response.ok || !response.data) throw new Error(response.message || 'Не удалось проверить запрос геопозиции');
+  return response.data;
+}

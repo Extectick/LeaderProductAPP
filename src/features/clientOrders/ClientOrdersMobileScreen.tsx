@@ -21,6 +21,7 @@ import {
   formatDateTime,
   formatMoney,
   getClientOrderItemsCount,
+  getClientOrderDisplayNumber,
   getDisplayedUnitPriceValue,
   getClientOrdersResponsiveMetrics,
   getOrderDisplayStatus,
@@ -121,6 +122,8 @@ import {
   type SearchPickerFilter,
 } from './screen/mobile/SearchPickerScreen';
 import OneCCompanyLogo from './assets/onec-company-logo.svg';
+import { OfflineDataBanner, OfflineProductDataNote } from './screen/mobile/OfflineDataBanner';
+import { SendDeviceOrdersButton } from './screen/SendDeviceOrdersButton';
 
 type ScreenMode = 'orders' | 'editor';
 type EditorSection = 'header' | 'items';
@@ -477,9 +480,7 @@ function orderTitle(order: ClientOrder) {
     return date === '—' ? order.number1c : `${order.number1c} от ${date}`;
   }
   const date = formatDateOnly(order.updatedAt || order.createdAt || order.deliveryDate);
-  const shortGuid = order.origin === 'device'
-    ? (order.clientOrderId || order.guid.replace(/^device-order-/, '')).slice(0, 8)
-    : order.guid.slice(0, 8);
+  const shortGuid = getClientOrderDisplayNumber(order);
   return date === '—' ? shortGuid : `${shortGuid} от ${date}`;
 }
 
@@ -1011,10 +1012,9 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         ordersLastFocusRefreshRef.current = now;
         void workspace.refreshOrders();
       }
-      void workspace.syncDeviceDrafts?.();
     });
     return () => task.cancel();
-  }, [mode, workspace.ordersInitialLoadDone, workspace.refreshOrders, workspace.syncDeviceDrafts]);
+  }, [mode, workspace.ordersInitialLoadDone, workspace.refreshOrders]);
 
   const clearEditorFocusTimers = React.useCallback(() => {
     editorFocusTimersRef.current.forEach((timer) => clearTimeout(timer));
@@ -1958,6 +1958,12 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     const isSyncedResubmit = workspace.selectedOrderSynced && workspace.dirty;
     const isErrorRetry = !!workspace.selectedOrderHas1cError && !workspace.dirty;
     const isResubmit = isQueuedResubmit || isSyncedResubmit || isErrorRetry;
+    if (!workspace.online || workspace.selectedOrder?.origin === 'device') {
+      setConfirmDialog({ title: 'Поставить в очередь на устройстве?',
+        message: 'Заказ останется на телефоне. Чтобы передать его в 1С, нажмите «Отправить документы» в списке при наличии сети.',
+        confirmLabel: 'В очередь', onConfirm: () => workspace.submitOrder() });
+      return;
+    }
     const warningMessage = workspace.validation.warningMessage
       ? `\n${workspace.validation.warningMessage}`
       : '';
@@ -2041,8 +2047,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       ? orderTitle(workspace.selectedOrder)
       : workspace.draft.guid
         ? (formatDateOnly(workspace.draft.deliveryDate) === '—'
-          ? workspace.draft.guid.slice(0, 8)
-          : `${workspace.draft.guid.slice(0, 8)} от ${formatDateOnly(workspace.draft.deliveryDate)}`)
+          ? getClientOrderDisplayNumber({ guid: workspace.draft.guid, clientOrderId: workspace.draft.clientOrderId })
+          : `${getClientOrderDisplayNumber({ guid: workspace.draft.guid, clientOrderId: workspace.draft.clientOrderId })} от ${formatDateOnly(workspace.draft.deliveryDate)}`)
         : 'Без номера';
   const documentStatusFullText = workspace.draftMode
     ? 'Черновик'
@@ -2390,9 +2396,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     return (
       <View style={styles.documentHeaderRightActions}>
         {!isReachable ? (
-          <View style={styles.documentHeaderOfflineBadge}>
-            <MaterialCommunityIcons name="wifi-off" size={15} color="#DC2626" />
-          </View>
+          <MaterialCommunityIcons name="wifi-off" size={22} color="#64748B" accessibilityLabel="Нет соединения" />
         ) : null}
         <DocumentActionsMenu
           styles={styles}
@@ -2760,6 +2764,32 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     );
 
     if (action === 'submit') {
+      if (order.origin === 'device' && (order as any).offlineDraftStatus === 'PRICE_REVIEW') {
+        Alert.alert(
+          'Цены изменились',
+          'Выберите, с какими ценами отправить заказ после повторной проверки.',
+          [
+            { text: 'Отмена', style: 'cancel' },
+            {
+              text: 'Актуальные цены',
+              onPress: () => void workspace.syncDeviceDrafts({
+                force: true,
+                orderGuid: order.guid,
+                pricePolicy: 'USE_CURRENT',
+              }),
+            },
+            {
+              text: 'Цены черновика',
+              onPress: () => void workspace.syncDeviceDrafts({
+                force: true,
+                orderGuid: order.guid,
+                pricePolicy: 'KEEP_DRAFT',
+              }),
+            },
+          ]
+        );
+        return;
+      }
       setConfirmDialog({
         title: isRetry ? 'Повторить отправку?' : 'Отправить заказ в 1С?',
         message: isRetry
@@ -2798,7 +2828,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     }
 
     void requestInvoiceNow(order);
-  }, [openInvoiceActions, requestInvoiceNow, workspace.copyOrderFromList, workspace.submitOrderFromList, workspace.unqueueOrder]);
+  }, [openInvoiceActions, requestInvoiceNow, workspace.copyOrderFromList, workspace.submitOrderFromList, workspace.syncDeviceDrafts, workspace.unqueueOrder]);
   const orderListContextMenuDisabled = !!openingOrderGuid
     || !!openingDocument
     || workspace.submitting
@@ -2846,6 +2876,26 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         importantForAccessibility={mode === 'orders' ? 'auto' : 'no-hide-descendants'}
         style={[styles.ordersStage, mode !== 'orders' && styles.ordersStageHidden]}
       >
+          {Platform.OS !== 'web' ? <OfflineDataBanner
+            online={workspace.online}
+            ready={workspace.offlineDataReady}
+            syncedAt={workspace.offlineDataLoadedAt}
+            loading={workspace.syncingOfflineData}
+            progress={workspace.offlineDataProgress}
+            transfer={workspace.offlineDataTransfer}
+            error={workspace.offlineDataError}
+            disabled={!!openingOrderGuid || !!openingDocument}
+            onRefresh={() => void workspace.refreshOfflineData(true)}
+            trailingAction={<SendDeviceOrdersButton
+              compact
+              remind={screenFocused && mode === 'orders'}
+              count={workspace.queuedDeviceDraftsCount}
+              online={workspace.online}
+              sending={workspace.syncingDeviceDrafts}
+              disabled={!!openingOrderGuid || !!openingDocument || workspace.submitting}
+              onPress={() => void workspace.syncDeviceDrafts({ force: true })}
+            />}
+          /> : null}
           <View style={[styles.ordersStickyToolbar, width >= 720 && styles.contentTablet, { paddingHorizontal: ui.pageX, maxWidth: layoutTier === 'tablet' ? 760 : undefined }]}>
             <OrdersToolbar
               styles={styles}
@@ -3094,6 +3144,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
           hasOrderContext={!!workspace.draft.organizationGuid && !!workspace.draft.counterpartyGuid}
           hasPriceType={!!workspace.draft.priceTypeGuid}
           hasWarehouse={!!workspace.draft.warehouseGuid}
+          offlineDataSyncedAt={workspace.offlineDataSyncedAt}
+          online={isReachable}
           onPressProduct={handleProductPickerPress}
           onLongPressProduct={handleProductPickerLongPress}
           onOpenImages={openProductGallery}
@@ -4378,6 +4430,8 @@ function ProductPickerFullscreenPanel({
   hasOrderContext,
   hasPriceType,
   hasWarehouse,
+  offlineDataSyncedAt,
+  online,
   onPressProduct,
   onLongPressProduct,
   onOpenImages,
@@ -4411,6 +4465,8 @@ function ProductPickerFullscreenPanel({
   hasOrderContext: boolean;
   hasPriceType: boolean;
   hasWarehouse: boolean;
+  offlineDataSyncedAt: string | null;
+  online: boolean;
   onPressProduct: (item: ClientOrderProduct) => void;
   onLongPressProduct: (item: ClientOrderProduct) => void;
   onOpenImages: (item: ClientOrderProduct) => void;
@@ -4460,13 +4516,14 @@ function ProductPickerFullscreenPanel({
   const listHeader = React.useMemo(() => (
     <>
       {!hasOrderContext ? <InfoText styles={styles} text="Сначала выберите организацию и контрагента." /> : null}
+      <OfflineProductDataNote online={online} syncedAt={offlineDataSyncedAt} />
       {showInitialLoader ? (
         <View style={styles.productPickerInitialLoader}>
           <ActivityIndicator size="large" color="#2563EB" />
         </View>
       ) : null}
     </>
-  ), [hasOrderContext, showInitialLoader, styles]);
+  ), [hasOrderContext, offlineDataSyncedAt, online, showInitialLoader, styles]);
   const listEmpty = React.useMemo(() => {
     if (isResetLoading || !hasOrderContext) return null;
     return <Text style={styles.filtersLookupEmpty}>Ничего не найдено.</Text>;
@@ -6632,6 +6689,13 @@ function OrdersToolbar({
           </Pressable>
         </View>
       ) : null}
+      {Platform.OS === 'web' ? <SendDeviceOrdersButton
+        count={workspace.queuedDeviceDraftsCount}
+        online={workspace.online}
+        sending={workspace.syncingDeviceDrafts}
+        disabled={disabled || workspace.submitting}
+        onPress={() => void workspace.syncDeviceDrafts({ force: true })}
+      /> : null}
     </Surface>
   );
 }
@@ -7807,14 +7871,31 @@ const OrderCard = React.memo(function OrderCard({
   const scale = React.useRef(new Animated.Value(1)).current;
   const displayStatus = getOrderDisplayStatus(order);
   const isDeviceOrder = order.origin === 'device';
+  const offlineDraftStatus = String((order as any).offlineDraftStatus || 'ON_DEVICE');
+  const isPlainDeviceDraft = isDeviceOrder && offlineDraftStatus === 'ON_DEVICE';
   const isApplicationOnlyDraft = !order.number1c;
   const hasDebtProblem = displayStatus === 'DEBT';
-  const statusIcon = isDeviceOrder && !hasDebtProblem
+  const statusTone = hasDebtProblem ? displayStatus
+    : isPlainDeviceDraft ? 'DRAFT'
+      : isDeviceOrder ? 'QUEUED' : displayStatus;
+  const statusIcon = isPlainDeviceDraft && !hasDebtProblem
+    ? orderStatusIcon('DRAFT')
+    : isDeviceOrder && !hasDebtProblem
     ? { name: 'cellphone-check', color: '#1D4ED8' }
     : orderStatusIcon(displayStatus);
   const hasProblem = hasDebtProblem || (!isDeviceOrder && orderHasVisibleProblem(order));
   const itemsCount = getClientOrderItemsCount(order);
-  const statusLabel = isDeviceOrder && !hasDebtProblem ? 'На устройстве' : getOrderDisplayStatusLabelWithQueue(order);
+  const offlineStatusLabel: Record<string, string> = {
+    ON_DEVICE: 'Черновик',
+    READY_TO_SEND: 'В очереди на устройстве',
+    PRICE_REVIEW: 'Цены изменились',
+    NEEDS_EDIT: 'Требует исправления',
+    SENDING: 'Отправляется',
+    SEND_ERROR: 'Ошибка отправки',
+  };
+  const statusLabel = isDeviceOrder && !hasDebtProblem
+    ? offlineStatusLabel[offlineDraftStatus] || 'Черновик'
+    : getOrderDisplayStatusLabelWithQueue(order);
   const invoice = getClientOrderInvoicePresentation(order);
   const profitAvailable = order.profitAvailable === true
     && order.profit !== null
@@ -7959,7 +8040,7 @@ const OrderCard = React.memo(function OrderCard({
             </View>
           </View>
           <View style={styles.orderCardBottomRow}>
-            <View style={[styles.orderStatusPill, orderStatusTone(isDeviceOrder && !hasDebtProblem ? 'QUEUED' : displayStatus), hasProblem && styles.orderStatusProblem]}>
+            <View style={[styles.orderStatusPill, orderStatusTone(statusTone), hasProblem && styles.orderStatusProblem]}>
               <MaterialCommunityIcons name={statusIcon.name as any} size={14} color={statusIcon.color} />
               <Text style={[styles.orderStatusText, { color: statusIcon.color }]} numberOfLines={1}>
                 {statusLabel}
@@ -8041,7 +8122,6 @@ const styles = StyleSheet.create({
   documentStatusMenuText: { fontSize: 13, lineHeight: 17, fontWeight: '900' },
   documentStatusMenuErrorText: { color: '#B91C1C' },
   documentHeaderRightActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  documentHeaderOfflineBadge: { width: 32, height: 32, borderRadius: 10, borderWidth: 1, borderColor: '#FECACA', backgroundColor: '#FEF2F2', alignItems: 'center', justifyContent: 'center' },
   documentHeaderMoreButton: { width: 40, height: 40, borderRadius: 12, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#F8FAFC', alignItems: 'center', justifyContent: 'center' },
   documentHeaderTopMoreButton: { width: 32, height: 32, borderRadius: 10, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#F8FAFC', alignItems: 'center', justifyContent: 'center' },
   documentTabsRow: { minHeight: 38, borderRadius: 12, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#EEF2F7', padding: 3, flexDirection: 'row', alignItems: 'center', gap: 3, position: 'relative', overflow: 'hidden' },

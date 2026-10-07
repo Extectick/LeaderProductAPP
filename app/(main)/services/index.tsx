@@ -4,6 +4,7 @@ import { useThemeColor } from '@/hooks/useThemeColor';
 import { saveWebCachedLastServiceRoute } from '@/src/features/navigation/lastServiceRouteStorage';
 import { applyAdminCatalogService } from '@/src/features/services/lib/adminCatalogService';
 import { useServicesData } from '@/src/features/services/hooks/useServicesData';
+import { canOpenService } from '@/src/features/services/lib/serviceAvailability';
 import { getServiceGridMetrics, getVisibleServices } from '@/src/features/services/lib/grid';
 import { useServerStatus } from '@/src/shared/network/useServerStatus';
 import { ServicesErrorView, ServicesLoadingView } from '@/src/features/services/ui/ServiceStateViews';
@@ -45,10 +46,7 @@ export default function ServicesScreen() {
   );
 
   const openService = React.useCallback((item: (typeof visibleServices)[number]) => {
-    if (!item.route || !item.enabled) return;
-    if (item.kind === 'CLOUD' && !isReachable) {
-      return;
-    }
+    if (!canOpenService(item, isReachable, Platform.OS)) return;
     saveWebCachedLastServiceRoute(item.route);
     router.push(item.route as any);
   }, [isReachable, router]);

@@ -6,10 +6,8 @@ const assert = require('node:assert/strict');
 const { TraceMap, eachMapping } = require('@jridgewell/trace-mapping');
 
 async function main() {
-  const root = path.resolve(process.argv[2] || 'dist-ota');
-  const metadata = JSON.parse(fs.readFileSync(path.join(root, 'metadata.json')));
-  const bundle = metadata.fileMetadata.android.bundle;
-  const map = JSON.parse(fs.readFileSync(path.join(root, bundle + '.map')));
+  const files = require('./crashSymbolFiles')(process.argv[2]);
+  const map = JSON.parse(fs.readFileSync(files.map));
   let frame;
   eachMapping(new TraceMap(map), mapping => {
     if (!frame && mapping.source?.replaceAll('\\', '/').endsWith('src/shared/monitoring/privacy.ts')

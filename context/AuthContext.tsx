@@ -69,12 +69,17 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const signOut = async () => {
     addMonitoringBreadcrumb('auth_signout_start');
     try {
+      const { stopTrackingV2 } = await import('@/utils/trackingV2Service');
+      await stopTrackingV2({ revoke: true });
+    } catch (e) {
+      captureException(e, { where: 'AuthProvider:stopTrackingV2' });
+    }
+    try {
       await unregisterPushToken();
-      await logout(); // чистим токены/профиль в AsyncStorage
     } catch (e) {
       captureException(e, { where: 'AuthProvider:signOut' });
-      console.warn('Logout failed, continuing local sign out:', e);
     }
+    await logout(); // локальный выход обязан завершиться даже при недоступном API
     setAuthenticated(false); // контекст -> guest
     await setProfile(null);  // чистим профиль в контексте
     addMonitoringBreadcrumb('auth_signout_done');

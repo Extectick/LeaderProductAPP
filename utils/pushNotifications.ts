@@ -1,17 +1,42 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
+import * as TaskManager from 'expo-task-manager';
 import { Platform } from 'react-native';
 
 import { apiClient } from './apiClient';
 import { API_ENDPOINTS } from './apiEndpoints';
+import { parseTrackingPush } from '@/src/features/tracking/trackingPushPayload';
 
 const PUSH_TOKEN_KEY = 'pushToken';
 const PROFILE_CHANNEL_ID = 'profile-status';
 const APPEAL_MESSAGE_CHANNEL_ID = 'appeal-message';
+const TRACKING_PUSH_TASK = 'TRACKING_V2_LOCATION_REQUEST';
 
 let notificationsModule: typeof import('expo-notifications') | null = null;
 let handlerInitialized = false;
 let responseListener: { remove: () => void } | null = null;
+const trackingRequests = new Map<string, number>();
+
+async function handleTrackingPush(data: unknown) {
+  const payload = parseTrackingPush(data);
+  if (!payload) return;
+  for (const [id, expiresAt] of trackingRequests) if (expiresAt < Date.now()) trackingRequests.delete(id);
+  if (trackingRequests.has(payload.requestId)) return;
+  trackingRequests.set(payload.requestId, payload.expiresAt);
+  try {
+    const { requestTrackingPosition } = await import('./trackingV2Service');
+    await requestTrackingPosition(payload.requestId);
+  } catch {
+    console.warn('[tracking-v2] could not capture requested location');
+  }
+}
+
+if (Platform.OS !== 'web' && !TaskManager.isTaskDefined(TRACKING_PUSH_TASK)) {
+  TaskManager.defineTask(TRACKING_PUSH_TASK, async ({ data, error }) => {
+    if (error) return;
+    await handleTrackingPush(data);
+  });
+}
 
 function isExpoGo() {
   const ownership = (Constants as any).appOwnership;
@@ -37,13 +62,20 @@ export async function initPushNotifications() {
   const Notifications = await getNotificationsModule();
   if (!Notifications) return;
 
+  try {
+    await Notifications.registerTaskAsync(TRACKING_PUSH_TASK);
+  } catch (error) {
+    console.warn('[tracking-v2] push background task unavailable', error);
+  }
+
   if (!handlerInitialized) {
+    Notifications.addNotificationReceivedListener((notification) => { void handleTrackingPush(notification); });
     Notifications.setNotificationHandler({
       handleNotification: async (notification) => ({
-        shouldShowAlert: notification.request.content.data?.type !== 'APPEAL_MESSAGE',
-        shouldShowBanner: notification.request.content.data?.type !== 'APPEAL_MESSAGE',
-        shouldShowList: notification.request.content.data?.type !== 'APPEAL_MESSAGE',
-        shouldPlaySound: true,
+        shouldShowAlert: !['APPEAL_MESSAGE', 'TRACKING_LOCATION_REQUEST'].includes(String(notification.request.content.data?.type)),
+        shouldShowBanner: !['APPEAL_MESSAGE', 'TRACKING_LOCATION_REQUEST'].includes(String(notification.request.content.data?.type)),
+        shouldShowList: !['APPEAL_MESSAGE', 'TRACKING_LOCATION_REQUEST'].includes(String(notification.request.content.data?.type)),
+        shouldPlaySound: notification.request.content.data?.type !== 'TRACKING_LOCATION_REQUEST',
         shouldSetBadge: false,
       }),
     });
@@ -113,13 +145,13 @@ export async function syncPushToken() {
   const token = await registerForPushNotificationsAsync();
   if (!token) return null;
 
-  const stored = await AsyncStorage.getItem(PUSH_TOKEN_KEY);
-  if (stored === token) return token;
-
-  await apiClient(API_ENDPOINTS.USERS.DEVICE_TOKENS, {
+  // Re-upsert on each authenticated session: a restored database or a different
+  // API/account can have lost the registration while this local cache survives.
+  const result = await apiClient(API_ENDPOINTS.USERS.DEVICE_TOKENS, {
     method: 'POST',
     body: { token, platform: Platform.OS },
   });
+  if (!result.ok) throw new Error(result.message || 'Не удалось зарегистрировать push-токен');
 
   await AsyncStorage.setItem(PUSH_TOKEN_KEY, token);
   return token;

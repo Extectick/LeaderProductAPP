@@ -1,403 +1,59 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 import * as Updates from 'expo-updates';
+import { reloadAppSafely } from '@/src/shared/ota/appReloadLifecycle';
 
-const OTA_CHECK_TIMEOUT_MS = 15000;
-const OTA_FETCH_TIMEOUT_MS = 90000;
-const OTA_NATIVE_IDLE_TIMEOUT_MS = 30000;
-const OTA_NATIVE_POLL_MS = 250;
-const OTA_PENDING_GRACE_MS = 2500;
-const OTA_RETRY_DELAY_MS = 1000;
-const OTA_MAX_CHECK_ATTEMPTS = 3;
-const RELOAD_DELAY_MS = 900;
-const NATIVE_OTA_GATE_HANDLES_STARTUP = Platform.OS === 'android' && !__DEV__;
-const JS_OTA_CHECK_ENABLED = Platform.OS !== 'web' && !__DEV__ && !NATIVE_OTA_GATE_HANDLES_STARTUP;
-const OTA_PENDING_RELOAD_GUARD_ENABLED = Platform.OS !== 'web' && !__DEV__;
+const RELOAD_TIMEOUT_MS = 8_000;
+type StartupOtaPhase = 'waiting' | 'disabled' | 'applying' | 'ready' | 'error';
+type StartupOtaState = { ready: boolean; phase: StartupOtaPhase };
 
-type StartupOtaPhase =
-  | 'waiting'
-  | 'disabled'
-  | 'checking'
-  | 'downloading'
-  | 'applying'
-  | 'up-to-date'
-  | 'error';
-
-type StartupOtaState = {
-  ready: boolean;
-  phase: StartupOtaPhase;
-  statusText: string;
-  hintText: string;
-  progress: number | null;
-};
-
-function clampProgress(value: number | null | undefined) {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
-  return Math.max(0, Math.min(1, value));
-}
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer) {
-      clearTimeout(timer);
-    }
-  }
-}
-
-function isExpectedUpdatesDisabledError(error: unknown) {
-  const code = (error as any)?.code;
-  const message = String((error as any)?.message || '');
-  return (
-    code === 'ERR_UPDATES_DISABLED' ||
-    message.includes('development mode') ||
-    message.includes('development builds')
-  );
-}
-
-function isTransientUpdatesBusyError(error: unknown) {
-  const message = String((error as any)?.message || '').toLowerCase();
-  return (
-    message.includes('already') ||
-    message.includes('in progress') ||
-    message.includes('busy') ||
-    message.includes('running')
-  );
-}
-
+/**
+ * Native startup selects a cached/embedded bundle within its network deadline.
+ * Never wait here for a background download or issue another check: the global
+ * banner owns that work. Only apply an already pending update before entry.
+ */
 export function useStartupOtaUpdate(start: boolean): StartupOtaState {
   const updatesState = Updates.useUpdates();
-  const [ready, setReady] = useState(!(JS_OTA_CHECK_ENABLED || OTA_PENDING_RELOAD_GUARD_ENABLED));
-  const [phase, setPhase] = useState<StartupOtaPhase>(
-    JS_OTA_CHECK_ENABLED || OTA_PENDING_RELOAD_GUARD_ENABLED ? 'waiting' : 'disabled'
-  );
-  const [manualProgress, setManualProgress] = useState<number | null>(null);
-  const startedRef = useRef(false);
-  const nativeGateStartedRef = useRef(false);
-  const reloadTriggeredRef = useRef(false);
-  const mountedRef = useRef(true);
-  const latestUpdatesStateRef = useRef(updatesState);
+  const enabled = Platform.OS !== 'web' && !__DEV__ && Updates.isEnabled;
+  const [state, setState] = useState<StartupOtaState>({
+    ready: !enabled, phase: enabled ? 'waiting' : 'disabled',
+  });
+  const reloadRef = useRef<Promise<void> | null>(null);
+  const reloadDeadlineRef = useRef<number | null>(null);
 
   useEffect(() => {
-    latestUpdatesStateRef.current = updatesState;
-  }, [updatesState]);
-
-  useEffect(() => {
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
-
-  const finish = useCallback((nextPhase: StartupOtaPhase) => {
-    if (!mountedRef.current) return;
-    setPhase(nextPhase);
-    setManualProgress(nextPhase === 'up-to-date' ? 1 : null);
-    setReady(true);
-  }, []);
-
-  const applyDownloadedUpdate = useCallback(async () => {
-    if (reloadTriggeredRef.current) return;
-    reloadTriggeredRef.current = true;
-    if (mountedRef.current) {
-      setReady(false);
-      setPhase('applying');
-      setManualProgress(0.96);
-    }
-    await sleep(RELOAD_DELAY_MS);
-    try {
-      await Updates.reloadAsync();
-    } catch (error) {
-      reloadTriggeredRef.current = false;
-      throw error;
-    }
-  }, []);
-
-  const hasPendingDownloadedUpdate = useCallback(() => {
-    const state = latestUpdatesStateRef.current;
-    return Boolean(state.isUpdatePending || state.downloadedUpdate);
-  }, []);
-
-  const waitForPendingDownloadedUpdate = useCallback(
-    async (isCancelled: () => boolean, timeoutMs = OTA_PENDING_GRACE_MS) => {
-      const deadline = Date.now() + timeoutMs;
-      while (!isCancelled() && mountedRef.current) {
-        if (hasPendingDownloadedUpdate()) return true;
-        if (Date.now() >= deadline) return false;
-        await sleep(OTA_NATIVE_POLL_MS);
-      }
-      return false;
-    },
-    [hasPendingDownloadedUpdate]
-  );
-
-  const waitForNativeUpdatesIdle = useCallback(
-    async (isCancelled: () => boolean) => {
-      const deadline = Date.now() + OTA_NATIVE_IDLE_TIMEOUT_MS;
-
-      while (!isCancelled() && mountedRef.current) {
-        const state = latestUpdatesStateRef.current;
-        if (state.isUpdatePending || state.downloadedUpdate) return 'pending' as const;
-        if (!state.isStartupProcedureRunning && !state.isChecking && !state.isDownloading) {
-          return 'idle' as const;
-        }
-        if (Date.now() >= deadline) return 'timeout' as const;
-        if (state.isDownloading) {
-          setPhase('downloading');
-          setManualProgress(null);
-        } else {
-          setPhase('checking');
-          setManualProgress((current) => current ?? 0.22);
-        }
-        await sleep(OTA_NATIVE_POLL_MS);
-      }
-
-      return 'cancelled' as const;
-    },
-    []
-  );
-
-  const finishIfNoPendingUpdate = useCallback(
-    (nextPhase: StartupOtaPhase) => {
-      if (hasPendingDownloadedUpdate()) {
-        void applyDownloadedUpdate().catch((error) => {
-          if (!isExpectedUpdatesDisabledError(error)) {
-            console.warn('[ota] reload failed', error);
-          }
-          finish('error');
-        });
-        return;
-      }
-      finish(nextPhase);
-    },
-    [applyDownloadedUpdate, finish, hasPendingDownloadedUpdate]
-  );
-
-  useEffect(() => {
-    if (!start) return;
-    if (!Updates.isEnabled) {
-      finish('disabled');
+    if (!start || state.ready) return;
+    if (!enabled) {
+      setState({ ready: true, phase: 'disabled' });
       return;
     }
-    if (!JS_OTA_CHECK_ENABLED && !OTA_PENDING_RELOAD_GUARD_ENABLED) {
-      finish('disabled');
-    }
-  }, [finish, start]);
-
-  useEffect(() => {
-    if (!start || JS_OTA_CHECK_ENABLED || !OTA_PENDING_RELOAD_GUARD_ENABLED || nativeGateStartedRef.current) return undefined;
-    if (!Updates.isEnabled) {
-      finish('disabled');
-      return undefined;
+    const downloadedId = updatesState.downloadedUpdate?.updateId;
+    const runningId = updatesState.currentlyRunning?.updateId || Updates.updateId;
+    const alreadyRunning = Boolean(downloadedId && runningId && downloadedId === runningId);
+    const nativeBusy = updatesState.isStartupProcedureRunning || updatesState.isChecking || updatesState.isDownloading;
+    if (!reloadRef.current && (alreadyRunning || !updatesState.isUpdatePending || nativeBusy)) {
+      // A download completing later must not restart an app the user is using.
+      setState({ ready: true, phase: 'ready' });
+      return;
     }
 
     let cancelled = false;
-    nativeGateStartedRef.current = true;
-
-    void (async () => {
-      try {
-        setReady(false);
-        setPhase('checking');
-        setManualProgress(0.22);
-
-        const nativeState = await waitForNativeUpdatesIdle(() => cancelled);
-        if (cancelled || !mountedRef.current || reloadTriggeredRef.current) return;
-
-        if (
-          nativeState === 'pending' ||
-          hasPendingDownloadedUpdate() ||
-          await waitForPendingDownloadedUpdate(() => cancelled)
-        ) {
-          await applyDownloadedUpdate();
-          return;
-        }
-
-        finish(nativeState === 'timeout' ? 'error' : 'up-to-date');
-      } catch (error) {
-        if (cancelled || !mountedRef.current || reloadTriggeredRef.current) return;
-        if (!isExpectedUpdatesDisabledError(error)) {
-          console.warn('[ota] native startup update guard failed', error);
-        }
-        finish('error');
-      }
-    })();
-
-    return () => {
-      cancelled = true;
+    setState({ ready: false, phase: 'applying' });
+    // Reuse the operation if StrictMode replays the effect.
+    const deadline = reloadDeadlineRef.current ??= Date.now() + RELOAD_TIMEOUT_MS;
+    const reload = reloadRef.current ??= reloadAppSafely(() => Updates.reloadAsync());
+    const finish = (error?: unknown) => {
+      if (cancelled) return;
+      clearTimeout(timer);
+      if (error) console.warn('[ota] startup reload failed', error);
+      setState({ ready: true, phase: error ? 'error' : 'ready' });
     };
-  }, [applyDownloadedUpdate, finish, hasPendingDownloadedUpdate, start, waitForNativeUpdatesIdle, waitForPendingDownloadedUpdate]);
+    const timer = setTimeout(() => finish(new Error('OTA reload timed out')), Math.max(0, deadline - Date.now()));
+    void reload.then(() => finish(), finish);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [enabled, start, state.ready, updatesState.currentlyRunning?.updateId,
+    updatesState.downloadedUpdate?.updateId, updatesState.isChecking, updatesState.isDownloading,
+    updatesState.isStartupProcedureRunning, updatesState.isUpdatePending]);
 
-  useEffect(() => {
-    if (!start || startedRef.current) return;
-    if (!JS_OTA_CHECK_ENABLED) return;
-    if (!Updates.isEnabled) return;
-
-    let cancelled = false;
-    startedRef.current = true;
-
-    void (async () => {
-      try {
-        setReady(false);
-        setPhase('checking');
-        setManualProgress(0.18);
-
-        const nativeState = await waitForNativeUpdatesIdle(() => cancelled);
-        if (cancelled || !mountedRef.current || reloadTriggeredRef.current) return;
-        if (nativeState === 'pending') {
-          await applyDownloadedUpdate();
-          return;
-        }
-
-        let checkResult: Awaited<ReturnType<typeof Updates.checkForUpdateAsync>> | null = null;
-        let lastError: unknown = null;
-        for (let attempt = 1; attempt <= OTA_MAX_CHECK_ATTEMPTS; attempt += 1) {
-          try {
-            checkResult = await withTimeout(
-              Updates.checkForUpdateAsync(),
-              OTA_CHECK_TIMEOUT_MS,
-              'OTA update check timed out'
-            );
-            lastError = null;
-            break;
-          } catch (error) {
-            lastError = error;
-            if (isExpectedUpdatesDisabledError(error)) throw error;
-            if (!isTransientUpdatesBusyError(error) && attempt >= OTA_MAX_CHECK_ATTEMPTS) {
-              throw error;
-            }
-
-            const retryState = await waitForNativeUpdatesIdle(() => cancelled);
-            if (cancelled || !mountedRef.current || reloadTriggeredRef.current) return;
-            if (retryState === 'pending') {
-              await applyDownloadedUpdate();
-              return;
-            }
-            await sleep(OTA_RETRY_DELAY_MS);
-          }
-        }
-
-        if (cancelled || !mountedRef.current || reloadTriggeredRef.current) return;
-        if (!checkResult) {
-          throw lastError || new Error('OTA update check failed');
-        }
-
-        if (!checkResult.isAvailable && !checkResult.isRollBackToEmbedded) {
-          finishIfNoPendingUpdate('up-to-date');
-          return;
-        }
-
-        setPhase('downloading');
-        setManualProgress(0.45);
-
-        const fetchResult = await withTimeout(
-          Updates.fetchUpdateAsync(),
-          OTA_FETCH_TIMEOUT_MS,
-          'OTA update download timed out'
-        );
-        if (cancelled || !mountedRef.current || reloadTriggeredRef.current) return;
-
-        if (fetchResult.isNew || fetchResult.isRollBackToEmbedded || hasPendingDownloadedUpdate()) {
-          await applyDownloadedUpdate();
-          return;
-        }
-
-        finishIfNoPendingUpdate('up-to-date');
-      } catch (error) {
-        if (cancelled || !mountedRef.current || reloadTriggeredRef.current) return;
-        if (!isExpectedUpdatesDisabledError(error)) {
-          console.warn('[ota] startup update check failed', error);
-        }
-        finish('error');
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [applyDownloadedUpdate, finish, finishIfNoPendingUpdate, hasPendingDownloadedUpdate, start, waitForNativeUpdatesIdle]);
-
-  const derivedPhase = useMemo<StartupOtaPhase>(() => {
-    if (phase === 'applying' || updatesState.isRestarting) return 'applying';
-    if (!ready && updatesState.isUpdatePending) return 'applying';
-    if (!ready && updatesState.isDownloading) return 'downloading';
-    if (!ready && updatesState.isChecking) return 'checking';
-    return phase;
-  }, [
-    phase,
-    ready,
-    updatesState.isChecking,
-    updatesState.isDownloading,
-    updatesState.isRestarting,
-    updatesState.isUpdatePending,
-  ]);
-
-  const progress = useMemo(() => {
-    if (derivedPhase === 'downloading') {
-      return clampProgress(updatesState.downloadProgress) ?? manualProgress ?? 0.45;
-    }
-    if (derivedPhase === 'checking') {
-      return manualProgress ?? 0.18;
-    }
-    if (derivedPhase === 'applying') {
-      return manualProgress ?? 0.96;
-    }
-    return manualProgress;
-  }, [derivedPhase, manualProgress, updatesState.downloadProgress]);
-
-  const runtimeLabel = Updates.runtimeVersion ? `Runtime ${Updates.runtimeVersion}.` : '';
-
-  const copy = useMemo(() => {
-    if (!start) {
-      return {
-        statusText: 'Подготовка обновлений',
-        hintText: 'Ожидаем завершения базовой инициализации.',
-      };
-    }
-    if (derivedPhase === 'checking') {
-      return {
-        statusText: 'Проверка OTA обновления',
-        hintText: `${runtimeLabel} Проверяем, есть ли свежий интерфейс.`.trim(),
-      };
-    }
-    if (derivedPhase === 'downloading') {
-      return {
-        statusText: 'Загрузка OTA обновления',
-        hintText: 'Скачиваем новый интерфейс. APK переустанавливать не нужно.',
-      };
-    }
-    if (derivedPhase === 'applying') {
-      return {
-        statusText: 'Применение OTA обновления',
-        hintText: 'Перезапускаем приложение на новой версии интерфейса.',
-      };
-    }
-    if (derivedPhase === 'error') {
-      return {
-        statusText: 'OTA временно недоступно',
-        hintText: 'Запускаем приложение без ожидания обновления.',
-      };
-    }
-    return {
-      statusText: 'OTA обновлений нет',
-      hintText: runtimeLabel || 'Интерфейс уже актуален.',
-    };
-  }, [derivedPhase, runtimeLabel, start]);
-
-  return {
-    ready,
-    phase: derivedPhase,
-    statusText: copy.statusText,
-    hintText: copy.hintText,
-    progress,
-  };
+  return state;
 }

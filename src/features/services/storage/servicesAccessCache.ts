@@ -14,7 +14,7 @@ export async function readCachedServices(): Promise<ServiceAccessItem[] | null> 
     const normalized = parsed
       .map((item) => normalizeServiceItem(item))
       .filter((item): item is ServiceAccessItem => item !== null);
-    return normalized.length ? normalized : null;
+    return normalized;
   } catch {
     return null;
   }

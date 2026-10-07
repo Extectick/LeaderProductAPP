@@ -347,13 +347,13 @@ describe('OTA status indicator', () => {
     expect(statusButton.props.accessibilityLabel).toBe('Обновление готово');
   });
 
-  it('does not ask to restart when the downloaded update is already running', async () => {
+  it.each([false, true])('does not ask to restart the running update with stale pending=%s', async (pending) => {
     mockUpdatesState.downloadedUpdate = {
       updateId: 'already-running-update',
       manifest: { extra: { displayVersion: '0.1.17.8' } },
     };
     mockUpdatesState.currentlyRunning.updateId = 'already-running-update';
-    mockUpdatesState.isUpdatePending = false;
+    mockUpdatesState.isUpdatePending = pending;
 
     let status: ReturnType<typeof useOtaUpdateStatus>;
     function Harness() {
@@ -371,6 +371,41 @@ describe('OTA status indicator', () => {
     expect(status!.phase).toBe('idle');
     expect(status!.readyToReload).toBe(false);
     expect(findPressables(renderer!)[0].props.accessibilityLabel).toBe('Сервер доступен');
+  });
+
+  it.each(['isStartupProcedureRunning', 'isChecking', 'isDownloading'])('does not enqueue another check during native %s', async (key) => {
+    mockUpdatesState[key] = true;
+    let status!: ReturnType<typeof useOtaUpdateStatus>;
+    function Harness() { status = useOtaUpdateStatus(); return null; }
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(React.createElement(OtaUpdateStatusProvider, { enabled: true }, React.createElement(Harness)));
+    });
+    await act(async () => { await status.requestCheck('manual'); });
+    expect(mockCheckForUpdateAsync).not.toHaveBeenCalled();
+    expect(mockFetchUpdateAsync).not.toHaveBeenCalled();
+    expect(mockCheckBinaryUpdate).not.toHaveBeenCalled();
+    expect(status.progress).toBeNull();
+    await act(async () => renderer.unmount());
+  });
+
+  it('hands a slow native download over to the banner and keeps completion manual', async () => {
+    // Previous download metadata may remain after that bundle has launched.
+    mockUpdatesState.downloadedUpdate = { updateId: 'current-update' };
+    mockUpdatesState.isDownloading = true;
+    mockUpdatesState.downloadProgress = 0.37;
+    let status!: ReturnType<typeof useOtaUpdateStatus>;
+    function Harness() { status = useOtaUpdateStatus(); return null; }
+    let renderer!: TestRenderer.ReactTestRenderer;
+    const tree = () => React.createElement(OtaUpdateStatusProvider, { enabled: true }, React.createElement(Harness));
+    await act(async () => { renderer = TestRenderer.create(tree()); });
+    expect(status.phase).toBe('downloading');
+    expect(status.progress).toBe(0.37);
+    mockUpdatesState = { ...mockUpdatesState, isDownloading: false, isUpdatePending: true, downloadedUpdate: { updateId: 'next-update' } };
+    await act(async () => renderer.update(tree()));
+    expect(status.readyToReload).toBe(true);
+    expect(mockReloadAsync).not.toHaveBeenCalled();
+    await act(async () => renderer.unmount());
   });
 
   it('keeps catalog idle press behavior for APK check and services refresh', async () => {

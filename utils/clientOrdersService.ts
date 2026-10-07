@@ -1,7 +1,14 @@
 import { API_ENDPOINTS } from './apiEndpoints';
 import { apiClient } from './apiClient';
-import { toUserErrorMessage } from '@/src/shared/errors/userErrorMessage';
-import { scheduleProductCatalogSync, searchCatalogProducts } from '@/src/features/productCatalog';
+import type { OrderGeoEventInput } from './orderGeo';
+import { isNetworkUnavailableError, toUserErrorMessage } from '@/src/shared/errors/userErrorMessage';
+import { getCatalogProductsByGuids, scheduleProductCatalogSync, searchCatalogProducts } from '@/src/features/productCatalog';
+import { getServerStatus } from '@/src/shared/network/serverStatus';
+import {
+  hasActiveOfflineEntity,
+  readActiveOfflineEntityItems,
+  type OfflineEntity,
+} from '@/src/features/clientOrders/offline/offlineOrdersDatabase';
 
 const CLIENT_ORDERS_REQUEST_TIMEOUT_MS = 65_000;
 
@@ -304,6 +311,7 @@ export type ClientOrder = {
   guid: string;
   clientOrderId?: string | null;
   clientRevision?: number | null;
+  geoEvents?: OrderGeoEventInput[];
   appGuid?: string | null;
   documentGuid?: string | null;
   number1c?: string | null;
@@ -481,14 +489,18 @@ function getErrorMessage(fallback: string, message?: string) {
   return toUserErrorMessage(message, fallback);
 }
 
-function throwApiError(fallback: string, res: { message?: string; status?: number; errorCode?: string; errorDetails?: any }): never {
+function throwApiError(fallback: string, res: { message?: string; status?: number; errorCode?: string; backendErrorCode?: string; errorDetails?: any }): never {
   const error = new Error(toUserErrorMessage(res, fallback)) as Error & {
     status?: number;
     errorCode?: string;
+    backendErrorCode?: string;
+    details?: any;
     errorDetails?: any;
   };
   error.status = res.status;
   error.errorCode = res.errorCode;
+  error.backendErrorCode = res.backendErrorCode;
+  error.details = res.errorDetails;
   error.errorDetails = res.errorDetails;
   throw error;
 }
@@ -662,17 +674,109 @@ export async function getClientOrderDefaults(params: {
   const query = buildQuery(params);
   const path = `${API_ENDPOINTS.CLIENT_ORDERS.DEFAULTS}?${query}`;
   return dedupeRead(`GET ${path}`, async () => {
-    const res = await apiClient<void, ClientOrderDefaults>(path, {
-      timeoutMs: CLIENT_ORDERS_REQUEST_TIMEOUT_MS,
-    });
-    if (!res.ok || !res.data) throw new Error(getErrorMessage('Не удалось получить значения по умолчанию', res.message));
+    const res = !getServerStatus().isReachable
+      ? { ok: false, data: null, message: 'Данные контрагента для офлайна ещё не загружены' }
+      : await apiClient<void, ClientOrderDefaults>(path, { timeoutMs: CLIENT_ORDERS_REQUEST_TIMEOUT_MS });
+    if (!res.ok || !res.data) {
+      const [organizations, counterparties, agreements, contracts, warehouses, addresses, priceTypes, orderOptions] = await Promise.all([
+        readActiveOfflineEntityItems<any>('organizations'),
+        readActiveOfflineEntityItems<any>('counterparties'),
+        readActiveOfflineEntityItems<any>('agreements'),
+        readActiveOfflineEntityItems<any>('contracts'),
+        readActiveOfflineEntityItems<any>('warehouses'),
+        readActiveOfflineEntityItems<any>('delivery-addresses'),
+        readActiveOfflineEntityItems<any>('price-types'),
+        readActiveOfflineEntityItems<any>('order-options'),
+      ]);
+      const organization = organizations.find((item) => item.guid === params.organizationGuid) ?? null;
+      const counterparty = counterparties.find((item) => item.guid === params.counterpartyGuid) ?? null;
+      const agreementRaw = agreements.find((item) =>
+        (item.counterparty?.guid ?? item.counterpartyGuid) === params.counterpartyGuid
+        && (item.organization?.guid ?? item.organizationGuid) === params.organizationGuid
+      ) ?? null;
+      const contractGuid = agreementRaw?.contract?.guid ?? agreementRaw?.contractGuid;
+      const contractRaw = contracts.find((item) => item.guid === contractGuid)
+        ?? contracts.find((item) =>
+          (item.counterparty?.guid ?? item.counterpartyGuid) === params.counterpartyGuid
+          && (item.organization?.guid ?? item.organizationGuid) === params.organizationGuid
+        ) ?? null;
+      const warehouseGuid = agreementRaw?.warehouse?.guid ?? agreementRaw?.warehouseGuid;
+      const priceTypeGuid = agreementRaw?.priceType?.guid ?? agreementRaw?.priceTypeGuid;
+      const warehouse = warehouses.find((item) => item.guid === warehouseGuid) ?? null;
+      const priceType = priceTypes.find((item) => item.guid === priceTypeGuid) ?? null;
+      const deliveryAddress = addresses.find((item) =>
+        (item.counterparty?.guid ?? item.counterpartyGuid) === params.counterpartyGuid && item.isDefault
+      ) ?? addresses.find((item) => (item.counterparty?.guid ?? item.counterpartyGuid) === params.counterpartyGuid) ?? null;
+      const paymentForms = orderOptions
+        .filter((item) => item.kind === 'payment-form')
+        .map((item) => ({ code: item.code, name: item.name || item.code }));
+      const deliveryMethods = orderOptions
+        .filter((item) => item.kind === 'delivery-method')
+        .map((item) => ({ code: item.code, name: item.name || item.code }));
+      if (counterparty) {
+        const agreement = agreementRaw ? {
+          ...agreementRaw,
+          counterpartyGuid: agreementRaw.counterparty?.guid ?? null,
+          organizationGuid: agreementRaw.organization?.guid ?? null,
+          contractGuid: contractGuid ?? null,
+          warehouseGuid: warehouseGuid ?? null,
+          priceTypeGuid: priceTypeGuid ?? null,
+          contract: contractRaw,
+          warehouse,
+          priceType,
+        } : null;
+        return {
+          organization: organization ?? { guid: params.organizationGuid, name: params.organizationGuid },
+          counterparty: { ...counterparty, hasDebt: false, shipmentProhibited: false, debtReason: null },
+          agreement,
+          contract: contractRaw,
+          warehouse,
+          deliveryAddress,
+          priceType,
+          paymentForm: agreementRaw?.paymentForm ?? null,
+          paymentForms: paymentForms.length
+            ? paymentForms
+            : agreementRaw?.paymentForm ? [{ code: agreementRaw.paymentForm, name: agreementRaw.paymentForm }] : [],
+          deliveryMethod: contractRaw?.deliveryMethod ?? null,
+          deliveryMethods: deliveryMethods.length
+            ? deliveryMethods
+            : contractRaw?.deliveryMethod ? [{ code: contractRaw.deliveryMethod, name: contractRaw.deliveryMethod }] : [],
+          currency: agreementRaw?.currency ?? 'RUB',
+          invoiceRequested: false,
+          hasDebt: false,
+          shipmentProhibited: false,
+          debtReason: null,
+        } as ClientOrderDefaults;
+      }
+      throw new Error(getErrorMessage('Не удалось получить значения по умолчанию', res.message));
+    }
     return res.data;
   });
 }
 
-export async function getClientOrderSettings() {
-  const res = await apiClient<void, ClientOrderSettings>(API_ENDPOINTS.CLIENT_ORDERS.SETTINGS);
-  if (!res.ok || !res.data) throw new Error(getErrorMessage('Не удалось загрузить настройки заказов клиентов', res.message));
+export async function getClientOrderSettings(options?: { offlineOnly?: boolean }) {
+  const res = options?.offlineOnly || !getServerStatus().isReachable
+    ? { ok: false, data: null, message: 'Настройки для офлайна ещё не загружены' }
+    : await apiClient<void, ClientOrderSettings>(API_ENDPOINTS.CLIENT_ORDERS.SETTINGS);
+  if (!res.ok || !res.data) {
+    const organizations = await readActiveOfflineEntityItems<ClientOrderOrganization>('organizations');
+    if (organizations.length) {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      return {
+        organizations,
+        preferredOrganization: null,
+        deliveryDateMode: 'NEXT_DAY' as const,
+        deliveryDateOffsetDays: 1,
+        fixedDeliveryDate: null,
+        resolvedDeliveryDate: tomorrow.toISOString(),
+        deliveryDateIssue: null,
+        deliveryDateIssueMessage: null,
+        currency: 'RUB' as const,
+      };
+    }
+    throw new Error(getErrorMessage('Не удалось загрузить настройки заказов клиентов', res.message));
+  }
   return res.data;
 }
 
@@ -707,11 +811,68 @@ async function getPagedSelector<T>(
     const res = await apiClient<void, { items: T[] }>(path, {
       timeoutMs: CLIENT_ORDERS_REQUEST_TIMEOUT_MS,
     });
+    if (!res.ok || !res.data) throwApiError(fallbackMessage, res);
     return mapPagedResponse(res, fallbackMessage);
   });
 }
 
-export function searchClientOrderCounterparties(params?: {
+async function getReferenceSelector<T>(
+  loadOnline: () => Promise<PagedResult<T>>,
+  loadOffline: () => Promise<PagedResult<T> | null>
+): Promise<PagedResult<T>> {
+  const readOffline = async () => {
+    try { return await loadOffline(); }
+    catch { return null; } // SQLite is a fallback, never a prerequisite for an API read.
+  };
+  if (!getServerStatus().isReachable) {
+    const local = await readOffline();
+    if (local) return local;
+    // An earlier network failure is not proof that the device is still offline.
+    // Without usable local data, try the API rather than returning an empty list.
+  }
+  try {
+    return await loadOnline();
+  } catch (error) {
+    const status = (error as { status?: number } | null)?.status;
+    const transientStatus = status === 0 || status === 408 || status === 502 || status === 503 || status === 504;
+    // Never hide authorization, validation or cancellation failures behind cached data.
+    if (transientStatus || (status === undefined && isNetworkUnavailableError(error))) {
+      const local = await readOffline();
+      if (local) return local;
+    }
+    throw error;
+  }
+}
+
+async function getOfflineSelector<T>(
+  entity: OfflineEntity,
+  params: { search?: string; limit?: number; offset?: number; organizationGuid?: string; counterpartyGuid?: string },
+  mapper: (item: any) => T
+) {
+  if (!(await hasActiveOfflineEntity(entity))) return null;
+  const stored = await readActiveOfflineEntityItems<any>(entity);
+  if (!stored.length) return null;
+  const search = (params.search || '').trim().toLocaleLowerCase('ru');
+  const all = stored.filter((item) => {
+    const counterpartyGuid = item.counterpartyGuid ?? item.counterparty?.guid;
+    const organizationGuid = item.organizationGuid ?? item.organization?.guid;
+    if (params.counterpartyGuid && counterpartyGuid !== params.counterpartyGuid) return false;
+    if (params.organizationGuid && organizationGuid && organizationGuid !== params.organizationGuid) return false;
+    if (!search) return true;
+    return [item.guid, item.name, item.fullName, item.number, item.inn, item.code, item.fullAddress]
+      .some((value) => String(value || '').toLocaleLowerCase('ru').includes(search));
+  });
+  const offset = Math.max(0, params.offset || 0);
+  const limit = Math.max(1, params.limit || 25);
+  const page = all.slice(offset, offset + limit).map(mapper);
+  return {
+    items: page,
+    meta: { total: all.length, count: page.length, limit, offset, hasMore: offset + page.length < all.length },
+    localOffline: true as const,
+  };
+}
+
+export async function searchClientOrderCounterparties(params?: {
   search?: string;
   limit?: number;
   offset?: number;
@@ -720,14 +881,21 @@ export function searchClientOrderCounterparties(params?: {
   organizationGuid?: string;
   debtStatus?: ClientOrderDebtStatus;
 }) {
-  return getPagedSelector<ClientOrderCounterpartyOption>(
-    API_ENDPOINTS.CLIENT_ORDERS.COUNTERPARTIES,
-    { ...(params || {}), debtStatus: params?.debtStatus ?? 'all' },
-    'Не удалось загрузить контрагентов'
+  const input = params || {};
+  return getReferenceSelector(
+    () => getPagedSelector<ClientOrderCounterpartyOption>(
+      API_ENDPOINTS.CLIENT_ORDERS.COUNTERPARTIES,
+      { ...input, debtStatus: input.debtStatus ?? 'all' },
+      'Не удалось загрузить контрагентов'
+    ),
+    () => input.debtStatus && input.debtStatus !== 'all' ? Promise.resolve(null)
+      : getOfflineSelector<ClientOrderCounterpartyOption>('counterparties', input, (item) => ({
+        ...item, hasDebt: false, shipmentProhibited: false, debtReason: null,
+      }))
   );
 }
 
-export function searchClientOrderAgreements(params?: {
+export async function searchClientOrderAgreements(params?: {
   counterpartyGuid?: string;
   organizationGuid?: string;
   search?: string;
@@ -735,14 +903,23 @@ export function searchClientOrderAgreements(params?: {
   offset?: number;
   includeInactive?: boolean;
 }) {
-  return getPagedSelector<ClientOrderAgreementOption>(
-    API_ENDPOINTS.CLIENT_ORDERS.AGREEMENTS,
-    params || {},
-    'Не удалось загрузить соглашения'
+  const input = params || {};
+  return getReferenceSelector(
+    () => getPagedSelector<ClientOrderAgreementOption>(
+      API_ENDPOINTS.CLIENT_ORDERS.AGREEMENTS, input, 'Не удалось загрузить соглашения'
+    ),
+    () => getOfflineSelector<ClientOrderAgreementOption>('agreements', input, (item) => ({
+      ...item,
+      counterpartyGuid: item.counterparty?.guid ?? item.counterpartyGuid ?? null,
+      organizationGuid: item.organization?.guid ?? item.organizationGuid ?? null,
+      contractGuid: item.contract?.guid ?? item.contractGuid ?? null,
+      warehouseGuid: item.warehouse?.guid ?? item.warehouseGuid ?? null,
+      priceTypeGuid: item.priceType?.guid ?? item.priceTypeGuid ?? null,
+    }))
   );
 }
 
-export function searchClientOrderContracts(params?: {
+export async function searchClientOrderContracts(params?: {
   counterpartyGuid?: string;
   organizationGuid?: string;
   search?: string;
@@ -750,14 +927,20 @@ export function searchClientOrderContracts(params?: {
   offset?: number;
   includeInactive?: boolean;
 }) {
-  return getPagedSelector<ClientOrderContractOption>(
-    API_ENDPOINTS.CLIENT_ORDERS.CONTRACTS,
-    params || {},
-    'Не удалось загрузить договоры'
+  const input = params || {};
+  return getReferenceSelector(
+    () => getPagedSelector<ClientOrderContractOption>(
+      API_ENDPOINTS.CLIENT_ORDERS.CONTRACTS, input, 'Не удалось загрузить договоры'
+    ),
+    () => getOfflineSelector<ClientOrderContractOption>('contracts', input, (item) => ({
+      ...item,
+      counterpartyGuid: item.counterparty?.guid ?? item.counterpartyGuid ?? null,
+      organizationGuid: item.organization?.guid ?? item.organizationGuid ?? null,
+    }))
   );
 }
 
-export function searchClientOrderWarehouses(params?: {
+export async function searchClientOrderWarehouses(params?: {
   counterpartyGuid?: string;
   organizationGuid?: string;
   search?: string;
@@ -765,27 +948,31 @@ export function searchClientOrderWarehouses(params?: {
   offset?: number;
   includeInactive?: boolean;
 }) {
-  return getPagedSelector<ClientOrderWarehouseOption>(
-    API_ENDPOINTS.CLIENT_ORDERS.WAREHOUSES,
-    params || {},
-    'Не удалось загрузить склады'
+  const input = params || {};
+  return getReferenceSelector(
+    () => getPagedSelector<ClientOrderWarehouseOption>(
+      API_ENDPOINTS.CLIENT_ORDERS.WAREHOUSES, input, 'Не удалось загрузить склады'
+    ),
+    () => getOfflineSelector<ClientOrderWarehouseOption>('warehouses', input, (item) => item)
   );
 }
 
-export function searchClientOrderPriceTypes(params?: {
+export async function searchClientOrderPriceTypes(params?: {
   search?: string;
   limit?: number;
   offset?: number;
   includeInactive?: boolean;
 }) {
-  return getPagedSelector<ClientOrderPriceTypeOption>(
-    API_ENDPOINTS.CLIENT_ORDERS.PRICE_TYPES,
-    params || {},
-    'Не удалось загрузить виды цен'
+  const input = params || {};
+  return getReferenceSelector(
+    () => getPagedSelector<ClientOrderPriceTypeOption>(
+      API_ENDPOINTS.CLIENT_ORDERS.PRICE_TYPES, input, 'Не удалось загрузить виды цен'
+    ),
+    () => getOfflineSelector<ClientOrderPriceTypeOption>('price-types', input, (item) => item)
   );
 }
 
-export function searchClientOrderDeliveryAddresses(params?: {
+export async function searchClientOrderDeliveryAddresses(params?: {
   counterpartyGuid?: string;
   organizationGuid?: string;
   search?: string;
@@ -793,10 +980,15 @@ export function searchClientOrderDeliveryAddresses(params?: {
   offset?: number;
   includeInactive?: boolean;
 }) {
-  return getPagedSelector<ClientOrderDeliveryAddressOption>(
-    API_ENDPOINTS.CLIENT_ORDERS.DELIVERY_ADDRESSES,
-    params || {},
-    'Не удалось загрузить адреса доставки'
+  const input = params || {};
+  return getReferenceSelector(
+    () => getPagedSelector<ClientOrderDeliveryAddressOption>(
+      API_ENDPOINTS.CLIENT_ORDERS.DELIVERY_ADDRESSES, input, 'Не удалось загрузить адреса доставки'
+    ),
+    () => getOfflineSelector<ClientOrderDeliveryAddressOption>('delivery-addresses', input, (item) => ({
+      ...item,
+      counterpartyGuid: item.counterparty?.guid ?? item.counterpartyGuid ?? null,
+    }))
   );
 }
 
@@ -812,27 +1004,28 @@ export async function searchClientOrderProducts(params: {
   offset?: number;
 }) {
   scheduleProductCatalogSync();
-  // Точный фильтр наличия зависит от склада и собственного резерва менеджера.
-  // Поэтому только этот режим остаётся живым запросом, обычный поиск идёт из SQLite.
-  if (!params.inStockOnly) {
-    try {
-      const local = await searchCatalogProducts(params.search || '', params.limit || 50, params.offset || 0);
-      if (local) {
-        return {
-          items: local.items,
-          meta: {
-            total: local.total,
-            count: local.items.length,
-            limit: params.limit || 50,
-            offset: params.offset || 0,
-            hasMore: local.hasMore,
-          },
-          localCatalog: true as const,
-        };
-      }
-    } catch (error) {
-      console.warn('[catalog] local search failed, using API fallback', error);
+  try {
+    const local = await searchCatalogProducts(params.search || '', params.limit || 50, params.offset || 0, {
+      priceTypeGuid: params.priceTypeGuid,
+      warehouseGuid: params.warehouseGuid,
+      organizationGuid: params.organizationGuid,
+      inStockOnly: params.inStockOnly,
+    });
+    if (local) {
+      return {
+        items: local.items,
+        meta: {
+          total: local.total,
+          count: local.items.length,
+          limit: params.limit || 50,
+          offset: params.offset || 0,
+          hasMore: local.hasMore,
+        },
+        localCatalog: true as const,
+      };
     }
+  } catch (error) {
+    console.warn('[catalog] local search failed, using API fallback', error);
   }
   return getPagedSelector<ClientOrderProduct>(API_ENDPOINTS.CLIENT_ORDERS.PRODUCTS, params, 'Не удалось загрузить номенклатуру');
 }
@@ -870,16 +1063,37 @@ export async function getClientOrderProductsBatch(payload: {
 
   const requestPayload = { ...payload, productGuids: missingGuids };
   const key = `POST ${API_ENDPOINTS.CLIENT_ORDERS.PRODUCTS_BATCH} ${JSON.stringify(requestPayload)}`;
-  const freshItems = await dedupeRead(key, async () => {
-    const res = await apiClient<typeof requestPayload, { items: ClientOrderProduct[] }>(
-      API_ENDPOINTS.CLIENT_ORDERS.PRODUCTS_BATCH,
-      { method: 'POST', body: requestPayload, timeoutMs: CLIENT_ORDERS_REQUEST_TIMEOUT_MS }
-    );
-    if (!res.ok || !res.data) {
-      throw new Error(getErrorMessage('Не удалось обновить цены и остатки товаров', res.message));
-    }
-    return Array.isArray(res.data.items) ? res.data.items : [];
-  });
+  let freshItems: ClientOrderProduct[];
+  if (!getServerStatus().isReachable) {
+    freshItems = await getCatalogProductsByGuids(missingGuids, {
+      priceTypeGuid: payload.priceTypeGuid,
+      warehouseGuid: payload.warehouseGuid,
+      organizationGuid: payload.organizationGuid,
+    });
+  } else {
+  try {
+    freshItems = await dedupeRead(key, async () => {
+      const res = await apiClient<typeof requestPayload, { items: ClientOrderProduct[] }>(
+        API_ENDPOINTS.CLIENT_ORDERS.PRODUCTS_BATCH,
+        { method: 'POST', body: requestPayload, timeoutMs: CLIENT_ORDERS_REQUEST_TIMEOUT_MS }
+      );
+      if (!res.ok || !res.data) {
+        const error = new Error(getErrorMessage('Не удалось обновить цены и остатки товаров', res.message)) as Error & { status?: number };
+        error.status = res.status;
+        throw error;
+      }
+      return Array.isArray(res.data.items) ? res.data.items : [];
+    });
+  } catch (error) {
+    const status = (error as { status?: number })?.status;
+    if (status !== 0 && status !== 408 && status !== 503 && status !== 504) throw error;
+    freshItems = await getCatalogProductsByGuids(missingGuids, {
+      priceTypeGuid: payload.priceTypeGuid,
+      warehouseGuid: payload.warehouseGuid,
+      organizationGuid: payload.organizationGuid,
+    });
+  }
+  }
   for (const item of freshItems) {
     cachedByGuid.set(item.guid, item);
     productBatchValueCache.set(`${contextKey}|${item.guid}`, { item, cachedAt: Date.now() });
@@ -904,7 +1118,11 @@ export async function createClientOrder(payload: any) {
 export async function putClientOrderByClientId(
   clientOrderId: string,
   payload: any,
-  options: { clientRevision: number; intent: 'SAVE' | 'SUBMIT' }
+  options: {
+    clientRevision: number;
+    intent: 'SAVE' | 'SUBMIT';
+    offlineReview?: { pricePolicy: 'ASK' | 'USE_CURRENT' | 'KEEP_DRAFT'; snapshotSyncedAt?: string };
+  }
 ) {
   const body = { ...payload, ...options };
   const res = await apiClient<typeof body, ClientOrder>(
@@ -918,6 +1136,14 @@ export async function putClientOrderByClientId(
   if (!res.ok || !res.data) {
     throwApiError('Не удалось сохранить заказ клиента', res);
   }
+  return normalizeClientOrder(res.data);
+}
+
+export async function getClientOrderByClientId(clientOrderId: string) {
+  const res = await apiClient<void, ClientOrder>(API_ENDPOINTS.CLIENT_ORDERS.BY_CLIENT_ID(clientOrderId), {
+    timeoutMs: CLIENT_ORDERS_REQUEST_TIMEOUT_MS,
+  });
+  if (!res.ok || !res.data) throwApiError('Не удалось сверить заказ клиента', res);
   return normalizeClientOrder(res.data);
 }
 
@@ -938,10 +1164,10 @@ export async function deleteClientOrder(guid: string) {
   return res.data;
 }
 
-export async function submitClientOrder(guid: string, revision: number) {
-  const res = await apiClient<{ revision: number }, ClientOrder>(API_ENDPOINTS.CLIENT_ORDERS.SUBMIT(guid), {
+export async function submitClientOrder(guid: string, revision: number, geoEvents?: OrderGeoEventInput[]) {
+  const res = await apiClient<{ revision: number; geoEvents?: OrderGeoEventInput[] }, ClientOrder>(API_ENDPOINTS.CLIENT_ORDERS.SUBMIT(guid), {
     method: 'POST',
-    body: { revision },
+    body: { revision, geoEvents },
     timeoutMs: CLIENT_ORDERS_REQUEST_TIMEOUT_MS,
   });
   if (!res.ok || !res.data) throw new Error(getErrorMessage('Не удалось отправить заказ клиента', res.message));

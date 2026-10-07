@@ -29,16 +29,19 @@ describe('local product catalog integration', () => {
     expect(apiClientMock).not.toHaveBeenCalled();
   });
 
-  it('keeps the exact in-stock filter on the live endpoint', async () => {
-    apiClientMock.mockResolvedValueOnce({ ok: true, status: 200, data: { items: [] }, meta: { total: 0 } } as any);
+  it('applies the exact in-stock filter in SQLite without waiting for the live endpoint', async () => {
+    localSearchMock.mockResolvedValueOnce({ items: [], total: 0, hasMore: false });
 
-    await searchClientOrderProducts({ search: 'мол', warehouseGuid: 'warehouse', inStockOnly: true, limit: 50, offset: 0 });
+    const result = await searchClientOrderProducts({ search: 'мол', warehouseGuid: 'warehouse', inStockOnly: true, limit: 50, offset: 0 });
 
-    expect(localSearchMock).not.toHaveBeenCalled();
-    expect(apiClientMock).toHaveBeenCalledWith(
-      '/api/client-orders/products?search=%D0%BC%D0%BE%D0%BB&warehouseGuid=warehouse&inStockOnly=true&limit=50&offset=0',
-      { timeoutMs: 65_000 }
-    );
+    expect(localSearchMock).toHaveBeenCalledWith('мол', 50, 0, {
+      priceTypeGuid: undefined,
+      warehouseGuid: 'warehouse',
+      organizationGuid: undefined,
+      inStockOnly: true,
+    });
+    expect(result.localCatalog).toBe(true);
+    expect(apiClientMock).not.toHaveBeenCalled();
   });
 
   it('caches context-dependent product values briefly and requests only missing GUIDs', async () => {

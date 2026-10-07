@@ -2,6 +2,8 @@ import {
   buildNewItem,
   buildCopyPayload,
   buildPayload,
+  buildLocalDraftPayload,
+  getClientOrderDisplayNumber,
   canComputeDraftProfit,
   canComputeLineProfit,
   computeDraftMetrics,
@@ -83,6 +85,39 @@ describe('order edit base token', () => {
   it('keeps the server content identity in save requests', () => {
     const value = draft({ contentToken: 'a'.repeat(64), items: [item()] });
     expect(buildPayload(value).integrity?.baseContentToken).toBe('a'.repeat(64));
+  });
+});
+
+describe('local drafts', () => {
+  it('persists partial input but keeps server submission validation strict', () => {
+    const value = draft({ counterpartyGuid: '', items: [] });
+    expect(() => buildPayload(value)).toThrow('Выберите контрагента');
+    expect(buildLocalDraftPayload(value).counterpartyGuid).toBe('');
+    expect(buildLocalDraftPayload(value).items).toEqual([]);
+  });
+
+  it('restores raw local quantities instead of converting incomplete input to a number', () => {
+    const value = draft({ items: [item({ quantity: '1,' })] });
+    const order = { guid: 'device-order-abc123', clientOrderId: 'abc123', clientRevision: 3,
+      revision: 1, origin: 'device', localDraft: value, items: [] } as any;
+    expect(orderToDraft(JSON.parse(JSON.stringify(order))).items[0].quantity).toBe('1,');
+    expect(orderToDraft(order).clientRevision).toBe(3);
+  });
+
+  it('uses the same short number and draft label locally as for API drafts', () => {
+    const order = { guid: 'device-order-abc123', clientOrderId: 'abcdef12-1234-4567-8910-123456789012', origin: 'device' } as any;
+    expect(getClientOrderDisplayNumber(order)).toBe('abcdef12');
+    expect(getClientOrderDisplayNumber({ ...order, clientOrderId: '12345678-1234-4567-8910-123456789012' })).toBe('12345678');
+    expect(getClientOrderDisplayNumber({ guid: 'abcdef12-1234-4567-8910-123456789012', origin: 'local' } as any)).toBe('abcdef12');
+    expect(getOrderDisplayStatusLabel({ ...order, offlineDraftStatus: 'ON_DEVICE' })).toBe('Черновик');
+    expect(getClientOrderDisplayNumber({ ...order, number1c: 'НОУТ-000001' })).toBe('НОУТ-000001');
+    expect(getOrderDisplayStatusLabelWithQueue({ ...order, offlineDraftStatus: 'READY_TO_SEND' })).toBe('В очереди на устройстве');
+  });
+
+  it('does not display technical prefixes for legacy local drafts or change server draft numbers', () => {
+    expect(getClientOrderDisplayNumber({ guid: 'device-order-1789999999999-abc123', origin: 'device' } as any)).toBe('99abc123');
+    expect(getClientOrderDisplayNumber({ guid: 'device-order-123', clientOrderId: 'legacy-server:abcdef12-1234-5678', origin: 'device' } as any)).toBe('abcdef12');
+    expect(getClientOrderDisplayNumber({ guid: 'abcdef12-1234-5678', clientOrderId: 'different-id', origin: 'device' } as any)).toBe('abcdef12');
   });
 });
 
