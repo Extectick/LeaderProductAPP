@@ -168,7 +168,7 @@ jobs:
         run: |
           node scripts/checkSentryConfig.js
           npx tsc --noEmit
-          npm run test:unit -- --runInBand __tests__/productionMonitoring.unit.test.ts __tests__/offlineOrdersSync.unit.test.ts __tests__/useClientOrdersWorkspace.unit.test.ts __tests__/trackingV2Lifecycle.unit.test.ts __tests__/trackingReliability.unit.test.ts __tests__/servicesOffline.unit.test.ts __tests__/sqliteWriteQueue.unit.test.ts
+          NODE_ENV=test BABEL_ENV=test npm run test:unit -- --runInBand __tests__/productionMonitoring.unit.test.ts __tests__/offlineOrdersSync.unit.test.ts __tests__/useClientOrdersWorkspace.unit.test.ts __tests__/trackingV2Lifecycle.unit.test.ts __tests__/trackingReliability.unit.test.ts __tests__/servicesOffline.unit.test.ts __tests__/sqliteWriteQueue.unit.test.ts
 
       - name: Generate Android native project
         if: ${{ steps.strategy.outputs.apk_required == 'true' }}
