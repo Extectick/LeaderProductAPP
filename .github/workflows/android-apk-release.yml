@@ -209,7 +209,17 @@ jobs:
           CRASH_SSH_USER: ${{ secrets.SERVER_USER }}
           CRASH_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
           CRASH_SSH_KNOWN_HOSTS: ${{ secrets.CRASH_SSH_KNOWN_HOSTS }}
-        run: bash scripts/uploadCrashSymbolsCi.sh --apk
+        run: |
+          node --test scripts/crashSymbolVerification.test.js
+          bash scripts/uploadCrashSymbolsCi.sh --apk
+
+      - name: Preserve built candidate on verification failure
+        if: ${{ failure() && steps.strategy.outputs.apk_required == 'true' && hashFiles('android/app/build/outputs/apk/release/app-release.apk') != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-apk-candidate-${{ env.EXPO_PUBLIC_UPDATE_CHANNEL }}-${{ steps.version.outputs.version_name }}-${{ steps.version.outputs.version_code }}
+          path: android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 3
 
       - name: Prepare release metadata
         if: ${{ steps.strategy.outputs.apk_required == 'true' }}
