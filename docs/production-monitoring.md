@@ -64,3 +64,28 @@ bundle and is insufficient for GlitchTip symbolication.
   copy WMS15/dev datasets into production or bypass the manifest readiness guard.
 - No physical-device or emulator runtime acceptance test is claimed by these
   static/unit/build checks.
+
+### Staged release outcome
+
+- API `d76204a` is deployed in production and healthy. Backup directory:
+  `/var/backups/leader-release-20261008`; archive `production.dump` was restored
+  to `LeaderAPI_releasecheck_20261008` before applying the reviewed schema diff.
+  Production 1C remains unchanged (LP App API reports v53).
+- APP workflow `37688741475` succeeded from `2261604`. CI passed 115 core tests,
+  four source-map gate tests and the native build. Synthetic event
+  `b80be0faa18be79e2185ac53150d49c9` resolved to `privacy.ts:14`.
+- Candidate: `prod/updates/apk/leader-product-prod-0.1.33-32.apk`, 129526385 bytes,
+  SHA-256 `29e9b91f2efe2bec369ad4fa0ac80f4d03463bed4ab667d44af88c42a0a54ee7`.
+  Local APK verifier passed: existing certificate, prod API/OTA, both ABIs,
+  release mode, metadata checksum, map and private-credential exclusion.
+- **Not published to AppUpdate yet.** The permanent download page still offers
+  the previously published APK, not this staged candidate.
+- `TRACKING_V2_ENABLED=true`. `CLIENT_ORDERS_OFFLINE_ENABLED=false` until initial
+  production exchange is explicitly authorized and verified. At staging time,
+  selling prices, manager reserves, manager-counterparty links and offline export
+  policy were absent. Do not mark an incomplete dataset ready or import dev data.
+- Next: obtain authorization for initial `torg2026 -> production API` reference,
+  price and stock exchange (no extension/business document modifications), verify
+  all offline entities under a real manager, enable the offline flag, publish the
+  verified metadata using `scripts/publish-apk-update-db.js` in the production API
+  container, then run `deploy/public-apk-download/verify-live.cjs` from API source.
