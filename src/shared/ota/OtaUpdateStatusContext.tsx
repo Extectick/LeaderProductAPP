@@ -1,8 +1,9 @@
 import React from 'react';
-import { AppState, type AppStateStatus, Platform } from 'react-native';
+import { Alert, AppState, type AppStateStatus, Platform } from 'react-native';
 import * as Application from 'expo-application';
 import Constants from 'expo-constants';
 import * as Updates from 'expo-updates';
+import { AppReloadDeferredError, reloadAppSafely } from './appReloadLifecycle';
 import { checkForUpdate, getInstallId, logUpdateEvent } from '@/utils/updateService';
 import {
   areAutomaticUpdateChecksPaused,
@@ -87,7 +88,7 @@ function isExpectedUpdatesDisabledError(error: unknown) {
 }
 
 function hasPendingUpdate(state: ReturnType<typeof Updates.useUpdates>) {
-  return Boolean(state.isUpdatePending);
+  return Boolean(state.isUpdatePending) && !isDownloadedUpdateAlreadyRunning(state);
 }
 
 function readUpdateId(source: unknown): string | null {
@@ -116,7 +117,7 @@ function readUpdateLabel(source: unknown): string | null {
 function isDownloadedUpdateAlreadyRunning(state: ReturnType<typeof Updates.useUpdates>) {
   const downloadedUpdateId = readUpdateId(state.downloadedUpdate);
   const runningUpdateId = readUpdateId((state as any).currentlyRunning) || String((Updates as any).updateId || '').trim();
-  return Boolean(downloadedUpdateId && runningUpdateId && downloadedUpdateId === runningUpdateId && !state.isUpdatePending);
+  return Boolean(downloadedUpdateId && runningUpdateId && downloadedUpdateId === runningUpdateId);
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
@@ -158,6 +159,7 @@ export function OtaUpdateStatusProvider({
   const nextAutoCheckAtRef = React.useRef(0);
   const otaReadyLoggedForRef = React.useRef<string | null>(null);
   const blockedByBinaryUpdateRef = React.useRef(false);
+  const reloadInProgressRef = React.useRef(false);
 
   React.useEffect(() => {
     latestUpdatesStateRef.current = updatesState;
@@ -242,13 +244,6 @@ export function OtaUpdateStatusProvider({
       setTargetUpdateId(null);
       return;
     }
-    if (isDownloadedUpdateAlreadyRunning(updatesState)) {
-      setPhase('idle');
-      setManualProgress(null);
-      setTargetVersionLabel(null);
-      setTargetUpdateId(null);
-      return;
-    }
     if (hasPendingUpdate(updatesState)) {
       setPhase('ready');
       setManualProgress(1);
@@ -268,6 +263,13 @@ export function OtaUpdateStatusProvider({
       setManualProgress((current) => current ?? 0.12);
       return;
     }
+    if (isDownloadedUpdateAlreadyRunning(updatesState)) {
+      setPhase('idle');
+      setManualProgress(null);
+      setTargetVersionLabel(null);
+      setTargetUpdateId(null);
+      return;
+    }
     setPhase((current) => {
       if (current === 'ready' || current === 'restarting' || current === 'error') return current;
       return 'idle';
@@ -276,6 +278,7 @@ export function OtaUpdateStatusProvider({
     enabled,
     blockedByBinaryUpdate,
     updatesEnabled,
+    updatesState.currentlyRunning?.updateId,
     updatesState.downloadedUpdate,
     updatesState.isChecking,
     updatesState.isDownloading,
@@ -293,6 +296,12 @@ export function OtaUpdateStatusProvider({
   const requestCheck = React.useCallback(
     async (source = 'manual') => {
       if (!updatesEnabled || checkingRef.current || phase === 'restarting') {
+        return false;
+      }
+      // Native startup may have released the app while still downloading.
+      // Observe that operation instead of queueing another check/fetch behind it.
+      const nativeState = latestUpdatesStateRef.current;
+      if (nativeState.isStartupProcedureRunning || nativeState.isChecking || nativeState.isDownloading) {
         return false;
       }
 
@@ -456,17 +465,32 @@ export function OtaUpdateStatusProvider({
   const reloadUpdate = React.useCallback(async () => {
     if (!updatesEnabled) return;
     if (blockedByBinaryUpdateRef.current) return;
+    if (reloadInProgressRef.current) return;
+    reloadInProgressRef.current = true;
     setPhase('restarting');
     setManualProgress(1);
     setErrorMessage(null);
-    await logOtaEvent('OTA_RELOAD');
-    await Updates.reloadAsync();
+    try {
+      await reloadAppSafely(() => {
+        // Telemetry must not hold the storage barrier on a slow network.
+        void logOtaEvent('OTA_RELOAD').catch(() => undefined);
+        return Updates.reloadAsync();
+      });
+    } catch (error) {
+      const message = error instanceof AppReloadDeferredError ? error.message
+        : 'Не удалось применить обновление. Повторите позже';
+      setPhase('ready');
+      setErrorMessage(message);
+      Alert.alert('Обновление', message);
+    } finally {
+      reloadInProgressRef.current = false;
+    }
   }, [logOtaEvent, updatesEnabled]);
 
   const progress = phase === 'downloading'
-    ? clampProgress(updatesState.downloadProgress) ?? manualProgress ?? 0.2
+    ? clampProgress(updatesState.downloadProgress)
     : phase === 'checking'
-      ? manualProgress ?? 0.12
+      ? null
       : phase === 'ready' || phase === 'restarting'
         ? 1
         : manualProgress;

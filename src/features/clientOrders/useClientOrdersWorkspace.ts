@@ -1,4 +1,5 @@
 import { AuthContext } from '@/context/AuthContext';
+import { offlineSyncStage, reportOfflineSyncFailure } from '@/src/shared/storage/offlineSyncDiagnostics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   cancelClientOrder,
@@ -48,11 +49,13 @@ import { useServerStatus } from '@/src/shared/network/useServerStatus';
 import { getServerStatus } from '@/src/shared/network/serverStatus';
 import {
   isNetworkUnavailableError as isSharedNetworkUnavailableError,
+  isTechnicalErrorMessage,
   toUserErrorMessage,
 } from '@/src/shared/errors/userErrorMessage';
 import {
   buildNewItem,
   buildCopyPayload,
+  buildLocalDraftPayload,
   buildPayload,
   computeDraftMetrics,
   computeDraftTotal,
@@ -90,10 +93,13 @@ import {
   readOfflineDatasetMeta,
   readOfflineDataSyncTime,
   readOfflineDrafts,
-  replaceOfflineDrafts,
+  applyOfflineDraftChanges,
   type OfflineDraftStatus,
 } from './offline/offlineOrdersDatabase';
-import { isOfflineOrderDataSyncing, syncOfflineOrderData } from './offline/offlineOrdersSync';
+import { isOfflineOrderDataSyncing, syncOfflineOrderData, type OfflineSyncTransfer } from './offline/offlineOrdersSync';
+import { offlineSyncErrorMessage } from './offline/offlineSyncError';
+import { applyLocalOrderOrganization, readLocalOrderSettings, writeLocalOrderOrganization, writeLocalOrderSettings } from './offline/localOrderSettings';
+import { registerAppReloadBlocker } from '@/src/shared/ota/appReloadLifecycle';
 import { captureOrderGeoEvent, type OrderGeoEventInput } from '@/utils/orderGeo';
 
 type AutosaveState = 'idle' | 'saved' | 'error';
@@ -101,6 +107,7 @@ type SaveOptions = {
   silent?: boolean;
   reason?: 'manual' | 'autosave';
   intent?: 'SAVE' | 'SUBMIT';
+  localOnly?: boolean;
   geoEvents?: OrderGeoEventInput[];
 };
 type DiscardDecision = 'save' | 'discard' | 'cancel';
@@ -412,17 +419,34 @@ async function readStoredOrdersCache(storageKey: string, signature: string) {
 }
 
 async function writeStoredOrdersCache(storageKey: string, entry: OrdersCacheEntry) {
-  const payload = JSON.stringify(entry);
-  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-    window.localStorage.setItem(storageKey, payload);
-    return;
+  try {
+    const payload = JSON.stringify(entry);
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.localStorage.setItem(storageKey, payload);
+      return;
+    }
+    await AsyncStorage.setItem(storageKey, payload);
+  } catch {
+    // This is a disposable list cache, not the durable SQLite draft store.
+    // A failed cache write must not turn a successful send into an unhandled error.
   }
-  await AsyncStorage.setItem(storageKey, payload);
+}
+
+function uniqueDeviceDraftEntries(entries: DeviceDraftEntry[]): DeviceDraftEntry[] {
+  const unique = new Map<string, DeviceDraftEntry>();
+  for (const entry of entries) {
+    const previous = unique.get(entry.clientOrderId);
+    if (!previous || entry.clientRevision > previous.clientRevision
+      || (entry.clientRevision === previous.clientRevision && entry.updatedAt > previous.updatedAt)) {
+      unique.set(entry.clientOrderId, entry);
+    }
+  }
+  return [...unique.values()];
 }
 
 function sanitizeDeviceDraftEntries(value: unknown): DeviceDraftEntry[] {
   if (!Array.isArray(value)) return [];
-  return value.flatMap((entry) => {
+  return uniqueDeviceDraftEntries(value.flatMap((entry) => {
     if (!entry || typeof entry !== 'object') return [];
     const raw = entry as Partial<DeviceDraftEntry>;
     if (!raw.id || typeof raw.id !== 'string') return [];
@@ -441,14 +465,14 @@ function sanitizeDeviceDraftEntries(value: unknown): DeviceDraftEntry[] {
           ? Math.max(1, raw.clientRevision)
           : Math.max(1, Number((raw.order as ClientOrder).clientRevision || 1)),
       intent: raw.intent === 'SUBMIT' ? 'SUBMIT' : 'SAVE',
-      status: raw.status && ['ON_DEVICE', 'READY_TO_SEND', 'PRICE_REVIEW', 'NEEDS_EDIT', 'SENDING', 'SEND_ERROR'].includes(raw.status)
+      status: raw.status === 'SENDING' ? 'SEND_ERROR' : raw.status && ['ON_DEVICE', 'READY_TO_SEND', 'PRICE_REVIEW', 'NEEDS_EDIT', 'SENDING', 'SEND_ERROR'].includes(raw.status)
         ? raw.status
         : raw.intent === 'SUBMIT' ? 'NEEDS_EDIT' : 'ON_DEVICE',
       serverGuid: typeof raw.serverGuid === 'string' && raw.serverGuid ? raw.serverGuid : null,
       serverRevision: typeof raw.serverRevision === 'number' ? raw.serverRevision : null,
       order: {
         ...(raw.order as ClientOrder),
-        offlineDraftStatus: raw.status && ['ON_DEVICE', 'READY_TO_SEND', 'PRICE_REVIEW', 'NEEDS_EDIT', 'SENDING', 'SEND_ERROR'].includes(raw.status)
+        offlineDraftStatus: raw.status === 'SENDING' ? 'SEND_ERROR' : raw.status && ['ON_DEVICE', 'READY_TO_SEND', 'PRICE_REVIEW', 'NEEDS_EDIT', 'SENDING', 'SEND_ERROR'].includes(raw.status)
           ? raw.status
           : raw.intent === 'SUBMIT' ? 'NEEDS_EDIT' : 'ON_DEVICE',
         items: Array.isArray((raw.order as ClientOrder).items) ? (raw.order as ClientOrder).items : [],
@@ -462,51 +486,50 @@ function sanitizeDeviceDraftEntries(value: unknown): DeviceDraftEntry[] {
       nextSyncAt: typeof raw.nextSyncAt === 'string' && raw.nextSyncAt ? raw.nextSyncAt : null,
       requiresReview: raw.requiresReview === true,
     }];
-  });
+  }));
 }
 
 async function readStoredDeviceDrafts(storageKey: string, userId: string) {
-  try {
-    if (Platform.OS !== 'web') {
-      const stored = await readOfflineDrafts(userId);
-      if (stored.length) {
-        return sanitizeDeviceDraftEntries(stored.map((entry) => ({
-          ...entry,
-          lastSyncError: entry.lastSendError,
-          syncAttempts: 0,
-          nextSyncAt: null,
-        })));
-      }
-      const legacyRaw = await AsyncStorage.getItem(storageKey);
-      if (!legacyRaw) return [];
-      const legacy = sanitizeDeviceDraftEntries(JSON.parse(legacyRaw)).map((entry) => ({
-        ...entry,
-        status: entry.intent === 'SUBMIT' ? 'NEEDS_EDIT' as const : 'ON_DEVICE' as const,
-      }));
-      const migrated = await replaceOfflineDrafts(userId, legacy.map((entry) => ({
-        ...entry,
-        lastSendError: entry.lastSyncError ?? null,
-      })));
-      // AsyncStorage is removed only after the SQLite transaction succeeded.
-      if (migrated) await AsyncStorage.removeItem(storageKey);
-      return legacy;
-    }
-    const raw = Platform.OS === 'web' && typeof window !== 'undefined'
-      ? window.localStorage.getItem(storageKey)
-      : await AsyncStorage.getItem(storageKey);
-    if (!raw) return [];
-    return sanitizeDeviceDraftEntries(JSON.parse(raw));
-  } catch {
-    return [];
-  }
-}
-
-async function writeStoredDeviceDrafts(storageKey: string, userId: string, entries: DeviceDraftEntry[]) {
   if (Platform.OS !== 'web') {
-    await replaceOfflineDrafts(userId, entries.map((entry) => ({
+    const stored = await readOfflineDrafts(userId);
+    if (stored.length) {
+      return sanitizeDeviceDraftEntries(stored.map((entry) => ({
+        ...entry,
+        lastSyncError: entry.lastSendError,
+        syncAttempts: 0,
+        nextSyncAt: null,
+      })));
+    }
+    const legacyRaw = await AsyncStorage.getItem(storageKey);
+    if (!legacyRaw) return [];
+    const legacy = sanitizeDeviceDraftEntries(JSON.parse(legacyRaw)).map((entry) => ({
+      ...entry,
+      status: entry.intent === 'SUBMIT' ? 'NEEDS_EDIT' as const : 'ON_DEVICE' as const,
+    }));
+    const migrated = await applyOfflineDraftChanges(userId, legacy.map((entry) => ({
       ...entry,
       lastSendError: entry.lastSyncError ?? null,
     })));
+    // AsyncStorage is removed only after the SQLite transaction succeeded.
+    if (migrated) await AsyncStorage.removeItem(storageKey);
+    return legacy;
+  }
+  const raw = Platform.OS === 'web' && typeof window !== 'undefined'
+    ? window.localStorage.getItem(storageKey)
+    : await AsyncStorage.getItem(storageKey);
+  if (!raw) return [];
+  return sanitizeDeviceDraftEntries(JSON.parse(raw));
+}
+
+async function writeStoredDeviceDrafts(storageKey: string, userId: string, entries: DeviceDraftEntry[], previous: DeviceDraftEntry[]) {
+  if (Platform.OS !== 'web') {
+    const old = new Map(previous.map(entry => [entry.clientOrderId, entry]));
+    const nextIds = new Set(entries.map(entry => entry.clientOrderId));
+    const saved = await applyOfflineDraftChanges(userId, entries.filter(entry => old.get(entry.clientOrderId) !== entry).map((entry) => ({
+      ...entry,
+      lastSendError: entry.lastSyncError ?? null,
+    })), previous.filter(entry => !nextIds.has(entry.clientOrderId)));
+    if (!saved) throw new Error('SQLite draft storage is unavailable');
     return;
   }
   const payload = JSON.stringify(entries);
@@ -519,6 +542,7 @@ async function writeStoredDeviceDrafts(storageKey: string, userId: string, entri
 
 function userErrorMessage(error: unknown, fallback: string) {
   if (isSharedNetworkUnavailableError(error)) return toUserErrorMessage(error, fallback);
+  if (isTechnicalErrorMessage(error)) return fallback;
   const message = error instanceof Error ? error.message.trim() : '';
   const lower = message.toLocaleLowerCase('ru');
   const looksTechnical =
@@ -773,6 +797,34 @@ function isQueuedClientOrder(order?: Pick<ClientOrder, 'status' | 'syncState'> |
   return order?.syncState === 'QUEUED' || order?.syncState === 'CANCEL_REQUESTED';
 }
 
+function isDeviceOnlyOrder(order: ClientOrder) {
+  return order.origin === 'device' || isDeviceDraftGuid(order.guid);
+}
+
+function orderIdentityKeys(order: Pick<ClientOrder, 'guid' | 'appGuid' | 'documentGuid' | 'clientOrderId'>) {
+  const keys = [order.guid, order.appGuid, order.documentGuid]
+    .filter((value): value is string => !!value?.trim())
+    .map(value => `guid:${value.trim().toLowerCase()}`);
+  if (order.clientOrderId?.trim()) keys.push(`client:${order.clientOrderId.trim().toLowerCase()}`);
+  return keys;
+}
+
+function isSameListOrder(left: ClientOrder, right: ClientOrder) {
+  const keys = new Set(orderIdentityKeys(left));
+  return orderIdentityKeys(right).some(key => keys.has(key));
+}
+
+function isOlderSubmissionSummary(current: ClientOrder, summary: ClientOrder) {
+  const rollsBackSubmission = (isQueuedClientOrder(current) && summary.syncState === 'DRAFT')
+    || (current.syncState === 'SYNCED' && !!current.number1c
+      && (isQueuedClientOrder(summary) || summary.syncState === 'DRAFT'));
+  if (!rollsBackSubmission || (summary.revision || 0) > (current.revision || 0)) return false;
+  const currentUpdatedAt = parseOrderDate(current.updatedAt);
+  const summaryUpdatedAt = parseOrderDate(summary.updatedAt);
+  // A newer edit/requeue is valid. Only discard a demonstrably older snapshot.
+  return currentUpdatedAt !== null && summaryUpdatedAt !== null && summaryUpdatedAt <= currentUpdatedAt;
+}
+
 function getOfflineDraftFailureStatus(error: unknown): OfflineDraftStatus {
   const integrityKind = String((error as { errorDetails?: { kind?: string } } | null)?.errorDetails?.kind || '');
   if (integrityKind.startsWith('ORDER_')) return 'NEEDS_EDIT';
@@ -787,6 +839,7 @@ function orderListContentSignature(order: ClientOrder) {
     order.guid,
     order.appGuid,
     order.documentGuid,
+    order.clientOrderId,
     order.revision,
     order.updatedAt,
     order.sourceUpdatedAt,
@@ -864,8 +917,10 @@ function mergeOrderListMetadata(current: ClientOrder, summary: ClientOrder): Cli
     paymentForm: summary.paymentForm ?? current.paymentForm,
     deliveryMethod: summary.deliveryMethod ?? current.deliveryMethod,
     itemsCount: summary.itemsCount ?? current.itemsCount,
-    lastExportError: summary.lastExportError ?? current.lastExportError,
-    last1cError: summary.last1cError ?? current.last1cError,
+    // Explicit null from the API clears a resolved error; only an omitted
+    // field in a partial summary should retain the current detail value.
+    lastExportError: summary.lastExportError !== undefined ? summary.lastExportError : current.lastExportError,
+    last1cError: summary.last1cError !== undefined ? summary.last1cError : current.last1cError,
     hasDebt: summary.hasDebt ?? current.hasDebt,
     shipmentProhibited: summary.shipmentProhibited ?? current.shipmentProhibited,
     debtReason: summary.debtReason !== undefined ? summary.debtReason : current.debtReason,
@@ -970,6 +1025,15 @@ function withOfflineDraftFailure(entry: DeviceDraftEntry, error: unknown, messag
   return { ...next, status, order: { ...next.order, offlineDraftStatus: status } as ClientOrder };
 }
 
+function isDeviceDraftReadyForSend(entry: DeviceDraftEntry, allowPriceReview = false) {
+  // Completeness, a retry status or a forced refresh never authorize submission.
+  // Only the explicit per-document send action creates a SUBMIT operation.
+  return entry.intent === 'SUBMIT' && !entry.requiresReview && (
+    entry.status === 'READY_TO_SEND' || entry.status === 'SEND_ERROR'
+    || (allowPriceReview && entry.status === 'PRICE_REVIEW')
+  );
+}
+
 function selectedDraftPackage(item: DraftItem) {
   return item.packageGuid ? item.packages.find((pack) => pack.guid === item.packageGuid) ?? null : null;
 }
@@ -1002,6 +1066,7 @@ function buildDeviceOrderFromDraft(args: {
         ? { guid: draft.priceTypeGuid, name: draft.priceTypeName || 'Вид цены' }
         : null;
     return {
+      lineGuid: item.lineGuid || item.key,
       product: {
         guid: item.productGuid,
         name: item.productName,
@@ -1123,6 +1188,7 @@ function buildDeviceOrderFromDraft(args: {
     updatedAt,
     sourceUpdatedAt: updatedAt,
     offlineDraftStatus: 'ON_DEVICE',
+    localDraft: draft,
   } as ClientOrder;
 }
 
@@ -1165,6 +1231,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const [syncingOfflineData, setSyncingOfflineData] = React.useState(false);
   const [offlineDataLoadedAt, setOfflineDataLoadedAt] = React.useState<string | null>(null);
   const [offlineDataProgress, setOfflineDataProgress] = React.useState<number | null>(null);
+  const [offlineDataTransfer, setOfflineDataTransfer] = React.useState<OfflineSyncTransfer | null>(null);
   const [offlineDataError, setOfflineDataError] = React.useState<string | null>(null);
   const offlineRefreshRef = React.useRef<{ userId: string; promise: Promise<boolean> } | null>(null);
   const activeOfflineUserRef = React.useRef<string | null>(offlineUserId);
@@ -1202,12 +1269,17 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const [savingSettings, setSavingSettings] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [submitting, setSubmitting] = React.useState(false);
+  const submitActionInFlightRef = React.useRef(false);
+  const [syncingDeviceDrafts, setSyncingDeviceDrafts] = React.useState(false);
   const [copying, setCopying] = React.useState(false);
   const [cancelling, setCancelling] = React.useState(false);
   const [deletingDraft, setDeletingDraft] = React.useState(false);
   const [refreshing, setRefreshing] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const [ordersError, setOrdersError] = React.useState<string | null>(null);
+  const [ordersErrorState, setOrdersErrorState] = React.useState<{ message: string | null; source: 'read' | 'action' }>({ message: null, source: 'read' });
+  const ordersError = ordersErrorState.message;
+  const setOrdersError = React.useCallback((message: string | null) => setOrdersErrorState({ message, source: 'action' }), []);
+  const setOrdersReadError = React.useCallback((message: string | null) => setOrdersErrorState({ message, source: 'read' }), []);
   const [ordersAppendError, setOrdersAppendError] = React.useState<string | null>(null);
   const [dirty, setDirty] = React.useState(false);
 
@@ -1230,12 +1302,21 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const [autosaveError, setAutosaveError] = React.useState<string | null>(null);
   const [lastSavedAt, setLastSavedAt] = React.useState<string | null>(null);
   const settingsRef = React.useRef<ClientOrderSettings | null>(null);
+  const settingsRequestIdRef = React.useRef(0);
   const apiOrdersRef = React.useRef<ClientOrder[]>([]);
+  const ordersMetaRef = React.useRef(ordersMeta);
+  const filtersRef = React.useRef(filters);
+  filtersRef.current = filters;
+  const ordersMutationVersionRef = React.useRef(0);
+  const queueProbeOffsetRef = React.useRef(0);
+  const ordersPollingEnabledRef = React.useRef(ordersPollingEnabled);
+  ordersPollingEnabledRef.current = ordersPollingEnabled;
   const ordersRef = React.useRef<ClientOrder[]>([]);
   const deviceDraftEntriesRef = React.useRef<DeviceDraftEntry[]>([]);
   const documentStartedRef = React.useRef(false);
   const dirtyRef = React.useRef(false);
   const draftEditVersionRef = React.useRef(0);
+  const failedAutosaveVersionRef = React.useRef<number | null>(null);
   const foregroundSaveRef = React.useRef(false);
   const selectedGuidRef = React.useRef<string | null>(null);
   const contextRefreshSignatureRef = React.useRef('');
@@ -1251,6 +1332,11 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const ordersNextOffsetRef = React.useRef(0);
   const ordersInitialLoadDoneRef = React.useRef(false);
   const deviceDraftSyncingRef = React.useRef(false);
+  React.useEffect(() => registerAppReloadBlocker(() => {
+    if (foregroundSaveRef.current || deviceDraftSyncingRef.current) return 'Дождитесь сохранения заказа';
+    if (dirtyRef.current) return 'Сначала сохраните изменения в заказе';
+    return null;
+  }), []);
   const invoicePollingRef = React.useRef(false);
   const invoiceSettledPollGuidRef = React.useRef<string | null>(null);
   const queueRefreshInFlightRef = React.useRef(false);
@@ -1273,6 +1359,10 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, []);
 
   const refreshTodaySummary = React.useCallback((options: { force?: boolean } = {}): Promise<ClientOrdersTodaySummary | null> => {
+    if (!getServerStatus().isReachable) {
+      setLoadingTodaySummary(false);
+      return Promise.resolve(todaySummaryRef.current);
+    }
     if (todaySummaryInFlightRef.current) return todaySummaryInFlightRef.current;
     const requestId = ++todaySummaryRequestIdRef.current;
     if (!todaySummaryRef.current) setLoadingTodaySummary(true);
@@ -1380,6 +1470,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   ]);
   const canSubmitOrder =
     validation.canSubmit &&
+    (!(selectedOrder?.origin === 'device' && (selectedOrder as any).offlineDraftStatus === 'READY_TO_SEND') || dirty) &&
     (!selectedOrderQueued || dirty || selectedOrderHas1cError) &&
     (!selectedOrderSynced || dirty || selectedOrderHas1cError);
   const draftMetrics = React.useMemo(
@@ -1470,6 +1561,10 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [orders]);
 
   React.useEffect(() => {
+    ordersMetaRef.current = ordersMeta;
+  }, [ordersMeta]);
+
+  React.useEffect(() => {
     ordersRef.current = sortedOrders;
   }, [sortedOrders]);
 
@@ -1522,13 +1617,22 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       return undefined;
     }
     let cancelled = false;
+    const mutationVersion = ordersMutationVersionRef.current;
     setOrdersCacheHydrated(false);
     void readStoredOrdersCache(ordersCacheStorageKey, filtersSignature).then((cache) => {
       if (cancelled) return;
+      if (mutationVersion !== ordersMutationVersionRef.current) {
+        setOrdersCacheHydrated(true);
+        return;
+      }
       if (cache) {
-        apiOrdersRef.current = cache.orders;
-        setOrders(cache.orders);
-        ordersNextOffsetRef.current = Math.max(cache.nextOffset, cache.orders.length);
+        // Device drafts have their own durable store. Old versions could also
+        // cache them here, leaving a ghost row after successful submission.
+        const apiOrders = cache.orders.filter(order => !isDeviceOnlyOrder(order));
+        apiOrdersRef.current = apiOrders;
+        setOrders(apiOrders);
+        ordersNextOffsetRef.current = Math.max(cache.nextOffset, apiOrders.length);
+        ordersMetaRef.current = cache.meta;
         setOrdersMeta(cache.meta);
         markOrdersInitialLoadDone();
       } else {
@@ -1552,8 +1656,13 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     setDeviceDraftsHydrated(false);
     void readStoredDeviceDrafts(deviceDraftsStorageKey, offlineUserId).then((entries) => {
       if (cancelled) return;
+      deviceDraftEntriesRef.current = entries;
       setDeviceDraftEntries(entries);
       setDeviceDraftsHydrated(true);
+    }).catch((error) => {
+      if (cancelled) return;
+      reportOfflineSyncFailure(error, { stage: 'draft.read', entity: 'drafts' });
+      setError('Не удалось прочитать черновики на устройстве. Откройте список заказов заново.');
     });
     return () => {
       cancelled = true;
@@ -1596,7 +1705,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [filters, filtersHydrated, filtersStorageKey]);
 
   const resetDraftToBase = React.useCallback((nextSettings?: ClientOrderSettings | null) => {
-    const base = buildDraftBase(nextSettings ?? settings);
+    const effectiveSettings = nextSettings ?? settingsRef.current;
+    const base = buildDraftBase(effectiveSettings);
     selectedGuidRef.current = null;
     documentStartedRef.current = false;
     contextRefreshSignatureRef.current = '';
@@ -1606,7 +1716,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     setDraft(normalizeDraftOrder({ ...emptyDraft(), ...base }));
     setSelections({
       ...emptySelections(),
-      organization: (nextSettings ?? settings)?.preferredOrganization || null,
+      organization: effectiveSettings?.preferredOrganization || null,
     });
     setSelectedGuid(null);
     setSelectedOrder(null);
@@ -1636,29 +1746,28 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [markDirty]);
 
   const applySavedOrderToList = React.useCallback((order: ClientOrder) => {
-    const matches = orderMatchesFilters(order, filters);
-    setOrders((prev) => {
-      const existingIndex = prev.findIndex((item) => item.guid === order.guid);
-      if (matches) {
-        const next = existingIndex >= 0
-          ? prev.map((item) => (item.guid === order.guid ? order : item))
-          : [order, ...prev];
-        return sortClientOrdersForWorkspace(next);
-      }
-      if (existingIndex < 0) return prev;
-      return prev.filter((item) => item.guid !== order.guid);
+    if (activeOfflineUserRef.current !== offlineUserId || isDeviceOnlyOrder(order)) return;
+    const current = apiOrdersRef.current.filter(item => !isDeviceOnlyOrder(item));
+    const existing = current.some(item => isSameListOrder(item, order));
+    const matches = orderMatchesFilters(order, filtersRef.current);
+    const remaining = current.filter(item => !isSameListOrder(item, order));
+    const next = sortClientOrdersForWorkspace(matches ? [order, ...remaining] : remaining);
+    const nextMeta = { ...ordersMetaRef.current,
+      total: Math.max(0, ordersMetaRef.current.total + Number(matches) - Number(existing)),
+    };
+    // Update refs synchronously: bulk sends and pending list reads must see the
+    // server identity immediately, before React commits the next render.
+    ordersMutationVersionRef.current += 1;
+    apiOrdersRef.current = next;
+    ordersMetaRef.current = nextMeta;
+    setOrders(next);
+    setOrdersMeta(nextMeta);
+    const cachedOrders = next.slice(0, ORDERS_CACHE_LIMIT);
+    void writeStoredOrdersCache(ordersCacheStorageKey, {
+      signature: ordersFilterSignature(filtersRef.current), orders: cachedOrders, meta: nextMeta,
+      nextOffset: Math.min(ordersNextOffsetRef.current, cachedOrders.length), storedAt: new Date().toISOString(),
     });
-    setOrdersMeta((prev) => {
-      const existingVisible = ordersRef.current.some((item) => item.guid === order.guid);
-      if (matches && !existingVisible) {
-        return { ...prev, total: prev.total + 1 };
-      }
-      if (!matches && existingVisible) {
-        return { ...prev, total: Math.max(0, prev.total - 1) };
-      }
-      return prev;
-    });
-  }, [filters]);
+  }, [offlineUserId, ordersCacheStorageKey]);
 
   const setItemPatch = React.useCallback((lineKey: string, patch: Partial<DraftItem>) => {
     patchDraft((prev) => ({
@@ -1950,10 +2059,12 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     setSelectedGuid(normalizedOrder.guid);
     setSelectedOrder(normalizedOrder);
     setDraft(nextDraft);
-    void enrichItemsMetadata(nextDraft, {
-      ...options,
-      receiptPriceAt: normalizedOrder.readOnly ? normalizedOrder.date1c ?? undefined : undefined,
-    });
+    if (normalizedOrder.origin !== 'device' || getServerStatus().isReachable) {
+      void enrichItemsMetadata(nextDraft, {
+        ...options,
+        receiptPriceAt: normalizedOrder.readOnly ? normalizedOrder.date1c ?? undefined : undefined,
+      });
+    }
     setDocumentStarted(true);
     setSelections({
       organization: normalizedOrder.organization || null,
@@ -1974,32 +2085,48 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     setAutosaveError(null);
   }, [enrichItemsMetadata, loadEnumOptionsForContext]);
 
-  const replaceDeviceDraftEntries = React.useCallback((entries: DeviceDraftEntry[]) => {
+  const replaceDeviceDraftEntries = React.useCallback(async (next: DeviceDraftEntry[]) => {
+    const previous = deviceDraftEntriesRef.current;
+    let entries = uniqueDeviceDraftEntries(next);
+    try {
+      await writeStoredDeviceDrafts(deviceDraftsStorageKey, offlineUserId, entries, previous);
+    } catch (error) {
+      reportOfflineSyncFailure(error, { stage: 'draft.write', entity: 'drafts' });
+      throw error;
+    }
+    // Other independent documents can be changed while SQLite is writing.
+    const changed = entries.filter(entry => !previous.includes(entry));
+    const removed = previous.filter(entry => !entries.some(item => item.clientOrderId === entry.clientOrderId));
+    entries = uniqueDeviceDraftEntries([
+      ...changed,
+      ...deviceDraftEntriesRef.current.filter(entry => !changed.some(item => item.clientOrderId === entry.clientOrderId)
+        && !removed.some(item => isSameOrderOperation(entry, item))),
+    ]);
     deviceDraftEntriesRef.current = entries;
     setDeviceDraftEntries(entries);
-    void writeStoredDeviceDrafts(deviceDraftsStorageKey, offlineUserId, entries);
   }, [deviceDraftsStorageKey, offlineUserId]);
 
-  const findDeviceDraftEntry = React.useCallback((guid?: string | null) => {
-    if (!guid) return null;
-    return deviceDraftEntriesRef.current.find((entry) => entry.order.guid === guid || entry.serverGuid === guid) ?? null;
+  const findDeviceDraftEntry = React.useCallback((guid?: string | null, clientOrderId?: string | null) => {
+    return deviceDraftEntriesRef.current.find((entry) =>
+      (clientOrderId && entry.clientOrderId === clientOrderId)
+      || (guid && (entry.order.guid === guid || entry.serverGuid === guid))) ?? null;
   }, []);
 
-  const removeDeviceDraftEntry = React.useCallback((guid?: string | null, expectedClientRevision?: number) => {
+  const removeDeviceDraftEntry = React.useCallback(async (guid?: string | null, expectedClientRevision?: number) => {
     if (!guid) return;
     const next = deviceDraftEntriesRef.current.filter((entry) =>
       (entry.order.guid !== guid && entry.serverGuid !== guid)
       || (expectedClientRevision !== undefined && entry.clientRevision !== expectedClientRevision));
-    replaceDeviceDraftEntries(next);
+    await replaceDeviceDraftEntries(next);
   }, [replaceDeviceDraftEntries]);
 
-  const saveDraftOnDevice = React.useCallback((
+  const saveDraftOnDevice = React.useCallback(async (
     payload: ClientOrderSavePayload,
     syncError?: string | null,
-    operation?: { clientOrderId: string; clientRevision: number; intent: 'SAVE' | 'SUBMIT' }
+    operation?: { clientOrderId?: string; clientRevision?: number; intent: 'SAVE' | 'SUBMIT' }
   ) => {
     const nowIso = new Date().toISOString();
-    const existing = findDeviceDraftEntry(draft.guid);
+    const existing = findDeviceDraftEntry(draft.guid, operation?.clientOrderId ?? draft.clientOrderId);
     const serverGuid = existing?.serverGuid ?? (draft.guid && !isDeviceDraftGuid(draft.guid) ? draft.guid : null);
     const clientOrderId = operation?.clientOrderId
       ?? existing?.clientOrderId
@@ -2022,7 +2149,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       serverRevision: existing?.serverRevision ?? (serverGuid ? draft.revision : null),
       order: {
         ...buildDeviceOrderFromDraft({
-          draft: { ...draft, guid: localGuid, clientOrderId, clientRevision, revision },
+          draft: { ...draft, guid: localGuid, clientOrderId, clientRevision, revision, geoEvents: payload.geoEvents ?? draft.geoEvents },
           selections,
           guid: localGuid,
           revision,
@@ -2039,12 +2166,12 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       syncAttempts: syncError ? existing?.syncAttempts ?? 0 : 0,
       nextSyncAt: null,
     };
-      const withoutCurrent = deviceDraftEntriesRef.current.filter((item) => item.id !== entry.id && item.order.guid !== localGuid && (!serverGuid || item.serverGuid !== serverGuid));
-    replaceDeviceDraftEntries([entry, ...withoutCurrent]);
+    const withoutCurrent = deviceDraftEntriesRef.current.filter((item) => item.clientOrderId !== clientOrderId && item.id !== entry.id && item.order.guid !== localGuid && (!serverGuid || item.serverGuid !== serverGuid));
+    await replaceDeviceDraftEntries([entry, ...withoutCurrent]);
     return entry.order;
   }, [draft, findDeviceDraftEntry, replaceDeviceDraftEntries, selectedOrder?.createdAt, selections]);
 
-  const createDeviceCopyFromCurrentDraft = React.useCallback(() => {
+  const createDeviceCopyFromCurrentDraft = React.useCallback(async () => {
     const nowIso = new Date().toISOString();
     const localGuid = makeDeviceDraftGuid();
     const copiedDraft = normalizeDraftOrder({
@@ -2094,7 +2221,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       syncAttempts: 0,
       nextSyncAt: null,
     };
-    replaceDeviceDraftEntries([entry, ...deviceDraftEntriesRef.current]);
+    await replaceDeviceDraftEntries([entry, ...deviceDraftEntriesRef.current]);
     applySavedOrderToList(order);
     applyOrderDetail(order, { refreshCommercialData: true });
     // Preserve incomplete or malformed input exactly in the editable copy.
@@ -2109,27 +2236,37 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     orderGuid?: string;
     pricePolicy?: 'ASK' | 'USE_CURRENT' | 'KEEP_DRAFT';
   } = {}) => {
-    if (!deviceDraftsHydrated || deviceDraftSyncingRef.current || foregroundSaveRef.current) return;
+    if (!deviceDraftsHydrated || deviceDraftSyncingRef.current || foregroundSaveRef.current || !getServerStatus().isReachable) return;
     const entries = deviceDraftEntriesRef.current;
     if (!entries.length) return;
+    const allowPriceReview = !!(syncOptions.draftId || syncOptions.orderGuid)
+      && !!syncOptions.pricePolicy && syncOptions.pricePolicy !== 'ASK';
     const dueEntries = entries.filter((entry) => {
-      if (entry.requiresReview) return false;
+      if (!isDeviceDraftReadyForSend(entry, allowPriceReview)) return false;
       if (syncOptions.draftId && entry.id !== syncOptions.draftId) return false;
       if (syncOptions.orderGuid && entry.order.guid !== syncOptions.orderGuid && entry.serverGuid !== syncOptions.orderGuid) return false;
-      const allowedStatuses = syncOptions.pricePolicy && syncOptions.pricePolicy !== 'ASK'
-        ? ['READY_TO_SEND', 'SEND_ERROR', 'PRICE_REVIEW']
-        : ['READY_TO_SEND', 'SEND_ERROR'];
-      if (!allowedStatuses.includes(entry.status)) return false;
       return syncOptions.force || isDeviceDraftSyncDue(entry);
     });
     if (!dueEntries.length) return;
 
     deviceDraftSyncingRef.current = true;
+    setSyncingDeviceDrafts(true);
     let nextEntries = entries;
 
     try {
       for (const entry of dueEntries) {
-        if (!deviceDraftEntriesRef.current.some(item => isSameOrderOperation(item, entry))) continue;
+        if (!getServerStatus().isReachable) break;
+        if (!deviceDraftEntriesRef.current.some(item => isSameOrderOperation(item, entry)
+          && isDeviceDraftReadyForSend(item, allowPriceReview))) continue;
+        const check = validateDraft(orderToDraft(entry.order));
+        if (!check.canSubmit) {
+          const message = check.blockingMessage || 'Проверьте заполнение заказа перед отправкой.';
+          await replaceDeviceDraftEntries(deviceDraftEntriesRef.current.map(item => isSameOrderOperation(item, entry)
+            ? { ...item, status: 'NEEDS_EDIT' as const, lastSyncError: message,
+                order: { ...item.order, offlineDraftStatus: 'NEEDS_EDIT', lastExportError: message } as ClientOrder }
+            : item));
+          continue;
+        }
         const sendingAt = new Date().toISOString();
         nextEntries = deviceDraftEntriesRef.current.map((item) => isSameOrderOperation(item, entry)
           ? {
@@ -2140,7 +2277,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
               nextSyncAt: null,
             }
           : item);
-        replaceDeviceDraftEntries(nextEntries);
+        await replaceDeviceDraftEntries(nextEntries);
         try {
           const existingSubmitEvent = entry.payload.geoEvents?.find((event) => event.type === 'SUBMITTED');
           const submitGeoEvent = existingSubmitEvent ?? await captureOrderGeoEvent('SUBMITTED');
@@ -2153,8 +2290,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
             if (!deviceDraftEntriesRef.current.some(item => isSameOrderOperation(item, entry))) continue;
             nextEntries = deviceDraftEntriesRef.current.map(item => isSameOrderOperation(item, entry)
               ? { ...item, payload: submissionPayload } : item);
-            replaceDeviceDraftEntries(nextEntries);
-            await writeStoredDeviceDrafts(deviceDraftsStorageKey, offlineUserId, nextEntries);
+            await replaceDeviceDraftEntries(nextEntries);
           }
           let order: ClientOrder;
           if (entry.clientOrderId.startsWith('legacy-server:')) {
@@ -2179,8 +2315,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
             );
           }
           nextEntries = deviceDraftEntriesRef.current.filter((item) => !isSameOrderOperation(item, entry));
-          replaceDeviceDraftEntries(nextEntries);
-          await writeStoredDeviceDrafts(deviceDraftsStorageKey, offlineUserId, nextEntries);
+          await replaceDeviceDraftEntries(nextEntries);
           applySavedOrderToList(order);
           const currentGuid = selectedGuidRef.current;
           if (!dirtyRef.current && !nextEntries.some(item => item.clientOrderId === entry.clientOrderId)
@@ -2190,13 +2325,12 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         } catch (error) {
           // A timeout can happen after the API/1C has committed the order. Reconcile
           // by clientOrderId before exposing an error or allowing another retry.
-          if (!entry.clientOrderId.startsWith('legacy-server:') && isTransientDeviceDraftSyncError(error)) {
+          if (getServerStatus().isReachable && !entry.clientOrderId.startsWith('legacy-server:') && isTransientDeviceDraftSyncError(error)) {
             try {
               const reconciled = await getClientOrderByClientId(entry.clientOrderId);
               if (!isReconciledOrderOperation(reconciled, { ...entry, intent: 'SUBMIT' })) throw error;
               nextEntries = deviceDraftEntriesRef.current.filter((item) => !isSameOrderOperation(item, entry));
-              replaceDeviceDraftEntries(nextEntries);
-              await writeStoredDeviceDrafts(deviceDraftsStorageKey, offlineUserId, nextEntries);
+              await replaceDeviceDraftEntries(nextEntries);
               applySavedOrderToList(reconciled);
               const currentGuid = selectedGuidRef.current;
               if (!dirtyRef.current && !nextEntries.some(item => item.clientOrderId === entry.clientOrderId)
@@ -2212,16 +2346,18 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
           nextEntries = deviceDraftEntriesRef.current.map((item) => (
             isSameOrderOperation(item, entry) ? withOfflineDraftFailure(item, error, message) : item
           ));
-          replaceDeviceDraftEntries(nextEntries);
-          await writeStoredDeviceDrafts(deviceDraftsStorageKey, offlineUserId, nextEntries);
+          await replaceDeviceDraftEntries(nextEntries);
 
           if (isTransientDeviceDraftSyncError(error)) {
             break;
           }
         }
       }
+    } catch (error) {
+      setError(userErrorMessage(error, 'Не удалось сохранить состояние отправки. Черновики остались на устройстве.'));
     } finally {
       deviceDraftSyncingRef.current = false;
+      setSyncingDeviceDrafts(false);
     }
   }, [applyOrderDetail, applySavedOrderToList, deviceDraftsHydrated, deviceDraftsStorageKey, offlineUserId, replaceDeviceDraftEntries]);
 
@@ -2234,32 +2370,64 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [patchDraft]);
 
   const loadSettings = React.useCallback(async () => {
+    const requestId = ++settingsRequestIdRef.current;
     setLoadingSettings(true);
-    try {
-      const nextSettings = await getClientOrderSettings();
+    let cachedSettings: ClientOrderSettings | null = null;
+    const isCurrent = () => requestId === settingsRequestIdRef.current && activeOfflineUserRef.current === offlineUserId;
+    const applySettings = (nextSettings: ClientOrderSettings) => {
+      if (!isCurrent()) return;
+      settingsRef.current = nextSettings;
       setSettings(nextSettings);
+      setLoadingSettings(false);
       setDraft((prev) => {
         if (prev.guid || prev.organizationGuid || prev.counterpartyGuid || prev.items.length) return prev;
         return normalizeDraftOrder({ ...prev, ...buildDraftBase(nextSettings) }, prev);
       });
-      setSelections((prev) => ({
-        ...prev,
-        organization: prev.organization || nextSettings.preferredOrganization || null,
-      }));
+      setSelections((prev) => ({ ...prev, organization: prev.organization || nextSettings.preferredOrganization || null }));
+    };
+    try {
+      const local = await readLocalOrderSettings(offlineUserId);
+      if (!isCurrent()) return null;
+      if (local.settings) {
+        cachedSettings = applyLocalOrderOrganization(local.settings, local.preference);
+        applySettings(cachedSettings);
+      }
+      if (!getServerStatus().isReachable) return cachedSettings;
+      const loaded = await getClientOrderSettings();
+      if (!isCurrent()) return null;
+      const nextSettings = applyLocalOrderOrganization(loaded, local.preference);
+      await writeLocalOrderSettings(offlineUserId, nextSettings);
+      if (!isCurrent()) return null;
+      applySettings(nextSettings);
       return nextSettings;
     } catch (e: any) {
-      setOrdersError(userErrorMessage(e, 'Не удалось загрузить настройки заказов клиентов.'));
-      return null;
+      if (isCurrent() && !isNetworkUnavailableError(e)) setOrdersReadError(userErrorMessage(e, 'Не удалось загрузить настройки заказов клиентов.'));
+      return isCurrent() ? cachedSettings : null;
     } finally {
-      setLoadingSettings(false);
+      if (requestId === settingsRequestIdRef.current) setLoadingSettings(false);
     }
-  }, []);
+  }, [offlineUserId]);
 
-  const loadOrders = React.useCallback(async (mode: 'reset' | 'append' = 'reset', loadOptions?: { silent?: boolean }) => {
+  const loadOrders = React.useCallback(async (mode: 'reset' | 'append' = 'reset', loadOptions?: { silent?: boolean; probe?: boolean }) => {
+    if (!getServerStatus().isReachable && !loadOptions?.probe) {
+      // Pull-to-refresh uses the hydrated local list immediately. Recovery has
+      // its own silent probes, so this cannot strand the screen in offline mode.
+      if (mode === 'reset') {
+        ordersRequestIdRef.current += 1;
+        setLoadingOrders(false);
+        markOrdersInitialLoadDone();
+      }
+      setLoadingMoreOrders(false);
+      return;
+    }
     if (mode === 'append' && ordersAppendLoadingRef.current) return;
     const silent = loadOptions?.silent === true;
     const offset = mode === 'append' ? ordersNextOffsetRef.current : 0;
     const requestId = silent ? ++silentOrdersRequestIdRef.current : ++ordersRequestIdRef.current;
+    const mutationVersion = ordersMutationVersionRef.current;
+    const isContextStale = () => ordersMutationVersionRef.current !== mutationVersion
+      || activeOfflineUserRef.current !== offlineUserId
+      || ordersFilterSignature(filtersRef.current) !== filtersSignature;
     if (mode === 'append') {
       ordersAppendLoadingRef.current = true;
       setLoadingMoreOrders(true);
@@ -2295,42 +2463,42 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       const requestIsStale = silent
         ? silentOrdersRequestIdRef.current !== requestId
         : ordersRequestIdRef.current !== requestId;
-      if (requestIsStale) return;
+      if (requestIsStale || isContextStale()) return;
       const liveSource = result.meta.liveSource;
       if (liveSource?.status && liveSource.status !== 'ok' && liveSource.message) {
-        setOrdersError(userErrorMessage(liveSource.message, 'Нет связи с 1С. Повторите попытку позже.'));
+        setOrdersReadError(userErrorMessage(liveSource.message, 'Нет связи с 1С. Повторите попытку позже.'));
       } else if (liveSource?.status === 'ok') {
         setOrdersError(null);
       }
       const rawList = Array.isArray(result.items) ? result.items : [];
-      const currentOrders = apiOrdersRef.current;
+      const currentOrders = apiOrdersRef.current.filter(order => !isDeviceOnlyOrder(order));
       const currentOrderByIdentifier = new Map<string, ClientOrder>();
       for (const order of currentOrders) {
-        for (const identifier of [order.guid, order.appGuid, order.documentGuid]) {
-          const normalized = identifier?.trim().toLowerCase();
-          if (normalized) currentOrderByIdentifier.set(normalized, order);
-        }
+        for (const key of orderIdentityKeys(order)) currentOrderByIdentifier.set(key, order);
       }
       const list = rawList.map((summary) => {
-        const current = currentOrderByIdentifier.get(summary.guid.trim().toLowerCase());
+        const current = orderIdentityKeys(summary).map(key => currentOrderByIdentifier.get(key)).find(Boolean);
         if (!current) return summary;
+        if (isOlderSubmissionSummary(current, summary)) return current;
         const next = preserveTransientInvoiceListState(current, summary);
         return orderListContentSignature(current) === orderListContentSignature(next) ? current : next;
       });
       const fetchedNextOffset = offset + list.length;
-      const knownOrderGuids = new Set(currentOrders.map((known) => known.guid));
+      const knownOrderKeys = new Set(currentOrders.flatMap(orderIdentityKeys));
       const preserveLoadedWindow = mode === 'reset' && silent && currentOrders.length > list.length;
-      const refreshedOrderGuids = new Set(list.map((item) => item.guid));
+      const refreshedByKey = new Map(list.flatMap(order => orderIdentityKeys(order).map(key => [key, order] as const)));
       const nextOrders = mode !== 'append'
-        ? preserveLoadedWindow
-          ? [
-              ...list,
-              ...currentOrders.filter((item) => !refreshedOrderGuids.has(item.guid)),
-            ]
-          : list
+        ? [
+            ...list,
+            // Once 1C assigns a number, an order can leave the first page.
+            // Retain unresolved submissions until their direct status read succeeds.
+            ...currentOrders.filter(item => (preserveLoadedWindow || isQueuedClientOrder(item))
+              && orderMatchesFilters(item, filters)
+              && !orderIdentityKeys(item).some(key => refreshedByKey.has(key))),
+          ]
         : [
-            ...currentOrders,
-            ...list.filter((item) => !knownOrderGuids.has(item.guid)),
+            ...currentOrders.map(item => orderIdentityKeys(item).map(key => refreshedByKey.get(key)).find(Boolean) || item),
+            ...list.filter(item => !orderIdentityKeys(item).some(key => knownOrderKeys.has(key))),
           ];
       const resolvedNextOrders = nextOrders.length === currentOrders.length
         && nextOrders.every((order, index) => order === currentOrders[index])
@@ -2359,6 +2527,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         hasMore: typeof result.meta.hasMore === 'boolean' ? result.meta.hasMore : undefined,
         statusCounts: result.meta.statusCounts || {},
       };
+      ordersMetaRef.current = nextMeta;
       setOrdersMeta((previous) => {
         const sameCounts = JSON.stringify(previous.statusCounts) === JSON.stringify(nextMeta.statusCounts);
         return previous.total === nextMeta.total
@@ -2397,16 +2566,17 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
           setDraft((prev) => (prev.guid ? normalizeDraftOrder({ ...emptyDraft(), ...buildDraftBase(settingsRef.current) }) : prev));
         }
       }
+      return list;
     } catch (e: any) {
       const requestIsStale = silent
         ? silentOrdersRequestIdRef.current !== requestId
         : ordersRequestIdRef.current !== requestId;
-      if (requestIsStale) return;
+      if (requestIsStale || isContextStale()) return;
       const message = userErrorMessage(e, mode === 'append' ? 'Не удалось загрузить ещё документы.' : 'Не удалось загрузить список заказов.');
       if (mode === 'append') {
         setOrdersAppendError(message);
       } else {
-        setOrdersError(message);
+        setOrdersReadError(message);
         if (!silent) markOrdersInitialLoadDone();
       }
     } finally {
@@ -2418,17 +2588,50 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         setLoadingOrders(false);
       }
     }
-  }, [filters, filtersSignature, markOrdersInitialLoadDone, mergeServerRevisionIntoOpenDraft, options.screenMode, ordersCacheStorageKey]);
+  }, [filters, filtersSignature, markOrdersInitialLoadDone, mergeServerRevisionIntoOpenDraft, offlineUserId, options.screenMode, ordersCacheStorageKey]);
 
   const refreshQueueState = React.useCallback(async () => {
-    if (queueRefreshInFlightRef.current) return;
+    if (queueRefreshInFlightRef.current || !getServerStatus().isReachable) return;
     queueRefreshInFlightRef.current = true;
+    const pending = apiOrdersRef.current.filter(order => !isDeviceOnlyOrder(order) && isQueuedClientOrder(order));
+    const pollIsActive = () => activeOfflineUserRef.current === offlineUserId
+      && ordersPollingEnabledRef.current && (!AppState.currentState || AppState.currentState === 'active')
+      && getServerStatus().isReachable;
     try {
-      await loadOrders('reset', { silent: true });
+      const summaries = await loadOrders('reset', { silent: true });
+      if (!summaries || !pollIsActive()) return;
+      const unresolved = pending.filter(order => {
+        const summary = summaries.find(item => isSameListOrder(item, order));
+        return !summary || (isQueuedClientOrder(summary)
+          && orderListContentSignature(summary) === orderListContentSignature(order));
+      }).sort((left, right) => (left.appGuid || left.guid).localeCompare(right.appGuid || right.guid));
+      if (!unresolved.length) return;
+      // Bounded sequential reads, rotating through larger queues. Never submit
+      // again just to refresh the UI; list pages may be cached or omit this order.
+      const start = queueProbeOffsetRef.current % unresolved.length;
+      const count = Math.min(3, unresolved.length);
+      queueProbeOffsetRef.current = (start + count) % unresolved.length;
+      for (let index = 0; index < count; index += 1) {
+        if (!pollIsActive()) break;
+        const target = unresolved[(start + index) % unresolved.length];
+        const before = apiOrdersRef.current.find(item => isSameListOrder(item, target));
+        if (before && !isQueuedClientOrder(before)) continue;
+        try {
+          const order = await getClientOrder(target.appGuid || target.guid);
+          if (!order?.guid || !pollIsActive() || !isSameListOrder(target, order)) continue;
+          const current = apiOrdersRef.current.find(item => isSameListOrder(item, target));
+          if (current && (!before || orderListContentSignature(current) !== orderListContentSignature(before))) continue;
+          if ((order.revision || 0) < (target.revision || 0)) continue;
+          applySavedOrderToList(order);
+          mergeServerRevisionIntoOpenDraft(order);
+        } catch {
+          // Keep the pending row on transient failures; the next active poll retries.
+        }
+      }
     } finally {
       queueRefreshInFlightRef.current = false;
     }
-  }, [loadOrders]);
+  }, [applySavedOrderToList, loadOrders, mergeServerRevisionIntoOpenDraft, offlineUserId]);
 
   const refreshInvoiceStates = React.useCallback(async () => {
     if (invoiceStatusesInFlightRef.current || !pendingInvoiceIdentifiers.length) return;
@@ -2664,24 +2867,30 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const refreshOfflineData = React.useCallback((force = false): Promise<boolean> => {
     if (Platform.OS === 'web' || offlineUserId === 'anonymous') return Promise.resolve(false);
     if (offlineRefreshRef.current?.userId === offlineUserId) return offlineRefreshRef.current.promise;
-    setSyncingOfflineData(true);
+    // Background manifest checks leave the existing data/date visible.
+    // A manual tap receives feedback immediately; downloads always show progress.
+    setSyncingOfflineData(force);
     setOfflineDataProgress(null);
+    setOfflineDataTransfer(null);
     setOfflineDataError(null);
     const promise = (async () => {
       try {
         const result = await syncOfflineOrderData(offlineUserId, {
           force, silent: !force,
-          onProgress: ({ progress, error }) => {
+          onProgress: ({ progress, error, transfer }) => {
             if (activeOfflineUserRef.current !== offlineUserId) return;
+            setSyncingOfflineData(force || !!transfer?.entity);
             setOfflineDataProgress(progress);
+            setOfflineDataTransfer(transfer ?? null);
             setOfflineDataError(error);
           },
         });
-        await readOfflineStatus();
+        await offlineSyncStage({ stage: 'offline.read-status' }, readOfflineStatus);
         return result;
       } catch (error) {
+        reportOfflineSyncFailure(error, { stage: 'offline.refresh' });
         if (activeOfflineUserRef.current === offlineUserId) {
-          setOfflineDataError(toUserErrorMessage(error, 'Не удалось обновить данные. Нажмите, чтобы повторить'));
+          setOfflineDataError(offlineSyncErrorMessage(error));
         }
         return false;
       } finally {
@@ -2700,6 +2909,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     setOfflineDataLoadedAt(null);
     setOfflineDataError(null);
     setOfflineDataProgress(null);
+    setOfflineDataTransfer(null);
     setSyncingOfflineData(false);
     return () => { activeOfflineUserRef.current = null; };
   }, [offlineUserId]);
@@ -2761,7 +2971,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       if (cancelled || retrying || (AppState?.currentState && AppState.currentState !== 'active')) return;
       retrying = true;
       try {
-        await loadOrders('reset', { silent: true });
+        await loadOrders('reset', { silent: true, probe: true });
       } finally {
         retrying = false;
       }
@@ -2822,37 +3032,65 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     };
   }, [invoicePollingEnabled, refreshSelectedOrderInvoices, selectedGuid, selectedInvoicePending]);
 
-  const saveUserSettings = React.useCallback(async (payload: Parameters<typeof updateClientOrderSettings>[0]) => {
+  const saveUserSettings = React.useCallback(async (
+    payload: Parameters<typeof updateClientOrderSettings>[0], selectedOrganization?: ClientOrderOrganization | null
+  ) => {
+    const requestId = ++settingsRequestIdRef.current;
     setSavingSettings(true);
+    setLoadingSettings(false);
     try {
-      const nextSettings = await updateClientOrderSettings(payload);
-      setSettings(nextSettings);
+      const currentSettings = settingsRef.current;
+      const organization = selectedOrganization !== undefined ? selectedOrganization
+        : currentSettings?.organizations.find(item => item.guid === payload.preferredOrganizationGuid) ?? null;
       if (payload.preferredOrganizationGuid !== undefined) {
-        const organization = nextSettings.organizations.find((item) => item.guid === payload.preferredOrganizationGuid) || null;
-        setSelections((prev) => ({ ...prev, organization }));
+        // The device preference is durable before attempting any network call.
+        await writeLocalOrderOrganization(offlineUserId, organization);
       }
+      let nextSettings = currentSettings ? { ...currentSettings, ...payload,
+        ...(payload.preferredOrganizationGuid !== undefined ? { preferredOrganization: organization } : {}) } : null;
+      if (nextSettings) {
+        await writeLocalOrderSettings(offlineUserId, nextSettings);
+        if (requestId !== settingsRequestIdRef.current || activeOfflineUserRef.current !== offlineUserId) return null;
+        settingsRef.current = nextSettings;
+        setSettings(nextSettings);
+      }
+      if (!getServerStatus().isReachable) return nextSettings;
+      nextSettings = await updateClientOrderSettings(payload);
+      if (requestId !== settingsRequestIdRef.current || activeOfflineUserRef.current !== offlineUserId) return null;
+      await writeLocalOrderSettings(offlineUserId, nextSettings);
+      settingsRef.current = nextSettings;
+      setSettings(nextSettings);
       return nextSettings;
     } catch (e: any) {
-      setError(userErrorMessage(e, 'Не удалось обновить настройки.'));
+      // Losing the connection must not turn a successfully saved local choice
+      // into a recurring document error. Storage/permission failures stay visible.
+      if (!isNetworkUnavailableError(e)) setError(userErrorMessage(e, 'Не удалось обновить настройки.'));
       return null;
     } finally {
-      setSavingSettings(false);
+      if (requestId === settingsRequestIdRef.current) setSavingSettings(false);
     }
-  }, []);
+  }, [offlineUserId]);
 
   const saveDraft = React.useCallback(async (options?: SaveOptions) => {
     if (readOnly || foregroundSaveRef.current || deviceDraftSyncingRef.current) return null;
+    if (options?.reason === 'autosave' && failedAutosaveVersionRef.current === draftEditVersionRef.current) return null;
+    const deviceEntry = findDeviceDraftEntry(draft.guid, draft.clientOrderId);
+    const localOnly = options?.localOnly || !!deviceEntry || !getServerStatus().isReachable;
+    const autosave = options?.reason === 'autosave';
+    if (deviceEntry && !dirtyRef.current && (autosave || deviceEntry.intent === (options?.intent ?? 'SAVE'))) return deviceEntry.order;
     foregroundSaveRef.current = true;
     const editVersion = draftEditVersionRef.current;
     const selectedAtStart = selectedGuidRef.current;
     let payload: ClientOrderSavePayload | null = null;
     let stagedDeviceOrder: ClientOrder | null = null;
-    const deviceEntry = findDeviceDraftEntry(draft.guid);
     try {
-      setSaving(true);
+      if (!autosave) setSaving(true);
       setAutosaveError(null);
+      if (!deviceDraftsHydrated) throw new Error('Черновики на устройстве ещё не прочитаны. Откройте список заказов заново.');
 
-      payload = buildPayload(draft, options?.reason || 'manual');
+      payload = localOnly
+        ? buildLocalDraftPayload(draft, options?.reason || 'manual')
+        : buildPayload(draft, options?.reason || 'manual');
       if (options?.geoEvents?.length) {
         const geoEvents = [...(payload.geoEvents || []), ...options.geoEvents];
         payload = {
@@ -2891,36 +3129,27 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       // Persist the exact operation before sending it. If the server commits but
       // the response is lost, every retry carries the same client identity.
       if (clientOrderId) {
-        stagedDeviceOrder = saveDraftOnDevice(payload, null, { clientOrderId, clientRevision, intent });
-        await writeStoredDeviceDrafts(deviceDraftsStorageKey, offlineUserId, deviceDraftEntriesRef.current);
-        // Editing an offline document stays local even if connectivity happens
-        // to return. Only an explicit submit action may contact 1C.
-        if (deviceEntry && intent === 'SAVE') {
-          if (draftEditVersionRef.current !== editVersion || selectedGuidRef.current !== selectedAtStart) {
-            applySavedOrderToList(stagedDeviceOrder);
-            return null;
-          }
-          applyOrderDetail(stagedDeviceOrder);
-          setError(null);
-          setDirty(false);
-          setLastSavedAt(new Date().toISOString());
-          setAutosaveState('saved');
-          return stagedDeviceOrder;
-        }
+        stagedDeviceOrder = await saveDraftOnDevice(payload, null, { clientOrderId, clientRevision, intent });
       }
 
-      // Do not wait for an HTTP timeout when connectivity monitoring already
-      // knows that the server is unavailable. The durable SQLite write is the
-      // successful result of an offline save; transmission remains explicit.
-      if (!serverStatus.isReachable) {
-        const localOrder = stagedDeviceOrder ?? saveDraftOnDevice(payload);
-        await writeStoredDeviceDrafts(deviceDraftsStorageKey, offlineUserId, deviceDraftEntriesRef.current);
+      // Local save/queue is complete after SQLite commits. Never reopen the
+      // editor here: that reloads prices/defaults and normalizes partial input.
+      if (localOnly || !getServerStatus().isReachable) {
+        const localOrder = stagedDeviceOrder ?? await saveDraftOnDevice(payload, null, {
+          intent, clientRevision: clientRevision || Math.max(1, draft.clientRevision + 1),
+        });
         if (draftEditVersionRef.current !== editVersion || selectedGuidRef.current !== selectedAtStart) {
           applySavedOrderToList(localOrder);
           return null;
         }
-        applyOrderDetail(localOrder);
+        selectedGuidRef.current = localOrder.guid;
+        documentStartedRef.current = true;
+        setSelectedGuid(localOrder.guid);
+        setSelectedOrder(localOrder);
+        mergeSavedOrderIntoDraft(localOrder);
+        setDocumentStarted(true);
         setError(null);
+        dirtyRef.current = false;
         setDirty(false);
         setLastSavedAt(new Date().toISOString());
         setAutosaveState('saved');
@@ -2943,22 +3172,21 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         if (!accepted || draftEditVersionRef.current !== editVersion || selectedGuidRef.current !== selectedAtStart) throw e;
         payload.integrity = { baseContentToken: review.baseContentToken, confirmationToken: review.confirmationToken };
         if (clientOrderId) {
-          stagedDeviceOrder = saveDraftOnDevice(payload, null, { clientOrderId, clientRevision, intent });
-          await writeStoredDeviceDrafts(deviceDraftsStorageKey, offlineUserId, deviceDraftEntriesRef.current);
+          stagedDeviceOrder = await saveDraftOnDevice(payload, null, { clientOrderId, clientRevision, intent });
         }
         order = await saveToApi(initialRevision);
       }
 
       if (draftEditVersionRef.current !== editVersion || selectedGuidRef.current !== selectedAtStart) {
-        replaceDeviceDraftEntries(deviceDraftEntriesRef.current.filter(entry =>
+        await replaceDeviceDraftEntries(deviceDraftEntriesRef.current.filter(entry =>
           !(entry.clientOrderId === clientOrderId && entry.clientRevision === clientRevision)));
         applySavedOrderToList(order);
         // Keep newer unsaved edits and their original base token. Never silently rebase.
         return null;
       }
 
-      removeDeviceDraftEntry(
-        draft.guid || deviceEntry?.order.guid || deviceEntry?.serverGuid || stagedDeviceOrder?.guid,
+      await removeDeviceDraftEntry(
+        draft.guid || stagedDeviceOrder?.guid,
         clientRevision || undefined
       );
       const savedDeliveryAddressGuid = order.deliveryAddress?.guid ?? null;
@@ -2993,27 +3221,36 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       return order;
     } catch (e: any) {
       if (payload && isNetworkUnavailableError(e)) {
-        const localOrder = stagedDeviceOrder ?? saveDraftOnDevice(payload);
-        if (draftEditVersionRef.current !== editVersion || selectedGuidRef.current !== selectedAtStart) {
-          applySavedOrderToList(localOrder);
-          return null;
+        try {
+          const localOrder = stagedDeviceOrder ?? await saveDraftOnDevice(payload, null, { intent: options?.intent ?? 'SAVE' });
+          if (draftEditVersionRef.current !== editVersion || selectedGuidRef.current !== selectedAtStart) {
+            applySavedOrderToList(localOrder);
+            return null;
+          }
+          applyOrderDetail(localOrder);
+          setError(null);
+          setDirty(false);
+          setLastSavedAt(new Date().toISOString());
+          setAutosaveState('saved');
+          return localOrder;
+        } catch (storageError) {
+          e = storageError;
         }
-        applyOrderDetail(localOrder);
-        setError(null);
-        setDirty(false);
-        setLastSavedAt(new Date().toISOString());
-        setAutosaveState('saved');
-        return localOrder;
       }
       if (stagedDeviceOrder) {
         const stagedEntry = findDeviceDraftEntry(stagedDeviceOrder.guid);
         if (stagedEntry && stagedEntry.clientRevision === stagedDeviceOrder.clientRevision) {
           const message = userErrorMessage(e, 'Не удалось проверить и отправить заказ.');
-          replaceDeviceDraftEntries(deviceDraftEntriesRef.current.map((entry) => (
-            isSameOrderOperation(entry, stagedEntry) ? withOfflineDraftFailure(entry, e, message) : entry
-          )));
+          try {
+            await replaceDeviceDraftEntries(deviceDraftEntriesRef.current.map((entry) => (
+              isSameOrderOperation(entry, stagedEntry) ? withOfflineDraftFailure(entry, e, message) : entry
+            )));
+          } catch (storageError) {
+            e = storageError;
+          }
         }
       }
+      failedAutosaveVersionRef.current = editVersion;
       const message = userErrorMessage(e, 'Не удалось сохранить заказ. Проверьте данные и повторите попытку.');
       setError(message);
       setAutosaveError(message);
@@ -3021,7 +3258,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       return null;
     } finally {
       foregroundSaveRef.current = false;
-      setSaving(false);
+      if (!autosave) setSaving(false);
     }
   }, [
     applyOrderDetail,
@@ -3037,13 +3274,15 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     selectedOrder?.clientRevision,
     selections,
     serverStatus.isReachable,
+    deviceDraftsHydrated,
     deviceDraftsStorageKey,
     offlineUserId,
   ]);
 
   React.useEffect(() => {
     if (!dirty || readOnly || saving || submitting) return undefined;
-    const isLocalDocument = !!findDeviceDraftEntry(draft.guid) || !serverStatus.isReachable;
+    if (failedAutosaveVersionRef.current === draftEditVersionRef.current) return undefined;
+    const isLocalDocument = !!findDeviceDraftEntry(draft.guid, draft.clientOrderId) || !serverStatus.isReachable;
     if (!isLocalDocument) return undefined;
     const timer = setTimeout(() => {
       void saveDraft({ silent: true, reason: 'autosave' });
@@ -3157,10 +3396,21 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const createNewOrder = React.useCallback(async () => {
     const canContinue = await confirmDiscardIfNeeded();
     if (!canContinue) return false;
-    resetDraftToBase();
+    // The list and editor may be separate mounted workspaces. Read the latest
+    // device choice, not the preference captured when this screen was mounted.
+    let nextSettings = settingsRef.current;
+    try {
+      const local = await readLocalOrderSettings(offlineUserId);
+      const base = local.settings ?? nextSettings;
+      if (base) nextSettings = applyLocalOrderOrganization(base, local.preference);
+    } catch {
+      // Existing in-memory settings still allow creating a document.
+    }
+    if (activeOfflineUserRef.current !== offlineUserId) return false;
+    resetDraftToBase(nextSettings);
     setDocumentStarted(true);
     return true;
-  }, [confirmDiscardIfNeeded, resetDraftToBase]);
+  }, [confirmDiscardIfNeeded, offlineUserId, resetDraftToBase]);
 
   const resetPairDependentDraft = React.useCallback((patch: Partial<DraftOrder>) => {
     enumOptionsRequestIdRef.current += 1;
@@ -3215,7 +3465,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     const counterpartyGuid = draft.counterpartyGuid;
     resetPairDependentDraft({ organizationGuid: organization?.guid || '' });
     setSelections((prev) => ({ ...prev, organization }));
-    void saveUserSettings({ preferredOrganizationGuid: organization?.guid || null });
+    void saveUserSettings({ preferredOrganizationGuid: organization?.guid || null }, organization);
     if (organization?.guid && counterpartyGuid) {
       await applyResolvedDefaults(organization.guid, counterpartyGuid);
     }
@@ -3620,6 +3870,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [loadDetail, loadOrders, loadSettings, ordersPollingEnabled, refreshTodaySummary, selectedGuid]);
 
   const submitOrder = React.useCallback(async () => {
+    if (submitActionInFlightRef.current || foregroundSaveRef.current || deviceDraftSyncingRef.current) return;
     if (!canSubmitOrder) {
       const message = selectedOrderQueued && !dirty
         ? 'Нет изменений для повторной отправки.'
@@ -3627,42 +3878,28 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       setError(message);
       return;
     }
-    const submitGeoEvent = await captureOrderGeoEvent('SUBMITTED');
-    if (draft.clientOrderId) {
-      try {
-        setSubmitting(true);
-        const saved = await saveDraft({ silent: true, reason: 'manual', intent: 'SUBMIT', geoEvents: [submitGeoEvent] });
+    submitActionInFlightRef.current = true;
+    setSubmitting(true);
+    try {
+      let targetGuid = draft.guid || selectedGuid;
+      let revision = draft.revision;
+      const localOnly = !getServerStatus().isReachable || !!findDeviceDraftEntry(targetGuid, draft.clientOrderId);
+      const submitGeoEvent = await captureOrderGeoEvent('SUBMITTED', localOnly ? 250 : undefined);
+      if (localOnly || draft.clientOrderId) {
+        const saved = await saveDraft({ silent: true, reason: 'manual', intent: 'SUBMIT', localOnly, geoEvents: [submitGeoEvent] });
         if (saved && saved.origin !== 'device') {
           applySavedOrderToList(saved);
           applyOrderDetail(saved);
           void loadOrders('reset', { silent: true });
         }
-        setError(null);
-      } finally {
-        setSubmitting(false);
-      }
-      return;
-    }
-    let targetGuid = draft.guid || selectedGuid;
-    let revision = draft.revision;
-    const deviceEntry = findDeviceDraftEntry(targetGuid);
-    if (!targetGuid || dirty || deviceEntry) {
-      const saved = await saveDraft({
-        silent: true,
-        reason: 'manual',
-        geoEvents: [submitGeoEvent],
-        ...(!serverStatus.isReachable || deviceEntry ? { intent: 'SUBMIT' as const } : {}),
-      });
-      if (!saved) return;
-      if (saved.origin === 'device' || findDeviceDraftEntry(saved.guid)) {
-        setError(null);
         return;
       }
-      targetGuid = saved.guid;
-      revision = saved.revision;
-    }
-    try {
-      setSubmitting(true);
+      if (!targetGuid || dirty) {
+        const saved = await saveDraft({ silent: true, reason: 'manual', geoEvents: [submitGeoEvent] });
+        if (!saved || saved.origin === 'device') return;
+        targetGuid = saved.guid;
+        revision = saved.revision;
+      }
       const order = await submitClientOrder(targetGuid, revision, [submitGeoEvent]);
       applySavedOrderToList(order);
       applyOrderDetail(order);
@@ -3673,12 +3910,14 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         : userErrorMessage(e, 'Не удалось отправить заказ.');
       setError(message);
     } finally {
+      submitActionInFlightRef.current = false;
       setSubmitting(false);
     }
   }, [applyOrderDetail, applySavedOrderToList, canSubmitOrder, dirty, draft.clientOrderId, draft.guid, draft.revision, findDeviceDraftEntry, loadOrders, mergeServerRevisionIntoOpenDraft, saveDraft, selectedGuid, selectedOrderQueued, serverStatus.isReachable, validation.blockingMessage]);
 
   const submitOrderFromList = React.useCallback(async (target: ClientOrder) => {
-    if (!target?.guid || submitting) return null;
+    if (!target?.guid || submitting || submitActionInFlightRef.current || deviceDraftSyncingRef.current) return null;
+    submitActionInFlightRef.current = true;
     let targetGuid = target.guid;
     let targetRevision = target.revision;
 
@@ -3688,12 +3927,18 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
       const deviceEntry = findDeviceDraftEntry(target.guid);
       if (deviceEntry) {
+        const check = validateDraft(orderToDraft(deviceEntry.order));
+        if (!check.canSubmit) {
+          setOrdersError(check.blockingMessage || 'Проверьте заполнение заказа.');
+          return null;
+        }
+        if (deviceEntry.status === 'READY_TO_SEND') return null;
         const updatedAt = new Date().toISOString();
         const submitGeoEvent = deviceEntry.payload.geoEvents?.find(event => event.type === 'SUBMITTED')
-          ?? await captureOrderGeoEvent('SUBMITTED');
+          ?? await captureOrderGeoEvent('SUBMITTED', 250);
         if (!deviceDraftEntriesRef.current.some(entry => isSameOrderOperation(entry, deviceEntry))) return null;
         const submitRevision = deviceEntry.intent === 'SUBMIT' ? deviceEntry.clientRevision : deviceEntry.clientRevision + 1;
-        replaceDeviceDraftEntries(deviceDraftEntriesRef.current.map((entry) => isSameOrderOperation(entry, deviceEntry)
+        await replaceDeviceDraftEntries(deviceDraftEntriesRef.current.map((entry) => isSameOrderOperation(entry, deviceEntry)
           ? {
               ...entry,
               intent: 'SUBMIT' as const,
@@ -3705,7 +3950,9 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
               nextSyncAt: null,
             }
           : entry));
-        await syncDeviceDrafts({ force: true, draftId: deviceEntry.id });
+        // The per-document action prepares a durable local queue. Only the
+        // list's explicit "Send documents" action drains it.
+        setOrdersError(null);
         return null;
       }
 
@@ -3719,6 +3966,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       setOrdersError(userErrorMessage(error, 'Не удалось отправить заказ в 1С. Проверьте данные и повторите попытку.'));
       return null;
     } finally {
+      submitActionInFlightRef.current = false;
       setSubmitting(false);
     }
   }, [applySavedOrderToList, findDeviceDraftEntry, loadOrders, replaceDeviceDraftEntries, submitting, syncDeviceDrafts]);
@@ -3775,8 +4023,15 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
   const copyOrder = React.useCallback(async (_options?: { saveFirst?: boolean }) => {
     const targetGuid = draft.guid || selectedGuid;
+    const copyLocally = async () => {
+      try { return await createDeviceCopyFromCurrentDraft(); }
+      catch (error) {
+        setError(userErrorMessage(error, 'Не удалось сохранить копию на устройстве. Повторите попытку.'));
+        return null;
+      }
+    };
     if (!targetGuid || dirty || isDeviceDraftGuid(targetGuid) || !!findDeviceDraftEntry(targetGuid)) {
-      return createDeviceCopyFromCurrentDraft();
+      return copyLocally();
     }
     try {
       setCopying(true);
@@ -3788,7 +4043,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     } catch {
       // Copying must remain available offline and when the source contains data
       // that the API/1C can no longer validate. Keep it as an editable device draft.
-      return createDeviceCopyFromCurrentDraft();
+      return copyLocally();
     } finally {
       setCopying(false);
     }
@@ -3860,7 +4115,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
           syncAttempts: 0,
           nextSyncAt: null,
         };
-        replaceDeviceDraftEntries([copiedEntry, ...deviceDraftEntriesRef.current]);
+        await replaceDeviceDraftEntries([copiedEntry, ...deviceDraftEntriesRef.current]);
         applySavedOrderToList(copiedOrder);
         return copiedOrder;
       }
@@ -3914,10 +4169,14 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
     const deviceEntry = findDeviceDraftEntry(targetGuid);
     if (deviceEntry) {
-      removeDeviceDraftEntry(targetGuid);
-      const deletingCurrent = targetGuid === draft.guid || targetGuid === selectedGuid;
-      if (deletingCurrent) {
-        resetDraftToBase();
+      try {
+        await removeDeviceDraftEntry(targetGuid, deviceEntry.clientRevision);
+        const deletingCurrent = targetGuid === draft.guid || targetGuid === selectedGuid;
+        if (deletingCurrent) {
+          resetDraftToBase();
+        }
+      } catch (error) {
+        setError(userErrorMessage(error, 'Не удалось удалить черновик с устройства. Повторите попытку.'));
       }
       return;
     }
@@ -3969,6 +4228,13 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     void removeStoredFilters(filtersStorageKey);
   }, [filtersStorageKey]);
 
+  // Offline is an expected list state, not a new alert on every refresh.
+  // Keep the original errors above for connectivity retries; hide only their
+  // network presentation while offline, never validation/permission failures.
+  const visibleListError = (message: string | null) => (
+    !serverStatus.isReachable && isSharedNetworkUnavailableError(message) ? null : message
+  );
+
   return {
     orders: sortedOrders,
     ordersMeta,
@@ -3982,22 +4248,28 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     documentHeaderDefaultsState,
     documentHeaderLoadingState,
     deviceDraftsCount: deviceDraftEntries.length,
-    readyDeviceDraftsCount: deviceDraftEntries.filter((entry) => (
-      entry.status === 'READY_TO_SEND' || entry.status === 'SEND_ERROR'
+    readyDeviceDraftsCount: deviceDraftEntries.filter((entry) => isDeviceDraftReadyForSend(entry)).length,
+    queuedDeviceDraftsCount: deviceDraftEntries.filter((entry) => (
+      isDeviceDraftReadyForSend(entry)
+      || (entry.intent === 'SUBMIT' && !entry.requiresReview && entry.status === 'SENDING')
     )).length,
     offlineDataReady,
     offlineDataSyncedAt,
     syncingOfflineData,
     offlineDataLoadedAt,
     offlineDataProgress,
+    offlineDataTransfer,
     offlineDataError,
     refreshOfflineData,
     syncDeviceDrafts,
+    syncingDeviceDrafts,
+    online: serverStatus.isReachable,
     openLatestDraftIfAny: () => latestDraftOrder ? selectOrder(latestDraftOrder.guid) : Promise.resolve(),
     createDocument: createNewOrder,
     hasMoreOrders,
-    ordersAppendError,
-    ordersError,
+    ordersAppendError: visibleListError(ordersAppendError),
+    ordersError: ordersErrorState.source === 'read' ? visibleListError(ordersError) : ordersError,
+    ordersConnectionNotice: serverStatus.isReachable ? null : 'Офлайн · обновление после подключения',
     setOrdersError,
     loadMoreOrders,
     refreshOrders,

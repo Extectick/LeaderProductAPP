@@ -674,9 +674,9 @@ export async function getClientOrderDefaults(params: {
   const query = buildQuery(params);
   const path = `${API_ENDPOINTS.CLIENT_ORDERS.DEFAULTS}?${query}`;
   return dedupeRead(`GET ${path}`, async () => {
-    const res = await apiClient<void, ClientOrderDefaults>(path, {
-      timeoutMs: CLIENT_ORDERS_REQUEST_TIMEOUT_MS,
-    });
+    const res = !getServerStatus().isReachable
+      ? { ok: false, data: null, message: 'Данные контрагента для офлайна ещё не загружены' }
+      : await apiClient<void, ClientOrderDefaults>(path, { timeoutMs: CLIENT_ORDERS_REQUEST_TIMEOUT_MS });
     if (!res.ok || !res.data) {
       const [organizations, counterparties, agreements, contracts, warehouses, addresses, priceTypes, orderOptions] = await Promise.all([
         readActiveOfflineEntityItems<any>('organizations'),
@@ -754,8 +754,10 @@ export async function getClientOrderDefaults(params: {
   });
 }
 
-export async function getClientOrderSettings() {
-  const res = await apiClient<void, ClientOrderSettings>(API_ENDPOINTS.CLIENT_ORDERS.SETTINGS);
+export async function getClientOrderSettings(options?: { offlineOnly?: boolean }) {
+  const res = options?.offlineOnly || !getServerStatus().isReachable
+    ? { ok: false, data: null, message: 'Настройки для офлайна ещё не загружены' }
+    : await apiClient<void, ClientOrderSettings>(API_ENDPOINTS.CLIENT_ORDERS.SETTINGS);
   if (!res.ok || !res.data) {
     const organizations = await readActiveOfflineEntityItems<ClientOrderOrganization>('organizations');
     if (organizations.length) {

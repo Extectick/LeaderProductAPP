@@ -2,6 +2,8 @@ import {
   copyClientOrder,
   downloadClientOrderInvoice,
   getClientOrder,
+  getClientOrderSettings,
+  getClientOrderDefaults,
   getClientOrderInvoices,
   getClientOrderInvoiceStatuses,
   getClientOrderProductsBatch,
@@ -14,6 +16,8 @@ import {
   submitClientOrder,
 } from "../utils/clientOrdersService";
 import { apiClient } from "../utils/apiClient";
+import { setServerReachable, setServerUnavailable } from '../src/shared/network/serverStatus';
+import { readActiveOfflineEntityItems } from '../src/features/clientOrders/offline/offlineOrdersDatabase';
 
 jest.mock("../utils/apiClient", () => ({
   apiClient: jest.fn(),
@@ -24,11 +28,30 @@ jest.mock("@/src/features/productCatalog", () => ({
   searchCatalogProducts: jest.fn(async () => null),
 }));
 
+jest.mock('@/src/features/clientOrders/offline/offlineOrdersDatabase', () => ({
+  hasActiveOfflineEntity: jest.fn(async () => false),
+  readActiveOfflineEntityItems: jest.fn(async () => []),
+}));
+
 const apiClientMock = jest.mocked(apiClient);
 
 describe("clientOrdersService", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    setServerReachable();
+    jest.mocked(readActiveOfflineEntityItems).mockResolvedValue([]);
+  });
+
+  it('loads offline organizations and header defaults without a network timeout', async () => {
+    setServerUnavailable('Network request failed');
+    jest.mocked(readActiveOfflineEntityItems).mockImplementation(async entity => {
+      if (entity === 'organizations') return [{ guid: 'org', name: 'Организация' }] as any;
+      if (entity === 'counterparties') return [{ guid: 'client', name: 'Контрагент' }] as any;
+      return [];
+    });
+    expect((await getClientOrderSettings()).organizations[0].guid).toBe('org');
+    expect((await getClientOrderDefaults({ organizationGuid: 'org', counterpartyGuid: 'client' })).counterparty?.guid).toBe('client');
+    expect(apiClientMock).not.toHaveBeenCalled();
   });
 
   it("builds list query and normalizes items/events arrays", async () => {

@@ -67,6 +67,8 @@ export function isTechnicalErrorMessage(value: unknown) {
     || lower.includes('zoderror')
     || lower.includes('expected number')
     || lower.includes('java.net.')
+    || /native\w*\.(?:\w+async)|call to function|shared object.*released/i.test(message)
+    || /sqlite|database is (?:locked|busy)|(?:not null|unique|foreign key) constraint failed/i.test(message)
     || lower.includes('http 500')
     || lower.startsWith('http ')
     || lower.includes('"path"')

@@ -59,7 +59,7 @@ export function fetchOfflineSnapshot(entity: OfflineEntity, params: { cursor?: s
   }>(`${API_ENDPOINTS.CLIENT_ORDERS.OFFLINE_SNAPSHOT(entity)}${queryString(params)}`);
 }
 
-export function fetchOfflineChanges(entity: OfflineEntity, params: { afterRevision: string; epoch: string; limit: number }) {
+export function fetchOfflineChanges(entity: OfflineEntity, params: { afterRevision: string; untilRevision?: string; epoch: string; limit: number }) {
   return requiredResponse<{
     entity: OfflineEntity;
     epoch: string;

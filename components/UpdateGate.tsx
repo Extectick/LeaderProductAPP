@@ -61,8 +61,6 @@ const APK_DOWNLOAD_STALE_MS = 20 * 60 * 1000;
 
 type Props = {
   children: React.ReactNode;
-  onStartupDone?: () => void;
-  showCheckingOverlay?: boolean;
 };
 
 function formatBytes(bytes?: number | null) {
@@ -73,9 +71,7 @@ function formatBytes(bytes?: number | null) {
   return `${Math.max(1, Math.round(kb))} КБ`;
 }
 
-const STARTUP_MAX_WAIT_MS = 12000;
-
-export default function UpdateGate({ children, onStartupDone, showCheckingOverlay = false }: Props) {
+export default function UpdateGate({ children }: Props) {
   const [updateInfo, setUpdateInfo] = useState<UpdateCheckResult | null>(null);
   const [mandatoryVisible, setMandatoryVisible] = useState(false);
   const [optionalVisible, setOptionalVisible] = useState(false);
@@ -93,7 +89,6 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
   const promptLoggedForRef = useRef<number | null>(null);
   const downloadDoneLoggedForRef = useRef<number | null>(null);
   const downloadRef = useRef<FileSystem.DownloadResumable | null>(null);
-  const startupDoneRef = useRef(false);
   const startupCheckStartedRef = useRef(false);
   const autoDownloadVersionRef = useRef<number | null>(null);
   const downloadStartedAtRef = useRef<number | null>(null);
@@ -128,12 +123,6 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
     },
     [getAndroidDownloadKey]
   );
-
-  const completeStartup = useCallback(() => {
-    if (startupDoneRef.current) return;
-    startupDoneRef.current = true;
-    onStartupDone?.();
-  }, [onStartupDone]);
 
   const versionName =
     Application.nativeApplicationVersion ??
@@ -391,7 +380,7 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
         const updateAvailable = Boolean(data.updateAvailable);
 
         setUpdateInfo(data);
-        setMandatoryVisible(false);
+        setMandatoryVisible(updateAvailable && Boolean(data.mandatory));
         setOptionalVisible(false);
         setErrorMessage(null);
         setStage((current) => {
@@ -432,14 +421,10 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
       } finally {
         checkingRef.current = false;
         setCheckingVisible(false);
-        if (source === 'startup') {
-          completeStartup();
-        }
       }
     },
     [
       clearCheckFailures,
-      completeStartup,
       getEtagKey,
       recordCheckFailure,
       shouldCheck,
@@ -454,22 +439,14 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
     if (startupCheckStartedRef.current) return;
     startupCheckStartedRef.current = true;
     if (!shouldCheck || !versionCode) {
-      completeStartup();
       return;
     }
     void runCheck('startup');
-  }, [completeStartup, runCheck, shouldCheck, versionCode]);
+  }, [runCheck, shouldCheck, versionCode]);
 
   useEffect(() => {
     return subscribeAppUpdateCheckRequests(() => runCheck('manual'));
   }, [runCheck]);
-
-  useEffect(() => {
-    const t = setTimeout(() => {
-      completeStartup();
-    }, STARTUP_MAX_WAIT_MS);
-    return () => clearTimeout(t);
-  }, [completeStartup]);
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
@@ -1006,6 +983,7 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
   ]);
 
   const handleClose = useCallback(async () => {
+    if (updateInfo?.updateAvailable && updateInfo.mandatory) return;
     const deviceId = await getInstallId();
     await logUpdateEvent({
       eventType: 'DISMISS',
@@ -1021,6 +999,7 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
   }, [updateInfo, versionCode, versionName]);
 
   const handleLater = useCallback(async () => {
+    if (updateInfo?.updateAvailable && updateInfo.mandatory) return;
     const deviceId = await getInstallId();
     await logUpdateEvent({
       eventType: 'DISMISS',
@@ -1039,9 +1018,8 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
     }
   }, [mandatoryVisible, updateInfo, versionCode, versionName]);
 
-  const showChecking = showCheckingOverlay && checkingVisible && !modalVisible;
   const isMandatory = mandatoryVisible;
-  const showProgress = stage !== 'idle';
+  const showProgress = stage === 'downloading' || stage === 'verifying' || stage === 'opening' || stage === 'done';
   const appUpdatePhase: AppBinaryUpdatePhase = useMemo(() => {
     if (!shouldCheck) return 'disabled';
     if (checkingVisible) return 'checking';
@@ -1057,9 +1035,10 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
   }, [runCheck]);
 
   const dismissAppUpdateStatus = useCallback(async () => {
+    if (updateInfo?.updateAvailable && updateInfo.mandatory) return;
     setMandatoryVisible(false);
     setOptionalVisible(false);
-  }, []);
+  }, [updateInfo]);
 
   const appUpdateStatusValue = useMemo<AppBinaryUpdateStatusContextValue>(() => ({
     phase: appUpdatePhase,
@@ -1161,9 +1140,9 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
           <View style={styles.card}>
             <View style={styles.headerRow}>
               <Text style={styles.title}>Обновление приложения</Text>
-              <Pressable onPress={handleClose} style={styles.closeBtn} hitSlop={10}>
+              {!isMandatory && <Pressable onPress={handleClose} style={styles.closeBtn} hitSlop={10}>
                 <Text style={styles.closeBtnText}>✕</Text>
-              </Pressable>
+              </Pressable>}
             </View>
             <Text style={styles.subtitle}>{description}</Text>
             {updateInfo?.latestVersionName ? (
@@ -1188,9 +1167,9 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
             {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
 
             <View style={styles.actions}>
-              <Pressable style={[styles.button, styles.secondary]} onPress={handleLater} disabled={busy}>
+              {!isMandatory && <Pressable style={[styles.button, styles.secondary]} onPress={handleLater} disabled={busy}>
                 <Text style={styles.secondaryText}>Закрыть</Text>
-              </Pressable>
+              </Pressable>}
               <Pressable
                 style={[styles.button, styles.primary, primaryActionDisabled && styles.primaryDisabled]}
                 onPress={handleUpdate}
@@ -1209,21 +1188,6 @@ export default function UpdateGate({ children, onStartupDone, showCheckingOverla
             {!updateInfo?.downloadUrl && !updateInfo?.storeUrl ? (
               <Text style={styles.hint}>Ссылка на обновление недоступна. Обратитесь к администратору.</Text>
             ) : null}
-          </View>
-        </View>
-      </Modal>
-      <Modal
-        visible={showChecking}
-        transparent
-        animationType="fade"
-        onRequestClose={() => {
-          setCheckingVisible(false);
-        }}
-      >
-        <View style={styles.overlay}>
-          <View style={styles.checkingCard}>
-            <ActivityIndicator size="large" color="#0ea5e9" />
-            <Text style={styles.checkingText}>Проверка наличия обновлений</Text>
           </View>
         </View>
       </Modal>
@@ -1355,26 +1319,5 @@ const styles = StyleSheet.create({
     marginTop: 12,
     fontSize: 12,
     color: '#94a3b8',
-  },
-  checkingCard: {
-    width: '100%',
-    maxWidth: 320,
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    paddingVertical: 20,
-    paddingHorizontal: 16,
-    alignItems: 'center',
-    gap: 12,
-    shadowColor: '#000',
-    shadowOpacity: 0.16,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 5,
-  },
-  checkingText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#0f172a',
-    textAlign: 'center',
   },
 });

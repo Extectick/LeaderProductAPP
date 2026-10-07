@@ -28,4 +28,14 @@ describe('user error messages', () => {
       'Недостаточно остатка по позиции'
     );
   });
+
+  it.each([
+    "Call to function 'NativeStatement.finalizeAsync' has been rejected",
+    'NativeDatabase.execAsync failed: database is locked',
+    'SQLITE_IOERR: disk I/O error',
+    'NOT NULL constraint failed: offline_stock.product_guid',
+    'Unable to find shared object already released',
+  ])('hides native storage details: %s', (message) => {
+    expect(toUserErrorMessage(new Error(message), 'Не удалось сохранить данные')).toBe('Не удалось сохранить данные');
+  });
 });

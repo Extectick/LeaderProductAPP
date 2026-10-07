@@ -1,33 +1,37 @@
 import { logger } from '@/utils/logger';
+import { Platform } from 'react-native';
+import * as Application from 'expo-application';
+import * as Updates from 'expo-updates';
+import { scrubCrashEvent, scrubDiagnosticValue } from './privacy';
 
 type SentryModule = {
   init?: (options: Record<string, unknown>) => void;
   captureException?: (error: unknown, context?: Record<string, unknown>) => void;
   addBreadcrumb?: (breadcrumb: Record<string, unknown>) => void;
+  setUser?: (user: { id: string } | null) => void;
+  setTag?: (name: string, value: string) => void;
 };
 
 let sentry: SentryModule | null = null;
 let initialized = false;
 let globalHandlerInstalled = false;
 
-function env(name: string) {
-  return (process.env[name] || '').trim();
-}
-
 function sentryEnabled() {
-  return env('EXPO_PUBLIC_SENTRY_ENABLED').toLowerCase() === 'true';
+  // Expo only inlines statically addressed EXPO_PUBLIC_* variables.
+  return process.env.EXPO_PUBLIC_UPDATE_CHANNEL === 'dev'
+    && process.env.EXPO_PUBLIC_SENTRY_ENABLED === 'true';
 }
 
 function sentryDsn() {
-  return env('EXPO_PUBLIC_SENTRY_DSN');
+  return (process.env.EXPO_PUBLIC_SENTRY_DSN || '').trim();
 }
 
 function sentryEnvironment() {
-  return env('EXPO_PUBLIC_SENTRY_ENVIRONMENT') || 'production';
+  return 'development';
 }
 
 function sentryRelease() {
-  return env('EXPO_PUBLIC_SENTRY_RELEASE');
+  return (process.env.EXPO_PUBLIC_SENTRY_RELEASE || '').trim();
 }
 
 function loadSentryModule(): SentryModule | null {
@@ -70,10 +74,25 @@ export function initMonitoring() {
       enabled: true,
       environment,
       release: release || undefined,
-      tracesSampleRate: 0.1,
+      tracesSampleRate: 0,
       profilesSampleRate: 0.0,
+      sendDefaultPii: false,
+      maxBreadcrumbs: 40,
+      attachScreenshot: false,
+      attachViewHierarchy: false,
+      enableLogs: false,
+      enableAutoSessionTracking: false,
+      autoInitializeNativeSdk: Platform.OS !== 'android' || Number(Application.nativeBuildVersion || 0) < 31,
+      beforeSend: scrubCrashEvent,
+      beforeBreadcrumb: (breadcrumb: any) => breadcrumb.category === 'app'
+        ? { ...breadcrumb, data: scrubDiagnosticValue(breadcrumb.data) } : null,
     });
     sentry = moduleRef;
+    sentry.setTag?.('js_monitoring_ready', 'true');
+    sentry.setTag?.('app_version', Application.nativeApplicationVersion || 'web');
+    sentry.setTag?.('build_number', Application.nativeBuildVersion || 'web');
+    sentry.setTag?.('runtime_version', String(Updates.runtimeVersion || 'unknown'));
+    sentry.setTag?.('ota_update_id', Updates.updateId || 'embedded');
     logger.info('Sentry initialized', undefined, 'monitoring');
   } catch (error) {
     logger.captureException(error, { where: 'initMonitoring' }, 'monitoring');
@@ -107,6 +126,8 @@ export function addMonitoringBreadcrumb(message: string, data?: Record<string, u
 }
 
 export function installGlobalJsErrorHandler() {
+  // Sentry installs its own fatal handler. Wrapping it would capture twice.
+  if (sentry) return;
   if (globalHandlerInstalled) return;
   globalHandlerInstalled = true;
 
@@ -123,4 +144,13 @@ export function installGlobalJsErrorHandler() {
   } catch (error) {
     logger.captureException(error, { where: 'installGlobalJsErrorHandler' }, 'monitoring');
   }
+}
+
+export function setMonitoringUser(id: number | string | null | undefined) {
+  sentry?.setUser?.(id == null ? null : { id: String(id) });
+}
+
+export function setMonitoringScreen(route: string) {
+  // Caller passes a route template, never a URL with query / client details.
+  sentry?.setTag?.('screen', route.slice(0, 160));
 }

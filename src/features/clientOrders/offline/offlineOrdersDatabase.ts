@@ -1,5 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { getCatalogDatabase } from '@/src/features/productCatalog/data/catalogDatabase';
+import { withSQLiteWriteTransaction } from '@/src/shared/storage/sqliteWriteQueue';
 
 export const OFFLINE_ENTITIES = [
   'organizations',
@@ -60,6 +61,8 @@ function nestedGuid(item: any, field: string, fallback?: string) {
 }
 
 export function offlineItemKey(entity: OfflineEntity, item: any) {
+  // One partner address may be selectable for more than one counterparty.
+  if (entity === 'delivery-addresses') return JSON.stringify([nestedGuid(item, 'counterparty') ?? '', item?.guid ?? '']);
   if (entity === 'selling-prices') return text(item?.syncKey) || '';
   if (entity === 'manager-stock') return text(item?.syncKey) || '';
   if (entity === 'stock') {
@@ -171,7 +174,7 @@ export async function replaceOfflineEntity(
 ) {
   const db = await getCatalogDatabase();
   if (!db) return false;
-  await db.withExclusiveTransactionAsync(async (tx) => {
+  await withSQLiteWriteTransaction(db, async (tx) => {
     await tx.runAsync('DELETE FROM offline_entities WHERE user_id = ? AND entity = ?', userId, meta.entity);
     if (meta.entity === 'selling-prices') {
       await tx.runAsync('DELETE FROM offline_selling_prices WHERE user_id = ?', userId);
@@ -210,7 +213,7 @@ export async function beginOfflineEntitySnapshot(userId: string, entity: Offline
   const db = await getCatalogDatabase();
   if (!db) return null;
   const stagingUserId = snapshotUserId(userId, entity);
-  await db.withExclusiveTransactionAsync(async (tx) => {
+  await withSQLiteWriteTransaction(db, async (tx) => {
     await clearEntityRows(tx, stagingUserId, entity);
   });
   return stagingUserId;
@@ -223,7 +226,7 @@ export async function appendOfflineEntitySnapshot(
 ) {
   const db = await getCatalogDatabase();
   if (!db) return false;
-  await db.withExclusiveTransactionAsync(async (tx) => {
+  await withSQLiteWriteTransaction(db, async (tx) => {
     for (const item of items) await upsertEntityItem(tx, stagingUserId, entity, item);
   });
   return true;
@@ -232,7 +235,7 @@ export async function appendOfflineEntitySnapshot(
 export async function abortOfflineEntitySnapshot(userId: string, entity: OfflineEntity) {
   const db = await getCatalogDatabase();
   if (!db) return false;
-  await db.withExclusiveTransactionAsync(async (tx) => {
+  await withSQLiteWriteTransaction(db, async (tx) => {
     await clearEntityRows(tx, snapshotUserId(userId, entity), entity);
   });
   return true;
@@ -245,7 +248,7 @@ export async function commitOfflineEntitySnapshot(
   const db = await getCatalogDatabase();
   if (!db) return false;
   const stagingUserId = snapshotUserId(userId, meta.entity);
-  await db.withExclusiveTransactionAsync(async (tx) => {
+  await withSQLiteWriteTransaction(db, async (tx) => {
     const staged = await tx.getFirstAsync<{ count: number }>(
       'SELECT COUNT(*) AS count FROM offline_entities WHERE user_id = ? AND entity = ?',
       stagingUserId,
@@ -286,7 +289,7 @@ export async function applyOfflineChanges(
 ) {
   const db = await getCatalogDatabase();
   if (!db) return false;
-  await db.withExclusiveTransactionAsync(async (tx) => {
+  await withSQLiteWriteTransaction(db, async (tx) => {
     for (const change of changes) {
       if (change.operation === 'DELETE' || !change.item) {
         await deleteEntityItem(tx, userId, meta.entity, change.itemKey);
@@ -304,6 +307,12 @@ export async function applyOfflineChanges(
   return true;
 }
 
+export async function refreshOfflineDatasetMeta(userId: string, meta: OfflineDatasetMeta) {
+  const db = await getCatalogDatabase();
+  if (!db) throw new Error('SQLite unavailable while refreshing offline metadata');
+  await withSQLiteWriteTransaction(db, tx => setMeta(tx, userId, meta));
+}
+
 export async function readOfflineDatasetMeta(userId: string, entity: OfflineEntity) {
   const db = await getCatalogDatabase();
   if (!db) return null;
@@ -311,11 +320,18 @@ export async function readOfflineDatasetMeta(userId: string, entity: OfflineEnti
     'SELECT * FROM offline_dataset_meta WHERE user_id = ? AND entity = ?', userId, entity
   );
   if (!row) return null;
+  // An older APK may have downloaded schema v2 while still keying by guid only.
+  // Force a complete refresh after OTA, but retain the usable cached addresses
+  // until that refresh commits successfully.
+  const legacyAddressKey = entity === 'delivery-addresses' && await db.getFirstAsync<{ item_key: string }>(
+    "SELECT item_key FROM offline_entities WHERE user_id = ? AND entity = ? AND item_key NOT LIKE '[%' LIMIT 1",
+    userId, entity
+  );
   return {
     entity,
     epoch: row.epoch,
     revision: row.revision,
-    schemaVersion: number(row.schema_version),
+    schemaVersion: legacyAddressKey ? 0 : number(row.schema_version),
     itemCount: number(row.item_count),
     lastSourceUpdateAt: row.last_source_update_at,
     lastSyncedAt: row.last_synced_at,
@@ -388,16 +404,18 @@ export async function readOfflineDataSyncTime(userId: string) {
 export async function markOfflineDataSynced(userId: string) {
   const db = await getCatalogDatabase();
   if (!db) return false;
-  await db.runAsync(
-    'INSERT INTO catalog_meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
-    `offlineLastSyncedAt:${userId}`, new Date().toISOString()
-  );
+  await withSQLiteWriteTransaction(db, async (tx) => {
+    await tx.runAsync(
+      'INSERT INTO catalog_meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+      `offlineLastSyncedAt:${userId}`, new Date().toISOString()
+    );
+  });
   return true;
 }
 
 export async function readOfflineDrafts(userId: string): Promise<StoredOfflineDraft[]> {
   const db = await getCatalogDatabase();
-  if (!db) return [];
+  if (!db) throw new Error('SQLite draft storage is unavailable');
   const rows = await db.getAllAsync<any>(
     'SELECT * FROM offline_drafts WHERE user_id = ? ORDER BY updated_at DESC', userId
   );
@@ -421,54 +439,88 @@ export async function readOfflineDrafts(userId: string): Promise<StoredOfflineDr
   });
 }
 
-export async function upsertOfflineDraft(userId: string, draft: StoredOfflineDraft) {
-  const db = await getCatalogDatabase();
-  if (!db) return false;
-  await db.withExclusiveTransactionAsync(async (tx) => {
+async function writeDraft(tx: SQLiteDatabase, userId: string, draft: StoredOfflineDraft) {
+  // The editor's UI guid can still be null while its first save is finishing.
+  // The client identity, not the temporary row id, identifies the document.
+  const existing = await tx.getFirstAsync<{ id: string; client_revision: number }>(
+    'SELECT id, client_revision FROM offline_drafts WHERE user_id = ? AND client_order_id = ?',
+    userId, draft.clientOrderId
+  );
+  if (existing && existing.client_revision > draft.clientRevision) {
+    throw new Error('На устройстве уже сохранена более новая версия заказа. Откройте его заново.');
+  }
+  const id = existing?.id ?? draft.id;
+  await tx.runAsync(`
+    INSERT INTO offline_drafts(
+      user_id, id, client_order_id, client_revision, status, intent,
+      server_guid, server_revision, order_json, payload_json,
+      created_at, updated_at, last_send_error
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, id) DO UPDATE SET
+      client_order_id=excluded.client_order_id,
+      client_revision=excluded.client_revision,
+      status=excluded.status,
+      intent=excluded.intent,
+      server_guid=excluded.server_guid,
+      server_revision=excluded.server_revision,
+      order_json=excluded.order_json,
+      payload_json=excluded.payload_json,
+      updated_at=excluded.updated_at,
+      last_send_error=excluded.last_send_error
+  `, userId, id, draft.clientOrderId, draft.clientRevision, draft.status, draft.intent,
+  draft.serverGuid, draft.serverRevision, JSON.stringify(draft.order), JSON.stringify(draft.payload),
+  draft.createdAt, draft.updatedAt, draft.lastSendError);
+  await tx.runAsync('DELETE FROM offline_draft_lines WHERE user_id = ? AND draft_id = ?', userId, id);
+  const items = Array.isArray(draft.payload?.items) ? draft.payload.items : [];
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
     await tx.runAsync(`
-      INSERT INTO offline_drafts(
-        user_id, id, client_order_id, client_revision, status, intent,
-        server_guid, server_revision, order_json, payload_json,
-        created_at, updated_at, last_send_error
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(user_id, id) DO UPDATE SET
-        client_order_id=excluded.client_order_id,
-        client_revision=excluded.client_revision,
-        status=excluded.status,
-        intent=excluded.intent,
-        server_guid=excluded.server_guid,
-        server_revision=excluded.server_revision,
-        order_json=excluded.order_json,
-        payload_json=excluded.payload_json,
-        updated_at=excluded.updated_at,
-        last_send_error=excluded.last_send_error
-    `, userId, draft.id, draft.clientOrderId, draft.clientRevision, draft.status, draft.intent,
-    draft.serverGuid, draft.serverRevision, JSON.stringify(draft.order), JSON.stringify(draft.payload),
-    draft.createdAt, draft.updatedAt, draft.lastSendError);
-    await tx.runAsync('DELETE FROM offline_draft_lines WHERE user_id = ? AND draft_id = ?', userId, draft.id);
-    const items = Array.isArray(draft.payload?.items) ? draft.payload.items : [];
-    for (let index = 0; index < items.length; index += 1) {
-      const item = items[index];
-      await tx.runAsync(`
-        INSERT INTO offline_draft_lines(user_id, draft_id, line_guid, product_guid, payload_json)
-        VALUES (?, ?, ?, ?, ?)
-      `, userId, draft.id, text(item?.lineGuid) || `line-${index}`, text(item?.productGuid) || '', JSON.stringify(item));
+      INSERT INTO offline_draft_lines(user_id, draft_id, line_guid, product_guid, payload_json)
+      VALUES (?, ?, ?, ?, ?)
+    `, userId, id, text(item?.lineGuid) || `line-${index}`, text(item?.productGuid) || '', JSON.stringify(item));
+  }
+}
+
+/** Persist only the intended changes, never replace another workspace's drafts. */
+export async function applyOfflineDraftChanges(
+  userId: string,
+  upserts: StoredOfflineDraft[],
+  removals: Pick<StoredOfflineDraft, 'clientOrderId' | 'clientRevision'>[] = []
+) {
+  const db = await getCatalogDatabase();
+  if (!db) throw new Error('SQLite draft storage is unavailable');
+  await withSQLiteWriteTransaction(db, async (tx) => {
+    for (const draft of upserts) await writeDraft(tx, userId, draft);
+    for (const removed of removals) {
+      const args = [userId, removed.clientOrderId, removed.clientRevision] as const;
+      // Exclusive connections do not inherit foreign_keys. Delete lines explicitly,
+      // with the same revision guard as the parent, inside the same transaction.
+      await tx.runAsync(`DELETE FROM offline_draft_lines WHERE user_id = ? AND draft_id IN (
+        SELECT id FROM offline_drafts WHERE user_id = ? AND client_order_id = ? AND client_revision = ?
+      )`, userId, ...args);
+      await tx.runAsync('DELETE FROM offline_drafts WHERE user_id = ? AND client_order_id = ? AND client_revision = ?', ...args);
     }
   });
   return true;
 }
 
+export async function upsertOfflineDraft(userId: string, draft: StoredOfflineDraft) {
+  return applyOfflineDraftChanges(userId, [draft]);
+}
+
 export async function deleteOfflineDraft(userId: string, id: string) {
   const db = await getCatalogDatabase();
   if (!db) return false;
-  await db.runAsync('DELETE FROM offline_drafts WHERE user_id = ? AND id = ?', userId, id);
+  await withSQLiteWriteTransaction(db, async (tx) => {
+    await tx.runAsync('DELETE FROM offline_drafts WHERE user_id = ? AND id = ?', userId, id);
+  });
   return true;
 }
 
 export async function replaceOfflineDrafts(userId: string, drafts: StoredOfflineDraft[]) {
   const db = await getCatalogDatabase();
   if (!db) return false;
-  await db.withExclusiveTransactionAsync(async (tx) => {
+  await withSQLiteWriteTransaction(db, async (tx) => {
     await tx.runAsync('DELETE FROM offline_drafts WHERE user_id = ?', userId);
     for (const draft of drafts) {
       await tx.runAsync(`

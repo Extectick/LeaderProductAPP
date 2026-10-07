@@ -1,15 +1,15 @@
 // app/_layout.tsx
 import '@/utils/logbox';
-import { Slot } from 'expo-router';
+import { Slot, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useMemo } from 'react';
 import { Platform, StatusBar, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { MD3LightTheme, PaperProvider } from 'react-native-paper';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { enableScreens } from 'react-native-screens';
 
-import { AuthProvider } from '@/context/AuthContext';
+import { AuthProvider, AuthContext } from '@/context/AuthContext';
 import { ThemeProvider } from '@/context/ThemeContext';
 import { useAuthRedirect } from '@/hooks/useAuthRedirect';
 import { useStartupOtaUpdate } from '@/hooks/useStartupOtaUpdate';
@@ -18,12 +18,11 @@ import { TrackingProvider } from '@/context/TrackingContextV2';
 import { NotificationViewportProvider } from '@/context/NotificationViewportContext';
 import { NotificationHost } from '@/components/NotificationHost';
 import UpdateGate from '@/components/UpdateGate';
-import StartupSplash from '@/components/StartupSplash';
 import StartupLogoLoader from '@/components/StartupLogoLoader';
 import { OtaUpdateStatusProvider } from '@/src/shared/ota/OtaUpdateStatusContext';
 import { registerOtaBackgroundPrefetchTask } from '@/src/shared/ota/registerOtaBackgroundTask';
 import { initPushNotifications } from '@/utils/pushNotifications';
-import { captureException, initMonitoring, installGlobalJsErrorHandler } from '@/src/shared/monitoring';
+import { captureException, setMonitoringScreen, setMonitoringUser } from '@/src/shared/monitoring';
 
 if (Platform.OS !== 'web') {
   void SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -34,25 +33,17 @@ enableScreens();
 const nativeBottomSheetProvider = Platform.OS === 'web'
   ? null
   : require('@gorhom/bottom-sheet').BottomSheetModalProvider;
-const hideReactStartupLoader = Platform.OS === 'android' && !__DEV__;
-
-function EmptyStartupSurface() {
-  return <StartupLogoLoader />;
-}
 
 function InnerLayout() {
+  const profile = useContext(AuthContext)?.profile;
+  const segments = useSegments();
+  const route = segments.join('/');
+  useEffect(() => { setMonitoringUser(profile?.id); }, [profile?.id]);
+  useEffect(() => { setMonitoringScreen(route); }, [route]);
   const { isChecking } = useAuthRedirect();
   useTelegramBackButton();
   if (isChecking) {
-    if (hideReactStartupLoader) {
-      return <EmptyStartupSurface />;
-    }
-    return (
-      <StartupSplash
-        statusText="Проверка авторизации"
-        hintText="Проверяем сессию и загружаем доступные разделы."
-      />
-    );
+    return <StartupLogoLoader />;
   }
   return <Slot />;
 }
@@ -74,52 +65,19 @@ export default function RootLayout() {
     },
   }), []);
 
-  const [preloadReady, setPreloadReady] = useState(false);
-  const [updateReady, setUpdateReady] = useState(false);
-  const [minSplashReady, setMinSplashReady] = useState(hideReactStartupLoader);
-  const otaUpdate = useStartupOtaUpdate(preloadReady);
+  const otaUpdate = useStartupOtaUpdate(true);
 
   useEffect(() => {
-    initMonitoring();
-    installGlobalJsErrorHandler();
+    // Notification setup must not hold startup while waiting on native tasks.
+    void initPushNotifications().catch((e) => {
+      captureException(e, { where: 'RootLayout:initPushNotifications' });
+      console.warn('App init error:', e);
+    });
   }, []);
 
-  const handleStartupDone = useCallback(() => {
-    setUpdateReady(true);
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        // preload...
-        await initPushNotifications();
-      } catch (e) {
-        captureException(e, { where: 'RootLayout:initPushNotifications' });
-        console.warn('App init error:', e);
-      } finally {
-        if (!cancelled) {
-          setPreloadReady(true);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (hideReactStartupLoader) return;
-    const timer = setTimeout(() => {
-      setMinSplashReady(true);
-    }, 1500);
-    return () => clearTimeout(timer);
-  }, []);
-
-  const appIsReady = useMemo(
-    () => preloadReady && otaUpdate.ready && updateReady && minSplashReady,
-    [minSplashReady, otaUpdate.ready, preloadReady, updateReady]
-  );
+  // Binary-update checks run over the mounted app. A mandatory result opens
+  // its blocking modal; a slow/offline check must not keep the logo on screen.
+  const appIsReady = otaUpdate.ready;
 
   useEffect(() => {
     if (!appIsReady) return;
@@ -129,51 +87,16 @@ export default function RootLayout() {
     });
   }, [appIsReady]);
 
-  const startupSplash = useMemo(() => {
-    if (!preloadReady) {
-      return {
-        statusText: 'Инициализация сервисов',
-        hintText: 'Подключаем уведомления и системные модули.',
-        progress: null,
-      };
+  // Hand over once the matching React surface is laid out, so progress is visible
+  // while initialization continues instead of being covered by the static logo.
+  const handleRootLayout = useCallback(() => {
+    if (Platform.OS !== 'web') {
+      void SplashScreen.hideAsync().catch(() => {});
     }
-    if (!otaUpdate.ready) {
-      return {
-        statusText: otaUpdate.statusText,
-        hintText: otaUpdate.hintText,
-        progress: otaUpdate.progress,
-      };
-    }
-    if (!updateReady) {
-      return {
-        statusText: 'Проверка обновлений',
-        hintText: 'Проверяем актуальность версии приложения.',
-        progress: null,
-      };
-    }
-    if (!minSplashReady) {
-      return {
-        statusText: 'Подготовка интерфейса',
-        hintText: 'Формируем стартовый экран.',
-        progress: null,
-      };
-    }
-    return {
-      statusText: 'Запуск приложения',
-      hintText: 'Подготавливаем рабочее пространство.',
-      progress: null,
-    };
-  }, [minSplashReady, otaUpdate.hintText, otaUpdate.progress, otaUpdate.ready, otaUpdate.statusText, preloadReady, updateReady]);
-
-  // Надёжно прячем splash как только инициализация завершена
-  useEffect(() => {
-    if (Platform.OS !== 'web' && appIsReady) {
-      SplashScreen.hideAsync().catch(() => {});
-    }
-  }, [appIsReady]);
+  }, []);
 
   return (
-    <Root style={{ flex: 1 }}>
+    <Root style={{ flex: 1 }} onLayout={handleRootLayout}>
       <SafeAreaProvider>
         <PaperProvider theme={paperTheme}>
           <MaybeBottomSheetProvider>
@@ -183,21 +106,12 @@ export default function RootLayout() {
                   <NotificationViewportProvider>
                     <OtaUpdateStatusProvider enabled={appIsReady}>
                       <NotificationHost>
-                        <UpdateGate
-                          onStartupDone={handleStartupDone}
-                          showCheckingOverlay={false}
-                        >
+                        <UpdateGate>
                           <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
                           {appIsReady ? (
                             <InnerLayout />
-                          ) : hideReactStartupLoader ? (
-                            <EmptyStartupSurface />
                           ) : (
-                            <StartupSplash
-                              statusText={startupSplash.statusText}
-                              hintText={startupSplash.hintText}
-                              progress={startupSplash.progress}
-                            />
+                            <StartupLogoLoader stage={otaUpdate.phase === 'applying' ? 'applying' : 'logo'} />
                           )}
                         </UpdateGate>
                       </NotificationHost>

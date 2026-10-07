@@ -362,6 +362,15 @@ export function getOrderDisplayStatus(order?: Pick<ClientOrder, 'status' | 'numb
 
 export function getOrderDisplayStatusLabel(order?: Pick<ClientOrder, 'status' | 'number1c' | 'origin' | 'status1c' | 'currentState1c' | 'documentStatus1c' | 'shipmentProhibited' | 'isPostedIn1c'> | null) {
   if (!order) return STATUS_LABELS.DRAFT;
+  if (order.origin === 'device') {
+    const localStatus = (order as { offlineDraftStatus?: string }).offlineDraftStatus;
+    if (localStatus === 'READY_TO_SEND') return 'В очереди на устройстве';
+    if (localStatus === 'ON_DEVICE') return STATUS_LABELS.DRAFT;
+    if (localStatus === 'SENDING') return 'Отправляется';
+    if (localStatus === 'PRICE_REVIEW') return 'Цены изменились';
+    if (localStatus === 'NEEDS_EDIT') return 'Требует исправления';
+    if (localStatus === 'SEND_ERROR') return 'Ошибка отправки';
+  }
   const displayStatus = getOrderDisplayStatus(order);
   const onecText = order.currentState1c || order.status1c;
   return STATUS_LABELS[displayStatus] || onecText || displayStatus || STATUS_LABELS.DRAFT;
@@ -874,6 +883,15 @@ export function getClientOrderItemsCount(order?: Pick<ClientOrder, 'items' | 'it
 }
 
 export function orderToDraft(order: ClientOrder): DraftOrder {
+  const localDraft = (order as ClientOrder & { localDraft?: DraftOrder }).localDraft;
+  if (order.origin === 'device' && localDraft && Array.isArray(localDraft.items)) {
+    // SQLite is allowed to contain incomplete input. Do not round-trip typed
+    // quantities, empty fields or package metadata through the API read model.
+    return normalizeDraftOrder({ ...localDraft, guid: order.guid,
+      clientOrderId: order.clientOrderId ?? localDraft.clientOrderId,
+      clientRevision: order.clientRevision ?? localDraft.clientRevision,
+      revision: order.revision, geoEvents: order.geoEvents ?? localDraft.geoEvents });
+  }
   const orderItems = getClientOrderItems(order);
   const headerPriceType = order.priceType ?? orderItems.find((item) => item.priceType?.guid)?.priceType ?? order.agreement?.priceType ?? null;
   return {
@@ -1259,6 +1277,21 @@ export function buildPayload(draft: DraftOrder, saveReason: 'manual' | 'autosave
 // not to creating it. Invalid values remain visible and editable in the copy.
 export function buildCopyPayload(draft: DraftOrder) {
   return mapDraftToPayload(draft, 'manual');
+}
+
+/** Local persistence is not submission: even a half-filled form must survive restart. */
+export function buildLocalDraftPayload(draft: DraftOrder, reason: 'manual' | 'autosave' = 'autosave') {
+  return mapDraftToPayload(draft, reason);
+}
+
+export function getClientOrderDisplayNumber(order: Pick<ClientOrder, 'guid' | 'number1c' | 'clientOrderId' | 'origin'>) {
+  if (order.number1c) return order.number1c;
+  if (order.guid.startsWith('device-order-')) {
+    const clientId = order.clientOrderId?.replace(/^legacy-server:/, '');
+    // Use the same short-id format as server drafts without changing the sync identity.
+    return clientId ? clientId.slice(0, 8) : order.guid.slice('device-order-'.length).replace(/-/g, '').slice(-8);
+  }
+  return order.guid.slice(0, 8);
 }
 
 export function pickDefaultWarehouse(refs: ClientOrdersReferenceData) {

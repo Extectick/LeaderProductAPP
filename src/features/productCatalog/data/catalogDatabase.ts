@@ -1,5 +1,9 @@
 import { Platform } from 'react-native';
 import * as SQLite from 'expo-sqlite';
+import { withSQLiteStatements, withSQLiteWriteTransaction } from '@/src/shared/storage/sqliteWriteQueue';
+import { offlineSyncStage, reportOfflineSyncFailure } from '@/src/shared/storage/offlineSyncDiagnostics';
+import { retrySQLiteBusy } from '@/src/shared/storage/sqliteBusy';
+import { assertSQLiteAvailable, manageSQLiteConnection, withSQLiteActivity } from '@/src/shared/storage/sqliteLifecycle';
 import type { ClientOrderProduct } from '@/utils/clientOrdersService';
 import type { CatalogChange, CatalogProduct, CatalogSearchResult } from '../model/catalog.types';
 
@@ -15,6 +19,7 @@ type CatalogMeta = {
 };
 
 let databasePromise: Promise<SQLite.SQLiteDatabase | null> | null = null;
+let initializationError: unknown = null;
 
 function serialize(value: unknown) {
   return JSON.stringify(value ?? null);
@@ -30,10 +35,28 @@ function parseJson<T>(value: string | null | undefined, fallback: T): T {
 }
 
 async function migrate(db: SQLite.SQLiteDatabase) {
-  await db.execAsync(`
-    PRAGMA journal_mode = WAL;
-    PRAGMA synchronous = NORMAL;
-    PRAGMA foreign_keys = ON;
+  // A connection's busy handler must be installed BEFORE touching the file.
+  await offlineSyncStage({ stage: 'sqlite.configure' }, () => db.execAsync(
+    'PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;'
+  ));
+  await offlineSyncStage({ stage: 'sqlite.journal' }, () => retrySQLiteBusy(async () => {
+    const mode = await db.getFirstAsync<{ journal_mode: string }>('PRAGMA journal_mode');
+    // WAL is persistent. Do not acquire a journal/schema lock on every launch.
+    if (mode?.journal_mode?.toLowerCase() !== 'wal') await db.execAsync('PRAGMA journal_mode = WAL;');
+    await db.execAsync('PRAGMA synchronous = NORMAL;');
+  }));
+  const version = await offlineSyncStage({ stage: 'sqlite.schema-version' }, () => retrySQLiteBusy(
+    () => db.getFirstAsync<{ user_version: number }>('PRAGMA user_version')
+  ));
+  // The old initializer executed DDL and wrote user_version on every open.
+  // That fails even for a ready WAL database while another connection writes.
+  if (Number(version?.user_version ?? 0) >= DATABASE_VERSION) return;
+  await offlineSyncStage({ stage: 'sqlite.migrate' }, () => retrySQLiteBusy(
+    () => withSQLiteWriteTransaction(db, async (tx) => {
+      // Another runtime may have completed migration while we waited.
+      const current = await tx.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
+      if (Number(current?.user_version ?? 0) >= DATABASE_VERSION) return;
+      await tx.execAsync(`
     CREATE TABLE IF NOT EXISTS catalog_meta (
       key TEXT PRIMARY KEY NOT NULL,
       value TEXT NOT NULL
@@ -158,17 +181,44 @@ async function migrate(db: SQLite.SQLiteDatabase) {
       FOREIGN KEY(user_id, draft_id) REFERENCES offline_drafts(user_id, id) ON DELETE CASCADE
     );
     PRAGMA user_version = ${DATABASE_VERSION};
-  `);
+      `);
+    })
+  ));
 }
 
 export async function getCatalogDatabase() {
   if (Platform.OS === 'web') return null;
+  assertSQLiteAvailable();
   if (!databasePromise) {
-    databasePromise = SQLite.openDatabaseAsync(DATABASE_NAME).then(async (db) => {
-      await migrate(db);
-      return db;
-    }).catch((error) => {
+    databasePromise = withSQLiteActivity(() => SQLite.openDatabaseAsync(DATABASE_NAME, {
+      // FTS owns internal statements that must only be finalized by SQLite.
+      // Expo's blanket cleanup can finalize them twice and abort the process.
+      // Exclusive transactions inherit these options. App-owned statements are
+      // finalized by Expo's query helpers / withSQLiteStatements instead.
+      // https://github.com/expo/expo/issues/38168
+      finalizeUnusedStatementsBeforeClosing: false,
+      // Do not inherit a cached handle/transaction from an older JS runtime.
+      useNewConnection: true,
+    }).then(async (db) => {
+      try {
+        await migrate(db);
+        initializationError = null;
+        manageSQLiteConnection(db, () => { databasePromise = null; initializationError = null; });
+        return db;
+      } catch (error) {
+        // Do not leak/reuse a partially initialized connection on the next try.
+        // Preserve the file (including offline drafts) and the original error.
+        try {
+          await db.closeAsync();
+        } catch (closeError) {
+          console.warn('[catalog] SQLite initialization cleanup failed', closeError);
+        }
+        throw error;
+      }
+    })).catch((error) => {
       databasePromise = null;
+      initializationError = error;
+      reportOfflineSyncFailure(error, { stage: 'sqlite.initialize' });
       console.warn('[catalog] SQLite initialization failed', error);
       return null;
     });
@@ -183,20 +233,19 @@ async function readMetaValue(db: SQLite.SQLiteDatabase, key: string) {
 
 export async function readCatalogMeta(): Promise<CatalogMeta> {
   const db = await getCatalogDatabase();
+  // Do not redownload the catalog when opening its local storage has failed.
+  if (!db && initializationError) throw initializationError;
   if (!db) return { epoch: null, revision: '0', schemaVersion: 0, productCount: 0, lastSyncedAt: null };
-  const [epoch, revision, schemaVersion, productCount, lastSyncedAt] = await Promise.all([
-    readMetaValue(db, 'epoch'),
-    readMetaValue(db, 'revision'),
-    readMetaValue(db, 'schemaVersion'),
-    readMetaValue(db, 'productCount'),
-    readMetaValue(db, 'lastSyncedAt'),
-  ]);
+  const rows = await db.getAllAsync<{ key: string; value: string }>(
+    "SELECT key, value FROM catalog_meta WHERE key IN ('epoch', 'revision', 'schemaVersion', 'productCount', 'lastSyncedAt')"
+  );
+  const meta = new Map(rows.map((row) => [row.key, row.value]));
   return {
-    epoch,
-    revision: revision || '0',
-    schemaVersion: Number(schemaVersion || 0),
-    productCount: Number(productCount || 0),
-    lastSyncedAt,
+    epoch: meta.get('epoch') ?? null,
+    revision: meta.get('revision') || '0',
+    schemaVersion: Number(meta.get('schemaVersion') || 0),
+    productCount: Number(meta.get('productCount') || 0),
+    lastSyncedAt: meta.get('lastSyncedAt') ?? null,
   };
 }
 
@@ -254,28 +303,26 @@ async function withCatalogStatements(
     insertFts: SQLite.SQLiteStatement;
   }) => Promise<void>
 ) {
-  const upsert = await tx.prepareAsync(`
-    INSERT INTO catalog_products(
-      guid, name, code, article, sku, is_weight, is_service, is_active,
-      group_json, base_unit_json, packages_json, image_hash, revision, source_updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(guid) DO UPDATE SET
-      name=excluded.name, code=excluded.code, article=excluded.article, sku=excluded.sku,
-      is_weight=excluded.is_weight, is_service=excluded.is_service, is_active=excluded.is_active,
-      group_json=excluded.group_json, base_unit_json=excluded.base_unit_json,
-      packages_json=excluded.packages_json, image_hash=excluded.image_hash,
-      revision=excluded.revision, source_updated_at=excluded.source_updated_at
-  `);
-  const deleteProduct = await tx.prepareAsync('DELETE FROM catalog_products WHERE guid = ?');
-  const deleteFts = await tx.prepareAsync('DELETE FROM catalog_products_fts WHERE guid = ?');
-  const insertFts = await tx.prepareAsync(
-    'INSERT INTO catalog_products_fts(guid, name, code, article, sku, barcodes) VALUES (?, ?, ?, ?, ?, ?)'
-  );
-  try {
+  await withSQLiteStatements(tx, async (prepare) => {
+    const upsert = await prepare(`
+      INSERT INTO catalog_products(
+        guid, name, code, article, sku, is_weight, is_service, is_active,
+        group_json, base_unit_json, packages_json, image_hash, revision, source_updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(guid) DO UPDATE SET
+        name=excluded.name, code=excluded.code, article=excluded.article, sku=excluded.sku,
+        is_weight=excluded.is_weight, is_service=excluded.is_service, is_active=excluded.is_active,
+        group_json=excluded.group_json, base_unit_json=excluded.base_unit_json,
+        packages_json=excluded.packages_json, image_hash=excluded.image_hash,
+        revision=excluded.revision, source_updated_at=excluded.source_updated_at
+    `);
+    const deleteProduct = await prepare('DELETE FROM catalog_products WHERE guid = ?');
+    const deleteFts = await prepare('DELETE FROM catalog_products_fts WHERE guid = ?');
+    const insertFts = await prepare(
+      'INSERT INTO catalog_products_fts(guid, name, code, article, sku, barcodes) VALUES (?, ?, ?, ?, ?, ?)'
+    );
     await callback({ upsert, deleteProduct, deleteFts, insertFts });
-  } finally {
-    await Promise.all([upsert.finalizeAsync(), deleteProduct.finalizeAsync(), deleteFts.finalizeAsync(), insertFts.finalizeAsync()]);
-  }
+  });
 }
 
 export async function replaceCatalog(input: {
@@ -286,7 +333,7 @@ export async function replaceCatalog(input: {
 }) {
   const db = await getCatalogDatabase();
   if (!db) return false;
-  await db.withExclusiveTransactionAsync(async (tx) => {
+  await withSQLiteWriteTransaction(db, async (tx) => {
     await tx.execAsync('DELETE FROM catalog_products_fts; DELETE FROM catalog_products;');
     await withCatalogStatements(tx, async (statements) => {
       for (const product of input.products) {
@@ -311,7 +358,7 @@ export async function applyCatalogChanges(input: {
 }) {
   const db = await getCatalogDatabase();
   if (!db) return false;
-  await db.withExclusiveTransactionAsync(async (tx) => {
+  await withSQLiteWriteTransaction(db, async (tx) => {
     await withCatalogStatements(tx, async (statements) => {
       for (const change of input.changes) {
         if (change.operation === 'DELETE' || !change.item) {

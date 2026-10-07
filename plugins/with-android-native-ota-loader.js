@@ -1,4 +1,4 @@
-const { AndroidConfig, withAndroidManifest, withDangerousMod } = require('expo/config-plugins');
+const { AndroidConfig, withAndroidManifest, withMainActivity, withDangerousMod } = require('expo/config-plugins');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -8,6 +8,7 @@ const CHECK_ON_LAUNCH_META = 'expo.modules.updates.EXPO_UPDATES_CHECK_ON_LAUNCH'
 const LAUNCH_WAIT_META = 'expo.modules.updates.EXPO_UPDATES_LAUNCH_WAIT_MS';
 const CUSTOM_INIT_PROPERTY = 'EX_UPDATES_CUSTOM_INIT';
 const COROUTINES_DEPENDENCY = "implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'";
+const SPLASHSCREEN_DEPENDENCY = "implementation 'androidx.core:core-splashscreen:1.2.0'";
 
 function normalizeActivityName(name, packageName) {
   if (!name) return name;
@@ -67,40 +68,72 @@ function updateManifest(androidManifest, packageName) {
   const application = AndroidConfig.Manifest.getMainApplicationOrThrow(androidManifest);
   application.activity = application.activity || [];
 
-  setMetaData(application, CHECK_ON_LAUNCH_META, 'NEVER');
-  setMetaData(application, LAUNCH_WAIT_META, '30000');
+  setMetaData(application, CHECK_ON_LAUNCH_META, 'ALWAYS');
+  setMetaData(application, LAUNCH_WAIT_META, '8000');
 
   const mainActivity = findActivity(application, packageName, MAIN_ACTIVITY);
   if (!mainActivity) {
     throw new Error('with-android-native-ota-loader could not find MainActivity');
   }
 
-  const movedIntentFilters = mainActivity['intent-filter']?.length
-    ? mainActivity['intent-filter']
-    : defaultIntentFilters();
-
-  delete mainActivity['intent-filter'];
-  mainActivity.$['android:exported'] = 'false';
-  mainActivity.$['android:name'] = shortActivityName(mainActivity.$['android:name'], packageName);
-
-  let gateActivity = findActivity(application, packageName, UPDATE_GATE_ACTIVITY);
-  if (!gateActivity) {
-    gateActivity = { $: { 'android:name': `.${UPDATE_GATE_ACTIVITY}` } };
-    application.activity.unshift(gateActivity);
+  const gateActivity = findActivity(application, packageName, UPDATE_GATE_ACTIVITY);
+  const filters = [...(mainActivity['intent-filter'] || []), ...(gateActivity?.['intent-filter'] || [])];
+  const uniqueFilters = [...new Map(filters.map((filter) => [JSON.stringify(filter), filter])).values()];
+  if (!uniqueFilters.some((filter) => hasAction(filter, 'android.intent.action.MAIN'))) {
+    uniqueFilters.unshift(defaultIntentFilters()[0]);
   }
-
-  gateActivity.$ = {
-    ...gateActivity.$,
+  if (!filters.length) uniqueFilters.push(defaultIntentFilters()[1]);
+  mainActivity['intent-filter'] = uniqueFilters;
+  mainActivity.$['android:exported'] = 'true';
+  mainActivity.$['android:name'] = shortActivityName(mainActivity.$['android:name'], packageName);
+  mainActivity.$['android:launchMode'] = 'singleTask';
+  application.activity = application.activity.filter((activity) => activity !== gateActivity);
+  // Preserve explicit intents / pinned shortcuts created by older APKs without
+  // instantiating a second Activity or exposing a second launcher icon.
+  application['activity-alias'] = (application['activity-alias'] || []).filter((alias) =>
+    normalizeActivityName(alias.$?.['android:name'], packageName) !== `${packageName}.${UPDATE_GATE_ACTIVITY}`);
+  application['activity-alias'].push({ $: {
     'android:name': `.${UPDATE_GATE_ACTIVITY}`,
-    'android:configChanges': mainActivity.$['android:configChanges'] || 'keyboard|keyboardHidden|orientation|screenSize|screenLayout|uiMode',
-    'android:launchMode': 'singleTask',
-    'android:theme': '@style/AppTheme',
+    'android:targetActivity': mainActivity.$['android:name'],
     'android:exported': 'true',
-    'android:screenOrientation': mainActivity.$['android:screenOrientation'] || 'portrait',
-  };
+  } });
+}
 
-  const hasLauncherFilter = movedIntentFilters.some((filter) => hasAction(filter, 'android.intent.action.MAIN'));
-  gateActivity['intent-filter'] = hasLauncherFilter ? movedIntentFilters : defaultIntentFilters();
+function updateMainActivity(contents) {
+  let result = contents
+    .replace(/^[ \t]*\/\/ @generated begin leader-startup-[^\n]*\r?\n[\s\S]*?^[ \t]*\/\/ @generated end leader-startup-[^\n]*\r?\n?/gm, '')
+    .replace(/^[ \t]*\/\/ @generated begin expo-splashscreen[^\n]*\r?\n[\s\S]*?^[ \t]*\/\/ @generated end expo-splashscreen[^\n]*\r?\n?/gm, '')
+    .replace(/^import expo\.modules\.splashscreen\.SplashScreenManager\r?\n/gm, '')
+    .replace(/^[ \t]*SplashScreenManager\.registerOnActivity\(this\)\r?\n/gm, '');
+  const splashImport = 'import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen';
+  if (!result.includes(splashImport)) result = result.replace(/^(package [^\n]+\r?\n)/m, `$1${splashImport}\n`);
+  const classPattern = /class MainActivity\s*:\s*ReactActivity\(\)\s*\{(?:\r?\n)?/;
+  if (!classPattern.test(result) || !result.includes('super.onCreate(null)')) {
+    throw new Error('Unsupported MainActivity template: refusing to replace application lifecycle');
+  }
+  result = result.replace(classPattern, (match) => `${match.trimEnd()}\n  // @generated begin leader-startup-state\n  private var startupOverlay: LeaderStartupOverlay? = null\n  // @generated end leader-startup-state\n`);
+  result = result.replace('super.onCreate(null)', `// @generated begin leader-startup-create-before
+    val splashScreen = installSplashScreen()
+    splashScreen.setOnExitAnimationListener { it.remove() }
+    if (!BuildConfig.DEBUG) startupOverlay = LeaderStartupOverlay(this)
+    // @generated end leader-startup-create-before
+    super.onCreate(null)
+    // @generated begin leader-startup-create-after
+    startupOverlay?.show()
+    // @generated end leader-startup-create-after`);
+  const dispose = '    startupOverlay?.dispose()\n    startupOverlay = null';
+  if (/override fun onDestroy\(\)/.test(result)) {
+    result = result.replace('super.onDestroy()', `// @generated begin leader-startup-destroy\n${dispose}\n    // @generated end leader-startup-destroy\n    super.onDestroy()`);
+  } else {
+    result = result.replace(/\n}\s*$/, `\n  // @generated begin leader-startup-destroy
+  override fun onDestroy() {
+${dispose}
+    super.onDestroy()
+  }
+  // @generated end leader-startup-destroy
+}\n`);
+  }
+  return result;
 }
 
 function upsertGradleProperty(contents, key, value) {
@@ -113,10 +146,13 @@ function upsertGradleProperty(contents, key, value) {
 }
 
 function ensureCoroutinesDependency(buildGradle) {
-  if (buildGradle.includes(COROUTINES_DEPENDENCY)) {
-    return buildGradle;
+  let result = buildGradle;
+  for (const dependency of [COROUTINES_DEPENDENCY, SPLASHSCREEN_DEPENDENCY]) {
+    if (!result.includes(dependency)) {
+      result = result.replace(/dependencies\s*\{/, `dependencies {\n    ${dependency}`);
+    }
   }
-  return buildGradle.replace(/dependencies\s*\{/, `dependencies {\n    ${COROUTINES_DEPENDENCY}`);
+  return result;
 }
 
 function writeFileIfChanged(filePath, contents) {
@@ -127,254 +163,125 @@ function writeFileIfChanged(filePath, contents) {
   fs.writeFileSync(filePath, contents);
 }
 
-function updateGateActivitySource(packageName) {
+function startupOverlaySource(packageName) {
   return `package ${packageName}
 
-import android.app.Activity
-import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Color
-import android.os.Bundle
 import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
+import android.widget.ScrollView
 import android.widget.TextView
-import expo.modules.updates.IUpdatesController
+import androidx.core.view.WindowInsetsCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import com.facebook.react.bridge.ReactMarker
+import com.facebook.react.bridge.ReactMarkerConstants
 import expo.modules.updates.UpdatesController
-import expo.modules.updates.events.IUpdatesEventManagerObserver
-import expo.modules.updates.statemachine.UpdatesStateContext
-import java.lang.ref.WeakReference
 import kotlin.math.roundToInt
-import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 
-class UpdateGateActivity : Activity(), IUpdatesEventManagerObserver {
-  private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+/** Presentation only. Expo owns initialization, waiting, rollback and JS events. */
+class LeaderStartupOverlay(private val activity: MainActivity) {
   private lateinit var statusView: TextView
-  private lateinit var hintView: TextView
+  private enum class Stage { LOGO, DOWNLOADING, APPLYING }
   private lateinit var progressBar: ProgressBar
   private lateinit var progressText: TextView
-  private var launchedMain = false
+  private var rootView: View? = null
+  private var progressJob: Job? = null
+  private var disposed = false
+  private val contentListener = ReactMarker.MarkerListener { name, _, _ ->
+    if (name == ReactMarkerConstants.CONTENT_APPEARED) activity.runOnUiThread { dispose() }
+  }
 
-  override fun onCreate(savedInstanceState: Bundle?) {
-    super.onCreate(savedInstanceState)
+  init {
+    ReactMarker.addListener(contentListener)
+    Log.d(TAG, "Activity created; waiting for React content")
+  }
 
-    if (BuildConfig.DEBUG) {
-      openMainActivity()
-      return
-    }
-
-    window.statusBarColor = Color.WHITE
-    window.navigationBarColor = Color.WHITE
+  fun show() {
+    if (disposed || rootView != null || activity.isFinishing || activity.isDestroyed) return
     buildContentView()
-    runUpdateGate()
-  }
-
-  override fun onNewIntent(intent: Intent?) {
-    super.onNewIntent(intent)
-    setIntent(intent)
-  }
-
-  override fun onDestroy() {
-    clearUpdatesObserver()
-    scope.cancel()
-    super.onDestroy()
-  }
-
-  override fun onStateMachineContextEvent(context: UpdatesStateContext) {
-    runOnUiThread {
-      when {
-        context.isChecking -> showStatus("Проверяем обновления", "Связываемся с сервером обновлений.", null)
-        context.isDownloading -> showStatus(
-          "Загружаем обновление",
-          "Скачиваем новый интерфейс перед запуском.",
-          context.downloadProgress
-        )
-        context.isUpdatePending -> showStatus("Обновление готово", "Запускаем свежую версию.", 1.0)
-        context.checkError != null || context.downloadError != null -> showStatus(
-          "Обновление недоступно",
-          "Запускаем текущую установленную версию.",
-          null
-        )
-      }
-    }
-  }
-
-  private fun runUpdateGate() {
-    scope.launch {
-      var controller: IUpdatesController? = null
-
-      try {
-        showStatus("Запускаем приложение", "Подготавливаем рабочее пространство.", 1.0)
-
-        controller = withContext(Dispatchers.IO) {
-          UpdatesController.initializeWithoutStarting(applicationContext, BuildConfig.DEBUG)
-          UpdatesController.instance
-        }
-
-        if (controller?.isActiveController != true) {
-          showStatus("Запускаем приложение", "OTA недоступно для этой сборки.", 1.0)
-          return@launch
-        }
-
-        controller.eventManager.observer = WeakReference(this@UpdateGateActivity)
-        controller.onEventListenerStartObserving()
-
-        showStatus("Проверяем обновления", "Связываемся с сервером обновлений.", null)
-        val updateFetched = checkAndFetchUpdate(controller)
-        if (updateFetched) {
-          showStatus("Обновление готово", "Запускаем свежую версию.", 1.0)
-        } else {
-          showStatus("Запускаем приложение", "Текущая версия уже готова к работе.", 1.0)
-        }
-      } catch (error: Throwable) {
-        Log.w(TAG, "Native update gate failed; launching current app", error)
-        showStatus("Запускаем приложение", "Обновление временно недоступно.", 1.0)
-      } finally {
-        startUpdatesAndOpenMain(controller)
-      }
-    }
-  }
-
-  private suspend fun checkAndFetchUpdate(controller: IUpdatesController): Boolean {
-    val checkResult = withTimeoutOrNull(OTA_CHECK_TIMEOUT_MS) {
-      controller.checkForUpdate()
-    }
-
-    return when (checkResult) {
-      is IUpdatesController.CheckForUpdateResult.UpdateAvailable,
-      is IUpdatesController.CheckForUpdateResult.RollBackToEmbedded -> {
-        showStatus("Загружаем обновление", "Скачиваем новый интерфейс перед запуском.", 0.0)
-        val fetchResult = withTimeoutOrNull(OTA_FETCH_TIMEOUT_MS) {
-          controller.fetchUpdate()
-        }
-        when (fetchResult) {
-          is IUpdatesController.FetchUpdateResult.Success,
-          is IUpdatesController.FetchUpdateResult.RollBackToEmbedded -> true
-          else -> false
+    progressJob = activity.lifecycleScope.launch {
+      activity.repeatOnLifecycle(Lifecycle.State.STARTED) {
+        while (isActive && !disposed) {
+          // Read an SDK snapshot off the UI thread. Never replace its single
+          // eventManager observer: that subscription belongs to UpdatesModule.
+          val context = withContext(Dispatchers.IO) {
+            try { UpdatesController.instance.getConstantsForModule().initialContext }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { null } // SDK may still be initializing.
+          }
+          if (disposed) return@repeatOnLifecycle
+          when {
+            context?.isDownloading == true -> renderStage(Stage.DOWNLOADING, context.downloadProgress)
+            context?.isUpdatePending == true -> renderStage(Stage.APPLYING)
+            else -> renderStage(Stage.LOGO)
+          }
+          delay(250) // Sampling interval, never a minimum display duration.
         }
       }
-      else -> false
     }
   }
 
-  private suspend fun startUpdatesAndOpenMain(controller: IUpdatesController?) {
-    showStatus("Запускаем приложение", "Подготавливаем рабочее пространство.", 1.0)
-
-    withContext(Dispatchers.IO) {
-      runCatching {
-        val activeController = controller ?: run {
-          UpdatesController.initializeWithoutStarting(applicationContext, BuildConfig.DEBUG)
-          UpdatesController.instance
-        }
-        activeController.start()
-        activeController.launchAssetFile ?: activeController.bundleAssetName
-      }.onFailure {
-        Log.w(TAG, "Failed to complete expo-updates startup", it)
-      }
-    }
-
-    openMainActivity()
-  }
-
-  private fun openMainActivity() {
-    if (launchedMain || isFinishing) return
-    launchedMain = true
-    clearUpdatesObserver()
-
-    val sourceIntent = intent
-    val nextIntent = Intent(this, MainActivity::class.java).apply {
-      action = sourceIntent?.action
-      data = sourceIntent?.data
-      sourceIntent?.categories?.forEach { addCategory(it) }
-      sourceIntent?.extras?.let { putExtras(it) }
-      flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-    }
-
-    startActivity(nextIntent)
-    finish()
-    overridePendingTransition(0, 0)
-  }
-
-  private fun clearUpdatesObserver() {
-    runCatching {
-      val observer = UpdatesController.instance.eventManager.observer?.get()
-      if (observer === this) {
-        UpdatesController.instance.eventManager.observer = null
-      }
-    }
+  fun dispose() {
+    if (disposed) return
+    disposed = true
+    progressJob?.cancel()
+    progressJob = null
+    ReactMarker.removeListener(contentListener)
+    rootView?.let { (it.parent as? ViewGroup)?.removeView(it) }
+    rootView = null
+    Log.d(TAG, "Startup presentation detached")
   }
 
   private fun buildContentView() {
-    val root = LinearLayout(this).apply {
-      orientation = LinearLayout.VERTICAL
-      gravity = Gravity.CENTER
+    val root = FrameLayout(activity).apply {
       setBackgroundColor(Color.WHITE)
-      setPadding(dp(28), dp(28), dp(28), dp(28))
       layoutParams = ViewGroup.LayoutParams(
         ViewGroup.LayoutParams.MATCH_PARENT,
         ViewGroup.LayoutParams.MATCH_PARENT
       )
     }
 
-    val logo = ImageView(this).apply {
+    val logo = ImageView(activity).apply {
       setImageResource(R.drawable.splashscreen_logo)
       scaleType = ImageView.ScaleType.FIT_CENTER
-      layoutParams = LinearLayout.LayoutParams(dp(132), dp(132)).apply {
-        bottomMargin = dp(22)
-      }
+      importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+      // Expo places the 200 dp artwork on a transparent 288 dp Android splash canvas.
+      // Scaling that drawable to 132 dp used to shrink and shift the logo at handover.
+      layoutParams = FrameLayout.LayoutParams(dp(288), dp(288), Gravity.CENTER)
     }
 
-    val title = TextView(this).apply {
-      text = getString(R.string.app_name)
-      setTextColor(Color.parseColor("#0F172A"))
-      setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
-      gravity = Gravity.CENTER
-      typeface = android.graphics.Typeface.DEFAULT_BOLD
-      layoutParams = LinearLayout.LayoutParams(
-        ViewGroup.LayoutParams.MATCH_PARENT,
-        ViewGroup.LayoutParams.WRAP_CONTENT
-      ).apply {
-        bottomMargin = dp(10)
-      }
-    }
-
-    statusView = TextView(this).apply {
+    statusView = TextView(activity).apply {
       setTextColor(Color.parseColor("#0F172A"))
       setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
       gravity = Gravity.CENTER
       typeface = android.graphics.Typeface.DEFAULT_BOLD
+      accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
       layoutParams = LinearLayout.LayoutParams(
         ViewGroup.LayoutParams.MATCH_PARENT,
         ViewGroup.LayoutParams.WRAP_CONTENT
       ).apply {
-        bottomMargin = dp(6)
+        bottomMargin = dp(12)
       }
     }
 
-    hintView = TextView(this).apply {
-      setTextColor(Color.parseColor("#475569"))
-      setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-      gravity = Gravity.CENTER
-      layoutParams = LinearLayout.LayoutParams(
-        ViewGroup.LayoutParams.MATCH_PARENT,
-        ViewGroup.LayoutParams.WRAP_CONTENT
-      ).apply {
-        bottomMargin = dp(22)
-      }
-    }
-
-    progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+    progressBar = ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal).apply {
       max = PROGRESS_MAX
       progress = 0
       isIndeterminate = true
@@ -385,14 +292,12 @@ class UpdateGateActivity : Activity(), IUpdatesEventManagerObserver {
         ViewGroup.LayoutParams.MATCH_PARENT,
         dp(8)
       ).apply {
-        marginStart = dp(20)
-        marginEnd = dp(20)
         bottomMargin = dp(8)
       }
     }
 
-    progressText = TextView(this).apply {
-      visibility = View.GONE
+    progressText = TextView(activity).apply {
+      visibility = View.INVISIBLE
       setTextColor(Color.parseColor("#1E40AF"))
       setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
       gravity = Gravity.CENTER
@@ -403,46 +308,62 @@ class UpdateGateActivity : Activity(), IUpdatesEventManagerObserver {
       )
     }
 
+    val statusColumn = LinearLayout(activity).apply {
+      orientation = LinearLayout.VERTICAL
+      gravity = Gravity.CENTER_HORIZONTAL
+      addView(statusView)
+      addView(progressBar)
+      addView(progressText)
+    }
+    val statusArea = ScrollView(activity).apply {
+      isVerticalScrollBarEnabled = false
+      addView(statusColumn)
+    }
     root.addView(logo)
-    root.addView(title)
-    root.addView(statusView)
-    root.addView(hintView)
-    root.addView(progressBar)
-    root.addView(progressText)
+    root.addView(statusArea)
+    root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+      val systemBottom = androidx.core.view.ViewCompat.getRootWindowInsets(root)
+        ?.getInsets(WindowInsetsCompat.Type.systemBars())?.bottom ?: 0
+      val columnWidth = minOf(dp(320), (root.width - dp(48)).coerceAtLeast(0))
+      // Status/progress never participate in centering the logo.
+      val statusTop = root.height / 2 + dp(128)
+      val areaHeight = (root.height - statusTop - systemBottom - dp(16)).coerceAtLeast(0)
+      val current = statusArea.layoutParams as FrameLayout.LayoutParams
+      if (current.width != columnWidth || current.height != areaHeight || current.topMargin != statusTop) {
+        statusArea.layoutParams = FrameLayout.LayoutParams(columnWidth, areaHeight, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply {
+          topMargin = statusTop
+        }
+      }
+    }
 
-    setContentView(root)
-    showStatus("Проверяем обновления", "Связываемся с сервером обновлений.", null)
+    rootView = root
+    activity.addContentView(root, root.layoutParams)
+    renderStage(Stage.LOGO)
   }
 
-  private fun showStatus(status: String, hint: String, progress: Double?) {
+  private fun renderStage(stage: Stage, progress: Double? = null) {
     if (!::statusView.isInitialized) return
-    runOnUiThread {
-      statusView.text = status
-      hintView.text = hint
+    val downloading = stage == Stage.DOWNLOADING
+    statusView.visibility = if (stage == Stage.LOGO) View.GONE else View.VISIBLE
+    statusView.text = if (downloading) "Обновляем" else "Запускаем"
+    progressBar.visibility = if (downloading) View.VISIBLE else View.GONE
+    progressText.visibility = View.GONE
+    if (!downloading) return
 
-      val normalizedProgress = progress?.takeIf { it.isFinite() }?.coerceIn(0.0, 1.0)
-      progressBar.isIndeterminate = normalizedProgress == null
-
-      if (normalizedProgress == null) {
-        progressText.visibility = View.GONE
-        return@runOnUiThread
-      }
-
-      val progressValue = (normalizedProgress * PROGRESS_MAX).roundToInt()
-      val percentValue = (normalizedProgress * 100).roundToInt()
-      progressBar.progress = progressValue
-      progressText.text = "$percentValue%"
+    val normalizedProgress = progress?.takeIf { it.isFinite() }?.coerceIn(0.0, 1.0)
+    progressBar.isIndeterminate = normalizedProgress == null
+    if (normalizedProgress != null) {
+      progressBar.progress = (normalizedProgress * PROGRESS_MAX).roundToInt()
+      progressText.text = "\${(normalizedProgress * 100).roundToInt()}%"
       progressText.visibility = View.VISIBLE
     }
   }
 
-  private fun dp(value: Int): Int = (value * resources.displayMetrics.density).roundToInt()
+  private fun dp(value: Int): Int = (value * activity.resources.displayMetrics.density).roundToInt()
 
   companion object {
-    private const val TAG = "UpdateGateActivity"
+    private const val TAG = "LeaderStartup"
     private const val PROGRESS_MAX = 1000
-    private const val OTA_CHECK_TIMEOUT_MS = 8_000L
-    private const val OTA_FETCH_TIMEOUT_MS = 120_000L
   }
 }
 `;
@@ -451,6 +372,12 @@ function withAndroidNativeOtaLoader(config) {
   config = withAndroidManifest(config, (modConfig) => {
     const packageName = AndroidConfig.Package.getPackage(modConfig) || 'com.leaderproduct.app';
     updateManifest(modConfig.modResults, packageName);
+    return modConfig;
+  });
+
+  config = withMainActivity(config, (modConfig) => {
+    if (modConfig.modResults.language !== 'kt') throw new Error('Leader startup requires Kotlin MainActivity');
+    modConfig.modResults.contents = updateMainActivity(modConfig.modResults.contents);
     return modConfig;
   });
 
@@ -466,7 +393,7 @@ function withAndroidNativeOtaLoader(config) {
         : '';
       writeFileIfChanged(
         gradlePropertiesPath,
-        upsertGradleProperty(gradleProperties, CUSTOM_INIT_PROPERTY, 'true')
+        upsertGradleProperty(upsertGradleProperty(gradleProperties, CUSTOM_INIT_PROPERTY, 'false'), 'EX_UPDATES_ANDROID_DELAY_LOAD_APP', 'true')
       );
 
       const appBuildGradlePath = path.join(projectRoot, 'app', 'build.gradle');
@@ -482,9 +409,9 @@ function withAndroidNativeOtaLoader(config) {
         'main',
         'java',
         ...packageName.split('.'),
-        `${UPDATE_GATE_ACTIVITY}.kt`
+        'LeaderStartupOverlay.kt'
       );
-      writeFileIfChanged(kotlinPath, updateGateActivitySource(packageName));
+      writeFileIfChanged(kotlinPath, startupOverlaySource(packageName));
 
       return modConfig;
     },

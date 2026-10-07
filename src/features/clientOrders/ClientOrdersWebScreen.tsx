@@ -6,6 +6,7 @@ import {
   formatDateTime,
   formatMoney,
   getClientOrderItemsCount,
+  getClientOrderDisplayNumber,
   getDisplayedUnitPriceValue,
   getClientOrdersResponsiveMetrics,
   getOrderDisplayStatus,
@@ -48,6 +49,7 @@ import {
 import { hasMorePage } from './lib/clientOrdersPaging';
 import { resolveStoredBooleanDefaultTrue, serializeStoredBoolean } from './lib/clientOrdersPrefs';
 import { useClientOrdersWorkspace } from './hooks/useClientOrdersWorkspace';
+import { SendDeviceOrdersButton } from './screen/SendDeviceOrdersButton';
 import {
   getClientOrderInvoiceActionLabel,
   getClientOrderInvoiceIdentifier,
@@ -521,7 +523,7 @@ function orderListTitle(order: ClientOrder) {
     const date = formatDateOnly(order.date1c);
     return date === '—' ? order.number1c : `${order.number1c} от ${date}`;
   }
-  return `Черновик ${order.guid.slice(0, 8)}`;
+  return `Черновик ${getClientOrderDisplayNumber(order)}`;
 }
 
 function orderStatusChipSx(order: ClientOrder) {
@@ -1965,11 +1967,11 @@ export default function ClientOrdersWebScreen() {
     ? 'Новый заказ клиента'
     : workspace.selectedOrder?.number1c
       ? `Заказ 1С ${workspace.selectedOrder.number1c}`
-      : `Черновик ${workspace.selectedOrder?.guid.slice(0, 8) || ''}`;
+      : workspace.selectedOrder ? orderListTitle(workspace.selectedOrder) : 'Черновик';
   const inlineEditorErrorMessages = React.useMemo(() => {
-    const messages = [workspace.error, workspace.validation.blockingMessage].filter(Boolean) as string[];
+    const messages = [workspace.error].filter(Boolean) as string[];
     return Array.from(new Set(messages));
-  }, [workspace.error, workspace.validation.blockingMessage]);
+  }, [workspace.error]);
   const showInlineEditorErrors = !isSinglePane && effectiveEditorPaneWidth >= 1180 && inlineEditorErrorMessages.length > 0;
 
   const createDocumentFromList = React.useCallback(async () => {
@@ -2568,6 +2570,14 @@ export default function ClientOrdersWebScreen() {
               placeholder="Поиск"
               onChange={(value) => workspace.setFilters((prev) => ({ ...prev, search: value }))}
             />
+            {workspace.ordersConnectionNotice ? (
+              <Stack direction="row" spacing={0.75} alignItems="center" sx={{ px: 0.6, py: 0.35 }}>
+                <Ionicons name="cloud-offline-outline" size={15} color="#64748B" />
+                <Typography sx={{ color: '#64748B', fontSize: 11, lineHeight: '16px' }}>
+                  {workspace.ordersConnectionNotice}
+                </Typography>
+              </Stack>
+            ) : null}
             {workspace.ordersError ? (
               <Alert
                 severity="error"
@@ -2577,6 +2587,13 @@ export default function ClientOrdersWebScreen() {
                 {workspace.ordersError}
               </Alert>
             ) : null}
+            <SendDeviceOrdersButton
+              count={workspace.queuedDeviceDraftsCount}
+              online={workspace.online}
+              sending={workspace.syncingDeviceDrafts}
+              disabled={workspace.submitting}
+              onPress={() => void workspace.syncDeviceDrafts({ force: true })}
+            />
             <CompactSelectField
               label="Статус"
               value={workspace.filters.statuses[0] || ''}
@@ -2964,7 +2981,6 @@ export default function ClientOrdersWebScreen() {
               <Box ref={editorScrollRef} sx={{ flex: 1, minHeight: 0, overflow: 'auto', px: 1.4, py: 1, display: 'flex', flexDirection: 'column' }}>
                 <Stack spacing={0.8} sx={{ flex: 1, minHeight: 0 }}>
                   {!showInlineEditorErrors && workspace.error ? <Alert severity="error">{workspace.error}</Alert> : null}
-                  {!showInlineEditorErrors && workspace.validation.blockingMessage ? <Alert severity="warning">{workspace.validation.blockingMessage}</Alert> : null}
                   {workspace.draftMode && !workspace.draft.organizationGuid && !workspace.loadingSettings ? (
                     <Paper variant="outlined" sx={{ borderRadius: '10px', p: 1, borderColor: '#F59E0B', background: '#FFFBEB' }}>
                       <Stack spacing={0.7}>
