@@ -1,15 +1,15 @@
 // app/_layout.tsx
 import '@/utils/logbox';
-import { Slot } from 'expo-router';
+import { Slot, useSegments, ErrorBoundary as RouterErrorBoundary, type ErrorBoundaryProps } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { Platform, StatusBar, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { MD3LightTheme, PaperProvider } from 'react-native-paper';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { enableScreens } from 'react-native-screens';
 
-import { AuthProvider } from '@/context/AuthContext';
+import { AuthProvider, AuthContext } from '@/context/AuthContext';
 import { ThemeProvider } from '@/context/ThemeContext';
 import { useAuthRedirect } from '@/hooks/useAuthRedirect';
 import { useStartupOtaUpdate } from '@/hooks/useStartupOtaUpdate';
@@ -23,7 +23,7 @@ import StartupLogoLoader from '@/components/StartupLogoLoader';
 import { OtaUpdateStatusProvider } from '@/src/shared/ota/OtaUpdateStatusContext';
 import { registerOtaBackgroundPrefetchTask } from '@/src/shared/ota/registerOtaBackgroundTask';
 import { initPushNotifications } from '@/utils/pushNotifications';
-import { captureException, initMonitoring, installGlobalJsErrorHandler } from '@/src/shared/monitoring';
+import { captureException, setMonitoringUser, setMonitoringScreen } from '@/src/shared/monitoring';
 
 if (Platform.OS !== 'web') {
   void SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -41,6 +41,11 @@ function EmptyStartupSurface() {
 }
 
 function InnerLayout() {
+  const profile = useContext(AuthContext)?.profile;
+  const segments = useSegments();
+  const route = segments.join('/');
+  useEffect(() => { setMonitoringUser(profile?.id); }, [profile?.id]);
+  useEffect(() => { setMonitoringScreen(route); }, [route]);
   const { isChecking } = useAuthRedirect();
   useTelegramBackButton();
   if (isChecking) {
@@ -78,11 +83,6 @@ export default function RootLayout() {
   const [updateReady, setUpdateReady] = useState(false);
   const [minSplashReady, setMinSplashReady] = useState(hideReactStartupLoader);
   const otaUpdate = useStartupOtaUpdate(preloadReady);
-
-  useEffect(() => {
-    initMonitoring();
-    installGlobalJsErrorHandler();
-  }, []);
 
   const handleStartupDone = useCallback(() => {
     setUpdateReady(true);
@@ -211,4 +211,9 @@ export default function RootLayout() {
       </SafeAreaProvider>
     </Root>
   );
+}
+
+export function ErrorBoundary(props: ErrorBoundaryProps) {
+  useEffect(() => { captureException(props.error, { source: 'router_error_boundary' }); }, [props.error]);
+  return <RouterErrorBoundary {...props} />;
 }

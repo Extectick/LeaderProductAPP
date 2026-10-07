@@ -46,7 +46,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx tsc --noEmit
-      - run: npm run test:unit -- --runInBand __tests__/deviceDraftRecovery.unit.test.ts __tests__/orderOperationIntegrity.unit.test.ts __tests__/clientOrdersShared.unit.test.ts __tests__/clientOrdersService.unit.test.ts __tests__/httpClient.unit.test.ts __tests__/useClientOrdersWorkspace.unit.test.ts
+      - run: npm run test:unit -- --runInBand __tests__/productionMonitoring.unit.test.ts __tests__/deviceDraftRecovery.unit.test.ts __tests__/orderOperationIntegrity.unit.test.ts __tests__/clientOrdersShared.unit.test.ts __tests__/clientOrdersService.unit.test.ts __tests__/httpClient.unit.test.ts __tests__/useClientOrdersWorkspace.unit.test.ts
 
   export-upload:
     needs: order-integrity-check
@@ -68,7 +68,13 @@ jobs:
       EXPO_PUBLIC_OTA_UPDATE_URL: ${{ (github.event_name != 'workflow_dispatch' || inputs.channel == 'prod') && 'https://api.leader-product.ru/ota/update' || format('{0}/ota/update', secrets.EXPO_PUBLIC_API_URL_DEV) }}
       EXPO_PUBLIC_TELEGRAM_BOT_USERNAME: ${{ secrets.EXPO_PUBLIC_TELEGRAM_BOT_USERNAME }}
       EXPO_PUBLIC_MAX_BOT_USERNAME: ${{ secrets.EXPO_PUBLIC_MAX_BOT_USERNAME }}
-      EXPO_PUBLIC_SENTRY_ENABLED: 'false'
+      EXPO_PUBLIC_SENTRY_ENABLED: ${{ (github.event_name != 'workflow_dispatch' || inputs.channel == 'prod') && 'true' || 'false' }}
+      EXPO_PUBLIC_SENTRY_DSN: ${{ secrets.EXPO_PUBLIC_SENTRY_DSN }}
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      SENTRY_READ_TOKEN: ${{ secrets.SENTRY_READ_TOKEN }}
+      SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+      SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+      SENTRY_URL: http://127.0.0.1:19000
       EXPO_PUBLIC_SENTRY_ENVIRONMENT: ${{ (github.event_name != 'workflow_dispatch' || inputs.channel == 'prod') && 'production' || 'development' }}
       NODE_ENV: ${{ (github.event_name != 'workflow_dispatch' || inputs.channel == 'prod') && 'production' || 'development' }}
 
@@ -107,9 +113,24 @@ jobs:
           fi
           echo "Runtime version OK: $ACTUAL"
           echo "runtime_version=$ACTUAL" >> "$GITHUB_OUTPUT"
+          BUILD="$(node -e "console.log(require('./scripts/readNativeVersion').readVersion().versionCode)")"
+          echo "SENTRY_DIST=$BUILD" >> "$GITHUB_ENV"
+          echo "EXPO_PUBLIC_SENTRY_RELEASE=com.leaderproduct.app@$ACTUAL+$BUILD-ota.${GITHUB_SHA:0:12}" >> "$GITHUB_ENV"
+
+      - name: Validate crash-reporting target
+        run: node scripts/checkSentryConfig.js
 
       - name: Export Android OTA bundle
-        run: npx expo export --platform "$OTA_PLATFORM" --output-dir dist-ota
+        run: npx expo export --platform "$OTA_PLATFORM" --output-dir dist-ota --source-maps --clear
+
+      - name: Upload private source maps before publishing
+        if: ${{ env.EXPO_PUBLIC_SENTRY_ENABLED == 'true' }}
+        env:
+          CRASH_SSH_HOST: ${{ secrets.SERVER_HOST }}
+          CRASH_SSH_USER: ${{ secrets.SERVER_USER }}
+          CRASH_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          CRASH_SSH_KNOWN_HOSTS: ${{ secrets.CRASH_SSH_KNOWN_HOSTS }}
+        run: bash scripts/uploadCrashSymbolsCi.sh dist-ota
 
       - name: Create OTA metadata
         id: metadata

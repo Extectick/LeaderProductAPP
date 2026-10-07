@@ -1,8 +1,14 @@
 // metro.config.js
+const { getSentryExpoConfig } = require('@sentry/react-native/metro');
 const { getDefaultConfig } = require('expo/metro-config');
 const path = require('path');
+const crypto = require('crypto');
 
-const config = getDefaultConfig(__dirname);
+const config = getSentryExpoConfig(__dirname, { getDefaultConfig, includeWebReplay: false });
+const publicEnv = Object.keys(process.env).filter(key => key.startsWith('EXPO_PUBLIC_')).sort()
+  .map(key => [key, process.env[key]]);
+config.cacheVersion = (config.cacheVersion || '1') + ':monitoring-' + crypto.createHash('sha256')
+  .update(JSON.stringify([process.env.NODE_ENV, publicEnv])).digest('hex');
 
 // --- нужен ТОЛЬКО если импортируешь .svg как компоненты ---
 // npm i -D react-native-svg-transformer (у тебя уже стоит)

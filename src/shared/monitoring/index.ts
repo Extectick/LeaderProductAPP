@@ -1,33 +1,35 @@
 import { logger } from '@/utils/logger';
+import * as Application from 'expo-application';
+import * as Updates from 'expo-updates';
+import { scrubCrashEvent, scrubDiagnosticValue } from './privacy';
 
 type SentryModule = {
   init?: (options: Record<string, unknown>) => void;
   captureException?: (error: unknown, context?: Record<string, unknown>) => void;
   addBreadcrumb?: (breadcrumb: Record<string, unknown>) => void;
+  setUser?: (user: { id: string } | null) => void;
+  setTag?: (name: string, value: string) => void;
 };
 
 let sentry: SentryModule | null = null;
 let initialized = false;
 let globalHandlerInstalled = false;
 
-function env(name: string) {
-  return (process.env[name] || '').trim();
-}
-
 function sentryEnabled() {
-  return env('EXPO_PUBLIC_SENTRY_ENABLED').toLowerCase() === 'true';
+  // Expo replaces only statically addressed public environment variables.
+  return process.env.EXPO_PUBLIC_SENTRY_ENABLED === 'true';
 }
 
 function sentryDsn() {
-  return env('EXPO_PUBLIC_SENTRY_DSN');
+  return (process.env.EXPO_PUBLIC_SENTRY_DSN || '').trim();
 }
 
 function sentryEnvironment() {
-  return env('EXPO_PUBLIC_SENTRY_ENVIRONMENT') || 'production';
+  return process.env.EXPO_PUBLIC_UPDATE_CHANNEL === 'dev' ? 'development' : 'production';
 }
 
 function sentryRelease() {
-  return env('EXPO_PUBLIC_SENTRY_RELEASE');
+  return (process.env.EXPO_PUBLIC_SENTRY_RELEASE || '').trim();
 }
 
 function loadSentryModule(): SentryModule | null {
@@ -70,10 +72,34 @@ export function initMonitoring() {
       enabled: true,
       environment,
       release: release || undefined,
-      tracesSampleRate: 0.1,
+      dist: Application.nativeBuildVersion || undefined,
+      tracesSampleRate: 0,
       profilesSampleRate: 0.0,
+      sendDefaultPii: false,
+      enableLogs: false,
+      enableAutoSessionTracking: false,
+      enableAutoPerformanceTracing: false,
+      enableNativeFramesTracking: false,
+      attachScreenshot: false,
+      attachViewHierarchy: false,
+      attachThreads: false,
+      maxBreadcrumbs: 30,
+      maxQueueSize: 30,
+      // OTA on runtime 0.1.26 has no early native privacy hook. Keep the
+      // native offline transport, but capture only sanitized JS exceptions.
+      enableNativeCrashHandling: false,
+      enableNdk: false,
+      enableWatchdogTerminationTracking: false,
+      beforeSend: scrubCrashEvent,
+      beforeBreadcrumb: (breadcrumb: any) => breadcrumb.category === 'app'
+        ? { ...breadcrumb, data: scrubDiagnosticValue(breadcrumb.data) } : null,
     });
     sentry = moduleRef;
+    sentry.setTag?.('app_version', Application.nativeApplicationVersion || 'web');
+    sentry.setTag?.('build_number', Application.nativeBuildVersion || 'web');
+    sentry.setTag?.('runtime_version', String(Updates.runtimeVersion || 'unknown'));
+    sentry.setTag?.('ota_update_id', Updates.updateId || 'embedded');
+    sentry.setTag?.('capture_mode', 'javascript');
     logger.info('Sentry initialized', undefined, 'monitoring');
   } catch (error) {
     logger.captureException(error, { where: 'initMonitoring' }, 'monitoring');
@@ -107,6 +133,8 @@ export function addMonitoringBreadcrumb(message: string, data?: Record<string, u
 }
 
 export function installGlobalJsErrorHandler() {
+  // The SDK owns fatal-JS handling; wrapping it would report twice.
+  if (sentry) return;
   if (globalHandlerInstalled) return;
   globalHandlerInstalled = true;
 
@@ -123,4 +151,14 @@ export function installGlobalJsErrorHandler() {
   } catch (error) {
     logger.captureException(error, { where: 'installGlobalJsErrorHandler' }, 'monitoring');
   }
+}
+
+export function setMonitoringUser(id: number | string | null | undefined) {
+  const value = id == null ? '' : String(id);
+  sentry?.setUser?.(/^\d{1,20}$/.test(value) ? { id: value } : null);
+}
+
+export function setMonitoringScreen(route: string) {
+  // useSegments supplies route templates, not actual document/customer IDs.
+  sentry?.setTag?.('screen', route.split('?')[0].slice(0, 160));
 }

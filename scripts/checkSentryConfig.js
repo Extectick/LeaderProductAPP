@@ -17,4 +17,14 @@ if (!environment) {
   process.exit(1);
 }
 
+const channel = process.env.EXPO_PUBLIC_UPDATE_CHANNEL || 'prod';
+const expectedEnvironment = channel === 'dev' ? 'development' : 'production';
+const expectedHost = channel === 'dev' ? 'dev.leader-product.ru' : 'api.leader-product.ru';
+let parsed;
+try { parsed = new URL(dsn); } catch { throw new Error('Invalid diagnostic DSN'); }
+if (parsed.protocol !== 'https:' || parsed.hostname !== expectedHost || !/^\/sentry\/\d+$/.test(parsed.pathname)
+    || environment !== expectedEnvironment || !process.env.EXPO_PUBLIC_SENTRY_RELEASE) {
+  throw new Error('Diagnostic channel, HTTPS ingestion host, release or environment mismatch');
+}
+
 console.log('Sentry config is valid for enabled mode');
