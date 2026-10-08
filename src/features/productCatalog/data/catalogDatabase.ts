@@ -427,6 +427,42 @@ export type CatalogCommercialContext = {
   inStockOnly?: boolean;
 };
 
+// The same effective price must drive both sorting and the displayed value.
+const OFFLINE_PRICE_ORDER = 'priority DESC, source_updated_at DESC, item_key';
+
+function offlineStockScope(userId: string, context: CatalogCommercialContext) {
+  const clauses = ['user_id = ?'];
+  const args: string[] = [userId];
+  if (context.warehouseGuid) {
+    clauses.push('warehouse_guid = ?');
+    args.push(context.warehouseGuid);
+  }
+  if (context.organizationGuid) {
+    clauses.push('(organization_guid = ? OR organization_guid IS NULL)');
+    args.push(context.organizationGuid);
+  }
+  return {
+    where: clauses.join(' AND '), args,
+    group: context.organizationGuid ? 'product_guid, organization_guid' : 'product_guid',
+    // An exact organization's zero balance overrides the warehouse-wide fallback.
+    order: context.organizationGuid ? 'CASE WHEN organization_guid = ? THEN 0 ELSE 1 END' : 'product_guid',
+    orderArgs: context.organizationGuid ? [context.organizationGuid] : [],
+  };
+}
+
+function availableStockQuery(userId: string, context: CatalogCommercialContext) {
+  const scope = offlineStockScope(userId, context);
+  const total = (table: string, column: string) => `MAX(COALESCE((
+    SELECT SUM(${column}) FROM ${table}
+    WHERE ${scope.where} AND product_guid = p.guid
+    GROUP BY ${scope.group} ORDER BY ${scope.order} LIMIT 1
+  ), 0), 0)`;
+  return {
+    sql: `${total('offline_stock', 'free_available')} + ${total('offline_manager_stock', 'reserved')}`,
+    args: [...scope.args, ...scope.orderArgs, ...scope.args, ...scope.orderArgs],
+  };
+}
+
 async function loadOfflineStockByProduct(
   db: SQLite.SQLiteDatabase,
   userId: string,
@@ -435,36 +471,24 @@ async function loadOfflineStockByProduct(
 ) {
   if (!productGuids.length) return new Map<string, any>();
   const placeholders = productGuids.map(() => '?').join(',');
-  const stockClauses = ['user_id = ?', `product_guid IN (${placeholders})`];
-  const stockArgs: any[] = [userId, ...productGuids];
-  if (context.warehouseGuid) {
-    stockClauses.push('warehouse_guid = ?');
-    stockArgs.push(context.warehouseGuid);
-  }
-  if (context.organizationGuid) {
-    stockClauses.push('(organization_guid = ? OR organization_guid IS NULL)');
-    stockArgs.push(context.organizationGuid);
-  }
-  const groupedByOrganization = context.organizationGuid ? ', organization_guid' : '';
-  const organizationOrder = context.organizationGuid
-    ? 'ORDER BY product_guid, CASE WHEN organization_guid = ? THEN 0 ELSE 1 END'
-    : 'ORDER BY product_guid';
+  const scope = offlineStockScope(userId, context);
+  const stockArgs = [...scope.args, ...productGuids, ...scope.orderArgs];
   const stocks = await db.getAllAsync<any>(`
     SELECT product_guid, organization_guid,
            SUM(quantity) AS quantity, SUM(free_available) AS free_available,
            MAX(receipt_price) AS receipt_price
     FROM offline_stock
-    WHERE ${stockClauses.join(' AND ')}
-    GROUP BY product_guid${groupedByOrganization}
-    ${organizationOrder}
-  `, ...stockArgs, ...(context.organizationGuid ? [context.organizationGuid] : []));
+    WHERE ${scope.where} AND product_guid IN (${placeholders})
+    GROUP BY ${scope.group}
+    ORDER BY product_guid, ${scope.order}
+  `, ...stockArgs);
   const reserves = await db.getAllAsync<any>(`
     SELECT product_guid, organization_guid, SUM(reserved) AS own_reserve
     FROM offline_manager_stock
-    WHERE ${stockClauses.join(' AND ')}
-    GROUP BY product_guid${groupedByOrganization}
-    ${organizationOrder}
-  `, ...stockArgs, ...(context.organizationGuid ? [context.organizationGuid] : []));
+    WHERE ${scope.where} AND product_guid IN (${placeholders})
+    GROUP BY ${scope.group}
+    ORDER BY product_guid, ${scope.order}
+  `, ...stockArgs);
   const stockByProduct = new Map<string, any>();
   stocks.forEach((item) => {
     if (!stockByProduct.has(item.product_guid)) stockByProduct.set(item.product_guid, item);
@@ -500,33 +524,58 @@ export async function searchCatalogProducts(
   if (!db) return null;
   const meta = await readCatalogMeta();
   if (!meta.epoch || meta.productCount <= 0) return null;
+  const activeUserId = await readMetaValue(db, 'offlineActiveUserId');
+  const filterStock = !!context.inStockOnly && !!context.warehouseGuid;
+  const requiredDatasets = [
+    ...(context.priceTypeGuid ? ['selling-prices'] : []),
+    ...(filterStock ? ['stock', 'manager-stock'] : []),
+  ];
+  if (requiredDatasets.length) {
+    if (!activeUserId) return null;
+    const ready = await db.getAllAsync<{ entity: string }>(`
+      SELECT entity FROM offline_dataset_meta
+      WHERE user_id = ? AND entity IN (${requiredDatasets.map(() => '?').join(',')})
+    `, activeUserId, ...requiredDatasets);
+    // A downloaded catalog without commercial data must not replace a valid
+    // online result with missing prices or an apparently empty warehouse.
+    if (ready.length !== requiredDatasets.length) return null;
+  }
   const pageSize = Math.max(1, Math.min(100, limit));
   const fetchSize = pageSize + 1;
-  let rows: ProductRow[];
   const fts = buildFtsQuery(search);
-  if (fts) {
-    rows = await db.getAllAsync<ProductRow>(`
-      SELECT p.guid, p.name, p.code, p.article, p.sku, p.is_weight,
-             p.base_unit_json, p.packages_json, p.image_hash
-      FROM catalog_products_fts f
-      JOIN catalog_products p ON p.guid = f.guid
-      WHERE catalog_products_fts MATCH ? AND p.is_active = 1
-      ORDER BY bm25(catalog_products_fts), p.name COLLATE NOCASE, p.guid
-      LIMIT ? OFFSET ?
-    `, fts, fetchSize, Math.max(0, offset));
-  } else {
-    rows = await db.getAllAsync<ProductRow>(`
-      SELECT guid, name, code, article, sku, is_weight,
-             base_unit_json, packages_json, image_hash
-      FROM catalog_products
-      WHERE is_active = 1
-      ORDER BY name COLLATE NOCASE, guid
-      LIMIT ? OFFSET ?
-    `, fetchSize, Math.max(0, offset));
+  const args: (string | number)[] = [];
+  let pricePriority = '1';
+  if (activeUserId && context.priceTypeGuid) {
+    pricePriority = `CASE WHEN (
+      SELECT price FROM offline_selling_prices
+      WHERE user_id = ? AND product_guid = p.guid AND price_type_guid = ?
+      ORDER BY ${OFFLINE_PRICE_ORDER} LIMIT 1
+    ) > 0 THEN 0 ELSE 1 END`;
+    args.push(activeUserId, context.priceTypeGuid);
   }
+  const conditions = ['p.is_active = 1'];
+  if (fts) {
+    conditions.push('catalog_products_fts MATCH ?');
+    args.push(fts);
+  }
+  if (filterStock && activeUserId) {
+    const stock = availableStockQuery(activeUserId, context);
+    conditions.push(`(${stock.sql}) > 0`);
+    args.push(...stock.args);
+  }
+  // Filter and rank the entire matching set BEFORE LIMIT/OFFSET. Filtering or
+  // sorting only a hydrated page skips products and can stop infinite scrolling.
+  const rows = await db.getAllAsync<ProductRow>(`
+    SELECT p.guid, p.name, p.code, p.article, p.sku, p.is_weight,
+           p.base_unit_json, p.packages_json, p.image_hash,
+           ${pricePriority} AS price_priority
+    FROM ${fts ? 'catalog_products_fts f JOIN catalog_products p ON p.guid = f.guid' : 'catalog_products p'}
+    WHERE ${conditions.join(' AND ')}
+    ORDER BY ${fts ? 'bm25(catalog_products_fts), ' : ''}price_priority, p.name COLLATE NOCASE, p.guid
+    LIMIT ? OFFSET ?
+  `, ...args, fetchSize, Math.max(0, offset));
   const hasMore = rows.length > pageSize;
-  let page = hasMore ? rows.slice(0, pageSize) : rows;
-  const activeUserId = await readMetaValue(db, 'offlineActiveUserId');
+  const page = hasMore ? rows.slice(0, pageSize) : rows;
   const commercialByProduct = new Map<string, {
     basePrice: number | null;
     receiptPrice: number | null;
@@ -542,7 +591,7 @@ export async function searchCatalogProducts(
           SELECT product_guid, price, currency, price_type_guid
           FROM offline_selling_prices
           WHERE user_id = ? AND price_type_guid = ? AND product_guid IN (${placeholders})
-          ORDER BY priority DESC, source_updated_at DESC
+          ORDER BY ${OFFLINE_PRICE_ORDER}
         `, activeUserId, context.priceTypeGuid, ...guids)
       : [];
     const priceByProduct = new Map<string, any>();
@@ -573,9 +622,6 @@ export async function searchCatalogProducts(
         } : { quantity: 0, freeAvailable: 0, myReserved: 0, available: 0 },
       });
     });
-    if (context.inStockOnly) {
-      page = page.filter((row) => Number(commercialByProduct.get(row.guid)?.stock?.available || 0) > 0);
-    }
   }
   return {
     items: page.map((row) => ({ ...rowToProduct(row), ...(commercialByProduct.get(row.guid) ?? {}) })),
@@ -604,7 +650,7 @@ export async function getCatalogProductsByGuids(
         SELECT product_guid, price, currency, price_type_guid
         FROM offline_selling_prices
         WHERE user_id = ? AND price_type_guid = ? AND product_guid IN (${placeholders})
-        ORDER BY priority DESC, source_updated_at DESC
+        ORDER BY ${OFFLINE_PRICE_ORDER}
       `, activeUserId, context.priceTypeGuid, ...guids)
     : [];
   const priceByProduct = new Map<string, any>();

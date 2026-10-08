@@ -7,6 +7,10 @@ jest.mock('../src/features/productCatalog', () => ({
   scheduleProductCatalogSync: jest.fn(),
   searchCatalogProducts: jest.fn(),
 }));
+jest.mock('../src/features/clientOrders/offline/offlineOrdersDatabase', () => ({
+  hasActiveOfflineEntity: jest.fn(async () => false),
+  readActiveOfflineEntityItems: jest.fn(async () => []),
+}));
 
 const apiClientMock = jest.mocked(apiClient);
 const localSearchMock = jest.mocked(searchCatalogProducts);
@@ -42,6 +46,23 @@ describe('local product catalog integration', () => {
     });
     expect(result.localCatalog).toBe(true);
     expect(apiClientMock).not.toHaveBeenCalled();
+  });
+
+  it('preserves the full client context in the API fallback when local commercial data is not ready', async () => {
+    localSearchMock.mockResolvedValueOnce(null);
+    apiClientMock.mockResolvedValueOnce({
+      ok: true, status: 200, data: { items: [{ guid: 'online', name: 'Online' }], meta: { total: 1 } },
+    } as any);
+    const result = await searchClientOrderProducts({
+      organizationGuid: 'org', counterpartyGuid: 'client', agreementGuid: 'agreement',
+      warehouseGuid: 'warehouse', priceTypeGuid: 'client-price', inStockOnly: true, limit: 50, offset: 0,
+    });
+    expect(result.items[0].guid).toBe('online');
+    const url = String(apiClientMock.mock.calls[0][0]);
+    for (const [key, value] of Object.entries({ organizationGuid: 'org', counterpartyGuid: 'client',
+      agreementGuid: 'agreement', warehouseGuid: 'warehouse', priceTypeGuid: 'client-price', inStockOnly: 'true' })) {
+      expect(url).toContain(`${key}=${value}`);
+    }
   });
 
   it('caches context-dependent product values briefly and requests only missing GUIDs', async () => {
