@@ -38,7 +38,7 @@ export function scrubCrashEvent(event: any): any {
   }
   for (const frame of event.stacktrace?.frames || []) delete frame.vars;
   event.tags = Object.fromEntries(Object.entries(event.tags || {})
-    .filter(([key]) => ['app_version', 'build_number', 'runtime_version', 'ota_update_id', 'screen', 'capture_mode', 'qa_smoke'].includes(key))
+    .filter(([key]) => ['app_version', 'build_number', 'runtime_version', 'ota_update_id', 'screen', 'capture_mode', 'installation_id', 'app_session_id', 'qa_smoke'].includes(key))
     .map(([key, value]) => [key, scrubDiagnosticValue(value)]));
   event.contexts = Object.fromEntries(Object.entries(event.contexts || {})
     .filter(([key]) => ['app', 'device', 'os', 'runtime', 'react_native_context'].includes(key))

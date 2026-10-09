@@ -40,10 +40,11 @@ const nativeBottomSheetProvider = Platform.OS === 'web'
   : require('@gorhom/bottom-sheet').BottomSheetModalProvider;
 
 function InnerLayout() {
-  const profile = useContext(AuthContext)?.profile;
+  const auth = useContext(AuthContext);
+  const profile = auth?.profile;
   const segments = useSegments();
   const route = segments.join('/');
-  useEffect(() => { setMonitoringUser(profile?.id); }, [profile?.id]);
+  useEffect(() => { if (!auth?.isLoading) void setMonitoringUser(profile?.id); }, [profile?.id, auth?.isLoading]);
   useEffect(() => { setMonitoringScreen(route); }, [route]);
   const { isChecking } = useAuthRedirect();
   useTelegramBackButton();

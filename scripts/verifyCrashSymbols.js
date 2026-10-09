@@ -17,17 +17,19 @@ async function main() {
   const debugId = map.debug_id || map.debugId;
   assert.ok(frame && debugId, 'Matching source frame and debug ID required');
   const dsn = new URL(process.env.EXPO_PUBLIC_SENTRY_DSN);
-  assert.equal(dsn.hostname, 'api.leader-product.ru');
+  const development = process.env.EXPO_PUBLIC_UPDATE_CHANNEL === 'dev';
+  const environment = development ? 'development' : 'production';
+  assert.equal(dsn.hostname, development ? 'dev.leader-product.ru' : 'api.leader-product.ru');
   const base = process.env.SENTRY_URL.replace(/\/$/, '');
   assert.match(base, /^http:\/\/127\.0\.0\.1:\d+$/);
   const codeFile = 'app:///index.android.bundle';
   const send = async () => {
   const id = crypto.randomBytes(16).toString('hex');
   const event = {
-    event_id: id, timestamp: Date.now() / 1000, platform: 'javascript', environment: 'production',
+    event_id: id, timestamp: Date.now() / 1000, platform: 'javascript', environment,
     release: process.env.EXPO_PUBLIC_SENTRY_RELEASE, dist: process.env.SENTRY_DIST, level: 'error',
     tags: { qa_smoke: 'synthetic-source-map-verification' },
-    exception: { values: [{ type: 'ProductionSourceMapSmoke', value: 'Synthetic map verification; not a user crash',
+    exception: { values: [{ type: 'SourceMapSmoke', value: 'Synthetic map verification; not a user crash',
       stacktrace: { frames: [{ filename: codeFile, abs_path: codeFile, lineno: frame.generatedLine, colno: frame.generatedColumn + 1, in_app: true }] } }] },
     debug_meta: { images: [{ type: 'sourcemap', code_file: codeFile, debug_id: debugId }] },
   };
@@ -37,7 +39,7 @@ async function main() {
     body: [JSON.stringify({ event_id: id, dsn: process.env.EXPO_PUBLIC_SENTRY_DSN }), JSON.stringify({ type: 'event' }), JSON.stringify(event), ''].join('\n'),
     signal: AbortSignal.timeout(15000),
   });
-  assert.equal(response.status, 200, 'Production ingestion must work before release');
+  assert.equal(response.status, 200, 'Target ingestion must work before release');
   return id;
   };
   const read = async id => {

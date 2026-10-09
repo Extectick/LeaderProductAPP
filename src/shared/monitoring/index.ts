@@ -2,6 +2,7 @@ import { logger } from '@/utils/logger';
 import * as Application from 'expo-application';
 import * as Updates from 'expo-updates';
 import { scrubCrashEvent, scrubDiagnosticValue } from './privacy';
+import { getNativeDiagnostics, invokeNativeDiagnostic } from './nativeDiagnostics';
 
 type SentryModule = {
   init?: (options: Record<string, unknown>) => void;
@@ -67,6 +68,7 @@ export function initMonitoring() {
   }
 
   try {
+    const native = getNativeDiagnostics();
     moduleRef.init({
       dsn,
       enabled: true,
@@ -84,13 +86,17 @@ export function initMonitoring() {
       attachViewHierarchy: false,
       attachThreads: false,
       maxBreadcrumbs: 30,
-      maxQueueSize: 30,
+      maxQueueSize: 100,
       // OTA on runtime 0.1.26 has no early native privacy hook. Keep the
       // native offline transport, but capture only sanitized JS exceptions.
-      enableNativeCrashHandling: false,
-      enableNdk: false,
+      // The new dev APK owns native initialization/privacy before React starts.
+      // Do not let RN reinitialize it and replace the native beforeSend hook.
+      autoInitializeNativeSdk: !native,
+      enableNativeCrashHandling: Boolean(native),
+      enableNdk: Boolean(native),
       enableWatchdogTerminationTracking: false,
-      beforeSend: scrubCrashEvent,
+      beforeSend: (event: any) => scrubCrashEvent({ ...event,
+        tags: { ...event.tags, capture_mode: 'javascript' } }),
       beforeBreadcrumb: (breadcrumb: any) => breadcrumb.category === 'app'
         ? { ...breadcrumb, data: scrubDiagnosticValue(breadcrumb.data) } : null,
     });
@@ -99,7 +105,14 @@ export function initMonitoring() {
     sentry.setTag?.('build_number', Application.nativeBuildVersion || 'web');
     sentry.setTag?.('runtime_version', String(Updates.runtimeVersion || 'unknown'));
     sentry.setTag?.('ota_update_id', Updates.updateId || 'embedded');
-    sentry.setTag?.('capture_mode', 'javascript');
+    if (native) {
+      sentry.setTag?.('installation_id', native.installationId);
+      sentry.setTag?.('app_session_id', native.sessionId);
+      if (/^\d{1,20}$/.test(native.userId)) sentry.setUser?.({ id: native.userId });
+      invokeNativeDiagnostic(n => n.setRuntime(String(Updates.runtimeVersion || 'unknown'), Updates.updateId || 'embedded'));
+    } else {
+      sentry.setTag?.('capture_mode', 'javascript');
+    }
     logger.info('Sentry initialized', undefined, 'monitoring');
   } catch (error) {
     logger.captureException(error, { where: 'initMonitoring' }, 'monitoring');
@@ -118,6 +131,7 @@ export function captureException(error: unknown, context?: Record<string, unknow
 }
 
 export function addMonitoringBreadcrumb(message: string, data?: Record<string, unknown>) {
+  if (/^[a-z_.:/-]{1,80}$/i.test(message)) invokeNativeDiagnostic(n => n.recordAction(message));
   if (sentry?.addBreadcrumb) {
     try {
       sentry.addBreadcrumb({
@@ -153,12 +167,15 @@ export function installGlobalJsErrorHandler() {
   }
 }
 
-export function setMonitoringUser(id: number | string | null | undefined) {
+export async function setMonitoringUser(id: number | string | null | undefined) {
   const value = id == null ? '' : String(id);
-  sentry?.setUser?.(/^\d{1,20}$/.test(value) ? { id: value } : null);
+  const safeId = /^\d{1,20}$/.test(value) ? value : null;
+  sentry?.setUser?.(safeId ? { id: safeId } : null);
+  try { await getNativeDiagnostics()?.setUser(safeId); } catch { /* Diagnostics must not break login/logout. */ }
 }
 
 export function setMonitoringScreen(route: string) {
   // useSegments supplies route templates, not actual document/customer IDs.
   sentry?.setTag?.('screen', route.split('?')[0].slice(0, 160));
+  invokeNativeDiagnostic(n => n.setScreen(route.split('?')[0].slice(0, 160)));
 }

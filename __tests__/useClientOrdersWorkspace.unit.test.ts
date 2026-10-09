@@ -2006,4 +2006,4 @@ describe('useClientOrdersWorkspace', () => {
     });
   });
 });
-jest.mock('../src/shared/monitoring', () => ({ captureException: jest.fn() }));
+jest.mock('../src/shared/monitoring', () => ({ captureException: jest.fn(), addMonitoringBreadcrumb: jest.fn() }));

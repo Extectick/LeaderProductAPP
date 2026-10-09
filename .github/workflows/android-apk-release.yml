@@ -79,7 +79,7 @@ jobs:
       EXPO_PUBLIC_MAP_STYLE_URL: https://tiles.openfreemap.org/styles/liberty
       EXPO_PUBLIC_TELEGRAM_BOT_USERNAME: ${{ secrets.EXPO_PUBLIC_TELEGRAM_BOT_USERNAME }}
       EXPO_PUBLIC_MAX_BOT_USERNAME: ${{ secrets.EXPO_PUBLIC_MAX_BOT_USERNAME }}
-      EXPO_PUBLIC_SENTRY_ENABLED: ${{ ((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || github.ref_name == 'dev') && 'false' || 'true' }}
+      EXPO_PUBLIC_SENTRY_ENABLED: 'true'
       EXPO_PUBLIC_SENTRY_DSN: ${{ secrets.EXPO_PUBLIC_SENTRY_DSN }}
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
       SENTRY_READ_TOKEN: ${{ secrets.SENTRY_READ_TOKEN }}
@@ -168,6 +168,7 @@ jobs:
         run: |
           node scripts/checkSentryConfig.js
           npx tsc --noEmit
+          NODE_ENV=test BABEL_ENV=test npm run test:unit -- --runInBand __tests__/nativeDiagnostics.unit.test.ts __tests__/crashReporting.unit.test.ts
           NODE_ENV=test BABEL_ENV=test npm run test:unit -- --runInBand __tests__/productionMonitoring.unit.test.ts __tests__/offlineOrdersSync.unit.test.ts __tests__/useClientOrdersWorkspace.unit.test.ts __tests__/trackingV2Lifecycle.unit.test.ts __tests__/trackingReliability.unit.test.ts __tests__/servicesOffline.unit.test.ts __tests__/sqliteWriteQueue.unit.test.ts
 
       - name: Generate Android native project
@@ -176,7 +177,9 @@ jobs:
 
       - name: Verify generated native tracking
         if: ${{ steps.strategy.outputs.apk_required == 'true' }}
-        run: npm run native:verify-prebuild
+        run: |
+          npm run native:verify-prebuild
+          node scripts/verifyNativeDiagnostics.js
 
       - name: Configure Gradle memory
         if: ${{ steps.strategy.outputs.apk_required == 'true' }}

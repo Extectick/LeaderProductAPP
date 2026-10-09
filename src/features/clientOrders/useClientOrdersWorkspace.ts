@@ -1,4 +1,5 @@
 import { AuthContext } from '@/context/AuthContext';
+import { addMonitoringBreadcrumb } from '@/src/shared/monitoring';
 import { offlineSyncStage, reportOfflineSyncFailure } from '@/src/shared/storage/offlineSyncDiagnostics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
@@ -3077,6 +3078,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     const deviceEntry = findDeviceDraftEntry(draft.guid, draft.clientOrderId);
     const localOnly = options?.localOnly || !!deviceEntry || !getServerStatus().isReachable;
     const autosave = options?.reason === 'autosave';
+    if (!autosave) addMonitoringBreadcrumb('order.save_requested');
     if (deviceEntry && !dirtyRef.current && (autosave || deviceEntry.intent === (options?.intent ?? 'SAVE'))) return deviceEntry.order;
     foregroundSaveRef.current = true;
     const editVersion = draftEditVersionRef.current;
@@ -3153,6 +3155,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         setDirty(false);
         setLastSavedAt(new Date().toISOString());
         setAutosaveState('saved');
+        if (!autosave) addMonitoringBreadcrumb(intent === 'SUBMIT' ? 'order.queued_locally' : 'order.saved_locally');
         return localOrder;
       }
 
@@ -3218,6 +3221,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       setLastSavedAt(new Date().toISOString());
       setAutosaveState('saved');
       applySavedOrderToList(order);
+      if (!autosave) addMonitoringBreadcrumb(intent === 'SUBMIT' ? 'order.submit_accepted' : 'order.save_completed');
       return order;
     } catch (e: any) {
       if (payload && isNetworkUnavailableError(e)) {
@@ -3251,6 +3255,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         }
       }
       failedAutosaveVersionRef.current = editVersion;
+      if (!autosave) addMonitoringBreadcrumb('order.save_failed');
       const message = userErrorMessage(e, 'Не удалось сохранить заказ. Проверьте данные и повторите попытку.');
       setError(message);
       setAutosaveError(message);
@@ -3381,6 +3386,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [confirmDiscard, dirty, draft.guid, draftMode, readOnly, resetDraftToBase, saveAndResubmitQueuedDraft, saveDraft, selectedOrder, selectedOrderQueued, selectedOrderSynced, validation.blockingMessage]);
 
   const selectOrder = React.useCallback(async (guid: string) => {
+    addMonitoringBreadcrumb('order.open');
     if (guid === selectedGuid && selectedOrder?.guid === guid) return true;
     const canContinue = await confirmDiscardIfNeeded();
     if (!canContinue) return false;
@@ -3394,6 +3400,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [confirmDiscardIfNeeded, loadDetail, selectedGuid, selectedOrder?.guid]);
 
   const createNewOrder = React.useCallback(async () => {
+    addMonitoringBreadcrumb('order.create');
     const canContinue = await confirmDiscardIfNeeded();
     if (!canContinue) return false;
     // The list and editor may be separate mounted workspaces. Read the latest
@@ -3698,6 +3705,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }), [loadingDefaults]);
 
   const addProduct = React.useCallback((product: ClientOrderProduct, options?: { quantity?: string | number }) => {
+    addMonitoringBreadcrumb('order.product_add');
     const existing = draft.items.find((item) => item.productGuid === product.guid);
     if (existing) return existing.key;
     const nextItem = buildNewItem(product, options);
@@ -3870,6 +3878,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [loadDetail, loadOrders, loadSettings, ordersPollingEnabled, refreshTodaySummary, selectedGuid]);
 
   const submitOrder = React.useCallback(async () => {
+    addMonitoringBreadcrumb('order.submit_requested');
     if (submitActionInFlightRef.current || foregroundSaveRef.current || deviceDraftSyncingRef.current) return;
     if (!canSubmitOrder) {
       const message = selectedOrderQueued && !dirty
@@ -3901,6 +3910,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         revision = saved.revision;
       }
       const order = await submitClientOrder(targetGuid, revision, [submitGeoEvent]);
+      addMonitoringBreadcrumb('order.submit_accepted');
       applySavedOrderToList(order);
       applyOrderDetail(order);
       void loadOrders('reset');
@@ -3909,6 +3919,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         ? 'Не удалось отправить заказ: нет связи или сервер не ответил. Документ сохранен, повторите отправку позже.'
         : userErrorMessage(e, 'Не удалось отправить заказ.');
       setError(message);
+      addMonitoringBreadcrumb('order.submit_failed');
     } finally {
       submitActionInFlightRef.current = false;
       setSubmitting(false);
@@ -3916,6 +3927,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [applyOrderDetail, applySavedOrderToList, canSubmitOrder, dirty, draft.clientOrderId, draft.guid, draft.revision, findDeviceDraftEntry, loadOrders, mergeServerRevisionIntoOpenDraft, saveDraft, selectedGuid, selectedOrderQueued, serverStatus.isReachable, validation.blockingMessage]);
 
   const submitOrderFromList = React.useCallback(async (target: ClientOrder) => {
+    addMonitoringBreadcrumb('order.list_submit_requested');
     if (!target?.guid || submitting || submitActionInFlightRef.current || deviceDraftSyncingRef.current) return null;
     submitActionInFlightRef.current = true;
     let targetGuid = target.guid;
