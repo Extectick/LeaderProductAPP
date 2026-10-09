@@ -1,5 +1,33 @@
 # Production error collection
 
+## Production OTA configuration repair (2026-10-09)
+
+- Production OTA 0.1.33.1 restored catalog price priority but the API served
+  `extra.expoClient: {}`. With the installed Expo modules this reproduces the
+  expo-linking manifest exception. A specific employee's rollback is not proven.
+- APP release tooling now persists an allowlisted runtime config from the same
+  build. API `e670d284f758630304ce3622672a2e994ec41275` validates it on both HTTP
+  and database publication, repairs legacy manifests, and serves the config.
+- Production API is pinned to that immutable image in `/opt/leader-api/.env`.
+  The narrow image preserves the existing production base/dependencies/schema
+  and changes only the OTA route, validator and publisher (three small layers).
+  It was deployed healthy; do not replace the pin with an unverified `latest`.
+- Config/image rollback: `/var/backups/leader-ota-manifest-20261009` and image
+  `rollback-ota-20261009`. Full database archive is local under workspace
+  `.artifacts/prod-ota-manifest-20261009/production.dump`, administrator-only;
+  all archive entries were read/decompressed successfully, without a DB restore.
+  SHA-256: `47a82e5e84ddddc5bd499a0a7260f9be418b97349fa3cf02c571abdc05faf2d7`.
+- Published APP source `620f321128da63dc5d14731f150a9d79b4a80980`, runtime 0.1.33,
+  display **0.1.33.2**, update `bfd24cb8-afe1-44cb-82c7-2420f3cc491c`, rollout 100%.
+  New identity ensures a previously downloaded/rejected manifest is not reused.
+  Workflow `37919823476` passed 202 APP tests, config/bundle verification and
+  private symbolication (`55f4eb7721df4935e6c90b101ec98409`, `privacy.ts:14`).
+  API workflow `37919576725` passed 76 tests and its guarded image build.
+- Public download verified 17973620 bundle bytes, hash
+  `e8YVYt-XvO6eO4bSXMDe6OoOqd9aXbPRBqCxmy7udCI`; current-update request returned
+  204. No new APK, dev native diagnostics, 1C changes or runtime relabeling.
+  Actual application on the employee's phone remains a user acceptance check.
+
 Initial scope: runtime 0.1.26 / APK build 25; monitoring-only OTA. That OTA
 contains no unrelated dev, offline-order, tracking or 1C changes.
 
