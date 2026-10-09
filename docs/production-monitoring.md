@@ -29,6 +29,27 @@ a guaranteed stack trace. Devices below Android 11 lack that fallback.
 Do not uninstall or clear app data: this deletes local drafts and cached reports.
 No physical-phone crash or offline-delivery acceptance is asserted by CI checks.
 
+### Published dev build (2026-10-09)
+
+- APK workflow `37911580150` succeeded from `973c94ae3167d0a235f82a26ab0eec241e6bc134`:
+  122 diagnostics/core tests, TypeScript, native release build and private symbol
+  upload passed. Hermes v1 uses `libhermesvm.so`, not `libhermes.so`.
+- Synthetic event `1dda7a409814e8a08d0ef897cf2011bb` resolved to
+  `/src/shared/monitoring/privacy.ts:14`; Java and minidump ingestion also passed.
+  These synthetic checks do not establish device capture or ANR acceptance.
+- AppUpdate id 19: optional dev 0.1.34/build33, rollout 100%, both arm64-v8a and
+  x86_64. Permanent download: `https://dev.leader-product.ru/download`.
+- APK size 129447637 bytes, SHA-256
+  `567fa0ed3384d2c9589b86e572e89f70ed3924a3121fd7aa6f4679b6a8161fe8`.
+  Local verifier confirmed the existing signing certificate, standalone release,
+  dev API/OTA/diagnostics configuration and absence of private credentials.
+  Public update check and signed download both returned the matching artifact.
+- Cloud diagnostics and the dev download page are deployed. The additional API
+  OTA-manifest patch in image `90390248d537311b1f86c01d270a4943010bfa48` is built
+  but not deployed: cloud free disk is approximately 1.7 GB, cleanup approval
+  pending. It is not required for this embedded APK or diagnostic ingestion.
+- Production API, APK, monitoring and 1C were not changed in this dev release.
+
 Initial scope: runtime 0.1.26 / APK build 25; monitoring-only OTA. That OTA
 contains no unrelated dev, offline-order, tracking or 1C changes.
 
