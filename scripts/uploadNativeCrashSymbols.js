@@ -9,7 +9,9 @@ assert.match(process.env.SENTRY_URL || '', /^http:\/\/127\.0\.0\.1:\d+\/?$/);
 const root = path.resolve('android/app/build/intermediates/merged_native_libs/release/mergeReleaseNativeLibs/out/lib');
 assert.ok(fs.existsSync(root), 'Unstripped native libraries must exist before publication');
 const libraries = fs.readdirSync(root).flatMap(abi => fs.readdirSync(path.join(root, abi)).filter(f => f.endsWith('.so')));
-assert.ok(libraries.includes('libhermes.so') && libraries.includes('libreactnative.so'), 'Hermes and React Native symbols required');
+// RN 0.86 ships Hermes v1 as libhermesvm.so; older runtimes use libhermes.so.
+assert.ok(libraries.some(name => name === 'libhermes.so' || name === 'libhermesvm.so')
+  && libraries.includes('libreactnative.so'), 'Hermes and React Native symbols required');
 const result = spawnSync(process.execPath, [require.resolve('@sentry/cli/bin/sentry-cli'),
   'debug-files', 'upload', '--org', process.env.SENTRY_ORG, '--project', process.env.SENTRY_PROJECT,
   root], { env: process.env, stdio: 'inherit', timeout: 600000 });
