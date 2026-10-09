@@ -3,6 +3,8 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { readVersion } = require('./readNativeVersion');
+const { getConfig } = require('expo/config');
+const { buildOtaExpoConfig } = require('./otaExpoConfig');
 
 function parseArgs(argv) {
   const args = { _: [] };
@@ -71,6 +73,8 @@ function main() {
   const channel = String(args.channel || process.env.EXPO_PUBLIC_UPDATE_CHANNEL || 'dev').trim();
   const runtimeVersion = getRuntimeVersion(args);
   const nativeVersion = readVersion();
+  const { exp } = getConfig(process.cwd(), { isPublicConfig: true });
+  const expoClient = buildOtaExpoConfig(exp, runtimeVersion, platform);
   const releaseKey = String(
     args.updateId ||
       `${platform}-${channel}-${runtimeVersion}-${new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)}-${crypto.randomBytes(4).toString('hex')}`
@@ -129,6 +133,8 @@ function main() {
     launchAssetLocalPath: bundlePath,
     assets: Array.from(assetByPath.values()),
     metadata: {
+      expoConfigSchemaVersion: 1,
+      expoClient,
       commitSha,
       releaseKey,
       baseVersionName: nativeVersion.versionName,
