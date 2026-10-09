@@ -170,7 +170,7 @@ export function installGlobalJsErrorHandler() {
 export async function setMonitoringUser(id: number | string | null | undefined) {
   const value = id == null ? '' : String(id);
   const safeId = /^\d{1,20}$/.test(value) ? value : null;
-  sentry?.setUser?.(safeId ? { id: safeId } : null);
+  try { sentry?.setUser?.(safeId ? { id: safeId } : null); } catch { /* Diagnostics must not break authentication. */ }
   try { await getNativeDiagnostics()?.setUser(safeId); } catch { /* Diagnostics must not break login/logout. */ }
 }
 

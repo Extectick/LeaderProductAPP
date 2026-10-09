@@ -232,7 +232,7 @@ object LeaderCrashReporting {
     event.transaction = null
     event.user = user(event.user?.id ?: "")
     event.tags?.keys?.toList()?.filter { it !in tagNames }?.forEach { event.removeTag(it) }
-    event.contexts.keys.toList().filter { it !in setOf("app", "device", "os", "runtime", "react_native_context", "android_exit") }.forEach { event.contexts.remove(it) }
+    java.util.Collections.list(event.contexts.keys()).filter { it !in setOf("app", "device", "os", "runtime", "react_native_context", "android_exit") }.forEach { event.contexts.remove(it) }
     event.contexts.device?.name = null
     event.contexts.device?.id = null
     event.breadcrumbs?.removeAll { it.category != "app" && it.category != "app.lifecycle" }
