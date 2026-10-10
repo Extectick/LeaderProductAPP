@@ -20,6 +20,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm ci --prefix public-order
+      - run: npx tsc --noEmit --project public-order/tsconfig.json
       - run: npm run build --prefix public-order
       - name: Stage static files
         uses: appleboy/scp-action@v1
