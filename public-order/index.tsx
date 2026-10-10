@@ -17,9 +17,11 @@ type Order = { number: string; date: string | null; customer: string; deliveryDa
 const theme = createTheme({ palette: { primary: { main: '#1859f7' }, text: { primary: '#111a35', secondary: '#61708a' } },
   typography: { fontFamily: 'Arial, system-ui, sans-serif', button: { textTransform: 'none', fontWeight: 600 } },
   shape: { borderRadius: 8 }, components: { MuiButton: { defaultProps: { disableElevation: true } } } });
+// A second shared URL opened in this tab must not keep the previous capability/data.
+window.addEventListener('hashchange', () => window.location.reload());
 const token = window.location.hash.slice(1);
 const validToken = /^[A-Za-z0-9_-]{43}$/.test(token);
-const money = (value: string, currency: string) => new Intl.NumberFormat('ru-RU', { style: 'currency', currency, maximumFractionDigits: 2 }).format(Number(value));
+const money = (value: string, currency: string, precision = 2) => new Intl.NumberFormat('ru-RU', { style: 'currency', currency, minimumFractionDigits: 0, maximumFractionDigits: precision }).format(Number(value));
 const number = (value: string) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 4 }).format(Number(value));
 const date = (value: string | null, year = false) => value ? new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', ...(year ? { year: 'numeric' } : {}), timeZone: 'Asia/Omsk' }).format(new Date(value)) : '';
 
@@ -101,7 +103,7 @@ function App() {
           {order.cancelled ? <Alert severity="info">Заказ отменён</Alert> : null}
           <section className="products" aria-label="Товары заказа">{order.items.map(item => <article key={item.id}>
             <ProductPhoto item={item} onOpen={(url, title) => setPhoto({ url, title })} />
-            <h2>{item.name}</h2><p className="quantity">{number(item.quantity)} {item.unit} × {money(item.unitPrice, order.currency)}</p>
+            <h2>{item.name}</h2><p className="quantity">{number(item.quantity)} {item.unit} × {money(item.unitPrice, order.currency, 4)}</p>
             <p className="line-total">{money(item.amount, order.currency)}</p>
           </article>)}</section>
           <footer className="order-footer">
