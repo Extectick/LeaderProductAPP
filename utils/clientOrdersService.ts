@@ -422,6 +422,7 @@ export type ClientOrderDefaults = {
 };
 
 export type ClientOrderProduct = {
+  lastPurchasedDate?: string | null;
   guid: string;
   name: string;
   code?: string | null;
@@ -993,6 +994,9 @@ export async function searchClientOrderDeliveryAddresses(params?: {
 }
 
 export async function searchClientOrderProducts(params: {
+  purchasedOnly?: boolean;
+  historyUserId?: string;
+  historyFetchedAt?: string;
   search?: string;
   organizationGuid?: string;
   counterpartyGuid?: string;
@@ -1010,6 +1014,10 @@ export async function searchClientOrderProducts(params: {
       warehouseGuid: params.warehouseGuid,
       organizationGuid: params.organizationGuid,
       inStockOnly: params.inStockOnly,
+      purchasedOnly: params.purchasedOnly,
+      historyUserId: params.historyUserId,
+      historyFetchedAt: params.historyFetchedAt,
+      counterpartyGuid: params.counterpartyGuid?.toLowerCase(),
     });
     if (local) {
       return {
@@ -1027,7 +1035,8 @@ export async function searchClientOrderProducts(params: {
   } catch (error) {
     console.warn('[catalog] local search failed, using API fallback', error);
   }
-  return getPagedSelector<ClientOrderProduct>(API_ENDPOINTS.CLIENT_ORDERS.PRODUCTS, params, 'Не удалось загрузить номенклатуру');
+  const { historyUserId: _localUser, historyFetchedAt: _localSnapshot, ...query } = params;
+  return getPagedSelector<ClientOrderProduct>(API_ENDPOINTS.CLIENT_ORDERS.PRODUCTS, query, 'Не удалось загрузить номенклатуру');
 }
 
 export async function getClientOrderProductsBatch(payload: {

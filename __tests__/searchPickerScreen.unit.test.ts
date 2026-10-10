@@ -164,4 +164,31 @@ describe('SearchPickerScreen', () => {
 
     act(() => renderer!.unmount());
   });
+
+  it('keeps both product filters icon-only and the same size as the close button', () => {
+    let renderer: TestRenderer.ReactTestRenderer;
+    const toggle = jest.fn();
+    act(() => {
+      renderer = TestRenderer.create(React.createElement(SearchPickerScreen, {
+        visible: true, pickerKey: 'product', topInset: 0, title: 'Подбор товаров', titleIcon: 'cube-outline',
+        onClose: jest.fn(), search: '', onSearchChange: jest.fn(), data: [], renderItem: () => null,
+        keyExtractor: () => '', filters: [
+          { key: 'stock', label: 'С остатками', selected: true, iconOnly: true, onPress: toggle },
+          { key: 'history', label: 'Клиент уже брал', selected: false, iconOnly: true, onPress: toggle, icon: 'history' },
+        ],
+      }));
+    });
+    const buttons = renderer!.root.findAllByType('Pressable' as any);
+    const filters = buttons.filter(node => node.props.accessibilityRole === 'checkbox');
+    expect(filters).toHaveLength(2);
+    const flatten = (style: any[]) => Object.assign({}, ...style.filter(Boolean));
+    for (const filter of filters) {
+      expect(flatten(filter.props.style({ pressed: false }))).toMatchObject({ width: 40, height: 40 });
+      expect(filter.findByType('MaterialCommunityIcons' as any).props.size).toBe(22);
+      expect(filter.findAllByType('Text' as any)).toHaveLength(0);
+    }
+    act(() => filters[1].props.onPress());
+    expect(toggle).toHaveBeenCalledTimes(1);
+    act(() => renderer!.unmount());
+  });
 });

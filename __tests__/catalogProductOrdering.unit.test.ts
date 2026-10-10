@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname, basename } from 'node:path';
 import { SQLiteTestDatabase } from './helpers/sqliteTestDatabase';
 import type { OfflineDatasetMeta } from '../src/features/clientOrders/offline/offlineOrdersDatabase';
+import type { CustomerPurchaseHistory } from '../src/features/clientOrders/lib/customerPurchaseHistory';
 
 jest.mock('react-native', () => ({ Platform: { OS: 'android' } }));
 jest.mock('../src/shared/monitoring', () => ({ captureException: jest.fn() }));
@@ -50,6 +51,52 @@ afterEach(async () => {
     throw new Error('Unsafe SQLite fixture cleanup path');
   }
   rmSync(directory, { recursive: true, force: true });
+});
+
+const history = (ids: string[], organizationGuid = 'org', counterpartyGuid = 'client'): CustomerPurchaseHistory => ({
+  version: 'customer-purchases-v1', organizationGuid, counterpartyGuid, coverageFrom: '2026-03-31',
+  asOf: '2026-10-09T12:00:00', fetchedAt: '2026-10-09T06:00:00Z',
+  items: ids.map(productGuid => ({ productGuid, lastPurchasedDate: '2026-10-08' })),
+});
+const historyContext = { historyUserId: 'u1', organizationGuid: 'org', counterpartyGuid: 'client', purchasedOnly: true };
+
+it('filters purchases across the full catalog before FTS, stock and pagination while retaining price priority', async () => {
+  const store = require('../src/features/clientOrders/offline/customerPurchaseHistoryDatabase');
+  await products(Array.from({ length: 110 }, (_, i) => product(`p${String(i).padStart(3, '0')}`, `Молоко ${i}`)));
+  await dataset('selling-prices', [price('p109')]);
+  await dataset('stock', [stock('p090'), stock('p100'), stock('p109')]);
+  await dataset('manager-stock', []);
+  await store.writeCustomerPurchaseHistory('u1', history(['p090', 'p095', 'p100', 'p109']));
+  const c = { ...context, ...historyContext };
+  const first = await catalog.searchCatalogProducts('мол', 2, 0, c);
+  const second = await catalog.searchCatalogProducts('мол', 2, 2, c);
+  expect(ids(first)).toEqual(['p109', 'p100']);
+  expect(ids(second)).toEqual(['p090']);
+  expect(first?.hasMore).toBe(true);
+  expect(second?.hasMore).toBe(false);
+  expect(ids(await catalog.searchCatalogProducts('мол', 10, 0, { ...c, inStockOnly: false }))).toHaveLength(4);
+  expect(await catalog.searchCatalogProducts('мол', 10, 0, { ...c, historyUserId: 'another-user' })).toBeNull();
+});
+
+it('isolates users, customers and organizations and distinguishes unknown history from empty history', async () => {
+  const store = require('../src/features/clientOrders/offline/customerPurchaseHistoryDatabase');
+  await products([product('a'), product('b')]);
+  expect(await catalog.searchCatalogProducts('', 10, 0, historyContext)).toBeNull();
+  await store.writeCustomerPurchaseHistory('u1', history(['a']));
+  await store.writeCustomerPurchaseHistory('u2', history(['b']));
+  await store.writeCustomerPurchaseHistory('u1', history(['b'], 'org2'));
+  await store.writeCustomerPurchaseHistory('u1', history([], 'org', 'client2'));
+  expect(ids(await catalog.searchCatalogProducts('', 10, 0, historyContext))).toEqual(['a']);
+  expect(await catalog.searchCatalogProducts('', 10, 0, { ...historyContext, historyFetchedAt: 'newer-unpersisted-snapshot' })).toBeNull();
+  expect(ids(await catalog.searchCatalogProducts('', 10, 0, { ...historyContext, historyUserId: 'u2' }))).toEqual(['b']);
+  expect(ids(await catalog.searchCatalogProducts('', 10, 0, { ...historyContext, organizationGuid: 'org2' }))).toEqual(['b']);
+  expect(ids(await catalog.searchCatalogProducts('', 10, 0, { ...historyContext, counterpartyGuid: 'client2' }))).toEqual([]);
+  expect((await store.readCustomerPurchaseHistory('u1', 'org', 'client')).items).toEqual(history(['a']).items);
+  await expect(store.writeCustomerPurchaseHistory('u1', { ...history(['b']), version: 'old' })).rejects.toThrow();
+  expect(ids(await catalog.searchCatalogProducts('', 10, 0, historyContext))).toEqual(['a']);
+  await store.writeCustomerPurchaseHistory('u1', history([]));
+  expect((await store.readCustomerPurchaseHistory('u1', 'org', 'client')).items).toEqual([]);
+  expect(ids(await catalog.searchCatalogProducts('', 10, 0, historyContext))).toEqual([]);
 });
 
 it('ranks client-priced products across the entire catalog before pagination, without duplicates', async () => {

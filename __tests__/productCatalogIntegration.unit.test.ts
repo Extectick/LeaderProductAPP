@@ -18,6 +18,18 @@ const localSearchMock = jest.mocked(searchCatalogProducts);
 describe('local product catalog integration', () => {
   beforeEach(() => jest.clearAllMocks());
 
+  it('retains the purchase filter on fallback without sending local user/cache identifiers to the server', async () => {
+    localSearchMock.mockResolvedValueOnce(null);
+    apiClientMock.mockResolvedValueOnce({ ok: true, status: 200, data: { items: [] } } as any);
+    await searchClientOrderProducts({ organizationGuid: 'org', counterpartyGuid: 'client', purchasedOnly: true,
+      historyUserId: 'private-local-user', historyFetchedAt: 'local-cache-revision', search: 'new-filter' });
+    const url = String(apiClientMock.mock.calls[0][0]);
+    expect(url).toContain('purchasedOnly=true');
+    expect(url).toContain('organizationGuid=org');
+    expect(url).not.toContain('historyUserId');
+    expect(url).not.toContain('historyFetchedAt');
+  });
+
   it('returns the local FTS result without waiting for the network', async () => {
     localSearchMock.mockResolvedValueOnce({
       items: [{ guid: 'local-product', name: 'Молоко', basePrice: null, receiptPrice: null, stock: null } as any],
@@ -43,6 +55,10 @@ describe('local product catalog integration', () => {
       warehouseGuid: 'warehouse',
       organizationGuid: undefined,
       inStockOnly: true,
+      purchasedOnly: undefined,
+      historyUserId: undefined,
+      historyFetchedAt: undefined,
+      counterpartyGuid: undefined,
     });
     expect(result.localCatalog).toBe(true);
     expect(apiClientMock).not.toHaveBeenCalled();

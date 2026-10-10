@@ -78,6 +78,9 @@ import {
   shareClientOrderInvoicePdf,
 } from './lib/clientOrderInvoices';
 import { useClientOrdersWorkspace } from './hooks/useClientOrdersWorkspace';
+import { useCustomerPurchaseHistory } from './hooks/useCustomerPurchaseHistory';
+import { purchaseHistoryLabel } from './lib/customerPurchaseHistory';
+import { ProductPickerSnapshot } from './lib/productPickerSnapshot';
 import { getClientOrderInvoices, getClientOrderProductsBatch, getClientOrderReferenceDetails, requestClientOrderInvoice } from '@/utils/clientOrdersService';
 import type { ClientOrder, ClientOrderCounterpartyOption, ClientOrderInvoice, ClientOrderOrganization, ClientOrderPriceTypeOption, ClientOrderProduct, ClientOrderReferenceDetails, ClientOrderReferenceKind, ClientOrdersTodaySummary, ClientOrderWarehouseOption } from '@/utils/clientOrdersService';
 import { useServerStatus } from '@/src/shared/network/useServerStatus';
@@ -628,6 +631,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const [pickerHasMore, setPickerHasMore] = React.useState(false);
   const [pickerScrollOffset, setPickerScrollOffset] = React.useState(0);
   const [pickerLoading, setPickerLoading] = React.useState(false);
+  const [pickerLoadError, setPickerLoadError] = React.useState(false);
   const [pickerAppendLoading, setPickerAppendLoading] = React.useState(false);
   const [pickerHasLoadedOnce, setPickerHasLoadedOnce] = React.useState(false);
   const [selectedProducts, setSelectedProducts] = React.useState<ProductSelectionMap>(() => new Map());
@@ -647,6 +651,15 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const [itemsSearchOffset, setItemsSearchOffset] = React.useState(0);
   const [itemsSearchError, setItemsSearchError] = React.useState<string | null>(null);
   const [inStockOnly, setInStockOnly] = React.useState(true);
+  const [purchasedOnly, setPurchasedOnly] = React.useState(false);
+  const purchaseHistory = useCustomerPurchaseHistory({
+    userId: workspace.offlineUserId,
+    organizationGuid: workspace.draft.organizationGuid,
+    counterpartyGuid: workspace.draft.counterpartyGuid,
+    enabled: pickerKind === 'product', online: workspace.online,
+  });
+  const purchaseHistoryRevision = purchasedOnly ? purchaseHistory.snapshot?.fetchedAt || 'missing' : '';
+  const purchaseHistoryReadyForFilter = !purchasedOnly || purchaseHistory.ready;
   const [inStockOnlyLoaded, setInStockOnlyLoaded] = React.useState(false);
   const [counterpartyManagerOnly, setCounterpartyManagerOnly] = React.useState(true);
   const [counterpartyManagerOnlyLoaded, setCounterpartyManagerOnlyLoaded] = React.useState(false);
@@ -716,7 +729,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const pickerAutoFocusSuppressedRef = React.useRef(false);
   const pickerListRef = React.useRef<any>(null);
   const pickerSkipNextResetLoadRef = React.useRef(false);
-  const productPickerStateSignatureRef = React.useRef('');
+  const productPickerSnapshotRef = React.useRef(new ProductPickerSnapshot());
   const pickerScrollYRef = React.useRef(0);
   const pickerScrollMetricsRef = React.useRef({ y: 0, contentHeight: 0, viewportHeight: 0 });
   const itemsSearchRequestIdRef = React.useRef(0);
@@ -839,14 +852,19 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const ordersContentHeightRef = React.useRef(0);
   const ordersLastFocusRefreshRef = React.useRef(0);
   const productPickerContextSignature = React.useMemo(() => ([
+    workspace.offlineUserId,
     workspace.draft.organizationGuid || '',
     workspace.draft.counterpartyGuid || '',
     workspace.draft.agreementGuid || '',
     workspace.draft.warehouseGuid || '',
     workspace.draft.priceTypeGuid || '',
     inStockOnly ? 'stock' : 'all',
+    purchasedOnly ? `purchased:${purchaseHistoryRevision}` : 'any-purchase',
   ].join(':')), [
     inStockOnly,
+    purchasedOnly,
+    purchaseHistoryRevision,
+    workspace.offlineUserId,
     workspace.draft.agreementGuid,
     workspace.draft.counterpartyGuid,
     workspace.draft.organizationGuid,
@@ -860,6 +878,10 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     linePriceTarget,
   }), [filterCounterparty, linePriceTarget, pickerKind, workspace]);
   const visiblePickerItems = React.useMemo(() => {
+    if (pickerKind === 'product') {
+      if (!productPickerSnapshotRef.current.matches(productPickerContextSignature)) return [];
+      return pickerItems.map(item => ({ ...item, lastPurchasedDate: purchaseHistory.dates.get(String(item.guid).toLowerCase()) || null }));
+    }
     if (pickerKind === 'warehouse') {
       return buildWarehousePickerRows(pickerItems as ClientOrderWarehouseOption[]);
     }
@@ -867,7 +889,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     const selectedItem = pickerItems.find((item) => item?.guid === selectedPickerGuid);
     if (!selectedItem) return pickerItems;
     return [selectedItem, ...pickerItems.filter((item) => item?.guid !== selectedPickerGuid)];
-  }, [pickerItems, pickerKind, selectedPickerGuid]);
+  }, [pickerItems, pickerKind, selectedPickerGuid, purchaseHistory.dates, productPickerContextSignature]);
   React.useEffect(() => {
     setSelectedProducts((current) => removeOrderItemsFromProductSelection(current, workspace.draft.items));
   }, [workspace.draft.items]);
@@ -1201,9 +1223,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     // the same event as opening the picker so it cannot remain visible for a
     // frame (or be restored by a stale document-header layout effect).
     setHeaderOverride({ hidden: true });
-    const shouldRestoreProductPicker = kind === 'product'
-      && productPickerStateSignatureRef.current === productPickerContextSignature
-      && (pickerItems.length > 0 || !!pickerSearch);
+    const shouldRestoreProductPicker = productPickerSnapshotRef.current.open(kind, productPickerContextSignature);
     setPickerKind(kind);
     setLinePriceTarget(kind === 'priceType' && lineKey ? lineKey : null);
     setSelectedProducts(new Map());
@@ -1215,6 +1235,9 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       restorePickerListScroll(pickerScrollYRef.current);
       return;
     }
+    // Reference pickers reuse these rows. Only a completed product request may
+    // mark them restorable; opening another picker invalidates that ownership.
+    productPickerSnapshotRef.current.invalidate();
     setPickerSearch('');
     setPickerItems([]);
     setPickerOffset(0);
@@ -1227,17 +1250,12 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     setPickerHasLoadedOnce(false);
     pickerLoadSignatureRef.current = '';
     pickerSkipNextResetLoadRef.current = false;
-    if (kind === 'product') {
-      productPickerStateSignatureRef.current = productPickerContextSignature;
-    }
     requestAnimationFrame(() => scrollPickerListToTop(false));
   }, [
     clearEditorFocusTimers,
     clearPickerFocusTimers,
     clearEditorScrollRestoreTimers,
     mode,
-    pickerItems.length,
-    pickerSearch,
     productPickerContextSignature,
     restorePickerListScroll,
     scrollPickerListToTop,
@@ -1245,6 +1263,9 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   ]);
 
   const handlePickerSearchChange = React.useCallback((value: string) => {
+    if (value === pickerSearch) return;
+    pickerRequestIdRef.current += 1;
+    productPickerSnapshotRef.current.invalidate();
     if (pickerProductHydrationTimerRef.current) {
       clearTimeout(pickerProductHydrationTimerRef.current);
       pickerProductHydrationTimerRef.current = null;
@@ -1258,7 +1279,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     pickerAppendLoadingRef.current = false;
     pickerLoadSignatureRef.current = '';
     requestAnimationFrame(() => scrollPickerListToTop(false));
-  }, [scrollPickerListToTop]);
+  }, [scrollPickerListToTop, pickerSearch]);
 
   const loadPickerPage = React.useCallback(async (kind: PickerKind, search: string, offset = 0, append = false) => {
     const pageSize = kind === 'product' ? PRODUCT_PICKER_PAGE_SIZE : kind === 'warehouse' ? 100 : PAGE_SIZE;
@@ -1269,7 +1290,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       workspace.draft.warehouseGuid || '',
       workspace.draft.priceTypeGuid || '',
     ].join(':');
-    const productFilter = kind === 'product' && inStockOnly ? 'stock' : 'all';
+    const productFilter = kind === 'product' ? productPickerContextSignature : 'all';
     const counterpartyFilter = (kind === 'counterparty' || kind === 'filterCounterparty') && counterpartyManagerOnly ? 'manager' : 'all';
     const signature = `${kind}|${contextSignature}|${search}|${offset}|${append ? 'append' : 'reset'}|${productFilter}|${counterpartyFilter}`;
     if ((append && pickerAppendLoadingRef.current) || pickerLoadSignatureRef.current === signature) return;
@@ -1281,9 +1302,17 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     }
     pickerLoadSignatureRef.current = signature;
     const requestId = ++pickerRequestIdRef.current;
+    if (!append) productPickerSnapshotRef.current.invalidate();
+    if (!append) setPickerItems([]);
+    setPickerLoadError(false);
     setPickerLoading(true);
     try {
       const hasOrderContext = !!workspace.draft.organizationGuid && !!workspace.draft.counterpartyGuid;
+      if (kind === 'product' && !purchaseHistoryReadyForFilter) {
+        setPickerItems([]);
+        setPickerHasMore(false);
+        return;
+      }
       if (pickerNeedsOrderContext(kind) && !hasOrderContext) {
         if (pickerRequestIdRef.current !== requestId || pickerKindRef.current !== kind) return;
         setPickerItems([]);
@@ -1302,7 +1331,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       else if (kind === 'warehouse') result = await workspace.searchWarehouses({ organizationGuid: workspace.draft.organizationGuid || undefined, counterpartyGuid: workspace.draft.counterpartyGuid || undefined, search, limit: pageSize, offset });
       else if (kind === 'deliveryAddress') result = await workspace.searchDeliveryAddresses({ organizationGuid: workspace.draft.organizationGuid || undefined, counterpartyGuid: workspace.draft.counterpartyGuid || undefined, search, limit: pageSize, offset });
       else if (kind === 'priceType') result = await workspace.searchPriceTypes({ search, limit: pageSize, offset });
-      else result = await workspace.searchProducts({ search, organizationGuid: workspace.draft.organizationGuid || undefined, counterpartyGuid: workspace.draft.counterpartyGuid, agreementGuid: workspace.draft.agreementGuid || undefined, warehouseGuid: workspace.draft.warehouseGuid || undefined, priceTypeGuid: workspace.draft.priceTypeGuid || undefined, inStockOnly, limit: pageSize, offset });
+      else result = await workspace.searchProducts({ search, organizationGuid: workspace.draft.organizationGuid || undefined, counterpartyGuid: workspace.draft.counterpartyGuid, agreementGuid: workspace.draft.agreementGuid || undefined, warehouseGuid: workspace.draft.warehouseGuid || undefined, priceTypeGuid: workspace.draft.priceTypeGuid || undefined, inStockOnly, purchasedOnly, historyUserId: workspace.offlineUserId, historyFetchedAt: purchaseHistoryRevision || undefined, limit: pageSize, offset });
       if (pickerRequestIdRef.current !== requestId || pickerKindRef.current !== kind) return;
       const items = result?.items || [];
       if (append && items.length === 0) {
@@ -1315,7 +1344,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       }
       const nextItems = kind === 'deliveryAddress' ? sortDeliveryAddressOptions(items) : items;
       if (kind === 'product' && !append) {
-        productPickerStateSignatureRef.current = productPickerContextSignature;
+        productPickerSnapshotRef.current.loaded(productPickerContextSignature);
       }
       setPickerItems((prev) => {
         if (!append) return nextItems;
@@ -1337,10 +1366,11 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
             warehouseGuid: workspace.draft.warehouseGuid || undefined,
             priceTypeGuid: workspace.draft.priceTypeGuid || undefined,
           }).then((freshItems) => {
+            if (pickerRequestIdRef.current !== requestId) return;
             if (pickerKindRef.current !== 'product') return;
-            if (productPickerStateSignatureRef.current !== hydrationContextSignature) return;
+            if (!productPickerSnapshotRef.current.matches(hydrationContextSignature)) return;
             const freshByGuid = new Map(freshItems.map((item) => [item.guid, item]));
-            setPickerItems((current) => current.map((item: any) => freshByGuid.get(item?.guid) || item));
+            setPickerItems((current) => current.map((item: any) => ({ ...item, ...freshByGuid.get(item?.guid) })));
           }).catch(() => {
             // Локальный каталог уже показан. Ошибка актуализации не должна очищать список.
           });
@@ -1350,11 +1380,12 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       setPickerHasMore(hasMorePage(items.length, pageSize, offset, result?.meta?.total));
     } catch {
       if (pickerRequestIdRef.current === requestId && pickerKindRef.current === kind) {
+        setPickerLoadError(true);
         setPickerHasMore(false);
         pickerLoadSignatureRef.current = '';
       }
     } finally {
-      if (append) {
+      if (append && pickerRequestIdRef.current === requestId && pickerKindRef.current === kind) {
         pickerAppendLoadingRef.current = false;
         setPickerAppendLoading(false);
       }
@@ -1366,6 +1397,10 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   }, [
     counterpartyManagerOnly,
     inStockOnly,
+    purchasedOnly,
+    purchaseHistoryReadyForFilter,
+    purchaseHistoryRevision,
+    workspace.offlineUserId,
     workspace.draft.agreementGuid,
     workspace.draft.counterpartyGuid,
     workspace.draft.organizationGuid,
@@ -3136,8 +3171,17 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
           loading={pickerLoading}
           appendLoading={pickerAppendLoading}
           hasLoadedOnce={pickerHasLoadedOnce}
+          loadError={pickerLoadError}
+          onRetryProducts={() => void loadPickerPage('product', pickerSearch, 0, false)}
           inStockOnly={inStockOnly}
           onToggleInStockOnly={() => setInStockOnly((prev) => !prev)}
+          purchasedOnly={purchasedOnly}
+          onTogglePurchasedOnly={() => setPurchasedOnly(prev => !prev)}
+          purchaseHistoryReady={purchaseHistory.ready}
+          historyNotice={purchaseHistory.loading && !purchaseHistory.ready ? 'Загружается история покупок…'
+            : !purchaseHistory.ready ? 'История покупок ещё не загружена'
+              : purchasedOnly || !workspace.online || purchaseHistory.error ? `Покупки с 31.03.2026 · данные на ${purchaseHistory.snapshot!.asOf.slice(0, 10).split('-').reverse().join('.')}` : null}
+          onRetryHistory={workspace.online && purchaseHistory.error ? purchaseHistory.refresh : undefined}
           items={visiblePickerItems as ClientOrderProduct[]}
           selectedProducts={selectedProducts}
           orderItems={workspace.draft.items}
@@ -4398,6 +4442,11 @@ const ProductPickerFullscreenRow = React.memo(function ProductPickerFullscreenRo
           hasPriceType={hasPriceType}
           hasWarehouse={hasWarehouse}
         />
+        {purchaseHistoryLabel(item.lastPurchasedDate) ? (
+          <Text style={{ color: '#15803D', fontSize: 12, marginTop: 3 }}>
+            <MaterialCommunityIcons name="history" size={14} /> {purchaseHistoryLabel(item.lastPurchasedDate)}
+          </Text>
+        ) : null}
         {disabled ? <Text style={styles.productPickerAlreadyText}>Уже в заказе</Text> : null}
       </View>
       {selected ? (
@@ -4422,8 +4471,15 @@ function ProductPickerFullscreenPanel({
   loading,
   appendLoading,
   hasLoadedOnce,
+  loadError,
+  onRetryProducts,
   inStockOnly,
   onToggleInStockOnly,
+  purchasedOnly,
+  onTogglePurchasedOnly,
+  purchaseHistoryReady,
+  historyNotice,
+  onRetryHistory,
   items,
   selectedProducts,
   orderItems,
@@ -4457,8 +4513,15 @@ function ProductPickerFullscreenPanel({
   loading: boolean;
   appendLoading: boolean;
   hasLoadedOnce: boolean;
+  loadError: boolean;
+  onRetryProducts: () => void;
   inStockOnly: boolean;
   onToggleInStockOnly: () => void;
+  purchasedOnly: boolean;
+  onTogglePurchasedOnly: () => void;
+  purchaseHistoryReady: boolean;
+  historyNotice: string | null;
+  onRetryHistory?: () => void;
   items: ClientOrderProduct[];
   selectedProducts: ReadonlyMap<string, ClientOrderProduct>;
   orderItems: DraftItem[];
@@ -4517,17 +4580,20 @@ function ProductPickerFullscreenPanel({
     <>
       {!hasOrderContext ? <InfoText styles={styles} text="Сначала выберите организацию и контрагента." /> : null}
       <OfflineProductDataNote online={online} syncedAt={offlineDataSyncedAt} />
+      {hasOrderContext && historyNotice ? <Text style={{ color: '#64748B', fontSize: 11, paddingHorizontal: 14, paddingVertical: 4 }}>{historyNotice}</Text> : null}
+      {hasOrderContext && onRetryHistory ? <PaperButton compact icon="refresh" onPress={onRetryHistory}>Повторить загрузку истории</PaperButton> : null}
+      {loadError ? <PaperButton compact icon="refresh" onPress={onRetryProducts}>Не удалось загрузить товары. Повторить</PaperButton> : null}
       {showInitialLoader ? (
         <View style={styles.productPickerInitialLoader}>
           <ActivityIndicator size="large" color="#2563EB" />
         </View>
       ) : null}
     </>
-  ), [hasOrderContext, offlineDataSyncedAt, online, showInitialLoader, styles]);
+  ), [hasOrderContext, offlineDataSyncedAt, online, showInitialLoader, styles, historyNotice, onRetryHistory, loadError, onRetryProducts]);
   const listEmpty = React.useMemo(() => {
-    if (isResetLoading || !hasOrderContext) return null;
+    if (isResetLoading || !hasOrderContext || loadError || (purchasedOnly && !purchaseHistoryReady)) return null;
     return <Text style={styles.filtersLookupEmpty}>Ничего не найдено.</Text>;
-  }, [hasOrderContext, isResetLoading, styles]);
+  }, [hasOrderContext, isResetLoading, styles, loadError, purchasedOnly, purchaseHistoryReady]);
   const listFooter = React.useMemo(() => {
     if (!showFooterLoader) return null;
     return (
@@ -4539,13 +4605,20 @@ function ProductPickerFullscreenPanel({
   const filters = React.useMemo<SearchPickerFilter[]>(() => ([
     {
       key: 'in-stock',
+      iconOnly: true,
       label: 'С остатками',
       selected: inStockOnly,
       onPress: onToggleInStockOnly,
       accessibilityLabel: 'Показывать только товары с остатком',
       tone: 'success',
     },
-  ]), [inStockOnly, onToggleInStockOnly]);
+    {
+      key: 'purchased', label: 'Клиент уже брал', iconOnly: true,
+      icon: 'history', selectedIcon: 'history', selected: purchasedOnly,
+      disabled: !hasOrderContext || (!purchaseHistoryReady && !purchasedOnly),
+      onPress: onTogglePurchasedOnly, accessibilityLabel: 'Только товары, которые клиент уже брал',
+    },
+  ]), [inStockOnly, onToggleInStockOnly, purchasedOnly, onTogglePurchasedOnly, purchaseHistoryReady, hasOrderContext]);
   const footer = selectedCount > 0 ? (
     <Surface mode="flat" style={[styles.filtersFullscreenFooter, { paddingBottom: Math.max(bottomInset, 10) + 8 }]}>
       <Pressable

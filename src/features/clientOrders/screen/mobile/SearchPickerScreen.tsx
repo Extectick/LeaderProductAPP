@@ -32,6 +32,7 @@ export type SearchPickerFilter = {
   icon?: string;
   selectedIcon?: string;
   disabled?: boolean;
+  iconOnly?: boolean;
   tone?: 'primary' | 'success';
 };
 
@@ -228,7 +229,8 @@ export function SearchPickerScreen<T>({
                       onPress={filter.onPress}
                       style={({ pressed }) => [
                         styles.filterChip,
-                        !showFilterLabels && styles.filterChipIconOnly,
+                        (!showFilterLabels || filter.iconOnly) && styles.filterChipIconOnly,
+                        filter.iconOnly && styles.filterAction,
                         filter.selected && (success ? styles.filterChipSuccess : styles.filterChipSelected),
                         filter.disabled && styles.disabled,
                         pressed && !filter.disabled && styles.pressed,
@@ -236,10 +238,10 @@ export function SearchPickerScreen<T>({
                     >
                       <MaterialCommunityIcons
                         name={icon as any}
-                        size={16}
+                        size={filter.iconOnly ? 22 : 16}
                         color={filter.selected ? selectedColor : '#64748B'}
                       />
-                      {showFilterLabels ? (
+                      {showFilterLabels && !filter.iconOnly ? (
                         <Text
                           style={[
                             styles.filterLabel,
@@ -419,6 +421,12 @@ const styles = StyleSheet.create({
     width: 28,
     paddingHorizontal: 0,
     justifyContent: 'center',
+  },
+  filterAction: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    marginRight: 4,
   },
   filterChipSelected: {
     borderColor: '#93C5FD',

@@ -49,6 +49,8 @@ import {
 import { hasMorePage } from './lib/clientOrdersPaging';
 import { resolveStoredBooleanDefaultTrue, serializeStoredBoolean } from './lib/clientOrdersPrefs';
 import { useClientOrdersWorkspace } from './hooks/useClientOrdersWorkspace';
+import { useCustomerPurchaseHistory } from './hooks/useCustomerPurchaseHistory';
+import { purchaseHistoryLabel } from './lib/customerPurchaseHistory';
 import { SendDeviceOrdersButton } from './screen/SendDeviceOrdersButton';
 import {
   getClientOrderInvoiceActionLabel,
@@ -958,6 +960,7 @@ function ProductPickerListItem(props: {
             {meta.stock}
           </Typography>
         </Box>
+        {purchaseHistoryLabel(props.item.lastPurchasedDate) ? <Typography sx={{ mt: 0.35, fontSize: 12, color: '#15803D' }}><Ionicons name="time-outline" size={14} /> {purchaseHistoryLabel(props.item.lastPurchasedDate)}</Typography> : null}
         {props.note ? <Typography sx={{ mt: 0.35, fontSize: 10.5, color: '#DC2626', fontWeight: 800 }}>{props.note}</Typography> : null}
         {selected ? (
           <Box sx={{ mt: 0.45, display: 'inline-flex', alignItems: 'center', gap: 0.35, color: '#1D4ED8', fontSize: 11, fontWeight: 900 }}>
@@ -1296,9 +1299,17 @@ export default function ClientOrdersWebScreen() {
   const [headerOpen, setHeaderOpen] = React.useState(false);
   const [filterCounterparty, setFilterCounterparty] = React.useState<ClientOrderCounterpartyOption | null>(null);
   const [pickerKind, setPickerKind] = React.useState<PickerKind | null>(null);
+  const [purchasedOnly, setPurchasedOnly] = React.useState(false);
+  const purchaseHistory = useCustomerPurchaseHistory({
+    userId: workspace.offlineUserId, organizationGuid: workspace.draft.organizationGuid,
+    counterpartyGuid: workspace.draft.counterpartyGuid, enabled: pickerKind === 'product', online: workspace.online,
+  });
+  const purchaseHistoryRevision = purchasedOnly ? purchaseHistory.snapshot?.fetchedAt || 'missing' : '';
+  const purchaseHistoryReadyForFilter = !purchasedOnly || purchaseHistory.ready;
   const [pickerSearch, setPickerSearch] = React.useState('');
   const [pickerItems, setPickerItems] = React.useState<any[]>([]);
   const [pickerLoading, setPickerLoading] = React.useState(false);
+  const [pickerLoadError, setPickerLoadError] = React.useState(false);
   const [pickerHasMore, setPickerHasMore] = React.useState(false);
   const [pickerOffset, setPickerOffset] = React.useState(0);
   const [selectedProducts, setSelectedProducts] = React.useState<ProductSelectionMap>(() => new Map());
@@ -1375,8 +1386,8 @@ export default function ClientOrdersWebScreen() {
   const pickerDisplayItems = React.useMemo(() => (
     pickerKind === 'warehouse'
       ? buildWarehousePickerRows(pickerItems as ClientOrderWarehouseOption[])
-      : pickerItems
-  ), [pickerItems, pickerKind]);
+      : pickerKind === 'product' ? pickerItems.map(item => ({ ...item, lastPurchasedDate: purchaseHistory.dates.get(String(item.guid).toLowerCase()) || null })) : pickerItems
+  ), [pickerItems, pickerKind, purchaseHistory.dates]);
   const showOrdersPane = !isSinglePane || responsivePane === 'orders';
   const showEditorPane = !isSinglePane || responsivePane === 'editor';
 
@@ -1607,19 +1618,27 @@ export default function ClientOrdersWebScreen() {
       draftWarehouseGuid || '',
       draftPriceTypeGuid || '',
     ].join(':');
-    const productFilter = kind === 'product' && productInStockOnly ? 'stock' : 'all';
+    const productFilter = kind === 'product' ? `${productInStockOnly}:${purchasedOnly}:${purchaseHistoryRevision}` : 'all';
     const counterpartyFilter = (kind === 'counterparty' || kind === 'filterCounterparty') && counterpartyManagerOnly ? 'manager' : 'all';
     const signature = `${kind}|${contextSignature}|${search}|${offset}|${append ? 'append' : 'reset'}|${productFilter}|${counterpartyFilter}`;
     if ((append && pickerAppendLoadingRef.current) || pickerLoadSignatureRef.current === signature) return;
     if (append) pickerAppendLoadingRef.current = true;
     pickerLoadSignatureRef.current = signature;
     const requestId = ++pickerRequestIdRef.current;
+    if (!append) setPickerItems([]);
+    setPickerLoadError(false);
     setPickerLoading(true);
     try {
       if (pickerNeedsOrderContext(kind) && !hasOrderContext) {
         if (pickerRequestIdRef.current !== requestId) return;
         setPickerItems([]);
         setPickerOffset(offset);
+        setPickerHasMore(false);
+        return;
+      }
+
+      if (kind === 'product' && !purchaseHistoryReadyForFilter) {
+        setPickerItems([]);
         setPickerHasMore(false);
         return;
       }
@@ -1664,6 +1683,9 @@ export default function ClientOrdersWebScreen() {
             warehouseGuid: draftWarehouseGuid || undefined,
             priceTypeGuid: draftPriceTypeGuid || undefined,
             inStockOnly: productInStockOnly,
+            purchasedOnly,
+            historyUserId: workspace.offlineUserId,
+            historyFetchedAt: purchaseHistoryRevision || undefined,
             limit: pageSize,
             offset,
           });
@@ -1681,6 +1703,7 @@ export default function ClientOrdersWebScreen() {
       setPickerHasMore(hasMorePage(nextItems.length, pageSize, offset, result?.meta?.total));
     } catch {
       if (pickerRequestIdRef.current === requestId) {
+        setPickerLoadError(true);
         setPickerHasMore(false);
         pickerLoadSignatureRef.current = '';
       }
@@ -1690,7 +1713,7 @@ export default function ClientOrdersWebScreen() {
         setPickerLoading(false);
       }
     }
-  }, [counterpartyManagerOnly, draftAgreementGuid, draftCounterpartyGuid, draftOrganizationGuid, draftPriceTypeGuid, draftWarehouseGuid, hasOrderContext, productInStockOnly, searchAgreements, searchContracts, searchCounterparties, searchDeliveryAddresses, searchPriceTypes, searchProducts, searchWarehouses, settings?.organizations]);
+  }, [counterpartyManagerOnly, draftAgreementGuid, draftCounterpartyGuid, draftOrganizationGuid, draftPriceTypeGuid, draftWarehouseGuid, hasOrderContext, productInStockOnly, purchasedOnly, purchaseHistoryRevision, purchaseHistoryReadyForFilter, workspace.offlineUserId, searchAgreements, searchContracts, searchCounterparties, searchDeliveryAddresses, searchPriceTypes, searchProducts, searchWarehouses, settings?.organizations]);
 
   React.useEffect(() => {
     if (!pickerKind) return;
@@ -3407,7 +3430,11 @@ export default function ClientOrdersWebScreen() {
                 <Typography sx={{ fontSize: 18, fontWeight: 900 }}>{pickerTitle}</Typography>
                 <Stack direction="row" alignItems="center" spacing={0.5}>
                   {pickerLoading ? <CircularProgress size={18} /> : null}
-                  <IconButton size="small" onClick={requestClosePicker} aria-label="Закрыть подбор">
+                  {pickerKind === 'product' ? <>
+                    <Tooltip title="Только товары с остатком"><IconButton aria-label="Только товары с остатком" aria-pressed={productInStockOnly} onClick={() => setProductInStockOnly(prev => !prev)} sx={{ width: 40, height: 40, color: productInStockOnly ? '#15803D' : '#64748B', bgcolor: productInStockOnly ? '#F0FDF4' : '#F1F5F9' }}><Ionicons name="cube-outline" size={22} /></IconButton></Tooltip>
+                    <Tooltip title="Только товары, которые клиент уже брал"><span><IconButton aria-label="Только товары, которые клиент уже брал" aria-pressed={purchasedOnly} disabled={!hasOrderContext || (!purchaseHistory.ready && !purchasedOnly)} onClick={() => setPurchasedOnly(prev => !prev)} sx={{ width: 40, height: 40, color: purchasedOnly ? '#1D4ED8' : '#64748B', bgcolor: purchasedOnly ? '#EFF6FF' : '#F1F5F9' }}><Ionicons name="time-outline" size={22} /></IconButton></span></Tooltip>
+                  </> : null}
+                  <IconButton sx={{ width: 40, height: 40 }} onClick={requestClosePicker} aria-label="Закрыть подбор">
                     <Ionicons name="close" size={20} color="#475569" />
                   </IconButton>
                 </Stack>
@@ -3428,16 +3455,6 @@ export default function ClientOrdersWebScreen() {
                   } : undefined}
                   sx={{ flex: 1 }}
                 />
-                {pickerKind === 'product' ? (
-                  <Chip
-                    clickable
-                    color={productInStockOnly ? 'success' : 'default'}
-                    variant={productInStockOnly ? 'filled' : 'outlined'}
-                    label="Только с остатком"
-                    onClick={() => setProductInStockOnly((prev) => !prev)}
-                    sx={{ height: 32, fontSize: 12, fontWeight: 900, borderRadius: '8px' }}
-                  />
-                ) : null}
                 {pickerKind === 'counterparty' || pickerKind === 'filterCounterparty' ? (
                   <Box
                     role="checkbox"
@@ -3478,10 +3495,14 @@ export default function ClientOrdersWebScreen() {
             </Stack>
           </Box>
           <Box onScroll={handlePickerScroll} sx={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+            {pickerLoadError ? <Button onClick={() => pickerKind && void loadPickerPage(pickerKind, pickerSearch, 0, false)}>Не удалось загрузить список. Повторить</Button> : null}
+            {pickerKind === 'product' && hasOrderContext && !purchaseHistory.ready ? <Typography sx={{ px: 2, py: 0.5, fontSize: 12, color: '#64748B' }}>{purchaseHistory.loading ? 'Загружается история покупок…' : 'История покупок ещё не загружена'}</Typography> : null}
+            {pickerKind === 'product' && purchaseHistory.error && workspace.online ? <Button startIcon={<Ionicons name="refresh" />} onClick={purchaseHistory.refresh}>Повторить загрузку истории</Button> : null}
+            {pickerKind === 'product' && purchasedOnly && purchaseHistory.snapshot ? <Typography sx={{ px: 2, py: 0.5, fontSize: 12, color: '#64748B' }}>Покупки с 31.03.2026 · данные на {purchaseHistory.snapshot.asOf.slice(0, 10).split('-').reverse().join('.')}</Typography> : null}
             {pickerNeedsOrderContext(pickerKind) && !hasOrderContext ? (
               <Typography sx={{ px: 2, py: 1.5, color: '#64748B', borderBottom: '1px solid #D8E2F0' }}>Сначала выберите организацию и контрагента.</Typography>
             ) : null}
-            {!pickerLoading && pickerItems.length === 0 && !(pickerNeedsOrderContext(pickerKind) && !hasOrderContext) ? (
+            {!pickerLoading && !pickerLoadError && !(pickerKind === 'product' && purchasedOnly && !purchaseHistory.ready) && pickerItems.length === 0 && !(pickerNeedsOrderContext(pickerKind) && !hasOrderContext) ? (
               <Typography sx={{ px: 2, py: 1.5, color: '#64748B', borderBottom: '1px solid #D8E2F0' }}>Ничего не найдено.</Typography>
             ) : null}
             {pickerDisplayItems.map((item: any, index) => {

@@ -142,8 +142,25 @@ it('rolls back a failed schema upgrade and preserves drafts and the previous ver
   expect(await db.getFirstAsync('PRAGMA user_version')).toEqual({ user_version: 2 });
   expect((await db.getFirstAsync<any>('SELECT client_order_id FROM offline_drafts'))?.client_order_id).toBe('client-id');
   expect(await catalog.getCatalogDatabase()).toBe(db);
-  expect(await db.getFirstAsync('PRAGMA user_version')).toEqual({ user_version: 3 });
+  expect(await db.getFirstAsync('PRAGMA user_version')).toEqual({ user_version: 4 });
   db.closeAsync = realClose;
+});
+
+it('upgrades the previous v3 database without clearing goods or unsent drafts', async () => {
+  await offline.upsertOfflineDraft('u1', draft);
+  await catalog.replaceCatalog({ epoch: 'existing', revision: '1', schemaVersion: 1,
+    products: [{ guid: 'p1', name: 'Milk', isActive: true, revision: '1', packages: [] }] });
+  // Only this isolated fixture database is changed to emulate the installed v3.
+  await db.execAsync('DROP TABLE customer_purchases; DROP TABLE customer_purchase_snapshots; PRAGMA user_version = 3;');
+  jest.resetModules();
+  require('expo-sqlite').openDatabaseAsync.mockResolvedValue(db);
+  catalog = require('../src/features/productCatalog/data/catalogDatabase');
+  offline = require('../src/features/clientOrders/offline/offlineOrdersDatabase');
+  expect(await catalog.getCatalogDatabase()).toBe(db);
+  expect(await offline.readOfflineDrafts('u1')).toEqual([draft]);
+  expect((await catalog.searchCatalogProducts('', 10, 0))?.items[0].guid).toBe('p1');
+  expect(await db.getFirstAsync('PRAGMA user_version')).toEqual({ user_version: 4 });
+  expect(await db.getFirstAsync('PRAGMA integrity_check')).toEqual({ integrity_check: 'ok' });
 });
 
 it('loads three datasets alongside catalog and draft writes without collisions', async () => {
