@@ -7,7 +7,8 @@ import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderConte
 import { useOptionalTabBarVisibility } from '@/components/Navigation/TabBarVisibilityContext';
 import { useNotificationViewport } from '@/context/NotificationViewportContext';
 import DateTimeInput from '@/components/ui/DateTimeInput';
-import { OrderShareDialog } from './components/OrderShareDialog';
+import { OrderShareDialog, OrderShareFeedback } from './components/OrderShareDialog';
+import { useOrderShareActions } from './hooks/useOrderShareActions';
 import ContextMenuTrigger from '@/components/ui/ContextMenuTrigger';
 import type { ContextMenuItem } from '@/components/ui/ContextMenu';
 import { LiquidGlassSurface } from '@/components/ui/LiquidGlassSurface';
@@ -134,7 +135,7 @@ type EditorSection = 'header' | 'items';
 type DocumentOpeningState = 'new' | 'existing' | null;
 type PickerKind = ClientOrdersPickerKind;
 type InvoiceFileAction = 'download' | 'share';
-type OrderListContextAction = 'submit' | 'unqueue' | 'copy' | 'invoice-request' | 'invoice-download' | 'invoice-share';
+type OrderListContextAction = 'submit' | 'unqueue' | 'copy' | 'order-share' | 'invoice-request' | 'invoice-download' | 'invoice-share';
 type ProductGalleryImage = {
   key: string;
   thumbUrl: string;
@@ -666,8 +667,6 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const [counterpartyManagerOnlyLoaded, setCounterpartyManagerOnlyLoaded] = React.useState(false);
   const [linePriceTarget, setLinePriceTarget] = React.useState<string | null>(null);
   const [actionsMenuOpen, setActionsMenuOpen] = React.useState(false);
-  const [orderShareOpen, setOrderShareOpen] = React.useState(false);
-  const openOrderShare = React.useCallback(() => { setActionsMenuOpen(false); setOrderShareOpen(true); }, []);
   const [invoicePickerOpen, setInvoicePickerOpen] = React.useState(false);
   const [invoicePickerContext, setInvoicePickerContext] = React.useState<{ orderGuid: string; invoices: ClientOrderInvoice[] } | null>(null);
   const [invoiceSharingId, setInvoiceSharingId] = React.useState<string | null>(null);
@@ -1872,7 +1871,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   }, [editorPagerOffset, editorPagerPosition, openingDocument, openingOrderGuid, workspace]);
 
   const selectOrderByGuid = React.useCallback(async (guid: string) => {
-    if (ordersOpenBusyRef.current || openingOrderGuid || openingDocument) return;
+    if (ordersOpenBusyRef.current || openingOrderGuid || openingDocument) return false;
     const requestId = ++openingOrderRequestIdRef.current;
     ordersOpenBusyRef.current = true;
     setOpeningOrderGuid(guid);
@@ -1886,15 +1885,16 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     try {
       await waitForUiPaint();
       const opened = await workspace.selectOrder(guid);
-      if (openingOrderRequestIdRef.current !== requestId) return;
+      if (openingOrderRequestIdRef.current !== requestId) return false;
       if (!opened) {
         setOpeningOrderGuid(null);
         setOpeningDocument(null);
         setMode('orders');
-        return;
+        return false;
       }
       setOpeningOrderGuid(null);
       setOpeningDocument(null);
+      return true;
     } catch (error) {
       if (openingOrderRequestIdRef.current === requestId) {
         setOpeningOrderGuid(null);
@@ -1908,6 +1908,9 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       }
     }
   }, [editorPagerOffset, editorPagerPosition, openingDocument, openingOrderGuid, workspace.selectOrder]);
+
+  const orderSharing = useOrderShareActions(workspace, selectOrderByGuid);
+  const openOrderShare = React.useCallback(() => { setActionsMenuOpen(false); orderSharing.open(); }, [orderSharing.open]);
 
   const selectOrder = React.useCallback(
     (order: ClientOrder) => selectOrderByGuid(order.guid),
@@ -2530,6 +2533,9 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         styles={styles}
         loading={documentContentLoading}
         documentNumber={documentDisplayTitle}
+        onCopyLink={orderSharing.copy}
+        copyingLink={orderSharing.copying}
+        copyLinkDisabled={workspace.mutationLocked}
         status={documentStatusCode}
         statusText={documentStatusFullText}
         queuePosition={workspace.selectedOrder?.queuePosition}
@@ -2545,6 +2551,9 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     );
   }, [
     documentDisplayTitle,
+    orderSharing.copy,
+    orderSharing.copying,
+    workspace.mutationLocked,
     documentContentLoading,
     documentStatusCode,
     documentStatusFullText,
@@ -2797,6 +2806,10 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     void selectOrder(order);
   }, [selectOrder]);
   const handleOrderListContextAction = React.useCallback((order: ClientOrder, action: OrderListContextAction) => {
+    if (action === 'order-share') {
+      void orderSharing.openFromList(order.guid);
+      return;
+    }
     const isRetry = !!(
       (order.last1cError || order.lastExportError)
       && (order.number1c || order.sentTo1cAt || Number(order.exportAttempts || 0) > 0)
@@ -2867,7 +2880,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     }
 
     void requestInvoiceNow(order);
-  }, [openInvoiceActions, requestInvoiceNow, workspace.copyOrderFromList, workspace.submitOrderFromList, workspace.syncDeviceDrafts, workspace.unqueueOrder]);
+  }, [orderSharing.openFromList, openInvoiceActions, requestInvoiceNow, workspace.copyOrderFromList, workspace.submitOrderFromList, workspace.syncDeviceDrafts, workspace.unqueueOrder]);
   const orderListContextMenuDisabled = !!openingOrderGuid
     || !!openingDocument
     || workspace.submitting
@@ -3356,7 +3369,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         onClose={() => setProductGallery(null)}
       />
 
-      <OrderShareDialog visible={orderShareOpen} onClose={() => setOrderShareOpen(false)} workspace={workspace} />
+      <OrderShareDialog visible={orderSharing.visible} onClose={orderSharing.close} workspace={workspace} />
+      <OrderShareFeedback message={orderSharing.feedback} onDismiss={orderSharing.dismissFeedback} />
       <ConfirmDialog
         styles={styles}
         state={confirmDialog}
@@ -3894,6 +3908,9 @@ function DocumentHeaderTitleSlot({
   styles,
   loading = false,
   documentNumber,
+  onCopyLink,
+  copyingLink,
+  copyLinkDisabled,
   status,
   statusText,
   queuePosition,
@@ -3909,6 +3926,9 @@ function DocumentHeaderTitleSlot({
   styles: any;
   loading?: boolean;
   documentNumber: string;
+  onCopyLink: () => void;
+  copyingLink: boolean;
+  copyLinkDisabled: boolean;
   status: string;
   statusText: string;
   queuePosition?: number | null;
@@ -3989,9 +4009,16 @@ function DocumentHeaderTitleSlot({
           />
         ) : null}
       </Menu>
-      <Text style={styles.documentTopTitle} numberOfLines={1} ellipsizeMode="tail">
-        {documentNumber}
-      </Text>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${documentNumber}. Скопировать ссылку для клиента`}
+        accessibilityState={{ busy: copyingLink, disabled: copyLinkDisabled || copyingLink }}
+        disabled={copyLinkDisabled || copyingLink}
+        onPress={onCopyLink}
+        style={({ pressed }) => [{ flex: 1, minWidth: 0, minHeight: 40, justifyContent: 'center' }, pressed && styles.flatPressed]}
+      >
+        <Text style={[styles.documentTopTitle, { flex: 0 }]} numberOfLines={1} ellipsizeMode="tail">{copyingLink ? 'Копирую ссылку…' : documentNumber}</Text>
+      </Pressable>
     </View>
   );
 }
@@ -8005,6 +8032,13 @@ const OrderCard = React.memo(function OrderCard({
     && !!getClientOrderInvoiceIdentifier(order)
     && !invoiceAvailable;
   const contextItems = React.useMemo<ContextMenuItem<OrderListContextAction>[]>(() => [
+    {
+      key: 'order-share',
+      label: 'Ссылка для клиента',
+      action: 'order-share',
+      icon: 'link-outline',
+      onSelect: () => onContextAction(order, 'order-share'),
+    },
     {
       key: 'submit',
       label: sendFailed ? 'Повторить отправку' : 'Отправить в 1С',

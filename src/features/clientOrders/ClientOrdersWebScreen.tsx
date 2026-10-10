@@ -1,6 +1,7 @@
 ﻿import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 import { useThemeColor } from '@/hooks/useThemeColor';
-import { OrderShareDialog } from './components/OrderShareDialog';
+import { OrderShareDialog, OrderShareFeedback } from './components/OrderShareDialog';
+import { useOrderShareActions } from './hooks/useOrderShareActions';
 import { ProductImageGalleryDialog, WebProductImage, PRODUCT_IMAGE_PLACEHOLDER_URI, type ProductGalleryImage } from './components/ProductImageGalleryDialog';
 import {
   computeLineTotal,
@@ -1153,7 +1154,7 @@ export default function ClientOrdersWebScreen() {
     resolve?.(result);
   }, []);
   const workspace = useClientOrdersWorkspace({ confirmDiscard: requestDiscardConfirm });
-  const [orderShareOpen, setOrderShareOpen] = React.useState(false);
+  const [documentMenuAnchor, setDocumentMenuAnchor] = React.useState<HTMLElement | null>(null);
   const router = useRouter();
   const workspaceRef = React.useRef(workspace);
   workspaceRef.current = workspace;
@@ -1876,7 +1877,10 @@ export default function ClientOrdersWebScreen() {
       setWebEditorSection('header');
       if (isSinglePane) setResponsivePane('editor');
     }
+    return selected;
   }, [isSinglePane, workspace]);
+
+  const orderSharing = useOrderShareActions(workspace, selectOrderFromList);
 
   React.useEffect(() => {
     if (!startOrderGuid || handledStartOrderGuidRef.current === startOrderGuid) return;
@@ -2638,7 +2642,7 @@ export default function ClientOrdersWebScreen() {
                       ) : null}
                     <Box sx={{ minWidth: 0 }}>
                       <Stack direction="row" spacing={0.75} alignItems="center" sx={{ minWidth: 0 }}>
-                        <Typography sx={{ fontSize: 18, fontWeight: 900, lineHeight: 1.1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</Typography>
+                        <Typography component="button" type="button" aria-label={`${title}. Скопировать ссылку для клиента`} title="Скопировать ссылку для клиента" disabled={orderSharing.copying || workspace.mutationLocked || workspace.loadingDetail} onClick={() => void orderSharing.copy()} sx={{ fontSize: 18, fontWeight: 900, lineHeight: 1.1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', border: 0, p: 0, background: 'transparent', color: 'inherit', textAlign: 'left', cursor: 'pointer', '&:disabled': { cursor: 'default', opacity: 0.65 } }}>{orderSharing.copying ? 'Копирую ссылку…' : title}</Typography>
                         {!workspace.draftMode ? <Chip size="small" label={getOrderDisplayStatusLabelWithQueue(workspace.selectedOrder)} sx={{ height: 20, fontSize: 10, fontWeight: 800, ...(workspace.selectedOrder ? orderStatusChipSx(workspace.selectedOrder) : {}) }} /> : null}
                       </Stack>
                       <Typography sx={{ color: '#64748B', fontSize: 11, fontWeight: 700 }}>{workspace.autosaveLabel}</Typography>
@@ -2711,7 +2715,7 @@ export default function ClientOrdersWebScreen() {
                       {!((workspace.selectedOrderQueued || workspace.selectedOrderSynced) && workspace.dirty) ? (
                         <ToolbarIconButton title="Сохранить" icon="save-outline" color="#2563EB" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={saveWithConfirm} disabled={workspace.readOnly || workspace.saving || !workspace.validation.canSave} loading={workspace.saving} />
                       ) : null}
-                      <ToolbarIconButton title="Ссылка для клиента" icon="link-outline" color="#2563EB" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => setOrderShareOpen(true)} disabled={workspace.mutationLocked} />
+                      <IconButton aria-label="Меню документа" aria-haspopup="menu" aria-expanded={!!documentMenuAnchor} onClick={event => setDocumentMenuAnchor(event.currentTarget)} disabled={workspace.loadingDetail} size="small"><Ionicons name="ellipsis-horizontal" size={ui.actionIconSize} color="#475569" /></IconButton>
                       <ToolbarIconButton title="Отправить в 1С" icon="cloud-upload-outline" label={effectiveEditorPaneWidth >= 1180 ? 'В 1С' : undefined} color="#16A34A" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => setConfirmSubmitOpen(true)} disabled={workspace.readOnly || workspace.submitting || !workspace.canSubmitOrder} loading={workspace.submitting} />
                         <ToolbarIconButton title="Копировать" icon="copy-outline" color="#475569" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={copyWithConfirm} disabled={workspace.copying || workspace.saving || workspace.submitting || !workspace.hasEditableDocument} loading={workspace.copying} />
                     </Stack>
@@ -3464,6 +3468,13 @@ export default function ClientOrdersWebScreen() {
         anchorReference="anchorPosition"
         anchorPosition={orderContextMenu ? { top: orderContextMenu.mouseY, left: orderContextMenu.mouseX } : undefined}
       >
+        <MenuItem disabled={workspace.mutationLocked || workspace.loadingDetail || orderSharing.copying} onClick={() => {
+          const guid = orderContextMenu?.order.guid;
+          closeOrderContextMenu();
+          if (guid) void orderSharing.openFromList(guid);
+        }}>
+          <Stack direction="row" spacing={1} alignItems="center"><Ionicons name="link-outline" size={16} color="#2563EB" /><Typography sx={{ fontSize: 13, fontWeight: 800 }}>Ссылка для клиента</Typography></Stack>
+        </MenuItem>
         <MenuItem onClick={openContextOrder}>
           <Stack direction="row" spacing={1} alignItems="center">
             <Ionicons name="document-text-outline" size={16} color="#0F172A" />
@@ -3510,7 +3521,13 @@ export default function ClientOrdersWebScreen() {
         </DialogActions>
       </Dialog>
 
-      <OrderShareDialog visible={orderShareOpen} onClose={() => setOrderShareOpen(false)} workspace={workspace} />
+      <Menu anchorEl={documentMenuAnchor} open={!!documentMenuAnchor} onClose={() => setDocumentMenuAnchor(null)}>
+        <MenuItem disabled={workspace.mutationLocked || orderSharing.copying} onClick={() => { setDocumentMenuAnchor(null); orderSharing.open(); }}>
+          <Stack direction="row" spacing={1} alignItems="center"><Ionicons name="link-outline" size={16} color="#2563EB" /><Typography sx={{ fontSize: 13, fontWeight: 800 }}>Ссылка для клиента</Typography></Stack>
+        </MenuItem>
+      </Menu>
+      <OrderShareDialog visible={orderSharing.visible} onClose={orderSharing.close} workspace={workspace} />
+      <OrderShareFeedback message={orderSharing.feedback} onDismiss={orderSharing.dismissFeedback} />
       <Dialog open={confirmSubmitOpen} onClose={() => setConfirmSubmitOpen(false)} maxWidth="xs" fullWidth fullScreen={isPhoneDialog}>
         <DialogTitle>{isErrorRetryTo1c ? 'Повторить отправку в 1С?' : isResubmitTo1c ? 'Переотправить в 1С?' : 'Отправить в 1С?'}</DialogTitle>
         <DialogContent>

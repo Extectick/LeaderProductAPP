@@ -1,12 +1,13 @@
 import React from 'react';
 import { Linking, Platform, Share, View } from 'react-native';
-import { Button, Dialog, HelperText, Portal, Text } from 'react-native-paper';
+import { Button, Dialog, HelperText, Portal, Snackbar, Text } from 'react-native-paper';
 import * as Clipboard from 'expo-clipboard';
 import { apiClient } from '@/utils/apiClient';
 import type { useClientOrdersWorkspace } from '../useClientOrdersWorkspace';
+import { publishClientOrderShare, type OrderShareLink } from '../lib/orderSharing';
 
 type Workspace = ReturnType<typeof useClientOrdersWorkspace>;
-type Link = { url: string; expiresAt: string; active: boolean };
+type Link = OrderShareLink;
 export function OrderShareDialog({ visible, onClose, workspace }: { visible: boolean; onClose: () => void; workspace: Workspace }) {
   const [link, setLink] = React.useState<Link | null>(null);
   const [guid, setGuid] = React.useState<string | null>(null);
@@ -39,15 +40,9 @@ export function OrderShareDialog({ visible, onClose, workspace }: { visible: boo
     setBusy(true); setMessage(''); setConfirm(null);
     const id = requestId.current;
     try {
-      let order = workspace.selectedOrder;
-      if (!workspace.readOnly && (workspace.dirty || !order || order.guid.startsWith('device-'))) {
-        order = await workspace.saveDraft({ reason: 'manual', intent: 'SAVE', serverOnly: true });
-      }
-      if (!order || order.guid.startsWith('device-')) throw new Error('Не удалось сохранить заказ на сервере. Проверьте подключение и заполнение заказа. Черновик остаётся на устройстве.');
-      const result = await apiClient<{ rotate: boolean }, Link>(`/api/order-sharing/${encodeURIComponent(order.guid)}/share`, { method: 'POST', body: { rotate } });
-      if (!result.ok || !result.data) throw new Error(result.message || 'Не удалось создать ссылку');
+      const result = await publishClientOrderShare(workspace, rotate);
       if (id !== requestId.current) return;
-      setGuid(order.guid); setLink(result.data);
+      setGuid(result.guid); setLink(result.link);
     } catch (error: any) { if (id === requestId.current) setMessage(error?.message || 'Не удалось создать ссылку'); }
     finally { if (id === requestId.current) setBusy(false); }
   };
@@ -94,4 +89,8 @@ export function OrderShareDialog({ visible, onClose, workspace }: { visible: boo
     </Dialog.Content>
     <Dialog.Actions><Button disabled={busy} onPress={onClose}>Закрыть</Button></Dialog.Actions>
   </Dialog></Portal>;
+}
+
+export function OrderShareFeedback({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+  return <Portal><Snackbar visible={!!message} onDismiss={onDismiss} duration={5000} action={{ label: 'Закрыть', onPress: onDismiss }}>{message}</Snackbar></Portal>;
 }
