@@ -1,10 +1,6 @@
 import { LiquidGlassSurface } from '@/components/ui/LiquidGlassSurface';
 import { useTheme } from '@/context/ThemeContext';
 import { useThemeColor } from '@/hooks/useThemeColor';
-import {
-  FLOATING_TAB_BAR_BOTTOM_OFFSET,
-  FLOATING_TAB_BAR_HEIGHT,
-} from '@/components/Navigation/FloatingTabBar';
 import { Ionicons } from '@expo/vector-icons';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -110,7 +106,7 @@ export default function TrackingPointsIsland({
   const mobileIslandSideInset = 10;
 
   const mobileBottomOffset = useMemo(
-    () => FLOATING_TAB_BAR_HEIGHT + FLOATING_TAB_BAR_BOTTOM_OFFSET + insets.bottom + 8,
+    () => insets.bottom + 8,
     [insets.bottom]
   );
   const collapsedHeight = 96;

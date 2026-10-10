@@ -123,7 +123,7 @@ function AlertButton({
   style?: any;
 }) {
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [
+    <Pressable accessibilityRole="button" onPress={onPress} style={({ pressed }) => [
       styles.button,
       { backgroundColor: baseColor, opacity: pressed ? 0.9 : 1 },
       style,

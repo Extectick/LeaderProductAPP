@@ -1,8 +1,4 @@
 import type { OnecLpAppRoutePoint, OnecLpAppTransportTask } from '@/utils/onecLpAppService';
-import {
-  FLOATING_TAB_BAR_BOTTOM_OFFSET,
-  FLOATING_TAB_BAR_HEIGHT,
-} from '@/components/Navigation/FloatingTabBar';
 import { useNavigation } from 'expo-router';
 import type { TransportTaskCoordinatePoint, TransportTaskDeparturePoint } from '../types';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -110,7 +106,7 @@ export default function TransportTasksMobileLayout({
   const shellWidth = Math.min(MOBILE_SHEET_MAX_WIDTH, Math.max(280, width - MOBILE_SHEET_SIDE_INSET * 2));
   const mapSelectionPanelStyle = useMemo(
     () => ({
-      bottom: FLOATING_TAB_BAR_HEIGHT + FLOATING_TAB_BAR_BOTTOM_OFFSET + insets.bottom + 8,
+      bottom: insets.bottom + 8,
       width: shellWidth,
       left: (width - shellWidth) / 2,
     }),

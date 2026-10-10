@@ -45,7 +45,7 @@ export const bottomTabItems: BottomTabItem[] = [
     label: 'Профиль',
     icon: 'person-outline',
     matchPath: '/profile',
-    activeTint: '#22C55E',
+    activeTint: '#2563EB',
   },
   {
     routeName: 'admin',

@@ -1,7 +1,3 @@
-import {
-  FLOATING_TAB_BAR_BOTTOM_OFFSET,
-  FLOATING_TAB_BAR_HEIGHT,
-} from '@/components/Navigation/FloatingTabBar';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Keyboard, PanResponder, Platform, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -52,7 +48,7 @@ export default function TransportTasksMobileSheet({
   const bottomOffset = useMemo(
     () => {
       if (keyboardHeight > 0) return keyboardHeight + MOBILE_SHEET_BOTTOM_GAP;
-      return FLOATING_TAB_BAR_HEIGHT + FLOATING_TAB_BAR_BOTTOM_OFFSET + insets.bottom + MOBILE_SHEET_BOTTOM_GAP;
+      return insets.bottom + MOBILE_SHEET_BOTTOM_GAP;
     },
     [insets.bottom, keyboardHeight]
   );

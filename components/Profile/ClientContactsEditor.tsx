@@ -8,7 +8,7 @@ type ContactResponse = { settings: ClientContacts; defaultPhone: string | null; 
 const empty: ClientContacts = { phones: [], telegramUrl: null, maxUrl: null, whatsappUrl: null, email: null };
 
 /** Shared by the employee profile and the administrator's user editor. */
-export function ClientContactsEditor({ userId, disabled = false }: { userId?: number; disabled?: boolean }) {
+export function ClientContactsEditor({ userId, disabled = false, embedded = false }: { userId?: number; disabled?: boolean; embedded?: boolean }) {
   const theme = useTheme();
   const [expanded, setExpanded] = React.useState(false);
   const [value, setValue] = React.useState<ClientContacts>(empty);
@@ -22,8 +22,9 @@ export function ClientContactsEditor({ userId, disabled = false }: { userId?: nu
   React.useEffect(() => {
     requestId.current++;
     setBaseline(null); setValue(empty); setMessage(''); setExpanded(false); setBusy(false);
+    if (embedded) void request(false);
     return () => { requestId.current++; };
-  }, [path]);
+  }, [path, embedded]);
   const request = async (save: boolean) => {
     const id = ++requestId.current;
     setBusy(true); setMessage(''); setFailed(false);
@@ -40,10 +41,7 @@ export function ClientContactsEditor({ userId, disabled = false }: { userId?: nu
     } finally { if (id === requestId.current) setBusy(false); }
   };
   const locked = busy || disabled;
-  return <List.Accordion title="Контакты для клиентов" description="Телефоны, мессенджеры и почта" expanded={expanded}
-    left={props => <List.Icon {...props} icon="card-account-phone-outline" />}
-    onPress={() => { setExpanded(!expanded); if (!expanded && !baseline && !busy) void request(false); }}>
-    <View style={styles.body}>
+  const body = <View style={[styles.body, embedded && { padding: 0 }]}>
       {busy && !baseline ? <ActivityIndicator accessibilityLabel="Загрузка контактов" /> : null}
       {baseline ? <>
         <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
@@ -51,9 +49,9 @@ export function ClientContactsEditor({ userId, disabled = false }: { userId?: nu
         </Text>
         {value.phones.map((phone, index) => <View key={index} style={styles.row}>
           <View style={styles.fields}>
-            <TextInput mode="outlined" dense label={`Телефон ${index + 1}`} value={phone.number} keyboardType="phone-pad" maxLength={40} disabled={locked}
+            <TextInput mode="outlined" dense label={`Телефон ${index + 1}`} accessibilityLabel={`Телефон ${index + 1}`} value={phone.number} keyboardType="phone-pad" maxLength={40} disabled={locked}
               onChangeText={number => setValue(prev => ({ ...prev, phones: prev.phones.map((p, i) => i === index ? { ...p, number } : p) }))} />
-            <TextInput mode="outlined" dense label="Подпись — необязательно" value={phone.label} maxLength={32} disabled={locked}
+            <TextInput mode="outlined" dense label="Подпись — необязательно" accessibilityLabel={`Подпись телефона ${index + 1}`} value={phone.label} maxLength={32} disabled={locked}
               onChangeText={label => setValue(prev => ({ ...prev, phones: prev.phones.map((p, i) => i === index ? { ...p, label } : p) }))} />
           </View>
           <IconButton icon="close" accessibilityLabel={`Удалить телефон ${index + 1}`} disabled={locked}
@@ -61,21 +59,23 @@ export function ClientContactsEditor({ userId, disabled = false }: { userId?: nu
         </View>)}
         <Button icon="plus" disabled={locked || value.phones.length >= 5} onPress={() => setValue(prev => ({ ...prev,
           phones: [...prev.phones, { label: '', number: prev.phones.length === 0 ? defaultPhone || '' : '' }] }))}>Добавить телефон</Button>
-        <TextInput mode="outlined" dense label="Telegram" placeholder="@username или https://t.me/…" autoCapitalize="none" autoCorrect={false}
+        <TextInput mode="outlined" dense label="Telegram" accessibilityLabel="Telegram" placeholder="@username или https://t.me/…" autoCapitalize="none" autoCorrect={false}
           value={value.telegramUrl || ''} maxLength={250} disabled={locked} onChangeText={telegramUrl => setValue(prev => ({ ...prev, telegramUrl }))} />
-        <TextInput mode="outlined" dense label="MAX" placeholder="https://max.ru/…" autoCapitalize="none" autoCorrect={false}
+        <TextInput mode="outlined" dense label="MAX" accessibilityLabel="MAX" placeholder="https://max.ru/…" autoCapitalize="none" autoCorrect={false}
           value={value.maxUrl || ''} maxLength={250} disabled={locked} onChangeText={maxUrl => setValue(prev => ({ ...prev, maxUrl }))} />
-        <TextInput mode="outlined" dense label="WhatsApp" placeholder="+7… или https://wa.me/…" autoCapitalize="none" autoCorrect={false}
+        <TextInput mode="outlined" dense label="WhatsApp" accessibilityLabel="WhatsApp" placeholder="+7… или https://wa.me/…" autoCapitalize="none" autoCorrect={false}
           left={<TextInput.Icon icon="whatsapp" />} value={value.whatsappUrl || ''} maxLength={250} disabled={locked}
           onChangeText={whatsappUrl => setValue(prev => ({ ...prev, whatsappUrl }))} />
-        <TextInput mode="outlined" dense label="Почта для клиентов" placeholder="name@example.ru" keyboardType="email-address" autoCapitalize="none" autoCorrect={false}
+        <TextInput mode="outlined" dense label="Почта для клиентов" accessibilityLabel="Почта для клиентов" placeholder="name@example.ru" keyboardType="email-address" autoCapitalize="none" autoCorrect={false}
           left={<TextInput.Icon icon="email-outline" />} value={value.email || ''} maxLength={254} disabled={locked}
           onChangeText={email => setValue(prev => ({ ...prev, email }))} />
         <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>Эти контакты видны по ссылке на заказ. Номер входа и привязка ботов не изменятся.</Text>
         <Button mode="contained" loading={busy} disabled={locked || JSON.stringify(value) === JSON.stringify(baseline)} onPress={() => void request(true)}>Сохранить контакты</Button>
       </> : failed ? <Button onPress={() => void request(false)}>Повторить</Button> : null}
       {message ? <HelperText type={failed ? 'error' : 'info'} visible accessibilityLiveRegion="polite">{message}</HelperText> : null}
-    </View>
-  </List.Accordion>;
+    </View>;
+  return embedded ? body : <List.Accordion title="Контакты для клиентов" description="Телефоны, мессенджеры и почта" expanded={expanded}
+    left={props => <List.Icon {...props} icon="card-account-phone-outline" />}
+    onPress={() => { setExpanded(!expanded); if (!expanded && !baseline && !busy) void request(false); }}>{body}</List.Accordion>;
 }
 const styles = StyleSheet.create({ body: { padding: 16, gap: 10 }, row: { flexDirection: 'row', alignItems: 'center' }, fields: { flex: 1, gap: 6 } });

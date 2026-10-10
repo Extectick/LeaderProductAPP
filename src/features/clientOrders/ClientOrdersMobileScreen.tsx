@@ -1,8 +1,4 @@
 ﻿import TabBarSpacer from '@/components/Navigation/TabBarSpacer';
-import {
-  FLOATING_TAB_BAR_BOTTOM_OFFSET,
-  FLOATING_TAB_BAR_HEIGHT,
-} from '@/components/Navigation/FloatingTabBar';
 import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 import { useOptionalTabBarVisibility } from '@/components/Navigation/TabBarVisibilityContext';
 import { useNotificationViewport } from '@/context/NotificationViewportContext';
@@ -5806,7 +5802,7 @@ function ProductLineEditorSheet({
   const selectedPackageGuid = displayedItem.packageGuid || null;
   const halfControlWidth = Math.max(120, (width - 32) / 2);
   const contentNeedsScroll = scrollViewportHeight > 0 && scrollContentHeight > scrollViewportHeight + 2;
-  const bottomReserve = keyboardVisible ? 0 : FLOATING_TAB_BAR_HEIGHT + FLOATING_TAB_BAR_BOTTOM_OFFSET + 8;
+  const bottomReserve = keyboardVisible ? 0 : 8;
   const measuredContentHeight = headerHeight && scrollContentHeight && footerHeight
     ? headerHeight + scrollContentHeight + footerHeight + bottomReserve
     : undefined;
@@ -8848,7 +8844,7 @@ const styles = StyleSheet.create({
   searchbarInput: { minHeight: 0, fontSize: 14, color: '#0F172A' },
   pickerToolbar: { paddingHorizontal: 8, paddingTop: 6, paddingBottom: 4, gap: 6 },
   pickerBottomSheetWrap: { position: 'absolute', zIndex: 14, bottom: 0 },
-  pickerBottomSheet: { width: '100%', height: '100%', borderTopLeftRadius: 8, borderTopRightRadius: 8, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#FFFFFF', paddingTop: 5, paddingBottom: FLOATING_TAB_BAR_HEIGHT + FLOATING_TAB_BAR_BOTTOM_OFFSET + 8, gap: 0, shadowColor: '#0F172A', shadowOpacity: 0.16, shadowRadius: 18, shadowOffset: { width: 0, height: -6 }, elevation: 14 },
+  pickerBottomSheet: { width: '100%', height: '100%', borderTopLeftRadius: 8, borderTopRightRadius: 8, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#FFFFFF', paddingTop: 5, paddingBottom: 8, gap: 0, shadowColor: '#0F172A', shadowOpacity: 0.16, shadowRadius: 18, shadowOffset: { width: 0, height: -6 }, elevation: 14 },
   pickerBottomSheetHandle: { alignSelf: 'center', width: 36, height: 4, borderRadius: 999, backgroundColor: '#D0D5DD', marginBottom: 12 },
   pickerBottomSheetHeader: { minHeight: 44, paddingLeft: 16, paddingRight: 12, paddingBottom: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   pickerBottomSheetTitleRow: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 10 },

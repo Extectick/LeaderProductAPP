@@ -65,3 +65,12 @@ test('failed save preserves edits for retry', async () => {
   expect(saveButton().props.disabled).toBe(false);
   expect(renderer.root.findByType('HelperText' as any).props.type).toBe('error');
 });
+
+test('embedded profile section loads once and does not require an accordion click', async () => {
+  await act(async () => { renderer = TestRenderer.create(React.createElement(ClientContactsEditor, { embedded: true })); });
+  expect(renderer.root.findAllByType('Accordion' as any)).toHaveLength(0);
+  expect(request).toHaveBeenCalledTimes(1);
+  expect(inputs('Telegram').props.value).toBe('');
+  await act(async () => inputs('Почта для клиентов').props.onChangeText('client@example.ru'));
+  expect(request).toHaveBeenCalledTimes(1);
+});
