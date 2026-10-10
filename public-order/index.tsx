@@ -1,9 +1,8 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { Alert, Button, CssBaseline, IconButton, Skeleton, ThemeProvider, Tooltip, createTheme, useMediaQuery } from '@mui/material';
+import { Alert, Button, CssBaseline, IconButton, Skeleton, ThemeProvider, createTheme, useMediaQuery } from '@mui/material';
 import { ProductImageGalleryDialog, type ProductImageGallery } from '../src/features/clientOrders/components/ProductImageGalleryDialog';
-import PhoneIcon from '@mui/icons-material/PhoneOutlined';
-import TelegramIcon from '@mui/icons-material/Telegram';
+import { ManagerContactDialog, type ManagerContacts } from './ManagerContactDialog';
 import ChatIcon from '@mui/icons-material/ChatBubbleOutline';
 import DeliveryIcon from '@mui/icons-material/LocalShippingOutlined';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -13,7 +12,7 @@ import './style.css';
 
 type Item = { id: string; name: string; quantity: string; unit: string; unitPrice: string; amount: string; image: { id: string; version: string } | null };
 type Order = { number: string; date: string | null; customer: string; deliveryDate: string | null; currency: string; cancelled: boolean;
-  total: string; updatedAt: string; items: Item[]; manager: { name: string; phones: { label: string; number: string }[]; telegramUrl: string | null; maxUrl: string | null } };
+  total: string; updatedAt: string; items: Item[]; manager: ManagerContacts };
 const theme = createTheme({ palette: { primary: { main: '#1859f7' }, text: { primary: '#111a35', secondary: '#61708a' } },
   typography: { fontFamily: 'Arial, system-ui, sans-serif', button: { textTransform: 'none', fontWeight: 600 } },
   shape: { borderRadius: 8 }, components: { MuiButton: { defaultProps: { disableElevation: true } } } });
@@ -64,6 +63,7 @@ function App() {
   const [unavailable, setUnavailable] = React.useState(!validToken);
   const [error, setError] = React.useState('');
   const [photo, setPhoto] = React.useState<ProductImageGallery | null>(null);
+  const [contactsOpen, setContactsOpen] = React.useState(false);
   const isPhoneDialog = useMediaQuery('(max-width:600px)');
   const footer = React.useRef<HTMLElement | null>(null);
   const [footerHeight, setFooterHeight] = React.useState(0);
@@ -125,18 +125,15 @@ function App() {
           <footer className="bottom-bar" ref={footer} aria-label="Доставка, сумма и контакты менеджера"><div className="order-footer">
             <div className="delivery"><DeliveryIcon aria-hidden="true" /><div><span className="footer-label">Доставка</span><strong>{order.deliveryDate ? date(order.deliveryDate) : 'Уточните у менеджера'}</strong></div></div>
             <div className="total" aria-label="Итого"><span className="footer-label">Сумма заказа</span><strong>{money(order.total, order.currency)}</strong></div>
-          <section className={`manager${order.manager.phones.length > 1 || order.manager.telegramUrl || order.manager.maxUrl ? ' manager-expanded' : ''}`} aria-label="Связаться с менеджером"><strong className="manager-name" title={order.manager.name}>{order.manager.name || 'Менеджер'}</strong>
-            <div className="contacts"><div className="phone-list" aria-label="Телефоны менеджера">{order.manager.phones.map(phone => <Button key={phone.number} className="contact-phone" href={`tel:${phone.number}`} aria-label={`Позвонить: ${phone.label ? `${phone.label}, ` : ''}${phone.number}`} title={phone.label || undefined} startIcon={<PhoneIcon />} variant="contained">{phone.number}</Button>)}</div>
-              <div className="messengers">
-              {order.manager.telegramUrl ? <Tooltip title="Telegram"><IconButton href={order.manager.telegramUrl} target="_blank" rel="noreferrer noopener" aria-label="Написать в Telegram" color="primary"><TelegramIcon /></IconButton></Tooltip> : null}
-              {order.manager.maxUrl ? <Tooltip title="MAX"><IconButton href={order.manager.maxUrl} target="_blank" rel="noreferrer noopener" aria-label="Написать в MAX" color="primary"><ChatIcon /></IconButton></Tooltip> : null}
-              </div>
-            </div>
-          </section>
-          </div></footer>
+          </div>
+            <Button className="manager-contact-button" variant="contained" fullWidth startIcon={<ChatIcon />}
+              aria-haspopup="dialog" aria-expanded={contactsOpen} onClick={() => setContactsOpen(true)}>Связь с менеджером</Button>
+          </footer>
         </> : <section className="empty-state"><h1>Не удалось загрузить заказ</h1><Button variant="contained" disabled={busy} onClick={() => void refresh()}>Повторить</Button></section>}
       </>}
     </main>
-  </div><ProductImageGalleryDialog productImagePreview={photo} setProductImagePreview={setPhoto} isPhoneDialog={isPhoneDialog} /></ThemeProvider>;
+  </div><ProductImageGalleryDialog productImagePreview={photo} setProductImagePreview={setPhoto} isPhoneDialog={isPhoneDialog} />
+    <ManagerContactDialog manager={order?.manager ?? null} open={contactsOpen && !!order && !unavailable} onClose={() => setContactsOpen(false)} />
+  </ThemeProvider>;
 }
 createRoot(document.getElementById('root')!).render(<App />);
