@@ -33,7 +33,9 @@ config.transformer = {
 };
 config.resolver = {
   ...config.resolver,
-  assetExts: config.resolver.assetExts.filter((ext) => ext !== 'svg'),
+  // expo-sqlite's web worker imports its WASM asset even when the app's web
+  // path skips opening the native-only offline catalog.
+  assetExts: [...new Set([...config.resolver.assetExts.filter((ext) => ext !== 'svg'), 'wasm'])],
   sourceExts: [...config.resolver.sourceExts, 'svg'],
 };
 
