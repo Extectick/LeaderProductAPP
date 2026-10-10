@@ -1,6 +1,6 @@
 ﻿import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 import { useThemeColor } from '@/hooks/useThemeColor';
-import { OrderShareDialog, OrderShareFeedback } from './components/OrderShareDialog';
+import { OrderShareFeedback } from './components/OrderShareFeedback';
 import { useOrderShareActions } from './hooks/useOrderShareActions';
 import { ProductImageGalleryDialog, WebProductImage, PRODUCT_IMAGE_PLACEHOLDER_URI, type ProductGalleryImage } from './components/ProductImageGalleryDialog';
 import {
@@ -1880,7 +1880,7 @@ export default function ClientOrdersWebScreen() {
     return selected;
   }, [isSinglePane, workspace]);
 
-  const orderSharing = useOrderShareActions(workspace, selectOrderFromList);
+  const orderSharing = useOrderShareActions(workspace);
 
   React.useEffect(() => {
     if (!startOrderGuid || handledStartOrderGuidRef.current === startOrderGuid) return;
@@ -3471,7 +3471,7 @@ export default function ClientOrdersWebScreen() {
         <MenuItem disabled={workspace.mutationLocked || workspace.loadingDetail || orderSharing.copying} onClick={() => {
           const guid = orderContextMenu?.order.guid;
           closeOrderContextMenu();
-          if (guid) void orderSharing.openFromList(guid);
+          if (guid) void orderSharing.copyFromList(guid);
         }}>
           <Stack direction="row" spacing={1} alignItems="center"><Ionicons name="link-outline" size={16} color="#2563EB" /><Typography sx={{ fontSize: 13, fontWeight: 800 }}>Ссылка для клиента</Typography></Stack>
         </MenuItem>
@@ -3522,11 +3522,10 @@ export default function ClientOrdersWebScreen() {
       </Dialog>
 
       <Menu anchorEl={documentMenuAnchor} open={!!documentMenuAnchor} onClose={() => setDocumentMenuAnchor(null)}>
-        <MenuItem disabled={workspace.mutationLocked || orderSharing.copying} onClick={() => { setDocumentMenuAnchor(null); orderSharing.open(); }}>
+        <MenuItem disabled={workspace.mutationLocked || orderSharing.copying} onClick={() => { setDocumentMenuAnchor(null); void orderSharing.copy(); }}>
           <Stack direction="row" spacing={1} alignItems="center"><Ionicons name="link-outline" size={16} color="#2563EB" /><Typography sx={{ fontSize: 13, fontWeight: 800 }}>Ссылка для клиента</Typography></Stack>
         </MenuItem>
       </Menu>
-      <OrderShareDialog visible={orderSharing.visible} onClose={orderSharing.close} workspace={workspace} />
       <OrderShareFeedback message={orderSharing.feedback} onDismiss={orderSharing.dismissFeedback} />
       <Dialog open={confirmSubmitOpen} onClose={() => setConfirmSubmitOpen(false)} maxWidth="xs" fullWidth fullScreen={isPhoneDialog}>
         <DialogTitle>{isErrorRetryTo1c ? 'Повторить отправку в 1С?' : isResubmitTo1c ? 'Переотправить в 1С?' : 'Отправить в 1С?'}</DialogTitle>

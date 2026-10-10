@@ -50,7 +50,7 @@ function ProductPhoto({ item, onOpen }: { item: Item; onOpen: (url: string, titl
     if (element.current) observer.observe(element.current);
     return () => { observer.disconnect(); controller.abort(); if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [item.image?.id, item.image?.version]);
-  return <div className="photo" ref={element}>
+  return <div className={`photo${url ? ' photo-loaded' : ''}`} ref={element}>
     {loading ? <Skeleton variant="rectangular" width="100%" height="100%" /> : url ?
       <button className="photo-button" onClick={() => onOpen(url, item.name)} aria-label={`Увеличить фото: ${item.name}`}><img src={url} alt={item.name} decoding="async" /></button>
       : <div className="photo-empty"><ImageIcon aria-hidden="true" /><span>Нет фото</span></div>}
@@ -106,12 +106,16 @@ function App() {
     return () => observer.disconnect();
   }, [!!order, unavailable]);
   return <ThemeProvider theme={theme}><CssBaseline /><div className="page" style={{ paddingBottom: footerHeight }}>
-    <header className="brand"><img src={logo} alt="" /><span>Лидер-Продукт</span></header>
+    <header className="order-header">
+      <div className="brand"><img src={logo} alt="" /><span>Лидер-Продукт</span>
+        {order?.date && !unavailable ? <time dateTime={order.date}>от {new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit', timeZone: 'Asia/Omsk' }).format(new Date(order.date))}</time> : null}
+      </div>
+      {loading ? <Skeleton className="customer-skeleton" height={28} width="65%" /> : order && !unavailable ? <h1>{order.customer}</h1> : null}
+    </header>
     <main>
       {unavailable ? <section className="empty-state"><h1>Ссылка недоступна</h1><p>Обратитесь к менеджеру за новой ссылкой на заказ.</p></section> : <>
         {error ? <Alert severity="warning" className="network-note" action={<IconButton color="inherit" aria-label="Обновить заказ" disabled={busy} onClick={() => void refresh()}><RefreshIcon /></IconButton>}>{error}</Alert> : null}
-        {loading ? <><div className="intro"><Skeleton width={110} /><Skeleton height={48} width="60%" /><Skeleton width={210} /></div><section className="products">{[1, 2, 3, 4].map(i => <article key={i}><div className="photo"><Skeleton variant="rectangular" width="100%" height="100%" /></div><Skeleton height={30} /><Skeleton width="65%" /></article>)}</section></> : order ? <>
-          <section className="intro"><span className="eyebrow">Заказ для</span><h1>{order.customer}</h1><p>{order.number === 'Черновик' ? 'Заказ' : `№ ${order.number}`}{order.date ? ` от ${date(order.date, true)}` : ''}</p></section>
+        {loading ? <section className="products">{[1, 2, 3, 4].map(i => <article key={i}><div className="photo"><Skeleton variant="rectangular" width="100%" height="100%" /></div><Skeleton height={30} /><Skeleton width="65%" /></article>)}</section> : order ? <>
           {order.cancelled ? <Alert severity="info">Заказ отменён</Alert> : null}
           <section className="products" aria-label="Товары заказа">{order.items.map(item => <article key={item.id}>
             <ProductPhoto item={item} onOpen={(url, title) => setPhoto({ title, index: 0, images: [{ key: item.id, previewUrl: url, thumbUrl: url }] })} />
@@ -119,16 +123,17 @@ function App() {
             <p className="line-total">{money(item.amount, order.currency)}</p>
           </article>)}</section>
           <footer className="bottom-bar" ref={footer} aria-label="Доставка, сумма и контакты менеджера"><div className="order-footer">
-            <div className="delivery"><DeliveryIcon aria-hidden="true" /><span>{order.deliveryDate ? `Доставка ${date(order.deliveryDate)}` : 'Доставка — уточните'}</span></div>
-            <div className="total" aria-label="Итого"><strong>{money(order.total, order.currency)}</strong></div>
-          <section className="manager" aria-label="Связаться с менеджером"><strong className="manager-name" title={order.manager.name}>{order.manager.name || 'Менеджер'}</strong>
-            <div className="contacts">{order.manager.phones.map(phone => <Button key={phone.number} className="contact-phone" href={`tel:${phone.number}`} startIcon={<PhoneIcon />} variant="text"><span>{phone.label ? <small>{phone.label}</small> : null}{phone.number}</span></Button>)}
+            <div className="delivery"><DeliveryIcon aria-hidden="true" /><div><span className="footer-label">Доставка</span><strong>{order.deliveryDate ? date(order.deliveryDate) : 'Уточните у менеджера'}</strong></div></div>
+            <div className="total" aria-label="Итого"><span className="footer-label">Сумма заказа</span><strong>{money(order.total, order.currency)}</strong></div>
+          <section className={`manager${order.manager.phones.length > 1 || order.manager.telegramUrl || order.manager.maxUrl ? ' manager-expanded' : ''}`} aria-label="Связаться с менеджером"><strong className="manager-name" title={order.manager.name}>{order.manager.name || 'Менеджер'}</strong>
+            <div className="contacts"><div className="phone-list" aria-label="Телефоны менеджера">{order.manager.phones.map(phone => <Button key={phone.number} className="contact-phone" href={`tel:${phone.number}`} aria-label={`Позвонить: ${phone.label ? `${phone.label}, ` : ''}${phone.number}`} title={phone.label || undefined} startIcon={<PhoneIcon />} variant="contained">{phone.number}</Button>)}</div>
+              <div className="messengers">
               {order.manager.telegramUrl ? <Tooltip title="Telegram"><IconButton href={order.manager.telegramUrl} target="_blank" rel="noreferrer noopener" aria-label="Написать в Telegram" color="primary"><TelegramIcon /></IconButton></Tooltip> : null}
               {order.manager.maxUrl ? <Tooltip title="MAX"><IconButton href={order.manager.maxUrl} target="_blank" rel="noreferrer noopener" aria-label="Написать в MAX" color="primary"><ChatIcon /></IconButton></Tooltip> : null}
+              </div>
             </div>
           </section>
           </div></footer>
-          <div className="freshness"><span>Обновлено {new Date(order.updatedAt).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span><Tooltip title="Обновить"><IconButton size="small" disabled={busy} onClick={() => void refresh()} aria-label="Обновить заказ"><RefreshIcon fontSize="small" /></IconButton></Tooltip></div>
         </> : <section className="empty-state"><h1>Не удалось загрузить заказ</h1><Button variant="contained" disabled={busy} onClick={() => void refresh()}>Повторить</Button></section>}
       </>}
     </main>

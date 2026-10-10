@@ -1,52 +1,35 @@
 import React from 'react';
 import * as Clipboard from 'expo-clipboard';
 import type { useClientOrdersWorkspace } from '../useClientOrdersWorkspace';
-import { publishClientOrderShare } from '../lib/orderSharing';
+import { publishClientOrderShare, publishClientOrderShareByGuid } from '../lib/orderSharing';
 
 type Workspace = ReturnType<typeof useClientOrdersWorkspace>;
-export function useOrderShareActions(workspace: Workspace, selectOrder: (guid: string) => Promise<boolean>) {
+export function useOrderShareActions(workspace: Workspace) {
   const workspaceRef = React.useRef(workspace);
   workspaceRef.current = workspace;
-  const [visible, setVisible] = React.useState(false);
-  const [pendingGuid, setPendingGuid] = React.useState<string | null>(null);
   const [copying, setCopying] = React.useState(false);
   const [feedback, setFeedback] = React.useState('');
-  const openingRef = React.useRef(false);
   const copyingRef = React.useRef(false);
   const mounted = React.useRef(true);
   React.useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  React.useEffect(() => {
-    // Wait for React to commit the loaded document, not the previously selected order.
-    if (pendingGuid && workspace.selectedOrder?.guid === pendingGuid && !workspace.loadingDetail) {
-      setPendingGuid(null); setVisible(true);
-    }
-  }, [pendingGuid, workspace.selectedOrder?.guid, workspace.loadingDetail]);
-  const open = React.useCallback(() => { setPendingGuid(null); setVisible(true); }, []);
-  const close = React.useCallback(() => { setPendingGuid(null); setVisible(false); }, []);
-  const openFromList = React.useCallback(async (guid: string) => {
-    if (openingRef.current || copyingRef.current) return;
-    openingRef.current = true;
-    setPendingGuid(null);
-    try {
-      const opened = await selectOrder(guid);
-      if (mounted.current && opened) setPendingGuid(guid);
-    } catch {
-      if (mounted.current) setFeedback('Не удалось открыть заказ. Повторите попытку.');
-    } finally { openingRef.current = false; }
-  }, [selectOrder]);
-  const copy = React.useCallback(async () => {
+  // Stable callbacks are required by the mobile header override. A list action
+  // never navigates or mutates whichever draft happens to be open in the editor.
+  const copyLink = React.useCallback(async (guid?: string) => {
     const current = workspaceRef.current;
-    if (copyingRef.current || openingRef.current || current.loadingDetail || current.mutationLocked) return;
-    copyingRef.current = true; setCopying(true); setFeedback('');
+    if (copyingRef.current || current.mutationLocked || (guid === undefined && current.loadingDetail)) return;
+    copyingRef.current = true; setCopying(true); setFeedback('Копирую ссылку…');
     try {
-      const { link } = await publishClientOrderShare(current);
+      const { link } = guid !== undefined ? await publishClientOrderShareByGuid(guid) : await publishClientOrderShare(current);
       if (!mounted.current) return;
-      await Clipboard.setStringAsync(link.url);
+      const copied = await Clipboard.setStringAsync(link.url);
+      if (copied === false) throw new Error('Не удалось скопировать ссылку. Разрешите доступ к буферу обмена и повторите.');
       if (mounted.current) setFeedback('Ссылка скопирована');
     } catch (error: any) {
       if (mounted.current) setFeedback(error?.message || 'Не удалось скопировать ссылку. Проверьте подключение.');
     } finally { copyingRef.current = false; if (mounted.current) setCopying(false); }
   }, []);
+  const copy = React.useCallback(() => copyLink(), [copyLink]);
+  const copyFromList = React.useCallback((guid: string) => copyLink(guid), [copyLink]);
   const dismissFeedback = React.useCallback(() => setFeedback(''), []);
-  return { visible, open, close, openFromList, copy, copying, feedback, dismissFeedback };
+  return { copy, copyFromList, copying, feedback, dismissFeedback };
 }

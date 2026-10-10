@@ -7,7 +7,7 @@ import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderConte
 import { useOptionalTabBarVisibility } from '@/components/Navigation/TabBarVisibilityContext';
 import { useNotificationViewport } from '@/context/NotificationViewportContext';
 import DateTimeInput from '@/components/ui/DateTimeInput';
-import { OrderShareDialog, OrderShareFeedback } from './components/OrderShareDialog';
+import { OrderShareFeedback } from './components/OrderShareFeedback';
 import { useOrderShareActions } from './hooks/useOrderShareActions';
 import ContextMenuTrigger from '@/components/ui/ContextMenuTrigger';
 import type { ContextMenuItem } from '@/components/ui/ContextMenu';
@@ -1909,8 +1909,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     }
   }, [editorPagerOffset, editorPagerPosition, openingDocument, openingOrderGuid, workspace.selectOrder]);
 
-  const orderSharing = useOrderShareActions(workspace, selectOrderByGuid);
-  const openOrderShare = React.useCallback(() => { setActionsMenuOpen(false); orderSharing.open(); }, [orderSharing.open]);
+  const orderSharing = useOrderShareActions(workspace);
+  const openOrderShare = React.useCallback(() => { setActionsMenuOpen(false); void orderSharing.copy(); }, [orderSharing.copy]);
 
   const selectOrder = React.useCallback(
     (order: ClientOrder) => selectOrderByGuid(order.guid),
@@ -2807,7 +2807,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   }, [selectOrder]);
   const handleOrderListContextAction = React.useCallback((order: ClientOrder, action: OrderListContextAction) => {
     if (action === 'order-share') {
-      void orderSharing.openFromList(order.guid);
+      void orderSharing.copyFromList(order.guid);
       return;
     }
     const isRetry = !!(
@@ -2880,7 +2880,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     }
 
     void requestInvoiceNow(order);
-  }, [orderSharing.openFromList, openInvoiceActions, requestInvoiceNow, workspace.copyOrderFromList, workspace.submitOrderFromList, workspace.syncDeviceDrafts, workspace.unqueueOrder]);
+  }, [orderSharing.copyFromList, openInvoiceActions, requestInvoiceNow, workspace.copyOrderFromList, workspace.submitOrderFromList, workspace.syncDeviceDrafts, workspace.unqueueOrder]);
   const orderListContextMenuDisabled = !!openingOrderGuid
     || !!openingDocument
     || workspace.submitting
@@ -3369,7 +3369,6 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         onClose={() => setProductGallery(null)}
       />
 
-      <OrderShareDialog visible={orderSharing.visible} onClose={orderSharing.close} workspace={workspace} />
       <OrderShareFeedback message={orderSharing.feedback} onDismiss={orderSharing.dismissFeedback} />
       <ConfirmDialog
         styles={styles}

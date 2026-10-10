@@ -1,6 +1,39 @@
-# Public order — dev design QA, 2026-10-10
+# Public order — dev design QA, 2026-10-11
 
 final result: passed
+
+## Latest scoped iteration (2026-10-11)
+
+Source visual truth: deployed dev page captured as `qa/public-order/mobile-before-20261011.png`, plus the user's six scoped changes. Keep the large 4/2 product grid; replace the intro with customer below the brand and date at right, restyle the pinned footer, remove the freshness block, preserve the missing-photo tile but remove loaded-photo background. Existing application image viewer remains a shared component (MUI on web; native Paper/Expo Image is not imported into the standalone DOM page).
+
+Implementation evidence (local preview, real dev QA order; no customer/1C writes):
+
+- `qa/public-order/mobile-after-20261011.png`: 390 × 844 CSS viewport, header, two-column layout, white photo background and pinned footer.
+- `qa/public-order/mobile-footer-20261011.png`: list scrolled to end; last amount bottom 696.61 < footer top 721.11, no occlusion.
+- `qa/public-order/gallery-20261011.png`: shared full-screen dark gallery, photo contain-fit, 44 px close control; open/close exercised.
+- `qa/public-order/small-20261011.png`: 320 × 740, no horizontal overflow (305 px document width including scrollbar exclusion).
+- `qa/public-order/desktop-20261011.png`: 1440 × 1024, four columns, aligned amount baselines, fixed flat footer.
+- `qa/public-order/edge-before-20261011.png` and `edge-after-20261011.png`: explicitly synthetic local-only fixture with five test phones, Telegram/MAX and a missing photo. Dev records are not modified.
+
+Comparison: before/after mobile images were emitted together in one comparison input. The multi-contact before/after pair was also compared together. Both captures use the same 390 × 844 CSS viewport; the browser capture excludes chrome/scrollbar area (375 × 811 raster), while the fullscreen gallery is 390 × 843. No raster-vs-CSS density mismatch was classified as a design defect. Footer and photo controls are readable in the full captures, so no separate cropped image was necessary.
+
+Iteration findings:
+
+- [P2, fixed] Five phone buttons pushed Telegram/MAX out of view. Split the contact strip into a scrollable phone list and non-shrinking messenger actions; allow a compact extra name row on mobile. In the final 390 px fixture Telegram is x=265..309 and MAX x=315..359, both inside the 375 px content area.
+- [P2, fixed by request] The share menu navigated into a document and opened a modal. Removed the dialog and changed list publication to GUID-only, followed by clipboard + Snackbar. The editor path still saves changes as API draft only.
+- No remaining P0/P1/P2 findings in these checked states.
+
+Required fidelity surfaces:
+
+- Typography: existing Arial/system stack, 14 px mobile names and 21 px amounts retained. Compact brand/customer/date hierarchy replaces the large intro deliberately. Full product names remain visible.
+- Layout: existing large four/two-column product presentation retained; quantity/amount aligned within each grid row. Pinned footer measured dynamically to keep final products accessible; 44 px contact targets.
+- Colors: white loaded-photo surfaces, blue prices/actions, restrained dividers, dark full-screen viewer matching the native visual direction. Missing-photo tile remains #f5f7f9.
+- Images: real catalog photos and existing logo, contain-fit and no cropping; original missing-photo icon/text retained. No generated replacement artwork.
+- Copy: only customer under brand and date at right, no freshness text. No cost, stock or internal data added. Extra phones and messenger links remain supported.
+
+Checks: APP/public-web TypeScript and public build passed; 123 targeted APP tests passed (including 18 sharing cases). Browser open/close gallery and page-end visibility passed; warning/error log empty. Native Android menu interactions were covered by hook/service tests, not claimed as physical-device QA. Phone/messenger hrefs were inspected, no call/message was sent. Production, API source and 1C unchanged.
+
+## Prior iteration record (2026-10-10)
 
 ## Source and implementation
 

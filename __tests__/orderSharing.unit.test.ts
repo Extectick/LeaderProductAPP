@@ -64,49 +64,83 @@ describe('customer order link publication', () => {
 describe('sharing entry points', () => {
   let renderer: TestRenderer.ReactTestRenderer;
   let actions: ReturnType<typeof useOrderShareActions>;
-  function Harness({ ws, select }: { ws: any; select: any }) { actions = useOrderShareActions(ws, select); return null; }
-  const mount = async (ws: any, select: any) => { await act(async () => { renderer = TestRenderer.create(React.createElement(Harness, { ws, select })); }); };
+  function Harness({ ws }: { ws: any }) { actions = useOrderShareActions(ws); return null; }
+  const mount = async (ws: any) => { await act(async () => { renderer = TestRenderer.create(React.createElement(Harness, { ws })); }); };
   afterEach(() => { if (renderer) act(() => renderer.unmount()); });
 
-  it('waits for the requested list document, never opening the previous one', async () => {
-    const select = jest.fn(async () => true);
-    await mount(workspace(), select);
-    await act(async () => { await actions.openFromList('second-order'); });
-    expect(select).toHaveBeenCalledWith('second-order');
-    expect(actions.visible).toBe(false);
-    await act(async () => { renderer.update(React.createElement(Harness, { ws: workspace({ selectedOrder: { guid: 'second-order' } }), select })); });
-    expect(actions.visible).toBe(true);
-    expect(apiClient).not.toHaveBeenCalled();
-  });
-  it('does not open a link dialog if document selection was cancelled', async () => {
-    await mount(workspace(), jest.fn(async () => false));
-    await act(async () => { await actions.openFromList('second-order'); });
-    expect(actions.visible).toBe(false);
-  });
-  it('copies from the document number once on rapid taps without a dialog', async () => {
-    await mount(workspace(), jest.fn());
-    await act(async () => { await Promise.all([actions.copy(), actions.copy()]); });
+  it('copies a list link by GUID without loading or saving the selected editor', async () => {
+    const ws = workspace({ dirty: true, loadingDetail: true, selectOrder: jest.fn() });
+    await mount(ws);
+    await act(async () => { await actions.copyFromList('second-order'); });
     expect(apiClient).toHaveBeenCalledTimes(1);
+    expect(apiClient).toHaveBeenCalledWith('/api/order-sharing/second-order/share', { method: 'POST', body: { rotate: false } });
+    expect(ws.selectOrder).not.toHaveBeenCalled();
+    expect(ws.saveDraft).not.toHaveBeenCalled();
+    expect(ws.selectedOrder.guid).toBe('api-draft');
     expect(Clipboard.setStringAsync).toHaveBeenCalledWith(link.url);
     expect(actions.feedback).toBe('Ссылка скопирована');
-    expect(actions.visible).toBe(false);
+    expect(actions).not.toHaveProperty('visible');
+  });
+  it('copies from the list even if no document is selected', async () => {
+    const ws = workspace({ selectedOrder: null });
+    await mount(ws);
+    await act(async () => { await actions.copyFromList('list-order'); });
+    expect(ws.saveDraft).not.toHaveBeenCalled();
+    expect(apiClient).toHaveBeenCalledWith('/api/order-sharing/list-order/share', expect.anything());
+  });
+  it.each(['device-123', ''])('never falls back to the selected editor for local/invalid identity %s', async guid => {
+    const ws = workspace();
+    await mount(ws);
+    await act(async () => { await actions.copyFromList(guid); });
+    expect(apiClient).not.toHaveBeenCalled();
+    expect(ws.saveDraft).not.toHaveBeenCalled();
+    expect(Clipboard.setStringAsync).not.toHaveBeenCalled();
+    expect(actions.feedback).toContain('сначала сохраните его на сервере');
+  });
+  it('copies once on rapid menu, list and title taps without a dialog', async () => {
+    await mount(workspace());
+    await act(async () => { await Promise.all([actions.copy(), actions.copyFromList('second'), actions.copy()]); });
+    expect(apiClient).toHaveBeenCalledTimes(1);
+    expect(Clipboard.setStringAsync).toHaveBeenCalledTimes(1);
+    expect(actions.feedback).toBe('Ссылка скопирована');
     expect(actions.copying).toBe(false);
   });
   it('shows feedback without copying when offline publication fails', async () => {
     (apiClient as jest.Mock).mockRejectedValue(new Error('Нет сети'));
-    await mount(workspace(), jest.fn());
-    await act(async () => { await actions.copy(); });
+    await mount(workspace());
+    await act(async () => { await actions.copyFromList('list-order'); });
     expect(Clipboard.setStringAsync).not.toHaveBeenCalled();
     expect(actions.feedback).toBe('Нет сети');
     expect(actions.copying).toBe(false);
   });
-  it('keeps the header callback stable but uses the latest selected document', async () => {
-    const select = jest.fn();
-    await mount(workspace(), select);
-    const copy = actions.copy;
-    await act(async () => { renderer.update(React.createElement(Harness, { ws: workspace({ selectedOrder: { guid: 'latest' } }), select })); });
+  it('does not claim clipboard success when the browser denies access', async () => {
+    (Clipboard.setStringAsync as jest.Mock).mockResolvedValueOnce(false);
+    await mount(workspace());
+    await act(async () => { await actions.copy(); });
+    expect(actions.feedback).toContain('Не удалось скопировать');
+  });
+  it('blocks both entry points during another mutation', async () => {
+    await mount(workspace({ mutationLocked: true }));
+    await act(async () => { await actions.copy(); await actions.copyFromList('list-order'); });
+    expect(apiClient).not.toHaveBeenCalled();
+  });
+  it('keeps callbacks stable but uses the latest selected document', async () => {
+    await mount(workspace());
+    const { copy, copyFromList } = actions;
+    await act(async () => { renderer.update(React.createElement(Harness, { ws: workspace({ selectedOrder: { guid: 'latest' } }) })); });
     expect(actions.copy).toBe(copy);
+    expect(actions.copyFromList).toBe(copyFromList);
     await act(async () => { await actions.copy(); });
     expect(apiClient).toHaveBeenCalledWith('/api/order-sharing/latest/share', expect.anything());
+  });
+  it('does not copy into the clipboard after the screen unmounts', async () => {
+    let finish!: (value: unknown) => void;
+    (apiClient as jest.Mock).mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    await mount(workspace());
+    let task!: Promise<void>;
+    act(() => { task = actions.copyFromList('list-order'); });
+    act(() => renderer.unmount());
+    await act(async () => { finish({ ok: true, data: link }); await task; });
+    expect(Clipboard.setStringAsync).not.toHaveBeenCalled();
   });
 });
