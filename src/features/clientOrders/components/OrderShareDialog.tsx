@@ -13,11 +13,11 @@ export function OrderShareDialog({ visible, onClose, workspace }: { visible: boo
   const [guid, setGuid] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [message, setMessage] = React.useState('');
-  const [confirm, setConfirm] = React.useState<'revoke' | 'rotate' | null>(null);
+  const [confirm, setConfirm] = React.useState(false);
   const requestId = React.useRef(0);
   React.useEffect(() => {
     const id = ++requestId.current;
-    setLink(null); setMessage(''); setConfirm(null); setBusy(false);
+    setLink(null); setMessage(''); setConfirm(false); setBusy(false);
     if (!visible) return;
     const selected = workspace.selectedOrder?.guid;
     const serverGuid = selected && !selected.startsWith('device-') ? selected : null;
@@ -35,12 +35,12 @@ export function OrderShareDialog({ visible, onClose, workspace }: { visible: boo
     // A successful save changes the selected guid; do not reset this open dialog.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
-  const publish = async (rotate = false) => {
+  const publish = async () => {
     if (busy || workspace.mutationLocked) return;
-    setBusy(true); setMessage(''); setConfirm(null);
+    setBusy(true); setMessage(''); setConfirm(false);
     const id = requestId.current;
     try {
-      const result = await publishClientOrderShare(workspace, rotate);
+      const result = await publishClientOrderShare(workspace);
       if (id !== requestId.current) return;
       setGuid(result.guid); setLink(result.link);
     } catch (error: any) { if (id === requestId.current) setMessage(error?.message || 'Не удалось создать ссылку'); }
@@ -48,7 +48,7 @@ export function OrderShareDialog({ visible, onClose, workspace }: { visible: boo
   };
   const revoke = async () => {
     if (!guid || busy) return;
-    setBusy(true); setMessage(''); setConfirm(null);
+    setBusy(true); setMessage(''); setConfirm(false);
     try {
       const result = await apiClient(`/api/order-sharing/${encodeURIComponent(guid)}/share`, { method: 'DELETE' });
       if (!result.ok) throw new Error(result.message);
@@ -77,13 +77,10 @@ export function OrderShareDialog({ visible, onClose, workspace }: { visible: boo
           <Button icon="content-copy" disabled={busy} onPress={() => { void Clipboard.setStringAsync(link!.url).then(() => setMessage('Ссылка скопирована')).catch(() => setMessage('Не удалось скопировать ссылку')); }}>Копировать ссылку</Button>
           <Button icon="open-in-new" disabled={busy} onPress={() => { void Linking.openURL(link!.url).catch(() => setMessage('Не удалось открыть браузер')); }}>Посмотреть как клиент</Button>
         </>}
-        {link?.active && !confirm ? <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-          <Button compact disabled={busy} onPress={() => setConfirm('rotate')}>Новая ссылка</Button>
-          <Button compact textColor="#B42318" disabled={busy} onPress={() => setConfirm('revoke')}>Отключить</Button>
-        </View> : null}
-        {confirm ? <><Text>Старая ссылка перестанет работать. Продолжить?</Text><View style={{ flexDirection: 'row' }}>
-          <Button onPress={() => setConfirm(null)}>Отмена</Button>
-          <Button onPress={() => { void (confirm === 'revoke' ? revoke() : publish(true)); }}>Подтвердить</Button>
+        {link?.active && !confirm ? <Button compact textColor="#B42318" disabled={busy} onPress={() => setConfirm(true)}>Отключить</Button> : null}
+        {confirm ? <><Text>Ссылка перестанет работать. Продолжить?</Text><View style={{ flexDirection: 'row' }}>
+          <Button onPress={() => setConfirm(false)}>Отмена</Button>
+          <Button onPress={() => { void revoke(); }}>Подтвердить</Button>
         </View></> : null}
       </View>
     </Dialog.Content>

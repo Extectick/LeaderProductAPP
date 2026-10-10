@@ -20,7 +20,7 @@ const theme = createTheme({ palette: { primary: { main: '#1859f7' }, text: { pri
 // A second shared URL opened in this tab must not keep the previous capability/data.
 window.addEventListener('hashchange', () => window.location.reload());
 const token = window.location.hash.slice(1);
-const validToken = /^[A-Za-z0-9_-]{43}$/.test(token);
+const validToken = (token.length === 12 || token.length === 43) && /^[A-Za-z0-9_-]+$/.test(token) && !/\s/.test(token);
 const money = (value: string, currency: string, precision = 2) => new Intl.NumberFormat('ru-RU', { style: 'currency', currency, minimumFractionDigits: 0, maximumFractionDigits: precision }).format(Number(value));
 const number = (value: string) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 4 }).format(Number(value));
 const date = (value: string | null, year = false) => value ? new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', ...(year ? { year: 'numeric' } : {}), timeZone: 'Asia/Omsk' }).format(new Date(value)) : '';
