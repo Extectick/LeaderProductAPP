@@ -4330,6 +4330,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
   return {
     orders: sortedOrders,
+    offlineUserId,
     ordersMeta,
     todaySummary,
     loadingTodaySummary,

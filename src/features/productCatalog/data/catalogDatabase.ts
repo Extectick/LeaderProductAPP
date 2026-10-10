@@ -8,7 +8,7 @@ import type { ClientOrderProduct } from '@/utils/clientOrdersService';
 import type { CatalogChange, CatalogProduct, CatalogSearchResult } from '../model/catalog.types';
 
 const DATABASE_NAME = 'leader-product-catalog.db';
-const DATABASE_VERSION = 3;
+const DATABASE_VERSION = 4;
 
 type CatalogMeta = {
   epoch: string | null;
@@ -60,6 +60,16 @@ async function migrate(db: SQLite.SQLiteDatabase) {
     CREATE TABLE IF NOT EXISTS catalog_meta (
       key TEXT PRIMARY KEY NOT NULL,
       value TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS customer_purchase_snapshots (
+      user_id TEXT NOT NULL, organization_guid TEXT NOT NULL, counterparty_guid TEXT NOT NULL,
+      metadata_json TEXT NOT NULL,
+      PRIMARY KEY(user_id, organization_guid, counterparty_guid)
+    );
+    CREATE TABLE IF NOT EXISTS customer_purchases (
+      user_id TEXT NOT NULL, organization_guid TEXT NOT NULL, counterparty_guid TEXT NOT NULL,
+      product_guid TEXT NOT NULL, last_purchased_date TEXT NOT NULL,
+      PRIMARY KEY(user_id, organization_guid, counterparty_guid, product_guid)
     );
     CREATE TABLE IF NOT EXISTS catalog_products (
       guid TEXT PRIMARY KEY NOT NULL,
@@ -421,6 +431,10 @@ function buildFtsQuery(search: string) {
 }
 
 export type CatalogCommercialContext = {
+  historyUserId?: string;
+  historyFetchedAt?: string;
+  counterpartyGuid?: string;
+  purchasedOnly?: boolean;
   priceTypeGuid?: string;
   warehouseGuid?: string;
   organizationGuid?: string;
@@ -526,6 +540,17 @@ export async function searchCatalogProducts(
   if (!meta.epoch || meta.productCount <= 0) return null;
   const activeUserId = await readMetaValue(db, 'offlineActiveUserId');
   const filterStock = !!context.inStockOnly && !!context.warehouseGuid;
+  // Do not combine the new user's history with the previous user's prices or
+  // personal reserves while the account's offline datasets are switching.
+  if (context.historyUserId && activeUserId && activeUserId !== context.historyUserId) return null;
+  const historyScope = [context.historyUserId || '', context.organizationGuid || '', context.counterpartyGuid || ''];
+  if (context.purchasedOnly) {
+    if (historyScope.some(value => !value)) return null;
+    const history = await db.getFirstAsync<{ metadata_json: string }>(
+      'SELECT metadata_json FROM customer_purchase_snapshots WHERE user_id = ? AND organization_guid = ? AND counterparty_guid = ?', ...historyScope
+    );
+    if (!history || (context.historyFetchedAt && parseJson<any>(history.metadata_json, {}).fetchedAt !== context.historyFetchedAt)) return null;
+  }
   const requiredDatasets = [
     ...(context.priceTypeGuid ? ['selling-prices'] : []),
     ...(filterStock ? ['stock', 'manager-stock'] : []),
@@ -554,6 +579,11 @@ export async function searchCatalogProducts(
     args.push(activeUserId, context.priceTypeGuid);
   }
   const conditions = ['p.is_active = 1'];
+  if (context.purchasedOnly) {
+    conditions.push(`EXISTS (SELECT 1 FROM customer_purchases h WHERE h.user_id = ?
+      AND h.organization_guid = ? AND h.counterparty_guid = ? AND h.product_guid = p.guid)`);
+    args.push(...historyScope);
+  }
   if (fts) {
     conditions.push('catalog_products_fts MATCH ?');
     args.push(fts);
