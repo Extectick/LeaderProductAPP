@@ -1,5 +1,6 @@
 param(
-    [string]$CredentialFile = 'C:\ProgramData\LeaderProduct\GlitchTipDev\credentials.json',
+    [string]$CredentialFile = 'C:\ProgramData\LeaderProduct\GlitchTipDevCloud\credentials.json',
+    [string]$DiagnosticsUrl = 'http://127.0.0.1:19020',
     [string]$Architectures = 'arm64-v8a,x86_64',
     [switch]$SkipPrebuild
 )
@@ -29,11 +30,17 @@ try {
     $env:SENTRY_RELEASE = "com.leaderproduct.app@$($version.versionName)+$($version.versionCode)"
     $env:EXPO_PUBLIC_SENTRY_RELEASE = $env:SENTRY_RELEASE
     $env:SENTRY_ALLOW_FAILURE = 'false'
-    $env:SENTRY_DISABLE_AUTO_UPLOAD = 'false'
-    $env:SENTRY_URL = [string]$config.sentryUrl
+    # Establish a private SSH forward to cloud 127.0.0.1:19002 before running.
+    if ($DiagnosticsUrl -notmatch '^http://127\.0\.0\.1:\d+$') { throw 'Private diagnostic tunnel required' }
+    Invoke-WebRequest "$DiagnosticsUrl/_health/" -TimeoutSec 10 | Out-Null
+    $env:SENTRY_DISABLE_AUTO_UPLOAD = 'true'
+    $env:SENTRY_DISABLE_NATIVE_DEBUG_UPLOAD = 'true'
+    $env:SENTRY_URL = $DiagnosticsUrl
     $env:SENTRY_ORG = [string]$config.organization
     $env:SENTRY_PROJECT = [string]$config.project
     $env:SENTRY_AUTH_TOKEN = [string]$config.authToken
+    $env:SENTRY_READ_TOKEN = [string]$config.readToken
+    $env:SENTRY_DIST = [string]$version.versionCode
     $env:TEMP = 'C:\Share\GradleTemp'
     $env:TMP = 'C:\Share\GradleTemp'
     $env:CI = '1'
@@ -44,10 +51,18 @@ try {
         & npx expo prebuild --platform android --no-install
         if ($LASTEXITCODE -ne 0) { throw 'Prebuild failed' }
     }
+    & node scripts/verifyNativeDiagnostics.js
+    if ($LASTEXITCODE -ne 0) { throw 'Native diagnostic generation is incomplete' }
     Set-Location android
     & .\gradlew.bat -g C:\Share\GradleHome --no-daemon --console=plain --max-workers=2 app:assembleRelease -x lintVitalRelease -x lintRelease "-PreactNativeArchitectures=$Architectures"
     if ($LASTEXITCODE -ne 0) { throw 'Dev APK build or source-map upload failed' }
+    Set-Location $appRoot
+    foreach ($script in @('uploadCrashSymbols.js','uploadNativeCrashSymbols.js','verifyCrashSymbols.js')) {
+        & node "scripts/$script" --apk
+        if ($LASTEXITCODE -ne 0) { throw 'Private diagnostic symbol verification failed' }
+    }
 } finally {
     Remove-Item Env:SENTRY_AUTH_TOKEN -ErrorAction SilentlyContinue
+    Remove-Item Env:SENTRY_READ_TOKEN -ErrorAction SilentlyContinue
     Pop-Location
 }

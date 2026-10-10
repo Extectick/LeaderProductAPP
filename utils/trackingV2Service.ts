@@ -6,6 +6,7 @@ import * as SecureStore from 'expo-secure-store';
 import { Linking, NativeModules, PermissionsAndroid, Platform } from 'react-native';
 import { trackingLogDiagnostics, type TrackingReliability } from './trackingReliability';
 import { loadTraccarSdk } from './traccarSdk';
+import { isTrackingReady, TrackingSetupRequiredError } from './trackingReadiness';
 
 import { apiClient } from './apiClient';
 import { API_BASE_URL } from './config';
@@ -72,8 +73,10 @@ export async function getTrackingReliability(): Promise<TrackingReliability> {
   return NativeModules.LeaderTracking.getReliabilityStatus().catch(() => ({}));
 }
 
-export async function openTrackingSettings(kind: 'battery' | 'location' | 'app') {
-  if (Platform.OS === 'android' && NativeModules.LeaderTracking?.openTrackingSettings) {
+export async function openTrackingSettings(kind: 'battery' | 'power' | 'location' | 'app') {
+  if (Platform.OS === 'android' && kind === 'power') {
+    await Linking.sendIntent('android.settings.BATTERY_SAVER_SETTINGS').catch(() => Linking.openSettings());
+  } else if (Platform.OS === 'android' && NativeModules.LeaderTracking?.openTrackingSettings) {
     await NativeModules.LeaderTracking.openTrackingSettings(kind);
   } else await Linking.openSettings();
 }
@@ -307,8 +310,13 @@ export async function startTrackingV2() {
   startOperation = serialize(async () => {
     if (!(await requestTrackingPermissions())) throw new Error('Разрешите постоянный доступ к геопозиции');
     if (generation !== intentGeneration) return;
+    const readiness = await readTrackingPrerequisites();
+    if (!isTrackingReady(readiness)) throw new TrackingSetupRequiredError(readiness);
     await migrateLegacyTracking();
     const Traccar = await configureTraccar({ requireBootstrap: true, allowOfflineCredential: true });
+    if (generation !== intentGeneration) return;
+    const currentReadiness = await readTrackingPrerequisites();
+    if (!isTrackingReady(currentReadiness)) throw new TrackingSetupRequiredError(currentReadiness);
     if (generation !== intentGeneration) return;
     // Persist intent before starting the native service. If Android interrupts
     // the startup sequence, the next authenticated launch repairs it.
@@ -371,6 +379,13 @@ export async function stopTrackingV2(options: { revoke?: boolean } = {}) {
   });
 }
 
+async function pauseForIncompleteSetup() {
+  await AsyncStorage.setItem(KEYS.enabled, 'false');
+  await setNativeCommandsEnabled(false).catch(() => undefined);
+  const tracker = await loadTraccarSdk();
+  await tracker.stop();
+}
+
 export async function restoreTrackingV2() {
   if (restoreOperation) return restoreOperation;
   const generation = intentGeneration;
@@ -378,21 +393,24 @@ export async function restoreTrackingV2() {
     await migrateLegacyTracking();
     const enabled = (await AsyncStorage.getItem(KEYS.enabled)) === 'true';
     if (!enabled || Platform.OS !== 'android' || generation !== intentGeneration) return false;
-    const [foreground, background, activityAllowed] = await Promise.all([
-      Location.getForegroundPermissionsAsync(), Location.getBackgroundPermissionsAsync(),
-      Number(Platform.Version) >= 29 ? PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.ACTIVITY_RECOGNITION) : Promise.resolve(true),
-    ]);
-    if (foreground.status !== 'granted' || background.status !== 'granted' || !activityAllowed) return false;
+    const readiness = await readTrackingPrerequisites();
+    if (!isTrackingReady(readiness)) {
+      // Do not keep the UI enabled or restart in the background with incomplete setup.
+      // Stop capture without revoking the credential or discarding buffered fixes.
+      await pauseForIncompleteSetup();
+      return false;
+    }
     // A valid durable key can keep collecting offline. Explicitly rejected
     // keys require a successful authenticated bootstrap before restarting.
-    const health = await getTrackingReliability();
-    if (health.notificationsEnabled === false || (Number(Platform.Version) >= 33
-      && (await Notifications.getPermissionsAsync()).status !== 'granted')) return false;
+    const health = readiness;
     const Traccar = await configureTraccar({
       requireBootstrap: Date.now() - lastBootstrapAt > 5 * 60_000 || health.commandError === 'DEVICE_AUTH_REQUIRED',
       allowOfflineCredential: true,
     });
     if (generation !== intentGeneration || (await AsyncStorage.getItem(KEYS.enabled)) !== 'true') return false;
+    const currentReadiness = await readTrackingPrerequisites();
+    if (!isTrackingReady(currentReadiness)) { await pauseForIncompleteSetup(); return false; }
+    if (generation !== intentGeneration) return false;
     if (!(await Traccar.isTracking())) await Traccar.start();
     if (generation !== intentGeneration) { await Traccar.stop(); return false; }
     await setNativeCommandsEnabled(true);
@@ -415,7 +433,7 @@ export async function requestTrackingPosition(requestId?: string) {
   return true;
 }
 
-export async function getTrackingV2Diagnostics(): Promise<TrackingV2Diagnostics> {
+export async function readTrackingPrerequisites(): Promise<TrackingV2Diagnostics> {
   const reliability = await getTrackingReliability();
   const [foreground, background, locationServicesEnabled, enabled, activityRecognitionPermission] = await Promise.all([
     Location.getForegroundPermissionsAsync(),
@@ -428,6 +446,19 @@ export async function getTrackingV2Diagnostics(): Promise<TrackingV2Diagnostics>
         .catch(() => 'denied' as const)
       : Promise.resolve('unavailable' as const),
   ]);
+  const notifications = Platform.OS === 'android' && Number(Platform.Version) >= 33
+    ? await Notifications.getPermissionsAsync() : null;
+  return {
+    ...reliability, available: Platform.OS === 'android', enabled: enabled === 'true', running: false,
+    permission: foreground.status, backgroundPermission: background.status, activityRecognitionPermission,
+    locationServicesEnabled,
+    preciseLocation: foreground.android?.accuracy === 'fine' || (!foreground.android?.accuracy && foreground.status === 'granted' && Number(Platform.Version) < 31),
+    notificationsEnabled: reliability.notificationsEnabled === true && (!notifications || notifications.status === 'granted'),
+  };
+}
+
+export async function getTrackingV2Diagnostics(): Promise<TrackingV2Diagnostics> {
+  const prerequisites = await readTrackingPrerequisites();
   let running = false;
   let lastRecordedAt: string | undefined;
   let lastSentAt: string | undefined;
@@ -443,15 +474,8 @@ export async function getTrackingV2Diagnostics(): Promise<TrackingV2Diagnostics>
     }
   }
   return {
-    ...reliability,
-    available: Platform.OS === 'android',
-    enabled: enabled === 'true',
+    ...prerequisites,
     running,
-    permission: foreground.status,
-    backgroundPermission: background.status,
-    activityRecognitionPermission,
-    locationServicesEnabled,
-    preciseLocation: foreground.android?.accuracy ? foreground.android.accuracy === 'fine' : undefined,
     lastRecordedAt,
     lastSentAt,
     lastError,

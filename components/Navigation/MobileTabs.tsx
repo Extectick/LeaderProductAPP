@@ -1,22 +1,14 @@
-import { useIsAdmin } from '@/hooks/useIsAdmin';
 import { Tabs } from 'expo-router';
-import React, { useMemo } from 'react';
-import FloatingTabBar from './FloatingTabBar';
-import { bottomTabItems } from './bottomTabsConfig';
+import React from 'react';
 
 export default function MobileTabs() {
-  const { isAdmin } = useIsAdmin();
-  const visibleItems = useMemo(
-    () => bottomTabItems.filter((item) => !item.requiresAdmin || isAdmin),
-    [isAdmin]
-  );
-
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
+        tabBarStyle: { display: 'none' },
       }}
-      tabBar={(props) => <FloatingTabBar {...props} items={visibleItems} />}
+      tabBar={() => null}
     >
       <Tabs.Screen name="home/index" options={{ title: "Главная" }} />
       <Tabs.Screen name="tasks/index" options={{ title: "Задачи" }} />

@@ -1,4 +1,4 @@
-param([string]$ApkPath = '', [string]$CredentialFile = 'C:\ProgramData\LeaderProduct\GlitchTipDev\credentials.json')
+param([string]$ApkPath = '', [string]$CredentialFile = 'C:\ProgramData\LeaderProduct\GlitchTipDevCloud\credentials.json')
 $ErrorActionPreference = 'Stop'
 $appRoot = Split-Path $PSScriptRoot -Parent
 if (-not $ApkPath) { $ApkPath = Join-Path $appRoot 'android\app\build\outputs\apk\release\app-release.apk' }

@@ -52,6 +52,9 @@ jest.mock('@/utils/orderGeo', () => ({
 }));
 
 jest.mock('@/utils/clientOrdersService', () => ({
+  backupClientOrderDraft: jest.fn(),
+  probeClientOrdersConnection: jest.fn(),
+  getClientOrderByClientId: jest.fn(),
   cancelClientOrder: jest.fn(),
   copyClientOrder: jest.fn(),
   createClientOrder: jest.fn(),
@@ -87,6 +90,9 @@ import { setServerReachable, setServerUnavailable } from '../src/shared/network/
 import { syncOfflineOrderData } from '../src/features/clientOrders/offline/offlineOrdersSync';
 import { buildLocalDraftPayload, emptyDraft } from '../src/features/clientOrders/clientOrdersShared';
 import {
+  backupClientOrderDraft,
+  probeClientOrdersConnection,
+  getClientOrderByClientId,
   createClientOrder,
   getClientOrder,
   getClientOrderInvoices,
@@ -234,7 +240,12 @@ describe('useClientOrdersWorkspace', () => {
   beforeEach(() => {
     jest.resetAllMocks();
     jest.useFakeTimers();
+    jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
+    jest.mocked(AsyncStorage.setItem).mockResolvedValue(undefined);
     setServerReachable();
+    jest.mocked(backupClientOrderDraft).mockImplementation(async (_id, clientRevision) => ({ clientRevision, savedAt: new Date().toISOString(), submittedOrderGuid: null }));
+    jest.mocked(probeClientOrdersConnection).mockResolvedValue(false);
+    jest.mocked(getClientOrderByClientId).mockRejectedValue(new Error('Not found'));
     jest.mocked(readOfflineDrafts).mockResolvedValue([]);
     jest.mocked(applyOfflineDraftChanges).mockResolvedValue(true);
     jest.mocked(captureOrderGeoEvent).mockImplementation(async (type) => ({
@@ -265,9 +276,9 @@ describe('useClientOrdersWorkspace', () => {
     jest.useRealTimers();
   });
 
-  async function ordersListWorkspace(userId = 1) {
+  async function ordersListWorkspace(userId = 1, screenMode: 'orders' | 'editor' = 'orders') {
     let current!: ReturnType<typeof useClientOrdersWorkspace>;
-    const Harness = () => { current = useClientOrdersWorkspace({ screenMode: 'orders' }); return null; };
+    const Harness = () => { current = useClientOrdersWorkspace({ screenMode }); return null; };
     let renderer!: TestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = TestRenderer.create(React.createElement(AuthContext.Provider, {
@@ -395,6 +406,83 @@ describe('useClientOrdersWorkspace', () => {
     return records;
   }
 
+  it('backs up incomplete local drafts online without submitting or removing them', async () => {
+    const records = memoryDraftStore([localEntry('incomplete-backup', 'ON_DEVICE', true)]);
+    const harness = await ordersListWorkspace();
+    await act(async () => { await jest.advanceTimersByTimeAsync(1600); });
+    expect(backupClientOrderDraft).toHaveBeenCalledWith('incomplete-backup', 1, expect.any(Object), expect.any(Object));
+    expect(records.get('incomplete-backup').intent).toBe('SAVE');
+    expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    await act(async () => { await jest.advanceTimersByTimeAsync(31_000); });
+    expect(backupClientOrderDraft).toHaveBeenCalledTimes(1);
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('retains shortage details across remount and highlights the exact affected lines', async () => {
+    const entry = localEntry('short-stock', 'READY_TO_SEND');
+    entry.order.warehouse = { guid: 'warehouse-guid', name: 'Склад' };
+    const records = memoryDraftStore([entry]);
+    jest.mocked(putClientOrderByClientId).mockRejectedValue(Object.assign(new Error('Недостаточно остатка'), {
+      status: 422, backendErrorCode: 'STOCK_SHORTAGE',
+      errorDetails: { serverGuid: 'api-draft', draftSaved: true, items: [{ productGuid: 'product-guid', required: 2, available: 1 }] },
+    }));
+    const first = await ordersListWorkspace();
+    await act(async () => { await first.current.syncDeviceDrafts({ force: true }); });
+    expect(first.current.ordersError).toContain('Недостаточно остатка');
+    expect(records.get('short-stock').status).toBe('NEEDS_EDIT');
+    expect(records.get('short-stock').order.draftReview.details.items[0].available).toBe(1);
+    await act(async () => first.renderer.unmount());
+    const reopened = await ordersListWorkspace();
+    await act(async () => { await reopened.current.selectOrder(entry.order.guid); });
+    expect(reopened.current.validation.itemMessages.line.join(' ')).toContain('доступно 1');
+    expect(reopened.current.error).toContain('Черновик сохранён');
+    await act(async () => reopened.renderer.unmount());
+  });
+
+  it('recovers connectivity inside the editor without resetting entered data or submitting', async () => {
+    memoryDraftStore([localEntry('editor-offline')]);
+    setServerUnavailable('Network request failed');
+    const harness = await ordersListWorkspace(1, 'editor');
+    await act(async () => { await harness.current.selectOrder('device-order-editor-offline'); });
+    await act(async () => { harness.current.patchDraft({ comment: 'Не потерять' }); });
+    jest.mocked(probeClientOrdersConnection).mockImplementation(async () => { setServerReachable(); return true; });
+    await act(async () => { await jest.advanceTimersByTimeAsync(3100); });
+    expect(probeClientOrdersConnection).toHaveBeenCalled();
+    expect(harness.current.online).toBe(true);
+    expect(harness.current.draft.comment).toBe('Не потерять');
+    expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('reconciles an ambiguous submission on reconnect without sending it again', async () => {
+    const entry = localEntry('response-lost', 'SEND_ERROR');
+    const records = memoryDraftStore([entry]);
+    setServerUnavailable('Network request failed');
+    const harness = await ordersListWorkspace();
+    jest.mocked(getClientOrderByClientId).mockResolvedValue(queuedOrder(1, {
+      guid: 'api-accepted', clientOrderId: entry.clientOrderId, clientRevision: entry.clientRevision,
+    }) as any);
+    await act(async () => { setServerReachable(); });
+    await flush();
+    expect(records.size).toBe(0);
+    expect(harness.current.orders.some(order => order.guid === 'api-accepted')).toBe(true);
+    expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('does not consume a timed-out submission merely because the API has a saved draft', async () => {
+    const entry = localEntry('saved-not-sent', 'SEND_ERROR');
+    const records = memoryDraftStore([entry]);
+    jest.mocked(getClientOrderByClientId).mockResolvedValue(queuedOrder(0, {
+      clientOrderId: entry.clientOrderId, clientRevision: entry.clientRevision, syncState: 'DRAFT', status: 'DRAFT',
+    }) as any);
+    const harness = await ordersListWorkspace();
+    await flush();
+    expect(records.size).toBe(1);
+    expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    await act(async () => harness.renderer.unmount());
+  });
+
   it('hydrates settings before the cold-start network request and retains them if it fails', async () => {
     const { writeLocalOrderSettings } = require('../src/features/clientOrders/offline/localOrderSettings');
     const store = new Map<string, string>();
@@ -426,6 +514,32 @@ describe('useClientOrdersWorkspace', () => {
       order: { ...queuedOrder(0), guid: `device-order-${id}`, clientOrderId: id, clientRevision: 1,
         origin: 'device', status: 'DRAFT', syncState: 'DRAFT', localDraft: value }, payload: buildLocalDraftPayload(value) };
   }
+
+  it('explicit sharing saves an unchanged local draft to API with SAVE, never SUBMIT', async () => {
+    const entry = localEntry('share-draft');
+    const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace(1, 'editor');
+    try {
+      await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+      jest.mocked(putClientOrderByClientId).mockResolvedValue({ ...entry.order, guid: 'api-shared', origin: 'app', localDraft: undefined } as any);
+      await act(async () => { await harness.current.saveDraft({ reason: 'manual', intent: 'SAVE', serverOnly: true }); });
+      expect(putClientOrderByClientId).toHaveBeenCalledWith('share-draft', expect.any(Object), expect.objectContaining({ intent: 'SAVE' }));
+      expect(records.size).toBe(0);
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('sharing never downgrades a queued or ambiguous submission to SAVE', async () => {
+    const entry = localEntry('share-queued', 'READY_TO_SEND');
+    const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace(1, 'editor');
+    try {
+      await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+      await act(async () => { await harness.current.saveDraft({ reason: 'manual', intent: 'SAVE', serverOnly: true }); });
+      expect(putClientOrderByClientId).not.toHaveBeenCalled();
+      expect(records.get('share-queued').intent).toBe('SUBMIT');
+      expect(harness.current.error).toContain('очеред');
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
 
   it('remembers organization offline across remounts without sharing it with another user', async () => {
     const store = new Map<string, string>();
@@ -2006,4 +2120,4 @@ describe('useClientOrdersWorkspace', () => {
     });
   });
 });
-jest.mock('../src/shared/monitoring', () => ({ captureException: jest.fn() }));
+jest.mock('../src/shared/monitoring', () => ({ captureException: jest.fn(), addMonitoringBreadcrumb: jest.fn() }));

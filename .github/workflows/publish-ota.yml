@@ -47,6 +47,12 @@ jobs:
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npm run test:unit -- --runInBand __tests__/otaManifestConfig.unit.test.ts
+      - run: npm run test:unit -- --runInBand __tests__/draftReview.unit.test.ts
+      - run: npm run test:unit -- --runInBand __tests__/orderSharing.unit.test.ts
+      - run: npm run test:unit -- --runInBand __tests__/galleryHistory.unit.test.ts
+      - run: npm run test:unit -- --runInBand __tests__/clientContactsEditor.unit.test.ts
+      - run: npm run test:unit -- --runInBand __tests__/profileSettings.unit.test.ts __tests__/trackingV2Lifecycle.unit.test.ts
+      - run: npm run test:unit -- --runInBand __tests__/profilePresentation.unit.test.ts __tests__/profileHome.unit.test.ts __tests__/profilePersonal.unit.test.ts __tests__/profileNotifications.unit.test.ts __tests__/profileNavigation.unit.test.ts __tests__/profileCache.unit.test.ts __tests__/profileChrome.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/catalogProductOrdering.unit.test.ts __tests__/productCatalogIntegration.unit.test.ts __tests__/offlineSqlite.unit.test.ts __tests__/catalogDatabaseLifecycle.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/productionMonitoring.unit.test.ts __tests__/deviceDraftRecovery.unit.test.ts __tests__/orderOperationIntegrity.unit.test.ts __tests__/clientOrdersShared.unit.test.ts __tests__/clientOrdersService.unit.test.ts __tests__/httpClient.unit.test.ts __tests__/useClientOrdersWorkspace.unit.test.ts
 
@@ -71,14 +77,14 @@ jobs:
       EXPO_PUBLIC_MAP_STYLE_URL: https://tiles.openfreemap.org/styles/liberty
       EXPO_PUBLIC_TELEGRAM_BOT_USERNAME: ${{ secrets.EXPO_PUBLIC_TELEGRAM_BOT_USERNAME }}
       EXPO_PUBLIC_MAX_BOT_USERNAME: ${{ secrets.EXPO_PUBLIC_MAX_BOT_USERNAME }}
-      EXPO_PUBLIC_SENTRY_ENABLED: ${{ (github.event_name != 'workflow_dispatch' || inputs.channel == 'prod') && 'true' || 'false' }}
+      EXPO_PUBLIC_SENTRY_ENABLED: 'true'
       EXPO_PUBLIC_SENTRY_DSN: ${{ secrets.EXPO_PUBLIC_SENTRY_DSN }}
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
       SENTRY_READ_TOKEN: ${{ secrets.SENTRY_READ_TOKEN }}
       SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
       SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
       SENTRY_URL: http://127.0.0.1:19000
-      EXPO_PUBLIC_SENTRY_ENVIRONMENT: ${{ (github.event_name != 'workflow_dispatch' || inputs.channel == 'prod') && 'production' || 'development' }}
+      EXPO_PUBLIC_SENTRY_ENVIRONMENT: ${{ ((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || github.ref_name == 'dev') && 'development' || 'production' }}
       NODE_ENV: ${{ (github.event_name != 'workflow_dispatch' || inputs.channel == 'prod') && 'production' || 'development' }}
 
     steps:

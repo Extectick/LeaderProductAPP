@@ -1,0 +1,52 @@
+name: Deploy Public Order Web
+on:
+  push:
+    branches: [dev, main, production]
+    paths: ['public-order/**', 'src/features/clientOrders/components/ProductImageGalleryDialog.tsx', 'src/features/clientOrders/hooks/useGalleryHistory.ts', 'scripts/buildOrderWeb.cjs', '.github/workflows/public-order-dev.yml', 'assets/images/icon.png', 'package-lock.json']
+  workflow_dispatch:
+concurrency:
+  group: public-order-web-${{ github.ref_name }}
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: contains(fromJSON('["dev","main","production"]'), github.ref_name)
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name == 'dev' && 'development' || 'production' }}
+    env:
+      WEB_ROOT: ${{ github.ref_name == 'dev' && '/var/www/leader-order-dev' || '/var/www/leader-order-prod' }}
+      PUBLIC_ORIGIN: ${{ github.ref_name == 'dev' && 'https://dev.leader-product.ru' || 'https://api.leader-product.ru' }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm ci --prefix public-order
+      - run: npx tsc --noEmit --project public-order/tsconfig.json
+      - run: npm run test:unit -- --runInBand __tests__/galleryHistory.unit.test.ts __tests__/publicOrderDelivery.unit.test.ts
+      - run: npm run build --prefix public-order
+      - name: Stage static files
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          source: dist-order/*
+          target: ${{ env.WEB_ROOT }}/releases/${{ github.sha }}
+          strip_components: 1
+      - name: Activate public web
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            set -eu
+            root=${{ env.WEB_ROOT }}
+            target=$root/releases/${{ github.sha }}
+            test -s "$target/index.html"
+            test -s "$target/assets/app.js"
+            ln -sfn "$target" "$root/current.next"
+            mv -Tf "$root/current.next" "$root/current"
+            curl --fail --silent --show-error ${{ env.PUBLIC_ORIGIN }}/order/ >/dev/null

@@ -1,167 +1,54 @@
-import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Switch, Text, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import {
-  getNotificationSettings,
-  updateNotificationSettings,
-  type NotificationSettings,
-} from '@/utils/notificationSettingsService';
+import React from 'react';
+import { View } from 'react-native';
+import { ActivityIndicator, Button, Divider, HelperText, List, Switch } from 'react-native-paper';
+import { getNotificationSettings, updateNotificationSettings, type NotificationSettings } from '@/utils/notificationSettingsService';
 
-const DEFAULT_SETTINGS: NotificationSettings = {
-  inAppNotificationsEnabled:    true,
-  telegramNotificationsEnabled: true,
-  maxNotificationsEnabled:      true,
-  pushNewMessage:               true,
-  pushStatusChanged:            true,
-  pushDeadlineChanged:          true,
-  telegramNewAppeal:            true,
-  telegramStatusChanged:        true,
-  telegramDeadlineChanged:      true,
-  telegramUnreadReminder:       true,
-  telegramClosureReminder:      true,
-  telegramNewMessage:           true,
-  maxNewAppeal:                 true,
-  maxStatusChanged:             true,
-  maxDeadlineChanged:           true,
-  maxUnreadReminder:            true,
-  maxClosureReminder:           true,
-  maxNewMessage:                true,
-};
+const channels = [
+  { key: 'inAppNotificationsEnabled', title: 'В приложении', description: 'Push и уведомления об обращениях', icon: 'bell-outline' },
+  { key: 'telegramNotificationsEnabled', title: 'Telegram', description: 'Уведомления через бота', icon: 'message-outline' },
+  { key: 'maxNotificationsEnabled', title: 'MAX', description: 'Уведомления через бота', icon: 'message-text-outline' },
+] as const;
 
 export function NotificationSettingsSection() {
-  const [settings, setSettings] = useState<NotificationSettings>(DEFAULT_SETTINGS);
-  const [loading, setLoading]   = useState(true);
-  const [saving, setSaving]     = useState<string | null>(null);
-
-  useEffect(() => {
-    void getNotificationSettings().then((s) => {
-      if (s) setSettings(s);
-      setLoading(false);
-    });
-  }, []);
-
-  const toggle = async (key: keyof NotificationSettings) => {
-    if (saving) return;
-    const prev = settings;
-    const next = { ...settings, [key]: !settings[key] };
-    setSettings(next);           // оптимистично
-    setSaving(key as string);
+  const [settings, setSettings] = React.useState<NotificationSettings | null>(null);
+  const [loading, setLoading] = React.useState(true);
+  const [saving, setSaving] = React.useState<string | null>(null);
+  const [error, setError] = React.useState('');
+  const lock = React.useRef(false);
+  const alive = React.useRef(true);
+  const load = React.useCallback(async () => {
+    setLoading(true); setError('');
     try {
-      const saved = await updateNotificationSettings({ [key]: next[key] });
-      setSettings(saved);
+      const next = await getNotificationSettings();
+      if (!next) throw new Error();
+      if (alive.current) setSettings(next);
+    } catch { if (alive.current) setError('Настройки недоступны. Попробуйте при наличии сети.'); }
+    finally { if (alive.current) setLoading(false); }
+  }, []);
+  React.useEffect(() => { alive.current = true; void load(); return () => { alive.current = false; }; }, [load]);
+  const toggle = async (key: typeof channels[number]['key']) => {
+    if (lock.current || !settings) return;
+    lock.current = true;
+    const previous = settings;
+    setSettings({ ...previous, [key]: !previous[key] }); setSaving(key); setError('');
+    try {
+      const saved = await updateNotificationSettings({ [key]: !previous[key] });
+      if (alive.current) setSettings(saved);
     } catch {
-      setSettings(prev);    // откат
-    } finally {
-      setSaving(null);
-    }
+      if (alive.current) { setSettings(previous); setError('Не удалось сохранить. Предыдущее значение восстановлено.'); }
+    } finally { lock.current = false; if (alive.current) setSaving(null); }
   };
-
-  if (loading) {
-    return (
-      <View style={styles.card}>
-        <ActivityIndicator size="small" color="#6366F1" />
-      </View>
-    );
-  }
-
-  return (
-    <View style={styles.card}>
-      <View style={styles.header}>
-        <View style={styles.icon}>
-          <Ionicons name="notifications-outline" size={17} color="#1E293B" />
-        </View>
-        <Text style={styles.title}>Уведомления</Text>
-      </View>
-
-      {/* Push + in-app */}
-      <View style={styles.row}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.label}>Уведомления об обращениях</Text>
-          <Text style={styles.hint}>Push-уведомления и всплывающие уведомления в приложении</Text>
-        </View>
-        <Switch
-          value={settings.inAppNotificationsEnabled}
-          onValueChange={() => void toggle('inAppNotificationsEnabled')}
-          disabled={!!saving}
-          trackColor={{ false: '#CBD5E1', true: '#6366F1' }}
-          thumbColor="#fff"
-        />
-      </View>
-
-      {/* Telegram bot */}
-      <View style={[styles.row, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#DDD6FE', paddingTop: 12 }]}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.label}>Уведомления в Telegram</Text>
-          <Text style={styles.hint}>Получать уведомления через Telegram-бота</Text>
-        </View>
-        <Switch
-          value={settings.telegramNotificationsEnabled}
-          onValueChange={() => void toggle('telegramNotificationsEnabled')}
-          disabled={!!saving}
-          trackColor={{ false: '#CBD5E1', true: '#6366F1' }}
-          thumbColor="#fff"
-        />
-      </View>
-
-      <View style={[styles.row, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#DDD6FE', paddingTop: 12 }]}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.label}>Уведомления в MAX</Text>
-          <Text style={styles.hint}>Получать уведомления через MAX-бота</Text>
-        </View>
-        <Switch
-          value={settings.maxNotificationsEnabled}
-          onValueChange={() => void toggle('maxNotificationsEnabled')}
-          disabled={!!saving}
-          trackColor={{ false: '#CBD5E1', true: '#6366F1' }}
-          thumbColor="#fff"
-        />
-      </View>
-    </View>
-  );
+  if (loading) return <ActivityIndicator accessibilityLabel="Загрузка настроек уведомлений" />;
+  return <View>
+    {settings && channels.map(channel => <React.Fragment key={channel.key}>
+      <List.Item title={channel.title} description={channel.description} descriptionNumberOfLines={2}
+        onPress={() => void toggle(channel.key)}
+        left={props => <List.Icon {...props} icon={channel.icon} />}
+        right={() => <Switch value={settings[channel.key]} onValueChange={() => void toggle(channel.key)} disabled={Boolean(saving)}
+          accessibilityLabel={`Уведомления: ${channel.title}`} color="#2563EB" />} />
+      <Divider />
+    </React.Fragment>)}
+    {error ? <HelperText type="error" accessibilityLiveRegion="polite">{error}</HelperText> : null}
+    {!settings && <Button onPress={() => void load()}>Повторить</Button>}
+  </View>;
 }
-
-const styles = StyleSheet.create({
-  card: {
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#FFFFFF',
-    gap: 12,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 9,
-  },
-  icon: {
-    width: 26,
-    height: 26,
-    borderRadius: 8,
-    backgroundColor: '#F1F5F9',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  title: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  hint: {
-    fontSize: 12,
-    color: '#64748B',
-    marginTop: 2,
-    lineHeight: 16,
-  },
-});

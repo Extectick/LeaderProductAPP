@@ -1,5 +1,8 @@
 ﻿import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 import { useThemeColor } from '@/hooks/useThemeColor';
+import { OrderShareFeedback } from './components/OrderShareFeedback';
+import { useOrderShareActions } from './hooks/useOrderShareActions';
+import { ProductImageGalleryDialog, WebProductImage, PRODUCT_IMAGE_PLACEHOLDER_URI, type ProductGalleryImage } from './components/ProductImageGalleryDialog';
 import {
   computeLineTotal,
   displayedUnitPriceToBasePriceInput,
@@ -126,19 +129,12 @@ import {
 
 type PickerKind = ClientOrdersPickerKind;
 type ResponsivePane = 'orders' | 'editor';
-type ProductGalleryImage = {
-  key: string;
-  thumbUrl: string;
-  previewUrl: string;
-  isMain?: boolean;
-};
 type PendingPriceTypeAction =
   | { type: 'change-header'; priceType: ClientOrderPriceTypeOption | null }
   | { type: 'reset-header' };
 type SegmentedChoice = { value: string | null; label: string };
 const PRODUCT_IN_STOCK_ONLY_STORAGE_KEY = 'clientOrders.productPicker.inStockOnly';
 const COUNTERPARTY_MANAGER_ONLY_STORAGE_KEY = 'clientOrders.counterpartyPicker.managerOnly';
-const PRODUCT_IMAGE_PLACEHOLDER_URI = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22120%22 height=%22120%22 viewBox=%220 0 120 120%22%3E%3Crect width=%22120%22 height=%22120%22 rx=%2224%22 fill=%22%23EFF6FF%22/%3E%3Crect x=%2222%22 y=%2224%22 width=%2276%22 height=%2272%22 rx=%2216%22 fill=%22%23FFFFFF%22 stroke=%22%2393C5FD%22 stroke-width=%225%22/%3E%3Ccircle cx=%2248%22 cy=%2249%22 r=%2211%22 fill=%22%23BFDBFE%22/%3E%3Cpath d=%22M33 82l19-21 14 14 11-13 22 20H33z%22 fill=%22%232563EB%22 opacity=%22.72%22/%3E%3C/svg%3E';
 const PAYMENT_FORM_CHOICES: SegmentedChoice[] = [
   { value: null, label: 'Любая' },
   { value: 'Наличная', label: 'Наличная' },
@@ -366,136 +362,6 @@ function getProductGalleryImages(item: DraftItem | any): ProductGalleryImage[] {
     isMain: true,
   });
   return result;
-}
-
-function isRemoteImageUri(src?: string | null) {
-  return !!src && !src.startsWith('data:');
-}
-
-function WebProductImage({
-  src,
-  alt,
-  sx,
-  loading = 'lazy',
-  spinnerSize = 18,
-  objectFit = 'contain',
-}: {
-  src: string;
-  alt: string;
-  sx?: any;
-  loading?: 'lazy' | 'eager';
-  spinnerSize?: number;
-  objectFit?: 'cover' | 'contain';
-}) {
-  const [loaded, setLoaded] = React.useState(!isRemoteImageUri(src));
-  const [failed, setFailed] = React.useState(false);
-  const displaySrc = failed ? PRODUCT_IMAGE_PLACEHOLDER_URI : src;
-  const shouldShowLoader = isRemoteImageUri(src) && !loaded && !failed;
-  const sxList = Array.isArray(sx) ? sx : [sx];
-
-  React.useEffect(() => {
-    setLoaded(!isRemoteImageUri(src));
-    setFailed(false);
-  }, [src]);
-
-  return (
-    <Box
-      sx={[
-        {
-          position: 'relative',
-          display: 'block',
-          overflow: 'hidden',
-          bgcolor: '#F8FAFC',
-        },
-        ...sxList,
-      ]}
-    >
-      <Box
-        component="img"
-        src={displaySrc}
-        alt={alt}
-        loading={loading}
-        onLoad={() => setLoaded(true)}
-        onError={() => {
-          setFailed(true);
-          setLoaded(true);
-        }}
-        sx={{
-          position: 'absolute',
-          inset: 0,
-          width: '100%',
-          height: '100%',
-          display: 'block',
-          objectFit,
-          opacity: shouldShowLoader ? 0.22 : 1,
-          transition: 'opacity 160ms ease',
-        }}
-      />
-      {shouldShowLoader ? (
-        <Box
-          sx={{
-            position: 'absolute',
-            inset: 0,
-            display: 'grid',
-            placeItems: 'center',
-            bgcolor: 'rgba(248, 250, 252, 0.78)',
-          }}
-        >
-          <CircularProgress size={spinnerSize} thickness={4.5} />
-        </Box>
-      ) : null}
-    </Box>
-  );
-}
-
-function WebProductPreviewImage({ src, alt, isPhoneDialog }: { src: string; alt: string; isPhoneDialog: boolean }) {
-  const [loaded, setLoaded] = React.useState(!isRemoteImageUri(src));
-  const [failed, setFailed] = React.useState(false);
-  const displaySrc = failed ? PRODUCT_IMAGE_PLACEHOLDER_URI : src;
-  const shouldShowLoader = isRemoteImageUri(src) && !loaded && !failed;
-
-  React.useEffect(() => {
-    setLoaded(!isRemoteImageUri(src));
-    setFailed(false);
-  }, [src]);
-
-  return (
-    <>
-      <Box
-        component="img"
-        src={displaySrc}
-        alt={alt}
-        onLoad={() => setLoaded(true)}
-        onError={() => {
-          setFailed(true);
-          setLoaded(true);
-        }}
-        sx={{
-          maxWidth: '100%',
-          maxHeight: isPhoneDialog ? '70vh' : 560,
-          width: 'auto',
-          height: 'auto',
-          objectFit: 'contain',
-          display: 'block',
-          opacity: shouldShowLoader ? 0.22 : 1,
-          transition: 'opacity 160ms ease',
-        }}
-      />
-      {shouldShowLoader ? (
-        <Box
-          sx={{
-            position: 'absolute',
-            inset: 0,
-            display: 'grid',
-            placeItems: 'center',
-            bgcolor: 'rgba(248, 250, 252, 0.72)',
-          }}
-        >
-          <CircularProgress size={30} thickness={4.2} />
-        </Box>
-      ) : null}
-    </>
-  );
 }
 
 function statusTone(status: string) {
@@ -1288,6 +1154,7 @@ export default function ClientOrdersWebScreen() {
     resolve?.(result);
   }, []);
   const workspace = useClientOrdersWorkspace({ confirmDiscard: requestDiscardConfirm });
+  const [documentMenuAnchor, setDocumentMenuAnchor] = React.useState<HTMLElement | null>(null);
   const router = useRouter();
   const workspaceRef = React.useRef(workspace);
   workspaceRef.current = workspace;
@@ -2010,7 +1877,10 @@ export default function ClientOrdersWebScreen() {
       setWebEditorSection('header');
       if (isSinglePane) setResponsivePane('editor');
     }
+    return selected;
   }, [isSinglePane, workspace]);
+
+  const orderSharing = useOrderShareActions(workspace);
 
   React.useEffect(() => {
     if (!startOrderGuid || handledStartOrderGuidRef.current === startOrderGuid) return;
@@ -2772,7 +2642,7 @@ export default function ClientOrdersWebScreen() {
                       ) : null}
                     <Box sx={{ minWidth: 0 }}>
                       <Stack direction="row" spacing={0.75} alignItems="center" sx={{ minWidth: 0 }}>
-                        <Typography sx={{ fontSize: 18, fontWeight: 900, lineHeight: 1.1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</Typography>
+                        <Typography component="button" type="button" aria-label={`${title}. Скопировать ссылку для клиента`} title="Скопировать ссылку для клиента" disabled={orderSharing.copying || workspace.mutationLocked || workspace.loadingDetail} onClick={() => void orderSharing.copy()} sx={{ fontSize: 18, fontWeight: 900, lineHeight: 1.1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', border: 0, p: 0, background: 'transparent', color: 'inherit', textAlign: 'left', cursor: 'pointer', '&:disabled': { cursor: 'default', opacity: 0.65 } }}>{orderSharing.copying ? 'Копирую ссылку…' : title}</Typography>
                         {!workspace.draftMode ? <Chip size="small" label={getOrderDisplayStatusLabelWithQueue(workspace.selectedOrder)} sx={{ height: 20, fontSize: 10, fontWeight: 800, ...(workspace.selectedOrder ? orderStatusChipSx(workspace.selectedOrder) : {}) }} /> : null}
                       </Stack>
                       <Typography sx={{ color: '#64748B', fontSize: 11, fontWeight: 700 }}>{workspace.autosaveLabel}</Typography>
@@ -2845,6 +2715,7 @@ export default function ClientOrdersWebScreen() {
                       {!((workspace.selectedOrderQueued || workspace.selectedOrderSynced) && workspace.dirty) ? (
                         <ToolbarIconButton title="Сохранить" icon="save-outline" color="#2563EB" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={saveWithConfirm} disabled={workspace.readOnly || workspace.saving || !workspace.validation.canSave} loading={workspace.saving} />
                       ) : null}
+                      <IconButton aria-label="Меню документа" aria-haspopup="menu" aria-expanded={!!documentMenuAnchor} onClick={event => setDocumentMenuAnchor(event.currentTarget)} disabled={workspace.loadingDetail} size="small"><Ionicons name="ellipsis-horizontal" size={ui.actionIconSize} color="#475569" /></IconButton>
                       <ToolbarIconButton title="Отправить в 1С" icon="cloud-upload-outline" label={effectiveEditorPaneWidth >= 1180 ? 'В 1С' : undefined} color="#16A34A" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => setConfirmSubmitOpen(true)} disabled={workspace.readOnly || workspace.submitting || !workspace.canSubmitOrder} loading={workspace.submitting} />
                         <ToolbarIconButton title="Копировать" icon="copy-outline" color="#475569" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={copyWithConfirm} disabled={workspace.copying || workspace.saving || workspace.submitting || !workspace.hasEditableDocument} loading={workspace.copying} />
                     </Stack>
@@ -3597,6 +3468,13 @@ export default function ClientOrdersWebScreen() {
         anchorReference="anchorPosition"
         anchorPosition={orderContextMenu ? { top: orderContextMenu.mouseY, left: orderContextMenu.mouseX } : undefined}
       >
+        <MenuItem disabled={workspace.mutationLocked || workspace.loadingDetail || orderSharing.copying} onClick={() => {
+          const guid = orderContextMenu?.order.guid;
+          closeOrderContextMenu();
+          if (guid) void orderSharing.copyFromList(guid);
+        }}>
+          <Stack direction="row" spacing={1} alignItems="center"><Ionicons name="link-outline" size={16} color="#2563EB" /><Typography sx={{ fontSize: 13, fontWeight: 800 }}>Ссылка для клиента</Typography></Stack>
+        </MenuItem>
         <MenuItem onClick={openContextOrder}>
           <Stack direction="row" spacing={1} alignItems="center">
             <Ionicons name="document-text-outline" size={16} color="#0F172A" />
@@ -3643,6 +3521,12 @@ export default function ClientOrdersWebScreen() {
         </DialogActions>
       </Dialog>
 
+      <Menu anchorEl={documentMenuAnchor} open={!!documentMenuAnchor} onClose={() => setDocumentMenuAnchor(null)}>
+        <MenuItem disabled={workspace.mutationLocked || orderSharing.copying} onClick={() => { setDocumentMenuAnchor(null); void orderSharing.copy(); }}>
+          <Stack direction="row" spacing={1} alignItems="center"><Ionicons name="link-outline" size={16} color="#2563EB" /><Typography sx={{ fontSize: 13, fontWeight: 800 }}>Ссылка для клиента</Typography></Stack>
+        </MenuItem>
+      </Menu>
+      <OrderShareFeedback message={orderSharing.feedback} onDismiss={orderSharing.dismissFeedback} />
       <Dialog open={confirmSubmitOpen} onClose={() => setConfirmSubmitOpen(false)} maxWidth="xs" fullWidth fullScreen={isPhoneDialog}>
         <DialogTitle>{isErrorRetryTo1c ? 'Повторить отправку в 1С?' : isResubmitTo1c ? 'Переотправить в 1С?' : 'Отправить в 1С?'}</DialogTitle>
         <DialogContent>
@@ -3802,110 +3686,7 @@ export default function ClientOrdersWebScreen() {
         </DialogActions>
       </Dialog>
 
-      <Dialog
-        open={!!productImagePreview}
-        onClose={() => setProductImagePreview(null)}
-        maxWidth="md"
-        fullWidth
-        fullScreen={isPhoneDialog}
-      >
-        <DialogTitle sx={{ pb: 0.75 }}>
-          <Stack direction="row" alignItems="flex-start" justifyContent="space-between" spacing={1}>
-            <Box sx={{ minWidth: 0 }}>
-              <Typography sx={{ fontSize: 16, fontWeight: 900, lineHeight: 1.2 }} noWrap>
-                {productImagePreview?.title || 'Изображение товара'}
-              </Typography>
-              {productImagePreview?.subtitle ? (
-                <Typography sx={{ mt: 0.35, fontSize: 11, fontWeight: 700, color: '#64748B' }}>
-                  {productImagePreview.subtitle}
-                </Typography>
-              ) : null}
-            </Box>
-            <IconButton
-              size="small"
-              onClick={() => setProductImagePreview(null)}
-              sx={{ mt: -0.4, width: 30, height: 30 }}
-            >
-              <Ionicons name="close-outline" size={19} />
-            </IconButton>
-          </Stack>
-        </DialogTitle>
-        <DialogContent sx={{ p: 2, pt: 1.25, bgcolor: '#F8FAFC' }}>
-          {productImagePreview ? (
-            <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
-              <Typography sx={{ fontSize: 11, color: '#64748B', fontWeight: 800 }}>
-                {productImagePreview.index + 1} из {productImagePreview.images.length}
-              </Typography>
-              {productImagePreview.images.length > 1 ? (
-                <Stack direction="row" spacing={0.75}>
-                  <IconButton
-                    size="small"
-                    onClick={() => setProductImagePreview((prev) => prev ? { ...prev, index: Math.max(0, prev.index - 1) } : prev)}
-                    disabled={productImagePreview.index <= 0}
-                    sx={{ width: 30, height: 30, border: '1px solid #D8E2F0', borderRadius: '8px' }}
-                  >
-                    <Ionicons name="chevron-back-outline" size={16} />
-                  </IconButton>
-                  <IconButton
-                    size="small"
-                    onClick={() => setProductImagePreview((prev) => prev ? { ...prev, index: Math.min(prev.images.length - 1, prev.index + 1) } : prev)}
-                    disabled={productImagePreview.index >= productImagePreview.images.length - 1}
-                    sx={{ width: 30, height: 30, border: '1px solid #D8E2F0', borderRadius: '8px' }}
-                  >
-                    <Ionicons name="chevron-forward-outline" size={16} />
-                  </IconButton>
-                </Stack>
-              ) : null}
-            </Stack>
-          ) : null}
-          <Box
-            sx={{
-              position: 'relative',
-              minHeight: isPhoneDialog ? '62vh' : 460,
-              display: 'grid',
-              placeItems: 'center',
-              bgcolor: '#FFFFFF',
-              border: '1px solid #D8E2F0',
-              borderRadius: '8px',
-              overflow: 'hidden',
-            }}
-          >
-            {productImagePreview ? (
-              <WebProductPreviewImage
-                src={productImagePreview.images[productImagePreview.index]?.previewUrl || PRODUCT_IMAGE_PLACEHOLDER_URI}
-                alt={productImagePreview.title}
-                key={productImagePreview.images[productImagePreview.index]?.key || productImagePreview.index}
-                isPhoneDialog={isPhoneDialog}
-              />
-            ) : null}
-          </Box>
-          {productImagePreview?.images.length && productImagePreview.images.length > 1 ? (
-            <Stack direction="row" spacing={1} sx={{ mt: 1.25, overflowX: 'auto', pb: 0.25 }}>
-              {productImagePreview.images.map((image, index) => (
-                <Box
-                  key={`preview-thumb-${image.key}`}
-                  component="button"
-                  type="button"
-                  onClick={() => setProductImagePreview((prev) => prev ? { ...prev, index } : prev)}
-                  sx={{
-                    width: 62,
-                    height: 62,
-                    flexShrink: 0,
-                    p: 0,
-                    borderRadius: '10px',
-                    border: index === productImagePreview.index ? '2px solid #2563EB' : '1px solid #D8E2F0',
-                    bgcolor: '#FFFFFF',
-                    overflow: 'hidden',
-                    cursor: 'pointer',
-                  }}
-                >
-                  <WebProductImage src={image.thumbUrl} alt="" spinnerSize={14} sx={{ width: '100%', height: '100%' }} />
-                </Box>
-              ))}
-            </Stack>
-          ) : null}
-        </DialogContent>
-      </Dialog>
+      <ProductImageGalleryDialog productImagePreview={productImagePreview} setProductImagePreview={setProductImagePreview} isPhoneDialog={isPhoneDialog} />
 
       <ReferenceDetailsDialog
         open={referenceDetailsOpen}

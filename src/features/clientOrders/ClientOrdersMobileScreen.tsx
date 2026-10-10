@@ -1,12 +1,10 @@
 ﻿import TabBarSpacer from '@/components/Navigation/TabBarSpacer';
-import {
-  FLOATING_TAB_BAR_BOTTOM_OFFSET,
-  FLOATING_TAB_BAR_HEIGHT,
-} from '@/components/Navigation/FloatingTabBar';
 import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 import { useOptionalTabBarVisibility } from '@/components/Navigation/TabBarVisibilityContext';
 import { useNotificationViewport } from '@/context/NotificationViewportContext';
 import DateTimeInput from '@/components/ui/DateTimeInput';
+import { OrderShareFeedback } from './components/OrderShareFeedback';
+import { useOrderShareActions } from './hooks/useOrderShareActions';
 import ContextMenuTrigger from '@/components/ui/ContextMenuTrigger';
 import type { ContextMenuItem } from '@/components/ui/ContextMenu';
 import { LiquidGlassSurface } from '@/components/ui/LiquidGlassSurface';
@@ -133,7 +131,7 @@ type EditorSection = 'header' | 'items';
 type DocumentOpeningState = 'new' | 'existing' | null;
 type PickerKind = ClientOrdersPickerKind;
 type InvoiceFileAction = 'download' | 'share';
-type OrderListContextAction = 'submit' | 'unqueue' | 'copy' | 'invoice-request' | 'invoice-download' | 'invoice-share';
+type OrderListContextAction = 'submit' | 'unqueue' | 'copy' | 'order-share' | 'invoice-request' | 'invoice-download' | 'invoice-share';
 type ProductGalleryImage = {
   key: string;
   thumbUrl: string;
@@ -1869,7 +1867,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   }, [editorPagerOffset, editorPagerPosition, openingDocument, openingOrderGuid, workspace]);
 
   const selectOrderByGuid = React.useCallback(async (guid: string) => {
-    if (ordersOpenBusyRef.current || openingOrderGuid || openingDocument) return;
+    if (ordersOpenBusyRef.current || openingOrderGuid || openingDocument) return false;
     const requestId = ++openingOrderRequestIdRef.current;
     ordersOpenBusyRef.current = true;
     setOpeningOrderGuid(guid);
@@ -1883,15 +1881,16 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     try {
       await waitForUiPaint();
       const opened = await workspace.selectOrder(guid);
-      if (openingOrderRequestIdRef.current !== requestId) return;
+      if (openingOrderRequestIdRef.current !== requestId) return false;
       if (!opened) {
         setOpeningOrderGuid(null);
         setOpeningDocument(null);
         setMode('orders');
-        return;
+        return false;
       }
       setOpeningOrderGuid(null);
       setOpeningDocument(null);
+      return true;
     } catch (error) {
       if (openingOrderRequestIdRef.current === requestId) {
         setOpeningOrderGuid(null);
@@ -1905,6 +1904,9 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       }
     }
   }, [editorPagerOffset, editorPagerPosition, openingDocument, openingOrderGuid, workspace.selectOrder]);
+
+  const orderSharing = useOrderShareActions(workspace);
+  const openOrderShare = React.useCallback(() => { setActionsMenuOpen(false); void orderSharing.copy(); }, [orderSharing.copy]);
 
   const selectOrder = React.useCallback(
     (order: ClientOrder) => selectOrderByGuid(order.guid),
@@ -2440,6 +2442,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
           setActionsMenuOpen={setActionsMenuOpen}
           setInspectorOpen={setInspectorOpen}
           saveDraftFromMenu={saveDraftFromMenu}
+          onShareOrder={openOrderShare}
           submitFromMenu={submitFromMenu}
           copyFromMenu={copyFromMenu}
           removeOrCancel={removeOrCancel}
@@ -2455,7 +2458,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         />
       </View>
     );
-  }, [actionsMenuOpen, copyFromMenu, deleteDocumentFromMenu, documentActionsWorkspace, documentContentLoading, downloadableInvoices.length, invoiceDownloadAvailable, invoiceGenerationPending, invoiceListLoading, invoiceRequestPendingGuid, invoiceRequesting, invoiceSharingId, isReachable, mode, openInvoiceActions, removeOrCancel, requestInvoiceNow, saveDraftFromMenu, selectedInvoiceOrderGuid, submitFromMenu]);
+  }, [actionsMenuOpen, copyFromMenu, deleteDocumentFromMenu, documentActionsWorkspace, documentContentLoading, downloadableInvoices.length, invoiceDownloadAvailable, invoiceGenerationPending, invoiceListLoading, invoiceRequestPendingGuid, invoiceRequesting, invoiceSharingId, isReachable, mode, openInvoiceActions, openOrderShare, removeOrCancel, requestInvoiceNow, saveDraftFromMenu, selectedInvoiceOrderGuid, submitFromMenu]);
   const handleEditorSectionChange = React.useCallback((nextSection: EditorSection) => {
     const nextTarget = nextSection === 'items' ? 1 : 0;
     const sectionChanged = nextTarget !== editorPagerTargetRef.current;
@@ -2526,6 +2529,9 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         styles={styles}
         loading={documentContentLoading}
         documentNumber={documentDisplayTitle}
+        onCopyLink={orderSharing.copy}
+        copyingLink={orderSharing.copying}
+        copyLinkDisabled={workspace.mutationLocked}
         status={documentStatusCode}
         statusText={documentStatusFullText}
         queuePosition={workspace.selectedOrder?.queuePosition}
@@ -2541,6 +2547,9 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     );
   }, [
     documentDisplayTitle,
+    orderSharing.copy,
+    orderSharing.copying,
+    workspace.mutationLocked,
     documentContentLoading,
     documentStatusCode,
     documentStatusFullText,
@@ -2793,6 +2802,10 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     void selectOrder(order);
   }, [selectOrder]);
   const handleOrderListContextAction = React.useCallback((order: ClientOrder, action: OrderListContextAction) => {
+    if (action === 'order-share') {
+      void orderSharing.copyFromList(order.guid);
+      return;
+    }
     const isRetry = !!(
       (order.last1cError || order.lastExportError)
       && (order.number1c || order.sentTo1cAt || Number(order.exportAttempts || 0) > 0)
@@ -2863,7 +2876,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     }
 
     void requestInvoiceNow(order);
-  }, [openInvoiceActions, requestInvoiceNow, workspace.copyOrderFromList, workspace.submitOrderFromList, workspace.syncDeviceDrafts, workspace.unqueueOrder]);
+  }, [orderSharing.copyFromList, openInvoiceActions, requestInvoiceNow, workspace.copyOrderFromList, workspace.submitOrderFromList, workspace.syncDeviceDrafts, workspace.unqueueOrder]);
   const orderListContextMenuDisabled = !!openingOrderGuid
     || !!openingDocument
     || workspace.submitting
@@ -3352,6 +3365,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         onClose={() => setProductGallery(null)}
       />
 
+      <OrderShareFeedback message={orderSharing.feedback} onDismiss={orderSharing.dismissFeedback} />
       <ConfirmDialog
         styles={styles}
         state={confirmDialog}
@@ -3788,6 +3802,7 @@ function DocumentActionsMenu({
   setActionsMenuOpen,
   setInspectorOpen,
   saveDraftFromMenu,
+  onShareOrder,
   submitFromMenu,
   copyFromMenu,
   removeOrCancel,
@@ -3807,6 +3822,7 @@ function DocumentActionsMenu({
   setActionsMenuOpen: (open: boolean) => void;
   setInspectorOpen: (open: boolean) => void;
   saveDraftFromMenu: () => void;
+  onShareOrder: () => void;
   submitFromMenu: () => void;
   copyFromMenu: () => void;
   removeOrCancel: () => void;
@@ -3857,6 +3873,7 @@ function DocumentActionsMenu({
         <Menu.Item leadingIcon="content-save-outline" title={workspace.saving ? 'Сохраняю...' : 'Сохранить'} onPress={saveDraftFromMenu} disabled={workspace.readOnly || workspace.mutationLocked || !workspace.validation.canSave} />
       ) : null}
       <Menu.Item leadingIcon="cloud-upload-outline" title={workspace.submitting ? 'Отправляю...' : 'Отправить в 1С'} onPress={submitFromMenu} disabled={workspace.readOnly || workspace.mutationLocked || !workspace.canSubmitOrder} />
+      <Menu.Item leadingIcon="link-variant" title="Ссылка для клиента" onPress={onShareOrder} disabled={workspace.mutationLocked} />
       <Menu.Item leadingIcon="content-copy" title={workspace.copying ? 'Копирую...' : 'Копировать'} onPress={copyFromMenu} disabled={workspace.mutationLocked || !workspace.hasEditableDocument} />
       {invoiceCount > 0 ? (
         <>
@@ -3886,6 +3903,9 @@ function DocumentHeaderTitleSlot({
   styles,
   loading = false,
   documentNumber,
+  onCopyLink,
+  copyingLink,
+  copyLinkDisabled,
   status,
   statusText,
   queuePosition,
@@ -3901,6 +3921,9 @@ function DocumentHeaderTitleSlot({
   styles: any;
   loading?: boolean;
   documentNumber: string;
+  onCopyLink: () => void;
+  copyingLink: boolean;
+  copyLinkDisabled: boolean;
   status: string;
   statusText: string;
   queuePosition?: number | null;
@@ -3981,9 +4004,16 @@ function DocumentHeaderTitleSlot({
           />
         ) : null}
       </Menu>
-      <Text style={styles.documentTopTitle} numberOfLines={1} ellipsizeMode="tail">
-        {documentNumber}
-      </Text>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${documentNumber}. Скопировать ссылку для клиента`}
+        accessibilityState={{ busy: copyingLink, disabled: copyLinkDisabled || copyingLink }}
+        disabled={copyLinkDisabled || copyingLink}
+        onPress={onCopyLink}
+        style={({ pressed }) => [{ flex: 1, minWidth: 0, minHeight: 40, justifyContent: 'center' }, pressed && styles.flatPressed]}
+      >
+        <Text style={[styles.documentTopTitle, { flex: 0 }]} numberOfLines={1} ellipsizeMode="tail">{copyingLink ? 'Копирую ссылку…' : documentNumber}</Text>
+      </Pressable>
     </View>
   );
 }
@@ -5772,7 +5802,7 @@ function ProductLineEditorSheet({
   const selectedPackageGuid = displayedItem.packageGuid || null;
   const halfControlWidth = Math.max(120, (width - 32) / 2);
   const contentNeedsScroll = scrollViewportHeight > 0 && scrollContentHeight > scrollViewportHeight + 2;
-  const bottomReserve = keyboardVisible ? 0 : FLOATING_TAB_BAR_HEIGHT + FLOATING_TAB_BAR_BOTTOM_OFFSET + 8;
+  const bottomReserve = keyboardVisible ? 0 : 8;
   const measuredContentHeight = headerHeight && scrollContentHeight && footerHeight
     ? headerHeight + scrollContentHeight + footerHeight + bottomReserve
     : undefined;
@@ -7998,6 +8028,13 @@ const OrderCard = React.memo(function OrderCard({
     && !invoiceAvailable;
   const contextItems = React.useMemo<ContextMenuItem<OrderListContextAction>[]>(() => [
     {
+      key: 'order-share',
+      label: 'Ссылка для клиента',
+      action: 'order-share',
+      icon: 'link-outline',
+      onSelect: () => onContextAction(order, 'order-share'),
+    },
+    {
       key: 'submit',
       label: sendFailed ? 'Повторить отправку' : 'Отправить в 1С',
       action: 'submit',
@@ -8807,7 +8844,7 @@ const styles = StyleSheet.create({
   searchbarInput: { minHeight: 0, fontSize: 14, color: '#0F172A' },
   pickerToolbar: { paddingHorizontal: 8, paddingTop: 6, paddingBottom: 4, gap: 6 },
   pickerBottomSheetWrap: { position: 'absolute', zIndex: 14, bottom: 0 },
-  pickerBottomSheet: { width: '100%', height: '100%', borderTopLeftRadius: 8, borderTopRightRadius: 8, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#FFFFFF', paddingTop: 5, paddingBottom: FLOATING_TAB_BAR_HEIGHT + FLOATING_TAB_BAR_BOTTOM_OFFSET + 8, gap: 0, shadowColor: '#0F172A', shadowOpacity: 0.16, shadowRadius: 18, shadowOffset: { width: 0, height: -6 }, elevation: 14 },
+  pickerBottomSheet: { width: '100%', height: '100%', borderTopLeftRadius: 8, borderTopRightRadius: 8, borderWidth: 1, borderColor: '#D8E2F0', backgroundColor: '#FFFFFF', paddingTop: 5, paddingBottom: 8, gap: 0, shadowColor: '#0F172A', shadowOpacity: 0.16, shadowRadius: 18, shadowOffset: { width: 0, height: -6 }, elevation: 14 },
   pickerBottomSheetHandle: { alignSelf: 'center', width: 36, height: 4, borderRadius: 999, backgroundColor: '#D0D5DD', marginBottom: 12 },
   pickerBottomSheetHeader: { minHeight: 44, paddingLeft: 16, paddingRight: 12, paddingBottom: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   pickerBottomSheetTitleRow: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 10 },

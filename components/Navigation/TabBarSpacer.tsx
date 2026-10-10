@@ -1,15 +1,9 @@
 import React from 'react';
-import { Platform, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import {
-  FLOATING_TAB_BAR_BOTTOM_OFFSET,
-  FLOATING_TAB_BAR_HEIGHT,
-} from '@/components/Navigation/FloatingTabBar';
+import { View } from 'react-native';
 
 export function useTabBarSpacerHeight() {
-  const insets = useSafeAreaInsets();
-  if (Platform.OS !== 'web') return 0;
-  return FLOATING_TAB_BAR_HEIGHT + FLOATING_TAB_BAR_BOTTOM_OFFSET + insets.bottom;
+  // Keep the shared layout API, without reserving space for a removed menu.
+  return 0;
 }
 
 export default function TabBarSpacer({ extra = 0 }: { extra?: number }) {

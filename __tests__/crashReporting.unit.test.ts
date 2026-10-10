@@ -1,5 +1,5 @@
 import { scrubCrashEvent, scrubDiagnosticValue } from '../src/shared/monitoring/privacy';
-const { patchMainApplication, nativeSource } = require('../plugins/with-dev-crash-reporting');
+const { patchMainApplication, nativeSource, diagnosticConfig } = require('../plugins/with-dev-crash-reporting');
 
 test('removes request, extra, PII, location and local variables while preserving error frames', () => {
   const event = scrubCrashEvent({
@@ -21,11 +21,22 @@ test('nested credentials are scrubbed and circular / large data is bounded', () 
   expect(JSON.stringify(scrubDiagnosticValue(data))).not.toContain('secret');
 });
 
-test('native bootstrap is early, idempotent and removed for non-dev builds', () => {
+test('native bootstrap is early, idempotent and removed when diagnostics are disabled', () => {
   const source = 'override fun onCreate() {\n    super.onCreate()\n    loadReactNative(this)\n}';
   const once = patchMainApplication(source, true);
   expect(patchMainApplication(once, true)).toBe(once);
   expect(once.indexOf('LeaderCrashReporting')).toBeLessThan(once.indexOf('loadReactNative'));
   expect(patchMainApplication(once, false)).toBe(source);
   expect(nativeSource('https://public@example.com/1')).toContain('options.isSendDefaultPii = false');
+});
+
+test.each(['prod', 'dev'])('native diagnostics use the %s channel and reject cross-environment DSNs', channel => {
+  const host = channel === 'dev' ? 'dev.leader-product.ru' : 'api.leader-product.ru';
+  const config = diagnosticConfig({ EXPO_PUBLIC_UPDATE_CHANNEL: channel, EXPO_PUBLIC_SENTRY_ENABLED: 'true',
+    EXPO_PUBLIC_SENTRY_DSN: `https://public@${host}/sentry/3` });
+  const native = nativeSource(config.dsn, config.channel);
+  expect(native).toContain(`options.environment = "${channel === 'dev' ? 'development' : 'production'}"`);
+  expect(native).not.toContain('__LEADER_');
+  expect(() => diagnosticConfig({ EXPO_PUBLIC_UPDATE_CHANNEL: channel === 'dev' ? 'prod' : 'dev',
+    EXPO_PUBLIC_SENTRY_ENABLED: 'true', EXPO_PUBLIC_SENTRY_DSN: config.dsn })).toThrow(/channel/);
 });

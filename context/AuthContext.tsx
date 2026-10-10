@@ -12,7 +12,7 @@ import { getProfile } from '@/utils/userService';
 import { getProfileGate } from '@/utils/profileGate';
 import { syncPushToken, unregisterPushToken } from '@/utils/pushNotifications';
 import { usePresenceHeartbeat } from '@/hooks/usePresenceHeartbeat';
-import { addMonitoringBreadcrumb, captureException } from '@/src/shared/monitoring';
+import { addMonitoringBreadcrumb, captureException, setMonitoringUser } from '@/src/shared/monitoring';
 
 interface AuthContextType {
   isLoading: boolean;
@@ -48,6 +48,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [profileState, setProfileState] = useState<Profile | null>(null);
 
   const setProfile = useCallback(async (newProfile: Profile | null) => {
+    await setMonitoringUser(newProfile?.id);
     // if (newProfile && !isValidProfile(newProfile)) {
     //   await logoutFn();
     //   setAuthenticated(false);
@@ -68,6 +69,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const signOut = async () => {
     addMonitoringBreadcrumb('auth_signout_start');
+    await setMonitoringUser(null);
     try {
       const { stopTrackingV2 } = await import('@/utils/trackingV2Service');
       await stopTrackingV2({ revoke: true });
@@ -87,6 +89,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   useEffect(() => {
     return onAuthSessionExpired((event) => {
+      void setMonitoringUser(null);
       addMonitoringBreadcrumb('auth_session_expired', {
         status: event.status,
         reason: event.reason,

@@ -58,6 +58,8 @@ import { shadeColor, tintColor } from '@/utils/color';
 import { formatPhoneDisplay, formatPhoneInputMask, normalizePhoneInputToDigits11, toApiPhoneDigitsString } from '@/utils/phone';
 import { getRoleDisplayName } from '@/utils/rbacLabels';
 import { getAppVersionInfo } from '@/utils/appVersion';
+import { Avatar, Divider, HelperText, List } from 'react-native-paper';
+import { ProfileAction, ProfileFact, ProfileField } from '@/src/features/profile/ui/ProfileSettingsPrimitives';
 
 type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
 type Tone = 'green' | 'violet' | 'gray' | 'red' | 'blue';
@@ -79,6 +81,7 @@ export type ProfileViewProps = {
   errorOverride?: string | null;
   onProfileUpdated?: (profile: Profile) => void;
   disableAppearAnimation?: boolean;
+  presentation?: 'full' | 'personal';
 };
 
 /* ---------- helpers ---------- */
@@ -101,6 +104,7 @@ export function ProfileView({
   errorOverride,
   onProfileUpdated,
   disableAppearAnimation = false,
+  presentation = 'full',
 }: ProfileViewProps) {
   const auth = useContext(AuthContext);
   const usingOverride = profileOverride !== undefined;
@@ -641,6 +645,51 @@ export function ProfileView({
         ]
       : []),
   ];
+
+  if (presentation === 'personal' && isSelf) {
+    const nameDirty = JSON.stringify(nameForm) !== JSON.stringify(buildNameForm(profile));
+    return <View style={[{ gap: 6 }, style]}>
+      <ProfileFact title="Фотография" value={uploadingAvatar ? 'Загрузка…' : 'Изменить фото'} icon="camera-outline"
+        onPress={uploadingAvatar ? undefined : handlePickAvatar} right={() =>
+          avatarUrl ? <Avatar.Image size={52} source={{ uri: avatarUrl }} /> : <Avatar.Text size={52} label={initials === '👤' ? '?' : initials} style={{ backgroundColor: '#DBE7FF' }} color="#2563EB" />} />
+      {(['lastName', 'firstName', 'middleName'] as const).map(key => <ProfileField key={key}
+        label={{ lastName: 'Фамилия', firstName: 'Имя', middleName: 'Отчество' }[key]} value={nameForm[key]} disabled={nameSaving}
+        autoCapitalize="words" onChangeText={value => { setNameMode('editing'); setNameForm(prev => ({ ...prev, [key]: value })); setNameError(null); }} />)}
+      {nameError ? <HelperText type="error">{nameError}</HelperText> : null}
+      <ProfileAction  loading={nameSaving} disabled={nameSaving || !nameDirty} onPress={() => void handleSaveName()}>Сохранить имя</ProfileAction>
+      <ProfileFact title="Почта для входа" icon="email-outline" value={email ? `${email}${emailVerified ? ' · Подтверждена' : ' · Не подтверждена'}` : 'Не указана'}
+        right={props => <List.Icon {...props} icon="pencil-outline" />} onPress={() => { if (!emailSaving && emailMode === 'view') { setEmailMode('editing'); setEmailError(null); setEmailNotice(null); setEmailInput(email || ''); } }} />
+      {emailMode === 'editing' && <>
+        <ProfileField  label="Новая почта" value={emailInput} keyboardType="email-address" autoCapitalize="none" autoCorrect={false}
+          disabled={emailSaving} onChangeText={value => { setEmailInput(value.replace(/\s+/g, '')); setEmailError(null); }} />
+        <ProfileAction  disabled={emailSaving} loading={emailSaving} onPress={() => void handleStartEmailFlow()}>Получить код</ProfileAction>
+      </>}
+      {emailMode === 'pending_code' && <>
+        <ProfileField  label="Код из письма" value={emailCode} keyboardType="number-pad" autoComplete="one-time-code" maxLength={6}
+          disabled={emailSaving} onChangeText={value => { setEmailCode(value.replace(/\D+/g, '').slice(0, 6)); setEmailError(null); }} />
+        <ProfileAction  disabled={emailSaving || emailCode.length !== 6} loading={emailSaving} onPress={() => void handleVerifyEmailCode()}>Подтвердить почту</ProfileAction>
+        <ProfileAction disabled={emailSaving} onPress={() => void handleResendEmailCode()}>Отправить код ещё раз</ProfileAction>
+      </>}
+      {emailMode !== 'view' && <ProfileAction disabled={emailSaving} onPress={() => void handleCancelEmailFlow()}>Отмена</ProfileAction>}
+      {emailError || emailNotice ? <HelperText type={emailError ? 'error' : 'info'}>{emailError || emailNotice}</HelperText> : null}
+      <ProfileFact title="Личный телефон" icon="phone-outline" value={phoneDisplay ? `${phoneDisplay}${phoneVerified ? ' · Подтверждён' : ' · Не подтверждён'}` : 'Не указан'}
+        right={props => <List.Icon {...props} icon="pencil-outline" />}
+        onPress={() => { if (!phoneBusy && phoneMode === 'collapsed') { setPhoneMode('editing'); setPhoneError(null); setPhoneStatusText(null); } }} />
+      {phoneMode === 'editing' && <>
+        <ProfileField  label="Номер телефона" value={phoneInput} keyboardType="phone-pad" disabled={phoneBusy}
+          onChangeText={value => { setPhoneInput(value); setPhoneError(null); }} />
+        <ProfileAction  loading={phoneBusy} disabled={phoneBusy} onPress={() => void handleStartPhoneFlow()}>Подтвердить через {providerLabel(phoneProvider)}</ProfileAction>
+        <ProfileAction disabled={phoneBusy} onPress={() => { setPhoneMode('collapsed'); setPhoneInput(profilePhoneMasked); setPhoneError(null); }}>Отмена</ProfileAction>
+      </>}
+      {phoneMode === 'pending' && <>
+        {isDesktopWeb && phoneQrPayload ? <View style={{ alignItems: 'center' }}><QRCode value={phoneQrPayload} size={180} /></View> : null}
+        <ProfileAction  disabled={phoneBusy} onPress={() => void handleOpenTelegram()}>Открыть {providerLabel(phoneProvider)}</ProfileAction>
+        <ProfileAction disabled={phoneBusy} onPress={() => void handleCancelPhoneFlow()}>Отменить подтверждение</ProfileAction>
+      </>}
+      {phoneError || phoneStatusText ? <HelperText type={phoneError ? 'error' : 'info'}>{phoneError || phoneStatusText}</HelperText> : null}
+      <AvatarCropperModal visible={cropVisible} image={cropImage} onCancel={() => setCropVisible(false)} onConfirm={handleConfirmCrop} />
+    </View>;
+  }
 
   return (
     <View style={[styles.profileShell, style]}>

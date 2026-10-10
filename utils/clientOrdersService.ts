@@ -307,6 +307,14 @@ export type ClientOrderInvoice = {
 };
 
 export type ClientOrder = {
+  draftReview?: {
+    code: string;
+    message: string;
+    warehouseGuid?: string | null;
+    clientRevision?: number;
+    checkedAt?: string;
+    details?: { items?: Array<{ productGuid: string; name?: string; required: number; available: number; shortage?: number }> } | null;
+  } | null;
   contentToken?: string;
   guid: string;
   clientOrderId?: string | null;
@@ -1154,6 +1162,23 @@ export async function getClientOrderByClientId(clientOrderId: string) {
   });
   if (!res.ok || !res.data) throwApiError('Не удалось сверить заказ клиента', res);
   return normalizeClientOrder(res.data);
+}
+
+/** Lightweight connectivity probe, independent of 1C and editor contents. */
+export async function probeClientOrdersConnection() {
+  const result = await apiClient('/health', { skipAuth: true, timeoutMs: 4000, networkRetryCount: 0 });
+  return result.ok;
+}
+
+/** Recovery only: this endpoint never queues an order or contacts 1C. */
+export async function backupClientOrderDraft(clientOrderId: string, clientRevision: number, payload: object, order: ClientOrder) {
+  const body = { clientRevision, payload, order };
+  const res = await apiClient<typeof body, { clientRevision: number; savedAt: string; submittedOrderGuid: string | null }>(
+    `/api/client-orders/draft-backups/${encodeURIComponent(clientOrderId)}`,
+    { method: 'PUT', body, timeoutMs: 15000 }
+  );
+  if (!res.ok || !res.data) throwApiError('Не удалось сохранить копию черновика в API', res);
+  return res.data;
 }
 
 export async function updateClientOrder(guid: string, payload: any) {

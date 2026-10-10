@@ -28,6 +28,56 @@
   204. No new APK, dev native diagnostics, 1C changes or runtime relabeling.
   Actual application on the employee's phone remains a user acceptance check.
 
+## Dev diagnostics v2 (0.1.34 / build 33, 2026-10-09)
+
+Dev only: early `LeaderCrashReporting` initializes the existing Android/NDK/ANR
+SDK before React. RN must use `autoInitializeNativeSdk:false` when that module
+is present, preserving its native privacy hook. Production behavior is unchanged.
+
+- Random installation and process-session IDs, persisted numeric user ID; login
+  waits for native identity persistence and logout clears it. No email/name.
+- Order open/create/add/save/queue/submit action names; no customer or row payloads.
+- Android 11+ exit reasons are reported on the next launch, using an opaque
+  process-state UUID to recover the previous session. Unknown identity stays
+  unknown. Low-memory kills and force stops are not labeled application crashes.
+- Native SDK disk queue (100 envelopes), repeated network delivery, private
+  source maps and native ELF symbols. No screenshots, replay, UI snapshots,
+  request bodies or frame locals. Native minidumps remain sensitive diagnostics.
+- Dev ingestion moved to an always-on cloud service; operations and retention:
+  API `deploy/glitchtip-dev-cloud`. Production and historical local reports remain
+  untouched. Only ingestion is public; report/UI access requires SSH.
+
+Phone acceptance is performed by the user: install over the existing dev app,
+sign in, reproduce an error while online/offline, reopen after a process exit,
+restore connectivity and check session/user/build/OTA correlation. Test Java,
+NDK and ANR separately. Killing the app for memory or Force Stop cannot run an
+immediate crash callback; Android exit history is a next-launch fallback, not
+a guaranteed stack trace. Devices below Android 11 lack that fallback.
+
+Do not uninstall or clear app data: this deletes local drafts and cached reports.
+No physical-phone crash or offline-delivery acceptance is asserted by CI checks.
+
+### Published dev build (2026-10-09)
+
+- APK workflow `37911580150` succeeded from `973c94ae3167d0a235f82a26ab0eec241e6bc134`:
+  122 diagnostics/core tests, TypeScript, native release build and private symbol
+  upload passed. Hermes v1 uses `libhermesvm.so`, not `libhermes.so`.
+- Synthetic event `1dda7a409814e8a08d0ef897cf2011bb` resolved to
+  `/src/shared/monitoring/privacy.ts:14`; Java and minidump ingestion also passed.
+  These synthetic checks do not establish device capture or ANR acceptance.
+- AppUpdate id 19: optional dev 0.1.34/build33, rollout 100%, both arm64-v8a and
+  x86_64. Permanent download: `https://dev.leader-product.ru/download`.
+- APK size 129447637 bytes, SHA-256
+  `567fa0ed3384d2c9589b86e572e89f70ed3924a3121fd7aa6f4679b6a8161fe8`.
+  Local verifier confirmed the existing signing certificate, standalone release,
+  dev API/OTA/diagnostics configuration and absence of private credentials.
+  Public update check and signed download both returned the matching artifact.
+- Cloud diagnostics and the dev download page are deployed. The additional API
+  OTA-manifest patch in image `90390248d537311b1f86c01d270a4943010bfa48` is built
+  but not deployed: cloud free disk is approximately 1.7 GB, cleanup approval
+  pending. It is not required for this embedded APK or diagnostic ingestion.
+- Production API, APK, monitoring and 1C were not changed in this dev release.
+
 Initial scope: runtime 0.1.26 / APK build 25; monitoring-only OTA. That OTA
 contains no unrelated dev, offline-order, tracking or 1C changes.
 
