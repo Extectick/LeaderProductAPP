@@ -4,6 +4,7 @@ import { Avatar, Button, Divider, List, Switch, Text, TouchableRipple } from 're
 import { Ionicons } from '@expo/vector-icons';
 import type { Profile } from '@/src/entities/user/types';
 import { profileIdentity, type ProfileSectionKey } from '../lib/presentation';
+import { ProfileLogoutButton } from './ProfileLogoutButton';
 
 type Props = {
   profile: Profile; version: string; trackingEnabled: boolean; trackingBusy: boolean;
@@ -47,7 +48,7 @@ export function ProfileHome(props: Props) {
         </View> : null}
       </View>
     </View>
-    <Button mode="contained-tonal" icon="pencil-outline" buttonColor="#E8F1FF" textColor="#2563EB"
+    <Button mode="contained-tonal" icon={({ color }) => <Ionicons name="create-outline" size={25} color={color} />} buttonColor="#E8F1FF" textColor="#2563EB"
       onPress={() => onOpen('personal')} style={styles.edit} contentStyle={styles.editContent} labelStyle={styles.editLabel}>Изменить данные</Button>
     <Section title="КОНТАКТЫ">
       <Row title="Контакты для клиентов" description="Телефоны, мессенджеры и почта" icon="people-outline" onPress={() => onOpen('contacts')} />
@@ -72,7 +73,7 @@ export function ProfileHome(props: Props) {
       <Row title="Уведомления" description="В приложении, Telegram и MAX" icon="notifications-outline" onPress={() => onOpen('notifications')} />
       <Row title="О приложении" description={`Версия ${props.version}`} icon="information-circle-outline" onPress={() => onOpen('about')} />
     </Section>
-    <View style={styles.logout}><Row title="Выйти из аккаунта" icon="log-out-outline" danger onPress={props.onLogout} /></View>
+    <View style={styles.logout}><ProfileLogoutButton onPress={props.onLogout} /></View>
   </View>;
 }
 const styles = StyleSheet.create({

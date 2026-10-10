@@ -7,7 +7,7 @@ jest.mock('react-native-paper', () => {
   const host = (name: string) => (props: any) => React.createElement(name, props);
   return {
     ActivityIndicator: host('ActivityIndicator'), Button: host('Button'), HelperText: host('HelperText'),
-    IconButton: host('IconButton'), List: { Accordion: host('Accordion'), Icon: host('Icon') },
+    IconButton: host('IconButton'), Divider: host('Divider'), List: { Accordion: host('Accordion'), Item: host('Item'), Icon: host('Icon') },
     Text: host('Text'), TextInput: Object.assign(host('TextInput'), { Icon: host('InputIcon') }),
     useTheme: () => ({ colors: { onSurfaceVariant: '#666' } }),
   };

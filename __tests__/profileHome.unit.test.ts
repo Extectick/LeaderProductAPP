@@ -1,6 +1,7 @@
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
-jest.mock('react-native', () => ({ View: 'View', StyleSheet: { create: (value: unknown) => value } }));
+jest.mock('react-native', () => ({ View: 'View', Pressable: 'Pressable', Text: 'Text', StyleSheet: { create: (value: unknown) => value } }));
+jest.mock('react-native-reanimated', () => ({ __esModule: true, default: { View: 'AnimatedView' }, useReducedMotion: () => false, useSharedValue: (value: number) => ({ value }), useAnimatedStyle: (fn: any) => fn(), withSpring: (value: number) => value }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 jest.mock('react-native-paper', () => {
   const React = require('react'); const host = (name: string) => (props: any) => React.createElement(name, props);
@@ -26,6 +27,6 @@ test('all summary rows navigate and geo switch does not open the detail', async 
   onOpen.mockClear();
   await act(async () => renderer.root.findByType('Switch' as any).props.onValueChange());
   expect(onToggleTracking).toHaveBeenCalledTimes(1); expect(onOpen).not.toHaveBeenCalled();
-  await act(async () => renderer.root.find(node => node.type === ('Item' as any) && node.props.title === 'Выйти из аккаунта').props.onPress());
+  await act(async () => renderer.root.find(node => node.type === ('Pressable' as any) && node.props.accessibilityLabel === 'Выйти из аккаунта').props.onPress());
   expect(onLogout).toHaveBeenCalledTimes(1);
 });

@@ -2,6 +2,7 @@ import React from 'react';
 import { StyleSheet, View } from 'react-native';
 import { ActivityIndicator, Button, HelperText, IconButton, List, Text, TextInput, useTheme } from 'react-native-paper';
 import { apiClient } from '@/utils/apiClient';
+import { ProfileAction, ProfileFact, ProfileField, profileSettingsStyles } from '@/src/features/profile/ui/ProfileSettingsPrimitives';
 
 export type ClientContacts = { phones: { label: string; number: string }[]; telegramUrl: string | null; maxUrl: string | null; whatsappUrl: string | null; email: string | null };
 type ContactResponse = { settings: ClientContacts; defaultPhone: string | null; effective: ClientContacts };
@@ -41,36 +42,38 @@ export function ClientContactsEditor({ userId, disabled = false, embedded = fals
     } finally { if (id === requestId.current) setBusy(false); }
   };
   const locked = busy || disabled;
+  const Field = embedded ? ProfileField : TextInput;
+  const Action = embedded ? ProfileAction : Button;
   const body = <View style={[styles.body, embedded && { padding: 0 }]}>
       {busy && !baseline ? <ActivityIndicator accessibilityLabel="Загрузка контактов" /> : null}
       {baseline ? <>
-        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+        {embedded && !value.phones.length ? <ProfileFact title="Телефон по умолчанию" value={defaultPhone || 'Добавьте номер для связи'} icon="phone-outline" /> : <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
           {value.phones.length ? 'Клиент увидит указанные ниже номера.' : defaultPhone ? `По умолчанию: ${defaultPhone}` : 'В профиле нет телефона. Добавьте номер для связи.'}
-        </Text>
+        </Text>}
         {value.phones.map((phone, index) => <View key={index} style={styles.row}>
           <View style={styles.fields}>
-            <TextInput mode="outlined" dense label={`Телефон ${index + 1}`} accessibilityLabel={`Телефон ${index + 1}`} value={phone.number} keyboardType="phone-pad" maxLength={40} disabled={locked}
+            <Field mode="outlined" dense label={`Телефон ${index + 1}`} accessibilityLabel={`Телефон ${index + 1}`} value={phone.number} keyboardType="phone-pad" maxLength={40} disabled={locked}
               onChangeText={number => setValue(prev => ({ ...prev, phones: prev.phones.map((p, i) => i === index ? { ...p, number } : p) }))} />
-            <TextInput mode="outlined" dense label="Подпись — необязательно" accessibilityLabel={`Подпись телефона ${index + 1}`} value={phone.label} maxLength={32} disabled={locked}
+            <Field mode="outlined" dense label="Подпись — необязательно" accessibilityLabel={`Подпись телефона ${index + 1}`} value={phone.label} maxLength={32} disabled={locked}
               onChangeText={label => setValue(prev => ({ ...prev, phones: prev.phones.map((p, i) => i === index ? { ...p, label } : p) }))} />
           </View>
           <IconButton icon="close" accessibilityLabel={`Удалить телефон ${index + 1}`} disabled={locked}
             onPress={() => setValue(prev => ({ ...prev, phones: prev.phones.filter((_, i) => i !== index) }))} />
         </View>)}
-        <Button icon="plus" disabled={locked || value.phones.length >= 5} onPress={() => setValue(prev => ({ ...prev,
-          phones: [...prev.phones, { label: '', number: prev.phones.length === 0 ? defaultPhone || '' : '' }] }))}>Добавить телефон</Button>
-        <TextInput mode="outlined" dense label="Telegram" accessibilityLabel="Telegram" placeholder="@username или https://t.me/…" autoCapitalize="none" autoCorrect={false}
+        <Action mode="text" icon="plus" disabled={locked || value.phones.length >= 5} onPress={() => setValue(prev => ({ ...prev,
+          phones: [...prev.phones, { label: '', number: prev.phones.length === 0 ? defaultPhone || '' : '' }] }))}>Добавить телефон</Action>
+        <Field mode="outlined" dense label="Telegram" accessibilityLabel="Telegram" placeholder="@username или https://t.me/…" autoCapitalize="none" autoCorrect={false}
           value={value.telegramUrl || ''} maxLength={250} disabled={locked} onChangeText={telegramUrl => setValue(prev => ({ ...prev, telegramUrl }))} />
-        <TextInput mode="outlined" dense label="MAX" accessibilityLabel="MAX" placeholder="https://max.ru/…" autoCapitalize="none" autoCorrect={false}
+        <Field mode="outlined" dense label="MAX" accessibilityLabel="MAX" placeholder="https://max.ru/…" autoCapitalize="none" autoCorrect={false}
           value={value.maxUrl || ''} maxLength={250} disabled={locked} onChangeText={maxUrl => setValue(prev => ({ ...prev, maxUrl }))} />
-        <TextInput mode="outlined" dense label="WhatsApp" accessibilityLabel="WhatsApp" placeholder="+7… или https://wa.me/…" autoCapitalize="none" autoCorrect={false}
-          left={<TextInput.Icon icon="whatsapp" />} value={value.whatsappUrl || ''} maxLength={250} disabled={locked}
+        <Field mode="outlined" dense label="WhatsApp" accessibilityLabel="WhatsApp" placeholder="+7… или https://wa.me/…" autoCapitalize="none" autoCorrect={false}
+          left={embedded ? undefined : <TextInput.Icon icon="whatsapp" />} value={value.whatsappUrl || ''} maxLength={250} disabled={locked}
           onChangeText={whatsappUrl => setValue(prev => ({ ...prev, whatsappUrl }))} />
-        <TextInput mode="outlined" dense label="Почта для клиентов" accessibilityLabel="Почта для клиентов" placeholder="name@example.ru" keyboardType="email-address" autoCapitalize="none" autoCorrect={false}
-          left={<TextInput.Icon icon="email-outline" />} value={value.email || ''} maxLength={254} disabled={locked}
+        <Field mode="outlined" dense label="Почта для клиентов" accessibilityLabel="Почта для клиентов" placeholder="name@example.ru" keyboardType="email-address" autoCapitalize="none" autoCorrect={false}
+          left={embedded ? undefined : <TextInput.Icon icon="email-outline" />} value={value.email || ''} maxLength={254} disabled={locked}
           onChangeText={email => setValue(prev => ({ ...prev, email }))} />
-        <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>Эти контакты видны по ссылке на заказ. Номер входа и привязка ботов не изменятся.</Text>
-        <Button mode="contained" loading={busy} disabled={locked || JSON.stringify(value) === JSON.stringify(baseline)} onPress={() => void request(true)}>Сохранить контакты</Button>
+        <Text variant="bodySmall" style={embedded ? profileSettingsStyles.hint : { color: theme.colors.onSurfaceVariant }}>Видны клиенту по ссылке на заказ. Данные для входа не меняются.</Text>
+        <Action mode={embedded ? 'contained-tonal' : 'contained'} loading={busy} disabled={locked || JSON.stringify(value) === JSON.stringify(baseline)} onPress={() => void request(true)}>Сохранить контакты</Action>
       </> : failed ? <Button onPress={() => void request(false)}>Повторить</Button> : null}
       {message ? <HelperText type={failed ? 'error' : 'info'} visible accessibilityLiveRegion="polite">{message}</HelperText> : null}
     </View>;

@@ -4,13 +4,14 @@ let sdk: any;
 let native: any;
 let api: jest.Mock;
 let location: any;
+const readyNative = { batteryOptimizationExempt: true, powerSaveMode: false, notificationsEnabled: true, commandsRunning: false };
 
 beforeEach(() => {
   jest.resetModules();
   storage = new Map([['tracking:v2:enabled', 'true'], ['tracking:v2:legacy-migrated', 'done']]);
   secure = new Map([['tracking.v2.credential', 'lpt_existing']]);
   sdk = { init: jest.fn().mockResolvedValue(undefined), setConfig: jest.fn().mockResolvedValue(undefined), start: jest.fn().mockResolvedValue(undefined), stop: jest.fn().mockResolvedValue(undefined), isTracking: jest.fn().mockResolvedValue(false), requestPosition: jest.fn().mockResolvedValue(true), getLogs: jest.fn().mockResolvedValue([]) };
-  native = { setCommandsEnabled: jest.fn().mockResolvedValue(true), getReliabilityStatus: jest.fn().mockResolvedValue({ batteryOptimizationExempt: false, commandsRunning: false }) };
+  native = { setCommandsEnabled: jest.fn().mockResolvedValue(true), getReliabilityStatus: jest.fn().mockResolvedValue(readyNative) };
   location = { getForegroundPermissionsAsync: jest.fn().mockResolvedValue({ status: 'granted', android: { accuracy: 'fine' } }), getBackgroundPermissionsAsync: jest.fn().mockResolvedValue({ status: 'granted' }), requestForegroundPermissionsAsync: jest.fn().mockResolvedValue({ status: 'granted' }), requestBackgroundPermissionsAsync: jest.fn().mockResolvedValue({ status: 'granted' }), hasServicesEnabledAsync: jest.fn().mockResolvedValue(true) };
   api = jest.fn(async (path: string) => path.endsWith('/bootstrap') ? ({ ok: true, status: 200, data: { credential: 'lpt_existing', endpoint: '/tracking/native/osmand' } }) : ({ ok: true, status: 200 }));
   jest.doMock('@react-native-async-storage/async-storage', () => ({ __esModule: true, default: {
@@ -49,14 +50,14 @@ it.each([401, 403, 404])('does not bypass bootstrap rejection %s using a saved k
 });
 
 it('does not revive a credential rejected by the native channel while offline', async () => {
-  native.getReliabilityStatus.mockResolvedValue({ commandError: 'DEVICE_AUTH_REQUIRED' });
+  native.getReliabilityStatus.mockResolvedValue({ ...readyNative, commandError: 'DEVICE_AUTH_REQUIRED' });
   api.mockResolvedValue({ ok: false, status: 0, message: 'Нет сети' });
   await expect(require('../utils/trackingV2Service').restoreTrackingV2()).rejects.toThrow('Нет сети');
   expect(sdk.start).not.toHaveBeenCalled();
 });
 
 it('repairs a rejected credential only after a successful authenticated bootstrap', async () => {
-  native.getReliabilityStatus.mockResolvedValue({ commandError: 'DEVICE_AUTH_REQUIRED' });
+  native.getReliabilityStatus.mockResolvedValue({ ...readyNative, commandError: 'DEVICE_AUTH_REQUIRED' });
   api.mockResolvedValue({ ok: true, data: { credential: 'lpt_replacement', endpoint: '/tracking/native/osmand' } });
   await expect(require('../utils/trackingV2Service').restoreTrackingV2()).resolves.toBe(true);
   expect(secure.get('tracking.v2.credential')).toBe('lpt_replacement');
@@ -140,6 +141,7 @@ it('does not open a notification permission prompt from automatic repair', async
 });
 
 it('exposes battery restrictions but not invented coordinates or successful upload time', async () => {
+  native.getReliabilityStatus.mockResolvedValue({ ...readyNative, batteryOptimizationExempt: false });
   sdk.getLogs.mockResolvedValue([{ time: Date.now(), message: 'Upload error: lpt_private' }, { time: Date.now(), message: 'Location provider failed' }]);
   const result = await require('../utils/trackingV2Service').getTrackingV2Diagnostics();
   expect(result.batteryOptimizationExempt).toBe(false);
@@ -147,4 +149,67 @@ it('exposes battery restrictions but not invented coordinates or successful uplo
   expect(result.lastSentAt).toBeUndefined();
   expect(result.lastRecordedAt).toBeUndefined();
   expect(JSON.stringify(result)).not.toContain('lpt_private');
+});
+
+it.each([
+  ['battery restriction', { batteryOptimizationExempt: false }],
+  ['unknown battery status', { batteryOptimizationExempt: undefined }],
+  ['power saver', { powerSaveMode: true }],
+  ['unknown power saver', { powerSaveMode: undefined }],
+  ['blocked notifications', { notificationsEnabled: false }],
+])('blocks explicit enable with %s before bootstrap', async (_, restriction) => {
+  storage.set('tracking:v2:enabled', 'false');
+  native.getReliabilityStatus.mockResolvedValue({ ...readyNative, ...restriction });
+  await expect(require('../utils/trackingV2Service').startTrackingV2()).rejects.toMatchObject({ code: 'TRACKING_SETUP_REQUIRED' });
+  expect(storage.get('tracking:v2:enabled')).toBe('false');
+  expect(sdk.start).not.toHaveBeenCalled();
+  expect(native.setCommandsEnabled).not.toHaveBeenCalledWith(true);
+  expect(api).not.toHaveBeenCalled();
+});
+
+it.each(['gps', 'coarse', 'activity', 'background'])('blocks explicit enable with missing %s', async reason => {
+  storage.set('tracking:v2:enabled', 'false');
+  if (reason === 'gps') location.hasServicesEnabledAsync.mockResolvedValue(false);
+  if (reason === 'coarse') location.getForegroundPermissionsAsync.mockResolvedValue({ status: 'granted', android: { accuracy: 'coarse' } });
+  if (reason === 'activity') require('react-native').PermissionsAndroid.check.mockResolvedValue(false);
+  if (reason === 'background') location.getBackgroundPermissionsAsync.mockResolvedValue({ status: 'denied' });
+  await expect(require('../utils/trackingV2Service').startTrackingV2()).rejects.toMatchObject({ code: 'TRACKING_SETUP_REQUIRED' });
+  expect(sdk.start).not.toHaveBeenCalled();
+  expect(storage.get('tracking:v2:enabled')).toBe('false');
+});
+
+it('pauses previously enabled capture with battery restrictions without deleting the queue or key', async () => {
+  native.getReliabilityStatus.mockResolvedValue({ ...readyNative, batteryOptimizationExempt: false });
+  const service = require('../utils/trackingV2Service');
+  await expect(service.restoreTrackingV2()).resolves.toBe(false);
+  expect(sdk.stop).toHaveBeenCalled();
+  expect(native.setCommandsEnabled).toHaveBeenCalledWith(false);
+  expect(storage.get('tracking:v2:enabled')).toBe('false');
+  expect(secure.get('tracking.v2.credential')).toBe('lpt_existing');
+  native.getReliabilityStatus.mockResolvedValue(readyNative);
+  await expect(service.restoreTrackingV2()).resolves.toBe(false); // settings alone do not enable tracking
+  expect(sdk.start).not.toHaveBeenCalled();
+  expect(api).not.toHaveBeenCalled();
+});
+
+it.each(['startTrackingV2', 'restoreTrackingV2'])('rechecks battery after slow bootstrap in %s', async method => {
+  if (method === 'startTrackingV2') storage.set('tracking:v2:enabled', 'false');
+  api.mockImplementation(async () => {
+    native.getReliabilityStatus.mockResolvedValue({ ...readyNative, powerSaveMode: true });
+    return { ok: true, data: { credential: 'lpt_existing', endpoint: '/tracking/native/osmand' } };
+  });
+  const operation = require('../utils/trackingV2Service')[method]();
+  if (method === 'startTrackingV2') await expect(operation).rejects.toMatchObject({ code: 'TRACKING_SETUP_REQUIRED' });
+  else await expect(operation).resolves.toBe(false);
+  expect(storage.get('tracking:v2:enabled')).toBe('false');
+  expect(sdk.start).not.toHaveBeenCalled();
+  expect(native.setCommandsEnabled).not.toHaveBeenCalledWith(true);
+});
+
+it('starts exactly once after all requirements pass', async () => {
+  storage.set('tracking:v2:enabled', 'false');
+  await require('../utils/trackingV2Service').startTrackingV2();
+  expect(storage.get('tracking:v2:enabled')).toBe('true');
+  expect(sdk.start).toHaveBeenCalledTimes(1);
+  expect(native.setCommandsEnabled).toHaveBeenCalledWith(true);
 });

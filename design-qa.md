@@ -1,3 +1,52 @@
+# Profile settings unification — 2026-10-11
+
+final result: passed
+
+## Scope
+
+Current iteration implements the user's eight profile follow-ups in APP only. Work and Departments is the visual reference. Notifications is unchanged. API address uses the app's configured API_BASE_URL, not a hardcoded production/dev URL. No native dependency, API or 1C changes; no publication in this iteration.
+
+Product Design guided a shared Paper-based row/field/action layer rather than separate form designs. Existing contact validation endpoints, name/avatar/phone/email verification and password-reset handlers are retained. Logout uses the prior spring (0.97 pressed, 1.03 hover; damping 18, stiffness 260), purple Android ripple and red/pink action; reduced-motion settings are respected.
+
+## Source and rendered evidence
+
+- Source visual target: existing Work and Departments layout, captured as `qa/profile/settings-work-reference.png` (390 x 844 CSS/raster, 1x). Its row structure was extracted without changing the reference's layout.
+- Actual app route `app/(main)/profile/settings.tsx` renders in the local RN Web harness at http://127.0.0.1:4186/; only authentication, network, native permissions and device data are fixtures. It does not modify a real account.
+- Final mobile: `settings-contacts-final.png`, `settings-personal-final.png`, `settings-security-final.png`, `settings-tracking-final.png`, `settings-about-final.png`, each 390 x 844.
+- Combined reference/rendered comparison opened and inspected: `settings-style-comparison.png` (1560 x 844: Work, Contacts, Personal, Security); `settings-tracking-comparison.png` (780 x 844: Work, Tracking). Readable at original density, so a separate focused crop was unnecessary.
+- Narrow screen: `settings-contacts-small.png`, `settings-about-small.png`, `settings-logout-small.png`, 320 x 740. No horizontal page overflow (scrollWidth = innerWidth = 320); API address and all dialog actions fit.
+- Desktop: `settings-contacts-desktop.png`, `settings-security-desktop.png`, 1440 x 900, centered maximum 720 px content. Full browser viewport, no fabricated device chrome.
+- All paths above are relative to `qa/profile/`. Capture/resize were separate operations to avoid stale IAB frame scaling.
+
+## Findings and iteration history
+
+1. [P2, fixed] Flat contact fields inherited left icons but forced zero input padding, overlapping labels. Initial `settings-contacts-before.png` documents the failure. Preserve Paper's icon padding in the shared field and omit the extra field icons in embedded mode; admin's outlined editor retains its icons. Final Contacts capture and combined board show no overlap.
+2. [P2, fixed] Personal settings had duplicated dividers between email and phone. Removed redundant separators; final personal capture has one divider per row.
+3. [P2, fixed] The unmet battery requirement was below completed permissions. Compare `settings-tracking-before.png` with final capture: incomplete checks now come first, immediately below progress.
+4. Preview bootstrap initially lacked a Babel worklet transform for the new logout animation. Added explicit useAnimatedStyle dependencies for web. This was preview troubleshooting, not a visual QA iteration; no new console errors after reload. The historical error at 21:38:46 UTC remains in the browser log.
+5. No remaining actionable P0/P1/P2 issues in inspected states. Empty flat input labels differ from read-only rows intentionally, preserving editable affordance.
+
+## Required fidelity surfaces
+
+- Typography: existing system/Paper fonts, 13 px muted row labels and 16 px values; multiline descriptions retained. Long email and phone verification status wrap rather than truncate. Empty editable labels use standard Paper floating-label behavior.
+- Layout: flat rows, shared dividers, transparent input backgrounds, no nested settings cards. Settings padding 18 px, max width 720 px. Tracking can scroll to reach the final action and platform note; nothing is fixed over the checklist.
+- Colors: profile background #F8FAFC, text #0F172A, labels #64748B, icons #566982, action #2563EB with #E8F1FF tonal fill, successful checks green. No changes to notification colors/controls.
+- Assets: installed icon fonts and existing avatar components only. Edit icon is the installed create-outline at 25 px. No generated or hand-drawn replacement artwork.
+- Copy: real account labels, configured API address; exact unmet permission/battery guidance rather than a misleading enabled state. No new marketing or placeholder instructions inside production components.
+
+## Functional checks
+
+- Final checks: 58 tests / 10 suites passed; `npx tsc --noEmit` and `git diff --check` passed. New settings/lifecycle suites added to the existing OTA workflow's preflight; the workflow was not dispatched.
+- Contact fixture: add phone, edit label, save, confirm saved state and disabled save action. No network request to a real API.
+- Tracking fixture: battery restricted -> switch disabled; refresh does not enable. Service tests cover each prerequisite, unknown battery/power state (fail closed), changed settings during bootstrap, pause/start races, rejected credentials, offline restoration and explicit successful start.
+- Missing prerequisites are checked before bootstrap and again immediately before capture; automatic restoration pauses incomplete setup without deleting credentials or buffered fixes. Completing settings alone does not enable tracking.
+- Reused native bridge supplies battery exemption/power-saving status; manufacturer-specific autostart cannot be reliably inspected and is explicitly described separately. No guarantee that arbitrary vendor task-killers or Force Stop can be bypassed.
+- Security tests preserve password reset through email code verification, then password change. Personal tests preserve unsaved name edits and verified email flow. Contact self/admin and notification regressions remain covered.
+- Browser checks: route navigation, Cancel on logout, disabled tracking, contact save, responsive widths 320/390/1440. No real call, message, password, location or account change.
+- Android Emulator QA preflight: `adb devices` returned an empty device list. Native settings navigation, actual ripple/keyboard and background capture therefore remain physical-device QA limits; browser and mocked tests are not native E2E proof. No APK built or installed.
+
+---
+
 # Profile correction — 2026-10-11
 
 final result: passed

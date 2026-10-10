@@ -12,6 +12,7 @@ import { logoutUser } from '@/utils/authService';
 import { ProfileHome } from '@/src/features/profile/ui/ProfileHome';
 import { useProfileData } from '@/src/features/profile/model/ProfileDataContext';
 import { trackingSummary, type ProfileSectionKey } from '@/src/features/profile/lib/presentation';
+import { isTrackingReady, TrackingSetupRequiredError } from '@/utils/trackingReadiness';
 
 export default function ProfileScreen() {
   const { profile, loading, error, refresh } = useProfileData();
@@ -32,9 +33,10 @@ export default function ProfileScreen() {
   const summary = trackingSummary(tracking.trackingEnabled, tracking.trackingStatus, tracking.nativeDiagnostics.lastRecordedAt, now);
   const toggleTracking = async () => {
     if (toggleLock.current) return;
+    if (!tracking.trackingEnabled && !isTrackingReady(tracking.reliability)) { open('tracking'); return; }
     toggleLock.current = true; setBusy(true);
     try { if (tracking.trackingEnabled) await tracking.stopTracking(); else await tracking.startTracking(); }
-    catch (e) { Alert.alert('Геолокация', e instanceof Error ? e.message : 'Не удалось изменить состояние геолокации'); }
+    catch (e) { if (e instanceof TrackingSetupRequiredError) open('tracking'); else Alert.alert('Геолокация', e instanceof Error ? e.message : 'Не удалось изменить состояние геолокации'); }
     finally { toggleLock.current = false; setBusy(false); }
   };
   const open = (section: ProfileSectionKey) => router.push({ pathname: '/profile/settings', params: { section } } as any);

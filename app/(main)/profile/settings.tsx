@@ -1,6 +1,6 @@
 import React from 'react';
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from 'react-native';
-import { Button, Divider, List, Text } from 'react-native-paper';
+import { Button, Text } from 'react-native-paper';
 import Animated, { FadeIn, ReduceMotion } from 'react-native-reanimated';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ProfileView } from '@/components/Profile/ProfileView';
@@ -12,12 +12,9 @@ import { isProfileSection } from '@/src/features/profile/lib/presentation';
 import { CredentialsSection, TrackingToggle, TrackingAdminHealthCard } from '@/src/features/profile/ui/ProfileServiceSettings';
 import { getRoleDisplayName } from '@/utils/rbacLabels';
 import { getAppVersionInfo } from '@/utils/appVersion';
+import { API_BASE_URL } from '@/utils/config';
+import { ProfileFact as Fact } from '@/src/features/profile/ui/ProfileSettingsPrimitives';
 
-function Fact({ title, value, icon }: { title: string; value?: string | null; icon: string }) {
-  return <><List.Item title={title} description={value || 'Не указано'} descriptionNumberOfLines={5}
-    left={props => <List.Icon {...props} icon={icon} />} titleStyle={{ color: '#64748B', fontSize: 13 }}
-    descriptionStyle={{ color: '#0F172A', fontSize: 16 }} style={{ paddingHorizontal: 0, paddingVertical: 10 }} /><Divider /></>;
-}
 export default function ProfileSettingsScreen() {
   const { section } = useLocalSearchParams<{ section: string }>();
   const { profile, refresh } = useProfileData();
@@ -53,6 +50,7 @@ export default function ProfileSettingsScreen() {
           <Fact title="Лидер-Продукт" value={`Версия ${version.fullVersionLabel}`} icon="cellphone" />
           <Fact title="Номер сборки" value={version.nativeBuild} icon="package-variant-closed" />
           <Fact title="Обновление приложения" value={version.otaLabel || 'Встроенная версия'} icon="update" />
+          <Fact title="Адрес API" value={API_BASE_URL || 'Не настроен'} icon="server-network-outline" />
           <Fact title="ID пользователя" value={String(profile.id)} icon="account-outline" />
           {employee?.createdAt && <Fact title="Профиль сотрудника создан" value={new Date(employee.createdAt).toLocaleString('ru-RU')} icon="calendar-outline" />}
           {employee?.updatedAt && <Fact title="Профиль сотрудника обновлён" value={new Date(employee.updatedAt).toLocaleString('ru-RU')} icon="clock-outline" />}

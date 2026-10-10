@@ -1,12 +1,13 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Linking, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { Button as PaperButton, Switch } from 'react-native-paper';
+import { Alert, Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { IconButton } from 'react-native-paper';
 import * as Clipboard from 'expo-clipboard';
-import { Ionicons } from '@expo/vector-icons';
 import type { Profile } from '@/src/entities/user/types';
 import { addCredentials, changePassword, requestPasswordReset, resendVerification, verify, verifyPasswordReset } from '@/utils/authService';
 import { useTracking } from '@/context/TrackingContextV2';
-import { openTrackingSettings, restoreTrackingV2 } from '@/utils/trackingV2Service';
+import { openTrackingSettings, requestTrackingPermissions } from '@/utils/trackingV2Service';
+import { ProfileTrackingSettings } from './ProfileTrackingSettings';
+import { ProfileAction, ProfileFact, ProfileField } from './ProfileSettingsPrimitives';
 import { useIsAdmin } from '@/hooks/useIsAdmin';
 import { getTrackingAdminHealth, type TrackingAdminHealth } from '@/utils/trackingApi';
 import OTP6Input from '@/components/OTP6Input';
@@ -359,113 +360,25 @@ export function CredentialsSection({
 
   return (
     <>
-      <View style={styles.credentialsCard}>
-        <View style={styles.settingsHeader}>
-          <View style={styles.settingsIcon}>
-            <Ionicons name="key-outline" size={17} color="#1E293B" />
-          </View>
-          <Text style={styles.settingsTitle}>Безопасность</Text>
-        </View>
+      <View>
+        <ProfileFact title="Вход по паролю" value={authMethods.passwordLoginEnabled ? emailFromProfile : 'Не подключён'} icon="key-outline" />
         {error ? <Text style={styles.credentialsError}>{error}</Text> : null}
         {notice ? <Text style={styles.credentialsNotice}>{notice}</Text> : null}
-
-      {!showCompletion && shouldShowSetup && step === 'credentials' ? (
-        <>
-          <TextInput
-            value={email}
-            onChangeText={setEmail}
-            style={styles.fieldInput}
-            placeholder="example@mail.com"
-            autoCapitalize="none"
-            keyboardType="email-address"
-          />
-          <TextInput
-            value={password}
-            onChangeText={setPassword}
-            style={styles.fieldInput}
-            placeholder="Пароль"
-            secureTextEntry
-          />
-          <Pressable
-            onPress={onSubmitCredentials}
-            disabled={saving}
-            style={({ pressed }) => [
-              styles.credentialsButton,
-              saving && styles.credentialsButtonDisabled,
-              pressed && !saving ? styles.credentialsButtonPressed : null,
-            ]}
-          >
-            <Text style={styles.credentialsButtonText}>
-              {saving ? 'Сохранение...' : 'Добавить email и пароль'}
-            </Text>
-          </Pressable>
-        </>
-      ) : null}
-
-      {!showCompletion && shouldShowSetup && step === 'verify' ? (
-        <>
-          <Text style={styles.credentialsHint}>
-            Подтвердите email {verificationEmail || '—'} кодом из письма.
-          </Text>
-          <TextInput
-            value={code}
-            onChangeText={(value) => setCode(value.replace(/\D+/g, '').slice(0, 6))}
-            style={styles.fieldInput}
-            placeholder="Код из 6 цифр"
-            keyboardType="number-pad"
-          />
-          <Pressable
-            onPress={onSubmitVerification}
-            disabled={saving}
-            style={({ pressed }) => [
-              styles.credentialsButton,
-              saving && styles.credentialsButtonDisabled,
-              pressed && !saving ? styles.credentialsButtonPressed : null,
-            ]}
-          >
-            <Text style={styles.credentialsButtonText}>
-              {saving ? 'Проверка...' : 'Подтвердить email'}
-            </Text>
-          </Pressable>
-          <Pressable
-            onPress={onResendCode}
-            disabled={resending || saving}
-            style={({ pressed }) => [
-              styles.credentialsSecondaryButton,
-              (resending || saving) && styles.credentialsButtonDisabled,
-              pressed && !(resending || saving) ? styles.credentialsSecondaryButtonPressed : null,
-            ]}
-          >
-            <Text style={styles.credentialsSecondaryButtonText}>
-              {resending ? 'Отправка...' : 'Отправить код повторно'}
-            </Text>
-          </Pressable>
-        </>
-      ) : null}
-
-      {showCompletion ? (
-        <View style={styles.credentialsDoneWrap}>
-          <Text style={styles.credentialsDoneText}>Вход по email/паролю активирован.</Text>
-        </View>
-      ) : null}
-
-        {canResetPassword ? (
-          <>
-            <Pressable
-              onPress={onRequestPasswordReset}
-              disabled={resetting || saving || resending}
-              style={({ pressed }) => [
-                styles.credentialsResetButton,
-                (resetting || saving || resending) && styles.credentialsButtonDisabled,
-                pressed && !(resetting || saving || resending) ? styles.credentialsResetButtonPressed : null,
-              ]}
-            >
-              <Text style={styles.credentialsResetButtonText}>
-                {resetting ? 'Отправка...' : 'Сбросить пароль'}
-              </Text>
-            </Pressable>
-          </>
-        ) : null}
+        {!showCompletion && shouldShowSetup && step === 'credentials' ? <>
+          <ProfileField label="Email" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" />
+          <ProfileField label="Пароль" value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" />
+          <ProfileAction onPress={onSubmitCredentials} disabled={saving} loading={saving}>Добавить email и пароль</ProfileAction>
+        </> : null}
+        {!showCompletion && shouldShowSetup && step === 'verify' ? <>
+          <Text style={styles.credentialsHint}>Подтвердите email {verificationEmail || '—'} кодом из письма.</Text>
+          <ProfileField label="Код из 6 цифр" value={code} keyboardType="number-pad"
+            onChangeText={value => setCode(value.replace(/\D+/g, '').slice(0, 6))} />
+          <ProfileAction onPress={onSubmitVerification} disabled={saving} loading={saving}>Подтвердить email</ProfileAction>
+          <ProfileAction mode="text" onPress={onResendCode} disabled={resending || saving} loading={resending}>Отправить код повторно</ProfileAction>
+        </> : null}
+        {showCompletion ? <Text style={styles.credentialsDoneText}>Вход по email/паролю активирован.</Text> : null}
+        {canResetPassword ? <ProfileFact title="Сбросить пароль" value={resetting ? 'Отправляем код…' : 'Подтверждение через email'} icon="lock-reset"
+          onPress={resetting || saving || resending ? undefined : onRequestPasswordReset} /> : null}
       </View>
 
       <Modal visible={resetModalVisible} transparent animationType="fade" onRequestClose={onCloseResetModal}>
@@ -562,20 +475,18 @@ export function CredentialsSection({
               </>
             ) : (
               <>
-                <TextInput
+                <ProfileField
                   value={resetPassword}
                   onChangeText={setResetPassword}
-                  style={styles.fieldInput}
-                  placeholder="Новый пароль"
+                  label="Новый пароль"
                   secureTextEntry
                   autoCapitalize="none"
                   autoCorrect={false}
                 />
-                <TextInput
+                <ProfileField
                   value={resetPasswordRepeat}
                   onChangeText={setResetPasswordRepeat}
-                  style={styles.fieldInput}
-                  placeholder="Повторите пароль"
+                  label="Повторите пароль"
                   secureTextEntry
                   autoCapitalize="none"
                   autoCorrect={false}
@@ -622,155 +533,30 @@ export function CredentialsSection({
 }
 
 export function TrackingToggle() {
-  const {
-    trackingEnabled,
-    trackingStatus,
-    trackingStatusText,
-    queueLength,
-    lastUploadAt,
-    lastError,
-    trackingMode,
-    nativeDiagnostics,
-    reliability,
-    refreshTrackingStatus,
-    startTracking,
-    stopTracking,
-  } = useTracking();
+  const tracking = useTracking();
+  useEffect(() => { void tracking.refreshTrackingStatus().catch(() => undefined); }, [tracking.refreshTrackingStatus]);
   const [loading, setLoading] = useState(false);
-
-  const openSettings = async (kind: 'battery' | 'location' | 'app') => {
-    try { await openTrackingSettings(kind); }
-    catch { Alert.alert('Настройки', 'Откройте настройки приложения вручную в настройках Android'); }
-  };
-  const repair = async () => {
-    if (loading) return;
-    setLoading(true);
-    try {
-      await restoreTrackingV2();
-      await refreshTrackingStatus();
-    } catch (error) { Alert.alert('Отслеживание', error instanceof Error ? error.message : 'Не удалось восстановить сервис'); }
-    finally { setLoading(false); }
-  };
-
-  const onToggle = async () => {
-    if (loading) return;
-    setLoading(true);
-    try {
-      if (trackingEnabled) {
-        await stopTracking();
-      } else {
-        await startTracking();
-      }
-    } catch (e: any) {
-      Alert.alert('Ошибка', e?.message ?? 'Не удалось изменить состояние трекинга');
-    } finally {
-      setLoading(false);
+  const lock = useRef(false);
+  const run = async (action: () => Promise<void>) => {
+    if (lock.current) return;
+    lock.current = true; setLoading(true);
+    try { await action(); }
+    catch (error) { Alert.alert('Геолокация', error instanceof Error ? error.message : 'Не удалось изменить настройки'); }
+    finally {
+      try { await tracking.refreshTrackingStatus(); } catch { /* Keep last known state until the next check. */ }
+      lock.current = false; setLoading(false);
     }
   };
-
-  const lastUploadLabel = lastUploadAt
-    ? new Date(lastUploadAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
-    : null;
-  const lastRecordedLabel = nativeDiagnostics.lastRecordedAt
-    ? new Date(nativeDiagnostics.lastRecordedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
-    : null;
-  const modeLabel =
-    trackingMode === 'native'
-      ? 'Фоновый сервис Android'
-      : trackingMode === 'fallback'
-        ? 'Резервный режим приложения'
-        : 'Не запущен';
-  const statusColor =
-    trackingStatus === 'tracking'
-      ? '#15803D'
-      : trackingStatus === 'uploading'
-        ? '#2563EB'
-        : trackingStatus === 'idle'
-          ? '#64748B'
-          : '#B45309';
-
-  return (
-    <View style={styles.trackingRow}>
-      <View style={styles.settingsIcon}>
-        <Ionicons name="navigate-outline" size={17} color={statusColor} />
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.trackingTitle}>Отслеживание маршрута</Text>
-        <Text style={styles.trackingSubtitle}>{trackingStatusText}</Text>
-        <View style={styles.trackingMetaRow}>
-          {trackingEnabled ? (
-            <View style={styles.trackingChip}>
-              <Ionicons name={trackingMode === 'native' ? 'shield-checkmark-outline' : 'phone-portrait-outline'} size={12} color="#475569" />
-              <Text style={styles.trackingChipText}>{modeLabel}</Text>
-            </View>
-          ) : null}
-          {queueLength !== null ? (
-            <View style={styles.trackingChip}>
-              <Ionicons name="cloud-upload-outline" size={12} color="#475569" />
-              <Text style={styles.trackingChipText}>
-                {queueLength > 0 ? `Очередь: ${queueLength}` : 'Очередь пуста'}
-              </Text>
-            </View>
-          ) : null}
-          {lastUploadLabel ? (
-            <View style={styles.trackingChip}>
-              <Ionicons name="time-outline" size={12} color="#475569" />
-              <Text style={styles.trackingChipText}>Связь с API {lastUploadLabel}</Text>
-            </View>
-          ) : null}
-          {lastRecordedLabel ? (
-            <View style={styles.trackingChip}>
-              <Ionicons name="locate-outline" size={12} color="#475569" />
-              <Text style={styles.trackingChipText}>Точка {lastRecordedLabel}</Text>
-            </View>
-          ) : null}
-        </View>
-        {trackingStatus === 'waitingNetwork' && nativeDiagnostics.nextRetryAt ? (
-          <Text style={styles.trackingRetry}>
-            Следующая попытка отправки {new Date(nativeDiagnostics.nextRetryAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
-          </Text>
-        ) : null}
-        {nativeDiagnostics.discardedPoints > 0 ? (
-          <Text style={styles.trackingDetail}>
-            Отфильтровано неточных или повторных точек: {nativeDiagnostics.discardedPoints}
-          </Text>
-        ) : null}
-        {lastError ? <Text style={styles.trackingError}>{lastError}</Text> : null}
-        {trackingEnabled && Platform.OS === 'android' ? (
-          <>
-            <Text style={styles.trackingDetail}>
-              {reliability.batteryOptimizationExempt === true ? 'Батарея: ограничения Android сняты' : reliability.batteryOptimizationExempt === false ? 'Батарея: Android может задерживать геопозицию' : 'Проверка батареи доступна в новом APK'}
-              {reliability.powerSaveMode ? '\nВключён режим энергосбережения телефона' : ''}
-              {reliability.notificationsEnabled === false ? '\nУведомление скрыто — разрешите уведомления приложения' : ''}
-              {reliability.preciseLocation === false ? '\nРазрешена только приблизительная геопозиция' : ''}
-            </Text>
-            {reliability.lastCommandPollAt ? (
-              <Text style={styles.trackingDetail}>Команды API: {new Date(reliability.lastCommandPollAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} · это не время координаты</Text>
-            ) : <Text style={styles.trackingDetail}>Канал команд: {reliability.commandsRunning ? 'соединяемся' : 'соединение не подтверждено'}</Text>}
-            {reliability.batteryOptimizationExempt !== true || reliability.powerSaveMode ? (
-              <PaperButton compact icon="battery-outline" onPress={() => void openSettings('battery')}>Настроить батарею</PaperButton>
-            ) : null}
-            {!reliability.locationServicesEnabled ? <PaperButton compact icon="crosshairs-gps" onPress={() => void openSettings('location')}>Включить геолокацию</PaperButton> : null}
-            {reliability.notificationsEnabled === false || reliability.preciseLocation === false || trackingStatus === 'permissionDenied' ? <PaperButton compact icon="cog-outline" onPress={() => void openSettings('app')}>Разрешения приложения</PaperButton> : null}
-            <PaperButton compact icon="refresh" disabled={loading} loading={loading} onPress={() => void repair()}>Проверить и восстановить</PaperButton>
-            <Text style={styles.trackingDetail}>Для работы в фоне выберите батарею «Без ограничений». Если в телефоне есть настройка автозапуска — разрешите её. После принудительной остановки нужно снова открыть приложение.</Text>
-          </>
-        ) : null}
-        {(trackingStatus === 'permissionDenied' || trackingStatus === 'serviceDenied' || trackingStatus === 'error') ? (
-          <Pressable
-            style={styles.trackingSettingsButton}
-            onPress={() => void Linking.openSettings()}
-            accessibilityRole="button"
-            accessibilityLabel="Открыть системные настройки приложения"
-          >
-            <Ionicons name="settings-outline" size={15} color="#2563EB" />
-            <Text style={styles.trackingSettingsButtonText}>Открыть настройки Android</Text>
-          </Pressable>
-        ) : null}
-      </View>
-      <Switch value={trackingEnabled} onValueChange={onToggle} disabled={loading} />
-    </View>
-  );
+  return <ProfileTrackingSettings diagnostics={tracking.reliability} enabled={tracking.trackingEnabled}
+    status={tracking.trackingStatusText} lastSentAt={tracking.lastUploadAt}
+    busy={loading || tracking.trackingStatus === 'starting' || tracking.trackingStatus === 'stopping'}
+    onToggle={() => void run(async () => { if (tracking.trackingEnabled) await tracking.stopTracking(); else await tracking.startTracking(); })}
+    onSetup={action => void run(async () => {
+      if (action === 'permissions') {
+        if (!(await requestTrackingPermissions())) await openTrackingSettings('app');
+      } else await openTrackingSettings(action);
+    })}
+    onRefresh={() => void run(tracking.refreshTrackingStatus)} />;
 }
 
 export function TrackingAdminHealthCard() {
@@ -810,154 +596,14 @@ export function TrackingAdminHealthCard() {
     ? '#B45309'
     : '#15803D';
 
-  return (
-    <View style={styles.trackingAdminRow}>
-      <View style={[styles.settingsIcon, { backgroundColor: tone === '#15803D' ? '#ECFDF5' : '#FFFBEB' }]}>
-        <Ionicons name="pulse-outline" size={17} color={tone} />
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.trackingTitle}>Состояние трекинга</Text>
-        <Text style={styles.trackingSubtitle}>
-          {summary
-            ? `Устройств: ${summary.activeDevices} · без связи: ${summary.staleDevices} · выдач токена за час: ${summary.tokenIssuesLastHour}`
-            : error || 'Загружаем состояние устройств…'}
-        </Text>
-      </View>
-      <Pressable
-        onPress={() => void refresh()}
-        disabled={loading}
-        accessibilityRole="button"
-        accessibilityLabel="Обновить состояние трекинга"
-        hitSlop={8}
-        style={styles.trackingHealthRefresh}
-      >
-        {loading ? <ActivityIndicator size="small" color={tone} /> : <Ionicons name="refresh-outline" size={18} color={tone} />}
-      </Pressable>
-    </View>
-  );
+  return <ProfileFact title="Состояние устройств" value={summary
+    ? `Устройств: ${summary.activeDevices} · без связи: ${summary.staleDevices} · выдач токена за час: ${summary.tokenIssuesLastHour}`
+    : error || 'Загружаем состояние устройств…'} icon="pulse"
+    right={() => <IconButton icon="refresh" iconColor={tone} loading={loading} disabled={loading}
+      accessibilityLabel="Обновить состояние трекинга" onPress={() => void refresh()} />} />;
 }
 
 const styles = StyleSheet.create({
-trackingRow: {
-    paddingHorizontal: 0,
-    paddingVertical: 13,
-    borderRadius: 0,
-    borderWidth: 0,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#FFFFFF',
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-  },
-trackingAdminRow: {
-    paddingHorizontal: 0,
-    paddingVertical: 11,
-    borderRadius: 0,
-    borderWidth: 0,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#FFFFFF',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-trackingSettingsButton: {
-    alignSelf: 'flex-start',
-    marginTop: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingVertical: 5,
-  },
-trackingSettingsButtonText: {
-    color: '#2563EB',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-trackingHealthRefresh: {
-    width: 34,
-    height: 34,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-trackingTitle: { fontWeight: '800', fontSize: 14, color: '#0F172A', marginBottom: 3 },
-trackingSubtitle: { fontSize: 12, color: '#64748B', lineHeight: 16 },
-trackingMetaRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginTop: 8,
-  },
-trackingChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 999,
-    backgroundColor: '#F1F5F9',
-  },
-trackingChipText: {
-    color: '#475569',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-trackingError: {
-    marginTop: 7,
-    color: '#B45309',
-    fontSize: 11,
-    lineHeight: 15,
-    fontWeight: '700',
-  },
-trackingRetry: {
-    marginTop: 7,
-    color: '#475569',
-    fontSize: 11,
-    lineHeight: 15,
-    fontWeight: '700',
-  },
-trackingDetail: {
-    marginTop: 5,
-    color: '#64748B',
-    fontSize: 11,
-    lineHeight: 15,
-  },
-settingsHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 9,
-    marginBottom: 2,
-  },
-settingsIcon: {
-    width: 26,
-    height: 26,
-    borderRadius: 8,
-    backgroundColor: '#F1F5F9',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-settingsTitle: {
-    color: '#0F172A',
-    fontSize: 14,
-    fontWeight: '800',
-  },
-fieldInput: {
-    backgroundColor: '#F9FAFB',
-    borderColor: '#E5E7EB',
-    borderWidth: 0,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    color: '#111827',
-  },
-credentialsCard: {
-    paddingHorizontal: 0,
-    paddingVertical: 13,
-    borderRadius: 0,
-    borderWidth: 0,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#FFFFFF',
-    gap: 11,
-  },
 credentialsTitle: { fontSize: 16, fontWeight: '800', color: '#0F172A' },
 credentialsSubtitle: { fontSize: 12, color: '#64748B' },
 credentialsHint: { fontSize: 12, color: '#374151' },
@@ -997,22 +643,6 @@ credentialsSecondaryButtonText: {
     color: '#3730A3',
     fontWeight: '700',
   },
-credentialsResetButton: {
-    borderRadius: 10,
-    paddingVertical: 11,
-    paddingHorizontal: 12,
-    alignItems: 'center',
-    backgroundColor: '#EFF6FF',
-    borderWidth: 0,
-    borderColor: '#2563EB',
-  },
-credentialsResetButtonPressed: {
-    backgroundColor: '#DBEAFE',
-  },
-credentialsResetButtonText: {
-    color: '#1D4ED8',
-    fontWeight: '800',
-  },
 resetModalOverlay: {
     flex: 1,
     justifyContent: 'center',
@@ -1034,14 +664,6 @@ resetModalActions: {
     flexDirection: 'row',
     gap: 8,
     flexWrap: 'wrap',
-  },
-credentialsDoneWrap: {
-    borderRadius: 10,
-    borderWidth: 0,
-    borderColor: '#86EFAC',
-    backgroundColor: '#F0FDF4',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
   },
 credentialsDoneText: {
     color: '#166534',
