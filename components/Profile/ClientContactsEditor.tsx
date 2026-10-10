@@ -3,9 +3,9 @@ import { StyleSheet, View } from 'react-native';
 import { ActivityIndicator, Button, HelperText, IconButton, List, Text, TextInput, useTheme } from 'react-native-paper';
 import { apiClient } from '@/utils/apiClient';
 
-export type ClientContacts = { phones: { label: string; number: string }[]; telegramUrl: string | null; maxUrl: string | null };
+export type ClientContacts = { phones: { label: string; number: string }[]; telegramUrl: string | null; maxUrl: string | null; whatsappUrl: string | null; email: string | null };
 type ContactResponse = { settings: ClientContacts; defaultPhone: string | null; effective: ClientContacts };
-const empty: ClientContacts = { phones: [], telegramUrl: null, maxUrl: null };
+const empty: ClientContacts = { phones: [], telegramUrl: null, maxUrl: null, whatsappUrl: null, email: null };
 
 /** Shared by the employee profile and the administrator's user editor. */
 export function ClientContactsEditor({ userId, disabled = false }: { userId?: number; disabled?: boolean }) {
@@ -31,7 +31,8 @@ export function ClientContactsEditor({ userId, disabled = false }: { userId?: nu
       const result = await apiClient<ClientContacts, ContactResponse>(path, save ? { method: 'PUT', body: value } : {});
       if (id !== requestId.current) return;
       if (!result.ok || !result.data) throw new Error(result.message || 'Не удалось загрузить контакты');
-      setValue(result.data.settings); setBaseline(result.data.settings); setDefaultPhone(result.data.defaultPhone);
+      const settings = { ...empty, ...result.data.settings };
+      setValue(settings); setBaseline(settings); setDefaultPhone(result.data.defaultPhone);
       if (save) setMessage('Контакты сохранены');
     } catch (error: any) {
       if (id !== requestId.current) return;
@@ -39,7 +40,7 @@ export function ClientContactsEditor({ userId, disabled = false }: { userId?: nu
     } finally { if (id === requestId.current) setBusy(false); }
   };
   const locked = busy || disabled;
-  return <List.Accordion title="Контакты для клиентов" description="Телефоны, Telegram и MAX" expanded={expanded}
+  return <List.Accordion title="Контакты для клиентов" description="Телефоны, мессенджеры и почта" expanded={expanded}
     left={props => <List.Icon {...props} icon="card-account-phone-outline" />}
     onPress={() => { setExpanded(!expanded); if (!expanded && !baseline && !busy) void request(false); }}>
     <View style={styles.body}>
@@ -64,6 +65,12 @@ export function ClientContactsEditor({ userId, disabled = false }: { userId?: nu
           value={value.telegramUrl || ''} maxLength={250} disabled={locked} onChangeText={telegramUrl => setValue(prev => ({ ...prev, telegramUrl }))} />
         <TextInput mode="outlined" dense label="MAX" placeholder="https://max.ru/…" autoCapitalize="none" autoCorrect={false}
           value={value.maxUrl || ''} maxLength={250} disabled={locked} onChangeText={maxUrl => setValue(prev => ({ ...prev, maxUrl }))} />
+        <TextInput mode="outlined" dense label="WhatsApp" placeholder="+7… или https://wa.me/…" autoCapitalize="none" autoCorrect={false}
+          left={<TextInput.Icon icon="whatsapp" />} value={value.whatsappUrl || ''} maxLength={250} disabled={locked}
+          onChangeText={whatsappUrl => setValue(prev => ({ ...prev, whatsappUrl }))} />
+        <TextInput mode="outlined" dense label="Почта для клиентов" placeholder="name@example.ru" keyboardType="email-address" autoCapitalize="none" autoCorrect={false}
+          left={<TextInput.Icon icon="email-outline" />} value={value.email || ''} maxLength={254} disabled={locked}
+          onChangeText={email => setValue(prev => ({ ...prev, email }))} />
         <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>Эти контакты видны по ссылке на заказ. Номер входа и привязка ботов не изменятся.</Text>
         <Button mode="contained" loading={busy} disabled={locked || JSON.stringify(value) === JSON.stringify(baseline)} onPress={() => void request(true)}>Сохранить контакты</Button>
       </> : failed ? <Button onPress={() => void request(false)}>Повторить</Button> : null}

@@ -3,6 +3,8 @@ import { Dialog, DialogContent, DialogTitle, IconButton, List, ListItemButton, L
 import CloseIcon from '@mui/icons-material/Close';
 import PhoneIcon from '@mui/icons-material/PhoneOutlined';
 import TelegramIcon from '@mui/icons-material/Telegram';
+import WhatsAppIcon from '@mui/icons-material/WhatsApp';
+import EmailIcon from '@mui/icons-material/EmailOutlined';
 import { useGalleryHistory } from '../src/features/clientOrders/hooks/useGalleryHistory';
 // Official MAX brand asset: https://go.max.ru/brandbook
 // Download: https://st.max.ru/brandbook/max-colored.zip (Max colored.png).
@@ -13,6 +15,8 @@ export type ManagerContacts = {
   phones: { label: string; number: string }[];
   telegramUrl: string | null;
   maxUrl: string | null;
+  whatsappUrl?: string | null;
+  email?: string | null;
 };
 
 export function ManagerContactDialog({ manager, open, onClose }: {
@@ -22,7 +26,7 @@ export function ManagerContactDialog({ manager, open, onClose }: {
 }) {
   // Reuse the same overlay history handling as photos: Back closes the dialog.
   const close = useGalleryHistory(open, onClose);
-  const hasContacts = !!(manager?.phones.length || manager?.telegramUrl || manager?.maxUrl);
+  const hasContacts = !!(manager?.phones.length || manager?.telegramUrl || manager?.maxUrl || manager?.whatsappUrl || manager?.email);
   return <Dialog open={open} onClose={close} fullWidth maxWidth="xs"
     aria-labelledby="manager-contact-title" className="manager-contact-dialog">
     <DialogTitle id="manager-contact-title" sx={{ pr: 7, pb: 1, fontSize: 19, fontWeight: 600 }}>
@@ -42,6 +46,12 @@ export function ManagerContactDialog({ manager, open, onClose }: {
         </ListItemButton> : null}
         {manager?.maxUrl ? <ListItemButton component="a" href={manager.maxUrl} target="_blank" rel="noreferrer noopener" aria-label="Написать в MAX">
           <ListItemIcon><img src={maxLogo} alt="" width={24} height={24} /></ListItemIcon><ListItemText primary="MAX" />
+        </ListItemButton> : null}
+        {manager?.whatsappUrl ? <ListItemButton component="a" href={manager.whatsappUrl} target="_blank" rel="noreferrer noopener" aria-label="Написать в WhatsApp">
+          <ListItemIcon><WhatsAppIcon sx={{ color: '#128c7e' }} /></ListItemIcon><ListItemText primary="WhatsApp" />
+        </ListItemButton> : null}
+        {manager?.email ? <ListItemButton component="a" href={`mailto:${encodeURIComponent(manager.email)}`} aria-label="Написать на почту">
+          <ListItemIcon><EmailIcon color="primary" /></ListItemIcon><ListItemText primary="Почта" secondary={manager.email} sx={{ overflowWrap: 'anywhere' }} />
         </ListItemButton> : null}
       </List> : <Typography sx={{ px: 3, py: 1 }} color="text.secondary">Контакты менеджера пока не указаны.</Typography>}
     </DialogContent>
