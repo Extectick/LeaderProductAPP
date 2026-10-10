@@ -7,6 +7,7 @@ import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderConte
 import { useOptionalTabBarVisibility } from '@/components/Navigation/TabBarVisibilityContext';
 import { useNotificationViewport } from '@/context/NotificationViewportContext';
 import DateTimeInput from '@/components/ui/DateTimeInput';
+import { OrderShareDialog } from './components/OrderShareDialog';
 import ContextMenuTrigger from '@/components/ui/ContextMenuTrigger';
 import type { ContextMenuItem } from '@/components/ui/ContextMenu';
 import { LiquidGlassSurface } from '@/components/ui/LiquidGlassSurface';
@@ -665,6 +666,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const [counterpartyManagerOnlyLoaded, setCounterpartyManagerOnlyLoaded] = React.useState(false);
   const [linePriceTarget, setLinePriceTarget] = React.useState<string | null>(null);
   const [actionsMenuOpen, setActionsMenuOpen] = React.useState(false);
+  const [orderShareOpen, setOrderShareOpen] = React.useState(false);
+  const openOrderShare = React.useCallback(() => { setActionsMenuOpen(false); setOrderShareOpen(true); }, []);
   const [invoicePickerOpen, setInvoicePickerOpen] = React.useState(false);
   const [invoicePickerContext, setInvoicePickerContext] = React.useState<{ orderGuid: string; invoices: ClientOrderInvoice[] } | null>(null);
   const [invoiceSharingId, setInvoiceSharingId] = React.useState<string | null>(null);
@@ -2440,6 +2443,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
           setActionsMenuOpen={setActionsMenuOpen}
           setInspectorOpen={setInspectorOpen}
           saveDraftFromMenu={saveDraftFromMenu}
+          onShareOrder={openOrderShare}
           submitFromMenu={submitFromMenu}
           copyFromMenu={copyFromMenu}
           removeOrCancel={removeOrCancel}
@@ -2455,7 +2459,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         />
       </View>
     );
-  }, [actionsMenuOpen, copyFromMenu, deleteDocumentFromMenu, documentActionsWorkspace, documentContentLoading, downloadableInvoices.length, invoiceDownloadAvailable, invoiceGenerationPending, invoiceListLoading, invoiceRequestPendingGuid, invoiceRequesting, invoiceSharingId, isReachable, mode, openInvoiceActions, removeOrCancel, requestInvoiceNow, saveDraftFromMenu, selectedInvoiceOrderGuid, submitFromMenu]);
+  }, [actionsMenuOpen, copyFromMenu, deleteDocumentFromMenu, documentActionsWorkspace, documentContentLoading, downloadableInvoices.length, invoiceDownloadAvailable, invoiceGenerationPending, invoiceListLoading, invoiceRequestPendingGuid, invoiceRequesting, invoiceSharingId, isReachable, mode, openInvoiceActions, openOrderShare, removeOrCancel, requestInvoiceNow, saveDraftFromMenu, selectedInvoiceOrderGuid, submitFromMenu]);
   const handleEditorSectionChange = React.useCallback((nextSection: EditorSection) => {
     const nextTarget = nextSection === 'items' ? 1 : 0;
     const sectionChanged = nextTarget !== editorPagerTargetRef.current;
@@ -3352,6 +3356,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         onClose={() => setProductGallery(null)}
       />
 
+      <OrderShareDialog visible={orderShareOpen} onClose={() => setOrderShareOpen(false)} workspace={workspace} />
       <ConfirmDialog
         styles={styles}
         state={confirmDialog}
@@ -3788,6 +3793,7 @@ function DocumentActionsMenu({
   setActionsMenuOpen,
   setInspectorOpen,
   saveDraftFromMenu,
+  onShareOrder,
   submitFromMenu,
   copyFromMenu,
   removeOrCancel,
@@ -3807,6 +3813,7 @@ function DocumentActionsMenu({
   setActionsMenuOpen: (open: boolean) => void;
   setInspectorOpen: (open: boolean) => void;
   saveDraftFromMenu: () => void;
+  onShareOrder: () => void;
   submitFromMenu: () => void;
   copyFromMenu: () => void;
   removeOrCancel: () => void;
@@ -3857,6 +3864,7 @@ function DocumentActionsMenu({
         <Menu.Item leadingIcon="content-save-outline" title={workspace.saving ? 'Сохраняю...' : 'Сохранить'} onPress={saveDraftFromMenu} disabled={workspace.readOnly || workspace.mutationLocked || !workspace.validation.canSave} />
       ) : null}
       <Menu.Item leadingIcon="cloud-upload-outline" title={workspace.submitting ? 'Отправляю...' : 'Отправить в 1С'} onPress={submitFromMenu} disabled={workspace.readOnly || workspace.mutationLocked || !workspace.canSubmitOrder} />
+      <Menu.Item leadingIcon="link-variant" title="Ссылка для клиента" onPress={onShareOrder} disabled={workspace.mutationLocked} />
       <Menu.Item leadingIcon="content-copy" title={workspace.copying ? 'Копирую...' : 'Копировать'} onPress={copyFromMenu} disabled={workspace.mutationLocked || !workspace.hasEditableDocument} />
       {invoiceCount > 0 ? (
         <>

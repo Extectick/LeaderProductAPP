@@ -1,5 +1,6 @@
 ﻿import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 import { useThemeColor } from '@/hooks/useThemeColor';
+import { OrderShareDialog } from './components/OrderShareDialog';
 import {
   computeLineTotal,
   displayedUnitPriceToBasePriceInput,
@@ -1288,6 +1289,7 @@ export default function ClientOrdersWebScreen() {
     resolve?.(result);
   }, []);
   const workspace = useClientOrdersWorkspace({ confirmDiscard: requestDiscardConfirm });
+  const [orderShareOpen, setOrderShareOpen] = React.useState(false);
   const router = useRouter();
   const workspaceRef = React.useRef(workspace);
   workspaceRef.current = workspace;
@@ -2845,6 +2847,7 @@ export default function ClientOrdersWebScreen() {
                       {!((workspace.selectedOrderQueued || workspace.selectedOrderSynced) && workspace.dirty) ? (
                         <ToolbarIconButton title="Сохранить" icon="save-outline" color="#2563EB" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={saveWithConfirm} disabled={workspace.readOnly || workspace.saving || !workspace.validation.canSave} loading={workspace.saving} />
                       ) : null}
+                      <ToolbarIconButton title="Ссылка для клиента" icon="link-outline" color="#2563EB" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => setOrderShareOpen(true)} disabled={workspace.mutationLocked} />
                       <ToolbarIconButton title="Отправить в 1С" icon="cloud-upload-outline" label={effectiveEditorPaneWidth >= 1180 ? 'В 1С' : undefined} color="#16A34A" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => setConfirmSubmitOpen(true)} disabled={workspace.readOnly || workspace.submitting || !workspace.canSubmitOrder} loading={workspace.submitting} />
                         <ToolbarIconButton title="Копировать" icon="copy-outline" color="#475569" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={copyWithConfirm} disabled={workspace.copying || workspace.saving || workspace.submitting || !workspace.hasEditableDocument} loading={workspace.copying} />
                     </Stack>
@@ -3643,6 +3646,7 @@ export default function ClientOrdersWebScreen() {
         </DialogActions>
       </Dialog>
 
+      <OrderShareDialog visible={orderShareOpen} onClose={() => setOrderShareOpen(false)} workspace={workspace} />
       <Dialog open={confirmSubmitOpen} onClose={() => setConfirmSubmitOpen(false)} maxWidth="xs" fullWidth fullScreen={isPhoneDialog}>
         <DialogTitle>{isErrorRetryTo1c ? 'Повторить отправку в 1С?' : isResubmitTo1c ? 'Переотправить в 1С?' : 'Отправить в 1С?'}</DialogTitle>
         <DialogContent>

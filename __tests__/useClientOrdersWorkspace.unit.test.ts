@@ -515,6 +515,32 @@ describe('useClientOrdersWorkspace', () => {
         origin: 'device', status: 'DRAFT', syncState: 'DRAFT', localDraft: value }, payload: buildLocalDraftPayload(value) };
   }
 
+  it('explicit sharing saves an unchanged local draft to API with SAVE, never SUBMIT', async () => {
+    const entry = localEntry('share-draft');
+    const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace(1, 'editor');
+    try {
+      await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+      jest.mocked(putClientOrderByClientId).mockResolvedValue({ ...entry.order, guid: 'api-shared', origin: 'app', localDraft: undefined } as any);
+      await act(async () => { await harness.current.saveDraft({ reason: 'manual', intent: 'SAVE', serverOnly: true }); });
+      expect(putClientOrderByClientId).toHaveBeenCalledWith('share-draft', expect.any(Object), expect.objectContaining({ intent: 'SAVE' }));
+      expect(records.size).toBe(0);
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('sharing never downgrades a queued or ambiguous submission to SAVE', async () => {
+    const entry = localEntry('share-queued', 'READY_TO_SEND');
+    const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace(1, 'editor');
+    try {
+      await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+      await act(async () => { await harness.current.saveDraft({ reason: 'manual', intent: 'SAVE', serverOnly: true }); });
+      expect(putClientOrderByClientId).not.toHaveBeenCalled();
+      expect(records.get('share-queued').intent).toBe('SUBMIT');
+      expect(harness.current.error).toContain('очеред');
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
   it('remembers organization offline across remounts without sharing it with another user', async () => {
     const store = new Map<string, string>();
     jest.mocked(AsyncStorage.getItem).mockImplementation(async key => store.get(key) ?? null);

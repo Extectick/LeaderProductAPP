@@ -1,0 +1,12 @@
+{
+  "name": "leader-public-order-web-build",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "build": "node ../scripts/buildOrderWeb.cjs"
+  },
+  "devDependencies": {
+    "@types/react-dom": "19.3.0",
+    "esbuild": "0.28.2"
+  }
+}

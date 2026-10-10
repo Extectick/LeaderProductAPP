@@ -112,6 +112,7 @@ type SaveOptions = {
   reason?: 'manual' | 'autosave';
   intent?: 'SAVE' | 'SUBMIT';
   localOnly?: boolean;
+  serverOnly?: boolean;
   geoEvents?: OrderGeoEventInput[];
 };
 type DiscardDecision = 'save' | 'discard' | 'cancel';
@@ -3144,10 +3145,14 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     if (readOnly || foregroundSaveRef.current || deviceDraftSyncingRef.current) return null;
     if (options?.reason === 'autosave' && failedAutosaveVersionRef.current === draftEditVersionRef.current) return null;
     const deviceEntry = findDeviceDraftEntry(draft.guid, draft.clientOrderId);
-    const localOnly = options?.localOnly || !!deviceEntry || !getServerStatus().isReachable;
+    if (options?.serverOnly && deviceEntry?.intent === 'SUBMIT') {
+      setError('Заказ уже поставлен в очередь. Завершите отправку или снимите его с очереди перед созданием ссылки.');
+      return null;
+    }
+    const localOnly = options?.localOnly || (!options?.serverOnly && !!deviceEntry) || !getServerStatus().isReachable;
     const autosave = options?.reason === 'autosave';
     if (!autosave) addMonitoringBreadcrumb('order.save_requested');
-    if (deviceEntry && !dirtyRef.current && (autosave || deviceEntry.intent === (options?.intent ?? 'SAVE'))) return deviceEntry.order;
+    if (!options?.serverOnly && deviceEntry && !dirtyRef.current && (autosave || deviceEntry.intent === (options?.intent ?? 'SAVE'))) return deviceEntry.order;
     foregroundSaveRef.current = true;
     const editVersion = draftEditVersionRef.current;
     const selectedAtStart = selectedGuidRef.current;

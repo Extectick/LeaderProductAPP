@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Dropdown from '@/components/ui/Dropdown';
+import { ClientContactsEditor } from '@/components/Profile/ClientContactsEditor';
 import {
   listOnecLpAppPhysicalPersons,
   listOnecLpAppUsers,
@@ -499,6 +500,7 @@ export function UsersEditorModal({
                 contentContainerStyle={styles.userEditorContent}
                 keyboardShouldPersistTaps="handled"
               >
+                {editorUserId && visible ? <ClientContactsEditor key={editorUserId} userId={editorUserId} disabled={saving} /> : null}
                 <View style={styles.userEditorSection}>
                   <Text style={styles.userEditorSectionTitle}>Основные данные</Text>
                   <View style={styles.userEditorGrid}>

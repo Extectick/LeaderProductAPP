@@ -1,0 +1,46 @@
+name: Deploy Public Order Web (dev)
+on:
+  push:
+    branches: [dev]
+    paths: ['public-order/**', 'scripts/buildOrderWeb.cjs', '.github/workflows/public-order-dev.yml', 'assets/images/icon.png', 'package-lock.json']
+  workflow_dispatch:
+concurrency:
+  group: public-order-web-dev
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: github.ref_name == 'dev'
+    runs-on: ubuntu-latest
+    environment: development
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm ci --prefix public-order
+      - run: npm run build --prefix public-order
+      - name: Stage static files
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          source: dist-order/*
+          target: /var/www/leader-order-dev/releases/${{ github.sha }}
+          strip_components: 1
+      - name: Activate dev public web
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            set -eu
+            target=/var/www/leader-order-dev/releases/${{ github.sha }}
+            test -s "$target/index.html"
+            test -s "$target/assets/app.js"
+            ln -sfn "$target" /var/www/leader-order-dev/current.next
+            mv -Tf /var/www/leader-order-dev/current.next /var/www/leader-order-dev/current
+            curl --fail --silent --show-error https://dev.leader-product.ru/order/ >/dev/null

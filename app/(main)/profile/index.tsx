@@ -22,6 +22,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Clipboard from 'expo-clipboard';
 import { Colors } from '@/constants/Colors';
 import { ProfileView } from '@/components/Profile/ProfileView';
+import { ClientContactsEditor } from '@/components/Profile/ClientContactsEditor';
 import {
   addCredentials,
   changePassword,
@@ -155,6 +156,7 @@ export default function ProfileScreen() {
           onAdded={refreshProfile}
         />
       )}
+      {profile ? <ClientContactsEditor key={profile.id} /> : null}
       {loading && !profile ? <TrackingSkeleton /> : <TrackingToggle />}
       {loading && !profile ? null : <TrackingAdminHealthCard />}
       {loading && !profile ? null : <NotificationSettingsSection />}
