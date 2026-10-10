@@ -1,7 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { Alert, Button, CssBaseline, Dialog, IconButton, Skeleton, ThemeProvider, Tooltip, createTheme } from '@mui/material';
-import CloseIcon from '@mui/icons-material/Close';
+import { Alert, Button, CssBaseline, IconButton, Skeleton, ThemeProvider, Tooltip, createTheme, useMediaQuery } from '@mui/material';
+import { ProductImageGalleryDialog, type ProductImageGallery } from '../src/features/clientOrders/components/ProductImageGalleryDialog';
 import PhoneIcon from '@mui/icons-material/PhoneOutlined';
 import TelegramIcon from '@mui/icons-material/Telegram';
 import ChatIcon from '@mui/icons-material/ChatBubbleOutline';
@@ -63,7 +63,10 @@ function App() {
   const [busy, setBusy] = React.useState(false);
   const [unavailable, setUnavailable] = React.useState(!validToken);
   const [error, setError] = React.useState('');
-  const [photo, setPhoto] = React.useState<{ url: string; title: string } | null>(null);
+  const [photo, setPhoto] = React.useState<ProductImageGallery | null>(null);
+  const isPhoneDialog = useMediaQuery('(max-width:600px)');
+  const footer = React.useRef<HTMLElement | null>(null);
+  const [footerHeight, setFooterHeight] = React.useState(0);
   const etag = React.useRef('');
   const inFlight = React.useRef(false);
   const request = React.useRef<AbortController | null>(null);
@@ -93,7 +96,16 @@ function App() {
     document.addEventListener('visibilitychange', update); window.addEventListener('online', update); window.addEventListener('offline', offline);
     return () => { clearInterval(timer); request.current?.abort(); request.current = null; document.removeEventListener('visibilitychange', update); window.removeEventListener('online', update); window.removeEventListener('offline', offline); };
   }, [refresh]);
-  return <ThemeProvider theme={theme}><CssBaseline /><div className="page">
+  React.useLayoutEffect(() => {
+    const element = footer.current;
+    if (!element) { setFooterHeight(0); return; }
+    const measure = () => setFooterHeight(Math.ceil(element.getBoundingClientRect().height));
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [!!order, unavailable]);
+  return <ThemeProvider theme={theme}><CssBaseline /><div className="page" style={{ paddingBottom: footerHeight }}>
     <header className="brand"><img src={logo} alt="" /><span>Лидер-Продукт</span></header>
     <main>
       {unavailable ? <section className="empty-state"><h1>Ссылка недоступна</h1><p>Обратитесь к менеджеру за новой ссылкой на заказ.</p></section> : <>
@@ -102,27 +114,24 @@ function App() {
           <section className="intro"><span className="eyebrow">Заказ для</span><h1>{order.customer}</h1><p>{order.number === 'Черновик' ? 'Заказ' : `№ ${order.number}`}{order.date ? ` от ${date(order.date, true)}` : ''}</p></section>
           {order.cancelled ? <Alert severity="info">Заказ отменён</Alert> : null}
           <section className="products" aria-label="Товары заказа">{order.items.map(item => <article key={item.id}>
-            <ProductPhoto item={item} onOpen={(url, title) => setPhoto({ url, title })} />
+            <ProductPhoto item={item} onOpen={(url, title) => setPhoto({ title, index: 0, images: [{ key: item.id, previewUrl: url, thumbUrl: url }] })} />
             <h2>{item.name}</h2><p className="quantity">{number(item.quantity)} {item.unit} × {money(item.unitPrice, order.currency, 4)}</p>
             <p className="line-total">{money(item.amount, order.currency)}</p>
           </article>)}</section>
-          <footer className="order-footer">
-            <div className="delivery"><DeliveryIcon aria-hidden="true" /><div><span className="eyebrow">Доставка</span><strong>{order.deliveryDate ? date(order.deliveryDate) : 'Уточните у менеджера'}</strong></div></div>
-            <div className="total"><span className="eyebrow">Итого</span><strong>{money(order.total, order.currency)}</strong></div>
-          </footer>
-          <section className="manager" aria-label="Связаться с менеджером"><div className="manager-name"><span className="eyebrow">Ваш менеджер</span><strong>{order.manager.name || 'Менеджер'}</strong></div>
+          <footer className="bottom-bar" ref={footer} aria-label="Доставка, сумма и контакты менеджера"><div className="order-footer">
+            <div className="delivery"><DeliveryIcon aria-hidden="true" /><span>{order.deliveryDate ? `Доставка ${date(order.deliveryDate)}` : 'Доставка — уточните'}</span></div>
+            <div className="total" aria-label="Итого"><strong>{money(order.total, order.currency)}</strong></div>
+          <section className="manager" aria-label="Связаться с менеджером"><strong className="manager-name" title={order.manager.name}>{order.manager.name || 'Менеджер'}</strong>
             <div className="contacts">{order.manager.phones.map(phone => <Button key={phone.number} className="contact-phone" href={`tel:${phone.number}`} startIcon={<PhoneIcon />} variant="text"><span>{phone.label ? <small>{phone.label}</small> : null}{phone.number}</span></Button>)}
-              {order.manager.telegramUrl ? <Button href={order.manager.telegramUrl} target="_blank" rel="noreferrer noopener" variant="outlined" startIcon={<TelegramIcon />}>Telegram</Button> : null}
-              {order.manager.maxUrl ? <Button href={order.manager.maxUrl} target="_blank" rel="noreferrer noopener" variant="outlined" startIcon={<ChatIcon />}>MAX</Button> : null}
+              {order.manager.telegramUrl ? <Tooltip title="Telegram"><IconButton href={order.manager.telegramUrl} target="_blank" rel="noreferrer noopener" aria-label="Написать в Telegram" color="primary"><TelegramIcon /></IconButton></Tooltip> : null}
+              {order.manager.maxUrl ? <Tooltip title="MAX"><IconButton href={order.manager.maxUrl} target="_blank" rel="noreferrer noopener" aria-label="Написать в MAX" color="primary"><ChatIcon /></IconButton></Tooltip> : null}
             </div>
           </section>
+          </div></footer>
           <div className="freshness"><span>Обновлено {new Date(order.updatedAt).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span><Tooltip title="Обновить"><IconButton size="small" disabled={busy} onClick={() => void refresh()} aria-label="Обновить заказ"><RefreshIcon fontSize="small" /></IconButton></Tooltip></div>
         </> : <section className="empty-state"><h1>Не удалось загрузить заказ</h1><Button variant="contained" disabled={busy} onClick={() => void refresh()}>Повторить</Button></section>}
       </>}
     </main>
-  </div><Dialog open={!!photo} onClose={() => setPhoto(null)} maxWidth="md" fullWidth PaperProps={{ sx: { padding: 2 } }}>
-    <div className="photo-dialog-header"><strong>{photo?.title}</strong><IconButton aria-label="Закрыть фото" onClick={() => setPhoto(null)}><CloseIcon /></IconButton></div>
-    {photo ? <img className="enlarged-photo" src={photo.url} alt={photo.title} /> : null}
-  </Dialog></ThemeProvider>;
+  </div><ProductImageGalleryDialog productImagePreview={photo} setProductImagePreview={setPhoto} isPhoneDialog={isPhoneDialog} /></ThemeProvider>;
 }
 createRoot(document.getElementById('root')!).render(<App />);

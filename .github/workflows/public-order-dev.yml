@@ -2,7 +2,7 @@ name: Deploy Public Order Web (dev)
 on:
   push:
     branches: [dev]
-    paths: ['public-order/**', 'scripts/buildOrderWeb.cjs', '.github/workflows/public-order-dev.yml', 'assets/images/icon.png', 'package-lock.json']
+    paths: ['public-order/**', 'src/features/clientOrders/components/ProductImageGalleryDialog.tsx', 'scripts/buildOrderWeb.cjs', '.github/workflows/public-order-dev.yml', 'assets/images/icon.png', 'package-lock.json']
   workflow_dispatch:
 concurrency:
   group: public-order-web-dev
