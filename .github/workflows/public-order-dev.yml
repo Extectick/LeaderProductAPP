@@ -21,7 +21,7 @@ jobs:
       - run: npm ci
       - run: npm ci --prefix public-order
       - run: npx tsc --noEmit --project public-order/tsconfig.json
-      - run: npm run test:unit -- --runInBand __tests__/galleryHistory.unit.test.ts
+      - run: npm run test:unit -- --runInBand __tests__/galleryHistory.unit.test.ts __tests__/publicOrderDelivery.unit.test.ts
       - run: npm run build --prefix public-order
       - name: Stage static files
         uses: appleboy/scp-action@v1

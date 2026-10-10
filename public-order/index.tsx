@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { Alert, Button, CssBaseline, IconButton, Skeleton, ThemeProvider, createTheme, useMediaQuery } from '@mui/material';
 import { ProductImageGalleryDialog, type ProductImageGallery } from '../src/features/clientOrders/components/ProductImageGalleryDialog';
 import { ManagerContactDialog, type ManagerContacts } from './ManagerContactDialog';
+import { getOrderDeliveryLabel, type PublicOrderDelivery } from './delivery';
 import ChatIcon from '@mui/icons-material/ChatBubbleOutline';
 import DeliveryIcon from '@mui/icons-material/LocalShippingOutlined';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -11,7 +12,7 @@ import logo from '../assets/images/icon.png';
 import './style.css';
 
 type Item = { id: string; name: string; quantity: string; unit: string; unitPrice: string; amount: string; image: { id: string; version: string } | null };
-type Order = { number: string; date: string | null; customer: string; deliveryDate: string | null; currency: string; cancelled: boolean;
+type Order = PublicOrderDelivery & { number: string; date: string | null; customer: string; deliveryDate: string | null; currency: string; cancelled: boolean;
   total: string; updatedAt: string; items: Item[]; manager: ManagerContacts };
 const theme = createTheme({ palette: { primary: { main: '#1859f7' }, text: { primary: '#111a35', secondary: '#61708a' } },
   typography: { fontFamily: 'Arial, system-ui, sans-serif', button: { textTransform: 'none', fontWeight: 600 } },
@@ -64,6 +65,7 @@ function App() {
   const [error, setError] = React.useState('');
   const [photo, setPhoto] = React.useState<ProductImageGallery | null>(null);
   const [contactsOpen, setContactsOpen] = React.useState(false);
+  const deliveryLabel = getOrderDeliveryLabel(order);
   const isPhoneDialog = useMediaQuery('(max-width:600px)');
   const footer = React.useRef<HTMLElement | null>(null);
   const [footerHeight, setFooterHeight] = React.useState(0);
@@ -111,6 +113,7 @@ function App() {
         {order?.date && !unavailable ? <time dateTime={order.date}>от {new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit', timeZone: 'Asia/Omsk' }).format(new Date(order.date))}</time> : null}
       </div>
       {loading ? <Skeleton className="customer-skeleton" height={28} width="65%" /> : order && !unavailable ? <h1>{order.customer}</h1> : null}
+      {!loading && order && !unavailable && deliveryLabel ? <p className="delivery-address" aria-label="Адрес или способ получения">{deliveryLabel}</p> : null}
     </header>
     <main>
       {unavailable ? <section className="empty-state"><h1>Ссылка недоступна</h1><p>Обратитесь к менеджеру за новой ссылкой на заказ.</p></section> : <>

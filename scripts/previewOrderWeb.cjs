@@ -22,6 +22,8 @@ http.createServer(async (req, res) => {
         body.data.manager.phones = Array.from({ length: 5 }, (_, i) => ({ number: `+7000000000${i + 1}`, label: `Тестовый ${i + 1}` }));
         body.data.manager.telegramUrl = 'https://t.me/test_manager';
         body.data.manager.maxUrl = 'https://max.ru/test_manager';
+        body.data.deliveryMethod = process.argv.includes('--pickup') ? 'Самовывоз' : 'До клиента';
+        body.data.deliveryAddress = body.data.deliveryMethod === 'Самовывоз' ? null : 'Омск, улица Тестовая, дом 12, корпус 2, вход со двора';
         res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }).end(JSON.stringify(body)); return;
       }
       res.writeHead(upstream.status, { 'Content-Type': upstream.headers.get('content-type') || 'application/json', 'Cache-Control': 'no-store', ...(upstream.headers.get('etag') ? { ETag: upstream.headers.get('etag') } : {}) });
