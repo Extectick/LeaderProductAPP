@@ -3,6 +3,7 @@ import { Box, CircularProgress, Dialog, DialogContent, DialogTitle, IconButton, 
 import CloseIcon from '@mui/icons-material/Close';
 import BackIcon from '@mui/icons-material/ChevronLeft';
 import NextIcon from '@mui/icons-material/ChevronRight';
+import { useGalleryHistory } from '../hooks/useGalleryHistory';
 
 export type ProductGalleryImage = {
   key: string;
@@ -106,7 +107,7 @@ export function ProductImageGalleryDialog({ productImagePreview, setProductImage
   const [loaded, setLoaded] = React.useState(false);
   const [failed, setFailed] = React.useState(false);
   React.useEffect(() => { setLoaded(false); setFailed(false); }, [active?.previewUrl]);
-  const close = () => setProductImagePreview(null);
+  const close = useGalleryHistory(!!productImagePreview, () => setProductImagePreview(null));
   const move = (delta: number) => setProductImagePreview(prev => prev ? {
     ...prev, index: Math.max(0, Math.min(prev.images.length - 1, prev.index + delta)),
   } : prev);

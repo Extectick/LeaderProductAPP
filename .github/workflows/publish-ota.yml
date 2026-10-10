@@ -49,6 +49,7 @@ jobs:
       - run: npm run test:unit -- --runInBand __tests__/otaManifestConfig.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/draftReview.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/orderSharing.unit.test.ts
+      - run: npm run test:unit -- --runInBand __tests__/galleryHistory.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/catalogProductOrdering.unit.test.ts __tests__/productCatalogIntegration.unit.test.ts __tests__/offlineSqlite.unit.test.ts __tests__/catalogDatabaseLifecycle.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/productionMonitoring.unit.test.ts __tests__/deviceDraftRecovery.unit.test.ts __tests__/orderOperationIntegrity.unit.test.ts __tests__/clientOrdersShared.unit.test.ts __tests__/clientOrdersService.unit.test.ts __tests__/httpClient.unit.test.ts __tests__/useClientOrdersWorkspace.unit.test.ts
 
