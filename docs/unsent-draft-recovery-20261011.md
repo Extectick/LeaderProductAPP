@@ -9,3 +9,11 @@ APP changes:
 - No native dependencies/config changes: OTA targets the existing production runtime 0.1.34. The affected manager's latest server session reports Android 0.1.34.
 
 Validation: 83 focused workspace/integrity/review tests and TypeScript check. Tests cover rejection/acceptance, exact persisted retry, no duplicate submission during recovery, and preserving a draft when API has a different revision or only SAVE. CI release verification follows. Physical-phone acceptance remains separate.
+
+## Published and verified
+
+- APP commit `69ffdab665988e4fb6a8a14de16344e641152ed8`; OTA workflow `38120625673` succeeded, including the full order-integrity check. Production API prerequisite `677d4bf` deployed successfully before publication.
+- Production OTA `0.1.34.2`, sequence 2, runtime `0.1.34`, 100% rollout; update ID `4bfe614a-2840-410f-a7de-a6e199f6188a`. Served manifest config matches the build; the downloaded 18041380-byte bundle matches SHA-256 base64url `PixaZzYPretJmcium5nx2pP01LT7icx2ygSdGbE-ARE`. Already-current clients receive HTTP 204.
+- Source-map verification event `f7c6e60b5b7eef182616d06e42118356` resolved to `/src/shared/monitoring/privacy.ts:14`, debug ID `83099801-00a8-4616-ae0c-91d7efb1d40c`.
+- APK workflow `38120625638` explicitly skipped native compilation: no runtime change or new APK. Existing APK 0.1.34/build 33 remains current. Main web workflow `38120625649` succeeded.
+- Production user-scoped GET confirms `НОУТ-122474`, posted, SYNCED, same clientRevision 6, four items and RUB 162064, with no 1C/export errors. The phone can reconcile that exact revision without another SUBMIT. No access to the physical phone was used or claimed.
