@@ -830,6 +830,16 @@ function isOlderSubmissionSummary(current: ClientOrder, summary: ClientOrder) {
   return currentUpdatedAt !== null && summaryUpdatedAt !== null && summaryUpdatedAt <= currentUpdatedAt;
 }
 
+async function confirmOrderChange(review: NonNullable<ReturnType<typeof orderChangeReview>>) {
+  const message = review.changes.map(i => `${i.productName}: ${i.reason} (${i.before} → ${i.after ?? 'удалено'})`).join('\n');
+  return Platform.OS === 'web' && typeof window !== 'undefined'
+    ? window.confirm(`Подтвердите изменение заказа:\n${message}`)
+    : new Promise<boolean>(resolve => Alert.alert('Изменение состава заказа', message,
+      [{ text: 'Отмена', style: 'cancel', onPress: () => resolve(false) },
+        { text: 'Подтвердить', style: 'destructive', onPress: () => resolve(true) }],
+      { cancelable: true, onDismiss: () => resolve(false) }));
+}
+
 function getOfflineDraftFailureStatus(error: unknown): OfflineDraftStatus {
   const integrityKind = String((error as { errorDetails?: { kind?: string } } | null)?.errorDetails?.kind || '');
   if (integrityKind.startsWith('ORDER_')) return 'NEEDS_EDIT';
@@ -2303,7 +2313,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         try {
           const existingSubmitEvent = entry.payload.geoEvents?.find((event) => event.type === 'SUBMITTED');
           const submitGeoEvent = existingSubmitEvent ?? await captureOrderGeoEvent('SUBMITTED');
-          const submissionPayload = existingSubmitEvent
+          let submissionPayload = existingSubmitEvent
             ? entry.payload
             : { ...entry.payload, geoEvents: [...(entry.payload.geoEvents || []), submitGeoEvent] };
           // The geo event is part of the idempotent request: persist it before HTTP,
@@ -2314,19 +2324,20 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
               ? { ...item, payload: submissionPayload } : item);
             await replaceDeviceDraftEntries(nextEntries);
           }
-          let order: ClientOrder;
-          if (entry.clientOrderId.startsWith('legacy-server:')) {
-            order = entry.serverGuid
-              ? await updateClientOrder(entry.serverGuid, {
-                  ...submissionPayload,
-                  revision: entry.serverRevision ?? entry.order.revision,
-                })
-              : await createClientOrder(submissionPayload);
-            if (entry.intent === 'SUBMIT') {
-              order = await submitClientOrder(order.guid, order.revision, [submitGeoEvent]);
+          const sendOperation = async (): Promise<ClientOrder> => {
+            if (entry.clientOrderId.startsWith('legacy-server:')) {
+              let saved = entry.serverGuid
+                ? await updateClientOrder(entry.serverGuid, {
+                    ...submissionPayload,
+                    revision: entry.serverRevision ?? entry.order.revision,
+                  })
+                : await createClientOrder(submissionPayload);
+              if (entry.intent === 'SUBMIT') {
+                saved = await submitClientOrder(saved.guid, saved.revision, [submitGeoEvent]);
+              }
+              return saved;
             }
-          } else {
-            order = await putClientOrderByClientId(
+            return putClientOrderByClientId(
               entry.clientOrderId,
               submissionPayload,
               {
@@ -2335,6 +2346,25 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
                 offlineReview: { pricePolicy: syncOptions.pricePolicy ?? 'ASK' },
               }
             );
+          };
+          let order: ClientOrder;
+          try {
+            order = await sendOperation();
+          } catch (error) {
+            const review = orderChangeReview(error);
+            if (!review) throw error;
+            const reviewEditVersion = draftEditVersionRef.current;
+            const accepted = await confirmOrderChange(review);
+            if (!accepted || activeOfflineUserRef.current !== offlineUserId
+              || reviewEditVersion !== draftEditVersionRef.current
+              || !deviceDraftEntriesRef.current.some(item => isSameOrderOperation(item, entry))) throw error;
+            submissionPayload = { ...submissionPayload,
+              integrity: { baseContentToken: review.baseContentToken, confirmationToken: review.confirmationToken } };
+            // Persist the explicitly approved packet before retrying the same revision.
+            nextEntries = deviceDraftEntriesRef.current.map(item => isSameOrderOperation(item, entry)
+              ? { ...item, payload: submissionPayload } : item);
+            await replaceDeviceDraftEntries(nextEntries);
+            order = await sendOperation();
           }
           nextEntries = deviceDraftEntriesRef.current.filter((item) => !isSameOrderOperation(item, entry));
           await replaceDeviceDraftEntries(nextEntries);
@@ -2397,13 +2427,14 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   React.useEffect(() => {
     if (!deviceDraftsHydrated || !serverStatus.isReachable || options.isScreenActive === false) return;
     let cancelled = false;
-    // Read-only recovery. A previous SAVE or an unaccepted SUBMIT is never
-    // interpreted as success and never triggers a new submission.
+    // Read-only recovery also covers a rejected operation accepted later (e.g.
+    // explicit administrator recovery). Never submit or consume a different revision.
     void (async () => {
       for (const entry of deviceDraftEntries) {
         if (cancelled || deviceDraftSyncingRef.current || !getServerStatus().isReachable) break;
-        if (entry.intent !== 'SUBMIT' || entry.status !== 'SEND_ERROR' || entry.clientOrderId.startsWith('legacy-server:')) continue;
-        if (dirtyRef.current && selectedGuidRef.current === entry.order.guid) continue;
+        if (entry.intent !== 'SUBMIT' || !['SEND_ERROR', 'NEEDS_EDIT', 'PRICE_REVIEW'].includes(entry.status)
+          || entry.clientOrderId.startsWith('legacy-server:')) continue;
+        if (dirtyRef.current && (selectedGuidRef.current === entry.order.guid || selectedGuidRef.current === entry.serverGuid)) continue;
         const key = `${offlineUserId}:${entry.clientOrderId}:${entry.clientRevision}`;
         if (Date.now() - (draftReconcileAttemptsRef.current.get(key) || 0) < 60_000) continue;
         draftReconcileAttemptsRef.current.set(key, Date.now());
@@ -2411,7 +2442,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
           const order = await getClientOrderByClientId(entry.clientOrderId);
           if (cancelled || activeOfflineUserRef.current !== offlineUserId || deviceDraftSyncingRef.current
             || !isReconciledOrderOperation(order, entry)) continue;
-          if (dirtyRef.current && selectedGuidRef.current === entry.order.guid) continue;
+          if (dirtyRef.current && (selectedGuidRef.current === entry.order.guid || selectedGuidRef.current === entry.serverGuid)) continue;
           const current = findDeviceDraftEntry(entry.order.guid, entry.clientOrderId);
           if (!current || !isSameOrderOperation(current, entry)) continue;
           await removeDeviceDraftEntry(entry.order.guid, entry.clientRevision);
@@ -3238,13 +3269,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       } catch (e) {
         const review = orderChangeReview(e);
         if (!review || options?.reason === 'autosave') throw e;
-        const message = review.changes.map(i => `${i.productName}: ${i.reason} (${i.before} → ${i.after ?? 'удалено'})`).join('\n');
-        const accepted = Platform.OS === 'web' && typeof window !== 'undefined'
-          ? window.confirm(`Подтвердите изменение заказа:\n${message}`)
-          : await new Promise<boolean>(resolve => Alert.alert('Изменение состава заказа', message,
-            [{ text: 'Отмена', style: 'cancel', onPress: () => resolve(false) },
-              { text: 'Подтвердить', style: 'destructive', onPress: () => resolve(true) }],
-            { cancelable: true, onDismiss: () => resolve(false) }));
+        const accepted = await confirmOrderChange(review);
         if (!accepted || draftEditVersionRef.current !== editVersion || selectedGuidRef.current !== selectedAtStart) throw e;
         payload.integrity = { baseContentToken: review.baseContentToken, confirmationToken: review.confirmationToken };
         if (clientOrderId) {

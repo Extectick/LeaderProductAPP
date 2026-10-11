@@ -454,8 +454,8 @@ describe('useClientOrdersWorkspace', () => {
     await act(async () => harness.renderer.unmount());
   });
 
-  it('reconciles an ambiguous submission on reconnect without sending it again', async () => {
-    const entry = localEntry('response-lost', 'SEND_ERROR');
+  it.each(['SEND_ERROR', 'NEEDS_EDIT', 'PRICE_REVIEW'])('reconciles a %s submission accepted on the server without sending it again', async status => {
+    const entry = localEntry('response-lost', status);
     const records = memoryDraftStore([entry]);
     setServerUnavailable('Network request failed');
     const harness = await ordersListWorkspace();
@@ -470,11 +470,24 @@ describe('useClientOrdersWorkspace', () => {
     await act(async () => harness.renderer.unmount());
   });
 
-  it('does not consume a timed-out submission merely because the API has a saved draft', async () => {
-    const entry = localEntry('saved-not-sent', 'SEND_ERROR');
+  it.each(['SEND_ERROR', 'NEEDS_EDIT', 'PRICE_REVIEW'])('does not consume %s merely because the API has a saved draft', async status => {
+    const entry = localEntry('saved-not-sent', status);
     const records = memoryDraftStore([entry]);
     jest.mocked(getClientOrderByClientId).mockResolvedValue(queuedOrder(0, {
       clientOrderId: entry.clientOrderId, clientRevision: entry.clientRevision, syncState: 'DRAFT', status: 'DRAFT',
+    }) as any);
+    const harness = await ordersListWorkspace();
+    await flush();
+    expect(records.size).toBe(1);
+    expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it.each([0, 2])('does not discard a rejected draft when the accepted server revision differs (%s)', async revision => {
+    const entry = localEntry('review-not-accepted', 'NEEDS_EDIT');
+    const records = memoryDraftStore([entry]);
+    jest.mocked(getClientOrderByClientId).mockResolvedValue(queuedOrder(0, {
+      clientOrderId: entry.clientOrderId, clientRevision: revision, syncState: 'SYNCED',
     }) as any);
     const harness = await ordersListWorkspace();
     await flush();
@@ -618,6 +631,51 @@ describe('useClientOrdersWorkspace', () => {
     expect(harness.current.orders.map(order => order.guid)).toEqual(['api-queued']);
     expect(harness.current.orders[0].syncState).toBe('QUEUED');
     await act(async () => harness.renderer.unmount());
+  });
+
+  it.each([true, false])('queue confirms a protected order reduction only with user approval (%s)', async accepted => {
+    const records = memoryDraftStore([localEntry('review-queued', 'READY_TO_SEND')]);
+    const challenge = Object.assign(new Error('Подтвердите уменьшение'), { status: 409,
+      errorDetails: { kind: 'ORDER_CHANGE_REVIEW_REQUIRED', baseContentToken: 'server-base',
+        confirmationToken: 'signed-review', changes: [{ productName: 'Говядина', reason: 'Уменьшение количества', before: 60, after: 20 }] } });
+    jest.mocked(putClientOrderByClientId).mockRejectedValueOnce(challenge).mockImplementationOnce(async (_id, payload, options) => {
+      expect(records.get('review-queued').payload.integrity).toEqual(payload.integrity);
+      return queuedOrder(1, { guid: 'api-queued', clientOrderId: 'review-queued', clientRevision: options.clientRevision }) as any;
+    });
+    jest.requireMock('react-native').Alert.alert.mockImplementation((_title: string, message: string, buttons: any[]) => {
+      expect(message).toContain('60 → 20');
+      buttons.find(button => button.text === (accepted ? 'Подтвердить' : 'Отмена')).onPress();
+    });
+    const harness = await ordersListWorkspace();
+    try {
+      await act(async () => { await harness.current.syncDeviceDrafts({ force: true }); });
+      const calls = jest.mocked(putClientOrderByClientId).mock.calls;
+      expect(calls).toHaveLength(accepted ? 2 : 1);
+      if (accepted) {
+        expect(calls[1][0]).toBe(calls[0][0]);
+        expect(calls[1][2]).toEqual(calls[0][2]);
+        expect(calls[1][1].integrity).toEqual({ baseContentToken: 'server-base', confirmationToken: 'signed-review' });
+        expect(calls[1][1].geoEvents).toEqual(calls[0][1].geoEvents);
+        expect(records.size).toBe(0);
+      } else {
+        expect(records.get('review-queued').status).toBe('NEEDS_EDIT');
+        expect(records.get('review-queued').payload.integrity?.confirmationToken).toBeUndefined();
+      }
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('queue never treats a content conflict as approval to retry', async () => {
+    const records = memoryDraftStore([localEntry('stale-queued', 'READY_TO_SEND')]);
+    jest.mocked(putClientOrderByClientId).mockRejectedValue(Object.assign(new Error('Stale'), {
+      status: 409, errorDetails: { kind: 'ORDER_CONTENT_CONFLICT' },
+    }));
+    const harness = await ordersListWorkspace();
+    try {
+      await act(async () => { await harness.current.syncDeviceDrafts({ force: true }); });
+      expect(putClientOrderByClientId).toHaveBeenCalledTimes(1);
+      expect(jest.requireMock('react-native').Alert.alert).not.toHaveBeenCalled();
+      expect(records.get('stale-queued').status).toBe('NEEDS_EDIT');
+    } finally { await act(async () => harness.renderer.unmount()); }
   });
 
   it('bulk sends only explicitly queued documents sequentially, leaving ordinary drafts untouched', async () => {
