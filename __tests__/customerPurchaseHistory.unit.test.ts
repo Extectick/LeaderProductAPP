@@ -1,4 +1,4 @@
-import { isPurchaseHistory, purchaseHistoryLabel } from '../src/features/clientOrders/lib/customerPurchaseHistory';
+import { isPurchaseHistory, purchaseHistoryDays, purchaseHistoryLabel } from '../src/features/clientOrders/lib/customerPurchaseHistory';
 import { ProductPickerSnapshot } from '../src/features/clientOrders/lib/productPickerSnapshot';
 
 const snapshot = { version: 'customer-purchases-v1', organizationGuid: 'org', counterpartyGuid: 'client',
@@ -34,6 +34,16 @@ it('labels calendar days, not elapsed 24-hour intervals; rejects future and inva
   expect(purchaseHistoryLabel('2026-10-10', now)).toBeNull();
   expect(purchaseHistoryLabel('2026-02-30', now)).toBeNull();
   expect(purchaseHistoryLabel(undefined, now)).toBeNull();
+});
+
+it('returns numeric calendar-day ages for the compact image overlay without inventing missing history', () => {
+  const now = new Date(2026, 9, 13, 0, 1);
+  expect(purchaseHistoryDays('2026-09-24', now)).toBe(19);
+  expect(purchaseHistoryDays('2026-10-06', now)).toBe(7);
+  expect(purchaseHistoryDays('2026-10-13', now)).toBe(0);
+  for (const value of [undefined, null, '', '2026-10-14', '2026-02-30']) {
+    expect(purchaseHistoryDays(value, now)).toBeNull();
+  }
 });
 
 it('distinguishes a valid empty snapshot from missing/incompatible/cross-context data', () => {

@@ -80,7 +80,6 @@ import { useCustomerPurchaseHistory } from './hooks/useCustomerPurchaseHistory';
 import { ProductPickerSnapshot } from './lib/productPickerSnapshot';
 import { applyProductPickerQuantity, productPickerQuantity, type ProductQuantityChange } from './lib/productPickerQuantity';
 import { ProductPickerRow, ProductPickerMetrics } from './screen/mobile/ProductPickerRow';
-import { ProductPickerQuantityDialog } from './screen/mobile/ProductPickerQuantityDialog';
 import { getClientOrderInvoices, getClientOrderProductsBatch, getClientOrderReferenceDetails, requestClientOrderInvoice } from '@/utils/clientOrdersService';
 import type { ClientOrder, ClientOrderCounterpartyOption, ClientOrderInvoice, ClientOrderOrganization, ClientOrderPriceTypeOption, ClientOrderProduct, ClientOrderReferenceDetails, ClientOrderReferenceKind, ClientOrdersTodaySummary, ClientOrderWarehouseOption } from '@/utils/clientOrdersService';
 import { useServerStatus } from '@/src/shared/network/useServerStatus';
@@ -4478,7 +4477,14 @@ function ProductPickerFullscreenPanel({
   onTransfer: () => void;
   onClearSelection: () => void;
 }) {
-  const [quantityProduct, setQuantityProduct] = React.useState<ClientOrderProduct | null>(null);
+  // Keep row callbacks stable while the draft and its totals update in the background.
+  const rowActions = React.useRef({ onPressProduct, onLongPressProduct, onOpenImages });
+  React.useLayoutEffect(() => { rowActions.current = { onPressProduct, onLongPressProduct, onOpenImages }; }, [onPressProduct, onLongPressProduct, onOpenImages]);
+  const openProduct = React.useCallback((item: ClientOrderProduct) => rowActions.current.onPressProduct(item), []);
+  const longPressProduct = React.useCallback((item: ClientOrderProduct) => rowActions.current.onLongPressProduct(item), []);
+  const renderThumbnail = React.useCallback((item: ClientOrderProduct) => (
+    <ProductThumb item={item} style={styles.productPickerQuantityThumb} iconSize={24} onPress={() => rowActions.current.onOpenImages(item)} />
+  ), [styles]);
   const quantities = React.useMemo(() => {
     const lines = new Map<string, DraftItem[]>();
     for (const line of orderItems) {
@@ -4488,9 +4494,6 @@ function ProductPickerFullscreenPanel({
     }
     return new Map(items.map(item => [item.guid, productPickerQuantity(lines.get(item.guid) || [], item)]));
   }, [items, orderItems]);
-  const stepQuantity = React.useCallback((item: ClientOrderProduct, delta: 1 | -1) => onChangeQuantity(item, { delta }), [onChangeQuantity]);
-  const dismissQuantity = React.useCallback(() => setQuantityProduct(null), []);
-  React.useEffect(() => { if (!visible) setQuantityProduct(null); }, [visible]);
   const hasSearch = !!search.trim();
   const isResetLoading = loading && !appendLoading;
   const showInitialLoader = isResetLoading && hasOrderContext && !hasLoadedOnce && !items.length && !hasSearch;
@@ -4505,24 +4508,24 @@ function ProductPickerFullscreenPanel({
       disabled={mutationLocked || !hasOrderContext}
       quantity={quantities.get(item.guid)?.quantity || 0}
       unit={quantities.get(item.guid)?.unit || unitLabel(item.baseUnit)}
+      fractional={quantities.get(item.guid)?.fractional || false}
       hasPriceType={hasPriceType}
       hasWarehouse={hasWarehouse}
-      onOpen={onPressProduct}
-      onLongPress={onLongPressProduct}
-      onStep={stepQuantity}
-      onEditQuantity={setQuantityProduct}
-      thumbnail={<ProductThumb item={item} style={styles.productPickerQuantityThumb} iconSize={24} onPress={() => onOpenImages(item)} />}
+      onOpen={openProduct}
+      onLongPress={longPressProduct}
+      onChangeQuantity={onChangeQuantity}
+      renderThumbnail={renderThumbnail}
     />
   ), [
     hasPriceType,
     hasWarehouse,
-    onLongPressProduct,
-    onOpenImages,
-    onPressProduct,
+    longPressProduct,
+    renderThumbnail,
+    openProduct,
     quantities,
     mutationLocked,
     hasOrderContext,
-    stepQuantity,
+    onChangeQuantity,
     selectedProducts,
     styles,
   ]);
@@ -4596,7 +4599,7 @@ function ProductPickerFullscreenPanel({
   if (!visible) return null;
 
   return (
-    <><SearchPickerScreen<ClientOrderProduct>
+    <SearchPickerScreen<ClientOrderProduct>
       visible
       pickerKey="product"
       topInset={topInset}
@@ -4630,10 +4633,6 @@ function ProductPickerFullscreenPanel({
       listProps={{ nestedScrollEnabled: true }}
       footer={footer}
     />
-    {quantityProduct && visible ? <ProductPickerQuantityDialog key={quantityProduct.guid}
-      name={quantityProduct.name} {...productPickerQuantity(orderItems, quantityProduct)} disabled={mutationLocked}
-      onDismiss={dismissQuantity} onConfirm={quantity => { onChangeQuantity(quantityProduct, { quantity }); dismissQuantity(); }} /> : null}
-    </>
   );
 }
 

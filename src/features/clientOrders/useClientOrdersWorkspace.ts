@@ -1326,6 +1326,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const documentStartedRef = React.useRef(false);
   const dirtyRef = React.useRef(false);
   const draftEditVersionRef = React.useRef(0);
+  const [appliedDraftEditVersion, setAppliedDraftEditVersion] = React.useState(0);
   const failedAutosaveVersionRef = React.useRef<number | null>(null);
   const foregroundSaveRef = React.useRef(false);
   const selectedGuidRef = React.useRef<string | null>(null);
@@ -1757,12 +1758,15 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, []);
 
   const patchDraft = React.useCallback((patch: Partial<DraftOrder> | ((prev: DraftOrder) => DraftOrder)) => {
-    draftEditVersionRef.current++;
+    const editVersion = ++draftEditVersionRef.current;
     dirtyRef.current = true;
     setDraft((prev) => normalizeDraftOrder(
       typeof patch === 'function' ? patch(prev) : { ...prev, ...patch },
       prev
     ));
+    // Commit the version in the same React lane as the draft. A previous autosave
+    // closure must never save old quantities as the latest edit during a transition.
+    setAppliedDraftEditVersion(editVersion);
     markDirty();
   }, [markDirty]);
 
@@ -3142,6 +3146,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [offlineUserId]);
 
   const saveDraft = React.useCallback(async (options?: SaveOptions) => {
+    if (appliedDraftEditVersion !== draftEditVersionRef.current) return null;
     if (readOnly || foregroundSaveRef.current || deviceDraftSyncingRef.current) return null;
     if (options?.reason === 'autosave' && failedAutosaveVersionRef.current === draftEditVersionRef.current) return null;
     const deviceEntry = findDeviceDraftEntry(draft.guid, draft.clientOrderId);
@@ -3354,6 +3359,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [
     applyOrderDetail,
     applySavedOrderToList,
+    appliedDraftEditVersion,
     draft,
     findDeviceDraftEntry,
     mergeServerRevisionIntoOpenDraft,

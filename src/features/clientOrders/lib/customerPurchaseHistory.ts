@@ -14,11 +14,17 @@ function calendarDay(value: string) {
   return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value ? date.getTime() / 86400000 : NaN;
 }
 
-export function purchaseHistoryLabel(value?: string | null, now = new Date()) {
+export function purchaseHistoryDays(value?: string | null, now = new Date()) {
   if (!value) return null;
   const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) / 86400000;
   const days = today - calendarDay(value);
   if (!Number.isFinite(days) || days < 0) return null;
+  return days;
+}
+
+export function purchaseHistoryLabel(value?: string | null, now = new Date()) {
+  const days = purchaseHistoryDays(value, now);
+  if (days === null) return null;
   return days === 0 ? 'Брал сегодня' : `Брал ${days} дн. назад`;
 }
 

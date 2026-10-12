@@ -183,6 +183,22 @@ describe('useClientOrdersWorkspace', () => {
     return { get current() { return current; }, renderer };
   }
 
+  it('does not let an old save closure persist stale quantities while a picker edit is pending', async () => {
+    const harness = await editableWorkspace();
+    const oldSave = harness.current.saveDraft;
+    await act(async () => {
+      React.startTransition(() => harness.current.patchDraft(prev => ({ ...prev,
+        items: prev.items.map(line => ({ ...line, quantity: '5' })),
+      })));
+      expect(await oldSave({ reason: 'autosave' })).toBeNull();
+    });
+    expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    expect(updateClientOrder).not.toHaveBeenCalled();
+    expect(harness.current.draft.items[0].quantity).toBe('5');
+    expect(harness.current.dirty).toBe(true);
+    await act(async () => harness.renderer.unmount());
+  });
+
   it('does not retry an ordinary conflict with a freshly fetched revision', async () => {
     const harness = await editableWorkspace();
     jest.mocked(putClientOrderByClientId).mockRejectedValue(Object.assign(new Error('conflict'), {
