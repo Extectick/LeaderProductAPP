@@ -200,7 +200,8 @@ export function SearchPickerScreen<T>({
         <View style={styles.titleRow}>
           <View style={styles.titleContent}>
             <MaterialCommunityIcons name={titleIcon as any} size={21} color="#2563EB" />
-            <Text style={styles.title} numberOfLines={1}>{title}</Text>
+            <Text style={[styles.title, pickerKey === 'product' && windowWidth < 360 && styles.compactTitle]}
+              numberOfLines={pickerKey === 'product' && windowWidth < 360 ? 2 : 1}>{title}</Text>
           </View>
           <View style={styles.titleActions}>
             {filters.length ? (
@@ -365,6 +366,7 @@ const styles = StyleSheet.create({
     lineHeight: 23,
     fontWeight: '900',
   },
+  compactTitle: { fontSize: 16, lineHeight: 20 },
   closeButton: {
     width: 40,
     height: 40,
