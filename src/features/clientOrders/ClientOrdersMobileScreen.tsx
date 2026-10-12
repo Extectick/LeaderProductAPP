@@ -77,8 +77,10 @@ import {
 } from './lib/clientOrderInvoices';
 import { useClientOrdersWorkspace } from './hooks/useClientOrdersWorkspace';
 import { useCustomerPurchaseHistory } from './hooks/useCustomerPurchaseHistory';
-import { purchaseHistoryLabel } from './lib/customerPurchaseHistory';
 import { ProductPickerSnapshot } from './lib/productPickerSnapshot';
+import { applyProductPickerQuantity, productPickerQuantity, type ProductQuantityChange } from './lib/productPickerQuantity';
+import { ProductPickerRow, ProductPickerMetrics } from './screen/mobile/ProductPickerRow';
+import { ProductPickerQuantityDialog } from './screen/mobile/ProductPickerQuantityDialog';
 import { getClientOrderInvoices, getClientOrderProductsBatch, getClientOrderReferenceDetails, requestClientOrderInvoice } from '@/utils/clientOrdersService';
 import type { ClientOrder, ClientOrderCounterpartyOption, ClientOrderInvoice, ClientOrderOrganization, ClientOrderPriceTypeOption, ClientOrderProduct, ClientOrderReferenceDetails, ClientOrderReferenceKind, ClientOrdersTodaySummary, ClientOrderWarehouseOption } from '@/utils/clientOrdersService';
 import { useServerStatus } from '@/src/shared/network/useServerStatus';
@@ -342,19 +344,6 @@ function linePackageShortLabel(item: any) {
   }
   return unitLabel(item?.baseUnit);
 }
-function productPickerMeta(item: any, context?: { hasPriceType?: boolean; hasWarehouse?: boolean }) {
-  const canShowPrice = context?.hasPriceType !== false;
-  const canShowStock = context?.hasWarehouse !== false;
-  const salePrice = item?.basePrice ?? item?.price;
-  return {
-    code: item?.code || 'Без кода',
-    receiptPrice: !canShowPrice || salePrice === null || salePrice === undefined
-      ? '—'
-      : formatMoney(salePrice, item.currency),
-    stock: canShowStock ? formatStockInlineLabel(item?.stock, item?.baseUnit) || '—' : '—',
-  };
-}
-
 function ProductPickerMetadata({
   styles,
   item,
@@ -368,24 +357,7 @@ function ProductPickerMetadata({
   hasWarehouse: boolean;
   compact?: boolean;
 }) {
-  const meta = productPickerMeta(item, { hasPriceType, hasWarehouse });
-  const metrics = [
-    { key: 'stock', icon: 'warehouse' as const, value: meta.stock },
-    { key: 'price', icon: 'cash-multiple' as const, value: meta.receiptPrice },
-    { key: 'article', icon: 'barcode-scan' as const, value: meta.code },
-  ];
-  return (
-    <View style={[styles.productPickerMetaRow, compact && styles.productPickerMetaRowCompact]}>
-      {metrics.map((metric) => (
-        <View key={metric.key} style={styles.productPickerMetaItem}>
-          <MaterialCommunityIcons name={metric.icon} size={compact ? 11 : 12} color="#64748B" />
-          <Text style={[styles.productPickerMetaValue, compact && styles.productPickerMetaValueCompact]} numberOfLines={1}>
-            {metric.value}
-          </Text>
-        </View>
-      ))}
-    </View>
-  );
+  return <ProductPickerMetrics item={item} hasPriceType={hasPriceType} hasWarehouse={hasWarehouse} compact={compact} />;
 }
 function getDraftItemImageUri(item: any) {
   return getProductGalleryImages(item)[0]?.thumbUrl || null;
@@ -1670,7 +1642,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
 
   const openProductEditorForProduct = React.useCallback((product: ClientOrderProduct) => {
     if (workspace.readOnly || workspace.mutationLocked) return;
-    const existingIndex = workspace.draft.items.findIndex((line: any) => line.productGuid === product.guid);
+    const existingIndex = workspace.draft.items.findIndex((line: any) => line.productGuid === product.guid && !isCancelledDraftItem(line));
     const existingKey = existingIndex >= 0 ? workspace.draft.items[existingIndex]?.key : null;
     setSection('items');
     if (existingKey) {
@@ -1781,6 +1753,12 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   }, [workspace.draft.items, workspace.mutationLocked, workspace.readOnly]);
 
   const handleProductPickerPress = React.useCallback((item: ClientOrderProduct) => {
+    if (workspace.readOnly || workspace.mutationLocked) return;
+    if (workspace.draft.items.some(line => line.productGuid === item.guid && !isCancelledDraftItem(line))) {
+      closePicker();
+      openProductEditorForProduct(item);
+      return;
+    }
     const action = resolveProductPickerPressAction({
       product: item,
       orderItems: workspace.draft.items,
@@ -1827,6 +1805,14 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const clearPickerProductSelection = React.useCallback(() => {
     setSelectedProducts(new Map());
   }, []);
+
+  const changePickerQuantity = React.useCallback((product: ClientOrderProduct, change: ProductQuantityChange) => {
+    if (workspace.readOnly || workspace.mutationLocked) return;
+    const newItem = buildNewItem(product);
+    workspace.patchDraft(current => ({ ...current,
+      items: applyProductPickerQuantity(current.items, product, change, newItem),
+    }));
+  }, [workspace.readOnly, workspace.mutationLocked, workspace.patchDraft]);
 
   const transferSelectedProducts = React.useCallback(() => {
     const firstNewIndex = workspace.draft.items.length;
@@ -3193,7 +3179,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
           purchaseHistoryReady={purchaseHistory.ready}
           historyNotice={purchaseHistory.loading && !purchaseHistory.ready ? 'Загружается история покупок…'
             : !purchaseHistory.ready ? 'История покупок ещё не загружена'
-              : purchasedOnly || !workspace.online || purchaseHistory.error ? `Покупки с 31.03.2026 · данные на ${purchaseHistory.snapshot!.asOf.slice(0, 10).split('-').reverse().join('.')}` : null}
+              : null}
           onRetryHistory={workspace.online && purchaseHistory.error ? purchaseHistory.refresh : undefined}
           items={visiblePickerItems as ClientOrderProduct[]}
           selectedProducts={selectedProducts}
@@ -3205,6 +3191,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
           online={isReachable}
           onPressProduct={handleProductPickerPress}
           onLongPressProduct={handleProductPickerLongPress}
+          onChangeQuantity={changePickerQuantity}
+          mutationLocked={workspace.readOnly || workspace.mutationLocked}
           onOpenImages={openProductGallery}
           onScroll={handlePickerScroll}
           onMomentumScrollEnd={handlePickerScroll}
@@ -4401,93 +4389,6 @@ function InlineProductSearchThumb({
   );
 }
 
-const ProductPickerFullscreenRow = React.memo(function ProductPickerFullscreenRow({
-  styles,
-  item,
-  selected,
-  disabled,
-  hasPriceType,
-  hasWarehouse,
-  onPressProduct,
-  onLongPressProduct,
-  onOpenImages,
-}: {
-  styles: any;
-  item: ClientOrderProduct;
-  selected: boolean;
-  disabled: boolean;
-  hasPriceType: boolean;
-  hasWarehouse: boolean;
-  onPressProduct: (item: ClientOrderProduct) => void;
-  onLongPressProduct: (item: ClientOrderProduct) => void;
-  onOpenImages: (item: ClientOrderProduct) => void;
-}) {
-  const suppressNextPressRef = React.useRef(false);
-  const handlePress = React.useCallback(() => {
-    if (suppressNextPressRef.current) {
-      suppressNextPressRef.current = false;
-      return;
-    }
-    onPressProduct(item);
-  }, [item, onPressProduct]);
-  const handleLongPress = React.useCallback(() => {
-    suppressNextPressRef.current = true;
-    onLongPressProduct(item);
-  }, [item, onLongPressProduct]);
-  const handlePressOut = React.useCallback(() => {
-    if (!suppressNextPressRef.current) return;
-    setTimeout(() => {
-      suppressNextPressRef.current = false;
-    }, 0);
-  }, []);
-  const handleOpenImages = React.useCallback(() => onOpenImages(item), [item, onOpenImages]);
-
-  return (
-    <Pressable
-      accessibilityRole="button"
-      disabled={disabled}
-      onPress={handlePress}
-      onLongPress={handleLongPress}
-      onPressOut={handlePressOut}
-      delayLongPress={280}
-      style={({ pressed }) => [
-        styles.pickerFlatRow,
-        styles.productPickerRow,
-        selected && styles.pickerFlatRowSelected,
-        pressed && styles.flatPressed,
-      ]}
-    >
-      <ProductThumb
-        item={item}
-        style={styles.productPickerThumb}
-        iconSize={26}
-        iconColor={disabled ? '#94A3B8' : '#2563EB'}
-        onPress={handleOpenImages}
-      />
-      <View style={styles.pickerFlatTextWrap}>
-        <Text style={styles.pickerFlatTitle} numberOfLines={2}>{item.name || getPickerItemTitle(item)}</Text>
-        <ProductPickerMetadata
-          styles={styles}
-          item={item}
-          hasPriceType={hasPriceType}
-          hasWarehouse={hasWarehouse}
-        />
-        {purchaseHistoryLabel(item.lastPurchasedDate) ? (
-          <Text style={{ color: '#15803D', fontSize: 12, marginTop: 3 }}>
-            <MaterialCommunityIcons name="history" size={14} /> {purchaseHistoryLabel(item.lastPurchasedDate)}
-          </Text>
-        ) : null}
-        {disabled ? <Text style={styles.productPickerAlreadyText}>Уже в заказе</Text> : null}
-      </View>
-      {selected ? (
-        <MaterialCommunityIcons name="check-circle" size={21} color="#16A34A" />
-      ) : (
-        <MaterialCommunityIcons name={disabled ? 'check-circle-outline' : 'plus-circle-outline'} size={22} color={disabled ? '#CBD5E1' : '#94A3B8'} />
-      )}
-    </Pressable>
-  );
-});
-
 function ProductPickerFullscreenPanel({
   styles,
   visible,
@@ -4520,6 +4421,8 @@ function ProductPickerFullscreenPanel({
   online,
   onPressProduct,
   onLongPressProduct,
+  onChangeQuantity,
+  mutationLocked,
   onOpenImages,
   onScroll,
   onMomentumScrollEnd,
@@ -4562,6 +4465,8 @@ function ProductPickerFullscreenPanel({
   online: boolean;
   onPressProduct: (item: ClientOrderProduct) => void;
   onLongPressProduct: (item: ClientOrderProduct) => void;
+  onChangeQuantity: (item: ClientOrderProduct, change: ProductQuantityChange) => void;
+  mutationLocked: boolean;
   onOpenImages: (item: ClientOrderProduct) => void;
   onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   onMomentumScrollEnd: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
@@ -4573,28 +4478,40 @@ function ProductPickerFullscreenPanel({
   onTransfer: () => void;
   onClearSelection: () => void;
 }) {
-  const orderProductGuids = React.useMemo(() => {
-    return new Set(orderItems.map((item) => item.productGuid).filter(Boolean) as string[]);
-  }, [orderItems]);
+  const [quantityProduct, setQuantityProduct] = React.useState<ClientOrderProduct | null>(null);
+  const quantities = React.useMemo(() => {
+    const lines = new Map<string, DraftItem[]>();
+    for (const line of orderItems) {
+      const group = lines.get(line.productGuid) || [];
+      group.push(line);
+      lines.set(line.productGuid, group);
+    }
+    return new Map(items.map(item => [item.guid, productPickerQuantity(lines.get(item.guid) || [], item)]));
+  }, [items, orderItems]);
+  const stepQuantity = React.useCallback((item: ClientOrderProduct, delta: 1 | -1) => onChangeQuantity(item, { delta }), [onChangeQuantity]);
+  const dismissQuantity = React.useCallback(() => setQuantityProduct(null), []);
+  React.useEffect(() => { if (!visible) setQuantityProduct(null); }, [visible]);
   const hasSearch = !!search.trim();
   const isResetLoading = loading && !appendLoading;
   const showInitialLoader = isResetLoading && hasOrderContext && !hasLoadedOnce && !items.length && !hasSearch;
   const showSearchLoader = isResetLoading && hasOrderContext && !showInitialLoader;
   const showFooterLoader = appendLoading && !!items.length;
   const selectedProductGuidKey = React.useMemo(() => Array.from(selectedProducts.keys()).join('|'), [selectedProducts]);
-  const orderProductGuidKey = React.useMemo(() => Array.from(orderProductGuids).join('|'), [orderProductGuids]);
   const keyExtractor = React.useCallback((item: ClientOrderProduct, index: number) => item.guid || item.code || item.name || `product-${index}`, []);
   const renderProductItem = React.useCallback(({ item }: { item: ClientOrderProduct }) => (
-    <ProductPickerFullscreenRow
-      styles={styles}
+    <ProductPickerRow
       item={item}
       selected={!!item.guid && selectedProducts.has(item.guid)}
-      disabled={!!item.guid && orderProductGuids.has(item.guid)}
+      disabled={mutationLocked || !hasOrderContext}
+      quantity={quantities.get(item.guid)?.quantity || 0}
+      unit={quantities.get(item.guid)?.unit || unitLabel(item.baseUnit)}
       hasPriceType={hasPriceType}
       hasWarehouse={hasWarehouse}
-      onPressProduct={onPressProduct}
-      onLongPressProduct={onLongPressProduct}
-      onOpenImages={onOpenImages}
+      onOpen={onPressProduct}
+      onLongPress={onLongPressProduct}
+      onStep={stepQuantity}
+      onEditQuantity={setQuantityProduct}
+      thumbnail={<ProductThumb item={item} style={styles.productPickerQuantityThumb} iconSize={24} onPress={() => onOpenImages(item)} />}
     />
   ), [
     hasPriceType,
@@ -4602,7 +4519,10 @@ function ProductPickerFullscreenPanel({
     onLongPressProduct,
     onOpenImages,
     onPressProduct,
-    orderProductGuids,
+    quantities,
+    mutationLocked,
+    hasOrderContext,
+    stepQuantity,
     selectedProducts,
     styles,
   ]);
@@ -4676,7 +4596,7 @@ function ProductPickerFullscreenPanel({
   if (!visible) return null;
 
   return (
-    <SearchPickerScreen<ClientOrderProduct>
+    <><SearchPickerScreen<ClientOrderProduct>
       visible
       pickerKey="product"
       topInset={topInset}
@@ -4692,7 +4612,7 @@ function ProductPickerFullscreenPanel({
       searchLoading={showSearchLoader}
       filters={filters}
       data={items}
-      extraData={`${selectedProductGuidKey}:${orderProductGuidKey}:${hasPriceType ? 'price' : 'noprice'}:${hasWarehouse ? 'warehouse' : 'nowarehouse'}`}
+      extraData={[selectedProductGuidKey, quantities, mutationLocked, hasPriceType, hasWarehouse]}
       keyExtractor={keyExtractor}
       renderItem={renderProductItem}
       listRef={listRef}
@@ -4710,6 +4630,10 @@ function ProductPickerFullscreenPanel({
       listProps={{ nestedScrollEnabled: true }}
       footer={footer}
     />
+    {quantityProduct && visible ? <ProductPickerQuantityDialog key={quantityProduct.guid}
+      name={quantityProduct.name} {...productPickerQuantity(orderItems, quantityProduct)} disabled={mutationLocked}
+      onDismiss={dismissQuantity} onConfirm={quantity => { onChangeQuantity(quantityProduct, { quantity }); dismissQuantity(); }} /> : null}
+    </>
   );
 }
 
@@ -8870,6 +8794,7 @@ const styles = StyleSheet.create({
   productPickerRow: { minHeight: 84, paddingLeft: 5, paddingRight: 10, paddingVertical: 2, gap: 8 },
   pickerFlatRowSelected: { borderColor: '#BFDBFE', backgroundColor: '#EFF6FF' },
   productPickerThumb: { width: 80, height: 80, borderRadius: 10, backgroundColor: 'transparent' },
+  productPickerQuantityThumb: { width: '100%', flex: 1, borderRadius: 6, backgroundColor: 'transparent' },
   productPickerThumbDisabled: { opacity: 0.55 },
   pickerFlatTextWrap: { flex: 1, minWidth: 0 },
   pickerFlatTitle: { color: '#0F172A', fontSize: 12.5, fontWeight: '900', lineHeight: 15 },
