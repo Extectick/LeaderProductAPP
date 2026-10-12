@@ -115,6 +115,7 @@ export function SearchPickerScreen<T>({
 }: SearchPickerScreenProps<T>) {
   const { width: windowWidth } = useWindowDimensions();
   const [inputValue, setInputValue] = React.useState(search);
+  const [inputSelection, setInputSelection] = React.useState<TextInputProps['selection']>();
   const searchbarRef = React.useRef<any>(null);
   const wasVisibleRef = React.useRef(false);
   const lastPickerKeyRef = React.useRef(pickerKey);
@@ -126,6 +127,7 @@ export function SearchPickerScreen<T>({
     if (visible && (opened || pickerChanged)) {
       skipNextDebounceRef.current = true;
       setInputValue(search);
+      setInputSelection(undefined);
     }
     wasVisibleRef.current = visible;
     lastPickerKeyRef.current = pickerKey;
@@ -179,13 +181,43 @@ export function SearchPickerScreen<T>({
 
   const commitSearchImmediately = React.useCallback((value: string) => {
     skipNextDebounceRef.current = true;
+    setInputSelection(undefined);
     setInputValue(value);
     onSearchChange(value);
   }, [onSearchChange]);
 
+  const changeSearchText = React.useCallback((value: string) => {
+    // Release the selection as soon as typing starts; do not reselect each new letter.
+    setInputSelection(undefined);
+    setInputValue(value);
+  }, []);
+
+  const selectSearchText = () => {
+    if (inputValue.length) setInputSelection({ start: 0, end: inputValue.length });
+  };
+
   const resolvedInputProps = {
     ...DEFAULT_SEARCH_INPUT_PROPS,
     ...searchInputProps,
+    ...(pickerKey === 'product' ? {
+      selectTextOnFocus: true,
+      selection: inputSelection,
+      onFocus: (event: Parameters<NonNullable<TextInputProps['onFocus']>>[0]) => {
+        selectSearchText();
+        searchInputProps?.onFocus?.(event);
+      },
+      onBlur: (event: Parameters<NonNullable<TextInputProps['onBlur']>>[0]) => {
+        setInputSelection(undefined);
+        searchInputProps?.onBlur?.(event);
+      },
+      // Focus alone does not fire when the user taps the already-focused field.
+      ...(Platform.OS === 'web' ? { onClick: selectSearchText } : {
+        onPressOut: (event: Parameters<NonNullable<TextInputProps['onPressOut']>>[0]) => {
+          selectSearchText();
+          searchInputProps?.onPressOut?.(event);
+        },
+      }),
+    } : {}),
   };
   const showFilterLabels = filters.length === 1 && windowWidth >= 350;
 
@@ -274,7 +306,7 @@ export function SearchPickerScreen<T>({
           ref={assignSearchInputRef}
           mode="bar"
           value={inputValue}
-          onChangeText={setInputValue}
+          onChangeText={changeSearchText}
           onClearIconPress={() => commitSearchImmediately('')}
           onSubmitEditing={() => commitSearchImmediately(inputValue)}
           placeholder={searchPlaceholder}

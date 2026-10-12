@@ -54,7 +54,87 @@ describe('SearchPickerScreen', () => {
   });
 
   afterEach(() => {
+    require('react-native').Platform.OS = 'android';
     jest.useRealTimers();
+  });
+
+  function renderSearch(search: string, pickerKey = 'product', searchInputProps = {}) {
+    const onSearchChange = jest.fn();
+    let renderer!: TestRenderer.ReactTestRenderer;
+    act(() => {
+      renderer = TestRenderer.create(React.createElement(SearchPickerScreen, {
+        visible: true, pickerKey, topInset: 0, title: 'Подбор товаров', titleIcon: 'cube-outline',
+        onClose: jest.fn(), search, onSearchChange, searchInputProps,
+        data: [], renderItem: () => null, keyExtractor: () => '',
+      }));
+    });
+    return { renderer, onSearchChange, input: () => renderer.root.findByType('Searchbar' as any) };
+  }
+
+  it('selects the entire current product query on focus and repeated taps without searching', () => {
+    const onFocus = jest.fn();
+    const onPressOut = jest.fn();
+    const { renderer, input, onSearchChange } = renderSearch('угорь', 'product', { onFocus, onPressOut });
+    expect(input().props.selectTextOnFocus).toBe(true);
+    const event = { nativeEvent: {} };
+    act(() => input().props.onFocus(event));
+    expect(input().props.selection).toEqual({ start: 0, end: 5 });
+    expect(onFocus).toHaveBeenCalledWith(event);
+    const previousSelection = input().props.selection;
+    act(() => input().props.onPressOut(event));
+    expect(input().props.selection).toEqual({ start: 0, end: 5 });
+    expect(input().props.selection).not.toBe(previousSelection);
+    expect(onPressOut).toHaveBeenCalledWith(event);
+    expect(onSearchChange).not.toHaveBeenCalled();
+
+    act(() => input().props.onChangeText('сыр'));
+    expect(input().props.selection).toBeUndefined();
+    expect(input().props.value).toBe('сыр');
+    act(() => input().props.onPressOut(event));
+    expect(input().props.selection).toEqual({ start: 0, end: 3 });
+    expect(onSearchChange).not.toHaveBeenCalled();
+    act(() => jest.advanceTimersByTime(280));
+    expect(onSearchChange).toHaveBeenCalledTimes(1);
+    expect(onSearchChange).toHaveBeenCalledWith('сыр');
+    act(() => renderer.unmount());
+  });
+
+  it('releases selection on blur and clear, and leaves empty searches alone', () => {
+    const onBlur = jest.fn();
+    const { renderer, input, onSearchChange } = renderSearch('угорь', 'product', { onBlur });
+    act(() => input().props.onFocus({}));
+    act(() => input().props.onBlur({}));
+    expect(input().props.selection).toBeUndefined();
+    expect(onBlur).toHaveBeenCalledTimes(1);
+    act(() => input().props.onPressOut({}));
+    act(() => input().props.onClearIconPress());
+    expect(input().props.selection).toBeUndefined();
+    expect(input().props.value).toBe('');
+    expect(onSearchChange).toHaveBeenCalledWith('');
+    act(() => input().props.onPressOut({}));
+    expect(input().props.selection).toBeUndefined();
+    act(() => renderer.unmount());
+  });
+
+  it('supports clicking an already-focused product search on web', () => {
+    require('react-native').Platform.OS = 'web';
+    const { renderer, input } = renderSearch('угорь');
+    act(() => input().props.onClick());
+    expect(input().props.selection).toEqual({ start: 0, end: 5 });
+    act(() => input().props.onChangeText('лосось'));
+    expect(input().props.selection).toBeUndefined();
+    act(() => input().props.onClick());
+    expect(input().props.selection).toEqual({ start: 0, end: 6 });
+    act(() => renderer.unmount());
+  });
+
+  it('preserves the existing selection behavior in other reference pickers', () => {
+    const onFocus = jest.fn();
+    const { renderer, input } = renderSearch('Клиент', 'counterparty', { onFocus });
+    expect(input().props.selectTextOnFocus).toBeUndefined();
+    expect(input().props.onPressOut).toBeUndefined();
+    expect(input().props.onFocus).toBe(onFocus);
+    act(() => renderer.unmount());
   });
 
   it('updates the native field immediately and debounces only the search request', () => {
