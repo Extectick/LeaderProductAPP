@@ -1015,37 +1015,40 @@ export async function searchClientOrderProducts(params: {
   inStockOnly?: boolean;
   limit?: number;
   offset?: number;
-}) {
+}): Promise<PagedResult<ClientOrderProduct> & { localCatalog?: true }> {
   scheduleProductCatalogSync();
-  try {
-    const local = await searchCatalogProducts(params.search || '', params.limit || 50, params.offset || 0, {
-      priceTypeGuid: params.priceTypeGuid,
-      warehouseGuid: params.warehouseGuid,
-      organizationGuid: params.organizationGuid,
-      inStockOnly: params.inStockOnly,
-      purchasedOnly: params.purchasedOnly,
-      historyUserId: params.historyUserId,
-      historyFetchedAt: params.historyFetchedAt,
-      counterpartyGuid: params.counterpartyGuid?.toLowerCase(),
-    });
-    if (local) {
-      return {
-        items: local.items,
-        meta: {
-          total: local.total,
-          count: local.items.length,
-          limit: params.limit || 50,
-          offset: params.offset || 0,
-          hasMore: local.hasMore,
-        },
-        localCatalog: true as const,
-      };
-    }
-  } catch (error) {
-    console.warn('[catalog] local search failed, using API fallback', error);
-  }
   const { historyUserId: _localUser, historyFetchedAt: _localSnapshot, ...query } = params;
-  return getPagedSelector<ClientOrderProduct>(API_ENDPOINTS.CLIENT_ORDERS.PRODUCTS, query, 'Не удалось загрузить номенклатуру');
+  // A ready local dataset is not evidence that its stock/catalog is current.
+  // Share the same online-first, transient-error fallback policy as references.
+  return getReferenceSelector(
+    () => getPagedSelector<ClientOrderProduct>(API_ENDPOINTS.CLIENT_ORDERS.PRODUCTS, query, 'Не удалось загрузить номенклатуру'),
+    async () => {
+      const local = await searchCatalogProducts(params.search || '', params.limit || 50, params.offset || 0, {
+        priceTypeGuid: params.priceTypeGuid,
+        warehouseGuid: params.warehouseGuid,
+        organizationGuid: params.organizationGuid,
+        inStockOnly: params.inStockOnly,
+        purchasedOnly: params.purchasedOnly,
+        historyUserId: params.historyUserId,
+        historyFetchedAt: params.historyFetchedAt,
+        counterpartyGuid: params.counterpartyGuid?.toLowerCase(),
+      });
+      if (local) {
+        return {
+          items: local.items,
+          meta: {
+            total: local.total,
+            count: local.items.length,
+            limit: params.limit || 50,
+            offset: params.offset || 0,
+            hasMore: local.hasMore,
+          },
+          localCatalog: true as const,
+        };
+      }
+      return null;
+    }
+  );
 }
 
 export async function getClientOrderProductsBatch(payload: {
