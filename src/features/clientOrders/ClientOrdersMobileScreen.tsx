@@ -123,6 +123,7 @@ import {
   SearchPickerScreen,
   type SearchPickerFilter,
 } from './screen/mobile/SearchPickerScreen';
+import { FilterLookupPickerPanel } from './screen/mobile/FilterLookupPickerPanel';
 import OneCCompanyLogo from './assets/onec-company-logo.svg';
 import { OfflineDataBanner, OfflineProductDataNote } from './screen/mobile/OfflineDataBanner';
 import { SendDeviceOrdersButton } from './screen/SendDeviceOrdersButton';
@@ -7314,6 +7315,7 @@ function OrdersFiltersFullscreen({
           />
         ) : lookupKind ? (
           <FilterLookupPickerPanel
+            renderSearch={(props) => <CompactSearchbar {...props} />}
             styles={styles}
             topInset={insets.top}
             bottomInset={insets.bottom}
@@ -7452,134 +7454,6 @@ function FilterStatusPickerPanel({
   );
 }
 
-function FilterLookupPickerPanel<T extends { guid: string; name: string }>({
-  styles,
-  topInset,
-  bottomInset,
-  title,
-  icon,
-  selectedGuid,
-  placeholder,
-  search,
-  onSelect,
-  onApply,
-  onReset,
-  onClose,
-}: {
-  styles: any;
-  topInset: number;
-  bottomInset: number;
-  title: string;
-  icon: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
-  selectedGuid?: string | null;
-  placeholder: string;
-  search: (args: { search: string; limit: number; offset: number }) => Promise<{ items: T[] }>;
-  onSelect: (item: T) => void;
-  onApply: () => void;
-  onReset: () => void;
-  onClose: () => void;
-}) {
-  const [query, setQuery] = React.useState('');
-  const [items, setItems] = React.useState<T[]>([]);
-  const [loading, setLoading] = React.useState(false);
-  const requestRef = React.useRef(0);
-
-  React.useEffect(() => {
-    const requestId = ++requestRef.current;
-    const loadingTimer = setTimeout(() => {
-      if (requestRef.current === requestId) setLoading(true);
-    }, query.trim() ? 260 : 0);
-    const requestTimer = setTimeout(() => {
-      void search({ search: query.trim(), limit: 40, offset: 0 })
-        .then((result) => {
-          if (requestRef.current !== requestId) return;
-          setItems(Array.isArray(result.items) ? result.items : []);
-        })
-        .catch(() => {
-          if (requestRef.current !== requestId) return;
-          setItems([]);
-        })
-        .finally(() => {
-          if (requestRef.current === requestId) setLoading(false);
-        });
-    }, query.trim() ? 520 : 0);
-    return () => {
-      clearTimeout(loadingTimer);
-      clearTimeout(requestTimer);
-    };
-  }, [query, search]);
-
-  return (
-    <View style={styles.filtersLookupOverlay}>
-      <Surface mode="flat" style={[styles.filtersFullscreenHeader, { paddingTop: Math.max(topInset, 10) + 8 }]}>
-        <View style={styles.filtersFullscreenHeaderRow}>
-          <View style={styles.filtersLookupTitleRow}>
-            <MaterialCommunityIcons name={icon} size={20} color="#2563EB" />
-            <Text style={styles.filtersFullscreenTitle}>{title}</Text>
-          </View>
-          <Pressable accessibilityRole="button" accessibilityLabel="Закрыть подбор" onPress={onClose} style={({ pressed }) => [styles.filtersCloseButton, pressed && styles.flatPressed]}>
-            <MaterialCommunityIcons name="close" size={22} color="#0F172A" />
-          </Pressable>
-        </View>
-      </Surface>
-      <View style={styles.filtersLookupSearchArea}>
-        <CompactSearchbar
-          style={styles.filtersLookupSearch}
-          inputStyle={styles.ordersSearchbarInput}
-          value={query}
-          onChangeText={setQuery}
-          placeholder={placeholder}
-        />
-      </View>
-      <ScrollView
-        style={styles.filtersLookupList}
-        contentContainerStyle={[styles.filtersLookupListContent, { paddingBottom: Math.max(bottomInset, 10) + 86 }]}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
-      >
-        {loading ? (
-          <View style={styles.filtersLookupStateRow}>
-            <ActivityIndicator size="small" color="#2563EB" />
-          </View>
-        ) : null}
-        {!loading && !items.length ? (
-          <Text style={styles.filtersLookupEmpty}>Ничего не найдено.</Text>
-        ) : null}
-        {items.map((item) => {
-          const selected = item.guid === selectedGuid;
-          return (
-            <Pressable
-              key={item.guid}
-              accessibilityRole="button"
-              onPress={() => onSelect(item)}
-              style={({ pressed }) => [styles.filtersLookupRow, selected && styles.filtersLookupRowSelected, pressed && styles.flatPressed]}
-            >
-              <View style={styles.filtersLookupRowText}>
-                <Text style={styles.filtersLookupRowTitle} numberOfLines={2}>{item.name}</Text>
-                {getPickerItemMeta(title === 'Контрагент' ? 'filterCounterparty' : 'organization', item) ? (
-                  <Text style={styles.filtersLookupRowMeta} numberOfLines={1}>{getPickerItemMeta(title === 'Контрагент' ? 'filterCounterparty' : 'organization', item)}</Text>
-                ) : null}
-              </View>
-              {selected ? (
-                <MaterialCommunityIcons name="check-circle" size={21} color="#16A34A" />
-              ) : (
-                <MaterialCommunityIcons name="chevron-right" size={22} color="#94A3B8" />
-              )}
-            </Pressable>
-          );
-        })}
-      </ScrollView>
-      <Surface mode="flat" style={[styles.filtersFullscreenFooter, { paddingBottom: Math.max(bottomInset, 10) + 8 }]}>
-        <PaperButton mode="outlined" onPress={onReset} disabled={!selectedGuid} style={styles.filtersFullscreenFooterButton} labelStyle={styles.filtersFullscreenFooterLabel} contentStyle={styles.filtersFullscreenFooterContent}>
-          Сбросить
-        </PaperButton>
-        <PaperButton mode="contained" onPress={onApply} buttonColor="#2563EB" textColor="#FFFFFF" style={styles.filtersFullscreenFooterButton} labelStyle={styles.filtersFullscreenFooterLabel} contentStyle={styles.filtersFullscreenFooterContent}>
-          Готово
-        </PaperButton>
-      </Surface>
-    </View>
-  );
-}
 
 function OrdersFiltersBottomSheet({
   styles,

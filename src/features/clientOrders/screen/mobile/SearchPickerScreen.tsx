@@ -42,7 +42,9 @@ export type SearchPickerScreenProps<T> = {
   topInset: number;
   title: string;
   titleIcon: string;
+  titleAccessory?: React.ReactNode;
   onClose: () => void | false;
+  closeIcon?: string;
   search: string;
   onSearchChange: (value: string) => void;
   searchPlaceholder?: string;
@@ -82,7 +84,9 @@ export function SearchPickerScreen<T>({
   topInset,
   title,
   titleIcon,
+  titleAccessory,
   onClose,
+  closeIcon = 'close',
   search,
   onSearchChange,
   searchPlaceholder = 'Поиск',
@@ -229,11 +233,16 @@ export function SearchPickerScreen<T>({
         mode="flat"
         style={[styles.header, { paddingTop: Math.max(topInset, 10) + 8 }]}
       >
-        <View style={styles.titleRow}>
+        <View style={[styles.titleRow, !!titleAccessory && windowWidth < 360 && { gap: 6 }]}>
+          {closeIcon === 'arrow-left' ? <Pressable accessibilityRole="button" accessibilityLabel="Назад" onPress={handleClose}
+            style={({ pressed }) => [styles.closeButton, !!titleAccessory && windowWidth < 360 && { width: 32 }, pressed && styles.pressed]}>
+            <MaterialCommunityIcons name="arrow-left" size={22} color="#0F172A" />
+          </Pressable> : null}
           <View style={styles.titleContent}>
-            <MaterialCommunityIcons name={titleIcon as any} size={21} color="#2563EB" />
-            <Text style={[styles.title, pickerKey === 'product' && windowWidth < 360 && styles.compactTitle]}
+            {titleIcon ? <MaterialCommunityIcons name={titleIcon as any} size={21} color="#2563EB" /> : null}
+            <Text style={[styles.title, !!titleAccessory && { flexGrow: 0, flexShrink: 0, flexBasis: 'auto' }, (pickerKey === 'product' || !!titleAccessory) && windowWidth < 360 && styles.compactTitle]}
               numberOfLines={pickerKey === 'product' && windowWidth < 360 ? 2 : 1}>{title}</Text>
+            {titleAccessory}
           </View>
           <View style={styles.titleActions}>
             {filters.length ? (
@@ -264,6 +273,7 @@ export function SearchPickerScreen<T>({
                         styles.filterChip,
                         (!showFilterLabels || filter.iconOnly) && styles.filterChipIconOnly,
                         filter.iconOnly && styles.filterAction,
+                        !!titleAccessory && windowWidth < 360 && filter.iconOnly && { width: 32, marginRight: 2 },
                         filter.selected && (success ? styles.filterChipSuccess : styles.filterChipSelected),
                         filter.disabled && styles.disabled,
                         pressed && !filter.disabled && styles.pressed,
@@ -290,15 +300,15 @@ export function SearchPickerScreen<T>({
                 })}
               </ScrollView>
             ) : null}
-            <Pressable
+            {closeIcon !== 'arrow-left' ? <Pressable
               accessibilityRole="button"
-              accessibilityLabel={`Закрыть ${title.toLocaleLowerCase('ru')}`}
+              accessibilityLabel={closeIcon === 'arrow-left' ? 'Назад' : `Закрыть ${title.toLocaleLowerCase('ru')}`}
               hitSlop={4}
               onPress={handleClose}
               style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]}
             >
-              <MaterialCommunityIcons name="close" size={22} color="#0F172A" />
-            </Pressable>
+              <MaterialCommunityIcons name={closeIcon as any} size={22} color="#0F172A" />
+            </Pressable> : null}
           </View>
         </View>
 
