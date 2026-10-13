@@ -4561,6 +4561,8 @@ function ProductPickerFullscreenPanel({
       key: 'in-stock',
       iconOnly: true,
       label: 'С остатками',
+      icon: 'warehouse',
+      selectedIcon: 'warehouse',
       selected: inStockOnly,
       onPress: onToggleInStockOnly,
       accessibilityLabel: 'Показывать только товары с остатком',
