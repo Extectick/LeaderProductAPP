@@ -32,15 +32,15 @@ function Metrics({ item, unit, full = false }: { item: StockMetrics; unit: strin
   </Tooltip>)}</View>;
 }
 const ProductRow = React.memo(function ProductRow({ item, onOpen, onOpenImages }: { item: StockProduct; onOpen: (item: StockProduct) => void; onOpenImages: (item: StockProduct) => void }) {
-  return <Pressable onPress={() => onOpen(item)} accessibilityRole="button" accessibilityLabel={`Остатки ${item.name}`}>
-    <ProductListRow thumbnail={<Pressable style={{ flex: 1 }} accessibilityRole="button" accessibilityLabel={`Изображение ${item.name}`} disabled={!item.imageThumbUrl}
-      onPress={event => { event.stopPropagation(); onOpenImages(item); }}>{item.imageThumbUrl ? <Image source={{ uri: item.imageThumbUrl, cacheKey: `${item.guid}:${item.imageHash || ''}` }}
+  return <ProductListRow thumbnail={<Pressable style={{ flex: 1 }} accessibilityRole="button" accessibilityLabel={`Изображение ${item.name}`} disabled={!item.imageThumbUrl}
+      onPress={() => onOpenImages(item)}>{item.imageThumbUrl ? <Image source={{ uri: item.imageThumbUrl, cacheKey: `${item.guid}:${item.imageHash || ''}` }}
       style={styles.image} contentFit="contain" cachePolicy="memory-disk" recyclingKey={item.guid} />
       : <View style={styles.placeholder}><MaterialCommunityIcons name="image-outline" size={32} color="#94A3B8" /></View>}</Pressable>}>
-      <Text style={styles.title} numberOfLines={3}>{item.name}</Text>
-      <Metrics item={item} unit={item.baseUnit?.symbol || item.baseUnit?.name || ''} />
-    </ProductListRow>
-  </Pressable>;
+      <Pressable style={{ flex: 1 }} onPress={() => onOpen(item)} accessibilityRole="button" accessibilityLabel={`Остатки ${item.name}`}>
+        <Text style={styles.title} numberOfLines={3}>{item.name}</Text>
+        <Metrics item={item} unit={item.baseUnit?.symbol || item.baseUnit?.name || ''} />
+      </Pressable>
+    </ProductListRow>;
 });
 
 export default function StockProductsScreen() {
