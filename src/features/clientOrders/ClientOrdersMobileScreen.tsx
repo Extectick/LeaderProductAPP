@@ -5,6 +5,7 @@ import { useNotificationViewport } from '@/context/NotificationViewportContext';
 import DateTimeInput from '@/components/ui/DateTimeInput';
 import { OrderShareFeedback } from './components/OrderShareFeedback';
 import { useOrderShareActions } from './hooks/useOrderShareActions';
+import { useOrderAction } from './hooks/useOrderAction';
 import ContextMenuTrigger from '@/components/ui/ContextMenuTrigger';
 import type { ContextMenuItem } from '@/components/ui/ContextMenu';
 import { LiquidGlassSurface } from '@/components/ui/LiquidGlassSurface';
@@ -1862,7 +1863,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     void selectOrderByGuid(startOrderGuid);
   }, [selectOrderByGuid, startOrderGuid]);
 
-  const removeOrCancel = React.useCallback(() => {
+  const removeOrCancel = useOrderAction(() => {
     if (workspace.selectedOrderQueued) {
       setConfirmDialog({
         title: 'Снять документ с очереди?',
@@ -1908,8 +1909,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       destructive: true,
       onConfirm: () => workspace.cancelOrderConfirmed(),
     });
-  }, [workspace]);
-  const deleteDocumentFromMenu = React.useCallback(() => {
+  });
+  const deleteDocumentFromMenu = useOrderAction(() => {
     setActionsMenuOpen(false);
     setConfirmDialog({
       title: workspace.selectedOrderQueued ? 'Удалить документ из очереди?' : 'Удалить документ?',
@@ -1929,9 +1930,9 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         }
       },
     });
-  }, [workspace]);
+  });
 
-  const submitFromMenu = React.useCallback(() => {
+  const submitFromMenu = useOrderAction(() => {
     if (!workspace.canSubmitOrder) return;
     setActionsMenuOpen(false);
     const isQueuedResubmit = workspace.selectedOrderQueued && workspace.dirty;
@@ -1964,7 +1965,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       confirmLabel: workspace.shipmentProhibited ? 'Всё равно отправить' : isQueuedResubmit ? 'В конец очереди' : isErrorRetry ? 'Повторить' : 'Отправить',
       onConfirm: () => workspace.submitOrder(),
     });
-  }, [workspace]);
+  });
   const saveDraftFromMenu = React.useCallback(() => {
     setActionsMenuOpen(false);
     if (workspace.validation.warningMessage) {
@@ -1982,7 +1983,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     setActionsMenuOpen(false);
     void workspace.saveDraft({ reason: 'manual' });
   }, [workspace.saveDraft]);
-  const copyFromMenu = React.useCallback(() => {
+  const copyFromMenu = useOrderAction(() => {
     if (!workspace.hasEditableDocument) return;
     setActionsMenuOpen(false);
     if (workspace.dirty) {
@@ -2010,7 +2011,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         }
       },
     });
-  }, [workspace]);
+  });
   const confirmResetHeaderPriceType = React.useCallback(() => {
     if (workspace.readOnly || workspace.mutationLocked) return;
     setConfirmDialog({

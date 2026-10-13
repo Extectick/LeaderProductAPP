@@ -6,6 +6,7 @@ import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderConte
 import { useNotificationViewport } from '@/context/NotificationViewportContext';
 import { useServicesHeaderSlot } from '@/src/features/services/headerSlotContext';
 import { logger } from '@/utils/logger';
+import { captureException } from '@/src/shared/monitoring';
 import { getProfile } from '@/utils/userService';
 import { isClientOrdersOnecUserLinked } from '../lib/clientOrdersAccess';
 import ClientOrdersMobileLayout from './mobile/ClientOrdersMobileLayout';
@@ -30,7 +31,7 @@ class ClientOrdersErrorBoundary extends React.Component<ErrorBoundaryProps, Erro
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
-    logger.captureException(error, { where: 'ClientOrdersScreen', componentStack: info.componentStack }, 'client-orders');
+    captureException(error, { contexts: { react_native_context: { componentStack: info.componentStack } } });
   }
 
   render() {

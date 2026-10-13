@@ -36,6 +36,12 @@ jest.mock('@/src/features/clientOrders/offline/offlineOrdersDatabase', () => ({
 const apiClientMock = jest.mocked(apiClient);
 
 describe("clientOrdersService", () => {
+  it.each(['', ' ', '\n\t'])('omits cleared/whitespace list search %j', async search => {
+    apiClientMock.mockResolvedValueOnce({ ok: true, status: 200, data: { items: [], total: 0 } } as any);
+    await getClientOrders({ search });
+    expect(apiClientMock.mock.calls[0][0]).not.toContain('search=');
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
     setServerReachable();

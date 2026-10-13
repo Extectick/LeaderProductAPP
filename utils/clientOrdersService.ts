@@ -471,6 +471,7 @@ export type ClientOrderProduct = {
 function buildQuery(params: Record<string, string | number | boolean | string[] | undefined | null>) {
   const query = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
+    if (key === 'search' && typeof value === 'string') value = value.trim();
     if (value === undefined || value === null || value === '') return;
     if (Array.isArray(value)) {
       const items = value.map((item) => String(item || '').trim()).filter(Boolean);
