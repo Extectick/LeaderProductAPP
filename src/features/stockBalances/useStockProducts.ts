@@ -5,6 +5,7 @@ import { clearStockCache, readStockCache, writeStockCache } from './stockCache';
 // Each route/filter/account owns its generation. Late responses may never mutate another one.
 export function useStockProducts<T extends { guid?: string; id?: string }>(path: string | null, query: StockQuery, userId: string | undefined, online: boolean) {
   const queryKey = JSON.stringify(query);
+  const cacheEnabled = query.bySeries !== '1';
   const identity = JSON.stringify([path, queryKey, userId]);
   const [pageIdentity, setPageIdentity] = React.useState(identity);
   const [page, setPage] = React.useState<StockPage<T> | null>(null);
@@ -25,7 +26,8 @@ export function useStockProducts<T extends { guid?: string; id?: string }>(path:
     const offset = append ? pageRef.current!.nextOffset : 0;
     setBusy(online); setError(null); failed.current = false;
     try {
-      if (!pageRef.current) {
+      if (!online && !cacheEnabled) { pageRef.current = null; setPage(null); return; }
+      if (!pageRef.current && cacheEnabled) {
         const cached = await readStockCache<T>(userId, cacheKey);
         if (epoch !== generation.current) return;
         if (cached) { pageRef.current = cached; setPageIdentity(identity); setPage(cached); setStale(true); }
@@ -35,7 +37,7 @@ export function useStockProducts<T extends { guid?: string; id?: string }>(path:
       if (epoch !== generation.current) return;
       const next = { ...result, items: append ? mergeStockPage(pageRef.current?.items ?? [], result.items) : result.items };
       pageRef.current = next; setPageIdentity(identity); setPage(next); setStale(false);
-      void writeStockCache(userId, cacheKey, next);
+      if (cacheEnabled) void writeStockCache(userId, cacheKey, next);
     } catch (e) {
       if (epoch !== generation.current || controller.signal.aborted) return;
       failed.current = true;
@@ -44,7 +46,7 @@ export function useStockProducts<T extends { guid?: string; id?: string }>(path:
     } finally {
       if (epoch === generation.current) { request.current = null; setBusy(false); }
     }
-  }, [path, queryKey, userId, online, identity]);
+  }, [path, queryKey, userId, online, identity, cacheEnabled]);
   React.useEffect(() => {
     generation.current++; request.current?.abort(); request.current = null;
     pageRef.current = null; setPage(null); setError(null); setBusy(false); setStale(false);

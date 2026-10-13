@@ -6,10 +6,10 @@ import { readStockCache, writeStockCache, clearStockCache } from '../src/feature
 jest.mock('../utils/apiClient', () => ({ apiClient: jest.fn() }));
 jest.mock('../src/features/stockBalances/stockCache', () => ({ readStockCache: jest.fn(), writeStockCache: jest.fn(), clearStockCache: jest.fn() }));
 const page = (ids: string[], more = false, offset = 0) => ({ items: ids.map(guid => ({ guid })), offset, nextOffset: offset + ids.length, hasMore: more });
-const initial = { search: '', userId: 'u1', online: true };
+const initial = { search: '', userId: 'u1', online: true, bySeries: '0' };
 let output: ReturnType<typeof useStockProducts<{ guid: string }>>;
 let renderer: TestRenderer.ReactTestRenderer;
-function Probe(props: typeof initial) { output = useStockProducts('products', { search: props.search }, props.userId, props.online); return null; }
+function Probe(props: typeof initial) { output = useStockProducts('products', { search: props.search, bySeries: props.bySeries }, props.userId, props.online); return null; }
 async function mount(props = initial) { await act(async () => { renderer = TestRenderer.create(React.createElement(Probe, props)); }); }
 async function update(props: typeof initial) { await act(async () => { renderer.update(React.createElement(Probe, props)); }); }
 beforeEach(() => {
@@ -60,4 +60,12 @@ it('clears inaccessible data and cache on forbidden response', async () => {
   jest.mocked(apiClient).mockResolvedValue({ ok: false, status: 403 } as any);
   await mount();
   expect(output.page).toBeNull(); expect(clearStockCache).toHaveBeenCalledWith('u1');
+});
+it('never loads or saves series in offline storage and clears live series when disconnected', async () => {
+  jest.mocked(apiClient).mockResolvedValue({ ok: true, data: page(['series']) } as any);
+  await mount({ ...initial, bySeries: '1' });
+  expect(output.page?.items).toHaveLength(1);
+  expect(readStockCache).not.toHaveBeenCalled(); expect(writeStockCache).not.toHaveBeenCalled();
+  await update({ ...initial, bySeries: '1', online: false });
+  expect(output.page).toBeNull(); expect(apiClient).toHaveBeenCalledTimes(1);
 });

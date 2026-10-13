@@ -43,6 +43,7 @@ export type SearchPickerScreenProps<T> = {
   title: string;
   titleIcon: string;
   titleAccessory?: React.ReactNode;
+  headerAccessory?: React.ReactNode;
   onClose: () => void | false;
   closeIcon?: string;
   search: string;
@@ -85,6 +86,7 @@ export function SearchPickerScreen<T>({
   title,
   titleIcon,
   titleAccessory,
+  headerAccessory,
   onClose,
   closeIcon = 'close',
   search,
@@ -312,6 +314,7 @@ export function SearchPickerScreen<T>({
           </View>
         </View>
 
+        {headerAccessory}
         <Searchbar
           ref={assignSearchInputRef}
           mode="bar"
