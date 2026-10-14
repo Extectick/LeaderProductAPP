@@ -466,14 +466,14 @@ function offlineStockScope(userId: string, context: CatalogCommercialContext) {
 
 function availableStockQuery(userId: string, context: CatalogCommercialContext) {
   const scope = offlineStockScope(userId, context);
-  const total = (table: string, column: string) => `MAX(COALESCE((
+  const total = (table: string, column: string) => `COALESCE((
     SELECT SUM(${column}) FROM ${table}
     WHERE ${scope.where} AND product_guid = p.guid
     GROUP BY ${scope.group} ORDER BY ${scope.order} LIMIT 1
-  ), 0), 0)`;
+  ), 0)`;
   return {
-    sql: `${total('offline_stock', 'free_available')} + ${total('offline_manager_stock', 'reserved')}`,
-    args: [...scope.args, ...scope.orderArgs, ...scope.args, ...scope.orderArgs],
+    sql: `MAX(MIN(${total('offline_stock', 'quantity')}, ${total('offline_stock', 'free_available')} + MAX(${total('offline_manager_stock', 'reserved')}, 0)), 0)`,
+    args: [...scope.args, ...scope.orderArgs, ...scope.args, ...scope.orderArgs, ...scope.args, ...scope.orderArgs],
   };
 }
 
@@ -520,9 +520,9 @@ async function loadOfflineStockByProduct(
     stockByProduct.set(guid, {
       ...stock,
       quantity: Number(stock.quantity || 0),
-      free_available: freeAvailable,
+      free_available: Math.max(freeAvailable, 0),
       own_reserve: ownReserve,
-      available: Math.max(freeAvailable, 0) + Math.max(ownReserve, 0),
+      available: Math.max(Math.min(Number(stock.quantity || 0), freeAvailable + Math.max(ownReserve, 0)), 0),
     });
   });
   return stockByProduct;

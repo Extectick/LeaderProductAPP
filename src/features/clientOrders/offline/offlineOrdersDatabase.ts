@@ -136,7 +136,8 @@ async function upsertEntityItem(db: SQLiteDatabase, userId: string, entity: Offl
         receipt_price=excluded.receipt_price,
         source_updated_at=excluded.source_updated_at
     `, userId, itemKey, nestedGuid(item, 'product'), nestedGuid(item, 'warehouse'), nestedGuid(item, 'organization'),
-    number(item?.quantity), number(item?.freeAvailable), number(item?.ownReserve), number(item?.available),
+    // Signed balance is stored in the existing column; no SQLite schema migration.
+    number(item?.quantity), number(item?.freeAvailableRaw ?? item?.freeAvailable), number(item?.ownReserve), number(item?.available),
     item?.receiptPrice == null ? null : number(item.receiptPrice), text(item?.sourceUpdatedAt ?? item?.updatedAt));
   }
 

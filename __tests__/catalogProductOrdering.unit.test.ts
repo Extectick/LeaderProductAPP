@@ -29,6 +29,23 @@ const reserve = (guid: string, reserved = 1, warehouseGuid = 'warehouse', organi
 });
 const context = { priceTypeGuid: 'client-price', warehouseGuid: 'warehouse', inStockOnly: true };
 const ids = (result: Awaited<ReturnType<typeof catalog.searchCatalogProducts>>) => result?.items.map(item => item.guid);
+test.each([
+  [3, -22, 25, 3],
+  [9, 3, 6, 9],
+  [9, -2, 6, 4],
+  [0, -25, 25, 0],
+  [3, -30, 25, 0],
+  [3, 0, 25, 3], // old snapshots are at least bounded by physical stock
+])('offline quantity=%s rawFree=%s personal=%s -> %s', async (quantity, freeAvailableRaw, own, expected) => {
+  await products([product('rice')]);
+  await dataset('selling-prices', []);
+  await dataset('stock', [{ ...stock('rice', Math.max(freeAvailableRaw, 0)), quantity, freeAvailableRaw }]);
+  await dataset('manager-stock', [reserve('rice', own)]);
+  const all = await catalog.searchCatalogProducts('', 50, 0, { ...context, inStockOnly: false });
+  expect(all?.items[0].stock).toMatchObject({ available: expected, myReserved: own, freeAvailable: Math.max(freeAvailableRaw, 0) });
+  const filtered = await catalog.searchCatalogProducts('', 50, 0, context);
+  expect(ids(filtered)).toEqual(expected > 0 ? ['rice'] : []);
+});
 async function products(rows: ReturnType<typeof product>[]) {
   await catalog.replaceCatalog({ epoch: 'catalog', revision: '1', schemaVersion: 1, products: rows });
 }
@@ -144,7 +161,7 @@ it('changes ranking immediately with the selected price type or active user', as
 it('filters warehouse balances and own reserves BEFORE paging, including sparse catalogs', async () => {
   await products([...Array.from({ length: 60 }, (_, i) => product(`a${i}`)), product('z1'), product('z2'), product('z3')]);
   await dataset('selling-prices', [price('z2')]);
-  await dataset('stock', [stock('z1', 3), stock('z2', 0), stock('z3', 2), stock('a1', 100, 'other')]);
+  await dataset('stock', [{ ...stock('z1', 3), quantity: 9 }, { ...stock('z2', 0), quantity: 4 }, stock('z3', 2), stock('a1', 100, 'other')]);
   await dataset('manager-stock', [reserve('z1', 6), reserve('z2', 4), reserve('a2', 100, 'other')]);
   const first = await catalog.searchCatalogProducts('', 2, 0, context);
   const second = await catalog.searchCatalogProducts('', 2, 2, context);
@@ -164,8 +181,9 @@ it('uses exact organization stock before fallback and sums series, matching disp
     stock('e-foreign', 100, 'warehouse', 'other'), stock('f-negative', -5)]);
   await dataset('manager-stock', [reserve('d-reserve', 3), reserve('f-negative', 2)]);
   const result = await catalog.searchCatalogProducts('', 10, 0, { ...context, organizationGuid: 'org' });
-  expect(ids(result)).toEqual(['b-fallback', 'c-series', 'd-reserve', 'f-negative']);
-  expect(result?.items.map(item => item.stock?.available)).toEqual([7, 5, 3, 2]);
+  // A personal reserve without physical stock must not invent availability.
+  expect(ids(result)).toEqual(['b-fallback', 'c-series']);
+  expect(result?.items.map(item => item.stock?.available)).toEqual([7, 5]);
   // Without organization, preserve the existing aggregate warehouse semantics.
   const allOrganizations = await catalog.searchCatalogProducts('', 10, 0, context);
   expect(ids(allOrganizations)).toContain('a-exact-zero');
