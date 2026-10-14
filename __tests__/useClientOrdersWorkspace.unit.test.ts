@@ -531,6 +531,80 @@ describe('useClientOrdersWorkspace', () => {
         origin: 'device', status: 'DRAFT', syncState: 'DRAFT', localDraft: value }, payload: buildLocalDraftPayload(value) };
   }
 
+  function legacyFixture(status = 'READY_TO_SEND') {
+    const entry: any = localEntry('legacy-server:legacy-guid', status);
+    entry.serverGuid = 'legacy-guid'; entry.serverRevision = 1; entry.order.guid = 'legacy-guid'; entry.order.revision = 1;
+    const saved: any = { ...entry.order, localDraft: undefined, origin: 'local', revision: 2, createdByUser: { id: 1 },
+      agreement: { guid: 'agreement-guid' }, contract: { guid: 'contract-guid' }, warehouse: { guid: 'warehouse-guid' },
+      deliveryAddress: { guid: 'address-guid' }, deliveryDate: entry.payload.deliveryDate, currency: 'RUB',
+      items: [{ lineGuid: 'line', product: { guid: 'product-guid', name: 'Товар' }, quantity: 2, basePrice: 100 }] };
+    return { entry, saved };
+  }
+
+  it('recovers the old server revision and checkpoints SQLite before explicit legacy submission', async () => {
+    const { entry, saved } = legacyFixture(); const records = memoryDraftStore([entry]);
+    jest.mocked(getClientOrder).mockResolvedValue(saved);
+    jest.mocked(submitClientOrder).mockImplementation(async () => {
+      expect(records.get(entry.clientOrderId).serverRevision).toBe(2);
+      expect(records.get(entry.clientOrderId).order.localDraft.revision).toBe(2);
+      return { ...saved, status: 'QUEUED', syncState: 'QUEUED' };
+    });
+    const harness = await ordersListWorkspace();
+    try {
+      await act(async () => { await Promise.all([harness.current.syncDeviceDrafts({ force: true }), harness.current.syncDeviceDrafts({ force: true })]); });
+      expect(submitClientOrder).toHaveBeenCalledTimes(1);
+      expect(submitClientOrder).toHaveBeenCalledWith('legacy-guid', 2, expect.any(Array));
+      expect(updateClientOrder).not.toHaveBeenCalled(); expect(createClientOrder).not.toHaveBeenCalled();
+      expect(putClientOrderByClientId).not.toHaveBeenCalled(); expect(records.size).toBe(0);
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('resumes legacy SUBMIT after remount using the persisted SAVE revision without a second PATCH', async () => {
+    const { entry, saved } = legacyFixture(); const records = memoryDraftStore([entry]);
+    jest.mocked(getClientOrder).mockResolvedValueOnce({ ...saved, revision: 1, items: [{ ...saved.items[0], quantity: 1 }] }).mockResolvedValue(saved);
+    jest.mocked(updateClientOrder).mockResolvedValue(saved);
+    jest.mocked(submitClientOrder).mockRejectedValueOnce(Object.assign(new Error('Network request failed'), { status: 0 }))
+      .mockResolvedValue({ ...saved, status: 'QUEUED', syncState: 'QUEUED' });
+    const first = await ordersListWorkspace();
+    await act(async () => { await first.current.syncDeviceDrafts({ force: true }); });
+    expect(records.get(entry.clientOrderId).serverRevision).toBe(2);
+    expect(records.get(entry.clientOrderId).status).toBe('SEND_ERROR');
+    await act(async () => first.renderer.unmount());
+    const reopened = await ordersListWorkspace();
+    try {
+      await flush(); expect(submitClientOrder).toHaveBeenCalledTimes(1);
+      await act(async () => { await reopened.current.syncDeviceDrafts({ force: true }); });
+      expect(updateClientOrder).toHaveBeenCalledTimes(1);
+      expect(submitClientOrder).toHaveBeenCalledTimes(2);
+      expect(submitClientOrder).toHaveBeenLastCalledWith('legacy-guid', 2, expect.any(Array));
+      expect(records.size).toBe(0);
+    } finally { await act(async () => reopened.renderer.unmount()); }
+  });
+
+  it('retains differing legacy content instead of overwriting the server revision', async () => {
+    const { entry, saved } = legacyFixture(); const records = memoryDraftStore([entry]);
+    jest.mocked(getClientOrder).mockResolvedValue({ ...saved, items: [{ ...saved.items[0], quantity: 3 }] });
+    const harness = await ordersListWorkspace();
+    try {
+      await act(async () => { await harness.current.syncDeviceDrafts({ force: true }); });
+      expect(records.get(entry.clientOrderId).status).toBe('NEEDS_EDIT');
+      expect(records.get(entry.clientOrderId).payload.items[0].quantity).toBe(2);
+      expect(harness.current.ordersError).toContain('Сравните версии');
+      expect(harness.current.ordersError).not.toContain('в 1С не отправлен');
+      expect(updateClientOrder).not.toHaveBeenCalled(); expect(submitClientOrder).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('reconciles an already accepted legacy submission on re-entry without sending automatically', async () => {
+    const { entry, saved } = legacyFixture('SEND_ERROR'); const records = memoryDraftStore([entry]);
+    jest.mocked(getClientOrder).mockResolvedValue({ ...saved, status: 'QUEUED', syncState: 'QUEUED' });
+    const harness = await ordersListWorkspace();
+    try {
+      await flush(); expect(records.size).toBe(0);
+      expect(updateClientOrder).not.toHaveBeenCalled(); expect(submitClientOrder).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
   it('explicit sharing saves an unchanged local draft to API with SAVE, never SUBMIT', async () => {
     const entry = localEntry('share-draft');
     const records = memoryDraftStore([entry]);

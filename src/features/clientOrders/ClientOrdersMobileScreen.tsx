@@ -7618,7 +7618,7 @@ const OrderCard = React.memo(function OrderCard({
     },
     {
       key: 'submit',
-      label: sendFailed ? 'Повторить отправку' : 'Отправить в 1С',
+      label: sendFailed ? 'Проверить и отправить' : 'Отправить в 1С',
       action: 'submit',
       icon: sendFailed ? 'refresh-outline' : 'cloud-upload-outline',
       visible: canSend,
