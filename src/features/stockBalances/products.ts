@@ -1,4 +1,5 @@
 import { apiClient } from '@/utils/apiClient';
+import type { SelectedWarehouse } from './useWarehouseSelection';
 
 export type StockMetrics = { inStock: number; available: number | null; reserved: number; myReserved?: number; availableForManager?: number | null; availabilityReason?: string };
 export type StockProduct = StockMetrics & { guid: string; name: string; code: string | null; baseUnit: { name: string; symbol: string | null } | null;
@@ -7,7 +8,7 @@ export type StockProduct = StockMetrics & { guid: string; name: string; code: st
 export type StockDetail = StockMetrics & { id: string; warehouse: { guid: string; name: string };
   seriesGuid?: string; seriesNumber?: string | null; expiresAt?: string | null; productionDate?: string | null; updatedAt?: string | null };
 export type StockPage<T> = { items: T[]; offset: number; nextOffset: number; hasMore: boolean };
-export type StockFilters = { warehouses: Array<{ guid: string; name: string }>; organizations: Array<{ guid: string; name: string }> };
+export type StockFilters = { warehouses: SelectedWarehouse[]; organizations: Array<{ guid: string; name: string }> };
 export type StockQuery = { search?: string; warehouseGuid?: string; warehouseGuids?: string; organizationGuid?: string; bySeries?: string; groupByWarehouse?: string };
 export class StockRequestError extends Error { constructor(public status: number) { super(status === 403 ? 'Нет доступа к остаткам' : status === 404 ? 'Нужно обновить API остатков' : 'Не удалось обновить остатки. Повторите попытку.'); } }
 export async function stockRequest<T>(path: string, query: StockQuery & { offset?: number }, signal: AbortSignal): Promise<T> {

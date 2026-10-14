@@ -5,7 +5,10 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { getPickerItemMeta } from '../../lib/clientOrdersUi';
 
 export function FilterLookupPickerPanel<T extends { guid: string; name: string }>({
-  styles = lookupPickerStyles,
+  styles: customStyles = lookupPickerStyles,
+  flat = false,
+  groups,
+  onSelectGroup,
   topInset,
   bottomInset,
   title,
@@ -23,6 +26,9 @@ export function FilterLookupPickerPanel<T extends { guid: string; name: string }
   onClose,
 }: {
   styles?: any;
+  flat?: boolean;
+  groups?: Array<{ key: string; name: string; items: T[] }>;
+  onSelectGroup?: (items: T[]) => void;
   topInset: number;
   bottomInset: number;
   title: string;
@@ -39,14 +45,20 @@ export function FilterLookupPickerPanel<T extends { guid: string; name: string }
   onReset: () => void;
   onClose: () => void;
 }) {
+  const styles = React.useMemo(() => flat ? { ...customStyles, ...flatLookupPickerStyles } : customStyles, [customStyles, flat]);
   const [query, setQuery] = React.useState('');
   const [items, setItems] = React.useState<T[]>([]);
   const [loading, setLoading] = React.useState(false);
   const requestRef = React.useRef(0);
+  const groupNames = React.useMemo(() => new Map(groups?.flatMap(group => group.items.map(item => [item.guid, group.name.toLocaleLowerCase('ru')] as const))), [groups]);
 
   React.useEffect(() => {
     const requestId = ++requestRef.current;
-    if (localItems) { setItems(localItems.filter(item => item.name.toLocaleLowerCase("ru").includes(query.trim().toLocaleLowerCase("ru")))); setLoading(false); return; }
+    if (localItems) {
+      const term = query.trim().toLocaleLowerCase('ru');
+      setItems(localItems.filter(item => item.name.toLocaleLowerCase('ru').includes(term) || groupNames.get(item.guid)?.includes(term)));
+      setLoading(false); return;
+    }
     if (!search) return;
     const loadingTimer = setTimeout(() => {
       if (requestRef.current === requestId) setLoading(true);
@@ -70,7 +82,22 @@ export function FilterLookupPickerPanel<T extends { guid: string; name: string }
       clearTimeout(loadingTimer);
       clearTimeout(requestTimer);
     };
-  }, [query, search, localItems]);
+  }, [query, search, localItems, groupNames]);
+
+  const renderRow = (item: T, indented = false) => {
+    const selected = selectedGuids ? (item.guid === '' ? !selectedGuids.length : selectedGuids.includes(item.guid)) : item.guid === selectedGuid;
+    return <Pressable key={item.guid} accessibilityRole={selectedGuids ? 'checkbox' : 'button'}
+      accessibilityState={{ selected, checked: selected }} aria-checked={selectedGuids ? selected : undefined} accessibilityLabel={item.name} onPress={() => onSelect(item)}
+      style={({ pressed }) => [styles.filtersLookupRow, indented && styles.filtersLookupChildRow, selected && styles.filtersLookupRowSelected, pressed && styles.flatPressed]}>
+      <View style={styles.filtersLookupRowText}>
+        <Text style={styles.filtersLookupRowTitle} numberOfLines={2}>{item.name}</Text>
+        {getPickerItemMeta(title === 'Контрагент' ? 'filterCounterparty' : 'organization', item) ?
+          <Text style={styles.filtersLookupRowMeta} numberOfLines={1}>{getPickerItemMeta(title === 'Контрагент' ? 'filterCounterparty' : 'organization', item)}</Text> : null}
+      </View>
+      <MaterialCommunityIcons name={flat && selectedGuids ? (selected ? 'checkbox-marked' : 'checkbox-blank-outline') : selected ? 'check-circle' : 'chevron-right'} size={flat ? 22 : selected ? 21 : 22} color={selected ? (flat ? '#2563EB' : '#16A34A') : '#94A3B8'} />
+    </Pressable>;
+  };
+  const groupedIds = new Set(groups?.flatMap(group => group.items.map(item => item.guid)));
 
   return (
     <View style={styles.filtersLookupOverlay}>
@@ -109,30 +136,22 @@ export function FilterLookupPickerPanel<T extends { guid: string; name: string }
         {!loading && !status && !items.length ? (
           <Text style={styles.filtersLookupEmpty}>Ничего не найдено.</Text>
         ) : null}
-        {items.map((item) => {
-          const selected = selectedGuids ? (item.guid === '' ? !selectedGuids.length : selectedGuids.includes(item.guid)) : item.guid === selectedGuid;
-          return (
-            <Pressable
-              key={item.guid}
-              accessibilityRole={selectedGuids ? "checkbox" : "button"}
-              accessibilityState={{ selected, checked: selected }}
-              accessibilityLabel={item.name}
-              onPress={() => onSelect(item)}
-              style={({ pressed }) => [styles.filtersLookupRow, selected && styles.filtersLookupRowSelected, pressed && styles.flatPressed]}
-            >
-              <View style={styles.filtersLookupRowText}>
-                <Text style={styles.filtersLookupRowTitle} numberOfLines={2}>{item.name}</Text>
-                {getPickerItemMeta(title === 'Контрагент' ? 'filterCounterparty' : 'organization', item) ? (
-                  <Text style={styles.filtersLookupRowMeta} numberOfLines={1}>{getPickerItemMeta(title === 'Контрагент' ? 'filterCounterparty' : 'organization', item)}</Text>
-                ) : null}
-              </View>
-              {selected ? (
-                <MaterialCommunityIcons name="check-circle" size={21} color="#16A34A" />
-              ) : (
-                <MaterialCommunityIcons name="chevron-right" size={22} color="#94A3B8" />
-              )}
+        {items.filter(item => !groups || !groupedIds.has(item.guid)).map(item => renderRow(item))}
+        {groups?.map(group => {
+          const visible = group.items.filter(member => items.some(item => member.guid === item.guid));
+          if (!visible.length) return null;
+          const count = group.items.filter(item => selectedGuids?.includes(item.guid)).length;
+          const checked = count === group.items.length ? true : count > 0 ? 'mixed' : false;
+          return <View key={group.key}>
+            <Pressable accessibilityRole="checkbox" accessibilityLabel={`Группа ${group.name}`} accessibilityState={{ checked }} aria-checked={checked}
+              onPress={() => onSelectGroup?.(group.items)} style={({ pressed }) => [styles.filtersLookupGroupRow, pressed && styles.flatPressed]}>
+              <MaterialCommunityIcons name="folder-outline" size={19} color="#64748B" />
+              <Text style={styles.filtersLookupGroupTitle}>{group.name}</Text>
+              <Text style={styles.filtersLookupGroupCount}>{count}/{group.items.length}</Text>
+              <MaterialCommunityIcons name={checked === 'mixed' ? 'minus-box' : checked ? 'checkbox-marked' : 'checkbox-blank-outline'} size={22} color={count ? '#2563EB' : '#94A3B8'} />
             </Pressable>
-          );
+            {visible.map(item => renderRow(item, true))}
+          </View>;
         })}
       </ScrollView>
       <Surface mode="flat" style={[styles.filtersFullscreenFooter, { paddingBottom: Math.max(bottomInset, 10) + 8 }]}>
@@ -140,7 +159,7 @@ export function FilterLookupPickerPanel<T extends { guid: string; name: string }
           Сбросить
         </PaperButton>
         <PaperButton mode="contained" onPress={onApply} buttonColor="#2563EB" textColor="#FFFFFF" style={styles.filtersFullscreenFooterButton} labelStyle={styles.filtersFullscreenFooterLabel} contentStyle={styles.filtersFullscreenFooterContent}>
-          Готово
+          {flat && selectedGuids?.length ? `Готово (${selectedGuids.length})` : 'Готово'}
         </PaperButton>
       </Surface>
     </View>
@@ -172,4 +191,20 @@ export const lookupPickerStyles = StyleSheet.create({
   filtersLookupRowTitle: { color: '#0F172A', fontSize: 13, lineHeight: 17, fontWeight: '900' },
   filtersLookupRowMeta: { color: '#64748B', fontSize: 11, lineHeight: 14, fontWeight: '800' },
   ordersSearchbarInput: { height: 42, minHeight: 0, maxHeight: 42, paddingVertical: 0, marginVertical: 0, fontSize: 14, lineHeight: 18, color: '#0F172A', fontWeight: '800', includeFontPadding: false, textAlignVertical: 'center' },
+});
+
+const flatLookupPickerStyles = StyleSheet.create({
+  filtersLookupOverlay: { ...StyleSheet.absoluteFill, zIndex: 380, elevation: 380, backgroundColor: '#FFFFFF' },
+  filtersLookupSearchArea: { paddingHorizontal: 12, paddingTop: 10, paddingBottom: 10, backgroundColor: '#FFFFFF' },
+  filtersCloseButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  filtersLookupListContent: { paddingHorizontal: 0, gap: 0 },
+  filtersLookupRow: { minHeight: 48, paddingHorizontal: 14, paddingVertical: 9, flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: '#FFFFFF', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#E2E8F0' },
+  filtersLookupRowSelected: { backgroundColor: '#EFF6FF' },
+  filtersLookupRowTitle: { color: '#0F172A', fontSize: 14, lineHeight: 19, fontWeight: '500' },
+  filtersLookupChildRow: { paddingLeft: 40 },
+  filtersLookupGroupRow: { minHeight: 44, paddingHorizontal: 14, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 9,
+    backgroundColor: '#F8FAFC', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#E2E8F0', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#E2E8F0' },
+  filtersLookupGroupTitle: { flex: 1, color: '#334155', fontSize: 13, lineHeight: 18, fontWeight: '700' },
+  filtersLookupGroupCount: { color: '#64748B', fontSize: 12, fontVariant: ['tabular-nums'] },
 });

@@ -50,6 +50,7 @@ jobs:
       - run: npm run test:unit -- --runInBand __tests__/draftReview.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/orderSharing.unit.test.ts __tests__/legacyOrderRecovery.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/orderHeaderActions.unit.test.ts
+      - run: npm run test:unit -- --runInBand __tests__/stockProductsScreen.unit.test.ts __tests__/stockProducts.unit.test.ts __tests__/stockCache.unit.test.ts __tests__/warehouseSelection.unit.test.ts __tests__/filterLookupPickerPanel.unit.test.ts __tests__/clientOrdersShared.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/galleryHistory.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/clientContactsEditor.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/profileSettings.unit.test.ts __tests__/trackingV2Lifecycle.unit.test.ts

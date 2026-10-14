@@ -1,6 +1,6 @@
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
-import { useWarehouseSelection, toggleWarehouse, warehouseSelectionLabel } from '../src/features/stockBalances/useWarehouseSelection';
+import { useWarehouseSelection, toggleWarehouse, toggleWarehouseGroup, warehouseSelectionLabel } from '../src/features/stockBalances/useWarehouseSelection';
 jest.mock('../utils/config', () => ({ API_BASE_URL: 'https://dev.invalid' }));
 jest.mock('@react-native-async-storage/async-storage', () => {
   const data = new Map();
@@ -34,4 +34,12 @@ it('restores choices after remount, isolates users and persists the reset to all
   await act(async () => { view = TestRenderer.create(React.createElement(Probe, { user: 'u1' })); });
   expect(output.items).toEqual([]);
   act(() => view.unmount());
+});
+it('toggles whole groups, fills partial selection and preserves other groups without duplicates', () => {
+  const c = { guid: 'c', name: 'Переработка' };
+  expect(toggleWarehouseGroup([], [a, c])).toEqual([a, c]);
+  expect(toggleWarehouseGroup([a, b], [a, c])).toEqual([a, b, c]);
+  expect(toggleWarehouseGroup([a, b, c], [a, c])).toEqual([b]);
+  expect(toggleWarehouseGroup([a, c], [a, c])).toEqual([]);
+  expect(toggleWarehouseGroup([a], [])).toEqual([a]);
 });

@@ -10,8 +10,10 @@ import { useServerStatus } from '@/src/shared/network/useServerStatus';
 import { ProductListRow } from '@/src/shared/ui/ProductListRow';
 import { SearchPickerScreen } from '@/src/features/clientOrders/screen/mobile/SearchPickerScreen';
 import { FilterLookupPickerPanel } from '@/src/features/clientOrders/screen/mobile/FilterLookupPickerPanel';
+import { buildWarehousePickerGroups } from '@/src/features/clientOrders/lib/clientOrdersUi';
 import { ProductImageGalleryModal, getProductGalleryImages, type ProductGallery } from '@/src/features/clientOrders/screen/mobile/ProductImageGalleryModal';
-import { useWarehouseSelection, warehouseSelectionLabel, toggleWarehouse, type SelectedWarehouse } from './useWarehouseSelection';
+import { useWarehouseSelection, warehouseSelectionLabel, toggleWarehouse, toggleWarehouseGroup, type SelectedWarehouse } from './useWarehouseSelection';
+import { readStockCache, writeStockCache } from './stockCache';
 import { stockRequest, type StockDetail, type StockFilters, type StockMetrics, type StockProduct } from './products';
 import { useStockProducts } from './useStockProducts';
 
@@ -75,13 +77,22 @@ export default function StockProductsScreen() {
   }, [goBack]);
   React.useEffect(() => { setFilters(emptyFilters); setProduct(null); setGallery(null); setWarehouseDraft(null); }, [userId]);
   React.useEffect(() => {
-    if (!isReachable || !userId) { setFilterLoading(false); return; }
+    if (!userId) { setFilterLoading(false); return; }
     const controller = new AbortController();
-    setFilterLoading(true); setFilterError(false);
-    void stockRequest<StockFilters>('filters', {}, controller.signal).then(data => {
-      if (!controller.signal.aborted) setFilters(data);
-    }).catch(() => { if (!controller.signal.aborted) setFilterError(true); })
-      .finally(() => { if (!controller.signal.aborted) setFilterLoading(false); });
+    setFilterLoading(isReachable); setFilterError(false);
+    void (async () => {
+      const cached = await readStockCache<SelectedWarehouse>(userId, 'warehouse-filters-v1');
+      if (controller.signal.aborted) return;
+      if (cached) setFilters({ warehouses: cached.items, organizations: [] });
+      if (!isReachable) { setFilterLoading(false); return; }
+      try {
+        const data = await stockRequest<StockFilters>('filters', {}, controller.signal);
+        if (controller.signal.aborted) return;
+        setFilters(data);
+        void writeStockCache(userId, 'warehouse-filters-v1', { items: data.warehouses, offset: 0, nextOffset: data.warehouses.length, hasMore: false });
+      } catch { if (!controller.signal.aborted) setFilterError(true); }
+      finally { if (!controller.signal.aborted) setFilterLoading(false); }
+    })();
     return () => controller.abort();
   }, [userId, isReachable, filterRevision]);
   const empty = (loading: boolean, error: string | null) => <View style={styles.empty}>
@@ -90,7 +101,8 @@ export default function StockProductsScreen() {
       {isReachable && error ? <Button onPress={() => product ? detail.refresh() : stock.refresh()}>Повторить</Button> : null}
     </>}
   </View>;
-  const warehouseItems = React.useMemo(() => [{ guid: '', name: 'Все' }, ...new Map([...warehouses.items, ...filters.warehouses].map(w => [w.guid, w])).values()], [warehouses.items, filters.warehouses]);
+  const warehouseItems = React.useMemo(() => [{ guid: '', name: 'Все склады' }, ...new Map([...warehouses.items, ...filters.warehouses].map(w => [w.guid, w])).values()], [warehouses.items, filters.warehouses]);
+  const warehouseGroups = React.useMemo(() => buildWarehousePickerGroups(warehouseItems.filter(w => !!w.guid)), [warehouseItems]);
   const warehouseLabel = warehouseSelectionLabel(warehouses.items.map(w => filters.warehouses.find(f => f.guid === w.guid) || w));
   const seriesSwitch = <View style={styles.seriesSwitch}><Text style={styles.metricLabel}>По сериям</Text><Switch value={bySeries} onValueChange={setBySeries} accessibilityLabel="По сериям" /></View>;
   return <View style={styles.root}>
@@ -99,7 +111,6 @@ export default function StockProductsScreen() {
         onPress={() => setWarehouseDraft(warehouses.items)} style={styles.warehouseSelector}>
         <Text numberOfLines={1} style={styles.warehouseLabel}>{warehouseLabel}</Text><MaterialCommunityIcons name="chevron-down" size={16} color="#2563EB" />
       </Pressable>}
-      headerAccessory={seriesSwitch}
       closeIcon="arrow-left" onClose={goBack} search={search} onSearchChange={setSearch} autoFocus={false}
       searchPlaceholder="Наименование, код или артикул" searchLoading={stock.busy && !!stock.page}
       filters={[
@@ -116,10 +127,11 @@ export default function StockProductsScreen() {
       ListEmptyComponent={empty(stock.busy || !warehouses.ready, stock.error)}
       ListFooterComponent={<View style={{ paddingBottom: insets.bottom + 12 }}>{stock.busy && stock.page ? <ActivityIndicator /> : null}</View>} />
     <Modal visible={warehouseDraft !== null} animationType="slide" onRequestClose={() => setWarehouseDraft(null)}>
-      <View style={styles.root}>{warehouseDraft !== null ? <FilterLookupPickerPanel title="Склады" icon="warehouse" topInset={insets.top} bottomInset={insets.bottom}
+      <View style={styles.root}>{warehouseDraft !== null ? <FilterLookupPickerPanel title="Склады" icon="warehouse" topInset={insets.top} bottomInset={insets.bottom} flat groups={warehouseGroups}
         status={filterLoading ? <ActivityIndicator /> : filterError ? <Button onPress={reloadFilters}>Повторить загрузку складов</Button> : null}
-        placeholder="Название склада" localItems={warehouseItems} selectedGuids={warehouseDraft.map(w => w.guid)}
+        placeholder="Склад или группа" localItems={warehouseItems} selectedGuids={warehouseDraft.map(w => w.guid)}
         onSelect={item => setWarehouseDraft(current => toggleWarehouse(current || [], item))}
+        onSelectGroup={items => setWarehouseDraft(current => toggleWarehouseGroup(current || [], items))}
         onReset={() => setWarehouseDraft([])} onClose={() => setWarehouseDraft(null)}
         onApply={() => { warehouses.save(warehouseDraft); setWarehouseDraft(null); }} /> : null}
       </View>

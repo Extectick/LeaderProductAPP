@@ -1,10 +1,18 @@
 import React from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_BASE_URL } from '@/utils/config';
-export type SelectedWarehouse = { guid: string; name: string };
+export type SelectedWarehouse = { guid: string; name: string; cityGuid?: string | null; cityName?: string | null; sortOrder?: number | null };
 export const warehouseSelectionLabel = (items: SelectedWarehouse[]) => items.length > 1 ? `Склады (${items.length})` : items[0]?.name || 'Все';
 export function toggleWarehouse(items: SelectedWarehouse[], item: SelectedWarehouse) {
   return !item.guid ? [] : items.some(w => w.guid === item.guid) ? items.filter(w => w.guid !== item.guid) : [...items, item];
+}
+export function toggleWarehouseGroup(items: SelectedWarehouse[], group: readonly SelectedWarehouse[]) {
+  const members = group.filter(w => !!w.guid);
+  if (!members.length) return items;
+  const ids = new Set(members.map(w => w.guid));
+  return members.every(w => items.some(item => item.guid === w.guid))
+    ? items.filter(w => !ids.has(w.guid))
+    : [...new Map([...items, ...members].map(w => [w.guid, w])).values()];
 }
 let writes = Promise.resolve();
 export function useWarehouseSelection(userId: string | undefined) {

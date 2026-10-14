@@ -6,6 +6,29 @@ jest.mock('react-native', () => {
   const host = (name: string) => ({ children, ...props }: any) => React.createElement(name, props, children);
   return { View: host('View'), Pressable: host('Pressable'), ScrollView: host('ScrollView'), StyleSheet: { create: (s: any) => s, absoluteFill: {} } };
 });
+it('shows flat groups with mixed state, searches group names and selects every member even under a search', async () => {
+  const members = [{ guid: 'main', name: 'Основной' }, { guid: 'processing', name: 'Переработка' }];
+  const other = { guid: 'nsk', name: 'Новосибирск' };
+  const onSelectGroup = jest.fn();
+  let view!: TestRenderer.ReactTestRenderer;
+  await act(async () => { view = TestRenderer.create(React.createElement(FilterLookupPickerPanel, {
+    title: 'Склады', icon: 'warehouse', topInset: 0, bottomInset: 0, placeholder: 'Склад или группа', flat: true,
+    localItems: [...members, other], groups: [{ key: 'omsk', name: 'Омск', items: members }, { key: 'nsk', name: 'Новосибирск', items: [other] }],
+    selectedGuids: ['main'], onSelectGroup, onSelect: jest.fn(), onApply: jest.fn(), onReset: jest.fn(), onClose: jest.fn(),
+  })); });
+  const groups = () => view.root.findAllByType('Pressable' as any).filter(n => n.props.accessibilityLabel?.startsWith('Группа '));
+  expect(groups()).toHaveLength(2);
+  expect(groups()[0].props.accessibilityState.checked).toBe('mixed');
+  expect(groups()[0].props['aria-checked']).toBe('mixed');
+  await act(async () => view.root.findByType('Searchbar' as any).props.onChangeText('омск'));
+  expect(groups()).toHaveLength(1);
+  expect(view.root.findAllByType('Pressable' as any).filter(n => n.props.accessibilityRole === 'checkbox')).toHaveLength(3);
+  await act(async () => view.root.findByType('Searchbar' as any).props.onChangeText('переработка'));
+  expect(groups()).toHaveLength(1);
+  act(() => groups()[0].props.onPress());
+  expect(onSelectGroup).toHaveBeenCalledWith(members);
+  act(() => view.unmount());
+});
 jest.mock('react-native-paper', () => {
   const React = require('react');
   const host = (name: string) => ({ children, ...props }: any) => React.createElement(name, props, children);
