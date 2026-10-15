@@ -14,7 +14,7 @@ jest.mock('react-native', () => {
 jest.mock('react-native-paper', () => {
   const React = require('react');
   const host = (name: string) => ({ children, ...props }: any) => React.createElement(name, props, children);
-  return { Text: host('Text'), Tooltip: host('Tooltip'), Button: host('Button'), Switch: host('Switch'), ActivityIndicator: host('ActivityIndicator'),
+  return { Text: host('Text'), Tooltip: host('Tooltip'), Button: host('Button'), Switch: host('Switch'), SegmentedButtons: host('Segments'), ActivityIndicator: host('ActivityIndicator'),
     PaperProvider: host('Provider'), Appbar: { Header: host('Header'), BackAction: host('Back'), Content: host('Content'), Action: host('Action') } };
 });
 jest.mock('expo-router', () => ({ useRouter: () => ({ canGoBack: () => false, replace: jest.fn() }) }));
@@ -29,7 +29,7 @@ jest.mock('../src/features/clientOrders/screen/mobile/FilterLookupPickerPanel', 
 jest.mock('../src/features/clientOrders/screen/mobile/ProductImageGalleryModal', () => ({ ProductImageGalleryModal: 'Gallery', getProductGalleryImages: () => [] }));
 jest.mock('../src/features/stockBalances/products', () => ({ stockRequest: jest.fn() }));
 jest.mock('../src/features/stockBalances/stockCache', () => ({ readStockCache: jest.fn(), writeStockCache: jest.fn() }));
-jest.mock('../src/features/stockBalances/useStockProducts', () => ({ useStockProducts: () => ({ page: { items: [] }, busy: false, stale: false, error: null }) }));
+jest.mock('../src/features/stockBalances/useStockProducts', () => ({ useStockProducts: () => ({ page: { items: [] }, busy: false, stale: false, error: null, refresh: jest.fn(), loadMore: jest.fn() }) }));
 jest.mock('../src/features/stockBalances/useWarehouseSelection', () => ({
   useWarehouseSelection: () => ({ items: [], ready: true, error: false }), warehouseSelectionLabel: () => 'Все',
 }));
@@ -59,4 +59,35 @@ it('restores warehouse groups offline without blocking the picker on a network c
   act(() => trigger.props.onPress());
   expect(view.root.findByType('WarehousePicker' as any).props.groups[0]).toMatchObject({ name: 'Омск', items: warehouses });
   expect(stockRequest).not.toHaveBeenCalled();
+});
+it('uses pull-to-refresh in both lists without a header refresh button', async () => {
+  await act(async () => { view = TestRenderer.create(React.createElement(StockProductsScreen)); });
+  const picker = view.root.findByType('SearchPicker' as any);
+  expect(picker.props.filters ?? []).toHaveLength(0);
+  expect(picker.props.listProps.refreshControl.props.onRefresh).toEqual(expect.any(Function));
+  act(() => picker.props.renderItem({ item: { guid: 'p', name: 'Product' } }).props.onOpen({ guid: 'p', name: 'Product' }));
+  expect(view.root.findAllByType('Action' as any)).toHaveLength(0);
+  const list = view.root.findByType('FlatList' as any);
+  act(() => list.props.refreshControl.props.onRefresh());
+  expect(list.props.refreshControl.props.onRefresh).toHaveBeenCalledTimes(1);
+  expect(list.props.refreshControl.props.enabled).toBe(true);
+});
+it('disables detail pull-to-refresh offline', async () => {
+  jest.mocked(useServerStatus).mockReturnValue({ isReachable: false } as any);
+  await act(async () => { view = TestRenderer.create(React.createElement(StockProductsScreen)); });
+  const picker = view.root.findByType('SearchPicker' as any);
+  act(() => picker.props.renderItem({ item: { guid: 'p', name: 'Product' } }).props.onOpen({ guid: 'p', name: 'Product' }));
+  expect(view.root.findByType('FlatList' as any).props.refreshControl.props.enabled).toBe(false);
+});
+it('shows full-width detail tabs and keeps series only in balances, resetting the tab for the next product', async () => {
+  await act(async () => { view = TestRenderer.create(React.createElement(StockProductsScreen)); });
+  const picker = view.root.findByType('SearchPicker' as any);
+  const open = () => picker.props.renderItem({ item: { guid: 'p', name: 'Product' } }).props.onOpen({ guid: 'p', name: 'Product' });
+  act(open);
+  expect(view.root.findByType('Segments' as any).props.buttons.map((item: any) => item.label)).toEqual(['Остатки', 'Поступления', 'Продажи']);
+  act(() => view.root.findByType('Segments' as any).props.onValueChange('receipt'));
+  expect(view.root.findAllByType('Switch' as any)).toHaveLength(0);
+  expect(view.root.findByType('Segments' as any).props.value).toBe('receipt');
+  act(open);
+  expect(view.root.findByType('Segments' as any).props.value).toBe('balances');
 });

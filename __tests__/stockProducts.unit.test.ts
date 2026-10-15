@@ -69,3 +69,27 @@ it('never loads or saves series in offline storage and clears live series when d
   await update({ ...initial, bySeries: '1', online: false });
   expect(output.page).toBeNull(); expect(apiClient).toHaveBeenCalledTimes(1);
 });
+it('uses the server movement cursor for load-more and starts a fresh cursor on pull-to-refresh, without persisting history', async () => {
+  function History() { output = useStockProducts('products/p/movements', { direction: 'receipt' }, 'u1', true); return null; }
+  jest.mocked(apiClient).mockResolvedValueOnce({ ok: true, data: { ...page(['a'], true), nextCursor: 'signed.cursor' } } as any);
+  await act(async () => { renderer = TestRenderer.create(React.createElement(History)); });
+  jest.mocked(apiClient).mockResolvedValueOnce({ ok: true, data: { ...page(['b']), nextCursor: null } } as any);
+  await act(async () => { await output.loadMore(); });
+  expect(jest.mocked(apiClient).mock.calls[1][0]).toContain('cursor=signed.cursor');
+  expect(output.page?.items.map(item => item.guid)).toEqual(['a', 'b']);
+  jest.mocked(apiClient).mockResolvedValueOnce({ ok: true, data: page(['c']) } as any);
+  await act(async () => { await output.refresh(); });
+  expect(jest.mocked(apiClient).mock.calls[2][0]).not.toContain('cursor=');
+  expect(output.page?.items.map(item => item.guid)).toEqual(['c']);
+  expect(readStockCache).not.toHaveBeenCalled(); expect(writeStockCache).not.toHaveBeenCalled();
+});
+it('does not display the pull-to-refresh spinner while a next page is loading', async () => {
+  jest.mocked(apiClient).mockResolvedValueOnce({ ok: true, data: page(['a'], true) } as any);
+  await mount();
+  let finish!: (value: any) => void;
+  jest.mocked(apiClient).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  act(() => { void output.loadMore(); });
+  expect(output.busy).toBe(true); expect(output.loadingMore).toBe(true); expect(output.refreshing).toBe(false);
+  await act(async () => { finish({ ok: true, data: page(['b']) }); });
+  expect(output.loadingMore).toBe(false); expect(output.busy).toBe(false);
+});

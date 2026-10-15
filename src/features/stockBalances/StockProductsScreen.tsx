@@ -1,6 +1,6 @@
 import React from 'react';
 import { BackHandler, FlatList, Modal, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
-import { ActivityIndicator, Appbar, Button, PaperProvider, Switch, Text, Tooltip } from 'react-native-paper';
+import { ActivityIndicator, Appbar, Button, PaperProvider, SegmentedButtons, Switch, Text, Tooltip } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
@@ -14,8 +14,9 @@ import { buildWarehousePickerGroups } from '@/src/features/clientOrders/lib/clie
 import { ProductImageGalleryModal, getProductGalleryImages, type ProductGallery } from '@/src/features/clientOrders/screen/mobile/ProductImageGalleryModal';
 import { useWarehouseSelection, warehouseSelectionLabel, toggleWarehouse, toggleWarehouseGroup, type SelectedWarehouse } from './useWarehouseSelection';
 import { readStockCache, writeStockCache } from './stockCache';
-import { stockRequest, type StockDetail, type StockFilters, type StockMetrics, type StockProduct } from './products';
+import { stockRequest, type StockDetail, type StockFilters, type StockMetrics, type StockMovement, type StockProduct } from './products';
 import { useStockProducts } from './useStockProducts';
+import { StockMovementRow } from './StockMovementRow';
 
 const emptyFilters: StockFilters = { warehouses: [], organizations: [] };
 const number = (value: number | null) => value === null ? '—' : value.toLocaleString('ru-RU', { maximumFractionDigits: 3 });
@@ -62,10 +63,14 @@ export default function StockProductsScreen() {
   const [bySeries, setBySeries] = React.useState(false);
   const [gallery, setGallery] = React.useState<ProductGallery | null>(null);
   const [product, setProduct] = React.useState<StockProduct | null>(null);
+  const [detailTab, setDetailTab] = React.useState<'balances' | 'receipt' | 'expense'>('balances');
   const listRef = React.useRef<any>(null);
   React.useEffect(() => { listRef.current?.scrollToOffset?.({ offset: 0, animated: false }); }, [search, warehouseGuids]);
   const stock = useStockProducts<StockProduct>('products', { search, warehouseGuids }, warehouses.ready ? userId : undefined, isReachable);
-  const detail = useStockProducts<StockDetail>(product ? `products/${product.guid}/balances` : null, { warehouseGuids, bySeries: bySeries ? '1' : '0', groupByWarehouse: '1' }, warehouses.ready ? userId : undefined, isReachable);
+  const detail = useStockProducts<StockDetail>(product && detailTab === 'balances' ? `products/${product.guid}/balances` : null, { warehouseGuids, bySeries: bySeries ? '1' : '0', groupByWarehouse: '1' }, warehouses.ready ? userId : undefined, isReachable);
+  const history = useStockProducts<StockMovement>(product && detailTab !== 'balances' ? `products/${product.guid}/movements` : null,
+    { warehouseGuids, direction: detailTab === 'receipt' ? 'receipt' : 'expense' }, warehouses.ready ? userId : undefined, isReachable);
+  const openProduct = React.useCallback((item: StockProduct) => { setDetailTab('balances'); setBySeries(false); setProduct(item); }, []);
   const openImages = React.useCallback((item: StockProduct) => {
     const images = getProductGalleryImages(item);
     if (images.length) setGallery({ title: item.name, images, index: 0 });
@@ -113,19 +118,16 @@ export default function StockProductsScreen() {
       </Pressable>}
       closeIcon="arrow-left" onClose={goBack} search={search} onSearchChange={setSearch} autoFocus={false}
       searchPlaceholder="Наименование, код или артикул" searchLoading={stock.busy && !!stock.page}
-      filters={[
-        { key: 'refresh', label: 'Обновить остатки', selected: false, icon: 'refresh', iconOnly: true, disabled: stock.busy || !isReachable, onPress: stock.refresh },
-      ]}
-      listRef={listRef} data={stock.page?.items ?? []} keyExtractor={item => item.guid} renderItem={({ item }) => <ProductRow item={item} onOpen={setProduct} onOpenImages={openImages} />}
+      listRef={listRef} data={stock.page?.items ?? []} keyExtractor={item => item.guid} renderItem={({ item }) => <ProductRow item={item} onOpen={openProduct} onOpenImages={openImages} />}
       onEndReached={stock.loadMore}
-      listProps={{ refreshControl: <RefreshControl refreshing={stock.busy && !!stock.page} onRefresh={stock.refresh} enabled={isReachable} /> }}
+      listProps={{ refreshControl: <RefreshControl refreshing={stock.refreshing} onRefresh={stock.refresh} enabled={isReachable} /> }}
       ListHeaderComponent={stock.stale || stock.error || warehouses.error ? <View style={styles.status}>
         {warehouses.error ? <Text style={styles.warning}>Не удалось сохранить или прочитать выбор складов</Text> : null}
         {stock.stale ? <Text style={styles.warning}>{!isReachable ? 'Нет сети · показаны ранее загруженные остатки' : 'Данные не обновлены'}</Text> : null}
         {stock.error && stock.page ? <Button compact onPress={stock.refresh}>{stock.error}</Button> : null}
       </View> : null}
       ListEmptyComponent={empty(stock.busy || !warehouses.ready, stock.error)}
-      ListFooterComponent={<View style={{ paddingBottom: insets.bottom + 12 }}>{stock.busy && stock.page ? <ActivityIndicator /> : null}</View>} />
+      ListFooterComponent={<View style={{ paddingBottom: insets.bottom + 12 }}>{stock.loadingMore ? <ActivityIndicator /> : null}</View>} />
     <Modal visible={warehouseDraft !== null} animationType="slide" onRequestClose={() => setWarehouseDraft(null)}>
       <View style={styles.root}>{warehouseDraft !== null ? <FilterLookupPickerPanel title="Склады" icon="warehouse" topInset={insets.top} bottomInset={insets.bottom} flat groups={warehouseGroups}
         status={filterLoading ? <ActivityIndicator /> : filterError ? <Button onPress={reloadFilters}>Повторить загрузку складов</Button> : null}
@@ -138,18 +140,34 @@ export default function StockProductsScreen() {
     </Modal>
     <Modal visible={!!product} animationType="slide" onRequestClose={() => setProduct(null)}>
       <View style={styles.root}>
-        <Appbar.Header><Appbar.BackAction onPress={() => setProduct(null)} /><Appbar.Content title="Остатки товара" /><Appbar.Action icon="refresh" accessibilityLabel="Обновить детализацию" disabled={detail.busy || !isReachable} onPress={detail.refresh} /></Appbar.Header>
+        <Appbar.Header><Appbar.BackAction accessibilityLabel="Назад" onPress={() => setProduct(null)} /><Appbar.Content title="Товар" /></Appbar.Header>
+        <SegmentedButtons value={detailTab} onValueChange={value => setDetailTab(value as typeof detailTab)} density="small" style={styles.tabs}
+          buttons={[{ value: 'balances', label: 'Остатки' }, { value: 'receipt', label: 'Поступления' }, { value: 'expense', label: 'Продажи' }].map(button => ({
+            ...button, style: styles.tab, labelStyle: styles.tabLabel, checkedColor: '#2563EB', uncheckedColor: '#64748B',
+          }))} />
+        {detailTab === 'balances' ? <>
         {seriesSwitch}
-        <FlatList data={detail.page?.items ?? []} keyExtractor={i => i.id} onEndReached={detail.loadMore} onEndReachedThreshold={0.5}
-          contentContainerStyle={{ paddingBottom: insets.bottom + 12 }}
+        <FlatList key="balances" data={detail.page?.items ?? []} keyExtractor={i => i.id} onEndReached={detail.loadMore} onEndReachedThreshold={0.5}
+          refreshControl={<RefreshControl refreshing={detail.refreshing} onRefresh={detail.refresh} enabled={isReachable} />}
+          contentContainerStyle={{ paddingBottom: insets.bottom + 12, flexGrow: 1 }}
           ListHeaderComponent={<View style={styles.status}><Text style={styles.title}>{product?.name}</Text>{detail.stale && !bySeries ? <Text style={styles.warning}>Сохранённые данные · нет обновления</Text> : null}{detail.error && detail.page ? <Button onPress={detail.refresh}>{detail.error}</Button> : null}</View>}
-          ListEmptyComponent={empty(detail.busy, detail.error)} ListFooterComponent={detail.busy && detail.page ? <ActivityIndicator /> : null}
+          ListEmptyComponent={empty(detail.busy, detail.error)} ListFooterComponent={detail.loadingMore ? <ActivityIndicator /> : null}
           renderItem={({ item }) => <View style={styles.balance}>
             <Text style={styles.title}>{item.warehouse.name}</Text>
             {bySeries ? <Text style={styles.hint}>Серия: {item.seriesNumber || 'Без серии'}{item.expiresAt ? ` · годен до ${new Date(item.expiresAt).toLocaleDateString('ru-RU')}` : ''}</Text> : null}
             <Metrics item={item} unit={product?.baseUnit?.symbol || product?.baseUnit?.name || ''} full />
             {item.availabilityReason ? <Text style={styles.hint}>{item.availabilityReason}</Text> : null}
-          </View>} />
+          </View>} /></> : <FlatList key={detailTab} data={history.page?.items ?? []} keyExtractor={i => i.id}
+            onEndReached={history.loadMore} onEndReachedThreshold={0.5}
+            refreshControl={<RefreshControl refreshing={history.refreshing} onRefresh={history.refresh} enabled={isReachable} />}
+            contentContainerStyle={{ paddingBottom: insets.bottom + 12, flexGrow: 1 }}
+            ListHeaderComponent={<View style={styles.status}><Text style={styles.title}>{product?.name}</Text>
+              {history.error && history.page ? <Text style={styles.warning}>{history.error}</Text> : null}</View>}
+            ListEmptyComponent={<View style={styles.empty}>{history.busy ? <ActivityIndicator /> : <Text>
+              {!isReachable ? 'История движений доступна при подключении к сети.' : history.error || (detailTab === 'receipt' ? 'Поступлений на выбранных складах нет' : 'Расходных движений на выбранных складах нет')}
+            </Text>}</View>}
+            ListFooterComponent={history.loadingMore ? <ActivityIndicator /> : null}
+            renderItem={({ item }) => <StockMovementRow item={item} unit={product?.baseUnit?.symbol || product?.baseUnit?.name || ''} />} />}
       </View>
     </Modal>
     <Modal visible={!!gallery} animationType="fade" onRequestClose={() => setGallery(null)}>
@@ -174,4 +192,7 @@ const styles = StyleSheet.create({
   empty: { padding: 24, alignItems: 'center', gap: 12 },
   balance: { padding: 12, borderBottomWidth: 1, borderBottomColor: '#E2E8F0' },
   seriesSwitch: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 8, paddingHorizontal: 12, minHeight: 32 },
+  tabs: { width: '100%' },
+  tab: { borderRadius: 0, borderColor: '#E2E8F0' },
+  tabLabel: { fontSize: 12, fontWeight: '600' },
 });
