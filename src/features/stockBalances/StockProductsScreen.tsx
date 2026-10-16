@@ -1,0 +1,198 @@
+import React from 'react';
+import { BackHandler, FlatList, Modal, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Appbar, Button, PaperProvider, SegmentedButtons, Switch, Text, Tooltip } from 'react-native-paper';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
+import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { AuthContext } from '@/context/AuthContext';
+import { useServerStatus } from '@/src/shared/network/useServerStatus';
+import { ProductListRow } from '@/src/shared/ui/ProductListRow';
+import { SearchPickerScreen } from '@/src/features/clientOrders/screen/mobile/SearchPickerScreen';
+import { FilterLookupPickerPanel } from '@/src/features/clientOrders/screen/mobile/FilterLookupPickerPanel';
+import { buildWarehousePickerGroups } from '@/src/features/clientOrders/lib/clientOrdersUi';
+import { ProductImageGalleryModal, getProductGalleryImages, type ProductGallery } from '@/src/features/clientOrders/screen/mobile/ProductImageGalleryModal';
+import { useWarehouseSelection, warehouseSelectionLabel, toggleWarehouse, toggleWarehouseGroup, type SelectedWarehouse } from './useWarehouseSelection';
+import { readStockCache, writeStockCache } from './stockCache';
+import { stockRequest, type StockDetail, type StockFilters, type StockMetrics, type StockMovement, type StockProduct } from './products';
+import { useStockProducts } from './useStockProducts';
+import { StockMovementRow } from './StockMovementRow';
+
+const emptyFilters: StockFilters = { warehouses: [], organizations: [] };
+const number = (value: number | null) => value === null ? '—' : value.toLocaleString('ru-RU', { maximumFractionDigits: 3 });
+function Metrics({ item, unit, full = false }: { item: StockMetrics; unit: string; full?: boolean }) {
+  const metrics = [
+    { icon: 'warehouse', title: full ? 'В наличии' : 'Остаток', value: item.inStock },
+    { icon: 'lock-outline', title: full ? 'Резервы' : 'В резерве', value: item.reserved },
+    ...(full ? [{ icon: 'account-tie-outline', title: 'Мой резерв', value: item.myReserved ?? 0 }] : []),
+    { icon: 'package-variant-closed-check', title: 'Доступно', value: item.availableForManager !== undefined ? item.availableForManager : item.available === null ? null : item.available + (item.myReserved ?? 0) },
+  ];
+  return <View style={styles.metrics} pointerEvents={full ? 'auto' : 'none'}>{metrics.map(m => <Tooltip key={m.icon} title={m.title === 'Доступно' && item.availabilityReason ? item.availabilityReason : m.title}>
+    <View style={styles.metric} accessible accessibilityLabel={`${m.title}: ${number(m.value)} ${unit}`}>
+      <MaterialCommunityIcons name={m.icon as any} size={17} color="#64748B" />
+      <Text style={styles.metricLabel}>{m.title}</Text><Text style={styles.metricText}>{number(m.value)}{m.value === null ? '' : ` ${unit}`}</Text>
+    </View>
+  </Tooltip>)}</View>;
+}
+const ProductRow = React.memo(function ProductRow({ item, onOpen, onOpenImages }: { item: StockProduct; onOpen: (item: StockProduct) => void; onOpenImages: (item: StockProduct) => void }) {
+  return <ProductListRow thumbnail={<Pressable style={{ flex: 1 }} accessibilityRole="button" accessibilityLabel={`Изображение ${item.name}`} disabled={!item.imageThumbUrl}
+      onPress={() => onOpenImages(item)}>{item.imageThumbUrl ? <Image source={{ uri: item.imageThumbUrl, cacheKey: `${item.guid}:${item.imageHash || ''}` }}
+      style={styles.image} contentFit="contain" cachePolicy="memory-disk" recyclingKey={item.guid} />
+      : <View style={styles.placeholder}><MaterialCommunityIcons name="image-outline" size={32} color="#94A3B8" /></View>}</Pressable>}>
+      <Pressable style={{ flex: 1 }} onPress={() => onOpen(item)} accessibilityRole="button" accessibilityLabel={`Остатки ${item.name}`}>
+        <Text style={styles.title} numberOfLines={3}>{item.name}</Text>
+        <Metrics item={item} unit={item.baseUnit?.symbol || item.baseUnit?.name || ''} />
+      </Pressable>
+    </ProductListRow>;
+});
+
+export default function StockProductsScreen() {
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const auth = React.useContext(AuthContext);
+  const userId = auth?.profile?.id == null ? undefined : String(auth.profile.id);
+  const { isReachable } = useServerStatus();
+  const [search, setSearch] = React.useState('');
+  const warehouses = useWarehouseSelection(userId);
+  const warehouseGuids = warehouses.items.map(w => w.guid).sort().join(',');
+  const [warehouseDraft, setWarehouseDraft] = React.useState<SelectedWarehouse[] | null>(null);
+  const [filters, setFilters] = React.useState<StockFilters>(emptyFilters);
+  const [filterError, setFilterError] = React.useState(false);
+  const [filterLoading, setFilterLoading] = React.useState(false);
+  const [filterRevision, reloadFilters] = React.useReducer(n => n + 1, 0);
+  const [bySeries, setBySeries] = React.useState(false);
+  const [gallery, setGallery] = React.useState<ProductGallery | null>(null);
+  const [product, setProduct] = React.useState<StockProduct | null>(null);
+  const [detailTab, setDetailTab] = React.useState<'balances' | 'receipt' | 'expense'>('balances');
+  const listRef = React.useRef<any>(null);
+  React.useEffect(() => { listRef.current?.scrollToOffset?.({ offset: 0, animated: false }); }, [search, warehouseGuids]);
+  const stock = useStockProducts<StockProduct>('products', { search, warehouseGuids }, warehouses.ready ? userId : undefined, isReachable);
+  const detail = useStockProducts<StockDetail>(product && detailTab === 'balances' ? `products/${product.guid}/balances` : null, { warehouseGuids, bySeries: bySeries ? '1' : '0', groupByWarehouse: '1' }, warehouses.ready ? userId : undefined, isReachable);
+  const history = useStockProducts<StockMovement>(product && detailTab !== 'balances' ? `products/${product.guid}/movements` : null,
+    { warehouseGuids, direction: detailTab === 'receipt' ? 'receipt' : 'expense' }, warehouses.ready ? userId : undefined, isReachable);
+  const openProduct = React.useCallback((item: StockProduct) => { setDetailTab('balances'); setBySeries(false); setProduct(item); }, []);
+  const openImages = React.useCallback((item: StockProduct) => {
+    const images = getProductGalleryImages(item);
+    if (images.length) setGallery({ title: item.name, images, index: 0 });
+  }, []);
+  const goBack = React.useCallback(() => { if (router.canGoBack()) router.back(); else router.replace('/services'); }, [router]);
+  React.useEffect(() => {
+    const handler = BackHandler.addEventListener('hardwareBackPress', () => { goBack(); return true; });
+    return () => handler.remove();
+  }, [goBack]);
+  React.useEffect(() => { setFilters(emptyFilters); setProduct(null); setGallery(null); setWarehouseDraft(null); }, [userId]);
+  React.useEffect(() => {
+    if (!userId) { setFilterLoading(false); return; }
+    const controller = new AbortController();
+    setFilterLoading(isReachable); setFilterError(false);
+    void (async () => {
+      const cached = await readStockCache<SelectedWarehouse>(userId, 'warehouse-filters-v1');
+      if (controller.signal.aborted) return;
+      if (cached) setFilters({ warehouses: cached.items, organizations: [] });
+      if (!isReachable) { setFilterLoading(false); return; }
+      try {
+        const data = await stockRequest<StockFilters>('filters', {}, controller.signal);
+        if (controller.signal.aborted) return;
+        setFilters(data);
+        void writeStockCache(userId, 'warehouse-filters-v1', { items: data.warehouses, offset: 0, nextOffset: data.warehouses.length, hasMore: false });
+      } catch { if (!controller.signal.aborted) setFilterError(true); }
+      finally { if (!controller.signal.aborted) setFilterLoading(false); }
+    })();
+    return () => controller.abort();
+  }, [userId, isReachable, filterRevision]);
+  const empty = (loading: boolean, error: string | null) => <View style={styles.empty}>
+    {loading ? <ActivityIndicator /> : <>
+      <Text>{!isReachable ? (product && bySeries ? 'Для просмотра серий нужно подключение к сети.' : 'Нет сети. Для этой выборки нет сохранённых остатков.') : error || 'Остатки не найдены'}</Text>
+      {isReachable && error ? <Button onPress={() => product ? detail.refresh() : stock.refresh()}>Повторить</Button> : null}
+    </>}
+  </View>;
+  const warehouseItems = React.useMemo(() => [{ guid: '', name: 'Все склады' }, ...new Map([...warehouses.items, ...filters.warehouses].map(w => [w.guid, w])).values()], [warehouses.items, filters.warehouses]);
+  const warehouseGroups = React.useMemo(() => buildWarehousePickerGroups(warehouseItems.filter(w => !!w.guid)), [warehouseItems]);
+  const warehouseLabel = warehouseSelectionLabel(warehouses.items.map(w => filters.warehouses.find(f => f.guid === w.guid) || w));
+  const seriesSwitch = <View style={styles.seriesSwitch}><Text style={styles.metricLabel}>По сериям</Text><Switch value={bySeries} onValueChange={setBySeries} accessibilityLabel="По сериям" /></View>;
+  return <View style={styles.root}>
+    <SearchPickerScreen visible pickerKey="stock-products" topInset={insets.top} title="Остатки" titleIcon=""
+      titleAccessory={<Pressable accessibilityRole="button" accessibilityLabel={`Выбрать склады: ${warehouseLabel}`} disabled={!warehouses.ready}
+        onPress={() => setWarehouseDraft(warehouses.items)} style={styles.warehouseSelector}>
+        <Text numberOfLines={1} style={styles.warehouseLabel}>{warehouseLabel}</Text><MaterialCommunityIcons name="chevron-down" size={16} color="#2563EB" />
+      </Pressable>}
+      closeIcon="arrow-left" onClose={goBack} search={search} onSearchChange={setSearch} autoFocus={false}
+      searchPlaceholder="Наименование, код или артикул" searchLoading={stock.busy && !!stock.page}
+      listRef={listRef} data={stock.page?.items ?? []} keyExtractor={item => item.guid} renderItem={({ item }) => <ProductRow item={item} onOpen={openProduct} onOpenImages={openImages} />}
+      onEndReached={stock.loadMore}
+      listProps={{ refreshControl: <RefreshControl refreshing={stock.refreshing} onRefresh={stock.refresh} enabled={isReachable} /> }}
+      ListHeaderComponent={stock.stale || stock.error || warehouses.error ? <View style={styles.status}>
+        {warehouses.error ? <Text style={styles.warning}>Не удалось сохранить или прочитать выбор складов</Text> : null}
+        {stock.stale ? <Text style={styles.warning}>{!isReachable ? 'Нет сети · показаны ранее загруженные остатки' : 'Данные не обновлены'}</Text> : null}
+        {stock.error && stock.page ? <Button compact onPress={stock.refresh}>{stock.error}</Button> : null}
+      </View> : null}
+      ListEmptyComponent={empty(stock.busy || !warehouses.ready, stock.error)}
+      ListFooterComponent={<View style={{ paddingBottom: insets.bottom + 12 }}>{stock.loadingMore ? <ActivityIndicator /> : null}</View>} />
+    <Modal visible={warehouseDraft !== null} animationType="slide" onRequestClose={() => setWarehouseDraft(null)}>
+      <View style={styles.root}>{warehouseDraft !== null ? <FilterLookupPickerPanel title="Склады" icon="warehouse" topInset={insets.top} bottomInset={insets.bottom} flat groups={warehouseGroups}
+        status={filterLoading ? <ActivityIndicator /> : filterError ? <Button onPress={reloadFilters}>Повторить загрузку складов</Button> : null}
+        placeholder="Склад или группа" localItems={warehouseItems} selectedGuids={warehouseDraft.map(w => w.guid)}
+        onSelect={item => setWarehouseDraft(current => toggleWarehouse(current || [], item))}
+        onSelectGroup={items => setWarehouseDraft(current => toggleWarehouseGroup(current || [], items))}
+        onReset={() => setWarehouseDraft([])} onClose={() => setWarehouseDraft(null)}
+        onApply={() => { warehouses.save(warehouseDraft); setWarehouseDraft(null); }} /> : null}
+      </View>
+    </Modal>
+    <Modal visible={!!product} animationType="slide" onRequestClose={() => setProduct(null)}>
+      <View style={styles.root}>
+        <Appbar.Header><Appbar.BackAction accessibilityLabel="Назад" onPress={() => setProduct(null)} /><Appbar.Content title="Товар" /></Appbar.Header>
+        <SegmentedButtons value={detailTab} onValueChange={value => setDetailTab(value as typeof detailTab)} density="small" style={styles.tabs}
+          buttons={[{ value: 'balances', label: 'Остатки' }, { value: 'receipt', label: 'Поступления' }, { value: 'expense', label: 'Продажи' }].map(button => ({
+            ...button, style: styles.tab, labelStyle: styles.tabLabel, checkedColor: '#2563EB', uncheckedColor: '#64748B',
+          }))} />
+        {detailTab === 'balances' ? <>
+        {seriesSwitch}
+        <FlatList key="balances" data={detail.page?.items ?? []} keyExtractor={i => i.id} onEndReached={detail.loadMore} onEndReachedThreshold={0.5}
+          refreshControl={<RefreshControl refreshing={detail.refreshing} onRefresh={detail.refresh} enabled={isReachable} />}
+          contentContainerStyle={{ paddingBottom: insets.bottom + 12, flexGrow: 1 }}
+          ListHeaderComponent={<View style={styles.status}><Text style={styles.title}>{product?.name}</Text>{detail.stale && !bySeries ? <Text style={styles.warning}>Сохранённые данные · нет обновления</Text> : null}{detail.error && detail.page ? <Button onPress={detail.refresh}>{detail.error}</Button> : null}</View>}
+          ListEmptyComponent={empty(detail.busy, detail.error)} ListFooterComponent={detail.loadingMore ? <ActivityIndicator /> : null}
+          renderItem={({ item }) => <View style={styles.balance}>
+            <Text style={styles.title}>{item.warehouse.name}</Text>
+            {bySeries ? <Text style={styles.hint}>Серия: {item.seriesNumber || 'Без серии'}{item.expiresAt ? ` · годен до ${new Date(item.expiresAt).toLocaleDateString('ru-RU')}` : ''}</Text> : null}
+            <Metrics item={item} unit={product?.baseUnit?.symbol || product?.baseUnit?.name || ''} full />
+            {item.availabilityReason ? <Text style={styles.hint}>{item.availabilityReason}</Text> : null}
+          </View>} /></> : <FlatList key={detailTab} data={history.page?.items ?? []} keyExtractor={i => i.id}
+            onEndReached={history.loadMore} onEndReachedThreshold={0.5}
+            refreshControl={<RefreshControl refreshing={history.refreshing} onRefresh={history.refresh} enabled={isReachable} />}
+            contentContainerStyle={{ paddingBottom: insets.bottom + 12, flexGrow: 1 }}
+            ListHeaderComponent={<View style={styles.status}><Text style={styles.title}>{product?.name}</Text>
+              {history.error && history.page ? <Text style={styles.warning}>{history.error}</Text> : null}</View>}
+            ListEmptyComponent={<View style={styles.empty}>{history.busy ? <ActivityIndicator /> : <Text>
+              {!isReachable ? 'История движений доступна при подключении к сети.' : history.error || (detailTab === 'receipt' ? 'Поступлений на выбранных складах нет' : 'Расходных движений на выбранных складах нет')}
+            </Text>}</View>}
+            ListFooterComponent={history.loadingMore ? <ActivityIndicator /> : null}
+            renderItem={({ item }) => <StockMovementRow item={item} unit={product?.baseUnit?.symbol || product?.baseUnit?.name || ''} />} />}
+      </View>
+    </Modal>
+    <Modal visible={!!gallery} animationType="fade" onRequestClose={() => setGallery(null)}>
+      <PaperProvider><ProductImageGalleryModal gallery={gallery} onClose={() => setGallery(null)} /></PaperProvider>
+    </Modal>
+  </View>;
+}
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: '#FFFFFF' },
+  image: { width: '100%', height: '100%', minHeight: 80 },
+  placeholder: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F8FAFC' },
+  title: { fontSize: 14, lineHeight: 18, fontWeight: '700', color: '#0F172A' },
+  metrics: { gap: 3, paddingTop: 4, paddingBottom: 2 },
+  metric: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  metricLabel: { fontSize: 12, color: '#64748B' },
+  metricText: { fontSize: 13, color: '#334155', fontWeight: '600' },
+  hint: { fontSize: 11, color: '#64748B', lineHeight: 16 },
+  warehouseSelector: { flexDirection: 'row', alignItems: 'center', flexShrink: 1, minWidth: 40, minHeight: 40 },
+  warehouseLabel: { flexShrink: 1, color: '#2563EB', fontSize: 13, fontWeight: '700' },
+  status: { paddingHorizontal: 12, paddingVertical: 6, backgroundColor: '#F8FAFC' },
+  warning: { color: '#92400E', fontSize: 12 },
+  empty: { padding: 24, alignItems: 'center', gap: 12 },
+  balance: { padding: 12, borderBottomWidth: 1, borderBottomColor: '#E2E8F0' },
+  seriesSwitch: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 8, paddingHorizontal: 12, minHeight: 32 },
+  tabs: { width: '100%' },
+  tab: { borderRadius: 0, borderColor: '#E2E8F0' },
+  tabLabel: { fontSize: 12, fontWeight: '600' },
+});

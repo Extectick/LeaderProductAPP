@@ -8,6 +8,7 @@ import { formatStockInlineLabel } from '../../lib/clientOrdersUi';
 import { purchaseHistoryDays, purchaseHistoryLabel } from '../../lib/customerPurchaseHistory';
 import type { ProductQuantityChange } from '../../lib/productPickerQuantity';
 import { ProductPickerQuantityControl } from './ProductPickerQuantityControl';
+import { ProductListRow } from '@/src/shared/ui/ProductListRow';
 
 function productMetrics(item: ClientOrderProduct, hasPriceType: boolean, hasWarehouse: boolean) {
   const price = hasPriceType ? item.basePrice : null;
@@ -51,16 +52,16 @@ export const ProductPickerRow = React.memo(function ProductPickerRow({ item, qua
   const historyDays = purchaseHistoryDays(item.lastPurchasedDate);
   const [stock, sale, cost] = productMetrics(item, hasPriceType, hasWarehouse);
   const thumbnail = React.useMemo(() => renderThumbnail(item), [item, renderThumbnail]);
-  return <View style={[styles.row, selected && styles.selected]} testID={`product-row-${item.guid}`}>
-    <View style={styles.thumbnail} testID={`product-thumbnail-${item.guid}`}>
+  return <ProductListRow selected={selected} testID={`product-row-${item.guid}`} thumbnailTestID={`product-thumbnail-${item.guid}`} thumbnail={
+    <>
       {thumbnail}
       {historyDays !== null ? <View style={styles.historyBadge} pointerEvents="none" accessible
         accessibilityLabel={purchaseHistoryLabel(item.lastPurchasedDate) || undefined} testID={`product-history-${item.guid}`}>
         <MaterialCommunityIcons name="history" size={13} color="#15803D" />
         <Text style={styles.historyText} numberOfLines={1}>{historyDays} дн.</Text>
       </View> : null}
-    </View>
-    <View style={styles.content}>
+    </>
+    }>
     <Pressable disabled={disabled} accessibilityRole="button" accessibilityLabel={item.name}
       onPressIn={() => { longPressed.current = false; }}
       onLongPress={() => { longPressed.current = true; onLongPress(item); }} delayLongPress={280}
@@ -78,15 +79,10 @@ export const ProductPickerRow = React.memo(function ProductPickerRow({ item, qua
           fractional={fractional} disabled={disabled} onChangeQuantity={onChangeQuantity} />
       </View>
     </View>
-    </View>
-  </View>;
+  </ProductListRow>;
 });
 
 const styles = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'stretch', gap: 8, paddingHorizontal: 12, paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: '#E2E8F0', backgroundColor: '#FFFFFF' },
-  selected: { backgroundColor: '#EFF6FF' },
-  thumbnail: { width: 80, minHeight: 80, flexShrink: 0 },
-  content: { flex: 1, minWidth: 0 },
   details: { alignSelf: 'stretch' },
   metricRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6 },
   title: { fontSize: 14, lineHeight: 18, fontWeight: '700', color: '#0F172A' },

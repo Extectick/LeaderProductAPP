@@ -307,6 +307,7 @@ export type ClientOrderInvoice = {
 };
 
 export type ClientOrder = {
+  acceptedClientOperation?: { clientRevision: number; intent: 'SUBMIT'; payload: Record<string, unknown> } | null;
   draftReview?: {
     code: string;
     message: string;

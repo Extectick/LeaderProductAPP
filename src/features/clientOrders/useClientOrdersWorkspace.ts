@@ -46,10 +46,12 @@ import {
 import React from 'react';
 import { Alert, AppState, Platform } from 'react-native';
 import { isReconciledOrderOperation, isSameOrderOperation, orderChangeReview } from './lib/orderOperationIntegrity';
+import { acceptedSubmissionConfirmsDeviceDraft } from './lib/deviceDraftRecovery';
 import { useServerStatus } from '@/src/shared/network/useServerStatus';
 import { getServerStatus } from '@/src/shared/network/serverStatus';
 import { probeClientOrdersConnection } from '@/utils/clientOrdersService';
 import { useDraftBackups } from './offline/useDraftBackups';
+import { isRecoverableLegacySaveError, legacyOrderMatches, legacySubmissionAccepted, runLegacyOrderOperation } from './lib/legacyOrderRecovery';
 import { draftReviewItemMessages, reviewFromError } from './lib/draftReview';
 import {
   isNetworkUnavailableError as isSharedNetworkUnavailableError,
@@ -842,6 +844,7 @@ async function confirmOrderChange(review: NonNullable<ReturnType<typeof orderCha
 
 function getOfflineDraftFailureStatus(error: unknown): OfflineDraftStatus {
   const integrityKind = String((error as { errorDetails?: { kind?: string } } | null)?.errorDetails?.kind || '');
+  if (integrityKind === 'LEGACY_DRAFT_CONFLICT') return 'NEEDS_EDIT';
   if (integrityKind.startsWith('ORDER_')) return 'NEEDS_EDIT';
   const code = String((error as { backendErrorCode?: string } | null)?.backendErrorCode || '');
   if (code === 'PRICE_REVIEW_REQUIRED') return 'PRICE_REVIEW';
@@ -2121,6 +2124,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   }, [enrichItemsMetadata, loadEnumOptionsForContext]);
 
   const replaceDeviceDraftEntries = React.useCallback(async (next: DeviceDraftEntry[]) => {
+    if (activeOfflineUserRef.current !== offlineUserId) throw new Error('Пользователь изменён. Откройте список заказов заново.');
     const previous = deviceDraftEntriesRef.current;
     let entries = uniqueDeviceDraftEntries(next);
     try {
@@ -2129,6 +2133,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       reportOfflineSyncFailure(error, { stage: 'draft.write', entity: 'drafts' });
       throw error;
     }
+    if (activeOfflineUserRef.current !== offlineUserId) return;
     // Other independent documents can be changed while SQLite is writing.
     const changed = entries.filter(entry => !previous.includes(entry));
     const removed = previous.filter(entry => !entries.some(item => item.clientOrderId === entry.clientOrderId));
@@ -2329,17 +2334,30 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
             await replaceDeviceDraftEntries(nextEntries);
           }
           const sendOperation = async (): Promise<ClientOrder> => {
-            if (entry.clientOrderId.startsWith('legacy-server:')) {
-              let saved = entry.serverGuid
-                ? await updateClientOrder(entry.serverGuid, {
-                    ...submissionPayload,
-                    revision: entry.serverRevision ?? entry.order.revision,
-                  })
-                : await createClientOrder(submissionPayload);
-              if (entry.intent === 'SUBMIT') {
-                saved = await submitClientOrder(saved.guid, saved.revision, [submitGeoEvent]);
-              }
-              return saved;
+          if (entry.clientOrderId.startsWith('legacy-server:')) {
+            const guid = entry.serverGuid || entry.clientOrderId.slice('legacy-server:'.length);
+            const isCurrent = () => activeOfflineUserRef.current === offlineUserId
+              && deviceDraftEntriesRef.current.some(item => isSameOrderOperation(item, entry));
+            return runLegacyOrderOperation({ guid, revision: entry.serverRevision ?? entry.order.revision,
+              payload: submissionPayload, userId: Number(offlineUserId), intent: entry.intent }, {
+              read: getClientOrder, update: updateClientOrder,
+              submit: (savedGuid, revision) => submitClientOrder(savedGuid, revision, [submitGeoEvent]),
+              isCurrent,
+              checkpoint: async saved => {
+                if (!isCurrent()) throw new Error('Локальный заказ изменён. Повторите проверку.');
+                await replaceDeviceDraftEntries(deviceDraftEntriesRef.current.map(item => {
+                  if (!isSameOrderOperation(item, entry)) return item;
+                  const localDraft = (item.order as ClientOrder & { localDraft?: DraftOrder }).localDraft;
+                  return { ...item, serverGuid: saved.guid, serverRevision: saved.revision,
+                    order: { ...item.order, revision: saved.revision,
+                      ...(localDraft ? { localDraft: { ...localDraft, revision: saved.revision } } : {}) } };
+                }));
+              },
+            });
+          }
+            if (entry.serverGuid) {
+              const existing = await getClientOrderByClientId(entry.clientOrderId);
+              if (acceptedSubmissionConfirmsDeviceDraft(entry, existing, Number(offlineUserId))) return existing;
             }
             return putClientOrderByClientId(
               entry.clientOrderId,
@@ -2370,6 +2388,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
             await replaceDeviceDraftEntries(nextEntries);
             order = await sendOperation();
           }
+          if (activeOfflineUserRef.current !== offlineUserId) break;
           nextEntries = deviceDraftEntriesRef.current.filter((item) => !isSameOrderOperation(item, entry));
           await replaceDeviceDraftEntries(nextEntries);
           applySavedOrderToList(order);
@@ -2379,12 +2398,14 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
             applyOrderDetail(order);
           }
         } catch (error) {
+          if (activeOfflineUserRef.current !== offlineUserId) break;
           // A timeout can happen after the API/1C has committed the order. Reconcile
           // by clientOrderId before exposing an error or allowing another retry.
           if (getServerStatus().isReachable && !entry.clientOrderId.startsWith('legacy-server:') && isTransientDeviceDraftSyncError(error)) {
             try {
               const reconciled = await getClientOrderByClientId(entry.clientOrderId);
-              if (!isReconciledOrderOperation(reconciled, { ...entry, intent: 'SUBMIT' })) throw error;
+              if (!isReconciledOrderOperation(reconciled, { ...entry, intent: 'SUBMIT' })
+                && !acceptedSubmissionConfirmsDeviceDraft(entry, reconciled, Number(offlineUserId))) throw error;
               nextEntries = deviceDraftEntriesRef.current.filter((item) => !isSameOrderOperation(item, entry));
               await replaceDeviceDraftEntries(nextEntries);
               applySavedOrderToList(reconciled);
@@ -2407,7 +2428,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
           const failed = nextEntries.find(item => isSameOrderOperation(item, entry));
           const feedback = isTransientDeviceDraftSyncError(error)
             ? `${message} Копия сохранена на телефоне. Результат отправки будет проверен после восстановления связи.`
-            : `${message} Заказ сохранён, в 1С не отправлен.`;
+            : `${message} Локальная копия сохранена.`;
           setOrdersError(feedback);
           if (selectedGuidRef.current === entry.order.guid || selectedGuidRef.current === entry.serverGuid) {
             setError(feedback);
@@ -2437,15 +2458,20 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       for (const entry of deviceDraftEntries) {
         if (cancelled || deviceDraftSyncingRef.current || !getServerStatus().isReachable) break;
         if (entry.intent !== 'SUBMIT' || !['SEND_ERROR', 'NEEDS_EDIT', 'PRICE_REVIEW'].includes(entry.status)
-          || entry.clientOrderId.startsWith('legacy-server:')) continue;
+          ) continue;
         if (dirtyRef.current && (selectedGuidRef.current === entry.order.guid || selectedGuidRef.current === entry.serverGuid)) continue;
         const key = `${offlineUserId}:${entry.clientOrderId}:${entry.clientRevision}`;
         if (Date.now() - (draftReconcileAttemptsRef.current.get(key) || 0) < 60_000) continue;
         draftReconcileAttemptsRef.current.set(key, Date.now());
         try {
-          const order = await getClientOrderByClientId(entry.clientOrderId);
+          const legacy = entry.clientOrderId.startsWith('legacy-server:');
+          const legacyGuid = entry.serverGuid || entry.clientOrderId.slice('legacy-server:'.length);
+          const order = legacy ? await getClientOrder(legacyGuid) : await getClientOrderByClientId(entry.clientOrderId);
           if (cancelled || activeOfflineUserRef.current !== offlineUserId || deviceDraftSyncingRef.current
-            || !isReconciledOrderOperation(order, entry)) continue;
+            || !(legacy
+              ? legacyOrderMatches({ guid: legacyGuid, userId: Number(offlineUserId), payload: entry.payload }, order) && legacySubmissionAccepted(order)
+              : isReconciledOrderOperation(order, entry)
+                || acceptedSubmissionConfirmsDeviceDraft(entry, order, Number(offlineUserId)))) continue;
           if (dirtyRef.current && (selectedGuidRef.current === entry.order.guid || selectedGuidRef.current === entry.serverGuid)) continue;
           const current = findDeviceDraftEntry(entry.order.guid, entry.clientOrderId);
           if (!current || !isSameOrderOperation(current, entry)) continue;
@@ -3224,17 +3250,35 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       const initialRevision = updateTargetGuid === deviceEntry?.serverGuid
         ? deviceEntry.serverRevision ?? draft.revision
         : draft.revision;
-      const saveToApi = (revision: number) => {
-        if (clientOrderId) {
+      const saveToApi = async (revision: number) => {
+        if (!payload) throw new Error('Нет данных для сохранения заказа.');
+        if (clientOrderId && !clientOrderId.startsWith('legacy-server:')) {
           return putClientOrderByClientId(clientOrderId, payload, {
             clientRevision,
             intent,
             ...(intent === 'SUBMIT' ? { offlineReview: { pricePolicy: 'ASK' as const } } : {}),
           });
         }
-        return updateTargetGuid
-          ? updateClientOrder(updateTargetGuid, { ...payload, revision })
-          : createClientOrder(payload);
+        if (!updateTargetGuid) {
+          if (clientOrderId?.startsWith('legacy-server:')) throw new Error('Не найден исходный серверный заказ. Копия сохранена на телефоне.');
+          return createClientOrder(payload);
+        }
+        try { return await updateClientOrder(updateTargetGuid, { ...payload, revision }); }
+        catch (error) {
+          if (!isRecoverableLegacySaveError(error)) throw error;
+          return runLegacyOrderOperation({ guid: updateTargetGuid, revision, userId: Number(offlineUserId),
+            intent: 'SAVE', payload }, {
+            read: getClientOrder, update: updateClientOrder,
+            submit: () => { throw new Error('Сохранение не разрешает отправку.'); },
+            checkpoint: async saved => {
+              if (!deviceEntry) return;
+              await replaceDeviceDraftEntries(deviceDraftEntriesRef.current.map(item => isSameOrderOperation(item, deviceEntry)
+                ? { ...item, serverGuid: saved.guid, serverRevision: saved.revision,
+                  order: { ...item.order, revision: saved.revision } } : item));
+            },
+            isCurrent: () => activeOfflineUserRef.current === offlineUserId && draftEditVersionRef.current === editVersion,
+          });
+        }
       };
 
       // Persist the exact operation before sending it. If the server commits but

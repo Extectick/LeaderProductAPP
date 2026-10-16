@@ -22,6 +22,12 @@ jest.mock('@/src/shared/network/serverStatus', () => ({
 }));
 
 const orders = SERVICE_CATALOG.find(item => item.key === 'client_orders')!;
+const stock = SERVICE_CATALOG.find(item => item.key === 'stock_balances')!;
+it('allows cached stock reports offline only with existing service access', () => {
+  expect(canOpenService(stock, false, 'android')).toBe(true);
+  expect(canOpenService({ ...stock, enabled: false }, false, 'android')).toBe(false);
+  expect(canOpenService({ ...stock, route: '/admin' }, false, 'android')).toBe(false);
+});
 let screen: ReactTestRenderer;
 let snapshot: ReturnType<typeof useServicesData>;
 const Harness = () => { snapshot = useServicesData(); return null; };

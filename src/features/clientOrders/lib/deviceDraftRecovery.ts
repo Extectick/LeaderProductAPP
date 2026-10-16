@@ -50,6 +50,7 @@ export function sameDeviceDraftContent(left: Payload, right: Payload) {
 }
 
 export function savedOrderConfirmsDeviceDraft(entry: RecoverableDeviceDraft, order: ClientOrder, userId: number) {
+  if (acceptedSubmissionConfirmsDeviceDraft(entry, order, userId)) return true;
   if (!entry.clientOrderId || entry.clientOrderId.startsWith('legacy:') || entry.clientOrderId.startsWith('legacy-server:')
     || order.origin === 'device' || !order.guid || order.clientOrderId !== entry.clientOrderId
     || order.createdByUser?.id !== userId || !Number.isInteger(order.clientRevision)
@@ -60,4 +61,18 @@ export function savedOrderConfirmsDeviceDraft(entry: RecoverableDeviceDraft, ord
   } catch {
     return false;
   }
+}
+
+/** A higher local counter can be a failed autosave of an already accepted input.
+ * Retire it only against hash-verified historical input, not normalized 1C fields. */
+export function acceptedSubmissionConfirmsDeviceDraft(entry: RecoverableDeviceDraft, order: ClientOrder, userId: number) {
+  const proof = order.acceptedClientOperation;
+  if (entry.intent !== 'SUBMIT' || !proof || proof.intent !== 'SUBMIT'
+    || entry.clientOrderId.startsWith('legacy') || order.clientOrderId !== entry.clientOrderId
+    || order.origin === 'device' || !order.guid || order.createdByUser?.id !== userId
+    || order.syncState !== 'SYNCED' || order.status !== 'CONFIRMED' || !order.isPostedIn1c || !order.number1c
+    || order.lastExportError || order.last1cError
+    || !Number.isInteger(proof.clientRevision) || proof.clientRevision !== order.clientRevision
+    || !Number.isInteger(entry.clientRevision) || entry.clientRevision <= proof.clientRevision) return false;
+  try { return sameDeviceDraftContent(entry.payload, proof.payload as Payload); } catch { return false; }
 }

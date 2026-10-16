@@ -10,6 +10,7 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import ImageIcon from '@mui/icons-material/ImageOutlined';
 import logo from '../assets/images/icon.png';
 import './style.css';
+import { shareTokenFromLocation } from './shareLocation';
 
 type Item = { id: string; name: string; quantity: string; unit: string; unitPrice: string; amount: string; image: { id: string; version: string } | null };
 type Order = PublicOrderDelivery & { number: string; date: string | null; customer: string; deliveryDate: string | null; currency: string; cancelled: boolean;
@@ -19,8 +20,8 @@ const theme = createTheme({ palette: { primary: { main: '#1859f7' }, text: { pri
   shape: { borderRadius: 8 }, components: { MuiButton: { defaultProps: { disableElevation: true } } } });
 // A second shared URL opened in this tab must not keep the previous capability/data.
 window.addEventListener('hashchange', () => window.location.reload());
-const token = window.location.hash.slice(1);
-const validToken = (token.length === 12 || token.length === 43) && /^[A-Za-z0-9_-]+$/.test(token) && !/\s/.test(token);
+const token = shareTokenFromLocation(window.location) || '';
+const validToken = !!token;
 const money = (value: string, currency: string, precision = 2) => new Intl.NumberFormat('ru-RU', { style: 'currency', currency, minimumFractionDigits: 0, maximumFractionDigits: precision }).format(Number(value));
 const number = (value: string) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 4 }).format(Number(value));
 const date = (value: string | null, year = false) => value ? new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', ...(year ? { year: 'numeric' } : {}), timeZone: 'Asia/Omsk' }).format(new Date(value)) : '';

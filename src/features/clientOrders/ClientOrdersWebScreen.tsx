@@ -107,7 +107,7 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import {
   flexRender,
   getCoreRowModel,
@@ -3302,7 +3302,7 @@ export default function ClientOrdersWebScreen() {
                 <Stack direction="row" alignItems="center" spacing={0.5}>
                   {pickerLoading ? <CircularProgress size={18} /> : null}
                   {pickerKind === 'product' ? <>
-                    <Tooltip title="Только товары с остатком"><IconButton aria-label="Только товары с остатком" aria-pressed={productInStockOnly} onClick={() => setProductInStockOnly(prev => !prev)} sx={{ width: 40, height: 40, color: productInStockOnly ? '#15803D' : '#64748B', bgcolor: productInStockOnly ? '#F0FDF4' : '#F1F5F9' }}><Ionicons name="cube-outline" size={22} /></IconButton></Tooltip>
+                    <Tooltip title="Только товары с остатком"><IconButton aria-label="Только товары с остатком" aria-pressed={productInStockOnly} onClick={() => setProductInStockOnly(prev => !prev)} sx={{ width: 40, height: 40, color: productInStockOnly ? '#15803D' : '#64748B', bgcolor: productInStockOnly ? '#F0FDF4' : '#F1F5F9' }}><MaterialCommunityIcons name="warehouse" size={22} /></IconButton></Tooltip>
                     <Tooltip title="Только товары, которые клиент уже брал"><span><IconButton aria-label="Только товары, которые клиент уже брал" aria-pressed={purchasedOnly} disabled={!hasOrderContext || (!purchaseHistory.ready && !purchasedOnly)} onClick={() => setPurchasedOnly(prev => !prev)} sx={{ width: 40, height: 40, color: purchasedOnly ? '#1D4ED8' : '#64748B', bgcolor: purchasedOnly ? '#EFF6FF' : '#F1F5F9' }}><Ionicons name="time-outline" size={22} /></IconButton></span></Tooltip>
                   </> : null}
                   <IconButton sx={{ width: 40, height: 40 }} onClick={requestClosePicker} aria-label="Закрыть подбор">

@@ -124,6 +124,9 @@ import {
   SearchPickerScreen,
   type SearchPickerFilter,
 } from './screen/mobile/SearchPickerScreen';
+import { FilterLookupPickerPanel } from './screen/mobile/FilterLookupPickerPanel';
+import { ProductImageGalleryModal, getProductGalleryImages, type ProductGalleryImage } from './screen/mobile/ProductImageGalleryModal';
+import { loadedProductImageUris, failedProductImageUris } from './lib/productImageCache';
 import OneCCompanyLogo from './assets/onec-company-logo.svg';
 import { OfflineDataBanner, OfflineProductDataNote } from './screen/mobile/OfflineDataBanner';
 import { SendDeviceOrdersButton } from './screen/SendDeviceOrdersButton';
@@ -134,12 +137,6 @@ type DocumentOpeningState = 'new' | 'existing' | null;
 type PickerKind = ClientOrdersPickerKind;
 type InvoiceFileAction = 'download' | 'share';
 type OrderListContextAction = 'submit' | 'unqueue' | 'copy' | 'order-share' | 'invoice-request' | 'invoice-download' | 'invoice-share';
-type ProductGalleryImage = {
-  key: string;
-  thumbUrl: string;
-  previewUrl: string;
-  isMain?: boolean;
-};
 type ClientOrdersMobileScreenProps = {
   registerBackOverlayHandler?: (handler: (() => boolean) | null) => void;
 };
@@ -238,8 +235,6 @@ function assignComposedRef<T>(targetRef: React.Ref<T> | undefined, value: T | nu
 const LINE_ITEM_SCROLL_ESTIMATE = 116;
 const CLIENT_ORDER_UPDATE_CHECK_BLOCKER = 'client-order-document';
 const EMPTY_LINE_MESSAGES: string[] = [];
-const loadedProductImageUris = new Set<string>();
-const failedProductImageUris = new Set<string>();
 let lastClientOrdersListScrollY = 0;
 type FilterKeyboardFieldKey = 'deliveryDates' | 'updatedDates' | 'amount' | 'items' | 'organization' | 'counterparty' | 'warehouse' | 'priceType';
 type FilterKeyboardInputRef = React.RefObject<any>;
@@ -399,43 +394,6 @@ function mergeProductImageData<T extends Record<string, any>>(target: T, source?
     ...target,
     ...patch,
   };
-}
-function getProductGalleryImages(item: any): ProductGalleryImage[] {
-  const result: ProductGalleryImage[] = [];
-  const seen = new Set<string>();
-  const pushImage = (input: Partial<ProductGalleryImage> & { previewUrl?: string | null; thumbUrl?: string | null }) => {
-    const previewUrl = input.previewUrl || input.thumbUrl || null;
-    const thumbUrl = input.thumbUrl || input.previewUrl || null;
-    if (!previewUrl || !thumbUrl) return;
-    const dedupeKey = `${thumbUrl}|${previewUrl}`;
-    if (seen.has(dedupeKey)) return;
-    seen.add(dedupeKey);
-    result.push({
-      key: input.key || previewUrl,
-      thumbUrl,
-      previewUrl,
-      isMain: input.isMain,
-    });
-  };
-
-  const images = Array.isArray(item?.images) ? item.images : [];
-  [...images]
-    .sort((a, b) => Number(!!b?.isMain) - Number(!!a?.isMain))
-    .forEach((image: any, index) => {
-      pushImage({
-        key: image?.id || image?.fileGuid || `image-${index}`,
-        thumbUrl: image?.thumbUrl,
-        previewUrl: image?.previewUrl,
-        isMain: !!image?.isMain,
-      });
-    });
-  pushImage({
-    key: item?.imageHash || item?.productGuid || item?.guid || 'primary',
-    thumbUrl: item?.imageThumbUrl || item?.thumbnailUrl || item?.imageUrl || item?.pictureUrl || item?.photoUrl,
-    previewUrl: item?.imagePreviewUrl || item?.imageUrl || item?.pictureUrl || item?.photoUrl || item?.imageThumbUrl || item?.thumbnailUrl,
-    isMain: true,
-  });
-  return result;
 }
 function quantityStep(item: any, direction: 1 | -1) {
   const weight = isWeightDraftItem(item);
@@ -4561,6 +4519,8 @@ function ProductPickerFullscreenPanel({
       key: 'in-stock',
       iconOnly: true,
       label: 'С остатками',
+      icon: 'warehouse',
+      selectedIcon: 'warehouse',
       selected: inStockOnly,
       onPress: onToggleInStockOnly,
       accessibilityLabel: 'Показывать только товары с остатком',
@@ -6423,180 +6383,6 @@ function DocumentBusyOverlay({ styles, label }: { styles: any; label: string }) 
   );
 }
 
-function ProductImageGalleryModal({
-  styles,
-  gallery,
-  onClose,
-}: {
-  styles: any;
-  gallery: { title: string; subtitle?: string | null; images: ProductGalleryImage[]; index: number } | null;
-  onClose: () => void;
-}) {
-  const { width, height } = useWindowDimensions();
-  const { top: safeTop, bottom: safeBottom } = useSafeAreaInsets();
-  const scrollRef = React.useRef<any>(null);
-  const [activeIndex, setActiveIndex] = React.useState(gallery?.index || 0);
-  const images = gallery?.images || [];
-  const stageWidth = width;
-  const stageHeight = height;
-
-  React.useEffect(() => {
-    if (!gallery) return;
-    const nextIndex = Math.min(Math.max(gallery.index || 0, 0), Math.max(gallery.images.length - 1, 0));
-    setActiveIndex(nextIndex);
-    requestAnimationFrame(() => scrollRef.current?.scrollTo?.({ x: nextIndex * stageWidth, animated: false }));
-  }, [gallery?.title, gallery?.index, gallery?.images.length, stageWidth]);
-
-  if (!gallery || !images.length) return null;
-
-  const scrollToIndex = (index: number) => {
-    const nextIndex = Math.min(Math.max(index, 0), images.length - 1);
-    setActiveIndex(nextIndex);
-    scrollRef.current?.scrollTo?.({ x: nextIndex * stageWidth, animated: true });
-  };
-
-  return (
-    <Portal>
-      <View style={styles.productGalleryOverlay}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Закрыть просмотр изображения" style={styles.productGalleryBackdrop} onPress={onClose} />
-        <Surface mode="flat" style={[styles.productGalleryCard, { width: stageWidth, height: stageHeight }]}>
-          <View style={[styles.productGalleryHeader, { top: Math.max(safeTop, 8) + 4 }]}>
-            <View style={styles.productGalleryTitleWrap}>
-              <Text style={styles.productGalleryTitle} numberOfLines={1}>{gallery.title}</Text>
-              <Text style={styles.productGallerySubtitle} numberOfLines={1}>
-                {gallery.subtitle || `${activeIndex + 1} из ${images.length}`}
-              </Text>
-            </View>
-            <View style={styles.productGalleryHeaderActions}>
-              {images.length > 1 ? <Text style={styles.productGalleryCounter}>{activeIndex + 1}/{images.length}</Text> : null}
-              <Pressable accessibilityRole="button" accessibilityLabel="Закрыть" onPress={onClose} style={({ pressed }) => [styles.productGalleryCloseButton, pressed && styles.flatPressed]}>
-                <MaterialCommunityIcons name="close" size={22} color="#FFFFFF" />
-              </Pressable>
-            </View>
-          </View>
-          <ScrollView
-            ref={scrollRef}
-            horizontal
-            pagingEnabled
-            showsHorizontalScrollIndicator={false}
-            scrollEventThrottle={16}
-            onMomentumScrollEnd={(event) => {
-              const nextIndex = Math.round(event.nativeEvent.contentOffset.x / stageWidth);
-              setActiveIndex(Math.min(Math.max(nextIndex, 0), images.length - 1));
-            }}
-            style={{ width: stageWidth }}
-          >
-            {images.map((image) => (
-              <ProductGallerySlide key={image.key} image={image} width={stageWidth} height={stageHeight} styles={styles} />
-            ))}
-          </ScrollView>
-          {images.length > 1 ? (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={[styles.productGalleryThumbsScroll, { bottom: Math.max(safeBottom, 8) + 8 }]}
-              contentContainerStyle={styles.productGalleryThumbs}
-            >
-              {images.map((image, index) => (
-                <Pressable
-                  key={`thumb-${image.key}`}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Показать изображение ${index + 1}`}
-                  onPress={() => scrollToIndex(index)}
-                  style={({ pressed }) => [
-                    styles.productGalleryThumb,
-                    activeIndex === index && styles.productGalleryThumbActive,
-                    pressed && styles.flatPressed,
-                  ]}
-                >
-                  <ExpoImage source={{ uri: image.thumbUrl }} style={styles.productGalleryThumbImage} contentFit="contain" cachePolicy="memory-disk" />
-                </Pressable>
-              ))}
-            </ScrollView>
-          ) : null}
-        </Surface>
-      </View>
-    </Portal>
-  );
-}
-
-function ProductGallerySlide({
-  image,
-  width,
-  height,
-  styles,
-}: {
-  image: ProductGalleryImage;
-  width: number;
-  height: number;
-  styles: any;
-}) {
-  const imageSource = React.useMemo(() => ({ uri: image.previewUrl }), [image.previewUrl]);
-  const [loading, setLoading] = React.useState(!loadedProductImageUris.has(image.previewUrl) && !failedProductImageUris.has(image.previewUrl));
-  const [failed, setFailed] = React.useState(failedProductImageUris.has(image.previewUrl));
-
-  React.useEffect(() => {
-    const nextFailed = failedProductImageUris.has(image.previewUrl);
-    const nextLoaded = loadedProductImageUris.has(image.previewUrl);
-    setLoading(!nextLoaded && !nextFailed);
-    setFailed(nextFailed);
-  }, [image.previewUrl]);
-
-  React.useEffect(() => {
-    if (!loading || failed) return undefined;
-    const timeout = setTimeout(() => {
-      failedProductImageUris.add(image.previewUrl);
-      setFailed(true);
-      setLoading(false);
-    }, 12000);
-    return () => clearTimeout(timeout);
-  }, [failed, image.previewUrl, loading]);
-
-  const handleImageLoaded = React.useCallback(() => {
-    loadedProductImageUris.add(image.previewUrl);
-    failedProductImageUris.delete(image.previewUrl);
-    setFailed(false);
-    setLoading(false);
-  }, [image.previewUrl]);
-
-  const handleImageError = React.useCallback(() => {
-    failedProductImageUris.add(image.previewUrl);
-    loadedProductImageUris.delete(image.previewUrl);
-    setFailed(true);
-    setLoading(false);
-  }, [image.previewUrl]);
-
-  return (
-    <View style={[styles.productGallerySlide, { width, height }]}>
-      {!failed ? (
-        <ExpoImage
-          source={imageSource}
-          style={styles.productGalleryImage}
-          contentFit="contain"
-          cachePolicy="memory-disk"
-          onLoadStart={() => {
-            if (!loadedProductImageUris.has(image.previewUrl) && !failedProductImageUris.has(image.previewUrl)) {
-              setLoading(true);
-            }
-          }}
-          onLoad={handleImageLoaded}
-          onLoadEnd={() => setLoading(false)}
-          onError={handleImageError}
-        />
-      ) : (
-        <View style={styles.productGalleryEmpty}>
-          <MaterialCommunityIcons name="image-broken-variant" size={42} color="#94A3B8" />
-          <Text style={styles.productGalleryEmptyText}>Изображение не загрузилось</Text>
-        </View>
-      )}
-      {loading && !failed ? (
-        <View pointerEvents="none" style={styles.productGalleryLoader}>
-          <ActivityIndicator size={28} color="#2563EB" />
-        </View>
-      ) : null}
-    </View>
-  );
-}
 
 function OrdersToolbar({
   styles,
@@ -7315,6 +7101,7 @@ function OrdersFiltersFullscreen({
           />
         ) : lookupKind ? (
           <FilterLookupPickerPanel
+            renderSearch={(props) => <CompactSearchbar {...props} />}
             styles={styles}
             topInset={insets.top}
             bottomInset={insets.bottom}
@@ -7453,134 +7240,6 @@ function FilterStatusPickerPanel({
   );
 }
 
-function FilterLookupPickerPanel<T extends { guid: string; name: string }>({
-  styles,
-  topInset,
-  bottomInset,
-  title,
-  icon,
-  selectedGuid,
-  placeholder,
-  search,
-  onSelect,
-  onApply,
-  onReset,
-  onClose,
-}: {
-  styles: any;
-  topInset: number;
-  bottomInset: number;
-  title: string;
-  icon: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
-  selectedGuid?: string | null;
-  placeholder: string;
-  search: (args: { search: string; limit: number; offset: number }) => Promise<{ items: T[] }>;
-  onSelect: (item: T) => void;
-  onApply: () => void;
-  onReset: () => void;
-  onClose: () => void;
-}) {
-  const [query, setQuery] = React.useState('');
-  const [items, setItems] = React.useState<T[]>([]);
-  const [loading, setLoading] = React.useState(false);
-  const requestRef = React.useRef(0);
-
-  React.useEffect(() => {
-    const requestId = ++requestRef.current;
-    const loadingTimer = setTimeout(() => {
-      if (requestRef.current === requestId) setLoading(true);
-    }, query.trim() ? 260 : 0);
-    const requestTimer = setTimeout(() => {
-      void search({ search: query.trim(), limit: 40, offset: 0 })
-        .then((result) => {
-          if (requestRef.current !== requestId) return;
-          setItems(Array.isArray(result.items) ? result.items : []);
-        })
-        .catch(() => {
-          if (requestRef.current !== requestId) return;
-          setItems([]);
-        })
-        .finally(() => {
-          if (requestRef.current === requestId) setLoading(false);
-        });
-    }, query.trim() ? 520 : 0);
-    return () => {
-      clearTimeout(loadingTimer);
-      clearTimeout(requestTimer);
-    };
-  }, [query, search]);
-
-  return (
-    <View style={styles.filtersLookupOverlay}>
-      <Surface mode="flat" style={[styles.filtersFullscreenHeader, { paddingTop: Math.max(topInset, 10) + 8 }]}>
-        <View style={styles.filtersFullscreenHeaderRow}>
-          <View style={styles.filtersLookupTitleRow}>
-            <MaterialCommunityIcons name={icon} size={20} color="#2563EB" />
-            <Text style={styles.filtersFullscreenTitle}>{title}</Text>
-          </View>
-          <Pressable accessibilityRole="button" accessibilityLabel="Закрыть подбор" onPress={onClose} style={({ pressed }) => [styles.filtersCloseButton, pressed && styles.flatPressed]}>
-            <MaterialCommunityIcons name="close" size={22} color="#0F172A" />
-          </Pressable>
-        </View>
-      </Surface>
-      <View style={styles.filtersLookupSearchArea}>
-        <CompactSearchbar
-          style={styles.filtersLookupSearch}
-          inputStyle={styles.ordersSearchbarInput}
-          value={query}
-          onChangeText={setQuery}
-          placeholder={placeholder}
-        />
-      </View>
-      <ScrollView
-        style={styles.filtersLookupList}
-        contentContainerStyle={[styles.filtersLookupListContent, { paddingBottom: Math.max(bottomInset, 10) + 86 }]}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
-      >
-        {loading ? (
-          <View style={styles.filtersLookupStateRow}>
-            <ActivityIndicator size="small" color="#2563EB" />
-          </View>
-        ) : null}
-        {!loading && !items.length ? (
-          <Text style={styles.filtersLookupEmpty}>Ничего не найдено.</Text>
-        ) : null}
-        {items.map((item) => {
-          const selected = item.guid === selectedGuid;
-          return (
-            <Pressable
-              key={item.guid}
-              accessibilityRole="button"
-              onPress={() => onSelect(item)}
-              style={({ pressed }) => [styles.filtersLookupRow, selected && styles.filtersLookupRowSelected, pressed && styles.flatPressed]}
-            >
-              <View style={styles.filtersLookupRowText}>
-                <Text style={styles.filtersLookupRowTitle} numberOfLines={2}>{item.name}</Text>
-                {getPickerItemMeta(title === 'Контрагент' ? 'filterCounterparty' : 'organization', item) ? (
-                  <Text style={styles.filtersLookupRowMeta} numberOfLines={1}>{getPickerItemMeta(title === 'Контрагент' ? 'filterCounterparty' : 'organization', item)}</Text>
-                ) : null}
-              </View>
-              {selected ? (
-                <MaterialCommunityIcons name="check-circle" size={21} color="#16A34A" />
-              ) : (
-                <MaterialCommunityIcons name="chevron-right" size={22} color="#94A3B8" />
-              )}
-            </Pressable>
-          );
-        })}
-      </ScrollView>
-      <Surface mode="flat" style={[styles.filtersFullscreenFooter, { paddingBottom: Math.max(bottomInset, 10) + 8 }]}>
-        <PaperButton mode="outlined" onPress={onReset} disabled={!selectedGuid} style={styles.filtersFullscreenFooterButton} labelStyle={styles.filtersFullscreenFooterLabel} contentStyle={styles.filtersFullscreenFooterContent}>
-          Сбросить
-        </PaperButton>
-        <PaperButton mode="contained" onPress={onApply} buttonColor="#2563EB" textColor="#FFFFFF" style={styles.filtersFullscreenFooterButton} labelStyle={styles.filtersFullscreenFooterLabel} contentStyle={styles.filtersFullscreenFooterContent}>
-          Готово
-        </PaperButton>
-      </Surface>
-    </View>
-  );
-}
 
 function OrdersFiltersBottomSheet({
   styles,
@@ -7960,7 +7619,7 @@ const OrderCard = React.memo(function OrderCard({
     },
     {
       key: 'submit',
-      label: sendFailed ? 'Повторить отправку' : 'Отправить в 1С',
+      label: sendFailed ? 'Проверить и отправить' : 'Отправить в 1С',
       action: 'submit',
       icon: sendFailed ? 'refresh-outline' : 'cloud-upload-outline',
       visible: canSend,

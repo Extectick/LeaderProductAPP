@@ -35,20 +35,14 @@ function warehouseGroupPriority(name: string) {
   return 100;
 }
 
-/**
- * New API/1C versions add cityName/cityGuid while keeping the old flat items
- * contract. If the fields are absent, return the original flat list so the
- * updated app also works against an older backend during rolling deployment.
- */
-export function buildWarehousePickerRows(
-  items: readonly ClientOrderWarehouseOption[]
-): Array<ClientOrderWarehouseOption | ClientOrderWarehouseGroupRow> {
-  if (!items.some((item) => !!item.cityName)) return [...items];
-
+/** Shared city grouping for order and stock selectors; never guess a city from the warehouse name. */
+export function buildWarehousePickerGroups<T extends Pick<ClientOrderWarehouseOption, 'name' | 'cityName' | 'cityGuid' | 'sortOrder'>>(
+  items: readonly T[]
+) {
   const groups = new Map<string, {
     name: string;
     cityGuid: string | null;
-    items: ClientOrderWarehouseOption[];
+    items: T[];
   }>();
   for (const item of items) {
     const name = item.cityName?.trim() || 'Другие склады';
@@ -63,17 +57,28 @@ export function buildWarehousePickerRows(
       warehouseGroupPriority(left.name) - warehouseGroupPriority(right.name)
       || left.name.localeCompare(right.name, 'ru', { sensitivity: 'base' })
     ))
-    .flatMap(([key, group]) => [
-      {
-        __warehouseGroup: true as const,
-        __warehouseGroupKey: `warehouse-group:${key}`,
-        name: group.name,
-        cityGuid: group.cityGuid,
-      },
-      ...group.items.sort((left, right) => (
+    .map(([key, group]) => ({
+      key: `warehouse-group:${key}`, name: group.name, cityGuid: group.cityGuid,
+      items: group.items.sort((left, right) => (
         Number(left.sortOrder || 0) - Number(right.sortOrder || 0)
         || left.name.localeCompare(right.name, 'ru', { numeric: true, sensitivity: 'base' })
       )),
+    }));
+}
+
+/** Preserve the legacy flat order picker when an older API has no group metadata. */
+export function buildWarehousePickerRows(
+  items: readonly ClientOrderWarehouseOption[]
+): Array<ClientOrderWarehouseOption | ClientOrderWarehouseGroupRow> {
+  if (!items.some((item) => !!item.cityName)) return [...items];
+  return buildWarehousePickerGroups(items).flatMap(group => [
+      {
+        __warehouseGroup: true as const,
+        __warehouseGroupKey: group.key,
+        name: group.name,
+        cityGuid: group.cityGuid,
+      },
+      ...group.items,
     ]);
 }
 
