@@ -143,9 +143,12 @@ it('never accepts another user/revision/hash receipt or removes a newer local op
 });
 it('never uploads, displays or removes another API environment legacy queue', async () => {
   const outbox = require('../src/features/clientOrders/offline/orderOutboxDatabase');
+  const { ORDER_API_SCOPE } = require('../src/features/clientOrders/offline/orderOutboxScope');
+  const foreignScope = ORDER_API_SCOPE === 'https://api.leader-product.ru'
+    ? 'https://dev.leader-product.ru' : 'https://api.leader-product.ru';
   const queued = queuedDraft(); await offline.upsertOfflineDraft('90', queued);
   await db.runAsync('UPDATE offline_drafts SET order_json=? WHERE user_id=? AND id=?', JSON.stringify(queued.order), '90', queued.id);
-  await db.runAsync("UPDATE catalog_meta SET value='https://api.leader-product.ru' WHERE key='offlineDraftLegacyApiScope'");
+  await db.runAsync("UPDATE catalog_meta SET value=? WHERE key='offlineDraftLegacyApiScope'", foreignScope);
   expect(await offline.readOfflineDrafts('90')).toEqual([]);
   expect(await outbox.claimOrderUploads('90')).toEqual([]);
   expect(await outbox.hasPendingOrderUploads('90')).toBe(false);
