@@ -367,6 +367,7 @@ export function getOrderDisplayStatusLabel(order?: Pick<ClientOrder, 'status' | 
     if (localStatus === 'READY_TO_SEND') return 'В очереди на устройстве';
     if (localStatus === 'ON_DEVICE') return STATUS_LABELS.DRAFT;
     if (localStatus === 'SENDING') return 'Отправляется';
+    if (localStatus === 'API_ACCEPTED') return 'Принят API · обработка';
     if (localStatus === 'PRICE_REVIEW') return 'Цены изменились';
     if (localStatus === 'NEEDS_EDIT') return 'Требует исправления';
     if (localStatus === 'SEND_ERROR') return 'Ошибка отправки';

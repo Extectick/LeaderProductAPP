@@ -249,6 +249,8 @@ async function ensureTokenStorageScope(): Promise<boolean> {
   }
 
   if (storedBaseUrl !== API_BASE_URL) {
+    // Preserve the backend of pre-outbox SQLite drafts before clearing auth.
+    if (!await AsyncStorage.getItem('orderOutboxLegacyApiBaseUrl')) await AsyncStorage.setItem('orderOutboxLegacyApiBaseUrl', storedBaseUrl);
     await invalidateAuthSession('api_base_url_changed');
     return false;
   }

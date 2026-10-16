@@ -1,4 +1,5 @@
 import { API_BASE_URL } from '@/utils/config';
+import { jwtDecode } from 'jwt-decode';
 import {
   getLastRefreshFailure,
   getAccessTokenForRequest,
@@ -30,6 +31,8 @@ export interface HttpResponse<T> {
 }
 
 export interface HttpRequestOptions<Req> {
+  /** Fence a background operation against logout/account switching during refresh. */
+  expectedUserId?: string;
   method?: HttpMethod;
   body?: Req | BodyLike;
   headers?: Record<string, string>;
@@ -107,6 +110,13 @@ export async function httpRequest<Req = undefined, Res = any>(
   ));
 
   async function doFetch(tk: string | null): Promise<Response> {
+    if (options.expectedUserId) {
+      let owner: unknown = null;
+      try { owner = tk ? jwtDecode<{ userId?: unknown }>(tk).userId : null; } catch { /* fail closed */ }
+      if (owner == null || String(owner) !== options.expectedUserId) {
+        throw Object.assign(new Error('Пользователь изменился. Отправка приостановлена.'), { name: 'AccountChangedError' });
+      }
+    }
     const h = buildHeaders(headers, tk, isForm);
     let reqBody: BodyInit | undefined;
     if (!isGetLike) {
@@ -242,6 +252,7 @@ export async function httpRequest<Req = undefined, Res = any>(
 
     return { ok: true, status, data, meta };
   } catch (error: any) {
+    if (error?.name === 'AccountChangedError') return { ok: false, status: 499, message: 'Пользователь изменился. Запрос не отправлен.' };
     if (error?.name === 'AbortError') {
       if (signal?.aborted) {
         return {

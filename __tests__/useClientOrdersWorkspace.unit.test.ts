@@ -2,6 +2,8 @@ import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState } from 'react-native';
+jest.mock('../src/features/clientOrders/offline/orderOutbox', () => ({ kickOrderOutbox: jest.fn(), retryOrderOutboxNow: async () => {}, isAsyncOrderOutboxEnabled: () => false }));
+jest.mock('../src/features/clientOrders/offline/orderOutboxDatabase', () => ({ readOrderMirrors: async () => [] }));
 
 jest.mock('@/context/AuthContext', () => {
   const React = require('react');
@@ -32,6 +34,7 @@ jest.mock('../src/features/clientOrders/offline/offlineOrdersDatabase', () => ({
   readOfflineDataSyncTime: jest.fn(async () => null),
   readOfflineDrafts: jest.fn(async () => []),
   applyOfflineDraftChanges: jest.fn(async () => true),
+  canAdoptLegacyOfflineDrafts: async () => true,
 }));
 
 jest.mock('../src/features/clientOrders/offline/offlineOrdersSync', () => ({

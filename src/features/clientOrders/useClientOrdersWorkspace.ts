@@ -47,6 +47,9 @@ import React from 'react';
 import { Alert, AppState, Platform } from 'react-native';
 import { isReconciledOrderOperation, isSameOrderOperation, orderChangeReview } from './lib/orderOperationIntegrity';
 import { acceptedSubmissionConfirmsDeviceDraft } from './lib/deviceDraftRecovery';
+import { kickOrderOutbox, retryOrderOutboxNow, isAsyncOrderOutboxEnabled } from './offline/orderOutbox';
+import { readOrderMirrors } from './offline/orderOutboxDatabase';
+import { subscribeOrderOutboxChange } from './offline/orderOutboxEvents';
 import { useServerStatus } from '@/src/shared/network/useServerStatus';
 import { getServerStatus } from '@/src/shared/network/serverStatus';
 import { probeClientOrdersConnection } from '@/utils/clientOrdersService';
@@ -100,6 +103,7 @@ import {
   readOfflineDataSyncTime,
   readOfflineDrafts,
   applyOfflineDraftChanges,
+  canAdoptLegacyOfflineDrafts,
   type OfflineDraftStatus,
 } from './offline/offlineOrdersDatabase';
 import { isOfflineOrderDataSyncing, syncOfflineOrderData, type OfflineSyncTransfer } from './offline/offlineOrdersSync';
@@ -110,6 +114,7 @@ import { captureOrderGeoEvent, type OrderGeoEventInput } from '@/utils/orderGeo'
 
 type AutosaveState = 'idle' | 'saved' | 'error';
 type SaveOptions = {
+  integrity?: ClientOrderSavePayload['integrity'];
   silent?: boolean;
   reason?: 'manual' | 'autosave';
   intent?: 'SAVE' | 'SUBMIT';
@@ -472,14 +477,14 @@ function sanitizeDeviceDraftEntries(value: unknown): DeviceDraftEntry[] {
           ? Math.max(1, raw.clientRevision)
           : Math.max(1, Number((raw.order as ClientOrder).clientRevision || 1)),
       intent: raw.intent === 'SUBMIT' ? 'SUBMIT' : 'SAVE',
-      status: raw.status === 'SENDING' ? 'SEND_ERROR' : raw.status && ['ON_DEVICE', 'READY_TO_SEND', 'PRICE_REVIEW', 'NEEDS_EDIT', 'SENDING', 'SEND_ERROR'].includes(raw.status)
+      status: !isAsyncOrderOutboxEnabled() && raw.status === 'SENDING' ? 'SEND_ERROR' : raw.status && ['ON_DEVICE', 'READY_TO_SEND', 'PRICE_REVIEW', 'NEEDS_EDIT', 'SENDING', 'SEND_ERROR', 'API_ACCEPTED'].includes(raw.status)
         ? raw.status
         : raw.intent === 'SUBMIT' ? 'NEEDS_EDIT' : 'ON_DEVICE',
       serverGuid: typeof raw.serverGuid === 'string' && raw.serverGuid ? raw.serverGuid : null,
       serverRevision: typeof raw.serverRevision === 'number' ? raw.serverRevision : null,
       order: {
         ...(raw.order as ClientOrder),
-        offlineDraftStatus: raw.status === 'SENDING' ? 'SEND_ERROR' : raw.status && ['ON_DEVICE', 'READY_TO_SEND', 'PRICE_REVIEW', 'NEEDS_EDIT', 'SENDING', 'SEND_ERROR'].includes(raw.status)
+        offlineDraftStatus: !isAsyncOrderOutboxEnabled() && raw.status === 'SENDING' ? 'SEND_ERROR' : raw.status && ['ON_DEVICE', 'READY_TO_SEND', 'PRICE_REVIEW', 'NEEDS_EDIT', 'SENDING', 'SEND_ERROR', 'API_ACCEPTED'].includes(raw.status)
           ? raw.status
           : raw.intent === 'SUBMIT' ? 'NEEDS_EDIT' : 'ON_DEVICE',
         items: Array.isArray((raw.order as ClientOrder).items) ? (raw.order as ClientOrder).items : [],
@@ -509,6 +514,7 @@ async function readStoredDeviceDrafts(storageKey: string, userId: string) {
     }
     const legacyRaw = await AsyncStorage.getItem(storageKey);
     if (!legacyRaw) return [];
+    if (!await canAdoptLegacyOfflineDrafts()) return [];
     const legacy = sanitizeDeviceDraftEntries(JSON.parse(legacyRaw)).map((entry) => ({
       ...entry,
       status: entry.intent === 'SUBMIT' ? 'NEEDS_EDIT' as const : 'ON_DEVICE' as const,
@@ -1428,7 +1434,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
   const draftMode = !draft.guid;
   const filtersSignature = React.useMemo(() => ordersFilterSignature(filters), [filters]);
-  const readOnly = !!selectedOrder?.readOnly || !!selectedOrder?.hasRealization;
+  const selectedDeviceStatus = deviceDraftEntries.find(entry => entry.order.guid === selectedGuid || entry.serverGuid === selectedGuid)?.status;
+  const readOnly = !!selectedOrder?.readOnly || !!selectedOrder?.hasRealization || ['SENDING','API_ACCEPTED'].includes(selectedDeviceStatus || '');
   const mutationLocked = saving || submitting || copying || cancelling || deletingDraft;
   const selectedOrderQueued = isQueuedClientOrder(selectedOrder);
   const selectedOrderSynced = !!selectedOrder && (
@@ -2271,12 +2278,77 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     return order;
   }, [applyOrderDetail, applySavedOrderToList, draft, replaceDeviceDraftEntries, selections]);
 
+  React.useEffect(() => {
+    if (Platform.OS === 'web' || !deviceDraftsHydrated) return;
+    let cancelled = false;
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    const refresh = async (event?: { order?: ClientOrder; previousGuid?: string | null }) => {
+      const entries = await readStoredDeviceDrafts(deviceDraftsStorageKey, offlineUserId);
+      if (cancelled || activeOfflineUserRef.current !== offlineUserId) return;
+      if (JSON.stringify(entries) !== JSON.stringify(deviceDraftEntriesRef.current)) {
+        deviceDraftEntriesRef.current = entries;
+        setDeviceDraftEntries(entries);
+      }
+      if (event?.order) {
+        applySavedOrderToList(event.order);
+        if (!dirtyRef.current && selectedGuidRef.current && [event.previousGuid, event.order.guid].includes(selectedGuidRef.current)) {
+          applyOrderDetail(event.order);
+          setError(null);
+        }
+      } else {
+        const selected = entries.find(entry => entry.order.guid === selectedGuidRef.current || entry.serverGuid === selectedGuidRef.current);
+        if (selected) setSelectedOrder(current => current ? { ...current, ...selected.order } : current);
+      }
+    };
+    const unsubscribe = subscribeOrderOutboxChange(event => {
+      if (event.userId !== offlineUserId) return;
+      if (event.order) void refresh(event).catch(() => {});
+      else if (!refreshTimer) refreshTimer = setTimeout(() => { refreshTimer = null; void refresh().catch(() => {}); }, 40);
+    });
+    // Rehydrate the canonical mirror even if no order list screen was open at ACK.
+    void readOrderMirrors(offlineUserId).then(mirrors => {
+      if (cancelled) return;
+      for (const order of mirrors) {
+        const existing = apiOrdersRef.current.find(item => isSameListOrder(item, order));
+        if (!existing || (order.revision >= existing.revision && Date.parse(order.updatedAt || '') > Date.parse(existing.updatedAt || ''))) applySavedOrderToList(order);
+      }
+    }).catch(() => {});
+    kickOrderOutbox();
+    return () => { cancelled = true; unsubscribe(); if (refreshTimer) clearTimeout(refreshTimer); };
+  }, [offlineUserId, deviceDraftsHydrated, deviceDraftsStorageKey, ordersCacheHydrated, applySavedOrderToList, applyOrderDetail]);
+
   const syncDeviceDrafts = React.useCallback(async (syncOptions: {
     force?: boolean;
     draftId?: string;
     orderGuid?: string;
     pricePolicy?: 'ASK' | 'USE_CURRENT' | 'KEEP_DRAFT';
   } = {}) => {
+    if (isAsyncOrderOutboxEnabled()) {
+      // Manual button only wakes the same global queue. It never promotes SAVE.
+      const target = deviceDraftEntriesRef.current.find(entry => entry.intent === 'SUBMIT'
+        && ((syncOptions.draftId && entry.id === syncOptions.draftId)
+          || (syncOptions.orderGuid && (entry.order.guid === syncOptions.orderGuid || entry.serverGuid === syncOptions.orderGuid))));
+      if (target && ['PRICE_REVIEW','NEEDS_EDIT'].includes(target.status)) {
+        let payload = target.payload;
+        if (syncOptions.pricePolicy && syncOptions.pricePolicy !== 'ASK') {
+          payload = { ...payload, offlineReview: { pricePolicy: syncOptions.pricePolicy } } as ClientOrderSavePayload;
+        }
+        const review = orderChangeReview((target.order as any).submissionErrorDetails);
+        if (review) {
+          if (!await confirmOrderChange(review)) return;
+          payload = { ...payload, integrity: { baseContentToken: review.baseContentToken, confirmationToken: review.confirmationToken } };
+        }
+        if (payload !== target.payload) {
+          const revision = target.clientRevision + 1;
+          await replaceDeviceDraftEntries(deviceDraftEntriesRef.current.map(entry => isSameOrderOperation(entry, target)
+            ? { ...entry, clientRevision: revision, status: 'READY_TO_SEND', payload,
+              order: { ...entry.order, readOnly: false, clientRevision: revision, offlineDraftStatus: 'READY_TO_SEND' } as ClientOrder,
+              lastSyncError: null, updatedAt: new Date().toISOString() } : entry));
+        }
+      }
+      await retryOrderOutboxNow();
+      return;
+    }
     if (!deviceDraftsHydrated || deviceDraftSyncingRef.current || foregroundSaveRef.current || !getServerStatus().isReachable) return;
     const entries = deviceDraftEntriesRef.current;
     if (!entries.length) return;
@@ -3204,14 +3276,15 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
   const saveDraft = React.useCallback(async (options?: SaveOptions) => {
     if (appliedDraftEditVersion !== draftEditVersionRef.current) return null;
-    if (readOnly || foregroundSaveRef.current || deviceDraftSyncingRef.current) return null;
+    if (readOnly || foregroundSaveRef.current || (Platform.OS === 'web' && deviceDraftSyncingRef.current)) return null;
     if (options?.reason === 'autosave' && failedAutosaveVersionRef.current === draftEditVersionRef.current) return null;
     const deviceEntry = findDeviceDraftEntry(draft.guid, draft.clientOrderId);
     if (options?.serverOnly && deviceEntry?.intent === 'SUBMIT') {
       setError('Заказ уже поставлен в очередь. Завершите отправку или снимите его с очереди перед созданием ссылки.');
       return null;
     }
-    const localOnly = options?.localOnly || (!options?.serverOnly && !!deviceEntry) || !getServerStatus().isReachable;
+    const localOnly = options?.localOnly || (isAsyncOrderOutboxEnabled() && options?.intent === 'SUBMIT')
+      || (!options?.serverOnly && !!deviceEntry) || !getServerStatus().isReachable;
     const autosave = options?.reason === 'autosave';
     if (!autosave) addMonitoringBreadcrumb('order.save_requested');
     if (!options?.serverOnly && deviceEntry && !dirtyRef.current && (autosave || deviceEntry.intent === (options?.intent ?? 'SAVE'))) return deviceEntry.order;
@@ -3228,6 +3301,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       payload = localOnly
         ? buildLocalDraftPayload(draft, options?.reason || 'manual')
         : buildPayload(draft, options?.reason || 'manual');
+      if (options?.integrity) payload.integrity = options.integrity;
       if (options?.geoEvents?.length) {
         const geoEvents = [...(payload.geoEvents || []), ...options.geoEvents];
         payload = {
@@ -4053,10 +4127,13 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     try {
       let targetGuid = draft.guid || selectedGuid;
       let revision = draft.revision;
-      const localOnly = !getServerStatus().isReachable || !!findDeviceDraftEntry(targetGuid, draft.clientOrderId);
+      const localOnly = isAsyncOrderOutboxEnabled() || !getServerStatus().isReachable || !!findDeviceDraftEntry(targetGuid, draft.clientOrderId);
+      const pendingReview = orderChangeReview((findDeviceDraftEntry(targetGuid, draft.clientOrderId)?.order as any)?.submissionErrorDetails);
+      if (pendingReview && !await confirmOrderChange(pendingReview)) return;
       const submitGeoEvent = await captureOrderGeoEvent('SUBMITTED', localOnly ? 250 : undefined);
       if (localOnly || draft.clientOrderId) {
-        const saved = await saveDraft({ silent: true, reason: 'manual', intent: 'SUBMIT', localOnly, geoEvents: [submitGeoEvent] });
+        const saved = await saveDraft({ silent: true, reason: 'manual', intent: 'SUBMIT', localOnly, geoEvents: [submitGeoEvent],
+          integrity: pendingReview ? { baseContentToken: pendingReview.baseContentToken, confirmationToken: pendingReview.confirmationToken } : undefined });
         if (saved && saved.origin !== 'device') {
           applySavedOrderToList(saved);
           applyOrderDetail(saved);
@@ -4106,30 +4183,47 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
           return null;
         }
         if (deviceEntry.status === 'READY_TO_SEND') return null;
+        const pendingReview = orderChangeReview((deviceEntry.order as any).submissionErrorDetails);
+        if (pendingReview && !await confirmOrderChange(pendingReview)) return null;
         const updatedAt = new Date().toISOString();
         const submitGeoEvent = deviceEntry.payload.geoEvents?.find(event => event.type === 'SUBMITTED')
           ?? await captureOrderGeoEvent('SUBMITTED', 250);
         if (!deviceDraftEntriesRef.current.some(entry => isSameOrderOperation(entry, deviceEntry))) return null;
-        const submitRevision = deviceEntry.intent === 'SUBMIT' ? deviceEntry.clientRevision : deviceEntry.clientRevision + 1;
+        const submitRevision = isAsyncOrderOutboxEnabled() || deviceEntry.intent !== 'SUBMIT' ? deviceEntry.clientRevision + 1 : deviceEntry.clientRevision;
         await replaceDeviceDraftEntries(deviceDraftEntriesRef.current.map((entry) => isSameOrderOperation(entry, deviceEntry)
           ? {
               ...entry,
               intent: 'SUBMIT' as const,
               clientRevision: submitRevision,
               status: 'READY_TO_SEND' as const,
-              payload: { ...entry.payload, geoEvents: [...(entry.payload.geoEvents || []).filter(event => event.clientEventId !== submitGeoEvent.clientEventId), submitGeoEvent] },
+              payload: { ...entry.payload,
+                ...(pendingReview ? { integrity: { baseContentToken: pendingReview.baseContentToken, confirmationToken: pendingReview.confirmationToken } } : {}),
+                geoEvents: [...(entry.payload.geoEvents || []).filter(event => event.clientEventId !== submitGeoEvent.clientEventId), submitGeoEvent] },
               order: { ...entry.order, clientRevision: submitRevision, geoEvents: [...(entry.order.geoEvents || []).filter(event => event.clientEventId !== submitGeoEvent.clientEventId), submitGeoEvent], offlineDraftStatus: 'READY_TO_SEND' } as ClientOrder,
               updatedAt,
               nextSyncAt: null,
             }
           : entry));
-        // The per-document action prepares a durable local queue. Only the
-        // list's explicit "Send documents" action drains it.
+        // SQLite commit emits a wake-up for the global background dispatcher.
         setOrdersError(null);
         return null;
       }
 
-      const submitGeoEvent = await captureOrderGeoEvent('SUBMITTED');
+      const submitGeoEvent = await captureOrderGeoEvent('SUBMITTED', Platform.OS !== 'web' ? 250 : undefined);
+      if (isAsyncOrderOutboxEnabled()) {
+        const detail = getClientOrderItemsCount(target) > 0 && Array.isArray(target.items) ? target : await getClientOrder(targetGuid);
+        const input = orderToDraft(detail);
+        const now = new Date().toISOString();
+        const clientOrderId = detail.clientOrderId || `legacy-server:${detail.guid}`;
+        const clientRevision = Number(detail.clientRevision || 0) + 1;
+        const entry: DeviceDraftEntry = { id: makeDeviceDraftGuid(), clientOrderId, clientRevision,
+          intent: 'SUBMIT', status: 'READY_TO_SEND', serverGuid: detail.guid, serverRevision: detail.revision,
+          order: { ...detail, origin: 'device', clientOrderId, clientRevision, offlineDraftStatus: 'READY_TO_SEND', readOnly: false } as ClientOrder,
+          payload: { ...buildPayload(input, 'manual'), geoEvents: [...(detail.geoEvents || []), submitGeoEvent] },
+          createdAt: detail.createdAt || now, updatedAt: now, lastSyncError: null };
+        await replaceDeviceDraftEntries([entry, ...deviceDraftEntriesRef.current]);
+        return null;
+      }
       const submitted = await submitClientOrder(targetGuid, targetRevision, [submitGeoEvent]);
 
       applySavedOrderToList(submitted);

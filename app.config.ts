@@ -118,6 +118,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     "./plugins/with-android-cleartext-network",
     "./plugins/with-leader-native-tracking",
     "./plugins/with-android-file-download",
+    "./plugins/with-order-outbox",
     "expo-audio",
     "expo-font",
     "expo-secure-store",

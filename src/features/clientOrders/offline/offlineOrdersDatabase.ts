@@ -1,6 +1,8 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { getCatalogDatabase } from '@/src/features/productCatalog/data/catalogDatabase';
 import { withSQLiteWriteTransaction } from '@/src/shared/storage/sqliteWriteQueue';
+import { emitOrderOutboxChange } from './orderOutboxEvents';
+import { ORDER_API_SCOPE, legacyOrderApiScope, localOrderApiScope, initializeOrderApiScope } from './orderOutboxScope';
 
 export const OFFLINE_ENTITIES = [
   'organizations',
@@ -23,6 +25,7 @@ export type OfflineDraftStatus =
   | 'PRICE_REVIEW'
   | 'NEEDS_EDIT'
   | 'SENDING'
+  | 'API_ACCEPTED'
   | 'SEND_ERROR';
 
 export type StoredOfflineDraft = {
@@ -420,8 +423,11 @@ export async function readOfflineDrafts(userId: string): Promise<StoredOfflineDr
   const rows = await db.getAllAsync<any>(
     'SELECT * FROM offline_drafts WHERE user_id = ? ORDER BY updated_at DESC', userId
   );
+  const legacyScope = await legacyOrderApiScope(db);
   return rows.flatMap((row) => {
     try {
+      const { _deviceApiBaseUrl, ...order } = JSON.parse(row.order_json);
+      if (localOrderApiScope({ _deviceApiBaseUrl }, legacyScope) !== ORDER_API_SCOPE) return [];
       return [{
         id: row.id,
         clientOrderId: row.client_order_id,
@@ -430,7 +436,7 @@ export async function readOfflineDrafts(userId: string): Promise<StoredOfflineDr
         intent: row.intent,
         serverGuid: row.server_guid,
         serverRevision: row.server_revision == null ? null : number(row.server_revision),
-        order: JSON.parse(row.order_json),
+        order,
         payload: JSON.parse(row.payload_json),
         createdAt: row.created_at,
         updatedAt: row.updated_at,
@@ -440,13 +446,26 @@ export async function readOfflineDrafts(userId: string): Promise<StoredOfflineDr
   });
 }
 
+export async function canAdoptLegacyOfflineDrafts() {
+  const db = await getCatalogDatabase();
+  if (!db) return false;
+  await initializeOrderApiScope(db);
+  return await legacyOrderApiScope(db) === ORDER_API_SCOPE;
+}
+
 async function writeDraft(tx: SQLiteDatabase, userId: string, draft: StoredOfflineDraft) {
+  const delivery = await tx.getFirstAsync<{ state: string }>(`SELECT state FROM offline_order_deliveries
+    WHERE user_id = ? AND client_order_id = ? AND api_scope=? AND state IN ('PENDING','UPLOADING','ACCEPTED') LIMIT 1`, userId, draft.clientOrderId, ORDER_API_SCOPE);
+  if (delivery) throw new Error('Этот заказ уже отправляется. Дождитесь подтверждения API. Другие заказы можно редактировать.');
   // The editor's UI guid can still be null while its first save is finishing.
   // The client identity, not the temporary row id, identifies the document.
-  const existing = await tx.getFirstAsync<{ id: string; client_revision: number }>(
-    'SELECT id, client_revision FROM offline_drafts WHERE user_id = ? AND client_order_id = ?',
+  const existing = await tx.getFirstAsync<{ id: string; client_revision: number; order_json: string }>(
+    'SELECT id, client_revision, order_json FROM offline_drafts WHERE user_id = ? AND client_order_id = ?',
     userId, draft.clientOrderId
   );
+  if (existing && localOrderApiScope(JSON.parse(existing.order_json), await legacyOrderApiScope(tx)) !== ORDER_API_SCOPE) {
+    throw new Error('Этот черновик принадлежит другому API. Он сохранён и не будет отправлен сюда.');
+  }
   if (existing && existing.client_revision > draft.clientRevision) {
     throw new Error('На устройстве уже сохранена более новая версия заказа. Откройте его заново.');
   }
@@ -469,7 +488,7 @@ async function writeDraft(tx: SQLiteDatabase, userId: string, draft: StoredOffli
       updated_at=excluded.updated_at,
       last_send_error=excluded.last_send_error
   `, userId, id, draft.clientOrderId, draft.clientRevision, draft.status, draft.intent,
-  draft.serverGuid, draft.serverRevision, JSON.stringify(draft.order), JSON.stringify(draft.payload),
+  draft.serverGuid, draft.serverRevision, JSON.stringify({ ...draft.order, _deviceApiBaseUrl: ORDER_API_SCOPE }), JSON.stringify(draft.payload),
   draft.createdAt, draft.updatedAt, draft.lastSendError);
   await tx.runAsync('DELETE FROM offline_draft_lines WHERE user_id = ? AND draft_id = ?', userId, id);
   const items = Array.isArray(draft.payload?.items) ? draft.payload.items : [];
@@ -493,6 +512,13 @@ export async function applyOfflineDraftChanges(
   await withSQLiteWriteTransaction(db, async (tx) => {
     for (const draft of upserts) await writeDraft(tx, userId, draft);
     for (const removed of removals) {
+      const candidate = await tx.getFirstAsync<{ order_json: string }>(`SELECT order_json FROM offline_drafts WHERE user_id=? AND client_order_id=? AND client_revision=?`,
+      userId, removed.clientOrderId, removed.clientRevision);
+      if (candidate && localOrderApiScope(JSON.parse(candidate.order_json), await legacyOrderApiScope(tx)) !== ORDER_API_SCOPE) continue;
+      const active = await tx.getFirstAsync(`SELECT 1 FROM offline_order_deliveries WHERE user_id = ?
+        AND client_order_id = ? AND client_revision = ? AND state IN ('PENDING','UPLOADING','ACCEPTED')`,
+      userId, removed.clientOrderId, removed.clientRevision);
+      if (active) throw new Error('Этот заказ ещё отправляется. Локальная копия сохранена.');
       const args = [userId, removed.clientOrderId, removed.clientRevision] as const;
       // Exclusive connections do not inherit foreign_keys. Delete lines explicitly,
       // with the same revision guard as the parent, inside the same transaction.
@@ -502,6 +528,7 @@ export async function applyOfflineDraftChanges(
       await tx.runAsync('DELETE FROM offline_drafts WHERE user_id = ? AND client_order_id = ? AND client_revision = ?', ...args);
     }
   });
+  emitOrderOutboxChange({ userId });
   return true;
 }
 
@@ -513,6 +540,12 @@ export async function deleteOfflineDraft(userId: string, id: string) {
   const db = await getCatalogDatabase();
   if (!db) return false;
   await withSQLiteWriteTransaction(db, async (tx) => {
+    const candidate = await tx.getFirstAsync<{ order_json: string }>('SELECT order_json FROM offline_drafts WHERE user_id=? AND id=?', userId, id);
+    if (candidate && localOrderApiScope(JSON.parse(candidate.order_json), await legacyOrderApiScope(tx)) !== ORDER_API_SCOPE) throw new Error('Черновик принадлежит другому API.');
+    const active = await tx.getFirstAsync(`SELECT 1 FROM offline_order_deliveries x JOIN offline_drafts d
+      ON d.user_id=x.user_id AND d.client_order_id=x.client_order_id WHERE d.user_id=? AND d.id=?
+      AND x.state IN ('PENDING','UPLOADING','ACCEPTED')`, userId, id);
+    if (active) throw new Error('Отправляемый заказ нельзя удалить до подтверждения API.');
     await tx.runAsync('DELETE FROM offline_drafts WHERE user_id = ? AND id = ?', userId, id);
   });
   return true;
@@ -522,7 +555,16 @@ export async function replaceOfflineDrafts(userId: string, drafts: StoredOffline
   const db = await getCatalogDatabase();
   if (!db) return false;
   await withSQLiteWriteTransaction(db, async (tx) => {
-    await tx.runAsync('DELETE FROM offline_drafts WHERE user_id = ?', userId);
+    if (await tx.getFirstAsync(`SELECT 1 FROM offline_order_deliveries WHERE user_id=? AND state IN ('PENDING','UPLOADING','ACCEPTED') LIMIT 1`, userId)) {
+      throw new Error('Нельзя заменить черновики во время отправки.');
+    }
+    const legacyScope = await legacyOrderApiScope(tx);
+    const existing = await tx.getAllAsync<{ id: string; order_json: string }>('SELECT id,order_json FROM offline_drafts WHERE user_id=?', userId);
+    for (const row of existing) {
+      if (localOrderApiScope(JSON.parse(row.order_json), legacyScope) !== ORDER_API_SCOPE) continue;
+      await tx.runAsync('DELETE FROM offline_draft_lines WHERE user_id=? AND draft_id=?', userId, row.id);
+      await tx.runAsync('DELETE FROM offline_drafts WHERE user_id=? AND id=?', userId, row.id);
+    }
     for (const draft of drafts) {
       await tx.runAsync(`
         INSERT INTO offline_drafts(
@@ -531,7 +573,7 @@ export async function replaceOfflineDrafts(userId: string, drafts: StoredOffline
           created_at, updated_at, last_send_error
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `, userId, draft.id, draft.clientOrderId, draft.clientRevision, draft.status, draft.intent,
-      draft.serverGuid, draft.serverRevision, JSON.stringify(draft.order), JSON.stringify(draft.payload),
+      draft.serverGuid, draft.serverRevision, JSON.stringify({ ...draft.order, _deviceApiBaseUrl: ORDER_API_SCOPE }), JSON.stringify(draft.payload),
       draft.createdAt, draft.updatedAt, draft.lastSendError);
       const items = Array.isArray(draft.payload?.items) ? draft.payload.items : [];
       for (let index = 0; index < items.length; index += 1) {

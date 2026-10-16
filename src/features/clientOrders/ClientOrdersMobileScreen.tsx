@@ -7577,6 +7577,7 @@ const OrderCard = React.memo(function OrderCard({
     PRICE_REVIEW: 'Цены изменились',
     NEEDS_EDIT: 'Требует исправления',
     SENDING: 'Отправляется',
+    API_ACCEPTED: 'Принят API · обработка',
     SEND_ERROR: 'Ошибка отправки',
   };
   const statusLabel = isDeviceOrder && !hasDebtProblem

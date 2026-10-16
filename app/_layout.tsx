@@ -21,6 +21,7 @@ import UpdateGate from '@/components/UpdateGate';
 import StartupLogoLoader from '@/components/StartupLogoLoader';
 import { OtaUpdateStatusProvider } from '@/src/shared/ota/OtaUpdateStatusContext';
 import { registerOtaBackgroundPrefetchTask } from '@/src/shared/ota/registerOtaBackgroundTask';
+import { registerOrderOutboxTask } from '@/src/features/clientOrders/offline/registerOrderOutboxTask';
 import { initPushNotifications } from '@/utils/pushNotifications';
 import { captureException, setMonitoringScreen, setMonitoringUser } from '@/src/shared/monitoring';
 
@@ -87,6 +88,7 @@ export default function RootLayout() {
 
   useEffect(() => {
     if (!appIsReady) return;
+    void registerOrderOutboxTask().catch(error => captureException(error, { where: 'RootLayout:registerOrderOutboxTask' }));
     void registerOtaBackgroundPrefetchTask().catch((error) => {
       captureException(error, { where: 'RootLayout:registerOtaBackgroundPrefetchTask' });
       console.warn('[ota] background prefetch registration failed', error);
