@@ -1,4 +1,6 @@
 :root { color-scheme: light; }
+@font-face { font-family: 'OrderWeightIcon'; src: url('./assets/weight-kilogram.woff') format('woff'); font-style: normal; font-weight: normal; font-display: block; }
+.order-weight-icon.MuiIcon-root { font-family: 'OrderWeightIcon'; font-weight: normal; font-style: normal; font-variant: normal; text-transform: none; line-height: 1; -webkit-font-smoothing: antialiased; }
 * { box-sizing: border-box; }
 body { margin: 0; background: #fff; }
 .page { max-width: 1440px; margin: auto; padding: 0 32px; }
@@ -21,14 +23,25 @@ main { padding-bottom: 24px; }
 .photo-empty svg { font-size: 36px; }
 .products h2 { margin: 14px 0 10px; font-size: 19px; line-height: 1.3; font-weight: 650; overflow-wrap: anywhere; }
 .quantity { margin: auto 0 4px; color: #61708a; font-size: 17px; line-height: 1.4; }
+.line-weight { display: flex; align-items: center; gap: 7px; margin: 0 0 8px; color: #61708a; font-size: 15px; line-height: 1.4; }
+.line-weight svg, .line-weight .order-weight-icon { width: 21px; height: 21px; font-size: 21px; flex-shrink: 0; }
 .line-total { margin: 0; color: #1859f7; font-size: 28px; font-weight: 750; line-height: 1.25; }
 .bottom-bar { position: fixed; inset: auto 0 0; z-index: 20; background: #fff; border-top: 1px solid #e1e7f0; padding-bottom: env(safe-area-inset-bottom); box-shadow: 0 -4px 20px rgba(17,26,53,.04); }
-.order-footer { max-width: 1440px; margin: auto; padding: 10px 32px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px 32px; }
+.order-footer { max-width: 1440px; margin: auto; padding: 16px 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: stretch; }
+.footer-metric { display: flex; align-items: center; justify-content: center; gap: 10px; min-width: 0; padding: 0 16px; }
+.footer-metric > div { min-width: 0; }
+.footer-metric > svg, .footer-metric > .order-weight-icon { width: 26px; height: 26px; font-size: 26px; flex-shrink: 0; }
+.footer-metric + .footer-metric { border-left: 1px solid #e1e7f0; }
 .footer-label { display: block; color: #61708a; font-size: 11px; font-weight: 400; line-height: 1.4; margin-bottom: 2px; }
-.delivery { display: flex; align-items: center; gap: 10px; font-size: 15px; }
+.delivery { font-size: 15px; }
 .delivery strong { font-weight: 600; line-height: 1.3; }
 .delivery svg { color: #1859f7; font-size: 25px; flex-shrink: 0; }
-.total { text-align: right; }
+.order-weight { color: #111a35; }
+.order-weight > svg, .order-weight > .order-weight-icon, .total > svg { color: #61708a; }
+.order-weight strong { display: block; font-size: 22px; line-height: 1.25; overflow-wrap: anywhere; }
+.order-weight:focus-visible { outline: 2px solid #1859f7; outline-offset: -2px; }
+.weight-incomplete strong { color: #61708a; }
+.total { text-align: left; }
 .total strong { color: #1859f7; display: block; font-size: 28px; line-height: 1.1; font-weight: 750; overflow-wrap: anywhere; }
 .bottom-bar .manager-contact-button { min-height: 44px; border-radius: 0; font-size: 15px; }
 .manager-contact-dialog .MuiListItemButton-root { min-height: 56px; padding-left: 24px; padding-right: 24px; }
@@ -40,31 +53,44 @@ main { padding-bottom: 24px; }
 @media (max-width: 1000px) {
   .page { padding: 0 24px; }
   .products { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px 18px; }
-  .order-footer { padding: 10px 24px; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; }
+  .footer-metric { padding: 0 12px; }
 }
 @media (max-width: 600px) {
-  .page { padding: 0 16px; }
-  .order-header { padding: 16px 0 14px; margin-bottom: 16px; }
-  .brand { font-size: 18px; gap: 7px; }
+  .page { padding: 0 20px; }
+  .order-header { padding: 24px 0 15px; margin-bottom: 24px; }
+  .brand { font-size: 20px; gap: 7px; }
   .brand img { width: 28px; height: 28px; }
   .brand time { font-size: 12px; }
-  h1 { font-size: 16px; margin-top: 10px; }
-  .delivery-address { margin-top: 4px; font-size: 13px; }
-  .products { gap: 22px 12px; }
+  h1 { font-size: 20px; margin-top: 12px; }
+  .delivery-address { margin-top: 5px; font-size: 14px; line-height: 1.3; }
+  .products { gap: 26px 16px; }
+  .photo { aspect-ratio: .75; }
   .photo-button { padding: 5px; }
-  .products h2 { margin: 9px 0 6px; font-size: 14px; line-height: 1.3; }
-  .quantity { font-size: 12px; margin-bottom: 3px; }
-  .line-total { font-size: 21px; }
-  .order-footer { padding: 8px 16px; }
-  .delivery { font-size: 13px; gap: 8px; }
-  .delivery svg { font-size: 22px; }
-  .total strong { font-size: 25px; }
+  .products h2 { margin: 14px 0 10px; font-size: 14px; line-height: 1.4; letter-spacing: -.55px; text-wrap: balance; }
+  .quantity { font-size: 13px; margin-bottom: 5px; }
+  .line-weight { font-size: 13px; gap: 6px; margin-bottom: 7px; }
+  .line-weight svg, .line-weight .order-weight-icon { width: 18px; height: 18px; font-size: 18px; }
+  .line-total { font-size: 24px; }
+  .order-footer { padding: 15px 0; }
+  .footer-metric { padding: 0 8px; gap: 7px; }
+  .footer-metric > svg, .footer-metric > .order-weight-icon { width: 22px; height: 22px; font-size: 22px; }
+  .footer-label { font-size: 11px; }
+  .delivery { font-size: 13px; }
+  .order-weight strong { font-size: 18px; }
+  .total strong { font-size: 22px; }
+  .bottom-bar .manager-contact-button { min-height: 60px; font-size: 16px; }
   .manager-contact-dialog .MuiDialog-container { align-items: flex-end; }
   .manager-contact-dialog .MuiDialog-paper { margin: 0; width: 100%; max-width: none; max-height: calc(100% - 32px); border-radius: 16px 16px 0 0; padding-bottom: env(safe-area-inset-bottom); }
 }
 @media (max-width: 350px) {
+  .page { padding: 0 14px; }
   .brand { font-size: 16px; }
   .brand time { font-size: 11px; }
   .brand img { width: 25px; height: 25px; }
+  .footer-metric { padding: 0 5px; gap: 5px; }
+  .footer-metric > svg, .footer-metric > .order-weight-icon { width: 19px; height: 19px; font-size: 19px; }
+  .order-weight strong { font-size: 16px; }
+  .total strong { font-size: 19px; }
+  .delivery { font-size: 12px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }

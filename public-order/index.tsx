@@ -1,6 +1,6 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { Alert, Button, CssBaseline, IconButton, Skeleton, ThemeProvider, createTheme, useMediaQuery } from '@mui/material';
+import { Alert, Button, CssBaseline, Icon, IconButton, Skeleton, ThemeProvider, Tooltip, createTheme, useMediaQuery } from '@mui/material';
 import { ProductImageGalleryDialog, type ProductImageGallery } from '../src/features/clientOrders/components/ProductImageGalleryDialog';
 import { ManagerContactDialog, type ManagerContacts } from './ManagerContactDialog';
 import { getOrderDeliveryLabel, type PublicOrderDelivery } from './delivery';
@@ -8,12 +8,14 @@ import ChatIcon from '@mui/icons-material/ChatBubbleOutline';
 import DeliveryIcon from '@mui/icons-material/LocalShippingOutlined';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import ImageIcon from '@mui/icons-material/ImageOutlined';
+import MoneyIcon from '@mui/icons-material/PaymentsOutlined';
+import { formatOrderWeight, publicOrderWeight, type PublicOrderWeight } from './weight';
 import logo from '../assets/images/icon.png';
 import './style.css';
 import { shareTokenFromLocation } from './shareLocation';
 
-type Item = { id: string; name: string; quantity: string; unit: string; unitPrice: string; amount: string; image: { id: string; version: string } | null };
-type Order = PublicOrderDelivery & { number: string; date: string | null; customer: string; deliveryDate: string | null; currency: string; cancelled: boolean;
+type Item = { id: string; name: string; quantity: string; unit: string; unitPrice: string; amount: string; weightKg?: string | null; image: { id: string; version: string } | null };
+type Order = PublicOrderDelivery & Omit<PublicOrderWeight, 'items'> & { number: string; date: string | null; customer: string; deliveryDate: string | null; currency: string; cancelled: boolean;
   total: string; updatedAt: string; items: Item[]; manager: ManagerContacts };
 const theme = createTheme({ palette: { primary: { main: '#1859f7' }, text: { primary: '#111a35', secondary: '#61708a' } },
   typography: { fontFamily: 'Arial, system-ui, sans-serif', button: { textTransform: 'none', fontWeight: 600 } },
@@ -22,6 +24,8 @@ const theme = createTheme({ palette: { primary: { main: '#1859f7' }, text: { pri
 window.addEventListener('hashchange', () => window.location.reload());
 const token = shareTokenFromLocation(window.location) || '';
 const validToken = !!token;
+// MaterialCommunityIcons weight-kilogram; same original glyph as selected option 1.
+const weightIconGlyph = '\u{F05A2}';
 const money = (value: string, currency: string, precision = 2) => new Intl.NumberFormat('ru-RU', { style: 'currency', currency, minimumFractionDigits: 0, maximumFractionDigits: precision }).format(Number(value));
 const number = (value: string) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 4 }).format(Number(value));
 const date = (value: string | null, year = false) => value ? new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', ...(year ? { year: 'numeric' } : {}), timeZone: 'Asia/Omsk' }).format(new Date(value)) : '';
@@ -67,6 +71,7 @@ function App() {
   const [photo, setPhoto] = React.useState<ProductImageGallery | null>(null);
   const [contactsOpen, setContactsOpen] = React.useState(false);
   const deliveryLabel = getOrderDeliveryLabel(order);
+  const weight = order ? publicOrderWeight(order) : null;
   const isPhoneDialog = useMediaQuery('(max-width:600px)');
   const footer = React.useRef<HTMLElement | null>(null);
   const [footerHeight, setFooterHeight] = React.useState(0);
@@ -124,11 +129,18 @@ function App() {
           <section className="products" aria-label="Товары заказа">{order.items.map(item => <article key={item.id}>
             <ProductPhoto item={item} onOpen={(url, title) => setPhoto({ title, index: 0, images: [{ key: item.id, previewUrl: url, thumbUrl: url }] })} />
             <h2>{item.name}</h2><p className="quantity">{number(item.quantity)} {item.unit} × {money(item.unitPrice, order.currency, 4)}</p>
+            <p className="line-weight"><Icon baseClassName="order-weight-icon" fontSize="inherit" aria-hidden="true">{weightIconGlyph}</Icon><span>Вес {formatOrderWeight(item.weightKg)}</span></p>
             <p className="line-total">{money(item.amount, order.currency)}</p>
           </article>)}</section>
-          <footer className="bottom-bar" ref={footer} aria-label="Доставка, сумма и контакты менеджера"><div className="order-footer">
-            <div className="delivery"><DeliveryIcon aria-hidden="true" /><div><span className="footer-label">Доставка</span><strong>{order.deliveryDate ? date(order.deliveryDate) : 'Уточните у менеджера'}</strong></div></div>
-            <div className="total" aria-label="Итого"><span className="footer-label">Сумма заказа</span><strong>{money(order.total, order.currency)}</strong></div>
+          <footer className="bottom-bar" ref={footer} aria-label="Доставка, вес, сумма и контакты менеджера"><div className="order-footer">
+            <div className="delivery footer-metric"><DeliveryIcon aria-hidden="true" /><div><span className="footer-label">Доставка</span><strong>{order.deliveryDate ? date(order.deliveryDate) : 'Уточните у менеджера'}</strong></div></div>
+            <Tooltip title={weight?.description ?? ''} enterTouchDelay={0}>
+              <div className={`order-weight footer-metric${weight?.complete ? '' : ' weight-incomplete'}`} tabIndex={0}
+                aria-label={`${weight?.label}: ${weight?.value}. ${weight?.description}`}>
+                <Icon baseClassName="order-weight-icon" fontSize="inherit" aria-hidden="true">{weightIconGlyph}</Icon><div><span className="footer-label">{weight?.label}</span><strong>{weight?.value}</strong></div>
+              </div>
+            </Tooltip>
+            <div className="total footer-metric" aria-label="Итого"><MoneyIcon aria-hidden="true" /><div><span className="footer-label">Сумма заказа</span><strong>{money(order.total, order.currency)}</strong></div></div>
           </div>
             <Button className="manager-contact-button" variant="contained" fullWidth startIcon={<ChatIcon />}
               aria-haspopup="dialog" aria-expanded={contactsOpen} onClick={() => setContactsOpen(true)}>Связь с менеджером</Button>
