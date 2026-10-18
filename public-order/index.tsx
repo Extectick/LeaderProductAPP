@@ -3,9 +3,10 @@ import { createRoot } from 'react-dom/client';
 import { Alert, Button, CssBaseline, Icon, IconButton, Skeleton, ThemeProvider, Tooltip, createTheme, useMediaQuery } from '@mui/material';
 import { ProductImageGalleryDialog, type ProductImageGallery } from '../src/features/clientOrders/components/ProductImageGalleryDialog';
 import { ManagerContactDialog, type ManagerContacts } from './ManagerContactDialog';
-import { getOrderDeliveryLabel, type PublicOrderDelivery } from './delivery';
+import { getOrderDeliveryLabel, getOrderDeliveryTitle, isOrderPickup, type PublicOrderDelivery } from './delivery';
 import ChatIcon from '@mui/icons-material/ChatBubbleOutline';
 import DeliveryIcon from '@mui/icons-material/LocalShippingOutlined';
+import PickupIcon from '@mui/icons-material/StorefrontOutlined';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import ImageIcon from '@mui/icons-material/ImageOutlined';
 import MoneyIcon from '@mui/icons-material/PaymentsOutlined';
@@ -71,6 +72,8 @@ function App() {
   const [photo, setPhoto] = React.useState<ProductImageGallery | null>(null);
   const [contactsOpen, setContactsOpen] = React.useState(false);
   const deliveryLabel = getOrderDeliveryLabel(order);
+  const deliveryTitle = getOrderDeliveryTitle(order);
+  const FulfillmentIcon = isOrderPickup(order) ? PickupIcon : DeliveryIcon;
   const weight = order ? publicOrderWeight(order) : null;
   const isPhoneDialog = useMediaQuery('(max-width:600px)');
   const footer = React.useRef<HTMLElement | null>(null);
@@ -132,8 +135,8 @@ function App() {
             <p className="line-weight"><Icon baseClassName="order-weight-icon" fontSize="inherit" aria-hidden="true">{weightIconGlyph}</Icon><span>Вес {formatOrderWeight(item.weightKg)}</span></p>
             <p className="line-total">{money(item.amount, order.currency)}</p>
           </article>)}</section>
-          <footer className="bottom-bar" ref={footer} aria-label="Доставка, вес, сумма и контакты менеджера"><div className="order-footer">
-            <div className="delivery footer-metric"><DeliveryIcon aria-hidden="true" /><div><span className="footer-label">Доставка</span><strong>{order.deliveryDate ? date(order.deliveryDate) : 'Уточните у менеджера'}</strong></div></div>
+          <footer className="bottom-bar" ref={footer} aria-label="Получение, вес, сумма и контакты менеджера"><div className="order-footer">
+            <div className="delivery footer-metric"><FulfillmentIcon aria-hidden="true" /><div><span className="footer-label">{deliveryTitle}</span><strong>{order.deliveryDate ? date(order.deliveryDate) : 'Уточните у менеджера'}</strong></div></div>
             <Tooltip title={weight?.description ?? ''} enterTouchDelay={0}>
               <div className={`order-weight footer-metric${weight?.complete ? '' : ' weight-incomplete'}`} tabIndex={0}
                 aria-label={`${weight?.label}: ${weight?.value}. ${weight?.description}`}>

@@ -70,6 +70,7 @@ import {
   computeDraftTotal,
   computeLineTotal,
   DEFAULT_ORDER_CURRENCY,
+  deliveryMethodForNewOrder,
   emptyDraft,
   getClientOrderItems,
   getClientOrderItemsCount,
@@ -607,7 +608,7 @@ function buildDraftBase(settings: ClientOrderSettings | null) {
     priceTypeGuid: null,
     priceTypeName: null,
     paymentForm: null,
-    deliveryMethod: null,
+    deliveryMethod: deliveryMethodForNewOrder(),
   };
 }
 
@@ -2225,6 +2226,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     const copiedDraft = normalizeDraftOrder({
       ...draft,
       guid: localGuid,
+      deliveryMethod: deliveryMethodForNewOrder(draft.deliveryMethod),
       clientOrderId: makeClientOrderId(),
       clientRevision: 1,
       revision: 1,
@@ -3666,7 +3668,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       priceTypeGuid: null,
       priceTypeName: null,
       paymentForm: null,
-      deliveryMethod: null,
+      deliveryMethod: deliveryMethodForNewOrder(prev.deliveryMethod),
       invoiceRequested: false,
       items: prev.items.map((item) => (
         hasManualPrice(item)
@@ -4330,6 +4332,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         const copiedDraft = normalizeDraftOrder({
           ...sourceDraft,
           guid: localGuid,
+          deliveryMethod: deliveryMethodForNewOrder(sourceDraft.deliveryMethod),
           clientOrderId: makeClientOrderId(),
           clientRevision: 1,
           revision: 1,

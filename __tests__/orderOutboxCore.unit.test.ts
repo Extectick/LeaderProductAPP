@@ -87,6 +87,7 @@ describe('durable background order queue', () => {
     store.accepted.mockResolvedValue([{ ...item(), receipt: receipt() }]); transport.statuses.mockResolvedValue([receipt(item(), 'QUEUED')]);
     transport.order.mockRejectedValue(new Error('offline'));
     await run(); expect(store.complete).not.toHaveBeenCalled(); expect(store.fail).not.toHaveBeenCalled();
+    expect(store.status).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ state: 'QUEUED' }));
   });
   it('halts cleanly for unsupported server capability', async () => {
     transport.capabilities.mockResolvedValue({ enabled: false, protocol: 'client-order-inbox-v1' });

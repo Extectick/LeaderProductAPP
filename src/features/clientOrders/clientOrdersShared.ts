@@ -456,7 +456,7 @@ export function emptyDraft(): DraftOrder {
     deliveryAddressGuid: '',
     deliveryDate: null,
     paymentForm: null,
-    deliveryMethod: null,
+    deliveryMethod: deliveryMethodForNewOrder(),
     comment: '',
     currency: DEFAULT_ORDER_CURRENCY,
     priceTypeGuid: null,
@@ -512,6 +512,11 @@ export function normalizeClientOrderDeliveryMethod(value: unknown): string | nul
     return 'ДоКлиента';
   }
   return normalized;
+}
+
+/** Only new documents/copies get a default; old unknown fields stay unknown. */
+export function deliveryMethodForNewOrder(value?: string | null) {
+  return normalizeClientOrderDeliveryMethod(value) || 'ДоКлиента';
 }
 
 export function manualPriceInput(item?: Pick<DraftItem, 'manualPrice'> | null) {

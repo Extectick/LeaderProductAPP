@@ -3440,6 +3440,7 @@ const HeaderSection = React.memo(function HeaderSection({
     />
     <FlatSegmentedField
       label="Способ доставки"
+      emptyLabel="Способ доставки не указан"
       value={workspace.draft.deliveryMethod}
       choices={DELIVERY_METHOD_CHOICES}
       icon="truck-delivery-outline"
@@ -3676,6 +3677,7 @@ function FlatDocumentField({
 
 function FlatSegmentedField({
   label,
+  emptyLabel,
   value,
   choices,
   icon,
@@ -3684,6 +3686,7 @@ function FlatSegmentedField({
   onChange,
 }: {
   label: string;
+  emptyLabel?: string;
   value?: string | null;
   choices: SegmentedChoice[];
   icon: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
@@ -3729,6 +3732,7 @@ function FlatSegmentedField({
           })}
         </View>
         {unsupported ? <Text style={styles.flatSegmentedUnsupported} numberOfLines={2}>Текущее из 1С: {unsupported}</Text> : null}
+        {!value?.trim() && emptyLabel && !loading ? <Text style={styles.flatSegmentedUnsupported}>{emptyLabel}</Text> : null}
       </View>
       {loading ? (
         <View style={styles.flatFieldActions}>

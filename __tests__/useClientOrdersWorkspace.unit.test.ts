@@ -572,6 +572,9 @@ describe('useClientOrdersWorkspace', () => {
 
   function legacyFixture(status = 'READY_TO_SEND') {
     const entry: any = localEntry('legacy-server:legacy-guid', status);
+    // Historical documents predate the new-order delivery default.
+    entry.order.localDraft.deliveryMethod = null;
+    entry.payload = buildLocalDraftPayload(entry.order.localDraft);
     entry.serverGuid = 'legacy-guid'; entry.serverRevision = 1; entry.order.guid = 'legacy-guid'; entry.order.revision = 1;
     const saved: any = { ...entry.order, localDraft: undefined, origin: 'local', revision: 2, createdByUser: { id: 1 },
       agreement: { guid: 'agreement-guid' }, contract: { guid: 'contract-guid' }, warehouse: { guid: 'warehouse-guid' },

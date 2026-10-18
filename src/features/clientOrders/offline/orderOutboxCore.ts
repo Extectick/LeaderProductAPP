@@ -60,13 +60,17 @@ export async function drainOrderOutbox(options: {
   if (!waiting.length) return;
   const results = await transport.statuses(waiting.map(item => item.receipt!.submissionId));
   for (const item of waiting) {
-    if (!isCurrent()) return;
+    if (!isCurrent() || Date.now() >= deadline) return;
     const receipt = results.find(result => matchingSubmissionReceipt(item, result)
       && result.submissionId === item.receipt?.submissionId);
     if (!receipt) continue;
     if (receipt.state === 'QUEUED') {
       try { await store.complete({ ...item, receipt }, await transport.order(receipt), item.clientOrderId.startsWith('legacy-server:')); }
-      catch { /* Keep the receipt AND the payload until exact durable reconciliation. */ }
+      catch {
+        // Retain the packet and rotate failed reads so one old receipt cannot
+        // permanently starve all later accepted orders behind the polling limit.
+        await store.status(item, receipt);
+      }
     } else await store.status(item, receipt);
   }
 }

@@ -345,6 +345,8 @@ export type ClientOrder = {
   sourceUpdatedAt?: string | null;
   revision: number;
   syncState: string;
+  /** Exact immutable inbox operation confirmed by the authenticated API. */
+  acceptedSubmission?: import('@/src/features/clientOrders/offline/orderSubmissionProtocol').SubmissionReceipt;
   status: string;
   queuePosition?: number | null;
   status1c?: string | null;

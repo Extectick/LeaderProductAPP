@@ -121,6 +121,49 @@ it('rolls back ACK deletion if the canonical mirror cannot be saved', async () =
   expect(await offline.readOfflineDrafts('90')).toHaveLength(1);
   expect(await outbox.readAcceptedUploads('90')).toHaveLength(1);
 });
+
+async function acceptedLegacyFixture() {
+  const outbox = require('../src/features/clientOrders/offline/orderOutboxDatabase');
+  const queued = { ...queuedDraft('legacy'), clientOrderId: 'legacy-server:canonical-guid',
+    serverGuid: 'canonical-guid', serverRevision: 3 };
+  await offline.upsertOfflineDraft('90', queued);
+  const [packet] = await outbox.claimOrderUploads('90');
+  await outbox.acceptOrderUpload(packet, ack(packet));
+  const accepted = { ...(await outbox.readAcceptedUploads('90'))[0], receipt: ack(packet, 'QUEUED') };
+  const order = { guid: 'canonical-guid', createdByUser: { id: 90 }, revision: 6, status: 'CONFIRMED', syncState: 'SYNCED',
+    deliveryMethod: 'ДоКлиента', paymentForm: 'Наличная', number1c: 'НОУТ-125596', items: [],
+    acceptedSubmission: ack(packet, 'QUEUED') };
+  return { outbox, accepted, order };
+}
+it('retires a legacy API-accepted copy against the exact receipt even after 1C enriched its header', async () => {
+  const { outbox, accepted, order } = await acceptedLegacyFixture();
+  await outbox.completeOrderUpload(accepted, order, true);
+  expect(await offline.readOfflineDrafts('90')).toEqual([]);
+  expect(await outbox.readOrderMirrors('90')).toEqual([order]);
+  expect(await db.getFirstAsync('PRAGMA integrity_check')).toEqual({ integrity_check: 'ok' });
+});
+it('shows a proven API-side export error instead of keeping the device stuck on API acceptance', async () => {
+  const { outbox, accepted, order } = await acceptedLegacyFixture();
+  const failedOrder = { ...order, status: 'QUEUED', syncState: 'ERROR', lastExportError: 'Недостаточно остатка' };
+  await outbox.completeOrderUpload(accepted, failedOrder, true);
+  expect(await offline.readOfflineDrafts('90')).toEqual([]);
+  expect(await outbox.readOrderMirrors('90')).toEqual([failedOrder]);
+});
+it.each([{ payloadHash: 'wrong' }, { userId: 91 }, { clientRevision: 2 }, { submissionId: 'another-receipt' },
+  { orderGuid: 'another-guid' }, { state: 'PROCESSING' }])('retains the legacy copy for mismatched immutable proof %j', async change => {
+  const { outbox, accepted, order } = await acceptedLegacyFixture();
+  order.acceptedSubmission = { ...order.acceptedSubmission, ...change };
+  await expect(outbox.completeOrderUpload(accepted, order, true)).rejects.toThrow('Исходный заказ');
+  expect(await offline.readOfflineDrafts('90')).toHaveLength(1);
+  expect(await outbox.readOrderMirrors('90')).toEqual([]);
+});
+it('does not discard a newer local revision on a late canonical receipt', async () => {
+  const { outbox, accepted, order } = await acceptedLegacyFixture();
+  await db.runAsync("UPDATE offline_drafts SET client_revision=2 WHERE user_id='90'");
+  await outbox.completeOrderUpload(accepted, order, true);
+  expect(await offline.readOfflineDrafts('90')).toHaveLength(1);
+  expect(await outbox.readOrderMirrors('90')).toEqual([]);
+});
 it('unlocks a business-rejected order for correction with a higher immutable revision', async () => {
   const outbox = require('../src/features/clientOrders/offline/orderOutboxDatabase');
   const queued = queuedDraft(); await offline.upsertOfflineDraft('90', queued); const [packet] = await outbox.claimOrderUploads('90');

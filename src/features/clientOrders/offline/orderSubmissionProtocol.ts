@@ -25,6 +25,14 @@ export function matchingSubmissionReceipt(packet: FrozenSubmission, receipt: any
     && typeof receipt.acceptedAt === 'string' && Number.isFinite(Date.parse(receipt.acceptedAt))
     && ['ACCEPTED', 'PROCESSING', 'RETRY', 'QUEUED', 'NEEDS_REVIEW', 'REJECTED'].includes(receipt.state);
 }
+
+export function submittedOrderConfirmsPacket(packet: FrozenSubmission, receipt: SubmissionReceipt | null,
+  order: { guid: string; acceptedSubmission?: SubmissionReceipt }) {
+  const proof = order.acceptedSubmission;
+  return !!receipt && receipt.state === 'QUEUED' && matchingSubmissionReceipt(packet, receipt)
+    && matchingSubmissionReceipt(packet, proof) && proof.state === 'QUEUED'
+    && receipt.submissionId === proof.submissionId && receipt.orderGuid === order.guid && proof.orderGuid === order.guid;
+}
 export function isAutomaticSubmission(entry: { intent: string; status: string; clientOrderId: string }) {
   return entry.intent === 'SUBMIT' && ['READY_TO_SEND', 'SEND_ERROR', 'SENDING'].includes(entry.status)
     && !entry.clientOrderId.startsWith('legacy:');

@@ -2,7 +2,7 @@ import type { SQLiteDatabase } from 'expo-sqlite';
 import { getCatalogDatabase } from '@/src/features/productCatalog/data/catalogDatabase';
 import { withSQLiteWriteTransaction } from '@/src/shared/storage/sqliteWriteQueue';
 import { emitOrderOutboxChange } from './orderOutboxEvents';
-import { isAutomaticSubmission, matchingSubmissionReceipt, submissionHash, type FrozenSubmission, type SubmissionReceipt } from './orderSubmissionProtocol';
+import { isAutomaticSubmission, matchingSubmissionReceipt, submittedOrderConfirmsPacket, submissionHash, type FrozenSubmission, type SubmissionReceipt } from './orderSubmissionProtocol';
 import { reviewFromError } from '../lib/draftReview';
 import type { ClientOrder } from '@/utils/clientOrdersService';
 import { legacyOrderMatches } from '../lib/legacyOrderRecovery';
@@ -137,13 +137,17 @@ export async function updateSubmissionStatus(item: Delivery, receipt: Submission
 /** Mirror is committed BEFORE deleting the exact local operation. Never a naked receipt. */
 export async function completeOrderUpload(item: Delivery, order: ClientOrder, legacy = false) {
   if (item.apiScope !== ORDER_API_SCOPE) return;
+  const exactReceipt = submittedOrderConfirmsPacket(item, item.receipt, order);
   if (order.createdByUser?.id !== Number(item.userId) || !order.guid || order.origin === 'device'
     || (!legacy && (order.clientOrderId !== item.clientOrderId || order.clientRevision !== item.clientRevision
       || (item.receipt?.orderGuid && item.receipt.orderGuid !== order.guid)))
-    || !['QUEUED','SYNCED'].includes(order.syncState) || !['QUEUED','SENT_TO_1C','CONFIRMED'].includes(order.status)) {
+    || (!['QUEUED','SYNCED'].includes(order.syncState) && !(exactReceipt && order.syncState === 'ERROR'))
+    || !['QUEUED','SENT_TO_1C','CONFIRMED'].includes(order.status)) {
     throw new Error('Сервер не подтвердил отправленную версию. Копия сохранена.');
   }
-  if (legacy && !legacyOrderMatches({ guid: item.payload.legacyServerGuid, userId: Number(item.userId), payload: item.payload }, order)) {
+  if (legacy && (item.payload.legacyServerGuid !== order.guid || item.clientOrderId !== `legacy-server:${order.guid}`
+    || (!exactReceipt
+      && !legacyOrderMatches({ guid: item.payload.legacyServerGuid, userId: Number(item.userId), payload: item.payload }, order)))) {
     throw new Error('Исходный заказ не совпал с отправленным пакетом. Копия сохранена.');
   }
   const db = await database();
@@ -169,7 +173,7 @@ export async function completeOrderUpload(item: Delivery, order: ClientOrder, le
     await tx.runAsync(`DELETE FROM offline_order_mirrors WHERE user_id=? AND api_scope=? AND client_order_id NOT IN (
       SELECT client_order_id FROM offline_order_mirrors WHERE user_id=? AND api_scope=? ORDER BY updated_at DESC LIMIT 100)`, item.userId, ORDER_API_SCOPE, item.userId, ORDER_API_SCOPE);
   });
-  emitOrderOutboxChange({ userId: item.userId, order, previousGuid });
+  if (previousGuid) emitOrderOutboxChange({ userId: item.userId, order, previousGuid });
 }
 export async function readOrderMirrors(userId: string): Promise<ClientOrder[]> {
   const db = await database();

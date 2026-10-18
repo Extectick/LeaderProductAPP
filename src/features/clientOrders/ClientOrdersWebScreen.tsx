@@ -452,6 +452,7 @@ function unsupportedChoiceValue(choices: SegmentedChoice[], value?: string | nul
 
 function SegmentedChoiceField(props: {
   label: string;
+  emptyLabel?: string;
   value?: string | null;
   choices: SegmentedChoice[];
   disabled?: boolean;
@@ -510,6 +511,7 @@ function SegmentedChoiceField(props: {
           Текущее из 1С: {unsupported}
         </Typography>
       ) : null}
+      {!props.value?.trim() && props.emptyLabel ? <Typography sx={{ fontSize: 10.5, color: '#B45309' }}>{props.emptyLabel}</Typography> : null}
     </Stack>
   );
 }
@@ -2819,6 +2821,7 @@ export default function ClientOrdersWebScreen() {
                     />
                     <SegmentedChoiceField
                       label="Способ доставки"
+                      emptyLabel="Способ доставки не указан"
                       value={workspace.draft.deliveryMethod}
                       choices={DELIVERY_METHOD_CHOICES}
                       disabled={workspace.readOnly || !hasOrderContext || workspace.loadingDefaults}
@@ -3252,6 +3255,7 @@ export default function ClientOrdersWebScreen() {
               <Box>
                 <SegmentedChoiceField
                   label="Способ доставки"
+                  emptyLabel="Способ доставки не указан"
                   value={workspace.draft.deliveryMethod}
                   choices={DELIVERY_METHOD_CHOICES}
                   disabled={workspace.readOnly || !hasOrderContext || workspace.loadingDefaults}

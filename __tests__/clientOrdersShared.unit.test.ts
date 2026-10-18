@@ -1,5 +1,7 @@
 import {
   buildNewItem,
+  emptyDraft,
+  deliveryMethodForNewOrder,
   buildCopyPayload,
   buildPayload,
   buildLocalDraftPayload,
@@ -32,6 +34,13 @@ import {
   type DraftItem,
   type DraftOrder,
 } from '../src/features/clientOrders/clientOrdersShared';
+
+test('only NEW orders default to our delivery; explicit pickup and old unknown input survive', () => {
+  expect(emptyDraft().deliveryMethod).toBe('ДоКлиента');
+  expect(deliveryMethodForNewOrder(null)).toBe('ДоКлиента');
+  expect(deliveryMethodForNewOrder(' Самовывоз ')).toBe('Самовывоз');
+  expect(normalizeClientOrderDeliveryMethod(null)).toBeNull();
+});
 
 function item(patch: Partial<DraftItem> = {}): DraftItem {
   return {
