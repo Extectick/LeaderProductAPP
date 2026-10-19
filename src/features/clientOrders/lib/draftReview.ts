@@ -3,13 +3,20 @@ import { getPackageMultiplier, normalizeQuantityForPayload, type DraftOrder } fr
 
 export function reviewFromError(error: unknown, warehouseGuid?: string | null): ClientOrder['draftReview'] {
   const value = error as { backendErrorCode?: string; message?: string; errorDetails?: any };
-  if (!['STOCK_SHORTAGE', 'REFERENCE_STALE', 'PRICE_REVIEW_REQUIRED'].includes(value?.backendErrorCode || '')) return null;
+  if (!['STOCK_SHORTAGE', 'REFERENCE_STALE', 'PRICE_REVIEW_REQUIRED', 'ORDER_CHANGE_REVIEW_REQUIRED', 'ORDER_CONTENT_CONFLICT', 'LEGACY_DRAFT_CONFLICT'].includes(value?.backendErrorCode || '')) return null;
   return { code: value.backendErrorCode!, message: value.message || 'Заказ требует проверки',
     warehouseGuid, checkedAt: new Date().toISOString(), details: value.errorDetails };
 }
 
 export function draftReviewItemMessages(draft: DraftOrder, review: ClientOrder['draftReview']) {
   const messages: Record<string, string[]> = {};
+  if (review?.code === 'ORDER_CHANGE_REVIEW_REQUIRED') {
+    for (const change of Array.isArray(review.details?.changes) ? review.details.changes : []) {
+      const line = draft.items.find(item => item.lineGuid === change.lineGuid);
+      if (line) messages[line.key] = [`Подтвердите изменение: ${change.before} → ${change.after ?? 'удалено'}.`];
+    }
+    return messages;
+  }
   if (review?.code !== 'STOCK_SHORTAGE' || review.warehouseGuid !== draft.warehouseGuid) return messages;
   for (const shortage of Array.isArray(review.details?.items) ? review.details.items : []) {
     if (!shortage || typeof shortage.productGuid !== 'string' || shortage.available == null) continue;

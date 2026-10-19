@@ -16,6 +16,7 @@ export type SubmissionReceipt = {
   clientOrderId: string; clientRevision: number; intent: string; payloadHash: string;
   acceptedAt: string; state: string; orderGuid?: string | null;
   errorCode?: string | null; errorMessage?: string | null; errorDetails?: any;
+  submittedVersion?: import('@/utils/clientOrdersService').SubmittedOrderVersion | null;
 };
 export function matchingSubmissionReceipt(packet: FrozenSubmission, receipt: any): receipt is SubmissionReceipt {
   return receipt?.receiptVersion === RECEIPT_VERSION && receipt.accepted === true && receipt.intent === 'SUBMIT'

@@ -4,6 +4,7 @@ import { withSQLiteWriteTransaction } from '@/src/shared/storage/sqliteWriteQueu
 import { emitOrderOutboxChange } from './orderOutboxEvents';
 import { isAutomaticSubmission, matchingSubmissionReceipt, submittedOrderConfirmsPacket, submissionHash, type FrozenSubmission, type SubmissionReceipt } from './orderSubmissionProtocol';
 import { reviewFromError } from '../lib/draftReview';
+import { submittedVersionOf } from '../lib/orderSubmissionPresentation';
 import type { ClientOrder } from '@/utils/clientOrdersService';
 import { legacyOrderMatches } from '../lib/legacyOrderRecovery';
 import { ORDER_API_SCOPE, legacyOrderApiScope, localOrderApiScope } from './orderOutboxScope';
@@ -20,7 +21,8 @@ function packet(row: any): Delivery {
     payloadHash: row.payload_hash, payload: JSON.parse(row.payload_json), leaseToken: row.lease_token,
     attempts: row.attempts, receipt: row.receipt_json ? JSON.parse(row.receipt_json) : null };
 }
-async function draftStatus(tx: SQLiteDatabase, item: FrozenSubmission, status: string, error: string | null = null, details?: any) {
+async function draftStatus(tx: SQLiteDatabase, item: FrozenSubmission, status: string, error: string | null = null, details?: any,
+  submittedVersion?: ClientOrder['submittedVersion']) {
   const row = await tx.getFirstAsync<any>(`SELECT order_json FROM offline_drafts
     WHERE user_id=? AND client_order_id=? AND client_revision=? AND intent='SUBMIT'`, item.userId, item.clientOrderId, item.clientRevision);
   if (!row) return;
@@ -28,7 +30,8 @@ async function draftStatus(tx: SQLiteDatabase, item: FrozenSubmission, status: s
   const readOnly = ['SENDING','API_ACCEPTED'].includes(status);
   const review = details ? reviewFromError(details, order.warehouse?.guid) : null;
   const next = { ...order, offlineDraftStatus: status, readOnly, readOnlyReason: readOnly ? 'Заказ отправляется в API' : null,
-    lastExportError: error, ...(details ? { draftReview: review, submissionErrorDetails: details } : {}) };
+    lastExportError: error, draftReview: review, submissionErrorDetails: details ?? null,
+    ...(submittedVersion ? { submittedVersion } : {}) };
   await tx.runAsync(`UPDATE offline_drafts SET status=?, last_send_error=?, order_json=?, updated_at=?
     WHERE user_id=? AND client_order_id=? AND client_revision=? AND intent='SUBMIT'`,
   status, error, JSON.stringify(next), new Date().toISOString(), item.userId, item.clientOrderId, item.clientRevision);
@@ -117,7 +120,11 @@ export async function failOrderUpload(item: Delivery, failure: { retryable: bool
 
 export async function readAcceptedUploads(userId: string): Promise<Delivery[]> {
   const db = await database();
-  return (await db.getAllAsync<any>(`SELECT * FROM offline_order_deliveries WHERE user_id=? AND api_scope=? AND state='ACCEPTED' AND next_attempt_at<=? ORDER BY updated_at LIMIT 20`, userId, ORDER_API_SCOPE, Date.now())).map(packet);
+  return (await db.getAllAsync<any>(`SELECT x.* FROM offline_order_deliveries x WHERE user_id=? AND api_scope=?
+    AND state IN ('ACCEPTED','REVIEW') AND next_attempt_at<=?
+    AND (state='ACCEPTED' OR EXISTS (SELECT 1 FROM offline_drafts d WHERE d.user_id=x.user_id
+      AND d.client_order_id=x.client_order_id AND d.client_revision=x.client_revision AND d.intent='SUBMIT'))
+    ORDER BY updated_at LIMIT 20`, userId, ORDER_API_SCOPE, Date.now())).map(packet);
 }
 export async function updateSubmissionStatus(item: Delivery, receipt: SubmissionReceipt) {
   if (item.apiScope !== ORDER_API_SCOPE) return;
@@ -126,10 +133,11 @@ export async function updateSubmissionStatus(item: Delivery, receipt: Submission
   await withSQLiteWriteTransaction(db, async tx => {
     const review = ['NEEDS_REVIEW','REJECTED'].includes(receipt.state);
     const changed = await tx.runAsync(`UPDATE offline_order_deliveries SET state=?,receipt_json=?,next_attempt_at=?,updated_at=?
-      WHERE user_id=? AND client_order_id=? AND client_revision=? AND state='ACCEPTED' AND api_scope=?`, review ? 'REVIEW' : 'ACCEPTED',
+      WHERE user_id=? AND client_order_id=? AND client_revision=? AND state IN ('ACCEPTED','REVIEW') AND api_scope=?`, review ? 'REVIEW' : 'ACCEPTED',
     JSON.stringify(receipt), Date.now() + 10_000, new Date().toISOString(), item.userId, item.clientOrderId, item.clientRevision, ORDER_API_SCOPE);
     if (changed.changes && review) await draftStatus(tx, item, receipt.errorCode === 'PRICE_REVIEW_REQUIRED' ? 'PRICE_REVIEW' : 'NEEDS_EDIT',
-      receipt.errorMessage || 'Заказ требует проверки', { backendErrorCode: receipt.errorCode, message: receipt.errorMessage, errorDetails: receipt.errorDetails });
+      receipt.errorMessage || 'Заказ требует проверки', { backendErrorCode: receipt.errorCode, message: receipt.errorMessage, errorDetails: receipt.errorDetails }, receipt.submittedVersion);
+    else if (changed.changes && receipt.submittedVersion) await draftStatus(tx, item, 'API_ACCEPTED', null, undefined, receipt.submittedVersion);
   });
   emitOrderOutboxChange({ userId: item.userId });
 }
@@ -152,21 +160,30 @@ export async function completeOrderUpload(item: Delivery, order: ClientOrder, le
   }
   const db = await database();
   let previousGuid: string | null = null;
+  let completed = false;
   await withSQLiteWriteTransaction(db, async tx => {
     const current = await tx.getFirstAsync<any>(`SELECT * FROM offline_drafts WHERE user_id=? AND client_order_id=? AND client_revision=? AND intent='SUBMIT'`,
     item.userId, item.clientOrderId, item.clientRevision);
-    if (!current) return;
+    const legacyScope = await legacyOrderApiScope(tx);
+    if (current && localOrderApiScope(JSON.parse(current.order_json), legacyScope) !== ORDER_API_SCOPE) return;
     const delivery = await tx.getFirstAsync<any>(`SELECT * FROM offline_order_deliveries WHERE user_id=? AND client_order_id=? AND client_revision=? AND api_scope=?`, item.userId, item.clientOrderId, item.clientRevision, ORDER_API_SCOPE);
     if (!delivery || !['ACCEPTED','UPLOADING'].includes(delivery.state) || delivery.payload_hash !== item.payloadHash
       || (legacy && delivery.lease_token !== item.leaseToken)) return;
-    previousGuid = JSON.parse(current.order_json).guid;
+    if (current) previousGuid = JSON.parse(current.order_json).guid;
     await tx.runAsync(`INSERT INTO offline_order_mirrors(api_scope,user_id,client_order_id,client_revision,order_json,updated_at) VALUES (?,?,?,?,?,?)
       ON CONFLICT(api_scope,user_id,client_order_id) DO UPDATE SET client_revision=excluded.client_revision,order_json=excluded.order_json,updated_at=excluded.updated_at
       WHERE excluded.client_revision>=offline_order_mirrors.client_revision`, ORDER_API_SCOPE, item.userId, item.clientOrderId, item.clientRevision, JSON.stringify(order), new Date().toISOString());
-    await tx.runAsync('DELETE FROM offline_draft_lines WHERE user_id=? AND draft_id=?', item.userId, current.id);
-    await tx.runAsync("DELETE FROM offline_drafts WHERE user_id=? AND client_order_id=? AND client_revision=? AND intent='SUBMIT'", item.userId, item.clientOrderId, item.clientRevision);
+    if (current) {
+      await tx.runAsync('DELETE FROM offline_draft_lines WHERE user_id=? AND draft_id=?', item.userId, current.id);
+      await tx.runAsync("DELETE FROM offline_drafts WHERE user_id=? AND client_order_id=? AND client_revision=? AND intent='SUBMIT'", item.userId, item.clientOrderId, item.clientRevision);
+    } else {
+      const newer = await tx.getFirstAsync<any>('SELECT client_revision,order_json FROM offline_drafts WHERE user_id=? AND client_order_id=? AND client_revision>?', item.userId, item.clientOrderId, item.clientRevision);
+      if (newer && localOrderApiScope(JSON.parse(newer.order_json), legacyScope) === ORDER_API_SCOPE) await tx.runAsync('UPDATE offline_drafts SET order_json=? WHERE user_id=? AND client_order_id=? AND client_revision=?',
+        JSON.stringify({ ...JSON.parse(newer.order_json), submittedVersion: submittedVersionOf(order) }), item.userId, item.clientOrderId, newer.client_revision);
+    }
     await tx.runAsync(`UPDATE offline_order_deliveries SET state='DONE',payload_json='null',lease_token=NULL,lease_until=NULL,updated_at=? WHERE user_id=? AND client_order_id=? AND client_revision=? AND api_scope=?`,
     new Date().toISOString(), item.userId, item.clientOrderId, item.clientRevision, ORDER_API_SCOPE);
+    completed = true;
     // Only completed metadata/mirrors; drafts, active/uncertain uploads and reviews stay intact.
     await tx.runAsync(`DELETE FROM offline_order_deliveries WHERE user_id=? AND state='DONE' AND updated_at<?`,
     item.userId, new Date(Date.now() - 30 * 86_400_000).toISOString());
@@ -174,6 +191,7 @@ export async function completeOrderUpload(item: Delivery, order: ClientOrder, le
       SELECT client_order_id FROM offline_order_mirrors WHERE user_id=? AND api_scope=? ORDER BY updated_at DESC LIMIT 100)`, item.userId, ORDER_API_SCOPE, item.userId, ORDER_API_SCOPE);
   });
   if (previousGuid) emitOrderOutboxChange({ userId: item.userId, order, previousGuid });
+  else if (completed) emitOrderOutboxChange({ userId: item.userId });
 }
 export async function readOrderMirrors(userId: string): Promise<ClientOrder[]> {
   const db = await database();

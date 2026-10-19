@@ -5,6 +5,7 @@ import {
   type ClientOrdersReferenceData,
 } from '@/utils/clientOrdersService';
 import type { OrderGeoEventInput } from '@/utils/orderGeo';
+import { amendmentStatusLabel, submittedVersionOf } from './lib/orderSubmissionPresentation';
 
 export const DEFAULT_ORDER_CURRENCY = 'RUB';
 
@@ -362,6 +363,8 @@ export function getOrderDisplayStatus(order?: Pick<ClientOrder, 'status' | 'numb
 
 export function getOrderDisplayStatusLabel(order?: Pick<ClientOrder, 'status' | 'number1c' | 'origin' | 'status1c' | 'currentState1c' | 'documentStatus1c' | 'shipmentProhibited' | 'isPostedIn1c'> | null) {
   if (!order) return STATUS_LABELS.DRAFT;
+  const amendmentLabel = amendmentStatusLabel(order as ClientOrder);
+  if (amendmentLabel) return amendmentLabel;
   if (order.origin === 'device') {
     const localStatus = (order as { offlineDraftStatus?: string }).offlineDraftStatus;
     if (localStatus === 'READY_TO_SEND') return 'В очереди на устройстве';
@@ -1096,7 +1099,7 @@ export function computeDraftMetrics(draft: DraftOrder) {
   });
 }
 
-export function validateDraft(draft: DraftOrder): DraftValidation {
+export function validateDraft(draft: DraftOrder, options?: { recheckStock?: boolean }): DraftValidation {
   const itemMessages: Record<string, string[]> = {};
   const itemWarnings: Record<string, string[]> = {};
   let hasSaveBlockingItemErrors = false;
@@ -1190,7 +1193,8 @@ export function validateDraft(draft: DraftOrder): DraftValidation {
     }
     const stockShortageMessage = getStockShortageMessage(item);
     if (stockShortageMessage) {
-      messages.push(stockShortageMessage);
+      if (options?.recheckStock) warnings.push(`${stockShortageMessage} API перепроверит остаток при отправке.`);
+      else messages.push(stockShortageMessage);
     }
     if (messages.length) {
       itemMessages[item.key] = messages;
@@ -1292,6 +1296,8 @@ export function buildLocalDraftPayload(draft: DraftOrder, reason: 'manual' | 'au
 
 export function getClientOrderDisplayNumber(order: Pick<ClientOrder, 'guid' | 'number1c' | 'clientOrderId' | 'origin'>) {
   if (order.number1c) return order.number1c;
+  const submittedNumber = submittedVersionOf(order as ClientOrder)?.number1c;
+  if (submittedNumber) return submittedNumber;
   if (order.guid.startsWith('device-order-')) {
     const clientId = order.clientOrderId?.replace(/^legacy-server:/, '');
     // Use the same short-id format as server drafts without changing the sync identity.

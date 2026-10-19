@@ -10,6 +10,7 @@ import {
   getClientOrders,
   getClientOrdersTodaySummary,
   putClientOrderByClientId,
+  previewClientOrderAmendment,
   searchClientOrderCounterparties,
   searchClientOrderProducts,
   requestClientOrderInvoice,
@@ -36,6 +37,14 @@ jest.mock('@/src/features/clientOrders/offline/offlineOrdersDatabase', () => ({
 const apiClientMock = jest.mocked(apiClient);
 
 describe("clientOrdersService", () => {
+  it('reads a fresh amendment preview without invoking the save or submit endpoint', async () => {
+    const review = { orderGuid: 'order-guid', serverRevision: 3, baseContentToken: 'a'.repeat(64), changes: [], requiresConfirmation: false, number1c: 'НОУТ-126165' };
+    apiClientMock.mockResolvedValueOnce({ ok: true, status: 200, data: review } as any);
+    expect(await previewClientOrderAmendment('client-order-id', { clientRevision: 30, intent: 'SUBMIT', items: [] })).toEqual(review);
+    expect(apiClientMock).toHaveBeenCalledWith('/api/client-orders/by-client-id/client-order-id/review', {
+      method: 'POST', body: { clientRevision: 30, intent: 'SUBMIT', items: [] }, timeoutMs: 15_000, networkRetryCount: 0,
+    });
+  });
   it.each(['', ' ', '\n\t'])('omits cleared/whitespace list search %j', async search => {
     apiClientMock.mockResolvedValueOnce({ ok: true, status: 200, data: { items: [], total: 0 } } as any);
     await getClientOrders({ search });

@@ -6,6 +6,7 @@ import DateTimeInput from '@/components/ui/DateTimeInput';
 import { OrderShareFeedback } from './components/OrderShareFeedback';
 import { useOrderShareActions } from './hooks/useOrderShareActions';
 import { useOrderAction } from './hooks/useOrderAction';
+import { amendmentStatusLabel, persistedOrderSubmissionError, submittedVersionOf } from './lib/orderSubmissionPresentation';
 import ContextMenuTrigger from '@/components/ui/ContextMenuTrigger';
 import type { ContextMenuItem } from '@/components/ui/ContextMenu';
 import { LiquidGlassSurface } from '@/components/ui/LiquidGlassSurface';
@@ -406,9 +407,10 @@ function hasPositiveQuantity(item: any) {
   return Number.isFinite(quantity) && quantity > 0;
 }
 function orderTitle(order: ClientOrder) {
-  if (order.number1c) {
+  const number = order.number1c || submittedVersionOf(order)?.number1c;
+  if (number) {
     const date = formatDateOnly(order.date1c);
-    return date === '—' ? order.number1c : `${order.number1c} от ${date}`;
+    return date === '—' ? number : `${number} от ${date}`;
   }
   const date = formatDateOnly(order.updatedAt || order.createdAt || order.deliveryDate);
   const shortGuid = getClientOrderDisplayNumber(order);
@@ -2443,7 +2445,12 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
       <DocumentHeaderSlot
         styles={styles}
         error={workspace.error}
-        onDismissError={dismissWorkspaceError}
+        onDismissError={workspace.error === persistedOrderSubmissionError(workspace.selectedOrder) ? undefined : dismissWorkspaceError}
+        onReview={workspace.selectedOrder?.submissionErrorDetails
+          && workspace.selectedOrder.submissionErrorDetails.backendErrorCode !== 'PRICE_REVIEW_REQUIRED'
+          && !workspace.readOnly ? workspace.submitOrder : undefined}
+        reviewing={workspace.submitting || workspace.mutationLocked}
+        reviewLabel={submittedVersionOf(workspace.selectedOrder) ? 'Проверить и отправить изменения' : 'Повторить проверку заказа'}
         itemsCount={workspace.draft.items.length}
         section={section}
         setSection={handleEditorSectionChange}
@@ -2465,6 +2472,12 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     section,
     workspace.draft.items.length,
     workspace.error,
+    workspace.selectedOrder?.submissionErrorDetails,
+    workspace.selectedOrder?.submittedVersion,
+    workspace.readOnly,
+    workspace.submitOrder,
+    workspace.submitting,
+    workspace.mutationLocked,
   ]);
   const documentHeaderTitleSlot = React.useMemo(() => {
     if (mode !== 'editor') return null;
@@ -3972,6 +3985,9 @@ function DocumentHeaderSlot({
   styles,
   error,
   onDismissError,
+  onReview,
+  reviewing,
+  reviewLabel,
   itemsCount,
   section,
   setSection,
@@ -3982,7 +3998,10 @@ function DocumentHeaderSlot({
 }: {
   styles: any;
   error: string | null;
-  onDismissError: () => void;
+  onDismissError?: () => void;
+  onReview?: () => void;
+  reviewing?: boolean;
+  reviewLabel?: string;
   itemsCount: number;
   section: EditorSection;
   setSection: (section: EditorSection) => void;
@@ -4024,7 +4043,7 @@ function DocumentHeaderSlot({
           <Text selectable style={styles.documentErrorBannerText}>
             {normalizeClientOrderUserErrorMessage(error, 'Не удалось выполнить действие')}
           </Text>
-          <Pressable
+          {onDismissError ? <Pressable
             accessibilityRole="button"
             accessibilityLabel="Закрыть сообщение об ошибке"
             hitSlop={6}
@@ -4032,8 +4051,13 @@ function DocumentHeaderSlot({
             style={({ pressed }) => [styles.documentErrorDismissButton, pressed && styles.flatPressed]}
           >
             <MaterialCommunityIcons name="close" size={18} color="#991B1B" />
-          </Pressable>
+          </Pressable> : null}
         </View>
+      ) : null}
+      {!loading && error && onReview ? (
+        <PaperButton compact disabled={reviewing} loading={reviewing} onPress={onReview}>
+          {reviewLabel || 'Проверить и отправить изменения'}
+        </PaperButton>
       ) : null}
       <View
         style={styles.documentTabsRow}
@@ -7573,7 +7597,9 @@ const OrderCard = React.memo(function OrderCard({
     : isDeviceOrder && !hasDebtProblem
     ? { name: 'cellphone-check', color: '#1D4ED8' }
     : orderStatusIcon(displayStatus);
-  const hasProblem = hasDebtProblem || (!isDeviceOrder && orderHasVisibleProblem(order));
+  const submittedVersion = isDeviceOrder ? submittedVersionOf(order) : null;
+  const submissionError = isDeviceOrder ? persistedOrderSubmissionError(order, { includeSubmittedVersion: false }) : null;
+  const hasProblem = hasDebtProblem || !!submissionError || (!isDeviceOrder && orderHasVisibleProblem(order));
   const itemsCount = getClientOrderItemsCount(order);
   const offlineStatusLabel: Record<string, string> = {
     ON_DEVICE: 'Черновик',
@@ -7585,7 +7611,7 @@ const OrderCard = React.memo(function OrderCard({
     SEND_ERROR: 'Ошибка отправки',
   };
   const statusLabel = isDeviceOrder && !hasDebtProblem
-    ? offlineStatusLabel[offlineDraftStatus] || 'Черновик'
+    ? amendmentStatusLabel(order) || offlineStatusLabel[offlineDraftStatus] || 'Черновик'
     : getOrderDisplayStatusLabelWithQueue(order);
   const invoice = getClientOrderInvoicePresentation(order);
   const profitAvailable = order.profitAvailable === true
@@ -7624,7 +7650,7 @@ const OrderCard = React.memo(function OrderCard({
     },
     {
       key: 'submit',
-      label: sendFailed ? 'Проверить и отправить' : 'Отправить в 1С',
+      label: submittedVersion ? 'Проверить и отправить изменения' : sendFailed ? 'Проверить и отправить' : 'Отправить в 1С',
       action: 'submit',
       icon: sendFailed ? 'refresh-outline' : 'cloud-upload-outline',
       visible: canSend,
@@ -7737,6 +7763,12 @@ const OrderCard = React.memo(function OrderCard({
               ) : null}
             </View>
           </View>
+          {submittedVersion ? (
+            <Text style={styles.orderMetaCompact}>
+              {submittedVersion.number1c ? 'В 1С' : 'В API'}: {submittedVersion.itemsCount} поз. · {formatMoney(submittedVersion.totalAmount || 0, order.currency)}
+              {' · '}На телефоне: {itemsCount} поз.
+            </Text>
+          ) : null}
           <View style={styles.orderCardBottomRow}>
             <View style={[styles.orderStatusPill, orderStatusTone(statusTone), hasProblem && styles.orderStatusProblem]}>
               <MaterialCommunityIcons name={statusIcon.name as any} size={14} color={statusIcon.color} />
@@ -7769,7 +7801,7 @@ const OrderCard = React.memo(function OrderCard({
               <Text style={styles.orderProblemText} numberOfLines={2}>
                 {order.shipmentProhibited && !order.isPostedIn1c
                   ? (order.debtReason || 'Контрагент имеет просроченную задолженность')
-                  : normalizeClientOrderUserErrorMessage(order.lastExportError || order.last1cError, 'Документ требует проверки')}
+                  : normalizeClientOrderUserErrorMessage(submissionError || order.lastExportError || order.last1cError, 'Документ требует проверки')}
               </Text>
             </View>
           ) : null}

@@ -160,9 +160,47 @@ it.each([{ payloadHash: 'wrong' }, { userId: 91 }, { clientRevision: 2 }, { subm
 it('does not discard a newer local revision on a late canonical receipt', async () => {
   const { outbox, accepted, order } = await acceptedLegacyFixture();
   await db.runAsync("UPDATE offline_drafts SET client_revision=2 WHERE user_id='90'");
+  const before = (await offline.readOfflineDrafts('90'))[0];
   await outbox.completeOrderUpload(accepted, order, true);
   expect(await offline.readOfflineDrafts('90')).toHaveLength(1);
-  expect(await outbox.readOrderMirrors('90')).toEqual([]);
+  const newer = (await offline.readOfflineDrafts('90'))[0];
+  expect(newer.clientRevision).toBe(2);
+  expect(newer.payload).toEqual(before.payload);
+  expect(newer.order).toMatchObject({ ...before.order, submittedVersion: { number1c: 'НОУТ-125596' } });
+  expect(await outbox.readOrderMirrors('90')).toEqual([order]);
+  expect(await outbox.readAcceptedUploads('90')).toEqual([]);
+});
+it('retains review reasons across reopen and refreshes prior 1C facts without changing the rejected packet', async () => {
+  const outbox = require('../src/features/clientOrders/offline/orderOutboxDatabase');
+  await offline.upsertOfflineDraft('90', queuedDraft());
+  const [packet] = await outbox.claimOrderUploads('90');
+  await outbox.acceptOrderUpload(packet, ack(packet));
+  const accepted = (await outbox.readAcceptedUploads('90'))[0];
+  const rejected = { ...ack(packet, 'REJECTED'), errorCode: 'ORDER_CONTENT_CONFLICT', errorMessage: 'Версия изменилась',
+    errorDetails: { kind: 'ORDER_CONTENT_CONFLICT' } };
+  await outbox.updateSubmissionStatus(accepted, rejected);
+  const first = (await offline.readOfflineDrafts('90'))[0];
+  expect(first).toMatchObject({ status: 'NEEDS_EDIT', order: { submissionErrorDetails: { backendErrorCode: 'ORDER_CONTENT_CONFLICT' } } });
+  await db.runAsync('UPDATE offline_order_deliveries SET next_attempt_at=0');
+  const review = (await outbox.readAcceptedUploads('90'))[0];
+  expect(review.receipt.state).toBe('REJECTED');
+  await outbox.updateSubmissionStatus(review, { ...rejected, submittedVersion: { orderGuid: 'canonical-guid', clientRevision: 0,
+    number1c: 'НОУТ-126165', isPostedIn1c: true, syncState: 'SYNCED', status: 'CONFIRMED', revision: 3, totalAmount: 36548, itemsCount: 16, updatedAt: new Date().toISOString() } });
+  const reopened = (await offline.readOfflineDrafts('90'))[0];
+  expect(reopened.payload).toEqual(first.payload);
+  expect(reopened.clientRevision).toBe(first.clientRevision);
+  expect(reopened.order).toMatchObject({ submittedVersion: { number1c: 'НОУТ-126165' },
+    submissionErrorDetails: { backendErrorCode: 'ORDER_CONTENT_CONFLICT' }, readOnly: false });
+  expect(await outbox.claimOrderUploads('90')).toEqual([]);
+});
+it.each([1, 2])('never deletes or modifies a foreign-API draft while completing receipt revision 1 (draft revision %i)', async revision => {
+  const { outbox, accepted, order } = await acceptedLegacyFixture();
+  const before: any = await db.getFirstAsync("SELECT order_json FROM offline_drafts WHERE user_id='90'");
+  const foreign = JSON.stringify({ ...JSON.parse(before.order_json), _deviceApiBaseUrl: 'https://other-api.example' });
+  await db.runAsync("UPDATE offline_drafts SET client_revision=?,order_json=? WHERE user_id='90'", revision, foreign);
+  await outbox.completeOrderUpload(accepted, order, true);
+  expect(await db.getFirstAsync("SELECT client_revision,order_json FROM offline_drafts WHERE user_id='90'"))
+    .toEqual({ client_revision: revision, order_json: foreign });
 });
 it('unlocks a business-rejected order for correction with a higher immutable revision', async () => {
   const outbox = require('../src/features/clientOrders/offline/orderOutboxDatabase');

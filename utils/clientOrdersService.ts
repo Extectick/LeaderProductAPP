@@ -306,7 +306,19 @@ export type ClientOrderInvoice = {
   updatedAt?: string | null;
 };
 
+export type SubmittedOrderVersion = {
+  orderGuid: string; clientRevision: number | null; number1c: string | null; isPostedIn1c: boolean;
+  status: string; syncState: string; revision: number; totalAmount: number | null; itemsCount: number; updatedAt: string;
+};
+export type ClientOrderAmendmentReview = {
+  orderGuid: string; serverRevision: number; number1c: string | null; baseContentToken: string; confirmationToken?: string;
+  requiresConfirmation: boolean;
+  changes: Array<{ lineGuid?: string; productName: string; reason: string; before: string | number | null; after: string | number | null }>;
+};
 export type ClientOrder = {
+  /** Independent accepted version; never proof that pending local edits were submitted. */
+  submittedVersion?: SubmittedOrderVersion | null;
+  submissionErrorDetails?: { backendErrorCode?: string; message?: string; errorDetails?: any } | null;
   acceptedClientOperation?: { clientRevision: number; intent: 'SUBMIT'; payload: Record<string, unknown> } | null;
   draftReview?: {
     code: string;
@@ -314,7 +326,7 @@ export type ClientOrder = {
     warehouseGuid?: string | null;
     clientRevision?: number;
     checkedAt?: string;
-    details?: { items?: Array<{ productGuid: string; name?: string; required: number; available: number; shortage?: number }> } | null;
+    details?: { items?: Array<{ productGuid: string; name?: string; required: number; available: number; shortage?: number }>; [key: string]: any } | null;
   } | null;
   contentToken?: string;
   guid: string;
@@ -1161,6 +1173,14 @@ export async function putClientOrderByClientId(
     throwApiError('Не удалось сохранить заказ клиента', res);
   }
   return normalizeClientOrder(res.data);
+}
+
+export async function previewClientOrderAmendment(clientOrderId: string, payload: any): Promise<ClientOrderAmendmentReview> {
+  const res = await apiClient<any, ClientOrderAmendmentReview>(`${API_ENDPOINTS.CLIENT_ORDERS.BY_CLIENT_ID(clientOrderId)}/review`, {
+    method: 'POST', body: payload, timeoutMs: 15_000, networkRetryCount: 0,
+  });
+  if (!res.ok || !res.data) throwApiError('Не удалось согласовать изменения. Локальная копия сохранена.', res);
+  return res.data;
 }
 
 export async function getClientOrderByClientId(clientOrderId: string) {

@@ -17,6 +17,7 @@ import {
   getClientOrders,
   getClientOrdersTodaySummary,
   putClientOrderByClientId,
+  previewClientOrderAmendment,
   searchClientOrderAgreements,
   searchClientOrderContracts,
   searchClientOrderCounterparties,
@@ -56,6 +57,8 @@ import { probeClientOrdersConnection } from '@/utils/clientOrdersService';
 import { useDraftBackups } from './offline/useDraftBackups';
 import { isRecoverableLegacySaveError, legacyOrderMatches, legacySubmissionAccepted, runLegacyOrderOperation } from './lib/legacyOrderRecovery';
 import { draftReviewItemMessages, reviewFromError } from './lib/draftReview';
+import { prepareOrderAmendment } from './lib/orderAmendmentReview';
+import { preserveSubmittedVersion, persistedOrderSubmissionError, submittedVersionOf } from './lib/orderSubmissionPresentation';
 import {
   isNetworkUnavailableError as isSharedNetworkUnavailableError,
   isTechnicalErrorMessage,
@@ -849,6 +852,22 @@ async function confirmOrderChange(review: NonNullable<ReturnType<typeof orderCha
       { cancelable: true, onDismiss: () => resolve(false) }));
 }
 
+async function confirmAmendment(review: Awaited<ReturnType<typeof previewClientOrderAmendment>>) {
+  const prefix = review.number1c ? `Заказ ${review.number1c} уже находится в 1С.\n` : 'Предыдущая версия уже отправлена.\n';
+  const changes = review.changes.map(line => `${line.productName}: ${line.reason} (${line.before ?? '—'} → ${line.after ?? 'удалено'})`).join('\n');
+  const message = `${prefix}Отправить следующие изменения актуальной версии?\n${changes || 'Версия на сервере обновилась; состав изменений проверен.'}`;
+  return Platform.OS === 'web' && typeof window !== 'undefined' ? window.confirm(message)
+    : new Promise<boolean>(resolve => Alert.alert('Согласование изменений', message,
+      [{ text: 'Отмена', style: 'cancel', onPress: () => resolve(false) },
+        { text: 'Отправить изменения', onPress: () => resolve(true) }],
+      { cancelable: true, onDismiss: () => resolve(false) }));
+}
+
+function needsAmendmentReview(order?: ClientOrder | null) {
+  const code = order?.submissionErrorDetails?.backendErrorCode || order?.draftReview?.code || '';
+  return !!submittedVersionOf(order) || ['ORDER_CONTENT_CONFLICT', 'ORDER_CHANGE_REVIEW_REQUIRED', 'LEGACY_DRAFT_CONFLICT'].includes(code);
+}
+
 function getOfflineDraftFailureStatus(error: unknown): OfflineDraftStatus {
   const integrityKind = String((error as { errorDetails?: { kind?: string } } | null)?.errorDetails?.kind || '');
   if (integrityKind === 'LEGACY_DRAFT_CONFLICT') return 'NEEDS_EDIT';
@@ -1445,7 +1464,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     selectedOrder.status === 'CONFIRMED'
   );
   const selectedOrderHas1cError = !!(selectedOrder?.last1cError || selectedOrder?.lastExportError);
-  const baseValidation = React.useMemo(() => validateDraft(draft), [draft]);
+  const baseValidation = React.useMemo(() => validateDraft(draft, { recheckStock: needsAmendmentReview(selectedOrder)
+    || selectedOrder?.draftReview?.code === 'STOCK_SHORTAGE' }), [draft, selectedOrder]);
   const validation = React.useMemo(() => {
     let nextValidation = baseValidation;
     const reviewMessages = draftReviewItemMessages(draft, selectedOrder?.draftReview);
@@ -1529,8 +1549,9 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const localWeight = draftMetrics.weight;
   const localProfitAvailable = draftMetrics.profitItems > 0;
   const visibleDeviceOrders = React.useMemo(
-    () => deviceDraftEntries.map((entry) => entry.order).filter((order) => orderMatchesFilters(order, filters)),
-    [deviceDraftEntries, filters]
+    () => deviceDraftEntries.map((entry) => preserveSubmittedVersion(entry.order, orders.find(order => isSameListOrder(order, entry.order))))
+      .filter((order) => orderMatchesFilters(order, filters)),
+    [deviceDraftEntries, filters, orders]
   );
   const visibleApiOrders = React.useMemo(
     () => orders.filter((order) => orderMatchesFilters(order, filters)),
@@ -2206,7 +2227,9 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
           lastSyncError: syncError ?? null,
         }),
         offlineDraftStatus: intent === 'SUBMIT' ? 'READY_TO_SEND' : 'ON_DEVICE',
-        draftReview: existing?.order.draftReview,
+        submittedVersion: submittedVersionOf(existing?.order) ?? submittedVersionOf(selectedOrder),
+        draftReview: intent === 'SUBMIT' ? null : existing?.order.draftReview,
+        submissionErrorDetails: intent === 'SUBMIT' ? null : existing?.order.submissionErrorDetails,
       } as ClientOrder,
       payload,
       createdAt,
@@ -2218,7 +2241,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     const withoutCurrent = deviceDraftEntriesRef.current.filter((item) => item.clientOrderId !== clientOrderId && item.id !== entry.id && item.order.guid !== localGuid && (!serverGuid || item.serverGuid !== serverGuid));
     await replaceDeviceDraftEntries([entry, ...withoutCurrent]);
     return entry.order;
-  }, [draft, findDeviceDraftEntry, replaceDeviceDraftEntries, selectedOrder?.createdAt, selections]);
+  }, [draft, findDeviceDraftEntry, replaceDeviceDraftEntries, selectedOrder, selections]);
 
   const createDeviceCopyFromCurrentDraft = React.useCallback(async () => {
     const nowIso = new Date().toISOString();
@@ -2335,12 +2358,12 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         if (syncOptions.pricePolicy && syncOptions.pricePolicy !== 'ASK') {
           payload = { ...payload, offlineReview: { pricePolicy: syncOptions.pricePolicy } } as ClientOrderSavePayload;
         }
-        const review = orderChangeReview((target.order as any).submissionErrorDetails);
-        if (review) {
-          if (!await confirmOrderChange(review)) return;
-          payload = { ...payload, integrity: { baseContentToken: review.baseContentToken, confirmationToken: review.confirmationToken } };
-        }
-        if (payload !== target.payload) {
+        const prepared = await prepareOrderAmendment({ clientOrderId: target.clientOrderId, payload,
+          clientRevision: target.clientRevision + 1, required: needsAmendmentReview(target.order), online: getServerStatus().isReachable,
+          read: previewClientOrderAmendment, confirm: confirmAmendment });
+        if (!prepared || activeOfflineUserRef.current !== offlineUserId) return;
+        payload = prepared;
+        if (deviceDraftEntriesRef.current.some(entry => isSameOrderOperation(entry, target))) {
           const revision = target.clientRevision + 1;
           await replaceDeviceDraftEntries(deviceDraftEntriesRef.current.map(entry => isSameOrderOperation(entry, target)
             ? { ...entry, clientRevision: revision, status: 'READY_TO_SEND', payload,
@@ -2871,8 +2894,9 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const loadDetail = React.useCallback(async (guid: string) => {
     const deviceEntry = findDeviceDraftEntry(guid);
     if (deviceEntry) {
-      applyOrderDetail(deviceEntry.order);
-      return deviceEntry.order;
+      const order = preserveSubmittedVersion(deviceEntry.order, apiOrdersRef.current.find(item => isSameListOrder(item, deviceEntry.order)));
+      applyOrderDetail(order);
+      return order;
     }
 
     const requestId = ++detailRequestIdRef.current;
@@ -3356,6 +3380,16 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
           });
         }
       };
+
+      if (localOnly && intent === 'SUBMIT' && clientOrderId && needsAmendmentReview(deviceEntry?.order ?? selectedOrder)) {
+        // Save new edits BEFORE any network/confirmation; SAVE never enters the outbox.
+        await saveDraftOnDevice(payload, null, { clientOrderId, clientRevision, intent: 'SAVE' });
+        const prepared = await prepareOrderAmendment({ clientOrderId, payload, clientRevision, required: true,
+          online: getServerStatus().isReachable, read: previewClientOrderAmendment, confirm: confirmAmendment });
+        if (!prepared || draftEditVersionRef.current !== editVersion || selectedGuidRef.current !== selectedAtStart
+          || activeOfflineUserRef.current !== offlineUserId) return null;
+        payload = prepared;
+      }
 
       // Persist the exact operation before sending it. If the server commits but
       // the response is lost, every retry carries the same client identity.
@@ -4131,11 +4165,11 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       let revision = draft.revision;
       const localOnly = isAsyncOrderOutboxEnabled() || !getServerStatus().isReachable || !!findDeviceDraftEntry(targetGuid, draft.clientOrderId);
       const pendingReview = orderChangeReview((findDeviceDraftEntry(targetGuid, draft.clientOrderId)?.order as any)?.submissionErrorDetails);
-      if (pendingReview && !await confirmOrderChange(pendingReview)) return;
+      if (!isAsyncOrderOutboxEnabled() && pendingReview && !await confirmOrderChange(pendingReview)) return;
       const submitGeoEvent = await captureOrderGeoEvent('SUBMITTED', localOnly ? 250 : undefined);
       if (localOnly || draft.clientOrderId) {
         const saved = await saveDraft({ silent: true, reason: 'manual', intent: 'SUBMIT', localOnly, geoEvents: [submitGeoEvent],
-          integrity: pendingReview ? { baseContentToken: pendingReview.baseContentToken, confirmationToken: pendingReview.confirmationToken } : undefined });
+        integrity: !isAsyncOrderOutboxEnabled() && pendingReview ? { baseContentToken: pendingReview.baseContentToken, confirmationToken: pendingReview.confirmationToken } : undefined });
         if (saved && saved.origin !== 'device') {
           applySavedOrderToList(saved);
           applyOrderDetail(saved);
@@ -4179,27 +4213,35 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
       const deviceEntry = findDeviceDraftEntry(target.guid);
       if (deviceEntry) {
-        const check = validateDraft(orderToDraft(deviceEntry.order));
+        const check = validateDraft(orderToDraft(deviceEntry.order), { recheckStock: needsAmendmentReview(deviceEntry.order)
+          || deviceEntry.order.draftReview?.code === 'STOCK_SHORTAGE' });
         if (!check.canSubmit) {
           setOrdersError(check.blockingMessage || 'Проверьте заполнение заказа.');
           return null;
         }
         if (deviceEntry.status === 'READY_TO_SEND') return null;
         const pendingReview = orderChangeReview((deviceEntry.order as any).submissionErrorDetails);
-        if (pendingReview && !await confirmOrderChange(pendingReview)) return null;
+        if (!isAsyncOrderOutboxEnabled() && pendingReview && !await confirmOrderChange(pendingReview)) return null;
         const updatedAt = new Date().toISOString();
         const submitGeoEvent = deviceEntry.payload.geoEvents?.find(event => event.type === 'SUBMITTED')
           ?? await captureOrderGeoEvent('SUBMITTED', 250);
         if (!deviceDraftEntriesRef.current.some(entry => isSameOrderOperation(entry, deviceEntry))) return null;
         const submitRevision = isAsyncOrderOutboxEnabled() || deviceEntry.intent !== 'SUBMIT' ? deviceEntry.clientRevision + 1 : deviceEntry.clientRevision;
+        const proposed = { ...deviceEntry.payload,
+          geoEvents: [...(deviceEntry.payload.geoEvents || []).filter(event => event.clientEventId !== submitGeoEvent.clientEventId), submitGeoEvent] };
+        const prepared = isAsyncOrderOutboxEnabled() ? await prepareOrderAmendment({ clientOrderId: deviceEntry.clientOrderId,
+          payload: proposed, clientRevision: submitRevision, required: needsAmendmentReview(deviceEntry.order),
+          online: getServerStatus().isReachable, read: previewClientOrderAmendment, confirm: confirmAmendment }) : proposed;
+        if (!prepared || activeOfflineUserRef.current !== offlineUserId
+          || !deviceDraftEntriesRef.current.some(entry => isSameOrderOperation(entry, deviceEntry))) return null;
         await replaceDeviceDraftEntries(deviceDraftEntriesRef.current.map((entry) => isSameOrderOperation(entry, deviceEntry)
           ? {
               ...entry,
               intent: 'SUBMIT' as const,
               clientRevision: submitRevision,
               status: 'READY_TO_SEND' as const,
-              payload: { ...entry.payload,
-                ...(pendingReview ? { integrity: { baseContentToken: pendingReview.baseContentToken, confirmationToken: pendingReview.confirmationToken } } : {}),
+              payload: { ...prepared,
+                ...(!isAsyncOrderOutboxEnabled() && pendingReview ? { integrity: { baseContentToken: pendingReview.baseContentToken, confirmationToken: pendingReview.confirmationToken } } : {}),
                 geoEvents: [...(entry.payload.geoEvents || []).filter(event => event.clientEventId !== submitGeoEvent.clientEventId), submitGeoEvent] },
               order: { ...entry.order, clientRevision: submitRevision, geoEvents: [...(entry.order.geoEvents || []).filter(event => event.clientEventId !== submitGeoEvent.clientEventId), submitGeoEvent], offlineDraftStatus: 'READY_TO_SEND' } as ClientOrder,
               updatedAt,
@@ -4218,10 +4260,16 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         const now = new Date().toISOString();
         const clientOrderId = detail.clientOrderId || `legacy-server:${detail.guid}`;
         const clientRevision = Number(detail.clientRevision || 0) + 1;
+        const payload = await prepareOrderAmendment({ clientOrderId,
+          payload: { ...buildPayload(input, 'manual'), geoEvents: [...(detail.geoEvents || []), submitGeoEvent] },
+          clientRevision, required: needsAmendmentReview(detail), online: getServerStatus().isReachable,
+          read: previewClientOrderAmendment, confirm: confirmAmendment });
+        if (!payload) return null;
         const entry: DeviceDraftEntry = { id: makeDeviceDraftGuid(), clientOrderId, clientRevision,
           intent: 'SUBMIT', status: 'READY_TO_SEND', serverGuid: detail.guid, serverRevision: detail.revision,
-          order: { ...detail, origin: 'device', clientOrderId, clientRevision, offlineDraftStatus: 'READY_TO_SEND', readOnly: false } as ClientOrder,
-          payload: { ...buildPayload(input, 'manual'), geoEvents: [...(detail.geoEvents || []), submitGeoEvent] },
+          order: { ...detail, origin: 'device', clientOrderId, clientRevision, offlineDraftStatus: 'READY_TO_SEND', readOnly: false,
+            submittedVersion: submittedVersionOf(detail) } as ClientOrder,
+          payload,
           createdAt: detail.createdAt || now, updatedAt: now, lastSyncError: null };
         await replaceDeviceDraftEntries([entry, ...deviceDraftEntriesRef.current]);
         return null;
@@ -4238,7 +4286,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       submitActionInFlightRef.current = false;
       setSubmitting(false);
     }
-  }, [applySavedOrderToList, findDeviceDraftEntry, loadOrders, replaceDeviceDraftEntries, submitting, syncDeviceDrafts]);
+  }, [applySavedOrderToList, findDeviceDraftEntry, loadOrders, offlineUserId, replaceDeviceDraftEntries, submitting, syncDeviceDrafts]);
 
   const unqueueOrder = React.useCallback(async (target?: { guid: string; revision: number }) => {
     let targetGuid = target?.guid || draft.guid || selectedGuid;
@@ -4620,8 +4668,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     cancelOrder,
     cancelOrderConfirmed: runCancel,
     deleteDraft,
-    error: error || (Object.keys(draftReviewItemMessages(draft, selectedOrder?.draftReview)).length
-      ? 'Недостаточно остатка. Черновик сохранён; проверьте отмеченные товары и повторите отправку.' : null),
+    error: error || persistedOrderSubmissionError(selectedOrder),
     setError,
     draftMode,
     readOnly,
