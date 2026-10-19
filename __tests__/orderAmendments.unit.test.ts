@@ -37,6 +37,16 @@ test('stock rejection names the item and does not require an unrelated field hig
   expect(persistedOrderSubmissionError({ ...local, submissionErrorDetails: { backendErrorCode: 'STOCK_SHORTAGE',
     errorDetails: { items: [{ name: 'Чипсы', required: 1, available: 0 }] } } })).toContain('Чипсы: нужно 1, доступно 0');
 });
+
+test('retains confirmed draft preservation alongside shortage details, without inventing an API save', () => {
+  const shortage: any = { backendErrorCode: 'STOCK_SHORTAGE', errorDetails: {
+    draftSaved: true, items: [{ name: 'Чипсы', required: 2, available: 1 }] } };
+  const saved = persistedOrderSubmissionError({ ...local, submissionErrorDetails: shortage });
+  expect(saved).toContain('Черновик сохранён');
+  expect(saved).toContain('Чипсы: нужно 2, доступно 1');
+  expect(persistedOrderSubmissionError({ ...local, submissionErrorDetails: {
+    ...shortage, errorDetails: { ...shortage.errorDetails, draftSaved: false } } })).not.toContain('Черновик сохранён');
+});
 test('an accepted amendment can explicitly recheck zero cached stock without disabling the submit action', () => {
   const draft = { ...emptyDraft(), organizationGuid: 'org', counterpartyGuid: 'cp', agreementGuid: 'agreement', contractGuid: 'contract',
     warehouseGuid: 'warehouse', deliveryAddressGuid: 'address', deliveryDate: '2026-10-20',

@@ -44,6 +44,7 @@ export function persistedOrderSubmissionError(order?: ClientOrder | null, option
     message = `Недостаточно остатка.${items.length ? '\n' + items.map((line: any) => `${line.name || 'Товар'}: нужно ${line.required}, доступно ${line.available}`).join('\n') : ''}\nПроверьте отмеченные позиции или повторите проверку отправкой.`;
   }
   if (!message) return null;
+  if (details?.draftSaved === true) message = `Черновик сохранён. ${message}`;
   const version = submittedVersionOf(order);
   return options?.includeSubmittedVersion !== false && version?.number1c
     ? `Заказ уже в 1С: ${version.number1c}. Последние изменения не отправлены.\n${message}` : message;
