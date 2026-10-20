@@ -63,8 +63,8 @@ export function savedOrderConfirmsDeviceDraft(entry: RecoverableDeviceDraft, ord
   }
 }
 
-/** A higher local counter can be a failed autosave of an already accepted input.
- * Retire it only against hash-verified historical input, not normalized 1C fields. */
+/** Counters can differ after a failed autosave or an authorized server recovery.
+ * Retire only identical hash-verified accepted input, never normalized 1C fields. */
 export function acceptedSubmissionConfirmsDeviceDraft(entry: RecoverableDeviceDraft, order: ClientOrder, userId: number) {
   const proof = order.acceptedClientOperation;
   if (entry.intent !== 'SUBMIT' || !proof || proof.intent !== 'SUBMIT'
@@ -73,6 +73,6 @@ export function acceptedSubmissionConfirmsDeviceDraft(entry: RecoverableDeviceDr
     || order.syncState !== 'SYNCED' || order.status !== 'CONFIRMED' || !order.isPostedIn1c || !order.number1c
     || order.lastExportError || order.last1cError
     || !Number.isInteger(proof.clientRevision) || proof.clientRevision !== order.clientRevision
-    || !Number.isInteger(entry.clientRevision) || entry.clientRevision <= proof.clientRevision) return false;
+    || !Number.isInteger(entry.clientRevision) || entry.clientRevision < 1 || proof.clientRevision < 1) return false;
   try { return sameDeviceDraftContent(entry.payload, proof.payload as Payload); } catch { return false; }
 }

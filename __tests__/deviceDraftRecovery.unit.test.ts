@@ -60,6 +60,21 @@ describe('posted operation with a redundant newer local counter (Kurenkova regre
     expect(acceptedSubmissionConfirmsDeviceDraft(local(), accepted() as any, 98)).toBe(true);
     expect(savedOrderConfirmsDeviceDraft(local(), accepted() as any, 98)).toBe(true);
   });
+  it.each([1, 2, 3])('reconciles accepted identical input across counters (local=%s), but never discards differing edits', revision => {
+    expect(acceptedSubmissionConfirmsDeviceDraft({ ...local(), clientRevision: revision }, accepted() as any, 98)).toBe(true);
+    const changed = { ...local(), clientRevision: revision, payload: { ...entry().payload, comment: 'New local edit' } };
+    expect(acceptedSubmissionConfirmsDeviceDraft(changed, accepted() as any, 98)).toBe(false);
+  });
+  it.each([0, -1, 1.5, NaN])('retains invalid local counters (%s)', clientRevision => {
+    expect(acceptedSubmissionConfirmsDeviceDraft({ ...local(), clientRevision }, accepted() as any, 98)).toBe(false);
+  });
+  it('clears the identical failed revision 30 after authorized recovery as revision 31 (НОУТ-126165)', () => {
+    const confirmed = { ...accepted(), clientRevision: 31,
+      acceptedClientOperation: { clientRevision: 31, intent: 'SUBMIT', payload: entry().payload } };
+    expect(acceptedSubmissionConfirmsDeviceDraft({ ...local(), clientRevision: 30 }, confirmed as any, 98)).toBe(true);
+    expect(acceptedSubmissionConfirmsDeviceDraft({ ...local(), clientRevision: 30,
+      payload: { ...entry().payload, deliveryDate: '2026-10-22' } }, confirmed as any, 98)).toBe(false);
+  });
   it.each([
     { clientOrderId: 'other' }, { createdByUser: { id: 2 } }, { status: 'DRAFT' }, { syncState: 'QUEUED' },
     { isPostedIn1c: false }, { number1c: null }, { acceptedClientOperation: null }, { clientRevision: 1 },
