@@ -212,6 +212,43 @@ it('unlocks a business-rejected order for correction with a higher immutable rev
   await offline.upsertOfflineDraft('90', { ...queued, clientRevision: 2 });
   expect((await outbox.claimOrderUploads('90'))[0].clientRevision).toBe(2);
 });
+it('does not overwrite a new upload with a late review response for the old rejected revision', async () => {
+  const outbox = require('../src/features/clientOrders/offline/orderOutboxDatabase');
+  const original = queuedDraft('review-retry');
+  await offline.upsertOfflineDraft('90', original);
+  const [first] = await outbox.claimOrderUploads('90');
+  await outbox.acceptOrderUpload(first, ack(first));
+  const accepted = (await outbox.readAcceptedUploads('90'))[0];
+  const rejection = { ...ack(first, 'NEEDS_REVIEW'), errorCode: 'ORDER_CONTENT_CONFLICT', errorMessage: 'Changed server version' };
+  await outbox.updateSubmissionStatus(accepted, rejection);
+  const evidence = await db.getFirstAsync('SELECT payload_hash,payload_json,state FROM offline_order_deliveries WHERE client_revision=1');
+  const proposal = { ...original, clientRevision: 2,
+    payload: { ...original.payload, integrity: { baseContentToken: 'a'.repeat(64), confirmationToken: 'fresh' } } };
+  await offline.upsertOfflineDraft('90', proposal);
+  await outbox.claimOrderUploads('90');
+  await outbox.updateSubmissionStatus(accepted, rejection);
+  expect((await offline.readOfflineDrafts('90'))[0]).toMatchObject({ clientRevision: 2, status: 'SENDING', payload: proposal.payload });
+  expect(await db.getFirstAsync('SELECT payload_hash,payload_json,state FROM offline_order_deliveries WHERE client_revision=1')).toEqual(evidence);
+});
+it.each(['USE_CURRENT', 'KEEP_DRAFT'])('freezes the selected price policy %s durably without rewriting the rejected receipt', async pricePolicy => {
+  const outbox = require('../src/features/clientOrders/offline/orderOutboxDatabase');
+  const queued = queuedDraft(); await offline.upsertOfflineDraft('90', queued);
+  const [packet] = await outbox.claimOrderUploads('90');
+  await outbox.acceptOrderUpload(packet, ack(packet));
+  const accepted = (await outbox.readAcceptedUploads('90'))[0];
+  const details = { items: [{ productGuid: 'p', lineGuid: 'line-queued', oldPrice: 110, currentPrice: 120 }] };
+  await outbox.updateSubmissionStatus(accepted, { ...ack(packet, 'NEEDS_REVIEW'), errorCode: 'PRICE_REVIEW_REQUIRED',
+    errorMessage: 'Цены изменились', errorDetails: details });
+  const before = await db.getFirstAsync('SELECT payload_hash,payload_json,receipt_json FROM offline_order_deliveries WHERE client_revision=1');
+  expect((await offline.readOfflineDrafts('90'))[0].order.draftReview).toMatchObject({ code: 'PRICE_REVIEW_REQUIRED', details });
+  await offline.upsertOfflineDraft('90', { ...queued, clientRevision: 2,
+    payload: { ...queued.payload, offlineReview: { pricePolicy } } });
+  const [next] = await outbox.claimOrderUploads('90');
+  expect(next.clientRevision).toBe(2);
+  expect(next.payload.offlineReview).toEqual({ pricePolicy });
+  expect(next.payloadHash).not.toBe(packet.payloadHash);
+  expect(await db.getFirstAsync('SELECT payload_hash,payload_json,receipt_json FROM offline_order_deliveries WHERE client_revision=1')).toEqual(before);
+});
 it('never accepts another user/revision/hash receipt or removes a newer local operation', async () => {
   const outbox = require('../src/features/clientOrders/offline/orderOutboxDatabase');
   await offline.upsertOfflineDraft('90', queuedDraft()); const [packet] = await outbox.claimOrderUploads('90');

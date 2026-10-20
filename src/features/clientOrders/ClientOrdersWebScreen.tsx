@@ -2,6 +2,7 @@
 import { useThemeColor } from '@/hooks/useThemeColor';
 import { OrderShareFeedback } from './components/OrderShareFeedback';
 import { useOrderShareActions } from './hooks/useOrderShareActions';
+import { hasPriceReview, PRICE_REVIEW_CHOICES, PRICE_REVIEW_QUESTION, type PriceReviewChoice } from './lib/priceReview';
 import { ProductImageGalleryDialog, WebProductImage, PRODUCT_IMAGE_PLACEHOLDER_URI, type ProductGalleryImage } from './components/ProductImageGalleryDialog';
 import {
   computeLineTotal,
@@ -1155,7 +1156,20 @@ export default function ClientOrdersWebScreen() {
     setDiscardConfirm((prev) => ({ ...prev, open: false }));
     resolve?.(result);
   }, []);
-  const workspace = useClientOrdersWorkspace({ confirmDiscard: requestDiscardConfirm });
+  const [priceReviewOpen, setPriceReviewOpen] = React.useState(false);
+  const priceReviewResolveRef = React.useRef<((choice: PriceReviewChoice | null) => void) | null>(null);
+  const requestPriceReview = React.useCallback(() => new Promise<PriceReviewChoice | null>(resolve => {
+    priceReviewResolveRef.current = resolve;
+    setPriceReviewOpen(true);
+  }), []);
+  const closePriceReview = React.useCallback((choice: PriceReviewChoice | null) => {
+    const resolve = priceReviewResolveRef.current;
+    priceReviewResolveRef.current = null;
+    setPriceReviewOpen(false);
+    resolve?.(choice);
+  }, []);
+  React.useEffect(() => () => { priceReviewResolveRef.current?.(null); }, []);
+  const workspace = useClientOrdersWorkspace({ confirmDiscard: requestDiscardConfirm, confirmPriceReview: requestPriceReview });
   const [documentMenuAnchor, setDocumentMenuAnchor] = React.useState<HTMLElement | null>(null);
   const router = useRouter();
   const workspaceRef = React.useRef(workspace);
@@ -2718,7 +2732,7 @@ export default function ClientOrdersWebScreen() {
                         <ToolbarIconButton title="Сохранить" icon="save-outline" color="#2563EB" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={saveWithConfirm} disabled={workspace.readOnly || workspace.saving || !workspace.validation.canSave} loading={workspace.saving} />
                       ) : null}
                       <IconButton aria-label="Меню документа" aria-haspopup="menu" aria-expanded={!!documentMenuAnchor} onClick={event => setDocumentMenuAnchor(event.currentTarget)} disabled={workspace.loadingDetail} size="small"><Ionicons name="ellipsis-horizontal" size={ui.actionIconSize} color="#475569" /></IconButton>
-                      <ToolbarIconButton title="Отправить в 1С" icon="cloud-upload-outline" label={effectiveEditorPaneWidth >= 1180 ? 'В 1С' : undefined} color="#16A34A" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => setConfirmSubmitOpen(true)} disabled={workspace.readOnly || workspace.submitting || !workspace.canSubmitOrder} loading={workspace.submitting} />
+                      <ToolbarIconButton title="Отправить в 1С" icon="cloud-upload-outline" label={effectiveEditorPaneWidth >= 1180 ? 'В 1С' : undefined} color="#16A34A" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => hasPriceReview(workspace.selectedOrder) ? void workspace.submitOrder() : setConfirmSubmitOpen(true)} disabled={workspace.readOnly || workspace.submitting || !workspace.canSubmitOrder} loading={workspace.submitting} />
                         <ToolbarIconButton title="Копировать" icon="copy-outline" color="#475569" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={copyWithConfirm} disabled={workspace.copying || workspace.saving || workspace.submitting || !workspace.hasEditableDocument} loading={workspace.copying} />
                     </Stack>
                   </Stack>
@@ -3531,6 +3545,14 @@ export default function ClientOrdersWebScreen() {
         </MenuItem>
       </Menu>
       <OrderShareFeedback message={orderSharing.feedback} onDismiss={orderSharing.dismissFeedback} />
+      <Dialog open={priceReviewOpen} onClose={() => closePriceReview(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>{PRICE_REVIEW_QUESTION}</DialogTitle>
+        <DialogActions>
+          {PRICE_REVIEW_CHOICES.map((choice, index) => <Button key={choice.policy}
+            variant={index === 0 ? 'contained' : 'text'} onClick={() => closePriceReview(choice.policy)}
+            sx={{ textTransform: 'none', fontWeight: 800 }}>{choice.label}</Button>)}
+        </DialogActions>
+      </Dialog>
       <Dialog open={confirmSubmitOpen} onClose={() => setConfirmSubmitOpen(false)} maxWidth="xs" fullWidth fullScreen={isPhoneDialog}>
         <DialogTitle>{isErrorRetryTo1c ? 'Повторить отправку в 1С?' : isResubmitTo1c ? 'Переотправить в 1С?' : 'Отправить в 1С?'}</DialogTitle>
         <DialogContent>

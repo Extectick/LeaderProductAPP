@@ -5,6 +5,7 @@ import { useNotificationViewport } from '@/context/NotificationViewportContext';
 import DateTimeInput from '@/components/ui/DateTimeInput';
 import { OrderShareFeedback } from './components/OrderShareFeedback';
 import { useOrderShareActions } from './hooks/useOrderShareActions';
+import { hasPriceReview } from './lib/priceReview';
 import { useOrderAction } from './hooks/useOrderAction';
 import { amendmentStatusLabel, persistedOrderSubmissionError, submittedVersionOf } from './lib/orderSubmissionPresentation';
 import ContextMenuTrigger from '@/components/ui/ContextMenuTrigger';
@@ -1937,6 +1938,10 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const submitFromMenu = useOrderAction(() => {
     if (!workspace.canSubmitOrder) return;
     setActionsMenuOpen(false);
+    if (hasPriceReview(workspace.selectedOrder)) {
+      void workspace.submitOrder();
+      return;
+    }
     const isQueuedResubmit = workspace.selectedOrderQueued && workspace.dirty;
     const isSyncedResubmit = workspace.selectedOrderSynced && workspace.dirty;
     const isErrorRetry = !!workspace.selectedOrderHas1cError && !workspace.dirty;
@@ -2446,8 +2451,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
         styles={styles}
         error={workspace.error}
         onDismissError={workspace.error === persistedOrderSubmissionError(workspace.selectedOrder) ? undefined : dismissWorkspaceError}
-        onReview={workspace.selectedOrder?.submissionErrorDetails
-          && workspace.selectedOrder.submissionErrorDetails.backendErrorCode !== 'PRICE_REVIEW_REQUIRED'
+        onReview={(workspace.selectedOrder?.submissionErrorDetails || hasPriceReview(workspace.selectedOrder))
           && !workspace.readOnly ? workspace.submitOrder : undefined}
         reviewing={workspace.submitting || workspace.mutationLocked}
         reviewLabel={submittedVersionOf(workspace.selectedOrder) ? 'Проверить и отправить изменения' : 'Повторить проверку заказа'}
@@ -2473,6 +2477,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     workspace.draft.items.length,
     workspace.error,
     workspace.selectedOrder?.submissionErrorDetails,
+    workspace.selectedOrder?.draftReview,
     workspace.selectedOrder?.submittedVersion,
     workspace.readOnly,
     workspace.submitOrder,
@@ -2769,30 +2774,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     );
 
     if (action === 'submit') {
-      if (order.origin === 'device' && (order as any).offlineDraftStatus === 'PRICE_REVIEW') {
-        Alert.alert(
-          'Цены изменились',
-          'Выберите, с какими ценами отправить заказ после повторной проверки.',
-          [
-            { text: 'Отмена', style: 'cancel' },
-            {
-              text: 'Актуальные цены',
-              onPress: () => void workspace.syncDeviceDrafts({
-                force: true,
-                orderGuid: order.guid,
-                pricePolicy: 'USE_CURRENT',
-              }),
-            },
-            {
-              text: 'Цены черновика',
-              onPress: () => void workspace.syncDeviceDrafts({
-                force: true,
-                orderGuid: order.guid,
-                pricePolicy: 'KEEP_DRAFT',
-              }),
-            },
-          ]
-        );
+      if (hasPriceReview(order)) {
+        void workspace.submitOrderFromList(order);
         return;
       }
       setConfirmDialog({

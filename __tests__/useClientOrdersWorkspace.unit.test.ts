@@ -2,7 +2,7 @@ import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState } from 'react-native';
-jest.mock('../src/features/clientOrders/offline/orderOutbox', () => ({ kickOrderOutbox: jest.fn(), retryOrderOutboxNow: async () => {}, isAsyncOrderOutboxEnabled: () => false }));
+jest.mock('../src/features/clientOrders/offline/orderOutbox', () => ({ kickOrderOutbox: jest.fn(), retryOrderOutboxNow: jest.fn(async () => {}), isAsyncOrderOutboxEnabled: jest.fn(() => false) }));
 jest.mock('../src/features/clientOrders/offline/orderOutboxDatabase', () => ({ readOrderMirrors: async () => [] }));
 
 jest.mock('@/context/AuthContext', () => {
@@ -71,6 +71,7 @@ jest.mock('@/utils/clientOrdersService', () => ({
   getClientOrders: jest.fn(),
   getClientOrdersTodaySummary: jest.fn(),
   putClientOrderByClientId: jest.fn(),
+  previewClientOrderAmendment: jest.fn(),
   searchClientOrderAgreements: jest.fn(),
   searchClientOrderContracts: jest.fn(),
   searchClientOrderCounterparties: jest.fn(),
@@ -107,6 +108,7 @@ import {
   getClientOrders,
   getClientOrdersTodaySummary,
   putClientOrderByClientId,
+  previewClientOrderAmendment,
   submitClientOrder,
   updateClientOrder,
 } from '@/utils/clientOrdersService';
@@ -258,6 +260,7 @@ describe('useClientOrdersWorkspace', () => {
 
   beforeEach(() => {
     jest.resetAllMocks();
+    jest.requireMock('../src/features/clientOrders/offline/orderOutbox').isAsyncOrderOutboxEnabled.mockReturnValue(false);
     jest.useFakeTimers();
     jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
     jest.mocked(AsyncStorage.setItem).mockResolvedValue(undefined);
@@ -489,9 +492,9 @@ describe('useClientOrdersWorkspace', () => {
     await act(async () => harness.renderer.unmount());
   });
 
-  it.each([false, true])('reconciles a redundant local revision but preserves a real edit (changed=%s)', async changed => {
+  it.each([[1, false], [1, true], [3, false], [3, true]])('reconciles identical accepted input across counters (local=%s, changed=%s)', async (localRevision, changed) => {
     const entry = localEntry('posted-local-counter', 'NEEDS_EDIT');
-    entry.clientRevision = 3;
+    entry.clientRevision = Number(localRevision);
     const acceptedPayload = JSON.parse(JSON.stringify(entry.payload));
     if (changed) entry.payload.items[0].quantity = 7;
     const records = memoryDraftStore([entry]);
@@ -569,6 +572,182 @@ describe('useClientOrdersWorkspace', () => {
       order: { ...queuedOrder(0), guid: `device-order-${id}`, clientOrderId: id, clientRevision: 1,
         origin: 'device', status: 'DRAFT', syncState: 'DRAFT', localDraft: value }, payload: buildLocalDraftPayload(value) };
   }
+
+  function priceEntry(id = 'price-review') {
+    const entry: any = localEntry(id, 'PRICE_REVIEW');
+    entry.order.offlineDraftStatus = 'PRICE_REVIEW';
+    entry.order.draftReview = { code: 'PRICE_REVIEW_REQUIRED', details: { items: [
+      { productGuid: 'product-guid', lineGuid: 'line', oldPrice: 100, currentPrice: 120 },
+    ] } };
+    return entry;
+  }
+
+  it.each([['NEEDS_EDIT', 0], ['PRICE_REVIEW', 0], ['NEEDS_EDIT', 4]])
+  ('rechecks an unchanged rejected %s above the accepted client revision %s', async (status, acceptedRevision) => {
+    const outbox = jest.requireMock('../src/features/clientOrders/offline/orderOutbox');
+    outbox.isAsyncOrderOutboxEnabled.mockReturnValue(true);
+    const entry: any = localEntry('unchanged-amendment', String(status));
+    entry.order.submissionErrorDetails = { backendErrorCode: 'ORDER_CONTENT_CONFLICT' };
+    entry.order.submittedVersion = { orderGuid: 'server-order', number1c: 'НОУТ-TEST', clientRevision: Number(acceptedRevision),
+      status: 'CONFIRMED', syncState: 'SYNCED', isPostedIn1c: true, revision: 3, itemsCount: 1, totalAmount: 200 };
+    const records = memoryDraftStore([entry]);
+    const original = JSON.stringify(entry);
+    const review: any = { orderGuid: 'server-order', serverRevision: 3, number1c: 'НОУТ-TEST',
+      baseContentToken: 'a'.repeat(64), requiresConfirmation: true,
+      changes: [{ productName: 'Товар', reason: 'Количество', before: 1, after: 2 }] };
+    jest.mocked(previewClientOrderAmendment).mockImplementation(async () => {
+      expect(records.get(entry.id).intent).toBe('SAVE');
+      return review;
+    });
+    jest.requireMock('react-native').Alert.alert.mockImplementation((_title: string, _message: unknown, buttons: any[]) => buttons[1].onPress());
+    const harness = await ordersListWorkspace(1, 'editor');
+    try {
+      await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+      expect(harness.current.dirty).toBe(false);
+      expect(harness.current.canSubmitOrder).toBe(true);
+      await act(async () => { await harness.current.submitOrder(); });
+      const revision = Math.max(1, Number(acceptedRevision)) + 1;
+      expect(previewClientOrderAmendment).toHaveBeenCalledWith(entry.clientOrderId, expect.objectContaining({ clientRevision: revision }));
+      expect(jest.requireMock('react-native').Alert.alert).toHaveBeenCalledTimes(1);
+      expect(records.get(entry.id)).toMatchObject({ clientRevision: revision, intent: 'SUBMIT', status: 'READY_TO_SEND',
+        payload: { integrity: { baseContentToken: review.baseContentToken } } });
+      expect(JSON.stringify(entry)).toBe(original);
+      expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it.each(['cancel', 'offline', 'invalid-preview'])('keeps a rejected amendment unqueued when review stops: %s', async outcome => {
+    jest.requireMock('../src/features/clientOrders/offline/orderOutbox').isAsyncOrderOutboxEnabled.mockReturnValue(true);
+    const entry: any = localEntry('review-stops', 'NEEDS_EDIT');
+    entry.order.submissionErrorDetails = { backendErrorCode: 'ORDER_CONTENT_CONFLICT' };
+    const records = memoryDraftStore([entry]);
+    jest.mocked(previewClientOrderAmendment).mockResolvedValue({ orderGuid: 'server-order', serverRevision: 3,
+      number1c: 'НОУТ-TEST', baseContentToken: outcome === 'invalid-preview' ? '' : 'a'.repeat(64),
+      requiresConfirmation: true, changes: [] });
+    jest.requireMock('react-native').Alert.alert.mockImplementation((_title: string, _message: unknown, buttons: any[]) => buttons[0].onPress());
+    const harness = await ordersListWorkspace(1, 'editor');
+    try {
+      await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+      if (outcome === 'offline') await act(async () => { setServerUnavailable('Network request failed'); });
+      await act(async () => { await harness.current.submitOrder(); });
+      expect(records.get(entry.id)).toMatchObject({ clientRevision: 2, intent: 'SAVE', status: 'ON_DEVICE' });
+      expect(records.get(entry.id).payload.items).toEqual(entry.payload.items);
+      expect(putClientOrderByClientId).not.toHaveBeenCalled();
+      if (outcome === 'offline') expect(previewClientOrderAmendment).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('wakes a transport failure without replacing its frozen operation', async () => {
+    const outbox = jest.requireMock('../src/features/clientOrders/offline/orderOutbox');
+    outbox.isAsyncOrderOutboxEnabled.mockReturnValue(true);
+    const entry = localEntry('lost-ack', 'SEND_ERROR'), records = memoryDraftStore([entry]);
+    const original = JSON.stringify(entry);
+    const harness = await ordersListWorkspace(1, 'editor');
+    try {
+      await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+      await act(async () => { await harness.current.submitOrder(); });
+      expect(outbox.retryOrderOutboxNow).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(records.get(entry.id))).toBe(original);
+      expect(previewClientOrderAmendment).not.toHaveBeenCalled();
+      expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it.each([false, true])('persists either explicit price choice before retry through the outbox (async=%s)', async asyncOutbox => {
+    const outbox = jest.requireMock('../src/features/clientOrders/offline/orderOutbox');
+    outbox.isAsyncOrderOutboxEnabled.mockReturnValue(asyncOutbox);
+    for (const [button, policy] of ['USE_CURRENT', 'KEEP_DRAFT'].entries()) {
+      const entry = priceEntry(); const records = memoryDraftStore([entry, localEntry('untouched')]);
+      const frozen = JSON.stringify(entry.payload);
+      jest.requireMock('react-native').Alert.alert.mockImplementation((title: string, message: unknown, buttons: any[]) => {
+        expect(title).toBe('Обновить цены?'); expect(message).toBeUndefined();
+        expect(buttons.map(b => b.text)).toEqual(['Обновить', 'Не изменять']);
+        buttons[button].onPress();
+      });
+      jest.mocked(putClientOrderByClientId).mockResolvedValue(queuedOrder(1, { clientOrderId: entry.clientOrderId }) as any);
+      const harness = await ordersListWorkspace();
+      try {
+        await act(async () => { await harness.current.syncDeviceDrafts({ force: true, orderGuid: entry.order.guid }); });
+        if (asyncOutbox) {
+          expect(records.get(entry.id)).toMatchObject({ clientRevision: 2, status: 'READY_TO_SEND',
+            payload: { offlineReview: { pricePolicy: policy } } });
+          expect(outbox.retryOrderOutboxNow).toHaveBeenCalled();
+        } else {
+          expect(putClientOrderByClientId).toHaveBeenLastCalledWith(entry.clientOrderId, expect.anything(),
+            expect.objectContaining({ clientRevision: 2, offlineReview: { pricePolicy: policy } }));
+        }
+        expect(records.get('untouched').intent).toBe('SAVE');
+        expect(JSON.stringify(entry.payload)).toBe(frozen);
+      } finally { await act(async () => harness.renderer.unmount()); }
+    }
+  });
+
+  it.each([['editor', false], ['list', false], ['editor', true], ['list', true]] as const)
+  ('asks on retry from %s without requiring edits first (async=%s)', async (action, asyncOutbox) => {
+    jest.requireMock('../src/features/clientOrders/offline/orderOutbox').isAsyncOrderOutboxEnabled.mockReturnValue(asyncOutbox);
+    const entry = priceEntry(); const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace();
+    jest.requireMock('react-native').Alert.alert.mockImplementation((_title: string, _message: unknown, buttons: any[]) => buttons[1].onPress());
+    try {
+      if (action === 'editor') {
+        await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+        expect(harness.current.validation.itemMessages.line).toEqual(['Цена изменилась: 100 ₽ → 120 ₽']);
+        expect(harness.current.canSubmitOrder).toBe(true);
+        await act(async () => { await harness.current.submitOrder(); });
+      } else {
+        await act(async () => { await harness.current.submitOrderFromList(entry.order); });
+      }
+      expect(jest.requireMock('react-native').Alert.alert).toHaveBeenCalledTimes(1);
+      expect(records.get(entry.id)).toMatchObject({ status: 'READY_TO_SEND', clientRevision: 2,
+        payload: { offlineReview: { pricePolicy: 'KEEP_DRAFT' } } });
+      expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('leaves the frozen price-review packet intact when the question is dismissed', async () => {
+    const entry = priceEntry(); const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace();
+    const before = JSON.stringify([...records.values()]);
+    jest.requireMock('react-native').Alert.alert.mockImplementation((_title: string, _message: unknown, _buttons: any[], options: any) => options.onDismiss());
+    try {
+      await act(async () => { await harness.current.syncDeviceDrafts({ force: true, orderGuid: entry.order.guid }); });
+      expect(JSON.stringify([...records.values()])).toBe(before);
+      expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('asks once for a bulk retry and cannot requeue the same price decision twice', async () => {
+    const outbox = jest.requireMock('../src/features/clientOrders/offline/orderOutbox');
+    outbox.isAsyncOrderOutboxEnabled.mockReturnValue(true);
+    const ordinary = localEntry('ordinary');
+    const records = memoryDraftStore([priceEntry('first-price'), priceEntry('second-price'), ordinary]);
+    const harness = await ordersListWorkspace();
+    jest.requireMock('react-native').Alert.alert.mockImplementation((_title: string, _message: unknown, buttons: any[]) => buttons[0].onPress());
+    try {
+      await act(async () => { await Promise.all([harness.current.syncDeviceDrafts({ force: true }), harness.current.syncDeviceDrafts({ force: true })]); });
+      expect(jest.requireMock('react-native').Alert.alert).toHaveBeenCalledTimes(1);
+      for (const id of ['first-price', 'second-price']) expect(records.get(id)).toMatchObject({ clientRevision: 2,
+        status: 'READY_TO_SEND', payload: { offlineReview: { pricePolicy: 'USE_CURRENT' } } });
+      expect(records.get('ordinary')).toEqual(ordinary);
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('does not queue stale editor contents if input changes while the price question is open', async () => {
+    const entry = priceEntry(); const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace();
+    let choose!: () => void;
+    let sending!: Promise<void>;
+    jest.requireMock('react-native').Alert.alert.mockImplementation((_title: string, _message: unknown, buttons: any[]) => { choose = buttons[0].onPress; });
+    try {
+      await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+      await act(async () => { sending = harness.current.submitOrder(); });
+      await act(async () => { harness.current.patchDraft({ comment: 'New input' }); });
+      await act(async () => { choose(); await sending; });
+      expect(records.get(entry.id).clientRevision).toBe(1);
+      expect(harness.current.draft.comment).toBe('New input');
+      expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
 
   function legacyFixture(status = 'READY_TO_SEND') {
     const entry: any = localEntry('legacy-server:legacy-guid', status);
@@ -812,17 +991,18 @@ describe('useClientOrdersWorkspace', () => {
       return queuedOrder(1, { guid: `api-${id}`, clientOrderId: id }) as any;
     });
     const harness = await ordersListWorkspace();
+    jest.requireMock('react-native').Alert.alert.mockImplementation((_title: string, _message: unknown, buttons: any[]) => buttons[1].onPress());
     expect(harness.current.deviceDraftsCount).toBe(6);
     expect(harness.current.readyDeviceDraftsCount).toBe(3);
-    expect(harness.current.queuedDeviceDraftsCount).toBe(3);
+    expect(harness.current.queuedDeviceDraftsCount).toBe(4);
     await act(async () => { await harness.current.syncDeviceDrafts({ force: true }); });
     expect(maxInFlight).toBe(1);
-    expect(jest.mocked(putClientOrderByClientId).mock.calls.map(call => call[0])).toEqual(['first', 'second']);
+    expect(jest.mocked(putClientOrderByClientId).mock.calls.map(call => call[0]).sort()).toEqual(['first', 'review', 'second']);
     expect(records.get('complete')).toEqual(completeDraft);
     expect(records.get('incomplete')).toEqual(incompleteDraft);
     expect(records.get('invalid-queued').status).toBe('NEEDS_EDIT');
-    expect(records.get('review').status).toBe('PRICE_REVIEW');
-    expect(records.size).toBe(4);
+    expect(records.has('review')).toBe(false);
+    expect(records.size).toBe(3);
     expect(harness.current.queuedDeviceDraftsCount).toBe(0);
     expect(harness.current.syncingDeviceDrafts).toBe(false);
     await act(async () => harness.renderer.unmount());
@@ -848,14 +1028,14 @@ describe('useClientOrdersWorkspace', () => {
     } finally { await act(async () => harness.renderer.unmount()); }
   });
 
-  it('keeps price-review documents out of bulk sending until a price choice targets that document', async () => {
+  it('does not apply an unscoped forced price policy to review documents', async () => {
     const review = localEntry('review', 'PRICE_REVIEW');
     const records = memoryDraftStore([review, localEntry('other-review', 'PRICE_REVIEW')]);
     const harness = await ordersListWorkspace();
     try {
       await act(async () => { await harness.current.syncDeviceDrafts({ force: true, pricePolicy: 'USE_CURRENT' }); });
       expect(putClientOrderByClientId).not.toHaveBeenCalled();
-      expect(harness.current.queuedDeviceDraftsCount).toBe(0);
+      expect(harness.current.queuedDeviceDraftsCount).toBe(2);
       jest.mocked(putClientOrderByClientId).mockResolvedValue(queuedOrder(1, { clientOrderId: review.clientOrderId }) as any);
       await act(async () => { await harness.current.syncDeviceDrafts({ force: true,
         orderGuid: review.order.guid, pricePolicy: 'USE_CURRENT' }); });
@@ -1275,6 +1455,11 @@ describe('useClientOrdersWorkspace', () => {
       fields: { last1cError: '', lastExportError: '' },
       expected: { last1cError: '', lastExportError: '' },
     },
+    {
+      name: 'clears an explicit null lock reason without requiring a new status or revision',
+      fields: { readOnlyReason: null },
+      expected: { readOnly: false, readOnlyReason: null, last1cError: 'Posting failed', lastExportError: 'Export failed' },
+    },
   ])('$name on list refresh without reloading the open document', async ({ fields, expected }) => {
     const original = queuedOrder(0, {
       status: 'CONFIRMED',
@@ -1283,6 +1468,8 @@ describe('useClientOrdersWorkspace', () => {
       isPostedIn1c: true,
       last1cError: 'Posting failed',
       lastExportError: 'Export failed',
+      readOnly: false,
+      readOnlyReason: 'Заказ отправляется в API',
       items: [{ product: { guid: 'product-guid', name: 'Товар' }, quantity: 2, basePrice: 100 }],
     });
     const page = (order: typeof original) => ({

@@ -326,7 +326,8 @@ export type ClientOrder = {
     warehouseGuid?: string | null;
     clientRevision?: number;
     checkedAt?: string;
-    details?: { items?: Array<{ productGuid: string; name?: string; required: number; available: number; shortage?: number }>; [key: string]: any } | null;
+    details?: { items?: Array<{ productGuid: string; lineGuid?: string | null; name?: string; productName?: string;
+      required?: number; available?: number; shortage?: number; oldPrice?: number; currentPrice?: number }>; [key: string]: any } | null;
   } | null;
   contentToken?: string;
   guid: string;
