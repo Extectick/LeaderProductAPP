@@ -95,4 +95,25 @@ describe('posted operation with a redundant newer local counter (Kurenkova regre
     expect(acceptedSubmissionConfirmsDeviceDraft({ ...local(), intent: 'SAVE' }, accepted() as any, 98)).toBe(false);
     expect(acceptedSubmissionConfirmsDeviceDraft({ ...local(), clientOrderId: 'legacy-server:old' }, accepted() as any, 98)).toBe(false);
   });
+  it('preserves a changed quoted price while comparing original packets rather than later 1C prices', () => {
+    const candidate = local();
+    candidate.payload.items[0] = { ...candidate.payload.items[0], manualPrice: undefined, basePrice: 110 };
+    const proofPayload = JSON.parse(JSON.stringify(candidate.payload));
+    const confirmed = { ...accepted(),
+      acceptedClientOperation: { clientRevision: 2, intent: 'SUBMIT', payload: proofPayload } };
+    expect(acceptedSubmissionConfirmsDeviceDraft(candidate, confirmed as any, 98)).toBe(true);
+    candidate.payload.items[0].basePrice = 120;
+    expect(acceptedSubmissionConfirmsDeviceDraft(candidate, confirmed as any, 98)).toBe(false);
+  });
+  it.each(['USE_CURRENT', 'KEEP_DRAFT'] as const)('preserves a different explicit price choice: %s', policy => {
+    const candidate = { ...local(), payload: { ...local().payload, offlineReview: { pricePolicy: policy } } };
+    const proofPayload = { ...entry().payload, offlineReview: { pricePolicy: policy === 'KEEP_DRAFT' ? 'USE_CURRENT' : 'KEEP_DRAFT' } };
+    const confirmed = { ...accepted(),
+      acceptedClientOperation: { clientRevision: 2, intent: 'SUBMIT', payload: proofPayload } };
+    expect(acceptedSubmissionConfirmsDeviceDraft(candidate, confirmed as any, 98)).toBe(false);
+    confirmed.acceptedClientOperation.payload.offlineReview.pricePolicy = policy;
+    expect(acceptedSubmissionConfirmsDeviceDraft(candidate, confirmed as any, 98)).toBe(true);
+    candidate.payload.offlineReview.pricePolicy = 'ASK' as any;
+    expect(acceptedSubmissionConfirmsDeviceDraft(candidate, confirmed as any, 98)).toBe(true);
+  });
 });

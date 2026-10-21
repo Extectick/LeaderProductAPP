@@ -6,6 +6,8 @@ import {
 } from '@/utils/clientOrdersService';
 import type { OrderGeoEventInput } from '@/utils/orderGeo';
 import { amendmentStatusLabel, submittedVersionOf } from './lib/orderSubmissionPresentation';
+import { getClientOrderItems } from './lib/orderItems';
+export { getClientOrderItems, getClientOrderItemsCount } from './lib/orderItems';
 
 export const DEFAULT_ORDER_CURRENCY = 'RUB';
 
@@ -874,21 +876,6 @@ export function formatDateTime(value?: string | Date | null) {
 
 export function getOrderActivityAt(order: ClientOrder) {
   return order.updatedAt || order.queuedAt || order.sentTo1cAt || order.createdAt || '';
-}
-
-export function getClientOrderItems(order?: Pick<ClientOrder, 'items'> | null) {
-  if (!Array.isArray((order as any)?.items)) return [];
-  return (order as ClientOrder).items.filter((item): item is ClientOrderItem => {
-    if (!item || typeof item !== 'object') return false;
-    const product = (item as ClientOrderItem).product;
-    return !!product && typeof product === 'object' && !!product.guid;
-  });
-}
-
-export function getClientOrderItemsCount(order?: Pick<ClientOrder, 'items' | 'itemsCount'> | null) {
-  const explicit = Number((order as any)?.itemsCount);
-  if (Number.isFinite(explicit) && explicit >= 0) return explicit;
-  return getClientOrderItems(order as any).filter((item) => !item.isCancelled).length;
 }
 
 export function orderToDraft(order: ClientOrder): DraftOrder {

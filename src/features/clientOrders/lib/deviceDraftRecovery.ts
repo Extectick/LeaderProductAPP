@@ -1,7 +1,9 @@
 import type { ClientOrder } from '@/utils/clientOrdersService';
 import { buildCopyPayload, orderToDraft } from '../clientOrdersShared';
 
-type Payload = ReturnType<typeof buildCopyPayload>;
+type Payload = ReturnType<typeof buildCopyPayload> & {
+  offlineReview?: { pricePolicy?: 'ASK' | 'USE_CURRENT' | 'KEEP_DRAFT' };
+};
 export type RecoverableDeviceDraft = {
   clientOrderId: string;
   clientRevision: number;
@@ -74,5 +76,17 @@ export function acceptedSubmissionConfirmsDeviceDraft(entry: RecoverableDeviceDr
     || order.lastExportError || order.last1cError
     || !Number.isInteger(proof.clientRevision) || proof.clientRevision !== order.clientRevision
     || !Number.isInteger(entry.clientRevision) || entry.clientRevision < 1 || proof.clientRevision < 1) return false;
-  try { return sameDeviceDraftContent(entry.payload, proof.payload as Payload); } catch { return false; }
+  try {
+    const accepted = proof.payload as Payload;
+    const policy = entry.payload.offlineReview?.pricePolicy;
+    // ASK can be resolved by a later explicit choice. A new explicit choice is
+    // not redundant unless that same choice was accepted too.
+    if (policy && policy !== 'ASK' && policy !== accepted.offlineReview?.pricePolicy) return false;
+    if (!sameDeviceDraftContent(entry.payload, accepted)) return false;
+    const acceptedItems = new Map(accepted.items.map(item => [guid(item.lineGuid), item]));
+    // Here both sides are original packets, not normalized 1C lines. Preserve
+    // a changed quoted price even when no manual price was entered.
+    return entry.payload.items.every(item => number(item.manualPrice) !== null
+      || number(item.basePrice) === number(acceptedItems.get(guid(item.lineGuid))?.basePrice));
+  } catch { return false; }
 }

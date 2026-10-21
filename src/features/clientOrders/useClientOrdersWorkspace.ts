@@ -1408,6 +1408,10 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const ordersInitialLoadDoneRef = React.useRef(false);
   const deviceDraftSyncingRef = React.useRef(false);
   const draftReconcileAttemptsRef = React.useRef(new Map<string, number>());
+  const draftReconcileReadsRef = React.useRef(new Map<string, Promise<ClientOrder>>());
+  const draftReconcileScopeRef = React.useRef(0);
+  const draftReconcileRunningRef = React.useRef(false);
+  const draftReconcileRunRef = React.useRef<(scope: number) => Promise<void>>(async () => {});
   React.useEffect(() => registerAppReloadBlocker(() => {
     if (foregroundSaveRef.current || deviceDraftSyncingRef.current) return 'Дождитесь сохранения заказа';
     if (dirtyRef.current) return 'Сначала сохраните изменения в заказе';
@@ -2216,6 +2220,50 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     await replaceDeviceDraftEntries(next);
   }, [replaceDeviceDraftEntries]);
 
+  /** Read-only: retire only this exact, accepted operation; never resend it or
+   * compare against quantities which an operator has since adjusted in 1C. */
+  const reconcileDeviceDraft = React.useCallback(async (entry: DeviceDraftEntry, isCurrent: () => boolean = () => true) => {
+    if (!isCurrent() || !getServerStatus().isReachable || activeOfflineUserRef.current !== offlineUserId
+      || entry.intent !== 'SUBMIT' || !['SEND_ERROR', 'NEEDS_EDIT', 'PRICE_REVIEW'].includes(entry.status)) return null;
+    const isOpenDirty = () => dirtyRef.current
+      && (selectedGuidRef.current === entry.order.guid || selectedGuidRef.current === entry.serverGuid);
+    if (isOpenDirty()) return null;
+    const key = `${offlineUserId}:${entry.clientOrderId}:${entry.clientRevision}`;
+    const legacy = entry.clientOrderId.startsWith('legacy-server:');
+    let pending = draftReconcileReadsRef.current.get(key);
+    if (!pending) {
+      pending = legacy ? getClientOrder(entry.serverGuid || entry.clientOrderId.slice('legacy-server:'.length))
+        : getClientOrderByClientId(entry.clientOrderId);
+      draftReconcileReadsRef.current.set(key, pending);
+    }
+    try {
+      const order = await pending;
+      if (!isCurrent() || activeOfflineUserRef.current !== offlineUserId || deviceDraftSyncingRef.current || isOpenDirty()) return null;
+      const confirms = (candidate: DeviceDraftEntry) => legacy
+        ? legacyOrderMatches({ guid: entry.serverGuid || entry.clientOrderId.slice('legacy-server:'.length),
+          userId: Number(offlineUserId), payload: candidate.payload }, order) && legacySubmissionAccepted(order)
+        : isReconciledOrderOperation(order, candidate) || acceptedSubmissionConfirmsDeviceDraft(candidate, order, Number(offlineUserId));
+      if (!confirms(entry)) return null;
+      const current = findDeviceDraftEntry(entry.order.guid, entry.clientOrderId);
+      // Another reconciliation may already have consumed this exact copy.
+      if (!current) return order;
+      if (!isSameOrderOperation(current, entry) || !confirms(current) || isOpenDirty()) return null;
+      await removeDeviceDraftEntry(entry.order.guid, entry.clientRevision);
+      if (!isCurrent() || activeOfflineUserRef.current !== offlineUserId
+        || findDeviceDraftEntry(entry.order.guid, entry.clientOrderId)) return null;
+      applySavedOrderToList(order);
+      if (!isOpenDirty() && (selectedGuidRef.current === entry.order.guid || selectedGuidRef.current === entry.serverGuid)) {
+        applyOrderDetail(order);
+        setError(null);
+      }
+      setOrdersError(null);
+      return order;
+    } catch { return null; }
+    finally {
+      if (draftReconcileReadsRef.current.get(key) === pending) draftReconcileReadsRef.current.delete(key);
+    }
+  }, [applyOrderDetail, applySavedOrderToList, findDeviceDraftEntry, offlineUserId, removeDeviceDraftEntry]);
+
   const saveDraftOnDevice = React.useCallback(async (
     payload: ClientOrderSavePayload,
     syncError?: string | null,
@@ -2377,6 +2425,17 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   } = {}) => {
     if (priceReviewPreparingRef.current || deviceDraftSyncingRef.current || foregroundSaveRef.current) return;
     const scoped = !!(syncOptions.draftId || syncOptions.orderGuid);
+    // An old price warning may already have been resolved by another accepted
+    // revision. Check before asking for a decision or creating another packet.
+    const pendingReviews = deviceDraftEntriesRef.current.filter(entry => entry.intent === 'SUBMIT'
+      && ['SEND_ERROR', 'NEEDS_EDIT', 'PRICE_REVIEW'].includes(entry.status)
+      && (scoped ? (syncOptions.draftId ? entry.id === syncOptions.draftId
+        : entry.order.guid === syncOptions.orderGuid || entry.serverGuid === syncOptions.orderGuid) : syncOptions.force));
+    priceReviewPreparingRef.current = true;
+    try {
+      for (const entry of pendingReviews) await reconcileDeviceDraft(entry);
+    } finally { priceReviewPreparingRef.current = false; }
+    if (activeOfflineUserRef.current !== offlineUserId) return;
     const reviewTargets = deviceDraftEntriesRef.current.filter(entry => entry.intent === 'SUBMIT' && !entry.requiresReview
       && hasPriceReview({ ...entry.order, offlineDraftStatus: entry.status })
       && (scoped ? (syncOptions.draftId ? entry.id === syncOptions.draftId
@@ -2605,47 +2664,43 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       deviceDraftSyncingRef.current = false;
       setSyncingDeviceDrafts(false);
     }
-  }, [applyOrderDetail, applySavedOrderToList, deviceDraftsHydrated, deviceDraftsStorageKey, offlineUserId, replaceDeviceDraftEntries, requestPriceReview]);
+  }, [applyOrderDetail, applySavedOrderToList, deviceDraftsHydrated, deviceDraftsStorageKey, offlineUserId, replaceDeviceDraftEntries, requestPriceReview, reconcileDeviceDraft]);
 
-  React.useEffect(() => {
-    if (!deviceDraftsHydrated || !serverStatus.isReachable || options.isScreenActive === false) return;
-    let cancelled = false;
-    // Read-only recovery also covers a rejected operation accepted later (e.g.
-    // explicit administrator recovery). Never submit or consume a different revision.
-    void (async () => {
-      for (const entry of deviceDraftEntries) {
-        if (cancelled || deviceDraftSyncingRef.current || !getServerStatus().isReachable) break;
-        if (entry.intent !== 'SUBMIT' || !['SEND_ERROR', 'NEEDS_EDIT', 'PRICE_REVIEW'].includes(entry.status)
-          ) continue;
-        if (dirtyRef.current && (selectedGuidRef.current === entry.order.guid || selectedGuidRef.current === entry.serverGuid)) continue;
+  // Keep requests alive across harmless queue/list rerenders. Only a real
+  // account/screen/network lifecycle change invalidates their results.
+  draftReconcileRunRef.current = async scope => {
+    if (draftReconcileRunningRef.current || scope !== draftReconcileScopeRef.current) return;
+    draftReconcileRunningRef.current = true;
+    try {
+      for (const entry of deviceDraftEntriesRef.current) {
+        if (scope !== draftReconcileScopeRef.current || deviceDraftSyncingRef.current
+          || !getServerStatus().isReachable || (AppState.currentState && AppState.currentState !== 'active')) break;
+        if (entry.intent !== 'SUBMIT' || !['SEND_ERROR', 'NEEDS_EDIT', 'PRICE_REVIEW'].includes(entry.status)) continue;
         const key = `${offlineUserId}:${entry.clientOrderId}:${entry.clientRevision}`;
         if (Date.now() - (draftReconcileAttemptsRef.current.get(key) || 0) < 60_000) continue;
         draftReconcileAttemptsRef.current.set(key, Date.now());
-        try {
-          const legacy = entry.clientOrderId.startsWith('legacy-server:');
-          const legacyGuid = entry.serverGuid || entry.clientOrderId.slice('legacy-server:'.length);
-          const order = legacy ? await getClientOrder(legacyGuid) : await getClientOrderByClientId(entry.clientOrderId);
-          if (cancelled || activeOfflineUserRef.current !== offlineUserId || deviceDraftSyncingRef.current
-            || !(legacy
-              ? legacyOrderMatches({ guid: legacyGuid, userId: Number(offlineUserId), payload: entry.payload }, order) && legacySubmissionAccepted(order)
-              : isReconciledOrderOperation(order, entry)
-                || acceptedSubmissionConfirmsDeviceDraft(entry, order, Number(offlineUserId)))) continue;
-          if (dirtyRef.current && (selectedGuidRef.current === entry.order.guid || selectedGuidRef.current === entry.serverGuid)) continue;
-          const current = findDeviceDraftEntry(entry.order.guid, entry.clientOrderId);
-          if (!current || !isSameOrderOperation(current, entry)) continue;
-          await removeDeviceDraftEntry(entry.order.guid, entry.clientRevision);
-          applySavedOrderToList(order);
-          if (!dirtyRef.current && (selectedGuidRef.current === entry.order.guid || selectedGuidRef.current === entry.serverGuid)) {
-            applyOrderDetail(order);
-            setError(null);
-          }
-          setOrdersError(null);
-        } catch { /* Keep the exact operation on the phone for an explicit retry. */ }
+        await reconcileDeviceDraft(entry, () => scope === draftReconcileScopeRef.current);
+        if (scope !== draftReconcileScopeRef.current) draftReconcileAttemptsRef.current.delete(key);
       }
-    })();
-    return () => { cancelled = true; };
-  }, [deviceDraftEntries, deviceDraftsHydrated, serverStatus.isReachable, offlineUserId, options.isScreenActive,
-    applyOrderDetail, applySavedOrderToList, findDeviceDraftEntry, removeDeviceDraftEntry, setOrdersError]);
+    } finally { draftReconcileRunningRef.current = false; }
+  };
+  React.useEffect(() => {
+    const scope = ++draftReconcileScopeRef.current;
+    if (!deviceDraftsHydrated || !serverStatus.isReachable || options.isScreenActive === false) return;
+    draftReconcileAttemptsRef.current.clear();
+    const run = () => { void draftReconcileRunRef.current(scope); };
+    run();
+    const timer = setInterval(run, 30_000);
+    const listener = typeof AppState.addEventListener === 'function' ? AppState.addEventListener('change', state => {
+      if (state === 'active') { draftReconcileAttemptsRef.current.clear(); run(); }
+    }) : null;
+    return () => { ++draftReconcileScopeRef.current; clearInterval(timer); listener?.remove(); };
+  }, [deviceDraftsHydrated, serverStatus.isReachable, offlineUserId, options.isScreenActive]);
+  React.useEffect(() => {
+    if (deviceDraftsHydrated && serverStatus.isReachable && options.isScreenActive !== false) {
+      void draftReconcileRunRef.current(draftReconcileScopeRef.current);
+    }
+  }, [deviceDraftEntries, deviceDraftsHydrated, serverStatus.isReachable, options.isScreenActive]);
 
   const removeItem = React.useCallback((lineKey: string) => {
     patchDraft((prev) => ({ ...prev, items: prev.items.filter((item) => item.key !== lineKey) }));
@@ -4238,9 +4293,12 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     try {
       let targetGuid = draft.guid || selectedGuid;
       let revision = draft.revision;
-      const reviewOrder = findDeviceDraftEntry(targetGuid, draft.clientOrderId)?.order ?? selectedOrder;
       const editVersion = draftEditVersionRef.current;
       const selectedAtStart = selectedGuidRef.current;
+      const deviceEntry = findDeviceDraftEntry(targetGuid, draft.clientOrderId);
+      if (deviceEntry && await reconcileDeviceDraft(deviceEntry)) return;
+      if (editVersion !== draftEditVersionRef.current || selectedAtStart !== selectedGuidRef.current) return;
+      const reviewOrder = deviceEntry?.order ?? selectedOrder;
       const pricePolicy = hasPriceReview(reviewOrder) ? await requestPriceReview() : undefined;
       if (pricePolicy === null || activeOfflineUserRef.current !== offlineUserId
         || editVersion !== draftEditVersionRef.current || selectedAtStart !== selectedGuidRef.current) return;
@@ -4279,7 +4337,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       submitActionInFlightRef.current = false;
       setSubmitting(false);
     }
-  }, [applyOrderDetail, applySavedOrderToList, canSubmitOrder, dirty, draft.clientOrderId, draft.guid, draft.revision, findDeviceDraftEntry, loadOrders, mergeServerRevisionIntoOpenDraft, saveDraft, selectedGuid, selectedOrder, selectedOrderQueued, offlineUserId, requestPriceReview, serverStatus.isReachable, validation.blockingMessage]);
+  }, [applyOrderDetail, applySavedOrderToList, canSubmitOrder, dirty, draft.clientOrderId, draft.guid, draft.revision, findDeviceDraftEntry, loadOrders, mergeServerRevisionIntoOpenDraft, saveDraft, selectedGuid, selectedOrder, selectedOrderQueued, offlineUserId, requestPriceReview, serverStatus.isReachable, validation.blockingMessage, reconcileDeviceDraft]);
 
   const submitOrderFromList = React.useCallback(async (target: ClientOrder) => {
     addMonitoringBreadcrumb('order.list_submit_requested');
@@ -4294,6 +4352,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
       const deviceEntry = findDeviceDraftEntry(target.guid);
       if (deviceEntry) {
+        const accepted = await reconcileDeviceDraft(deviceEntry);
+        if (accepted) return accepted;
         const check = validateDraft(orderToDraft(deviceEntry.order), { recheckStock: needsAmendmentReview(deviceEntry.order)
           || deviceEntry.order.draftReview?.code === 'STOCK_SHORTAGE' });
         if (!check.canSubmit) {
@@ -4375,7 +4435,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       submitActionInFlightRef.current = false;
       setSubmitting(false);
     }
-  }, [applySavedOrderToList, findDeviceDraftEntry, loadOrders, offlineUserId, replaceDeviceDraftEntries, submitting, syncDeviceDrafts, requestPriceReview]);
+  }, [applySavedOrderToList, findDeviceDraftEntry, loadOrders, offlineUserId, replaceDeviceDraftEntries, submitting, syncDeviceDrafts, requestPriceReview, reconcileDeviceDraft]);
 
   const unqueueOrder = React.useCallback(async (target?: { guid: string; revision: number }) => {
     let targetGuid = target?.guid || draft.guid || selectedGuid;

@@ -515,6 +515,141 @@ describe('useClientOrdersWorkspace', () => {
     await act(async () => harness.renderer.unmount());
   });
 
+  it('rechecks a stale price error after 1C posts it later, without requiring a local edit or reconnect', async () => {
+    const entry = localEntry('batalov-price-review', 'PRICE_REVIEW');
+    entry.clientRevision = 2;
+    const acceptedPayload = JSON.parse(JSON.stringify(entry.payload));
+    const records = memoryDraftStore([entry]);
+    let posted = false;
+    jest.mocked(getClientOrderByClientId).mockImplementation(async () => queuedOrder(0, {
+      guid: 'api-accepted', clientOrderId: entry.clientOrderId, clientRevision: 3, origin: 'local',
+      createdByUser: { id: 1 }, syncState: 'SYNCED', status: posted ? 'CONFIRMED' : 'SENT_TO_1C',
+      number1c: 'НОУТ-127336', isPostedIn1c: posted, lastExportError: null, last1cError: null,
+      acceptedClientOperation: posted ? { clientRevision: 3, intent: 'SUBMIT', payload: acceptedPayload } : null,
+    }) as any);
+    const harness = await ordersListWorkspace(1, 'editor');
+    try {
+      expect(records.size).toBe(1);
+      expect(getClientOrderByClientId).toHaveBeenCalledTimes(1);
+      posted = true;
+      await act(async () => { await jest.advanceTimersByTimeAsync(65_000); });
+      expect(records.size).toBe(0);
+      expect(putClientOrderByClientId).not.toHaveBeenCalled();
+      expect(submitClientOrder).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  function postedAcceptance(entry: any) {
+    return queuedOrder(0, {
+      guid: 'api-accepted', clientOrderId: entry.clientOrderId, clientRevision: 3, origin: 'local',
+      createdByUser: { id: 1 }, syncState: 'SYNCED', status: 'CONFIRMED', isPostedIn1c: true,
+      number1c: 'НОУТ-127336', lastExportError: null, last1cError: null,
+      readOnly: true, readOnlyReason: 'По заказу создана проведенная реализация товаров и услуг.',
+      // Actual 1C quantities may differ after the operator weighs the goods.
+      items: [{ product: { guid: 'product-guid' }, quantity: 9, price: 100, amount: 900 }],
+      acceptedClientOperation: { clientRevision: 3, intent: 'SUBMIT', payload: JSON.parse(JSON.stringify(entry.payload)) },
+    });
+  }
+
+  it.each(['editor', 'list', 'bulk', 'scoped'] as const)
+  ('reconciles before a manual %s retry, without a price prompt or overwriting later 1C quantities', async action => {
+    const entry = priceEntry('already-accepted');
+    entry.clientRevision = 2;
+    const records = memoryDraftStore([entry, localEntry('untouched-save')]);
+    const harness = await ordersListWorkspace(1, 'editor');
+    try {
+      if (action === 'editor') await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+      jest.mocked(getClientOrderByClientId).mockResolvedValue(postedAcceptance(entry) as any);
+      await act(async () => {
+        if (action === 'editor') await harness.current.submitOrder();
+        else if (action === 'list') await harness.current.submitOrderFromList(entry.order);
+        else await harness.current.syncDeviceDrafts({ force: true,
+          ...(action === 'scoped' ? { orderGuid: entry.order.guid } : {}) });
+      });
+      expect([...records.keys()]).toEqual(['untouched-save']);
+      expect(harness.current.orders.find(order => order.guid === 'api-accepted')?.items?.[0].quantity).toBe(9);
+      expect(jest.requireMock('react-native').Alert.alert).not.toHaveBeenCalled();
+      expect(putClientOrderByClientId).not.toHaveBeenCalled();
+      expect(submitClientOrder).not.toHaveBeenCalled();
+      expect(updateClientOrder).not.toHaveBeenCalled();
+      expect(previewClientOrderAmendment).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('finishes a reconciliation across a harmless local metadata refresh and shares its read with manual retry', async () => {
+    const { emitOrderOutboxChange } = require('../src/features/clientOrders/offline/orderOutboxEvents');
+    const entry = priceEntry('slow-acceptance');
+    entry.clientRevision = 2;
+    const accepted = postedAcceptance(entry);
+    const records = memoryDraftStore([entry]);
+    let finish!: (value: any) => void;
+    jest.mocked(getClientOrderByClientId).mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    const harness = await ordersListWorkspace(1, 'editor');
+    try {
+      records.set(entry.clientOrderId, { ...entry, updatedAt: '2026-10-21T09:00:00Z' });
+      await act(async () => { emitOrderOutboxChange({ userId: '1' }); await jest.advanceTimersByTimeAsync(50); });
+      let retry!: Promise<any>;
+      await act(async () => { retry = harness.current.submitOrderFromList(entry.order); });
+      expect(getClientOrderByClientId).toHaveBeenCalledTimes(1);
+      await act(async () => { finish(accepted); await retry; });
+      expect(records.size).toBe(0);
+      expect(jest.requireMock('react-native').Alert.alert).not.toHaveBeenCalled();
+      expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it.each(['new-operation', 'new-price', 'new-price-choice', 'dirty-editor', 'unmount'] as const)
+  ('keeps local input when an old reconciliation finishes after %s', async change => {
+    const { emitOrderOutboxChange } = require('../src/features/clientOrders/offline/orderOutboxEvents');
+    const entry = priceEntry('late-acceptance');
+    entry.clientRevision = 2;
+    const accepted = postedAcceptance(entry);
+    const records = memoryDraftStore([entry]);
+    let finish!: (value: any) => void;
+    jest.mocked(getClientOrderByClientId).mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    const harness = await ordersListWorkspace(1, 'editor');
+    try {
+      if (change === 'unmount') await act(async () => harness.renderer.unmount());
+      else if (change === 'dirty-editor') {
+        await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+        await act(async () => { harness.current.patchDraft({ comment: 'New unsaved input' }); });
+      } else {
+        records.set(entry.clientOrderId, { ...entry, clientRevision: 4,
+          payload: change === 'new-price' ? { ...entry.payload,
+            items: entry.payload.items.map(item => ({ ...item, basePrice: 120 })) }
+            : change === 'new-price-choice' ? { ...entry.payload, offlineReview: { pricePolicy: 'USE_CURRENT' } }
+              : { ...entry.payload, comment: 'New submitted input' } });
+        await act(async () => { emitOrderOutboxChange({ userId: '1' }); await jest.advanceTimersByTimeAsync(50); });
+      }
+      await act(async () => { finish(accepted); });
+      expect(records.size).toBe(1);
+      if (change === 'new-operation') expect(records.get(entry.clientOrderId)?.payload.comment).toBe('New submitted input');
+      if (change === 'new-price') expect(records.get(entry.clientOrderId)?.payload.items[0].basePrice).toBe(120);
+      if (change === 'new-price-choice') expect(records.get(entry.clientOrderId)?.payload.offlineReview.pricePolicy).toBe('USE_CURRENT');
+      if (change === 'dirty-editor') {
+        expect(harness.current.dirty).toBe(true);
+        expect(harness.current.draft.comment).toBe('New unsaved input');
+      }
+      expect(putClientOrderByClientId).not.toHaveBeenCalled();
+      expect(submitClientOrder).not.toHaveBeenCalled();
+    } finally { if (change !== 'unmount') await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('does not poll stale errors in the background and removes its timer on unmount', async () => {
+    const entry = priceEntry('background-recheck');
+    const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace(1, 'editor');
+    try {
+      expect(getClientOrderByClientId).toHaveBeenCalledTimes(1);
+      AppState.currentState = 'background';
+      await act(async () => { await jest.advanceTimersByTimeAsync(65_000); });
+      expect(getClientOrderByClientId).toHaveBeenCalledTimes(1);
+      expect(records.size).toBe(1);
+    } finally { AppState.currentState = 'active'; await act(async () => harness.renderer.unmount()); }
+    await act(async () => { await jest.advanceTimersByTimeAsync(65_000); });
+    expect(getClientOrderByClientId).toHaveBeenCalledTimes(1);
+  });
+
   it.each(['SEND_ERROR', 'NEEDS_EDIT', 'PRICE_REVIEW'])('does not consume %s merely because the API has a saved draft', async status => {
     const entry = localEntry('saved-not-sent', status);
     const records = memoryDraftStore([entry]);

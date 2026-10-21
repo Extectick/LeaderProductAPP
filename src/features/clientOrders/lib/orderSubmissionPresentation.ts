@@ -1,4 +1,5 @@
 import type { ClientOrder, SubmittedOrderVersion } from '@/utils/clientOrdersService';
+import { getClientOrderItemsCount } from './orderItems';
 
 export function submittedVersionOf(order?: ClientOrder | null): SubmittedOrderVersion | null {
   if (order?.submittedVersion?.orderGuid) return order.submittedVersion;
@@ -6,7 +7,7 @@ export function submittedVersionOf(order?: ClientOrder | null): SubmittedOrderVe
     || !['QUEUED', 'SYNCED', 'ERROR'].includes(order.syncState)) return null;
   return { orderGuid: order.guid, clientRevision: order.clientRevision ?? null, number1c: order.number1c ?? null,
     isPostedIn1c: !!order.isPostedIn1c, status: order.status, syncState: order.syncState, revision: order.revision,
-    totalAmount: order.totalAmount == null ? null : Number(order.totalAmount), itemsCount: order.items?.length ?? 0, updatedAt: order.updatedAt ?? '' };
+    totalAmount: order.totalAmount == null ? null : Number(order.totalAmount), itemsCount: getClientOrderItemsCount(order), updatedAt: order.updatedAt ?? '' };
 }
 
 /** Only status metadata may cross into a newer local edit, never server lines/token. */

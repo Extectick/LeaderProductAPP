@@ -4,9 +4,10 @@ import { emptyDraft, getClientOrderDisplayNumber, getOrderDisplayStatusLabel, va
 import { draftReviewItemMessages, reviewFromError } from '../src/features/clientOrders/lib/draftReview';
 const accepted: any = { guid: 'order-guid', clientOrderId: 'client-id-123', clientRevision: 29, revision: 3,
   source: 'MANAGER_APP', origin: 'merged', syncState: 'SYNCED', status: 'CONFIRMED', number1c: 'НОУТ-126165', isPostedIn1c: true,
-  totalAmount: 36548, items: Array.from({ length: 16 }, () => ({})) };
+  totalAmount: 36548, items: Array.from({ length: 16 }, (_, index) => ({ product: { guid: `product-${index}` } })) };
 const local: any = { ...accepted, origin: 'device', number1c: null, status: 'DRAFT', syncState: 'DRAFT',
-  clientRevision: 30, offlineDraftStatus: 'NEEDS_EDIT', contentToken: 'old-base', totalAmount: 43028, items: Array.from({ length: 19 }, () => ({})),
+  clientRevision: 30, offlineDraftStatus: 'NEEDS_EDIT', contentToken: 'old-base', totalAmount: 43028,
+  items: Array.from({ length: 19 }, (_, index) => ({ product: { guid: `product-${index}` } })),
   submissionErrorDetails: { backendErrorCode: 'ORDER_CONTENT_CONFLICT', message: 'Старая версия', errorDetails: { kind: 'ORDER_CONTENT_CONFLICT' } } };
 test('shows accepted 16 lines and pending 19 as independent facts, never replaces edits with old ACK', () => {
   const merged = preserveSubmittedVersion(local, accepted);

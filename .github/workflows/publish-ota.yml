@@ -48,7 +48,7 @@ jobs:
       - run: npx tsc --noEmit
       - run: npm run test:unit -- --runInBand __tests__/orderAmendments.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/otaManifestConfig.unit.test.ts
-      - run: npm run test:unit -- --runInBand __tests__/draftReview.unit.test.ts __tests__/priceReview.unit.test.ts
+      - run: npm run test:unit -- --runInBand __tests__/draftReview.unit.test.ts __tests__/priceReview.unit.test.ts __tests__/orderSubmissionPresentation.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/orderOutboxCore.unit.test.ts __tests__/orderOutboxLifecycle.unit.test.ts __tests__/offlineSqlite.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/orderSharing.unit.test.ts __tests__/legacyOrderRecovery.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/orderHeaderActions.unit.test.ts
