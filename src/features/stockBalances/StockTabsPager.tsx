@@ -4,12 +4,14 @@ import {Text} from 'react-native-paper';
 import {Gesture, GestureDetector, GestureHandlerRootView} from 'react-native-gesture-handler';
 import PagerView, {type ClientOrdersPagerRef, type PagerViewOnPageSelectedEvent} from '../clientOrders/ClientOrdersPager';
 import {STOCK_TABS, stockSwipeTarget, type StockTab} from './stockTabs';
+import {StockSwipeRefContext} from './StockGestureLists';
 
 const AnimatedPager = Animated.createAnimatedComponent(PagerView);
 export function StockTabsPager({value, onChange, enabled = true, tabsAccessory, children}: React.PropsWithChildren<{
   value: StockTab; onChange: (tab: StockTab) => void; enabled?: boolean; tabsAccessory?: React.ReactNode;
 }>) {
   const ref = React.useRef<ClientOrdersPagerRef | null>(null);
+  const swipeRef = React.useRef<any>(undefined);
   const target = React.useRef(STOCK_TABS.findIndex(tab => tab.value === value));
   const position = React.useRef(new Animated.Value(target.current)).current;
   const offset = React.useRef(new Animated.Value(0)).current;
@@ -35,8 +37,8 @@ export function StockTabsPager({value, onChange, enabled = true, tabsAccessory, 
       ref.current?.setPageWithoutAnimation(page);
     }
   }, [value, position, offset]);
-  const gesture = React.useMemo(() => Gesture.Pan().enabled(enabled)
-    .activeOffsetX([-28, 28]).failOffsetY([-11, 11])
+  const gesture = React.useMemo(() => Gesture.Pan().withRef(swipeRef).enabled(enabled)
+    .activeOffsetX([-12, 12]).failOffsetY([-18, 18])
     .onEnd(event => select(stockSwipeTarget(target.current, event))).runOnJS(true), [enabled, select]);
   const step = width / STOCK_TABS.length;
   return <GestureHandlerRootView style={styles.root}>
@@ -50,7 +52,7 @@ export function StockTabsPager({value, onChange, enabled = true, tabsAccessory, 
         </Pressable>)}
       </View>{tabsAccessory}
     </View>
-    <GestureDetector gesture={gesture}>
+    <StockSwipeRefContext.Provider value={swipeRef}><GestureDetector gesture={gesture}>
       <AnimatedPager ref={ref as any} testID="stock-tabs-pager" style={styles.root} initialPage={target.current}
         orientation="horizontal" layoutDirection="ltr" pageMargin={0} offscreenPageLimit={1} overScrollMode="never"
         keyboardDismissMode="on-drag" scrollEnabled={false} onPageScroll={onScroll} onPageSelected={selected}>
@@ -58,7 +60,7 @@ export function StockTabsPager({value, onChange, enabled = true, tabsAccessory, 
           pointerEvents={value === tab.value ? 'auto' : 'none'} accessibilityElementsHidden={value !== tab.value}
           importantForAccessibility={value === tab.value ? 'auto' : 'no-hide-descendants'}>{React.Children.toArray(children)[index]}</View>)}
       </AnimatedPager>
-    </GestureDetector>
+    </GestureDetector></StockSwipeRefContext.Provider>
   </GestureHandlerRootView>;
 }
 const styles = StyleSheet.create({

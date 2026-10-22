@@ -82,3 +82,43 @@ P3: physical-device review of native font rendering and very large text settings
 - Checks: TypeScript passes; 30 tests in 4 focused suites pass. No P0/P1/P2 visual findings in first full comparison; no repair iteration claimed.
 - P3: physical-phone text scaling and touch verification remains a follow-up.
 - final result: passed
+
+## Sales chart revision — 2026-10-22
+
+- Source visual: `C:/Users/Администратор/.codex/generated_images/01a16315-2ebe-70d3-841b-68ca2cb14e83/exec-b584c299-2d93-4360-8998-ae838fdea4c5.png`, with the user's explicit request for lower analytics height.
+- Actual APP components rendered at `http://localhost:8097/` using the isolated stock-products-qa data fixture. No production data or release was changed.
+- Evidence: workspace `.artifacts/stock-incoming-cost-20261022/sales-chart-390.png`, `sales-chart-selected-390.png`, `sales-chart-selected-320.png`, combined `sales-chart-comparison.png`.
+- Source pixels 853×1844 normalized proportionally to 390×843; implementation 390×844 and 320×740, CSS density 1. Selected-day state compared in the combined image. Entire comparison is readable at native size; no extra focused crop required.
+- Intentional differences: actual native app typography, full product/customer/warehouse names, and existing warehouse multi-selector retained. Fixture sale days/amounts differ from illustration. Chart is explicitly 140 CSS px rather than the taller generated illustration; measured rendered height 140. Popup uses the chart width to preserve long names and prices. No pixel-equality claim.
+- Typography: established app fonts; compact 10px chart labels, 12–13px popup data; original 16px financial figures in document rows unchanged. All popup fields readable at320.
+- Spacing/layout: one chart without title/KPIs, dropdown upper right, documents below. Existing three tabs retained; no additional Analytics tab. Popup stays within the 140px chart and scrolls for multiple documents without pushing the list down.
+- Colors/tokens: blue bars and period control, navy figures, muted axis/grid lines. Existing muted warehouse-role colors preserved.
+- Assets: original eel photo and existing MaterialCommunityIcons; chart rendered with the app's existing ECharts SVG renderer, not a mock screenshot.
+- Copy/content: document, client, quantity, unit sale price and amount shown for each sale. Unknown financial values remain em dash with source reason. Transfers/writeoffs remain identifiable list records but are excluded from sales totals. Physical movement day is not converted through UTC.
+- Iteration: P2 narrow multi-document popup wrapped price/unit unnecessarily. Increased popup width (left inset40→10), recaptured320; price fits and later documents remain accessible by scrolling. Final combined390 comparison has no actionable P0/P1/P2 findings.
+- Browser interactions: product opening, Sales tab, one sale and multi-sale day selection, popup close and scroll, month/7-day dropdown, empty previous month, both widths. Latest browser console error check returned none. Fixture Metro needed the same existing tslib shim as the real APP; no application dependency change.
+- Data safety: sequential existing signed-cursor pagination loads the full chosen period before showing totals. Errors, missing/repeated cursors and a100-page safety limit never show partial totals as complete. Scope changes and refresh reset the guard.
+- Checks: TypeScript passed;77 focused tests across14 stock/warehouse/sales suites passed. Broad run:758/759 passed, one unrelated tracking timeout; isolated rerun of that suite passed22/22. Broad run also emitted existing OTA timer/act warnings; it is not recorded as a clean full-suite pass.
+- Remaining validation: physical Android touch/font scaling and live business-data acceptance were not performed; browser fixture QA is not physical-device QA. API/1C unchanged, OTA not published.
+- final result: passed
+
+## Stock interaction and history-access fixes — 2026-10-23
+
+- Scope: six requested refinements; no new design generation. APP worktree changes remain uncommitted. No production or OTA deployment performed.
+- Gestures: both RNGH FlatList and native RefreshControl wait for the same horizontal Pan recognizer. Forwarded refresh ref preserves RNGH's own nested scroll/refresh coordination. Horizontal activation 12px, vertical failure 18px; existing deliberate-swipe distance/direction checks retained. Unit tests cover both directions, no wrapping, blocked overlays and shared waitFor wiring. No adb devices available; native Android arbitration still needs physical-device verification.
+- Sales: negative quantities red #DC2626; warehouse receiver/sender colors #519A72/#C46B6B, text unchanged. Accepted receipt movements no longer show the preliminary accounting-month question; unavailable costs still expose their reason. No financial values or accounting status in 1C modified.
+- Analytics: one chart, Quantity/Price toggle, total height 140px including 28px toggle; 112px plot. Prices are quantity-weighted daily averages. Unknown/incomplete day prices are gaps; currencies are not mixed. Meaningful minimum price-axis range prevents sub-kopeck rounding from appearing as a large change. Explicit visible price-point symbols remain clickable despite sparse date labels.
+- Browser evidence: workspace `.artifacts/stock-products-qa/qa-20261023/sales-quantity-390.png`, `sales-price-320.png`, `sales-popup-320.png`, `receipts-390.png`. Actual APP components with isolated data fixture, 390x844 and 320x740. Verified metric switching, price-point click opens document/customer/quantity/price/amount, close, and accepted receipt without preliminary question. Browser console errors: none. Temporary viewport reset.
+- Tests: TypeScript passed. 82 tests / 16 focused stock/warehouse/sales suites passed; final chart-symbol adjustment additionally passed chart tests and TypeScript. `git diff --check` passed (existing LF/CRLF warnings only).
+- History root cause: 1C used the order warehouse allowlist to validate an entire stock-history group. Separately authorized read-only history now queries active non-group warehouses using SELECT ALLOWED. Order warehouse export/selection and write paths unchanged. No metadata attributes added.
+- WMS15 only: штатный update script completed source load, applicability, server/thin-client compilation (log: `Ошибок не обнаружено`), database configuration update. Logs: workspace `.artifacts/stock-products-qa/onec-history-20261023/`. Ping confirms `stockHistoryWarehousesVersion=2`.
+- Live WMS15 checks: both directions for Omsk (19 warehouses) and Novosibirsk (21 warehouses), next-page scopes and non-overlap, unchanged two order warehouses. Local API `listStockMovements` exercised against live WMS15 validates actual schema and signed-cursor pagination for all four group/direction combinations. Verification scripts: workspace `.artifacts/stock-products-qa/verify-history-wms15.ps1` and `verify-local-api-history.cjs`.
+- Test-harness issue corrected: PowerShell JSON auto-converted ISO cursor dates to localized DateTime strings; verifier now preserves date strings. This was not an app/API defect. Existing MCP requires explicit includeColumnTypes=false; verifier supplies it.
+- Limitation: repeat checks through the deployed dev container could not run because SSH to the dev host timed out during banner exchange. Direct WMS15 and local API-to-WMS15 validation passed. No dev-server deployment is claimed.
+
+## Dev OTA preparation: analytics paused — 2026-10-23
+
+- User requested OTA with analytics hidden. Sales chart and period picker are disconnected from StockProductsScreen; implementation files are retained for later refinement but not imported into the screen. Period auto-loading and date filtering are also removed, so historical documents remain visible and pagination is driven by scrolling.
+- Existing gesture, quantity/color, and accepted-receipt presentation fixes included. Regression test verifies no chart/picker, preservation of a previous-year document, no automatic history loading, and working scroll pagination/refresh.
+- TypeScript and 83 focused tests / 16 suites passed. Browser fixture verified no chart or period control; capture: workspace `.artifacts/stock-products-qa/qa-20261023/sales-analytics-hidden.png`. Physical Android verification remains outstanding.
+- Release target dev only, native runtime unchanged (0.1.34/build33); no production release requested. Final CI/manifest verification is reported separately after publication.

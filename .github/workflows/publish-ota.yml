@@ -51,6 +51,7 @@ jobs:
       - run: npm run test:unit -- --runInBand __tests__/orderSharing.unit.test.ts __tests__/legacyOrderRecovery.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/orderHeaderActions.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/stockProductsScreen.unit.test.ts __tests__/stockProducts.unit.test.ts __tests__/stockProductRow.unit.test.ts __tests__/warehouseBalances.unit.test.ts __tests__/stockIncomingCost.unit.test.ts __tests__/stockMovementRow.unit.test.ts __tests__/receiptPresentation.unit.test.ts __tests__/salesPresentation.unit.test.ts __tests__/stockTabs.unit.test.ts __tests__/stockTabsPager.unit.test.ts __tests__/stockCache.unit.test.ts __tests__/warehouseSelection.unit.test.ts __tests__/filterLookupPickerPanel.unit.test.ts __tests__/clientOrdersShared.unit.test.ts
+      - run: npm run test:unit -- --runInBand __tests__/stockGestureLists.unit.test.ts __tests__/salesAnalytics.unit.test.ts __tests__/stockSalesChart.unit.test.ts __tests__/useSalesRange.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/galleryHistory.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/clientContactsEditor.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/profileSettings.unit.test.ts __tests__/trackingV2Lifecycle.unit.test.ts

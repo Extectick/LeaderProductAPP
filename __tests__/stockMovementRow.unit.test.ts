@@ -24,7 +24,8 @@ it('formats a 1C document date without timezone conversion or time', () => {
 });
 it('shows compact receipt and supplier icon without captions or repeated dates', () => {
   const text = render(item);
-  for (const value of ['office-building-outline', 'help-circle-outline', 'Поставщик', '₽/кг']) expect(text).toContain(value);
+  for (const value of ['office-building-outline', 'Поставщик', '₽/кг']) expect(text).toContain(value);
+  expect(text).not.toContain('help-circle-outline');
   expect(text).not.toContain('Предварительная стоимость');
 });
 it('does not display an invented zero price for unavailable costs', () => {
@@ -59,10 +60,10 @@ it('keeps dates out of collapsed sales rows and reveals physical date in details
 });
 it('opens the cost explanation and full document details on demand', () => {
   let renderer!: TestRenderer.ReactTestRenderer;
-  act(() => { renderer = TestRenderer.create(React.createElement(StockMovementRow, { item, unit: 'кг' })); });
+  act(() => { renderer = TestRenderer.create(React.createElement(StockMovementRow, { item: {...item, costStatus: 'UNAVAILABLE', costReason: 'Нет распределения стоимости'}, unit: 'кг' })); });
   const buttons = renderer.root.findAllByType('Pressable' as any);
   act(() => buttons.find(button => button.props.accessibilityLabel === 'Пояснение стоимости')!.props.onPress());
-  expect(JSON.stringify(renderer.toJSON())).toContain('Пока не закрыт месяц');
+  expect(JSON.stringify(renderer.toJSON())).toContain('Нет распределения стоимости');
   act(() => buttons.find(button => button.props.accessibilityLabel.startsWith('Документ:'))!.props.onPress());
   expect(JSON.stringify(renderer.toJSON())).toContain('НОУТ-012723');
   expect(JSON.stringify(renderer.toJSON())).toContain('Порча');

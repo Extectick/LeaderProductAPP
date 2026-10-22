@@ -13,7 +13,7 @@ jest.mock('react-native',()=>({View:'View',Pressable:'Pressable',StyleSheet:{cre
 }}));
 jest.mock('react-native-paper',()=>({Text:'Text'}));
 jest.mock('react-native-gesture-handler',()=>({GestureHandlerRootView:'Root',GestureDetector:'GestureDetector',Gesture:{Pan:jest.fn(()=>{
-  const gesture:any={};for(const name of ['enabled','activeOffsetX','failOffsetY','onEnd','runOnJS'])gesture[name]=jest.fn((value:any)=>{gesture[name+'Value']=value;return gesture;});return gesture;
+  const gesture:any={};for(const name of ['withRef','enabled','activeOffsetX','failOffsetY','onEnd','runOnJS'])gesture[name]=jest.fn((value:any)=>{gesture[name+'Value']=value;return gesture;});return gesture;
 })}}));
 let view:TestRenderer.ReactTestRenderer;
 const onChange=jest.fn();
@@ -28,10 +28,11 @@ it('uses native animated setPage for buttons, committing selection only on the n
   expect(onChange).toHaveBeenCalledWith('receipt');
   expect(mockSetPageWithoutAnimation).not.toHaveBeenCalled();
 });
-it('applies the order-document gesture thresholds, swipes both directions, and does not wrap',()=>{
+it('locks horizontal gestures before refresh, swipes both directions, and does not wrap',()=>{
   mount();
   const gesture=view.root.findByType('GestureDetector' as any).props.gesture;
-  expect(gesture.activeOffsetXValue).toEqual([-28,28]);expect(gesture.failOffsetYValue).toEqual([-11,11]);
+  expect(gesture.activeOffsetXValue).toEqual([-12,12]);expect(gesture.failOffsetYValue).toEqual([-18,18]);
+  expect(gesture.withRefValue).toBeDefined();
   const swipe=(x:number,y=0)=>act(()=>gesture.onEndValue({translationX:x,translationY:y,velocityX:0,velocityY:0}));
   swipe(-100);swipe(-100);swipe(-100);swipe(100);swipe(100);swipe(100);
   expect(mockSetPage.mock.calls.map(args=>args[0])).toEqual([1,2,1,0]);

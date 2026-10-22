@@ -1,5 +1,6 @@
 import React from 'react';
-import { BackHandler, FlatList, Modal, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
+import { BackHandler, Modal, Pressable, StyleSheet, View } from 'react-native';
+import { StockFlatList as FlatList, StockRefreshControl as RefreshControl } from './StockGestureLists';
 import { ActivityIndicator, Appbar, Button, PaperProvider, Switch, Text, Tooltip } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -110,6 +111,7 @@ export default function StockProductsScreen() {
   const warehouseLabel = warehouseSelectionLabel(warehouses.items.map(w => filters.warehouses.find(f => f.guid === w.guid) || w));
   const balanceRows = React.useMemo(() => warehouseBalanceRows(detail.page?.items ?? [], warehouses.items, warehouseGroups, collapsedFolders), [detail.page, warehouses.items, warehouseGroups, collapsedFolders]);
   const receiptRows = React.useMemo(() => selectedWarehouseRows(receipts.page?.items ?? [], warehouses.items).filter(isVisibleStockReceipt), [receipts.page, warehouses.items]);
+  // Analytics is paused: keep the complete document history and lazy pagination.
   const expenseRows = React.useMemo(() => selectedWarehouseRows(expenses.page?.items ?? [], warehouses.items), [expenses.page, warehouses.items]);
   const lastReceiptPage = React.useRef<{scope: string; page: StockPage<StockMovement>; visible: number} | null>(null);
   // Excluded-only first AND middle pages must not stall FlatList: its visible
@@ -143,14 +145,14 @@ export default function StockProductsScreen() {
   const renderHistory = (direction: 'receipt' | 'expense') => {
     const history = direction === 'receipt' ? receipts : expenses;
     const rows = direction === 'receipt' ? receiptRows : expenseRows;
-    const loading = history.busy || !visitedTabs.has(direction) || (!rows.length && !!history.page?.hasMore && !history.error);
+    const loading = history.busy || !visitedTabs.has(direction) || (direction === 'receipt' && !rows.length && !history.error && !!history.page?.hasMore);
     return <FlatList testID={`stock-${direction}-list`} data={rows} keyExtractor={i => i.id}
       onEndReached={detailTab === direction ? history.loadMore : undefined} onEndReachedThreshold={0.5}
       refreshControl={<RefreshControl refreshing={history.refreshing} onRefresh={history.refresh} />}
       contentContainerStyle={{paddingBottom: insets.bottom + 12, flexGrow: 1}}
       ListHeaderComponent={history.error && history.page ? <View style={styles.status}><Text style={styles.warning}>{history.error}</Text></View> : null}
       ListEmptyComponent={<View style={styles.empty}>{loading ? <ActivityIndicator /> : <Text>
-        {!isReachable ? 'Для работы сервиса нужно подключение к сети.' : history.error || (direction === 'receipt' ? 'Поступлений на выбранных складах нет' : 'Расходных движений на выбранных складах нет')}
+        {!isReachable ? 'Для работы сервиса нужно подключение к сети.' : history.error || (direction === 'receipt' ? 'Поступлений на выбранных складах нет' : 'Движений на выбранных складах нет')}
       </Text>}{!loading && (!isReachable || history.error) ? <Button onPress={history.refresh}>Повторить</Button> : null}</View>}
       ListFooterComponent={history.loadingMore && rows.length > 0 ? <ActivityIndicator /> : null}
       renderItem={({item, index}) => <>
@@ -176,7 +178,7 @@ export default function StockProductsScreen() {
     {!product ? warehousePicker : null}
     <Modal visible={!!product} animationType="slide" onRequestClose={() => setProduct(null)}>
       <View style={styles.root}>
-        <Appbar.Header style={{backgroundColor:'#FFFFFF'}}><Appbar.BackAction accessibilityLabel="Назад" color="#2563EB" onPress={() => setProduct(null)} /><Appbar.Content title="Товар" style={{flex:0,minWidth:74}} titleStyle={{fontSize:20,fontWeight:'700',color:'#0F172A'}} /><View style={styles.productWarehouseSelector}>{warehouseTrigger('stock-product-warehouses')}</View></Appbar.Header>
+        <Appbar.Header style={{backgroundColor:'#FFFFFF'}}><Appbar.BackAction accessibilityLabel="Назад" color="#2563EB" onPress={() => setProduct(null)} /><Appbar.Content title="Товар" titleStyle={{fontSize:20,fontWeight:'700',color:'#0F172A'}} /></Appbar.Header>
         {product ? <View style={styles.productHero}>
           <View style={styles.heroImage}><StockThumbnail item={product} compact onOpen={() => openImages(product)} /></View>
           <View style={styles.heroContent}><Text style={styles.title}>{product.name}</Text>
@@ -184,6 +186,7 @@ export default function StockProductsScreen() {
               <MaterialCommunityIcons name="chart-bar" size={17} color="#64748B" /><Text style={styles.metricLabel}>Входящая</Text>
               <Text style={styles.costText}>{incomingCostText(currentCost, productUnit(product))}</Text>
             </View></Tooltip>
+            {warehouseTrigger('stock-product-warehouses')}
           </View>
         </View> : null}
         {product ? <StockTabsPager key={product.guid} value={detailTab} onChange={changeTab} enabled={!warehouseDraft && !gallery}

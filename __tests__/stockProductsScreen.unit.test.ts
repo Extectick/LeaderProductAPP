@@ -32,6 +32,10 @@ jest.mock('../src/features/clientOrders/screen/mobile/SearchPickerScreen', () =>
 jest.mock('../src/features/clientOrders/screen/mobile/FilterLookupPickerPanel', () => ({ FilterLookupPickerPanel: 'WarehousePicker' }));
 jest.mock('../src/features/clientOrders/screen/mobile/ProductImageGalleryModal', () => ({ ProductImageGalleryModal: 'Gallery', getProductGalleryImages: () => [] }));
 jest.mock('../src/features/stockBalances/products', () => ({ stockRequest: jest.fn() }));
+jest.mock('../src/features/stockBalances/StockSalesChart', () => ({ StockSalesChart: 'SalesChart' }));
+jest.mock('../src/features/stockBalances/StockGestureLists', () => ({ StockFlatList: require('react-native').FlatList, StockRefreshControl: require('react-native').RefreshControl }));
+jest.mock('../src/features/stockBalances/SalesPeriodPicker', () => ({ SalesPeriodPicker: 'SalesPeriodPicker' }));
+jest.mock('../src/features/stockBalances/useSalesRange', () => ({ useSalesRange: () => { throw new Error('Paused analytics must not load a period'); } }));
 jest.mock('../src/features/stockBalances/StockTabsPager',()=>({StockTabsPager:({value,onChange,children}:any)=>{
   const React=require('react');
   const tabs=[['balances','Остатки'],['receipt','Поступления'],['expense','Продажи']];
@@ -114,7 +118,7 @@ it('shares the warehouse picker between list and card and updates all three tab 
   }
 });
 it('never displays a warehouse outside the current choice, even if an API page contained it',async()=>{
-  const rows=[{id:'a',warehouse:warehouses[0],inStock:1,reserved:0,available:1},{id:'b',warehouse:{guid:'b',name:'Чужой склад'},inStock:1,reserved:0,available:1}].map(r=>({...r,document:{type:'ПриходныйОрдерНаТовары'},operationKind:'Поступление'}));
+  const rows=[{id:'a',warehouse:warehouses[0],inStock:1,reserved:0,available:1},{id:'b',warehouse:{guid:'b',name:'Чужой склад'},inStock:1,reserved:0,available:1}].map(r=>({...r,movementAt:new Date().toLocaleDateString('sv-SE')+'T12:00:00',document:{type:'ПриходныйОрдерНаТовары'},operationKind:'Поступление'}));
   jest.mocked(useWarehouseSelection).mockImplementation(()=>({items:warehouses,save:jest.fn(),ready:true,error:false}));
   jest.mocked(useStockProducts).mockImplementation(()=>({page:{items:rows},busy:false,loadingMore:false,refreshing:false,error:null,refresh:jest.fn(),loadMore:jest.fn()}) as any);
   await act(async()=>{view=TestRenderer.create(React.createElement(StockProductsScreen));});
@@ -169,7 +173,7 @@ it('labels all warehouses in list/card and groups every warehouse without an exp
   expect(view.root.findByType('FlatList' as any).props.data.filter((r:any)=>r.kind==='folder').map((r:any)=>r.name)).toEqual(['Омск','Новосибирск']);
 });
 it('filters customer orders only from receipts and keeps independent lazy-loaded histories when switching tabs',async()=>{
-  const order={id:'order',warehouse:warehouses[0],document:{type:'ЗаказКлиента'},operationKind:'Заказ клиента'};
+  const order={id:'order',movementAt:new Date().toLocaleDateString('sv-SE')+'T12:00:00',warehouse:warehouses[0],document:{type:'ЗаказКлиента'},operationKind:'Заказ клиента'};
   const receipt={...order,id:'receipt',document:{type:'ПриходныйОрдерНаТовары'},operationKind:'Поступление'};
   jest.mocked(useStockProducts).mockImplementation((path,query)=>({page:{items:query.direction?[order,receipt]:[]},busy:false,loadingMore:false,refreshing:false,error:null,refresh:jest.fn(),loadMore:jest.fn()}) as any);
   await act(async()=>{view=TestRenderer.create(React.createElement(StockProductsScreen));});
@@ -194,6 +198,22 @@ it('continues pagination past a receipt page containing only excluded customer o
   act(()=>view.root.findAllByType('Pressable' as any).filter(n=>n.props.accessibilityRole==='tab')[1].props.onPress());
   expect(view.root.findByType('FlatList' as any).props.data).toEqual([]);
   expect(loadMore).toHaveBeenCalled();
+});
+it('hides analytics and period controls, retains older sales and loads further pages only on scroll',async()=>{
+  const loadMore=jest.fn(),refresh=jest.fn();
+  const old={id:'old-sale',movementAt:'2025-01-01T12:00:00',warehouse:warehouses[0],document:{type:'РеализацияТоваровУслуг'},operationKind:'Продажа'};
+  jest.mocked(useStockProducts).mockImplementation((path,query)=>({page:{items:query.direction==='expense'?[old]:[],hasMore:query.direction==='expense'},busy:false,loadingMore:false,refreshing:false,error:null,refresh,loadMore}) as any);
+  await act(async()=>{view=TestRenderer.create(React.createElement(StockProductsScreen));});
+  act(()=>view.root.findByType('SearchPicker' as any).props.renderItem({item:{guid:'p',name:'Product'}}).props.onOpen({guid:'p',name:'Product'}));
+  act(()=>view.root.findAllByType('Pressable' as any).filter(n=>n.props.accessibilityRole==='tab')[2].props.onPress());
+  const list=view.root.findByType('FlatList' as any);
+  expect(list.props.data).toEqual([old]);
+  expect(list.props.ListHeaderComponent).toBeNull();
+  expect(view.root.findAllByType('SalesPeriodPicker' as any)).toHaveLength(0);
+  expect(view.root.findAllByType('SalesChart' as any)).toHaveLength(0);
+  expect(loadMore).not.toHaveBeenCalled();
+  act(()=>list.props.onEndReached());expect(loadMore).toHaveBeenCalledTimes(1);
+  act(()=>list.props.refreshControl.props.onRefresh());expect(refresh).toHaveBeenCalledTimes(1);
 });
 it('continues an excluded-only middle page even when earlier visible rows already exist',async()=>{
   const loadMore=jest.fn();
