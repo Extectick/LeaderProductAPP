@@ -1,0 +1,30 @@
+import React from 'react';
+import TestRenderer, {act} from 'react-test-renderer';
+import {StockProductRow} from '../src/features/stockBalances/StockProductRow';
+jest.mock('react-native',()=>{
+  const React=require('react');
+  const host=(name:string)=>({children,...props}:any)=>React.createElement(name,props,children);
+  return{View:host('View'),Pressable:host('Pressable'),StyleSheet:{create:(s:any)=>s}};
+});
+jest.mock('react-native-paper',()=>({Text:'Text'}));
+jest.mock('expo-image',()=>({Image:'Image'}));
+jest.mock('@expo/vector-icons',()=>({MaterialCommunityIcons:'Icon'}));
+it('opens the card from the row and all content, but only the image from the photo',()=>{
+  const item={guid:'p',name:'Товар',imageThumbUrl:'https://example.invalid/photo.jpg',inStock:5,reserved:1,available:4} as any;
+  const onOpen=jest.fn(),onOpenImages=jest.fn(),stopPropagation=jest.fn();
+  let view!:TestRenderer.ReactTestRenderer;
+  act(()=>{view=TestRenderer.create(React.createElement(StockProductRow,{item,onOpen,onOpenImages}));});
+  const buttons=view.root.findAllByType('Pressable' as any);
+  const row=buttons.find(n=>!n.props.accessibilityRole)!;
+  act(()=>row.props.onPress());
+  expect(onOpen).toHaveBeenCalledTimes(1);
+  onOpen.mockClear();
+  const content=buttons.find(n=>n.props.accessibilityLabel==='Остатки Товар')!;
+  expect(content.findByProps({pointerEvents:'none'})).toBeTruthy();
+  act(()=>content.props.onPress({stopPropagation}));
+  expect(onOpen).toHaveBeenCalledTimes(1);expect(stopPropagation).toHaveBeenCalledTimes(1);
+  onOpen.mockClear();stopPropagation.mockClear();
+  act(()=>buttons.find(n=>n.props.accessibilityLabel==='Изображение Товар')!.props.onPress({stopPropagation}));
+  expect(onOpenImages).toHaveBeenCalledWith(item);expect(onOpen).not.toHaveBeenCalled();expect(stopPropagation).toHaveBeenCalledTimes(1);
+  act(()=>view.unmount());
+});

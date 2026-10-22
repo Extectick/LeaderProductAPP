@@ -8,7 +8,7 @@ jest.mock('@react-native-async-storage/async-storage', () => {
 });
 const a = { guid: 'a', name: 'Омск' }, b = { guid: 'b', name: 'Новосибирск' };
 it('labels all, one and multiple warehouses and toggles without duplicates', () => {
-  expect(warehouseSelectionLabel([])).toBe('Все');
+  expect(warehouseSelectionLabel([])).toBe('Склады (Все)');
   expect(warehouseSelectionLabel([a])).toBe('Омск');
   expect(warehouseSelectionLabel([a, b])).toBe('Склады (2)');
   expect(toggleWarehouse([a], b)).toEqual([a, b]);

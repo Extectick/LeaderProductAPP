@@ -2,9 +2,10 @@ import { apiClient } from '@/utils/apiClient';
 import type { SelectedWarehouse } from './useWarehouseSelection';
 
 export type StockMetrics = { inStock: number; available: number | null; reserved: number; myReserved?: number; availableForManager?: number | null; availabilityReason?: string };
+export type IncomingCost = { price: number; currency: string; source: 'RECEIPT_PRICE'; updatedAt: string | null };
 export type StockProduct = StockMetrics & { guid: string; name: string; code: string | null; baseUnit: { name: string; symbol: string | null } | null;
   imageThumbUrl?: string | null; imagePreviewUrl?: string | null; imageHash?: string | null;
-  images?: Array<{ id: string; fileGuid: string; thumbUrl: string; previewUrl: string; isMain?: boolean }>; updatedAt: string | null };
+  images?: Array<{ id: string; fileGuid: string; thumbUrl: string; previewUrl: string; isMain?: boolean }>; updatedAt: string | null; incomingCost?: IncomingCost | null };
 export type StockDetail = StockMetrics & { id: string; warehouse: { guid: string; name: string };
   seriesGuid?: string; seriesNumber?: string | null; expiresAt?: string | null; productionDate?: string | null; updatedAt?: string | null };
 export type StockMovement = { id: string; direction: 'receipt' | 'expense'; operationKind: string;
@@ -13,7 +14,7 @@ export type StockMovement = { id: string; direction: 'receipt' | 'expense'; oper
   baseDocuments: StockMovement['document'][]; counterparty: string; writeOffArticles: string[];
   price: number | null; amount: number | null; currency: string; costBasis: 'VAT_INCLUDED';
   costStatus: 'CALCULATED' | 'PRELIMINARY' | 'UNAVAILABLE' | 'DOCUMENT'; costReason: string };
-export type StockPage<T> = { items: T[]; offset: number; nextOffset: number; hasMore: boolean; nextCursor?: string | null; snapshotAt?: string };
+export type StockPage<T> = { items: T[]; offset: number; nextOffset: number; hasMore: boolean; nextCursor?: string | null; snapshotAt?: string; incomingCost?: IncomingCost | null };
 export type StockFilters = { warehouses: SelectedWarehouse[]; organizations: Array<{ guid: string; name: string }> };
 export type StockQuery = { search?: string; warehouseGuid?: string; warehouseGuids?: string; organizationGuid?: string; bySeries?: string; groupByWarehouse?: string; direction?: 'receipt' | 'expense' };
 export class StockRequestError extends Error { constructor(public status: number, history = false) {

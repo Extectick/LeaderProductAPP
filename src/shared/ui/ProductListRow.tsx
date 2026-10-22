@@ -1,14 +1,15 @@
 import React from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 
 /** Shared flat product layout: image spans the row, title and metrics occupy the remaining width. */
-export function ProductListRow({ thumbnail, children, selected, testID, thumbnailTestID }: React.PropsWithChildren<{
-  thumbnail: React.ReactNode; selected?: boolean; testID?: string; thumbnailTestID?: string;
+export function ProductListRow({ thumbnail, children, selected, testID, thumbnailTestID, onPress }: React.PropsWithChildren<{
+  thumbnail: React.ReactNode; selected?: boolean; testID?: string; thumbnailTestID?: string; onPress?: () => void;
 }>) {
-  return <View testID={testID} style={[styles.row, selected && styles.selected]}>
+  const Root = onPress ? Pressable : View;
+  return <Root testID={testID} onPress={onPress} accessible={false} focusable={false} style={[styles.row, selected && styles.selected]}>
     <View testID={thumbnailTestID} style={styles.thumbnail}>{thumbnail}</View>
     <View style={styles.content}>{children}</View>
-  </View>;
+  </Root>;
 }
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'stretch', gap: 8, paddingHorizontal: 12, paddingVertical: 4,

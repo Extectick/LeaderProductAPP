@@ -6,10 +6,10 @@ import { readStockCache, writeStockCache, clearStockCache } from '../src/feature
 jest.mock('../utils/apiClient', () => ({ apiClient: jest.fn() }));
 jest.mock('../src/features/stockBalances/stockCache', () => ({ readStockCache: jest.fn(), writeStockCache: jest.fn(), clearStockCache: jest.fn() }));
 const page = (ids: string[], more = false, offset = 0) => ({ items: ids.map(guid => ({ guid })), offset, nextOffset: offset + ids.length, hasMore: more });
-const initial = { search: '', userId: 'u1', online: true, bySeries: '0' };
+const initial = { search: '', userId: 'u1', online: true, bySeries: '0', warehouseGuids: '' };
 let output: ReturnType<typeof useStockProducts<{ guid: string }>>;
 let renderer: TestRenderer.ReactTestRenderer;
-function Probe(props: typeof initial) { output = useStockProducts('products', { search: props.search, bySeries: props.bySeries }, props.userId, props.online); return null; }
+function Probe(props: typeof initial) { output = useStockProducts('products', { search: props.search, bySeries: props.bySeries, warehouseGuids:props.warehouseGuids }, props.userId, props.online); return null; }
 async function mount(props = initial) { await act(async () => { renderer = TestRenderer.create(React.createElement(Probe, props)); }); }
 async function update(props: typeof initial) { await act(async () => { renderer.update(React.createElement(Probe, props)); }); }
 beforeEach(() => {
@@ -17,13 +17,14 @@ beforeEach(() => {
   jest.mocked(readStockCache).mockResolvedValue(null);
 });
 afterEach(() => { act(() => renderer?.unmount()); });
-it('loads a cached page offline without network requests and refreshes after reconnection', async () => {
+it('never uses cached stock offline and loads a live page after reconnection', async () => {
   jest.mocked(readStockCache).mockResolvedValue(page(['old']));
   await mount({ ...initial, online: false });
-  expect(output.page?.items[0].guid).toBe('old'); expect(output.busy).toBe(false); expect(apiClient).not.toHaveBeenCalled();
+  expect(output.page).toBeNull(); expect(output.busy).toBe(false); expect(apiClient).not.toHaveBeenCalled();
+  expect(readStockCache).not.toHaveBeenCalled();
   jest.mocked(apiClient).mockResolvedValue({ ok: true, data: page(['new']) } as any);
   await update(initial);
-  expect(output.page?.items[0].guid).toBe('new'); expect(output.stale).toBe(false);
+  expect(output.page?.items[0].guid).toBe('new');
 });
 it('ignores old search and user responses, including their cache writes', async () => {
   let finish!: (v: any) => void;
@@ -33,8 +34,7 @@ it('ignores old search and user responses, including their cache writes', async 
   await update({ ...initial, userId: 'u2', search: 'new' });
   await act(async () => finish({ ok: true, data: page(['old']) }));
   expect(output.page?.items.map(i => i.guid)).toEqual(['new']);
-  expect(writeStockCache).toHaveBeenCalledTimes(1);
-  expect(writeStockCache).toHaveBeenCalledWith('u2', expect.any(String), expect.any(Object));
+  expect(readStockCache).not.toHaveBeenCalled(); expect(writeStockCache).not.toHaveBeenCalled();
 });
 it('paginates without duplicates, serializes repeated end events and refreshes from zero', async () => {
   jest.mocked(apiClient).mockResolvedValueOnce({ ok: true, data: page(['a', 'b'], true) } as any);
@@ -55,11 +55,11 @@ it('retains working data on failure but blocks automatic retry loops', async () 
   await act(async () => { await output.loadMore(); });
   expect(apiClient).toHaveBeenCalledTimes(2); expect(output.page?.items).toHaveLength(1); expect(output.busy).toBe(false);
 });
-it('clears inaccessible data and cache on forbidden response', async () => {
+it('clears inaccessible data on forbidden response without loading disk data', async () => {
   jest.mocked(readStockCache).mockResolvedValue(page(['cached']));
   jest.mocked(apiClient).mockResolvedValue({ ok: false, status: 403 } as any);
   await mount();
-  expect(output.page).toBeNull(); expect(clearStockCache).toHaveBeenCalledWith('u1');
+  expect(output.page).toBeNull(); expect(readStockCache).not.toHaveBeenCalled(); expect(clearStockCache).not.toHaveBeenCalled();
 });
 it('never loads or saves series in offline storage and clears live series when disconnected', async () => {
   jest.mocked(apiClient).mockResolvedValue({ ok: true, data: page(['series']) } as any);
@@ -92,4 +92,33 @@ it('does not display the pull-to-refresh spinner while a next page is loading', 
   expect(output.busy).toBe(true); expect(output.loadingMore).toBe(true); expect(output.refreshing).toBe(false);
   await act(async () => { finish({ ok: true, data: page(['b']) }); });
   expect(output.loadingMore).toBe(false); expect(output.busy).toBe(false);
+});
+it('drops visible data when disconnected and allows an explicit retry instead of getting stuck offline',async()=>{
+  jest.mocked(apiClient).mockResolvedValue({ok:true,data:page(['live'])} as any);
+  await mount();
+  await update({...initial,online:false});
+  expect(output.page).toBeNull();
+  await act(async()=>{await output.refresh();});
+  expect(apiClient).toHaveBeenCalledTimes(2);
+  expect(output.page).toBeNull();
+});
+it('clears old data after a failed full refresh',async()=>{
+  jest.mocked(apiClient).mockResolvedValueOnce({ok:true,data:page(['live'])} as any);
+  await mount();
+  jest.mocked(apiClient).mockResolvedValue({ok:false,status:503} as any);
+  await act(async()=>{await output.refresh();});
+  expect(output.page).toBeNull();expect(output.error).toBeTruthy();
+});
+it('never appends a late warehouse page into the new selected scope',async()=>{
+  jest.mocked(apiClient).mockResolvedValueOnce({ok:true,data:page(['old'],true)} as any);
+  await mount({...initial,warehouseGuids:'a'});
+  let finish!:(value:any)=>void;
+  jest.mocked(apiClient).mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+  act(()=>{void output.loadMore();});
+  jest.mocked(apiClient).mockResolvedValueOnce({ok:true,data:page(['selected-b'])} as any);
+  await update({...initial,warehouseGuids:'b'});
+  await act(async()=>{finish({ok:true,data:page(['late-a'])});});
+  expect(output.page?.items.map(item=>item.guid)).toEqual(['selected-b']);
+  expect(jest.mocked(apiClient).mock.calls[2][0]).toContain('warehouseGuids=b');
+  expect(jest.mocked(apiClient).mock.calls[2][0]).toContain('offset=0');
 });
