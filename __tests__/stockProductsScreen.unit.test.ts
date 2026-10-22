@@ -84,10 +84,11 @@ it('shows full-width detail tabs and keeps series only in balances, resetting th
   const picker = view.root.findByType('SearchPicker' as any);
   const open = () => picker.props.renderItem({ item: { guid: 'p', name: 'Product' } }).props.onOpen({ guid: 'p', name: 'Product' });
   act(open);
-  expect(view.root.findByType('Segments' as any).props.buttons.map((item: any) => item.label)).toEqual(['Остатки', 'Поступления', 'Продажи']);
-  act(() => view.root.findByType('Segments' as any).props.onValueChange('receipt'));
+  const tabs = () => view.root.findAllByType('Pressable' as any).filter(item => item.props.accessibilityRole === 'tab');
+  expect(tabs().map(item => item.findByType('Text' as any).props.children)).toEqual(['Остатки', 'Поступления', 'Продажи']);
+  act(() => tabs()[1].props.onPress());
   expect(view.root.findAllByType('Switch' as any)).toHaveLength(0);
-  expect(view.root.findByType('Segments' as any).props.value).toBe('receipt');
+  expect(tabs()[1].props.accessibilityState.selected).toBe(true);
   act(open);
-  expect(view.root.findByType('Segments' as any).props.value).toBe('balances');
+  expect(tabs()[0].props.accessibilityState.selected).toBe(true);
 });

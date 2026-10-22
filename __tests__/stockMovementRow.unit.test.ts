@@ -24,11 +24,21 @@ it('formats a 1C document date without timezone conversion or time', () => {
 });
 it('shows VAT-included price, preliminary status, linked document and article', () => {
   const text = render(item);
-  for (const value of ['Цена с НДС', 'Предварительная стоимость', 'НОУТ-012723', 'Порча', 'Поставщик']) expect(text).toContain(value);
+  for (const value of ['Входящая, с НДС', 'Предварительная стоимость', 'НОУТ-012723', 'Порча', 'Поставщик', '₽/кг']) expect(text).toContain(value);
 });
 it('does not display an invented zero price for unavailable costs', () => {
   const text = render({ ...item, price: null, amount: null, costStatus: 'UNAVAILABLE', costReason: 'Нет распределения стоимости' });
-  expect(text).not.toContain('Цена с НДС'); expect(text).toContain('Нет распределения стоимости');
+  expect(text).not.toContain('0 ₽'); expect(text).toContain('Нет распределения стоимости');
+});
+it('labels document sales prices as sales, not incoming cost', () => {
+  const text = render({ ...item, direction: 'expense', costStatus: 'DOCUMENT' });
+  expect(text).toContain('Цена продажи, с НДС');
+  expect(text).not.toContain('Входящая, с НДС');
+});
+it('preserves a known zero price and does not invent the missing amount', () => {
+  const text = render({ ...item, price: 0, amount: null });
+  expect(text).toContain('0 ₽/кг');
+  expect(text).toContain('—');
 });
 it('distinguishes a later physical movement date from the document date, still without time', () => {
   const text = render({ ...item, movementAt: '2026-09-08T14:00:00' });
