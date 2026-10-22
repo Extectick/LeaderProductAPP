@@ -30,6 +30,12 @@ it('does not display an invented zero price for unavailable costs', () => {
   const text = render({ ...item, price: null, amount: null, costStatus: 'UNAVAILABLE', costReason: 'Нет распределения стоимости' });
   expect(text).not.toContain('0 ₽'); expect(text).toContain('Нет распределения стоимости');
 });
+it('normalizes the 1C numeric ruble code in both unit price and amount', () => {
+  const text = render({...item,currency:'643'}).replace(/\u00a0/g,' ');
+  expect(text).toContain('100 ₽/кг');
+  expect(text).toContain('6 000 ₽');
+  expect(text).not.toContain('643');
+});
 it('labels document sales prices as sales, not incoming cost', () => {
   const text = render({ ...item, direction: 'expense', costStatus: 'DOCUMENT' });
   expect(text).toContain('Цена продажи, с НДС');

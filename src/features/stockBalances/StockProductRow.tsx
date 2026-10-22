@@ -9,9 +9,9 @@ import { availableQuantity, incomingCostHint, incomingCostText } from './incomin
 
 export const stockNumber = (value: number | null | undefined) => typeof value !== 'number' || !Number.isFinite(value) ? '—' : value.toLocaleString('ru-RU', { maximumFractionDigits: 3 });
 export const productUnit = (item?: StockProduct | null) => item?.baseUnit?.symbol || item?.baseUnit?.name || '';
-export function StockThumbnail({ item, onOpen }: { item: StockProduct; onOpen: () => void }) {
-  return <Pressable style={styles.photo} accessibilityRole="button" accessibilityLabel={`Изображение ${item.name}`} disabled={!item.imageThumbUrl} onPress={onOpen}>
-    {item.imageThumbUrl ? <Image source={{ uri: item.imageThumbUrl, cacheKey: `${item.guid}:${item.imageHash || ''}` }} style={styles.image}
+export function StockThumbnail({ item, onOpen, compact = false }: { item: StockProduct; onOpen: () => void; compact?: boolean }) {
+  return <Pressable style={[styles.photo, compact && styles.compactPhoto]} accessibilityRole="button" accessibilityLabel={`Изображение ${item.name}`} disabled={!item.imageThumbUrl} onPress={onOpen}>
+    {item.imageThumbUrl ? <Image source={{ uri: item.imageThumbUrl, cacheKey: `${item.guid}:${item.imageHash || ''}` }} style={[styles.image, compact && styles.compactPhoto]}
       contentFit="contain" cachePolicy="memory-disk" recyclingKey={item.guid} />
       : <View style={styles.placeholder}><MaterialCommunityIcons name="image-outline" size={32} color="#94A3B8" /></View>}
   </Pressable>;
@@ -45,6 +45,7 @@ export const StockProductRow = React.memo(function StockProductRow({ item, onOpe
   </ProductListRow>;
 });
 const styles = StyleSheet.create({
+  compactPhoto: { minHeight: 80 },
   photo: { flex: 1, minHeight: 100 }, image: { width: '100%', height: '100%', minHeight: 100 },
   placeholder: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F8FAFC' },
   content: { flex: 1, paddingVertical: 8 }, title: { fontSize: 16, lineHeight: 20, fontWeight: '700', color: '#0F172A' },

@@ -4,6 +4,7 @@ import StockProductsScreen from '../src/features/stockBalances/StockProductsScre
 import { stockRequest } from '../src/features/stockBalances/products';
 import { readStockCache, writeStockCache } from '../src/features/stockBalances/stockCache';
 import { useServerStatus } from '../src/shared/network/useServerStatus';
+import { useStockProducts } from '../src/features/stockBalances/useStockProducts';
 jest.mock('react-native', () => {
   const React = require('react');
   const host = (name: string) => ({ children, ...props }: any) => React.createElement(name, props, children);
@@ -29,7 +30,7 @@ jest.mock('../src/features/clientOrders/screen/mobile/FilterLookupPickerPanel', 
 jest.mock('../src/features/clientOrders/screen/mobile/ProductImageGalleryModal', () => ({ ProductImageGalleryModal: 'Gallery', getProductGalleryImages: () => [] }));
 jest.mock('../src/features/stockBalances/products', () => ({ stockRequest: jest.fn() }));
 jest.mock('../src/features/stockBalances/stockCache', () => ({ readStockCache: jest.fn(), writeStockCache: jest.fn() }));
-jest.mock('../src/features/stockBalances/useStockProducts', () => ({ useStockProducts: () => ({ page: { items: [] }, busy: false, stale: false, error: null, refresh: jest.fn(), loadMore: jest.fn() }) }));
+jest.mock('../src/features/stockBalances/useStockProducts', () => ({ useStockProducts: jest.fn(() => ({ page: { items: [] }, busy: false, stale: false, error: null, refresh: jest.fn(), loadMore: jest.fn() })) }));
 jest.mock('../src/features/stockBalances/useWarehouseSelection', () => ({
   useWarehouseSelection: () => ({ items: [], ready: true, error: false }), warehouseSelectionLabel: () => 'Все',
 }));
@@ -42,13 +43,15 @@ beforeEach(() => {
   jest.mocked(stockRequest).mockResolvedValue({ warehouses, organizations: [] });
 });
 afterEach(() => act(() => view?.unmount()));
-it('keeps the series switch only inside the product card', async () => {
+it('temporarily hides series in the list and product card, querying only grouped balances', async () => {
   await act(async () => { view = TestRenderer.create(React.createElement(StockProductsScreen)); });
   expect(view.root.findAllByType('Switch' as any)).toHaveLength(0);
   const picker = view.root.findByType('SearchPicker' as any);
   expect(picker.props.headerAccessory).toBeUndefined();
   act(() => picker.props.renderItem({ item: { guid: 'p', name: 'Product' } }).props.onOpen({ guid: 'p', name: 'Product' }));
-  expect(view.root.findAllByType('Switch' as any)).toHaveLength(1);
+  expect(view.root.findAllByType('Switch' as any)).toHaveLength(0);
+  expect(view.root.findAllByType('Text' as any).some(node => node.props.children === 'По сериям')).toBe(false);
+  expect(jest.mocked(useStockProducts)).toHaveBeenCalledWith('products/p/balances',expect.objectContaining({bySeries:'0',groupByWarehouse:'1'}),'1',true);
   expect(writeStockCache).toHaveBeenCalledWith('1', 'warehouse-filters-v1', expect.objectContaining({ items: warehouses }));
 });
 it('restores warehouse groups offline without blocking the picker on a network call', async () => {
@@ -79,7 +82,7 @@ it('disables detail pull-to-refresh offline', async () => {
   act(() => picker.props.renderItem({ item: { guid: 'p', name: 'Product' } }).props.onOpen({ guid: 'p', name: 'Product' }));
   expect(view.root.findByType('FlatList' as any).props.refreshControl.props.enabled).toBe(false);
 });
-it('shows full-width detail tabs and keeps series only in balances, resetting the tab for the next product', async () => {
+it('shows full-width detail tabs without series, resetting the tab for the next product', async () => {
   await act(async () => { view = TestRenderer.create(React.createElement(StockProductsScreen)); });
   const picker = view.root.findByType('SearchPicker' as any);
   const open = () => picker.props.renderItem({ item: { guid: 'p', name: 'Product' } }).props.onOpen({ guid: 'p', name: 'Product' });
@@ -91,4 +94,5 @@ it('shows full-width detail tabs and keeps series only in balances, resetting th
   expect(tabs()[1].props.accessibilityState.selected).toBe(true);
   act(open);
   expect(tabs()[0].props.accessibilityState.selected).toBe(true);
+  expect(view.root.findAllByType('Switch' as any)).toHaveLength(0);
 });

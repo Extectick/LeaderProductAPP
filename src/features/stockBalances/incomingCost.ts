@@ -1,10 +1,9 @@
 import type { IncomingCost } from './products';
+import { stockMoney } from './stockMoney';
 
-const price = (value: number) => value.toLocaleString('ru-RU', { maximumFractionDigits: 2 });
 export function incomingCostText(cost: IncomingCost | null | undefined, unit: string) {
   if (!cost || !Number.isFinite(cost.price) || cost.price <= 0 || cost.source !== 'RECEIPT_PRICE') return '—';
-  const currency = /^(RUB|RUR|руб\.?|рубль|российский рубль)$/i.test(cost.currency.trim()) ? '₽' : cost.currency;
-  return `${price(cost.price)} ${currency}${unit ? `/${unit}` : ''}`;
+  return `${stockMoney(cost.price, cost.currency)}${unit ? `/${unit}` : ''}`;
 }
 export function incomingCostHint(cost: IncomingCost | null | undefined) {
   return cost ? 'Текущая общая входящая цена за единицу хранения, как в подборе товаров.' : 'Текущая входящая цена недоступна. Потяните список вниз для обновления.';

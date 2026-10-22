@@ -19,6 +19,8 @@ import { StockProductRow, StockThumbnail, productUnit } from './StockProductRow'
 import { availableQuantity, incomingCostHint, incomingCostText } from './incomingCost';
 
 const emptyFilters: StockFilters = { warehouses: [], organizations: [] };
+// Temporarily disabled: do not show the control or issue live series requests.
+const SERIES_BALANCES_ENABLED = false;
 const number = (value: number | null | undefined) => typeof value !== 'number' || !Number.isFinite(value) ? '—' : value.toLocaleString('ru-RU', { maximumFractionDigits: 3 });
 function Metrics({ item, unit, full = false }: { item: StockMetrics; unit: string; full?: boolean }) {
   const metrics = [
@@ -47,7 +49,8 @@ export default function StockProductsScreen() {
   const [filterError, setFilterError] = React.useState(false);
   const [filterLoading, setFilterLoading] = React.useState(false);
   const [filterRevision, reloadFilters] = React.useReducer(n => n + 1, 0);
-  const [bySeries, setBySeries] = React.useState(false);
+  const [seriesSelected, setBySeries] = React.useState(false);
+  const bySeries = SERIES_BALANCES_ENABLED && seriesSelected;
   const [gallery, setGallery] = React.useState<ProductGallery | null>(null);
   const [product, setProduct] = React.useState<StockProduct | null>(null);
   const [detailTab, setDetailTab] = React.useState<'balances' | 'receipt' | 'expense'>('balances');
@@ -130,7 +133,7 @@ export default function StockProductsScreen() {
       <View style={styles.root}>
         <Appbar.Header style={{backgroundColor:'#FFFFFF'}}><Appbar.BackAction accessibilityLabel="Назад" color="#2563EB" onPress={() => setProduct(null)} /><Appbar.Content title="Товар" titleStyle={{fontSize:20,fontWeight:'700',color:'#0F172A'}} /></Appbar.Header>
         {product ? <View style={styles.productHero}>
-          <View style={styles.heroImage}><StockThumbnail item={product} onOpen={() => openImages(product)} /></View>
+          <View style={styles.heroImage}><StockThumbnail item={product} compact onOpen={() => openImages(product)} /></View>
           <View style={styles.heroContent}><Text style={styles.title}>{product.name}</Text>
             <Tooltip title={incomingCostHint(currentCost)}><View style={styles.costLine} accessible accessibilityLabel={`Входящая ${incomingCostText(currentCost, productUnit(product))}`}>
               <MaterialCommunityIcons name="chart-bar" size={17} color="#64748B" /><Text style={styles.metricLabel}>Входящая</Text>
@@ -144,7 +147,7 @@ export default function StockProductsScreen() {
             onPress={()=>setDetailTab(button.value)} style={[styles.tab, detailTab === button.value && styles.selectedTab]}>
             <Text style={[styles.tabLabel, detailTab===button.value && styles.selectedTabLabel]}>{button.label}</Text>
           </Pressable>)}
-        </View>{detailTab === 'balances' ? seriesSwitch : null}</View>
+        </View>{SERIES_BALANCES_ENABLED && detailTab === 'balances' ? seriesSwitch : null}</View>
         {detailTab === 'balances' ? <>
         <FlatList key="balances" data={detail.page?.items ?? []} keyExtractor={i => i.id} onEndReached={detail.loadMore} onEndReachedThreshold={0.5}
           refreshControl={<RefreshControl refreshing={detail.refreshing} onRefresh={detail.refresh} enabled={isReachable} />}
@@ -177,7 +180,7 @@ export default function StockProductsScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#FFFFFF' },
   title: { fontSize: 16, lineHeight: 21, fontWeight: '700', color: '#0F172A' },
-  metrics: { flexDirection: 'row', paddingTop: 18, paddingBottom: 8 },
+  metrics: { flexDirection: 'row', paddingTop: 8, paddingBottom: 2 },
   metric: { flex: 1, gap: 3, paddingRight: 6 },
   metricDivider: { borderLeftWidth: 1, borderColor: '#E2E8F0', paddingLeft: 12 },
   metricLabel: { fontSize: 12, color: '#64748B' },
@@ -189,16 +192,16 @@ const styles = StyleSheet.create({
   status: { paddingHorizontal: 12, paddingVertical: 6, backgroundColor: '#F8FAFC' },
   warning: { color: '#92400E', fontSize: 12 },
   empty: { padding: 24, alignItems: 'center', gap: 12 },
-  balance: { paddingHorizontal: 16, paddingVertical: 20, borderBottomWidth: 1, borderBottomColor: '#E2E8F0' },
+  balance: { paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#E2E8F0' },
   seriesSwitch: { alignItems: 'center', justifyContent: 'center', width: 58 },
   seriesLabel: { fontSize: 10, color: '#64748B' },
-  tabsRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 12, borderBottomWidth: 1, borderColor: '#E2E8F0' },
+  tabsRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 6, borderBottomWidth: 1, borderColor: '#E2E8F0' },
   tabs: { flex: 1, flexDirection: 'row', borderRadius: 10, backgroundColor:'#F1F5F9', overflow:'hidden' },
-  tab: { flex:1, minHeight:44, paddingHorizontal:2, alignItems:'center', justifyContent:'center' },
+  tab: { flex:1, minHeight:36, paddingHorizontal:2, alignItems:'center', justifyContent:'center' },
   tabLabel: { fontSize:11, fontWeight:'600', color:'#64748B' }, selectedTabLabel:{color:'#2563EB'},
   selectedTab: { backgroundColor: '#DBEAFE' },
-  productHero: { flexDirection: 'row', gap: 12, paddingHorizontal: 12, paddingVertical: 16 },
-  heroImage: { width: 100, minHeight: 100 }, heroContent: { flex: 1, gap: 8 },
+  productHero: { flexDirection: 'row', gap: 10, paddingHorizontal: 12, paddingVertical: 6 },
+  heroImage: { width: 80, minHeight: 80 }, heroContent: { flex: 1, gap: 4 },
   costLine: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 4 }, costText: { fontSize: 16, fontWeight: '700', color: '#0F172A' },
   warehouseHeading: { flexDirection: 'row', alignItems: 'center', gap: 10 },
 });
