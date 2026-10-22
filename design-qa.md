@@ -67,3 +67,18 @@ P3: physical-device review of native font rendering and very large text settings
 - Comparison history: first implementation comparison found no actionable P0/P1/P2 issues; longer content and retained shared selector are intentional product constraints. No visual repair iteration claimed.
 - P3 follow-up: physical Android font scaling/touch QA remains separate from browser verification.
 - final result: passed
+
+## Sales compact-list revision — 2026-10-22
+
+- Source visual: `C:/Share/GitRepositories/LeaderProductMobile/.artifacts/stock-incoming-cost-20261022/receipt-design-390.png`; user explicitly requested analogous Sales layout.
+- Implementation captures: same artifact directory, `sales-design-390.png` and `sales-design-320.png`. Full comparison: `sales-design-comparison.png`.
+- Viewports/pixels: source and primary implementation both 390×844, density 1; narrow implementation 320×740. No density scaling. Collapsed product-history state; different receipt/sale data and selected warehouse counts intentionally differ. Product image/header retained.
+- Typography: same native font and scale, regular warehouse names, 14px counterparty, unchanged 16px financial figures. Long client and writeoff names wrap at 320 without clipping quantities.
+- Layout/spacing: same date headers, flat row separators, aligned icons, operation plus number, no financial captions or repeated dates. Focused row text is legible in the full-size combined input, so no separate crop needed.
+- Colors/tokens: outgoing quantities blue; muted red sender and green receiver icons. Warehouse-role accessibility labels retained. Supplier icon becomes account icon for sales counterparties.
+- Assets: unchanged eel photo and existing MaterialCommunityIcons; no synthetic asset replacements.
+- Content: transfers and writeoffs retain their operation identity; only explicit 1C `В:` transfer destination is parsed. Unknown values stay em dash. Full document date, physical movement date when different, linked documents and articles remain available on expansion. Receipt-only customer-order filtering preserved.
+- Interactions tested: opening Sales, expanding/collapsing document details and unknown-cost question, both viewport widths. Browser console errors: none. Independent shared pager tests covered swipe navigation; no physical Android verification claimed.
+- Checks: TypeScript passes; 30 tests in 4 focused suites pass. No P0/P1/P2 visual findings in first full comparison; no repair iteration claimed.
+- P3: physical-phone text scaling and touch verification remains a follow-up.
+- final result: passed

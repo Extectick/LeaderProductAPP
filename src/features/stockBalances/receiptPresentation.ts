@@ -1,5 +1,11 @@
 import type { StockMovement } from './products';
 
+export const isCustomerOrderDocument = (doc: StockMovement['document']) => doc.type === 'ЗаказКлиента';
+/** Customer orders are not incoming stock documents. Keep returns and actual receipts. */
+export function isVisibleStockReceipt(item: StockMovement) {
+  return !isCustomerOrderDocument(item.document) && item.operationKind.trim().toLowerCase() !== 'заказ клиента';
+}
+
 export const movementDay = (item: StockMovement) => item.movementAt.slice(0, 10);
 const months = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
 export function movementDayLabel(day: string, now = new Date()) {
@@ -13,13 +19,21 @@ export function movementDayLabel(day: string, now = new Date()) {
 }
 
 export function receiptPresentation(item: StockMovement) {
+  return movementPresentation(item);
+}
+
+export function movementPresentation(item: StockMovement) {
+  const receipt = item.direction !== 'expense';
   const transfers = item.baseDocuments.filter(doc => doc.type === 'ПеремещениеТоваров');
   const transfer = item.document.type === 'ПеремещениеТоваров' || transfers.length > 0 || item.operationKind === 'Перемещение товаров';
-  // 1C explicitly encodes the opposite warehouse for a transfer as "Из: ...".
+  // 1C explicitly encodes the opposite warehouse as "Из: ..." / "В: ...".
   // Never interpret a supplier with the same prefix as a warehouse.
-  const source = transfer ? /^Из:\s*(.+)$/u.exec(item.counterparty)?.[1].trim() : undefined;
+  const opposite = transfer ? (receipt ? /^Из:\s*(.+)$/u : /^В:\s*(.+)$/u).exec(item.counterparty)?.[1].trim() : undefined;
+  const source = receipt ? opposite : item.warehouse?.name;
+  const destination = receipt ? item.warehouse?.name : opposite;
   const document = transfer && transfers.length === 1 ? transfers[0] : item.document;
-  const operation = transfer ? 'Перемещение' : /Приобретение|Поступление|Приходный ордер/i.test(item.operationKind || item.document.typeName)
-    ? 'Поступление' : item.operationKind || item.document.typeName;
-  return { transfer, source, document, operation };
+  const rawOperation = item.operationKind || item.document.typeName;
+  const operation = transfer ? 'Перемещение' : receipt && /Приобретение|Поступление|Приходный ордер/i.test(rawOperation)
+    ? 'Поступление' : !receipt && /Реализация товаров/i.test(rawOperation) ? 'Продажа' : rawOperation;
+  return { transfer, source, destination, document, operation };
 }

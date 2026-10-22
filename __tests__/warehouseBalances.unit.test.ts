@@ -16,5 +16,8 @@ it('shows a checked folder with its warehouses and leaves individually selected 
 it('collapses folders without leaking warehouses or duplicating headers when pages merge',()=>{
   expect(warehouseBalanceRows(balances,[a,b],groups,new Set(['omsk']))).toEqual([{kind:'folder',id:'omsk',name:'Омск',count:2,expanded:false}]);
   expect(warehouseBalanceRows(balances,[a,b,c],groups,new Set()).filter(r=>r.kind==='folder')).toHaveLength(2);
-  expect(warehouseBalanceRows(balances,[],groups,new Set()).every(r=>r.kind==='balance'&&!r.indented)).toBe(true);
+  const all=warehouseBalanceRows(balances,[],groups,new Set());
+  expect(all.filter(r=>r.kind==='folder').map(r=>r.name)).toEqual(['Омск','Новосибирск']);
+  expect(all.filter(r=>r.kind==='balance').every(r=>r.indented)).toBe(true);
+  expect(warehouseBalanceRows(balances,[],groups,new Set(['omsk'])).map(r=>r.id)).toEqual(['omsk','nsk','c']);
 });

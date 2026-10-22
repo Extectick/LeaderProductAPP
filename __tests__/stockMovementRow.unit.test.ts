@@ -47,9 +47,15 @@ it('preserves a known zero price and does not invent the missing amount', () => 
   expect(text).toContain('0 ₽/кг');
   expect(text).toContain('—');
 });
-it('distinguishes a later physical movement date from the document date, still without time', () => {
-  const text = render({ ...item, direction: 'expense', movementAt: '2026-09-08T14:00:00' });
-  expect(text).toContain('Движение по складу'); expect(text).toContain('08.09.26'); expect(text).not.toContain('14:00:00');
+it('keeps dates out of collapsed sales rows and reveals physical date in details', () => {
+  const value: StockMovement = { ...item, direction: 'expense', movementAt: '2026-09-08T14:00:00' };
+  expect(render(value)).not.toContain('Движение по складу');
+  let renderer!: TestRenderer.ReactTestRenderer;
+  act(() => { renderer = TestRenderer.create(React.createElement(StockMovementRow, { item: value, unit: 'кг' })); });
+  act(() => renderer.root.findAllByType('Pressable' as any).find(button => button.props.accessibilityLabel.startsWith('Документ:'))!.props.onPress());
+  const text = JSON.stringify(renderer.toJSON());
+  expect(text).toContain('Движение по складу'); expect(text).toContain('2026-09-08'); expect(text).not.toContain('14:00:00');
+  act(() => renderer.unmount());
 });
 it('opens the cost explanation and full document details on demand', () => {
   let renderer!: TestRenderer.ReactTestRenderer;
@@ -61,4 +67,13 @@ it('opens the cost explanation and full document details on demand', () => {
   expect(JSON.stringify(renderer.toJSON())).toContain('НОУТ-012723');
   expect(JSON.stringify(renderer.toJSON())).toContain('Порча');
   act(() => renderer.unmount());
+});
+it('does not show customer-order references in receipt details', () => {
+  let renderer!:TestRenderer.ReactTestRenderer;
+  const order={...item.document,type:'ЗаказКлиента',typeName:'Заказ клиента',guid:'order',number:'ORDER-HIDDEN'};
+  act(()=>{renderer=TestRenderer.create(React.createElement(StockMovementRow,{item:{...item,baseDocuments:[...item.baseDocuments,order]},unit:'кг'}));});
+  act(()=>renderer.root.findAllByType('Pressable' as any).find(b=>b.props.accessibilityLabel.startsWith('Документ:'))!.props.onPress());
+  expect(JSON.stringify(renderer.toJSON())).not.toContain('ORDER-HIDDEN');
+  expect(JSON.stringify(renderer.toJSON())).toContain('НОУТ-012723');
+  act(()=>renderer.unmount());
 });

@@ -18,7 +18,7 @@ export function warehouseBalanceRows(items: StockDetail[], selected: SelectedWar
   const placed = new Set<string>();
   const rows: BalanceRow[] = [];
   for (const group of groups) {
-    if (!group.items.length || !group.items.every(w => ids.has(w.guid.toLowerCase()))) continue;
+    if (!group.items.length || (selected.length && !group.items.every(w => ids.has(w.guid.toLowerCase())))) continue;
     const members = new Set(group.items.map(w => w.guid.toLowerCase()));
     const children = visible.filter(row => members.has(row.warehouse.guid.toLowerCase()) && !placed.has(row.id));
     if (!children.length) continue;

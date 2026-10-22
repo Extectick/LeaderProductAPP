@@ -2,7 +2,7 @@ import React from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_BASE_URL } from '@/utils/config';
 export type SelectedWarehouse = { guid: string; name: string; cityGuid?: string | null; cityName?: string | null; sortOrder?: number | null };
-export const warehouseSelectionLabel = (items: SelectedWarehouse[]) => items.length > 1 ? `Склады (${items.length})` : items[0]?.name || 'Все';
+export const warehouseSelectionLabel = (items: SelectedWarehouse[]) => items.length > 1 ? `Склады (${items.length})` : items[0]?.name || 'Склады (Все)';
 export function toggleWarehouse(items: SelectedWarehouse[], item: SelectedWarehouse) {
   return !item.guid ? [] : items.some(w => w.guid === item.guid) ? items.filter(w => w.guid !== item.guid) : [...items, item];
 }

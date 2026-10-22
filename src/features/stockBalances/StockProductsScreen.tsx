@@ -14,7 +14,9 @@ import { useWarehouseSelection, warehouseSelectionLabel, toggleWarehouse, toggle
 import { stockRequest, type StockDetail, type StockFilters, type StockMetrics, type StockMovement, type StockProduct } from './products';
 import { useStockProducts } from './useStockProducts';
 import { StockMovementRow } from './StockMovementRow';
-import { movementDay, movementDayLabel } from './receiptPresentation';
+import { isVisibleStockReceipt, movementDay, movementDayLabel } from './receiptPresentation';
+import { StockTabsPager } from './StockTabsPager';
+import type { StockTab } from './stockTabs';
 import { StockProductRow, StockThumbnail, productUnit } from './StockProductRow';
 import { availableQuantity, incomingCostHint, incomingCostText } from './incomingCost';
 import { selectedWarehouseRows, warehouseBalanceRows } from './warehouseBalances';
@@ -54,17 +56,24 @@ export default function StockProductsScreen() {
   const bySeries = SERIES_BALANCES_ENABLED && seriesSelected;
   const [gallery, setGallery] = React.useState<ProductGallery | null>(null);
   const [product, setProduct] = React.useState<StockProduct | null>(null);
-  const [detailTab, setDetailTab] = React.useState<'balances' | 'receipt' | 'expense'>('balances');
+  const [detailTab, setDetailTab] = React.useState<StockTab>('balances');
+  const [visitedTabs, setVisitedTabs] = React.useState<ReadonlySet<StockTab>>(new Set());
+  const changeTab = React.useCallback((tab: StockTab) => {
+    setDetailTab(tab);
+    setVisitedTabs(current => current.has(tab) ? current : new Set([...current, tab]));
+  }, []);
   const [collapsedFolders, setCollapsedFolders] = React.useState<Set<string>>(new Set());
   const listRef = React.useRef<any>(null);
   React.useEffect(() => { listRef.current?.scrollToOffset?.({ offset: 0, animated: false }); }, [search, warehouseGuids]);
   const stock = useStockProducts<StockProduct>('products', { search, warehouseGuids }, warehouses.ready ? userId : undefined, isReachable);
   const detail = useStockProducts<StockDetail>(product ? `products/${product.guid}/balances` : null, { warehouseGuids, bySeries: bySeries ? '1' : '0', groupByWarehouse: '1' }, warehouses.ready ? userId : undefined, isReachable);
-  const history = useStockProducts<StockMovement>(product && detailTab !== 'balances' ? `products/${product.guid}/movements` : null,
-    { warehouseGuids, direction: detailTab === 'receipt' ? 'receipt' : 'expense' }, warehouses.ready ? userId : undefined, isReachable);
+  const receipts = useStockProducts<StockMovement>(product && visitedTabs.has('receipt') ? `products/${product.guid}/movements` : null,
+    { warehouseGuids, direction: 'receipt' }, warehouses.ready ? userId : undefined, isReachable);
+  const expenses = useStockProducts<StockMovement>(product && visitedTabs.has('expense') ? `products/${product.guid}/movements` : null,
+    { warehouseGuids, direction: 'expense' }, warehouses.ready ? userId : undefined, isReachable);
   const currentCost = !isReachable ? null : detail.page && Object.prototype.hasOwnProperty.call(detail.page, 'incomingCost') ? detail.page.incomingCost : product?.incomingCost;
   React.useEffect(() => { setCollapsedFolders(new Set()); }, [product?.guid, warehouseGuids]);
-  const openProduct = React.useCallback((item: StockProduct) => { setDetailTab('balances'); setBySeries(false); setProduct(item); }, []);
+  const openProduct = React.useCallback((item: StockProduct) => { setDetailTab('balances'); setVisitedTabs(new Set()); setBySeries(false); setProduct(item); }, []);
   const openImages = React.useCallback((item: StockProduct) => {
     const images = getProductGalleryImages(item);
     if (images.length) setGallery({ title: item.name, images, index: 0 });
@@ -100,7 +109,12 @@ export default function StockProductsScreen() {
   const warehouseGroups = React.useMemo(() => buildWarehousePickerGroups(warehouseItems.filter(w => !!w.guid)), [warehouseItems]);
   const warehouseLabel = warehouseSelectionLabel(warehouses.items.map(w => filters.warehouses.find(f => f.guid === w.guid) || w));
   const balanceRows = React.useMemo(() => warehouseBalanceRows(detail.page?.items ?? [], warehouses.items, warehouseGroups, collapsedFolders), [detail.page, warehouses.items, warehouseGroups, collapsedFolders]);
-  const historyRows = React.useMemo(() => selectedWarehouseRows(history.page?.items ?? [], warehouses.items), [history.page, warehouses.items]);
+  const receiptRows = React.useMemo(() => selectedWarehouseRows(receipts.page?.items ?? [], warehouses.items).filter(isVisibleStockReceipt), [receipts.page, warehouses.items]);
+  const expenseRows = React.useMemo(() => selectedWarehouseRows(expenses.page?.items ?? [], warehouses.items), [expenses.page, warehouses.items]);
+  // An excluded-only API page must not look like the end of incoming history.
+  React.useEffect(() => {
+    if (product && detailTab === 'receipt' && !receipts.busy && !receipts.error && receipts.page?.hasMore && !receiptRows.length) void receipts.loadMore();
+  }, [product, detailTab, receipts.busy, receipts.error, receipts.page, receipts.loadMore, receiptRows.length]);
   const warehouseTrigger = (testID: string) => <Pressable testID={testID} accessibilityRole="button" accessibilityLabel={`Выбрать склады: ${warehouseLabel}`} disabled={!warehouses.ready || !isReachable}
     onPress={() => setWarehouseDraft(warehouses.items)} style={styles.warehouseSelector}>
     <Text numberOfLines={1} style={styles.warehouseLabel}>{warehouseLabel}</Text><MaterialCommunityIcons name="chevron-down" size={16} color="#2563EB" />
@@ -116,6 +130,25 @@ export default function StockProductsScreen() {
     </View>
   </Modal>;
   const seriesSwitch = <View style={styles.seriesSwitch}><Switch value={bySeries} onValueChange={setBySeries} accessibilityLabel="По сериям" /><Text style={styles.seriesLabel}>По сериям</Text></View>;
+  const renderHistory = (direction: 'receipt' | 'expense') => {
+    const history = direction === 'receipt' ? receipts : expenses;
+    const rows = direction === 'receipt' ? receiptRows : expenseRows;
+    const loading = history.busy || !visitedTabs.has(direction) || (!rows.length && !!history.page?.hasMore && !history.error);
+    return <FlatList testID={`stock-${direction}-list`} data={rows} keyExtractor={i => i.id}
+      onEndReached={detailTab === direction ? history.loadMore : undefined} onEndReachedThreshold={0.5}
+      refreshControl={<RefreshControl refreshing={history.refreshing} onRefresh={history.refresh} />}
+      contentContainerStyle={{paddingBottom: insets.bottom + 12, flexGrow: 1}}
+      ListHeaderComponent={history.error && history.page ? <View style={styles.status}><Text style={styles.warning}>{history.error}</Text></View> : null}
+      ListEmptyComponent={<View style={styles.empty}>{loading ? <ActivityIndicator /> : <Text>
+        {!isReachable ? 'Для работы сервиса нужно подключение к сети.' : history.error || (direction === 'receipt' ? 'Поступлений на выбранных складах нет' : 'Расходных движений на выбранных складах нет')}
+      </Text>}{!loading && (!isReachable || history.error) ? <Button onPress={history.refresh}>Повторить</Button> : null}</View>}
+      ListFooterComponent={history.loadingMore && rows.length > 0 ? <ActivityIndicator /> : null}
+      renderItem={({item, index}) => <>
+        {index === 0 || movementDay(item) !== movementDay(rows[index - 1]) ?
+          <View style={styles.movementDay}><Text style={styles.movementDayText}>{movementDayLabel(movementDay(item))}</Text></View> : null}
+        <StockMovementRow item={item} unit={productUnit(product)} />
+      </>} />;
+  };
   return <View style={styles.root}>
     <SearchPickerScreen visible pickerKey="stock-products" topInset={insets.top} title="Остатки" titleIcon=""
       titleAccessory={warehouseTrigger('stock-list-warehouses')}
@@ -143,15 +176,9 @@ export default function StockProductsScreen() {
             </View></Tooltip>
           </View>
         </View> : null}
-        <View style={styles.tabsRow}><View style={styles.tabs}>
-          {([{ value: 'balances', label: 'Остатки' }, { value: 'receipt', label: 'Поступления' }, { value: 'expense', label: 'Продажи' }] as const).map(button => <Pressable
-            key={button.value} accessibilityRole="tab" accessibilityState={{selected:detailTab===button.value}}
-            onPress={()=>setDetailTab(button.value)} style={[styles.tab, detailTab === button.value && styles.selectedTab]}>
-            <Text style={[styles.tabLabel, detailTab===button.value && styles.selectedTabLabel]}>{button.label}</Text>
-          </Pressable>)}
-        </View>{SERIES_BALANCES_ENABLED && detailTab === 'balances' ? seriesSwitch : null}</View>
-        {detailTab === 'balances' ? <>
-        <FlatList key="balances" data={balanceRows} keyExtractor={i => i.id} onEndReached={detail.loadMore} onEndReachedThreshold={0.5}
+        {product ? <StockTabsPager key={product.guid} value={detailTab} onChange={changeTab} enabled={!warehouseDraft && !gallery}
+          tabsAccessory={SERIES_BALANCES_ENABLED && detailTab === 'balances' ? seriesSwitch : null}>
+        <FlatList testID="stock-balances-list" data={balanceRows} keyExtractor={i => i.id} onEndReached={detailTab === 'balances' ? detail.loadMore : undefined} onEndReachedThreshold={0.5}
           refreshControl={<RefreshControl refreshing={detail.refreshing} onRefresh={detail.refresh} />}
           contentContainerStyle={{ paddingBottom: insets.bottom + 12, flexGrow: 1 }}
           ListHeaderComponent={detail.error && detail.page ? <View style={styles.status}><Button onPress={detail.refresh}>{detail.error}</Button></View> : null}
@@ -170,20 +197,10 @@ export default function StockProductsScreen() {
             {(item.myReserved ?? 0) > 0 ? <Text style={styles.hint}>Мой резерв {number(item.myReserved ?? 0)} {productUnit(product)} · учтён в доступном</Text> : null}
             {item.availabilityReason ? <Text style={styles.hint}>{item.availabilityReason}</Text> : null}
           </View>;
-          }} /></> : <FlatList key={detailTab} data={historyRows} keyExtractor={i => i.id}
-            onEndReached={history.loadMore} onEndReachedThreshold={0.5}
-            refreshControl={<RefreshControl refreshing={history.refreshing} onRefresh={history.refresh} />}
-            contentContainerStyle={{ paddingBottom: insets.bottom + 12, flexGrow: 1 }}
-            ListHeaderComponent={history.error && history.page ? <View style={styles.status}><Text style={styles.warning}>{history.error}</Text></View> : null}
-            ListEmptyComponent={<View style={styles.empty}>{history.busy ? <ActivityIndicator /> : <Text>
-              {!isReachable ? 'Для работы сервиса нужно подключение к сети.' : history.error || (detailTab === 'receipt' ? 'Поступлений на выбранных складах нет' : 'Расходных движений на выбранных складах нет')}
-            </Text>}{!history.busy && (!isReachable || history.error) ? <Button onPress={history.refresh}>Повторить</Button> : null}</View>}
-            ListFooterComponent={history.loadingMore ? <ActivityIndicator /> : null}
-            renderItem={({ item, index }) => <>
-              {detailTab === 'receipt' && (index === 0 || movementDay(item) !== movementDay(historyRows[index - 1])) ?
-                <View style={styles.movementDay}><Text style={styles.movementDayText}>{movementDayLabel(movementDay(item))}</Text></View> : null}
-              <StockMovementRow item={item} unit={product?.baseUnit?.symbol || product?.baseUnit?.name || ''} />
-            </>} />}
+          }} />
+        {renderHistory('receipt')}
+        {renderHistory('expense')}
+        </StockTabsPager> : null}
         {product ? warehousePicker : null}
       </View>
     </Modal>
@@ -215,11 +232,6 @@ const styles = StyleSheet.create({
   folder: {flexDirection:'row',alignItems:'center',gap:8,paddingHorizontal:12,minHeight:44,backgroundColor:'#F8FAFC',borderBottomWidth:1,borderColor:'#E2E8F0'},
   seriesSwitch: { alignItems: 'center', justifyContent: 'center', width: 58 },
   seriesLabel: { fontSize: 10, color: '#64748B' },
-  tabsRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 6, borderBottomWidth: 1, borderColor: '#E2E8F0' },
-  tabs: { flex: 1, flexDirection: 'row', borderRadius: 10, backgroundColor:'#F1F5F9', overflow:'hidden' },
-  tab: { flex:1, minHeight:36, paddingHorizontal:2, alignItems:'center', justifyContent:'center' },
-  tabLabel: { fontSize:11, fontWeight:'600', color:'#64748B' }, selectedTabLabel:{color:'#2563EB'},
-  selectedTab: { backgroundColor: '#DBEAFE' },
   productHero: { flexDirection: 'row', gap: 10, paddingHorizontal: 12, paddingVertical: 6 },
   heroImage: { width: 80, minHeight: 80 }, heroContent: { flex: 1, gap: 4 },
   costLine: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 4 }, costText: { fontSize: 16, fontWeight: '700', color: '#0F172A' },

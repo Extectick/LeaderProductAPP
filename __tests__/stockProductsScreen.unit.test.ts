@@ -32,6 +32,11 @@ jest.mock('../src/features/clientOrders/screen/mobile/SearchPickerScreen', () =>
 jest.mock('../src/features/clientOrders/screen/mobile/FilterLookupPickerPanel', () => ({ FilterLookupPickerPanel: 'WarehousePicker' }));
 jest.mock('../src/features/clientOrders/screen/mobile/ProductImageGalleryModal', () => ({ ProductImageGalleryModal: 'Gallery', getProductGalleryImages: () => [] }));
 jest.mock('../src/features/stockBalances/products', () => ({ stockRequest: jest.fn() }));
+jest.mock('../src/features/stockBalances/StockTabsPager',()=>({StockTabsPager:({value,onChange,children}:any)=>{
+  const React=require('react');
+  const tabs=[['balances','Остатки'],['receipt','Поступления'],['expense','Продажи']];
+  return React.createElement('StockTabsPager',{},tabs.map(([key,label])=>React.createElement('Pressable',{key,accessibilityRole:'tab',accessibilityState:{selected:value===key},onPress:()=>onChange(key)},React.createElement('Text',{},label))),React.Children.toArray(children)[tabs.findIndex(([key])=>key===value)]);
+}}));
 jest.mock('../src/features/stockBalances/stockCache', () => ({ readStockCache: jest.fn(), writeStockCache: jest.fn() }));
 jest.mock('../src/features/stockBalances/useStockProducts', () => ({ useStockProducts: jest.fn(() => ({ page: { items: [] }, busy: false, stale: false, error: null, refresh: jest.fn(), loadMore: jest.fn() })) }));
 jest.mock('../src/features/stockBalances/useWarehouseSelection', () => ({
@@ -109,7 +114,7 @@ it('shares the warehouse picker between list and card and updates all three tab 
   }
 });
 it('never displays a warehouse outside the current choice, even if an API page contained it',async()=>{
-  const rows=[{id:'a',warehouse:warehouses[0],inStock:1,reserved:0,available:1},{id:'b',warehouse:{guid:'b',name:'Чужой склад'},inStock:1,reserved:0,available:1}];
+  const rows=[{id:'a',warehouse:warehouses[0],inStock:1,reserved:0,available:1},{id:'b',warehouse:{guid:'b',name:'Чужой склад'},inStock:1,reserved:0,available:1}].map(r=>({...r,document:{type:'ПриходныйОрдерНаТовары'},operationKind:'Поступление'}));
   jest.mocked(useWarehouseSelection).mockImplementation(()=>({items:warehouses,save:jest.fn(),ready:true,error:false}));
   jest.mocked(useStockProducts).mockImplementation(()=>({page:{items:rows},busy:false,loadingMore:false,refreshing:false,error:null,refresh:jest.fn(),loadMore:jest.fn()}) as any);
   await act(async()=>{view=TestRenderer.create(React.createElement(StockProductsScreen));});
@@ -123,7 +128,7 @@ it('never displays a warehouse outside the current choice, even if an API page c
 });
 it('renders selected warehouse folders and collapses only their children',async()=>{
   const selected=[warehouses[0],{guid:'b',name:'Основной',cityGuid:'omsk',cityName:'Омск'}];
-  const rows=selected.map(w=>({id:w.guid,warehouse:w,inStock:1,reserved:0,available:1}));
+  const rows=selected.map(w=>({id:w.guid,warehouse:w,inStock:1,reserved:0,available:1,document:{type:'ПриходныйОрдерНаТовары'},operationKind:'Поступление'}));
   jest.mocked(stockRequest).mockResolvedValue({warehouses:selected,organizations:[]});
   jest.mocked(useWarehouseSelection).mockImplementation(()=>({items:selected,save:jest.fn(),ready:true,error:false}));
   jest.mocked(useStockProducts).mockImplementation(()=>({page:{items:rows},busy:false,loadingMore:false,refreshing:false,error:null,refresh:jest.fn(),loadMore:jest.fn()}) as any);
@@ -151,4 +156,42 @@ it('shows full-width detail tabs without series, resetting the tab for the next 
   act(open);
   expect(tabs()[0].props.accessibilityState.selected).toBe(true);
   expect(view.root.findAllByType('Switch' as any)).toHaveLength(0);
+});
+it('labels all warehouses in list/card and groups every warehouse without an explicit selection',async()=>{
+  const all=[warehouses[0],{guid:'b',name:'Новосибирск',cityGuid:'nsk',cityName:'Новосибирск'}];
+  jest.mocked(stockRequest).mockResolvedValue({warehouses:all,organizations:[]});
+  jest.mocked(useStockProducts).mockImplementation(()=>({page:{items:all.map(w=>({id:w.guid,warehouse:w,document:{type:'Поступление'},operationKind:'Поступление'}))},busy:false,loadingMore:false,refreshing:false,error:null,refresh:jest.fn(),loadMore:jest.fn()}) as any);
+  await act(async()=>{view=TestRenderer.create(React.createElement(StockProductsScreen));});
+  const picker=view.root.findByType('SearchPicker' as any);
+  expect(picker.props.titleAccessory.props.accessibilityLabel).toBe('Выбрать склады: Склады (Все)');
+  act(()=>picker.props.renderItem({item:{guid:'p',name:'Product'}}).props.onOpen({guid:'p',name:'Product'}));
+  expect(view.root.findByProps({testID:'stock-product-warehouses'}).props.accessibilityLabel).toBe('Выбрать склады: Склады (Все)');
+  expect(view.root.findByType('FlatList' as any).props.data.filter((r:any)=>r.kind==='folder').map((r:any)=>r.name)).toEqual(['Омск','Новосибирск']);
+});
+it('filters customer orders only from receipts and keeps independent lazy-loaded histories when switching tabs',async()=>{
+  const order={id:'order',warehouse:warehouses[0],document:{type:'ЗаказКлиента'},operationKind:'Заказ клиента'};
+  const receipt={...order,id:'receipt',document:{type:'ПриходныйОрдерНаТовары'},operationKind:'Поступление'};
+  jest.mocked(useStockProducts).mockImplementation((path,query)=>({page:{items:query.direction?[order,receipt]:[]},busy:false,loadingMore:false,refreshing:false,error:null,refresh:jest.fn(),loadMore:jest.fn()}) as any);
+  await act(async()=>{view=TestRenderer.create(React.createElement(StockProductsScreen));});
+  act(()=>view.root.findByType('SearchPicker' as any).props.renderItem({item:{guid:'p',name:'Product'}}).props.onOpen({guid:'p',name:'Product'}));
+  const tabs=()=>view.root.findAllByType('Pressable' as any).filter(n=>n.props.accessibilityRole==='tab');
+  expect(jest.mocked(useStockProducts).mock.calls.some(([path,query])=>path==='products/p/movements'&&query.direction==='receipt')).toBe(false);
+  act(()=>tabs()[1].props.onPress());
+  expect(view.root.findByType('FlatList' as any).props.data.map((r:any)=>r.id)).toEqual(['receipt']);
+  act(()=>tabs()[2].props.onPress());
+  expect(view.root.findByType('FlatList' as any).props.data.map((r:any)=>r.id)).toEqual(['order','receipt']);
+  const recent=jest.mocked(useStockProducts).mock.calls.slice(-4);
+  expect(recent).toContainEqual(['products/p/movements',expect.objectContaining({direction:'receipt'}),'1',true]);
+  expect(recent).toContainEqual(['products/p/movements',expect.objectContaining({direction:'expense'}),'1',true]);
+});
+it('continues pagination past a receipt page containing only excluded customer orders',async()=>{
+  const loadMore=jest.fn();
+  const order={id:'order',warehouse:warehouses[0],document:{type:'ЗаказКлиента'},operationKind:'Заказ клиента'};
+  jest.mocked(useStockProducts).mockImplementation((path,query)=>({page:{items:query.direction==='receipt'?[order]:[],hasMore:query.direction==='receipt'},busy:false,loadingMore:false,refreshing:false,error:null,refresh:jest.fn(),loadMore}) as any);
+  await act(async()=>{view=TestRenderer.create(React.createElement(StockProductsScreen));});
+  act(()=>view.root.findByType('SearchPicker' as any).props.renderItem({item:{guid:'p',name:'Product'}}).props.onOpen({guid:'p',name:'Product'}));
+  expect(loadMore).not.toHaveBeenCalled();
+  act(()=>view.root.findAllByType('Pressable' as any).filter(n=>n.props.accessibilityRole==='tab')[1].props.onPress());
+  expect(view.root.findByType('FlatList' as any).props.data).toEqual([]);
+  expect(loadMore).toHaveBeenCalled();
 });
