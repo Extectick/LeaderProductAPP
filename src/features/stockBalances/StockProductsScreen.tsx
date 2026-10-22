@@ -11,7 +11,7 @@ import { FilterLookupPickerPanel } from '@/src/features/clientOrders/screen/mobi
 import { buildWarehousePickerGroups } from '@/src/features/clientOrders/lib/clientOrdersUi';
 import { ProductImageGalleryModal, getProductGalleryImages, type ProductGallery } from '@/src/features/clientOrders/screen/mobile/ProductImageGalleryModal';
 import { useWarehouseSelection, warehouseSelectionLabel, toggleWarehouse, toggleWarehouseGroup, type SelectedWarehouse } from './useWarehouseSelection';
-import { stockRequest, type StockDetail, type StockFilters, type StockMetrics, type StockMovement, type StockProduct } from './products';
+import { stockRequest, type StockDetail, type StockFilters, type StockMetrics, type StockMovement, type StockPage, type StockProduct } from './products';
 import { useStockProducts } from './useStockProducts';
 import { StockMovementRow } from './StockMovementRow';
 import { isVisibleStockReceipt, movementDay, movementDayLabel } from './receiptPresentation';
@@ -111,10 +111,20 @@ export default function StockProductsScreen() {
   const balanceRows = React.useMemo(() => warehouseBalanceRows(detail.page?.items ?? [], warehouses.items, warehouseGroups, collapsedFolders), [detail.page, warehouses.items, warehouseGroups, collapsedFolders]);
   const receiptRows = React.useMemo(() => selectedWarehouseRows(receipts.page?.items ?? [], warehouses.items).filter(isVisibleStockReceipt), [receipts.page, warehouses.items]);
   const expenseRows = React.useMemo(() => selectedWarehouseRows(expenses.page?.items ?? [], warehouses.items), [expenses.page, warehouses.items]);
-  // An excluded-only API page must not look like the end of incoming history.
+  const lastReceiptPage = React.useRef<{scope: string; page: StockPage<StockMovement>; visible: number} | null>(null);
+  // Excluded-only first AND middle pages must not stall FlatList: its visible
+  // content length stays unchanged, so onEndReached need not fire again.
   React.useEffect(() => {
-    if (product && detailTab === 'receipt' && !receipts.busy && !receipts.error && receipts.page?.hasMore && !receiptRows.length) void receipts.loadMore();
-  }, [product, detailTab, receipts.busy, receipts.error, receipts.page, receipts.loadMore, receiptRows.length]);
+    const page = receipts.page;
+    if (!product || !page) { lastReceiptPage.current = null; return; }
+    if (detailTab !== 'receipt' || receipts.busy || receipts.error) return;
+    const scope = JSON.stringify([userId, product.guid, warehouseGuids]);
+    const previous = lastReceiptPage.current?.scope === scope ? lastReceiptPage.current : null;
+    if (previous?.page === page) return;
+    const excludedAppend = previous && page.items.length > previous.page.items.length && receiptRows.length === previous.visible;
+    lastReceiptPage.current = {scope, page, visible: receiptRows.length};
+    if (page.hasMore && (!receiptRows.length || excludedAppend)) void receipts.loadMore();
+  }, [product, userId, warehouseGuids, detailTab, receipts.busy, receipts.error, receipts.page, receipts.loadMore, receiptRows.length]);
   const warehouseTrigger = (testID: string) => <Pressable testID={testID} accessibilityRole="button" accessibilityLabel={`Выбрать склады: ${warehouseLabel}`} disabled={!warehouses.ready || !isReachable}
     onPress={() => setWarehouseDraft(warehouses.items)} style={styles.warehouseSelector}>
     <Text numberOfLines={1} style={styles.warehouseLabel}>{warehouseLabel}</Text><MaterialCommunityIcons name="chevron-down" size={16} color="#2563EB" />

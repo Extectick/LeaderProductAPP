@@ -195,3 +195,23 @@ it('continues pagination past a receipt page containing only excluded customer o
   expect(view.root.findByType('FlatList' as any).props.data).toEqual([]);
   expect(loadMore).toHaveBeenCalled();
 });
+it('continues an excluded-only middle page even when earlier visible rows already exist',async()=>{
+  const loadMore=jest.fn();
+  const row={id:'receipt',warehouse:warehouses[0],document:{type:'ПриходныйОрдерНаТовары'},operationKind:'Поступление'};
+  const order={...row,id:'order',document:{type:'ЗаказКлиента'},operationKind:'Заказ клиента'};
+  let page={items:[row],hasMore:true};
+  jest.mocked(useStockProducts).mockImplementation((path,query)=>({page:query.direction==='receipt'?page:{items:[]},busy:false,loadingMore:false,refreshing:false,error:null,refresh:jest.fn(),loadMore}) as any);
+  await act(async()=>{view=TestRenderer.create(React.createElement(StockProductsScreen));});
+  act(()=>view.root.findByType('SearchPicker' as any).props.renderItem({item:{guid:'p',name:'Product'}}).props.onOpen({guid:'p',name:'Product'}));
+  act(()=>view.root.findAllByType('Pressable' as any).filter(n=>n.props.accessibilityRole==='tab')[1].props.onPress());
+  expect(loadMore).not.toHaveBeenCalled();
+  page={items:[row,order],hasMore:true};
+  act(()=>view.update(React.createElement(StockProductsScreen)));
+  expect(loadMore).toHaveBeenCalledTimes(1);
+  expect(view.root.findByType('FlatList' as any).props.data.map((r:any)=>r.id)).toEqual(['receipt']);
+  act(()=>view.update(React.createElement(StockProductsScreen)));
+  expect(loadMore).toHaveBeenCalledTimes(1);
+  page={items:[row,order,{...row,id:'next-receipt'}],hasMore:true};
+  act(()=>view.update(React.createElement(StockProductsScreen)));
+  expect(loadMore).toHaveBeenCalledTimes(1);
+});
