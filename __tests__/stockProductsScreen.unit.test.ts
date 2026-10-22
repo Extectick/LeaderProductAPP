@@ -5,6 +5,9 @@ import { stockRequest } from '../src/features/stockBalances/products';
 import { readStockCache, writeStockCache } from '../src/features/stockBalances/stockCache';
 import { useServerStatus } from '../src/shared/network/useServerStatus';
 import { useStockProducts } from '../src/features/stockBalances/useStockProducts';
+import { useWarehouseSelection } from '../src/features/stockBalances/useWarehouseSelection';
+jest.mock('../utils/config',()=>({API_BASE_URL:'https://dev.invalid'}));
+jest.mock('@react-native-async-storage/async-storage',()=>({getItem:jest.fn(),setItem:jest.fn()}));
 jest.mock('react-native', () => {
   const React = require('react');
   const host = (name: string) => ({ children, ...props }: any) => React.createElement(name, props, children);
@@ -32,7 +35,7 @@ jest.mock('../src/features/stockBalances/products', () => ({ stockRequest: jest.
 jest.mock('../src/features/stockBalances/stockCache', () => ({ readStockCache: jest.fn(), writeStockCache: jest.fn() }));
 jest.mock('../src/features/stockBalances/useStockProducts', () => ({ useStockProducts: jest.fn(() => ({ page: { items: [] }, busy: false, stale: false, error: null, refresh: jest.fn(), loadMore: jest.fn() })) }));
 jest.mock('../src/features/stockBalances/useWarehouseSelection', () => ({
-  useWarehouseSelection: () => ({ items: [], ready: true, error: false }), warehouseSelectionLabel: () => 'Все',
+  ...jest.requireActual('../src/features/stockBalances/useWarehouseSelection'),useWarehouseSelection:jest.fn(),
 }));
 const warehouses = [{ guid: 'a', name: 'Переработка', cityGuid: 'omsk', cityName: 'Омск' }];
 let view: TestRenderer.ReactTestRenderer;
@@ -41,6 +44,11 @@ beforeEach(() => {
   jest.mocked(useServerStatus).mockReturnValue({ isReachable: true } as any);
   jest.mocked(readStockCache).mockResolvedValue(null);
   jest.mocked(stockRequest).mockResolvedValue({ warehouses, organizations: [] });
+  jest.mocked(useWarehouseSelection).mockImplementation(()=>{
+    const [items,save]=React.useState<any[]>([]);
+    return{items,save,ready:true,error:false};
+  });
+  jest.mocked(useStockProducts).mockImplementation(()=>({page:{items:[]},busy:false,loadingMore:false,refreshing:false,error:null,refresh:jest.fn(),loadMore:jest.fn()}));
 });
 afterEach(() => act(() => view?.unmount()));
 it('temporarily hides series in the list and product card, querying only grouped balances', async () => {
@@ -52,16 +60,17 @@ it('temporarily hides series in the list and product card, querying only grouped
   expect(view.root.findAllByType('Switch' as any)).toHaveLength(0);
   expect(view.root.findAllByType('Text' as any).some(node => node.props.children === 'По сериям')).toBe(false);
   expect(jest.mocked(useStockProducts)).toHaveBeenCalledWith('products/p/balances',expect.objectContaining({bySeries:'0',groupByWarehouse:'1'}),'1',true);
-  expect(writeStockCache).toHaveBeenCalledWith('1', 'warehouse-filters-v1', expect.objectContaining({ items: warehouses }));
+  expect(readStockCache).not.toHaveBeenCalled();expect(writeStockCache).not.toHaveBeenCalled();
 });
-it('restores warehouse groups offline without blocking the picker on a network call', async () => {
+it('does not restore cached filters or show saved-data banners for the online-only service', async () => {
   jest.mocked(useServerStatus).mockReturnValue({ isReachable: false } as any);
   jest.mocked(readStockCache).mockResolvedValue({ items: warehouses, offset: 0, nextOffset: 1, hasMore: false });
   await act(async () => { view = TestRenderer.create(React.createElement(StockProductsScreen)); });
   const trigger = view.root.findByType('SearchPicker' as any).props.titleAccessory;
-  act(() => trigger.props.onPress());
-  expect(view.root.findByType('WarehousePicker' as any).props.groups[0]).toMatchObject({ name: 'Омск', items: warehouses });
+  expect(trigger.props.disabled).toBe(true);
   expect(stockRequest).not.toHaveBeenCalled();
+  expect(readStockCache).not.toHaveBeenCalled();
+  expect(view.root.findByType('SearchPicker' as any).props.ListHeaderComponent).toBeNull();
 });
 it('uses pull-to-refresh in both lists without a header refresh button', async () => {
   await act(async () => { view = TestRenderer.create(React.createElement(StockProductsScreen)); });
@@ -73,14 +82,61 @@ it('uses pull-to-refresh in both lists without a header refresh button', async (
   const list = view.root.findByType('FlatList' as any);
   act(() => list.props.refreshControl.props.onRefresh());
   expect(list.props.refreshControl.props.onRefresh).toHaveBeenCalledTimes(1);
-  expect(list.props.refreshControl.props.enabled).toBe(true);
+  expect(list.props.refreshControl.props.enabled).not.toBe(false);
 });
-it('disables detail pull-to-refresh offline', async () => {
+it('allows an explicit connection retry from detail pull-to-refresh', async () => {
   jest.mocked(useServerStatus).mockReturnValue({ isReachable: false } as any);
   await act(async () => { view = TestRenderer.create(React.createElement(StockProductsScreen)); });
   const picker = view.root.findByType('SearchPicker' as any);
   act(() => picker.props.renderItem({ item: { guid: 'p', name: 'Product' } }).props.onOpen({ guid: 'p', name: 'Product' }));
-  expect(view.root.findByType('FlatList' as any).props.refreshControl.props.enabled).toBe(false);
+  expect(view.root.findByType('FlatList' as any).props.refreshControl.props.enabled).not.toBe(false);
+});
+it('shares the warehouse picker between list and card and updates all three tab queries',async()=>{
+  await act(async()=>{view=TestRenderer.create(React.createElement(StockProductsScreen));});
+  const picker=view.root.findByType('SearchPicker' as any);
+  act(()=>picker.props.renderItem({item:{guid:'p',name:'Product'}}).props.onOpen({guid:'p',name:'Product'}));
+  act(()=>view.root.findByProps({testID:'stock-product-warehouses'}).props.onPress());
+  act(()=>view.root.findByType('WarehousePicker' as any).props.onSelect(warehouses[0]));
+  act(()=>view.root.findByType('WarehousePicker' as any).props.onApply());
+  expect(view.root.findByType('SearchPicker' as any).props.titleAccessory.props.accessibilityLabel).toContain('Переработка');
+  expect(view.root.findByProps({testID:'stock-product-warehouses'}).props.accessibilityLabel).toContain('Переработка');
+  expect(jest.mocked(useStockProducts)).toHaveBeenCalledWith('products',expect.objectContaining({warehouseGuids:'a'}),'1',true);
+  expect(jest.mocked(useStockProducts)).toHaveBeenCalledWith('products/p/balances',expect.objectContaining({warehouseGuids:'a'}),'1',true);
+  for(const label of ['Поступления','Продажи']){
+    const tab=view.root.findAllByType('Pressable' as any).find(n=>n.props.accessibilityRole==='tab'&&n.findByType('Text' as any).props.children===label)!;
+    act(()=>tab.props.onPress());
+    expect(jest.mocked(useStockProducts)).toHaveBeenCalledWith('products/p/movements',expect.objectContaining({warehouseGuids:'a',direction:label==='Поступления'?'receipt':'expense'}),'1',true);
+  }
+});
+it('never displays a warehouse outside the current choice, even if an API page contained it',async()=>{
+  const rows=[{id:'a',warehouse:warehouses[0],inStock:1,reserved:0,available:1},{id:'b',warehouse:{guid:'b',name:'Чужой склад'},inStock:1,reserved:0,available:1}];
+  jest.mocked(useWarehouseSelection).mockImplementation(()=>({items:warehouses,save:jest.fn(),ready:true,error:false}));
+  jest.mocked(useStockProducts).mockImplementation(()=>({page:{items:rows},busy:false,loadingMore:false,refreshing:false,error:null,refresh:jest.fn(),loadMore:jest.fn()}) as any);
+  await act(async()=>{view=TestRenderer.create(React.createElement(StockProductsScreen));});
+  act(()=>view.root.findByType('SearchPicker' as any).props.renderItem({item:{guid:'p',name:'Product'}}).props.onOpen({guid:'p',name:'Product'}));
+  expect(view.root.findByType('FlatList' as any).props.data.filter((r:any)=>r.kind==='balance').map((r:any)=>r.item.warehouse.guid)).toEqual(['a']);
+  for(const label of ['Поступления','Продажи']){
+    const tab=view.root.findAllByType('Pressable' as any).find(n=>n.props.accessibilityRole==='tab'&&n.findByType('Text' as any).props.children===label)!;
+    act(()=>tab.props.onPress());
+    expect(view.root.findByType('FlatList' as any).props.data.map((r:any)=>r.warehouse.guid)).toEqual(['a']);
+  }
+});
+it('renders selected warehouse folders and collapses only their children',async()=>{
+  const selected=[warehouses[0],{guid:'b',name:'Основной',cityGuid:'omsk',cityName:'Омск'}];
+  const rows=selected.map(w=>({id:w.guid,warehouse:w,inStock:1,reserved:0,available:1}));
+  jest.mocked(stockRequest).mockResolvedValue({warehouses:selected,organizations:[]});
+  jest.mocked(useWarehouseSelection).mockImplementation(()=>({items:selected,save:jest.fn(),ready:true,error:false}));
+  jest.mocked(useStockProducts).mockImplementation(()=>({page:{items:rows},busy:false,loadingMore:false,refreshing:false,error:null,refresh:jest.fn(),loadMore:jest.fn()}) as any);
+  await act(async()=>{view=TestRenderer.create(React.createElement(StockProductsScreen));});
+  act(()=>view.root.findByType('SearchPicker' as any).props.renderItem({item:{guid:'p',name:'Product'}}).props.onOpen({guid:'p',name:'Product'}));
+  const list=()=>view.root.findByType('FlatList' as any);
+  expect(list().props.data.map((r:any)=>r.kind)).toEqual(['folder','balance','balance']);
+  const folder=list().props.renderItem({item:list().props.data[0]});
+  expect(folder.props.accessibilityLabel).toBe('Папка складов Омск');
+  act(()=>folder.props.onPress());
+  expect(list().props.data).toEqual([expect.objectContaining({kind:'folder',expanded:false,count:2})]);
+  act(()=>list().props.renderItem({item:list().props.data[0]}).props.onPress());
+  expect(list().props.data.map((r:any)=>r.kind)).toEqual(['folder','balance','balance']);
 });
 it('shows full-width detail tabs without series, resetting the tab for the next product', async () => {
   await act(async () => { view = TestRenderer.create(React.createElement(StockProductsScreen)); });

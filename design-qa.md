@@ -49,3 +49,21 @@ Tested opening product, switching balances/receipts/sales, series switch, leavin
 ## Follow-up polish
 
 P3: physical-device review of native font rendering and very large text settings. No claim of physical-phone QA is made by the browser run.
+
+## Receipt documents revision — 2026-10-22
+
+- Source: `C:/Users/Администратор/.codex/generated_images/01a16315-2ebe-70d3-841b-68ca2cb14e83/exec-d4eaa4db-6171-41ae-961a-1876feba8dca.png`, plus explicit supplier-icon request.
+- Implementation: `C:/Share/GitRepositories/LeaderProductMobile/.artifacts/stock-incoming-cost-20261022/receipt-design-390.png` and `receipt-design-320.png`.
+- Viewports: 390×844 and 320×740, browser CSS density 1. Source 853×1844 normalized to 390×844.
+- Full comparison: `.artifacts/stock-incoming-cost-20261022/receipt-design-comparison.png`; focused comparison: `receipt-design-focused.png` (paths relative to workspace root).
+- State: product / receipts / collapsed details. Fixture includes longer actual-style warehouse names and customer returns, whereas the mock uses shortened warehouse names and four illustrative records. These data differences intentionally affect wrapping/row height; no pixel-equality claim. Existing compact product header and shared warehouse selector retained.
+- Typography: existing native font; warehouse regular 13/19; supplier bold14; financial values unchanged16/21. Long return operation wraps at320 instead of clipping identifiers. Standard receipt/transfer headings fit one line.
+- Layout: date headers, flat separators, shared icon column, compact operation+number, no repeated dates or financial captions. Full names remain readable rather than artificially shortened to match the illustration.
+- Colors: navy text, blue operations, green quantity, muted receiving #8BAF9B / sending #C49C9C. Accessible warehouse-role labels supplement color.
+- Assets/icons: existing real eel image and MaterialCommunityIcons; supplier office-building icon added as requested. No generated replacement asset needed.
+- Content: explicit 1C transfer source parsed only for transfer documents; missing source not guessed. Price and amount keep null/zero semantics, VAT captions retained in accessibility labels.
+- Interactions: question toggles cost reason; document heading toggles original document/base documents/articles. Today/yesterday grouping checked. Photo opens gallery independently; available amount and footer open product. Warehouse-scope fixture excludes nonselected warehouses. Console errors: none.
+- Live read-only dev/WMS15 evidence: 29 movements checked, one transfer with explicit source, no writes.
+- Comparison history: first implementation comparison found no actionable P0/P1/P2 issues; longer content and retained shared selector are intentional product constraints. No visual repair iteration claimed.
+- P3 follow-up: physical Android font scaling/touch QA remains separate from browser verification.
+- final result: passed

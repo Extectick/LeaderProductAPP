@@ -4,6 +4,7 @@ import { Text, Tooltip } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import type { StockMovement } from './products';
 import { stockMoney } from './stockMoney';
+import { StockReceiptRow } from './StockReceiptRow';
 
 export function movementDate(date: string) {
   const [year, month, day] = date.slice(0, 10).split('-');
@@ -13,6 +14,9 @@ const Info = ({ icon, children }: { icon: React.ComponentProps<typeof MaterialCo
   <View style={styles.info}><MaterialCommunityIcons name={icon} size={15} color="#64748B" /><Text style={styles.secondary}>{children}</Text></View>;
 
 export const StockMovementRow = React.memo(function StockMovementRow({ item, unit }: { item: StockMovement; unit: string }) {
+  return item.direction === 'receipt' ? <StockReceiptRow item={item} unit={unit} /> : <StockExpenseRow item={item} unit={unit} />;
+});
+const StockExpenseRow = React.memo(function StockExpenseRow({ item, unit }: { item: StockMovement; unit: string }) {
   const receipt = item.direction === 'receipt';
   const priceLabel = receipt ? 'Входящая, с НДС' : item.costStatus === 'DOCUMENT' ? 'Цена продажи, с НДС' : 'Стоимость, с НДС';
   const hasPrice = item.price !== null && Number.isFinite(item.price);

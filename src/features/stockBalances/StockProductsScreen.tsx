@@ -11,12 +11,13 @@ import { FilterLookupPickerPanel } from '@/src/features/clientOrders/screen/mobi
 import { buildWarehousePickerGroups } from '@/src/features/clientOrders/lib/clientOrdersUi';
 import { ProductImageGalleryModal, getProductGalleryImages, type ProductGallery } from '@/src/features/clientOrders/screen/mobile/ProductImageGalleryModal';
 import { useWarehouseSelection, warehouseSelectionLabel, toggleWarehouse, toggleWarehouseGroup, type SelectedWarehouse } from './useWarehouseSelection';
-import { readStockCache, writeStockCache } from './stockCache';
 import { stockRequest, type StockDetail, type StockFilters, type StockMetrics, type StockMovement, type StockProduct } from './products';
 import { useStockProducts } from './useStockProducts';
 import { StockMovementRow } from './StockMovementRow';
+import { movementDay, movementDayLabel } from './receiptPresentation';
 import { StockProductRow, StockThumbnail, productUnit } from './StockProductRow';
 import { availableQuantity, incomingCostHint, incomingCostText } from './incomingCost';
+import { selectedWarehouseRows, warehouseBalanceRows } from './warehouseBalances';
 
 const emptyFilters: StockFilters = { warehouses: [], organizations: [] };
 // Temporarily disabled: do not show the control or issue live series requests.
@@ -54,13 +55,15 @@ export default function StockProductsScreen() {
   const [gallery, setGallery] = React.useState<ProductGallery | null>(null);
   const [product, setProduct] = React.useState<StockProduct | null>(null);
   const [detailTab, setDetailTab] = React.useState<'balances' | 'receipt' | 'expense'>('balances');
+  const [collapsedFolders, setCollapsedFolders] = React.useState<Set<string>>(new Set());
   const listRef = React.useRef<any>(null);
   React.useEffect(() => { listRef.current?.scrollToOffset?.({ offset: 0, animated: false }); }, [search, warehouseGuids]);
   const stock = useStockProducts<StockProduct>('products', { search, warehouseGuids }, warehouses.ready ? userId : undefined, isReachable);
   const detail = useStockProducts<StockDetail>(product ? `products/${product.guid}/balances` : null, { warehouseGuids, bySeries: bySeries ? '1' : '0', groupByWarehouse: '1' }, warehouses.ready ? userId : undefined, isReachable);
   const history = useStockProducts<StockMovement>(product && detailTab !== 'balances' ? `products/${product.guid}/movements` : null,
     { warehouseGuids, direction: detailTab === 'receipt' ? 'receipt' : 'expense' }, warehouses.ready ? userId : undefined, isReachable);
-  const currentCost = detail.page && Object.prototype.hasOwnProperty.call(detail.page, 'incomingCost') ? detail.page.incomingCost : product?.incomingCost;
+  const currentCost = !isReachable ? null : detail.page && Object.prototype.hasOwnProperty.call(detail.page, 'incomingCost') ? detail.page.incomingCost : product?.incomingCost;
+  React.useEffect(() => { setCollapsedFolders(new Set()); }, [product?.guid, warehouseGuids]);
   const openProduct = React.useCallback((item: StockProduct) => { setDetailTab('balances'); setBySeries(false); setProduct(item); }, []);
   const openImages = React.useCallback((item: StockProduct) => {
     const images = getProductGalleryImages(item);
@@ -77,15 +80,11 @@ export default function StockProductsScreen() {
     const controller = new AbortController();
     setFilterLoading(isReachable); setFilterError(false);
     void (async () => {
-      const cached = await readStockCache<SelectedWarehouse>(userId, 'warehouse-filters-v1');
-      if (controller.signal.aborted) return;
-      if (cached) setFilters({ warehouses: cached.items, organizations: [] });
-      if (!isReachable) { setFilterLoading(false); return; }
+      if (!isReachable) { setFilters(emptyFilters); setWarehouseDraft(null); setFilterLoading(false); return; }
       try {
         const data = await stockRequest<StockFilters>('filters', {}, controller.signal);
         if (controller.signal.aborted) return;
         setFilters(data);
-        void writeStockCache(userId, 'warehouse-filters-v1', { items: data.warehouses, offset: 0, nextOffset: data.warehouses.length, hasMore: false });
       } catch { if (!controller.signal.aborted) setFilterError(true); }
       finally { if (!controller.signal.aborted) setFilterLoading(false); }
     })();
@@ -93,45 +92,48 @@ export default function StockProductsScreen() {
   }, [userId, isReachable, filterRevision]);
   const empty = (loading: boolean, error: string | null) => <View style={styles.empty}>
     {loading ? <ActivityIndicator /> : <>
-      <Text>{!isReachable ? (product && bySeries ? 'Для просмотра серий нужно подключение к сети.' : 'Нет сети. Для этой выборки нет сохранённых остатков.') : error || 'Остатки не найдены'}</Text>
-      {isReachable && error ? <Button onPress={() => product ? detail.refresh() : stock.refresh()}>Повторить</Button> : null}
+      <Text>{!isReachable ? 'Для работы сервиса нужно подключение к сети.' : error || 'Остатки не найдены'}</Text>
+      {!isReachable || error ? <Button onPress={() => product ? detail.refresh() : stock.refresh()}>Повторить</Button> : null}
     </>}
   </View>;
   const warehouseItems = React.useMemo(() => [{ guid: '', name: 'Все склады' }, ...new Map([...warehouses.items, ...filters.warehouses].map(w => [w.guid, w])).values()], [warehouses.items, filters.warehouses]);
   const warehouseGroups = React.useMemo(() => buildWarehousePickerGroups(warehouseItems.filter(w => !!w.guid)), [warehouseItems]);
   const warehouseLabel = warehouseSelectionLabel(warehouses.items.map(w => filters.warehouses.find(f => f.guid === w.guid) || w));
+  const balanceRows = React.useMemo(() => warehouseBalanceRows(detail.page?.items ?? [], warehouses.items, warehouseGroups, collapsedFolders), [detail.page, warehouses.items, warehouseGroups, collapsedFolders]);
+  const historyRows = React.useMemo(() => selectedWarehouseRows(history.page?.items ?? [], warehouses.items), [history.page, warehouses.items]);
+  const warehouseTrigger = (testID: string) => <Pressable testID={testID} accessibilityRole="button" accessibilityLabel={`Выбрать склады: ${warehouseLabel}`} disabled={!warehouses.ready || !isReachable}
+    onPress={() => setWarehouseDraft(warehouses.items)} style={styles.warehouseSelector}>
+    <Text numberOfLines={1} style={styles.warehouseLabel}>{warehouseLabel}</Text><MaterialCommunityIcons name="chevron-down" size={16} color="#2563EB" />
+  </Pressable>;
+  const warehousePicker = <Modal visible={warehouseDraft !== null} animationType="slide" onRequestClose={() => setWarehouseDraft(null)}>
+    <View style={styles.root}>{warehouseDraft !== null ? <FilterLookupPickerPanel title="Склады" icon="warehouse" topInset={insets.top} bottomInset={insets.bottom} flat groups={warehouseGroups}
+      status={filterLoading ? <ActivityIndicator /> : filterError ? <Button onPress={reloadFilters}>Повторить загрузку складов</Button> : null}
+      placeholder="Склад или группа" localItems={warehouseItems} selectedGuids={warehouseDraft.map(w => w.guid)}
+      onSelect={item => setWarehouseDraft(current => toggleWarehouse(current || [], item))}
+      onSelectGroup={items => setWarehouseDraft(current => toggleWarehouseGroup(current || [], items))}
+      onReset={() => setWarehouseDraft([])} onClose={() => setWarehouseDraft(null)}
+      onApply={() => { warehouses.save(warehouseDraft); setWarehouseDraft(null); }} /> : null}
+    </View>
+  </Modal>;
   const seriesSwitch = <View style={styles.seriesSwitch}><Switch value={bySeries} onValueChange={setBySeries} accessibilityLabel="По сериям" /><Text style={styles.seriesLabel}>По сериям</Text></View>;
   return <View style={styles.root}>
     <SearchPickerScreen visible pickerKey="stock-products" topInset={insets.top} title="Остатки" titleIcon=""
-      titleAccessory={<Pressable accessibilityRole="button" accessibilityLabel={`Выбрать склады: ${warehouseLabel}`} disabled={!warehouses.ready}
-        onPress={() => setWarehouseDraft(warehouses.items)} style={styles.warehouseSelector}>
-        <Text numberOfLines={1} style={styles.warehouseLabel}>{warehouseLabel}</Text><MaterialCommunityIcons name="chevron-down" size={16} color="#2563EB" />
-      </Pressable>}
+      titleAccessory={warehouseTrigger('stock-list-warehouses')}
       closeIcon="arrow-left" onClose={goBack} search={search} onSearchChange={setSearch} autoFocus={false}
       searchPlaceholder="Наименование, код или артикул" searchLoading={stock.busy && !!stock.page}
       listRef={listRef} data={stock.page?.items ?? []} keyExtractor={item => item.guid} renderItem={({ item }) => <StockProductRow item={item} onOpen={openProduct} onOpenImages={openImages} />}
       onEndReached={stock.loadMore}
-      listProps={{ refreshControl: <RefreshControl refreshing={stock.refreshing} onRefresh={stock.refresh} enabled={isReachable} /> }}
-      ListHeaderComponent={stock.stale || stock.error || warehouses.error ? <View style={styles.status}>
+      listProps={{ refreshControl: <RefreshControl refreshing={stock.refreshing} onRefresh={stock.refresh} /> }}
+      ListHeaderComponent={stock.error || warehouses.error ? <View style={styles.status}>
         {warehouses.error ? <Text style={styles.warning}>Не удалось сохранить или прочитать выбор складов</Text> : null}
-        {stock.stale ? <Text style={styles.warning}>{!isReachable ? 'Нет сети · показаны ранее загруженные остатки' : 'Данные не обновлены'}</Text> : null}
         {stock.error && stock.page ? <Button compact onPress={stock.refresh}>{stock.error}</Button> : null}
       </View> : null}
       ListEmptyComponent={empty(stock.busy || !warehouses.ready, stock.error)}
       ListFooterComponent={<View style={{ paddingBottom: insets.bottom + 12 }}>{stock.loadingMore ? <ActivityIndicator /> : null}</View>} />
-    <Modal visible={warehouseDraft !== null} animationType="slide" onRequestClose={() => setWarehouseDraft(null)}>
-      <View style={styles.root}>{warehouseDraft !== null ? <FilterLookupPickerPanel title="Склады" icon="warehouse" topInset={insets.top} bottomInset={insets.bottom} flat groups={warehouseGroups}
-        status={filterLoading ? <ActivityIndicator /> : filterError ? <Button onPress={reloadFilters}>Повторить загрузку складов</Button> : null}
-        placeholder="Склад или группа" localItems={warehouseItems} selectedGuids={warehouseDraft.map(w => w.guid)}
-        onSelect={item => setWarehouseDraft(current => toggleWarehouse(current || [], item))}
-        onSelectGroup={items => setWarehouseDraft(current => toggleWarehouseGroup(current || [], items))}
-        onReset={() => setWarehouseDraft([])} onClose={() => setWarehouseDraft(null)}
-        onApply={() => { warehouses.save(warehouseDraft); setWarehouseDraft(null); }} /> : null}
-      </View>
-    </Modal>
+    {!product ? warehousePicker : null}
     <Modal visible={!!product} animationType="slide" onRequestClose={() => setProduct(null)}>
       <View style={styles.root}>
-        <Appbar.Header style={{backgroundColor:'#FFFFFF'}}><Appbar.BackAction accessibilityLabel="Назад" color="#2563EB" onPress={() => setProduct(null)} /><Appbar.Content title="Товар" titleStyle={{fontSize:20,fontWeight:'700',color:'#0F172A'}} /></Appbar.Header>
+        <Appbar.Header style={{backgroundColor:'#FFFFFF'}}><Appbar.BackAction accessibilityLabel="Назад" color="#2563EB" onPress={() => setProduct(null)} /><Appbar.Content title="Товар" style={{flex:0,minWidth:74}} titleStyle={{fontSize:20,fontWeight:'700',color:'#0F172A'}} /><View style={styles.productWarehouseSelector}>{warehouseTrigger('stock-product-warehouses')}</View></Appbar.Header>
         {product ? <View style={styles.productHero}>
           <View style={styles.heroImage}><StockThumbnail item={product} compact onOpen={() => openImages(product)} /></View>
           <View style={styles.heroContent}><Text style={styles.title}>{product.name}</Text>
@@ -149,27 +151,40 @@ export default function StockProductsScreen() {
           </Pressable>)}
         </View>{SERIES_BALANCES_ENABLED && detailTab === 'balances' ? seriesSwitch : null}</View>
         {detailTab === 'balances' ? <>
-        <FlatList key="balances" data={detail.page?.items ?? []} keyExtractor={i => i.id} onEndReached={detail.loadMore} onEndReachedThreshold={0.5}
-          refreshControl={<RefreshControl refreshing={detail.refreshing} onRefresh={detail.refresh} enabled={isReachable} />}
+        <FlatList key="balances" data={balanceRows} keyExtractor={i => i.id} onEndReached={detail.loadMore} onEndReachedThreshold={0.5}
+          refreshControl={<RefreshControl refreshing={detail.refreshing} onRefresh={detail.refresh} />}
           contentContainerStyle={{ paddingBottom: insets.bottom + 12, flexGrow: 1 }}
-          ListHeaderComponent={detail.stale || detail.error ? <View style={styles.status}>{detail.stale && !bySeries ? <Text style={styles.warning}>Сохранённые данные · нет обновления</Text> : null}{detail.error && detail.page ? <Button onPress={detail.refresh}>{detail.error}</Button> : null}</View> : null}
+          ListHeaderComponent={detail.error && detail.page ? <View style={styles.status}><Button onPress={detail.refresh}>{detail.error}</Button></View> : null}
           ListEmptyComponent={empty(detail.busy, detail.error)} ListFooterComponent={detail.loadingMore ? <ActivityIndicator /> : null}
-          renderItem={({ item }) => <View style={styles.balance}>
+          renderItem={({ item: row }) => {
+            if (row.kind === 'folder') return <Pressable accessibilityRole="button" accessibilityLabel={`Папка складов ${row.name}`} accessibilityState={{expanded:row.expanded}}
+              onPress={() => setCollapsedFolders(current => { const next = new Set(current); if (next.has(row.id)) next.delete(row.id); else next.add(row.id); return next; })} style={styles.folder}>
+              <MaterialCommunityIcons name={row.expanded ? 'folder-open-outline' : 'folder-outline'} size={21} color="#2563EB" /><Text style={[styles.title,{flex:1}]}>{row.name}</Text>
+              <Text style={styles.metricLabel}>{row.count}</Text><MaterialCommunityIcons name={row.expanded ? 'chevron-up' : 'chevron-down'} size={20} color="#64748B" />
+            </Pressable>;
+            const item = row.item;
+            return <View style={[styles.balance, row.indented && styles.indentedBalance]}>
             <View style={styles.warehouseHeading}><MaterialCommunityIcons name="warehouse" size={25} color="#2563EB" /><Text style={[styles.title, { flex: 1 }]}>{item.warehouse.name}</Text></View>
             {bySeries ? <Text style={styles.hint}>Серия: {item.seriesNumber || 'Без серии'}{item.expiresAt ? ` · годен до ${new Date(item.expiresAt).toLocaleDateString('ru-RU')}` : ''}</Text> : null}
             <Metrics item={item} unit={product?.baseUnit?.symbol || product?.baseUnit?.name || ''} full />
             {(item.myReserved ?? 0) > 0 ? <Text style={styles.hint}>Мой резерв {number(item.myReserved ?? 0)} {productUnit(product)} · учтён в доступном</Text> : null}
             {item.availabilityReason ? <Text style={styles.hint}>{item.availabilityReason}</Text> : null}
-          </View>} /></> : <FlatList key={detailTab} data={history.page?.items ?? []} keyExtractor={i => i.id}
+          </View>;
+          }} /></> : <FlatList key={detailTab} data={historyRows} keyExtractor={i => i.id}
             onEndReached={history.loadMore} onEndReachedThreshold={0.5}
-            refreshControl={<RefreshControl refreshing={history.refreshing} onRefresh={history.refresh} enabled={isReachable} />}
+            refreshControl={<RefreshControl refreshing={history.refreshing} onRefresh={history.refresh} />}
             contentContainerStyle={{ paddingBottom: insets.bottom + 12, flexGrow: 1 }}
             ListHeaderComponent={history.error && history.page ? <View style={styles.status}><Text style={styles.warning}>{history.error}</Text></View> : null}
             ListEmptyComponent={<View style={styles.empty}>{history.busy ? <ActivityIndicator /> : <Text>
-              {!isReachable ? 'История движений доступна при подключении к сети.' : history.error || (detailTab === 'receipt' ? 'Поступлений на выбранных складах нет' : 'Расходных движений на выбранных складах нет')}
-            </Text>}</View>}
+              {!isReachable ? 'Для работы сервиса нужно подключение к сети.' : history.error || (detailTab === 'receipt' ? 'Поступлений на выбранных складах нет' : 'Расходных движений на выбранных складах нет')}
+            </Text>}{!history.busy && (!isReachable || history.error) ? <Button onPress={history.refresh}>Повторить</Button> : null}</View>}
             ListFooterComponent={history.loadingMore ? <ActivityIndicator /> : null}
-            renderItem={({ item }) => <StockMovementRow item={item} unit={product?.baseUnit?.symbol || product?.baseUnit?.name || ''} />} />}
+            renderItem={({ item, index }) => <>
+              {detailTab === 'receipt' && (index === 0 || movementDay(item) !== movementDay(historyRows[index - 1])) ?
+                <View style={styles.movementDay}><Text style={styles.movementDayText}>{movementDayLabel(movementDay(item))}</Text></View> : null}
+              <StockMovementRow item={item} unit={product?.baseUnit?.symbol || product?.baseUnit?.name || ''} />
+            </>} />}
+        {product ? warehousePicker : null}
       </View>
     </Modal>
     <Modal visible={!!gallery} animationType="fade" onRequestClose={() => setGallery(null)}>
@@ -178,6 +193,8 @@ export default function StockProductsScreen() {
   </View>;
 }
 const styles = StyleSheet.create({
+  movementDay: { paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#EDF2F7' },
+  movementDayText: { fontSize: 15, lineHeight: 20, fontWeight: '700', color: '#0F172A' },
   root: { flex: 1, backgroundColor: '#FFFFFF' },
   title: { fontSize: 16, lineHeight: 21, fontWeight: '700', color: '#0F172A' },
   metrics: { flexDirection: 'row', paddingTop: 8, paddingBottom: 2 },
@@ -188,11 +205,14 @@ const styles = StyleSheet.create({
   availableText: { color: '#2563EB' },
   hint: { fontSize: 11, color: '#64748B', lineHeight: 16 },
   warehouseSelector: { flexDirection: 'row', alignItems: 'center', flexShrink: 1, minWidth: 40, minHeight: 40 },
+  productWarehouseSelector: {flex:1,minWidth:0,paddingRight:12},
   warehouseLabel: { flexShrink: 1, color: '#2563EB', fontSize: 13, fontWeight: '700' },
   status: { paddingHorizontal: 12, paddingVertical: 6, backgroundColor: '#F8FAFC' },
   warning: { color: '#92400E', fontSize: 12 },
   empty: { padding: 24, alignItems: 'center', gap: 12 },
   balance: { paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#E2E8F0' },
+  indentedBalance: {paddingLeft:28},
+  folder: {flexDirection:'row',alignItems:'center',gap:8,paddingHorizontal:12,minHeight:44,backgroundColor:'#F8FAFC',borderBottomWidth:1,borderColor:'#E2E8F0'},
   seriesSwitch: { alignItems: 'center', justifyContent: 'center', width: 58 },
   seriesLabel: { fontSize: 10, color: '#64748B' },
   tabsRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 6, borderBottomWidth: 1, borderColor: '#E2E8F0' },

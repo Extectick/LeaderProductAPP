@@ -1,6 +1,6 @@
 import React from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
-import { Text, Tooltip } from 'react-native-paper';
+import { Text } from 'react-native-paper';
 import { Image } from 'expo-image';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { ProductListRow } from '@/src/shared/ui/ProductListRow';
@@ -10,7 +10,7 @@ import { availableQuantity, incomingCostHint, incomingCostText } from './incomin
 export const stockNumber = (value: number | null | undefined) => typeof value !== 'number' || !Number.isFinite(value) ? '—' : value.toLocaleString('ru-RU', { maximumFractionDigits: 3 });
 export const productUnit = (item?: StockProduct | null) => item?.baseUnit?.symbol || item?.baseUnit?.name || '';
 export function StockThumbnail({ item, onOpen, compact = false }: { item: StockProduct; onOpen: () => void; compact?: boolean }) {
-  return <Pressable style={[styles.photo, compact && styles.compactPhoto]} accessibilityRole="button" accessibilityLabel={`Изображение ${item.name}`} disabled={!item.imageThumbUrl} onPress={onOpen}>
+  return <Pressable style={[styles.photo, compact && styles.compactPhoto]} accessibilityRole="button" accessibilityLabel={`Изображение ${item.name}`} disabled={!item.imageThumbUrl} onPress={event => { event.stopPropagation(); onOpen(); }}>
     {item.imageThumbUrl ? <Image source={{ uri: item.imageThumbUrl, cacheKey: `${item.guid}:${item.imageHash || ''}` }} style={[styles.image, compact && styles.compactPhoto]}
       contentFit="contain" cachePolicy="memory-disk" recyclingKey={item.guid} />
       : <View style={styles.placeholder}><MaterialCommunityIcons name="image-outline" size={32} color="#94A3B8" /></View>}
@@ -21,16 +21,17 @@ export const StockProductRow = React.memo(function StockProductRow({ item, onOpe
 }) {
   const unit = productUnit(item), cost = incomingCostText(item.incomingCost, unit);
   const available = availableQuantity(item);
-  return <ProductListRow thumbnail={<StockThumbnail item={item} onOpen={() => onOpenImages(item)} />}>
-    <Pressable style={styles.content} onPress={() => onOpen(item)} accessibilityRole="button" accessibilityLabel={`Остатки ${item.name}`}>
+  return <ProductListRow onPress={() => onOpen(item)} thumbnail={<StockThumbnail item={item} onOpen={() => onOpenImages(item)} />}>
+    <Pressable style={styles.content} onPress={event => { event.stopPropagation(); onOpen(item); }} accessibilityRole="button" accessibilityLabel={`Остатки ${item.name}`}>
+      <View pointerEvents="none">
       <Text style={styles.title} numberOfLines={3}>{item.name}</Text>
       <View style={styles.columns}>
-        <View style={styles.available}><Tooltip title={item.availabilityReason || 'Доступно с учётом вашего резерва'}><View>
+        <View style={styles.available} accessibilityLabel={item.availabilityReason || 'Доступно с учётом вашего резерва'}>
           <Text style={styles.label}>Доступно</Text><Text style={styles.quantity}>{stockNumber(available)}{available === null ? '' : ` ${unit}`}</Text>
-        </View></Tooltip></View>
-        <View style={styles.cost}><Tooltip title={incomingCostHint(item.incomingCost)}><View accessible accessibilityLabel={`Входящая цена: ${cost}. ${incomingCostHint(item.incomingCost)}`}>
+        </View>
+        <View style={styles.cost} accessible accessibilityLabel={`Входящая цена: ${cost}. ${incomingCostHint(item.incomingCost)}`}>
           <Text style={styles.label}>Входящая</Text><Text style={styles.price}>{cost}</Text>
-        </View></Tooltip></View>
+        </View>
       </View>
       <View style={styles.footer}>
         <View style={styles.metric} accessible accessibilityLabel={`В наличии ${stockNumber(item.inStock)} ${unit}`}>
@@ -40,6 +41,7 @@ export const StockProductRow = React.memo(function StockProductRow({ item, onOpe
         <View style={styles.metric} accessible accessibilityLabel={`В резерве ${stockNumber(item.reserved)} ${unit}`}>
           <MaterialCommunityIcons name="lock-outline" size={15} color="#64748B" /><Text style={styles.secondary}>{stockNumber(item.reserved)} {unit}</Text>
         </View>
+      </View>
       </View>
     </Pressable>
   </ProductListRow>;

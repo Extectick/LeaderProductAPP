@@ -2,7 +2,7 @@ import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
 import { StockMovementRow, movementDate } from '../src/features/stockBalances/StockMovementRow';
 import type { StockMovement } from '../src/features/stockBalances/products';
-jest.mock('react-native', () => ({ View: 'View', StyleSheet: { create: (s: any) => s, hairlineWidth: 1 } }));
+jest.mock('react-native', () => ({ View: 'View', Pressable: 'Pressable', StyleSheet: { create: (s: any) => s, hairlineWidth: 1 } }));
 jest.mock('react-native-paper', () => ({ Text: 'Text', Tooltip: 'Tooltip' }));
 jest.mock('@expo/vector-icons', () => ({ MaterialCommunityIcons: 'Icon' }));
 const item: StockMovement = { id: 'm', direction: 'receipt', operationKind: 'Приобретение товаров и услуг',
@@ -20,15 +20,16 @@ function render(value: StockMovement) {
 }
 it('formats a 1C document date without timezone conversion or time', () => {
   expect(movementDate('2026-09-02')).toBe('02.09.26');
-  expect(render(item)).toContain('02.09.26'); expect(render(item)).not.toContain('07:18:39');
+  expect(render(item)).not.toContain('02.09.26'); expect(render(item)).not.toContain('07:18:39');
 });
-it('shows VAT-included price, preliminary status, linked document and article', () => {
+it('shows compact receipt and supplier icon without captions or repeated dates', () => {
   const text = render(item);
-  for (const value of ['Входящая, с НДС', 'Предварительная стоимость', 'НОУТ-012723', 'Порча', 'Поставщик', '₽/кг']) expect(text).toContain(value);
+  for (const value of ['office-building-outline', 'help-circle-outline', 'Поставщик', '₽/кг']) expect(text).toContain(value);
+  expect(text).not.toContain('Предварительная стоимость');
 });
 it('does not display an invented zero price for unavailable costs', () => {
   const text = render({ ...item, price: null, amount: null, costStatus: 'UNAVAILABLE', costReason: 'Нет распределения стоимости' });
-  expect(text).not.toContain('0 ₽'); expect(text).toContain('Нет распределения стоимости');
+  expect(text).not.toContain('0 ₽'); expect(text).toContain('Пояснение стоимости');
 });
 it('normalizes the 1C numeric ruble code in both unit price and amount', () => {
   const text = render({...item,currency:'643'}).replace(/\u00a0/g,' ');
@@ -47,6 +48,17 @@ it('preserves a known zero price and does not invent the missing amount', () => 
   expect(text).toContain('—');
 });
 it('distinguishes a later physical movement date from the document date, still without time', () => {
-  const text = render({ ...item, movementAt: '2026-09-08T14:00:00' });
+  const text = render({ ...item, direction: 'expense', movementAt: '2026-09-08T14:00:00' });
   expect(text).toContain('Движение по складу'); expect(text).toContain('08.09.26'); expect(text).not.toContain('14:00:00');
+});
+it('opens the cost explanation and full document details on demand', () => {
+  let renderer!: TestRenderer.ReactTestRenderer;
+  act(() => { renderer = TestRenderer.create(React.createElement(StockMovementRow, { item, unit: 'кг' })); });
+  const buttons = renderer.root.findAllByType('Pressable' as any);
+  act(() => buttons.find(button => button.props.accessibilityLabel === 'Пояснение стоимости')!.props.onPress());
+  expect(JSON.stringify(renderer.toJSON())).toContain('Пока не закрыт месяц');
+  act(() => buttons.find(button => button.props.accessibilityLabel.startsWith('Документ:'))!.props.onPress());
+  expect(JSON.stringify(renderer.toJSON())).toContain('НОУТ-012723');
+  expect(JSON.stringify(renderer.toJSON())).toContain('Порча');
+  act(() => renderer.unmount());
 });
