@@ -11,8 +11,8 @@ export function helpDate(value: string, now = new Date()) {
   return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', ...(date.getFullYear() !== now.getFullYear() ? { year: 'numeric' } : {}) });
 }
 export const helpTime = (value: string) => new Date(value).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-export const helpCreated = (value: string) => new Date(value).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
-export const helpInitials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join('').toUpperCase();
+export const helpCreated = (value: string) => new Date(value).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+export const helpInitials = (name: string) => name.split(/\s+/).filter(part => /^[\p{L}\p{N}]/u.test(part)).slice(0, 2).map(part => part[0]).join('').toUpperCase();
 export function helpColor(id: number) { return ['#447DB5', '#8468B3', '#388C85', '#B07842', '#B15B7A', '#668A45'][Math.abs(id) % 6]; }
 export function canEditHelpMessage(message: { authorId: number | null; kind: string; createdAt: string }, userId: number, now = Date.now()) {
   const age = now - Date.parse(message.createdAt);
@@ -34,6 +34,10 @@ export function stableHelpOrder<T extends { id: number; updatedAt: string }>(ite
 export const helpDuration = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
 export const helpFileSize = (size: number) => size >= 1048576 ? `${(size / 1048576).toFixed(1)} МБ` : `${Math.max(1, Math.round(size / 1024))} КБ`;
 export function helpReplyGesture(dx: number, dy: number, previouslyBlocked = false) {
-  const blocked = previouslyBlocked || dx < -4 || Math.abs(dy) > 12;
+  // Ignore finger jitter; reject vertical scrolling, not a slightly diagonal reply.
+  const blocked = previouslyBlocked || dx < -10 || (Math.abs(dy) > 12 && Math.abs(dy) >= Math.abs(dx));
   return { blocked, capture: !blocked && dx > 12 && dx > Math.abs(dy) * 1.7 };
+}
+export function helpTimestampFits(width: number, lastLineEnd: number | null, metadataWidth: number) {
+  return width > 0 && lastLineEnd !== null && metadataWidth > 0 && lastLineEnd + metadataWidth + 8 <= width;
 }

@@ -1,36 +1,41 @@
-# Экран 404 — выбранный макет 1
+# Help — fidelity and interaction QA, 2026-10-23
 
-## Evidence
+## Scope and evidence
 
-- Source: `C:/Users/Администратор/.codex/generated_images/01a13901-0264-79d3-b404-1dbafcfc68ac/exec-114f67d3-75bd-4886-b3a4-93a0efe0da63.png` (853 × 1844).
-- Implementation: `tmp/not-found-qa/implementation-final.png` (390 × 844, CSS 390 × 844, DPR 1).
-- Same light fallback state, no device chrome. Reference normalized to 390 × 844 with bicubic scaling in `tmp/not-found-qa/comparison-final.png` (780 × 844 side-by-side).
-- Local browser renders the actual `components/NotFoundView.tsx` via a development-only harness, not a recreated HTML mock. Harness callbacks display destinations; actual Expo Router actions are covered by unit tests. No authentication bypass was added to the application.
-- Full-view comparison opened together. Text, icon, and controls are readable at this scale, so a separate focused crop was unnecessary.
+- Reference: approved running prototype at `http://192.168.30.244:8095/`, source in `DocsForAI/help-service/mobile-prototype`. Prototype runtime check passed; protected source was not edited.
+- Implementation: actual `HelpScreen`, composer, message, media and primitive components, rendered by isolated `qa/help-preview`. Its service/router fixtures are QA-only; production authentication and API routes are not bypassed.
+- Matched dark-list comparison: `tmp/help-design-qa/comparison-list-dark.png`, normalized to 393 × 852. Source device chrome is retained; QA safe areas are 54/34. Different ticket contents, times and assignees are fixture differences, not a claim of identical backend state.
+- Additional browser evidence: `app-reply-dark-full.jpg`, `app-gallery-dark.jpg`, `app-close-dark-full.jpg`, `app-composer-light-320-full.jpg`, `app-long-message-light-320.png` in the same directory.
+- Chat comparison `comparison-chat-dark.png` was inspected and exposed a duplicate sticky/inline date at scrollTop=0; this snapshot is pre-fix evidence, not final sign-off.
+- Final chat comparison `comparison-chat-dark-final.png` was inspected after the fix: one inline date at the start; floating date only after its separator leaves the top.
+- Previous 404 report preserved at `docs/design-qa/not-found-2026-10-23.md`.
 
-## Comparison history
+## Corrections verified in rendered UI
 
-1. Initial capture `implementation-390.png` / `comparison.png`: P2 web header too close to top; paragraph wrapped later than reference; CTA block slightly too low.
-2. Adjusted web-only header spacing, paragraph width, title line height, icon placement and action rhythm. Final capture compared again against the source.
-3. Independent review caught stale last-service restoration on cold entry. Explicit catalog recovery now clears that user's remembered service before navigation; regression test uses real storage helpers. Darkened local action blue for normal-size text contrast and honored reduced-motion preference.
+- Prototype palette, 56px header, 76px ticket rows, typography, avatar grouping, unread badges, search and action geometry.
+- Composer and new-ticket action share 48px resting height, 4px horizontal inset and bottom safe-area offset. Final list action is y=762, width=385 at 393 × 852, matching the prototype.
+- Transparent text area, no focus glow, 6.5-line cap and symmetric overflow fades. Browser measurement: four lines 88px → one line 22px; after a long message is sent, empty input returns to 22px (48px outer composer).
+- Long unbroken messages at 320px wrap without covering timestamps. Timestamp placement uses actual last-line metrics; reactions remain inside the bubble.
+- Reply actions and quoted-image preview, quote navigation, photo opening/closing, and close-ticket composer with focus after “Помогло” were exercised.
+- Voice bubble uses compact play/seek/caption layout; progress is interpolated between audio updates. Recording uses actual metering, not decorative playback bars.
+- Image-load callback crash on web and the photo timestamp overlay intercepting taps were found and corrected during QA.
 
-## Required fidelity surfaces
+## Automated / implementation checks
 
-- Typography: native system font, 28/32 bold title, 16/24 secondary text, 18/24 actions. Two-line title and paragraph match reference wrapping. Native platform font rendering is an intentional product constraint.
-- Layout: centered content, full-width primary action, plain secondary action, circular header back. Touch target is 44px (larger than reference) for accessibility. Narrow 320 × 568 viewport is scrollable; bottom action was reached and activated.
-- Colors: existing light background/text tokens. Action blue is intentionally darker (#0068D9) than mock to meet 4.5:1 text contrast; decorative 404 excluded from accessibility reading.
-- Assets: generated standalone document/question illustration, bundled locally with transparency; actual Ionicons back icon. Minor raster stroke differences from the concept are P3, no missing asset or placeholder.
-- Copy: Russian copy matches the selected screen. No raw failing URL or sensitive details are displayed.
+- Targeted Help tests cover permission interruption, cancellation/unmount cleanup, composer shrink, right-only reply gesture and reversal cancellation, timestamp fit, audio layout, media/gallery, list/draft/navigation, service and websocket behavior.
+- Final targeted run: **107/107 tests, 9/9 Help suites, exit 0**, including the 7 scroll/date regressions. Full TypeScript recheck after the final screen changes also passed (exit 0).
+- Full Jest assertions passed (100 suites, 869 tests), but the full process exited 1 due to unrelated asynchronous OTA console output after test completion. This is not reported as a green full-suite run.
+- QA Android Metro/Hermes export passed. This does not prove native runtime interaction.
+- Final **actual APP** Android/Hermes export passed with dev API/channel configuration: 6295 modules, 52 assets, 21MB HBC in `tmp/help-final-android`. QA entry is not included. No upload/publication was performed.
+- Browser archive/back flow, old-ticket new-draft source link and cancelling that empty draft were exercised successfully with QA fixtures.
+- Actual expo-audio web playback of the locally generated 8-second WAV completed successfully (play → pause state → 0:08/0:08 and play state).
+- Browser wheel/layout regression verified: at history top, growing composer increased scrollHeight 1015→1103 while scrollTop stayed 0; at bottom, the same growth moved scrollTop 273→361 with viewport 742 (still exactly at bottom). Date duplication disappeared when scrolled to top.
 
-## Verification
+## Remaining verification / constraints
 
-- Primary and back callbacks clicked in browser; expected destination state appeared. Browser console: no error entries.
-- 25 focused tests passed, including both back controls with/without history, stale service clearing, catalog routes and offline availability.
-- Full TypeScript passed.
-- Physical Android safe areas, system font scaling and device animation remain pilot checks, not claimed as browser-verified.
+- Native Android keyboard movement and first microphone-permission/hold lifecycle remain unverified. API35 AVD entered a system_server Watchdog boot loop before app installation; the existing API30 fallback remained ADB offline after ~7 minutes. Only our two emulator processes were stopped; no AVD data/config was reset. The emulator-only x86_64 debug APK build was requested to stop after the fallback failed, before its C++ phase; no debug APK success is claimed. Generated files/caches are preserved. Physical-device QA is not performed.
+- Native system fonts/icons and blur rendering may differ from browser prototype. No pixel-perfect/native 1:1 claim is made before the native comparison.
+- AI integration remains disabled by requirement. QA list participants and content are local fixtures, not live API data.
+- Multiple-image download uses the current platform download/share flow, not a ZIP archive.
 
-## Findings / follow-up
-
-No remaining P0/P1/P2 visual or navigation findings. P3: platform font/raster stroke differences; physical-device pilot pending.
-
-final result: passed
+Final result: **BLOCKED for full native sign-off**; browser fidelity and targeted interaction checks completed, native QA pending.

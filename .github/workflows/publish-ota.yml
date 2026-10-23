@@ -47,7 +47,7 @@ jobs:
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npm run test:unit -- --runInBand __tests__/serviceRoutes.unit.test.ts __tests__/servicesOffline.unit.test.ts __tests__/notFound.unit.test.ts
-      - run: npm run test:unit -- --runInBand __tests__/help.client.unit.test.ts __tests__/helpUiLogic.unit.test.ts __tests__/helpScreen.unit.test.ts __tests__/helpSocket.unit.test.ts __tests__/helpServiceFocus.unit.test.ts __tests__/helpComposer.unit.test.ts
+      - run: npm run test:unit -- --runInBand __tests__/help.client.unit.test.ts __tests__/helpUiLogic.unit.test.ts __tests__/helpScreen.unit.test.ts __tests__/helpSocket.unit.test.ts __tests__/helpServiceFocus.unit.test.ts __tests__/helpComposer.unit.test.ts __tests__/helpMessageBubble.unit.test.ts __tests__/helpPrimitives.unit.test.ts __tests__/helpMedia.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/otaManifestConfig.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/draftReview.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/orderSharing.unit.test.ts __tests__/legacyOrderRecovery.unit.test.ts

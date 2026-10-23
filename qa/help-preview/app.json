@@ -1,0 +1,10 @@
+{
+  "expo": {
+    "name": "Help component QA — local fixtures",
+    "slug": "help-components-local-qa",
+    "platforms": ["web", "android"],
+    "scheme": "leaderproduct",
+    "android": { "package": "com.leaderproduct.app" },
+    "web": { "bundler": "metro", "output": "single" }
+  }
+}

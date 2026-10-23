@@ -1,0 +1,11 @@
+{
+  "name": "help-components-local-qa",
+  "private": true,
+  "version": "0.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node ../../node_modules/expo/bin/cli start --web --host localhost --port 8100",
+    "start:lan": "node ../../node_modules/expo/bin/cli start --web --host lan --port 8100",
+    "start:native": "node ../../node_modules/expo/bin/cli start --dev-client --host lan --port 8100"
+  }
+}
