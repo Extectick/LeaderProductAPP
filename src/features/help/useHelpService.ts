@@ -13,7 +13,7 @@ export function mergeHelpMessages(older: HelpMessage[], incoming: HelpMessage[])
   incoming.forEach((m) => byId.set(m.id, m));
   return [...byId.values()].sort((a, b) => a.sequence - b.sequence);
 }
-export function useHelpService() {
+export function useHelpService(isFocused = true) {
   const auth = useContext(AuthContext);
   const userId = Number(auth?.profile?.id || 0);
   const helpApi = useMemo(()=>createHelpApi(userId),[userId]);
@@ -32,6 +32,11 @@ export function useHelpService() {
   const identity = `${API_BASE_URL}:${userId}:${auth?.isAuthenticated}`;
   const identityRef = useRef(identity); identityRef.current = identity;
   const mounted = useRef(true);
+  const focusedRef = useRef(isFocused); focusedRef.current = isFocused;
+  const previousFocus = useRef(isFocused);
+  const canRead = useCallback(() => focusedRef.current && (Platform.OS === 'web'
+    ? typeof document !== 'undefined' && document.visibilityState === 'visible'
+    : AppState.currentState === 'active'), []);
   const socketRef = useRef<ManagedSocketConnection | null>(null);
   const activeId = useRef<number | null>(null);
   const listFilter = useRef({ status: 'OPEN', scope: 'mine', query: '', cursor: null as string | number | null });
@@ -93,11 +98,11 @@ export function useHelpService() {
       const detail = await helpApi.detail(id);
       if (!current(account) || generation !== detailGeneration.current) return;
       applyDetail(detail); socketRef.current?.getSocket()?.emit('help:subscribe', { ticketId: id });
-      void helpApi.read(id, detail.messages.at(-1)?.sequence).catch(() => {});
+      if (canRead()) void helpApi.read(id, detail.messages.at(-1)?.sequence).catch(() => {});
       return detail;
     } catch (e) { if (current(account) && generation === detailGeneration.current) { report(e); setSelectedTicket(null); setMessages([]); } throw e; }
     finally { if (current(account) && generation === detailGeneration.current) setLoading(false); }
-  }, [identity, current, report, applyDetail]);
+  }, [identity, current, report, applyDetail, canRead]);
   const clearSelection = useCallback(() => { ++detailGeneration.current; activeId.current = null; setSelectedTicket(null); setMessages([]); }, []);
   const refresh = useCallback(async () => {
     const navigation = detailGeneration.current, mutation = mutationGeneration.current;
@@ -108,14 +113,19 @@ export function useHelpService() {
       const account = identity;
       try { const detail = await helpApi.detail(id); if (current(account) && activeId.current === id && navigation === detailGeneration.current && mutation === mutationGeneration.current) {
         applyDetail(detail, true);
-        if (AppState.currentState === 'active' || (Platform.OS === 'web' && typeof document !== 'undefined' && document.visibilityState === 'visible')) {
+        if (canRead()) {
           void helpApi.read(id, detail.messages.at(-1)?.sequence).then(()=>{if(current(account))setTickets(old=>old.map(t=>t.id===id?{...t,unreadCount:0}:t));}).catch(()=>{});
         }
       } }
       catch (e) { if (current(account) && activeId.current === id && navigation === detailGeneration.current && mutation === mutationGeneration.current) { report(e); if (e instanceof HelpApiError && [401,403,404].includes(e.status)) clearSelection(); } }
     }
-  }, [identity, loadTickets, applyDetail, current, report, clearSelection]);
+  }, [identity, loadTickets, applyDetail, current, report, clearSelection, canRead]);
   const liveRefresh = useRef(refresh); liveRefresh.current = refresh;
+  useEffect(() => {
+    const returned = isFocused && !previousFocus.current;
+    previousFocus.current = isFocused;
+    if (returned) void liveRefresh.current();
+  }, [isFocused]);
 
   useEffect(() => {
     mounted.current = true; setTickets([]); clearSelection(); setCanManage(false); setBusy(false); setPendingCount(0); setError(null);
@@ -142,10 +152,13 @@ export function useHelpService() {
     });
     socketRef.current = connection;
     const appState = AppState.addEventListener('change', (state) => { if (state === 'active') scheduleRefresh(); });
+    const onVisibility = () => { if (canRead()) scheduleRefresh(); };
+    if (Platform.OS === 'web' && typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibility);
     // REST repair also covers an event lost during disconnect or a socket authorization failure.
     const repair = setInterval(() => { if (AppState.currentState === 'active' || Platform.OS === 'web') scheduleRefresh(); }, 30000);
     return () => {
       mounted.current = false; clearTimeout(refreshTimer); clearInterval(repair); appState.remove(); connection.disconnect();
+      if (Platform.OS === 'web' && typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility);
       socketRef.current = null; setConnected(false); typingTimers.current.forEach(clearTimeout); typingTimers.current.clear(); setTyping({});
       for (const value of media.current.values()) void value.then((s) => { if (s.uri.startsWith('blob:')) URL.revokeObjectURL(s.uri); }).catch(()=>{});
       media.current.clear();

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, BackHandler, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useFocusEffect } from 'expo-router/react-navigation';
+import { useFocusEffect, useIsFocused } from 'expo-router/react-navigation';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
@@ -20,7 +20,8 @@ type Overlay = { kind: 'menu' | 'it' | 'read-all' } | { kind: 'row'; ticket: Hel
 type ReturnContext = { active: number | 'new'; filter: 'OPEN' | 'CLOSED'; source: SourceTicket | null; draft: string; files: HelpLocalFile[]; mode: HelpComposeMode; reply: HelpMessage | null; edit: HelpMessage | null; editAttachments: HelpAttachment[]; rating: number };
 
 export default function HelpScreen() {
-  const service = useHelpService(); const c = useHelpTheme(); const insets = useSafeAreaInsets(); const router = useRouter(); const params = useLocalSearchParams<{ ticketId?: string }>();
+  const isFocused = useIsFocused();
+  const service = useHelpService(isFocused); const c = useHelpTheme(); const insets = useSafeAreaInsets(); const router = useRouter(); const params = useLocalSearchParams<{ ticketId?: string }>();
   const currentAccount = useRef(service.userId); currentAccount.current = service.userId;
   const draftRevisions = useRef(new Map<string,number>());
   const [active, setActive] = useState<number | 'new' | null>(null); const [filter, setFilter] = useState<'OPEN' | 'CLOSED'>('OPEN'); const [scope, setScope] = useState<'mine' | 'queue'>('mine');
@@ -67,18 +68,19 @@ export default function HelpScreen() {
     if (mode !== 'message') { cancelMode(); return; }
     const previous = stack.current.pop();
     if (previous) {
-      ++navigationGeneration.current;
+      const restoreNavigation = ++navigationGeneration.current, restoreAccount = service.userId;
       restoredDraft.current = {key: previous.active === 'new' ? `new:${previous.source?.id ?? 'plain'}` : `ticket:${previous.active}`, text: previous.draft};
       saveDraftNow(); Keyboard.dismiss(); setActive(previous.active); setSource(previous.source); setFilter(previous.filter); setMode(previous.mode); setReply(previous.reply); setEditing(previous.edit); setEditAttachments(previous.editAttachments); setRating(previous.rating); setFiles(previous.files); draftLoaded.current = false;
       if (previous.active === 'new') service.clearSelection(); else await run(() => service.openTicket(previous.active as number));
+      if (currentAccount.current !== restoreAccount || navigationGeneration.current !== restoreNavigation) return;
       // Restoring an existing draft is intentional; prevent the async storage read from replacing it.
       ++draftGeneration.current; setDraft(previous.draft); draftLoaded.current = true; return;
     }
     if (active !== null) { list(); return; } if (filter === 'CLOSED') { list('OPEN'); return; } router.replace('/services' as any);
   }
   const latestBack = useRef(back); latestBack.current = back;
-  useEffect(() => { const subscription = BackHandler.addEventListener('hardwareBackPress', () => { void latestBack.current(); return true; }); return () => subscription.remove(); }, []);
-  useEffect(() => {
+  useFocusEffect(useCallback(() => { const subscription = BackHandler.addEventListener('hardwareBackPress', () => { void latestBack.current(); return true; }); return () => subscription.remove(); }, []));
+  useFocusEffect(useCallback(() => {
     if (Platform.OS !== 'web') return;
     // Keep one local history guard: Back uses the same overlay/chat/archive hierarchy as Android.
     const url = window.location.href; const previousState = window.history.state;
@@ -86,7 +88,7 @@ export default function HelpScreen() {
     const onPop = (event: PopStateEvent) => { event.stopImmediatePropagation(); window.history.pushState({...previousState,helpLocalBack:true},'',url); void latestBack.current(); };
     window.addEventListener('popstate',onPop,true);
     return () => window.removeEventListener('popstate',onPop,true);
-  }, []);
+  }, []));
   const visible = useMemo(() => stableHelpOrder(service.tickets.filter(t => t.status === filter), order), [service.tickets, filter, order]);
   const sourceLink = ticket ? ticket.sourceTicket : source;
   async function openSource() {
@@ -95,9 +97,10 @@ export default function HelpScreen() {
   }
   function startMode(next: HelpComposeMode, message?: HelpMessage) {
     ++navigationGeneration.current;
-    regularDraft.current = { text: draft, files, reply }; setMode(next); setDraft(message?.text ?? ''); setFiles([]); setReply(null); setRating(message?.rating ?? 0); setEditing(message ?? null); setEditAttachments(message?.attachments ?? []); setOverlay(null); setSelectedMessage(null); setFocusKey(n => n + 1); followBottom.current = true;
+    if (mode === 'message') regularDraft.current = { text: draft, files, reply };
+    setMode(next); setDraft(message?.text ?? ''); setFiles([]); setReply(null); setRating(message?.rating ?? 0); setEditing(message ?? null); setEditAttachments(message?.attachments ?? []); setOverlay(null); setSelectedMessage(null); setFocusKey(n => n + 1); followBottom.current = true;
   }
-  function replyTo(message: HelpMessage) { if (ticket?.status !== 'OPEN' || !isParticipant) return; setReply(message); setSelectedMessage(null); setFocusKey(n => n + 1); }
+  function replyTo(message: HelpMessage) { if (mode !== 'message' || ticket?.status !== 'OPEN' || !isParticipant) return; setReply(message); setSelectedMessage(null); setFocusKey(n => n + 1); }
   function jump(id: number) { followBottom.current = false; jumpAttempt.current = null; setPendingJump(id); }
   async function submit(voice?: HelpLocalFile) {
     const account = service.userId;
@@ -118,10 +121,11 @@ export default function HelpScreen() {
       else if (mode === 'close' && ticket) detail = await service.closeTicket(ticket.id, { text, rating, attachmentIds: uploads.map(a => a.id) });
       else if (mode === 'reopen' && ticket) { if (!canReopenHelpTicket(ticket)) throw new Error('Прошло больше 3 дней. Создайте новое обращение.'); detail = await service.reopenTicket(ticket.id, { text, attachmentIds: uploads.map(a => a.id) }); }
       else if (active === 'new') detail = await service.createTicket({ text, attachmentIds: uploads.map(a => a.id), sourceTicketId: source?.id });
-      else detail = await service.sendMessage(active, { text, attachmentIds: uploads.map(a => a.id), replyToId: voice ? undefined : reply?.id });
+      else detail = await service.sendMessage(active, { text, attachmentIds: uploads.map(a => a.id), replyToId: reply?.id });
       if (!detail || currentAccount.current!==account) return;
       if(navigationGeneration.current!==navigation) { if(mode==='message'&&!voice&&(draftRevisions.current.get(draftKey)??0)===draftRevision){await service.setDraft(draftKey,'');if((draftRevisions.current.get(draftKey)??0)===draftRevision)fileDrafts.current.delete(draftKey);} return; }
       if (mode === 'message' && !voice) { await service.setDraft(draftKey, ''); fileDrafts.current.delete(draftKey); if(currentAccount.current!==account||navigationGeneration.current!==navigation)return; setDraft(''); setFiles([]); setReply(null); }
+      if (mode === 'message' && voice) setReply(null);
       if (active === 'new') { restoredDraft.current = {key:`ticket:${detail.ticket.id}`,text:voice ? draft : ''}; setActive(detail.ticket.id); setSource(null); await service.setDraft(`ticket:${detail.ticket.id}`, voice ? draft : ''); }
       if(currentAccount.current!==account||navigationGeneration.current!==navigation)return;
       if (mode !== 'message') { setMode('message'); setDraft(regularDraft.current.text); setFiles(regularDraft.current.files); setReply(regularDraft.current.reply); setEditing(null); Keyboard.dismiss(); }
@@ -154,7 +158,7 @@ export default function HelpScreen() {
           {service.loading && !messages.length ? <ActivityIndicator color={c.accent} style={{ margin: 25 }} /> : null}
           {active === 'new' ? <Text style={{ color: c.muted, textAlign: 'center', fontSize: 13, lineHeight: 19, margin: 30 }}>Опишите, что случилось. Обращение будет создано после первого сообщения.{ '\n' }Пока отвечает только служба IT — ИИ ещё не подключён.</Text> : null}
           {messages.length >= 100 ? <Pressable accessibilityRole="button" onPress={() => void run(service.loadOlder)} style={{ padding: 12, alignItems: 'center' }}><Text style={{ color: c.accentText }}>Предыдущие сообщения</Text></Pressable> : null}
-          {groups.map(group => <React.Fragment key={group.date}><View style={{ alignItems: 'center', marginVertical: 10 }}><Text style={{ color: c.text, backgroundColor: c.elevated, paddingHorizontal: 11, paddingVertical: 5, borderRadius: 12, fontSize: 11 }}>{group.date}</Text></View>{group.items.map(message => <View key={message.id} onLayout={event => { positions.current.set(message.id, { y: event.nativeEvent.layout.y, date: group.date }); }}><HelpMessageBubble message={message} userId={service.userId} open={ticket?.status === 'OPEN' && isParticipant} canInteract={isParticipant} selected={selectedMessage === message.id} highlighted={highlighted === message.id} solution={isOwner && ticket?.status === 'OPEN' && message.id === lastIncoming?.id} resolve={service.mediaSource} onMenu={() => { Keyboard.dismiss(); setSelectedMessage(selectedMessage === message.id ? null : message.id); }} onReply={() => replyTo(message)} onCopy={() => void run(async () => { await Clipboard.setStringAsync(message.text || message.attachments.map(a => a.name).join('\n')); setSelectedMessage(null); tell('Скопировано'); })} onEdit={() => startMode('edit', message)} onForward={() => { Keyboard.dismiss(); setSelectedMessage(null); setOverlay({ kind: 'forward', message }); void service.loadTickets('OPEN', scope); }} onReaction={emoji => {if(isParticipant)void run(() => service.toggleReaction(message, emoji));}} onQuote={jump} onImage={(images, index, origin) => { Keyboard.dismiss(); setGallery({ images, index, origin }); }} onFile={file => void run(() => downloadHelpAttachment(file, service.mediaSource))} onCloseTicket={() => startMode('close')} onRequestIt={() => { Keyboard.dismiss(); setOverlay({ kind: 'it' }); }} onError={tell} /></View>)}</React.Fragment>)}
+          {groups.map(group => <React.Fragment key={group.date}><View style={{ alignItems: 'center', marginVertical: 10 }}><Text style={{ color: c.text, backgroundColor: c.elevated, paddingHorizontal: 11, paddingVertical: 5, borderRadius: 12, fontSize: 11 }}>{group.date}</Text></View>{group.items.map(message => <View key={message.id} onLayout={event => { positions.current.set(message.id, { y: event.nativeEvent.layout.y, date: group.date }); }}><HelpMessageBubble message={message} userId={service.userId} open={mode === 'message' && ticket?.status === 'OPEN' && isParticipant} canInteract={isParticipant} selected={selectedMessage === message.id} highlighted={highlighted === message.id} solution={isOwner && ticket?.status === 'OPEN' && message.id === lastIncoming?.id} resolve={service.mediaSource} onMenu={() => { Keyboard.dismiss(); setSelectedMessage(selectedMessage === message.id ? null : message.id); }} onReply={() => replyTo(message)} onCopy={() => void run(async () => { await Clipboard.setStringAsync(message.text || message.attachments.map(a => a.name).join('\n')); setSelectedMessage(null); tell('Скопировано'); })} onEdit={() => startMode('edit', message)} onForward={() => { Keyboard.dismiss(); setSelectedMessage(null); setOverlay({ kind: 'forward', message }); void service.loadTickets('OPEN', scope); }} onReaction={emoji => {if(isParticipant)void run(() => service.toggleReaction(message, emoji));}} onQuote={jump} onImage={(images, index, origin) => { Keyboard.dismiss(); setGallery({ images, index, origin }); }} onFile={file => void run(() => downloadHelpAttachment(file, service.mediaSource))} onCloseTicket={() => startMode('close')} onRequestIt={() => { Keyboard.dismiss(); setOverlay({ kind: 'it' }); }} onError={tell} /></View>)}</React.Fragment>)}
           {ticket && service.typingByTicket[ticket.id]?.length ? <View style={{ paddingLeft: 44, paddingVertical: 8 }}><HelpTyping text={`${service.typingByTicket[ticket.id].map(p => p.name).join(', ')} печатает`} /></View> : null}
         </ScrollView></BlurTargetView>
         <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0 }}>{notice ? <HelpNotice key={notice} text={notice} onDone={() => setNotice('')} /> : null}<HelpDock target={blurTarget} onHeight={setDockHeight}>

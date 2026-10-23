@@ -47,10 +47,18 @@ export function HelpComposer(props: Props) {
     state.starting = true; state.release = null; state.locked = lock; setStarting(true); Keyboard.dismiss();
     try {
       const permission = await requestRecordingPermissionsAsync();
-      if (!permission.granted) { latest.current.error('Разрешите доступ к микрофону, чтобы записать голосовое сообщение.'); return; }
+      if (!permission.granted) { if (state.mounted) latest.current.error('Разрешите доступ к микрофону, чтобы записать голосовое сообщение.'); return; }
       if (state.release || !state.mounted) return;
-      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true }); await recorder.prepareToRecordAsync();
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
       if (state.release || !state.mounted) return;
+      await recorder.prepareToRecordAsync();
+      if (state.release || !state.mounted) {
+        // Expo's web prepare already owns a live microphone stream. Its inactive
+        // MediaRecorder must start before stop can release tracks; discard it.
+        if (Platform.OS === 'web') recorder.record();
+        await recorder.stop();
+        return;
+      }
       recorder.record(); state.recording = true; setMeter([]); setRecording(true); setLocked(state.locked);
     } catch { if (state.mounted) latest.current.error(Platform.OS === 'web' ? 'Запись требует HTTPS и разрешения браузера на микрофон.' : 'Не удалось включить микрофон.'); }
     finally { state.starting = false; if (state.mounted) setStarting(false); if (!state.recording) void setAudioModeAsync({ allowsRecording: false }).catch(() => {}); if (state.release && state.recording) void finish(state.release); }
@@ -62,7 +70,7 @@ export function HelpComposer(props: Props) {
       if (latest.current.files.length + added.length + (latest.current.existingFiles?.length ?? 0) > 5) { latest.current.error('В одном сообщении можно прикрепить до 5 файлов.'); return; }
       if (added.some(a => (a.size ?? 0) > 20 * 1024 * 1024)) { latest.current.error('Размер каждого файла должен быть не больше 20 МБ.'); return; }
       latest.current.onFiles([...latest.current.files, ...added]);
-    } catch { props.error('Не удалось выбрать файл.'); }
+    } catch { if (life.current.mounted) latest.current.error('Не удалось выбрать файл.'); }
   }
   const hasText = Boolean(props.value.trim() || props.files.length || props.existingFiles?.length); const canSend = !props.disabled && !props.busy && (props.mode === 'close' || props.editClosure || hasText) && (props.mode !== 'reopen' || Boolean(props.value.trim()));
   return <View style={{ borderRadius: 20, backgroundColor: c.surface, borderWidth: 1, borderColor: c.line, overflow: 'visible' }}>

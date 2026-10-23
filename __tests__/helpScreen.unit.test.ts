@@ -1,12 +1,15 @@
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
-import { Pressable } from 'react-native';
+import { BackHandler, Pressable } from 'react-native';
 import type { HelpDetail, HelpTicket } from '../src/features/help/helpApi';
 
 const mockRouter = { replace: jest.fn() };
+let mockFocused = true;
 jest.mock('../context/ThemeContext', () => ({ useTheme: () => ({theme:'light'}) }));
 jest.mock('expo-router', () => ({ useRouter: () => mockRouter, useLocalSearchParams: () => ({}) }));
-jest.mock('expo-router/react-navigation', () => ({ useFocusEffect: () => {} }));
+jest.mock('expo-router/react-navigation', () => ({ useIsFocused: () => mockFocused, useFocusEffect: (effect:any) => {
+  require('react').useEffect(()=>mockFocused ? effect() : undefined,[effect,mockFocused]);
+} }));
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 jest.mock('expo-linear-gradient', () => ({ LinearGradient: 'LinearGradient' }));
 jest.mock('expo-blur', () => ({ BlurView: 'BlurView', BlurTargetView: 'BlurTargetView' }));
@@ -36,6 +39,7 @@ const detail: HelpDetail = { ticket, messages: [] };
 describe('Help screen integration with service boundary', () => {
   let screen: TestRenderer.ReactTestRenderer;
   beforeEach(() => {
+    mockFocused = true;
     Object.assign(mockService,{tickets:[],selectedTicket:null,messages:[],loading:false,busy:false,error:null,online:true,connected:true,canManage:false,userId:5,typingByTicket:{},hasMore:false,
       loadTickets:jest.fn().mockResolvedValue(undefined),clearSelection:jest.fn(()=>{mockService.selectedTicket=null;}),openTicket:jest.fn(async()=>{mockService.selectedTicket=ticket;return detail;}),getDraft:jest.fn().mockResolvedValue(''),setDraft:jest.fn().mockResolvedValue(undefined),emitTyping:jest.fn(),createTicket:jest.fn(async()=>{mockService.selectedTicket=ticket;return detail;}),sendMessage:jest.fn().mockResolvedValue(detail),uploadAttachments:jest.fn(),closeTicket:jest.fn().mockResolvedValue(detail),reopenTicket:jest.fn(),editMessage:jest.fn(),toggleReaction:jest.fn(),mediaSource:jest.fn(),loadOlder:jest.fn(),retryPending:jest.fn(),markAllRead:jest.fn(),requestIt:jest.fn(),claimTicket:jest.fn()});
   });
@@ -103,5 +107,58 @@ describe('Help screen integration with service boundary', () => {
     await act(async()=>button('Назад').props.onPress());
     await act(async()=>button('Новое обращение').props.onPress());
     expect(composer().props.files).toEqual([file]);
+  });
+  test('hardware Back listener detaches while another route covers Help and restores on focus',async()=>{
+    const remove=jest.fn(); const add=jest.spyOn(BackHandler,'addEventListener').mockReturnValue({remove});
+    await render(); expect(add).toHaveBeenCalledTimes(1);
+    mockFocused=false; await act(async()=>screen.update(React.createElement(HelpScreen)));
+    expect(remove).toHaveBeenCalledTimes(1);
+    mockFocused=true; await act(async()=>screen.update(React.createElement(HelpScreen)));
+    expect(add).toHaveBeenCalledTimes(2);
+  });
+  async function openWithMessage() {
+    await render(); await act(async()=>button('Новое обращение').props.onPress());
+    await act(async()=>composer().props.onChange('Первый вопрос'));
+    await act(async()=>composer().props.onSend());
+    mockService.messages=[{id:31,ticketId:7,sequence:1,authorId:5,authorRole:'USER',author:{id:5,name:'Я'},kind:'TEXT',text:'Исходное сообщение',createdAt:new Date().toISOString(),attachments:[],reactions:[]}];
+    await act(async()=>screen.update(React.createElement(HelpScreen)));
+  }
+  function bubble(){return screen.root.findByType('HelpMessageBubble' as any);}
+  test('voice send keeps reply target and clears quote only after success',async()=>{
+    await openWithMessage(); await act(async()=>bubble().props.onReply());
+    expect(composer().props.quote).toBeTruthy();
+    const voice={uri:'file://voice.m4a',name:'voice.m4a',mimeType:'audio/mp4'};
+    mockService.uploadAttachments.mockResolvedValue([{id:'voice-upload'}]);
+    await act(async()=>composer().props.onSend(voice));
+    expect(mockService.sendMessage).toHaveBeenCalledWith(7,{text:'',attachmentIds:['voice-upload'],replyToId:31});
+    expect(composer().props.quote).toBeUndefined();
+  });
+  test('switching close/edit modes preserves original message draft and disables replying',async()=>{
+    await openWithMessage(); await act(async()=>composer().props.onChange('Мой обычный черновик'));
+    await act(async()=>bubble().props.onCloseTicket());
+    await act(async()=>composer().props.onChange('Отзыв о закрытии'));
+    expect(bubble().props.open).toBe(false);
+    await act(async()=>bubble().props.onReply());expect(composer().props.quote).toBeUndefined();
+    await act(async()=>bubble().props.onEdit());
+    await act(async()=>composer().props.onCancelMode());
+    expect(composer().props.value).toBe('Мой обычный черновик');
+  });
+  test.each(['navigation','account'])('late source-return response cannot overwrite newer draft after %s change',async(change)=>{
+    const linked={...ticket,sourceTicketId:8,sourceTicket:{id:8,number:1008,title:'Старое обращение'}};
+    mockService.createTicket.mockImplementation(async()=>{mockService.selectedTicket=linked;return{ticket:linked,messages:[]};});
+    await openWithMessage();await act(async()=>composer().props.onChange('Исходный черновик'));
+    const sourceTicket={...ticket,id:8,number:1008,title:'Старое обращение'};
+    mockService.openTicket.mockImplementation(async()=>{mockService.selectedTicket=sourceTicket;return{ticket:sourceTicket,messages:[]};});
+    let link=screen.root.findByProps({name:'return-up-back'});while(typeof link.props.onPress!=='function')link=link.parent!;
+    await act(async()=>link.props.onPress());
+    let resolve!:(value:HelpDetail)=>void;
+    mockService.openTicket.mockImplementation(()=>new Promise(done=>{resolve=done;}));
+    await act(async()=>button('Назад').props.onPress());
+    if(change==='account'){mockService.userId=9;await act(async()=>screen.update(React.createElement(HelpScreen)));}
+    else await act(async()=>button('Назад').props.onPress());
+    await act(async()=>button('Новое обращение').props.onPress());
+    await act(async()=>composer().props.onChange('Новый безопасный черновик'));
+    await act(async()=>resolve({ticket:linked,messages:[]}));
+    expect(composer().props.value).toBe('Новый безопасный черновик');
   });
 });
