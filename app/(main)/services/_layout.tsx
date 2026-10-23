@@ -252,7 +252,7 @@ export default function ServicesLayout() {
 
           return {
             // Tracking owns a safe-area-aware toolbar above the map.
-            headerShown: !clientOrdersHeaderHidden && !showTrackingBottomSlot && !/^\/services\/stock_balances(?:\/.*)?$/.test(currentPath),
+            headerShown: !clientOrdersHeaderHidden && !showTrackingBottomSlot && !/^\/services\/(stock_balances|help)(?:\/.*)?$/.test(currentPath),
             headerTransparent: true,
             headerShadowVisible: false,
             headerStatusBarHeight: 0,

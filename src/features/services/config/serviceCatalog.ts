@@ -4,6 +4,11 @@ export type CatalogServiceItem = ServiceAccessItem;
 
 export const SERVICE_CATALOG: CatalogServiceItem[] = [
   {
+    id: 9, key: 'help', name: 'Помощь', kind: 'CLOUD', route: '/services/help',
+    icon: 'chatbubbles-outline', description: 'Поддержка сотрудников и чат с IT-специалистами.',
+    gradientStart: '#2563EB', gradientEnd: '#38BDF8', visible: true, enabled: true,
+  },
+  {
     id: 1,
     key: 'qrcodes',
     name: 'QR генератор и аналитика',

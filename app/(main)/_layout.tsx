@@ -6,6 +6,7 @@ import { useNotify } from '@/components/NotificationHost';
 import { normalizeRoutePath } from '@/src/shared/lib/routePath';
 import { startAppealsOutboxAutoFlush, stopAppealsOutboxAutoFlush } from '@/src/features/appeals/sync/outbox';
 import { bindPushNavigation } from '@/utils/pushNotifications';
+import { HelpNotificationsBridge } from '@/src/features/help/HelpNotificationsBridge';
 import { getProfileGate } from '@/utils/profileGate';
 import {
   getAppealMuteStatus,
@@ -49,6 +50,8 @@ function AppealsNotificationsBridge() {
     let cleanup: (() => void) | undefined;
     bindPushNavigation((appealId) => {
       router.push(`/(main)/services/appeals/${appealId}` as any);
+    }, (ticketId) => {
+      router.push({ pathname: '/services/help', params: { ticketId: String(ticketId) } } as any);
     })
       .then((cb) => {
         cleanup = cb;
@@ -351,6 +354,7 @@ export default function MainLayout() {
   return (
     <View style={styles.container}>
       <AppealsNotificationsBridge />
+      <HelpNotificationsBridge />
 
       {/* Общие UI элементы */}
       {/* <AppHeader /> */}

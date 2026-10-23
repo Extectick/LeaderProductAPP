@@ -6,10 +6,12 @@ import { Platform } from 'react-native';
 import { apiClient } from './apiClient';
 import { API_ENDPOINTS } from './apiEndpoints';
 import { parseTrackingPush } from '@/src/features/tracking/trackingPushPayload';
+import { parseHelpPush } from '@/src/features/help/helpPush';
 
 const PUSH_TOKEN_KEY = 'pushToken';
 const PROFILE_CHANNEL_ID = 'profile-status';
 const APPEAL_MESSAGE_CHANNEL_ID = 'appeal-message';
+const HELP_MESSAGE_CHANNEL_ID = 'help-message';
 const TRACKING_PUSH_TASK = 'TRACKING_V2_LOCATION_REQUEST';
 
 let notificationsModule: typeof import('expo-notifications') | null = null;
@@ -72,9 +74,9 @@ export async function initPushNotifications() {
     Notifications.addNotificationReceivedListener((notification) => { void handleTrackingPush(notification); });
     Notifications.setNotificationHandler({
       handleNotification: async (notification) => ({
-        shouldShowAlert: !['APPEAL_MESSAGE', 'TRACKING_LOCATION_REQUEST'].includes(String(notification.request.content.data?.type)),
-        shouldShowBanner: !['APPEAL_MESSAGE', 'TRACKING_LOCATION_REQUEST'].includes(String(notification.request.content.data?.type)),
-        shouldShowList: !['APPEAL_MESSAGE', 'TRACKING_LOCATION_REQUEST'].includes(String(notification.request.content.data?.type)),
+        shouldShowAlert: !['APPEAL_MESSAGE', 'HELP_MESSAGE', 'TRACKING_LOCATION_REQUEST'].includes(String(notification.request.content.data?.type)),
+        shouldShowBanner: !['APPEAL_MESSAGE', 'HELP_MESSAGE', 'TRACKING_LOCATION_REQUEST'].includes(String(notification.request.content.data?.type)),
+        shouldShowList: !['APPEAL_MESSAGE', 'HELP_MESSAGE', 'TRACKING_LOCATION_REQUEST'].includes(String(notification.request.content.data?.type)),
         shouldPlaySound: notification.request.content.data?.type !== 'TRACKING_LOCATION_REQUEST',
         shouldSetBadge: false,
       }),
@@ -96,6 +98,10 @@ export async function initPushNotifications() {
       vibrationPattern: [0, 250, 200, 250],
       lightColor: '#2563EB',
       enableVibrate: true,
+    });
+    await Notifications.setNotificationChannelAsync(HELP_MESSAGE_CHANNEL_ID, {
+      name: 'Помощь — сообщения IT', importance: Notifications.AndroidImportance.HIGH,
+      vibrationPattern: [0, 250, 200, 250], lightColor: '#3289FF', enableVibrate: true,
     });
   }
 }
@@ -181,12 +187,14 @@ function parseAppealIdFromData(data: any): number | null {
   return parseAppealId(data.appealId);
 }
 
-export async function bindPushNavigation(onOpenAppeal: (appealId: number) => void) {
+export async function bindPushNavigation(onOpenAppeal: (appealId: number) => void, onOpenHelp?: (ticketId: number) => void) {
   const Notifications = await getNotificationsModule();
   if (!Notifications) return () => {};
 
   responseListener?.remove();
   responseListener = Notifications.addNotificationResponseReceivedListener((response) => {
+    const help = parseHelpPush(response.notification.request.content.data);
+    if (help) { onOpenHelp?.(help.ticketId); return; }
     const appealId = parseAppealIdFromData(response.notification.request.content.data);
     if (appealId) onOpenAppeal(appealId);
   });
@@ -194,8 +202,10 @@ export async function bindPushNavigation(onOpenAppeal: (appealId: number) => voi
   try {
     const coldStart = await Notifications.getLastNotificationResponseAsync();
     if (coldStart) {
-      const appealId = parseAppealIdFromData(coldStart.notification.request.content.data);
-      if (appealId) onOpenAppeal(appealId);
+      const data = coldStart.notification.request.content.data;
+      const help = parseHelpPush(data);
+      if (help) onOpenHelp?.(help.ticketId);
+      else { const appealId = parseAppealIdFromData(data); if (appealId) onOpenAppeal(appealId); }
       await Notifications.clearLastNotificationResponseAsync?.();
     }
   } catch (error) {
