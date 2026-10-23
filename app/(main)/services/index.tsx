@@ -4,7 +4,7 @@ import { useThemeColor } from '@/hooks/useThemeColor';
 import { saveWebCachedLastServiceRoute } from '@/src/features/navigation/lastServiceRouteStorage';
 import { applyAdminCatalogService } from '@/src/features/services/lib/adminCatalogService';
 import { useServicesData } from '@/src/features/services/hooks/useServicesData';
-import { canOpenService } from '@/src/features/services/lib/serviceAvailability';
+import { canOpenService, supportsServiceRoute } from '@/src/features/services/lib/serviceAvailability';
 import { getServiceGridMetrics, getVisibleServices } from '@/src/features/services/lib/grid';
 import { useServerStatus } from '@/src/shared/network/useServerStatus';
 import { ServicesErrorView, ServicesLoadingView } from '@/src/features/services/ui/ServiceStateViews';
@@ -106,7 +106,7 @@ export default function ServicesScreen() {
             <ServiceCard
               icon={item.icon || 'apps-outline'}
               name={item.name}
-              description={item.description || undefined}
+              description={supportsServiceRoute(item) ? item.description || undefined : 'Доступно в новой версии приложения'}
               kind={item.kind}
               size={metrics.cardSize}
               enterIndex={index}
@@ -117,7 +117,7 @@ export default function ServicesScreen() {
                   : undefined
               }
               iconSize={26}
-              disabled={!item.enabled}
+              disabled={!item.enabled || !supportsServiceRoute(item)}
               containerStyle={{ backgroundColor: cardBackground }}
             />
           </View>
