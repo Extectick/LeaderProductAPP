@@ -59,7 +59,7 @@ import { probeClientOrdersConnection } from '@/utils/clientOrdersService';
 import { useDraftBackups } from './offline/useDraftBackups';
 import { isRecoverableLegacySaveError, legacyOrderMatches, legacySubmissionAccepted, runLegacyOrderOperation } from './lib/legacyOrderRecovery';
 import { draftReviewItemMessages, reviewFromError } from './lib/draftReview';
-import { hasPriceReview, PRICE_REVIEW_CHOICES, PRICE_REVIEW_QUESTION, type PriceReviewChoice } from './lib/priceReview';
+import { hasPriceReview, priceReviewPrompt, type PriceReviewPrompt, type PriceReviewChoice } from './lib/priceReview';
 import { prepareOrderAmendment } from './lib/orderAmendmentReview';
 import { preserveSubmittedVersion, persistedOrderSubmissionError, submittedVersionOf } from './lib/orderSubmissionPresentation';
 import {
@@ -137,7 +137,8 @@ type DiscardConfirmContext = {
   blockingMessage: string | null;
 };
 type UseClientOrdersWorkspaceOptions = {
-  confirmPriceReview?: () => Promise<PriceReviewChoice | null>;
+  confirmPriceReview?: (prompt: PriceReviewPrompt) => Promise<PriceReviewChoice | null>;
+  notifyCancelDenied?: (message: string) => void;
   confirmDiscard?: (context: DiscardConfirmContext) => Promise<DiscardDecision | boolean>;
   /** Mobile screens use this to suspend work that is not visible to the user. */
   screenMode?: 'orders' | 'editor';
@@ -1260,13 +1261,15 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   confirmPriceReviewRef.current = options.confirmPriceReview;
   const priceReviewInFlightRef = React.useRef(false);
   const priceReviewPreparingRef = React.useRef(false);
-  const requestPriceReview = React.useCallback(async () => {
+  const requestPriceReview = React.useCallback(async (orders: Array<ClientOrder | null | undefined>) => {
     if (priceReviewInFlightRef.current) return null;
     priceReviewInFlightRef.current = true;
     try {
-      if (confirmPriceReviewRef.current) return await confirmPriceReviewRef.current();
-      return await new Promise<PriceReviewChoice | null>(resolve => Alert.alert(PRICE_REVIEW_QUESTION, undefined,
-        PRICE_REVIEW_CHOICES.map(choice => ({ text: choice.label, onPress: () => resolve(choice.policy) })),
+      const prompt = priceReviewPrompt(orders);
+      if (confirmPriceReviewRef.current) return await confirmPriceReviewRef.current(prompt);
+      return await new Promise<PriceReviewChoice | null>(resolve => Alert.alert(prompt.title, prompt.message,
+        [...prompt.choices.map(choice => ({ text: choice.label, onPress: () => resolve(choice.policy) })),
+          { text: 'Назад', onPress: () => resolve(null) }],
         { cancelable: true, onDismiss: () => resolve(null) }));
     } finally { priceReviewInFlightRef.current = false; }
   }, []);
@@ -2509,7 +2512,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       priceReviewPreparingRef.current = true;
       try {
         const pricePolicy = scoped && syncOptions.pricePolicy && syncOptions.pricePolicy !== 'ASK'
-          ? syncOptions.pricePolicy : await requestPriceReview();
+          ? syncOptions.pricePolicy : await requestPriceReview(reviewTargets.map(target => target.order));
         if (!pricePolicy || activeOfflineUserRef.current !== offlineUserId) return;
         for (const target of reviewTargets) {
           if (!deviceDraftEntriesRef.current.some(entry => isSameOrderOperation(entry, target))) continue;
@@ -4382,7 +4385,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       if (deviceEntry && await reconcileDeviceDraft(deviceEntry)) return;
       if (editVersion !== draftEditVersionRef.current || selectedAtStart !== selectedGuidRef.current) return;
       const reviewOrder = deviceEntry?.order ?? selectedOrder;
-      const pricePolicy = hasPriceReview(reviewOrder) ? await requestPriceReview() : undefined;
+      const pricePolicy = hasPriceReview(reviewOrder) ? await requestPriceReview([reviewOrder]) : undefined;
       if (pricePolicy === null || activeOfflineUserRef.current !== offlineUserId
         || editVersion !== draftEditVersionRef.current || selectedAtStart !== selectedGuidRef.current) return;
       const localOnly = isAsyncOrderOutboxEnabled() || !getServerStatus().isReachable || !!findDeviceDraftEntry(targetGuid, draft.clientOrderId);
@@ -4445,7 +4448,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         }
         if (deviceEntry.status === 'READY_TO_SEND') return null;
         const pricePolicy = hasPriceReview({ ...deviceEntry.order, offlineDraftStatus: deviceEntry.status })
-          ? await requestPriceReview() : undefined;
+          ? await requestPriceReview([deviceEntry.order]) : undefined;
         if (pricePolicy === null || activeOfflineUserRef.current !== offlineUserId
           || !deviceDraftEntriesRef.current.some(entry => isSameOrderOperation(entry, deviceEntry))) return null;
         const pendingReview = orderChangeReview((deviceEntry.order as any).submissionErrorDetails);
@@ -4704,11 +4707,15 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       setDraft(normalizeDraftOrder(orderToDraft(order)));
       setDirty(false);
     } catch (e: any) {
-      setError(userErrorMessage(e, 'Не удалось отменить заказ.'));
+      const message = userErrorMessage(e, 'Не удалось отменить заказ.');
+      if (e?.errorDetails?.action === 'CANCEL_DENIED') {
+        if (options.notifyCancelDenied) options.notifyCancelDenied(message);
+        else Alert.alert('Отмена не выполнена', message);
+      } else setError(message);
     } finally {
       setCancelling(false);
     }
-  }, [applySavedOrderToList, draft.guid, draft.revision, resetDraftToBase]);
+  }, [applySavedOrderToList, draft.guid, draft.revision, resetDraftToBase, options.notifyCancelDenied]);
 
   const deleteDraft = React.useCallback(async (guid?: string) => {
     const targetGuid = guid || draft.guid || selectedGuid;

@@ -32,7 +32,7 @@ it('keeps real phone edits and attaches the current accepted version separately'
   expect(merged.submittedVersion?.totalAmount).toBe(7512);
   expect(merged.submissionErrorDetails).toBe(local.submissionErrorDetails);
   expect(getOrderDisplayStatus(merged)).not.toBe('DEBT');
-  expect(getOrderDisplayStatusLabel(merged)).toBe('В 1С · изменения не отправлены');
+  expect(getOrderDisplayStatusLabel(merged)).toBe('Проведён в 1С · изменения не отправлены');
 });
 it('retires Nalimova SAVE revision 2 only from verified accepted revision 1 input', () => {
   const local: any = { clientOrderId: 'client-id', clientRevision: 2, intent: 'SAVE', payload: { ...payload, integrity: { baseContentToken: 'new' } } };

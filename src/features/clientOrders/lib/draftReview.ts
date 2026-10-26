@@ -13,16 +13,18 @@ export function draftReviewItemMessages(draft: DraftOrder, review: ClientOrder['
   if (review?.code === 'PRICE_REVIEW_REQUIRED') {
     if (review.warehouseGuid && review.warehouseGuid !== draft.warehouseGuid) return messages;
     for (const change of Array.isArray(review.details?.items) ? review.details.items : []) {
-      if (!change || typeof change.productGuid !== 'string' || change.oldPrice == null || change.currentPrice == null) continue;
+      if (!change || typeof change.productGuid !== 'string' || change.oldPrice == null) continue;
       const before = Number(change.oldPrice), after = Number(change.currentPrice);
-      if (!Number.isFinite(before) || !Number.isFinite(after) || Math.abs(before - after) < 0.0001) continue;
+      const missing = change.priceAvailable === false || change.currentPrice == null || !Number.isFinite(after) || after <= 0;
+      if (!Number.isFinite(before) || (!missing && Math.abs(before - after) < 0.0001)) continue;
       for (const line of draft.items) {
         if (line.isCancelled || hasManualPrice(line) || line.basePrice == null || !Number.isFinite(Number(line.basePrice))
           || line.productGuid?.toLowerCase() !== change.productGuid.toLowerCase()
           || (change.lineGuid && line.lineGuid?.toLowerCase() !== String(change.lineGuid).toLowerCase())
           || Math.abs(Number(line.basePrice) - before) > 0.0001) continue;
         const multiplier = getPackageMultiplier(line);
-        messages[line.key] = [`Цена изменилась: ${formatMoney(before * multiplier, draft.currency)} → ${formatMoney(after * multiplier, draft.currency)}`];
+        messages[line.key] = [missing ? `Актуальная цена не получена. Цена заказа: ${formatMoney(before * multiplier, draft.currency)}.`
+          : `Цена изменилась: ${formatMoney(before * multiplier, draft.currency)} → ${formatMoney(after * multiplier, draft.currency)}`];
       }
     }
     return messages;

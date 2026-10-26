@@ -14,8 +14,8 @@ test('shows accepted 16 lines and pending 19 as independent facts, never replace
   expect(merged).toMatchObject({ clientRevision: 30, contentToken: 'old-base', totalAmount: 43028,
     submittedVersion: { clientRevision: 29, number1c: 'НОУТ-126165', itemsCount: 16, totalAmount: 36548 } });
   expect(merged.items).toHaveLength(19);
-  expect(amendmentStatusLabel(merged)).toBe('В 1С · изменения не отправлены');
-  expect(getOrderDisplayStatusLabel(merged)).toBe('В 1С · изменения не отправлены');
+  expect(amendmentStatusLabel(merged)).toBe('Проведён в 1С · изменения не отправлены');
+  expect(getOrderDisplayStatusLabel(merged)).toBe('Проведён в 1С · изменения не отправлены');
   expect(getClientOrderDisplayNumber(merged)).toBe('НОУТ-126165');
   expect(persistedOrderSubmissionError(merged)).toContain('Заказ уже в 1С: НОУТ-126165');
   expect(persistedOrderSubmissionError(merged)).toContain('сравнить и согласовать');

@@ -318,6 +318,23 @@ describe('useClientOrdersWorkspace', () => {
     return { get current() { return current; }, renderer };
   }
 
+  it('shows a new cancellation refusal once without putting it on the document or list', async () => {
+    const service = jest.requireMock('@/utils/clientOrdersService');
+    service.cancelClientOrder.mockRejectedValueOnce(Object.assign(new Error('По заказу есть реализация'), {
+      errorDetails: { action: 'CANCEL_DENIED' }, backendErrorCode: 'CONFLICT',
+    }));
+    const harness = await ordersListWorkspace();
+    try {
+      const oldError = harness.current.error;
+      const oldOrdersError = harness.current.ordersError;
+      await act(async () => { await harness.current.cancelOrderConfirmed({ guid: 'app-order', revision: 1 }); });
+      expect(jest.requireMock('react-native').Alert.alert).toHaveBeenCalledWith('Отмена не выполнена', expect.stringContaining('реализация'));
+      expect(harness.current.error).toBe(oldError);
+      expect(harness.current.ordersError).toBe(oldOrdersError);
+      expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
   it('reconciles queued orders through the DB-only batch and rejects a late queued list snapshot', async () => {
     const old = queuedOrder(1, { clientOrderId: 'client-order-123', deliveryDate: '2026-10-26' });
     jest.mocked(getClientOrders).mockResolvedValue({ items: [old], meta: { total: 1, limit: 20, offset: 0 } } as any);
@@ -872,7 +889,7 @@ describe('useClientOrdersWorkspace', () => {
       const frozen = JSON.stringify(entry.payload);
       jest.requireMock('react-native').Alert.alert.mockImplementation((title: string, message: unknown, buttons: any[]) => {
         expect(title).toBe('Обновить цены?'); expect(message).toBeUndefined();
-        expect(buttons.map(b => b.text)).toEqual(['Обновить', 'Не изменять']);
+        expect(buttons.map(b => b.text)).toEqual(['Обновить', 'Не изменять', 'Назад']);
         buttons[button].onPress();
       });
       jest.mocked(putClientOrderByClientId).mockResolvedValue(queuedOrder(1, { clientOrderId: entry.clientOrderId }) as any);

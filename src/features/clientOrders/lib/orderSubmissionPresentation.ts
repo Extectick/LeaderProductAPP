@@ -21,7 +21,7 @@ export function amendmentStatusLabel(order?: ClientOrder | null): string | null 
   if (!order || order.origin !== 'device') return null;
   const version = submittedVersionOf(order);
   if (!version) return null;
-  const prefix = version.number1c ? 'В 1С' : 'В API';
+  const prefix = version.number1c ? (version.isPostedIn1c ? 'Проведён в 1С' : 'Сохранён в 1С') : 'В API';
   const status = String((order as any).offlineDraftStatus || 'ON_DEVICE');
   if (['NEEDS_EDIT', 'SEND_ERROR', 'PRICE_REVIEW'].includes(status)) return `${prefix} · изменения не отправлены`;
   if (['READY_TO_SEND', 'SENDING', 'API_ACCEPTED'].includes(status)) return `${prefix} · изменения в обработке`;

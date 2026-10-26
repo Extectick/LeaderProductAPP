@@ -1,4 +1,4 @@
-import { preserveSubmittedVersion, submittedVersionOf } from '../src/features/clientOrders/lib/orderSubmissionPresentation';
+import { amendmentStatusLabel, preserveSubmittedVersion, submittedVersionOf } from '../src/features/clientOrders/lib/orderSubmissionPresentation';
 
 const summary: any = { guid: 'api-order', clientOrderId: 'phone-id', clientRevision: 3, origin: 'local',
   number1c: 'НОУТ-127336', syncState: 'SYNCED', status: 'CONFIRMED', revision: 7, isPostedIn1c: true,
@@ -12,6 +12,13 @@ test('uses the explicit row count in list summaries without loading or replacing
   expect(combined.submittedVersion?.itemsCount).toBe(2);
   expect(combined.localDraft).toBe(local.localDraft);
   expect(combined.items).toBe(local.items);
+});
+
+test('distinguishes a posted original order from its unsent amendment', () => {
+  const order: any = { origin: 'device', offlineDraftStatus: 'NEEDS_EDIT', submittedVersion: submittedVersionOf(summary) };
+  expect(amendmentStatusLabel(order)).toBe('Проведён в 1С · изменения не отправлены');
+  order.submittedVersion.isPostedIn1c = false;
+  expect(amendmentStatusLabel(order)).toBe('Сохранён в 1С · изменения не отправлены');
 });
 
 test('retains an explicit zero and counts only active rows when no summary count exists', () => {

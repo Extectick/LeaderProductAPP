@@ -30,6 +30,13 @@ test('highlights only the exact price-changed line, not every copy of its produc
   ] };
   expect(draftReviewItemMessages(draft, priceReview)).toEqual({ changed: ['Цена изменилась: 110 ₽ → 120 ₽'] });
 });
+
+test.each([null, 0])('explains a missing price without showing a zero-price replacement: %s', currentPrice => {
+  const draft = { ...emptyDraft(), items: [{ ...line('changed', '1'), lineGuid: 'changed', basePrice: 110 }] };
+  const details = { ...priceReview, details: { items: [{ productGuid: 'p', lineGuid: 'changed', oldPrice: 110,
+    currentPrice, priceAvailable: false }] } };
+  expect(draftReviewItemMessages(draft, details)).toEqual({ changed: ['Актуальная цена не получена. Цена заказа: 110 ₽.'] });
+});
 test('matches legacy product-only price details and displays prices for the selected package', () => {
   const draft = { ...emptyDraft(), items: [{ ...line('pack', '1', 5), basePrice: 110 }] };
   const details = { ...priceReview, details: { items: [{ productGuid: 'P', oldPrice: 110, currentPrice: 120 }] } };

@@ -2,7 +2,7 @@
 import { useThemeColor } from '@/hooks/useThemeColor';
 import { OrderShareFeedback } from './components/OrderShareFeedback';
 import { useOrderShareActions } from './hooks/useOrderShareActions';
-import { hasPriceReview, PRICE_REVIEW_CHOICES, PRICE_REVIEW_QUESTION, type PriceReviewChoice } from './lib/priceReview';
+import { hasPriceReview, priceReviewPrompt, type PriceReviewPrompt, type PriceReviewChoice } from './lib/priceReview';
 import { ProductImageGalleryDialog, WebProductImage, PRODUCT_IMAGE_PLACEHOLDER_URI, type ProductGalleryImage } from './components/ProductImageGalleryDialog';
 import {
   computeLineTotal,
@@ -1157,9 +1157,12 @@ export default function ClientOrdersWebScreen() {
     resolve?.(result);
   }, []);
   const [priceReviewOpen, setPriceReviewOpen] = React.useState(false);
+  const [reviewPrompt, setReviewPrompt] = React.useState<PriceReviewPrompt>(() => priceReviewPrompt([]));
+  const [cancelDenied, setCancelDenied] = React.useState<string | null>(null);
   const priceReviewResolveRef = React.useRef<((choice: PriceReviewChoice | null) => void) | null>(null);
-  const requestPriceReview = React.useCallback(() => new Promise<PriceReviewChoice | null>(resolve => {
+  const requestPriceReview = React.useCallback((prompt: PriceReviewPrompt) => new Promise<PriceReviewChoice | null>(resolve => {
     priceReviewResolveRef.current = resolve;
+    setReviewPrompt(prompt);
     setPriceReviewOpen(true);
   }), []);
   const closePriceReview = React.useCallback((choice: PriceReviewChoice | null) => {
@@ -1169,7 +1172,8 @@ export default function ClientOrdersWebScreen() {
     resolve?.(choice);
   }, []);
   React.useEffect(() => () => { priceReviewResolveRef.current?.(null); }, []);
-  const workspace = useClientOrdersWorkspace({ confirmDiscard: requestDiscardConfirm, confirmPriceReview: requestPriceReview });
+  const workspace = useClientOrdersWorkspace({ confirmDiscard: requestDiscardConfirm, confirmPriceReview: requestPriceReview,
+    notifyCancelDenied: setCancelDenied });
   const [documentMenuAnchor, setDocumentMenuAnchor] = React.useState<HTMLElement | null>(null);
   const router = useRouter();
   const workspaceRef = React.useRef(workspace);
@@ -3546,12 +3550,19 @@ export default function ClientOrdersWebScreen() {
       </Menu>
       <OrderShareFeedback message={orderSharing.feedback} onDismiss={orderSharing.dismissFeedback} />
       <Dialog open={priceReviewOpen} onClose={() => closePriceReview(null)} maxWidth="xs" fullWidth>
-        <DialogTitle>{PRICE_REVIEW_QUESTION}</DialogTitle>
+        <DialogTitle>{reviewPrompt.title}</DialogTitle>
+        {reviewPrompt.message ? <DialogContent><Typography sx={{ whiteSpace: 'pre-line' }}>{reviewPrompt.message}</Typography></DialogContent> : null}
         <DialogActions>
-          {PRICE_REVIEW_CHOICES.map((choice, index) => <Button key={choice.policy}
+          <Button onClick={() => closePriceReview(null)}>Назад</Button>
+          {reviewPrompt.choices.map((choice, index) => <Button key={choice.policy}
             variant={index === 0 ? 'contained' : 'text'} onClick={() => closePriceReview(choice.policy)}
             sx={{ textTransform: 'none', fontWeight: 800 }}>{choice.label}</Button>)}
         </DialogActions>
+      </Dialog>
+      <Dialog open={!!cancelDenied} onClose={() => setCancelDenied(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>Отмена не выполнена</DialogTitle>
+        <DialogContent><Typography>{cancelDenied}</Typography></DialogContent>
+        <DialogActions><Button onClick={() => setCancelDenied(null)}>Понятно</Button></DialogActions>
       </Dialog>
       <Dialog open={confirmSubmitOpen} onClose={() => setConfirmSubmitOpen(false)} maxWidth="xs" fullWidth fullScreen={isPhoneDialog}>
         <DialogTitle>{isErrorRetryTo1c ? 'Повторить отправку в 1С?' : isResubmitTo1c ? 'Переотправить в 1С?' : 'Отправить в 1С?'}</DialogTitle>
@@ -3742,7 +3753,8 @@ export default function ClientOrdersWebScreen() {
                 <Typography sx={{ fontWeight: 900 }}>История</Typography>
                 {!workspace.selectedOrder?.events.length ? <Typography sx={{ fontSize: 13, color: '#64748B' }}>Событий пока нет.</Typography> : workspace.selectedOrder.events.map((event) => (
                   <Box key={event.id} sx={{ borderRadius: '14px', bgcolor: '#F8FAFC', px: 1.4, py: 1.2 }}>
-                    <Typography sx={{ fontWeight: 800 }}>{event.eventType} • rev {event.revision}</Typography>
+                    <Typography sx={{ fontWeight: 800 }}>{event.eventType === 'ONEC_ORDER_CANCEL_DENIED' ? 'Отмена не выполнена' : event.eventType} • rev {event.revision}</Typography>
+                    {event.eventType === 'ONEC_ORDER_CANCEL_DENIED' && event.note ? <Typography sx={{ fontSize: 13 }}>{event.note}</Typography> : null}
                     <Typography sx={{ fontSize: 10, color: '#64748B' }}>{event.source} • {formatDateTime(event.createdAt)}</Typography>
                   </Box>
                 ))}
