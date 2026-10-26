@@ -22,6 +22,69 @@ const draft: StoredOfflineDraft = {
   serverGuid: null, serverRevision: null, order: {}, payload: { items: [{ lineGuid: 'line', productGuid: 'p' }] },
   createdAt: '2026-09-21T00:00:00Z', updatedAt: '2026-09-21T00:00:00Z', lastSendError: null,
 };
+
+async function redundantSaveFixture() {
+  const outbox = require('../src/features/clientOrders/offline/orderOutboxDatabase');
+  const payload = { organizationGuid: 'org', counterpartyGuid: 'customer',
+    items: [{ lineGuid: 'line', productGuid: 'product', quantity: 1, basePrice: 1350 }] };
+  const local = { ...draft, clientRevision: 2, payload,
+    order: { guid: 'api-guid', clientOrderId: draft.clientOrderId, origin: 'device', counterparty: { name: 'Customer' } } };
+  await offline.upsertOfflineDraft('90', local);
+  const state = { guid: 'api-guid', clientOrderId: draft.clientOrderId, clientRevision: 1, revision: 5, source: 'MANAGER_APP',
+    createdByUser: { id: 90 }, status: 'CONFIRMED', syncState: 'SYNCED', isPostedIn1c: true, hasRealization: true,
+    number1c: 'ИПУТ-011129', totalAmount: 1350, itemsCount: 2, updatedAt: '2026-10-26T06:00:00Z',
+    lastExportError: null, last1cError: null, acceptedClientOperation: { clientRevision: 1, intent: 'SUBMIT', payload } };
+  return { outbox, local, state };
+}
+it('atomically replaces a redundant SAVE by a canonical list mirror and survives a cold read', async () => {
+  const { outbox, local, state } = await redundantSaveFixture();
+  expect(await outbox.retireRedundantDeviceDraft('90', local, state)).toMatchObject({ origin: 'local', number1c: 'ИПУТ-011129' });
+  expect(await offline.readOfflineDrafts('90')).toEqual([]);
+  expect(await outbox.readOrderMirrors('90')).toEqual([expect.objectContaining({ status: 'CONFIRMED', isPostedIn1c: true })]);
+  expect(await db.getFirstAsync('PRAGMA integrity_check')).toEqual({ integrity_check: 'ok' });
+});
+it('retains the SAVE and lines when the mirror cannot be committed', async () => {
+  const { outbox, local, state } = await redundantSaveFixture();
+  await db.execAsync("CREATE TRIGGER fail_reconcile BEFORE INSERT ON offline_order_mirrors BEGIN SELECT RAISE(ABORT,'disk full'); END;");
+  await expect(outbox.retireRedundantDeviceDraft('90', local, state)).rejects.toThrow('disk full');
+  expect(await offline.readOfflineDrafts('90')).toHaveLength(1);
+  expect(await db.getAllAsync('SELECT * FROM offline_draft_lines')).toHaveLength(1);
+});
+it.each(['revision', 'quantity', 'user', 'scope'])('does not discard a changed/foreign local copy (%s)', async kind => {
+  const { outbox, local, state } = await redundantSaveFixture();
+  if (kind === 'revision') await db.runAsync("UPDATE offline_drafts SET client_revision=3 WHERE user_id='90'");
+  if (kind === 'quantity') await db.runAsync("UPDATE offline_drafts SET payload_json=? WHERE user_id='90'", JSON.stringify({ ...local.payload, items: [{ ...local.payload.items[0], quantity: 3 }] }));
+  if (kind === 'user') state.createdByUser.id = 91;
+  if (kind === 'scope') await db.runAsync("UPDATE offline_drafts SET order_json=? WHERE user_id='90'", JSON.stringify({ ...local.order, _deviceApiBaseUrl: 'https://foreign.example' }));
+  expect(await outbox.retireRedundantDeviceDraft('90', local, state)).toBeNull();
+  expect(await offline.readOfflineDrafts('90')).toHaveLength(kind === 'scope' ? 0 : 1);
+  expect(await db.getAllAsync('SELECT * FROM offline_drafts')).toHaveLength(1);
+});
+it('refreshes the persisted mirror but rejects a late stale state', async () => {
+  const { outbox, local, state } = await redundantSaveFixture();
+  await outbox.retireRedundantDeviceDraft('90', local, state);
+  await outbox.refreshOrderMirrors('90', [{ ...state, revision: 6, totalAmount: 1500 }]);
+  await outbox.refreshOrderMirrors('90', [{ ...state, revision: 1, syncState: 'QUEUED', number1c: null }]);
+  expect((await outbox.readOrderMirrors('90'))[0]).toMatchObject({ revision: 6, totalAmount: 1500, syncState: 'SYNCED', number1c: 'ИПУТ-011129' });
+});
+it('does not retire a local edit using proof older than the persisted server mirror', async () => {
+  const { outbox, local, state } = await redundantSaveFixture();
+  await outbox.retireRedundantDeviceDraft('90', local, state);
+  await outbox.refreshOrderMirrors('90', [{ ...state, revision: 6 }]);
+  await offline.upsertOfflineDraft('90', local);
+  expect(await outbox.retireRedundantDeviceDraft('90', local, state)).toBeNull();
+  expect(await offline.readOfflineDrafts('90')).toHaveLength(1);
+  expect((await outbox.readOrderMirrors('90'))[0].revision).toBe(6);
+});
+it('does not retire a copy while its delivery is in flight', async () => {
+  const { outbox, local, state } = await redundantSaveFixture();
+  await offline.upsertOfflineDraft('90', { ...local, intent: 'SUBMIT', status: 'READY_TO_SEND' });
+  const claimed = await outbox.claimOrderUploads('90', 10);
+  expect(claimed).toHaveLength(1);
+  await db.runAsync("UPDATE offline_drafts SET status='ON_DEVICE' WHERE user_id='90'");
+  expect(await outbox.retireRedundantDeviceDraft('90', local, state)).toBeNull();
+  expect(await offline.readOfflineDrafts('90')).toHaveLength(1);
+});
 beforeEach(async () => {
   jest.resetModules();
   directory = mkdtempSync(join(tmpdir(), 'leader-offline-sqlite-'));

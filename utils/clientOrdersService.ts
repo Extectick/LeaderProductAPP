@@ -623,6 +623,22 @@ export async function getClientOrder(guid: string) {
   });
 }
 
+/** Partial canonical server state, not an editable document or a new receipt. */
+export type ClientOrderState = Pick<ClientOrder, 'guid' | 'appGuid' | 'clientOrderId' | 'clientRevision'
+  | 'revision' | 'source' | 'status' | 'syncState' | 'number1c' | 'date1c' | 'isPostedIn1c'
+  | 'hasRealization' | 'deliveryDate' | 'totalAmount' | 'itemsCount' | 'lastExportError' | 'last1cError'
+  | 'cancelRequestedAt' | 'queuedAt' | 'sentTo1cAt' | 'updatedAt' | 'createdByUser' | 'acceptedClientOperation'>;
+
+export async function getClientOrderStates(identifiers: string[], userId: string, proofClientOrderIds: string[] = []): Promise<ClientOrderState[]> {
+  const ids = [...new Set(identifiers.filter(Boolean))].slice(0, 50);
+  if (!ids.length) return [];
+  const res = await apiClient<{ identifiers: string[]; proofClientOrderIds: string[] }, { items: ClientOrderState[] }>('/api/client-orders/states', {
+    method: 'POST', body: { identifiers: ids, proofClientOrderIds: proofClientOrderIds.filter(id => ids.includes(id)).slice(0, 50) }, expectedUserId: userId, timeoutMs: 15_000,
+  });
+  if (!res.ok || !res.data) throw new Error(getErrorMessage('Не удалось проверить состояние заказов', res.message));
+  return res.data.items;
+}
+
 export async function getClientOrderInvoices(guid: string) {
   const path = API_ENDPOINTS.CLIENT_ORDERS.INVOICES(guid);
   const res = await apiClient<void, { items?: ClientOrderInvoice[] } | ClientOrderInvoice[]>(path);

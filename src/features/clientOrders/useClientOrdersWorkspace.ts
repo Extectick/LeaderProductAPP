@@ -10,6 +10,7 @@ import {
   getClientOrderDefaults,
   getClientOrder,
   getClientOrderByClientId,
+  getClientOrderStates,
   getClientOrderInvoices,
   getClientOrderInvoiceStatuses,
   getClientOrderProductsBatch,
@@ -47,9 +48,10 @@ import {
 import React from 'react';
 import { Alert, AppState, Platform } from 'react-native';
 import { isReconciledOrderOperation, isSameOrderOperation, orderChangeReview } from './lib/orderOperationIntegrity';
-import { acceptedSubmissionConfirmsDeviceDraft } from './lib/deviceDraftRecovery';
+import { acceptedSubmissionConfirmsDeviceDraft, sameDeviceDraftInput } from './lib/deviceDraftRecovery';
+import { matchesDeliveryDateRange, matchesOrderState, mergeOrderState } from './lib/orderStateReconciliation';
 import { kickOrderOutbox, retryOrderOutboxNow, isAsyncOrderOutboxEnabled } from './offline/orderOutbox';
-import { readOrderMirrors } from './offline/orderOutboxDatabase';
+import { readOrderMirrors, refreshOrderMirrors, retireRedundantDeviceDraft } from './offline/orderOutboxDatabase';
 import { subscribeOrderOutboxChange } from './offline/orderOutboxEvents';
 import { useServerStatus } from '@/src/shared/network/useServerStatus';
 import { getServerStatus } from '@/src/shared/network/serverStatus';
@@ -732,11 +734,7 @@ function orderMatchesFilters(order: ClientOrder, filters: ClientOrdersFilters) {
   const itemsMax = parseFilterInteger(filters.itemsMax);
   if (itemsMin !== null && itemsCount < itemsMin) return false;
   if (itemsMax !== null && itemsCount > itemsMax) return false;
-  const deliveryDate = parseOrderDate(order.deliveryDate);
-  const deliveryFrom = parseFilterDate(filters.deliveryDateFrom);
-  const deliveryTo = parseFilterDate(filters.deliveryDateTo);
-  if (deliveryFrom !== null && (deliveryDate === null || deliveryDate < deliveryFrom)) return false;
-  if (deliveryTo !== null && (deliveryDate === null || deliveryDate > deliveryTo + 86399999)) return false;
+  if (!matchesDeliveryDateRange(order.deliveryDate, filters.deliveryDateFrom, filters.deliveryDateTo)) return false;
   const updatedDate = parseOrderDate(order.updatedAt || order.sourceUpdatedAt || order.createdAt);
   const updatedFrom = parseFilterDate(filters.updatedFrom);
   const updatedTo = parseFilterDate(filters.updatedTo);
@@ -838,6 +836,7 @@ function isSameListOrder(left: ClientOrder, right: ClientOrder) {
 
 function isOlderSubmissionSummary(current: ClientOrder, summary: ClientOrder) {
   const rollsBackSubmission = (isQueuedClientOrder(current) && summary.syncState === 'DRAFT')
+    || (!!current.isPostedIn1c && !summary.isPostedIn1c)
     || (current.syncState === 'SYNCED' && !!current.number1c
       && (isQueuedClientOrder(summary) || summary.syncState === 'DRAFT'));
   if (!rollsBackSubmission || (summary.revision || 0) > (current.revision || 0)) return false;
@@ -894,11 +893,16 @@ function orderListContentSignature(order: ClientOrder) {
     order.appGuid,
     order.documentGuid,
     order.clientOrderId,
+    order.clientRevision,
     order.revision,
     order.updatedAt,
     order.sourceUpdatedAt,
     order.status,
     order.syncState,
+    order.isPostedIn1c,
+    order.submittedVersion,
+    order.draftReview,
+    order.submissionErrorDetails,
     order.queuePosition,
     order.number1c,
     order.date1c,
@@ -1846,6 +1850,9 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const applySavedOrderToList = React.useCallback((order: ClientOrder) => {
     if (activeOfflineUserRef.current !== offlineUserId || isDeviceOnlyOrder(order)) return;
     const current = apiOrdersRef.current.filter(item => !isDeviceOnlyOrder(item));
+    const previous = current.find(item => isSameListOrder(item, order));
+    if (previous && isOlderSubmissionSummary(previous, order)) return;
+    if (previous && JSON.stringify(previous) === JSON.stringify(order)) return;
     const existing = current.some(item => isSameListOrder(item, order));
     const matches = orderMatchesFilters(order, filtersRef.current);
     const remaining = current.filter(item => !isSameListOrder(item, order));
@@ -2219,6 +2226,56 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       || (expectedClientRevision !== undefined && entry.clientRevision !== expectedClientRevision));
     await replaceDeviceDraftEntries(next);
   }, [replaceDeviceDraftEntries]);
+
+  const stateReconcileRunningRef = React.useRef(false);
+  const reconcileCanonicalStates = React.useCallback(async () => {
+    if (stateReconcileRunningRef.current || !getServerStatus().isReachable
+      || activeOfflineUserRef.current !== offlineUserId) return false;
+    stateReconcileRunningRef.current = true;
+    const isCurrent = () => activeOfflineUserRef.current === offlineUserId;
+    try {
+      const mirrors = Platform.OS === 'web' ? [] : await readOrderMirrors(offlineUserId);
+      if (!isCurrent()) return false;
+      const candidates = [...deviceDraftEntriesRef.current.map(entry => entry.order), ...mirrors,
+        ...apiOrdersRef.current.filter(order => isQueuedClientOrder(order) || !!order.last1cError || !!order.lastExportError)];
+      const identifiers = [...new Set(candidates.map(order => order.clientOrderId?.startsWith('legacy-server:')
+        ? order.clientOrderId.slice('legacy-server:'.length) : order.clientOrderId || order.appGuid || order.guid))];
+      if (!identifiers.length) return true;
+      const start = queueProbeOffsetRef.current % identifiers.length;
+      const batch = [...identifiers.slice(start), ...identifiers.slice(0, start)].slice(0, 50);
+      queueProbeOffsetRef.current = (start + batch.length) % identifiers.length;
+      const states = await getClientOrderStates(batch, offlineUserId,
+        deviceDraftEntriesRef.current.filter(entry => ['ON_DEVICE', 'SEND_ERROR', 'NEEDS_EDIT', 'PRICE_REVIEW'].includes(entry.status)).map(entry => entry.clientOrderId));
+      if (!isCurrent()) return false;
+      if (Platform.OS !== 'web') await refreshOrderMirrors(offlineUserId, states);
+      for (const state of states) {
+        if (!isCurrent() || state.createdByUser?.id !== Number(offlineUserId)) break;
+        const entry = deviceDraftEntriesRef.current.find(item => matchesOrderState(item.order, state));
+        const open = entry && (selectedGuidRef.current === entry.order.guid || selectedGuidRef.current === entry.serverGuid);
+        // Do not delete or replace a document currently being edited (even before its debounce commits).
+        if (entry && !open && Platform.OS !== 'web') {
+          const retired = await retireRedundantDeviceDraft(offlineUserId, entry, state);
+          if (!isCurrent()) break;
+          if (retired) applySavedOrderToList(retired);
+        }
+        const current = apiOrdersRef.current.find(item => matchesOrderState(item, state))
+          || mirrors.find(item => matchesOrderState(item, state));
+        if (current) applySavedOrderToList(mergeOrderState(current, state));
+        else if (entry) {
+          // Only canonical status enters the server list. The independent local edit still wins in the UI.
+          applySavedOrderToList({ ...entry.order, ...state, origin: 'local', items: [], events: [],
+            contentToken: undefined, submittedVersion: undefined, draftReview: null, submissionErrorDetails: null,
+            readOnly: !!state.hasRealization, status1c: null, currentState1c: null, documentStatus1c: null });
+        }
+      }
+      if (Platform.OS !== 'web' && isCurrent()) {
+        const entries = await readStoredDeviceDrafts(deviceDraftsStorageKey, offlineUserId);
+        if (isCurrent()) { deviceDraftEntriesRef.current = entries; setDeviceDraftEntries(entries); }
+      }
+      return true;
+    } catch { return false; } // Keep all data on timeout/old API; no resubmission as a fallback.
+    finally { stateReconcileRunningRef.current = false; }
+  }, [offlineUserId, deviceDraftsStorageKey, applySavedOrderToList]);
 
   /** Read-only: retire only this exact, accepted operation; never resend it or
    * compare against quantities which an operator has since adjusted in 1C. */
@@ -2672,10 +2729,12 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     if (draftReconcileRunningRef.current || scope !== draftReconcileScopeRef.current) return;
     draftReconcileRunningRef.current = true;
     try {
+      const batchAvailable = await reconcileCanonicalStates();
       for (const entry of deviceDraftEntriesRef.current) {
         if (scope !== draftReconcileScopeRef.current || deviceDraftSyncingRef.current
           || !getServerStatus().isReachable || (AppState.currentState && AppState.currentState !== 'active')) break;
         if (entry.intent !== 'SUBMIT' || !['SEND_ERROR', 'NEEDS_EDIT', 'PRICE_REVIEW'].includes(entry.status)) continue;
+        if (batchAvailable && !entry.clientOrderId.startsWith('legacy-server:')) continue;
         const key = `${offlineUserId}:${entry.clientOrderId}:${entry.clientRevision}`;
         if (Date.now() - (draftReconcileAttemptsRef.current.get(key) || 0) < 60_000) continue;
         draftReconcileAttemptsRef.current.set(key, Date.now());
@@ -2939,7 +2998,9 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
       && ordersPollingEnabledRef.current && (!AppState.currentState || AppState.currentState === 'active')
       && getServerStatus().isReachable;
     try {
+      const batchAvailable = await reconcileCanonicalStates();
       const summaries = await loadOrders('reset', { silent: true });
+      if (batchAvailable) return;
       if (!summaries || !pollIsActive()) return;
       const unresolved = pending.filter(order => {
         const summary = summaries.find(item => isSameListOrder(item, order));
@@ -2972,7 +3033,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     } finally {
       queueRefreshInFlightRef.current = false;
     }
-  }, [applySavedOrderToList, loadOrders, mergeServerRevisionIntoOpenDraft, offlineUserId]);
+  }, [applySavedOrderToList, loadOrders, mergeServerRevisionIntoOpenDraft, offlineUserId, reconcileCanonicalStates]);
 
   const refreshInvoiceStates = React.useCallback(async () => {
     if (invoiceStatusesInFlightRef.current || !pendingInvoiceIdentifiers.length) return;
@@ -3463,6 +3524,20 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         };
       }
       const intent = options?.intent === 'SUBMIT' ? 'SUBMIT' : 'SAVE';
+      // A save/blur after ACK must not turn an identical submitted packet into a new SAVE revision.
+      if (!options?.serverOnly && intent === 'SAVE' && deviceEntry && sameDeviceDraftInput(payload, deviceEntry.payload)) {
+        if (draftEditVersionRef.current === editVersion && selectedGuidRef.current === selectedAtStart) {
+          dirtyRef.current = false; setDirty(false); setAutosaveState('saved');
+        }
+        return deviceEntry.order;
+      }
+      if (!options?.serverOnly && intent === 'SAVE' && !deviceEntry && selectedOrder?.origin !== 'device' && selectedOrder?.clientOrderId
+        && sameDeviceDraftInput(payload, buildCopyPayload(orderToDraft(selectedOrder)))) {
+        if (draftEditVersionRef.current === editVersion && selectedGuidRef.current === selectedAtStart) {
+          dirtyRef.current = false; setDirty(false); setAutosaveState('saved');
+        }
+        return selectedOrder;
+      }
       if (intent === 'SUBMIT') payload = { ...payload, offlineReview: { pricePolicy: options?.pricePolicy ?? 'ASK' } };
       const clientOrderId = deviceEntry?.clientOrderId ?? draft.clientOrderId ?? null;
       const clientRevision = clientOrderId
@@ -3678,6 +3753,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     replaceDeviceDraftEntries,
     saveDraftOnDevice,
     selectedOrder?.clientRevision,
+    selectedOrder,
     selections,
     serverStatus.isReachable,
     deviceDraftsHydrated,

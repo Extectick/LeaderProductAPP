@@ -3,7 +3,8 @@ import TestRenderer, { act } from 'react-test-renderer';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState } from 'react-native';
 jest.mock('../src/features/clientOrders/offline/orderOutbox', () => ({ kickOrderOutbox: jest.fn(), retryOrderOutboxNow: jest.fn(async () => {}), isAsyncOrderOutboxEnabled: jest.fn(() => false) }));
-jest.mock('../src/features/clientOrders/offline/orderOutboxDatabase', () => ({ readOrderMirrors: async () => [] }));
+jest.mock('../src/features/clientOrders/offline/orderOutboxDatabase', () => ({ readOrderMirrors: async () => [],
+  refreshOrderMirrors: jest.fn(async () => {}), retireRedundantDeviceDraft: jest.fn(async () => null) }));
 
 jest.mock('@/context/AuthContext', () => {
   const React = require('react');
@@ -58,6 +59,7 @@ jest.mock('@/utils/clientOrdersService', () => ({
   backupClientOrderDraft: jest.fn(),
   probeClientOrdersConnection: jest.fn(),
   getClientOrderByClientId: jest.fn(),
+  getClientOrderStates: jest.fn(async () => { throw new Error('Old API fallback'); }),
   cancelClientOrder: jest.fn(),
   copyClientOrder: jest.fn(),
   createClientOrder: jest.fn(),
@@ -97,6 +99,7 @@ import {
   backupClientOrderDraft,
   probeClientOrdersConnection,
   getClientOrderByClientId,
+  getClientOrderStates,
   createClientOrder,
   getClientOrder,
   getClientOrderInvoices,
@@ -268,6 +271,7 @@ describe('useClientOrdersWorkspace', () => {
     jest.mocked(backupClientOrderDraft).mockImplementation(async (_id, clientRevision) => ({ clientRevision, savedAt: new Date().toISOString(), submittedOrderGuid: null }));
     jest.mocked(probeClientOrdersConnection).mockResolvedValue(false);
     jest.mocked(getClientOrderByClientId).mockRejectedValue(new Error('Not found'));
+    jest.mocked(getClientOrderStates).mockRejectedValue(new Error('Old API fallback'));
     jest.mocked(readOfflineDrafts).mockResolvedValue([]);
     jest.mocked(applyOfflineDraftChanges).mockResolvedValue(true);
     jest.mocked(captureOrderGeoEvent).mockImplementation(async (type) => ({
@@ -312,6 +316,53 @@ describe('useClientOrdersWorkspace', () => {
     await act(async () => { await jest.advanceTimersByTimeAsync(0); });
     return { get current() { return current; }, renderer };
   }
+
+  it('reconciles queued orders through the DB-only batch and rejects a late queued list snapshot', async () => {
+    const old = queuedOrder(1, { clientOrderId: 'client-order-123', deliveryDate: '2026-10-26' });
+    jest.mocked(getClientOrders).mockResolvedValue({ items: [old], meta: { total: 1, limit: 20, offset: 0 } } as any);
+    jest.mocked(getClientOrderStates).mockResolvedValue([{ ...old, revision: 5, clientRevision: 1,
+      createdByUser: { id: 1 }, isPostedIn1c: true, status: 'CONFIRMED', syncState: 'SYNCED', number1c: 'НОУТ-128623',
+      updatedAt: '2026-10-26T06:00:00Z' }] as any);
+    const harness = await ordersListWorkspace();
+    try {
+      await act(async () => { await harness.current.refreshOrders(); });
+      await act(async () => { await jest.advanceTimersByTimeAsync(31_000); });
+      expect(getClientOrderStates).toHaveBeenCalledWith(expect.arrayContaining(['client-order-123']), '1', []);
+      expect(harness.current.orders[0]).toMatchObject({ number1c: 'НОУТ-128623', isPostedIn1c: true, syncState: 'SYNCED' });
+      expect(getClientOrder).not.toHaveBeenCalled();
+      await act(async () => { await harness.current.refreshOrders(); });
+      expect(harness.current.orders[0].syncState).toBe('SYNCED');
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('rerenders posting-only changes even when revision, total and status text are unchanged', async () => {
+    const old = queuedOrder(0, { status: 'CONFIRMED', syncState: 'SYNCED', number1c: 'НОУТ-128912',
+      shipmentProhibited: true, isPostedIn1c: false });
+    jest.mocked(getClientOrders).mockResolvedValue({ items: [old], meta: { total: 1, limit: 20, offset: 0 } } as any);
+    const harness = await ordersListWorkspace();
+    try {
+      await act(async () => { await harness.current.refreshOrders(); });
+      expect(harness.current.orders[0].isPostedIn1c).toBe(false);
+      jest.mocked(getClientOrders).mockResolvedValue({ items: [{ ...old, isPostedIn1c: true }], meta: { total: 1, limit: 20, offset: 0 } } as any);
+      await act(async () => { await harness.current.refreshOrders(); });
+      expect(harness.current.orders[0].isPostedIn1c).toBe(true);
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('applies shipment-date filters to retained queued rows and late server pages', async () => {
+    const wrong = queuedOrder(1, { guid: 'previous-day', deliveryDate: '2026-10-25T23:59:59Z' });
+    const right = queuedOrder(2, { guid: 'selected-day', deliveryDate: '2026-10-26T00:00:00Z', createdAt: '2026-10-23T08:00:00Z' });
+    jest.mocked(getClientOrders).mockResolvedValue({ items: [wrong, right], meta: { total: 2, limit: 20, offset: 0 } } as any);
+    const harness = await ordersListWorkspace();
+    try {
+      await act(async () => harness.current.setFilters(prev => ({ ...prev, deliveryDateFrom: '2026-10-26', deliveryDateTo: '2026-10-26' })));
+      await act(async () => { await harness.current.refreshOrders(); });
+      expect(harness.current.orders.map(order => order.guid)).toEqual(['selected-day']);
+      await act(async () => harness.current.setFilters(prev => ({ ...prev, deliveryDateFrom: '2026-10-27', deliveryDateTo: '2026-10-27' })));
+      await act(async () => { await harness.current.refreshOrders(); });
+      expect(harness.current.orders).toEqual([]);
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
 
   it('keeps cached documents and quiet offline feedback on repeated refresh and pagination, then recovers automatically', async () => {
     const saved = queuedOrder(0, { status: 'CONFIRMED', syncState: 'SYNCED', number1c: 'НОУТ-000001' });

@@ -5,7 +5,9 @@ import { emitOrderOutboxChange } from './orderOutboxEvents';
 import { isAutomaticSubmission, matchingSubmissionReceipt, submittedOrderConfirmsPacket, submissionHash, type FrozenSubmission, type SubmissionReceipt } from './orderSubmissionProtocol';
 import { reviewFromError } from '../lib/draftReview';
 import { submittedVersionOf } from '../lib/orderSubmissionPresentation';
-import type { ClientOrder } from '@/utils/clientOrdersService';
+import type { ClientOrder, ClientOrderState } from '@/utils/clientOrdersService';
+import { matchesOrderState, mergeOrderState } from '../lib/orderStateReconciliation';
+import { acceptedInputMatchesDeviceDraft } from '../lib/deviceDraftRecovery';
 import { legacyOrderMatches } from '../lib/legacyOrderRecovery';
 import { ORDER_API_SCOPE, legacyOrderApiScope, localOrderApiScope } from './orderOutboxScope';
 
@@ -196,6 +198,61 @@ export async function completeOrderUpload(item: Delivery, order: ClientOrder, le
 export async function readOrderMirrors(userId: string): Promise<ClientOrder[]> {
   const db = await database();
   return (await db.getAllAsync<any>('SELECT order_json FROM offline_order_mirrors WHERE user_id=? AND api_scope=? ORDER BY updated_at DESC LIMIT 100', userId, ORDER_API_SCOPE)).map(row => JSON.parse(row.order_json));
+}
+
+/** Persist status advancement, so cold starts cannot resurrect an old QUEUED ACK. */
+export async function refreshOrderMirrors(userId: string, states: ClientOrderState[]) {
+  if (!states.length) return;
+  const db = await database();
+  await withSQLiteWriteTransaction(db, async tx => {
+    const mirrors = await tx.getAllAsync<any>('SELECT client_order_id,order_json FROM offline_order_mirrors WHERE user_id=? AND api_scope=?', userId, ORDER_API_SCOPE);
+    for (const row of mirrors) {
+      const previous: ClientOrder = JSON.parse(row.order_json);
+      const state = states.find(item => item.createdByUser?.id === Number(userId) && matchesOrderState(previous, item));
+      if (!state) continue;
+      const next = mergeOrderState(previous, state);
+      if (JSON.stringify(previous) === JSON.stringify(next)) continue;
+      await tx.runAsync('UPDATE offline_order_mirrors SET order_json=?,client_revision=?,updated_at=? WHERE user_id=? AND api_scope=? AND client_order_id=?',
+        JSON.stringify(next), state.clientRevision ?? 0, new Date().toISOString(), userId, ORDER_API_SCOPE, row.client_order_id);
+    }
+  });
+}
+
+/** Exact-row compare + mirror + delete in ONE SQLite transaction. Never touches
+ * a live upload, another account/API, or an edit made during the network read. */
+export async function retireRedundantDeviceDraft(userId: string, expected: { clientOrderId: string; clientRevision: number }, state: ClientOrderState) {
+  const db = await database();
+  let result: ClientOrder | null = null;
+  await withSQLiteWriteTransaction(db, async tx => {
+    const row = await tx.getFirstAsync<any>('SELECT * FROM offline_drafts WHERE user_id=? AND client_order_id=? AND client_revision=?',
+      userId, expected.clientOrderId, expected.clientRevision);
+    if (!row || !['ON_DEVICE', 'SEND_ERROR', 'NEEDS_EDIT', 'PRICE_REVIEW'].includes(row.status)) return;
+    const local: ClientOrder = JSON.parse(row.order_json);
+    if (localOrderApiScope(local, await legacyOrderApiScope(tx)) !== ORDER_API_SCOPE) return;
+    const server = { ...state, origin: 'local', items: [], events: [] } as ClientOrder;
+    const mirror = await tx.getFirstAsync<any>('SELECT order_json FROM offline_order_mirrors WHERE user_id=? AND api_scope=? AND client_order_id=?', userId, ORDER_API_SCOPE, row.client_order_id);
+    if (mirror) {
+      const previous: ClientOrder = JSON.parse(mirror.order_json);
+      if (state.revision < previous.revision || (state.revision === previous.revision
+        && Date.parse(state.updatedAt || '') < Date.parse(previous.updatedAt || ''))) return;
+    }
+    if (!acceptedInputMatchesDeviceDraft({ clientOrderId: row.client_order_id, clientRevision: row.client_revision,
+      intent: row.intent, payload: JSON.parse(row.payload_json) }, server, Number(userId))) return;
+    const active = await tx.getFirstAsync('SELECT 1 FROM offline_order_deliveries WHERE user_id=? AND api_scope=? AND client_order_id=? AND state IN (\'PENDING\',\'UPLOADING\',\'ACCEPTED\') LIMIT 1',
+      userId, ORDER_API_SCOPE, row.client_order_id);
+    if (active) return;
+    // Preserve reference labels for the list, never present local lines as a fresh editable server detail.
+    result = { ...local, ...server, items: [], contentToken: undefined, submittedVersion: undefined,
+      submissionErrorDetails: null, draftReview: null, readOnly: !!state.hasRealization,
+      status1c: null, currentState1c: null, documentStatus1c: null };
+    await tx.runAsync(`INSERT INTO offline_order_mirrors(api_scope,user_id,client_order_id,client_revision,order_json,updated_at) VALUES (?,?,?,?,?,?)
+      ON CONFLICT(api_scope,user_id,client_order_id) DO UPDATE SET client_revision=excluded.client_revision,order_json=excluded.order_json,updated_at=excluded.updated_at`,
+      ORDER_API_SCOPE, userId, row.client_order_id, state.clientRevision ?? 0, JSON.stringify(result), new Date().toISOString());
+    await tx.runAsync('DELETE FROM offline_draft_lines WHERE user_id=? AND draft_id=?', userId, row.id);
+    await tx.runAsync('DELETE FROM offline_drafts WHERE user_id=? AND id=? AND client_revision=?', userId, row.id, expected.clientRevision);
+  });
+  if (result) emitOrderOutboxChange({ userId });
+  return result;
 }
 export async function hasPendingOrderUploads(userId: string) {
   const db = await database();

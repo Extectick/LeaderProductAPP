@@ -68,8 +68,14 @@ export function savedOrderConfirmsDeviceDraft(entry: RecoverableDeviceDraft, ord
 /** Counters can differ after a failed autosave or an authorized server recovery.
  * Retire only identical hash-verified accepted input, never normalized 1C fields. */
 export function acceptedSubmissionConfirmsDeviceDraft(entry: RecoverableDeviceDraft, order: ClientOrder, userId: number) {
+  return entry.intent === 'SUBMIT' && acceptedInputMatchesDeviceDraft(entry, order, userId);
+}
+
+/** Also allows a redundant SAVE copy, but only with the exact accepted input.
+ * A server number, matching total or newer revision alone is never sufficient. */
+export function acceptedInputMatchesDeviceDraft(entry: RecoverableDeviceDraft, order: ClientOrder, userId: number) {
   const proof = order.acceptedClientOperation;
-  if (entry.intent !== 'SUBMIT' || !proof || proof.intent !== 'SUBMIT'
+  if (!proof || proof.intent !== 'SUBMIT'
     || entry.clientOrderId.startsWith('legacy') || order.clientOrderId !== entry.clientOrderId
     || order.origin === 'device' || !order.guid || order.createdByUser?.id !== userId
     || order.syncState !== 'SYNCED' || order.status !== 'CONFIRMED' || !order.isPostedIn1c || !order.number1c
@@ -89,4 +95,12 @@ export function acceptedSubmissionConfirmsDeviceDraft(entry: RecoverableDeviceDr
     return entry.payload.items.every(item => number(item.manualPrice) !== null
       || number(item.basePrice) === number(acceptedItems.get(guid(item.lineGuid))?.basePrice));
   } catch { return false; }
+}
+
+export function sameDeviceDraftInput(left: Payload, right: Payload) {
+  if (!sameDeviceDraftContent(left, right)) return false;
+  if ((left.offlineReview?.pricePolicy || 'ASK') !== (right.offlineReview?.pricePolicy || 'ASK')) return false;
+  const other = new Map(right.items.map(item => [guid(item.lineGuid), item]));
+  return left.items.every(item => number(item.manualPrice) !== null
+    || number(item.basePrice) === number(other.get(guid(item.lineGuid))?.basePrice));
 }

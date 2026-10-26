@@ -7041,8 +7041,8 @@ function OrdersFiltersFullscreen({
           </View>
 
           <View style={styles.filtersAmountRow}>
-            <FilterDateField styles={styles} label="Период от" value={draft.deliveryDateFrom || ''} onChange={(deliveryDateFrom) => patchDraft({ deliveryDateFrom })} />
-            <FilterDateField styles={styles} label="Период до" value={draft.deliveryDateTo || ''} onChange={(deliveryDateTo) => patchDraft({ deliveryDateTo })} />
+            <FilterDateField styles={styles} label="Отгрузка с" value={draft.deliveryDateFrom || ''} onChange={(deliveryDateFrom) => patchDraft({ deliveryDateFrom })} />
+            <FilterDateField styles={styles} label="Отгрузка по" value={draft.deliveryDateTo || ''} onChange={(deliveryDateTo) => patchDraft({ deliveryDateTo })} />
           </View>
 
           <View style={styles.filtersAmountRow}>
@@ -7782,7 +7782,7 @@ const OrderCard = React.memo(function OrderCard({
             <View style={styles.orderProblemRow}>
               <MaterialCommunityIcons name="alert-circle-outline" size={14} color="#B91C1C" />
               <Text style={styles.orderProblemText} numberOfLines={2}>
-                {order.shipmentProhibited && !order.isPostedIn1c
+                {order.shipmentProhibited && !order.isPostedIn1c && !submittedVersion?.isPostedIn1c
                   ? (order.debtReason || 'Контрагент имеет просроченную задолженность')
                   : normalizeClientOrderUserErrorMessage(submissionError || order.lastExportError || order.last1cError, 'Документ требует проверки')}
               </Text>

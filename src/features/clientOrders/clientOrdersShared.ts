@@ -352,9 +352,9 @@ export function mapOnecOrderStatus(value?: string | null) {
   return null;
 }
 
-export function getOrderDisplayStatus(order?: Pick<ClientOrder, 'status' | 'number1c' | 'origin' | 'status1c' | 'currentState1c' | 'documentStatus1c' | 'shipmentProhibited' | 'isPostedIn1c'> | null) {
+export function getOrderDisplayStatus(order?: Pick<ClientOrder, 'status' | 'number1c' | 'origin' | 'status1c' | 'currentState1c' | 'documentStatus1c' | 'shipmentProhibited' | 'isPostedIn1c' | 'submittedVersion'> | null) {
   if (!order) return 'DRAFT';
-  if (order.shipmentProhibited && !order.isPostedIn1c) return 'DEBT';
+  if (order.shipmentProhibited && !order.isPostedIn1c && !order.submittedVersion?.isPostedIn1c) return 'DEBT';
   const onecText = order.currentState1c || order.status1c;
   const isOnecBacked = Boolean(order.number1c || order.origin === 'onec' || order.origin === 'merged');
   if (isOnecBacked && onecText) {
