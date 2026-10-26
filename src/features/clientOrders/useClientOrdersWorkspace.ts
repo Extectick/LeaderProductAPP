@@ -2230,6 +2230,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const stateReconcileRunningRef = React.useRef(false);
   const reconcileCanonicalStates = React.useCallback(async () => {
     if (stateReconcileRunningRef.current || !getServerStatus().isReachable
+      || (AppState.currentState && AppState.currentState !== 'active')
       || activeOfflineUserRef.current !== offlineUserId) return false;
     stateReconcileRunningRef.current = true;
     const isCurrent = () => activeOfflineUserRef.current === offlineUserId;
@@ -2269,8 +2270,14 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         }
       }
       if (Platform.OS !== 'web' && isCurrent()) {
+        const previousEntries = deviceDraftEntriesRef.current;
         const entries = await readStoredDeviceDrafts(deviceDraftsStorageKey, offlineUserId);
-        if (isCurrent()) { deviceDraftEntriesRef.current = entries; setDeviceDraftEntries(entries); }
+        // Unchanged hydration must not retrigger the draft-change reconciliation effect.
+        // A concurrent local save owns its newer in-memory entries.
+        if (isCurrent() && deviceDraftEntriesRef.current === previousEntries
+          && JSON.stringify(entries) !== JSON.stringify(previousEntries)) {
+          deviceDraftEntriesRef.current = entries; setDeviceDraftEntries(entries);
+        }
       }
       return true;
     } catch { return false; } // Keep all data on timeout/old API; no resubmission as a fallback.

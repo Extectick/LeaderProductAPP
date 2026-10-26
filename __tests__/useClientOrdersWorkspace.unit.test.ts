@@ -3,7 +3,7 @@ import TestRenderer, { act } from 'react-test-renderer';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState } from 'react-native';
 jest.mock('../src/features/clientOrders/offline/orderOutbox', () => ({ kickOrderOutbox: jest.fn(), retryOrderOutboxNow: jest.fn(async () => {}), isAsyncOrderOutboxEnabled: jest.fn(() => false) }));
-jest.mock('../src/features/clientOrders/offline/orderOutboxDatabase', () => ({ readOrderMirrors: async () => [],
+jest.mock('../src/features/clientOrders/offline/orderOutboxDatabase', () => ({ readOrderMirrors: jest.fn(async () => []),
   refreshOrderMirrors: jest.fn(async () => {}), retireRedundantDeviceDraft: jest.fn(async () => null) }));
 
 jest.mock('@/context/AuthContext', () => {
@@ -263,6 +263,7 @@ describe('useClientOrdersWorkspace', () => {
 
   beforeEach(() => {
     jest.resetAllMocks();
+    jest.requireMock('../src/features/clientOrders/offline/orderOutboxDatabase').readOrderMirrors.mockResolvedValue([]);
     jest.requireMock('../src/features/clientOrders/offline/orderOutbox').isAsyncOrderOutboxEnabled.mockReturnValue(false);
     jest.useFakeTimers();
     jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
@@ -333,6 +334,30 @@ describe('useClientOrdersWorkspace', () => {
       await act(async () => { await harness.current.refreshOrders(); });
       expect(harness.current.orders[0].syncState).toBe('SYNCED');
     } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('does not loop reconciliation for an unchanged native mirror or poll while backgrounded', async () => {
+    const mirror = queuedOrder(0, { clientOrderId: 'mirrored-client-id', createdByUser: { id: 1 } });
+    const state = { ...mirror, revision: 5, status: 'CONFIRMED', syncState: 'SYNCED', isPostedIn1c: true, number1c: 'НОУТ-128623' };
+    jest.requireMock('../src/features/clientOrders/offline/orderOutboxDatabase').readOrderMirrors.mockImplementation(async () => [{ ...mirror }]);
+    let calls = 0;
+    jest.mocked(getClientOrderStates).mockImplementation(async () => {
+      // Stop a regression from hanging the test; the assertion still catches the loop.
+      if (++calls > 8) throw new Error('Reconciliation loop');
+      return [state] as any;
+    });
+    jest.mocked(getClientOrders).mockResolvedValue({ items: [state], meta: { total: 1, limit: 20, offset: 0 } } as any);
+    const harness = await ordersListWorkspace();
+    try {
+      for (let step = 0; step < 12; step++) await flush();
+      expect(calls).toBeGreaterThan(0);
+      expect(calls).toBeLessThanOrEqual(2);
+      const before = calls;
+      (AppState as any).currentState = 'background';
+      await act(async () => { await jest.advanceTimersByTimeAsync(60_000); });
+      expect(calls).toBe(before);
+      expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    } finally { (AppState as any).currentState = 'active'; await act(async () => harness.renderer.unmount()); }
   });
 
   it('rerenders posting-only changes even when revision, total and status text are unchanged', async () => {
