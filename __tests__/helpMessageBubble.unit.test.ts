@@ -1,6 +1,6 @@
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
-import { Animated, PanResponder } from 'react-native';
+import { Animated, Modal, PanResponder, StyleSheet } from 'react-native';
 jest.mock('@expo/vector-icons', () => ({Ionicons:'Ionicons'}));
 jest.mock('../src/features/help/helpTheme', () => ({useHelpReducedMotion:()=>false,useHelpTheme:()=>({surface:'#222222',text:'#ffffff',muted:'#999999',accent:'#3388ff',accentText:'#88bbff',outgoing:'#334455',elevated:'#333333',line:'#444444'})}));
 jest.mock('../src/features/help/components/HelpPrimitives', () => ({HelpIcon:'HelpIcon',HelpAvatar:'HelpAvatar'}));
@@ -13,12 +13,29 @@ describe('Help message native layout and reply gestures', () => {
   beforeEach(() => {
     jest.spyOn(PanResponder,'create').mockImplementation(config => ({panHandlers:config} as any));
     jest.spyOn(Animated,'spring').mockReturnValue({start:jest.fn(),stop:jest.fn(),reset:jest.fn()});
-    props = {message:{id:1,authorId:7,kind:'TEXT',text:'Проверка',createdAt:'2026-10-23T10:00:00Z',attachments:[],reactions:[]},userId:7,open:true,canInteract:true,onReply:jest.fn(),onMenu:jest.fn()};
+    props = {message:{id:1,authorId:7,kind:'TEXT',text:'Проверка',createdAt:'2026-10-23T10:00:00Z',attachments:[],reactions:[]},userId:7,open:true,canInteract:true,onReply:jest.fn(),onMenu:jest.fn(),onDismissMenu:jest.fn()};
   });
   afterEach(async () => { if(screen) await act(async()=>screen.unmount()); jest.restoreAllMocks(); });
   const node = (id:string) => screen.root.findAll(n=>n.props.testID===id)[0];
   const g = (dx:number,dy=0) => ({dx,dy,numberActiveTouches:1});
   async function render() { await act(async()=>{ screen=TestRenderer.create(React.createElement(HelpMessageBubble,props)); }); }
+  test('selection keeps bubble geometry and floats a dismissible menu outside message layout',async()=>{
+    await render();
+    const original=StyleSheet.flatten(node('help-message-bubble').props.style);
+    props.selected=true;
+    await act(async()=>screen.update(React.createElement(HelpMessageBubble,props)));
+    expect(StyleSheet.flatten(node('help-message-bubble').props.style)).toEqual(original);
+    expect(StyleSheet.flatten(node('help-message-outline').props.style)).toMatchObject({position:'absolute',borderWidth:2});
+    expect(node('help-message-menu').props.style.position).toBe('absolute');
+    node('help-message-menu-backdrop').props.onPress();
+    expect(props.onDismissMenu).toHaveBeenCalledTimes(1);
+    screen.root.findByType(Modal).props.onRequestClose();
+    expect(props.onDismissMenu).toHaveBeenCalledTimes(2);
+    expect(node('help-message-text').props.selectable).toBe(false);
+    props.selected=false;
+    await act(async()=>screen.update(React.createElement(HelpMessageBubble,props)));
+    expect(screen.root.findAll(n=>n.props.testID==='help-message-menu')).toHaveLength(0);
+  });
   test('rightward diagonal swipe replies once; vertical and leftward starts stay rejected', async () => {
     await render(); const pan=node('help-message-1').props;
     pan.onStartShouldSetPanResponderCapture();

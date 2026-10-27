@@ -1,17 +1,18 @@
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
-import { AppState, PanResponder, Platform, TextInput } from 'react-native';
+import { Animated, AppState, PanResponder, Platform, TextInput } from 'react-native';
 
 const mockRecorder = { prepareToRecordAsync: jest.fn(), record: jest.fn(), stop: jest.fn(), getStatus: jest.fn(() => ({durationMillis:1000})), uri: 'file://voice.m4a' };
 const mockPermission = jest.fn();
 const mockGetPermission = jest.fn();
 const mockAudioMode = jest.fn();
 const mockPicker = jest.fn();
+let mockReducedMotion = true;
 jest.mock('expo-audio', () => ({RecordingPresets:{HIGH_QUALITY:{}},getRecordingPermissionsAsync:(...args:any[])=>mockGetPermission(...args),requestRecordingPermissionsAsync:(...args:any[])=>mockPermission(...args),setAudioModeAsync:(...args:any[])=>mockAudioMode(...args),useAudioRecorder:()=>mockRecorder,useAudioRecorderState:()=>({isRecording:false,durationMillis:0})}));
 jest.mock('expo-document-picker', () => ({getDocumentAsync:(...args:any[])=>mockPicker(...args)}));
 jest.mock('expo-linear-gradient', () => ({LinearGradient:'LinearGradient'}));
 jest.mock('@expo/vector-icons', () => ({Ionicons:'Ionicons'}));
-jest.mock('../src/features/help/helpTheme', () => ({useHelpTheme:()=>({surface:'#222222',text:'#ffffff',muted:'#999999',accent:'#3388ff',elevated:'#333333',line:'#444444'}),useHelpReducedMotion:()=>true}));
+jest.mock('../src/features/help/helpTheme', () => ({useHelpTheme:()=>({surface:'#222222',text:'#ffffff',muted:'#999999',accent:'#3388ff',elevated:'#333333',line:'#444444'}),useHelpReducedMotion:()=>mockReducedMotion}));
 jest.mock('../src/features/help/components/HelpPrimitives', () => ({HelpIcon:'HelpIcon'}));
 jest.mock('../src/features/help/components/HelpMedia', () => ({HelpImage:'HelpImage'}));
 import { HelpComposer } from '../src/features/help/components/HelpComposer';
@@ -23,6 +24,7 @@ describe('Help composer recorder lifecycle', () => {
   let appStateChange:(state:string)=>void;
   let props:any;
   beforeEach(()=>{
+    mockReducedMotion = true;
     jest.spyOn(PanResponder,'create').mockImplementation(config=>({panHandlers:config} as any));
     Object.defineProperty(AppState,'currentState',{configurable:true,value:'active'});
     jest.spyOn(AppState,'addEventListener').mockImplementation((_, listener)=>{appStateChange=listener as any;return {remove:jest.fn()};});
@@ -37,6 +39,20 @@ describe('Help composer recorder lifecycle', () => {
   async function render(){await act(async()=>{screen=TestRenderer.create(React.createElement(HelpComposer,props));});}
   function mic(){return screen!.root.findAll(n=>typeof n.props.onPanResponderGrant==='function')[0];}
   function deferred<T>(){let resolve!:(value:T)=>void;let reject!:(reason:Error)=>void;const promise=new Promise<T>((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};}
+  test('height growth is interruptible and scoped to the composer, with reduced-motion fallback',async()=>{
+    mockReducedMotion=false;
+    const stop=jest.fn(),start=jest.fn();
+    const timing=jest.spyOn(Animated,'timing').mockReturnValue({start,stop,reset:jest.fn()});
+    await render();
+    const field=()=>screen!.root.findAll(n=>n.type===TextInput)[0];
+    await act(async()=>field().props.onContentSizeChange({nativeEvent:{contentSize:{height:66}}}));
+    expect(timing).toHaveBeenLastCalledWith(expect.anything(),expect.objectContaining({toValue:90,duration:260,useNativeDriver:false}));
+    expect(stop).toHaveBeenCalled();
+    mockReducedMotion=true;
+    await act(async()=>screen!.update(React.createElement(HelpComposer,props)));
+    const entry=screen!.root.findAll(n=>n.props.testID==='help-composer-entry')[0];
+    expect(entry.props.style.height.__getValue()).toBe(90);
+  });
   test('release while web preparation is pending releases acquired microphone without recording or sending',async()=>{
     Object.defineProperty(Platform,'OS',{configurable:true,value:'web'});
     const trackStop=jest.fn(),disconnect=jest.fn();
@@ -203,7 +219,7 @@ describe('Help composer recorder lifecycle', () => {
     await render();const field=()=>screen!.root.findByType(TextInput);
     const entry=()=>screen!.root.findAll(n=>n.props.testID==='help-composer-entry')[0];
     expect(entry().props.style).toMatchObject({minHeight:46,paddingTop:12,paddingBottom:12,paddingLeft:45,paddingRight:47});
-    expect(field().props.style).toMatchObject({fontSize:14,lineHeight:22,padding:0,borderWidth:0,includeFontPadding:false,backgroundColor:'transparent'});
+    expect(field().props.style).toMatchObject({fontSize:16,lineHeight:22,padding:0,borderWidth:0,includeFontPadding:false,backgroundColor:'transparent'});
     await act(async()=>field().props.onContentSizeChange({nativeEvent:{contentSize:{height:400}}}));
     expect(field().props.style.height).toBe(145);expect(field().props.scrollEnabled).toBe(true);
     expect(entry().props.style.paddingBottom).toBe(0);

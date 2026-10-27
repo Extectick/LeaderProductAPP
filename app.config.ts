@@ -19,6 +19,7 @@ const nativeVersion = JSON.parse(
   fs.readFileSync(path.resolve(__dirname, "app.version.json"), "utf8")
 ) as NativeVersionConfig;
 const iosBuildNumber = nativeVersion.iosBuildNumber || String(nativeVersion.versionCode);
+const developmentClient = process.env.LEADER_DEV_CLIENT === '1';
 
 const sentryRuntimeEnabled = String(process.env.EXPO_PUBLIC_SENTRY_ENABLED || "").trim().toLowerCase() === "true";
 const sentryUploadConfigured = !!(process.env.SENTRY_ORG && process.env.SENTRY_PROJECT && process.env.SENTRY_AUTH_TOKEN);
@@ -32,19 +33,19 @@ const otaUpdateUrl =
   (apiBaseUrl ? `${apiBaseUrl.replace(/\/+$/, "")}/ota/update` : undefined);
 
 export default ({ config }: ConfigContext): ExpoConfig => ({
-  name: "Лидер Продукт",
+  name: developmentClient ? "Лидер Продукт DEV" : "Лидер Продукт",
   slug: "leader-product",
   owner: "extectick",
   version: nativeVersion.versionName,
   orientation: "portrait",
   userInterfaceStyle: "automatic",
-  scheme: "leaderproduct",
+  scheme: developmentClient ? "leaderproduct-dev" : "leaderproduct",
   icon: "./assets/images/icon.png",
   runtimeVersion: {
     policy: "appVersion",
   },
   updates: {
-    enabled: Boolean(otaUpdateUrl),
+    enabled: !developmentClient && Boolean(otaUpdateUrl),
     url: otaUpdateUrl,
     checkAutomatically: "ON_LOAD",
     // Maximum network wait, not a minimum splash duration. Slow downloads
@@ -58,9 +59,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     favicon: "./assets/images/favicon.png",
   },
 
-  ios: { bundleIdentifier: "com.leaderproduct.app", buildNumber: iosBuildNumber },
+  ios: { bundleIdentifier: developmentClient ? "com.leaderproduct.app.dev" : "com.leaderproduct.app", buildNumber: iosBuildNumber },
   android: {
-    package: "com.leaderproduct.app",
+    package: developmentClient ? "com.leaderproduct.app.dev" : "com.leaderproduct.app",
     versionCode: nativeVersion.versionCode,
     allowBackup: false,
     usesCleartextTraffic: true,
@@ -103,6 +104,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   } as any,
 
   plugins: [
+    ...(developmentClient ? [["expo-dev-client", { launchMode: "launcher", addGeneratedScheme: false }] as [string, Record<string, unknown>]] : []),
     // MainApplication mods run in reverse order: initialize before tracking/React.
     "./plugins/with-dev-crash-reporting",
     "expo-router",

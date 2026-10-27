@@ -1,4 +1,39 @@
-# Help — fidelity and interaction QA, 2026-10-23
+# Help — composer and context-menu follow-up, 2026-10-23
+
+## Latest comparison target
+
+- Source visual truth: `C:/Users/836D~1/AppData/Local/Temp/codex-clipboard-05d6acca-3757-4244-97d2-e3c9e0d4bd34.png`, 471 × 614 pixels. The left Telegram card is the requested composer reference; the right card demonstrates the previous defect.
+- Implementation: actual HelpScreen via isolated `qa/help-preview`, no API writes. Browser URL: `http://127.0.0.1:8100/?screen=list&theme=light&width=393&height=852&insetTop=24&insetBottom=24`.
+- Full-view evidence: `tmp/help-design-qa/composer-comparison-full.png`. Source card crop 254 × 548 normalized to 393 × 848; implementation crop 393 × 852 from a 1265 × 920 full-page browser screenshot, CSS surface 393 × 852, 1 screenshot pixel per CSS px. The low-resolution Android task-switcher reference cannot establish exact original device font metrics.
+- Focused evidence: `tmp/help-design-qa/composer-comparison-detail.png`; the same-width crops compare the actual input shape, padding, type scale, and buttons.
+- Additional implementation captures: `composer-empty-fixed.png`, `composer-multiline-fixed.png`, `composer-long-dark-320-fixed.png`, `context-menu-fixed.png` in that directory.
+
+## Findings and comparison history
+
+1. [P2, fixed] Composer looked flat and its input type was too small in the supplied current-state screenshot. Increased input font 14 → 16, message body 14/19 → 15/21, composer radius 20 → 24, shared dock side inset 4 → 8. Resting height remains 48; new-ticket button retains matching geometry. Post-fix focused comparison shows the floating pill and larger text.
+2. [P1, fixed] Selected messages changed geometry because the border and menu participated in normal layout. Border is now a pointer-transparent absolute overlay; the anchored action menu is in a transparent Modal. Rendered message 8 remained exactly 369 × 102 before/after selection. Clicking the dismiss backdrop removed the menu; selecting Reply removed it and populated the quote preview. Android Back uses onRequestClose.
+3. [P2, fixed in implementation; native feel still requires device QA] Replaced global 180 ms LayoutAnimation with interruptible, composer-only 260 ms eased height animation, with reduced-motion fallback. The chat follows animated dock height without restarting a competing scroll animation each frame. Browser height checkpoints: empty 48, three lines 92, four lines 114, capped input 145 / outer composer 159. Maximum remains 6.5 lines with overflow fades. Automated tests cover retarget/cancel and reduced-motion behavior; browser tooling did not expose frame sampling, so no FPS claim is made.
+
+## Required fidelity surfaces
+
+- Typography: system family retained, input 16/22, body 15/21, small time labels unchanged; long content wraps without timestamp collision in tested states.
+- Spacing/layout: 48 px empty pill, 24 px radius, 8 px dock inset; 320 and 393 px surfaces exercised. Menu no longer changes message layout.
+- Colors/tokens: existing light/dark product palettes preserved; no input glow. Reference wallpaper is not copied because only the composer is in scope.
+- Images/icons: existing vector icon library preserved. Paperclip remains on the previously requested left side, no new emoji-picker feature. Fixture media is test content, not an attempted replacement for reference artwork.
+- Copy: Russian placeholder and action labels retained; icon-only copy/edit keep accessible labels.
+
+## Verification and limits
+
+- 109 Help assertions in 9 suites pass; TypeScript passes. New regressions cover menu dismissal/layout neutrality and composer animation/reduced motion.
+- Browser console error check returned no errors. Tested empty/multiline/capped input, light/dark, narrow layout, right-click menu, outside dismissal, Reply and cancel quote.
+- Physical Android keyboard, native long-press and perceived animation smoothness were not re-tested on a phone in this follow-up. Browser evidence is not native-device certification.
+- Scope-specific browser visual QA: no remaining actionable P0/P1/P2 visual findings. No deployment performed in this follow-up.
+
+final result: passed
+
+---
+
+# Historical QA before this follow-up (superseded composer dimensions below)
 
 ## Scope and evidence
 

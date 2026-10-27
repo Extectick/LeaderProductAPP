@@ -18,7 +18,7 @@ describe('Help approved prototype tokens and primitive geometry',()=>{
   test('new-ticket CTA matches empty composer dimensions and disabled controls never scale',async()=>{
     await act(async()=>{screen=TestRenderer.create(React.createElement(HelpPrimaryButton,{text:'Новое обращение',onPress:jest.fn(),disabled:true}));});
     const button=screen!.root.findByProps({accessibilityRole:'button'});
-    expect(StyleSheet.flatten(typeof button.props.style==='function' ? button.props.style({pressed:true}) : button.props.style)).toMatchObject({height:48,borderRadius:20,transform:[{scale:1}]});
+    expect(StyleSheet.flatten(typeof button.props.style==='function' ? button.props.style({pressed:true}) : button.props.style)).toMatchObject({height:48,borderRadius:24,transform:[{scale:1}]});
   });
   test('active archive uses a circular soft surface',async()=>{
     await act(async()=>{screen=TestRenderer.create(React.createElement(HelpIcon,{name:'archive',label:'Открытые обращения',active:true}));});
@@ -29,7 +29,7 @@ describe('Help approved prototype tokens and primitive geometry',()=>{
   test('dock keeps keyboard-aware padding and feather starts 8px above it',async()=>{
     await act(async()=>{screen=TestRenderer.create(React.createElement(HelpDock,{children:null}));});
     expect(StyleSheet.flatten(screen!.root.findByProps({testID:'help-dock-backdrop'}).props.style).top).toBe(-8);
-    expect(StyleSheet.flatten(screen!.root.findByProps({testID:'help-dock-backdrop'}).parent!.props.style)).toMatchObject({paddingHorizontal:4,paddingTop:8,paddingBottom:42});
+    expect(StyleSheet.flatten(screen!.root.findByProps({testID:'help-dock-backdrop'}).parent!.props.style)).toMatchObject({paddingHorizontal:8,paddingTop:8,paddingBottom:42});
   });
   test('sheet uses 22px upper corners and minimum260 instead of rounded cards',async()=>{
     await act(async()=>{screen=TestRenderer.create(React.createElement(HelpSheet,{title:'Подключить IT?',onClose:jest.fn(),children:null}));});

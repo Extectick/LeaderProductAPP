@@ -138,7 +138,11 @@ export default function UpdateGate({ children }: Props) {
   const configVersionCode = Platform.OS === 'ios' ? iosVersionCode : androidVersionCode;
   const versionCode = nativeBuildVersion || configVersionCode;
 
-  const shouldCheck = Platform.OS === 'android' || Platform.OS === 'ios';
+  // The separately installed Metro client must never offer a regular APK:
+  // it has a different package and receives its running code from the computer.
+  const developmentClient = Application.applicationId === 'com.leaderproduct.app.dev'
+    || androidPackageName === 'com.leaderproduct.app.dev';
+  const shouldCheck = !developmentClient && (Platform.OS === 'android' || Platform.OS === 'ios');
   const modalVisible = mandatoryVisible || optionalVisible;
 
   const openDownloadedApk = useCallback(

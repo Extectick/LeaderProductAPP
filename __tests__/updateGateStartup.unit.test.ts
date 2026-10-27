@@ -9,6 +9,7 @@ const mockLog = jest.fn(async () => undefined);
 const mockMount = jest.fn();
 const mockUnmount = jest.fn();
 const mockAppStateListeners = new Set<(state: string) => void>();
+let mockApplicationId = 'com.leaderproduct.app';
 let mockStatus: AppBinaryUpdateStatusContextValue;
 
 jest.mock('react-native', () => {
@@ -27,7 +28,7 @@ jest.mock('react-native', () => {
 jest.mock('@react-native-async-storage/async-storage', () => ({
   getItem: jest.fn(async () => null), setItem: jest.fn(async () => undefined), removeItem: jest.fn(async () => undefined),
 }));
-jest.mock('expo-application', () => ({ nativeApplicationVersion: '0.1.31', nativeBuildVersion: '30' }));
+jest.mock('expo-application', () => ({ nativeApplicationVersion: '0.1.31', nativeBuildVersion: '30', get applicationId() { return mockApplicationId; } }));
 jest.mock('expo-constants', () => ({ __esModule: true, default: { expoConfig: { android: { versionCode: 30 } } } }));
 jest.mock('expo-file-system/legacy', () => ({ cacheDirectory: 'file:///cache/' }));
 jest.mock('expo-intent-launcher', () => ({ startActivityAsync: jest.fn() }));
@@ -48,6 +49,7 @@ function Content() {
 }
 let screen: TestRenderer.ReactTestRenderer;
 beforeEach(() => {
+  mockApplicationId = 'com.leaderproduct.app';
   jest.useFakeTimers();
   mockCheck.mockReset(); mockLog.mockClear(); mockMount.mockClear(); mockUnmount.mockClear();
   mockCheck.mockResolvedValue({ ok: true, data: { updateAvailable: false, mandatory: false } });
@@ -60,6 +62,14 @@ afterEach(async () => {
 async function render() {
   await act(async () => { screen = TestRenderer.create(React.createElement(UpdateGate, null, React.createElement(Content))); });
 }
+test('separate Metro client never checks for or installs the ordinary APK', async () => {
+  mockApplicationId = 'com.leaderproduct.app.dev';
+  await render();
+  await act(async () => { jest.advanceTimersByTime(60_000); });
+  expect(mockCheck).not.toHaveBeenCalled();
+  expect(mockStatus.phase).toBe('disabled');
+  expectContentOnly();
+});
 function expectContentOnly() {
   expect(screen.root.findAllByType('ScreenContent' as any)).toHaveLength(1);
   expect(screen.root.findAllByType('Modal' as any)).toHaveLength(0);

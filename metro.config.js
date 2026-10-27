@@ -13,6 +13,19 @@ const config = sentryEnabled
   })
   : getDefaultConfig(__dirname);
 
+// Native builds generate thousands of headers, objects and archives. They are
+// not JS inputs; indexing their changes makes Metro crawl during a local build.
+const previousBlockList = config.resolver.blockList || [];
+const generatedDirectories = ['tmp', 'dev-builds', 'dist-help-android', 'dist-help-web'];
+config.resolver.blockList = [
+  ...(Array.isArray(previousBlockList) ? previousBlockList : [previousBlockList]),
+  /[/\\](?:\.cxx|\.gradle)[/\\]/,
+  /[/\\]android[/\\](?:app[/\\])?build[/\\]/,
+  ...generatedDirectories.map(directory => new RegExp(
+    '^' + path.resolve(__dirname, directory).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?:[/\\\\]|$)'
+  )),
+];
+
 // Expo inlines EXPO_PUBLIC_* into production bundles. Its CI embed command
 // disables --reset-cache, so dev/local/prod must not share transformed modules.
 const publicEnvironment = Object.keys(process.env)

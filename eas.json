@@ -6,7 +6,12 @@
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal"
+      "distribution": "internal",
+      "env": {
+        "LEADER_DEV_CLIENT": "1",
+        "EXPO_PUBLIC_UPDATE_CHANNEL": "dev",
+        "EXPO_PUBLIC_API_URL_DEV": "https://dev.leader-product.ru"
+      }
     },
     "preview": {
       "android": { "buildType": "apk" },
