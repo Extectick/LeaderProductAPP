@@ -113,6 +113,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     "expo-updates",
     "expo-asset",
     "expo-image",
+    ["expo-camera", { cameraPermission: "Разрешите доступ к камере, чтобы отправлять фотографии в обращениях.", recordAudioAndroid: false, barcodeScannerEnabled: false }],
+    ["expo-media-library", { photosPermission: "Разрешите доступ к фотографиям, чтобы прикреплять их к обращениям.", savePhotosPermission: "Разрешите сохранять фотографии.", granularPermissions: ["photo"] }],
     "expo-sharing",
     "expo-status-bar",
     "expo-web-browser",

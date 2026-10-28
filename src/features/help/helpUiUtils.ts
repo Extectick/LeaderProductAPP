@@ -1,17 +1,34 @@
 export const HELP_REOPEN_WINDOW = 72 * 60 * 60 * 1000;
 export const HELP_EDIT_WINDOW = 60 * 60 * 1000;
 
-export function helpDate(value: string, now = new Date()) {
-  const date = new Date(value);
+/** Calendar identity is cheap and independent of translated labels / midnight. */
+export function helpDayKey(value: string | Date): string {
+  const date = typeof value === 'string' ? new Date(value) : value;
   if (!Number.isFinite(date.getTime())) return '';
-  const day = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  if (day === today) return 'Сегодня';
-  if (day === new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime()) return 'Вчера';
-  return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', ...(date.getFullYear() !== now.getFullYear() ? { year: 'numeric' } : {}) });
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
-export const helpTime = (value: string) => new Date(value).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-export const helpCreated = (value: string) => new Date(value).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+const dayFormatter = new Intl.DateTimeFormat('ru-RU', { timeZone: 'UTC', day: 'numeric', month: 'long' });
+const yearDayFormatter = new Intl.DateTimeFormat('ru-RU', { timeZone: 'UTC', day: 'numeric', month: 'long', year: 'numeric' });
+const timeFormatter = new Intl.DateTimeFormat('ru-RU', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit' });
+const createdFormatter = new Intl.DateTimeFormat('ru-RU', { timeZone: 'UTC', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+/** Format local calendar fields with reusable formatters. Mirroring them into UTC
+ * avoids caching the device timezone: a timezone or DST change is read from each
+ * Date's local getters, without constructing an expensive Intl formatter per row. */
+function localCalendarValue(date: Date): Date {
+  const local = new Date(0);
+  local.setUTCFullYear(date.getFullYear(), date.getMonth(), date.getDate());
+  local.setUTCHours(date.getHours(), date.getMinutes(), date.getSeconds(), date.getMilliseconds());
+  return local;
+}
+export function helpDate(value: string, now = new Date()) {
+  const date = new Date(value), day = helpDayKey(date);
+  if (!day) return '';
+  if (day === helpDayKey(now)) return 'Сегодня';
+  if (day === helpDayKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1))) return 'Вчера';
+  return (date.getFullYear() !== now.getFullYear() ? yearDayFormatter : dayFormatter).format(localCalendarValue(date));
+}
+export const helpTime = (value: string) => { const date = new Date(value); return Number.isFinite(date.getTime()) ? timeFormatter.format(localCalendarValue(date)) : 'Invalid Date'; };
+export const helpCreated = (value: string) => { const date = new Date(value); return Number.isFinite(date.getTime()) ? createdFormatter.format(localCalendarValue(date)) : 'Invalid Date'; };
 export const helpInitials = (name: string) => name.split(/\s+/).filter(part => /^[\p{L}\p{N}]/u.test(part)).slice(0, 2).map(part => part[0]).join('').toUpperCase();
 export function helpColor(id: number) { return ['#447DB5', '#8468B3', '#388C85', '#B07842', '#B15B7A', '#668A45'][Math.abs(id) % 6]; }
 export function canEditHelpMessage(message: { authorId: number | null; kind: string; createdAt: string }, userId: number, now = Date.now()) {

@@ -3,9 +3,10 @@ import { jwtDecode } from 'jwt-decode';
 import { apiClient } from '@/utils/apiClient';
 import { API_BASE_URL } from '@/utils/config';
 import { getAccessToken, getAccessTokenForRequest, refreshToken } from '@/utils/tokenService';
+import type { HelpHistoryPage, HelpHistoryQuery, HelpSearchResult, HelpSyncResult } from './helpHistoryTypes';
 
 export type HelpUser = { id: number; name: string; avatarUrl: string | null };
-export type HelpAttachment = { id: string; name: string; mimeType: string; size: number; kind: 'IMAGE' | 'AUDIO' | 'FILE'; url: string };
+export type HelpAttachment = { id: string; name: string; mimeType: string; size: number; kind: 'IMAGE' | 'AUDIO' | 'FILE'; url: string; width?: number | null; height?: number | null; thumbnailDataUri?: string | null; position?: number };
 export type HelpMessage = {
   id: number; ticketId: number; sequence: number; clientMessageId: string | null;
   authorId: number | null; author: HelpUser | null; authorRole: 'USER' | 'IT' | 'SYSTEM';
@@ -18,16 +19,17 @@ export type HelpTicket = {
   id: number; number: number; title: string; status: 'OPEN' | 'CLOSED'; ownerId: number;
   createdAt: string; updatedAt: string; closedAt: string | null; sourceTicketId: number | null;
   sourceTicket: { id: number; number: number; title: string } | null; itRequested: boolean;
-  members: { userId: number; role: 'OWNER' | 'IT'; user: HelpUser }[];
+  members: { userId: number; role: 'OWNER' | 'IT'; user: HelpUser; lastReadSequence?: number }[];
   unreadCount: number; lastMessage: HelpMessage | null; canReopen: boolean; aiEnabled: false;
+  lastReadSequence?: number; lastSequence?: number;
 };
-export type HelpDetail = { ticket: HelpTicket; messages: HelpMessage[] };
+export type HelpDetail = { ticket: HelpTicket; messages: HelpMessage[] } & Partial<HelpHistoryPage>;
 export type HelpConfig = { aiEnabled: false; canManage: boolean; maxAttachments: number; maxFileBytes: number };
 export type HelpFile = { uri: string; name: string; mimeType?: string; file?: File };
 export type HelpMessageInput = { text: string; attachmentIds?: string[]; replyToId?: number; forwardedFromId?: number; clientMessageId?: string };
 export type HelpCreateInput = HelpMessageInput & { sourceTicketId?: number; clientTicketId?: string };
 export type HelpCloseInput = { text: string; rating: number; attachmentIds?: string[]; clientMessageId?: string };
-export type HelpMediaSource = { uri: string; headers?: Record<string, string> };
+export type HelpMediaSource = { uri: string; headers?: Record<string, string>; cacheKey?: string };
 export class HelpApiError extends Error {
   constructor(message: string, public status: number, public code?: string) { super(message); }
 }
@@ -80,7 +82,15 @@ export function createHelpApi(expectedUserId?: number) {
   config: () => helpRequest<HelpConfig>('/config'),
   list: (status: string, scope: string, cursor?: string | number, query = '') => helpRequest<{ tickets: HelpTicket[]; nextCursor: string | number | null }>(`/tickets?status=${status}&scope=${scope}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${query ? `&q=${encodeURIComponent(query)}` : ''}`),
   detail: (id: number) => helpRequest<HelpDetail>(`/tickets/${id}`),
-  messages: (id: number, before?: number) => helpRequest<{ messages: HelpMessage[]; nextCursor: number | null }>(`/tickets/${id}/messages?limit=100${before ? `&before=${before}` : ''}`),
+  messages: (id: number, query: HelpHistoryQuery | number = {}) => {
+    const options = typeof query === 'number' ? {before:query} : query;
+    const params = new URLSearchParams({limit:String(options.limit ?? 100)});
+    for (const name of ['before','after','around','aroundMessageId'] as const) if (options[name] !== undefined) params.set(name,String(options[name]));
+    return helpRequest<HelpHistoryPage>(`/tickets/${id}/messages?${params}`);
+  },
+  search: (id:number, query:string, before?:number) => helpRequest<HelpSearchResult>(`/tickets/${id}/search?q=${encodeURIComponent(query)}&limit=30${before ? `&before=${before}` : ''}`),
+  date: (id:number, from:string, to:string) => helpRequest<{messageId:number;sequence:number}>(`/tickets/${id}/date?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
+  sync: (id:number, after=0) => helpRequest<HelpSyncResult>(`/tickets/${id}/sync?after=${after}&limit=200`),
   create: (input: HelpCreateInput) => helpRequest<HelpDetail>('/tickets', 'POST', input),
   send: (id: number, input: HelpMessageInput) => helpRequest<HelpDetail>(`/tickets/${id}/messages`, 'POST', input),
   close: (id: number, input: HelpCloseInput) => helpRequest<HelpDetail>(`/tickets/${id}/close`, 'POST', input),
@@ -96,7 +106,7 @@ export function createHelpApi(expectedUserId?: number) {
 export const helpApi = createHelpApi();
 
 export async function uploadHelpFiles(files: HelpFile[], expectedUserId?: number): Promise<HelpAttachment[]> {
-  if (!files.length || files.length > 5) throw new Error('Можно прикрепить от 1 до 5 файлов.');
+  if (!files.length || files.length > 10) throw new Error('Можно прикрепить от 1 до 10 файлов.');
   const auth = await captureAuth(expectedUserId);
   const form = new FormData();
   for (const file of files) {
@@ -120,7 +130,7 @@ export async function loadHelpMedia(attachment: HelpAttachment, expectedUserId?:
   const uri = helpAttachmentUrl(attachment);
   let auth = await captureAuth(expectedUserId);
   await assertAuth(auth);
-  if (Platform.OS !== 'web') return { uri, headers: { Authorization: `Bearer ${auth.token}` } };
+  if (Platform.OS !== 'web') return { uri, headers: { Authorization: `Bearer ${auth.token}` }, cacheKey: `help:${auth.userId}:${attachment.id}:${API_BASE_URL}` };
   let response = await fetch(uri, { headers: { Authorization: `Bearer ${auth.token}` } });
   if (response.status === 401) {
     auth = await refreshAuth(auth);

@@ -2,6 +2,16 @@
   "name": "extectick-app",
   "main": "index.js",
   "version": "1.0.0",
+  "expo": {
+    "autolinking": {
+      "android": {
+        "buildFromSource": [
+          "expo-blur",
+          "expo-camera"
+        ]
+      }
+    }
+  },
   "scripts": {
     "start": "expo start",
     "start:dev": "cross-env NODE_ENV=development expo start",
@@ -9,6 +19,7 @@
     "start:dev-client": "node ./scripts/devClient.js start",
     "build:dev-client": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-dev-client.ps1",
     "logs:android": "adb logcat ReactNativeJS:V ReactNative:V Expo:V AndroidRuntime:E *:S",
+    "qa:help:inspect": "node ./scripts/help-ui-diagnostics.mjs",
     "start:prod": "cross-env NODE_ENV=production expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
@@ -28,7 +39,7 @@
     "test:unit": "jest --config jest.config.js",
     "check:no-legacy-types-imports": "node ./scripts/checkLegacyTypesImports.js",
     "check:sentry-config": "node ./scripts/checkSentryConfig.js",
-    "postinstall": "node ./scripts/patchExpoTaskManager.js"
+    "postinstall": "node ./scripts/patchExpoTaskManager.js && node ./scripts/patchExpoBlur.js && node ./scripts/patchExpoCamera.js"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -43,6 +54,7 @@
     "@mui/material": "^7.3.11",
     "@react-native-async-storage/async-storage": "^2.2.0",
     "@react-native-community/datetimepicker": "9.1.0",
+    "@react-native-masked-view/masked-view": "0.3.2",
     "@react-native-picker/picker": "2.11.4",
     "@sentry/react-native": "~7.11.0",
     "@shopify/flash-list": "^2.3.2",
@@ -60,6 +72,7 @@
     "expo-audio": "~57.0.3",
     "expo-background-task": "~57.0.8",
     "expo-blur": "~57.0.2",
+    "expo-camera": "~57.0.6",
     "expo-clipboard": "~57.0.1",
     "expo-constants": "~57.0.9",
     "expo-dev-client": "~57.0.10",
@@ -115,6 +128,7 @@
     "tslib": "^2.8.1"
   },
   "devDependencies": {
+    "ws": "8.21.2",
     "@aws-sdk/client-s3": "^3.1104.0",
     "@babel/core": "^7.25.2",
     "@types/jest": "^29.5.14",

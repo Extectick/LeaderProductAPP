@@ -13,6 +13,13 @@ expo-env.d.ts
 android/
 ios/
 
+# Local Expo modules are source, unlike the generated application Android tree.
+!modules/*/android/
+modules/*/android/*
+!modules/*/android/build.gradle
+!modules/*/android/src/
+!modules/*/android/src/**
+
 # Native
 .kotlin/
 *.orig.*

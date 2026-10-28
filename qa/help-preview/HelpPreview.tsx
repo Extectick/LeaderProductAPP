@@ -1,6 +1,6 @@
 /** Local visual fixture entry. Never imported by app/ or the production entry. */
 import React, { useEffect, useState } from 'react';
-import { Image, Platform, Pressable, ScrollView, Text, View, useWindowDimensions } from 'react-native';
+import { Image, Platform, Pressable, ScrollView, StatusBar, Text, View, useWindowDimensions } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import { SafeAreaInsetsContext, SafeAreaProvider } from 'react-native-safe-area-context';
 import { ThemeProvider, useTheme } from '../../context/ThemeContext';
@@ -11,6 +11,8 @@ import { HelpIcon } from '../../src/features/help/components/HelpPrimitives';
 import { useHelpTheme } from '../../src/features/help/helpTheme';
 import type { HelpAttachment, HelpMessage } from '../../src/features/help/helpApi';
 import HelpScreen from '../../src/features/help/HelpScreen';
+import {helpDevActions} from '../../src/features/help/helpDiagnostics';
+import { installHelpCacheProbe } from './cacheProbe';
 
 export const OWNER = { id: 101, name: 'Вы', avatarUrl: null };
 export const IT = { id: 202, name: 'Анна · IT', avatarUrl: null };
@@ -58,6 +60,8 @@ export const fixtures = [
 
 function Preview() {
   const { theme, setTheme } = useTheme(); const c = useHelpTheme();
+  useEffect(() => installHelpCacheProbe(), []);
+  useEffect(()=>helpDevActions('fixture.theme',{'fixture.theme':value=>{if(value==='dark'||value==='light')void setTheme(value);}}));
   const windowSize = useWindowDimensions();
   const [messages, setMessages] = useState(fixtures), [value, setValue] = useState(''), [files, setFiles] = useState<HelpLocalFile[]>([]);
   const [mode, setMode] = useState<HelpComposeMode>('message'), [rating, setRating] = useState(0), [selected, setSelected] = useState<number | null>(null), [quote, setQuote] = useState<HelpMessage | null>(null);
@@ -82,7 +86,7 @@ function Preview() {
   useEffect(() => { if (Platform.OS !== 'web') { void setTheme('dark'); return; } const requested = params.get('theme'); if (requested === 'light' || requested === 'dark') void setTheme(requested); const w = Number(params.get('width')); if (w >= 280 && w <= 600) setWidth(w); if (params.get('composer') === 'long') setValue(Array.from({ length: 10 }, (_, i) => `${i + 1}. Проверка длинного текста в поле ввода.`).join('\n')); }, []);
   // No browser toolbar or fake insets on native: use the full real screen,
   // OS keyboard, safe area, PanResponder gestures and expo-audio recorder.
-  if (Platform.OS !== 'web') return <View testID="help-qa-surface" style={{ flex: 1, width: windowSize.width, backgroundColor: c.background }}><HelpScreen /></View>;
+  if (Platform.OS !== 'web') return <View testID="help-qa-surface" style={{ flex: 1, width: windowSize.width, backgroundColor: c.background }}><StatusBar barStyle={c.dark ? 'light-content' : 'dark-content'}/><HelpScreen /></View>;
   const button = (label: string, onPress: () => void) => <Pressable key={label} accessibilityRole="button" onPress={onPress} style={{ backgroundColor: c.elevated, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7 }}><Text style={{ color: c.text, fontSize: 12 }}>{label}</Text></Pressable>;
   return <View style={{ ...(fixedHeight ? { flexGrow: 1, flexShrink: 0, minHeight: fixedHeight + toolbarHeight, overflow: 'visible' as const } : { flex: 1 }), backgroundColor: c.background, alignItems: 'center' }}>
     <View onLayout={event => setToolbarHeight(event.nativeEvent.layout.height)} style={{ width: '100%', flexShrink: 0, padding: 8, borderBottomWidth: 1, borderColor: c.line, gap: 6 }}>

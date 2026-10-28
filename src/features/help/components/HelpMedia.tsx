@@ -1,5 +1,8 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useContext, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Image, Modal, PanResponder, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions, type ImageStyle, type StyleProp } from 'react-native';
+import { Image as CachedImage } from 'expo-image';
+import { HelpMediaLoadingContext } from '../helpMediaLoading';
+import { useHelpAudioPlayback, type HelpAudioPlaybackController } from '../HelpAudioPlayback';
 import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
@@ -10,25 +13,42 @@ import { useHelpTheme, useHelpReducedMotion } from '../helpTheme';
 import { helpDuration, helpFileSize } from '../helpUiUtils';
 import { HelpIcon } from './HelpPrimitives';
 
-export type HelpMediaSource = { uri: string; headers?: Record<string, string> };
+export type HelpMediaSource = { uri: string; headers?: Record<string, string>; cacheKey?:string };
 export type HelpImageOrigin = { x: number; y: number; width: number; height: number };
 export type ResolveHelpMedia = (attachment: HelpAttachment) => Promise<HelpMediaSource>;
 // Fixed decorative player iconography from the approved prototype, not measured
 // file amplitude. Only the clipping position represents real playback progress.
 const decorativeTrackBars = [9, 15, 11, 23, 30, 18, 12, 26, 34, 21, 15, 10, 19, 29, 24, 13, 8, 17, 31, 26, 16, 22, 32, 19, 11, 16, 25, 13];
 export function HelpImage({ attachment, resolve, style, resizeMode = 'cover', onAspectRatio }: { attachment: HelpAttachment; resolve: ResolveHelpMedia; style?: StyleProp<ImageStyle>; resizeMode?: 'cover' | 'contain'; onAspectRatio?: (ratio: number) => void }) {
-  const [source, setSource] = useState<HelpMediaSource>(); const [error, setError] = useState(false); const c = useHelpTheme();
-  useEffect(() => { let alive = true; setSource(undefined); setError(false); void resolve(attachment).then(value => { if (alive) setSource(value); }).catch(() => { if (alive) setError(true); }); return () => { alive = false; }; }, [attachment.id, resolve]);
-  return source && !error ? <Image accessibilityLabel={attachment.name} source={source} style={style} resizeMode={resizeMode} onLoad={event => {
-    // RN native supplies source dimensions; RN Web forwards a DOM load Event.
-    // Read its image target's intrinsic size, never the CSS display dimensions.
-    type LoadedImage = { naturalWidth?: number; naturalHeight?: number };
-    const loaded = event as unknown as { nativeEvent?: { source?: { width?: number; height?: number }; target?: LoadedImage; currentTarget?: LoadedImage }; target?: LoadedImage; currentTarget?: LoadedImage };
-    const target = loaded.nativeEvent?.target ?? loaded.nativeEvent?.currentTarget ?? loaded.target ?? loaded.currentTarget;
-    const width = loaded.nativeEvent?.source?.width ?? target?.naturalWidth ?? 0;
-    const height = loaded.nativeEvent?.source?.height ?? target?.naturalHeight ?? 0;
-    if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) onAspectRatio?.(width / height);
-  }} onError={() => setError(true)} /> : <View style={[style, { alignItems: 'center', justifyContent: 'center', backgroundColor: c.elevated }]}>{error ? <Text style={{ color: c.muted }}>Не удалось загрузить</Text> : <ActivityIndicator color={c.accent} />}</View>;
+  const proximity=useContext(HelpMediaLoadingContext),c=useHelpTheme(),reduced=useHelpReducedMotion();
+  const allowOriginal=proximity!=='deferred';
+  const identity=useRef({id:attachment.id,resolve});identity.current={id:attachment.id,resolve};
+  const [result,setResult]=useState<{id:string;resolver:ResolveHelpMedia;source?:HelpMediaSource;error?:boolean;loaded?:boolean}>();
+  const current=result?.id===attachment.id && result.resolver===resolve?result:undefined;
+  const thumbnail=attachment.thumbnailDataUri && /^data:image\/(jpeg|webp|png);base64,/.test(attachment.thumbnailDataUri) && attachment.thumbnailDataUri.length<=3072 ? attachment.thumbnailDataUri : undefined;
+  useEffect(()=>{
+    if(!allowOriginal)return;
+    let alive=true;
+    void resolve(attachment).then(source=>{if(alive)setResult(previous=>previous?.id===attachment.id && previous.resolver===resolve && previous.source?.uri===source.uri?previous:{id:attachment.id,resolver:resolve,source});})
+      .catch(()=>{if(alive)setResult({id:attachment.id,resolver:resolve,error:true});});
+    return()=>{alive=false;};
+  },[attachment.id,resolve,allowOriginal]);
+  const loaded=(event:any)=>{
+    if(identity.current.id!==attachment.id||identity.current.resolve!==resolve)return;
+    setResult(previous=>previous?.id===attachment.id && previous.resolver===resolve?{...previous,loaded:true}:previous);
+    const native=event.source?undefined:event.nativeEvent;
+    const target=native?.target??native?.currentTarget??event.target??event.currentTarget;
+    const width=event.source?.width??native?.source?.width??target?.naturalWidth??0;
+    const height=event.source?.height??native?.source?.height??target?.naturalHeight??0;
+    if(Number.isFinite(width)&&Number.isFinite(height)&&width>0&&height>0)onAspectRatio?.(width/height);
+  };
+  const failed=()=>{if(identity.current.id===attachment.id&&identity.current.resolve===resolve)setResult({id:attachment.id,resolver:resolve,error:true});};
+  const original=current?.source && !current.error && (proximity!=='deferred'||current.loaded) ? current.source : undefined;
+  return <View testID="help-progressive-image" style={[style,{overflow:'hidden',backgroundColor:c.elevated}]}>
+    {thumbnail ? <Image testID="help-image-preview" source={{uri:thumbnail}} resizeMode={resizeMode} style={StyleSheet.absoluteFill} blurRadius={2}/> : null}
+    {original ? Platform.OS==='web' ? <Image accessibilityLabel={attachment.name} source={original} style={StyleSheet.absoluteFill} resizeMode={resizeMode} onLoad={loaded} onError={failed}/> : <CachedImage testID="help-image-original" accessibilityLabel={attachment.name} source={original} style={StyleSheet.absoluteFill} contentFit={resizeMode} placeholder={thumbnail?{uri:thumbnail}:undefined} placeholderContentFit={resizeMode} cachePolicy="memory-disk" recyclingKey={original.cacheKey??attachment.id} priority={proximity==='visible'?'high':'low'} transition={reduced?0:120} onLoad={loaded} onError={failed}/> : null}
+    {!current?.loaded ? <View pointerEvents="none" style={[StyleSheet.absoluteFill,{alignItems:'center',justifyContent:'center'}]}>{current?.error ? <Ionicons name="image-outline" accessibilityLabel="Изображение недоступно" size={24} color={c.muted}/> : proximity!=='deferred' ? <View style={{padding:9,borderRadius:22,backgroundColor:'#00000038'}}><ActivityIndicator color="#FFFFFF"/></View> : null}</View> : null}
+  </View>;
 }
 export async function downloadHelpAttachment(attachment: HelpAttachment, resolve: ResolveHelpMedia) {
   const source = await resolve(attachment);
@@ -46,20 +66,75 @@ export async function downloadHelpAttachment(attachment: HelpAttachment, resolve
     if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(result.uri, { mimeType: attachment.mimeType, dialogTitle: 'Сохранить файл' });
   }
 }
-export function HelpAudio({ attachment, resolve, onError, captionRight }: { attachment: HelpAttachment; resolve: ResolveHelpMedia; onError: (text: string) => void; captionRight?: React.ReactNode }) {
-  const c = useHelpTheme(); const player = useAudioPlayer(null, { updateInterval: 100 }); const status = useAudioPlayerStatus(player);
-  const [ready, setReady] = useState(false); const [progress, setProgress] = useState(0); const [width, setWidth] = useState(180);
-  const alive = useRef(true); const report = useRef(onError); report.current = onError;
+type HelpAudioProps = { attachment: HelpAttachment; resolve: ResolveHelpMedia; onError: (text: string) => void; captionRight?: React.ReactNode; messageId?: number; author?: string; createdAt?: string; ticketId?: number };
+export function HelpAudio(props: HelpAudioProps) {
+  const playback = useHelpAudioPlayback();
+  const identity = `${props.ticketId ?? ''}:${props.messageId ?? ''}:${props.attachment.id}`;
+  // Keep native hooks outside the shared path: recycled rows must not allocate
+  // players or download audio merely by entering the rendering window.
+  return playback && props.messageId !== undefined
+    ? <SharedHelpAudio key={identity} {...props} messageId={props.messageId} playback={playback}/>
+    : <StandaloneHelpAudio key={identity} {...props}/>;
+}
+function SharedHelpAudio(props: HelpAudioProps & { messageId: number; playback: HelpAudioPlaybackController }) {
+  const { attachment, resolve, messageId, author = '', createdAt = '', ticketId, playback } = props;
+  const active = playback.current?.attachment.id === attachment.id && playback.current.messageId === messageId && (ticketId === undefined || playback.current.ticketId === undefined || playback.current.ticketId === ticketId);
+  return <HelpAudioView key={active ? 'active' : 'inactive'} {...props}
+    ready={active && playback.ready} loading={active && playback.loading} playing={active && playback.playing}
+    currentTime={active ? playback.positionSeconds : 0} duration={active ? playback.durationSeconds : 0} rate={playback.speed}
+    onPlay={() => active ? playback.toggle() : playback.play({ attachment, messageId, author, createdAt, ticketId }, resolve)}
+    onSeek={async seconds => { if (active) await playback.seek(seconds); }}/>
+}
+function StandaloneHelpAudio(props: HelpAudioProps) {
+  const { attachment, resolve } = props;
+  const player = useAudioPlayer(null, { updateInterval: 100 }), status = useAudioPlayerStatus(player);
+  const [prepared, setPrepared] = useState(false), [loading, setLoading] = useState(false);
+  const lifecycle = useRef({ mounted: false, generation: 0, prepared: false, pending: false });
+  const resolver = useRef(resolve); resolver.current = resolve;
+  const report = useRef(props.onError); report.current = props.onError;
+  useEffect(() => {
+    const life = lifecycle.current; life.mounted = true; life.prepared = false; life.pending = false;
+    setPrepared(false); setLoading(false);
+    return () => {
+      life.mounted = false; life.generation++; life.pending = false;
+      if (life.prepared) {
+        try { player.pause(); player.replace(null); } catch { /* Native hook owns final disposal. */ }
+      }
+      life.prepared = false;
+    };
+  }, [player, resolve]);
+  const play = async () => {
+    const life = lifecycle.current, generation = life.generation;
+    const current = () => life.mounted && life.generation === generation && resolver.current === resolve;
+    if (!current() || life.pending) return;
+    try {
+      if (!life.prepared) {
+        life.pending = true; setLoading(true);
+        const source = await resolve(attachment);
+        if (!current()) return;
+        player.replace(source); life.prepared = true; setPrepared(true); player.play();
+      } else if (status.playing) player.pause();
+      else {
+        if (status.didJustFinish) await player.seekTo(0);
+        if (current()) player.play();
+      }
+    } catch { if (current()) report.current('Не удалось воспроизвести голосовое сообщение'); }
+    finally { if (current()) { life.pending = false; setLoading(false); } }
+  };
+  return <HelpAudioView {...props} ready={prepared && status.isLoaded !== false} loading={loading || (prepared && status.isLoaded === false)}
+    playing={prepared && status.playing} currentTime={prepared ? status.currentTime : 0} duration={prepared ? status.duration : 0} rate={status.playbackRate}
+    onPlay={play} onSeek={async seconds => { if (lifecycle.current.mounted && lifecycle.current.prepared) await player.seekTo(seconds); }}/>
+}
+type HelpAudioViewProps = Pick<HelpAudioProps, 'attachment' | 'captionRight' | 'onError'> & { ready: boolean; loading: boolean; playing: boolean; currentTime: number; duration: number; rate: number; onPlay: () => Promise<void>; onSeek: (seconds: number) => Promise<void> };
+function HelpAudioView({ attachment, captionRight, onError, ready, loading, playing, currentTime, duration, rate, onPlay, onSeek }: HelpAudioViewProps) {
+  const c = useHelpTheme();
+  const [progress, setProgress] = useState(0); const [width, setWidth] = useState(180);
+  const alive = useRef(true); const latest = useRef({ onError, onPlay, onSeek, ready }); latest.current = { onError, onPlay, onSeek, ready };
   const seekVersion = useRef(0); const seeking = useRef(false);
   const clock = useRef({ time: 0, at: 0, playing: false, duration: 0, rate: 1 });
   useEffect(() => { alive.current = true; return () => { alive.current = false; seekVersion.current++; }; }, []);
   useEffect(() => {
-    let current = true; setReady(false); setProgress(0); seekVersion.current++; seeking.current = false;
-    void resolve(attachment).then(source => { if (current) { player.replace(source); setReady(true); } }).catch(() => { if (current) report.current('Не удалось загрузить голосовое сообщение'); });
-    return () => { current = false; };
-  }, [attachment.id, resolve, player]);
-  useEffect(() => {
-    clock.current = { time: status.currentTime || 0, at: performance.now(), playing: status.playing, duration: status.duration || 0, rate: status.playbackRate || 1 };
+    clock.current = { time: currentTime || 0, at: performance.now(), playing, duration: duration || 0, rate: rate || 1 };
     let frame: number | undefined;
     const update = (now: number) => {
       const value = clock.current;
@@ -70,27 +145,27 @@ export function HelpAudio({ attachment, resolve, onError, captionRight }: { atta
     };
     update(performance.now());
     return () => { if (frame !== undefined) cancelAnimationFrame(frame); };
-  }, [status.playing, status.currentTime, status.duration, status.playbackRate]);
+  }, [playing, currentTime, duration, rate]);
   const seekTime = async (time: number) => {
-    if (!ready || !status.duration) return;
-    const target = Math.max(0, Math.min(status.duration, time)); const version = ++seekVersion.current;
-    seeking.current = true; setProgress(target / status.duration);
-    try { await player.seekTo(target); if (alive.current && version === seekVersion.current) clock.current = { ...clock.current, time: target, at: performance.now() }; }
-    catch { if (alive.current && version === seekVersion.current) report.current('Не удалось перемотать аудио'); }
+    if (!alive.current || !latest.current.ready || !duration || !Number.isFinite(time)) return;
+    const target = Math.max(0, Math.min(duration, time)); const version = ++seekVersion.current;
+    seeking.current = true; setProgress(target / duration);
+    try { await latest.current.onSeek(target); if (alive.current && version === seekVersion.current) clock.current = { ...clock.current, time: target, at: performance.now() }; }
+    catch { if (alive.current && version === seekVersion.current) latest.current.onError('Не удалось перемотать аудио'); }
     finally { if (version === seekVersion.current) seeking.current = false; }
   };
-  const seek = (x: number) => { if (width > 0) void seekTime(x / width * (status.duration || 0)); };
-  const play = async () => { try { if (status.playing) player.pause(); else { if (status.didJustFinish) await player.seekTo(0); if (alive.current) player.play(); } } catch { if (alive.current) report.current('Не удалось воспроизвести аудио'); } };
+  const seek = (x: number) => { if (width > 0) void seekTime(x / width * (duration || 0)); };
+  const play = async () => { if (!alive.current) return; try { await latest.current.onPlay(); } catch { if (alive.current) latest.current.onError('Не удалось воспроизвести аудио'); } };
   return <View testID="help-audio" style={{ flexDirection: 'row', alignItems: 'center', gap: 10, minWidth: 218, maxWidth: 320, paddingVertical: 0 }}>
-    <HelpIcon name={status.playing ? 'pause' : 'play'} label={status.playing ? 'Пауза' : 'Воспроизвести голосовое сообщение'} disabled={!ready} color="#FFF" size={20} style={{ backgroundColor: c.accentText, width: 36, height: 36, borderRadius: 18 }} onPress={() => void play()} />
-    <View style={{ flex: 1, minWidth: 0 }}><View testID="help-audio-seek" accessible accessibilityRole="adjustable" accessibilityLabel="Позиция голосового сообщения" accessibilityValue={{ min: 0, max: Math.floor(status.duration || 0), now: Math.floor(progress * (status.duration || 0)) }} accessibilityActions={[{ name: 'increment', label: 'Вперёд на 5 секунд' }, { name: 'decrement', label: 'Назад на 5 секунд' }]} onAccessibilityAction={e => { if (['increment', 'decrement'].includes(e.nativeEvent.actionName)) void seekTime(progress * status.duration + (e.nativeEvent.actionName === 'increment' ? 5 : -5)); }} onLayout={e => setWidth(e.nativeEvent.layout.width)} onStartShouldSetResponder={() => ready} onMoveShouldSetResponder={() => ready} onResponderGrant={e => seek(e.nativeEvent.locationX)} onResponderMove={e => seek(e.nativeEvent.locationX)} style={{ height: 28, justifyContent: 'center', overflow: 'hidden', borderRadius: 5 }}>
+    {loading ? <Pressable accessibilityRole="button" accessibilityLabel="Загрузка голосового сообщения" accessibilityState={{ busy: true }} onPress={() => void play()} style={{ backgroundColor: c.accentText, width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator testID="help-audio-loading" size="small" color="#FFF"/></Pressable> : <HelpIcon name={playing ? 'pause' : 'play'} label={playing ? 'Пауза' : 'Воспроизвести голосовое сообщение'} color="#FFF" size={20} style={{ backgroundColor: c.accentText, width: 36, height: 36, borderRadius: 18 }} onPress={() => void play()} />}
+    <View style={{ flex: 1, minWidth: 0 }}><View testID="help-audio-seek" accessible accessibilityRole="adjustable" accessibilityLabel="Позиция голосового сообщения" accessibilityState={{ disabled: !ready }} accessibilityValue={{ min: 0, max: Math.floor(duration || 0), now: Math.floor(progress * (duration || 0)) }} accessibilityActions={[{ name: 'increment', label: 'Вперёд на 5 секунд' }, { name: 'decrement', label: 'Назад на 5 секунд' }]} onAccessibilityAction={e => { if (['increment', 'decrement'].includes(e.nativeEvent.actionName)) void seekTime(progress * duration + (e.nativeEvent.actionName === 'increment' ? 5 : -5)); }} onLayout={e => setWidth(e.nativeEvent.layout.width)} onStartShouldSetResponder={() => ready} onMoveShouldSetResponder={() => ready} onResponderGrant={e => seek(e.nativeEvent.locationX)} onResponderMove={e => seek(e.nativeEvent.locationX)} style={{ height: 28, justifyContent: 'center', overflow: 'hidden', borderRadius: 5 }}>
       <View testID="help-audio-decorative-track" pointerEvents="none" aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 3 }}>
         {decorativeTrackBars.map((height, i) => <View key={i} style={{ width: 3, height: height * .65, borderRadius: 3, backgroundColor: c.accentText, opacity: .3 }} />)}
       </View>
       <View testID="help-audio-progress" pointerEvents="none" aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ position: 'absolute', left: 0, top: 0, height: 28, width: `${progress * 100}%`, overflow: 'hidden' }}>
         <View style={{ width, height: 28, flexDirection: 'row', alignItems: 'center', gap: 3 }}>{decorativeTrackBars.map((height, i) => <View key={i} style={{ width: 3, height: height * .65, borderRadius: 3, backgroundColor: c.accentText }} />)}</View>
       </View>
-    </View><View testID="help-audio-caption" style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, minHeight: 12 }}><Text numberOfLines={1} style={{ fontSize: 10, lineHeight: 12, color: c.muted, fontVariant: ['tabular-nums'] }}>{helpDuration(progress * (status.duration || 0))} / {status.duration ? helpDuration(status.duration) : helpFileSize(attachment.size)}</Text>{captionRight}</View></View>
+    </View><View testID="help-audio-caption" style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, minHeight: 12 }}><Text numberOfLines={1} style={{ fontSize: 10, lineHeight: 12, color: c.muted, fontVariant: ['tabular-nums'] }}>{helpDuration(progress * (duration || 0))} / {duration ? helpDuration(duration) : helpFileSize(attachment.size)}</Text>{captionRight}</View></View>
   </View>;
 }
 export function HelpGallery({ attachments, initialIndex, resolve, onClose, onError, origin }: { attachments: HelpAttachment[]; initialIndex: number; resolve: ResolveHelpMedia; onClose: () => void; onError: (text: string) => void; origin?: HelpImageOrigin }) {

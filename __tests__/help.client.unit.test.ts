@@ -121,3 +121,23 @@ test('media 401 refresh never fetches again with another account bearer', async 
   await expect(loadHelpMedia({url:'/help/attachments/private/content'} as HelpAttachment,1)).rejects.toMatchObject({code:'HELP_ACCOUNT_CHANGED'});
   expect(global.fetch).toHaveBeenCalledTimes(1);
 });
+test('native image cache keys include account and API scope', async () => {
+  Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});
+  const attachment={id:'photo-1',url:'/help/attachments/photo-1/content'} as HelpAttachment;
+  expect(await loadHelpMedia(attachment,1)).toMatchObject({cacheKey:'help:1:photo-1:https://dev.example.test'});
+  (getAccessTokenForRequest as jest.Mock).mockResolvedValue(jwt(2));(getAccessToken as jest.Mock).mockResolvedValue(jwt(2));
+  expect(await loadHelpMedia(attachment,2)).toMatchObject({cacheKey:'help:2:photo-1:https://dev.example.test'});
+});
+test('upload accepts ten attachments in original order and rejects eleven before transport', async () => {
+  Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});
+  const files=Array.from({length:10},(_,i)=>({uri:`file://photo-${i}`,name:`photo-${i}.jpg`,mimeType:'image/jpeg'}));
+  const append=jest.spyOn(FormData.prototype,'append').mockImplementation(()=>{});
+  (apiClient as jest.Mock).mockReset().mockResolvedValue({ok:true,status:200,data:{attachments:[]}});
+  try {
+    await uploadHelpFiles(files,1);
+    expect(append.mock.calls.map(call=>(call[1] as unknown as {name:string}).name)).toEqual(files.map(file=>file.name));
+    expect(apiClient).toHaveBeenCalledTimes(1);
+    await expect(uploadHelpFiles([...files,files[0]],1)).rejects.toThrow('от 1 до 10');
+    expect(apiClient).toHaveBeenCalledTimes(1);
+  }finally{append.mockRestore();}
+});
