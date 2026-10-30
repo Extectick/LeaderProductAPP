@@ -74,3 +74,45 @@ test('a cached completed answer has no guessed height or absolute measurement pa
   expect(view.root.findAllByProps({ testID: 'help-assistant-body' })[0].props.onLayout).toBeUndefined();
   await act(async () => view.unmount());
 });
+
+test('first streamed words keep the reasoning height and do not restart a fade', async () => {
+  let view!: TestRenderer.ReactTestRenderer;
+  let current = message;
+  await act(async () => { view = TestRenderer.create(React.createElement(HelpAssistantMessage, { message: current })); });
+  try {
+    const measure = async (height: number) => act(async () => {
+      view.root.findAllByProps({ testID: 'help-assistant-body' })[0].props.onLayout({ nativeEvent: { layout: { height } } });
+    });
+    await measure(140);
+    current = { ...message, text: 'Начнём', assistantRun: { ...message.assistantRun!, status: 'streaming' } };
+    await act(async () => view.update(React.createElement(HelpAssistantMessage, { message: current })));
+    await measure(62);
+    await measure(84);
+    const row = view.root.findAllByProps({ testID: 'help-assistant-message' })[0];
+    expect(row.props.style.height).toBe(140);
+    expect(row.props.style.opacity).toBeUndefined();
+    await act(async () => view.update(React.createElement(HelpAssistantMessage, { message: current })));
+    expect(StyleSheet.flatten(view.root.findAllByProps({ testID: 'help-assistant-surface' })[0].props.style).height).toBe(140);
+  } finally { await act(async () => view.unmount()); }
+});
+
+test('the timestamp follows the animated bottom outside the clipped text', async () => {
+  let view!: TestRenderer.ReactTestRenderer;
+  const current = { ...message, text: 'Текст ответа', assistantRun: { ...message.assistantRun!, status: 'streaming' as const } };
+  await act(async () => { view = TestRenderer.create(React.createElement(HelpAssistantMessage, { message: current })); });
+  try {
+    const measure = async (height: number) => {
+      await act(async () => view.root.findAllByProps({ testID: 'help-assistant-body' })[0].props.onLayout({ nativeEvent: { layout: { height } } }));
+      // The test mock reruns UI worklets on render.
+      await act(async () => view.update(React.createElement(HelpAssistantMessage, { message: current })));
+    };
+    await measure(84);
+    const clip = view.root.findAllByProps({ testID: 'help-assistant-content-clip' })[0];
+    expect(clip.findAllByProps({ testID: 'help-assistant-time' })).toHaveLength(0);
+    expect(clip.props.style.bottom).toBe(28);
+    const stamp = () => StyleSheet.flatten(view.root.findAllByProps({ testID: 'help-assistant-time' })[0].props.style);
+    expect(stamp().transform).toEqual([{ translateY: 60 }]);
+    await measure(106);
+    expect(stamp().transform).toEqual([{ translateY: 82 }]);
+  } finally { await act(async () => view.unmount()); }
+});
