@@ -195,20 +195,18 @@ describe('Help message native layout and reply gestures', () => {
     expect(image.props.onAspectRatio).toBeUndefined();
     expect(image.parent!.props.style.width/image.parent!.props.style.height).toBeCloseTo(2);
   });
-  test('short outgoing text stays on the timestamp line after Android fractional width rounding', async () => {
+  test('short outgoing text keeps its first-paint timestamp through Android fractional row widths', async () => {
     props.message={...props.message,text:'132'};
     await render();
-    await act(async()=>{
-      node('help-message-1').props.onLayout({nativeEvent:{layout:{width:388}}});
-      node('help-text-layout').props.onLayout({nativeEvent:{layout:{width:68}}});
-      node('help-message-text').props.onTextLayout({nativeEvent:{lines:[{x:0,width:25.714286}]}});
-      node('help-message-time').props.onLayout({nativeEvent:{layout:{width:43.428574}}});
-    });
-    const minWidth=StyleSheet.flatten(node('help-message-bubble').parent!.props.style).minWidth;
-    expect(minWidth).toBe(101);
-    await act(async()=>node('help-text-layout').props.onLayout({nativeEvent:{layout:{width:minWidth-22-.19}}}));
-    expect(node('help-message-time').props.style.position).toBe('absolute');
-    expect(node('help-message-time').props.style.bottom).toBe(8);
+    const firstStamp=StyleSheet.flatten(node('help-message-time').props.style);
+    expect(firstStamp).toMatchObject({position:'absolute',bottom:8,right:11});
+    expect(node('help-message-stamp-reserve')).toBeDefined();
+    expect(node('help-message-text').props.onTextLayout).toBeUndefined();
+    expect(node('help-text-layout').props.onLayout).toBeUndefined();
+    for(const width of [388,387.81]) {
+      await act(async()=>node('help-message-1').props.onLayout({nativeEvent:{layout:{width}}}));
+      expect(StyleSheet.flatten(node('help-message-time').props.style)).toEqual(firstStamp);
+    }
   });
   test('audio-only timestamp is part of audio caption, not a separate footer', async () => {
     props.message={...props.message,text:'',attachments:[{id:'voice',kind:'AUDIO',name:'Voice'}]};
