@@ -49,7 +49,7 @@ jobs:
       - run: npm run test:unit -- --runInBand __tests__/serviceRoutes.unit.test.ts __tests__/servicesOffline.unit.test.ts __tests__/notFound.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/help.client.unit.test.ts __tests__/helpUiLogic.unit.test.ts __tests__/helpScreen.unit.test.ts __tests__/helpSocket.unit.test.ts __tests__/helpServiceFocus.unit.test.ts __tests__/helpComposer.unit.test.ts __tests__/helpMessageBubble.unit.test.ts __tests__/helpPrimitives.unit.test.ts __tests__/helpMedia.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/otaManifestConfig.unit.test.ts
-      - run: npm run test:unit -- --runInBand __tests__/draftReview.unit.test.ts
+      - run: npm run test:unit -- --runInBand __tests__/draftReview.unit.test.ts __tests__/clientOrderMarkup.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/orderSharing.unit.test.ts __tests__/legacyOrderRecovery.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/orderHeaderActions.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/stockProductsScreen.unit.test.ts __tests__/stockProducts.unit.test.ts __tests__/stockProductRow.unit.test.ts __tests__/warehouseBalances.unit.test.ts __tests__/stockIncomingCost.unit.test.ts __tests__/stockMovementRow.unit.test.ts __tests__/receiptPresentation.unit.test.ts __tests__/salesPresentation.unit.test.ts __tests__/stockTabs.unit.test.ts __tests__/stockTabsPager.unit.test.ts __tests__/stockCache.unit.test.ts __tests__/warehouseSelection.unit.test.ts __tests__/filterLookupPickerPanel.unit.test.ts __tests__/clientOrdersShared.unit.test.ts
