@@ -167,6 +167,38 @@ describe('Help message native layout and reply gestures', () => {
     await act(async()=>{pan.onPanResponderGrant(null,g(20));pan.onPanResponderMove(null,g(100));pan.onPanResponderMove(null,g(65));pan.onPanResponderRelease(null,g(65));});
     expect(props.onReply).not.toHaveBeenCalled();
   });
+  test('rightward drag moves the avatar and bubble together and fills the new reply indicator at 50dp',async()=>{
+    props.message={...props.message,authorId:8};await render();
+    const pan=node('help-message-1').props,content=node('help-message-swipe-content');
+    expect(content.findAll(n=>n.props.testID==='help-message-avatar-slot').length).toBeGreaterThan(0);
+    expect(content.findAll(n=>n.props.testID==='help-message-bubble').length).toBeGreaterThan(0);
+    const translation=StyleSheet.flatten(content.props.style).transform[0].translateX as Animated.Value;
+    pan.onStartShouldSetPanResponderCapture();
+    await act(async()=>{pan.onPanResponderGrant(null,g(18));pan.onPanResponderMove(null,g(35));});
+    expect((translation as any).__getValue()).toBe(35);
+    const fill=StyleSheet.flatten(node('help-reply-swipe-fill').props.style).transform[0].scale;
+    expect(fill.__getValue()).toBeCloseTo(.5);
+    await act(async()=>pan.onPanResponderMove(null,g(60)));
+    expect(fill.__getValue()).toBe(1);
+    expect(node('help-reply-swipe-icon').props.name).toBe('arrow-undo');
+    await act(async()=>pan.onPanResponderMove(null,g(200)));
+    expect((translation as any).__getValue()).toBe(80);
+    await act(async()=>pan.onPanResponderRelease(null,g(200)));
+    expect(props.onReply).toHaveBeenCalledTimes(1);
+    expect(Animated.spring).toHaveBeenLastCalledWith(translation,expect.objectContaining({toValue:0,useNativeDriver:true,isInteraction:false}));
+  });
+  test('a terminated swipe cannot reply on a late release and recycled messages reset the drag',async()=>{
+    await render();const pan=node('help-message-1').props;
+    const translation=StyleSheet.flatten(node('help-message-swipe-content').props.style).transform[0].translateX as any;
+    pan.onStartShouldSetPanResponderCapture();
+    await act(async()=>{pan.onPanResponderGrant(null,g(20));pan.onPanResponderMove(null,g(70));pan.onPanResponderTerminate();pan.onPanResponderRelease(null,g(70));});
+    expect(props.onReply).not.toHaveBeenCalled();
+    pan.onStartShouldSetPanResponderCapture();await act(async()=>pan.onPanResponderGrant(null,g(40)));
+    props.message={...props.message,id:2};await act(async()=>screen.update(React.createElement(HelpMessageBubble,props)));
+    expect(translation.__getValue()).toBe(0);
+    await act(async()=>pan.onPanResponderRelease(null,g(70)));
+    expect(props.onReply).not.toHaveBeenCalled();
+  });
   test('stamp shares last line only when measured space exists, including edited text', async () => {
     await render();
     await act(async()=>{
