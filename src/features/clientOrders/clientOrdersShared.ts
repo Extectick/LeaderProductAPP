@@ -1022,6 +1022,42 @@ export function computeLineProfitabilityPercent(
   return Number.isFinite(profitabilityPercent) ? profitabilityPercent : null;
 }
 
+/** Markup uses cost, not sales revenue. Unknown or non-positive cost has no percentage. */
+export function computeMarkupPercent(profit: number, salesBasisAmount: number): number | null {
+  const cost = salesBasisAmount - profit;
+  if (!Number.isFinite(profit) || !Number.isFinite(cost) || cost <= 0) return null;
+  const markupPercent = profit / cost * 100;
+  return Number.isFinite(markupPercent) ? markupPercent : null;
+}
+
+export function computeLineMarkupPercent(
+  item: DraftItem,
+  generalDiscountPercent?: string,
+  computedLineTotal?: number
+) {
+  if (!canComputeLineProfit(item)) return null;
+  const lineTotal = computedLineTotal ?? computeLineTotal(item, generalDiscountPercent);
+  return computeMarkupPercent(computeLineProfit(item, generalDiscountPercent, lineTotal), lineTotal);
+}
+
+export function getOrderMarkupPercent(order?: {
+  profitAvailable?: boolean;
+  profit?: number | null;
+  profitBasisAmount?: number | null;
+  profitabilityPercent?: number | null;
+} | null): number | null {
+  if (!order?.profitAvailable || order.profit == null || !Number.isFinite(order.profit)) return null;
+  if (order.profitBasisAmount != null) {
+    // Only rows with known cost belong in the basis, not the entire order total.
+    return computeMarkupPercent(order.profit, order.profitBasisAmount);
+  }
+  // Older cached/API summaries expose margin only. Keep its API meaning unchanged.
+  const margin = order.profitabilityPercent;
+  if (margin == null || !Number.isFinite(margin) || margin >= 100) return null;
+  const markupPercent = margin / (100 - margin) * 100;
+  return Number.isFinite(markupPercent) ? markupPercent : null;
+}
+
 export function canComputeLineProfit(item: DraftItem) {
   if (isCancelledDraftItem(item)) return false;
   const receiptPrice = Number(item.receiptPrice);
