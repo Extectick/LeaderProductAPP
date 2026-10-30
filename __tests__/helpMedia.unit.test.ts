@@ -1,6 +1,6 @@
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
-import { Animated, Image, PanResponder, Platform, StyleSheet, Text } from 'react-native';
+import { ActivityIndicator, Animated, Image, PanResponder, Platform, StyleSheet, Text } from 'react-native';
 
 const mockPlayer = { replace: jest.fn(), play: jest.fn(), pause: jest.fn(), seekTo: jest.fn() };
 const mockUseAudioPlayer = jest.fn(() => mockPlayer);
@@ -15,7 +15,7 @@ jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 jest.mock('../src/features/help/helpTheme', () => ({ useHelpTheme: () => ({ muted: '#999999', accent: '#3388ff', accentText: '#68B0FF', elevated: '#333333' }), useHelpReducedMotion: () => mockReduced }));
 jest.mock('../src/features/help/components/HelpPrimitives', () => ({ HelpIcon: 'HelpIcon' }));
 import { HelpAudio, HelpGallery, HelpImage } from '../src/features/help/components/HelpMedia';
-import { HelpMediaLoadingContext } from '../src/features/help/helpMediaLoading';
+import { createHelpImageCache, HelpImageCacheContext, HelpMediaLoadingContext } from '../src/features/help/helpMediaLoading';
 import { HelpAudioPlaybackProvider, type HelpAudioPlaybackController } from '../src/features/help/HelpAudioPlayback';
 
 describe('Help media geometry and lifecycle', () => {
@@ -27,8 +27,10 @@ describe('Help media geometry and lifecycle', () => {
   const file = { id: 'photo-1', kind: 'IMAGE', name: 'Снимок.jpg', size: 128, mimeType: 'image/jpeg' } as any;
   const voice = { id: 'voice-1', kind: 'AUDIO', name: 'voice.m4a', size: 4096, mimeType: 'audio/mp4' } as any;
   let playback: HelpAudioPlaybackController;
+  let imageCache: ReturnType<typeof createHelpImageCache>;
   beforeEach(() => {
     frames = new Map(); now = 0; mockReduced = true;
+    imageCache=createHelpImageCache();
     mockStatus = { playing: false, currentTime: 0, duration: 10, playbackRate: 1, didJustFinish: false };
     mockPlayer.replace.mockReset(); mockPlayer.play.mockReset(); mockPlayer.pause.mockReset(); mockPlayer.seekTo.mockReset().mockResolvedValue(undefined);
     mockUseAudioPlayer.mockClear();
@@ -49,9 +51,10 @@ describe('Help media geometry and lifecycle', () => {
   async function renderSharedAudio() { props = { ...props, attachment: voice, messageId: 41, author: 'Анна', createdAt: '2026-10-28T10:15:00Z', ticketId: 7 }; await act(async () => { screen = TestRenderer.create(sharedAudioTree()); }); }
   async function updateSharedAudio() { await act(async () => screen!.update(sharedAudioTree())); }
   function activateSharedAudio(override: Partial<HelpAudioPlaybackController> = {}) { playback = { ...playback, current: { attachment: props.attachment, messageId: props.messageId, author: props.author, createdAt: props.createdAt, ticketId: props.ticketId }, ready: true, durationSeconds: 10, ...override }; }
-  const imageTree = (proximity:'visible'|'near'|'deferred'='visible') => React.createElement(HelpMediaLoadingContext.Provider, {value:proximity}, React.createElement(HelpImage,props));
-  async function renderImage(proximity:'visible'|'near'|'deferred'='visible') { await act(async()=>{screen=TestRenderer.create(imageTree(proximity));}); }
-  async function updateImage(proximity:'visible'|'near'|'deferred'='visible') { await act(async()=>screen!.update(imageTree(proximity))); }
+  type Proximity='visible'|'near'|'deferred'|'retained';
+  const imageTree = (proximity:Proximity='visible',key?:string) => React.createElement(HelpImageCacheContext.Provider,{value:imageCache},React.createElement(HelpMediaLoadingContext.Provider, {value:proximity}, React.createElement(HelpImage,{...props,key})));
+  async function renderImage(proximity:Proximity='visible') { await act(async()=>{screen=TestRenderer.create(imageTree(proximity));}); }
+  async function updateImage(proximity:Proximity='visible') { await act(async()=>screen!.update(imageTree(proximity))); }
   const originalImage = () => screen!.root.findByType('CachedImage' as any);
   async function renderGallery() { props = { attachments: [file, { ...file, id: 'photo-2', name: 'Второй.jpg' }], initialIndex: 0, resolve: props.resolve, onClose: jest.fn(), onError: props.onError }; await act(async () => { screen = TestRenderer.create(React.createElement(HelpGallery, props)); }); }
   async function tick(time: number) { now = time; const callbacks = [...frames.values()]; frames.clear(); await act(async () => callbacks.forEach(cb => cb(time))); }
@@ -300,6 +303,50 @@ describe('Help media geometry and lifecycle', () => {
     expect(originalImage().props).toMatchObject({priority:'low',recyclingKey:'help:7:photo-1',transition:120});
     await updateImage('visible');
     expect(originalImage().props).toMatchObject({priority:'high',recyclingKey:'help:7:photo-1',source:{cacheKey:'help:7:photo-1'}});
+  });
+  test('a transition copy and remounted cell reuse a loaded photo without resolving, fading or showing a loader again',async()=>{
+    mockReduced=false;await renderImage();
+    const source=originalImage().props.source;
+    await act(async()=>originalImage().props.onLoad({source:{width:400,height:300}}));
+    await act(async()=>screen!.update(imageTree('retained','snapshot')));
+    expect(props.resolve).toHaveBeenCalledTimes(1);
+    expect(originalImage().props).toMatchObject({source,transition:0});
+    expect(screen!.root.findAllByType(ActivityIndicator)).toHaveLength(0);
+    await act(async()=>screen!.update(imageTree('deferred','recycled-cell')));
+    expect(originalImage().props.source).toBe(source);
+    expect(props.resolve).toHaveBeenCalledTimes(1);
+  });
+  test('a retained copy cannot start downloading an original that has not loaded',async()=>{
+    await renderImage('retained');
+    expect(props.resolve).not.toHaveBeenCalled();
+    expect(screen!.root.findAllByType('CachedImage' as any)).toHaveLength(0);
+    await updateImage('visible');expect(props.resolve).toHaveBeenCalledTimes(1);
+  });
+  test('a warm photo cannot be restored through another account resolver',async()=>{
+    await renderImage();await act(async()=>originalImage().props.onLoad({source:{width:400,height:300}}));
+    props.resolve=jest.fn().mockResolvedValue({uri:'file://other-account.jpg'});
+    await act(async()=>screen!.update(imageTree('retained','other-account')));
+    expect(screen!.root.findAllByType('CachedImage' as any)).toHaveLength(0);
+    expect(props.resolve).not.toHaveBeenCalled();
+  });
+  test('recycled source identity includes the attachment URL even when its id is unchanged',async()=>{
+    props.attachment={...file,url:'file://old.jpg'};await renderImage();
+    const oldLoad=originalImage().props.onLoad;
+    await act(async()=>oldLoad({source:{width:400,height:300}}));
+    props.attachment={...file,url:'file://replacement.jpg'};await updateImage('deferred');
+    await act(async()=>oldLoad({source:{width:400,height:300}}));
+    expect(screen!.root.findAllByType('CachedImage' as any)).toHaveLength(0);
+    expect(imageCache.read(props.resolve,props.attachment)).toBeUndefined();
+  });
+  test('an evicted warm image refreshes its authorised source once, while a failed retry stays failed',async()=>{
+    await renderImage();await act(async()=>originalImage().props.onLoad({source:{width:400,height:300}}));
+    await act(async()=>screen!.update(imageTree('visible','recycled')));
+    props.resolve.mockResolvedValue({uri:'file://refreshed.jpg'});
+    await act(async()=>originalImage().props.onError({error:'Cache was evicted'}));
+    expect(props.resolve).toHaveBeenCalledTimes(2);
+    expect(originalImage().props.source.uri).toBe('file://refreshed.jpg');
+    await act(async()=>originalImage().props.onError({error:'Unavailable'}));
+    expect(props.resolve).toHaveBeenCalledTimes(2);expect(byLabel('Изображение недоступно')).toBeDefined();
   });
   test('gallery places round header controls, filename footer and edge-centered navigation', async () => {
     await renderGallery();

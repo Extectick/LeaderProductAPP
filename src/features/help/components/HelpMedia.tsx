@@ -1,7 +1,7 @@
 import React, { useContext, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Image, Modal, PanResponder, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions, type ImageStyle, type StyleProp } from 'react-native';
 import { Image as CachedImage } from 'expo-image';
-import { HelpMediaLoadingContext } from '../helpMediaLoading';
+import { HelpImageCacheContext, HelpMediaLoadingContext } from '../helpMediaLoading';
 import { useHelpAudioPlayback, type HelpAudioPlaybackController } from '../HelpAudioPlayback';
 import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -20,34 +20,44 @@ export type ResolveHelpMedia = (attachment: HelpAttachment) => Promise<HelpMedia
 // file amplitude. Only the clipping position represents real playback progress.
 const decorativeTrackBars = [9, 15, 11, 23, 30, 18, 12, 26, 34, 21, 15, 10, 19, 29, 24, 13, 8, 17, 31, 26, 16, 22, 32, 19, 11, 16, 25, 13];
 export function HelpImage({ attachment, resolve, style, resizeMode = 'cover', onAspectRatio }: { attachment: HelpAttachment; resolve: ResolveHelpMedia; style?: StyleProp<ImageStyle>; resizeMode?: 'cover' | 'contain'; onAspectRatio?: (ratio: number) => void }) {
-  const proximity=useContext(HelpMediaLoadingContext),c=useHelpTheme(),reduced=useHelpReducedMotion();
-  const allowOriginal=proximity!=='deferred';
-  const identity=useRef({id:attachment.id,resolve});identity.current={id:attachment.id,resolve};
-  const [result,setResult]=useState<{id:string;resolver:ResolveHelpMedia;source?:HelpMediaSource;error?:boolean;loaded?:boolean}>();
-  const current=result?.id===attachment.id && result.resolver===resolve?result:undefined;
+  const proximity=useContext(HelpMediaLoadingContext),cache=useContext(HelpImageCacheContext),c=useHelpTheme(),reduced=useHelpReducedMotion();
+  const allowOriginal=proximity==='visible'||proximity==='near';
+  const identity=useRef({id:attachment.id,url:attachment.url,resolve});identity.current={id:attachment.id,url:attachment.url,resolve};
+  const [result,setResult]=useState<{id:string;url:string;resolver:ResolveHelpMedia;source?:HelpMediaSource;error?:boolean;loaded?:boolean}>();
+  const cached=cache?.read(resolve,attachment);
+  const own=result?.id===attachment.id && result.url===attachment.url && result.resolver===resolve?result:undefined;
+  const current=own??(cached?{id:attachment.id,url:attachment.url,resolver:resolve,source:cached,loaded:true}:undefined);
+  const restored=Boolean(!own&&cached);
   const thumbnail=attachment.thumbnailDataUri && /^data:image\/(jpeg|webp|png);base64,/.test(attachment.thumbnailDataUri) && attachment.thumbnailDataUri.length<=3072 ? attachment.thumbnailDataUri : undefined;
   useEffect(()=>{
-    if(!allowOriginal)return;
+    if(!allowOriginal||cached)return;
     let alive=true;
-    void resolve(attachment).then(source=>{if(alive)setResult(previous=>previous?.id===attachment.id && previous.resolver===resolve && previous.source?.uri===source.uri?previous:{id:attachment.id,resolver:resolve,source});})
-      .catch(()=>{if(alive)setResult({id:attachment.id,resolver:resolve,error:true});});
+    void resolve(attachment).then(source=>{if(alive)setResult(previous=>previous?.id===attachment.id && previous.url===attachment.url && previous.resolver===resolve && previous.source?.uri===source.uri?previous:{id:attachment.id,url:attachment.url,resolver:resolve,source});})
+      .catch(()=>{if(alive)setResult({id:attachment.id,url:attachment.url,resolver:resolve,error:true});});
     return()=>{alive=false;};
-  },[attachment.id,resolve,allowOriginal]);
+  },[attachment.id,attachment.url,resolve,allowOriginal,cached]);
   const loaded=(event:any)=>{
-    if(identity.current.id!==attachment.id||identity.current.resolve!==resolve)return;
-    setResult(previous=>previous?.id===attachment.id && previous.resolver===resolve?{...previous,loaded:true}:previous);
+    if(identity.current.id!==attachment.id||identity.current.url!==attachment.url||identity.current.resolve!==resolve)return;
+    if(current?.source)cache?.remember(resolve,attachment,current.source);
+    setResult(previous=>previous?.id===attachment.id && previous.url===attachment.url && previous.resolver===resolve?{...previous,loaded:true}:previous);
     const native=event.source?undefined:event.nativeEvent;
     const target=native?.target??native?.currentTarget??event.target??event.currentTarget;
     const width=event.source?.width??native?.source?.width??target?.naturalWidth??0;
     const height=event.source?.height??native?.source?.height??target?.naturalHeight??0;
     if(Number.isFinite(width)&&Number.isFinite(height)&&width>0&&height>0)onAspectRatio?.(width/height);
   };
-  const failed=()=>{if(identity.current.id===attachment.id&&identity.current.resolve===resolve)setResult({id:attachment.id,resolver:resolve,error:true});};
-  const original=current?.source && !current.error && (proximity!=='deferred'||current.loaded) ? current.source : undefined;
+  const failed=()=>{
+    if(identity.current.id!==attachment.id||identity.current.url!==attachment.url||identity.current.resolve!==resolve)return;
+    cache?.forget(resolve,attachment);
+    // Native cache eviction may require a fresh authorised source. Retry that
+    // once for a real cell; transition copies never start their own requests.
+    setResult({id:attachment.id,url:attachment.url,resolver:resolve,error:!(restored&&allowOriginal)});
+  };
+  const original=current?.source && !current.error && (allowOriginal||current.loaded) ? current.source : undefined;
   return <View testID="help-progressive-image" style={[style,{overflow:'hidden',backgroundColor:c.elevated}]}>
     {thumbnail ? <Image testID="help-image-preview" source={{uri:thumbnail}} resizeMode={resizeMode} style={StyleSheet.absoluteFill} blurRadius={2}/> : null}
-    {original ? Platform.OS==='web' ? <Image accessibilityLabel={attachment.name} source={original} style={StyleSheet.absoluteFill} resizeMode={resizeMode} onLoad={loaded} onError={failed}/> : <CachedImage testID="help-image-original" accessibilityLabel={attachment.name} source={original} style={StyleSheet.absoluteFill} contentFit={resizeMode} placeholder={thumbnail?{uri:thumbnail}:undefined} placeholderContentFit={resizeMode} cachePolicy="memory-disk" recyclingKey={original.cacheKey??attachment.id} priority={proximity==='visible'?'high':'low'} transition={reduced?0:120} onLoad={loaded} onError={failed}/> : null}
-    {!current?.loaded ? <View pointerEvents="none" style={[StyleSheet.absoluteFill,{alignItems:'center',justifyContent:'center'}]}>{current?.error ? <Ionicons name="image-outline" accessibilityLabel="Изображение недоступно" size={24} color={c.muted}/> : proximity!=='deferred' ? <View style={{padding:9,borderRadius:22,backgroundColor:'#00000038'}}><ActivityIndicator color="#FFFFFF"/></View> : null}</View> : null}
+    {original ? Platform.OS==='web' ? <Image accessibilityLabel={attachment.name} source={original} style={StyleSheet.absoluteFill} resizeMode={resizeMode} onLoad={loaded} onError={failed}/> : <CachedImage testID="help-image-original" accessibilityLabel={attachment.name} source={original} style={StyleSheet.absoluteFill} contentFit={resizeMode} placeholder={thumbnail?{uri:thumbnail}:undefined} placeholderContentFit={resizeMode} cachePolicy="memory-disk" recyclingKey={original.cacheKey??attachment.id} priority={proximity==='visible'?'high':'low'} transition={reduced||restored?0:120} onLoad={loaded} onError={failed}/> : null}
+    {!current?.loaded ? <View pointerEvents="none" style={[StyleSheet.absoluteFill,{alignItems:'center',justifyContent:'center'}]}>{current?.error ? <Ionicons name="image-outline" accessibilityLabel="Изображение недоступно" size={24} color={c.muted}/> : allowOriginal ? <View style={{padding:9,borderRadius:22,backgroundColor:'#00000038'}}><ActivityIndicator color="#FFFFFF"/></View> : null}</View> : null}
   </View>;
 }
 export async function downloadHelpAttachment(attachment: HelpAttachment, resolve: ResolveHelpMedia) {

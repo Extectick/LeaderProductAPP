@@ -193,6 +193,17 @@ describe('sticky date geometry and navigation integration',()=>{
     await act(async()=>mockFlashProps.onScrollBeginDrag());
     expect(await waiting).toBe(false);
   });
+  test('a date transition retains the same image cache and never gives its copy a download priority',async()=>{
+    const {HelpImageCacheContext,HelpMediaLoadingContext}=require('../src/features/help/helpMediaLoading');
+    const seen:{priority:string;cache:unknown}[]=[];
+    const ImageProbe=()=>{const priority=React.useContext(HelpMediaLoadingContext) as string,cache=React.useContext(HelpImageCacheContext);seen.push({priority,cache});return React.createElement(View);};
+    mockReducedMotion=false;props={...props,renderMessage:()=>React.createElement(ImageProbe)};
+    await render();const cache=seen[0].cache;
+    await act(async()=>ref.current!.jumpToDate(firstDate));
+    const retained=seen.filter(value=>value.priority==='retained');
+    expect(cache).toBeTruthy();expect(retained.length).toBeGreaterThan(0);
+    expect(retained.every(value=>value.cache===cache)).toBe(true);
+  });
   test('leaving the tail by 8px never reacquires follow inside the old 64px threshold',async()=>{
     await render();await act(async()=>ref.current!.scrollToEnd());
     expect(props.onFollow).toHaveBeenLastCalledWith(true);
