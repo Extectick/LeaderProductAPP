@@ -17,7 +17,8 @@ import { useOptionalLastServiceRoute } from '@/src/features/navigation/LastServi
 import {
   canComputeLineProfit,
   computeLineProfit,
-  computeLineProfitabilityPercent,
+  computeLineMarkupPercent,
+  getOrderMarkupPercent,
   computeLineTotal,
   formatDateTime,
   formatMoney,
@@ -459,7 +460,7 @@ function pickerShouldAutofocusSearch(kind: PickerKind | null) {
   return kind === 'organization' || kind === 'counterparty' || kind === 'priceType' || kind === 'product';
 }
 
-function formatProfitabilityPercent(value: number) {
+function formatMarkupPercent(value: number) {
   if (!Number.isFinite(value)) return '';
   return `${value.toLocaleString('ru-RU', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
 }
@@ -4658,8 +4659,8 @@ function DocumentBottomBar({
   const profitValue = profitAvailable
     ? formatMoney(workspace.localProfit, currency)
     : '-';
-  const profitabilityPercent = profitAvailable && Number.isFinite(Number(workspace.localProfitabilityPercent))
-    ? Number(workspace.localProfitabilityPercent)
+  const markupPercent = profitAvailable && workspace.localMarkupPercent != null && Number.isFinite(workspace.localMarkupPercent)
+    ? workspace.localMarkupPercent
     : null;
   const profitColor = !profitAvailable ? '#64748B' : workspace.localProfit < 0 ? '#DC2626' : '#16A34A';
   const metrics = [
@@ -4694,14 +4695,14 @@ function DocumentBottomBar({
     {
       key: 'profit',
       label: 'Прибыль',
-      labelSuffix: profitabilityPercent === null ? null : `${formatProfitabilityPercent(profitabilityPercent)}`,
+      labelSuffix: markupPercent === null ? null : formatMarkupPercent(markupPercent),
       value: profitAvailable ? profitValue : 'Рассчитать',
       icon: 'chart-line',
       color: profitColor,
       loading: profitLoading,
       action: !profitAvailable && !profitLoading ? workspace.refreshDocumentProfit : undefined,
       description: profitAvailable
-        ? 'Прибыль рассчитана по активным строкам с известной ценой поступления. Строки без себестоимости пропущены.'
+        ? 'Прибыль рассчитана по активным строкам с известной ценой поступления. Процент — наценка к себестоимости. Строки без себестоимости пропущены.'
         : 'Прибыль появится после получения хотя бы одной цены поступления.',
     },
   ];
@@ -5102,10 +5103,10 @@ const LineItemCard = React.memo(function LineItemCard({
     ? computeLineProfit(item, generalDiscountPercent, lineTotalAmount)
     : 0;
   const lineProfit = formatMoney(lineProfitAmount, currency);
-  const lineProfitabilityPercent = computeLineProfitabilityPercent(item, generalDiscountPercent, lineTotalAmount);
-  const lineProfitLabel = lineProfitabilityPercent === null
+  const lineMarkupPercent = computeLineMarkupPercent(item, generalDiscountPercent, lineTotalAmount);
+  const lineProfitLabel = lineMarkupPercent === null
     ? lineProfit
-    : `${lineProfit} (${formatProfitabilityPercent(lineProfitabilityPercent)})`;
+    : `${lineProfit} (${formatMarkupPercent(lineMarkupPercent)})`;
   const lineProfitColor = lineProfitAmount < 0 ? '#DC2626' : '#16A34A';
   const packageLabelText = linePackageShortLabel(item);
   const muteValidation = documentReadOnly;
@@ -5174,7 +5175,11 @@ const LineItemCard = React.memo(function LineItemCard({
           {lineProfitAvailable ? (
             <View style={[styles.productPreviewProfitRow, readOnly && styles.productPreviewProfitReadOnly]}>
               <MaterialCommunityIcons name={lineProfitAmount < 0 ? 'trending-down' : 'trending-up'} size={12} color={lineProfitColor} />
-              <Text style={[styles.productPreviewProfit, { color: lineProfitColor }]} numberOfLines={1}>{lineProfitLabel}</Text>
+              <Text
+                style={[styles.productPreviewProfit, { color: lineProfitColor }]}
+                accessibilityLabel={`Прибыль ${lineProfit}${lineMarkupPercent === null ? '' : `, наценка ${formatMarkupPercent(lineMarkupPercent)}`}`}
+                numberOfLines={1}
+              >{lineProfitLabel}</Text>
             </View>
           ) : null}
         </View>
@@ -5674,14 +5679,14 @@ function ProductLineEditorSheet({
     lineProfitAmount,
     displayedItem.currency || workspace.draft.currency
   );
-  const lineProfitabilityPercent = computeLineProfitabilityPercent(
+  const lineMarkupPercent = computeLineMarkupPercent(
     displayedItemWithLocalEdits,
     workspace.draft.generalDiscountPercent,
     lineTotalAmount
   );
-  const lineProfitLabel = lineProfitabilityPercent === null
+  const lineProfitLabel = lineMarkupPercent === null
     ? lineProfit
-    : `${lineProfit} (${formatProfitabilityPercent(lineProfitabilityPercent)})`;
+    : `${lineProfit} (${formatMarkupPercent(lineMarkupPercent)})`;
   const lineProfitColor = lineProfitAmount < 0 ? '#DC2626' : '#16A34A';
   const article = displayedItem.productArticle || displayedItem.productSku || displayedItem.productCode || '—';
   const stock = formatStockInlineLabel(displayedItem.stock, displayedItem.baseUnit) || '—';
@@ -5874,7 +5879,11 @@ function ProductLineEditorSheet({
             {lineProfitAvailable ? (
               <View style={styles.productEditorFooterProfitRow}>
                 <MaterialCommunityIcons name={lineProfitAmount < 0 ? 'trending-down' : 'trending-up'} size={13} color={lineProfitColor} />
-                <Text style={[styles.productEditorFooterProfit, { color: lineProfitColor }]} numberOfLines={1}>{lineProfitLabel}</Text>
+                <Text
+                  style={[styles.productEditorFooterProfit, { color: lineProfitColor }]}
+                  accessibilityLabel={`Прибыль ${lineProfit}${lineMarkupPercent === null ? '' : `, наценка ${formatMarkupPercent(lineMarkupPercent)}`}`}
+                  numberOfLines={1}
+                >{lineProfitLabel}</Text>
               </View>
             ) : null}
           </View>
@@ -6568,9 +6577,7 @@ function OrdersBottomBar({
   const profit = summary?.profitAvailable && Number.isFinite(Number(summary.profit))
     ? formatMoney(Number(summary.profit), currency)
     : null;
-  const profitabilityPercent = summary?.profitAvailable && Number.isFinite(Number(summary.profitabilityPercent))
-    ? Number(summary.profitabilityPercent)
-    : null;
+  const markupPercent = getOrderMarkupPercent(summary);
   const profitColor = !summary?.profitAvailable
     ? '#64748B'
     : Number(summary.profit) < 0
@@ -6640,7 +6647,7 @@ function OrdersBottomBar({
               styles={styles}
               icon="chart-line"
               label="Прибыль"
-              labelSuffix={profitabilityPercent === null ? null : formatProfitabilityPercent(profitabilityPercent)}
+              labelSuffix={markupPercent === null ? null : formatMarkupPercent(markupPercent)}
               value={profit ?? 'Рассчитать'}
               loading={loadingMetrics || calculatingProfit}
               color={profitColor}
@@ -7602,9 +7609,7 @@ const OrderCard = React.memo(function OrderCard({
     && order.profit !== undefined
     && Number.isFinite(Number(order.profit));
   const profit = profitAvailable ? Number(order.profit) : null;
-  const profitabilityPercent = profitAvailable && Number.isFinite(Number(order.profitabilityPercent))
-    ? Number(order.profitabilityPercent)
-    : null;
+  const markupPercent = getOrderMarkupPercent(order);
   const profitColor = profit !== null && profit < 0 ? '#DC2626' : '#16A34A';
   const interactionDisabled = disabled || loading;
   const queuedForSending = order.syncState === 'QUEUED';
@@ -7740,7 +7745,7 @@ const OrderCard = React.memo(function OrderCard({
                   />
                   <Text style={[styles.orderProfit, { color: profitColor }]} numberOfLines={1}>
                     {formatMoney(profit, order.currency)}
-                    {profitabilityPercent === null ? '' : ` (${formatProfitabilityPercent(profitabilityPercent)})`}
+                    {markupPercent === null ? '' : ` (${formatMarkupPercent(markupPercent)})`}
                   </Text>
                 </View>
               ) : null}
