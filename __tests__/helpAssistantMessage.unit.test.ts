@@ -1,0 +1,27 @@
+import React from 'react';
+import TestRenderer, { act } from 'react-test-renderer';
+import { Text } from 'react-native';
+import type { HelpMessage } from '../src/features/help/helpApi';
+jest.mock('../context/ThemeContext',()=>({useTheme:()=>({theme:'dark'})}));
+jest.mock('@expo/vector-icons',()=>({Ionicons:'Ionicons'}));
+jest.mock('../src/features/help/helpDiagnostics',()=>({helpDevState:jest.fn()}));
+import { HelpAssistantMessage } from '../src/features/help/components/HelpAssistantMessage';
+const base={id:1,ticketId:1043,createdAt:'2026-10-30T10:00:00Z',text:'',assistantRun:{runId:'qa-1',eventId:1,ticketId:1043,status:'thinking',step:1,completedSteps:1,startedAt:0,updatedAt:0}} as HelpMessage;
+test('reasoning becomes the answer in one message with a single AI identity',async()=>{
+  let view!:TestRenderer.ReactTestRenderer;
+  await act(async()=>{view=TestRenderer.create(React.createElement(HelpAssistantMessage,{message:base}));});
+  const text=()=>view.root.findAllByType(Text).map(node=>node.props.children).flat().join(' ');
+  expect(text()).not.toContain('ИИ рассуждает');
+  expect(view.root.findAllByProps({testID:'help-assistant-avatar-loading-1043'})).toHaveLength(0);
+  expect(view.root.findAllByProps({testID:'help-assistant-step-loader'}).length).toBeGreaterThan(0);
+  expect(text()).not.toContain('тестовый сценарий');
+  expect(view.root.findAll(node=>node.props.accessibilityLabel==='Остановить обработку ИИ')).toHaveLength(0);
+  const answer={...base,text:'Готовый ответ',assistantRun:{...base.assistantRun!,status:'completed' as const,step:3,completedSteps:4}};
+  await act(async()=>view.update(React.createElement(HelpAssistantMessage,{message:answer})));
+  expect(text()).toContain('Готовый ответ');
+  expect(text()).not.toContain('Анализ завершён');
+  expect(text()).not.toContain('Изучаю описание');
+  expect(view.root.findAllByType(Text).filter(node=>node.props.children==='Помощник · ИИ')).toHaveLength(0);
+  expect(view.root.findAll(node=>node.type==='Ionicons'&&node.props.name==='hardware-chip-outline')).toHaveLength(1);
+  await act(async()=>view.unmount());
+});

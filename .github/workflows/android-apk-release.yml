@@ -171,6 +171,33 @@ jobs:
           NODE_ENV=test BABEL_ENV=test npm run test:unit -- --runInBand __tests__/nativeDiagnostics.unit.test.ts __tests__/crashReporting.unit.test.ts
           NODE_ENV=test BABEL_ENV=test npm run test:unit -- --runInBand __tests__/productionMonitoring.unit.test.ts __tests__/offlineOrdersSync.unit.test.ts __tests__/useClientOrdersWorkspace.unit.test.ts __tests__/trackingV2Lifecycle.unit.test.ts __tests__/trackingReliability.unit.test.ts __tests__/servicesOffline.unit.test.ts __tests__/sqliteWriteQueue.unit.test.ts
 
+      - name: Restore Firebase Android configuration
+        if: ${{ steps.strategy.outputs.apk_required == 'true' }}
+        env:
+          FIREBASE_ANDROID_CONFIG_PROD: ${{ secrets.FIREBASE_ANDROID_CONFIG_PROD }}
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const contents = process.env.FIREBASE_ANDROID_CONFIG_PROD;
+          if (!contents) {
+            throw new Error('FIREBASE_ANDROID_CONFIG_PROD must be configured before building an Android APK.');
+          }
+          let config;
+          try {
+            config = JSON.parse(contents);
+          } catch {
+            throw new Error('FIREBASE_ANDROID_CONFIG_PROD must contain a valid Firebase Android JSON configuration.');
+          }
+          if (!Array.isArray(config?.client) || !config.client.some(client => client?.client_info?.android_client_info?.package_name === 'com.leaderproduct.app')) {
+            throw new Error('Firebase Android configuration has no client for com.leaderproduct.app.');
+          }
+          const filename = './firebase/google-services.prod.json';
+          fs.mkdirSync('./firebase', { recursive: true });
+          fs.writeFileSync(filename, contents, { mode: 0o600 });
+          fs.appendFileSync(process.env.GITHUB_ENV, `GOOGLE_SERVICES_JSON=${filename}\n`);
+          console.log('Firebase Android configuration restored for com.leaderproduct.app.');
+          NODE
+
       - name: Generate Android native project
         if: ${{ steps.strategy.outputs.apk_required == 'true' }}
         run: npx expo prebuild --platform android --clean --non-interactive

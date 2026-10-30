@@ -8,7 +8,7 @@ const HELP_MESSAGE_GROUP_INTERVAL = 5 * 60 * 1000;
 export function helpMessagesCanGroup(previous: HelpMessage | undefined, next: HelpMessage | undefined, firstUnreadSequence?: number | null): boolean {
   if (!previous || !next || previous.kind !== 'TEXT' || next.kind !== 'TEXT'
     || previous.authorId == null || previous.authorId !== next.authorId || previous.ticketId !== next.ticketId
-    || next.sequence === firstUnreadSequence) return false;
+    || next.sequence === firstUnreadSequence || next.ticketStatusChange) return false;
   const from = new Date(previous.createdAt), to = new Date(next.createdAt);
   const elapsed = to.getTime() - from.getTime();
   return elapsed >= 0 && elapsed <= HELP_MESSAGE_GROUP_INTERVAL

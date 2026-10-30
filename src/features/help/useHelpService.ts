@@ -3,14 +3,20 @@ import { AppState, Platform } from 'react-native';
 import { AuthContext } from '@/context/AuthContext';
 import { API_BASE_URL } from '@/utils/config';
 import { type ManagedSocketConnection } from '@/src/shared/socket/managedSocket';
-import { createHelpSocket } from './helpSocket';
+import { acquireHelpAccount } from './helpAccountSync';
+import type {HelpPending} from './helpDurableTypes';
+import { dispatchHelpPending } from './helpOutbox';
 import { useServerStatus } from '@/src/shared/network/useServerStatus';
 import { HelpApiError, createHelpApi, loadHelpMedia, uploadHelpFiles, type HelpTicket, type HelpMessage, type HelpDetail, type HelpCreateInput, type HelpMessageInput, type HelpCloseInput, type HelpAttachment, type HelpMediaSource, type HelpFile } from './helpApi';
-import { getHelpDraft, setHelpDraft, helpClientId, readHelpPending, saveHelpPending, removeHelpPending, sameHelpPayload } from './helpStorage';
+import { getHelpDraft, setHelpDraft, helpClientId, readHelpPending, readLastCreatedOperation, subscribeHelpOutbox, saveHelpPending, removeHelpPending, sameHelpPayload } from './helpStorage';
 import { cacheHelpPage, cacheHelpSync, cacheHelpTickets, findCachedHelpDate, forgetHelpTicket, readCachedHelpMessage, readCachedHelpRange, readCachedHelpTicket, readCachedHelpTickets, saveHelpViewport } from './helpHistory';
 import { initialHelpPosition, reconcileHelpWindow, trimHelpWindow, validHelpAnchor } from './helpHistoryModel';
 import type { HelpHistoryPage, HelpNavigationTarget, HelpViewportAnchor } from './helpHistoryTypes';
+import {isHelpConnectionIssue} from './helpConnectionState';
+import {updateHelpTypingUsers,type HelpTypingUser,type HelpTypingEvent} from './helpTypingModel';
+import {readableHelpSequence} from './helpReadSequence';
 import { helpLocalDayBounds } from './helpDateNavigation';
+import {helpListCacheKey,helpViewCache,rememberHelpWindow,forgetHelpView,shareHelpItems} from './helpViewCache';
 const isAccessRevoked=(error:unknown)=>error instanceof HelpApiError&&([401,403].includes(error.status)||(error.status===404&&!['HELP_MESSAGE_NOT_FOUND','HELP_DATE_MESSAGE_NOT_FOUND'].includes(error.code??'')));
 
 function detailPage(detail:HelpDetail):HelpHistoryPage {
@@ -30,7 +36,8 @@ export function useHelpService(isFocused = true) {
   const userId = Number(auth?.profile?.id || 0);
   const helpApi = useMemo(()=>createHelpApi(userId),[userId]);
   const server = useServerStatus();
-  const [tickets, setTickets] = useState<HelpTicket[]>([]);
+  const identity = `${API_BASE_URL}:${userId}:${auth?.isAuthenticated}`;
+  const [tickets, setTickets] = useState<HelpTicket[]>(()=>helpViewCache(identity).lists.get(helpListCacheKey('OPEN','mine'))??[]);
   const [selectedTicket, setSelectedTicket] = useState<HelpTicket | null>(null);
   const [messages, setMessages] = useState<HelpMessage[]>([]);
   const messagesRef=useRef<HelpMessage[]>([]);messagesRef.current=messages;
@@ -50,18 +57,23 @@ export function useHelpService(isFocused = true) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [canManage, setCanManage] = useState(false);
+  const [aiEnabled,setAiEnabled]=useState(false);
   const [connected, setConnected] = useState(false);
+  const [connectionIssue,setConnectionIssue]=useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
-  const [typingByTicket, setTyping] = useState<Record<number, { userId: number; name: string }[]>>({});
-  const identity = `${API_BASE_URL}:${userId}:${auth?.isAuthenticated}`;
+  const [pendingMessages,setPendingMessages]=useState<HelpPending[]>([]);
+  const [lastCreatedOperation,setLastCreatedOperation]=useState<Awaited<ReturnType<typeof readLastCreatedOperation>>>(null);
+  const [typingByTicket, setTyping] = useState<Record<number, HelpTypingUser[]>>({});
   const identityRef = useRef(identity); identityRef.current = identity;
+  const viewIdentity = useRef(identity);
   const mounted = useRef(true);
   const focusedRef = useRef(isFocused); focusedRef.current = isFocused;
   const previousFocus = useRef(isFocused);
   const canRead = useCallback(() => focusedRef.current && (Platform.OS === 'web'
     ? typeof document !== 'undefined' && document.visibilityState === 'visible'
     : AppState.currentState === 'active'), []);
+  const accountConnection=useRef<ReturnType<typeof acquireHelpAccount>|null>(null);
   const socketRef = useRef<ManagedSocketConnection | null>(null);
   const activeId = useRef<number | null>(null);
   const listFilter = useRef({ status: 'OPEN', scope: 'mine', query: '', cursor: null as string | number | null });
@@ -71,9 +83,10 @@ export function useHelpService(isFocused = true) {
   const operation = useRef<string | null>(null);
   const media = useRef(new Map<string, Promise<HelpMediaSource>>());
   const typingTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const liveTicketRefresh = useRef<(id: number)=>Promise<void>>(async()=>{});
   const current = useCallback((scope: string) => mounted.current && identityRef.current === scope, []);
-  const report = useCallback((e: unknown) => setError(e instanceof Error ? e.message : 'Не удалось выполнить действие'), []);
-  const updateMessages=useCallback((next:HelpMessage[])=>{messagesRef.current=next;setMessages(next);},[]);
+  const report = useCallback((e: unknown) => {if(isHelpConnectionIssue(e)){setConnectionIssue(true);return;}setError(e instanceof Error ? e.message : 'Не удалось выполнить действие');}, []);
+  const updateMessages=useCallback((next:HelpMessage[])=>{const shared=shareHelpItems(messagesRef.current,next);messagesRef.current=shared;setMessages(shared);},[]);
   const issueNavigation=useCallback((target:Omit<HelpNavigationTarget,'key'>)=>setNavigationTarget({...target,key:++navigationKey.current}),[]);
   const applyPage=useCallback((page:HelpHistoryPage,mode:'replace'|'older'|'newer'='replace')=>{
     const old=pageRef.current,merged=mode==='replace'?page.messages:mergeHelpMessages(messagesRef.current,page.messages);
@@ -94,16 +107,26 @@ export function useHelpService(isFocused = true) {
 
   const applyDetail = useCallback((detail: HelpDetail, merge = false) => {
     setTickets((old) => {
-      const list = old.filter((t) => t.id !== detail.ticket.id);
-      if (detail.ticket.status === listFilter.current.status && (!listFilter.current.query || old.some(t=>t.id===detail.ticket.id))) list.push(detail.ticket);
-      return list;
+      const mine=detail.ticket.ownerId===userId||detail.ticket.members.some(member=>member.userId===userId);
+      const included=detail.ticket.status === listFilter.current.status && (listFilter.current.scope==='queue'||mine) && (!listFilter.current.query || old.some(t=>t.id===detail.ticket.id));
+      const list=old.flatMap(ticket=>ticket.id===detail.ticket.id ? included ? [detail.ticket] : [] : [ticket]);
+      if(included&&!old.some(ticket=>ticket.id===detail.ticket.id))list.push(detail.ticket);
+      return shareHelpItems(old,list);
     });
     if (activeId.current === detail.ticket.id) {
       selectedRef.current=detail.ticket;setSelectedTicket(detail.ticket);
       if(merge)updateMessages(reconcileHelpWindow(messagesRef.current,detail.messages,[],false));
       else applyPage(detailPage(detail));
     }
-  }, [applyPage,updateMessages]);
+  }, [applyPage,updateMessages,userId]);
+  const rememberActive=useCallback(()=>{
+    if(viewIdentity.current!==identity)return;
+    const ticket=selectedRef.current,page=pageRef.current;if(!ticket||!page)return;
+    const unread=page.firstUnreadSequence && page.firstUnreadSequence>readSequence.current ? page.firstUnreadSequence : null;
+    rememberHelpWindow(identity,{ticket,page:{...page,messages:messagesRef.current,lastReadSequence:readSequence.current,firstUnreadSequence:unread},anchor:viewport.current});
+  },[identity]);
+  useEffect(()=>{if(viewIdentity.current!==identity)return;const key=helpListCacheKey(listFilter.current.status,listFilter.current.scope,listFilter.current.query);helpViewCache(identity).lists.set(key,tickets);},[identity,tickets]);
+  useEffect(()=>{rememberActive();},[rememberActive,selectedTicket,messages,hasOlder,hasNewer]);
   const loadTickets = useCallback(async (status = 'OPEN', scope = 'mine', append = false, query?: string, background = false) => {
     if (!userId || !auth?.isAuthenticated) return;
     const generation = ++listGeneration.current, account = identity, mutation = mutationGeneration.current;
@@ -111,11 +134,13 @@ export function useHelpService(isFocused = true) {
     const search = query ?? (append || background ? listFilter.current.query : '');
     const previous = ticketsRef.current;
     listFilter.current = { status, scope, cursor, query: search };
-    if (!background) { setLoading(true); setError(null); }
+    const memory=helpViewCache(identity).lists.get(helpListCacheKey(status,scope,search));
+    if(!append&&memory){ticketsRef.current=memory;setTickets(memory);}
+    if (!background) { if(activeId.current===null)setLoading(!memory&&!previous.length); setError(null); }
     try {
       if(!append&&!background&&!previous.length){
         const cached=await readCachedHelpTickets(userId).catch(()=>[]);
-        if(current(account)&&generation===listGeneration.current)setTickets(cached.filter(ticket=>ticket.status===status&&(scope==='queue'||ticket.members.some(member=>member.userId===userId))&&(!search||ticket.title.toLocaleLowerCase().includes(search.toLocaleLowerCase()))));
+        if(current(account)&&generation===listGeneration.current){const rows=cached.filter(ticket=>ticket.status===status&&(scope==='queue'||ticket.ownerId===userId||ticket.members.some(member=>member.userId===userId))&&(!search||ticket.title.toLocaleLowerCase().includes(search.toLocaleLowerCase())));setTickets(old=>shareHelpItems(old,rows));if(rows.length&&activeId.current===null)setLoading(false);}
       }
       const result = await helpApi.list(status, scope, cursor ?? undefined, search);
       // Refresh the whole loaded window, not just page one. Keep rows in the UI's frozen order.
@@ -133,28 +158,37 @@ export function useHelpService(isFocused = true) {
         result.tickets.push(...displaced.filter((t):t is HelpTicket=>!!t && t.status===status && (scope==='queue'||t.members.some(m=>m.userId===userId))));
       }
       if (!current(account) || generation !== listGeneration.current || mutation !== mutationGeneration.current) return;
-      listFilter.current.cursor = result.nextCursor; setHasMore(!!result.nextCursor);
-      setTickets((old) => append ? [...new Map([...old, ...result.tickets].map((t) => [t.id, t])).values()] : result.tickets);
+      setConnectionIssue(false);listFilter.current.cursor = result.nextCursor; setHasMore(!!result.nextCursor);
+      setTickets((old) => shareHelpItems(old,append ? [...new Map([...old, ...result.tickets].map((t) => [t.id, t])).values()] : result.tickets));
       await cacheHelpTickets(userId,result.tickets).catch(report);
     } catch (e) { if (current(account) && generation === listGeneration.current) { report(e); if (e instanceof HelpApiError && [401,403].includes(e.status)) setTickets([]); } }
-    finally { if (current(account) && generation === listGeneration.current) setLoading(false); }
+    finally { if (current(account) && generation === listGeneration.current && activeId.current===null) setLoading(false); }
   }, [userId, auth?.isAuthenticated, identity, current, report]);
   const clearSelection=useCallback(()=>{
+    rememberActive();
     ++detailGeneration.current;activeId.current=null;selectedRef.current=null;setSelectedTicket(null);updateMessages([]);
     viewport.current=null;pageRef.current=null;pendingTrim.current=null;readSequence.current=0;pendingRead.current=0;paging.current={older:false,newer:false};
     setHasOlder(false);setHasNewer(false);setLoadingOlder(false);setLoadingNewer(false);setNavigationTarget(null);setFirstUnreadSequence(null);setLoading(false);
-  },[updateMessages]);
+  },[updateMessages,rememberActive]);
   const revokeTicket=useCallback(async(id:number)=>{
-    await forgetHelpTicket(userId,id).catch(report);setTickets(old=>old.filter(ticket=>ticket.id!==id));if(activeId.current===id)clearSelection();
-  },[userId,clearSelection,report]);
+    if(activeId.current===id)clearSelection();forgetHelpView(identity,id);
+    await forgetHelpTicket(userId,id).catch(report);setTickets(old=>old.filter(ticket=>ticket.id!==id));
+  },[userId,identity,clearSelection,report]);
   const openTicket=useCallback(async(id:number,explicit?:{messageId?:number;sequence?:number})=>{
     const account=identity,generation=++detailGeneration.current;
+    rememberActive();
+    const hot=helpViewCache(identity).windows.get(id);
     activeId.current=id;selectedRef.current=null;setSelectedTicket(null);updateMessages([]);pageRef.current=null;viewport.current=null;
     readSequence.current=0;pendingRead.current=0;setLoading(true);setError(null);setNavigationTarget(null);setFirstUnreadSequence(null);
     setHasOlder(false);setHasNewer(false);setLoadingOlder(false);setLoadingNewer(false);paging.current={older:false,newer:false};
     let fallbackDetail:HelpDetail|undefined;
-    let cachedShown=false,shownRevision=viewportRevision.current,emittedPosition:Omit<HelpNavigationTarget,'key'>|null=null;
     const valid=()=>current(account)&&generation===detailGeneration.current&&activeId.current===id;
+    if(hot&&(!hot.anchor||hot.anchor.atLatest||hot.page.messages.some(message=>message.sequence===hot.anchor!.sequence))&&(!explicit?.messageId||hot.page.messages.some(message=>message.id===explicit.messageId))&&(!explicit?.sequence||hot.page.messages.some(message=>message.sequence===explicit.sequence))){
+      selectedRef.current=hot.ticket;setSelectedTicket(hot.ticket);viewport.current=hot.anchor;applyPage(hot.page);
+      setFirstUnreadSequence(hot.page.firstUnreadSequence);issueNavigation(initialHelpPosition(hot.anchor,hot.page.firstUnreadSequence,explicit));setLoading(false);
+      socketRef.current?.getSocket()?.emit('help:subscribe',{ticketId:id});void liveTicketRefresh.current(id);
+      return {ticket:hot.ticket,...hot.page};
+    }
     try{
       let cached=await readCachedHelpTicket(userId,id).catch(()=>null);if(!valid())return;
       const anchor=cached?.record.anchor??null;viewport.current=anchor;
@@ -162,8 +196,10 @@ export function useHelpService(isFocused = true) {
       if(cachedPosition.sequence)cached=await readCachedHelpTicket(userId,id,cachedPosition.sequence).catch(()=>cached);
       if(!valid())return;
       if(cached){selectedRef.current=cached.record.ticket;setSelectedTicket(cached.record.ticket);
-        if(cached.page&&(!explicit?.messageId||cached.page.messages.some(message=>message.id===explicit.messageId))){
-          applyPage(cached.page);setFirstUnreadSequence(cached.record.firstUnreadSequence);issueNavigation(cachedPosition);emittedPosition=cachedPosition;cachedShown=true;shownRevision=viewportRevision.current;setLoading(false);
+        if(cached.page&&(!explicit?.messageId||cached.page.messages.some(message=>message.id===explicit.messageId))&&(!explicit?.sequence||cached.page.messages.some(message=>message.sequence===explicit.sequence))){
+          applyPage(cached.page);setFirstUnreadSequence(cached.record.firstUnreadSequence);issueNavigation(cachedPosition);setLoading(false);
+          socketRef.current?.getSocket()?.emit('help:subscribe',{ticketId:id});void liveTicketRefresh.current(id);
+          return {ticket:cached.record.ticket,...cached.page};
         }}
       const detail=await helpApi.detail(id);if(!valid())return;fallbackDetail=detail;
       const tail=detailPage(detail);await persistPage(detail.ticket,tail);if(!valid())return;
@@ -174,23 +210,13 @@ export function useHelpService(isFocused = true) {
         if(!found)page=await helpApi.messages(id,position.messageId&&!target?{aroundMessageId:position.messageId}:{around:target});
       }
       if(!valid())return;await persistPage(detail.ticket,page);if(!valid())return;
-      if(cachedShown&&viewportRevision.current!==shownRevision){
-        // A cache-first screen is already interactive. A late initial response must not undo its newer reading position.
-        applyDetail({ticket:detail.ticket,messages:[]},true);
-        updateMessages(reconcileHelpWindow(messagesRef.current,page.messages,[],false));
-        const livePage=pageRef.current as HelpHistoryPage|null;
-        if(livePage){livePage.lastSequence=Math.max(livePage.lastSequence,tail.lastSequence);
-          if(!viewport.current?.atLatest&&tail.lastSequence>(messagesRef.current.at(-1)?.sequence??0)){livePage.hasNewer=true;setHasNewer(true);}}
-      }else{
-        applyDetail({...detail,...page});setFirstUnreadSequence(tail.firstUnreadSequence);
-        if(!emittedPosition||emittedPosition.kind!==position.kind||emittedPosition.sequence!==position.sequence||emittedPosition.messageId!==position.messageId)issueNavigation(position);
-      }
+      applyDetail({...detail,...page});setFirstUnreadSequence(tail.firstUnreadSequence);issueNavigation(position);
       socketRef.current?.getSocket()?.emit('help:subscribe',{ticketId:id});
-      void liveRefresh.current();
+      void liveTicketRefresh.current(id);
       return {...detail,messages:page.messages};
-    }catch(e){if(valid()){report(e);if(isAccessRevoked(e)){await revokeTicket(id);throw e;}if(e instanceof HelpApiError&&e.code==='HELP_MESSAGE_NOT_FOUND'&&fallbackDetail){if(!cachedShown){applyDetail(fallbackDetail);issueNavigation({kind:'latest',animate:false});}return fallbackDetail;}if(!cachedShown){clearSelection();throw e;}}return undefined;}
+    }catch(e){if(valid()){report(e);if(isAccessRevoked(e)){await revokeTicket(id);throw e;}if(e instanceof HelpApiError&&e.code==='HELP_MESSAGE_NOT_FOUND'&&fallbackDetail){applyDetail(fallbackDetail);issueNavigation({kind:'latest',animate:false});return fallbackDetail;}clearSelection();throw e;}return undefined;}
     finally{if(valid())setLoading(false);}
-  },[identity,userId,current,helpApi,updateMessages,applyDetail,applyPage,issueNavigation,persistPage,report,revokeTicket,clearSelection]);
+  },[identity,userId,current,helpApi,updateMessages,applyDetail,applyPage,issueNavigation,persistPage,report,revokeTicket,clearSelection,rememberActive]);
   const loadPage=useCallback(async(direction:'older'|'newer')=>{
     const id=activeId.current,account=identity,generation=detailGeneration.current,old=messagesRef.current;
     if(!id||!old.length||paging.current[direction]||!(direction==='older'?pageRef.current?.hasOlder:pageRef.current?.hasNewer))return;
@@ -210,60 +236,28 @@ export function useHelpService(isFocused = true) {
     }catch(e){if(current(account)&&generation===detailGeneration.current){report(e);if(isAccessRevoked(e))await revokeTicket(id);}}
     finally{if(current(account)&&generation===detailGeneration.current){paging.current[direction]=false;(direction==='older'?setLoadingOlder:setLoadingNewer)(false);}}
   },[identity,userId,current,helpApi,persistPage,applyPage,report,revokeTicket,server.isReachable]);
-  const syncTicket=useCallback(async(id:number)=>{
-    if(!pageRef.current)return;
+  const readCommittedTicket=useCallback(async(id:number)=>{
     const account=identity,generation=detailGeneration.current;
-    const following=viewport.current?.atLatest===true&&!pageRef.current?.hasNewer;
-    const valid=()=>current(account)&&activeId.current===id&&generation===detailGeneration.current;
-    try{
-      const cached=await readCachedHelpTicket(userId,id);let cursor=cached?.record.syncCursor??0;if(!valid())return;
-      let more=true;
-      while(more&&valid()){
-        const result=await helpApi.sync(id,cursor);if(!valid())return;
-        await cacheHelpSync(userId,id,result);if(!valid())return;
-        cursor=result.nextCursor;more=result.hasMore;
-        // Only update visible IDs here. Replay must never join two disjoint history windows.
-        const committed=await readCachedHelpTicket(userId,id);if(!valid())return;
-        applyDetail({ticket:committed?.record.ticket??result.ticket,messages:[]},true);
-        const shown=messagesRef.current;
-        const refreshed=shown.length?await readCachedHelpRange(userId,id,shown[0].sequence,shown.at(-1)!.sequence,shown.length):[];
-        if(!valid())return;updateMessages(reconcileHelpWindow(messagesRef.current,refreshed,result.deletedMessageIds.filter(id=>!refreshed.some(message=>message.id===id)),false));
-        readSequence.current=Math.max(readSequence.current,result.lastReadSequence);
-        if(pageRef.current){pageRef.current={...pageRef.current,lastSequence:Math.max(pageRef.current.lastSequence,result.lastSequence),lastReadSequence:Math.max(pageRef.current.lastReadSequence,result.lastReadSequence)};
-          if(result.lastSequence>(messagesRef.current.at(-1)?.sequence??0)&&!following){pageRef.current.hasNewer=true;setHasNewer(true);}}
-      }
-      if(valid()&&following&&(pageRef.current?.lastSequence??0)>(messagesRef.current.at(-1)?.sequence??0)){
-        let after=messagesRef.current.at(-1)?.sequence??0,collected:HelpMessage[]=[];
-        let page:HelpHistoryPage|undefined;
-        for(let pages=0;pages<10&&valid();pages++){
-          page=await helpApi.messages(id,{after});if(!valid())return;
-          if(selectedRef.current)await persistPage(selectedRef.current,page);if(!valid())return;
-          collected=mergeHelpMessages(collected,page.messages);const next=page.messages.at(-1)?.sequence;
-          if(!page.hasNewer||!next||next<=after)break;after=next;
-        }
-        if(page&&valid()){
-          if(page.hasNewer){
-            // A very long reconnect should open a bounded latest window rather than mount every missed row.
-            const latest=await helpApi.messages(id);if(!valid())return;
-            if(selectedRef.current)await persistPage(selectedRef.current,latest);if(!valid())return;
-            if(viewport.current?.atLatest){applyPage(latest);issueNavigation({kind:'latest',animate:false});}
-            else{pageRef.current!.hasNewer=true;setHasNewer(true);}
-          }else if(viewport.current?.atLatest)applyPage({...page,messages:collected},'newer');
-          else if(pageRef.current){pageRef.current.hasNewer=true;setHasNewer(true);}
-        }
-      }
-    }catch(e){if(valid()){report(e);if(isAccessRevoked(e))await revokeTicket(id);}}
-  },[identity,userId,current,helpApi,applyDetail,updateMessages,persistPage,applyPage,issueNavigation,report,revokeTicket]);
-  const refresh=useCallback(async()=>{
-    if(replaying.current){queuedReplay.current=true;return replaying.current;}
-    const account=identity;const work=(async()=>{
-      do{queuedReplay.current=false;const id=activeId.current;
-        // Active messages are repaired before list metadata so incoming delivery is not held up by list pagination.
-        if(id&&current(account))await syncTicket(id);
-        if(current(account))await loadTickets(listFilter.current.status,listFilter.current.scope,false,listFilter.current.query,true);
-      }while(queuedReplay.current&&current(account));
-    })();replaying.current=work;try{await work;}finally{if(replaying.current===work)replaying.current=null;}
-  },[identity,current,loadTickets,syncTicket]);
+    const cached=await readCachedHelpTicket(userId,id);if(!current(account)||!cached)return;
+    applyDetail({ticket:cached.record.ticket,messages:[]},true);
+    const hot=helpViewCache(identity).windows.get(id);if(hot)hot.ticket=cached.record.ticket;
+    if(activeId.current!==id||generation!==detailGeneration.current)return;
+    const shown=messagesRef.current,following=viewport.current?.atLatest===true&&!pageRef.current?.hasNewer;
+    const from=shown[0]?.sequence??1,to=following?cached.record.lastSequence:shown.at(-1)?.sequence??cached.record.lastSequence;
+    const rows=await readCachedHelpRange(userId,id,from,to,1000);
+    if(!current(account)||activeId.current!==id||generation!==detailGeneration.current)return;
+    const pending=await readHelpPending(userId);if(!current(account)||activeId.current!==id||generation!==detailGeneration.current)return;
+    setPendingMessages(pending);setPendingCount(pending.length);updateMessages(shareHelpItems(shown,rows));
+    readSequence.current=Math.max(readSequence.current,cached.record.lastReadSequence);
+    if(pageRef.current){pageRef.current={...pageRef.current,lastSequence:cached.record.lastSequence,lastReadSequence:readSequence.current,hasNewer:!following&&cached.record.lastSequence>(rows.at(-1)?.sequence??0)};setHasNewer(pageRef.current.hasNewer);}
+    rememberActive();
+  },[identity,userId,current,applyDetail,updateMessages,rememberActive]);
+  const committedRef=useRef(readCommittedTicket);committedRef.current=readCommittedTicket;
+  const syncTicket=useCallback(async(id:number)=>{await accountConnection.current?.syncTicket(id);await readCommittedTicket(id);},[readCommittedTicket]);
+  const targetedRequests=useRef(new Map<number,Promise<void>>()),targetedAgain=useRef(new Set<number>());
+  const refreshTicket=useCallback(async(id:number)=>{try{await syncTicket(id);}catch(error){if(current(identity)){if(isAccessRevoked(error))await revokeTicket(id);else report(error);}}},[syncTicket,current,identity,revokeTicket,report]);
+  liveTicketRefresh.current=refreshTicket;
+  const refresh=useCallback(async()=>{await accountConnection.current?.refresh();const id=activeId.current;if(id)await committedRef.current(id);},[]);
   const liveRefresh = useRef(refresh); liveRefresh.current = refresh;
   useEffect(() => {
     const returned = isFocused && !previousFocus.current;
@@ -272,41 +266,46 @@ export function useHelpService(isFocused = true) {
   }, [isFocused]);
 
   useEffect(() => {
-    mounted.current = true; setTickets([]); clearSelection(); setCanManage(false); setBusy(false); setPendingCount(0); setError(null);
+    mounted.current = true; clearSelection();viewIdentity.current=identity;setTickets(helpViewCache(identity).lists.get(helpListCacheKey('OPEN','mine'))??[]);setCanManage(false);setAiEnabled(false);setConnectionIssue(false);setPendingMessages([]);setLastCreatedOperation(null); setBusy(false); setPendingCount(0); setError(null);
     replaying.current=null;queuedReplay.current=false;
+    targetedRequests.current.clear();targetedAgain.current.clear();
     const account = identity;
     if (!userId || !auth?.isAuthenticated) return;
-    void readHelpPending(userId).then(items=>{if(current(account))setPendingCount(items.length);}).catch(e=>{if(current(account))report(e);});
-    void helpApi.config().then((config) => { if (current(account)) setCanManage(config.canManage); }).catch((e) => { if (current(account)) report(e); });
+    const updateOutbox=()=>{void readLastCreatedOperation(userId).then(mapping=>{if(current(account))setLastCreatedOperation(mapping);}).catch(report);const id=activeId.current;if(id){void committedRef.current(id).catch(report);return;}void readHelpPending(userId).then(items=>{if(current(account)){setPendingCount(items.length);setPendingMessages(items);}}).catch(e=>{if(current(account))report(e);});};
+    updateOutbox();const unsubscribeOutbox=subscribeHelpOutbox(userId,updateOutbox);
+    void helpApi.config().then((config) => { if (current(account)) {setCanManage(config.canManage);setAiEnabled(config.aiEnabled);} }).catch((e) => { if (current(account)) report(e); });
     void loadTickets();
-    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
-    const scheduleRefresh = () => { clearTimeout(refreshTimer); refreshTimer = setTimeout(() => { if (current(account)) void liveRefresh.current(); }, 120); };
-    const connection = createHelpSocket(userId, (socket) => {
-        socket.on('connect', () => { if (!current(account)) return; setConnected(true); socket.emit('help:subscribe', activeId.current ? {ticketId: activeId.current} : {}); scheduleRefresh(); });
-        socket.on('disconnect', () => { if (current(account)) setConnected(false); });
-        socket.on('help:event', () => { if(current(account))void liveRefresh.current(); });
-        socket.on('help:typing', (event: {ticketId:number;userId:number;name?:string;typing?:boolean;isTyping?:boolean}) => {
-          if (!current(account) || event.userId === userId || !Number.isSafeInteger(event.ticketId)) return;
-          const key = `${event.ticketId}:${event.userId}`;
-          clearTimeout(typingTimers.current.get(key));
-          const remove = () => setTyping((old) => ({...old,[event.ticketId]:(old[event.ticketId]||[]).filter((p)=>p.userId!==event.userId)}));
-          if (event.typing === false || event.isTyping === false) { remove(); return; }
-          setTyping((old) => ({...old,[event.ticketId]:[...(old[event.ticketId]||[]).filter((p)=>p.userId!==event.userId),{userId:event.userId,name:event.name||'Участник'}]}));
-          typingTimers.current.set(key,setTimeout(remove,5000));
-        });
+    let typingSocket:ReturnType<ReturnType<typeof acquireHelpAccount>['getSocket']>=null;
+    const typing=(event:HelpTypingEvent)=>{
+      if(!current(account)||event.userId===userId||!Number.isSafeInteger(event.ticketId)||!Number.isSafeInteger(event.userId))return;
+      const key=`${event.ticketId}:${event.userId}`;clearTimeout(typingTimers.current.get(key));
+      const remove=()=>{typingTimers.current.delete(key);if(current(account))setTyping(old=>({...old,[event.ticketId]:updateHelpTypingUsers(old[event.ticketId]||[],{...event,name:event.name||'Участник',typing:false})}));};
+      if(event.typing===false||event.isTyping===false){remove();return;}
+      const ticket=selectedRef.current?.id===event.ticketId?selectedRef.current:ticketsRef.current.find(row=>row.id===event.ticketId);
+      const member=ticket?.members.find(row=>row.userId===event.userId)?.user;
+      const next={...event,name:event.name||member?.name||'Участник',avatarUrl:event.avatarUrl!==undefined?event.avatarUrl:member?.avatarUrl??null};
+      setTyping(old=>({...old,[event.ticketId]:updateHelpTypingUsers(old[event.ticketId]||[],next)}));
+      const ttl=Number.isFinite(event.expiresAt)?Math.max(0,Math.min(5000,event.expiresAt!-Date.now())):5000;
+      typingTimers.current.set(key,setTimeout(remove,ttl));
+    };
+    const bindTyping=()=>{const next=connection.getSocket();if(next===typingSocket)return;typingSocket?.off('help:typing',typing);typingSocket=next;typingSocket?.on('help:typing',typing);};
+    const connection=acquireHelpAccount(userId,notice=>{
+      if(!current(account))return;
+      if(notice.type==='ticket'){setConnectionIssue(false);void committedRef.current(notice.ticketId).catch(report);}
+      if(notice.type==='revoked')void revokeTicket(notice.ticketId);
+      if(notice.type==='error')report(notice.error);
+      if(notice.type==='healthy')setConnectionIssue(false);
+      if(notice.type==='outbox')void readHelpPending(userId).then(items=>{if(current(account))setPendingCount(items.length);});
+      if(notice.type==='connected'){
+        setConnected(notice.connected);if(notice.connected)setConnectionIssue(false);
+        if(notice.connected)bindTyping();
+      }
     });
-    socketRef.current = connection;
-    const appState = AppState.addEventListener('change', (state) => { if (state === 'active') scheduleRefresh(); });
-    const onVisibility = () => { if (canRead()) scheduleRefresh(); };
-    if (Platform.OS === 'web' && typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibility);
-    // REST repair also covers an event lost during disconnect or a socket authorization failure.
-    const repair = setInterval(() => { if (AppState.currentState === 'active' || Platform.OS === 'web') scheduleRefresh(); }, 30000);
-    return () => {
-      mounted.current = false; clearTimeout(refreshTimer); clearInterval(repair); appState.remove(); connection.disconnect();
-      if (Platform.OS === 'web' && typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility);
-      socketRef.current = null; setConnected(false); typingTimers.current.forEach(clearTimeout); typingTimers.current.clear(); setTyping({});
-      for (const value of media.current.values()) void value.then((s) => { if (s.uri.startsWith('blob:')) URL.revokeObjectURL(s.uri); }).catch(()=>{});
-      media.current.clear();
+    accountConnection.current=connection;socketRef.current={getSocket:connection.getSocket,disconnect:()=>connection.release()};
+    setConnected(Boolean(connection.getSocket()?.connected));bindTyping();
+    return()=>{
+      unsubscribeOutbox();mounted.current=false;typingSocket?.off('help:typing',typing);connection.release();accountConnection.current=null;socketRef.current=null;setConnected(false);typingTimers.current.forEach(clearTimeout);typingTimers.current.clear();setTyping({});
+      for(const value of media.current.values())void value.then(source=>{if(source.uri.startsWith('blob:'))URL.revokeObjectURL(source.uri);}).catch(()=>{});media.current.clear();
     };
   }, [identity]); // The account identity, not ticket navigation, owns the connection.
 
@@ -326,7 +325,7 @@ export function useHelpService(isFocused = true) {
       else if(activeId.current===detail.ticket.id&&navigation===detailGeneration.current){
         const last=detail.lastSequence??detail.ticket.lastSequence??detail.messages.at(-1)?.sequence??0;
         if(pageRef.current&&last>(messagesRef.current.at(-1)?.sequence??0)){pageRef.current.hasNewer=true;setHasNewer(true);}
-        void liveRefresh.current();
+        void liveTicketRefresh.current(detail.ticket.id);
       }
       return detail;
     } catch (e) { if (current(account)) report(e); throw e; }
@@ -336,35 +335,31 @@ export function useHelpService(isFocused = true) {
   const durableSend = useCallback(async (input: HelpCreateInput & {rating?:number}, ticketId?: number, action?: 'close' | 'reopen'): Promise<HelpDetail> => {
     const account = identity;
     const saved = await readHelpPending(userId);
-    const previous = saved.find((p) => p.ticketId === ticketId && p.action === action && p.input.rating === input.rating && p.create === !ticketId && p.input.sourceTicketId === input.sourceTicketId && sameHelpPayload(p.input,input));
-    const item = previous || { key: input.clientMessageId || helpClientId(), ticketId, action, create: !ticketId, createdAt: Date.now(), input: {...input, clientMessageId: input.clientMessageId || helpClientId(), ...(!ticketId ? { clientTicketId: input.clientTicketId || helpClientId() } : {})} };
+    const previous = input.clientMessageId?saved.find(item=>item.input.clientMessageId===input.clientMessageId):undefined;
+    const clientMessageId=input.clientMessageId||helpClientId();
+    const item = previous || {key:clientMessageId,ticketId,action,create:!ticketId,status:'queued' as const,createdAt:Date.now(),input:{...input,clientMessageId,...(!ticketId?{clientTicketId:input.clientTicketId||helpClientId()}:{})}};
     await saveHelpPending(userId,item);
     if (!current(account)) throw new Error('Учётная запись изменилась');
     const queued = await readHelpPending(userId);
     if (!current(account)) throw new Error('Учётная запись изменилась');
     setPendingCount(queued.length);
-    try {
-      const detail = action === 'close' && ticketId ? await helpApi.close(ticketId,{...item.input,rating:item.input.rating ?? 0})
-        : action === 'reopen' && ticketId ? await helpApi.reopen(ticketId,item.input)
-        : ticketId ? await helpApi.send(ticketId,item.input) : await helpApi.create(item.input);
-      await removeHelpPending(userId,item.key);
-      const remaining = await readHelpPending(userId);
-      if(current(account))setPendingCount(remaining.length);
-      return detail;
-    } catch (e) {
-      // Unknown network outcome keeps the exact immutable request for a safe retry.
-      if (e instanceof HelpApiError && e.status >=400 && e.status <500 && e.status !==408 && e.status !==429) {
-        await removeHelpPending(userId,item.key);
-        const remaining = await readHelpPending(userId);
-        if(current(account))setPendingCount(remaining.length);
-      }
-      throw e;
-    }
+    try{return await dispatchHelpPending(userId,item);}
+    finally{const remaining=await readHelpPending(userId);if(current(account))setPendingCount(remaining.length);}
   }, [identity,userId,current]);
   const createTicket = useCallback((input: HelpCreateInput) => mutate(()=>durableSend(input),true),[mutate,durableSend]);
-  const sendMessage = useCallback(async(id:number,input:HelpMessageInput)=>{
-    const detail=await mutate(()=>durableSend(input,id));if(activeId.current===id)await navigateLatest.current();return detail;
-  },[mutate,durableSend]);
+  const sendMessage = useCallback(async(id:number,input:HelpMessageInput):Promise<HelpDetail>=>{
+    const ticket=selectedRef.current?.id===id?selectedRef.current:ticketsRef.current.find(row=>row.id===id);if(!ticket)throw new Error('Обращение не открыто');
+    const clientMessageId=input.clientMessageId||helpClientId();
+    const item:HelpPending={key:clientMessageId,ticketId:id,create:false,createdAt:Date.now(),status:'queued',input:{...input,clientMessageId}};
+    await saveHelpPending(userId,item);
+    if(!current(identity))throw new Error('Учётная запись изменилась');
+    if(input.attachmentIds?.length){const detail=await mutate(()=>dispatchHelpPending(userId,item));await liveTicketRefresh.current(id);return detail;}
+    // Acceptance means durable local enqueue. Delivery continues beyond this screen.
+    void dispatchHelpPending(userId,item).then(()=>{if(current(identity))return liveTicketRefresh.current(id);}).catch(error=>{if(current(identity))report(error);});
+    return {...(pageRef.current??{}),ticket,messages:messagesRef.current.filter(message=>message.ticketId===id),queued:true};
+  },[userId,current,identity,report,mutate]);
+  const stopAssistant=useCallback((id:number,runId:string)=>mutate(()=>helpApi.stopAssistant(id,runId)),[mutate,helpApi]);
+  const retryAssistant=useCallback((id:number,runId:string)=>mutate(()=>helpApi.retryAssistant(id,runId)),[mutate,helpApi]);
   const editMessage = useCallback((id:number,input:{text:string;rating?:number;attachmentIds?:string[]})=>mutate(()=>helpApi.edit(id,input)),[mutate]);
   const closeTicket = useCallback((id:number,input:HelpCloseInput)=>mutate(()=>durableSend(input,id,'close')),[mutate,durableSend]);
   const reopenTicket = useCallback((id:number,input:HelpMessageInput)=>mutate(()=>durableSend(input,id,'reopen')),[mutate,durableSend]);
@@ -421,6 +416,7 @@ export function useHelpService(isFocused = true) {
   navigateLatest.current=jumpToLatest;
   const saveViewport=useCallback(async(anchor:HelpViewportAnchor,ticketId?:number,options?:{deferTrim?:boolean})=>{
     const id=ticketId??activeId.current;if(!validHelpAnchor(anchor)||!id)return;
+    const hot=helpViewCache(identity).windows.get(id);if(hot)hot.anchor=anchor;
     if(id===activeId.current){
       viewport.current=anchor;++viewportRevision.current;
       const trimmed=pendingTrim.current&&!options?.deferTrim?trimHelpWindow(messagesRef.current,anchor,pendingTrim.current):null;
@@ -434,8 +430,9 @@ export function useHelpService(isFocused = true) {
     const message=await readCachedHelpMessage(userId,id,anchor.messageId).catch(()=>null);
     if(!message||message.ticketId!==id||message.sequence!==anchor.sequence)return;
     await saveHelpViewport(userId,id,anchor).catch(report);
-  },[userId,report,updateMessages,issueNavigation]);
+  },[identity,userId,report,updateMessages,issueNavigation]);
   const markVisibleRead=useCallback(async(sequence:number)=>{
+    sequence=readableHelpSequence(messagesRef.current,sequence);
     const id=activeId.current,account=identity,generation=detailGeneration.current;
     if(!id||!canRead()||!Number.isSafeInteger(sequence)||sequence<=readSequence.current||!messagesRef.current.some(message=>message.sequence===sequence))return;
     const readOwner=`${account}:${id}:${generation}`;
@@ -444,7 +441,7 @@ export function useHelpService(isFocused = true) {
       while(pendingRead.current>readSequence.current&&current(account)&&generation===detailGeneration.current&&canRead()){
         const value=pendingRead.current;await helpApi.read(id,value);if(!current(account)||generation!==detailGeneration.current)return;
         readSequence.current=Math.max(readSequence.current,value);const ticket=selectedRef.current;
-        if(ticket){const unread=messagesRef.current.filter(message=>message.sequence>value&&message.authorId!==userId).length;
+        if(ticket){const unread=messagesRef.current.filter(message=>message.sequence>value&&message.authorId!==userId&&message.kind!=='ASSISTANT_PROGRESS').length;
           applyDetail({ticket:{...ticket,lastReadSequence:value,unreadCount:pageRef.current?.hasNewer?ticket.unreadCount:unread},messages:[]},true);}
       }
     }catch(e){if(current(account)&&generation===detailGeneration.current)report(e);}finally{if(reading.current===readOwner)reading.current=null;}
@@ -467,15 +464,16 @@ export function useHelpService(isFocused = true) {
     const account=identity;
     for(const item of await readHelpPending(userId)) {
       if(!current(account))return;
-      await mutate(()=>durableSend(item.input,item.ticketId,item.action));
+      await mutate(()=>dispatchHelpPending(userId,item));
     }
     await refresh();
   },[identity,userId,current,mutate,durableSend,refresh]);
+  const retryPendingOperation=useCallback(async(key:string)=>{const item=(await readHelpPending(userId)).find(row=>row.key===key);if(!item)return;const detail=await dispatchHelpPending(userId,{...item,status:'queued',nextAttemptAt:0});if(current(identity))await liveTicketRefresh.current(detail.ticket.id);},[userId,current,identity]);
   const getDraft=useCallback((key:string)=>getHelpDraft(userId,key),[userId]);
   const setDraft=useCallback((key:string,text:string)=>setHelpDraft(userId,key,text),[userId]);
   const uploadAttachments=useCallback((files:HelpFile[])=>uploadHelpFiles(files,userId),[userId]);
-  return {tickets,selectedTicket,messages,loading,busy,error,pendingCount,connected:connected&&server.isReachable,online:server.isReachable,canManage,userId,typingByTicket,hasMore,
+  return {tickets,selectedTicket,messages,pendingMessages,lastCreatedOperation,retryPendingOperation,loading,busy,error,pendingCount,connected:connected&&server.isReachable&&!connectionIssue,online:server.isReachable,canManage,userId,typingByTicket,hasMore,
     hasOlder,hasNewer,loadingOlder,loadingNewer,navigationTarget,firstUnreadSequence,loadNewer,jumpToMessage,jumpToLatest,jumpToDate,cancelNavigation,saveViewport,markVisibleRead,searchMessages,
-    loadTickets,openTicket,clearSelection,createTicket,sendMessage,editMessage,closeTicket,reopenTicket,requestIt,claimTicket,markAllRead,toggleReaction,
+    aiEnabled,stopAssistant,retryAssistant,loadTickets,openTicket,clearSelection,createTicket,sendMessage,editMessage,closeTicket,reopenTicket,requestIt,claimTicket,markAllRead,toggleReaction,
     uploadAttachments,mediaSource,loadOlder,emitTyping,getDraft,setDraft,retryPending,refresh};
 }

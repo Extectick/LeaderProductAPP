@@ -17,6 +17,36 @@ describe('Help history QA fixture transitions', () => {
   afterEach(async () => { await act(async () => screen.unmount()); });
   const action = async (name: string, value?: unknown) => { await act(async () => { await mockActions[name](value); }); };
 
+  test('close and reopen preserve status events and rating through reopening history', async () => {
+    await act(async () => { await service.openTicket(1042); });
+    await act(async () => { await service.closeTicket(1042, { text: 'Помогло, спасибо', rating: 4 }); });
+    const closure = service.messages.at(-1)!;
+    expect(closure).toMatchObject({ kind: 'CLOSURE', rating: 4, ticketStatusChange: 'CLOSED', text: 'Помогло, спасибо' });
+    expect(service.selectedTicket).toMatchObject({ status: 'CLOSED', canReopen: true });
+    await act(async () => { await service.reopenTicket(1042, { text: 'Проблема повторилась' }); });
+    expect(service.messages.at(-1)).toMatchObject({ kind: 'TEXT', rating: null, ticketStatusChange: 'REOPENED', text: 'Проблема повторилась' });
+    expect(service.selectedTicket).toMatchObject({ status: 'OPEN', closedAt: null, canReopen: false });
+    await act(async () => { service.clearSelection(); });
+    await act(async () => { await service.openTicket(1042); });
+    expect(service.messages.filter(row => row.ticketStatusChange)).toHaveLength(2);
+    expect(service.messages.find(row => row.id === closure.id)?.rating).toBe(4);
+    await act(async () => { await service.editMessage(closure.id, { text: 'Спасибо!', rating: 5 }); });
+    expect(service.messages.find(row => row.id === closure.id)).toMatchObject({ rating: 5, kind: 'CLOSURE', ticketStatusChange: 'CLOSED' });
+  });
+  test('closing during assistant processing stops late updates and does not start another answer', async () => {
+    jest.useFakeTimers();
+    try {
+      let id = 0;
+      await act(async () => { id = (await service.createTicket({ text: 'Не печатает принтер' })).ticket.id; });
+      await act(async () => { await service.closeTicket(id, { text: '', rating: 4 }); });
+      const messages = service.messages;
+      expect(messages.at(-1)).toMatchObject({ kind: 'CLOSURE', rating: 4 });
+      expect(messages.find(row => row.assistantRun)?.assistantRun?.status).toBe('stopped');
+      await act(async () => { await jest.advanceTimersByTimeAsync(20000); });
+      expect(service.messages).toBe(messages);
+    } finally { jest.useRealTimers(); }
+  });
+
   test('default composer fixture stays small; history navigation restores a saved message offset', async () => {
     await act(async () => { await service.openTicket(1042); });
     expect(service.messages).toHaveLength(8);

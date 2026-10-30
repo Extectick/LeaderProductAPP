@@ -11,6 +11,7 @@ import { HelpMediaLoadingContext } from '../helpMediaLoading';
 import { useHelpReducedMotion, useHelpTheme } from '../helpTheme';
 import { HelpDateSeparator, HelpUnreadSeparator, HelpHistoryStatus, HelpJumpToLatest } from './HelpTimelineIndicators';
 import { hasNativeChatLayout } from './HelpNativeChatLayout';
+import { HELP_COMPOSER_ACTION_RIGHT } from '../helpLayout';
 
 export type HelpTimelineHandle = {
   save: () => void;
@@ -50,6 +51,14 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   const hasImages = useMemo(() => props.messages.some(message => message.attachments?.some(attachment => attachment.kind==='IMAGE') || message.replyTo?.attachments?.some(attachment => attachment.kind==='IMAGE')), [props.messages]);
   const hasImagesRef = useRef(hasImages); hasImagesRef.current = hasImages;
   const [following, setFollowing] = useState(false), [ready, setReady] = useState(false), [loaded, setLoaded] = useState(false), [navigating,setNavigating] = useState(false);
+  const [initialLoadingVisible,setInitialLoadingVisible]=useState(false);
+  useEffect(()=>{
+    setInitialLoadingVisible(false);
+    if(!props.loading||rows.length)return;
+    // Local disk hydration should not flash a network loader for a single frame.
+    const timer=setTimeout(()=>setInitialLoadingVisible(true),200);
+    return()=>clearTimeout(timer);
+  },[props.loading,rows.length]);
   const readyRef = useRef(false), followingRef = useRef(false), mounted = useRef(true);
   const geometry = useRef({offset: 0, height: 0, content: 0});
   const lastAnchor = useRef<HelpViewportAnchor | null>(null), committedTarget = useRef<number | null>(null);
@@ -107,13 +116,16 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   const settleScroll = useCallback(() => {
     stopIdleSave();
     if(dragging.current || momentum.current || Date.now()<webIntent.current || inNavigation.current || !readyRef.current)return;
+    const userWasScrolling = userScrollSession.current;
     userScrollSession.current=false;
     const {content,offset,height}=geometry.current;
     // The 64dp affordance threshold must never own native scrolling. Only an
     // actual, settled bottom (or an explicit Latest action) can reacquire it.
     const atEnd=!live.current.hasNewer && content+(hasNativeChatLayout?live.current.dockHeight+12:0)-offset-height<=2;
-    setFollow(atEnd);
-    if(lastAnchor.current)lastAnchor.current={...lastAnchor.current,atLatest:atEnd};
+    // Content growth, AI replacement and composer collapse are not user intent
+    // to leave the tail. Only a completed gesture may release/reacquire follow.
+    if(userWasScrolling) setFollow(atEnd);
+    if(lastAnchor.current)lastAnchor.current={...lastAnchor.current,atLatest:followingRef.current && !live.current.hasNewer};
     save();
   },[save,setFollow,stopIdleSave]);
   const scheduleIdleSave = useCallback(() => {
@@ -190,10 +202,34 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     if (hasNativeChatLayout && native?.scrollToEnd) native.scrollToEnd({animated});
     else list.current?.scrollToEnd({animated});
   }, []);
+  const pinLatest = useCallback((animated = false) => {
+    const generation = ++navigationGeneration.current;
+    const opening = !readyRef.current;
+    inNavigation.current = false; setNavigating(false);
+    userScrollSession.current = false; dragging.current = false; momentum.current = false; webIntent.current = 0;
+    stopIdleSave(); cancelJump();
+    if (!opening) { readyRef.current = true; setReady(true); }
+    setFollow(!live.current.hasNewer);
+    // Keep the native end anchor. scrollToIndex(last, viewPosition=0) would
+    // first align the last cell at the top, then scroll a second time to its end.
+    scrollEnd(animated);
+    let lastHeight = -1, stable = 0, passes = 0;
+    const finishLayout = () => {
+      if (!mounted.current || generation !== navigationGeneration.current) return;
+      const last = list.current?.getLayout(rowsRef.current.length - 1);
+      const measuredEnd = last ? last.y + last.height : 0;
+      stable = measuredEnd > 0 && Math.abs(measuredEnd - lastHeight) < .5 ? stable + 1 : 0;
+      lastHeight = measuredEnd;
+      if (opening && stable < 2 && ++passes < 8) { scrollEnd(false); requestAnimationFrame(finishLayout); return; }
+      readyRef.current = true; setReady(true);
+      setFollow(!live.current.hasNewer); scrollEnd(false); updateMediaRange(true); observe();
+    };
+    requestAnimationFrame(finishLayout);
+  }, [cancelJump,observe,scrollEnd,setFollow,stopIdleSave,updateMediaRange]);
   useImperativeHandle(ref, () => ({save:()=>save(true),prepareJump,cancelJump,jumpToDate:jumpDate,
     scrollTo: ({y,animated}) => {touched.current=true;setFollow(false);list.current?.scrollToOffset({offset:y,animated,skipFirstItemOffset:true});},
-    scrollToEnd: ({animated} = {}) => {setFollow(!live.current.hasNewer);scrollEnd(animated);},
-  }), [save,prepareJump,cancelJump,jumpDate,setFollow,scrollEnd]);
+    scrollToEnd: ({animated} = {}) => pinLatest(animated),
+  }), [save,prepareJump,cancelJump,jumpDate,setFollow,pinLatest]);
 
   const stickyDate = ready && !outgoing && currentDate ? currentDate : null;
   useEffect(() => { props.onStickyDateChange?.(stickyDate); }, [stickyDate, props.onStickyDateChange]);
@@ -212,6 +248,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     const index = target.kind === 'latest' ? rows.length - 1 : rows.findIndex(row => (target.kind==='unread' ? row.kind==='unread' : row.kind==='message') && (row.message.id === target.messageId || row.message.sequence === target.sequence));
     if(index < 0) return;
     committedTarget.current=target.key;
+    if (target.kind === 'latest') { lastNavigationMode.current = 'latest'; pinLatest(false); return; }
     const targetLayout=list.current?.getLayout(index);
     const targetWasLoaded=!dateSnapshot.current || dateSnapshot.current.loadedIds.has(rows[index].message.id);
     const dateMode=target.kind==='date'?helpDateJumpMode({
@@ -230,7 +267,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     stopIdleSave();
     // FlashList's animated index endpoint excludes the native composer inset.
     // Let its measurement settle without a competing fling, then pin native end.
-    const animated=Boolean(target.kind!=='latest' && target.animate && !reduced && readyRef.current && !outgoingRef.current);
+    const animated=Boolean(target.animate && !reduced && readyRef.current && !outgoingRef.current);
     // A date row is 44dp with a centered 24dp pill. Leave its pill at the
     // same headerHeight-12 position as the floating date after a real jump.
     const targetOffset=target.offset??(target.kind==='date'?22:0);
@@ -246,7 +283,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
       if(!mounted.current || generation!==navigationGeneration.current)return;
       // Text wrapping and attachment aspect ratios can refine recycled row sizes
       // after scrollToIndex resolves. Hold the target through those layout commits.
-      if(target.kind!=='latest' && dateMode!=='near'){
+      if(dateMode!=='near'){
         let previous=-1,stable=0;
         for(let pass=0;pass<12;pass++){
           await new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve())));
@@ -260,15 +297,14 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
           if(stable>=3)break;
         }
       }
-      if(target.kind==='latest') scrollEnd(false);
       readyRef.current=true;setReady(true);
-      setFollow(target.kind==='latest' && !live.current.hasNewer);
+      setFollow(false);
       if(target.kind==='message' && target.messageId)live.current.onHighlight(target.messageId);
       const finish=()=>{if(!mounted.current || generation!==navigationGeneration.current)return;cancelJump();inNavigation.current=false;setNavigating(false);updateMediaRange(true);observe();};
       if(outgoingRef.current && !reduced) Animated.timing(transition,{toValue:1,duration:280,easing:Easing.out(Easing.cubic),useNativeDriver:true}).start(finish);
       else finish();
     })().catch(()=>{if(!mounted.current || generation!==navigationGeneration.current)return;inNavigation.current=false;setNavigating(false);readyRef.current=true;setReady(true);cancelJump();live.current.onError('Не удалось перейти к сообщению. Попробуйте ещё раз.');});
-  }, [props.navigationTarget,rows,loaded,props.headerHeight,props.dockHeight,reduced,cancelJump,observe,scrollEnd,setFollow,stopIdleSave,transition,updateMediaRange,visible]);
+  }, [props.navigationTarget,rows,loaded,props.headerHeight,props.dockHeight,reduced,cancelJump,observe,scrollEnd,setFollow,stopIdleSave,transition,updateMediaRange,visible,pinLatest]);
   // Empty/new conversations have no anchor to resolve.
   useEffect(()=>{if(!props.loading && !rows.length){readyRef.current=true;setReady(true);setFollow(!props.hasNewer);}},[props.loading,rows.length,props.hasNewer,setFollow]);
   useEffect(()=>{if(!props.navigationTarget && loaded && rows.length && !readyRef.current){readyRef.current=true;setReady(true);setFollow(!props.hasNewer);scrollEnd(false);}},[loaded,rows.length,props.navigationTarget,props.hasNewer,setFollow,scrollEnd]);
@@ -308,6 +344,8 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   const maintainVisibleContentPosition=useMemo(()=>({disabled:maintainDisabled,startRenderingFromBottom:false}),[maintainDisabled]);
   const listStyle=useMemo(()=>({backgroundColor:c.background}),[c.background]);
   const listContentStyle=useMemo(()=>({paddingTop:props.headerHeight+12,paddingBottom:hasNativeChatLayout?0:props.dockHeight+12}),[props.headerHeight,props.dockHeight]);
+  const showLatestButton = Boolean(rows.length > 0 && ready && !props.hideLatestButton && (!following || props.hasNewer));
+  useEffect(() => { helpDevState({timelineLatestButtonVisible:showLatestButton}); }, [showLatestButton]);
   return <View style={{flex:1}}>
     <Animated.View style={{flex:1,opacity:ready||!rows.length?1:0,transform:[{translateY:outgoing?transition.interpolate({inputRange:[0,1],outputRange:[-direction*distance,0]}):0}]}}>
       <FlashList ref={list} data={rows} extraData={mediaRange} keyExtractor={rowKey} getItemType={rowType} renderItem={renderItem}
@@ -326,9 +364,9 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
         ListFooterComponent={props.footer}
       />
     </Animated.View>
-    {props.loadingOlder || (props.loading && !rows.length) ? <View pointerEvents="none" style={{position:'absolute',top:props.headerHeight,left:0,right:0}}><HelpHistoryStatus loading/></View> : null}
+    {props.loadingOlder || (props.loading && !rows.length && initialLoadingVisible) ? <View pointerEvents="none" style={{position:'absolute',top:props.headerHeight,left:0,right:0}}><HelpHistoryStatus loading/></View> : null}
     {outgoing ? <Animated.View testID="help-timeline-transition" pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{position:'absolute',top:0,left:0,right:0,bottom:0,backgroundColor:c.background,overflow:'hidden',transform:[{translateY:transition.interpolate({inputRange:[0,1],outputRange:[0,direction*distance]})}]}}>{outgoing.rows.map(item=><View key={item.row.key} style={{position:'absolute',left:0,right:0,top:item.top}}>{renderRow(item.row)}</View>)}</Animated.View> : null}
     {!props.hideStickyDate && stickyDate ? <View style={{position:'absolute',top:Math.max(0,props.headerHeight-12),alignSelf:'center'}}><HelpDateSeparator compact date={stickyDate} onPress={()=>jumpDate(stickyDate)}/></View> : null}
-    {rows.length>0 && ready && !props.hideLatestButton && (!following || props.hasNewer) ? <HelpJumpToLatest count={props.unreadCount} loading={props.loadingNewer} onPress={()=>{prepareJump();void props.onLatest().catch(()=>{cancelJump();props.onError('Не удалось открыть последние сообщения');});}} style={{position:'absolute',right:16,bottom:props.dockHeight+12}}/> : null}
+    {showLatestButton ? <HelpJumpToLatest count={props.unreadCount} loading={props.loadingNewer} onPress={()=>{prepareJump();void props.onLatest().catch(()=>{cancelJump();props.onError('Не удалось открыть последние сообщения');});}} style={{position:'absolute',right:HELP_COMPOSER_ACTION_RIGHT,bottom:props.dockHeight+12}}/> : null}
   </View>;
 });

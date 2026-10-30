@@ -1,6 +1,6 @@
 /** Metro alias applies ONLY to HelpScreen inside this standalone QA project. */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import type { HelpLocalFile } from '../../src/features/help/components/HelpComposer';
 import { helpDevActions, helpDevState } from '../../src/features/help/helpDiagnostics';
@@ -10,6 +10,10 @@ import { fixtures, message, OWNER, IT, resolve } from './HelpPreview';
 import { createFixtureHistory, findFixtureDateMessage, fixtureHistoryPage, searchFixtureHistory } from './historyFixture';
 import { trimHelpWindow } from '../../src/features/help/helpHistoryModel';
 import { createFixtureAlbum } from './albumFixture';
+import { FixtureAssistant, fixtureAssistantTitle, supersedeFixtureAssistantRuns } from './assistantFixture';
+import type {HelpTypingUser} from '../../src/features/help/helpTypingModel';
+import type { HelpAssistantPreview, HelpAssistantScenario } from '../../src/features/help/helpAssistant';
+import {fixtureSnapshot,saveFixtureSnapshot,loadFixtureSnapshot} from './fixturePersistence';
 
 let fixtureUploadSequence = 0;
 /** Simulate server ownership locally: sent media must outlive draft cleanup. */
@@ -28,17 +32,18 @@ export async function uploadFixtureAttachment(file: HelpLocalFile): Promise<Help
 }
 
 export function useHelpService() {
-  const [all, setAll] = useState<HelpTicket[]>(() => [
+  const [all, setAll] = useState<HelpTicket[]>(() => fixtureSnapshot()?.tickets ?? [
     { id: 1042, number: 1042, title: 'Не открывается заказ', status: 'OPEN', ownerId: OWNER.id, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), closedAt: null, sourceTicketId: null, sourceTicket: null, itRequested: true, members: [{ userId: IT.id, role: 'IT', user: IT }], unreadCount: 3, lastMessage: fixtures[7], canReopen: false, aiEnabled: false },
     ...[1041, 1040, 1039, 1038, 1037, 1036].map((id, i): HelpTicket => ({ id, number: id, title: ['Не печатает принтер', 'Ошибка при входе в 1С', 'Как выгрузить отчёт в Excel', 'Проверить обмен', 'Заказ не найден', 'Старая заявка'][i], status: i > 3 ? 'CLOSED' : 'OPEN', ownerId: OWNER.id, createdAt: new Date(Date.now() - (i + 1) * 86400000).toISOString(), updatedAt: new Date(Date.now() - (i + 1) * 86400000).toISOString(), closedAt: i > 3 ? new Date(Date.now() - (i === 4 ? 1 : 5) * 86400000).toISOString() : null, sourceTicketId: null, sourceTicket: null, itRequested: i % 2 === 0, members: i % 2 === 0 ? [{ userId: IT.id, role: 'IT', user: IT }, { userId: 203, role: 'IT', user: { id: 203, name: 'Алексей · IT', avatarUrl: null } }] : [], unreadCount: i % 3, lastMessage: message(20 + i, i > 3 ? 'Обращение завершено' : 'Проверяю, скоро вернусь с ответом'), canReopen: i === 4, aiEnabled: false })),
   ]);
   const [selection, setSelection] = useState<number | null>(null), [messages, setMessages] = useState(fixtures), [query, setQuery] = useState('');
+  const [typingUsers,setTypingUsers]=useState<Record<number,HelpTypingUser[]>>({1041:[{userId:IT.id,name:IT.name,avatarUrl:IT.avatarUrl}]});
   const [canManage, setCanManage] = useState(false), [extraRows, setExtraRows] = useState(0), [online, setOnline] = useState(true);
   const [hasOlder, setHasOlder] = useState(false), [hasNewer, setHasNewer] = useState(false), [loadingOlder, setLoadingOlder] = useState(false), [loadingNewer, setLoadingNewer] = useState(false);
   const [navigationTarget, setNavigationTarget] = useState<HelpNavigationTarget | null>(null), [firstUnreadSequence, setFirstUnreadSequence] = useState<number | null>(null), [lastReadSequence, setLastReadSequence] = useState(0), [error, setError] = useState<string | null>(null);
   const allRef = useRef(all), selectionRef = useRef(selection), visible = useRef(messages), onlineRef = useRef(online);
   allRef.current = all; selectionRef.current = selection; visible.current = messages; onlineRef.current = online;
-  const histories = useRef(new Map<number, HelpMessage[]>()), anchors = useRef(new Map<number, HelpViewportAnchor>()), readCursors = useRef(new Map<number, number>()), offlineTails = useRef(new Map<number, number>());
+  const histories = useRef(new Map<number, HelpMessage[]>(fixtureSnapshot()?.histories)), anchors = useRef(new Map<number, HelpViewportAnchor>(fixtureSnapshot()?.anchors)), readCursors = useRef(new Map<number, number>(fixtureSnapshot()?.readCursors)), offlineTails = useRef(new Map<number, number>());
   const historySize = useRef(0), navKey = useRef(0), latency = useRef(80), epoch = useRef(0), loadingPage = useRef(false);
   const pendingTrim = useRef<'older' | 'newer' | null>(null);
   const mediaLatency = useRef(0), mediaResolves = useRef(0), mediaCompleted = useRef(0);
@@ -53,7 +58,29 @@ export function useHelpService() {
     }
     return resolve(attachment);
   }, []);
-  const drafts = useRef(new Map<string, string>()), uploaded = useRef(new Map<string, HelpAttachment>());
+  const drafts = useRef(new Map<string, string>(fixtureSnapshot()?.drafts)), uploaded = useRef(new Map<string, HelpAttachment>());
+  const assistant = useRef(new FixtureAssistant());
+  const [assistantScenario, setAssistantScenario] = useState<HelpAssistantScenario>('answer');
+  const scenarioRef = useRef(assistantScenario); scenarioRef.current = assistantScenario;
+  const assistantTickets = useRef(new Set<number>(fixtureSnapshot()?.assistantTickets)), ticketSequence = useRef(fixtureSnapshot()?.nextTicket??1042), assistantMessageSequence = useRef(fixtureSnapshot()?.nextAssistantMessage??2000000);
+  const flushFixture=()=>saveFixtureSnapshot({tickets:allRef.current,histories:[...histories.current],anchors:[...anchors.current],readCursors:[...readCursors.current],drafts:[...drafts.current],assistantTickets:[...assistantTickets.current],nextTicket:ticketSequence.current,nextAssistantMessage:assistantMessageSequence.current});
+  useEffect(()=>{
+    let alive=true,hydrated=false,dirty='',revision=0;
+    const historyVersions=new WeakMap<HelpMessage[],number>();
+    const persist=()=>{if(!hydrated)return;const stamp=JSON.stringify([allRef.current,[...anchors.current],[...drafts.current],[...readCursors.current],[...histories.current].map(([id,rows])=>{if(!historyVersions.has(rows))historyVersions.set(rows,++revision);return [id,historyVersions.get(rows)];})]);if(stamp===dirty)return;dirty=stamp;void flushFixture().catch(()=>{dirty='';});};
+    void loadFixtureSnapshot().then(saved=>{
+      if(!alive)return;
+      // A first asynchronous disk load must not overwrite an interaction already in progress.
+      if(saved&&!assistantTickets.current.size&&allRef.current.every(ticket=>ticket.id<=1042)){
+        allRef.current=saved.tickets;setAll(saved.tickets);histories.current=new Map(saved.histories);anchors.current=new Map(saved.anchors);readCursors.current=new Map(saved.readCursors);drafts.current=new Map(saved.drafts);assistantTickets.current=new Set(saved.assistantTickets);ticketSequence.current=saved.nextTicket;assistantMessageSequence.current=saved.nextAssistantMessage;
+        const id=selectionRef.current;if(id!==null&&saved.tickets.some(ticket=>ticket.id===id))void openTicket(id);
+      }
+      for(const [id,rows] of histories.current){const last=rows.at(-1);if(last?.assistantRun&&['thinking','streaming'].includes(last.assistantRun.status))startAssistant(id,last.id,true);}
+      hydrated=true;persist();
+    });
+    const timer=setInterval(persist,250),state=AppState.addEventListener('change',value=>{if(value!=='active')persist();});
+    return()=>{alive=false;clearInterval(timer);state.remove();void flushFixture().catch(()=>{});assistant.current.dispose();};
+  }, []);
   const commitTickets = (update: (tickets: HelpTicket[]) => HelpTicket[]) => { const next = update(allRef.current); allRef.current = next; setAll(next); };
   const historyFor = (id: number) => {
     let history = histories.current.get(id);
@@ -184,24 +211,102 @@ export function useHelpService() {
     if (onlineRef.current) { publishWindow(id, (visible.current.at(-1)?.sequence ?? 0) >= oldTail ? [...visible.current, ...incoming] : visible.current); updateTicket(id); }
     helpDevState({ fixtureIncomingCount: count, fixtureIncomingDeferred: !onlineRef.current });
   };
+  const startAssistant = (id: number, retryMessageId?: number, resume = false) => {
+    const history = historyFor(id), target = retryMessageId ? history.find(item => item.id === retryMessageId) : undefined;
+    const source = [...history].reverse().find(item => item.authorId === OWNER.id && (!target || item.sequence < target.sequence));
+    if (!source) return;
+    const previous = target ?? [...history].reverse().find(item => item.assistantRun);
+    const continuing = Boolean(target || previous?.assistantRun && ['thinking','streaming'].includes(previous.assistantRun.status));
+    const startSequence = continuing ? previous?.assistantRun?.taskStartSequence ?? history.find(item => item.authorId === OWNER.id)?.sequence ?? source.sequence : source.sequence;
+    const context = history.filter(item => item.authorId === OWNER.id && item.sequence >= startSequence && (!target || item.sequence < target.sequence));
+    assistant.current.cancel(id);
+    // Normalize model state too: Fast Refresh may have already disposed the old timer.
+    histories.current.set(id, supersedeFixtureAssistantRuns(history, target?.id));
+    const sequence = (history.at(-1)?.sequence ?? 0) + 1;
+    const row = target ?? message(++assistantMessageSequence.current, '', false, { ticketId: id, sequence, authorId: 303, author: { id: 303, name: 'Помощник · ИИ', avatarUrl: null }, authorRole: 'SYSTEM' });
+    if (!target) histories.current.set(id, [...historyFor(id), row]);
+    const scenario = resume ? target?.assistantRun?.scenario??scenarioRef.current : retryMessageId && scenarioRef.current === 'error' ? 'answer' : scenarioRef.current;
+    assistant.current.start(id, context.map(item => item.text).filter(Boolean).join('\n\n'), scenario, (run, text) => {
+      const next = historyFor(id).map(item => item.id === row.id ? { ...item, text, assistantRun: run } : item);
+      histories.current.set(id, next);
+      if (selectionRef.current === id) {
+        const shown = new Set(visible.current.map(item => item.id));
+        const atTail = !visible.current.length || visible.current.at(-1)!.sequence >= sequence - 1;
+        publishWindow(id, next.filter(item => shown.has(item.id) || atTail && item.id === row.id));
+      }
+      updateTicket(id);
+      helpDevState({ assistantContextMessageCount: run.contextMessageCount ?? 1 });
+    }, { id: continuing ? previous?.assistantRun?.taskId ?? previous?.assistantRun?.runId : undefined, startSequence, contextMessageCount: context.length },resume&&target?.assistantRun?{run:target.assistantRun,text:target.text}:undefined);
+  };
+  const stopAssistant = (id: number, runId: string) => {
+    assistant.current.stop(id, runId);
+    const next = historyFor(id).map(item => item.assistantRun?.runId === runId && ['thinking','streaming'].includes(item.assistantRun.status)
+      ? { ...item, assistantRun: { ...item.assistantRun, status: 'stopped' as const, stopReason: 'user' as const, eventId: item.assistantRun.eventId + 1, updatedAt: Date.now() } } : item);
+    histories.current.set(id, next);
+    publishWindow(id, visible.current.map(item => next.find(row => row.id === item.id) ?? item)); updateTicket(id);
+  };
+  const retryAssistant = (id: number, runId: string) => {
+    const row = historyFor(id).find(item => item.assistantRun?.runId === runId);
+    if (row) startAssistant(id, row.id);
+  };
+  const createTicket = async (input: HelpMessageInput): Promise<HelpDetail> => {
+    if (!onlineRef.current) throw new Error('Нет подключения');
+    const id = ++ticketSequence.current, now = new Date().toISOString();
+    const ticket: HelpTicket = { id, number: id, title: fixtureAssistantTitle(input.text), status: 'OPEN', ownerId: OWNER.id, createdAt: now, updatedAt: now, closedAt: null, sourceTicketId: null, sourceTicket: null, itRequested: false, members: [], unreadCount: 0, lastMessage: null, canReopen: false, aiEnabled: true };
+    commitTickets(tickets => [ticket, ...tickets]);
+    selectionRef.current = id; setSelection(id); setError(null); setFirstUnreadSequence(null);
+    const next = [message(1, input.text, true, { ticketId: id, attachments: (input.attachmentIds || []).map(key => uploaded.current.get(key)!).filter(Boolean) })];
+    histories.current.set(id, next); readCursors.current.set(id, 1); assistantTickets.current.add(id);
+    publishWindow(id, next); updateTicket(id); startAssistant(id);
+    publishWindow(id, historyFor(id)); navigate({ kind: 'latest', animate: false });
+    return { ticket: allRef.current.find(item => item.id === id)!, messages: historyFor(id) };
+  };
   const sendMessage = async (id: number, input: HelpMessageInput): Promise<HelpDetail> => {
     if (!onlineRef.current) throw new Error('Нет подключения');
     const history = historyFor(id), reply = history.find(item => item.id === input.replyToId), sequence = (history.at(-1)?.sequence ?? 0) + 1;
+    const hadNewerGap = (visible.current.at(-1)?.sequence ?? 0) < (history.at(-1)?.sequence ?? 0);
     const next = [...history, message(sequence, input.text, true, { ticketId: id, sequence, attachments: (input.attachmentIds || []).map(key => uploaded.current.get(key)!).filter(Boolean), replyToId: reply?.id || null, replyTo: reply ? { id: reply.id, text: reply.text, author: reply.author, attachments: reply.attachments } : null })];
     histories.current.set(id, next); readCursors.current.set(id, sequence); updateTicket(id);
-    const page = fixtureHistoryPage(next).messages; publishWindow(id, page); navigate({ kind: 'latest', animate: true });
-    return { ticket: allRef.current.find(item => item.id === id)!, messages: page };
+    const page = fixtureHistoryPage(next).messages; publishWindow(id, page);
+    if(hadNewerGap)navigate({ kind: 'latest', animate: false });
+    if (assistantTickets.current.has(id)) startAssistant(id);
+    return { ticket: allRef.current.find(item => item.id === id)!, messages: fixtureHistoryPage(historyFor(id)).messages };
   };
   const status = async (id: number, input: HelpMessageInput & { rating?: number }, closed: boolean) => {
-    const result = await sendMessage(id, input), ticket: HelpTicket = { ...result.ticket, status: closed ? 'CLOSED' : 'OPEN', closedAt: closed ? new Date().toISOString() : null, canReopen: closed };
-    commitTickets(tickets => tickets.map(item => item.id === id ? ticket : item)); return { ...result, ticket };
+    if (!onlineRef.current) throw new Error('Нет подключения');
+    const current = allRef.current.find(item => item.id === id);
+    if (!current) throw new Error('Обращение не найдено');
+    if (closed) {
+      for (const row of historyFor(id)) if (row.assistantRun) assistant.current.stop(id, row.assistantRun.runId);
+      assistant.current.cancel(id);
+    }
+    const history = historyFor(id), sequence = (history.at(-1)?.sequence ?? 0) + 1;
+    const next = [...history, message(sequence, input.text, true, {
+      ticketId: id, sequence, kind: closed ? 'CLOSURE' : 'TEXT', rating: closed ? (input.rating ?? 0) : null,
+      ticketStatusChange: closed ? 'CLOSED' : 'REOPENED',
+      attachments: (input.attachmentIds || []).map(key => uploaded.current.get(key)!).filter(Boolean),
+    })];
+    histories.current.set(id, next); readCursors.current.set(id, sequence);
+    commitTickets(tickets => tickets.map(item => item.id === id ? { ...item, status: closed ? 'CLOSED' : 'OPEN', closedAt: closed ? new Date().toISOString() : null, canReopen: closed, itRequested: closed ? item.itRequested : true } : item));
+    updateTicket(id);
+    if (!closed && assistantTickets.current.has(id)) startAssistant(id);
+    const page = fixtureHistoryPage(historyFor(id)).messages;
+    publishWindow(id, page); navigate({ kind: 'latest', animate: true });
+    return { ticket: allRef.current.find(item => item.id === id)!, messages: page };
   };
   useEffect(() => helpDevActions('fixture.service', {
+    'fixture.persist.save':()=>flushFixture(),
+    'fixture.typing': value=>{const id=selectionRef.current??1042,count=Math.max(0,Math.min(4,Number(value)||0));const users:HelpTypingUser[]=[{userId:IT.id,name:IT.name,avatarUrl:IT.avatarUrl},{userId:203,name:'Борис · IT',avatarUrl:null},{userId:204,name:'Вера · IT',avatarUrl:null},{userId:205,name:'Глеб · IT',avatarUrl:null}];setTypingUsers(previous=>({...previous,[id]:users.slice(0,count)}));helpDevState({fixtureTypingCount:count});},
+    'fixture.ai.scenario': value => { if (['answer','slow','question','error'].includes(String(value))) setAssistantScenario(value as HelpAssistantScenario); },
+    'fixture.ai.create': async value => { const detail = await createTicket({ text: typeof value === 'string' ? value : 'Не печатает принтер. Что проверить?' }); return detail.ticket.id; },
+    'fixture.ai.stop': () => { const id = selectionRef.current; if (id !== null) { const row = [...historyFor(id)].reverse().find(item => item.assistantRun); if (row?.assistantRun) stopAssistant(id, row.assistantRun.runId); } },
+    'fixture.ai.retry': () => { const id = selectionRef.current; if (id !== null) { const row = [...historyFor(id)].reverse().find(item => item.assistantRun); if (row?.assistantRun) retryAssistant(id, row.assistantRun.runId); } },
     'fixture.it': value => setCanManage(value === 'true' || value === true),
     'fixture.rows': value => setExtraRows(Math.max(0, Math.min(100, Number(value) || 0))),
     'fixture.history': async value => {
       historySize.current = value === 'reset' || Number(value) === 0 ? 0 : Math.max(1, Math.min(2000, Number(value) || 600));
       histories.current.clear(); anchors.current.clear(); readCursors.current.clear(); offlineTails.current.clear(); ++epoch.current;
+      assistant.current.dispose(); assistantTickets.current.clear();
       setFirstUnreadSequence(null); setConnection(true);
       if (selectionRef.current !== null) await openTicket(selectionRef.current);
       helpDevState({ fixtureHistoryCount: historySize.current || fixtures.length });
@@ -247,12 +352,13 @@ export function useHelpService() {
   }));
   const noop = useCallback(async () => {}, []);
   const list = [...all, ...Array.from({ length: extraRows }, (_, index) => ({ ...all[index % 5], id: 2000 + index, number: 2000 + index }))];
-  return { tickets: list.filter(ticket => !query || ticket.title.includes(query)), selectedTicket, messages, loading: false, busy: false, error, pendingCount: 0, connected: online, online, canManage, userId: OWNER.id, typingByTicket: { 1041: [{ userId: IT.id, name: IT.name }] }, hasMore: false,
+  return { tickets: list.filter(ticket => !query || ticket.title.includes(query)), selectedTicket, messages, loading: false, busy: false, error, pendingCount: 0, connected: online, online, canManage, userId: OWNER.id, typingByTicket: typingUsers, hasMore: false,
+    assistantPreview: { scenario: assistantScenario, setScenario: setAssistantScenario, stop: stopAssistant, retry: retryAssistant, replay: (id: number) => { const row = [...historyFor(id)].reverse().find(item => item.assistantRun); if (row?.assistantRun) retryAssistant(id, row.assistantRun.runId); } } satisfies HelpAssistantPreview,
     hasOlder, hasNewer, loadingOlder, loadingNewer, navigationTarget, firstUnreadSequence, lastReadSequence, lastSequence: selectedTicket?.lastMessage?.sequence ?? 0,
     loadTickets, openTicket, clearSelection, sendMessage, getDraft, setDraft, saveViewport, markVisibleRead, searchMessages, jumpToMessage, jumpToLatest, jumpToDate,
     loadOlder: () => loadPage('older'), loadNewer: () => loadPage('newer'),
     closeTicket: (id: number, input: HelpMessageInput & { rating: number }) => status(id, input, true), reopenTicket: (id: number, input: HelpMessageInput) => status(id, input, false),
-    createTicket: async (input: HelpMessageInput) => { const id = Date.now(), ticket = { ...allRef.current[0], id, number: id, title: input.text || 'QA новое обращение' }; commitTickets(tickets => [ticket, ...tickets]); selectionRef.current = id; setSelection(id); const next = [message(1, input.text, true, { ticketId: id, attachments: (input.attachmentIds || []).map(key => uploaded.current.get(key)!).filter(Boolean) })]; histories.current.set(id, next); readCursors.current.set(id, 1); publishWindow(id, next); updateTicket(id); navigate({ kind: 'latest', animate: false }); return { ticket, messages: next }; },
+    createTicket,
     editMessage: async (id: number, input: { text: string; rating?: number }) => { const ticketId = selectionRef.current!; histories.current.set(ticketId, historyFor(ticketId).map(item => item.id === id ? { ...item, ...input, editedAt: new Date().toISOString() } : item)); const next = visible.current.map(item => historyFor(ticketId).find(value => value.id === item.id) || item); publishWindow(ticketId, next); updateTicket(ticketId); return { ticket: allRef.current.find(item => item.id === ticketId)!, messages: next }; },
     toggleReaction: async (m: { id: number }, emoji: string) => { const id = selectionRef.current!; histories.current.set(id, historyFor(id).map(item => item.id !== m.id ? item : { ...item, reactions: item.reactions.some(reaction => reaction.emoji === emoji) ? item.reactions.filter(reaction => reaction.emoji !== emoji) : [...item.reactions, { emoji, count: 1, mine: true, userIds: [OWNER.id] }] })); publishWindow(id, visible.current.map(item => historyFor(id).find(value => value.id === item.id) || item)); },
     uploadAttachments: async (files: HelpLocalFile[]) => {

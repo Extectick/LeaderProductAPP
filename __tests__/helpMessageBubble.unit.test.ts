@@ -21,6 +21,30 @@ describe('Help message native layout and reply gestures', () => {
   const node = (id:string) => screen.root.findAll(n=>n.props.testID===id)[0];
   const g = (dx:number,dy=0) => ({dx,dy,numberActiveTouches:1});
   async function render() { await act(async()=>{ screen=TestRenderer.create(React.createElement(HelpMessageBubble,props)); }); }
+  test('closure shows one centered event and the selected stars, even for older API messages', async () => {
+    props.message = { ...props.message, kind: 'CLOSURE', rating: 4, text: 'Спасибо, помогло' };
+    await render();
+    expect(StyleSheet.flatten(node('help-ticket-status-1').props.style).alignItems).toBe('center');
+    expect(node('help-ticket-status-1').findAll(n => n.props.children === 'Вы закрыли обращение').length).toBeGreaterThan(0);
+    expect(node('help-closure-rating').props.accessibilityLabel).toBe('Оценка: 4 из 5');
+    expect(screen.root.findAll(n => (n.type as any) === 'Ionicons' && n.props.name === 'star')).toHaveLength(4);
+    expect(screen.root.findAll(n => (n.type as any) === 'Ionicons' && n.props.name === 'star-outline')).toHaveLength(1);
+    expect(node('help-message-text').props.children).toBe('Спасибо, помогло');
+  });
+  test('reopen retains the reason below its event, without closure stars', async () => {
+    props.message = { ...props.message, ticketStatusChange: 'REOPENED', text: 'Снова ошибка' };
+    await render();
+    expect(node('help-ticket-status-1').findAll(n => n.props.children === 'Вы открыли обращение повторно').length).toBeGreaterThan(0);
+    expect(node('help-message-text').props.children).toBe('Снова ошибка');
+    expect(screen.root.findAll(n => n.props.testID === 'help-closure-rating')).toHaveLength(0);
+  });
+  test('empty closure places time beside stars and omits the numeric fraction', async () => {
+    props.message = { ...props.message, kind: 'CLOSURE', text: '', rating: 4 };
+    await render();
+    expect(node('help-closure-meta').findAll(n => n.props.testID === 'help-message-time').length).toBeGreaterThan(0);
+    expect(StyleSheet.flatten(node('help-message-time').props.style)).toMatchObject({ alignSelf: 'center', marginTop: 0 });
+    expect(screen.root.findAll(n => n.props.children === '4/5')).toHaveLength(0);
+  });
   test('scroll callback churn skips the measured body but gestures always call the newest handlers', async () => {
     await render();
     const initialRenders = mockUseHelpTheme.mock.calls.length;

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Easing,
@@ -14,6 +14,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 
+import { NotificationDeadlines } from '@/utils/notificationDeadlines';
 import { useNotificationViewport } from '@/context/NotificationViewportContext';
 import {
   dismissNotification,
@@ -63,6 +64,10 @@ const withOpacity = (color: string, opacity: number) => {
 
 export function NotificationHost({ children }: Props) {
   const [items, setItems] = useState<ActiveNotification[]>([]);
+  const itemsRef=useRef(items);itemsRef.current=items;
+  const presented=useRef(new Set<string>());
+  const removeRef=useRef<(id:string)=>void>(()=>{});
+  const deadlines=useMemo(()=>new NotificationDeadlines(id=>removeRef.current(id)),[]);
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const { headerBottomOffset } = useNotificationViewport();
@@ -77,6 +82,7 @@ export function NotificationHost({ children }: Props) {
   const maxWidth = width >= 780 ? 560 : width >= 420 ? width - 26 : width - 14;
 
   const remove = useCallback((id: string, immediate = false) => {
+    deadlines.cancel(id);presented.current.delete(id);
     setItems((prev) => {
       const idx = prev.findIndex((n) => n.id === id);
       if (idx === -1) return prev;
@@ -105,26 +111,32 @@ export function NotificationHost({ children }: Props) {
       markNotificationClosed(id);
       return next;
     });
-  }, []);
+  }, [deadlines]);
+  removeRef.current=remove;
 
   const add = useCallback(
     (notification: Required<NotificationPayload>) => {
       const anim = new Animated.Value(0);
       const dragY = new Animated.Value(0);
       const normalized: ActiveNotification = { ...notification, anim, dragY };
-      setItems((prev) => [normalized, ...prev].slice(0, 4));
-      Animated.timing(anim, {
+      const replaced=itemsRef.current.filter(item=>item.id===notification.id || notification.variant==='message'&&notification.groupKey&&item.groupKey===notification.groupKey);
+      replaced.forEach(item=>{deadlines.cancel(item.id);if(item.id!==notification.id)markNotificationClosed(item.id);presented.current.delete(item.id);});
+      const keep=itemsRef.current.filter(item=>!replaced.includes(item));
+      const oldIndex=itemsRef.current.findIndex(item=>replaced.includes(item));
+      const insertion=oldIndex>=0?Math.min(oldIndex,keep.length):notification.variant==='message'?keep.length:0;
+      const ordered=[...keep];ordered.splice(insertion,0,normalized);const next=ordered.slice(0,4);
+      ordered.slice(4).forEach(item=>{deadlines.cancel(item.id);markNotificationClosed(item.id);});
+      itemsRef.current=next;setItems(next);
+      if(notification.variant!=='message')Animated.timing(anim, {
         toValue: 1,
         duration: 300,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }).start();
 
-      if (notification.durationMs >= 0) {
-        setTimeout(() => remove(notification.id), notification.durationMs || 5200);
-      }
+      if(notification.variant!=='message')deadlines.start(notification.id,notification.durationMs);
     },
-    [remove]
+    [deadlines]
   );
 
   useEffect(() => {
@@ -132,18 +144,18 @@ export function NotificationHost({ children }: Props) {
     const unsubDismiss = subscribeToNotificationDismiss((id) => remove(id, true));
     return () => {
       unsub();
-      unsubDismiss();
+      unsubDismiss();deadlines.clear();
     };
-  }, [add, remove]);
+  }, [add, remove,deadlines]);
 
   const containerStyle = useMemo(
     () => [
       styles.host,
       {
-        paddingTop: Math.max(headerBottomOffset + 8, Math.max(insets.top, Platform.OS === 'web' ? 10 : 6) + 6),
+        paddingTop: items.some(item=>item.variant==='message')?Math.max(insets.top,8)+6:Math.max(headerBottomOffset + 8, Math.max(insets.top, Platform.OS === 'web' ? 10 : 6) + 6),
       },
     ],
-    [headerBottomOffset, insets.top]
+    [headerBottomOffset, insets.top,items]
   );
 
   return (
@@ -151,7 +163,8 @@ export function NotificationHost({ children }: Props) {
       {children}
       <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
         <View pointerEvents="box-none" style={containerStyle}>
-          {items.map((item, index) => {
+          {items.filter(item=>item.variant!=='message'||item.id===items.find(row=>row.variant==='message')?.id).map((item, index) => {
+            const messageVariant=item.variant==='message';
             const colors = palette[item.type] || palette.info;
             const bg = item.backgroundColor || colors.bg;
             const border = item.borderColor || colors.border;
@@ -161,7 +174,7 @@ export function NotificationHost({ children }: Props) {
             const iconBg = withOpacity(iconTint, 0.13);
             const entryTranslate = item.anim.interpolate({
               inputRange: [0, 1],
-              outputRange: [-34, 0],
+              outputRange: [messageVariant?-110:-34, 0],
             });
             const translateY = Animated.add(entryTranslate, item.dragY);
             const scale = item.anim.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1] });
@@ -172,6 +185,8 @@ export function NotificationHost({ children }: Props) {
                 const dx = gesture.dx;
                 return dy < -8 && Math.abs(dy) > Math.abs(dx);
               },
+              onPanResponderGrant:()=>deadlines.pause(item.id),
+              onPanResponderTerminate:()=>{deadlines.resume(item.id);Animated.spring(item.dragY,{toValue:0,useNativeDriver:true}).start();},
               onPanResponderMove: (_event, gesture) => {
                 if (!swipeEnabled) return;
                 const next = Math.max(-90, Math.min(0, gesture.dy));
@@ -184,6 +199,7 @@ export function NotificationHost({ children }: Props) {
                   dismissNotification(item.id);
                   return;
                 }
+                deadlines.resume(item.id);
                 Animated.spring(item.dragY, {
                   toValue: 0,
                   useNativeDriver: true,
@@ -196,8 +212,11 @@ export function NotificationHost({ children }: Props) {
             return (
               <Animated.View
                 key={item.id}
+                testID={messageVariant?'help-message-banner':undefined}
+                onLayout={()=>{if(!presented.current.has(item.id)){presented.current.add(item.id);if(messageVariant){Animated.timing(item.anim,{toValue:1,duration:300,easing:Easing.out(Easing.cubic),useNativeDriver:true}).start();deadlines.start(item.id,item.durationMs);}item.onPresented();}}}
                 style={[
                   styles.card,
+                  messageVariant?{borderRadius:24,borderWidth:StyleSheet.hairlineWidth,width:'100%'}:null,
                   {
                     transform: [{ translateY }, { scale }],
                     opacity: item.anim,
@@ -210,6 +229,8 @@ export function NotificationHost({ children }: Props) {
                 {...(swipeEnabled ? panResponder.panHandlers : {})}
               >
                 <Pressable
+                  accessibilityRole="button" accessibilityLabel={`${item.title}. ${item.message}`}
+                  onPressIn={()=>deadlines.pause(item.id)} onPressOut={()=>deadlines.resume(item.id)}
                   onPress={() => {
                     if (item.onPress) item.onPress();
                     if (item.actionHref) openNotificationLink(item.actionHref);
@@ -218,19 +239,19 @@ export function NotificationHost({ children }: Props) {
                   style={({ pressed }) => [styles.inner, pressed ? styles.pressed : null]}
                 >
                   {item.avatarUrl ? (
-                    <Image source={{ uri: item.avatarUrl }} style={styles.avatar} />
+                    <Image source={{ uri: item.avatarUrl }} style={[styles.avatar,messageVariant?{width:42,height:42,borderRadius:21}:null]} />
                   ) : (
-                    <View style={[styles.iconWrap, { backgroundColor: iconBg }]}>
-                      <Ionicons name={iconName as any} size={20} color={iconTint} />
+                    <View style={[styles.iconWrap, { backgroundColor: item.avatarColor||iconBg },messageVariant?{width:42,height:42,borderRadius:21}:null]}>
+                      <Ionicons name={iconName as any} size={messageVariant?23:20} color={messageVariant?'#FFF':iconTint} />
                     </View>
                   )}
                   <View style={styles.content}>
                     {item.title ? (
-                      <Text style={[styles.title, { color: textColor }]} numberOfLines={2}>
+                      <Text style={[styles.title, { color: textColor },messageVariant?{fontWeight:'600'}:null]} numberOfLines={messageVariant?1:2}>
                         {item.title}
                       </Text>
                     ) : null}
-                    <Text style={[styles.message, { color: textColor }]} numberOfLines={4}>
+                    <Text style={[styles.message, { color: textColor },messageVariant?{fontWeight:'400',fontSize:14,lineHeight:20,opacity:.85}:null]} numberOfLines={messageVariant?2:4}>
                       {item.message}
                     </Text>
                     {item.actionLabel ? (

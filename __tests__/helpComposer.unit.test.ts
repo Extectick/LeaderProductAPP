@@ -53,6 +53,25 @@ describe('Help composer recorder lifecycle', () => {
   }
   function mic(){return screen!.root.findAll(n=>typeof n.props.onPanResponderGrant==='function')[0];}
   function deferred<T>(){let resolve!:(value:T)=>void;let reject!:(reason:Error)=>void;const promise=new Promise<T>((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};}
+  test('AI correction can send a draft while the previous reply is processing',async()=>{
+    Object.defineProperty(Platform,'OS',{configurable:true,value:'web'});
+    const stop=jest.fn();props={...props,value:'Следующий вопрос',files:[{uri:'file://draft.pdf',name:'draft.pdf'}],onStopAssistant:stop};
+    await render();
+    const button=screen!.root.findAll(n=>n.props.label==='Отправить сообщение')[0];
+    expect(button.props.name).toBe('arrow-up');expect(button.props.disabled).toBe(false);
+    expect(screen!.root.findAll(n=>n.props.label==='Остановить ответ ИИ')).toHaveLength(0);
+    expect(screen!.root.findByType(TextInput).props.editable).toBe(true);
+    await act(async()=>button.props.onPress());
+    expect(stop).not.toHaveBeenCalled();expect(props.onSend).toHaveBeenCalledTimes(1);
+    expect(props.onChange).not.toHaveBeenCalled();expect(props.onFiles).not.toHaveBeenCalled();
+  });
+  test('AI stop replaces an empty composer microphone until processing ends',async()=>{
+    props.onStopAssistant=jest.fn();await render();
+    expect(screen!.root.findAll(n=>n.props.accessibilityLabel==='Удерживайте для записи голосового сообщения. Проведите вверх, чтобы закрепить запись')).toHaveLength(0);
+    props={...props,onStopAssistant:undefined};await act(async()=>screen!.update(React.createElement(HelpComposer,props)));
+    expect(screen!.root.findAll(n=>n.props.accessibilityLabel==='Удерживайте для записи голосового сообщения. Проведите вверх, чтобы закрепить запись').length).toBeGreaterThan(0);
+    expect(mockRecorder.prepareToRecordAsync).not.toHaveBeenCalled();
+  });
   test('gallery regression: one composer in the tray, then back restores selected thumbnails above input',async()=>{
     Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});
     props.value='Подпись';props.files=[{uri:'file://draft.jpg',name:'draft.jpg',mimeType:'image/jpeg'}];await render();

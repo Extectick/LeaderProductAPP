@@ -3,6 +3,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View, type StyleProp, t
 import { Ionicons } from '@expo/vector-icons';
 import { useHelpReducedMotion, useHelpTheme } from '../helpTheme';
 import { helpDate } from '../helpUiUtils';
+import { HELP_COMPOSER_ACTION_SIZE } from '../helpLayout';
 
 export function HelpDateSeparator({ date, onPress, compact = false }: { date: string; onPress?: () => void; compact?: boolean }) {
   const c = useHelpTheme();
@@ -27,8 +28,8 @@ export function HelpJumpToLatest({ onPress, count = 0, loading = false, style }:
   const c = useHelpTheme();
   const reduced = useHelpReducedMotion();
   const unread = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
-  return <Pressable testID="help-jump-to-latest" accessibilityRole="button" accessibilityLabel={unread ? `К последним сообщениям. Новых: ${unread}` : 'К последним сообщениям'} accessibilityState={{ busy: loading, disabled: loading }} disabled={loading} onPress={onPress} style={({ pressed }) => [{ width: 48, height: 48, borderRadius: 24, backgroundColor: c.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: c.line, alignItems: 'center', justifyContent: 'center', elevation: 3, shadowColor: '#000', shadowOpacity: .12, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, opacity: pressed ? .8 : 1, transform: [{ scale: pressed && !reduced ? .96 : 1 }] }, style]}>
-    {loading && !reduced ? <ActivityIndicator size="small" color={c.accentText} /> : <Ionicons name="chevron-down" size={26} color={c.accentText} accessible={false} />}
+  return <Pressable testID="help-jump-to-latest" accessibilityRole="button" accessibilityLabel={unread ? `К последним сообщениям. Новых: ${unread}` : 'К последним сообщениям'} accessibilityState={{ busy: loading, disabled: loading }} disabled={loading} onPress={onPress} hitSlop={3} style={({ pressed }) => [{ width: HELP_COMPOSER_ACTION_SIZE, height: HELP_COMPOSER_ACTION_SIZE, borderRadius: HELP_COMPOSER_ACTION_SIZE / 2, backgroundColor: c.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: c.line, alignItems: 'center', justifyContent: 'center', elevation: 3, shadowColor: '#000', shadowOpacity: .12, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, opacity: pressed ? .8 : 1, transform: [{ scale: pressed && !reduced ? .96 : 1 }] }, style]}>
+    {loading && !reduced ? <ActivityIndicator size="small" color={c.accentText} /> : <Ionicons name="chevron-down" size={22} color={c.accentText} accessible={false} />}
     {unread > 0 ? <View pointerEvents="none" style={{ position: 'absolute', top: -7, alignSelf: 'center', minWidth: 22, height: 22, borderRadius: 11, paddingHorizontal: 5, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: c.background }}><Text style={{ color: '#FFF', fontSize: 10, lineHeight: 14, fontWeight: '700' }}>{unread > 99 ? '99+' : unread}</Text></View> : null}
   </Pressable>;
 }

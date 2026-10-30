@@ -3,7 +3,7 @@
 This isolated Expo project imports the **real** HelpMessageBubble, HelpComposer,
 HelpMedia and ThemeProvider. It never imports AuthContext, useHelpService, the
 production app entry, API or notification/socket bridges. All messages and
-actions stay in fixture memory. No accounts, credentials or API calls are used.
+actions stay in the local fixture cache on this device. No accounts, credentials or API calls are used.
 
 From this directory, with the parent's existing node_modules (no installation):
 
@@ -166,3 +166,62 @@ The album assets and tone contain no user data and require no external service.
 Use ADB UI-tree bounds for taps and swipes; never interact with Telegram chats as
 part of these fixtures. Native blur now additionally uses the opt-in
 `frameClearColor` to avoid a white initial capture.
+
+### Local AI processing scenario
+
+Create a new ticket and send the first message. The fixture assigns a short title
+and a sequential number, then inserts one assistant message with processing steps
+and a streamed test answer. No model or backend is contacted. Follow-up messages
+in these newly created tickets start another run; existing IT fixtures retain
+their original behavior.
+
+The chat ellipsis menu (also available on the empty new-ticket screen) selects
+the scenario for the next message: normal answer, slow analysis, clarification,
+or error. While processing, the empty composer shows Stop; entering text switches
+to Send so the user can submit a correction. Corrections keep the task ID and
+previous input context, retire old progress, and place updated progress below
+the new user message. Superseded empty progress rows are hidden. Stopping shows
+a compact status/retry row, without a stage counter. Assistant names are hidden.
+The draft remains editable and stopping preserves it. The answer replaces
+the processing block in the same assistant row; completed steps are not kept
+onscreen. Failed or stopped runs offer Retry in the row. Assistant avatars have
+a stable per-ticket color shared by the list and chat; IT members take priority
+in the list.
+Retry after the error scenario runs a successful answer. The menu can replay the
+latest assistant row without creating another ticket. Runs belong to their ticket;
+navigating elsewhere does not redirect their events. Reloading restores saved runs and resumes their current step or partial answer.
+
+QA-only diagnostics: `fixture.ai.scenario` accepts `answer`, `slow`, `question`,
+or `error`; `fixture.ai.create` creates a local ticket (optional text argument),
+then use `screen.open` with its number. `fixture.ai.stop` and `fixture.ai.retry`
+target the latest assistant run in the selected ticket. Snapshot state includes
+assistant status, step, event number and answer length, never answer text.
+
+Shared view: `src/features/help/components/HelpAssistantMessage.tsx`.
+Event/state contract: `src/features/help/helpAssistant.ts`.
+Local event generator: `qa/help-preview/assistantFixture.ts`.
+
+
+### Persistent opening and smooth tail
+
+The QA fixture saves ticket metadata, complete message history in 100-message
+storage pages, drafts, read cursors and reading anchors in AsyncStorage. It loads
+before HelpScreen mounts, so a reload does not replace custom tickets with seeds.
+Writes are serialized with the manifest published last; changed state is flushed
+every 250 ms and on background/unmount. `fixture.persist.save` awaits an explicit
+flush for process-restart checks. This namespace is separate from account data.
+
+The real application uses its existing account/API-scoped SQLite history plus a
+bounded memory cache of opened windows. A cached chat opens before network work;
+repair uses the saved event cursor. Ticket socket events are coalesced per ID and
+refresh that ticket. Unchanged rows and message cells keep their object references;
+memoized list rows skip updates when another ticket changes. Reconnect and periodic
+repair still reconcile quietly without a list spinner.
+
+Android's updated LeaderHelpChatLayout module keeps the scroll range at the tail
+and eases content displacement on native frames. Reduced motion disables this
+presentation spring. The native change requires an updated Dev Client; the emulator
+artifact is `dev-builds/development-client/leader-product-dev-client-0.1.35-smooth-x86_64.apk`.
+It is for x86_64 emulators. The jump-to-latest button is 38 dp and shares the send
+button axis. Completed AI answers use natural layout immediately; processing has
+one spinner in the current step marker, with no spinner on its avatar.

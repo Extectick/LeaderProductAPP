@@ -1,3 +1,4 @@
+import {DurableHelpProbe} from './durableProbe';
 /** Local visual fixture entry. Never imported by app/ or the production entry. */
 import React, { useEffect, useState } from 'react';
 import { Image, Platform, Pressable, ScrollView, StatusBar, Text, View, useWindowDimensions } from 'react-native';
@@ -13,6 +14,10 @@ import type { HelpAttachment, HelpMessage } from '../../src/features/help/helpAp
 import HelpScreen from '../../src/features/help/HelpScreen';
 import {helpDevActions} from '../../src/features/help/helpDiagnostics';
 import { installHelpCacheProbe } from './cacheProbe';
+import { FixtureCacheBoundary } from './FixtureCacheBoundary';
+import { NotificationHost } from '../../components/NotificationHost';
+import { pushNotification } from '../../utils/notificationStore';
+import { helpAssistantAvatarColor } from '../../src/features/help/helpAssistant';
 
 export const OWNER = { id: 101, name: 'Вы', avatarUrl: null };
 export const IT = { id: 202, name: 'Анна · IT', avatarUrl: null };
@@ -60,6 +65,7 @@ export const fixtures = [
 
 function Preview() {
   const { theme, setTheme } = useTheme(); const c = useHelpTheme();
+  useEffect(()=>helpDevActions('fixture.notifications',{'fixture.notification':()=>pushNotification({variant:'message',id:`qa-help-${Date.now()}`,groupKey:'qa-help-1043',title:'Не печатает принтер',message:'Проверьте подключение USB и очередь печати. Подготовил следующие шаги для решения проблемы.',icon:'hardware-chip-outline',avatarColor:helpAssistantAvatarColor(1043),backgroundColor:c.surface,textColor:c.text,borderColor:c.line,durationMs:8000})}),[c]);
   useEffect(() => installHelpCacheProbe(), []);
   useEffect(()=>helpDevActions('fixture.theme',{'fixture.theme':value=>{if(value==='dark'||value==='light')void setTheme(value);}}));
   const windowSize = useWindowDimensions();
@@ -109,4 +115,4 @@ function Preview() {
     {gallery ? <HelpGallery attachments={gallery.attachments} initialIndex={gallery.index} resolve={resolve} onClose={() => setGallery(null)} onError={setNotice} /> : null}
   </View>;
 }
-export default function HelpPreview() { return <SafeAreaProvider><ThemeProvider><Preview /></ThemeProvider></SafeAreaProvider>; }
+export default function HelpPreview() { return <SafeAreaProvider><ThemeProvider><NotificationHost><DurableHelpProbe/><FixtureCacheBoundary><Preview /></FixtureCacheBoundary></NotificationHost></ThemeProvider></SafeAreaProvider>; }

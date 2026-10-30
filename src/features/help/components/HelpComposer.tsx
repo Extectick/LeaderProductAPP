@@ -14,10 +14,11 @@ import type { HelpAttachment } from '../helpApi';
 import {HelpNativeInput, hasNativeHelpInput, type HelpNativeInputHandle} from './HelpNativeInput';
 import { helpDevActions, helpDevEvent, helpDevRef, helpDevState } from '../helpDiagnostics';
 import { HelpPhotoPicker } from './HelpPhotoPicker';
+import {scheduleHelpInputFocus} from '../helpInputFocus';
 
 export type HelpLocalFile = { uri: string; name: string; mimeType?: string; file?: File; size?: number; width?: number; height?: number; assetId?: string };
 export type HelpComposeMode = 'message' | 'close' | 'reopen' | 'edit';
-type Props = { value: string; onChange: (text: string) => void; files: HelpLocalFile[]; onFiles: (files: HelpLocalFile[]) => void; onSend: (voice?: HelpLocalFile, selectedFiles?: HelpLocalFile[]) => Promise<boolean | void>; busy: boolean; mode: HelpComposeMode; rating: number; onRating: (rating: number) => void; onCancelMode: () => void; quote?: { name: string; text: string; onPress: () => void; thumbnail?: HelpAttachment }; resolve?: ResolveHelpMedia; recordingAreaHeight?: number; onCancelQuote: () => void; error: (message: string) => void; focusKey?: number; onResize: () => void; disabled?: boolean; editClosure?: boolean; existingFiles?: HelpAttachment[]; onRemoveExisting?: (id: string) => void };
+type Props = { value: string; onChange: (text: string) => void; files: HelpLocalFile[]; onFiles: (files: HelpLocalFile[]) => void; onSend: (voice?: HelpLocalFile, selectedFiles?: HelpLocalFile[]) => Promise<boolean | void>; busy: boolean; mode: HelpComposeMode; rating: number; onRating: (rating: number) => void; onCancelMode: () => void; quote?: { name: string; text: string; onPress: () => void; thumbnail?: HelpAttachment }; resolve?: ResolveHelpMedia; recordingAreaHeight?: number; onCancelQuote: () => void; error: (message: string) => void; focusKey?: number; onResize: () => void; disabled?: boolean; sendBlocked?:boolean; editClosure?: boolean; existingFiles?: HelpAttachment[]; onRemoveExisting?: (id: string) => void; onStopAssistant?: () => void };
 
 const COMPOSER_LINE_HEIGHT = 22;
 const COMPOSER_MAX_HEIGHT = COMPOSER_LINE_HEIGHT * 6.5 + 2;
@@ -89,7 +90,7 @@ export function HelpComposer(props: Props) {
     node.scrollTop = offset; setScrollY(offset); setContentHeight(measured);
     if (height !== next) { setHeight(next); props.onResize(); }
   }, [props.value]);
-  useEffect(() => { if (props.focusKey) input.current?.focus(); }, [props.focusKey]);
+  useEffect(() => { if (props.focusKey) return scheduleHelpInputFocus(()=>input.current); }, [props.focusKey]);
   useEffect(() => { if (recordState.isRecording) setMeter(values => [...values.slice(-27), Math.min(1, Math.max(.04, ((recordState.metering ?? -50) + 60) / 60))]); }, [recordState.durationMillis]);
   useEffect(() => { if (recording && recordState.durationMillis >= 60000) void finish('stage'); }, [recordState.durationMillis, recording]);
   useEffect(() => {
@@ -138,7 +139,7 @@ export function HelpComposer(props: Props) {
   }
   async function start(lock = false) {
     const state = life.current;
-    if (!state.mounted || state.starting || state.recording || state.ending || state.appState !== 'active' || latest.current.busy || latest.current.disabled) return;
+    if (!state.mounted || state.starting || state.recording || state.ending || state.appState !== 'active' || latest.current.busy || latest.current.disabled || latest.current.onStopAssistant) return;
     state.starting = true; state.release = null; state.locked = lock; state.permissionInterrupted = false; setStarting(true); Keyboard.dismiss();
     try {
       // On web, even getRecordingPermissionsAsync can display a permission prompt.
@@ -215,7 +216,7 @@ export function HelpComposer(props: Props) {
   }
   useEffect(() => helpDevActions('composer', { 'composer.focus': () => input.current?.focus(), 'composer.text': value => { if(typeof value==='string')props.onChange(value); }, 'composer.photos':()=>{Keyboard.dismiss();setPhotoPickerOpen(true);} }));
   useEffect(() => {const timer=setTimeout(()=>helpDevState({composerHeight,inputTargetHeight:height,inputContentHeight:contentHeight,inputScrollY:scrollY,draftLength:props.value.length,fontSize:COMPOSER_FONT_SIZE,animationDuration:reduced ? 0 : 180}),100);return()=>clearTimeout(timer);},[composerHeight,height,contentHeight,scrollY,props.value.length,reduced]);
-  const hasText = Boolean(props.value.trim() || props.files.length || props.existingFiles?.length); const canSend = !props.disabled && !props.busy && !preparingPhotos && (props.mode === 'close' || props.editClosure || hasText) && (props.mode !== 'reopen' || Boolean(props.value.trim()));
+  const hasText = Boolean(props.value.trim() || props.files.length || props.existingFiles?.length); const canSend = !props.sendBlocked && !props.disabled && !props.busy && !preparingPhotos && (props.mode === 'close' || props.editClosure || hasText) && (props.mode !== 'reopen' || Boolean(props.value.trim()));
   function measureContent(rawHeight: number) {
     const measured = Math.max(COMPOSER_LINE_HEIGHT, rawHeight);
     const next = Math.min(COMPOSER_MAX_HEIGHT, measured);
@@ -254,7 +255,7 @@ export function HelpComposer(props: Props) {
       {overflowing && scrollY + height < contentHeight - 1 ? <LinearGradient testID="help-composer-fade-bottom" pointerEvents="none" colors={[c.surface + '00', c.surface + '80']} style={{ position: 'absolute', left: 45, right: 47, bottom: 0, height: 12 }} /> : null}
     </Animated.View>}
       <HelpIcon name="attach-outline" label="Прикрепить файлы" disabled={props.busy || props.disabled || recording || starting} onPress={() => {if(Platform.OS==='web')setAttachmentMenu(true);else{Keyboard.dismiss();setPhotoPickerOpen(value=>!value);}}} color={c.muted} size={24} rotation={40} style={{ position: 'absolute', bottom: 4, left: 4, width: 36, height: 38 }} />
-      {props.mode === 'message' && !hasText && !photoPickerOpen ? <Animated.View {...gestures.panHandlers} accessible accessibilityRole="button" accessibilityLabel="Удерживайте для записи голосового сообщения. Проведите вверх, чтобы закрепить запись" onAccessibilityTap={() => void start(true)} style={{ position: 'absolute', right: 4, bottom: 4, width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: recording && !locked ? '#DB5059' : c.accent, opacity: props.busy || props.disabled ? .4 : 1, transform: [{ scale: pulse }] }}>{starting ? <ActivityIndicator color="#FFF" size="small" /> : <Ionicons name={locked ? 'lock-closed' : 'mic'} size={22} color="#FFF" />}</Animated.View> : <HelpIcon name={props.mode === 'close' || props.mode === 'edit' ? 'checkmark' : 'arrow-up'} label={props.mode === 'close' ? 'Закрыть обращение' : props.mode === 'edit' ? 'Сохранить изменения' : 'Отправить сообщение'} disabled={!canSend} color="#FFF" size={22} style={{ position: 'absolute', right: 4, bottom: 4, width: 38, height: 38, borderRadius: 19, backgroundColor: c.accent }} onPress={() => void props.onSend().then(result=>{if(result!==false)setPhotoPickerOpen(false);})} />}
+      {props.onStopAssistant && !hasText ? <HelpIcon name="stop" label="Остановить ответ ИИ" color="#FFF" size={20} style={{ position: 'absolute', right: 4, bottom: 4, width: 38, height: 38, borderRadius: 19, backgroundColor: c.accent }} onPress={props.onStopAssistant}/> : props.mode === 'message' && !hasText && !photoPickerOpen ? <Animated.View {...gestures.panHandlers} accessible accessibilityRole="button" accessibilityLabel="Удерживайте для записи голосового сообщения. Проведите вверх, чтобы закрепить запись" onAccessibilityTap={() => void start(true)} style={{ position: 'absolute', right: 4, bottom: 4, width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: recording && !locked ? '#DB5059' : c.accent, opacity: props.busy || props.disabled ? .4 : 1, transform: [{ scale: pulse }] }}>{starting ? <ActivityIndicator color="#FFF" size="small" /> : <Ionicons name={locked ? 'lock-closed' : 'mic'} size={22} color="#FFF" />}</Animated.View> : <HelpIcon name={props.mode === 'close' || props.mode === 'edit' ? 'checkmark' : 'arrow-up'} label={props.mode === 'close' ? 'Закрыть обращение' : props.mode === 'edit' ? 'Сохранить изменения' : 'Отправить сообщение'} disabled={!canSend} color="#FFF" size={22} style={{ position: 'absolute', right: 4, bottom: 4, width: 38, height: 38, borderRadius: 19, backgroundColor: c.accent }} onPress={() => void props.onSend().then(result=>{if(result!==false)setPhotoPickerOpen(false);})} />}
   </View>:null}
     {Platform.OS !== 'web' ? <HelpPhotoPicker open={photoPickerOpen} onVisibility={setPhotoPickerVisible} onClose={()=>setPhotoPickerOpen(false)} files={props.files} onFiles={props.onFiles} caption={props.value} onCaption={props.onChange} onSend={files=>props.onSend(undefined,files)} onPreparing={setPreparingPhotos} onError={props.error} onDocuments={()=>{setPhotoPickerOpen(false);void pick('files');}} busy={props.busy||Boolean(props.disabled)} existingCount={props.existingFiles?.length??0}/> : null}
   </View>;

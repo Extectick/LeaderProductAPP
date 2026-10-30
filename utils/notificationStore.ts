@@ -4,6 +4,10 @@ export type NotificationType = 'info' | 'success' | 'warning' | 'error';
 
 export type NotificationPayload = {
   id?: string;
+  variant?: 'default' | 'message';
+  groupKey?: string;
+  avatarColor?: string;
+  onPresented?: () => void;
   title?: string;
   message: string;
   type?: NotificationType;
@@ -57,6 +61,10 @@ export function pushNotification(payload: NotificationPayload) {
   const dismissKeys = normalizeKeys(payload.dismissKeys);
   const normalized: Required<NotificationPayload> = {
     id,
+    variant: payload.variant ?? 'default',
+    groupKey: payload.groupKey ?? '',
+    avatarColor: payload.avatarColor ?? '',
+    onPresented: payload.onPresented ?? (() => {}),
     title: payload.title ?? '',
     message: payload.message,
     type: payload.type ?? 'info',

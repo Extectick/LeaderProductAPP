@@ -1,0 +1,30 @@
+import React from 'react';
+import TestRenderer,{act} from 'react-test-renderer';
+import {Text,Image} from 'react-native';
+jest.mock('@expo/vector-icons',()=>({Ionicons:'Ionicons'}));
+jest.mock('expo-blur',()=>({BlurView:'BlurView'}));
+jest.mock('@react-native-masked-view/masked-view',()=>({__esModule:true,default:'MaskedView'}));
+jest.mock('expo-linear-gradient',()=>({LinearGradient:'LinearGradient'}));
+jest.mock('react-native-safe-area-context',()=>({useSafeAreaInsets:()=>({top:0,right:0,bottom:0,left:0})}));
+jest.mock('../src/features/help/helpTheme',()=>({useHelpTheme:()=>({background:'#151B22',incoming:'#202D38',accentText:'#67B2FF',soft:'#283647'}),useHelpReducedMotion:()=>true}));
+jest.mock('../src/features/help/helpDiagnostics',()=>({helpDevRef:()=>{},helpDevState:()=>{}}));
+import {HelpTyping} from '../src/features/help/components/HelpPrimitives';
+import {helpTypingLabel,updateHelpTypingUsers,type HelpTypingUser} from '../src/features/help/helpTypingModel';
+const anna:HelpTypingUser={userId:202,name:'Анна · IT',avatarUrl:'https://example.test/anna.png'},boris:HelpTypingUser={userId:203,name:'Борис',avatarUrl:null};
+test('concurrent typists retain independent identities when one stops',()=>{
+  let users=updateHelpTypingUsers([],{...anna,ticketId:7,typing:true});users=updateHelpTypingUsers(users,{...boris,ticketId:7,typing:true});
+  expect(helpTypingLabel(users)).toBe('Анна и Борис печатают');
+  users=updateHelpTypingUsers(users,{...anna,ticketId:7,typing:false});expect(users).toEqual([boris]);expect(helpTypingLabel(users)).toBe('Борис печатает');
+});
+test('typing row shows participant avatars, complete accessible names and compact overflow',async()=>{
+  const users=[anna,boris,{userId:204,name:'Вера'},{userId:205,name:'Глеб'}];let view!:TestRenderer.ReactTestRenderer;
+  await act(async()=>{view=TestRenderer.create(React.createElement(HelpTyping,{users}));});
+  expect(view.root.findAllByProps({testID:'help-typing-avatar-202'}).length).toBeGreaterThan(0);
+  expect(view.root.findAllByProps({testID:'help-typing-avatar-204'}).length).toBeGreaterThan(0);
+  expect(view.root.findAllByProps({testID:'help-typing-more'}).length).toBeGreaterThan(0);
+  expect(view.root.findAllByProps({accessibilityLabel:'Анна, Борис, Вера, Глеб печатают'}).length).toBeGreaterThan(0);
+  const texts=view.root.findAllByType(Text).map(node=>node.props.children).flat().join(' ');expect(texts).toContain('Анна, Борис и ещё 2 печатают');
+  await act(async()=>{view.root.findByType(Image).props.onError();});expect(view.root.findAllByType(Image)).toHaveLength(0);
+  expect(view.root.findAllByType(Text).map(node=>node.props.children).flat()).toContain('АI');
+  await act(async()=>view.unmount());
+});

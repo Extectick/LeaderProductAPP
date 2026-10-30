@@ -1,0 +1,14 @@
+// Keep native commands/object paths within Windows limits and bound Ninja workers.
+allprojects { project ->
+    ['com.android.application', 'com.android.library'].each { pluginId ->
+        project.plugins.withId(pluginId) {
+            project.extensions.getByName('android').defaultConfig.externalNativeBuild.cmake {
+                arguments '-DCMAKE_OBJECT_PATH_MAX=128',
+                    '-DCMAKE_NINJA_FORCE_RESPONSE_FILE=ON',
+                    '-DCMAKE_JOB_POOLS=leader_compile=2;leader_link=1',
+                    '-DCMAKE_JOB_POOL_COMPILE=leader_compile',
+                    '-DCMAKE_JOB_POOL_LINK=leader_link'
+            }
+        }
+    }
+}

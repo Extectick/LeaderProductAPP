@@ -46,23 +46,28 @@ function AppealsNotificationsBridge() {
   }, [auth?.profile?.departmentRoles, auth?.profile?.employeeProfile?.department?.id]);
 
   useEffect(() => {
-    if (!auth?.isAuthenticated) return;
+    if (!auth?.isAuthenticated || !Number.isSafeInteger(Number(auth.profile?.id)) || Number(auth.profile?.id)<=0) return;
     let cleanup: (() => void) | undefined;
+    let alive=true;
     bindPushNavigation((appealId) => {
+      if(!alive)return false;
       router.push(`/(main)/services/appeals/${appealId}` as any);
-    }, (ticketId) => {
-      router.push({ pathname: '/services/help', params: { ticketId: String(ticketId) } } as any);
+      return true;
+    }, (ticketId,target) => {
+      if(!alive||target?.recipientUserId!==undefined&&target.recipientUserId!==Number(auth?.profile?.id))return false;
+      router.push({ pathname: '/services/help', params: { ticketId: String(ticketId), ...(target?.messageId?{messageId:String(target.messageId)}:{}), ...(target?.eventId?{eventId:String(target.eventId)}:{}) } } as any);
+      return true;
     })
       .then((cb) => {
-        cleanup = cb;
+        if(!alive)cb();else cleanup = cb;
       })
       .catch((error) => {
         console.warn('[push] navigation binding failed', error);
       });
     return () => {
-      cleanup?.();
+      alive=false;cleanup?.();
     };
-  }, [auth?.isAuthenticated, router]);
+  }, [auth?.isAuthenticated, auth?.profile?.id,router]);
 
   const rememberShown = useCallback((key: string) => {
     if (!key) return false;

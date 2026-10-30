@@ -3,14 +3,17 @@ import { jwtDecode } from 'jwt-decode';
 import { apiClient } from '@/utils/apiClient';
 import { API_BASE_URL } from '@/utils/config';
 import { getAccessToken, getAccessTokenForRequest, refreshToken } from '@/utils/tokenService';
-import type { HelpHistoryPage, HelpHistoryQuery, HelpSearchResult, HelpSyncResult } from './helpHistoryTypes';
+import type { HelpEvent, HelpHistoryPage, HelpHistoryQuery, HelpSearchResult, HelpSyncResult } from './helpHistoryTypes';
+import type { HelpAssistantRun } from './helpAssistant';
 
 export type HelpUser = { id: number; name: string; avatarUrl: string | null };
 export type HelpAttachment = { id: string; name: string; mimeType: string; size: number; kind: 'IMAGE' | 'AUDIO' | 'FILE'; url: string; width?: number | null; height?: number | null; thumbnailDataUri?: string | null; position?: number };
 export type HelpMessage = {
+  ticketStatusChange?: 'CLOSED' | 'REOPENED' | null;
+  assistantRun?: HelpAssistantRun;
   id: number; ticketId: number; sequence: number; clientMessageId: string | null;
   authorId: number | null; author: HelpUser | null; authorRole: 'USER' | 'IT' | 'SYSTEM';
-  kind: 'TEXT' | 'CLOSURE' | 'SYSTEM'; text: string; createdAt: string; editedAt: string | null;
+  kind: 'TEXT' | 'CLOSURE' | 'SYSTEM' | 'ASSISTANT_PROGRESS'; text: string; createdAt: string; editedAt: string | null;
   replyToId: number | null; replyTo: { id: number; text: string; author?: HelpUser | null; attachments?: HelpAttachment[] } | null;
   forwardedFromId: number | null; rating: number | null; attachments: HelpAttachment[];
   reactions: { emoji: string; count: number; mine: boolean; userIds: number[] }[];
@@ -20,11 +23,11 @@ export type HelpTicket = {
   createdAt: string; updatedAt: string; closedAt: string | null; sourceTicketId: number | null;
   sourceTicket: { id: number; number: number; title: string } | null; itRequested: boolean;
   members: { userId: number; role: 'OWNER' | 'IT'; user: HelpUser; lastReadSequence?: number }[];
-  unreadCount: number; lastMessage: HelpMessage | null; canReopen: boolean; aiEnabled: false;
+  unreadCount: number; lastMessage: HelpMessage | null; canReopen: boolean; aiEnabled: boolean;
   lastReadSequence?: number; lastSequence?: number;
 };
-export type HelpDetail = { ticket: HelpTicket; messages: HelpMessage[] } & Partial<HelpHistoryPage>;
-export type HelpConfig = { aiEnabled: false; canManage: boolean; maxAttachments: number; maxFileBytes: number };
+export type HelpDetail = { queued?:boolean; ticket: HelpTicket; messages: HelpMessage[] } & Partial<HelpHistoryPage>;
+export type HelpConfig = { aiEnabled: boolean; canManage: boolean; maxAttachments: number; maxFileBytes: number };
 export type HelpFile = { uri: string; name: string; mimeType?: string; file?: File };
 export type HelpMessageInput = { text: string; attachmentIds?: string[]; replyToId?: number; forwardedFromId?: number; clientMessageId?: string };
 export type HelpCreateInput = HelpMessageInput & { sourceTicketId?: number; clientTicketId?: string };
@@ -79,6 +82,9 @@ export function createHelpApi(expectedUserId?: number) {
   const helpRequest = async <T,>(path: string, method: HelpMethod = 'GET', body?: unknown) =>
     requestWithAuth<T>(path, method, body, await captureAuth(expectedUserId));
   return {
+  events: (after=0) => helpRequest<{events:HelpEvent[];nextCursor:number;hasMore:boolean;resyncRequired?:boolean;snapshotCursor?:number;visibleTicketIds?:number[];visibilityComplete?:boolean}>(`/events?after=${after}`),
+  stopAssistant: (id:number,runId:string) => helpRequest<HelpDetail>(`/tickets/${id}/assistant/stop`,'POST',{runId}),
+  retryAssistant: (id:number,runId:string) => helpRequest<HelpDetail>(`/tickets/${id}/assistant/retry`,'POST',{runId}),
   config: () => helpRequest<HelpConfig>('/config'),
   list: (status: string, scope: string, cursor?: string | number, query = '') => helpRequest<{ tickets: HelpTicket[]; nextCursor: string | number | null }>(`/tickets?status=${status}&scope=${scope}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${query ? `&q=${encodeURIComponent(query)}` : ''}`),
   detail: (id: number) => helpRequest<HelpDetail>(`/tickets/${id}`),

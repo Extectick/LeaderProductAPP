@@ -16,9 +16,14 @@ export function updateHelpHistoryRecord(previous: HelpHistoryRecord | null, chan
   const mergedTicket={...acceptedTicket,lastReadSequence,
     ...(previous&&(ticket.lastReadSequence??0)<previous.lastReadSequence?{unreadCount:previous.ticket.unreadCount}:{}),
   };
+  let ranges=change.page ? mergeHelpRanges(previous?.ranges ?? [],change.page) : previous?.ranges ?? [];
+  // A delta proves only the returned individual message positions, never a disjoint span.
+  if(change.sync)for(const message of change.sync.messages){if(ranges.some(range=>message.sequence>=range.from&&message.sequence<=range.to))continue;
+    ranges=mergeHelpRanges(ranges,{messages:[message],nextCursor:null,olderCursor:null,newerCursor:null,hasOlder:message.sequence>1,hasNewer:message.sequence<change.sync.lastSequence,lastReadSequence,lastSequence:change.sync.lastSequence,firstUnreadSequence:change.sync.firstUnreadSequence,eventCursor:change.sync.eventCursor});
+  }
   return {
     ticket: mergedTicket,
-    ranges: change.page ? mergeHelpRanges(previous?.ranges ?? [], change.page) : previous?.ranges ?? [],
+    ranges,
     anchor: change.anchor ?? previous?.anchor ?? null,
     // A page is only a snapshot of one window. It must not acknowledge unseen edits elsewhere.
     syncCursor: change.sync ? Math.max(previous?.syncCursor ?? 0, change.sync.nextCursor)

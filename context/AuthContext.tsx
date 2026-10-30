@@ -3,14 +3,15 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import isEqual from 'fast-deep-equal';
 import { jwtDecode } from 'jwt-decode';
-import React, { createContext, ReactNode, useCallback, useEffect, useState } from 'react';
+import React, { createContext, ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 
 import { Profile } from '@/src/entities/user/types';
 import { getAccessToken, getRefreshToken, handleBackendUnavailable, hasAuthSessionExpired, logout, onAuthSessionExpired, refreshToken } from '@/utils/tokenService';
 import { getProfile } from '@/utils/userService';
 import { getProfileGate } from '@/utils/profileGate';
-import { syncPushToken, unregisterPushToken } from '@/utils/pushNotifications';
+import { unregisterPushToken } from '@/utils/pushNotifications';
+import {startPushTokenRegistration} from '@/utils/pushRegistration';
 import { usePresenceHeartbeat } from '@/hooks/usePresenceHeartbeat';
 import { addMonitoringBreadcrumb, captureException, setMonitoringUser } from '@/src/shared/monitoring';
 
@@ -46,6 +47,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [isAuthenticated, setAuthenticated] = useState(false);
   const [profileState, setProfileState] = useState<Profile | null>(null);
+  const stopPushRegistration=useRef<(()=>void)|null>(null);
 
   const setProfile = useCallback(async (newProfile: Profile | null) => {
     await setMonitoringUser(newProfile?.id);
@@ -68,6 +70,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   }, []);
 
   const signOut = async () => {
+    stopPushRegistration.current?.();stopPushRegistration.current=null;
     addMonitoringBreadcrumb('auth_signout_start');
     await setMonitoringUser(null);
     try {
@@ -89,6 +92,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   useEffect(() => {
     return onAuthSessionExpired((event) => {
+      stopPushRegistration.current?.();stopPushRegistration.current=null;
       void setMonitoringUser(null);
       addMonitoringBreadcrumb('auth_session_expired', {
         status: event.status,
@@ -247,21 +251,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     };
   }, [isAuthenticated, setProfile]);
 
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const token = await syncPushToken();
-        if (!token || cancelled) return;
-      } catch (e) {
-        console.warn('Push token sync failed:', e);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [isAuthenticated]);
+  useEffect(()=>{
+    const userId=Number(profileState?.id);
+    if(!isAuthenticated||!Number.isSafeInteger(userId)||userId<=0)return;
+    const stop=startPushTokenRegistration(userId);stopPushRegistration.current=stop;
+    return()=>{stop();if(stopPushRegistration.current===stop)stopPushRegistration.current=null;};
+  },[isAuthenticated,profileState?.id]);
 
   usePresenceHeartbeat(isAuthenticated);
 

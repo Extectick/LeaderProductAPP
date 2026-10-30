@@ -25,9 +25,9 @@ export function HelpMoreCloseButton({active,onPress,activeLabel='Закрыть'
   </Pressable>;
 }
 
-export function HelpChatHeader({title,meta,onBack,onMenu,onSearch,search,menuActive=false}:{title:string;meta:string;onBack:()=>void;onMenu?:()=>void;onSearch?:()=>void;search?:HelpChatSearchFieldProps;menuActive?:boolean}) {
+export function HelpChatHeader({title,meta,onBack,onMenu,onSearch,search,menuActive=false,connecting=false}:{title:string;meta:string;onBack:()=>void;onMenu?:()=>void;onSearch?:()=>void;search?:HelpChatSearchFieldProps;menuActive?:boolean;connecting?:boolean}) {
   const c=useHelpTheme();
-  return <HelpHeaderFrame onBack={search?.onClose??onBack}>
+  return <HelpHeaderFrame onBack={search?.onClose??onBack} connecting={connecting}>
     <View key="content" style={{flex:1,minWidth:0,justifyContent:'center',gap:1}}>
       {search ? <View style={{height:48,flexDirection:'row',alignItems:'center'}}><Ionicons name="search-outline" size={20} color={c.muted} accessible={false}/><TextInput testID="help-chat-search-input" accessibilityLabel="Поиск в переписке" value={search.query} onChangeText={search.onQueryChange} onSubmitEditing={search.onSubmit} autoFocus={search.autoFocus??false} placeholder="Поиск в переписке" placeholderTextColor={c.muted} autoCapitalize="none" autoCorrect={false} returnKeyType="search" clearButtonMode="never" maxLength={100} style={{flex:1,minWidth:0,height:48,paddingHorizontal:8,paddingVertical:0,color:c.text,fontSize:16,includeFontPadding:false}}/></View> : <><Text numberOfLines={1} style={{color:c.text,fontSize:15,lineHeight:20,fontWeight:'600'}}>{title}</Text>{meta ? <Text numberOfLines={1} style={{color:c.muted,fontSize:10,lineHeight:14}}>{meta}</Text> : null}</>}
     </View>

@@ -8,6 +8,7 @@ import { HelpHeaderFrame } from './HelpHeaderFrame';
 import { helpDevActions, helpDevRef, helpDevState } from '../helpDiagnostics';
 
 type Props = {
+  connecting?: boolean;
   search: string;
   onSearch: (value: string) => void;
   archived: boolean;
@@ -18,7 +19,7 @@ type Props = {
   onScope?: () => void;
 };
 
-export function HelpListHeader({ search, onSearch, archived, onArchive, onBack, canManage = false, scope = 'mine', onScope }: Props) {
+export function HelpListHeader({ search, onSearch, archived, onArchive, onBack, canManage = false, scope = 'mine', onScope, connecting=false }: Props) {
   const c = useHelpTheme();
   const reducedMotion = useHelpReducedMotion();
   const window = useWindowDimensions();
@@ -37,7 +38,7 @@ export function HelpListHeader({ search, onSearch, archived, onArchive, onBack, 
   const scopeAction = () => { closeMenu(); onScope?.(); };
   useEffect(() => helpDevActions('header', { 'header.openMenu': openMenu, 'header.closeMenu': closeMenu, 'header.archive': archiveAction, ...(canManage ? { 'header.scope': scopeAction } : {}) }));
   useEffect(() => helpDevState({ menuVisible, archived, scope }), [menuVisible, archived, scope]);
-  return <><HelpHeaderFrame onBack={onBack}>
+  return <><HelpHeaderFrame onBack={onBack} connecting={connecting}>
       <Ionicons name="search-outline" size={20} color={c.muted} style={{ marginRight: 8 }} />
       <TextInput accessibilityLabel="Поиск обращений" value={search} onChangeText={onSearch} placeholder="Поиск" placeholderTextColor={c.muted} returnKeyType="search" autoCorrect={false} underlineColorAndroid="transparent" style={{ flex: 1, minWidth: 0, height: 44, padding: 0, color: c.text, fontSize: 16, includeFontPadding: false, textAlignVertical: 'center', ...(Platform.OS === 'web' ? { outlineStyle: 'none' } as any : {}) }} />
       {search ? <HelpIcon name="close" label="Очистить поиск" size={17} style={{ width: 28, height: 44 }} onPress={() => onSearch('')} /> : null}

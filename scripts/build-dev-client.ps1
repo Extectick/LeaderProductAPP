@@ -15,7 +15,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Development client prebuild failed' }
     }
     Set-Location android
-    & .\gradlew.bat -g C:\Share\GradleHome --no-daemon --console=plain --max-workers=2 app:assembleDebug "-PreactNativeArchitectures=$Architectures"
+    & .\gradlew.bat -g C:\Share\GradleHome -I (Join-Path $PSScriptRoot 'gradle-windows-native.init.gradle') --no-daemon --console=plain --max-workers=2 app:assembleDebug "-PreactNativeArchitectures=$Architectures"
     if ($LASTEXITCODE -ne 0) { throw 'Development client build failed' }
     Set-Location $appRoot
     $apk = Join-Path $appRoot 'android/app/build/outputs/apk/debug/app-debug.apk'

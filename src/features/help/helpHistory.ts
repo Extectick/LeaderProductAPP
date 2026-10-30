@@ -1,6 +1,6 @@
 import { API_BASE_URL } from '@/utils/config';
 import type { HelpTicket } from './helpApi';
-import { listHistoryRecords, readHistoryMessage, readHistoryMessages, readHistoryRecord, removeHistoryTicket, writeHistoryChange } from './helpHistoryDatabase';
+import { readHistorySnapshot, listHistoryRecords, readHistoryMessage, readHistoryMessages, readHistoryRecord, removeHistoryTicket, writeHistoryChange } from './helpHistoryDatabase';
 import { validHelpAnchor } from './helpHistoryModel';
 import type { HelpCachedWindow, HelpHistoryPage, HelpSyncResult, HelpViewportAnchor } from './helpHistoryTypes';
 
@@ -12,18 +12,11 @@ export async function cacheHelpTickets(userId: number, tickets: HelpTicket[]) {
   for (const ticket of tickets) await writeHistoryChange(helpHistoryScope(userId), ticket.id, {ticket});
 }
 export async function readCachedHelpTicket(userId: number, ticketId: number, sequence?: number): Promise<HelpCachedWindow | null> {
-  const scope = helpHistoryScope(userId), record = await readHistoryRecord(scope,ticketId);
-  if (!record) return null;
-  const target = sequence ?? record.lastSequence;
-  const range = record.ranges.find(range => target >= range.from && target <= range.to)
-    ?? (!sequence ? record.ranges.at(-1) : undefined);
-  if (!range) return {record,page:null};
-  let messages;
-  if (sequence) {
-    const before = await readHistoryMessages(scope,ticketId,range.from,target,40,true);
-    const after = await readHistoryMessages(scope,ticketId,target+1,range.to,100-before.length);
-    messages = [...before,...after];
-  } else messages = await readHistoryMessages(scope,ticketId,range.from,range.to,100,true);
+  const snapshot=await readHistorySnapshot(helpHistoryScope(userId),ticketId,sequence);
+  if(!snapshot)return null;
+  const {record,messages}=snapshot,target=sequence??record.lastSequence;
+  const range=record.ranges.find(range=>target>=range.from&&target<=range.to)??(!sequence?record.ranges.at(-1):undefined);
+  if(!range)return {record,page:null};
   const first = messages[0]?.sequence, last = messages.at(-1)?.sequence;
   const hasOlder = first !== undefined && (range.hasOlder || first > range.from);
   const hasNewer = last !== undefined && (range.hasNewer || last < record.lastSequence || last < range.to);

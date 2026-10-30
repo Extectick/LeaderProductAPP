@@ -20,6 +20,20 @@ const nativeVersion = JSON.parse(
 ) as NativeVersionConfig;
 const iosBuildNumber = nativeVersion.iosBuildNumber || String(nativeVersion.versionCode);
 const developmentClient = process.env.LEADER_DEV_CLIENT === '1';
+const androidPackage = developmentClient ? 'com.leaderproduct.app.dev' : 'com.leaderproduct.app';
+const localGoogleServicesFile = `./firebase/google-services.${developmentClient ? 'dev' : 'prod'}.json`;
+const googleServicesCandidate = process.env.GOOGLE_SERVICES_JSON || localGoogleServicesFile;
+const googleServicesPath = path.resolve(__dirname, googleServicesCandidate);
+if (process.env.GOOGLE_SERVICES_JSON && !fs.existsSync(googleServicesPath)) {
+  throw new Error('GOOGLE_SERVICES_JSON must point to an existing Firebase Android configuration file.');
+}
+const googleServicesFile = fs.existsSync(googleServicesPath) ? googleServicesCandidate : undefined;
+if (googleServicesFile) {
+  const firebaseConfig = JSON.parse(fs.readFileSync(googleServicesPath, 'utf8'));
+  const matchesPackage = firebaseConfig.client?.some((client: any) =>
+    client.client_info?.android_client_info?.package_name === androidPackage);
+  if (!matchesPackage) throw new Error(`Firebase Android configuration has no client for ${androidPackage}.`);
+}
 
 const sentryRuntimeEnabled = String(process.env.EXPO_PUBLIC_SENTRY_ENABLED || "").trim().toLowerCase() === "true";
 const sentryUploadConfigured = !!(process.env.SENTRY_ORG && process.env.SENTRY_PROJECT && process.env.SENTRY_AUTH_TOKEN);
@@ -61,7 +75,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
 
   ios: { bundleIdentifier: developmentClient ? "com.leaderproduct.app.dev" : "com.leaderproduct.app", buildNumber: iosBuildNumber },
   android: {
-    package: developmentClient ? "com.leaderproduct.app.dev" : "com.leaderproduct.app",
+    package: androidPackage,
+    ...(googleServicesFile ? { googleServicesFile } : {}),
     versionCode: nativeVersion.versionCode,
     allowBackup: false,
     usesCleartextTraffic: true,
@@ -104,7 +119,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   } as any,
 
   plugins: [
-    ...(developmentClient ? [["expo-dev-client", { launchMode: "launcher", addGeneratedScheme: false }] as [string, Record<string, unknown>]] : []),
+    ...(developmentClient ? [
+      ["expo-dev-client", { launchMode: "most-recent", addGeneratedScheme: false }] as [string, Record<string, unknown>],
+      "./plugins/with-dev-client-last-bundle",
+    ] : []),
     // MainApplication mods run in reverse order: initialize before tracking/React.
     "./plugins/with-dev-crash-reporting",
     "expo-router",

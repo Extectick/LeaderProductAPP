@@ -43,6 +43,12 @@ describe('consecutive Help message groups', () => {
       .toEqual(['date', 'message', 'unread', 'message']);
   });
 
+  test('reopen event separates its reason from the previous sender group', () => {
+    const groups = helpMessageGroups([message(1), message(2, { ticketStatusChange: 'REOPENED' }), message(3)]);
+    expect(groups.get(1)?.groupLast).toBe(true);
+    expect(groups.get(2)?.groupFirst).toBe(true);
+  });
+
   test.each(['SYSTEM', 'CLOSURE'] as const)('%s isolates itself and separates surrounding messages', kind => {
     const groups = helpMessageGroups([message(1), message(2, { kind }), message(3)]);
     expect([...groups.values()]).toEqual(Array(3).fill({ groupFirst: true, groupLast: true }));
