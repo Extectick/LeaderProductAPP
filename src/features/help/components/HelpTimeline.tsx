@@ -5,7 +5,7 @@ import type { HelpMessage } from '../helpApi';
 import type { HelpNavigationTarget, HelpViewportAnchor } from '../helpHistoryTypes';
 import { helpTimelineRows, helpVisibleRows, type HelpTimelineRow } from '../helpTimelineModel';
 import { helpDateJumpMode } from '../helpDateNavigation';
-import { helpDevActions, helpDevProbe, helpDevState } from '../helpDiagnostics';
+import { helpDevActions, helpDevEvent, helpDevProbe, helpDevState } from '../helpDiagnostics';
 import { helpDayKey } from '../helpUiUtils';
 import { HelpMediaLoadingContext } from '../helpMediaLoading';
 import { useHelpReducedMotion, useHelpTheme } from '../helpTheme';
@@ -51,6 +51,13 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   const hasImages = useMemo(() => props.messages.some(message => message.attachments?.some(attachment => attachment.kind==='IMAGE') || message.replyTo?.attachments?.some(attachment => attachment.kind==='IMAGE')), [props.messages]);
   const hasImagesRef = useRef(hasImages); hasImagesRef.current = hasImages;
   const [following, setFollowing] = useState(false), [ready, setReady] = useState(false), [loaded, setLoaded] = useState(false), [navigating,setNavigating] = useState(false);
+  const mountedAt = useRef(Date.now()), openingReported = useRef(false);
+  useEffect(() => {
+    if (ready && rows.length && !openingReported.current) {
+      openingReported.current = true;
+      helpDevEvent('chat.open.visible', { ticketId: props.messages[0]?.ticketId ?? null, mountedAt: mountedAt.current, elapsedMs: Date.now() - mountedAt.current, rows: rows.length, target: props.navigationTarget?.kind ?? 'none' });
+    }
+  }, [ready, rows.length]);
   const [initialLoadingVisible,setInitialLoadingVisible]=useState(false);
   useEffect(()=>{
     setInitialLoadingVisible(false);
@@ -221,6 +228,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
       stable = measuredEnd > 0 && Math.abs(measuredEnd - lastHeight) < .5 ? stable + 1 : 0;
       lastHeight = measuredEnd;
       if (opening && stable < 2 && ++passes < 8) { scrollEnd(false); requestAnimationFrame(finishLayout); return; }
+      if (opening) helpDevEvent('chat.open.positioned', { target: 'latest', passes, elapsedMs: Date.now() - mountedAt.current });
       readyRef.current = true; setReady(true);
       setFollow(!live.current.hasNewer); scrollEnd(false); updateMediaRange(true); observe();
     };
@@ -271,6 +279,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     // A date row is 44dp with a centered 24dp pill. Leave its pill at the
     // same headerHeight-12 position as the floating date after a real jump.
     const targetOffset=target.offset??(target.kind==='date'?22:0);
+    const opening = !readyRef.current, positioningAt = Date.now();
     void (async()=>{
       // FlashList uses positive viewOffset to move farther down. Saved offset is relative to the uncovered top.
       if(dateMode==='near' && targetLayout){
@@ -280,12 +289,15 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
         list.current?.scrollToOffset({offset,animated,skipFirstItemOffset:true});
         if(animated)await new Promise<void>(resolve=>setTimeout(resolve,300));
       }else await list.current?.scrollToIndex({index,animated,viewPosition:0,viewOffset:-(props.headerHeight+targetOffset)});
+      const indexElapsedMs = Date.now() - positioningAt;
+      let settlePasses = 0;
       if(!mounted.current || generation!==navigationGeneration.current)return;
       // Text wrapping and attachment aspect ratios can refine recycled row sizes
       // after scrollToIndex resolves. Hold the target through those layout commits.
       if(dateMode!=='near'){
         let previous=-1,stable=0;
         for(let pass=0;pass<12;pass++){
+          settlePasses = pass + 1;
           await new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve())));
           if(!mounted.current || generation!==navigationGeneration.current)return;
           const currentIndex=rowsRef.current.findIndex(row=>row.key===rows[index].key);
@@ -297,6 +309,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
           if(stable>=3)break;
         }
       }
+      if (opening) helpDevEvent('chat.open.positioned', { target: target.kind, indexElapsedMs, settlePasses, elapsedMs: Date.now() - positioningAt });
       readyRef.current=true;setReady(true);
       setFollow(false);
       if(target.kind==='message' && target.messageId)live.current.onHighlight(target.messageId);
@@ -354,7 +367,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
         contentContainerStyle={listContentStyle}
         maintainVisibleContentPosition={maintainVisibleContentPosition}
         showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive"
-        scrollEventThrottle={16} onLoad={()=>{setLoaded(true);updateMediaRange(true);observe();}} onScroll={onScroll}
+        scrollEventThrottle={16} onLoad={()=>{helpDevEvent('chat.open.listLoaded',{ticketId:live.current.messages[0]?.ticketId??null,mountedAt:mountedAt.current,elapsedMs:Date.now()-mountedAt.current,rows:rowsRef.current.length});setLoaded(true);updateMediaRange(true);observe();}} onScroll={onScroll}
         onScrollBeginDrag={()=>{dragging.current=true;momentum.current=false;takeScrollControl();}}
         onMomentumScrollBegin={()=>{if(userScrollSession.current&&!inNavigation.current){momentum.current=true;stopIdleSave();setFollow(false);}}}
         onMomentumScrollEnd={()=>{if(userScrollSession.current){dragging.current=false;momentum.current=false;updateMediaRange(true);observe();settleScroll();}}}

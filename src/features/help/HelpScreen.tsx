@@ -32,7 +32,7 @@ import { HelpTimeline, type HelpTimelineHandle } from './components/HelpTimeline
 import { HelpChatSearchDock, HelpChatSearchArrows, HelpChatSearchResults } from './components/HelpChatSearch';
 import { helpMessageGroups } from './helpTimelineModel';
 import { HELP_LIST_INSET, HELP_LIST_META_WIDTH } from './helpLayout';
-import { helpDevActions, helpDevRef, helpDevState } from './helpDiagnostics';
+import { helpDevActions, helpDevEvent, helpDevRef, helpDevState } from './helpDiagnostics';
 import { downloadHelpAttachment, HelpGallery, type HelpImageOrigin } from './components/HelpMedia';
 import { HelpPhotoPortalProvider } from './components/HelpPhotoPortal';
 import { clearHelpAttachmentDraft, holdHelpAttachmentFiles, loadHelpAttachmentDraft, saveHelpAttachmentDraft } from './helpAttachmentDrafts';
@@ -151,9 +151,14 @@ export default function HelpScreen() {
   useEffect(() => helpDevState({ screen:active===null ? 'list' : active==='new' ? 'new' : 'chat', filter, scope, canManage:service.canManage, searchLength:search.length, dockHeight, listHeaderHeight, theme:c.dark ? 'dark' : 'light' }), [active,filter,scope,service.canManage,search.length,dockHeight,listHeaderHeight,c.dark]);
 
   async function open(id: number,messageId?:number) {
+    const openedAt = Date.now();
+    helpDevEvent('chat.open.request', { ticketId: id, openedAt });
     saveDraftNow();
     ++navigationGeneration.current; Keyboard.dismiss(); setOverlay(null); setSelectedMessage(null); setMode('message'); setReply(null); setEditing(null); setFiles([]); setSource(null); setActive(id); followBottom.current = true;
-    try { await service.openTicket(id,messageId?{messageId}:undefined); } catch (e) { tell(e instanceof Error ? e.message : 'Не удалось открыть обращение'); }
+    try {
+      await service.openTicket(id,messageId?{messageId}:undefined);
+      helpDevEvent('chat.open.data', { ticketId: id, openedAt, elapsedMs: Date.now() - openedAt });
+    } catch (e) { tell(e instanceof Error ? e.message : 'Не удалось открыть обращение'); }
   }
   function persistFiles(value:HelpLocalFile[],key=draftKey,account=renderAccount,revision=draftRevisions.current.get(key)??0):Promise<HelpLocalFile[]> {
     const existing=filePersistence.current.get(key);if(account===currentAccount.current&&existing?.revision===revision)return existing.promise;

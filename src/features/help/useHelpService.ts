@@ -17,6 +17,7 @@ import {updateHelpTypingUsers,type HelpTypingUser,type HelpTypingEvent} from './
 import {readableHelpSequence} from './helpReadSequence';
 import { helpLocalDayBounds } from './helpDateNavigation';
 import {helpListCacheKey,helpViewCache,rememberHelpWindow,forgetHelpView,shareHelpItems} from './helpViewCache';
+import {helpDevEvent} from './helpDiagnostics';
 const isAccessRevoked=(error:unknown)=>error instanceof HelpApiError&&([401,403].includes(error.status)||(error.status===404&&!['HELP_MESSAGE_NOT_FOUND','HELP_DATE_MESSAGE_NOT_FOUND'].includes(error.code??'')));
 
 function detailPage(detail:HelpDetail):HelpHistoryPage {
@@ -175,6 +176,8 @@ export function useHelpService(isFocused = true) {
     await forgetHelpTicket(userId,id).catch(report);setTickets(old=>old.filter(ticket=>ticket.id!==id));
   },[userId,identity,clearSelection,report]);
   const openTicket=useCallback(async(id:number,explicit?:{messageId?:number;sequence?:number})=>{
+    const openedAt=Date.now();
+    const traceData=(source:string)=>helpDevEvent('chat.open.cache',{ticketId:id,source,elapsedMs:Date.now()-openedAt,openedAt});
     const account=identity,generation=++detailGeneration.current;
     rememberActive();
     const hot=helpViewCache(identity).windows.get(id);
@@ -187,6 +190,7 @@ export function useHelpService(isFocused = true) {
       selectedRef.current=hot.ticket;setSelectedTicket(hot.ticket);viewport.current=hot.anchor;applyPage(hot.page);
       setFirstUnreadSequence(hot.page.firstUnreadSequence);issueNavigation(initialHelpPosition(hot.anchor,hot.page.firstUnreadSequence,explicit));setLoading(false);
       socketRef.current?.getSocket()?.emit('help:subscribe',{ticketId:id});void liveTicketRefresh.current(id);
+      traceData('memory');
       return {ticket:hot.ticket,...hot.page};
     }
     try{
@@ -199,6 +203,7 @@ export function useHelpService(isFocused = true) {
         if(cached.page&&(!explicit?.messageId||cached.page.messages.some(message=>message.id===explicit.messageId))&&(!explicit?.sequence||cached.page.messages.some(message=>message.sequence===explicit.sequence))){
           applyPage(cached.page);setFirstUnreadSequence(cached.record.firstUnreadSequence);issueNavigation(cachedPosition);setLoading(false);
           socketRef.current?.getSocket()?.emit('help:subscribe',{ticketId:id});void liveTicketRefresh.current(id);
+          traceData('sqlite');
           return {ticket:cached.record.ticket,...cached.page};
         }}
       const detail=await helpApi.detail(id);if(!valid())return;fallbackDetail=detail;
@@ -213,6 +218,7 @@ export function useHelpService(isFocused = true) {
       applyDetail({...detail,...page});setFirstUnreadSequence(tail.firstUnreadSequence);issueNavigation(position);
       socketRef.current?.getSocket()?.emit('help:subscribe',{ticketId:id});
       void liveTicketRefresh.current(id);
+      traceData('network');
       return {...detail,messages:page.messages};
     }catch(e){if(valid()){report(e);if(isAccessRevoked(e)){await revokeTicket(id);throw e;}if(e instanceof HelpApiError&&e.code==='HELP_MESSAGE_NOT_FOUND'&&fallbackDetail){applyDetail(fallbackDetail);issueNavigation({kind:'latest',animate:false});return fallbackDetail;}clearSelection();throw e;}return undefined;}
     finally{if(valid())setLoading(false);}

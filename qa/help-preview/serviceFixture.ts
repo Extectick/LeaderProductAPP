@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import type { HelpLocalFile } from '../../src/features/help/components/HelpComposer';
-import { helpDevActions, helpDevState } from '../../src/features/help/helpDiagnostics';
+import { helpDevActions, helpDevEvent, helpDevState } from '../../src/features/help/helpDiagnostics';
 import type { HelpAttachment, HelpDetail, HelpMessage, HelpMessageInput, HelpTicket } from '../../src/features/help/helpApi';
 import type { HelpNavigationTarget, HelpViewportAnchor } from '../../src/features/help/helpHistoryTypes';
 import { fixtures, message, OWNER, IT, resolve } from './HelpPreview';
@@ -110,6 +110,7 @@ export function useHelpService() {
   const selectedTicket = all.find(ticket => ticket.id === selection) || null;
   const loadTickets = useCallback(async (_status?: string, _scope?: string, _append?: boolean, search = '') => { setQuery(search); }, []);
   const openTicket = async (id: number, explicit?: { messageId?: number; sequence?: number }): Promise<HelpDetail> => {
+    const openedAt = Date.now();
     const ticket = allRef.current.find(item => item.id === id);
     if (!ticket) throw new Error('QA fixture missing');
     ++epoch.current; selectionRef.current = id; setSelection(id); setError(null);
@@ -121,6 +122,7 @@ export function useHelpService() {
     else target = { kind: 'latest', animate: false };
     const page = fixtureHistoryPage(history, target.kind === 'latest' ? {} : { around: target.sequence, aroundMessageId: target.messageId });
     setFirstUnreadSequence(firstUnread); publishWindow(id, page.messages); updateTicket(id); navigate(target);
+    helpDevEvent('chat.open.cache', { ticketId: id, source: 'fixture-memory', elapsedMs: Date.now() - openedAt, openedAt });
     return { ticket: allRef.current.find(item => item.id === id)!, messages: page.messages };
   };
   const clearSelection = useCallback(() => { ++epoch.current; selectionRef.current = null; setSelection(null); setNavigationTarget(null); }, []);
