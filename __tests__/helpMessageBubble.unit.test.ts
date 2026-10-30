@@ -7,6 +7,7 @@ jest.mock('../src/features/help/helpTheme', () => ({useHelpReducedMotion:()=>fal
 jest.mock('../src/features/help/components/HelpPrimitives', () => ({HelpIcon:'HelpIcon',HelpAvatar:'HelpAvatar'}));
 jest.mock('../src/features/help/components/HelpMedia', () => ({HelpAudio:'HelpAudio',HelpImage:'HelpImage'}));
 import { HelpMessageBubble } from '../src/features/help/components/HelpMessageBubble';
+import { createHelpMessageLayoutCache, HelpMessageLayoutCacheContext } from '../src/features/help/helpMessageLayoutCache';
 
 describe('Help message native layout and reply gestures', () => {
   let screen: TestRenderer.ReactTestRenderer;
@@ -21,6 +22,22 @@ describe('Help message native layout and reply gestures', () => {
   const node = (id:string) => screen.root.findAll(n=>n.props.testID===id)[0];
   const g = (dx:number,dy=0) => ({dx,dy,numberActiveTouches:1});
   async function render() { await act(async()=>{ screen=TestRenderer.create(React.createElement(HelpMessageBubble,props)); }); }
+  test('reopening a measured incoming text restores its width and inline time before new measurements',async()=>{
+    const cache=createHelpMessageLayoutCache();props.message={...props.message,ticketId:12,authorId:8};
+    const tree=()=>React.createElement(HelpMessageLayoutCacheContext.Provider,{value:cache},React.createElement(HelpMessageBubble,props));
+    await act(async()=>{screen=TestRenderer.create(tree());});
+    await act(async()=>{
+      node('help-message-1').props.onLayout({nativeEvent:{layout:{width:360}}});
+      node('help-text-layout').props.onLayout({nativeEvent:{layout:{width:240}}});
+      node('help-message-text').props.onTextLayout({nativeEvent:{lines:[{x:0,width:170}]}});
+      node('help-message-time').props.onLayout({nativeEvent:{layout:{width:50}}});
+    });
+    const width=node('help-message-bubble').parent!.props.style.minWidth;
+    expect(node('help-message-time').props.style.position).toBe('absolute');
+    await act(async()=>screen.unmount());await act(async()=>{screen=TestRenderer.create(tree());});
+    expect(node('help-message-bubble').parent!.props.style.minWidth).toBe(width);
+    expect(node('help-message-time').props.style.position).toBe('absolute');
+  });
   test('closure shows one centered event and the selected stars, even for older API messages', async () => {
     props.message = { ...props.message, kind: 'CLOSURE', rating: 4, text: 'Спасибо, помогло' };
     await render();
@@ -102,7 +119,8 @@ describe('Help message native layout and reply gestures', () => {
     expect(props.onDismissMenu).toHaveBeenCalledTimes(1); expect(props.onCopy).toHaveBeenCalledTimes(1);
     expect(props.onError).toHaveBeenCalledWith('Не удалось загрузить аудио'); expect(props.onReaction).toHaveBeenCalledWith('❤️');
   });
-  test('native measurement rerenders reuse gesture and animation identities', async () => {
+  test('fallback measurement rerenders reuse gesture and animation identities', async () => {
+    props.message={...props.message,authorId:8};
     await render();
     const firstHandlers = node('help-message-1').props.onPanResponderMove;
     await act(async () => {
@@ -200,6 +218,7 @@ describe('Help message native layout and reply gestures', () => {
     expect(props.onReply).not.toHaveBeenCalled();
   });
   test('stamp shares last line only when measured space exists, including edited text', async () => {
+    props.message={...props.message,authorId:8};
     await render();
     await act(async()=>{
       node('help-text-layout').props.onLayout({nativeEvent:{layout:{width:240}}});

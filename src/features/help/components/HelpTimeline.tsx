@@ -1,4 +1,4 @@
-import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { forwardRef, useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, AppState, Easing, Platform, ScrollView, type ScrollViewProps, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import type { HelpMessage } from '../helpApi';
@@ -49,7 +49,9 @@ const rowType = (row: HelpTimelineRow) => row.kind;
 /** FlashList owns history anchors; native layout owns composer geometry only while following the tail. */
 export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpTimeline(props, ref) {
   const c = useHelpTheme(), reduced = useHelpReducedMotion();
-  const imageCache = useMemo(() => createHelpImageCache(), []);
+  const parentImageCache=useContext(HelpImageCacheContext);
+  const localImageCache=useMemo(() => createHelpImageCache(), []);
+  const imageCache=parentImageCache??localImageCache;
   const list = useRef<FlashListRef<HelpTimelineRow>>(null), live = useRef(props); live.current = props;
   const rows = useMemo(() => helpTimelineRows(props.messages, props.firstUnreadSequence), [props.messages, props.firstUnreadSequence]);
   const rowsRef = useRef(rows); rowsRef.current = rows;
@@ -90,6 +92,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     return()=>clearTimeout(timer);
   },[props.loading,rows.length]);
   const readyRef = useRef(false), followingRef = useRef(false), mounted = useRef(true);
+  const openingLayout = useRef({active:false,key:0,frame:0,passes:0,signature:'',aligned:'',tailId:null as number|null});
   const geometry = useRef({offset: 0, height: 0, content: 0});
   const lastAnchor = useRef<HelpViewportAnchor | null>(null), committedTarget = useRef<number | null>(null);
   const inNavigation = useRef(false), navigationGeneration = useRef(0), touched = useRef(false);
@@ -296,6 +299,52 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     };
     requestAnimationFrame(finishLayout);
   }, [cancelJump,observe,scrollEnd,setFollow,stopIdleSave,updateMediaRange]);
+  const settleOpening = useCallback(() => {
+    const pending=openingLayout.current;
+    if(!pending.active||pending.frame)return;
+    const step=()=>{
+      pending.frame=0;
+      const view=list.current,target=live.current.navigationTarget;
+      if(!mounted.current||!pending.active||!view||!target||target.key!==pending.key){pending.active=false;return;}
+      const index=target.kind==='latest'?rowsRef.current.length-1:rowsRef.current.findIndex(row=>(target.kind==='unread'?row.kind==='unread':row.kind==='message')&&(row.message.id===target.messageId||row.message.sequence===target.sequence));
+      if(index<0){pending.active=false;return;}
+      const readLayout=(rowIndex:number)=>{try{return view.getLayout(rowIndex);}catch{return undefined;}};
+      const item=readLayout(index),range=view.computeVisibleIndices();
+      const visibleLayouts=[];
+      let measured=Boolean(item&&item.height>0&&item.isHeightMeasured!==false);
+      for(let i=Math.max(0,range.startIndex);i<=Math.min(range.endIndex,rowsRef.current.length-1);i++){
+        const layout=readLayout(i);visibleLayouts.push(layout?`${i}:${layout.y}:${layout.height}`:'pending');
+        if(!layout||layout.height<=0||layout.isHeightMeasured===false)measured=false;
+      }
+      const {height,content}=geometry.current,inset=hasNativeChatLayout?live.current.dockHeight+12:0;
+      const end=Math.max(0,content+inset-height);
+      const offset=target.kind==='latest'?end:Math.min(end,Math.max(0,(item?.y??0)+view.getFirstItemOffset()-live.current.headerHeight-(target.offset??0)));
+      const signature=JSON.stringify([offset,item?.y,item?.height,height,content,live.current.headerHeight,live.current.dockHeight,visibleLayouts]);
+      if(measured&&height>0&&content>0&&pending.aligned!==signature){
+        if(target.kind==='latest')scrollEnd(false);
+        else view.scrollToOffset({offset,animated:false,skipFirstItemOffset:true});
+        pending.aligned=signature;
+      }
+      const tail=live.current.messages.at(-1);
+      const liveTail=target.kind==='latest'&&(tail?.id!==pending.tailId||live.current.messages.some(message=>message.assistantRun&&['thinking','streaming'].includes(message.assistantRun.status)));
+      const settled=pending.signature===signature&&Math.abs(view.getAbsoluteLastScrollOffset()-offset)<=1;
+      // An active answer/new socket messages must not make opening wait for
+      // the conversation to become idle. Hand its measured tail to native follow.
+      if(measured&&height>0&&content>0&&(settled||liveTail&&pending.passes>0&&pending.aligned)){
+        pending.active=false;readyRef.current=true;setReady(true);inNavigation.current=false;setNavigating(false);
+        setFollow(target.kind==='latest'&&!live.current.hasNewer);
+        if(target.kind==='latest')scrollEnd(false);
+        if(target.kind==='message'&&target.messageId)live.current.onHighlight(target.messageId);
+        helpDevEvent('chat.open.positioned',{target:target.kind,initialIndex:true,settlePasses:pending.passes,elapsedMs:Date.now()-mountedAt.current});
+        updateMediaRange(true);observe();return;
+      }
+      pending.signature=measured?signature:'';
+      // Native measurement commits restart this bounded pump. Unmeasured
+      // estimates never become permission to show an incorrectly placed window.
+      if(++pending.passes%32!==0)pending.frame=requestAnimationFrame(step);
+    };
+    pending.frame=requestAnimationFrame(step);
+  },[observe,scrollEnd,setFollow,updateMediaRange]);
   useImperativeHandle(ref, () => ({save:()=>save(true),prepareJump,cancelJump,jumpToDate:jumpDate,
     waitForJumpReady,scrollTo: ({y,animated}) => {touched.current=true;setFollow(false);list.current?.scrollToOffset({offset:y,animated,skipFirstItemOffset:true});},
     scrollToEnd: ({animated} = {}) => pinLatest(animated),
@@ -308,16 +357,22 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     mounted.current = true;
     const subscription = AppState.addEventListener('change', state => {if(state !== 'active') save(true);});
     return () => {save(true);mounted.current=false;++navigationGeneration.current;subscription.remove();live.current.onStickyDateChange?.(null);
-      if(saveTimer.current)clearTimeout(saveTimer.current);if(readTimer.current)clearTimeout(readTimer.current);transition.stopAnimation();incomingTransition.stopAnimation();snapshotPending.current?.resolve(false);};
+      if(saveTimer.current)clearTimeout(saveTimer.current);if(readTimer.current)clearTimeout(readTimer.current);cancelAnimationFrame(openingLayout.current.frame);openingLayout.current.active=false;transition.stopAnimation();incomingTransition.stopAnimation();snapshotPending.current?.resolve(false);};
   }, [save,transition,incomingTransition]);
   useEffect(() => {if(!props.active)save(true);else observe();}, [props.active,save,observe]);
 
   useLayoutEffect(() => {
     const target = props.navigationTarget;
     if (!loaded || !rows.length || !target || committedTarget.current === target.key) return;
+    if(openingLayout.current.active&&openingLayout.current.key===target.key)return;
     const index = target.kind === 'latest' ? rows.length - 1 : rows.findIndex(row => (target.kind==='unread' ? row.kind==='unread' : row.kind==='message') && (row.message.id === target.messageId || row.message.sequence === target.sequence));
     if(index < 0) return;
     committedTarget.current=target.key;
+    if(!readyRef.current&&target.kind!=='date'){
+      inNavigation.current=true;
+      Object.assign(openingLayout.current,{active:true,key:target.key,passes:0,signature:'',aligned:'',tailId:live.current.messages.at(-1)?.id??null});
+      settleOpening();return;
+    }
     if (target.kind === 'latest') { lastNavigationMode.current = 'latest'; pinLatest(false); return; }
     const targetLayout=list.current?.getLayout(index);
     const targetWasLoaded=!dateSnapshot.current || dateSnapshot.current.loadedIds.has(rows[index].message.id);
@@ -346,24 +401,6 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     // same headerHeight-12 position as the floating date after a real jump.
     const targetOffset=target.offset??(target.kind==='date'?22:0);
     const opening = !readyRef.current, positioningAt = Date.now();
-    // onLoad follows FlashList's native measurement. When the initial index
-    // already rendered the target, align it once instead of running another
-    // scrollToIndex preparation and 4-12 double-RAF stability passes.
-    if (opening && initialPosition.current?.key === target.key && targetLayout && targetLayout.height > 0 && target.kind !== 'date') {
-      const align = () => {
-        const layout = list.current?.getLayout(index);
-        if (layout && list.current) list.current.scrollToOffset({ offset: Math.max(0, layout.y + list.current.getFirstItemOffset() - live.current.headerHeight - targetOffset), skipFirstItemOffset: true, animated: false });
-      };
-      align();
-      requestAnimationFrame(() => {
-        if (!mounted.current || generation !== navigationGeneration.current) return;
-        align(); readyRef.current = true; setReady(true); inNavigation.current = false; setNavigating(false); setFollow(false);
-        if (target.kind === 'message' && target.messageId) live.current.onHighlight(target.messageId);
-        helpDevEvent('chat.open.positioned', { target: target.kind, initialIndex: true, settlePasses: 1, elapsedMs: Date.now() - positioningAt });
-        updateMediaRange(true); observe();
-      });
-      return;
-    }
     void (async()=>{
       // FlashList uses positive viewOffset to move farther down. Saved offset is relative to the uncovered top.
       if(dateMode==='near' && targetLayout){
@@ -410,7 +447,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
       }
       else finish();
     })().catch(()=>{if(!mounted.current || generation!==navigationGeneration.current)return;inNavigation.current=false;setNavigating(false);readyRef.current=true;setReady(true);cancelJump();live.current.onError('Не удалось перейти к сообщению. Попробуйте ещё раз.');});
-  }, [props.navigationTarget,rows,loaded,props.headerHeight,props.dockHeight,reduced,cancelJump,observe,scrollEnd,setFollow,stopIdleSave,transition,incomingTransition,stageViewport,updateMediaRange,visible,pinLatest]);
+  }, [props.navigationTarget,rows,loaded,props.headerHeight,props.dockHeight,reduced,cancelJump,observe,scrollEnd,setFollow,stopIdleSave,transition,incomingTransition,stageViewport,updateMediaRange,visible,pinLatest,settleOpening]);
   // Empty/new conversations have no anchor to resolve.
   useEffect(()=>{if(!props.loading && !rows.length){readyRef.current=true;setReady(true);setFollow(!props.hasNewer);}},[props.loading,rows.length,props.hasNewer,setFollow]);
   useEffect(()=>{if(!props.navigationTarget && loaded && rows.length && !readyRef.current){readyRef.current=true;setReady(true);setFollow(!props.hasNewer);scrollEnd(false);}},[loaded,rows.length,props.navigationTarget,props.hasNewer,setFollow,scrollEnd]);
@@ -420,6 +457,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     const e=event.nativeEvent;
     const previous=geometry.current;
     geometry.current={offset:e.contentOffset.y,height:e.layoutMeasurement.height,content:e.contentSize.height};
+    settleOpening();
     updateMediaRange();
     if(!readyRef.current || inNavigation.current)return;
     const policy=updateHelpLatestAffordance(latestAffordance.current,{
@@ -441,7 +479,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     if(e.contentSize.height-e.contentOffset.y-e.layoutMeasurement.height < live.current.dockHeight+preloadDistance && live.current.hasNewer && !live.current.loadingNewer && !newerPending.current){
       newerPending.current=true;void live.current.loadNewer().catch(()=>live.current.onError('Не удалось загрузить новые сообщения')).finally(()=>{newerPending.current=false;});
     }
-  },[observe,setFollow,updateMediaRange]);
+  },[observe,setFollow,updateMediaRange,settleOpening]);
   const NativeScroll=useMemo(()=>forwardRef<ScrollView,ScrollViewProps>((scrollProps,scrollRef)=><ScrollView {...scrollProps} ref={scrollRef} nativeID={props.nativeID}/>),[props.nativeID]);
   const webProps = Platform.OS==='web' ? {
     onWheel:()=>{takeScrollControl();webIntent.current=Date.now()+500;},
@@ -456,7 +494,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     outgoingVisible:snapshotVisible,outgoingRows:outgoingRef.current?.rows.length??0,
     visible:visible().map(item=>({sequence:item.row.message.sequence,top:item.top,height:item.height}))})),[visible,currentDate,snapshotVisible]);
   const distance=Math.min(geometry.current.height || 500,620),direction=outgoing?.direction || 1;
-  const maintainDisabled=navigating || following;
+  const maintainDisabled=!ready || navigating || following;
   const startFromBottom=initialPosition.current?.kind==='latest';
   const maintainVisibleContentPosition=useMemo(()=>({disabled:maintainDisabled,startRenderingFromBottom:startFromBottom}),[maintainDisabled,startFromBottom]);
   const listStyle=useMemo(()=>({backgroundColor:c.background}),[c.background]);
@@ -466,19 +504,13 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   const onListLoad = useCallback(() => {
     helpDevEvent('chat.open.listLoaded',{ticketId:live.current.messages[0]?.ticketId??null,mountedAt:mountedAt.current,elapsedMs:Date.now()-mountedAt.current,rows:rowsRef.current.length});
     const target = live.current.navigationTarget, seed = initialPosition.current;
-    if (!readyRef.current && target && seed?.key === target.key && (target.kind === 'anchor' || target.kind === 'latest')) {
-      const layout = list.current?.getLayout(seed.index);
-      if (layout && layout.height > 0 && list.current) {
-        committedTarget.current = target.key;
-        setFollow(target.kind === 'latest' && !live.current.hasNewer);
-        if (target.kind === 'latest') scrollEnd(false);
-        else list.current.scrollToOffset({ offset: Math.max(0, layout.y + list.current.getFirstItemOffset() - live.current.headerHeight - (target.offset ?? 0)), animated: false, skipFirstItemOffset: true });
-        readyRef.current = true; setReady(true);
-        helpDevEvent('chat.open.positioned',{target:target.kind,initialIndex:true,settlePasses:0,elapsedMs:Date.now()-mountedAt.current});
-      }
+    if (!readyRef.current && target && seed?.key === target.key && target.kind !== 'date') {
+      committedTarget.current=target.key;inNavigation.current=true;
+      Object.assign(openingLayout.current,{active:true,key:target.key,passes:0,signature:'',aligned:'',tailId:live.current.messages.at(-1)?.id??null});
+      settleOpening();
     }
     setLoaded(true); updateMediaRange(true); observe();
-  }, [setFollow,scrollEnd,updateMediaRange,observe]);
+  }, [settleOpening,updateMediaRange,observe]);
   return <HelpImageCacheContext.Provider value={imageCache}><View style={{flex:1}}>
     <Animated.View testID="help-timeline-live-layer" style={{flex:1,opacity:ready||!rows.length?1:0,transform:[{translateY:outgoing?incomingTransition.interpolate({inputRange:[0,1],outputRange:[-direction*distance,0]}):0}]}}>
       <FlashList ref={list} data={rows} extraData={mediaRange} keyExtractor={rowKey} getItemType={rowType} renderItem={renderItem}
@@ -489,12 +521,12 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
         contentContainerStyle={listContentStyle}
         maintainVisibleContentPosition={maintainVisibleContentPosition}
         showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive"
-        scrollEventThrottle={16} onLoad={onListLoad} onScroll={onScroll}
+        scrollEventThrottle={16} onLoad={onListLoad} onScroll={onScroll} onCommitLayoutEffect={settleOpening}
         onScrollBeginDrag={()=>{dragging.current=true;momentum.current=false;takeScrollControl();}}
         onMomentumScrollBegin={()=>{if(userScrollSession.current&&!inNavigation.current){momentum.current=true;stopIdleSave();setFollow(false);}}}
         onMomentumScrollEnd={()=>{if(userScrollSession.current){dragging.current=false;momentum.current=false;updateMediaRange(true);observe();settleScroll();}}}
-        onScrollEndDrag={()=>{dragging.current=false;updateMediaRange(true);observe();scheduleIdleSave();}} onLayout={event=>{if(event)geometry.current.height=event.nativeEvent.layout.height;}}
-        onContentSizeChange={()=>{if(!hasNativeChatLayout && followingRef.current && readyRef.current && !inNavigation.current)scrollEnd(false);updateMediaRange(true);observe();}}
+        onScrollEndDrag={()=>{dragging.current=false;updateMediaRange(true);observe();scheduleIdleSave();}} onLayout={event=>{if(event)geometry.current.height=event.nativeEvent.layout.height;settleOpening();}}
+        onContentSizeChange={(_width,height)=>{geometry.current.content=height;settleOpening();if(!hasNativeChatLayout && followingRef.current && readyRef.current && !inNavigation.current)scrollEnd(false);updateMediaRange(true);observe();}}
         ListHeaderComponent={props.header}
         ListFooterComponent={props.footer}
       />

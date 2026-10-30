@@ -6,8 +6,8 @@ import type { HelpAttachment, HelpMediaSource } from './helpApi';
 export const HelpMediaLoadingContext=createContext<'visible'|'near'|'deferred'|'retained'>('visible');
 
 /** Only readiness/source metadata lives here; Expo owns the pixel/disk cache.
- * A timeline owns this store, so navigation copies share it and leaving the
- * conversation releases it. Resolvers isolate account/source identities. */
+ * The account's Help screen shares it across reopened conversations; standalone
+ * timelines own a local store. Resolvers isolate account/source identities. */
 export function createHelpImageCache() {
   const resolvers = new WeakMap<object, Map<string, HelpMediaSource>>();
   const key = (attachment: HelpAttachment) => JSON.stringify([attachment.id,attachment.url]);

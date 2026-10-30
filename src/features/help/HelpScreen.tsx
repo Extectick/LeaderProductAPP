@@ -29,6 +29,8 @@ import { HelpChatHeader } from './components/HelpChatHeader';
 import { HelpPlaybackScope, HelpChatPlayback } from './components/HelpPlaybackScope';
 import { HelpDateSeparator } from './components/HelpTimelineIndicators';
 import { HelpChatEntry, type HelpChatEntryHandle } from './components/HelpChatEntry';
+import { createHelpImageCache, HelpImageCacheContext } from './helpMediaLoading';
+import { createHelpMessageLayoutCache, HelpMessageLayoutCacheContext } from './helpMessageLayoutCache';
 import { HelpTimeline, type HelpTimelineHandle } from './components/HelpTimeline';
 import { HelpChatSearchDock, HelpChatSearchArrows, HelpChatSearchResults } from './components/HelpChatSearch';
 import { helpMessageGroups } from './helpTimelineModel';
@@ -47,6 +49,8 @@ export default function HelpScreen() {
   const nativeScrollId = `help-chat-scroll-${nativeLayoutId}`, nativeDockId = `help-chat-dock-${nativeLayoutId}`;
   const isFocused = useIsFocused();
   const service = useHelpService(isFocused); const c = useHelpTheme(); const insets = useSafeAreaInsets(); const router = useRouter(); const params = useLocalSearchParams<{ ticketId?: string;messageId?:string;eventId?:string }>();
+  const imageCache=useMemo(()=>createHelpImageCache(),[service.userId]);
+  const messageLayoutCache=useMemo(()=>createHelpMessageLayoutCache(),[service.userId]);
   // Optional capability supplied only by the isolated QA service alias.
   const assistantPreview = (service as typeof service & { assistantPreview?: HelpAssistantPreview }).assistantPreview;
   const renderAccount=service.userId;
@@ -55,6 +59,7 @@ export default function HelpScreen() {
   const draftRevisions = useRef(new Map<string,number>());
   const sentDraftRevisions = useRef(new Map<string,number>());
   const [retainList, setRetainList] = useState(false);
+  const [entrySettled,setEntrySettled]=useState(false);
   const chatEntry = useRef<HelpChatEntryHandle>(null);
   const listBlurTarget = useRef<View>(null), retainedListHeight = useRef(0);
   const [active, setActive] = useState<number | 'new' | null>(null); const [filter, setFilter] = useState<'OPEN' | 'CLOSED'>('OPEN'); const [scope, setScope] = useState<'mine' | 'queue'>('mine');
@@ -155,7 +160,10 @@ export default function HelpScreen() {
   useEffect(() => helpDevState({ screen:active===null ? 'list' : active==='new' ? 'new' : 'chat', filter, scope, canManage:service.canManage, searchLength:search.length, dockHeight, listHeaderHeight, theme:c.dark ? 'dark' : 'light' }), [active,filter,scope,service.canManage,search.length,dockHeight,listHeaderHeight,c.dark]);
 
   async function open(id: number,messageId?:number) {
+    setEntrySettled(false);
     if (active === null) { retainedListHeight.current = listHeaderHeight; setRetainList(true); }
+    // Reply/edit focus belongs to that composer, not every subsequently opened chat.
+    if (active !== 'new') setFocusKey(0);
     const openedAt = Date.now();
     helpDevEvent('chat.open.request', { ticketId: id, openedAt });
     saveDraftNow();
@@ -177,8 +185,8 @@ export default function HelpScreen() {
     return promise;
   }
   function saveDraftNow() { scroll.current?.save(); if (active && mode === 'message') { const sent=sentDraftRevisions.current.get(draftKey)===(draftRevisions.current.get(draftKey)??0);void persistFiles(sent?[]:files).catch(()=>tell('Не удалось сохранить вложения черновика.')); void service.setDraft(draftKey, sent?'':draft).catch(()=>tell('Не удалось сохранить черновик.')); } }
-  function list(next: 'OPEN' | 'CLOSED' = filter) { setRetainList(false); ++navigationGeneration.current; saveDraftNow(); Keyboard.dismiss(); setActive(null); service.clearSelection(); setMode('message'); setFiles([]); setReply(null); setEditing(null); setSource(null); setOrder([]); setFilter(next); stack.current = []; void service.loadTickets(next, scope,false,search.trim()); }
-  function newTicket(linked: SourceTicket | null = null) { setRetainList(false); ++navigationGeneration.current; saveDraftNow(); Keyboard.dismiss(); stack.current = []; service.clearSelection(); setActive('new'); setSource(linked); setDraft(''); setFiles([]); setMode('message'); setReply(null); setEditing(null); setSelectedMessage(null); followBottom.current = true; setFocusKey(n => n + 1); }
+  function list(next: 'OPEN' | 'CLOSED' = filter) { setRetainList(false); setEntrySettled(false); setFocusKey(0); ++navigationGeneration.current; saveDraftNow(); Keyboard.dismiss(); setActive(null); service.clearSelection(); setMode('message'); setFiles([]); setReply(null); setEditing(null); setSource(null); setOrder([]); setFilter(next); stack.current = []; void service.loadTickets(next, scope,false,search.trim()); }
+  function newTicket(linked: SourceTicket | null = null) { setEntrySettled(false); setRetainList(false); ++navigationGeneration.current; saveDraftNow(); Keyboard.dismiss(); stack.current = []; service.clearSelection(); setActive('new'); setSource(linked); setDraft(''); setFiles([]); setMode('message'); setReply(null); setEditing(null); setSelectedMessage(null); followBottom.current = true; setFocusKey(n => n + 1); }
   function cancelMode() { ++navigationGeneration.current; setMode('message'); setDraft(regularDraft.current.text); setFiles(regularDraft.current.files); setReply(regularDraft.current.reply); setEditing(null); Keyboard.dismiss(); }
   async function back() {
     if (gallery) { setGallery(null); return; } if (overlay) { setOverlay(null); return; } if (selectedMessage !== null) { setSelectedMessage(null); return; }
@@ -279,7 +287,7 @@ export default function HelpScreen() {
   const lastIncoming = [...messages].reverse().find(m => m.authorRole === 'IT' && m.kind === 'TEXT');
   const listHeader = <HelpListHeader connecting={!service.connected} search={search} onSearch={setSearch} archived={filter === 'CLOSED'} onArchive={() => list(filter === 'OPEN' ? 'CLOSED' : 'OPEN')} onBack={() => void back()} canManage={service.canManage} scope={scope} onScope={()=>{const next=scope==='mine' ? 'queue' : 'mine';setScope(next);setOrder([]);void service.loadTickets(filter,next,false,search.trim());}} />; const header = active === null ? listHeader : <HelpChatHeader connecting={!service.connected} search={chatSearchOpen && ticket ? {query:chatSearchQuery,onQueryChange:setChatSearchQuery,onClose:closeSearch,onSubmit:()=>Keyboard.dismiss(),autoFocus:true} : undefined} menuActive={overlay?.kind==='menu'} onSearch={ticket?()=>{saveDraftNow();Keyboard.dismiss();setChatSearchOpen(true);}:undefined} title={ticket?.title || (active==='new' ? 'Новое обращение' : 'Обращение')} meta={ticket ? `${ticket.status==='CLOSED' ? 'Закрыто' : 'Открыто'} · #${ticket.number} · ${helpCreated(ticket.createdAt)}` : ''} onBack={()=>void back()} onMenu={ticket || assistantPreview ? ()=>{Keyboard.dismiss();setOverlay(previous=>previous?.kind==='menu'?null:{kind:'menu'});} : undefined}/>;
 
-  return <HelpPhotoPortalProvider><HelpPlaybackScope userId={service.userId} ticketId={typeof active === 'number' ? active : null} onError={tell}><KeyboardAvoidingView style={{ flex: 1, backgroundColor: c.background, paddingTop: insets.top }} behavior={Platform.OS === 'ios' ? 'padding' : Platform.OS === 'android' ? 'height' : undefined}>
+  return <HelpImageCacheContext.Provider value={imageCache}><HelpMessageLayoutCacheContext.Provider value={messageLayoutCache}><HelpPhotoPortalProvider><HelpPlaybackScope userId={service.userId} ticketId={typeof active === 'number' ? active : null} onError={tell}><KeyboardAvoidingView style={{ flex: 1, backgroundColor: c.background, paddingTop: insets.top }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
     <View style={{ flex: 1, width: '100%', maxWidth: 900, alignSelf: 'center' }}>
       {service.pendingCount > 0 ? <Pressable accessibilityRole="button" accessibilityLabel="Восстановить отправку" disabled={busy} onPress={() => void run(() => service.retryPending())} style={{padding:10,backgroundColor:c.elevated}}><Text style={{color:c.accentText,fontSize:13,textAlign:'center'}}>Восстановить отправку ({service.pendingCount})</Text></Pressable> : null}
       {service.error&&!isHelpConnectionIssue(service.error) ? <Pressable accessibilityRole="button" onPress={() => void run(() => service.retryPending())} style={{ paddingVertical: 7, paddingHorizontal: 14, backgroundColor: c.danger + '15' }}><Text style={{ color: c.danger, fontSize: 12 }} numberOfLines={2}>{service.error} · Повторить</Text></Pressable> : null}
@@ -291,7 +299,7 @@ export default function HelpScreen() {
           {service.loading && visible.length ? <ActivityIndicator color={c.accent} style={{ margin: 15 }} /> : null}
         </ScrollView></BlurTargetView><View testID="help-list-header-overlay" onLayout={event=>{if(active===null)setListHeaderHeight(event.nativeEvent.layout.height);}} style={{position:'absolute',top:0,left:0,right:0,zIndex:2}}><View pointerEvents="none" style={StyleSheet.absoluteFill}><HelpBlurSurface target={active===null?listBlurTarget:undefined} edge="bottom"/></View>{listHeader}</View><View style={{ position: 'absolute', bottom: 0, left: 0, right: 0 }}><HelpDock target={active===null?listBlurTarget:undefined}><View style={{ paddingHorizontal: HELP_LIST_INSET - 8 }}><HelpPrimaryButton text="Новое обращение" onPress={() => newTicket()} /></View></HelpDock></View>
       </View> : null}
-      {active !== null ? <HelpChatEntry key={`${service.userId}:${active}`} ref={chatEntry} ready={active==='new'} backgroundColor={c.background} onEntered={()=>{setRetainList(false);helpDevEvent('chat.open.transitionFinished',{ticketId:typeof active==='number'?active:null,finishedAt:Date.now()});}} onLayout={event=>setChatViewportHeight(event.nativeEvent.layout.height)}>
+      {active !== null ? <HelpChatEntry key={`${service.userId}:${active}`} ref={chatEntry} ready={active==='new'} backgroundColor={c.background} onEntered={()=>{setEntrySettled(true);setRetainList(false);helpDevEvent('chat.open.transitionFinished',{ticketId:typeof active==='number'?active:null,finishedAt:Date.now()});}} onLayout={event=>setChatViewportHeight(event.nativeEvent.layout.height)}>
         <BlurTargetView ref={blurTarget} style={{ flex: 1 }}>
           <HelpTimeline key={`${service.userId}:${active}`} onReady={()=>chatEntry.current?.reveal()} ref={scroll} messages={messages} nativeID={nativeScrollId} headerHeight={listHeaderHeight} dockHeight={dockHeight}
             navigationTarget={service.navigationTarget} firstUnreadSequence={service.firstUnreadSequence} hasOlder={service.hasOlder} hasNewer={service.hasNewer}
@@ -307,7 +315,7 @@ export default function HelpScreen() {
         {chatSearchOpen && !chatSearchList ? <HelpChatSearchArrows total={chatSearchTotal} selectedIndex={chatResultIndex} loading={chatSearchLoading} canPrevious={chatResultIndex>0} canNext={chatResultIndex+1<chatResults.length || chatSearchCursor!==null} onPrevious={()=>{if(chatResultIndex>0)void showSearchResult(chatResults[chatResultIndex-1],chatResultIndex-1);}} onNext={nextSearch} style={{position:'absolute',right:8,bottom:dockHeight+12}}/> : null}
         <View nativeID={nativeDockId} style={{ position: 'absolute', bottom: 0, left: 0, right: 0 }}>{notice ? <HelpNotice key={notice} text={notice} onDone={() => setNotice('')} /> : null}<HelpDock target={blurTarget} onHeight={setDockHeight}>
           {chatSearchOpen ? <HelpChatSearchDock query={chatSearchQuery} total={chatSearchTotal} selectedIndex={chatResultIndex} loading={chatSearchLoading} showList={chatSearchList} onToggleList={()=>setChatSearchList(value=>!value)} error={chatSearchError}/> : ticket?.status === 'CLOSED' && mode === 'message' ? !isOwner ? <HelpPrimaryButton text="Закрыт" icon="lock-closed-outline" disabled onPress={()=>{}}/> : <View>{canReopenHelpTicket(ticket) ? <HelpPrimaryButton text="Открыть повторно" icon="sync-outline" onPress={()=>startMode('reopen')}/> : <><View style={{flexDirection:'row',justifyContent:'center',alignItems:'center',gap:6,paddingHorizontal:8,paddingBottom:9}}><Ionicons name="lock-closed-outline" size={15} color={c.muted}/><Text style={{color:c.muted,fontSize:12,lineHeight:18}}>Закрыт{ticket.closedAt ? ' · прошло больше 3 дней' : ''}</Text></View><HelpPrimaryButton text="Создать новое обращение" onPress={()=>newTicket({id:ticket.id,number:ticket.number,title:ticket.title})}/></>}</View> : ticket&&!isParticipant ? <HelpPrimaryButton text="Взять обращение" icon="headset-outline" disabled={busy||!service.canManage} onPress={()=>void run(()=>service.claimTicket(ticket.id))}/> : <HelpComposer key={`${service.userId}:${active}:${mode}`} value={draft} onChange={changeDraft} files={files} onFiles={changeFiles} onSend={submit} sendBlocked={Boolean(pendingCreate)} onStopAssistant={activeAssistant?.assistantRun ? ()=>{if(assistantPreview)assistantPreview.stop(activeAssistant.ticketId,activeAssistant.assistantRun!.runId);else void run(()=>assistantActions.stopAssistant!(activeAssistant.ticketId,activeAssistant.assistantRun!.runId));} : undefined} busy={busy} mode={mode} rating={rating} onRating={setRating} onCancelMode={cancelMode} quote={reply ? {name:reply.author?.name||'Сообщение',text:reply.text||'Вложение',thumbnail:reply.attachments.find(item=>item.kind==='IMAGE'),onPress:()=>jump(reply.id)} : undefined} resolve={service.mediaSource} recordingAreaHeight={Math.max(0,chatViewportHeight-listHeaderHeight-dockHeight+8)} onCancelQuote={()=>setReply(null)} error={tell} focusKey={focusKey} onResize={()=>{ composerResizingUntil.current=Date.now()+320; scrollBottom(false); }} disabled={active!=='new'&&!ticket} editClosure={editing?.kind==='CLOSURE'} existingFiles={mode==='edit' ? editAttachments : undefined} onRemoveExisting={id=>setEditAttachments(values=>values.filter(a=>a.id!==id))}/>}
-        </HelpDock></View>{hasNativeChatLayout ? <HelpNativeChatLayout key={`${service.userId}:${active}`} scrollId={nativeScrollId} dockId={nativeDockId} allowFollow={nativeFollow && !service.hasNewer}/> : null}
+        </HelpDock></View>{hasNativeChatLayout ? <HelpNativeChatLayout key={`${service.userId}:${active}`} scrollId={nativeScrollId} dockId={nativeDockId} allowFollow={nativeFollow && !service.hasNewer} animateTail={entrySettled}/> : null}
       </HelpChatEntry> : null}
     </View>
     {active === null && notice ? <View style={{ position: 'absolute', bottom: 85 + insets.bottom, left: 0, right: 0 }}><HelpNotice key={notice} text={notice} onDone={() => setNotice('')} /></View> : null}
@@ -319,7 +327,7 @@ export default function HelpScreen() {
       {overlay.kind === 'row' ? <View style={{ gap: 10 }}><SheetAction label="Открыть переписку" icon="chatbubble-outline" onPress={() => void open(overlay.ticket.id)} />{overlay.ticket.status === 'OPEN' && overlay.ticket.ownerId === service.userId ? <SheetAction label="Закрыть обращение" icon="checkmark-circle-outline" onPress={() => void run(async () => { await open(overlay.ticket.id); startMode('close'); })} /> : null}</View> : null}
       {overlay.kind === 'forward' ? <ScrollView style={{ maxHeight: 330 }} scrollEventThrottle={16} onScroll={e => setSheetOffset(Math.max(0, e.nativeEvent.contentOffset.y))}>{service.tickets.filter(t => t.status === 'OPEN' && t.id !== ticket?.id && (t.ownerId === service.userId || t.members.some(m => m.userId === service.userId))).map(destination => <SheetAction key={destination.id} label={`#${destination.number} · ${destination.title}`} icon="arrow-redo-outline" onPress={() => void run(async () => { await service.sendMessage(destination.id, { text: overlay.message.text, forwardedFromId: overlay.message.id }); setOverlay(null); tell('Сообщение переслано'); })} />)}{!service.tickets.some(t => t.status === 'OPEN' && t.id !== ticket?.id && (t.ownerId === service.userId || t.members.some(m => m.userId === service.userId))) ? <Text style={{ color: c.muted, paddingVertical: 12 }}>Нет других открытых обращений для пересылки.</Text> : null}</ScrollView> : null}
     </HelpSheet> : null}
-  </KeyboardAvoidingView></HelpPlaybackScope></HelpPhotoPortalProvider>;
+  </KeyboardAvoidingView></HelpPlaybackScope></HelpPhotoPortalProvider></HelpMessageLayoutCacheContext.Provider></HelpImageCacheContext.Provider>;
 }
 
 function SheetAction({ label, icon, onPress }: { label: string; icon: keyof typeof Ionicons.glyphMap; onPress: () => void }) {

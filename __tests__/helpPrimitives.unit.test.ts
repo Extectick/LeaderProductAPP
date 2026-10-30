@@ -1,6 +1,6 @@
 import React from 'react';
 import TestRenderer,{act} from 'react-test-renderer';
-import {Platform,StyleSheet,type View} from 'react-native';
+import {Keyboard,Platform,StyleSheet,type View} from 'react-native';
 let mockTheme:'light'|'dark'='light';
 jest.mock('../context/ThemeContext',()=>({useTheme:()=>({theme:mockTheme})}));
 jest.mock('@expo/vector-icons',()=>({Ionicons:'Ionicons'}));
@@ -34,6 +34,20 @@ describe('Help approved prototype tokens and primitive geometry',()=>{
     await act(async()=>{screen=TestRenderer.create(React.createElement(HelpDock,{children:null}));});
     expect(StyleSheet.flatten(screen!.root.findByProps({testID:'help-dock-backdrop'}).props.style).top).toBe(-8);
     expect(StyleSheet.flatten(screen!.root.findByProps({testID:'help-dock-backdrop'}).parent!.props.style)).toMatchObject({paddingHorizontal:8,paddingTop:8,paddingBottom:42});
+  });
+  test('zero-height keyboard reports cannot remove the dock safe area during opening',async()=>{
+    jest.spyOn(Keyboard,'isVisible').mockReturnValue(true);
+    jest.spyOn(Keyboard,'metrics').mockReturnValue({height:-24} as any);
+    let shown:((event:any)=>void)|undefined;
+    jest.spyOn(Keyboard,'addListener').mockImplementation(((event:string,callback:any)=>{if(event==='keyboardDidShow')shown=callback;return {remove:jest.fn()};}) as any);
+    jest.replaceProperty(Platform,'OS','android');
+    try {
+      await act(async()=>{screen=TestRenderer.create(React.createElement(HelpDock,{children:null}));});
+      const padding=()=>StyleSheet.flatten(screen!.root.findByProps({testID:'help-dock-backdrop'}).parent!.props.style).paddingBottom;
+      expect(padding()).toBe(42);
+      await act(async()=>shown!({endCoordinates:{height:0}}));expect(padding()).toBe(42);
+      await act(async()=>shown!({endCoordinates:{height:240}}));expect(padding()).toBe(8);
+    } finally {jest.restoreAllMocks();}
   });
   test('sheet uses 22px upper corners and minimum260 instead of rounded cards',async()=>{
     await act(async()=>{screen=TestRenderer.create(React.createElement(HelpSheet,{title:'Подключить IT?',onClose:jest.fn(),children:null}));});

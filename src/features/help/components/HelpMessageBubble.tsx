@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Modal, PanResponder, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { HelpAttachment, HelpMessage } from '../helpApi';
@@ -11,6 +11,7 @@ import { HelpImageAlbum } from './HelpImageAlbum';
 import { helpImageAspectRatio } from '../helpAlbumLayout';
 import { HelpSearchText } from './HelpChatSearch';
 import { HelpInlineMessageStamp, HelpMessageStampReserve } from './HelpInlineMessageStamp';
+import { HelpMessageLayoutCacheContext } from '../helpMessageLayoutCache';
 
 type Props = { message: HelpMessage; userId: number; open: boolean; canInteract: boolean; selected: boolean; highlighted: boolean; readByOthers?: boolean; groupFirst?: boolean; groupLast?: boolean; searchQuery?: string; solution: boolean; resolve: ResolveHelpMedia; onMenu: () => void; onDismissMenu: () => void; onReply: () => void; onCopy: () => void; onEdit: () => void; onForward: () => void; onReaction: (emoji: string) => void; onQuote: (id: number) => void; onImage: (images: HelpAttachment[], index: number, origin?: HelpImageOrigin) => void; onFile: (file: HelpAttachment) => void; onCloseTicket: () => void; onRequestIt: () => void; onError: (message: string) => void };
 export function HelpMessageBubble(props: Props) {
@@ -55,6 +56,11 @@ const MemoHelpMessageBubbleBody = memo(function HelpMessageBubbleBody(props: Pro
     borderBottomRightRadius: props.solution ? 0 : bottomRight };
   const bubbleRef = useRef<View>(null);
   const window = useWindowDimensions();
+  const layoutCache=useContext(HelpMessageLayoutCacheContext);
+  const nativeTextStamp = own && m.kind === 'TEXT' && Boolean(m.text) && !m.ticketStatusChange && !m.attachments.length && !m.reactions.length;
+  const layoutKey=!nativeTextStamp&&m.kind==='TEXT'&&m.text&&!m.attachments.length&&!m.reactions.length
+    ? JSON.stringify([m.ticketId,m.id,m.text,m.editedAt,props.userId,window.width,window.fontScale]) : null;
+  const cachedLayout=layoutKey?layoutCache?.read(layoutKey):undefined;
   const [menuAnchor, setMenuAnchor] = useState({ x: 8, y: 8, width: 0, height: 0 });
   useLayoutEffect(() => {
     if (!props.selected) return;
@@ -72,10 +78,10 @@ const MemoHelpMessageBubbleBody = memo(function HelpMessageBubbleBody(props: Pro
   const swipePeak = useRef(0);
   const reducedMotion = useHelpReducedMotion();
   const reduced = useRef(reducedMotion); reduced.current = reducedMotion;
-  const [textWidth, setTextWidth] = useState(0);
-  const [lastLine, setLastLine] = useState<(HelpTextLineMeasurement & {text: string; fontScale: number; windowWidth: number}) | null>(null);
-  const [rowWidth, setRowWidth] = useState(0);
-  const [stampWidth, setStampWidth] = useState(0);
+  const [textWidth, setTextWidth] = useState(cachedLayout?.textWidth??0);
+  const [lastLine, setLastLine] = useState<(HelpTextLineMeasurement & {text: string; fontScale: number; windowWidth: number}) | null>(cachedLayout?.lastLine??null);
+  const [rowWidth, setRowWidth] = useState(cachedLayout?.rowWidth??0);
+  const [stampWidth, setStampWidth] = useState(cachedLayout?.stampWidth??0);
   const textRef = useRef<Text>(null);
   // RN web does not emit onTextLayout. Measure the real rendered line boxes,
   // including fallback fonts, instead of estimating a timestamp-sized spacer.
@@ -90,8 +96,8 @@ const MemoHelpMessageBubbleBody = memo(function HelpMessageBubbleBody(props: Pro
   }, [m.text, textWidth, window.fontScale, window.width]);
   const audioOnly = !m.text && m.kind !== 'CLOSURE' && !m.reactions.length && m.attachments.length === 1 && m.attachments[0].kind === 'AUDIO';
   const compactClosure = m.kind === 'CLOSURE' && !m.text && !m.attachments.length && !m.reactions.length;
-  const nativeTextStamp = own && m.kind === 'TEXT' && Boolean(m.text) && !m.ticketStatusChange && !m.attachments.length && !m.reactions.length;
   const measuredLines = lastLine?.text === m.text && lastLine.fontScale === window.fontScale && lastLine.windowWidth === window.width ? lastLine : null;
+  useLayoutEffect(()=>{if(layoutKey&&layoutCache&&measuredLines&&rowWidth>0&&textWidth>0&&stampWidth>0)layoutCache.remember(layoutKey,{rowWidth,textWidth,stampWidth,lastLine:measuredLines});},[layoutKey,layoutCache,measuredLines,rowWidth,textWidth,stampWidth]);
   const availableBubbleWidth = own ? (rowWidth || window.width - 24) * .86 : (rowWidth || window.width - 24) - 36;
   const textStampLayout = helpTextStampLayout({ availableWidth: availableBubbleWidth, contentWidth: textWidth, lines: measuredLines, stampWidth, allowExpansion: !m.attachments.length });
   const inlineStamp = nativeTextStamp || Boolean(m.text && !m.reactions.length && textStampLayout.inline);
@@ -149,7 +155,7 @@ const MemoHelpMessageBubbleBody = memo(function HelpMessageBubbleBody(props: Pro
   const statusText = statusChange === 'CLOSED' ? (own ? 'Вы закрыли обращение' : `${author}: обращение закрыто`) : (own ? 'Вы открыли обращение повторно' : `${author}: обращение открыто повторно`);
   return <>
     {statusChange ? <View testID={`help-ticket-status-${m.id}`} style={{ alignItems: 'center', paddingVertical: 10, paddingHorizontal: 30 }}><Text style={{ color: c.muted, fontSize: 12, textAlign: 'center', backgroundColor: c.elevated, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12 }}>{statusText}</Text></View> : null}
-    <View {...pan.panHandlers} onLayout={e => setRowWidth(e.nativeEvent.layout.width)} testID={`help-message-${m.id}`} style={{ marginTop: groupFirst ? 4 : 1, marginBottom: groupLast ? 4 : 1, marginLeft: 12, marginRight: 12, flexDirection: 'row', alignItems: 'flex-start', justifyContent: own ? 'flex-end' : 'flex-start', gap: 8 }}>
+    <View {...pan.panHandlers} onLayout={e => {if(!nativeTextStamp)setRowWidth(e.nativeEvent.layout.width);}} testID={`help-message-${m.id}`} style={{ marginTop: groupFirst ? 4 : 1, marginBottom: groupLast ? 4 : 1, marginLeft: 12, marginRight: 12, flexDirection: 'row', alignItems: 'flex-start', justifyContent: own ? 'flex-end' : 'flex-start', gap: 8 }}>
     {props.open&&props.canInteract ? <Animated.View testID="help-reply-swipe-indicator" pointerEvents="none" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" aria-hidden style={{position:'absolute',top:'50%',left:0,marginLeft:-16,marginTop:-16,width:32,height:32,opacity:replyMotion.opacity,transform:[{translateX:replyMotion.offset},{scale:reducedMotion?1:replyMotion.reveal}]}}>
       <Animated.View style={{width:32,height:32,borderRadius:16,overflow:'hidden',alignItems:'center',justifyContent:'center',backgroundColor:c.elevated,borderWidth:1,borderColor:c.accentText+'66',transform:[{scale:replyPulse}]}}>
         <Animated.View testID="help-reply-swipe-fill" style={[StyleSheet.absoluteFill,{borderRadius:16,backgroundColor:c.accent,opacity:.3,transform:[{scale:replyMotion.fill}]}]}/>

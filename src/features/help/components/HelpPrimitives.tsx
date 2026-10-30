@@ -49,9 +49,9 @@ export function HelpBlurSurface({target,edge='top'}:{target?:React.RefObject<Vie
 }
 export function HelpDock({ children, onHeight, target }: { children: React.ReactNode; onHeight?: (height: number) => void; target?: React.RefObject<View | null> }) {
   const c = useHelpTheme(); const insets = useSafeAreaInsets();
-  const [keyboardVisible, setKeyboardVisible] = useState(() => Keyboard.isVisible());
+  const [keyboardVisible, setKeyboardVisible] = useState(() => Keyboard.isVisible() && (Keyboard.metrics()?.height ?? 0) > 0);
   useEffect(() => {
-    const show = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', () => setKeyboardVisible(true));
+    const show = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', event => setKeyboardVisible(event.endCoordinates.height > 0));
     const hide = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => setKeyboardVisible(false));
     return () => { show.remove(); hide.remove(); };
   }, []);

@@ -37,8 +37,17 @@ test('chat entry waits for a ready viewport and retains the previous screen unti
   await act(async () => ref.current!.reveal());
   expect(child).toHaveBeenCalledTimes(1);
   expect(jobs.at(-1)!.config).toMatchObject({duration:150,useNativeDriver:true});
+  expect(view.root.findAllByProps({testID:'help-chat-viewport'})[0].props.renderToHardwareTextureAndroid).toBe(true);
   expect(onEntered).not.toHaveBeenCalled();
   await act(async () => jobs.at(-1)!.callback?.({finished:true}));
   expect(onEntered).toHaveBeenCalledTimes(1);
+  expect(view.root.findAllByProps({testID:'help-chat-viewport'})[0].props.renderToHardwareTextureAndroid).toBe(false);
   await act(async () => view.unmount());
+});
+test('unmounted entry ignores a late native animation completion',async()=>{
+  let view!:TestRenderer.ReactTestRenderer;const ref=React.createRef<HelpChatEntryHandle>(),onEntered=jest.fn();
+  await act(async()=>{view=TestRenderer.create(React.createElement(HelpChatEntry,{ref,ready:false,onEntered,onLayout:jest.fn(),backgroundColor:'#151b22',children:null}));});
+  await act(async()=>ref.current!.reveal());const callback=jobs.at(-1)!.callback;
+  await act(async()=>view.unmount());await act(async()=>callback?.({finished:true}));
+  expect(onEntered).not.toHaveBeenCalled();
 });

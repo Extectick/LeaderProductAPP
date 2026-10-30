@@ -155,12 +155,47 @@ describe('sticky date geometry and navigation integration',()=>{
   const scrollEvent=(offset:number)=>({nativeEvent:{contentOffset:{x:0,y:offset},layoutMeasurement:{width:390,height:600},contentSize:{width:390,height:1000}}});
   test('opening a saved index needs one measured alignment, not an index preparation and stability loop',async()=>{
     props={...props,onReady:jest.fn(),navigationTarget:{key:91,kind:'anchor',messageId:2,sequence:2,offset:5,animate:false}};
+    mockListApi.scrollToOffset.mockImplementation(({offset}:any)=>{mockListApi.getAbsoluteLastScrollOffset=()=>offset;});
     await render();
     expect(mockFlashProps.initialScrollIndex).toBe(3);
-    await act(async()=>jest.advanceTimersByTimeAsync(20));
+    await act(async()=>jest.advanceTimersByTimeAsync(80));
     expect(mockListApi.scrollToIndex).not.toHaveBeenCalled();
     expect(mockListApi.scrollToOffset).toHaveBeenLastCalledWith({offset:259,animated:false,skipFirstItemOffset:true});
     expect(props.onReady).toHaveBeenCalled();
+  });
+  test('initial positioning keeps estimates hidden and owns the anchor until measured rows stop changing',async()=>{
+    props={...props,onReady:jest.fn(),navigationTarget:{key:92,kind:'anchor',messageId:2,sequence:2,offset:5,animate:false}};
+    (mockLayouts[3] as any).isHeightMeasured=false;mockLayouts[3].height=0;
+    mockListApi.scrollToOffset.mockImplementation(({offset}:any)=>{mockListApi.getAbsoluteLastScrollOffset=()=>offset;});
+    await render();await act(async()=>jest.advanceTimersByTimeAsync(80));
+    expect(props.onReady).not.toHaveBeenCalled();
+    expect(mockFlashProps.maintainVisibleContentPosition.disabled).toBe(true);
+    mockLayouts[3]={y:460,height:100,...{isHeightMeasured:true}};
+    await act(async()=>{mockFlashProps.onCommitLayoutEffect();await jest.advanceTimersByTimeAsync(80);});
+    expect(mockListApi.scrollToOffset).toHaveBeenLastCalledWith({offset:355,animated:false,skipFirstItemOffset:true});
+    expect(props.onReady).toHaveBeenCalledTimes(1);
+    expect(mockFlashProps.maintainVisibleContentPosition.disabled).toBe(false);
+  });
+  test('a page arriving after the empty list loaded still uses measured initial positioning',async()=>{
+    const messages=props.messages;props={...props,messages:[],loading:true,onReady:jest.fn(),navigationTarget:null};
+    mockListApi.scrollToOffset.mockImplementation(({offset}:any)=>{mockListApi.getAbsoluteLastScrollOffset=()=>offset;});
+    await render();expect(props.onReady).not.toHaveBeenCalled();
+    props={...props,messages,loading:false,navigationTarget:{key:94,kind:'anchor',messageId:2,sequence:2,offset:5,animate:false}};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    await act(async()=>jest.advanceTimersByTimeAsync(80));
+    expect(mockListApi.scrollToIndex).not.toHaveBeenCalled();
+    expect(mockListApi.scrollToOffset).toHaveBeenLastCalledWith({offset:259,animated:false,skipFirstItemOffset:true});
+    expect(props.onReady).toHaveBeenCalledTimes(1);
+  });
+  test('opening a measured live answer hands the growing tail to follow without waiting for the answer to finish',async()=>{
+    let content=1000,offset=0;
+    props={...props,messages:props.messages.map((message,index)=>index===1?{...message,assistantRun:{status:'streaming'} as any}:message),onReady:jest.fn(),navigationTarget:{key:93,kind:'latest',animate:false}};
+    mockListApi.getAbsoluteLastScrollOffset=()=>offset;mockListApi.scrollToEnd.mockImplementation(()=>{offset=content-600;});
+    await render();
+    const stream=setInterval(()=>{content+=2;mockLayouts[3].height+=2;mockFlashProps.onContentSizeChange(390,content);},8);
+    await act(async()=>jest.advanceTimersByTimeAsync(80));clearInterval(stream);
+    expect(props.onReady).toHaveBeenCalledTimes(1);expect(props.onFollow).toHaveBeenLastCalledWith(true);
+    expect(props.messages[1].assistantRun?.status).toBe('streaming');
   });
   test('an 8dp user scroll and programmatic positioning keep the latest arrow hidden',async()=>{
     await render();
