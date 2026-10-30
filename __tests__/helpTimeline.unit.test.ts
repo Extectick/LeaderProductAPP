@@ -19,7 +19,7 @@ jest.mock('@shopify/flash-list',()=>{
 });
 jest.mock('@expo/vector-icons',()=>({Ionicons:'Ionicons'}));
 jest.mock('../src/features/help/helpTheme',()=>({useHelpReducedMotion:()=>mockReducedMotion,useHelpTheme:()=>({background:'#151B22',surface:'#222B35',line:'#33404E',panel:'#1E2730',muted:'#A6B0BE',accentText:'#68B0FF'})}));
-jest.mock('../src/features/help/helpDiagnostics',()=>({helpDevActions:()=>()=>{},helpDevProbe:()=>()=>{},helpDevState:jest.fn()}));
+jest.mock('../src/features/help/helpDiagnostics',()=>({helpDevActions:()=>()=>{},helpDevProbe:()=>()=>{},helpDevState:jest.fn(),helpDevEvent:jest.fn()}));
 jest.mock('../src/features/help/components/HelpNativeChatLayout',()=>({hasNativeChatLayout:false}));
 import {HelpTimeline,type HelpTimelineHandle} from '../src/features/help/components/HelpTimeline';
 import {HelpDateSeparator} from '../src/features/help/components/HelpTimelineIndicators';
@@ -153,6 +153,46 @@ describe('sticky date geometry and navigation integration',()=>{
     expect(screen!.root.findByProps({testID:'priority-10'}).props.accessibilityLabel).toBe('visible');
   });
   const scrollEvent=(offset:number)=>({nativeEvent:{contentOffset:{x:0,y:offset},layoutMeasurement:{width:390,height:600},contentSize:{width:390,height:1000}}});
+  test('opening a saved index needs one measured alignment, not an index preparation and stability loop',async()=>{
+    props={...props,onReady:jest.fn(),navigationTarget:{key:91,kind:'anchor',messageId:2,sequence:2,offset:5,animate:false}};
+    await render();
+    expect(mockFlashProps.initialScrollIndex).toBe(3);
+    await act(async()=>jest.advanceTimersByTimeAsync(20));
+    expect(mockListApi.scrollToIndex).not.toHaveBeenCalled();
+    expect(mockListApi.scrollToOffset).toHaveBeenLastCalledWith({offset:259,animated:false,skipFirstItemOffset:true});
+    expect(props.onReady).toHaveBeenCalled();
+  });
+  test('an 8dp user scroll and programmatic positioning keep the latest arrow hidden',async()=>{
+    await render();
+    await act(async()=>mockFlashProps.onScroll(scrollEvent(400)));
+    const arrow=()=>screen!.root.findAll(node=>typeof node.props.visible==='boolean'&&typeof node.props.onPress==='function')[0];
+    expect(arrow().props.visible).toBe(false);
+    await act(async()=>mockFlashProps.onScrollBeginDrag());
+    await act(async()=>mockFlashProps.onScroll(scrollEvent(392)));
+    expect(arrow().props.visible).toBe(false);
+    await act(async()=>mockFlashProps.onScroll(scrollEvent(272)));
+    expect(arrow().props.visible).toBe(true);
+  });
+  test('date preparation leaves the original on screen and resolves only after the old viewport is painted',async()=>{
+    mockReducedMotion=false;await render();
+    await act(async()=>ref.current!.jumpToDate(firstDate));
+    expect(StyleSheet.flatten(screen!.root.findAllByProps({testID:'help-timeline-live-layer'})[0].props.style).opacity).toBe(1);
+    expect(StyleSheet.flatten(screen!.root.findAllByProps({testID:'help-timeline-preparation'})[0].props.style).opacity).toBe(0);
+    let prepared=false;
+    const waiting=ref.current!.waitForJumpReady().then(value=>{prepared=value;});
+    expect(prepared).toBe(false);
+    await act(async()=>jest.advanceTimersByTimeAsync(70));
+    await waiting;
+    expect(prepared).toBe(true);
+    expect(StyleSheet.flatten(screen!.root.findAllByProps({testID:'help-timeline-transition'})[0].props.style).opacity).toBe(1);
+  });
+  test('touching the old viewport cancels a still-preparing date jump',async()=>{
+    mockReducedMotion=false;await render();
+    await act(async()=>ref.current!.jumpToDate(firstDate));
+    const waiting=ref.current!.waitForJumpReady();
+    await act(async()=>mockFlashProps.onScrollBeginDrag());
+    expect(await waiting).toBe(false);
+  });
   test('leaving the tail by 8px never reacquires follow inside the old 64px threshold',async()=>{
     await render();await act(async()=>ref.current!.scrollToEnd());
     expect(props.onFollow).toHaveBeenLastCalledWith(true);
