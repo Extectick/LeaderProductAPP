@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, BackHandler, Keyboard, KeyboardAvoidingView, PanResponder, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, BackHandler, Keyboard, KeyboardAvoidingView, PanResponder, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import Reanimated, {useAnimatedStyle, useSharedValue} from 'react-native-reanimated';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useFocusEffect, useIsFocused } from 'expo-router/react-navigation';
@@ -63,11 +64,14 @@ export default function HelpScreen() {
   const screenMounted=useRef(true);useEffect(()=>{screenMounted.current=true;return()=>{screenMounted.current=false;};},[]);
   const draftRevisions = useRef(new Map<string,number>());
   const sentDraftRevisions = useRef(new Map<string,number>());
-  const [retainList, setRetainList] = useState(false);
+  const chatProgress=useSharedValue(0),viewportSize=useWindowDimensions();
+  const listMotion=useAnimatedStyle(()=>({transform:[{translateX:-Math.min(viewportSize.width*.25,120)*chatProgress.value}]}),[viewportSize.width]);
+  const returningToList=useRef(false);
+  const [listSceneHeaderHeight,setListSceneHeaderHeight]=useState(68);
   const [entrySettled,setEntrySettled]=useState(false);
   const [timelineReady,setTimelineReady]=useState(false);
   const chatEntry = useRef<HelpChatEntryHandle>(null);
-  const listBlurTarget = useRef<View>(null), retainedListHeight = useRef(0);
+  const listBlurTarget = useRef<View>(null);
   const [active, setActive] = useState<number | 'new' | null>(null); const [filter, setFilter] = useState<'OPEN' | 'CLOSED'>('OPEN'); const [scope, setScope] = useState<'mine' | 'queue'>('mine');
   const [search, setSearch] = useState(''); const [order, setOrder] = useState<number[]>([]); const [draft, setDraft] = useState(''); const [files, setFiles] = useState<HelpLocalFile[]>([]); const [source, setSource] = useState<SourceTicket | null>(null);
   const [listDrafts,setListDrafts]=useState<Record<number,string>>({});
@@ -87,6 +91,7 @@ export default function HelpScreen() {
   const listPaging=useRef(false);
   const [imeInset,setImeInset]=useState(0);
   useEffect(()=>{setImeInset(0);setTimelineReady(false);},[active]);
+  useLayoutEffect(()=>{if(active===null)chatProgress.value=0;},[active,chatProgress]);
   const chatBounds = useRef<View>(null);
   const measureKeyboard = useHelpKeyboardInset(chatBounds, isFocused && active !== null && !hasNativeImeLayout, setImeInset);
   const boundedChat = hasNativeImeLayout || Platform.OS === 'android';
@@ -173,7 +178,7 @@ export default function HelpScreen() {
 
   async function open(id: number,messageId?:number) {
     setEntrySettled(false);
-    if (active === null) { retainedListHeight.current = listHeaderHeight; setRetainList(true); }
+
     // Reply/edit focus belongs to that composer, not every subsequently opened chat.
     if (active !== 'new') setFocusKey(0);
     const openedAt = Date.now();
@@ -197,8 +202,20 @@ export default function HelpScreen() {
     return promise;
   }
   function saveDraftNow() { scroll.current?.save(); if (active && mode === 'message') { const sent=sentDraftRevisions.current.get(draftKey)===(draftRevisions.current.get(draftKey)??0);void persistFiles(sent?[]:files).catch(()=>tell('Не удалось сохранить вложения черновика.')); void service.setDraft(draftKey, sent?'':draft).catch(()=>tell('Не удалось сохранить черновик.')); } }
-  function list(next: 'OPEN' | 'CLOSED' = filter) { setRetainList(false); setEntrySettled(false); setFocusKey(0); ++navigationGeneration.current; saveDraftNow(); Keyboard.dismiss(); setActive(null); service.clearSelection(); setMode('message'); setFiles([]); setReply(null); setEditing(null); setSource(null); setOrder([]); setFilter(next); stack.current = []; void service.loadTickets(next, scope,false,search.trim()); }
-  function newTicket(linked: SourceTicket | null = null) { setEntrySettled(false); setRetainList(false); ++navigationGeneration.current; saveDraftNow(); Keyboard.dismiss(); stack.current = []; service.clearSelection(); setActive('new'); setSource(linked); setDraft(''); setFiles([]); setMode('message'); setReply(null); setEditing(null); setSelectedMessage(null); followBottom.current = true; setFocusKey(n => n + 1); }
+  async function list(next: 'OPEN' | 'CLOSED' = filter) {
+    if(returningToList.current)return;
+    const navigation=++navigationGeneration.current,account=service.userId;
+    saveDraftNow();Keyboard.dismiss();
+    if(active!==null){
+      returningToList.current=true;setNativeFollow(false);
+      const finished=await chatEntry.current?.dismiss();returningToList.current=false;
+      if(finished===false||navigation!==navigationGeneration.current||account!==currentAccount.current)return;
+    }
+    setEntrySettled(false);setFocusKey(0);setListHeaderHeight(listSceneHeaderHeight);
+    setActive(null);service.clearSelection();setMode('message');setFiles([]);setReply(null);setEditing(null);setSource(null);setOrder([]);setFilter(next);stack.current=[];
+    void service.loadTickets(next,scope,false,search.trim());
+  }
+  function newTicket(linked: SourceTicket | null = null) { setEntrySettled(false); ++navigationGeneration.current; saveDraftNow(); Keyboard.dismiss(); stack.current = []; service.clearSelection(); setActive('new'); setSource(linked); setDraft(''); setFiles([]); setMode('message'); setReply(null); setEditing(null); setSelectedMessage(null); followBottom.current = true; setFocusKey(n => n + 1); }
   function cancelMode() { ++navigationGeneration.current; setMode('message'); setDraft(regularDraft.current.text); setFiles(regularDraft.current.files); setReply(regularDraft.current.reply); setEditing(null); Keyboard.dismiss(); }
   async function back() {
     if (gallery) { setGallery(null); return; } if (overlay) { setOverlay(null); return; } if (selectedMessage !== null) { setSelectedMessage(null); return; }
@@ -326,17 +343,17 @@ export default function HelpScreen() {
     <View ref={chatBounds} onLayout={measureKeyboard} style={{ flex: 1, width: '100%', maxWidth: 900, alignSelf: 'center' }}>
       {service.pendingCount > 0 ? <Pressable accessibilityRole="button" accessibilityLabel="Восстановить отправку" disabled={busy} onPress={() => void run(() => service.retryPending())} style={{padding:10,backgroundColor:c.elevated}}><Text style={{color:c.accentText,fontSize:13,textAlign:'center'}}>Восстановить отправку ({service.pendingCount})</Text></Pressable> : null}
       {service.error&&!(active===null&&service.loading)&&!isHelpConnectionIssue(service.error) ? <Pressable accessibilityRole="button" onPress={() => void run(() => active===null?service.loadTickets(filter,scope,false,search.trim()):service.retryPending())} style={{ paddingVertical: 7, paddingHorizontal: 14, backgroundColor: c.danger + '15' }}><Text style={{ color: c.danger, fontSize: 12 }} numberOfLines={2}>{service.error} · Повторить</Text></Pressable> : null}
-      {active === null || retainList ? <View key="help-list-scene" renderToHardwareTextureAndroid={active!==null} pointerEvents={active===null?'auto':'none'} accessibilityElementsHidden={active!==null} importantForAccessibility={active===null?'auto':'no-hide-descendants'} style={active===null?{flex:1}:StyleSheet.absoluteFill}>
+      <Reanimated.View key="help-list-scene" pointerEvents={active===null?'auto':'none'} accessibilityElementsHidden={active!==null} importantForAccessibility={active===null?'auto':'no-hide-descendants'} style={[active===null?{flex:1}:StyleSheet.absoluteFill,listMotion]}>
 
-        <BlurTargetView ref={listBlurTarget} style={{ flex: 1 }}><FlashList ref={listScroll} testID="help-ticket-list" data={visible} keyExtractor={item=>String(item.id)} extraData={[listDrafts,service.typingByTicket]} style={{backgroundColor:c.background}} keyboardShouldPersistTaps="handled" contentContainerStyle={{paddingTop:active===null?listHeaderHeight:retainedListHeight.current,paddingBottom:100}} drawDistance={300}
+        <BlurTargetView ref={listBlurTarget} style={{ flex: 1 }}><FlashList ref={listScroll} testID="help-ticket-list" data={visible} keyExtractor={item=>String(item.id)} extraData={[listDrafts,service.typingByTicket]} style={{backgroundColor:c.background}} keyboardShouldPersistTaps="handled" contentContainerStyle={{paddingTop:listSceneHeaderHeight,paddingBottom:100}} drawDistance={300}
           onScroll={e=>helpDevState({listScrollY:e.nativeEvent.contentOffset.y})} scrollEventThrottle={160}
           onEndReachedThreshold={.5} onEndReached={()=>{if(active!==null||!service.hasMore||service.loading||listPaging.current)return;listPaging.current=true;void service.loadTickets(filter,scope,true,search.trim()).finally(()=>{listPaging.current=false;});}}
           ListEmptyComponent={<View style={{ alignItems: 'center', justifyContent:'center', minHeight:service.loading?300:undefined, padding: 35, gap: 12 }}>{service.loading ? <View testID="help-chats-loading" accessibilityRole="progressbar" accessibilityLabel="Загрузка чатов" style={{alignItems:'center',gap:14}}><ActivityIndicator size="large" color={c.accent}/><Text accessibilityLiveRegion="polite" style={{color:c.muted,fontSize:14}}>Загружаем чаты…</Text></View> : <><Ionicons name={filter === 'CLOSED' ? 'archive-outline' : 'chatbubbles-outline'} color={c.muted} size={38} /><Text style={{ color: c.text, fontSize: 16, fontWeight: '600' }}>{search ? 'Ничего не найдено' : filter === 'CLOSED' ? 'Закрытых обращений пока нет' : 'Расскажите, чем помочь'}</Text><Text style={{ color: c.muted, textAlign: 'center', fontSize: 13 }}>{search ? 'Попробуйте другой запрос' : 'Ваши сообщения и вложения увидят специалисты IT.'}</Text></>}</View>}
           ListFooterComponent={null}
           renderItem={({item})=><TicketRow ticket={item} draft={listDrafts[item.id]} typing={service.typingByTicket[item.id]} onPress={()=>{void open(item.id);}} onMenu={()=>{Keyboard.dismiss();setOverlay({kind:'row',ticket:item});}}/>}
-        /></BlurTargetView><View testID="help-list-header-overlay" onLayout={event=>{if(active===null)setListHeaderHeight(event.nativeEvent.layout.height);}} style={{position:'absolute',top:0,left:0,right:0,zIndex:2}}><View pointerEvents="none" style={StyleSheet.absoluteFill}><View style={[StyleSheet.absoluteFill,{backgroundColor:c.background}]}/></View>{listHeader}</View><View style={{ position: 'absolute', bottom: 0, left: 0, right: 0 }}><HelpDock target={active===null?listBlurTarget:undefined}><View style={{ paddingHorizontal: HELP_LIST_INSET - 8 }}><HelpPrimaryButton text="Новое обращение" onPress={() => newTicket()} /></View></HelpDock></View>
-      </View> : null}
-      {active !== null ? <HelpChatEntry key={`${service.userId}:${active}`} ref={chatEntry} ready={active==='new'||timelineReady} backgroundColor={c.background} onEntered={()=>{setEntrySettled(true);setRetainList(false);helpDevEvent('chat.open.transitionFinished',{ticketId:typeof active==='number'?active:null,finishedAt:Date.now()});}} onLayout={event=>setChatViewportHeight(event.nativeEvent.layout.height)}>
+        /></BlurTargetView><View testID="help-list-header-overlay" onLayout={event=>{if(active===null){setListHeaderHeight(event.nativeEvent.layout.height);setListSceneHeaderHeight(event.nativeEvent.layout.height);}}} style={{position:'absolute',top:0,left:0,right:0,zIndex:2}}><View pointerEvents="none" style={StyleSheet.absoluteFill}><View style={[StyleSheet.absoluteFill,{backgroundColor:c.background}]}/></View>{listHeader}</View><View style={{ position: 'absolute', bottom: 0, left: 0, right: 0 }}><HelpDock target={active===null?listBlurTarget:undefined}><View style={{ paddingHorizontal: HELP_LIST_INSET - 8 }}><HelpPrimaryButton text="Новое обращение" onPress={() => newTicket()} /></View></HelpDock></View>
+      </Reanimated.View>
+      {active !== null ? <HelpChatEntry key={`${service.userId}:${active}`} ref={chatEntry} progress={chatProgress} ready={active==='new'||timelineReady} backgroundColor={c.background} onEntered={()=>{setEntrySettled(true);helpDevEvent('chat.open.transitionFinished',{ticketId:typeof active==='number'?active:null,finishedAt:Date.now()});}} onLayout={event=>setChatViewportHeight(event.nativeEvent.layout.height)}>
         <View testID="help-chat-visible-viewport" style={boundedChat?{position:'absolute',top:0,left:0,right:0,bottom:dockHeight+imeInset,overflow:'hidden'}:{flex:1}}><BlurTargetView ref={blurTarget} style={{ flex: 1 }}>
           <HelpTimeline key={`${service.userId}:${active}`} onReady={()=>{setTimelineReady(true);chatEntry.current?.reveal();}} ref={scroll} messages={messages} nativeID={nativeScrollId} headerHeight={listHeaderHeight} dockHeight={boundedChat?0:dockHeight+imeInset}
             navigationTarget={service.navigationTarget} firstUnreadSequence={service.firstUnreadSequence} hasOlder={service.hasOlder} hasNewer={service.hasNewer}

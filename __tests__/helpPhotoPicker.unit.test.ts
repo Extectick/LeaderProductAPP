@@ -36,7 +36,13 @@ jest.mock('../src/features/help/helpDiagnostics',()=>({helpDevActions:()=>()=>{}
 jest.mock('../src/features/help/components/HelpPhotoCamera',()=>({HelpPhotoCamera:'HelpPhotoCamera'}));
 jest.mock('../src/features/help/components/HelpPhotoPreview',()=>({HelpPhotoPreview:'HelpPhotoPreview'}));
 jest.mock('../src/features/help/components/HelpNativeInput',()=>({hasNativeHelpInput:false,HelpNativeInput:'HelpNativeInput'}));
-import {HelpPhotoPicker} from '../src/features/help/components/HelpPhotoPicker';
+import {HelpPhotoPicker,helpPhotoSheetMaximumHeight} from '../src/features/help/components/HelpPhotoPicker';
+
+test('photo sheet keeps the same available height with overlay and resized Android keyboards',()=>{
+  expect(helpPhotoSheetMaximumHeight(800,24,0,500)).toBe(368);
+  expect(helpPhotoSheetMaximumHeight(500,24,0,500)).toBe(368);
+  expect(helpPhotoSheetMaximumHeight(800,24,20,null)).toBe(648);
+});
 import type {HelpLibraryPhoto} from '../src/features/help/helpPhotoLibrary';
 import type {HelpLocalFile} from '../src/features/help/components/HelpComposer';
 

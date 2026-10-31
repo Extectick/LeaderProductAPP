@@ -3,6 +3,12 @@ import TestRenderer, { act } from 'react-test-renderer';
 import { BackHandler, KeyboardAvoidingView, Modal, PanResponder, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput } from 'react-native';
 import type { HelpDetail, HelpTicket } from '../src/features/help/helpApi';
 
+jest.mock('react-native-reanimated',()=>({
+  __esModule:true,default:{View:require('react-native').View},cancelAnimation:jest.fn(),runOnJS:(fn:any)=>fn,
+  useSharedValue:(value:number)=>require('react').useRef({value}).current,
+  useAnimatedStyle:(fn:()=>any)=>Object.defineProperties({},Object.fromEntries(Object.keys(fn()).map(key=>[key,{enumerable:true,get:()=>fn()[key]}]))),
+  withTiming:(value:number,_config:any,done?:any)=>{done?.(true);return value;},Easing:{out:(fn:any)=>fn,cubic:(x:number)=>x},
+}));
 const mockRouter = { replace: jest.fn(), dismissTo: jest.fn() };
 jest.mock('@shopify/flash-list',()=>{
   const React=require('react'),{ScrollView}=require('react-native');
@@ -108,6 +114,16 @@ describe('Help screen integration with service boundary', () => {
     expect(screen.root.findAllByType(Text).some(node=>node.props.children==='Поддержка')).toBe(false);
     await act(async()=>button('Назад').props.onPress());
     expect(mockRouter.dismissTo).toHaveBeenCalledWith('/services');expect(mockRouter.replace).not.toHaveBeenCalled();
+  });
+  test('the same list instance survives opening, entry completion and returning from a chat',async()=>{
+    mockService.tickets=[ticket];await render();
+    const list=screen.root.findByProps({testID:'help-ticket-list'});
+    await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());
+    await act(async()=>mockTimelineProps.onReady());
+    expect(screen.root.findByProps({testID:'help-ticket-list'})).toBe(list);
+    await act(async()=>button('Назад').props.onPress());
+    expect(screen.root.findByProps({testID:'help-ticket-list'})).toBe(list);
+    expect(screen.root.findAllByProps({testID:'help-chat-viewport'})).toHaveLength(0);
   });
   function button(label:string){return screen.root.findAll(node=>node.props.accessibilityLabel===label && typeof node.props.onPress==='function')[0];}
   function composer(){return screen.root.findByType('HelpComposer' as any);}
@@ -227,7 +243,7 @@ describe('Help screen integration with service boundary', () => {
     await act(async()=>button('Показать мои обращения').props.onPress());
     expect(mockService.loadTickets).toHaveBeenLastCalledWith('OPEN','mine',false,'');
     expect(StyleSheet.flatten(screen.root.findByProps({testID:'help-list-header-overlay'}).props.style)).toMatchObject({position:'absolute',top:0});
-    expect(screen.root.findByProps({testID:'help-ticket-list'}).props.contentContainerStyle.paddingTop).toBe(100);
+    expect(screen.root.findByProps({testID:'help-ticket-list'}).props.contentContainerStyle.paddingTop).toBe(68);
   });
   test('header search stays connected when archive toggles and can be cleared',async()=>{
     await render();
@@ -474,12 +490,12 @@ describe('Help screen integration with service boundary', () => {
     await act(async()=>mockTimelineProps.onStickyDateChange(date));
     const overlay=()=>screen.root.findByProps({testID:'help-sticky-date-overlay'});
     const initialTop=StyleSheet.flatten(overlay().props.style).top;
-    expect(initialTop).toBe(88);expect(initialTop-(100-16)).toBe(4);
+    expect(initialTop).toBe(56);expect(initialTop-(68-16)).toBe(4);
     let ancestor=overlay().parent;while(ancestor){expect(ancestor.type).not.toBe('BlurTargetView');ancestor=ancestor.parent;}
     const chip=overlay().findAllByProps({testID:'help-date-jump'}).find(node=>node.props.accessibilityRole==='button')!;
     expect(StyleSheet.flatten(chip.props.style({pressed:false})).minHeight).toBe(24);expect(chip.props.hitSlop).toEqual({bottom:20,left:10,right:10});
     await act(async()=>chip.props.onPress());expect(mockTimelineDateJump).toHaveBeenCalledWith(date);
-    await act(async()=>screen.root.findByProps({testID:'help-chat-header-overlay'}).props.onLayout({nativeEvent:{layout:{height:144}}}));
+    await act(async()=>screen.root.findByProps({testID:'help-chat-header-overlay'}).props.onLayout({nativeEvent:{layout:{height:112}}}));
     expect(StyleSheet.flatten(overlay().props.style).top).toBe(initialTop+44);
     await act(async()=>mockTimelineProps.onStickyDateChange(null));expect(screen.root.findAllByProps({testID:'help-sticky-date-overlay'})).toHaveLength(0);
   });
@@ -509,7 +525,7 @@ describe('Help screen integration with service boundary', () => {
   test('chat uses the shared header, keeps IT in its menu, and excludes the header from the recording area',async()=>{
     await openWithMessage();expect(button('Подключить IT')).toBeUndefined();
     expect(button('Действия с обращением')).toBeDefined();
-    expect(screen.root.findByProps({testID:'help-search-surface'}).findAll(node=>node.props.accessibilityLabel==='Действия с обращением')).toHaveLength(0);
+    expect(screen.root.findByProps({testID:'help-chat-header-overlay'}).findByProps({testID:'help-search-surface'}).findAll(node=>node.props.accessibilityLabel==='Действия с обращением')).toHaveLength(0);
     await act(async()=>button('Действия с обращением').props.onPress());
     expect(screen.root.findAllByType(Text).some(node=>node.props.children==='Подключить IT')).toBe(true);
     expect(StyleSheet.flatten(screen.root.findByProps({testID:'help-chat-header-overlay'}).props.style)).toMatchObject({position:'absolute',top:0});
@@ -518,7 +534,7 @@ describe('Help screen integration with service boundary', () => {
     await act(async()=>screen.update(React.createElement(HelpScreen)));
     await act(async()=>bubble().props.onReply());
     await act(async()=>screen.root.findByProps({testID:'help-chat-viewport'}).props.onLayout({nativeEvent:{layout:{height:600}}}));
-    expect(composer().props.recordingAreaHeight).toBe(444);
+    expect(composer().props.recordingAreaHeight).toBe(476);
     expect(composer().props.quote.thumbnail).toEqual(thumbnail);expect(composer().props.resolve).toBe(mockService.mediaSource);
   });
   test('voice send keeps reply target and clears quote only after success',async()=>{
