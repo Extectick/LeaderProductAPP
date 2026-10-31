@@ -1,4 +1,5 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {HelpVisualEffectsContext} from '../helpVisualEffects';
 import { Animated, Image, Keyboard, Modal, PanResponder, Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -22,12 +23,13 @@ export function HelpAvatar({ id, name, uri, size = 34, muted = false }: { id: nu
 /** One blur pass with a continuous alpha mask; no horizontal strip layers. */
 export function HelpBlurSurface({target,edge='top'}:{target?:React.RefObject<View|null>;edge?:'top'|'bottom'}) {
   const c=useHelpTheme();
+  const enabled=useContext(HelpVisualEffectsContext);
   const [laidOut,setLaidOut]=useState(false);
   const [boundTarget,setBoundTarget]=useState<React.RefObject<View|null>|undefined>();
   // Refs are populated after render and may be reused when switching list/chat.
   // Give Expo an immutable target snapshot so it can detect a replaced native view.
   useLayoutEffect(()=>{
-    if(Platform.OS!=='android')return;
+    if(Platform.OS!=='android'||!enabled)return;
     let active=true;let frame:number|undefined;
     const bind=()=>{
       if(!active)return;
@@ -38,10 +40,11 @@ export function HelpBlurSurface({target,edge='top'}:{target?:React.RefObject<Vie
     bind();
     return()=>{active=false;if(frame!==undefined)cancelAnimationFrame(frame);};
   });
-  const ready=Platform.OS!=='android'||(laidOut&&Boolean(boundTarget?.current));
+  const ready=enabled&&(Platform.OS!=='android'||(laidOut&&Boolean(boundTarget?.current)));
   const feather=edge==='top' ? 40 : 24;
   const direction=edge==='top' ? 'to bottom' : 'to top';
   const mask=`linear-gradient(${direction}, transparent 0, #00000018 ${feather*.25}px, #00000080 ${feather*.6}px, #000 ${feather}px)`;
+  if(!enabled)return null;
   if(Platform.OS==='web')return <View style={[StyleSheet.absoluteFill,{backdropFilter:'blur(10px)',WebkitBackdropFilter:'blur(10px)',maskImage:mask,WebkitMaskImage:mask} as any]}/>;
   return <MaskedView testID="help-blur-surface" onLayout={event=>setLaidOut(event.nativeEvent.layout.width>0&&event.nativeEvent.layout.height>0)} style={StyleSheet.absoluteFill} maskElement={<View style={{flex:1,flexDirection:edge==='top' ? 'column' : 'column-reverse'}}><LinearGradient colors={edge==='top' ? ['#00000000','#00000018','#00000080','#000000'] : ['#000000','#00000080','#00000018','#00000000']} locations={edge==='top' ? [0,.25,.6,1] : [0,.4,.75,1]} style={{height:feather}}/><View style={{flex:1,backgroundColor:'#000'}}/></View>}>
     {ready ? <BlurView blurTarget={Platform.OS==='android' ? boundTarget : target} blurMethod="dimezisBlurViewSdk31Plus" noiseEnabled={false} frameClearColor={c.background} intensity={30} tint={c.dark ? 'dark' : 'light'} style={StyleSheet.absoluteFill}/> : <View testID="help-blur-preparing" style={[StyleSheet.absoluteFill,{backgroundColor:c.background}]}/>}
@@ -69,10 +72,24 @@ export function HelpSheet({ title, children, onClose, scrollOffset = 0 }: { titl
   const c = useHelpTheme(); const reduced=useHelpReducedMotion(); const insets = useSafeAreaInsets(); const y = useRef(new Animated.Value(260)).current;
   const callbacks=useRef({onClose,reduced});callbacks.current={onClose,reduced};
   useEffect(()=>{Animated.timing(y,{toValue:0,duration:reduced ? 0 : 180,useNativeDriver:true}).start();},[reduced]);
-  const close = () => Animated.timing(y, { toValue: 700, duration: callbacks.current.reduced ? 0 : 180, useNativeDriver: true }).start(()=>callbacks.current.onClose());
+  const closing=useRef(false),sheetHeight=useRef(700);
+  const close = () => {
+    if(closing.current)return;
+    closing.current=true;y.stopAnimation();
+    Animated.timing(y,{toValue:sheetHeight.current,duration:callbacks.current.reduced?0:180,useNativeDriver:true}).start(({finished})=>{if(finished)callbacks.current.onClose();});
+  };
+  useEffect(()=>()=>y.stopAnimation(),[y]);
   const offset = useRef(scrollOffset); offset.current = scrollOffset;
-  const pan = useRef(PanResponder.create({ onMoveShouldSetPanResponder: (_, g) => offset.current <= 0 && g.dy > 12 && Math.abs(g.dy) > Math.abs(g.dx) * 1.5, onPanResponderMove: (_, g) => y.setValue(Math.max(0, g.dy)), onPanResponderRelease: (_, g) => g.dy > 90 || g.vy > 1.1 ? close() : Animated.spring(y, { toValue: 0, useNativeDriver: true, damping: 22 }).start() })).current;
-  return <Modal transparent animationType="none" onRequestClose={close} statusBarTranslucent><View style={{flex:1,justifyContent:'flex-end',backgroundColor:'#00000057'}}><Pressable accessibilityLabel="Закрыть" onPress={close} style={StyleSheet.absoluteFill}/><Animated.View testID="help-sheet-surface" {...pan.panHandlers} style={{minHeight:260,backgroundColor:c.dark ? c.panel : c.headerSurface,borderTopLeftRadius:22,borderTopRightRadius:22,paddingHorizontal:18,paddingBottom:Math.max(24,insets.bottom+16),transform:[{translateY:y}]}}><View style={{height:30,alignItems:'center',justifyContent:'center'}}><View style={{width:42,height:5,borderRadius:3,backgroundColor:'#C9C9C4'}}/></View><View style={{flexDirection:'row',alignItems:'center',paddingBottom:14,minHeight:36}}><Text style={{flex:1,color:c.text,fontSize:18,fontWeight:'900',paddingRight:34}}>{title}</Text><HelpIcon name="close-outline" label="Закрыть" onPress={close} size={22} style={{position:'absolute',right:-6,top:-7}}/></View>{children}</Animated.View></View></Modal>;
+  const restore=()=>Animated.spring(y,{toValue:0,useNativeDriver:true,damping:24,stiffness:240,mass:1}).start();
+  const wantsDrag=(_:unknown,g:any)=>!closing.current&&offset.current<=0&&g.dy>8&&g.dy>Math.abs(g.dx)*1.5;
+  const pan=useRef(PanResponder.create({
+    onMoveShouldSetPanResponder:wantsDrag,onMoveShouldSetPanResponderCapture:wantsDrag,
+    onPanResponderGrant:()=>y.stopAnimation(),
+    onPanResponderMove:(_,g)=>y.setValue(Math.max(0,g.dy)),
+    onPanResponderRelease:(_,g)=>g.dy>90||g.dy>16&&g.vy>1.1?close():restore(),
+    onPanResponderTerminate:restore,onPanResponderTerminationRequest:()=>false,
+  })).current;
+  return <Modal transparent animationType="none" onRequestClose={close} statusBarTranslucent><View style={{flex:1,justifyContent:'flex-end',backgroundColor:'#00000057'}}><Pressable accessibilityLabel="Закрыть" onPress={close} style={StyleSheet.absoluteFill}/><Animated.View testID="help-sheet-surface" onLayout={e=>{sheetHeight.current=e.nativeEvent.layout.height+insets.bottom;}} {...pan.panHandlers} style={{minHeight:260,backgroundColor:c.dark ? c.panel : c.headerSurface,borderTopLeftRadius:22,borderTopRightRadius:22,paddingHorizontal:18,paddingBottom:Math.max(24,insets.bottom+16),transform:[{translateY:y}]}}><View style={{height:30,alignItems:'center',justifyContent:'center'}}><View style={{width:42,height:5,borderRadius:3,backgroundColor:'#C9C9C4'}}/></View><View style={{flexDirection:'row',alignItems:'center',paddingBottom:14,minHeight:36}}><Text style={{flex:1,color:c.text,fontSize:18,fontWeight:'900',paddingRight:34}}>{title}</Text><HelpIcon name="close-outline" label="Закрыть" onPress={close} size={22} style={{position:'absolute',right:-6,top:-7}}/></View>{children}</Animated.View></View></Modal>;
 }
 export function HelpTyping({ text, users, color, compact=false }: { text?: string; users?: readonly HelpTypingUser[]; color?: string; compact?:boolean }) {
   const c=useHelpTheme(); const reduced=useHelpReducedMotion(); const phases=useRef([0,1,2].map(()=>new Animated.Value(0))).current;

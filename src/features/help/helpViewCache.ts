@@ -12,10 +12,18 @@ export function helpViewCache(identity: string): ViewCache {
   return cache;
 }
 /** Keep references for unchanged rows/cells, including quiet socket repairs. */
+function sameHelpValue(a: unknown, b: unknown): boolean {
+  if(a===b)return true;
+  if(!a||!b||typeof a!=='object'||typeof b!=='object')return false;
+  if(Array.isArray(a)!==Array.isArray(b))return false;
+  const left=a as Record<string,unknown>,right=b as Record<string,unknown>;
+  const keys=Object.keys(left),otherKeys=Object.keys(right);
+  return keys.length===otherKeys.length&&keys.every(key=>Object.prototype.hasOwnProperty.call(right,key)&&sameHelpValue(left[key],right[key]));
+}
 export function shareHelpItems<T extends {id: number}>(previous: T[], incoming: T[]): T[] {
   if(previous===incoming || !previous.length)return incoming;
   const byId = new Map(previous.map(item=>[item.id,item]));
-  const next = incoming.map(item=>{const old=byId.get(item.id);return old && (old===item || JSON.stringify(old)===JSON.stringify(item)) ? old : item;});
+  const next = incoming.map(item=>{const old=byId.get(item.id);return old && sameHelpValue(old,item) ? old : item;});
   return next.length===previous.length && next.every((item,index)=>item===previous[index]) ? previous : next;
 }
 export function rememberHelpWindow(identity: string, window: HelpViewWindow) {

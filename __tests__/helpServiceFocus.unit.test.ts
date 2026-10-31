@@ -9,7 +9,7 @@ jest.mock('../src/features/help/helpSocket',()=>({createHelpSocket:()=>({disconn
 jest.mock('../src/features/help/helpAccountSync',()=>({acquireHelpAccount:()=>({getSocket:()=>null,release:jest.fn(),refresh:jest.fn(async()=>{}),syncTicket:jest.fn(async()=>{})})}));
 jest.mock('../src/features/help/helpOutbox',()=>({dispatchHelpPending:jest.fn()}));
 jest.mock('../src/features/help/helpDiagnostics',()=>({helpDevEvent:jest.fn()}));
-const mockApi={config:jest.fn(),list:jest.fn(),detail:jest.fn(),read:jest.fn(),sync:jest.fn(),messages:jest.fn(),search:jest.fn()};
+const mockApi={config:jest.fn(),list:jest.fn(),detail:jest.fn(),read:jest.fn(),sync:jest.fn(),messages:jest.fn(),search:jest.fn(),react:jest.fn()};
 jest.mock('../src/features/help/helpApi',()=>({createHelpApi:()=>mockApi,HelpApiError:class extends Error {},loadHelpMedia:jest.fn(),uploadHelpFiles:jest.fn()}));
 jest.mock('../src/features/help/helpStorage',()=>({readHelpPending:jest.fn(async()=>[]),readLastCreatedOperation:jest.fn(async()=>null),subscribeHelpOutbox:jest.fn(()=>()=>{}),getHelpDraft:jest.fn(),setHelpDraft:jest.fn()}));
 jest.mock('../src/features/help/helpHistory',()=>({
@@ -55,5 +55,46 @@ describe('Help read cursor respects route focus',()=>{
     let request:Promise<unknown>;await act(async()=>{request=service.openTicket(7);});
     await focus(false);await act(async()=>{resolve(detail);await request;});
     expect(mockApi.read).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('Help optimistic reactions',()=>{
+  let screen:TestRenderer.ReactTestRenderer;
+  const original={id:1,ticketId:7,sequence:1,reactions:[{emoji:'👍',mine:false,count:1,userIds:[9]}]};
+  const response=(reactions:any[])=>({...detail,messages:[{...original,reactions}]});
+  beforeEach(()=>{
+    const cache=helpViewCache('https://dev.example.test:5:true');cache.lists.clear();cache.windows.clear();
+    mockApi.config.mockResolvedValue({canManage:false});mockApi.list.mockResolvedValue({tickets:[],nextCursor:null});
+    mockApi.detail.mockResolvedValue(response(original.reactions));mockApi.react.mockReset();
+    require('../src/features/help/helpHistory').readCachedHelpRange.mockResolvedValue([original]);
+  });
+  afterEach(async()=>{if(screen)await act(async()=>screen.unmount());});
+  async function open(){await act(async()=>{screen=TestRenderer.create(React.createElement(Harness,{focused:true}));});await act(async()=>{await service.openTicket(7);});}
+  test('reacts before HTTP completes, preserves other users and never locks the composer',async()=>{
+    await open();let done!:(value:any)=>void;mockApi.react.mockReturnValueOnce(new Promise(resolve=>{done=resolve;}));
+    let request!:Promise<unknown>;await act(async()=>{request=service.toggleReaction(service.messages[0],'👍');});
+    expect(service.messages[0].reactions).toEqual([{emoji:'👍',mine:true,count:2,userIds:[9,5]}]);expect(service.busy).toBe(false);
+    await act(async()=>{done(response(service.messages[0].reactions));await request;});
+    expect(mockApi.react).toHaveBeenCalledWith(1,'👍',false);expect(service.messages[0].reactions[0].mine).toBe(true);
+  });
+  test('two fast taps show the final choice immediately and send ordered explicit states',async()=>{
+    await open();let first!:(value:any)=>void,second!:(value:any)=>void;
+    mockApi.react.mockReturnValueOnce(new Promise(resolve=>{first=resolve;})).mockReturnValueOnce(new Promise(resolve=>{second=resolve;}));
+    let a!:Promise<unknown>,b!:Promise<unknown>;await act(async()=>{a=service.toggleReaction(service.messages[0],'👍');b=service.toggleReaction(service.messages[0],'👍');});
+    expect(service.messages[0].reactions).toEqual(original.reactions);expect(mockApi.react).toHaveBeenCalledTimes(1);
+    await act(async()=>{first(response([{emoji:'👍',mine:true,count:2,userIds:[9,5]}]));await a;});
+    expect(service.messages[0].reactions).toEqual(original.reactions);expect(mockApi.react).toHaveBeenLastCalledWith(1,'👍',true);
+    await act(async()=>{second(response(original.reactions));await b;});expect(service.messages[0].reactions).toEqual(original.reactions);
+  });
+  test('a failed request restores the reaction while preserving typed-message availability',async()=>{
+    await open();mockApi.react.mockRejectedValueOnce(new Error('Reaction failed'));
+    await act(async()=>{await expect(service.toggleReaction(service.messages[0],'👍')).rejects.toThrow('Reaction failed');});
+    expect(service.messages[0].reactions).toEqual(original.reactions);expect(service.busy).toBe(false);expect(service.error).toBe('Reaction failed');
+  });
+  test('a reaction outside the returned history window remains visible after confirmation',async()=>{
+    await open();mockApi.react.mockResolvedValueOnce({...detail,messages:[]});
+    await act(async()=>{await service.toggleReaction(service.messages[0],'👍');});
+    expect(service.messages[0].reactions).toEqual([{emoji:'👍',mine:true,count:2,userIds:[9,5]}]);
   });
 });

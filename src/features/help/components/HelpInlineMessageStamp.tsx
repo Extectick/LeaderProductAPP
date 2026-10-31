@@ -9,10 +9,12 @@ const label = (time: string, edited = false) => `${edited ? 'изменено ' 
  * paint. The nonbreaking suffix wraps as one unit and the receipt slot fits
  * both delivery icons and the sending/error indicator. */
 export function HelpMessageStampReserve({ time, edited }: { time: string; edited?: boolean }) {
-  return <Text testID="help-message-stamp-reserve" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[timeStyle, { color: 'transparent' }]}>
-    {'\u2002\u2002'}{label(time, edited).replace(/ /g, '\u00a0')}{'\u00a0'}
-    <Text allowFontScaling={false} maxFontSizeMultiplier={1} style={{ fontSize: 15, lineHeight: 21 }}>{'\u2003\u2060\u2009\u2060'}</Text>
-  </Text>;
+  // Android can reuse the surrounding foreground span for transparent nested
+  // glyphs. An inline view keeps the measured suffix while hiding its entire
+  // rendering layer, so only HelpInlineMessageStamp paints the timestamp.
+  return <View testID="help-message-stamp-reserve" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{opacity:0,flexDirection:'row',alignItems:'center',height:21}}>
+    <Text style={timeStyle}>{'\u2002\u2002'}{label(time, edited).replace(/ /g, '\u00a0')}{'\u00a0'}</Text><View style={{width:18}}/>
+  </View>;
 }
 
 export function HelpInlineMessageStamp({ time, edited, status, reduced, muted, receiptColor, danger, onRetry }: {

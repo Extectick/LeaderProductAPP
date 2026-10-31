@@ -22,7 +22,7 @@ test.each(['123', 'Длинный текст, который занимает н
     const node = (testID: string) => view.root.findAllByProps({ testID })[0];
     expect(node('help-message-text').props.onTextLayout).toBeUndefined();
     expect(node('help-text-layout').props.onLayout).toBeUndefined();
-    expect(node('help-message-stamp-reserve')).toBeDefined();
+    expect(StyleSheet.flatten(node('help-message-stamp-reserve').props.style).opacity).toBe(0);
     expect(StyleSheet.flatten(node('help-message-time').props.style)).toMatchObject({ position: 'absolute', right: 11, bottom: 8 });
     await act(async () => view.update(React.createElement(HelpMessageBubble, { ...props, message: { ...message, text }, readByOthers: true })));
     expect(StyleSheet.flatten(node('help-message-time').props.style)).toMatchObject({ position: 'absolute', right: 11, bottom: 8 });

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View, type LayoutChangeEvent } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Reanimated, { cancelAnimation, Easing as ResizeEasing, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
@@ -16,7 +16,17 @@ export function HelpAssistantPreviewMenu({ preview, ticketId, onClose }: { previ
   return <View style={{ gap: 3, marginBottom: 12 }}><Text style={{ color: c.muted, fontSize: 12, marginBottom: 6 }}>Режим ответа ИИ · для следующего сообщения</Text>{options.map(([value, label]) => <Pressable key={value} accessibilityRole="radio" accessibilityState={{ checked: preview.scenario === value }} onPress={() => { preview.setScenario(value); onClose(); }} style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10 }}><Ionicons name={preview.scenario === value ? 'radio-button-on' : 'radio-button-off'} size={20} color={preview.scenario === value ? c.accentText : c.muted}/><Text style={{ color: c.text, fontSize: 14 }}>{label}</Text></Pressable>)}{ticketId !== undefined && <Pressable accessibilityRole="button" onPress={() => { preview.replay(ticketId); onClose(); }} style={{ minHeight: 44, justifyContent: 'center' }}><Text style={{ color: c.accentText, fontSize: 14 }}>Повторить последний сценарий ИИ</Text></Pressable>}</View>;
 }
 
-export function HelpAssistantMessage({ message, onRetry, onConnectOnec }: { message: HelpMessage; onRetry?: () => void; onConnectOnec?: () => void }) {
+type MessageProps = {message: HelpMessage; onRetry?: () => void; onConnectOnec?: () => void};
+export function HelpAssistantMessage(props: MessageProps) {
+  const latest=useRef(props);latest.current=props;
+  const canRetry=Boolean(props.onRetry),canConnect=Boolean(props.onConnectOnec);
+  const actions=useMemo(()=>({
+    onRetry:canRetry?()=>latest.current.onRetry?.():undefined,
+    onConnectOnec:canConnect?()=>latest.current.onConnectOnec?.():undefined,
+  }),[canRetry,canConnect]);
+  return <MemoHelpAssistantMessage {...props} {...actions}/>;
+}
+const MemoHelpAssistantMessage = memo(function HelpAssistantMessageBody({ message, onRetry, onConnectOnec }: MessageProps) {
   const c = useHelpTheme(), reduced = useHelpReducedMotion(), run = message.assistantRun!;
   const active = run.status === 'thinking' || run.status === 'streaming';
   const showRetry = Boolean(message.text) && run.status === 'stopped' && run.stopReason !== 'superseded';
@@ -100,4 +110,4 @@ export function HelpAssistantMessage({ message, onRetry, onConnectOnec }: { mess
       {Boolean(message.text) && <Reanimated.View testID="help-assistant-time" pointerEvents="none" style={[{ position: 'absolute', right: 12, ...(hasMeasured ? { top: 0 } : { bottom: 12 + (showRetry ? 44 : 0) }) }, stampStyle]}><Text style={{ color: c.muted, fontSize: 10, lineHeight: 12, fontVariant: ['tabular-nums'] }}>{helpTime(message.createdAt)}</Text></Reanimated.View>}
     </Reanimated.View>
   </View>;
-}
+});

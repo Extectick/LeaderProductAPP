@@ -130,6 +130,9 @@ export default function ServicesLayout() {
           const name = (route as any)?.routeName || (route.name as string);
           let meta = headerMap[name as keyof typeof headerMap];
           const currentPath = String(pathname || '').split('?')[0];
+          // Options also run for the outgoing scene. Help owns its header even
+          // after pathname has changed back to the catalogue during transition.
+          const isHelpScreen = /^help(?:\/|$)/.test(name);
           const isCatalogPath = /^\/services\/?$/.test(currentPath);
 
           const isAppeals = name?.includes('appeals');
@@ -252,7 +255,7 @@ export default function ServicesLayout() {
 
           return {
             // Tracking owns a safe-area-aware toolbar above the map.
-            headerShown: !clientOrdersHeaderHidden && !showTrackingBottomSlot && !/^\/services\/(stock_balances|help)(?:\/.*)?$/.test(currentPath),
+            headerShown: !clientOrdersHeaderHidden && !showTrackingBottomSlot && !isHelpScreen && !/^\/services\/stock_balances(?:\/.*)?$/.test(currentPath),
             headerTransparent: true,
             headerShadowVisible: false,
             headerStatusBarHeight: 0,

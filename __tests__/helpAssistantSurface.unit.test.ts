@@ -8,7 +8,7 @@ jest.mock('../src/features/help/helpDiagnostics', () => ({ helpDevState: jest.fn
 jest.mock('react-native-reanimated', () => ({
   __esModule: true, default: { View: require('react-native').View },
   useSharedValue: (value: number) => require('react').useRef({ value }).current,
-  useAnimatedStyle: (fn: () => unknown) => fn(), cancelAnimation: jest.fn(),
+  useAnimatedStyle: (fn: () => any) => Object.defineProperties({},Object.fromEntries(Object.keys(fn()).map(key=>[key,{enumerable:true,get:()=>fn()[key]}]))), cancelAnimation: jest.fn(),
   runOnJS: (fn: (...args: unknown[]) => unknown) => fn,
   withTiming: jest.fn((value: number) => value),
   Easing: { out: (fn: unknown) => fn, quad: () => 0 },

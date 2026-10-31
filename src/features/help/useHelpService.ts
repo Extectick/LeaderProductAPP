@@ -1,3 +1,4 @@
+import {withHelpReaction} from './helpReactions';
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, Platform } from 'react-native';
 import { AuthContext } from '@/context/AuthContext';
@@ -87,7 +88,17 @@ export function useHelpService(isFocused = true) {
   const liveTicketRefresh = useRef<(id: number)=>Promise<void>>(async()=>{});
   const current = useCallback((scope: string) => mounted.current && identityRef.current === scope, []);
   const report = useCallback((e: unknown) => {if(isHelpConnectionIssue(e)){setConnectionIssue(true);return;}setError(e instanceof Error ? e.message : 'Не удалось выполнить действие');}, []);
-  const updateMessages=useCallback((next:HelpMessage[])=>{const shared=shareHelpItems(messagesRef.current,next);messagesRef.current=shared;setMessages(shared);},[]);
+  const reactionWork=useRef(new Map<string,{targets:Map<string,{mine:boolean;revision:number}>;chain:Promise<unknown>;base:HelpMessage['reactions']}>());
+  const reactionRevision=useRef(0);
+  const updateMessages=useCallback((next:HelpMessage[])=>{
+    const overlaid=next.map(message=>{
+      const work=reactionWork.current.get(identity+':'+message.ticketId+':'+message.id);
+      if(!work)return message;
+      for(const [emoji,target] of work.targets)message=withHelpReaction(message,emoji,target.mine,userId);
+      return message;
+    });
+    const shared=shareHelpItems(messagesRef.current,overlaid);messagesRef.current=shared;setMessages(shared);
+  },[identity,userId]);
   const issueNavigation=useCallback((target:Omit<HelpNavigationTarget,'key'>)=>setNavigationTarget({...target,key:++navigationKey.current}),[]);
   const applyPage=useCallback((page:HelpHistoryPage,mode:'replace'|'older'|'newer'='replace')=>{
     const old=pageRef.current,merged=mode==='replace'?page.messages:mergeHelpMessages(messagesRef.current,page.messages);
@@ -280,6 +291,7 @@ export function useHelpService(isFocused = true) {
     mounted.current = true; clearSelection();viewIdentity.current=identity;setTickets(helpViewCache(identity).lists.get(helpListCacheKey('OPEN','mine'))??[]);setCanManage(false);setAiEnabled(false);setConnectionIssue(false);setPendingMessages([]);setLastCreatedOperation(null); setBusy(false); setPendingCount(0); setError(null);
     replaying.current=null;queuedReplay.current=false;
     targetedRequests.current.clear();targetedAgain.current.clear();
+    reactionWork.current.clear();
     const account = identity;
     if (!userId || !auth?.isAuthenticated) return;
     const updateOutbox=()=>{void readLastCreatedOperation(userId).then(mapping=>{if(current(account))setLastCreatedOperation(mapping);}).catch(report);const id=activeId.current;if(id){void committedRef.current(id).catch(report);return;}void readHelpPending(userId).then(items=>{if(current(account)){setPendingCount(items.length);setPendingMessages(items);}}).catch(e=>{if(current(account))report(e);});};
@@ -376,7 +388,40 @@ export function useHelpService(isFocused = true) {
   const reopenTicket = useCallback((id:number,input:HelpMessageInput)=>mutate(()=>durableSend(input,id,'reopen')),[mutate,durableSend]);
   const requestIt = useCallback((id:number)=>mutate(()=>helpApi.requestIt(id)),[mutate]);
   const claimTicket = useCallback((id:number)=>mutate(()=>helpApi.claim(id)),[mutate]);
-  const toggleReaction = useCallback((message:HelpMessage,emoji:string)=>mutate(()=>helpApi.react(message.id,emoji,!!message.reactions.find((r)=>r.emoji===emoji)?.mine)),[mutate]);
+  const toggleReaction = useCallback((message:HelpMessage,emoji:string)=>{
+    const account=identity,key=account+':'+message.ticketId+':'+message.id;
+    let work=reactionWork.current.get(key);
+    if(!work){work={targets:new Map(),chain:Promise.resolve(),base:message.reactions};reactionWork.current.set(key,work);}
+    const shown=messagesRef.current.find(item=>item.id===message.id&&item.ticketId===message.ticketId)??message;
+    const mine=!Boolean(work.targets.get(emoji)?.mine??shown.reactions.find(item=>item.emoji===emoji)?.mine);
+    const revision=++reactionRevision.current;work.targets.set(emoji,{mine,revision});
+    updateMessages(messagesRef.current);
+    const pending=work;
+    const request=pending.chain.catch(()=>{}).then(async()=>{
+      if(!current(account))return;
+      try{
+        const detail=await helpApi.react(message.id,emoji,!mine);
+        if(!current(account))return;
+        const confirmed=detail.messages.find(item=>item.id===message.id);
+        pending.base=confirmed?.reactions??withHelpReaction({...message,reactions:pending.base},emoji,mine,userId).reactions;
+      }catch(error){if(current(account))report(error);throw error;}
+      finally{
+        // Keep the chosen state over any socket/cache replay until the final
+        // queued request has been reconciled. Otherwise an older disk snapshot
+        // can briefly erase a reaction that the server has already accepted.
+        if(current(account)&&pending.targets.size===1&&pending.targets.get(emoji)?.revision===revision){
+          await liveTicketRefresh.current(message.ticketId).catch(report);
+        }
+        if(pending.targets.get(emoji)?.revision===revision)pending.targets.delete(emoji);
+        if(current(account)){
+          if(activeId.current===message.ticketId)updateMessages(messagesRef.current.map(item=>item.id===message.id?{...item,reactions:pending.base}:item));
+          if(!pending.targets.size)reactionWork.current.delete(key);
+        }else reactionWork.current.delete(key);
+      }
+    });
+    pending.chain=request;
+    return request;
+  },[identity,userId,current,helpApi,updateMessages,report]);
   const markAllRead = useCallback(async()=>{await helpApi.readAll(); await refresh();},[refresh]);
   const loadOlder=useCallback(()=>loadPage('older'),[loadPage]);
   const loadNewer=useCallback(()=>loadPage('newer'),[loadPage]);
