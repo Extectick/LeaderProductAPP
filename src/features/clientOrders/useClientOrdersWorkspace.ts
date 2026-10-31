@@ -64,6 +64,7 @@ import {
   buildPayload,
   computeDraftMetrics,
   computeDraftTotal,
+  computeMarkupPercent,
   computeLineTotal,
   DEFAULT_ORDER_CURRENCY,
   emptyDraft,
@@ -1507,6 +1508,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   const localProfitabilityPercent = draftMetrics.profitBasisAmount !== 0
     ? draftMetrics.profit / draftMetrics.profitBasisAmount * 100
     : null;
+  const localMarkupPercent = computeMarkupPercent(localProfit, localProfitBasisAmount);
   const localWeight = draftMetrics.weight;
   const localProfitAvailable = draftMetrics.profitItems > 0;
   const visibleDeviceOrders = React.useMemo(
@@ -4518,6 +4520,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     localProfit,
     localProfitBasisAmount,
     localProfitabilityPercent,
+    localMarkupPercent,
     localWeight,
     localProfitAvailable,
     statusCounts,

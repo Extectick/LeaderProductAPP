@@ -501,6 +501,10 @@ describe('Help composer recorder lifecycle', () => {
     const selected=[{uri:'file://ready.jpg',name:'ready.jpg',mimeType:'image/jpeg'}];
     await act(async()=>tray().props.onSend(selected));expect(props.onSend).toHaveBeenCalledWith(undefined,selected);
     await act(async()=>tray().props.onPreparing(true));
+    // The inline gallery owns the composer while open; check its restored
+    // send button after closing the gallery, while preparation is still pending.
+    expect(screen!.root.findAll(n=>n.props.label==='Отправить сообщение')).toHaveLength(0);
+    await act(async()=>tray().props.onClose());
     expect(screen!.root.findAll(n=>n.props.label==='Отправить сообщение')[0].props.disabled).toBe(true);
   });
   test('native documents action uses document picker and closes the inline tray',async()=>{
