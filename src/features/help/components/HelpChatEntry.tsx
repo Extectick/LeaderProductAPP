@@ -11,7 +11,8 @@ export const HelpChatEntry = forwardRef<HelpChatEntryHandle, { ready: boolean; c
   const ready = initiallyReady || revealed;
   useImperativeHandle(ref, () => ({ reveal: () => setRevealed(true) }), []);
   const reduced = useHelpReducedMotion();
-  const progress = useRef(new Animated.Value(ready ? 1 : 0)).current;
+  // A cached ticket can be ready on its first render; it still needs an entry.
+  const progress = useRef(new Animated.Value(0)).current;
   const entered = useRef(onEntered); entered.current = onEntered;
   const generation=useRef(0),didEnter=useRef(false);
   useEffect(() => {

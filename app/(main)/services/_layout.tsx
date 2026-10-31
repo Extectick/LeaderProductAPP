@@ -285,7 +285,7 @@ export default function ServicesLayout() {
                 showServerStatus={activeHeaderOverride?.showServerStatus ?? (!isCatalogPath && !isClientOrdersPath)}
               />
             ),
-            animation: isClientOrdersPath ? 'fade' : 'ios_from_left',
+            animation: isHelpScreen || isClientOrdersPath ? 'fade' : 'ios_from_left',
           };
         }}
       />
