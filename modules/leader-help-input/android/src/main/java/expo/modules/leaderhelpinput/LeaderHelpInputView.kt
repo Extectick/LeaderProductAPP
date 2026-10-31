@@ -7,6 +7,7 @@ import android.content.pm.ApplicationInfo
 import android.content.res.ColorStateList
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.os.SystemClock
 import android.text.Editable
 import android.text.InputType
@@ -29,9 +30,14 @@ import kotlin.math.roundToInt
 
 class HelpEditText(context: Context) : EditText(context) {
     var selectionListener: (() -> Unit)? = null
+    var scrollListener: (() -> Unit)? = null
     override fun onSelectionChanged(start: Int, end: Int) {
       super.onSelectionChanged(start, end)
       selectionListener?.invoke()
+    }
+    override fun onScrollChanged(left: Int, top: Int, oldLeft: Int, oldTop: Int) {
+      super.onScrollChanged(left, top, oldLeft, oldTop)
+      scrollListener?.invoke()
     }
 
 }
@@ -46,6 +52,7 @@ class LeaderHelpInputView(context: Context, appContext: AppContext) : ExpoView(c
   private val debug = context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
   val onTextEdited by EventDispatcher<Map<String, Any>>()
   val onGeometry by EventDispatcher<Map<String, Any>>()
+  val onSelectionChanged by EventDispatcher<Map<String, Any>>()
   var reducedMotion = false
   private var suppressChange = false
   private var eventCount = 0
@@ -63,6 +70,7 @@ class LeaderHelpInputView(context: Context, appContext: AppContext) : ExpoView(c
   private var clippedFrames = 0
   private var observedFrames = 0
   private val transitions = ArrayDeque<Map<String, Any>>()
+  private val scrollbarPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x88627185.toInt() }
   // Expo's requestLayout posts its layout pass. Flush pending text layout before
   // drawing too: otherwise a keystroke can paint one frame with yesterday's size.
   private val beforeDraw = ViewTreeObserver.OnPreDrawListener {
@@ -85,7 +93,11 @@ class LeaderHelpInputView(context: Context, appContext: AppContext) : ExpoView(c
     imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI
     setHorizontallyScrolling(false)
     breakStrategy = android.text.Layout.BREAK_STRATEGY_SIMPLE
+    // Some OEM EditText themes have no ScrollBarDrawable. Enabling the platform
+    // scrollbar crashes View.onDrawScrollBars on realme Android 13. Draw the
+    // indicator ourselves; EditText still owns touch scrolling and selection.
     isVerticalScrollBarEnabled = false
+    setPadding(0, 0, px(5f), 0)
     overScrollMode = View.OVER_SCROLL_NEVER
     contentDescription = "Сообщение"
   }
@@ -94,7 +106,11 @@ class LeaderHelpInputView(context: Context, appContext: AppContext) : ExpoView(c
     clipChildren = true
     clipToPadding = false
     addView(editor)
-    editor.selectionListener = { revealCaret = true; requestLayout() }
+    editor.scrollListener = { invalidate() }
+    editor.selectionListener = {
+      revealCaret = true; requestLayout()
+      onSelectionChanged(mapOf("start" to editor.selectionStart, "end" to editor.selectionEnd))
+    }
     editor.addTextChangedListener(object : TextWatcher {
       override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
       override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
@@ -119,7 +135,12 @@ class LeaderHelpInputView(context: Context, appContext: AppContext) : ExpoView(c
     suppressChange = false
   }
   fun setTextColor(value: String) { editor.setTextColor(Color.parseColor(value)) }
-  fun setHintColor(value: String) { editor.setHintTextColor(Color.parseColor(value)) }
+  fun setHintColor(value: String) {
+    val color = Color.parseColor(value)
+    editor.setHintTextColor(color)
+    scrollbarPaint.color = (color and 0x00FFFFFF) or 0x88000000.toInt()
+    invalidate()
+  }
   fun setAccentColor(value: String) {
     val color = Color.parseColor(value)
     editor.highlightColor = (color and 0x00FFFFFF) or 0x55000000
@@ -210,6 +231,15 @@ class LeaderHelpInputView(context: Context, appContext: AppContext) : ExpoView(c
     val clipTop = if (textHeight <= px(22f)) min(px(12f), editor.top.coerceAtLeast(0)) else px(12f)
     canvas.clipRect(px(45f), clipTop, width - px(47f), height - currentBottomInset())
     super.dispatchDraw(canvas)
+    if (textHeight > viewportHeight) {
+      val top = max(clipTop, editor.top).toFloat()
+      val bottom = min(height - currentBottomInset(), editor.bottom).toFloat()
+      val track = (bottom - top).coerceAtLeast(1f)
+      val thumb = max(px(18f).toFloat(), track * viewportHeight / textHeight).coerceAtMost(track)
+      val progress = (editor.scrollY.toFloat() / (textHeight - viewportHeight)).coerceIn(0f, 1f)
+      val y = top + (track - thumb) * progress
+      canvas.drawRoundRect((width - px(50f)).toFloat(), y, (width - px(48f)).toFloat(), y + thumb, px(1f).toFloat(), px(1f).toFloat(), scrollbarPaint)
+    }
     canvas.restoreToCount(save)
     if (debug && editor.layout != null) recordFrame()
   }
@@ -234,6 +264,11 @@ class LeaderHelpInputView(context: Context, appContext: AppContext) : ExpoView(c
   fun focusInput() {
     editor.requestFocus()
     (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(editor, InputMethodManager.SHOW_IMPLICIT)
+  }
+  fun restoreInput(text: String, start: Int, end: Int) {
+    if (editor.text.toString() != text) editor.setText(text)
+    editor.setSelection(start.coerceIn(0, editor.length()), end.coerceIn(0, editor.length()))
+    focusInput()
   }
   fun diagnostics(): Map<String, Any> = if (!debug) emptyMap() else mapOf(
     "engine" to "native", "focused" to editor.hasFocus(), "eventCount" to eventCount, "length" to editor.length(), "lines" to editor.lineCount,

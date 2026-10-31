@@ -1,1 +1,1 @@
-{"platforms":["android"],"android":{"modules":["expo.modules.leaderhelpinput.LeaderHelpInputModule","expo.modules.leaderhelpinput.LeaderHelpChatLayoutModule"]}}
+{"platforms":["android"],"android":{"modules":["expo.modules.leaderhelpinput.LeaderHelpInputModule","expo.modules.leaderhelpinput.LeaderHelpChatLayoutModule","expo.modules.leaderhelpinput.LeaderHelpVoiceModule"]}}

@@ -1,6 +1,6 @@
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
-import { BackHandler, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput } from 'react-native';
+import { BackHandler, KeyboardAvoidingView, Modal, PanResponder, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput } from 'react-native';
 import type { HelpDetail, HelpTicket } from '../src/features/help/helpApi';
 
 const mockRouter = { replace: jest.fn() };
@@ -69,6 +69,7 @@ const detail: HelpDetail = { ticket, messages: [] };
 describe('Help screen integration with service boundary', () => {
   let screen: TestRenderer.ReactTestRenderer;
   beforeEach(() => {
+    jest.spyOn(PanResponder,'create').mockImplementation(config=>({panHandlers:config} as any));
     mockFocused = true;
     mockAttachmentDrafts.load.mockReset().mockResolvedValue([]);mockAttachmentDrafts.save.mockReset().mockImplementation(async(_user:any,_key:any,files:any)=>files);mockAttachmentDrafts.clear.mockReset().mockResolvedValue(undefined);mockAttachmentDrafts.hold.mockReset().mockImplementation(()=>jest.fn());
     mockNativeChatLayout = false;
@@ -77,7 +78,7 @@ describe('Help screen integration with service boundary', () => {
     Object.assign(mockService,{tickets:[],selectedTicket:null,messages:[],loading:false,busy:false,error:null,online:true,connected:true,canManage:false,userId:5,typingByTicket:{},hasMore:false,
       loadTickets:jest.fn().mockResolvedValue(undefined),clearSelection:jest.fn(()=>{mockService.selectedTicket=null;}),openTicket:jest.fn(async()=>{mockService.selectedTicket=ticket;return detail;}),getDraft:jest.fn().mockResolvedValue(''),setDraft:jest.fn().mockResolvedValue(undefined),emitTyping:jest.fn(),createTicket:jest.fn(async()=>{mockService.selectedTicket=ticket;return detail;}),sendMessage:jest.fn().mockResolvedValue(detail),uploadAttachments:jest.fn(),closeTicket:jest.fn().mockResolvedValue(detail),reopenTicket:jest.fn(),editMessage:jest.fn(),toggleReaction:jest.fn(),mediaSource:jest.fn(),loadOlder:jest.fn(),loadNewer:jest.fn(),jumpToLatest:jest.fn().mockResolvedValue(undefined),jumpToMessage:jest.fn().mockResolvedValue(undefined),saveViewport:jest.fn(),markVisibleRead:jest.fn(),searchMessages:jest.fn().mockResolvedValue({messages:[],total:0,nextCursor:null}),retryPending:jest.fn(),markAllRead:jest.fn(),requestIt:jest.fn(),claimTicket:jest.fn()});
   });
-  afterEach(async()=>{if(screen)await act(async()=>screen.unmount());});
+  afterEach(async()=>{if(screen)await act(async()=>screen.unmount());jest.restoreAllMocks();});
   async function render(){await act(async()=>{screen=TestRenderer.create(React.createElement(HelpScreen));});}
   function button(label:string){return screen.root.findAll(node=>node.props.accessibilityLabel===label && typeof node.props.onPress==='function')[0];}
   function composer(){return screen.root.findByType('HelpComposer' as any);}
@@ -99,6 +100,36 @@ describe('Help screen integration with service boundary', () => {
     expect(screen.root.findByType('HelpNativeChatLayout' as any).props.animateTail).toBe(true);
   });
   async function archiveAction(label:string){await act(async()=>button('Меню поддержки').props.onPress());await act(async()=>button(label).props.onPress());}
+  test('a completed right swipe anywhere in the chat navigates back and preserves the draft',async()=>{
+    await render();await act(async()=>button('Новое обращение').props.onPress());
+    await act(async()=>composer().props.onChange('Черновик перед свайпом'));
+    const pan=screen.root.findAll(n=>n.props.testID==='help-screen-navigation')[0].props;
+    const gesture=(dx:number,dy=0)=>({dx,dy,x0:0,numberActiveTouches:1});
+    const start=(pageX=10)=>pan.onStartShouldSetPanResponderCapture({nativeEvent:{touches:[{pageX}]}});
+    start(200);
+    expect(pan.onMoveShouldSetPanResponderCapture(null,gesture(40))).toBe(true);
+    for(const [movement,pageX] of [[gesture(-120),200],[gesture(10,100),200]] as const){
+      start(pageX);
+      expect(pan.onMoveShouldSetPanResponderCapture(null,movement)).toBe(false);
+    }
+    start();
+    expect(pan.onMoveShouldSetPanResponderCapture(null,gesture(40))).toBe(true);
+    await act(async()=>pan.onPanResponderRelease(null,gesture(95)));
+    expect(composer()).toBeDefined();
+    start();
+    await act(async()=>{pan.onPanResponderMove(null,gesture(140));pan.onPanResponderMove(null,gesture(110));pan.onPanResponderRelease(null,gesture(110));});
+    expect(composer()).toBeDefined();
+    start();
+    await act(async()=>{pan.onPanResponderTerminate();pan.onPanResponderRelease(null,gesture(120));});
+    expect(composer()).toBeDefined();
+    start();
+    expect(pan.onMoveShouldSetPanResponderCapture(null,gesture(100))).toBe(true);
+    await act(async()=>pan.onPanResponderRelease(null,gesture(100)));
+    expect(mockService.setDraft).toHaveBeenCalledWith('new:plain','Черновик перед свайпом');
+    expect(button('Новое обращение')).toBeDefined();
+    start();
+    expect(pan.onMoveShouldSetPanResponderCapture(null,gesture(120))).toBe(false);
+  });
   test('native chat owns the bottom inset instead of waiting for a JS dock measurement',async()=>{
     mockNativeChatLayout=true;
     await render();
@@ -110,6 +141,22 @@ describe('Help screen integration with service boundary', () => {
     expect(chat.props.nativeID).toBe(native.props.scrollId);
     expect(screen.root.findAll(node=>node.props.nativeID===native.props.dockId).length).toBeGreaterThan(0);
   });
+  test('new ticket menu enables only search and keeps the unsent draft',async()=>{
+    await render();
+    await act(async()=>button('Новое обращение').props.onPress());
+    await act(async()=>composer().props.onChange('Черновик нового обращения'));
+    await act(async()=>button('Действия с обращением').props.onPress());
+    expect(button('Поиск в переписке').props.disabled).not.toBe(true);
+    expect(button('Закрыть обращение').props.disabled).toBe(true);
+    expect(button('Подключить IT').props.disabled).toBe(true);
+    await act(async()=>button('Поиск в переписке').props.onPress());
+    expect(screen.root.findAllByProps({testID:'help-chat-search-input'}).length).toBeGreaterThan(0);
+    await act(async()=>screen.root.findAllByProps({testID:'help-chat-search-input'})[0].props.onChangeText('заказ'));
+    expect(mockService.searchMessages).not.toHaveBeenCalled();
+    await act(async()=>button('Закрыть поиск').props.onPress());
+    expect(composer().props.value).toBe('Черновик нового обращения');
+    expect(mockService.createTicket).not.toHaveBeenCalled();
+  });
   test('support header contains search and archive without the duplicated list heading',async()=>{
     await render();
     expect(StyleSheet.flatten(screen.root.findByProps({testID:'help-header'}).props.style)).toMatchObject({paddingHorizontal:16});
@@ -118,7 +165,7 @@ describe('Help screen integration with service boundary', () => {
     expect(screen.root.findAllByType(Text).some(node=>node.props.children==='Мои обращения')).toBe(false);
     expect(button('Прочитать все сообщения')).toBeUndefined();
     expect(screen.root.findAllByType(Text).some(node=>node.props.children==='Архив')).toBe(false);
-    expect(StyleSheet.flatten(screen.root.findByProps({testID:'help-search-surface'}).props.style)).toMatchObject({height:48,borderTopLeftRadius:0,borderBottomLeftRadius:0,borderTopRightRadius:24,borderBottomRightRadius:24,backgroundColor:'#EEF2F7'});
+    expect(StyleSheet.flatten(screen.root.findByProps({testID:'help-search-surface'}).props.style)).toMatchObject({height:48,borderRadius:24,backgroundColor:'#EEF2F7'});
   });
   test('IT scope selection lives only inside the contextual menu',async()=>{
     mockService.canManage=true;
@@ -395,7 +442,12 @@ describe('Help screen integration with service boundary', () => {
   test('chat search replaces the header and back closes search before leaving the ticket',async()=>{
     await openWithMessage();
     await act(async()=>composer().props.onChange('Неотправленный черновик'));
+    expect(button('Поиск в переписке')).toBeUndefined();
+    await act(async()=>button('Действия с обращением').props.onPress());
+    expect(screen.root.findAllByProps({testID:'help-chat-dropdown'}).length).toBeGreaterThan(0);
+    expect(screen.root.findAllByProps({testID:'help-sheet-surface'})).toHaveLength(0);
     await act(async()=>button('Поиск в переписке').props.onPress());
+    expect(screen.root.findAllByProps({testID:'help-chat-dropdown'})).toHaveLength(0);
     expect(screen.root.findAllByProps({testID:'help-chat-search-input'}).length).toBeGreaterThan(0);
     expect(screen.root.findAllByType('HelpComposer' as any)).toHaveLength(0);
     expect(screen.root.findAllByProps({testID:'help-chat-search-dock'}).length).toBeGreaterThan(0);
@@ -407,6 +459,8 @@ describe('Help screen integration with service boundary', () => {
   });
   test('chat uses the shared header, keeps IT in its menu, and excludes the header from the recording area',async()=>{
     await openWithMessage();expect(button('Подключить IT')).toBeUndefined();
+    expect(button('Действия с обращением')).toBeDefined();
+    expect(screen.root.findByProps({testID:'help-search-surface'}).findAll(node=>node.props.accessibilityLabel==='Действия с обращением')).toHaveLength(0);
     await act(async()=>button('Действия с обращением').props.onPress());
     expect(screen.root.findAllByType(Text).some(node=>node.props.children==='Подключить IT')).toBe(true);
     expect(StyleSheet.flatten(screen.root.findByProps({testID:'help-chat-header-overlay'}).props.style)).toMatchObject({position:'absolute',top:0});

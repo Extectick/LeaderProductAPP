@@ -13,9 +13,9 @@ class HelpInputState : Record {
 class LeaderHelpInputModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("LeaderHelpInput")
-    Constants("apiVersion" to 1)
+    Constants("apiVersion" to 2)
     View(LeaderHelpInputView::class) {
-      Events("onTextEdited", "onGeometry")
+      Events("onTextEdited", "onGeometry", "onSelectionChanged")
       Prop("textState") { view: LeaderHelpInputView, state: HelpInputState -> view.setTextState(state) }
       Prop("placeholder") { view: LeaderHelpInputView, value: String -> view.editor.hint = value }
       Prop("textColor") { view: LeaderHelpInputView, value: String -> view.setTextColor(value) }
@@ -24,6 +24,7 @@ class LeaderHelpInputModule : Module() {
       Prop("editable") { view: LeaderHelpInputView, value: Boolean -> view.editor.isEnabled = value }
       Prop("reducedMotion") { view: LeaderHelpInputView, value: Boolean -> view.reducedMotion = value }
       AsyncFunction("focusInput") { view: LeaderHelpInputView -> view.focusInput() }
+      AsyncFunction("restoreInput") { view: LeaderHelpInputView, text: String, start: Int, end: Int -> view.restoreInput(text, start, end) }
       AsyncFunction("diagnostics") { view: LeaderHelpInputView -> view.diagnostics() }
       AsyncFunction("resetDiagnostics") { view: LeaderHelpInputView -> view.resetDiagnostics() }
       AsyncFunction("testInput") { view: LeaderHelpInputView, text: String, interval: Int -> view.testInput(text, interval) }

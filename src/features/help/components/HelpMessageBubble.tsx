@@ -3,15 +3,19 @@ import { Animated, Modal, PanResponder, Platform, Pressable, StyleSheet, Text, V
 import { Ionicons } from '@expo/vector-icons';
 import type { HelpAttachment, HelpMessage } from '../helpApi';
 import { useHelpReducedMotion, useHelpTheme } from '../helpTheme';
-import { canEditHelpMessage, helpFileSize, helpTime, helpReplyGesture } from '../helpUiUtils';
+import { canEditHelpMessage, helpFileSize, helpTime } from '../helpUiUtils';
 import { helpTextStampLayout, type HelpTextLineMeasurement } from '../helpTextStampLayout';
 import { HelpAvatar, HelpIcon } from './HelpPrimitives';
 import { HelpAudio, HelpImage, type ResolveHelpMedia, type HelpImageOrigin } from './HelpMedia';
 import { HelpImageAlbum } from './HelpImageAlbum';
 import { helpImageAspectRatio } from '../helpAlbumLayout';
 import { HelpSearchText } from './HelpChatSearch';
+
 import { HelpInlineMessageStamp, HelpMessageStampReserve } from './HelpInlineMessageStamp';
 import { HelpMessageLayoutCacheContext } from '../helpMessageLayoutCache';
+
+const REPLY_SWIPE_DISTANCE = 80;
+const REPLY_TRIGGER_DISTANCE = 40;
 
 type Props = { message: HelpMessage; userId: number; open: boolean; canInteract: boolean; selected: boolean; highlighted: boolean; readByOthers?: boolean; groupFirst?: boolean; groupLast?: boolean; searchQuery?: string; solution: boolean; resolve: ResolveHelpMedia; onMenu: () => void; onDismissMenu: () => void; onReply: () => void; onCopy: () => void; onEdit: () => void; onForward: () => void; onReaction: (emoji: string) => void; onQuote: (id: number) => void; onImage: (images: HelpAttachment[], index: number, origin?: HelpImageOrigin) => void; onFile: (file: HelpAttachment) => void; onCloseTicket: () => void; onRequestIt: () => void; onError: (message: string) => void };
 export function HelpMessageBubble(props: Props) {
@@ -40,15 +44,15 @@ const MemoHelpMessageBubbleBody = memo(function HelpMessageBubbleBody(props: Pro
   const { message: m } = props; const c = useHelpTheme(); const own = m.authorId === props.userId; const [x] = useState(() => new Animated.Value(0)); const blocked = useRef(false); const last = useRef(props); last.current = props;
   const [replyPulse] = useState(() => new Animated.Value(1));
   const replyArmed = useRef(false);
-  const [replyOrigin] = useState(() => new Animated.Value(0));
-  // Mirror Telegram's 20→50dp indicator reveal/fill and 80dp travel cap
-  // for the requested right-only reply gesture. Transforms do not reflow rows.
+  const [replyProgress] = useState(() => new Animated.Value(0));
+  const replyTouch = useRef({x:0,dragging:false,menuPending:false});
+  // Fill at the short reply threshold, independently of the touch's screen position.
   const replyMotion = useMemo(() => ({
-    opacity:x.interpolate({inputRange:[0,12,20,50],outputRange:[0,0,.3,1],extrapolate:'clamp'}),
-    reveal:x.interpolate({inputRange:[0,20,50],outputRange:[.4,.55,1],extrapolate:'clamp'}),
-    fill:x.interpolate({inputRange:[20,50],outputRange:[0,1],extrapolate:'clamp'}),
-    offset:Animated.add(replyOrigin,Animated.multiply(x,.5)),
-  }), [x,replyOrigin]);
+    opacity:replyProgress.interpolate({inputRange:[0,12,20,REPLY_SWIPE_DISTANCE],outputRange:[0,0,.3,1],extrapolate:'clamp'}),
+    reveal:replyProgress.interpolate({inputRange:[0,20,REPLY_SWIPE_DISTANCE],outputRange:[.4,.55,1],extrapolate:'clamp'}),
+    fill:replyProgress.interpolate({inputRange:[0,REPLY_SWIPE_DISTANCE],outputRange:[0,1],extrapolate:'clamp'}),
+    offset:replyProgress.interpolate({inputRange:[0,REPLY_SWIPE_DISTANCE],outputRange:[16,16]}),
+  }), [replyProgress]);
   const groupFirst = props.groupFirst !== false, groupLast = props.groupLast !== false;
   const bottomLeft = !own && !groupLast ? 4 : 16, bottomRight = own && !groupLast ? 4 : 16;
   const bubbleCorners = { borderRadius: 16, borderTopLeftRadius: !own && !groupFirst ? 4 : 16,
@@ -75,7 +79,6 @@ const MemoHelpMessageBubbleBody = memo(function HelpMessageBubbleBody(props: Pro
   const menuLeft = Math.max(12, Math.min(window.width - menuWidth - 12, own ? menuAnchor.x + menuAnchor.width - menuWidth : menuAnchor.x));
   const menuTop = Math.max(12, Math.min(window.height - menuHeight - 24, menuAnchor.y + menuAnchor.height + menuHeight + 24 < window.height ? menuAnchor.y + menuAnchor.height + 6 : menuAnchor.y - menuHeight - 6));
   const mediaTouch = useRef(false);
-  const swipePeak = useRef(0);
   const reducedMotion = useHelpReducedMotion();
   const reduced = useRef(reducedMotion); reduced.current = reducedMotion;
   const [textWidth, setTextWidth] = useState(cachedLayout?.textWidth??0);
@@ -104,46 +107,54 @@ const MemoHelpMessageBubbleBody = memo(function HelpMessageBubbleBody(props: Pro
   // Five 17dp stars, their gaps, timestamp and bubble padding share one row.
   const bubbleMinWidth = nativeTextStamp ? 90 : compactClosure ? Math.min(availableBubbleWidth, 133 + Math.max(44, stampWidth)) : m.text && !m.reactions.length ? textStampLayout.minWidth : 90;
   const resetSwipe = useCallback(() => {
-    replyArmed.current=false;replyPulse.stopAnimation();replyPulse.setValue(1);x.stopAnimation();
+    replyArmed.current=false;replyProgress.setValue(0);replyPulse.stopAnimation();replyPulse.setValue(1);x.stopAnimation();
     if (reduced.current) x.setValue(0);
     else Animated.spring(x, { toValue: 0, useNativeDriver: true, damping: 24, stiffness: 260, overshootClamping: true, isInteraction:false }).start();
-  }, [x,replyPulse]);
-  const moveSwipe = useCallback((dx:number) => {
-    const offset=Math.min(80,Math.max(0,dx));x.setValue(offset);
-    const armed=offset>=50;
+  }, [x,replyPulse,replyProgress]);
+  const moveSwipe = useCallback((pageX:number) => {
+    const travelled=Math.max(0,replyTouch.current.x-pageX);
+    x.setValue(-Math.min(REPLY_SWIPE_DISTANCE,travelled));
+    replyProgress.setValue(Math.min(REPLY_SWIPE_DISTANCE,travelled/REPLY_TRIGGER_DISTANCE*REPLY_SWIPE_DISTANCE));
+    const armed=travelled>=REPLY_TRIGGER_DISTANCE;
     if(armed&&!replyArmed.current&&!reduced.current){
       replyPulse.stopAnimation();replyPulse.setValue(1.14);
       Animated.spring(replyPulse,{toValue:1,useNativeDriver:true,damping:18,stiffness:380,mass:.5,isInteraction:false}).start();
     }
     replyArmed.current=armed;
-  }, [x,replyPulse]);
+  }, [x,replyPulse,replyProgress]);
   useLayoutEffect(()=>{
-    blocked.current=true;replyArmed.current=false;x.stopAnimation();x.setValue(0);replyPulse.stopAnimation();replyPulse.setValue(1);
+    blocked.current=true;replyTouch.current.dragging=false;replyTouch.current.menuPending=false;replyArmed.current=false;replyProgress.setValue(0);x.stopAnimation();x.setValue(0);replyPulse.stopAnimation();replyPulse.setValue(1);
     return()=>{x.stopAnimation();replyPulse.stopAnimation();};
-  },[m.id,x,replyPulse]);
+  },[m.id,x,replyPulse,replyProgress]);
   const pan = useMemo(() => PanResponder.create({
-    onStartShouldSetPanResponderCapture: () => { blocked.current = false; mediaTouch.current = false; swipePeak.current = 0; return false; },
+    onStartShouldSetPanResponderCapture: event => {
+      const pageX=event?.nativeEvent.touches?.[0]?.pageX??event?.nativeEvent.pageX;
+      replyTouch.current={x:Number.isFinite(pageX)?pageX:0,dragging:false,menuPending:false};
+      blocked.current=false;mediaTouch.current=false;return false;
+    },
     onMoveShouldSetPanResponderCapture: (_, g) => {
-      const result = helpReplyGesture(g.dx, g.dy, blocked.current);
-      blocked.current = result.blocked;
-      return last.current.open && last.current.canInteract && !mediaTouch.current && g.numberActiveTouches === 1 && result.capture;
+      if(g.numberActiveTouches!==1||g.dx>12||Math.abs(g.dy)>Math.max(12,Math.abs(g.dx)))blocked.current=true;
+      const capture=last.current.open&&last.current.canInteract&&!blocked.current&&!mediaTouch.current&&g.dx< -12&&-g.dx>Math.abs(g.dy)*1.7;
+      if(capture){replyTouch.current.dragging=true;replyTouch.current.menuPending=false;}
+      return capture;
     },
-    onPanResponderGrant: (_, g) => { swipePeak.current = g.dx; x.stopAnimation(); moveSwipe(g.dx); },
-    onPanResponderMove: (_, g) => {
+    onPanResponderGrant: event => { replyTouch.current.dragging=true;replyTouch.current.menuPending=false;x.stopAnimation();moveSwipe(event.nativeEvent.pageX); },
+    onPanResponderMove: (event, g) => {
       const wasBlocked=blocked.current;
-      swipePeak.current = Math.max(swipePeak.current, g.dx);
-      if (g.numberActiveTouches !== 1 || g.dx < -10 || swipePeak.current - g.dx > 16 || Math.abs(g.dy) > Math.max(32, Math.abs(g.dx))) blocked.current = true;
+      if (g.numberActiveTouches !== 1 || g.dx > 12 || Math.abs(g.dy) > Math.max(32, Math.abs(g.dx))) blocked.current = true;
       if(blocked.current){if(!wasBlocked)resetSwipe();return;}
-      moveSwipe(g.dx);
+      moveSwipe(event.nativeEvent.pageX);
     },
-    onPanResponderRelease: (_, g) => {
-      if (last.current.open && last.current.canInteract && !blocked.current && !mediaTouch.current && g.numberActiveTouches<=1 && g.dx >= 50 && g.dx > Math.abs(g.dy) * 1.3) last.current.onReply();
+    onPanResponderRelease: (event, g) => {
+      if (last.current.open && last.current.canInteract && replyTouch.current.dragging && !blocked.current && !mediaTouch.current && g.numberActiveTouches<=1 && replyTouch.current.x-event.nativeEvent.pageX>=REPLY_TRIGGER_DISTANCE && Math.abs(g.dy)<Math.max(32,replyTouch.current.x-event.nativeEvent.pageX)) last.current.onReply();
       blocked.current=true;
       resetSwipe();
     },
     onPanResponderTerminationRequest: () => false,
     onPanResponderTerminate: () => {blocked.current=true;resetSwipe();},
   }), [resetSwipe, moveSwipe, x]);
+  const holdMessage=()=>{if(!blocked.current)replyTouch.current.menuPending=true;};
+  const finishMessageTouch=()=>{if(replyTouch.current.menuPending&&!replyTouch.current.dragging&&!blocked.current)last.current.onMenu();replyTouch.current.menuPending=false;};
   if (m.kind === 'SYSTEM') return <View style={{ alignItems: 'center', paddingVertical: 10, paddingHorizontal: 30 }}><Text style={{ color: c.muted, fontSize: 12, textAlign: 'center', backgroundColor: c.elevated, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12 }}>{props.searchQuery ? <HelpSearchText text={m.text} query={props.searchQuery}/> : m.text}</Text></View>;
   const images = m.attachments.filter(a => a.kind === 'IMAGE'); const other = m.attachments.filter(a => a.kind !== 'IMAGE');
   const albumWidth=Math.min(340,(rowWidth||Math.min(window.width-24,876))*(own ? .86 : 1)-(own?0:36),images.length===1?350*(helpImageAspectRatio(images[0])??1):Infinity);
@@ -155,8 +166,8 @@ const MemoHelpMessageBubbleBody = memo(function HelpMessageBubbleBody(props: Pro
   const statusText = statusChange === 'CLOSED' ? (own ? 'Вы закрыли обращение' : `${author}: обращение закрыто`) : (own ? 'Вы открыли обращение повторно' : `${author}: обращение открыто повторно`);
   return <>
     {statusChange ? <View testID={`help-ticket-status-${m.id}`} style={{ alignItems: 'center', paddingVertical: 10, paddingHorizontal: 30 }}><Text style={{ color: c.muted, fontSize: 12, textAlign: 'center', backgroundColor: c.elevated, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12 }}>{statusText}</Text></View> : null}
-    <View {...pan.panHandlers} onLayout={e => {if(!nativeTextStamp)setRowWidth(e.nativeEvent.layout.width);}} testID={`help-message-${m.id}`} style={{ marginTop: groupFirst ? 4 : 1, marginBottom: groupLast ? 4 : 1, marginLeft: 12, marginRight: 12, flexDirection: 'row', alignItems: 'flex-start', justifyContent: own ? 'flex-end' : 'flex-start', gap: 8 }}>
-    {props.open&&props.canInteract ? <Animated.View testID="help-reply-swipe-indicator" pointerEvents="none" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" aria-hidden style={{position:'absolute',top:'50%',left:0,marginLeft:-16,marginTop:-16,width:32,height:32,opacity:replyMotion.opacity,transform:[{translateX:replyMotion.offset},{scale:reducedMotion?1:replyMotion.reveal}]}}>
+    <View {...pan.panHandlers} onTouchEnd={finishMessageTouch} onTouchCancel={()=>{replyTouch.current.menuPending=false;}} onLayout={e => {if(!nativeTextStamp)setRowWidth(e.nativeEvent.layout.width);}} testID={`help-message-${m.id}`} style={{ marginTop: groupFirst ? 4 : 1, marginBottom: groupLast ? 4 : 1, marginLeft: 12, marginRight: 12, flexDirection: 'row', alignItems: 'flex-start', justifyContent: own ? 'flex-end' : 'flex-start', gap: 8 }}>
+    {props.open&&props.canInteract ? <Animated.View testID="help-reply-swipe-indicator" pointerEvents="none" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" aria-hidden style={{position:'absolute',top:'50%',right:16,marginTop:-16,width:32,height:32,opacity:replyMotion.opacity,transform:[{translateX:replyMotion.offset},{scale:reducedMotion?1:replyMotion.reveal}]}}>
       <Animated.View style={{width:32,height:32,borderRadius:16,overflow:'hidden',alignItems:'center',justifyContent:'center',backgroundColor:c.elevated,borderWidth:1,borderColor:c.accentText+'66',transform:[{scale:replyPulse}]}}>
         <Animated.View testID="help-reply-swipe-fill" style={[StyleSheet.absoluteFill,{borderRadius:16,backgroundColor:c.accent,opacity:.3,transform:[{scale:replyMotion.fill}]}]}/>
         <Ionicons testID="help-reply-swipe-icon" name="arrow-undo" size={20} color={c.accentText}/>
@@ -164,12 +175,12 @@ const MemoHelpMessageBubbleBody = memo(function HelpMessageBubbleBody(props: Pro
     </Animated.View> : null}
     <Animated.View testID="help-message-swipe-content" style={{flex:1,flexDirection:'row',alignItems:'flex-start',justifyContent:own?'flex-end':'flex-start',gap:8,transform:[{translateX:x}]}}>
     {!own ? <View testID="help-message-avatar-slot" style={{ width: 28, flexShrink: 0, alignSelf: 'flex-end' }}>{groupLast ? <HelpAvatar id={m.authorId || 0} name={author} uri={m.author?.avatarUrl} size={28} /> : null}</View> : null}
-    <View onLayout={event=>replyOrigin.setValue(own?event.nativeEvent.layout.x:0)} style={{ maxWidth: own ? '86%' : '100%', width:images.length?albumWidth:undefined, flexShrink: 1, minWidth: images.length?undefined:bubbleMinWidth }}>
+    <View style={{ maxWidth: own ? '86%' : '100%', width:images.length?albumWidth:undefined, flexShrink: 1, minWidth: images.length?undefined:bubbleMinWidth }}>
       {!own && groupFirst ? <Text testID="help-message-author" style={{ color: c.muted, fontSize: 11, lineHeight: 14, marginLeft: 2, marginBottom: 3 }}>{author}</Text> : null}
-      <Pressable ref={bubbleRef} testID="help-message-bubble" {...contextProps} accessibilityLabel={`${own ? 'Вы' : author}: ${m.text || (images.length ? 'Изображения' : 'Вложение')}. ${helpTime(m.createdAt)}${own ? props.readByOthers ? '. Прочитано' : '. Отправлено' : ''}`} onLongPress={props.onMenu} delayLongPress={500} style={{ ...bubbleCorners, backgroundColor: own ? c.outgoing : c.surface, overflow: 'hidden' }}>
+      <Pressable ref={bubbleRef} testID="help-message-bubble" {...contextProps} accessibilityLabel={`${own ? 'Вы' : author}: ${m.text || (images.length ? 'Изображения' : 'Вложение')}. ${helpTime(m.createdAt)}${own ? props.readByOthers ? '. Прочитано' : '. Отправлено' : ''}`} onLongPress={holdMessage} delayLongPress={500} style={{ ...bubbleCorners, backgroundColor: own ? c.outgoing : c.surface, overflow: 'hidden' }}>
         {m.forwardedFromId ? <Text style={{ color: c.accentText, fontSize: 11, paddingHorizontal: 11, paddingTop: 8 }}>Пересланное сообщение</Text> : null}
         {m.replyTo ? <Pressable accessibilityRole="button" accessibilityLabel="Перейти к исходному сообщению" onPress={() => props.onQuote(m.replyTo!.id)} style={{ margin: 7, padding: 7, borderLeftWidth: 2, borderLeftColor: c.accent, backgroundColor: c.elevated, borderRadius: 6, flexDirection: 'row', gap: 7 }}>{m.replyTo.attachments?.find(a => a.kind === 'IMAGE') ? <HelpImage attachment={m.replyTo.attachments.find(a => a.kind === 'IMAGE')!} resolve={props.resolve} style={{ width: 34, height: 34, borderRadius: 4 }} /> : null}<View style={{ flex: 1 }}><Text numberOfLines={1} style={{ color: c.accentText, fontWeight: '600', fontSize: 12 }}>{m.replyTo.author?.name || 'Сообщение'}</Text><Text numberOfLines={2} style={{ color: c.muted, fontSize: 12 }}>{m.replyTo.text || 'Вложение'}</Text></View></Pressable> : null}
-        {images.length ? <HelpImageAlbum attachments={images} resolve={props.resolve} availableWidth={albumWidth} onImage={(index,origin)=>props.onImage(images,index,origin)} onLongPress={props.onMenu}/> : null}
+        {images.length ? <HelpImageAlbum attachments={images} resolve={props.resolve} availableWidth={albumWidth} onImage={(index,origin)=>props.onImage(images,index,origin)} onLongPress={holdMessage}/> : null}
         <View testID="help-message-content" pointerEvents={photoOnly ? "none" : "auto"} style={photoOnly ? { position: 'absolute', left: 0, right: 0, bottom: 0, height: 30 } : { paddingHorizontal: 11, paddingVertical: audioOnly ? 6 : 8 }}>
           {m.kind === 'CLOSURE' ? <View style={{ marginBottom: compactClosure ? 0 : 5 }}><Text style={{ color: c.text, fontWeight: '600', fontSize: 13 }}>Обращение завершено</Text><View testID="help-closure-meta" style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginTop: 5 }}><View testID="help-closure-rating" accessible accessibilityLabel={`Оценка: ${m.rating ?? 0} из 5`} style={{ flexDirection: 'row', gap: 3 }}>{[1, 2, 3, 4, 5].map(n => <Ionicons key={n} name={(m.rating ?? 0) >= n ? 'star' : 'star-outline'} size={17} color={(m.rating ?? 0) >= n ? '#DDA944' : c.muted} />)}</View>{compactClosure ? stamp : null}</View></View> : null}
           {other.map(file => file.kind === 'AUDIO' ? <View key={file.id} testID="help-audio-touch" onTouchStart={() => { mediaTouch.current = true; }}><HelpAudio attachment={file} messageId={m.id} author={m.author?.name || (m.authorRole === 'IT' ? 'Поддержка' : 'Пользователь')} createdAt={m.createdAt} ticketId={m.ticketId} resolve={props.resolve} onError={props.onError} captionRight={audioOnly ? stamp : undefined} /></View> : <Pressable key={file.id} onPress={() => props.onFile(file)} accessibilityRole="button" accessibilityLabel={`Скачать ${file.name}`} style={{ flexDirection: 'row', alignItems: 'center', gap: 9, paddingVertical: 6 }}><Ionicons name="document-outline" size={28} color={c.accentText} /><View style={{ flexShrink: 1 }}><Text numberOfLines={2} style={{ color: c.text, fontSize: 13, fontWeight: '500' }}>{file.name}</Text><Text style={{ color: c.muted, fontSize: 10 }}>{helpFileSize(file.size)} · Скачать</Text></View></Pressable>)}

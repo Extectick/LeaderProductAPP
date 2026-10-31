@@ -4,13 +4,15 @@ import {requireNativeViewManager, requireOptionalNativeModule} from 'expo-module
 import {helpDevActions, helpDevProbe, helpDevRef} from '../helpDiagnostics';
 import {isDetachedHelpInputFocusError} from '../helpInputFocus';
 
-export const hasNativeHelpInput = Platform.OS === 'android' && requireOptionalNativeModule('LeaderHelpInput')?.apiVersion === 1;
+export const hasNativeHelpInput = Platform.OS === 'android' && (requireOptionalNativeModule('LeaderHelpInput')?.apiVersion ?? 0) >= 1;
 const NativeInput = hasNativeHelpInput ? requireNativeViewManager<any>('LeaderHelpInput') : null;
-export type HelpNativeInputHandle = {focus: () => void};
+export type HelpNativeInputHandle = {focus: () => void; restore: (text:string,selection:{start:number;end:number}) => Promise<void>};
 type Props = {
   value: string; onChange: (value: string) => void; placeholder: string;
   color: string; hintColor: string; accentColor: string; editable: boolean; reducedMotion: boolean;
   onGeometry: (height: number, contentHeight: number) => void;
+  onSelection?: (selection:{start:number;end:number})=>void;
+  onLines?: (lines:number)=>void;
 };
 
 export const HelpNativeInput = forwardRef<HelpNativeInputHandle, Props>(function HelpNativeInput(props, forwardedRef) {
@@ -27,7 +29,7 @@ export const HelpNativeInput = forwardRef<HelpNativeInputHandle, Props>(function
   useImperativeHandle(forwardedRef, () => ({focus: () => {
     const node=native.current;if(!mounted.current||!node||!props.editable)return;
     try{void Promise.resolve(node.focusInput()).catch(focusFailure);}catch(error){focusFailure(error);}
-  }}), [props.editable,focusFailure]);
+  },restore:async(text,selection)=>{const node=native.current;if(!mounted.current||!node||!props.editable)return;try{if(node.restoreInput)await node.restoreInput(text,selection.start,selection.end);else await node.focusInput();}catch(error){focusFailure(error);}}}), [props.editable,focusFailure]);
   useEffect(() => helpDevProbe('composer', () => native.current?.diagnostics()), []);
   useEffect(() => helpDevActions('composer.native', {
     'composer.resetMetrics': () => native.current?.resetDiagnostics(),
@@ -43,5 +45,6 @@ export const HelpNativeInput = forwardRef<HelpNativeInputHandle, Props>(function
     textColor={props.color} hintColor={props.hintColor} accentColor={props.accentColor}
     editable={props.editable} reducedMotion={props.reducedMotion}
     onTextEdited={(event:any) => { setEventCount(event.nativeEvent.eventCount); props.onChange(event.nativeEvent.text); }}
-    onGeometry={(event:any) => props.onGeometry(event.nativeEvent.height,event.nativeEvent.contentHeight)}/>
+    onSelectionChanged={(event:any)=>props.onSelection?.({start:event.nativeEvent.start,end:event.nativeEvent.end})}
+    onGeometry={(event:any) => {props.onGeometry(event.nativeEvent.height,event.nativeEvent.contentHeight);if(event.nativeEvent.lines)props.onLines?.(event.nativeEvent.lines);}}/>
 });
