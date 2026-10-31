@@ -38,13 +38,12 @@ export function HelpListHeader({ search, onSearch, archived, onArchive, onBack, 
   const scopeAction = () => { closeMenu(); onScope?.(); };
   useEffect(() => helpDevActions('header', { 'header.openMenu': openMenu, 'header.closeMenu': closeMenu, 'header.archive': archiveAction, ...(canManage ? { 'header.scope': scopeAction } : {}) }));
   useEffect(() => helpDevState({ menuVisible, archived, scope }), [menuVisible, archived, scope]);
-  return <><HelpHeaderFrame onBack={onBack} connecting={connecting}>
+  return <><HelpHeaderFrame connecting={connecting} onBack={onBack} trailing={<Pressable ref={node => { menuButton.current = node; helpDevRef('header.menu', node); }} accessibilityRole="button" accessibilityLabel="Меню поддержки" accessibilityState={{ expanded: menuVisible }} onPress={openMenu} style={({ pressed }) => ({ width: HELP_LIST_META_WIDTH, height: 48, borderRadius:24, backgroundColor:c.panel, alignItems: 'center', justifyContent: 'center', opacity: pressed ? .65 : 1 })}>
+        <Ionicons name="ellipsis-horizontal" size={24} color={archived ? c.accentText : c.text} />
+      </Pressable>}>
       <Ionicons name="search-outline" size={20} color={c.muted} style={{ marginRight: 8 }} />
       <TextInput accessibilityLabel="Поиск обращений" value={search} onChangeText={onSearch} placeholder="Поиск" placeholderTextColor={c.muted} returnKeyType="search" autoCorrect={false} underlineColorAndroid="transparent" style={{ flex: 1, minWidth: 0, height: 44, padding: 0, color: c.text, fontSize: 16, includeFontPadding: false, textAlignVertical: 'center', ...(Platform.OS === 'web' ? { outlineStyle: 'none' } as any : {}) }} />
       {search ? <HelpIcon name="close" label="Очистить поиск" size={17} style={{ width: 28, height: 44 }} onPress={() => onSearch('')} /> : null}
-      <Pressable ref={node => { menuButton.current = node; helpDevRef('header.menu', node); }} accessibilityRole="button" accessibilityLabel="Меню поддержки" accessibilityState={{ expanded: menuVisible }} onPress={openMenu} style={({ pressed }) => ({ width: HELP_LIST_META_WIDTH, height: 48, alignItems: 'center', justifyContent: 'center', opacity: pressed ? .65 : 1 })}>
-        <Ionicons name="ellipsis-horizontal" size={24} color={archived ? c.accentText : c.text} />
-      </Pressable>
     </HelpHeaderFrame>
     {menuVisible ? <Modal transparent visible animationType={reducedMotion ? 'none' : 'fade'} onRequestClose={closeMenu} statusBarTranslucent>
       <View style={{ flex: 1 }}>

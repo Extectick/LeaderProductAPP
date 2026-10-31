@@ -12,7 +12,9 @@ import { createHelpMessageLayoutCache, HelpMessageLayoutCacheContext } from '../
 describe('Help message native layout and reply gestures', () => {
   let screen: TestRenderer.ReactTestRenderer;
   let props: any;
+  let clock:number;
   beforeEach(() => {
+    clock=Date.now();jest.spyOn(Date,"now").mockImplementation(()=>clock);
     mockUseHelpTheme.mockClear();
     jest.spyOn(PanResponder,'create').mockImplementation(config => ({panHandlers:config} as any));
     jest.spyOn(Animated,'spring').mockReturnValue({start:jest.fn(),stop:jest.fn(),reset:jest.fn()});
@@ -21,6 +23,9 @@ describe('Help message native layout and reply gestures', () => {
   afterEach(async () => { if(screen) await act(async()=>screen.unmount()); jest.restoreAllMocks(); });
   const node = (id:string) => screen.root.findAll(n=>n.props.testID===id)[0];
   const g = (dx:number,dy=0) => ({dx,dy,numberActiveTouches:1});
+  const event=(pageX:number)=>({nativeEvent:{pageX,touches:[{pageX}]}});
+  const start=(pan:any,x=200)=>pan.onStartShouldSetPanResponderCapture(event(x));
+  const hold=()=>{clock+=500;};
   async function render() { await act(async()=>{ screen=TestRenderer.create(React.createElement(HelpMessageBubble,props)); }); }
   test('reopening a measured incoming text restores its width and inline time before new measurements',async()=>{
     const cache=createHelpMessageLayoutCache();props.message={...props.message,ticketId:12,authorId:8};
@@ -75,9 +80,9 @@ describe('Help message native layout and reply gestures', () => {
     }
     expect(mockUseHelpTheme).toHaveBeenCalledTimes(initialRenders);
     expect(PanResponder.create).toHaveBeenCalledTimes(1);
-    await act(async () => longPress());
-    pan.onStartShouldSetPanResponderCapture();
-    await act(async () => pan.onPanResponderRelease(null, g(70)));
+    start(pan);await act(async () => {longPress();pan.onTouchEnd();});
+    start(pan);hold();pan.onMoveShouldSetPanResponderCapture(null,g(-40));
+    await act(async () => {pan.onPanResponderGrant(event(160),g(-40));pan.onPanResponderRelease(event(20),g(-180));});
     expect(props.onMenu).toHaveBeenCalledTimes(1); expect(props.onReply).toHaveBeenCalledTimes(1);
     expect(firstMenu).not.toHaveBeenCalled(); expect(firstReply).not.toHaveBeenCalled();
   });
@@ -149,73 +154,61 @@ describe('Help message native layout and reply gestures', () => {
     await act(async()=>screen.update(React.createElement(HelpMessageBubble,props)));
     expect(screen.root.findAll(n=>n.props.testID==='help-message-menu')).toHaveLength(0);
   });
-  test('rightward diagonal swipe replies once; vertical and leftward starts stay rejected', async () => {
-    await render(); const pan=node('help-message-1').props;
-    pan.onStartShouldSetPanResponderCapture();
-    expect(pan.onMoveShouldSetPanResponderCapture(null,g(60,18))).toBe(true);
-    await act(async()=>{pan.onPanResponderGrant(null,g(60,18));pan.onPanResponderMove(null,g(70,20));pan.onPanResponderRelease(null,g(70,20));});
-    expect(props.onReply).toHaveBeenCalledTimes(1);
-    for(const movement of [g(-40),g(2,40)]) {
-      pan.onStartShouldSetPanResponderCapture();
-      expect(pan.onMoveShouldSetPanResponderCapture(null,movement)).toBe(false);
-      expect(pan.onMoveShouldSetPanResponderCapture(null,g(70))).toBe(false);
-    }
+  test('left swipe captures immediately and right swipe remains for navigation',async()=>{
+    await render();const pan=node('help-message-1').props;
+    start(pan);expect(pan.onMoveShouldSetPanResponderCapture(null,g(-30))).toBe(true);
+    start(pan);expect(pan.onMoveShouldSetPanResponderCapture(null,g(30))).toBe(false);
   });
-  test('termination or a short swipe cannot reply; next gesture starts cleanly', async () => {
-    await render(); const pan=node('help-message-1').props;
-    pan.onStartShouldSetPanResponderCapture();
-    await act(async()=>{pan.onPanResponderMove(null,g(30));pan.onPanResponderRelease(null,g(30));pan.onPanResponderTerminate();});
+  test('short left swipe replies without hold or reaching the edge, on release',async()=>{
+    await render();const pan=node('help-message-1').props;
+    start(pan);expect(pan.onMoveShouldSetPanResponderCapture(null,g(-30))).toBe(true);
+    await act(async()=>{pan.onPanResponderGrant(event(170),g(-30));pan.onPanResponderMove(event(161),g(-39));pan.onPanResponderRelease(event(161),g(-39));});
     expect(props.onReply).not.toHaveBeenCalled();
-    pan.onStartShouldSetPanResponderCapture();
-    expect(pan.onMoveShouldSetPanResponderCapture(null,g(60))).toBe(true);
+    start(pan);expect(pan.onMoveShouldSetPanResponderCapture(null,g(-30))).toBe(true);
+    await act(async()=>{pan.onPanResponderGrant(event(170),g(-30));pan.onPanResponderMove(event(160),g(-40));});
+    expect(props.onReply).not.toHaveBeenCalled();
+    await act(async()=>pan.onPanResponderRelease(event(160),g(-40)));
+    expect(props.onReply).toHaveBeenCalledTimes(1);expect(props.onMenu).not.toHaveBeenCalled();
   });
-  test('audio seek and closed/nonparticipant messages never get captured', async () => {
-    props.message.attachments=[{id:'voice',kind:'AUDIO',name:'voice.m4a'}]; await render();
-    const pan=node('help-message-1').props; pan.onStartShouldSetPanResponderCapture();
-    node('help-audio-touch').props.onTouchStart();
-    expect(pan.onMoveShouldSetPanResponderCapture(null,g(80))).toBe(false);
-    props.open=false; await act(async()=>screen.update(React.createElement(HelpMessageBubble,props)));
-    pan.onStartShouldSetPanResponderCapture(); expect(pan.onMoveShouldSetPanResponderCapture(null,g(80))).toBe(false);
+  test('returning below the short swipe threshold or termination cancels reply',async()=>{
+    await render();const pan=node('help-message-1').props;
+    start(pan);hold();pan.onMoveShouldSetPanResponderCapture(null,g(-30));
+    await act(async()=>{pan.onPanResponderGrant(event(170),g(-30));pan.onPanResponderMove(event(20),g(-180));pan.onPanResponderMove(event(180),g(-20));pan.onPanResponderRelease(event(180),g(-20));});
+    expect(props.onReply).not.toHaveBeenCalled();
+    start(pan);hold();pan.onMoveShouldSetPanResponderCapture(null,g(-30));
+    await act(async()=>{pan.onPanResponderGrant(event(170),g(-30));pan.onPanResponderTerminate();pan.onPanResponderRelease(event(20),g(-180));});
+    expect(props.onReply).not.toHaveBeenCalled();
+  });
+  test('vertical moves, audio seek and noninteractive messages never capture',async()=>{
+    await render();const pan=node('help-message-1').props;
+    start(pan);hold();expect(pan.onMoveShouldSetPanResponderCapture(null,g(-10,80))).toBe(false);
+    props.message={...props.message,attachments:[{id:'voice',kind:'AUDIO',name:'voice.m4a'}]};await act(async()=>screen.update(React.createElement(HelpMessageBubble,props)));
+    start(pan);hold();node('help-audio-touch').props.onTouchStart();expect(pan.onMoveShouldSetPanResponderCapture(null,g(-80))).toBe(false);
+    props.open=false;await act(async()=>screen.update(React.createElement(HelpMessageBubble,props)));
+    start(pan);hold();expect(pan.onMoveShouldSetPanResponderCapture(null,g(-80))).toBe(false);
     props.open=true;props.canInteract=false;await act(async()=>screen.update(React.createElement(HelpMessageBubble,props)));
-    expect(pan.onMoveShouldSetPanResponderCapture(null,g(80))).toBe(false);
+    start(pan);hold();expect(pan.onMoveShouldSetPanResponderCapture(null,g(-80))).toBe(false);
   });
-  test('reversing a rightward swipe cancels reply even when release remains past threshold', async () => {
-    await render(); const pan=node('help-message-1').props;
-    pan.onStartShouldSetPanResponderCapture();
-    await act(async()=>{pan.onPanResponderGrant(null,g(20));pan.onPanResponderMove(null,g(100));pan.onPanResponderMove(null,g(65));pan.onPanResponderRelease(null,g(65));});
-    expect(props.onReply).not.toHaveBeenCalled();
-  });
-  test('rightward drag moves the avatar and bubble together and fills the new reply indicator at 50dp',async()=>{
-    props.message={...props.message,authorId:8};await render();
-    const pan=node('help-message-1').props,content=node('help-message-swipe-content');
+  test('message moves left immediately and indicator fills after a short swipe',async()=>{
+    props.message={...props.message,authorId:8};await render();const pan=node('help-message-1').props,content=node('help-message-swipe-content');
     expect(content.findAll(n=>n.props.testID==='help-message-avatar-slot').length).toBeGreaterThan(0);
-    expect(content.findAll(n=>n.props.testID==='help-message-bubble').length).toBeGreaterThan(0);
-    const translation=StyleSheet.flatten(content.props.style).transform[0].translateX as Animated.Value;
-    pan.onStartShouldSetPanResponderCapture();
-    await act(async()=>{pan.onPanResponderGrant(null,g(18));pan.onPanResponderMove(null,g(35));});
-    expect((translation as any).__getValue()).toBe(35);
+    const translation=StyleSheet.flatten(content.props.style).transform[0].translateX as any;
+    start(pan);hold();pan.onMoveShouldSetPanResponderCapture(null,g(-30));
+    await act(async()=>{pan.onPanResponderGrant(event(170),g(-30));pan.onPanResponderMove(event(180),g(-20));});
+    expect(translation.__getValue()).toBe(-20);
     const fill=StyleSheet.flatten(node('help-reply-swipe-fill').props.style).transform[0].scale;
     expect(fill.__getValue()).toBeCloseTo(.5);
-    await act(async()=>pan.onPanResponderMove(null,g(60)));
-    expect(fill.__getValue()).toBe(1);
-    expect(node('help-reply-swipe-icon').props.name).toBe('arrow-undo');
-    await act(async()=>pan.onPanResponderMove(null,g(200)));
-    expect((translation as any).__getValue()).toBe(80);
-    await act(async()=>pan.onPanResponderRelease(null,g(200)));
+    await act(async()=>pan.onPanResponderMove(event(20),g(-180)));
+    expect(translation.__getValue()).toBe(-80);expect(fill.__getValue()).toBe(1);
+    await act(async()=>pan.onPanResponderRelease(event(20),g(-180)));
     expect(props.onReply).toHaveBeenCalledTimes(1);
-    expect(Animated.spring).toHaveBeenLastCalledWith(translation,expect.objectContaining({toValue:0,useNativeDriver:true,isInteraction:false}));
   });
-  test('a terminated swipe cannot reply on a late release and recycled messages reset the drag',async()=>{
+  test('hold without dragging keeps the menu available on release, without intercepting the drag',async()=>{
     await render();const pan=node('help-message-1').props;
-    const translation=StyleSheet.flatten(node('help-message-swipe-content').props.style).transform[0].translateX as any;
-    pan.onStartShouldSetPanResponderCapture();
-    await act(async()=>{pan.onPanResponderGrant(null,g(20));pan.onPanResponderMove(null,g(70));pan.onPanResponderTerminate();pan.onPanResponderRelease(null,g(70));});
-    expect(props.onReply).not.toHaveBeenCalled();
-    pan.onStartShouldSetPanResponderCapture();await act(async()=>pan.onPanResponderGrant(null,g(40)));
-    props.message={...props.message,id:2};await act(async()=>screen.update(React.createElement(HelpMessageBubble,props)));
-    expect(translation.__getValue()).toBe(0);
-    await act(async()=>pan.onPanResponderRelease(null,g(70)));
-    expect(props.onReply).not.toHaveBeenCalled();
+    start(pan);hold();node('help-message-bubble').props.onLongPress();
+    expect(props.onMenu).not.toHaveBeenCalled();pan.onTouchEnd();expect(props.onMenu).toHaveBeenCalledTimes(1);
+    start(pan);hold();node('help-message-bubble').props.onLongPress();pan.onMoveShouldSetPanResponderCapture(null,g(-30));pan.onTouchEnd();
+    expect(props.onMenu).toHaveBeenCalledTimes(1);
   });
   test('stamp shares last line only when measured space exists, including edited text', async () => {
     props.message={...props.message,authorId:8};

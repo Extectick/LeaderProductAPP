@@ -27,3 +27,17 @@ test('acknowledges native text events without remounting or controlling selectio
   expect(mockProbe).toHaveBeenCalledWith('composer',expect.any(Function));
   await act(async()=>tree.unmount());
 });
+
+test('fullscreen return restores text and selection through a production native command',async()=>{
+  const restoreInput=jest.fn(async()=>{}),selection=jest.fn(),lines=jest.fn(),ref=React.createRef<any>();
+  let tree!:TestRenderer.ReactTestRenderer;
+  await act(async()=>{tree=TestRenderer.create(React.createElement(HelpNativeInput,{ref,value:'Текст',onChange:jest.fn(),onGeometry:jest.fn(),onSelection:selection,onLines:lines,placeholder:'',color:'#fff',hintColor:'#999',accentColor:'#38f',editable:true,reducedMotion:true}),{createNodeMock:()=>({restoreInput})});});
+  const input=tree.root.findByType('NativeHelpInput' as any);
+  input.props.onSelectionChanged({nativeEvent:{start:1,end:3}});
+  expect(selection).toHaveBeenCalledWith({start:1,end:3});
+  input.props.onGeometry({nativeEvent:{height:68,contentHeight:44,lines:2}});
+  expect(lines).toHaveBeenCalledWith(2);
+  await ref.current.restore('Дополненный текст',{start:2,end:7});
+  expect(restoreInput).toHaveBeenCalledWith('Дополненный текст',2,7);
+  await act(async()=>tree.unmount());
+});

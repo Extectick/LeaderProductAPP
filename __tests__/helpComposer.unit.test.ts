@@ -20,6 +20,8 @@ jest.mock('../src/features/help/helpTheme', () => ({useHelpTheme:()=>({surface:'
 jest.mock('../src/features/help/components/HelpPrimitives', () => ({HelpIcon:'HelpIcon',HelpSheet:'HelpSheet'}));
 jest.mock('../src/features/help/components/HelpMedia', () => ({HelpImage:'HelpImage'}));
 jest.mock('../src/features/help/components/HelpPhotoPicker', () => ({HelpPhotoPicker:'HelpPhotoPicker'}));
+jest.mock('../src/features/help/components/HelpExpandedEditor',()=>({HelpExpandedEditor:'HelpExpandedEditor'}));
+jest.mock('../src/features/help/components/HelpVoiceRecorder',()=>({hasNativeHelpVoice:false,HelpVoiceRecorder:'HelpVoiceRecorder'}));
 import { HelpComposer } from '../src/features/help/components/HelpComposer';
 
 describe('Help composer recorder lifecycle', () => {
@@ -501,11 +503,26 @@ describe('Help composer recorder lifecycle', () => {
     const selected=[{uri:'file://ready.jpg',name:'ready.jpg',mimeType:'image/jpeg'}];
     await act(async()=>tray().props.onSend(selected));expect(props.onSend).toHaveBeenCalledWith(undefined,selected);
     await act(async()=>tray().props.onPreparing(true));
+    expect(screen!.root.findAllByProps({testID:'help-composer-surface'})).toHaveLength(0);
+    expect(tray().props.open).toBe(true);
     // The inline gallery owns the composer while open; check its restored
     // send button after closing the gallery, while preparation is still pending.
     expect(screen!.root.findAll(n=>n.props.label==='Отправить сообщение')).toHaveLength(0);
     await act(async()=>tray().props.onClose());
     expect(screen!.root.findAll(n=>n.props.label==='Отправить сообщение')[0].props.disabled).toBe(true);
+  });
+  test('visual wrapping opens the same draft in fullscreen and returns without sending',async()=>{
+    props.value='Длинное сообщение';await render();
+    expect(screen!.root.findAll(n=>n.props.label==='Развернуть редактор сообщения')).toHaveLength(0);
+    const field=screen!.root.findAll(n=>n.type===TextInput)[0];
+    await act(async()=>{field.props.onSelectionChange({nativeEvent:{selection:{start:2,end:6}}});field.props.onContentSizeChange({nativeEvent:{contentSize:{height:44}}});});
+    await act(async()=>screen!.root.findAll(n=>n.props.label==='Развернуть редактор сообщения')[0].props.onPress());
+    const expanded=()=>screen!.root.findByType('HelpExpandedEditor' as any);
+    expect(expanded().props.selection).toEqual({start:2,end:6});expect(expanded().props.value).toBe(props.value);
+    await act(async()=>expanded().props.onChange('Дополненный черновик'));expect(props.onChange).toHaveBeenCalledWith('Дополненный черновик');
+    props={...props,value:'Дополненный черновик'};await act(async()=>screen!.update(React.createElement(HelpComposer,props)));
+    expect(expanded().props.value).toBe('Дополненный черновик');
+    await act(async()=>expanded().props.onDone({start:4,end:8}));expect(screen!.root.findAllByType('HelpExpandedEditor' as any)).toHaveLength(0);expect(props.onSend).not.toHaveBeenCalled();
   });
   test('native documents action uses document picker and closes the inline tray',async()=>{
     Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});mockPicker.mockResolvedValue({canceled:true,assets:null});await render();
