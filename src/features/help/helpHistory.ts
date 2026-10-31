@@ -1,6 +1,6 @@
 import { API_BASE_URL } from '@/utils/config';
 import type { HelpTicket } from './helpApi';
-import { readHistorySnapshot, listHistoryRecords, readHistoryMessage, readHistoryMessages, readHistoryRecord, removeHistoryTicket, writeHistoryChange } from './helpHistoryDatabase';
+import { readHistorySnapshot, listHistoryRecords, readHistoryMessage, readHistoryMessages, readHistoryRecord, removeHistoryTicket, writeHistoryChange, writeAccountChanges } from './helpHistoryDatabase';
 import { validHelpAnchor } from './helpHistoryModel';
 import type { HelpCachedWindow, HelpHistoryPage, HelpSyncResult, HelpViewportAnchor } from './helpHistoryTypes';
 
@@ -9,7 +9,7 @@ export async function readCachedHelpTickets(userId: number) {
   return (await listHistoryRecords(helpHistoryScope(userId))).map(row => row.ticket);
 }
 export async function cacheHelpTickets(userId: number, tickets: HelpTicket[]) {
-  for (const ticket of tickets) await writeHistoryChange(helpHistoryScope(userId), ticket.id, {ticket});
+  if(tickets.length)await writeAccountChanges(helpHistoryScope(userId),tickets.map(ticket=>({ticketId:ticket.id,change:{ticket}})));
 }
 export async function readCachedHelpTicket(userId: number, ticketId: number, sequence?: number): Promise<HelpCachedWindow | null> {
   const snapshot=await readHistorySnapshot(helpHistoryScope(userId),ticketId,sequence);

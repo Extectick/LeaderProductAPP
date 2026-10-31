@@ -6,15 +6,17 @@ jest.mock('../utils/config',()=>({API_BASE_URL:'https://dev.example.test'}));
 let mockOnline=true;
 jest.mock('../src/shared/network/useServerStatus',()=>({useServerStatus:()=>({isReachable:mockOnline})}));
 const mockHandlers:Record<string,Function>={};
-jest.mock('../src/features/help/helpSocket',()=>({createHelpSocket:(_:number,ready:Function)=>{const socket={emit:jest.fn(),on:(key:string,fn:Function)=>{mockHandlers[key]=fn;}};ready(socket);return{disconnect:jest.fn(),getSocket:()=>socket};}}));
+jest.mock('../src/features/help/helpSocket',()=>({createHelpSocket:(_:number,ready:Function)=>{const socket={off:jest.fn(),emit:jest.fn(),on:(key:string,fn:Function)=>{mockHandlers[key]=fn;}};ready(socket);return{disconnect:jest.fn(),getSocket:()=>socket};}}));
 jest.mock('@react-native-async-storage/async-storage',()=>{const values=new Map<string,string>();return{getItem:jest.fn(async(key:string)=>values.get(key)??null),setItem:jest.fn(async(key:string,value:string)=>{values.set(key,value);}),removeItem:jest.fn(async(key:string)=>{values.delete(key);}),clear:jest.fn(async()=>values.clear()),getAllKeys:jest.fn(async()=>[...values.keys()]),multiGet:jest.fn(async(keys:string[])=>keys.map(key=>[key,values.get(key)??null]))};});
 jest.mock('../src/features/help/helpHistoryDatabase',()=>require('../src/features/help/helpHistoryDatabase.web'));
-const mockApi={config:jest.fn(),list:jest.fn(),detail:jest.fn(),read:jest.fn(),sync:jest.fn(),messages:jest.fn(),search:jest.fn(),date:jest.fn()};
+const mockApi={events:jest.fn(),config:jest.fn(),list:jest.fn(),detail:jest.fn(),read:jest.fn(),sync:jest.fn(),messages:jest.fn(),search:jest.fn(),date:jest.fn()};
 jest.mock('../src/features/help/helpApi',()=>({createHelpApi:()=>mockApi,HelpApiError:class extends Error{status:number;code?:string;constructor(message:string,status=0,code?:string){super(message);this.status=status;this.code=code;}},loadHelpMedia:jest.fn(),uploadHelpFiles:jest.fn()}));
-jest.mock('../src/features/help/helpStorage',()=>({readHelpPending:jest.fn(async()=>[]),getHelpDraft:jest.fn(),setHelpDraft:jest.fn()}));
+jest.mock('../src/features/help/helpStorage',()=>({readHelpPending:jest.fn(async()=>[]),readLastCreatedOperation:jest.fn(async()=>null),subscribeHelpOutbox:()=>()=>{},helpClientId:()=> 'history-test',getHelpDraft:jest.fn(),getHelpDrafts:jest.fn(),setHelpDraft:jest.fn()}));
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {helpViewCache} from '../src/features/help/helpViewCache';
 import {useHelpService} from '../src/features/help/useHelpService';
 import {cacheHelpPage,readCachedHelpTicket,saveHelpViewport} from '../src/features/help/helpHistory';
+import * as history from '../src/features/help/helpHistory';
 import {helpLocalDayBounds} from '../src/features/help/helpDateNavigation';
 import {HelpApiError} from '../src/features/help/helpApi';
 import type {HelpMessage,HelpTicket} from '../src/features/help/helpApi';
@@ -28,7 +30,7 @@ function Harness(){service=useHelpService(true);newerStates.push(service.hasNewe
 async function render(){await act(async()=>{screen=TestRenderer.create(React.createElement(Harness));});}
 async function open(id=7){await act(async()=>{await service.openTicket(id);await service.refresh();});}
 beforeEach(async()=>{
-  mockOnline=true;await AsyncStorage.clear();Object.keys(mockHandlers).forEach(key=>delete mockHandlers[key]);
+  helpViewCache('https://dev.example.test:5:true').lists.clear();helpViewCache('https://dev.example.test:5:true').windows.clear();mockOnline=true;mockApi.events.mockReset().mockImplementation(async(cursor:number)=>({events:[],nextCursor:cursor,hasMore:false}));await AsyncStorage.clear();Object.keys(mockHandlers).forEach(key=>delete mockHandlers[key]);
   mockApi.config.mockReset().mockResolvedValue({canManage:false});mockApi.list.mockReset().mockResolvedValue({tickets:[],nextCursor:null});
   mockApi.detail.mockReset().mockImplementation(async(id:number)=>({ticket:ticket(id),...page(101,200,id)}));
   mockApi.read.mockReset().mockResolvedValue({});mockApi.search.mockReset().mockResolvedValue({messages:[],total:0,nextCursor:null});
@@ -79,7 +81,7 @@ test('socket arrival updates history cache and badge without joining a disconnec
   await render();await open();await act(async()=>{await service.saveViewport({messageId:70150,sequence:150,offset:8,atLatest:false},7);});
   const key=service.navigationTarget?.key;
   mockApi.sync.mockResolvedValue({ticket:{...ticket(7,201),unreadCount:1},events:[{id:11}],messages:[msg(201)],deletedMessageIds:[],nextCursor:11,eventCursor:11,snapshotCursor:11,hasMore:false,lastSequence:201,lastReadSequence:200,firstUnreadSequence:201});
-  await act(async()=>{mockHandlers['help:event']({ticketId:7});await service.refresh();});
+  await act(async()=>{mockApi.events.mockResolvedValueOnce({events:[{id:11,ticketId:7}],nextCursor:11,hasMore:false});mockHandlers['help:event']({id:11,ticketId:7});await service.refresh();});
   expect(service.messages.at(-1)?.sequence).toBe(200);expect(service.hasNewer).toBe(true);expect(service.selectedTicket?.unreadCount).toBe(1);expect(service.navigationTarget?.key).toBe(key);
   expect((await readCachedHelpTicket(5,7))?.record.lastSequence).toBe(201);
 });
@@ -88,14 +90,14 @@ test('live arrival while following the tail never transiently disables follow wi
   newerStates.length=0;
   mockApi.sync.mockResolvedValue({ticket:ticket(7,201),events:[{id:11}],messages:[msg(201)],deletedMessageIds:[],nextCursor:11,eventCursor:11,snapshotCursor:11,hasMore:false,lastSequence:201,lastReadSequence:200,firstUnreadSequence:201});
   mockApi.messages.mockResolvedValue(page(201,201,7,201));
-  await act(async()=>{mockHandlers['help:event']({ticketId:7});await service.refresh();});
+  await act(async()=>{mockApi.events.mockResolvedValueOnce({events:[{id:11,ticketId:7}],nextCursor:11,hasMore:false});mockHandlers['help:event']({id:11,ticketId:7});await service.refresh();});
   expect(service.messages.at(-1)?.sequence).toBe(201);expect(newerStates.every(value=>value===false)).toBe(true);
 });
 test('event arriving during an in-flight replay triggers a second replay',async()=>{
   await render();await open();mockApi.sync.mockClear();
   let resolve!:(value:unknown)=>void;mockApi.sync.mockReturnValueOnce(new Promise(done=>{resolve=done;}));
-  await act(async()=>{mockHandlers['help:event']({ticketId:7});});
-  await act(async()=>{mockHandlers['help:event']({ticketId:7});});
+  await act(async()=>{mockApi.events.mockResolvedValueOnce({events:[{id:11,ticketId:7}],nextCursor:11,hasMore:false});mockHandlers['help:event']({id:11,ticketId:7});});
+  await act(async()=>{mockApi.events.mockResolvedValueOnce({events:[{id:11,ticketId:7}],nextCursor:11,hasMore:false});mockHandlers['help:event']({id:11,ticketId:7});});
   await act(async()=>{resolve({ticket:ticket(),events:[],messages:[],deletedMessageIds:[],nextCursor:10,eventCursor:10,snapshotCursor:10,hasMore:false,lastSequence:200,lastReadSequence:200,firstUnreadSequence:null});await service.refresh();});
   expect(mockApi.sync.mock.calls.length).toBeGreaterThanOrEqual(2);
 });
@@ -166,4 +168,28 @@ test('offline partial history refuses to claim a cached matching row is the firs
   mockOnline=false;mockApi.detail.mockRejectedValue(new Error('offline'));mockApi.sync.mockRejectedValue(new Error('offline'));await render();await open();const key=service.navigationTarget?.key;
   await act(async()=>{await expect(service.jumpToDate('2026-10-28')).rejects.toThrow('сохранена не полностью');});
   expect(service.selectedTicket?.id).toBe(7);expect(service.navigationTarget?.key).toBe(key);expect(mockApi.date).not.toHaveBeenCalled();
+});
+
+for(const denied of [false,true])test(denied?'late disk list cannot restore tickets after access denial':'network list does not wait for disk or get overwritten by late cache',async()=>{
+ let resolve!:(value:HelpTicket[])=>void;const disk=jest.spyOn(history,'readCachedHelpTickets').mockImplementation(()=>new Promise(done=>{resolve=done;}));
+ const fresh=ticket(8),old=ticket(7);
+ if(denied)mockApi.list.mockRejectedValue(new HelpApiError('Forbidden',403));else mockApi.list.mockResolvedValue({tickets:[fresh],nextCursor:null});
+ try{await render();expect(mockApi.list).toHaveBeenCalled();expect(service.tickets.map(row=>row.id)).toEqual(denied?[]:[8]);await act(async()=>{resolve([old]);});expect(service.tickets.map(row=>row.id)).toEqual(denied?[]:[8]);}
+ finally{disk.mockRestore();}
+});
+
+test('an empty memory snapshot keeps list loading until the server request finishes',async()=>{
+ helpViewCache('https://dev.example.test:5:true').lists.set(JSON.stringify(['OPEN','mine','']),[]);
+ let resolve!:(value:any)=>void;mockApi.list.mockImplementation(()=>new Promise(done=>{resolve=done;}));
+ await render();expect(service.loading).toBe(true);expect(service.tickets).toEqual([]);
+ await act(async()=>{resolve({tickets:[],nextCursor:null});});
+ expect(service.loading).toBe(false);expect(service.error).toBeNull();
+});
+
+test('successful list loading clears an interim startup error',async()=>{
+ let resolve!:(value:any)=>void;mockApi.list.mockImplementation(()=>new Promise(done=>{resolve=done;}));
+ mockApi.config.mockRejectedValue(new Error('Temporary startup error'));
+ await render();expect(service.loading).toBe(true);expect(service.error).toBe('Temporary startup error');
+ await act(async()=>{resolve({tickets:[ticket()],nextCursor:null});});
+ expect(service.loading).toBe(false);expect(service.error).toBeNull();expect(service.tickets).toHaveLength(1);
 });

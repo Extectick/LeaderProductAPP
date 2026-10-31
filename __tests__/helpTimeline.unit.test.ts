@@ -176,6 +176,14 @@ describe('sticky date geometry and navigation integration',()=>{
     expect(props.onReady).toHaveBeenCalledTimes(1);
     expect(mockFlashProps.maintainVisibleContentPosition.disabled).toBe(false);
   });
+  test('a fully measured short history opens when initial-index offset differs from native clamp',async()=>{
+    props={...props,onReady:jest.fn(),navigationTarget:{key:95,kind:'anchor',messageId:2,sequence:2,offset:5,animate:false}};
+    mockListApi.getAbsoluteLastScrollOffset=()=>80;
+    await render();
+    await act(async()=>{mockFlashProps.onContentSizeChange(390,470);await jest.advanceTimersByTimeAsync(80);});
+    expect(mockListApi.scrollToOffset).toHaveBeenLastCalledWith({offset:0,animated:false,skipFirstItemOffset:true});
+    expect(props.onReady).toHaveBeenCalledTimes(1);
+  });
   test('a page arriving after the empty list loaded still uses measured initial positioning',async()=>{
     const messages=props.messages;props={...props,messages:[],loading:true,onReady:jest.fn(),navigationTarget:null};
     mockListApi.scrollToOffset.mockImplementation(({offset}:any)=>{mockListApi.getAbsoluteLastScrollOffset=()=>offset;});

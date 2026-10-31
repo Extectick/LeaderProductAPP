@@ -328,9 +328,13 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
       const tail=live.current.messages.at(-1);
       const liveTail=target.kind==='latest'&&(tail?.id!==pending.tailId||live.current.messages.some(message=>message.assistantRun&&['thinking','streaming'].includes(message.assistantRun.status)));
       const settled=pending.signature===signature&&Math.abs(view.getAbsoluteLastScrollOffset()-offset)<=1;
+      // A short list is clamped at native offset zero. FlashList can still
+      // report its initial-index offset after native bottom padding changes.
+      // Once every visible row is measured, no offscreen anchor remains to resolve.
+      const fits=content+inset<=height;
       // An active answer/new socket messages must not make opening wait for
       // the conversation to become idle. Hand its measured tail to native follow.
-      if(measured&&height>0&&content>0&&(settled||liveTail&&pending.passes>0&&pending.aligned)){
+      if(measured&&height>0&&content>0&&(settled||(fits||liveTail||target.kind==='latest'&&hasNativeChatLayout)&&pending.passes>0&&pending.aligned)){
         pending.active=false;readyRef.current=true;setReady(true);inNavigation.current=false;setNavigating(false);
         setFollow(target.kind==='latest'&&!live.current.hasNewer);
         if(target.kind==='latest')scrollEnd(false);
@@ -339,6 +343,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
         updateMediaRange(true);observe();return;
       }
       pending.signature=measured?signature:'';
+      if(pending.passes===31)helpDevEvent('chat.open.measurementPending',{target:target.kind,index,measured,itemMeasured:item?.isHeightMeasured!==false,itemHeight:item?.height??0,firstVisible:range.startIndex,lastVisible:range.endIndex,height,content});
       // Native measurement commits restart this bounded pump. Unmeasured
       // estimates never become permission to show an incorrectly placed window.
       if(++pending.passes%32!==0)pending.frame=requestAnimationFrame(step);

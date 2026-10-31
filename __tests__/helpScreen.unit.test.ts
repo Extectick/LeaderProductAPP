@@ -4,6 +4,13 @@ import { BackHandler, KeyboardAvoidingView, Modal, PanResponder, Platform, Press
 import type { HelpDetail, HelpTicket } from '../src/features/help/helpApi';
 
 const mockRouter = { replace: jest.fn() };
+jest.mock('@shopify/flash-list',()=>{
+  const React=require('react'),{ScrollView}=require('react-native');
+  return {FlashList:React.forwardRef((props:any,ref:any)=>{
+    React.useImperativeHandle(ref,()=>({scrollToOffset:jest.fn()}));
+    return React.createElement(ScrollView,props,props.data.length?props.data.map((item:any)=>React.createElement(React.Fragment,{key:item.id},props.renderItem({item}))):props.ListEmptyComponent,props.ListFooterComponent);
+  })};
+});
 let mockFocused = true;
 let mockNativeChatLayout = false;
 let mockTimelineProps:any;
@@ -20,7 +27,7 @@ jest.mock('../src/features/help/HelpAudioPlayback',()=>({
   useHelpAudioPlayback:()=>mockPlayback,
 }));
 jest.mock('../src/features/help/components/HelpNativeChatLayout', () => ({
-  get hasNativeChatLayout() { return mockNativeChatLayout; }, HelpNativeChatLayout:'HelpNativeChatLayout',
+  get hasNativeChatLayout() { return mockNativeChatLayout; }, get hasNativeImeLayout() { return mockNativeChatLayout; }, HelpNativeChatLayout:'HelpNativeChatLayout',
 }));
 jest.mock('../context/ThemeContext', () => ({ useTheme: () => ({theme:'light'}) }));
 jest.mock('expo-router', () => ({ useRouter: () => mockRouter, useLocalSearchParams: () => ({}) }));
@@ -83,6 +90,17 @@ describe('Help screen integration with service boundary', () => {
   async function render(){await act(async()=>{screen=TestRenderer.create(React.createElement(HelpScreen));});}
   function button(label:string){return screen.root.findAll(node=>node.props.accessibilityLabel===label && typeof node.props.onPress==='function')[0];}
   function composer(){return screen.root.findByType('HelpComposer' as any);}
+  test('chat list shows a loading animation instead of action errors while its request is pending',async()=>{
+    mockService.loading=true;mockService.error='Не удалось выполнить действие';await render();
+    expect(screen.root.findByProps({testID:'help-chats-loading'}).props.accessibilityRole).toBe('progressbar');
+    expect(screen.root.findAllByType(Text).some(node=>node.props.children==='Загружаем чаты…')).toBe(true);
+    expect(screen.root.findAllByType(Text).some(node=>String(node.props.children).includes('Повторить'))).toBe(false);
+    mockService.loading=false;await act(async()=>screen.update(React.createElement(HelpScreen)));
+    expect(screen.root.findAllByProps({testID:'help-chats-loading'})).toHaveLength(0);
+    const retry=screen.root.findAll(node=>typeof node.props.onPress==='function'&&node.findAllByType(Text).some(text=>String(text.props.children).includes('Повторить'))).at(-1)!;
+    mockService.loadTickets.mockClear();await act(async()=>retry.props.onPress());
+    expect(mockService.loadTickets).toHaveBeenCalledWith('OPEN','mine',false,'');expect(mockService.retryPending).not.toHaveBeenCalled();
+  });
   test('opening another chat does not carry a reply focus request into its composer',async()=>{
     mockService.tickets=[ticket];mockService.messages=[{id:81,ticketId:7,sequence:1,authorId:9,authorRole:'IT',text:'Ответ',kind:'TEXT',attachments:[],reactions:[],createdAt:new Date().toISOString()}];
     await render();await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());
@@ -97,8 +115,17 @@ describe('Help screen integration with service boundary', () => {
     mockNativeChatLayout=true;mockService.tickets=[ticket];await render();
     await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());
     expect(screen.root.findByType('HelpNativeChatLayout' as any).props.animateTail).toBe(false);
-    await act(async()=>screen.root.findByType(HelpChatEntry).props.onEntered());
+    await act(async()=>{mockTimelineProps.onReady();screen.root.findByType(HelpChatEntry).props.onEntered();});
     expect(screen.root.findByType('HelpNativeChatLayout' as any).props.animateTail).toBe(true);
+  });
+  test('native keyboard reduces the actual chat viewport without duplicating the inset inside the list',async()=>{
+    mockNativeChatLayout=true;mockService.tickets=[ticket];await render();
+    await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());
+    const viewport=()=>StyleSheet.flatten(screen.root.findByProps({testID:'help-chat-visible-viewport'}).props.style);const before=viewport().bottom;expect(viewport().overflow).toBe('hidden');expect(mockTimelineProps.dockHeight).toBe(0);
+    await act(async()=>screen.root.findByType('HelpNativeChatLayout' as any).props.onImeInsetChange(250));
+    expect(viewport().bottom).toBe(before+250);expect(mockTimelineProps.dockHeight).toBe(0);expect(StyleSheet.flatten(screen.root.findByProps({testID:'help-chat-dock-layout'}).props.style).bottom).toBe(250);
+    await act(async()=>screen.root.findByType('HelpNativeChatLayout' as any).props.onImeInsetChange(0));
+    expect(viewport().bottom).toBe(before);expect(mockTimelineProps.dockHeight).toBe(0);expect(StyleSheet.flatten(screen.root.findByProps({testID:'help-chat-dock-layout'}).props.style).bottom).toBe(0);
   });
   async function archiveAction(label:string){await act(async()=>button('Меню поддержки').props.onPress());await act(async()=>button(label).props.onPress());}
   test('a completed right swipe anywhere in the chat navigates back and preserves the draft',async()=>{

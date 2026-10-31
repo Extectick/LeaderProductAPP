@@ -123,6 +123,15 @@ describe('Help composer recorder lifecycle', () => {
     await render();await act(async()=>mic().props.onPanResponderGrant());
     expect(mockStopPlayback).not.toHaveBeenCalled();expect(mockRecorder.record).not.toHaveBeenCalled();
   });
+  test('reply and input share one surface while their controls stay in separate rows',async()=>{
+    props.value='Line one\nLine two';props.quote={name:'Support',text:'Original message',onPress:jest.fn()};await render();
+    const preview=screen!.root.findByProps({testID:'help-reply-preview'}),surface=screen!.root.findByProps({testID:'help-composer-surface'}),row=screen!.root.findByProps({testID:'help-composer-input-row'});
+    expect(preview.parent?.props.testID).toBe('help-composer-surface');expect(surface.findAllByProps({testID:'help-reply-preview'}).length).toBeGreaterThan(0);expect(row.props.style.minHeight).toBe(88);
+    const expand=row.findAll(node=>node.props.label==='Развернуть редактор сообщения')[0];expect(expand.props.name).toBe('resize-outline');expect(expand.props.style).toMatchObject({top:0,right:0,width:44,height:44});
+    const cancel=preview.findAll(node=>node.props.label==='Отменить ответ')[0];expect(cancel.props.style).toMatchObject({width:44,height:44});
+    await act(async()=>cancel.props.onPress());expect(props.onCancelQuote).toHaveBeenCalledTimes(1);
+    expect(screen!.root.findAllByType('HelpExpandedEditor' as any)).toHaveLength(0);expect(props.onChange).not.toHaveBeenCalled();await act(async()=>expand.props.onPress());expect(screen!.root.findAllByType('HelpExpandedEditor' as any)).toHaveLength(1);
+  });
   test('height growth is interruptible and scoped to the composer, with reduced-motion fallback',async()=>{
     mockReducedMotion=false;
     const stop=jest.fn(),start=jest.fn();

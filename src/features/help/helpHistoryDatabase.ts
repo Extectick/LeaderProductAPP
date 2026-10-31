@@ -9,6 +9,26 @@ function parseRecord(raw:string):HelpHistoryRecord|null {
   try{const value=JSON.parse(raw);return value&&Number.isSafeInteger(value.ticket?.id)&&Array.isArray(value.ranges)&&Number.isSafeInteger(value.syncCursor)?value:null;}catch{return null;}
 }
 let opening: Promise<SQLite.SQLiteDatabase> | null = null;
+let readerOpening: Promise<SQLite.SQLiteDatabase> | null = null;
+let readerTail: Promise<unknown> = Promise.resolve();
+/** A WAL read snapshot must not join the outbox/replay writer queue. */
+function withHistoryReadSnapshot<T>(work:(db:SQLite.SQLiteDatabase)=>Promise<T>):Promise<T> {
+    return withSQLiteActivity(async()=>{
+        await database();
+        const result=readerTail.catch(()=>{}).then(async()=>{
+            if(!readerOpening)readerOpening=SQLite.openDatabaseAsync('help-history-v1.db',{useNewConnection:true,finalizeUnusedStatementsBeforeClosing:false}).then(async db=>{
+                try{await db.execAsync('PRAGMA query_only = ON; PRAGMA busy_timeout = 5000;');manageSQLiteConnection(db,()=>{readerOpening=null;});return db;}
+                catch(error){await db.closeAsync().catch(()=>{});throw error;}
+            }).catch(error=>{readerOpening=null;throw error;});
+            const db=await readerOpening;
+            await db.execAsync('BEGIN DEFERRED TRANSACTION');
+            try{const value=await work(db);await db.execAsync('COMMIT');return value;}
+            catch(error){await db.execAsync('ROLLBACK').catch(()=>{});throw error;}
+        });
+        readerTail=result.then(()=>{},()=>{});
+        return result;
+    });
+}
 async function database() {
     assertSQLiteAvailable();
     if (!opening)
@@ -124,7 +144,7 @@ export async function readHistorySnapshot(scope: string, ticketId: number, seque
         record: HelpHistoryRecord;
         messages: HelpMessage[];
     } | null = null;
-    await withSQLiteWriteTransaction(await database(), async (tx) => {
+    await withHistoryReadSnapshot(async (tx) => {
         const row = await tx.getFirstAsync<{
             data: string;
         }>('SELECT data FROM help_history_tickets WHERE scope=? AND ticket_id=?', scope, ticketId);
@@ -153,6 +173,10 @@ export async function readAccountValue(scope: string, key: string): Promise<stri
         data: string;
     }>('SELECT data FROM help_account_state WHERE scope=? AND state_key=?', scope, key);
     return row?.data ?? null;
+}
+export async function readAccountValues(scope:string,prefix:string):Promise<Record<string,string>> {
+    const rows=await(await database()).getAllAsync<{state_key:string;data:string}>('SELECT state_key,data FROM help_account_state WHERE scope=? AND substr(state_key,1,?)=?',scope,prefix.length,prefix);
+    return Object.fromEntries(rows.map(row=>[row.state_key,row.data]));
 }
 export async function writeAccountValue(scope: string, key: string, data: string) {
     await withSQLiteWriteTransaction(await database(), async (tx) => { await tx.runAsync('INSERT INTO help_account_state(scope,state_key,data) VALUES(?,?,?) ON CONFLICT(scope,state_key) DO UPDATE SET data=excluded.data', scope, key, data); });

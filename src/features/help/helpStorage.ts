@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_BASE_URL } from '@/utils/config';
 import type { HelpDetail, HelpMessageInput } from './helpApi';
-import { readOutbox, putOutbox, deleteOutbox, readAccountValue, insertAccountValueIfAbsent, writeAccountValue, writeAccountChanges } from './helpHistoryDatabase';
+import { readOutbox, putOutbox, deleteOutbox, readAccountValue, readAccountValues, insertAccountValueIfAbsent, writeAccountValue, writeAccountChanges } from './helpHistoryDatabase';
 import { helpHistoryScope } from './helpHistory';
 import type { HelpPending } from './helpDurableTypes';
 export type { HelpPending } from './helpDurableTypes';
@@ -73,6 +73,13 @@ export async function markHelpNotificationPresented(userId: number, eventId: num
     const scope = helpHistoryScope(userId);
     await serialized(`${scope}:notifications`, async () => { const events = JSON.parse(await readAccountValue(scope, 'presented-events') || '[]') as number[]; if (!events.includes(eventId))
         await writeAccountValue(scope, 'presented-events', JSON.stringify([...events, eventId].slice(-1000))); });
+}
+export async function getHelpDrafts(userId:number,keys:string[]):Promise<Record<string,string>> {
+    const saved=await readAccountValues(helpHistoryScope(userId),'draft:');
+    const missing=keys.filter(key=>saved[`draft:${key}`]===undefined);
+    const legacy=missing.length?await AsyncStorage.multiGet(missing.map(key=>helpStorageKey(userId,`draft:${key}`))):[];
+    const old=new Map(legacy);
+    return Object.fromEntries(keys.map(key=>[key,saved[`draft:${key}`]??old.get(helpStorageKey(userId,`draft:${key}`))??'']));
 }
 export async function getHelpDraft(userId: number, key: string) {
     const scope = helpHistoryScope(userId), value = await readAccountValue(scope, `draft:${key}`);
