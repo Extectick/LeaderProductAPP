@@ -16,6 +16,8 @@ import UsersTab from '../tabs/users/UsersTab';
 import AdminDesktopLayout from './AdminDesktopLayout';
 import AdminMobileLayout from './AdminMobileLayout';
 import { ADMIN_DESKTOP_BREAKPOINT, styles } from './styles';
+import { KnowledgeReviewPanel } from '@/src/features/knowledge/KnowledgeReviewPanel';
+import { knowledgeApi } from '@/src/features/knowledge/api';
 
 export default function AdminScreen() {
   const controller = useAdminScreen();
@@ -62,6 +64,7 @@ export default function AdminScreen() {
       />
       <RolesTab active={controller.activeTab === 'roles'} styles={legacyStyles} colors={colors} />
       <ServicesTab active={controller.activeTab === 'services'} styles={legacyStyles} colors={colors} />
+      {controller.activeTab === 'knowledge' ? <KnowledgeReviewPanel client={knowledgeApi} /> : null}
       <UpdatesTab
         active={controller.activeTab === 'updates'}
         styles={legacyStyles}

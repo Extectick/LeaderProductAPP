@@ -1,4 +1,4 @@
-export type AdminTabKey = 'users' | 'departments' | 'roles' | 'services' | 'updates';
+export type AdminTabKey = 'users' | 'departments' | 'roles' | 'services' | 'updates' | 'knowledge';
 
 export type AdminTabItem = {
   key: AdminTabKey;

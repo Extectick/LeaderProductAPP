@@ -5,5 +5,6 @@ export const ADMIN_TABS: AdminTabItem[] = [
   { key: 'departments', label: 'Отделы', icon: 'domain' },
   { key: 'roles', label: 'Роли', icon: 'shield-account-outline' },
   { key: 'services', label: 'Сервисы', icon: 'apps' },
+  { key: 'knowledge', label: 'База знаний', icon: 'book-open-page-variant-outline' },
   { key: 'updates', label: 'Обновления', icon: 'cloud-upload-outline' },
 ];

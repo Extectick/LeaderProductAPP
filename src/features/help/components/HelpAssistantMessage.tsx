@@ -16,7 +16,7 @@ export function HelpAssistantPreviewMenu({ preview, ticketId, onClose }: { previ
   return <View style={{ gap: 3, marginBottom: 12 }}><Text style={{ color: c.muted, fontSize: 12, marginBottom: 6 }}>Режим ответа ИИ · для следующего сообщения</Text>{options.map(([value, label]) => <Pressable key={value} accessibilityRole="radio" accessibilityState={{ checked: preview.scenario === value }} onPress={() => { preview.setScenario(value); onClose(); }} style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10 }}><Ionicons name={preview.scenario === value ? 'radio-button-on' : 'radio-button-off'} size={20} color={preview.scenario === value ? c.accentText : c.muted}/><Text style={{ color: c.text, fontSize: 14 }}>{label}</Text></Pressable>)}{ticketId !== undefined && <Pressable accessibilityRole="button" onPress={() => { preview.replay(ticketId); onClose(); }} style={{ minHeight: 44, justifyContent: 'center' }}><Text style={{ color: c.accentText, fontSize: 14 }}>Повторить последний сценарий ИИ</Text></Pressable>}</View>;
 }
 
-export function HelpAssistantMessage({ message, onRetry }: { message: HelpMessage; onRetry?: () => void }) {
+export function HelpAssistantMessage({ message, onRetry, onConnectOnec }: { message: HelpMessage; onRetry?: () => void; onConnectOnec?: () => void }) {
   const c = useHelpTheme(), reduced = useHelpReducedMotion(), run = message.assistantRun!;
   const active = run.status === 'thinking' || run.status === 'streaming';
   const showRetry = Boolean(message.text) && run.status === 'stopped' && run.stopReason !== 'superseded';
@@ -90,7 +90,10 @@ export function HelpAssistantMessage({ message, onRetry }: { message: HelpMessag
           {onRetry && <Pressable accessibilityRole="button" accessibilityLabel="Повторить ответ ИИ" onPress={onRetry} style={{ minHeight: 44, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 5 }}><Ionicons name="refresh-outline" size={17} color={c.accentText}/><Text style={{ color: c.accentText, fontSize: 13 }}>Повторить</Text></Pressable>}
         </View>}
       </View>}
-      {Boolean(message.text) && <View style={{ padding: 12, paddingBottom: 28 }}><Text selectable style={{ color: c.text, fontSize: 15, lineHeight: 22 }}>{message.text}</Text></View>}
+      {Boolean(message.text) && <View style={{ padding: 12, paddingBottom: 28 }}><Text selectable style={{ color: c.text, fontSize: 15, lineHeight: 22 }}>{message.text}</Text>
+        {run.action?.type === 'connect_onec' && onConnectOnec && <Pressable accessibilityRole="button" accessibilityLabel="Подключить 1С" onPress={onConnectOnec}
+          style={{ flexDirection: 'row', gap: 8, alignItems: 'center', minHeight: 44, marginTop: 8 }}><Ionicons name="lock-closed-outline" size={18} color={c.accentText}/><Text style={{ color: c.accentText, fontSize: 14, fontWeight: '600' }}>Подключить 1С</Text><Ionicons name="chevron-forward" size={16} color={c.accentText}/></Pressable>}
+      </View>}
       {showRetry && <Pressable accessibilityRole="button" accessibilityLabel="Повторить обработку ИИ" onPress={onRetry} style={{ minHeight: 44, paddingHorizontal: 12, justifyContent: 'center' }}><Text style={{ color: c.accentText, fontSize: 12 }}>Ответ остановлен · Повторить</Text></Pressable>}
       </View>
       </View>

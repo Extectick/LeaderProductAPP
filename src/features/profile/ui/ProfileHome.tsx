@@ -44,7 +44,7 @@ export function ProfileHome(props: Props) {
         <Text style={styles.subtitle}>{identity.subtitle}</Text>
         {profile.employeeProfile ? <View style={styles.connection}>
           <Ionicons name="ellipse" size={8} color={linked ? '#059669' : '#94A3B8'} />
-          <Text style={[styles.connectionText, { color: linked ? '#059669' : '#64748B' }]}>{linked ? '1С подключена' : '1С не подключена'}</Text>
+          <Text style={[styles.connectionText, { color: linked ? '#059669' : '#64748B' }]}>{linked ? 'Учётная запись 1С найдена' : 'Учётная запись 1С не сопоставлена'}</Text>
         </View> : null}
       </View>
     </View>
@@ -54,6 +54,7 @@ export function ProfileHome(props: Props) {
       <Row title="Контакты для клиентов" description="Телефоны, мессенджеры и почта" icon="people-outline" onPress={() => onOpen('contacts')} />
     </Section>
     <Section title="РАБОЧИЕ ИНСТРУМЕНТЫ">
+      {profile.employeeProfile && <Row title="Подключение 1С" description="Личная учётная запись и доступ ИИ" icon="server-outline" onPress={() => onOpen('onec')} />}
       <View style={styles.trackingRow}>
         <View style={styles.trackingLink}>
           <List.Item title="Геолокация" description={props.trackingText} onPress={() => onOpen('tracking')}

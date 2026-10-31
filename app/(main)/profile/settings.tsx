@@ -14,9 +14,11 @@ import { getRoleDisplayName } from '@/utils/rbacLabels';
 import { getAppVersionInfo } from '@/utils/appVersion';
 import { API_BASE_URL } from '@/utils/config';
 import { ProfileFact as Fact } from '@/src/features/profile/ui/ProfileSettingsPrimitives';
+import { ProfileOnecConnections } from '@/src/features/profile/ui/ProfileOnecConnections';
+import { httpRequest } from '@/src/shared/api/httpClient';
 
 export default function ProfileSettingsScreen() {
-  const { section } = useLocalSearchParams<{ section: string }>();
+  const { section, base, returnTicket, returnRun } = useLocalSearchParams<{ section: string; base?: string; returnTicket?: string; returnRun?: string }>();
   const { profile, refresh } = useProfileData();
   const router = useRouter();
   if (!profile || !isProfileSection(section)) return <View style={styles.content}><Text>Раздел недоступен</Text><Button onPress={() => router.replace('/profile')}>В профиль</Button></View>;
@@ -30,6 +32,12 @@ export default function ProfileSettingsScreen() {
         {section === 'contacts' && <ClientContactsEditor embedded />}
         {section === 'notifications' && <NotificationSettingsSection />}
         {section === 'tracking' && <><TrackingToggle /><TrackingAdminHealthCard /></>}
+        {section === 'onec' && <ProfileOnecConnections key={profile.id} userId={profile.id} initialBase={base}
+          onConnected={returnTicket && /^\d+$/.test(returnTicket) && returnRun ? async () => {
+            const r = await httpRequest(`/help/tickets/${returnTicket}/assistant/retry`, { method: 'POST', body: { runId: returnRun }, expectedUserId: profile.id, networkRetryCount: 0 });
+            if (!r.ok) throw new Error('1С подключена. Вернитесь в чат, чтобы продолжить обращение.');
+            router.back();
+          } : undefined} />}
         {section === 'security' && <>
           <Fact title="Вход через Telegram" value={profile.authMethods?.telegramLinked || profile.telegramId ? profile.telegramUsername ? `@${profile.telegramUsername}` : 'Подключён' : 'Не подключён'} icon="message-outline" />
           <Fact title="Вход через MAX" value={profile.authMethods?.maxLinked || profile.maxId ? profile.maxUsername || 'Подключён' : 'Не подключён'} icon="message-text-outline" />
@@ -40,7 +48,7 @@ export default function ProfileSettingsScreen() {
           <Fact title="Роль" value={getRoleDisplayName(profile.role)} icon="badge-account-outline" />
           {employee && <><Fact title="Основной отдел" value={employee.department?.name} icon="office-building-outline" />
             <Fact title="Текущий отдел" value={employee.activeDepartment?.name || employee.department?.name} icon="briefcase-outline" />
-            <Fact title="Учётная запись 1С" value={employee.onecUserGuid ? 'Подключена' : 'Не подключена'} icon="link-variant" /></>}
+            <Fact title="Учётная запись 1С" value={employee.onecUserGuid ? 'Сопоставлена · настроить доступ' : 'Настроить подключение'} icon="link-variant" onPress={() => router.push('/profile/settings?section=onec' as any)} /></>}
           {(profile.departmentRoles || []).map((entry, index) => <Fact key={`${entry.department.id}-${entry.role.id}-${index}`}
             title={entry.department.name || `Отдел №${entry.department.id}`} value={getRoleDisplayName(entry.role)} icon="account-group-outline" />)}
           {address && <Fact title="Адрес" value={[address.city, address.street, address.state, address.postalCode, address.country].filter(Boolean).join(', ')} icon="map-marker-outline" />}

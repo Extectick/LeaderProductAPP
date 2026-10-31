@@ -1,0 +1,1 @@
+{"name":"knowledge-components-local-qa","private":true,"version":"0.0.0","main":"index.js","scripts":{"start":"node ../../node_modules/expo/bin/cli start --web --host localhost --port 8102"}}

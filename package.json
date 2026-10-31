@@ -20,6 +20,7 @@
     "build:dev-client": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-dev-client.ps1",
     "logs:android": "adb logcat ReactNativeJS:V ReactNative:V Expo:V AndroidRuntime:E *:S",
     "qa:help:inspect": "node ./scripts/help-ui-diagnostics.mjs",
+    "qa:knowledge": "npm --prefix qa/knowledge-preview start",
     "start:prod": "cross-env NODE_ENV=production expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",

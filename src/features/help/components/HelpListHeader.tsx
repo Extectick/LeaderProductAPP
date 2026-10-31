@@ -6,6 +6,7 @@ import { HelpIcon } from './HelpPrimitives';
 import { HELP_LIST_META_WIDTH } from '../helpLayout';
 import { HelpHeaderFrame } from './HelpHeaderFrame';
 import { helpDevActions, helpDevRef, helpDevState } from '../helpDiagnostics';
+import { knowledgeApi } from '../../knowledge/api';
 
 type Props = {
   connecting?: boolean;
@@ -17,18 +18,26 @@ type Props = {
   canManage?: boolean;
   scope?: 'mine' | 'queue';
   onScope?: () => void;
+  onKnowledge?: () => void;
 };
 
-export function HelpListHeader({ search, onSearch, archived, onArchive, onBack, canManage = false, scope = 'mine', onScope, connecting=false }: Props) {
+export function HelpListHeader({ search, onSearch, archived, onArchive, onBack, canManage = false, scope = 'mine', onScope, onKnowledge, connecting=false }: Props) {
   const c = useHelpTheme();
   const reducedMotion = useHelpReducedMotion();
   const window = useWindowDimensions();
   const menuButton = useRef<View>(null);
   const [menuVisible, setMenuVisible] = useState(false);
+  const [canReviewKnowledge, setCanReviewKnowledge] = useState(false);
+  useEffect(() => {
+    if (!menuVisible || !onKnowledge) return;
+    const abort = new AbortController(); setCanReviewKnowledge(false);
+    knowledgeApi.config(abort.signal).then(config => { if (!abort.signal.aborted) setCanReviewKnowledge(config.canManage); }).catch(() => {});
+    return () => abort.abort();
+  }, [menuVisible, !!onKnowledge]);
   const [anchor, setAnchor] = useState({ x: window.width - 64, y: 36, width: 48, height: 48 });
-  const menuWidth = archived || canManage ? 224 : 160;
+  const menuWidth = archived || canManage || canReviewKnowledge ? 224 : 160;
   const menuLeft = Math.max(12, Math.min(window.width - menuWidth - 12, anchor.x + anchor.width - menuWidth));
-  const menuTop = Math.max(12, Math.min(window.height - (canManage ? 120 : 72), anchor.y + anchor.height + 6));
+  const menuTop = Math.max(12, Math.min(window.height - (canManage ? 120 : 72) - (canReviewKnowledge ? 48 : 0), anchor.y + anchor.height + 6));
   const openMenu = () => {
     menuButton.current?.measureInWindow((x, y, width, height) => setAnchor({ x, y, width, height }));
     setMenuVisible(true);
@@ -57,6 +66,9 @@ export function HelpListHeader({ search, onSearch, archived, onArchive, onBack, 
           {canManage ? <Pressable accessibilityRole="button" accessibilityLabel={scope === 'mine' ? 'Показать очередь IT' : 'Показать мои обращения'} onPress={scopeAction} style={({ pressed }) => ({ minHeight: 48, paddingHorizontal: 12, borderRadius: 10, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: pressed ? c.soft : 'transparent' })}>
             <Ionicons name={scope === 'mine' ? 'people-outline' : 'person-outline'} size={22} color={c.text}/>
             <Text style={{color:c.text,fontSize:16,lineHeight:22}}>{scope === 'mine' ? 'Очередь IT' : 'Мои обращения'}</Text>
+          </Pressable> : null}
+          {canReviewKnowledge && onKnowledge ? <Pressable accessibilityRole="button" accessibilityLabel="Проверка базы знаний" onPress={() => { closeMenu(); onKnowledge(); }} style={({ pressed }) => ({ minHeight: 48, paddingHorizontal: 12, borderRadius: 10, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: pressed ? c.soft : 'transparent' })}>
+            <Ionicons name="book-outline" size={22} color={c.text} /><Text style={{ color: c.text, fontSize: 16, lineHeight: 22 }}>База знаний</Text>
           </Pressable> : null}
         </View>
       </View>

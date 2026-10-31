@@ -1,4 +1,5 @@
 import { API_BASE_URL } from '@/utils/config';
+import { jwtDecode } from 'jwt-decode';
 import {
   getLastRefreshFailure,
   getAccessTokenForRequest,
@@ -30,6 +31,8 @@ export interface HttpResponse<T> {
 }
 
 export interface HttpRequestOptions<Req> {
+  /** Pin credential-bearing requests to the initiating account, including token-refresh retries. */
+  expectedUserId?: number;
   method?: HttpMethod;
   body?: Req | BodyLike;
   headers?: Record<string, string>;
@@ -107,6 +110,11 @@ export async function httpRequest<Req = undefined, Res = any>(
   ));
 
   async function doFetch(tk: string | null): Promise<Response> {
+    if (options.expectedUserId !== undefined) {
+      let matches = false;
+      try { matches = Number(jwtDecode<{ userId?: number }>(tk || '').userId) === options.expectedUserId; } catch { /* fail closed */ }
+      if (!matches) throw new Error('ACCOUNT_CHANGED');
+    }
     const h = buildHeaders(headers, tk, isForm);
     let reqBody: BodyInit | undefined;
     if (!isGetLike) {
@@ -242,6 +250,9 @@ export async function httpRequest<Req = undefined, Res = any>(
 
     return { ok: true, status, data, meta };
   } catch (error: any) {
+    if (error?.message === 'ACCOUNT_CHANGED') {
+      return { ok: false, status: 409, message: 'Учётная запись изменилась. Откройте форму заново.', errorCode: 'CONFLICT' };
+    }
     if (error?.name === 'AbortError') {
       if (signal?.aborted) {
         return {

@@ -12,6 +12,7 @@ export type HelpAssistantRun = {
   step: number; completedSteps: number; startedAt: number; updatedAt: number;
   taskId?: string; taskStartSequence?: number; contextMessageCount?: number;
   stopReason?: 'user' | 'superseded';
+  action?: { type: 'connect_onec'; baseKey?: string };
   scenario?: HelpAssistantScenario;
 };
 export type HelpAssistantPreview = {
