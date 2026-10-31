@@ -78,9 +78,9 @@ function readLegacyExpoVersionAt(ref) {
 function isNativeReleaseFile(file) {
   if (file === VERSION_FILE) return true;
   if (file === 'app.config.ts' || file === 'package.json' || file === 'package-lock.json') return true;
-  if (file === 'scripts/patchExpoTaskManager.js') return true;
+  if (/^scripts\/patchExpo[^/]*\.js$/.test(file)) return true;
   if (file.startsWith('android/') || file.startsWith('ios/')) return true;
-  if (file.startsWith('plugins/')) return true;
+  if (file.startsWith('plugins/') || file.startsWith('modules/')) return true;
   return false;
 }
 

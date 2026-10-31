@@ -1,3 +1,9 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, dirname, basename } from 'node:path';
+import { SQLiteTestDatabase } from './helpers/sqliteTestDatabase';
+jest.mock('expo-sqlite', () => ({ openDatabaseAsync: jest.fn() }));
+jest.mock('../src/shared/monitoring', () => ({ captureException: jest.fn() }));
 jest.mock('@react-native-async-storage/async-storage', () => {
   const data = new Map<string, string>();
   return { getItem: jest.fn(async (key: string) => data.get(key) ?? null), setItem: jest.fn(async (key: string,value: string) => {data.set(key,value);}), removeItem: jest.fn(async (key: string) => {data.delete(key);}), clear: jest.fn(async () => data.clear()) };
@@ -16,8 +22,22 @@ import { parseHelpPush } from '@/src/features/help/helpPush';
 const jwt = (userId:number, version=1) => `header.${Buffer.from(JSON.stringify({userId,version})).toString('base64')}.signature`;
 const originalFetch = global.fetch;
 const originalPlatform = Platform.OS;
+let directory: string;
+let db: SQLiteTestDatabase;
+beforeAll(async () => {
+  directory = mkdtempSync(join(tmpdir(), 'leader-help-client-sqlite-'));
+  db = new SQLiteTestDatabase(join(directory, 'help.db'));
+  require('expo-sqlite').openDatabaseAsync.mockResolvedValue(db);
+  await getHelpDraft(1, 'schema-init');
+});
+afterAll(async () => {
+  await db.closeAsync();
+  if (dirname(directory) !== tmpdir() || !basename(directory).startsWith('leader-help-client-sqlite-')) throw new Error('Unsafe SQLite fixture cleanup path');
+  rmSync(directory, { recursive: true, force: true });
+});
 beforeEach(async () => {
   jest.clearAllMocks(); await AsyncStorage.clear();
+  await db.execAsync('DELETE FROM help_outbox; DELETE FROM help_account_state; DELETE FROM help_history_messages; DELETE FROM help_history_tickets;');
   (getAccessTokenForRequest as jest.Mock).mockResolvedValue(jwt(1));
   (getAccessToken as jest.Mock).mockResolvedValue(jwt(1));
 });

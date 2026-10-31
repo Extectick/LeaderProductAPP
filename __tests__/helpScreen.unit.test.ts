@@ -11,6 +11,7 @@ const mockPlayback:any={};
 const mockUseAudioController=jest.fn((_options:any)=>mockPlayback);
 const mockTimelineDateJump=jest.fn();
 const mockAttachmentDrafts={load:jest.fn(),save:jest.fn(),clear:jest.fn(),hold:jest.fn()};
+jest.mock('../src/features/knowledge/api', () => ({ knowledgeApi: { config: jest.fn(async () => ({ canManage: false })) } }));
 jest.mock('../src/features/help/helpAttachmentDrafts',()=>({loadHelpAttachmentDraft:(...args:any[])=>mockAttachmentDrafts.load(...args),saveHelpAttachmentDraft:(...args:any[])=>mockAttachmentDrafts.save(...args),clearHelpAttachmentDraft:(...args:any[])=>mockAttachmentDrafts.clear(...args),holdHelpAttachmentFiles:(...args:any[])=>mockAttachmentDrafts.hold(...args)}));
 jest.mock('../src/features/help/components/HelpPhotoPortal',()=>({HelpPhotoPortalProvider:({children}:any)=>require('react').createElement('HelpPhotoPortalProvider',null,children)}));
 jest.mock('../src/features/help/HelpAudioPlayback',()=>({

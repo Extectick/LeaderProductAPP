@@ -6,13 +6,17 @@ jest.mock('../context/AuthContext',()=>({AuthContext:require('react').createCont
 jest.mock('../utils/config',()=>({API_BASE_URL:'https://dev.example.test'}));
 jest.mock('../src/shared/network/useServerStatus',()=>({useServerStatus:()=>({isReachable:true})}));
 jest.mock('../src/features/help/helpSocket',()=>({createHelpSocket:()=>({disconnect:jest.fn(),getSocket:()=>({emit:jest.fn()})})}));
+jest.mock('../src/features/help/helpAccountSync',()=>({acquireHelpAccount:()=>({getSocket:()=>null,release:jest.fn(),refresh:jest.fn(async()=>{}),syncTicket:jest.fn(async()=>{})})}));
+jest.mock('../src/features/help/helpOutbox',()=>({dispatchHelpPending:jest.fn()}));
+jest.mock('../src/features/help/helpDiagnostics',()=>({helpDevEvent:jest.fn()}));
 const mockApi={config:jest.fn(),list:jest.fn(),detail:jest.fn(),read:jest.fn(),sync:jest.fn(),messages:jest.fn(),search:jest.fn()};
 jest.mock('../src/features/help/helpApi',()=>({createHelpApi:()=>mockApi,HelpApiError:class extends Error {},loadHelpMedia:jest.fn(),uploadHelpFiles:jest.fn()}));
-jest.mock('../src/features/help/helpStorage',()=>({readHelpPending:jest.fn(async()=>[]),getHelpDraft:jest.fn(),setHelpDraft:jest.fn()}));
+jest.mock('../src/features/help/helpStorage',()=>({readHelpPending:jest.fn(async()=>[]),readLastCreatedOperation:jest.fn(async()=>null),subscribeHelpOutbox:jest.fn(()=>()=>{}),getHelpDraft:jest.fn(),setHelpDraft:jest.fn()}));
 jest.mock('../src/features/help/helpHistory',()=>({
   readCachedHelpTickets:jest.fn(async()=>[]),readCachedHelpTicket:jest.fn(async()=>null),cacheHelpTickets:jest.fn(async()=>{}),cacheHelpPage:jest.fn(async()=>{}),cacheHelpSync:jest.fn(async()=>{}),forgetHelpTicket:jest.fn(async()=>{}),saveHelpViewport:jest.fn(async()=>{}),readCachedHelpMessage:jest.fn(async()=>null),readCachedHelpRange:jest.fn(async()=>[{id:1,ticketId:7,sequence:1}]),
 }));
 import { useHelpService } from '../src/features/help/useHelpService';
+import { helpViewCache } from '../src/features/help/helpViewCache';
 
 const detail={ticket:{id:7,status:'OPEN',members:[],unreadCount:1},messages:[{id:1,ticketId:7,sequence:1}],lastReadSequence:0,firstUnreadSequence:1,lastSequence:1,eventCursor:1};
 let service:ReturnType<typeof useHelpService>;
@@ -21,6 +25,7 @@ function Harness({focused}:{focused:boolean}){service=useHelpService(focused);re
 describe('Help read cursor respects route focus',()=>{
   let screen:TestRenderer.ReactTestRenderer;
   beforeEach(()=>{
+    const cache=helpViewCache('https://dev.example.test:5:true');cache.lists.clear();cache.windows.clear();
     mockApi.config.mockReset().mockResolvedValue({canManage:false});
     mockApi.list.mockReset().mockImplementation(async()=>({tickets:[],nextCursor:null}));
     mockApi.detail.mockReset().mockResolvedValue(detail);
