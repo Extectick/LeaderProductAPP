@@ -213,6 +213,32 @@ describe('sticky date geometry and navigation integration',()=>{
     expect(mockListApi.scrollToOffset).toHaveBeenLastCalledWith({offset:259,animated:false,skipFirstItemOffset:true});
     expect(props.onReady).toHaveBeenCalledTimes(1);
   });
+  test('late history brings an unmeasured saved cell into the rendered window',async()=>{
+    const messages=props.messages;props={...props,messages:[],loading:true,onReady:jest.fn(),navigationTarget:null};
+    await render();
+    (mockLayouts[3] as any).isHeightMeasured=false;
+    mockListApi.scrollToIndex.mockImplementation(async()=>{mockLayouts[3]={y:364,height:100,...{isHeightMeasured:true}};});
+    mockListApi.scrollToOffset.mockImplementation(({offset}:any)=>{mockListApi.getAbsoluteLastScrollOffset=()=>offset;});
+    props={...props,messages,loading:false,navigationTarget:{key:96,kind:'anchor',messageId:2,sequence:2,offset:5}};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    await act(async()=>jest.advanceTimersByTimeAsync(100));
+    expect(mockListApi.scrollToIndex).toHaveBeenCalledTimes(1);
+    expect(mockListApi.scrollToIndex).toHaveBeenCalledWith({index:3,animated:false,viewOffset:-105});
+    expect(props.onReady).toHaveBeenCalledTimes(1);
+  });
+  test('a measured empty row cannot prevent the rest of the history opening',async()=>{
+    mockLayouts[2]={y:320,height:0,...{isHeightMeasured:true}};
+    props={...props,onReady:jest.fn(),navigationTarget:{key:97,kind:'anchor',messageId:2,sequence:2,offset:5}};
+    mockListApi.scrollToOffset.mockImplementation(({offset}:any)=>{mockListApi.getAbsoluteLastScrollOffset=()=>offset;});
+    await render();await act(async()=>jest.advanceTimersByTimeAsync(100));expect(props.onReady).toHaveBeenCalledTimes(1);
+  });
+  test('a stable measured long page opens even if native scrolling clamps its cached offset',async()=>{
+    props={...props,onReady:jest.fn(),navigationTarget:{key:98,kind:'anchor',messageId:2,sequence:2,offset:5}};
+    mockListApi.getAbsoluteLastScrollOffset=()=>80;
+    await render();await act(async()=>{mockFlashProps.onContentSizeChange(390,2000);await jest.advanceTimersByTimeAsync(250);});
+    expect(props.onReady).toHaveBeenCalledTimes(1);
+    expect(mockListApi.scrollToOffset).toHaveBeenCalledWith({offset:259,animated:false,skipFirstItemOffset:true});
+  });
   test('opening a measured live answer hands the growing tail to follow without waiting for the answer to finish',async()=>{
     let content=1000,offset=0;
     props={...props,messages:props.messages.map((message,index)=>index===1?{...message,assistantRun:{status:'streaming'} as any}:message),onReady:jest.fn(),navigationTarget:{key:93,kind:'latest',animate:false}};
