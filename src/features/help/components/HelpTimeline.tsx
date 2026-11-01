@@ -134,7 +134,11 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     const {startIndex, endIndex} = view.computeVisibleIndices();
     const first = view.getFirstItemOffset(), offset = view.getAbsoluteLastScrollOffset();
     const candidates = [];
-    for (let index = Math.max(0, startIndex); index <= Math.min(endIndex, rowsRef.current.length - 1); index++) {
+    // FlashList may report the first message as its first visible item while
+    // the shorter date/unread row immediately before it is still on screen.
+    // Inspect adjacent decorations and clip by their actual visual bounds.
+    const overscan=includeDecor?2:0;
+    for (let index = Math.max(0, startIndex-overscan); index <= Math.min(endIndex+overscan, rowsRef.current.length - 1); index++) {
       const layout = view.getLayout(index);
       if (layout && (includeDecor || rowsRef.current[index].kind==='message')) candidates.push({row: rowsRef.current[index], top: layout.y + first - offset, height: layout.height});
     }

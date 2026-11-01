@@ -65,6 +65,13 @@ describe('sticky date geometry and navigation integration',()=>{
     ref=React.createRef<HelpTimelineHandle>();
   });
   afterEach(async()=>{if(screen)await act(async()=>screen!.unmount());screen=undefined;jest.clearAllTimers();jest.useRealTimers();});
+  test('a still-visible inline day hides its sticky copy even when FlashList starts at the next message',async()=>{
+    mockLayouts[0]={y:110,height:44};mockLayouts[1]={y:154,height:100};
+    mockListApi.computeVisibleIndices=()=>({startIndex:1,endIndex:3});
+    await render();expect(floating()).toBeUndefined();
+    mockLayouts[0]={y:50,height:44};mockLayouts[1]={y:90,height:100};
+    await observe();expect(floating()!.props.date).toBe(firstDate);
+  });
   async function render(){
     await act(async()=>{screen=TestRenderer.create(React.createElement(HelpTimeline,{...props,ref}));});
     await act(async()=>mockFlashProps.onLayout({nativeEvent:{layout:{height:600}}}));
