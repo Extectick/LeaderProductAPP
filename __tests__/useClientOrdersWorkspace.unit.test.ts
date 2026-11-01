@@ -1107,9 +1107,10 @@ describe('useClientOrdersWorkspace', () => {
     await act(async () => otherUser.renderer.unmount());
   });
 
-  it('silently autosaves incomplete local input once per edit and restores it exactly after remount', async () => {
+  it.each([false, true])('autosaves incomplete new input locally once per edit and restores it after remount (online=%s)', async online => {
     const records = memoryDraftStore();
-    setServerUnavailable('Network request failed');
+    if (online) setServerReachable();
+    else setServerUnavailable('Network request failed');
     const harness = await ordersListWorkspace();
     await act(async () => { harness.current.patchDraft({ organizationGuid: 'org-guid', counterpartyGuid: '', comment: 'Незавершённый' }); });
     await act(async () => { await jest.advanceTimersByTimeAsync(400); });
@@ -1125,6 +1126,10 @@ describe('useClientOrdersWorkspace', () => {
     expect(harness.current.draft.items[0].quantity).toBe('1,');
     expect(getClientOrderProductsBatch).not.toHaveBeenCalled();
     expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    expect(createClientOrder).not.toHaveBeenCalled();
+    expect(updateClientOrder).not.toHaveBeenCalled();
+    expect(submitClientOrder).not.toHaveBeenCalled();
+    expect([...records.values()][0]).toMatchObject({ intent: 'SAVE', status: 'ON_DEVICE' });
     const saved = [...records.values()][0];
     await act(async () => harness.renderer.unmount());
     const restored = await ordersListWorkspace();

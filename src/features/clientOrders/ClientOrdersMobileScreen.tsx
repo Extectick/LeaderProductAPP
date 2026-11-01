@@ -5575,20 +5575,17 @@ function ProductLineEditorSheet({
       priceCommitTimerRef.current = null;
     }
     const pending = pendingPricePatchRef.current;
-    pendingPricePatchRef.current = null;
     if (pending?.key) setItemPatchRef.current(pending.key, pending.patch);
+    if (pendingPricePatchRef.current === pending) pendingPricePatchRef.current = null;
   }, []);
 
   const schedulePriceCommit = React.useCallback((key: string, patch: Record<string, unknown>) => {
     pendingPricePatchRef.current = { key, patch };
     if (priceCommitTimerRef.current) clearTimeout(priceCommitTimerRef.current);
     priceCommitTimerRef.current = setTimeout(() => {
-      priceCommitTimerRef.current = null;
-      const pending = pendingPricePatchRef.current;
-      pendingPricePatchRef.current = null;
-      if (pending?.key) setItemPatchRef.current(pending.key, pending.patch);
+      commitPrice();
     }, 180);
-  }, []);
+  }, [commitPrice]);
 
   const previousDisplayedItemKeyRef = React.useRef(displayedItemKey);
   const visibleRef = React.useRef(false);
@@ -5900,6 +5897,7 @@ function ProductLineEditorSheet({
               selectTextOnFocus
               editable={!readOnly}
               onChangeText={(value: string) => updateQuantityLocally(normalizeQuantityInput(displayedItemWithLocalEdits, value))}
+              onBlur={commitQuantity}
               style={[styles.productEditorQtyInput, styles.productEditorQtyInputContent, readOnly && styles.productEditorReadOnlyInputSurface, readOnly && styles.productEditorReadOnlyInputText]}
             />
             <Pressable disabled={readOnly} onPress={() => updateQuantityLocally(quantityStep(displayedItemWithLocalEdits, 1))} style={({ pressed }) => [styles.productEditorQtyButton, readOnly && styles.productEditorReadOnlyStepButton, pressed && !readOnly && styles.flatPressed]}>

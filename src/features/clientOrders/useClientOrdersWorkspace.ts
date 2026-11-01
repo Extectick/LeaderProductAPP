@@ -3776,10 +3776,12 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
   React.useEffect(() => {
     if (!dirty || readOnly || saving || submitting) return undefined;
     if (failedAutosaveVersionRef.current === draftEditVersionRef.current) return undefined;
-    const isLocalDocument = !!findDeviceDraftEntry(draft.guid, draft.clientOrderId) || !serverStatus.isReachable;
+    const isLocalDocument = !draft.guid || !!findDeviceDraftEntry(draft.guid, draft.clientOrderId) || !serverStatus.isReachable;
     if (!isLocalDocument) return undefined;
     const timer = setTimeout(() => {
-      void saveDraft({ silent: true, reason: 'autosave' });
+      // Recovery persistence is local even when online. It must not create an
+      // API/1C order or submit an incomplete draft without an explicit action.
+      void saveDraft({ silent: true, reason: 'autosave', localOnly: true });
     }, 400);
     return () => clearTimeout(timer);
   }, [dirty, draft.guid, findDeviceDraftEntry, readOnly, saveDraft, saving, serverStatus.isReachable, submitting]);
@@ -3788,7 +3790,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
     if (Platform.OS === 'web' || typeof AppState?.addEventListener !== 'function') return undefined;
     const subscription = AppState.addEventListener('change', (state) => {
       if (state === 'active' || !dirtyRef.current || readOnly) return;
-      void saveDraft({ silent: true, reason: 'autosave' });
+      void saveDraft({ silent: true, reason: 'autosave', localOnly: true });
     });
     return () => subscription.remove();
   }, [readOnly, saveDraft]);
