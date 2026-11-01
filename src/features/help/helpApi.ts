@@ -113,7 +113,39 @@ export const helpApi = createHelpApi();
 
 export async function uploadHelpFiles(files: HelpFile[], expectedUserId?: number): Promise<HelpAttachment[]> {
   if (!files.length || files.length > 10) throw new Error('Можно прикрепить от 1 до 10 файлов.');
-  const auth = await captureAuth(expectedUserId);
+  let auth = await captureAuth(expectedUserId);
+  if (Platform.OS === 'android') {
+    // Read local recordings on the native side. RN fetch/FormData can fail
+    // before issuing HTTP for file-backed multipart bodies on Android.
+    const fs:typeof import('expo-file-system/legacy') = require('expo-file-system/legacy');
+    const attachments:HelpAttachment[]=[];
+    for(const file of files){
+      await assertAuth(auth);
+      const info=await fs.getInfoAsync(file.uri);
+      if(!info.exists||info.isDirectory)throw new HelpApiError('Файл вложения недоступен. Выберите его заново или повторите запись.',0,'HELP_FILE_UNAVAILABLE');
+      await assertAuth(auth);
+      const upload=async()=>{
+        const task=fs.createUploadTask(`${API_BASE_URL.replace(/\/$/,'')}/help/attachments`,file.uri,{
+          httpMethod:'POST',uploadType:fs.FileSystemUploadType.MULTIPART,fieldName:'files',mimeType:file.mimeType||'application/octet-stream',
+          headers:{Authorization:`Bearer ${auth.token}`},parameters:{},
+        });
+        const timer=setTimeout(()=>{void task.cancelAsync().catch(()=>{});},30000);
+        try{return await task.uploadAsync();}
+        catch{throw new HelpApiError('Не удалось загрузить вложение. Проверьте соединение и повторите отправку. Запись сохранена.',0,'HELP_UPLOAD_FAILED');}
+        finally{clearTimeout(timer);}
+      };
+      let result=await upload();
+      await assertAuth(auth);
+      if(result?.status===401){auth=await refreshAuth(auth);result=await upload();await assertAuth(auth);}
+      if(!result)throw new HelpApiError('Загрузка вложения прервана. Повторите отправку.',408,'HELP_UPLOAD_TIMEOUT');
+      let body:any;try{body=JSON.parse(result.body);}catch{throw new HelpApiError('Сервер вернул некорректный ответ при загрузке вложения.',result.status);}
+      if(result.status<200||result.status>=300)throw new HelpApiError(typeof body.message==='string'?body.message:'Не удалось загрузить вложение.',result.status,body.error?.code);
+      const rows=(body.data??body).attachments;
+      if(!Array.isArray(rows)||rows.length!==1)throw new HelpApiError('Сервер не подтвердил загрузку вложения. Повторите отправку.',result.status);
+      attachments.push({...rows[0],name:file.name});
+    }
+    return attachments;
+  }
   const form = new FormData();
   for (const file of files) {
     if (Platform.OS === 'web') {

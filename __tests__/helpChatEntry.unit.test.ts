@@ -19,6 +19,12 @@ describe('Help bidirectional scene motion',()=>{
   beforeEach(()=>{mockReduced=false;mockAnimations.length=0;entered.mockClear();ref=React.createRef();});
   afterEach(async()=>{if(tree)await act(async()=>tree.unmount());});
   async function render(ready=true,progress={value:1} as SharedValue<number>){await act(async()=>{tree=TestRenderer.create(React.createElement(HelpChatEntry,{ref,ready,progress,onLayout:jest.fn(),onEntered:entered,backgroundColor:'#fff',children:null}));});return progress;}
+  test('prepares unmeasured history inside the viewport while hidden',async()=>{
+    await render(false);
+    const style=tree.root.findByProps({testID:'help-chat-viewport'}).props.style[1];
+    expect(style.opacity).toBe(0);expect(style.transform).toEqual([{translateX:0}]);
+    expect(mockAnimations).toHaveLength(0);
+  });
   test('cached chats still enter once and notify readiness only after UI completion',async()=>{
     const progress=await render();expect(progress.value).toBe(0);expect(mockAnimations.map(x=>x.target)).toEqual([1]);expect(entered).not.toHaveBeenCalled();
     await act(async()=>{mockAnimations[0].done?.(true);mockAnimations[0].done?.(true);});expect(entered).toHaveBeenCalledTimes(1);

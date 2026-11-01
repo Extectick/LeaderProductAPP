@@ -38,6 +38,8 @@ export const HelpChatEntry=forwardRef<HelpChatEntryHandle,Props>(function HelpCh
       return request;
     },
   }),[progress,ready,dismissed]);
-  const style=useAnimatedStyle(()=>({transform:[{translateX:width*(1-progress.value)}]}),[width]);
-  return <Reanimated.View testID="help-chat-viewport" onLayout={onLayout} pointerEvents={ready&&!exiting?'auto':'none'} style={[{flex:1,backgroundColor,opacity:ready?1:0},style]}>{children}</Reanimated.View>;
+  // FlashList must measure its first window inside the viewport. Parking an
+  // unmeasured long list offscreen can clip its cells and deadlock readiness.
+  const style=useAnimatedStyle(()=>({opacity:ready?1:0,transform:[{translateX:ready?width*(1-progress.value):0}]}),[width,ready]);
+  return <Reanimated.View testID="help-chat-viewport" onLayout={onLayout} pointerEvents={ready&&!exiting?'auto':'none'} style={[{flex:1,backgroundColor},style]}>{children}</Reanimated.View>;
 });

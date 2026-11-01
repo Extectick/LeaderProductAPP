@@ -3,7 +3,7 @@ import { Animated, AppState, Easing, Platform, ScrollView, type ScrollViewProps,
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import type { HelpMessage } from '../helpApi';
 import type { HelpNavigationTarget, HelpViewportAnchor } from '../helpHistoryTypes';
-import { helpTimelineRows, helpVisibleRows, type HelpTimelineRow } from '../helpTimelineModel';
+import { helpTimelineRows, helpVisibleRows, helpNavigationIndex, type HelpTimelineRow } from '../helpTimelineModel';
 import { helpDateJumpMode } from '../helpDateNavigation';
 import { helpDevActions, helpDevEvent, helpDevProbe, helpDevState } from '../helpDiagnostics';
 import { helpDayKey } from '../helpUiUtils';
@@ -61,7 +61,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   const initialPosition = useRef<{ key: number; kind: HelpNavigationTarget['kind']; index: number; offset: number } | null>(null);
   if (!initialPosition.current && !loaded && rows.length && props.navigationTarget) {
     const target = props.navigationTarget;
-    const index = target.kind === 'latest' ? rows.length - 1 : rows.findIndex(row => (target.kind === 'unread' ? row.kind === 'unread' : row.kind === 'message') && (row.message.id === target.messageId || row.message.sequence === target.sequence));
+    const index = helpNavigationIndex(rows,target);
     if (index >= 0) initialPosition.current = { key: target.key, kind: target.kind, index, offset: target.offset ?? 0 };
   }
   const readyNotified = useRef(false);
@@ -310,7 +310,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
       pending.frame=0;
       const view=list.current,target=live.current.navigationTarget;
       if(!mounted.current||!pending.active||!view||!target||target.key!==pending.key){pending.active=false;return;}
-      const index=target.kind==='latest'?rowsRef.current.length-1:rowsRef.current.findIndex(row=>(target.kind==='unread'?row.kind==='unread':row.kind==='message')&&(row.message.id===target.messageId||row.message.sequence===target.sequence));
+      const index=helpNavigationIndex(rowsRef.current,target);
       if(index<0){pending.active=false;return;}
       const readLayout=(rowIndex:number)=>{try{return view.getLayout(rowIndex);}catch{return undefined;}};
       const item=readLayout(index),range=view.computeVisibleIndices();
@@ -374,7 +374,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     const target = props.navigationTarget;
     if (!loaded || !rows.length || !target || committedTarget.current === target.key) return;
     if(openingLayout.current.active&&openingLayout.current.key===target.key)return;
-    const index = target.kind === 'latest' ? rows.length - 1 : rows.findIndex(row => (target.kind==='unread' ? row.kind==='unread' : row.kind==='message') && (row.message.id === target.messageId || row.message.sequence === target.sequence));
+    const index = helpNavigationIndex(rows,target);
     if(index < 0) return;
     committedTarget.current=target.key;
     if(!readyRef.current&&target.kind!=='date'){
@@ -489,7 +489,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
       newerPending.current=true;void live.current.loadNewer().catch(()=>live.current.onError('Не удалось загрузить новые сообщения')).finally(()=>{newerPending.current=false;});
     }
   },[observe,setFollow,updateMediaRange,settleOpening]);
-  const NativeScroll=useMemo(()=>forwardRef<ScrollView,ScrollViewProps>((scrollProps,scrollRef)=><ScrollView {...scrollProps} ref={scrollRef} nativeID={props.nativeID}/>),[props.nativeID]);
+  const NativeScroll=useMemo(()=>forwardRef<ScrollView,ScrollViewProps>((scrollProps,scrollRef)=><ScrollView {...scrollProps} removeClippedSubviews={false} ref={scrollRef} nativeID={props.nativeID}/>),[props.nativeID]);
   const webProps = Platform.OS==='web' ? {
     onWheel:()=>{takeScrollControl();webIntent.current=Date.now()+500;},
     onTouchMove:()=>{takeScrollControl();webIntent.current=Date.now()+500;},

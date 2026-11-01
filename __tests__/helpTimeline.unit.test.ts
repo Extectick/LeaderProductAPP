@@ -1,7 +1,7 @@
 import React from 'react';
 import TestRenderer,{act} from 'react-test-renderer';
 import {StyleSheet,View} from 'react-native';
-import { helpIsAtLatest, helpTimelineRows, helpVisibleRows } from '../src/features/help/helpTimelineModel';
+import { helpNavigationIndex, helpIsAtLatest, helpTimelineRows, helpVisibleRows } from '../src/features/help/helpTimelineModel';
 import type { HelpMessage } from '../src/features/help/helpApi';
 let mockFlashProps:any;
 let mockReducedMotion=true;
@@ -27,6 +27,17 @@ import {HelpMediaLoadingContext} from '../src/features/help/helpMediaLoading';
 
 const message=(sequence:number,date='2026-10-28T12:00:00Z')=>({id:sequence,sequence,createdAt:date}) as HelpMessage;
 describe('messenger viewport and read boundaries',()=>{
+  test('nonmonotonic dates keep recycled row keys unique',()=>{
+    const rows=helpTimelineRows([message(1),message(2,'2026-10-29T12:00:00Z'),message(3)]);
+    expect(new Set(rows.map(row=>row.key)).size).toBe(rows.length);
+  });
+  test('missing saved or unread anchors resolve to a visible neighbour',()=>{
+    const rows=helpTimelineRows([message(10),message(12)]);
+    expect(rows[helpNavigationIndex(rows,{kind:'anchor',key:1,messageId:11,sequence:11,offset:0})].message.id).toBe(12);
+    expect(rows[helpNavigationIndex(rows,{kind:'unread',key:2,messageId:10,sequence:10})].message.id).toBe(10);
+    expect(rows[helpNavigationIndex(rows,{kind:'anchor',key:3,messageId:99,sequence:99,offset:0})].message.id).toBe(12);
+    expect(helpNavigationIndex([],{kind:'latest',key:4})).toBe(-1);
+  });
   test('cells below composer or behind header are not read, partial tall cells remain readable',()=>{
     const rows=[{id:1,top:0,height:80},{id:2,top:70,height:500},{id:3,top:580,height:200}];
     expect(helpVisibleRows(rows,100,570).map(row=>row.id)).toEqual([2]);

@@ -11,6 +11,7 @@ jest.mock('@react-native-async-storage/async-storage', () => {
 jest.mock('@/utils/config', () => ({API_BASE_URL:'https://dev.example.test'}));
 jest.mock('@/utils/apiClient', () => ({apiClient:jest.fn()}));
 jest.mock('@/utils/tokenService', () => ({getAccessToken:jest.fn(),getAccessTokenForRequest:jest.fn(),refreshToken:jest.fn()}));
+jest.mock('expo-file-system/legacy',()=>({getInfoAsync:jest.fn(),createUploadTask:jest.fn(),FileSystemUploadType:{MULTIPART:1}}));
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import { apiClient } from '@/utils/apiClient';
@@ -151,13 +152,38 @@ test('native image cache keys include account and API scope', async () => {
 test('upload accepts ten attachments in original order and rejects eleven before transport', async () => {
   Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});
   const files=Array.from({length:10},(_,i)=>({uri:`file://photo-${i}`,name:`photo-${i}.jpg`,mimeType:'image/jpeg'}));
-  const append=jest.spyOn(FormData.prototype,'append').mockImplementation(()=>{});
-  (apiClient as jest.Mock).mockReset().mockResolvedValue({ok:true,status:200,data:{attachments:[]}});
-  try {
-    await uploadHelpFiles(files,1);
-    expect(append.mock.calls.map(call=>(call[1] as unknown as {name:string}).name)).toEqual(files.map(file=>file.name));
-    expect(apiClient).toHaveBeenCalledTimes(1);
-    await expect(uploadHelpFiles([...files,files[0]],1)).rejects.toThrow('от 1 до 10');
-    expect(apiClient).toHaveBeenCalledTimes(1);
-  }finally{append.mockRestore();}
+  const fs=require('expo-file-system/legacy');
+  fs.getInfoAsync.mockResolvedValue({exists:true,isDirectory:false});
+  fs.createUploadTask.mockImplementation((_url:string,uri:string)=>({uploadAsync:jest.fn(async()=>({status:201,body:JSON.stringify({attachments:[{id:uri}]})})),cancelAsync:jest.fn()}));
+  const result=await uploadHelpFiles(files,1);
+  expect(result.map(row=>row.id)).toEqual(files.map(file=>file.uri));
+  expect(result.map(row=>row.name)).toEqual(files.map(file=>file.name));
+  expect(fs.createUploadTask).toHaveBeenCalledTimes(10);
+  expect(fs.createUploadTask).toHaveBeenCalledWith('https://dev.example.test/help/attachments',files[0].uri,expect.objectContaining({fieldName:'files',headers:{Authorization:`Bearer ${jwt(1)}`}}));
+  await expect(uploadHelpFiles([...files,files[0]],1)).rejects.toThrow('от 1 до 10');
+  expect(fs.createUploadTask).toHaveBeenCalledTimes(10);
+});
+
+test('missing Android recording fails before HTTP with a file-specific error',async()=>{
+  Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});
+  const fs=require('expo-file-system/legacy');fs.getInfoAsync.mockResolvedValue({exists:false});
+  await expect(uploadHelpFiles([{uri:'file:///gone.m4a',name:'voice.m4a'}],1)).rejects.toMatchObject({code:'HELP_FILE_UNAVAILABLE'});
+  expect(fs.createUploadTask).not.toHaveBeenCalled();
+});
+
+test('native upload cannot return private attachments after switching account',async()=>{
+  Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});
+  const fs=require('expo-file-system/legacy');fs.getInfoAsync.mockResolvedValue({exists:true});
+  fs.createUploadTask.mockReturnValue({uploadAsync:jest.fn(async()=>{(getAccessToken as jest.Mock).mockResolvedValue(jwt(2));return {status:201,body:JSON.stringify({attachments:[{id:'private'}]})};}),cancelAsync:jest.fn()});
+  await expect(uploadHelpFiles([{uri:'file:///voice.m4a',name:'voice.m4a'}],1)).rejects.toMatchObject({code:'HELP_ACCOUNT_CHANGED'});
+});
+
+test('native multipart refreshes only the same account after 401',async()=>{
+  Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});
+  const fs=require('expo-file-system/legacy');fs.getInfoAsync.mockResolvedValue({exists:true});
+  fs.createUploadTask.mockReturnValueOnce({uploadAsync:async()=>({status:401,body:'{}'}),cancelAsync:jest.fn()})
+    .mockReturnValueOnce({uploadAsync:async()=>({status:201,body:JSON.stringify({attachments:[{id:'voice'}]})}),cancelAsync:jest.fn()});
+  (refreshToken as jest.Mock).mockImplementation(async()=>{(getAccessToken as jest.Mock).mockResolvedValue(jwt(1,2));return jwt(1,2);});
+  expect(await uploadHelpFiles([{uri:'file:///voice.m4a',name:'voice.m4a'}],1)).toEqual([{id:'voice',name:'voice.m4a'}]);
+  expect(fs.createUploadTask.mock.calls[1][2].headers.Authorization).toBe(`Bearer ${jwt(1,2)}`);
 });
