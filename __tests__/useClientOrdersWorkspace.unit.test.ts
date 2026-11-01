@@ -191,6 +191,56 @@ describe('useClientOrdersWorkspace', () => {
     return { get current() { return current; }, renderer };
   }
 
+  it('does not lock a new order while an unrelated device packet is API_ACCEPTED', async () => {
+    const entry = localEntry('previous-packet', 'API_ACCEPTED');
+    memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace();
+    try {
+      expect(harness.current.selectedGuid).toBeNull();
+      expect(harness.current.readOnly).toBe(false);
+      await act(async () => { await harness.current.createNewOrder(); });
+      expect(harness.current.selectedOrder).toBeNull();
+      expect(harness.current.readOnly).toBe(false);
+      await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+      expect(harness.current.readOnly).toBe(true);
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('keeps only the actively sending document read-only, not a new form', async () => {
+    const entry = localEntry('previous-packet', 'READY_TO_SEND');
+    memoryDraftStore([entry]);
+    let finish!: (order: any) => void;
+    jest.mocked(putClientOrderByClientId).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const harness = await ordersListWorkspace();
+    let sending!: Promise<void>;
+    try {
+      await act(async () => { sending = harness.current.syncDeviceDrafts({ force: true }); });
+      expect(harness.current.syncingDeviceDrafts).toBe(true);
+      expect(harness.current.readOnly).toBe(false);
+      await act(async () => { await harness.current.createNewOrder(); });
+      expect(harness.current.readOnly).toBe(false);
+      await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+      expect(harness.current.readOnly).toBe(true);
+    } finally {
+      if (finish) await act(async () => { finish(queuedOrder(1, { clientOrderId: 'previous-packet' })); await sending; });
+      await act(async () => harness.renderer.unmount());
+    }
+  });
+
+  it('does not apply a previous order invoice result to a fresh unsent draft', async () => {
+    const harness = await editableWorkspace();
+    try {
+      const before = harness.current.draft;
+      await act(async () => {
+        harness.current.applyInvoiceRequestResult('previous-order', [{ id: 'old-invoice',
+          realizationGuid: 'old-realization', version: 1, state: 'WAITING', downloadAvailable: false }]);
+      });
+      expect(harness.current.selectedOrder).toBeNull();
+      expect(harness.current.draft).toEqual(before);
+      expect(harness.current.draft.invoiceRequested).toBeFalsy();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
   it('does not let an old save closure persist stale quantities while a picker edit is pending', async () => {
     const harness = await editableWorkspace();
     const oldSave = harness.current.saveDraft;

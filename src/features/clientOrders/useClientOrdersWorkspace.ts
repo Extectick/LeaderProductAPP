@@ -1491,7 +1491,11 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
   const draftMode = !draft.guid;
   const filtersSignature = React.useMemo(() => ordersFilterSignature(filters), [filters]);
-  const selectedDeviceStatus = deviceDraftEntries.find(entry => entry.order.guid === selectedGuid || entry.serverGuid === selectedGuid)?.status;
+  // Unsaved drafts and unsent packets both have null server IDs. They are not
+  // the same document: a previous packet's SENDING state must not lock a new form.
+  const selectedDeviceStatus = selectedGuid
+    ? deviceDraftEntries.find(entry => entry.order.guid === selectedGuid || entry.serverGuid === selectedGuid)?.status
+    : undefined;
   const readOnly = !!selectedOrder?.readOnly || !!selectedOrder?.hasRealization || ['SENDING','API_ACCEPTED'].includes(selectedDeviceStatus || '');
   const mutationLocked = saving || submitting || copying || cancelling || deletingDraft;
   const selectedOrderQueued = isQueuedClientOrder(selectedOrder);

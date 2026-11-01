@@ -1,5 +1,6 @@
 ﻿import TabBarSpacer from '@/components/Navigation/TabBarSpacer';
 import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
+import { InvoiceRequestField } from './screen/mobile/InvoiceRequestField';
 import { useOptionalTabBarVisibility } from '@/components/Navigation/TabBarVisibilityContext';
 import { useNotificationViewport } from '@/context/NotificationViewportContext';
 import DateTimeInput from '@/components/ui/DateTimeInput';
@@ -74,6 +75,8 @@ import { getClientOrdersSearchTextInputProps } from './lib/clientOrdersSearchInp
 import {
   getClientOrderInvoiceActionLabel,
   getClientOrderInvoiceIdentifier,
+  hasClientOrderInvoiceDocument,
+  isClientOrderInvoiceRequestForOrder,
   getClientOrderInvoicePresentation,
   getDownloadableClientOrderInvoices,
   saveClientOrderInvoicePdf,
@@ -604,7 +607,8 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const [invoiceListLoading, setInvoiceListLoading] = React.useState(false);
   const [invoiceListLoadingAction, setInvoiceListLoadingAction] = React.useState<InvoiceFileAction | null>(null);
   const [loadedInvoiceItems, setLoadedInvoiceItems] = React.useState<{ orderGuid: string; items: ClientOrderInvoice[] } | null>(null);
-  const [invoiceRequesting, setInvoiceRequesting] = React.useState(false);
+  const [invoiceRequestingGuids, setInvoiceRequestingGuids] = React.useState<Set<string>>(() => new Set());
+  const invoiceRequestsInFlightRef = React.useRef(new Set<string>());
   const [invoiceRequestPendingGuid, setInvoiceRequestPendingGuid] = React.useState<string | null>(null);
   const [statusMenuOpen, setStatusMenuOpen] = React.useState(false);
   const [confirmDialog, setConfirmDialog] = React.useState<ConfirmDialogState>(null);
@@ -668,8 +672,14 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
   const itemsSearchLoadingMoreRef = React.useRef(false);
   const itemsSearchBlurTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const openingOrderRequestIdRef = React.useRef(0);
-  const selectedInvoiceOrder = workspace.selectedOrder as ClientOrder | null;
+  const selectedInvoiceOrder = hasClientOrderInvoiceDocument(workspace.selectedOrder)
+    ? workspace.selectedOrder as ClientOrder
+    : null;
   const selectedInvoiceOrderGuid = getClientOrderInvoiceIdentifier(selectedInvoiceOrder);
+  const invoiceRequesting = !!selectedInvoiceOrderGuid && invoiceRequestingGuids.has(selectedInvoiceOrderGuid);
+  const selectedInvoiceRequestPending = isClientOrderInvoiceRequestForOrder(selectedInvoiceOrderGuid, invoiceRequestPendingGuid);
+  const invoiceUiContextRef = React.useRef('');
+  invoiceUiContextRef.current = `${mode}:${selectedInvoiceOrderGuid || ''}:${workspace.draft.clientOrderId || ''}`;
   const downloadableInvoices = React.useMemo(() => {
     const current = getDownloadableClientOrderInvoices(selectedInvoiceOrder);
     if (current.length || !loadedInvoiceItems || loadedInvoiceItems.orderGuid !== selectedInvoiceOrderGuid) return current;
@@ -692,10 +702,10 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     setInvoiceListLoadingAction(null);
   }, [selectedInvoiceOrderGuid]);
   React.useEffect(() => {
-    if (invoiceDownloadAvailable && invoiceRequestPendingGuid === selectedInvoiceOrderGuid) {
+    if (invoiceDownloadAvailable && selectedInvoiceRequestPending) {
       setInvoiceRequestPendingGuid(null);
     }
-  }, [invoiceDownloadAvailable, invoiceRequestPendingGuid, selectedInvoiceOrderGuid]);
+  }, [invoiceDownloadAvailable, selectedInvoiceRequestPending]);
   const runInvoiceFileAction = React.useCallback(async (invoice: ClientOrderInvoice, action: InvoiceFileAction, targetOrderGuid?: string | null) => {
     const orderGuid = targetOrderGuid || invoicePickerContext?.orderGuid || selectedInvoiceOrderGuid;
     if (!orderGuid || invoiceSharingId) return;
@@ -752,24 +762,31 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
     }
   }, [downloadableInvoices, invoiceDownloadAvailable, invoiceListLoading, runInvoiceFileAction, selectedInvoiceOrderGuid]);
   const requestInvoiceNow = React.useCallback(async (targetOrder?: ClientOrder | null) => {
+    if (targetOrder && !hasClientOrderInvoiceDocument(targetOrder)) return;
     const orderGuid = targetOrder ? getClientOrderInvoiceIdentifier(targetOrder) : selectedInvoiceOrderGuid;
-    if (!orderGuid || invoiceRequesting) return;
+    if (!orderGuid || invoiceRequestsInFlightRef.current.has(orderGuid)) return;
+    const requestContext = invoiceUiContextRef.current;
+    invoiceRequestsInFlightRef.current.add(orderGuid);
     setActionsMenuOpen(false);
-    setInvoiceRequesting(true);
+    setInvoiceRequestingGuids(new Set(invoiceRequestsInFlightRef.current));
     try {
       const result = await requestClientOrderInvoice(orderGuid);
-      setLoadedInvoiceItems({ orderGuid, items: result.items });
+      // Update the original order in the list, but never the next editor's UI.
       workspace.applyInvoiceRequestResult(orderGuid, result.items);
+      if (invoiceUiContextRef.current !== requestContext) return;
+      setLoadedInvoiceItems({ orderGuid, items: result.items });
       if (!getDownloadableClientOrderInvoices({ invoices: result.items }).length) {
         setInvoiceRequestPendingGuid(orderGuid);
       }
     } catch (error: any) {
+      if (invoiceUiContextRef.current !== requestContext) return;
       setInvoiceRequestPendingGuid(null);
       Alert.alert('Не удалось запросить счёт', error?.message || 'Проверьте готовность реализации в 1С.');
     } finally {
-      setInvoiceRequesting(false);
+      invoiceRequestsInFlightRef.current.delete(orderGuid);
+      setInvoiceRequestingGuids(new Set(invoiceRequestsInFlightRef.current));
     }
-  }, [invoiceRequesting, selectedInvoiceOrderGuid, workspace.applyInvoiceRequestResult]);
+  }, [selectedInvoiceOrderGuid, workspace.applyInvoiceRequestResult]);
   const downloadInvoiceFromDocument = React.useCallback(() => {
     void openInvoiceActions('download');
   }, [openInvoiceActions]);
@@ -2404,13 +2421,13 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
           onDownloadInvoice={() => { void openInvoiceActions('download'); }}
           onShareInvoice={() => { void openInvoiceActions('share'); }}
           canRequestInvoice={!!workspace.readOnly && !invoiceDownloadAvailable}
-          invoiceRequestBusy={invoiceRequesting || invoiceGenerationPending || invoiceRequestPendingGuid === selectedInvoiceOrderGuid}
+          invoiceRequestBusy={invoiceRequesting || invoiceGenerationPending || selectedInvoiceRequestPending}
           onRequestInvoice={() => { void requestInvoiceNow(); }}
           compact
         />
       </View>
     );
-  }, [actionsMenuOpen, copyFromMenu, deleteDocumentFromMenu, documentActionsWorkspace, documentContentLoading, downloadableInvoices.length, invoiceDownloadAvailable, invoiceGenerationPending, invoiceListLoading, invoiceRequestPendingGuid, invoiceRequesting, invoiceSharingId, isReachable, mode, openInvoiceActions, openOrderShare, removeOrCancel, requestInvoiceNow, saveDraftFromMenu, selectedInvoiceOrderGuid, submitFromMenu]);
+  }, [actionsMenuOpen, copyFromMenu, deleteDocumentFromMenu, documentActionsWorkspace, documentContentLoading, downloadableInvoices.length, invoiceDownloadAvailable, invoiceGenerationPending, invoiceListLoading, selectedInvoiceRequestPending, invoiceRequesting, invoiceSharingId, isReachable, mode, openInvoiceActions, openOrderShare, removeOrCancel, requestInvoiceNow, saveDraftFromMenu, selectedInvoiceOrderGuid, submitFromMenu]);
   const handleEditorSectionChange = React.useCallback((nextSection: EditorSection) => {
     const nextTarget = nextSection === 'items' ? 1 : 0;
     const sectionChanged = nextTarget !== editorPagerTargetRef.current;
@@ -3012,7 +3029,7 @@ export default function ClientOrdersMobileScreen({ registerBackOverlayHandler }:
                       invoiceDownloadBusy={(invoiceSharingAction === 'download' && !!invoiceSharingId) || (invoiceListLoading && invoiceListLoadingAction === 'download')}
                       invoiceShareBusy={(invoiceSharingAction === 'share' && !!invoiceSharingId) || (invoiceListLoading && invoiceListLoadingAction === 'share')}
                       invoiceRequesting={invoiceRequesting}
-                      invoiceRequestPending={invoiceGenerationPending || invoiceRequestPendingGuid === selectedInvoiceOrderGuid}
+                      invoiceRequestPending={invoiceGenerationPending || selectedInvoiceRequestPending}
                     />
                   </ScrollView>
                 </View>
@@ -3416,6 +3433,7 @@ const HeaderSection = React.memo(function HeaderSection({
       onReset={workspace.isHeaderPriceTypeCustom ? onResetHeaderPriceType : undefined}
     />
     <InvoiceRequestField
+      styles={styles}
       workspace={workspace}
       readOnly={readOnly}
       onDownload={onDownloadInvoice}
@@ -4895,159 +4913,6 @@ const ItemsSection = React.memo(function ItemsSection({
   );
 });
 
-function InvoiceRequestField({
-  workspace,
-  readOnly,
-  onDownload,
-  onShare,
-  onRequestInvoice,
-  downloadBusy,
-  shareBusy,
-  requestBusy,
-  requestPending,
-}: {
-  workspace: any;
-  readOnly: boolean;
-  onDownload: () => void;
-  onShare: () => void;
-  onRequestInvoice: () => void;
-  downloadBusy: boolean;
-  shareBusy: boolean;
-  requestBusy: boolean;
-  requestPending: boolean;
-}) {
-  const selectedOrder = workspace.selectedOrder as ClientOrder | null;
-  const committedAutoSend = !!workspace.draft.invoiceRequested;
-  const [optimisticAutoSend, setOptimisticAutoSend] = React.useState(committedAutoSend);
-  const optimisticAutoSendRef = React.useRef(committedAutoSend);
-  const invoices = getDownloadableClientOrderInvoices(selectedOrder);
-  const invoiceDownloadAvailable = invoices.length > 0 || !!selectedOrder?.invoiceDownloadAvailable;
-  const hasPendingInvoice = requestPending || getClientOrderInvoicePresentation(selectedOrder).pending;
-  const hasCounterparty = !!(
-    workspace.draft.counterpartyGuid
-    || workspace.selections.counterparty?.guid
-  );
-  const preferenceLoading = hasCounterparty && workspace.loadingDefaults;
-  const autoSendDisabled = readOnly || !hasCounterparty || preferenceLoading;
-
-  React.useEffect(() => {
-    optimisticAutoSendRef.current = committedAutoSend;
-    setOptimisticAutoSend(committedAutoSend);
-  }, [committedAutoSend]);
-
-  const toggle = () => {
-    if (autoSendDisabled) return;
-    const nextValue = !optimisticAutoSendRef.current;
-    optimisticAutoSendRef.current = nextValue;
-    // Keep the control responsive even when recalculating the full draft is expensive.
-    // The draft update (and its later persistence) is deliberately low priority.
-    setOptimisticAutoSend(nextValue);
-    React.startTransition(() => {
-      workspace.patchDraft({ invoiceRequested: nextValue });
-    });
-  };
-
-  if (invoiceDownloadAvailable) {
-    return (
-      <View style={[styles.flatField, styles.invoiceReadyField, readOnly && styles.readOnlyFieldSurface]}>
-        <View style={styles.flatFieldIcon}>
-          <MaterialCommunityIcons name="file-pdf-box" size={20} color="#16A34A" />
-        </View>
-        <View style={styles.flatFieldTextWrap}>
-          <Text style={styles.flatFieldValue} numberOfLines={1}>Скачать счёт</Text>
-        </View>
-        <View style={styles.invoiceFileActions}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Скачать счёт"
-            disabled={downloadBusy || shareBusy}
-            onPress={onDownload}
-            style={({ pressed }) => [styles.invoiceFileAction, pressed && !downloadBusy && !shareBusy && styles.flatPressed]}
-          >
-            {downloadBusy ? (
-              <ActivityIndicator size={24} color="#1D4ED8" />
-            ) : (
-              <MaterialCommunityIcons name="download-outline" size={24} color="#1D4ED8" />
-            )}
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Поделиться счётом"
-            disabled={downloadBusy || shareBusy}
-            onPress={onShare}
-            style={({ pressed }) => [styles.invoiceFileAction, styles.invoiceFileActionDivider, pressed && !downloadBusy && !shareBusy && styles.flatPressed]}
-          >
-            {shareBusy ? (
-              <ActivityIndicator size={24} color="#1D4ED8" />
-            ) : (
-              <MaterialCommunityIcons name="share-variant-outline" size={24} color="#1D4ED8" />
-            )}
-          </Pressable>
-        </View>
-      </View>
-    );
-  }
-
-  if (readOnly) {
-    return (
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={hasPendingInvoice ? 'Счёт формируется' : 'Запросить счёт'}
-        disabled={requestBusy || hasPendingInvoice}
-        onPress={onRequestInvoice}
-        style={({ pressed }) => [styles.flatField, styles.invoiceReadyField, styles.readOnlyFieldSurface, pressed && !requestBusy && !hasPendingInvoice && styles.flatPressed]}
-      >
-        <View style={styles.flatFieldIcon}>
-          <MaterialCommunityIcons name="file-download-outline" size={20} color="#1D4ED8" />
-        </View>
-        <View style={styles.flatFieldTextWrap}>
-          <Text style={styles.flatFieldValue} numberOfLines={1}>{hasPendingInvoice ? 'Счёт формируется' : 'Запросить счёт'}</Text>
-        </View>
-        <View style={[styles.invoiceFileAction, styles.invoiceFileActionDivider]}>
-          {requestBusy || hasPendingInvoice ? (
-            <ActivityIndicator size={24} color="#1D4ED8" />
-          ) : (
-            <MaterialCommunityIcons name="cloud-download-outline" size={24} color="#1D4ED8" />
-          )}
-        </View>
-      </Pressable>
-    );
-  }
-
-  return (
-    <Pressable
-      accessibilityRole="checkbox"
-      accessibilityState={{ checked: optimisticAutoSend, disabled: autoSendDisabled, busy: preferenceLoading }}
-      disabled={autoSendDisabled}
-      onPress={toggle}
-      style={({ pressed }) => [
-        styles.flatField,
-        autoSendDisabled && styles.readOnlyFieldSurface,
-        pressed && !autoSendDisabled && styles.flatPressed,
-      ]}
-    >
-      <View style={styles.flatFieldIcon}>
-        <MaterialCommunityIcons name="receipt-text-outline" size={20} color={autoSendDisabled ? 'rgba(71, 85, 105, 0.48)' : '#475569'} />
-      </View>
-      <View style={styles.flatFieldTextWrap}>
-        <Text style={[styles.flatFieldValue, autoSendDisabled && styles.readOnlyFieldValue]} numberOfLines={2}>
-          Отправлять счёт автоматически
-        </Text>
-      </View>
-      {preferenceLoading ? (
-        <View style={styles.flatFieldAction}>
-          <ActivityIndicator size={17} color="#2563EB" />
-        </View>
-      ) : (
-        <MaterialCommunityIcons
-          name={optimisticAutoSend ? 'checkbox-marked' : 'checkbox-blank-outline'}
-          size={24}
-          color={optimisticAutoSend ? '#2563EB' : '#94A3B8'}
-        />
-      )}
-    </Pressable>
-  );
-}
 
 function equalStringLists(left: string[], right: string[]) {
   return left === right || (
