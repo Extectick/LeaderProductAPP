@@ -1,6 +1,6 @@
 import React from 'react';
 import TestRenderer,{act} from 'react-test-renderer';
-import {Keyboard,Platform,StyleSheet,type View} from 'react-native';
+import {AccessibilityInfo,Animated,Keyboard,PanResponder,Platform,StyleSheet,type View} from 'react-native';
 let mockTheme:'light'|'dark'='light';
 jest.mock('../context/ThemeContext',()=>({useTheme:()=>({theme:mockTheme})}));
 jest.mock('@expo/vector-icons',()=>({Ionicons:'Ionicons'}));
@@ -9,8 +9,47 @@ jest.mock('../src/features/help/helpDiagnostics',()=>({helpDevRef:jest.fn(),help
 jest.mock('@react-native-masked-view/masked-view',()=> 'MaskedView');
 jest.mock('expo-linear-gradient',()=>({LinearGradient:'LinearGradient'}));
 jest.mock('react-native-safe-area-context',()=>({useSafeAreaInsets:()=>({top:0,right:0,bottom:34,left:0})}));
-import {helpThemeTokens} from '../src/features/help/helpTheme';
+import {helpThemeTokens,useHelpReducedMotion} from '../src/features/help/helpTheme';
 import {HelpBlurSurface,HelpDock,HelpIcon,HelpPrimaryButton,HelpSheet} from '../src/features/help/components/HelpPrimitives';
+import {HelpVisualEffectsContext} from '../src/features/help/helpVisualEffects';
+
+test('a long chat shares one motion subscription and a late query cannot undo a system change',async()=>{
+  let changed!:(value:boolean)=>void,resolve!:(value:boolean)=>void;
+  const remove=jest.fn();
+  const events=jest.spyOn(AccessibilityInfo,'addEventListener').mockImplementation((_event,listener)=>{changed=listener as any;return {remove};});
+  const query=jest.spyOn(AccessibilityInfo,'isReduceMotionEnabled').mockReturnValue(new Promise(done=>{resolve=done;}));
+  function Consumer(){return React.createElement('MotionPreference',{reduced:useHelpReducedMotion()});}
+  let tree!:TestRenderer.ReactTestRenderer;
+  try{
+    await act(async()=>{tree=TestRenderer.create(React.createElement(React.Fragment,null,Array.from({length:100},(_,key)=>React.createElement(Consumer,{key}))));});
+    expect(events).toHaveBeenCalledTimes(1);expect(query).toHaveBeenCalledTimes(1);
+    await act(async()=>{changed(true);resolve(false);});
+    expect(tree.root.findAllByType('MotionPreference' as any).every(node=>node.props.reduced===true)).toBe(true);
+    await act(async()=>tree.unmount());expect(remove).toHaveBeenCalledTimes(1);
+  }finally{if(tree)await act(async()=>tree.unmount());events.mockRestore();query.mockRestore();}
+});
+
+test('IT sheet captures downward drags over buttons, restores cancellation and dismisses once',async()=>{
+  let handlers:any;
+  const capture=jest.spyOn(PanResponder,'create').mockImplementation(config=>{handlers=config;return {panHandlers:{}} as any;});
+  const timing=jest.spyOn(Animated,'timing').mockImplementation((value:any,config:any)=>({start:(done?:any)=>{value.setValue(config.toValue);done?.({finished:true});},stop:jest.fn(),reset:jest.fn()}) as any);
+  const spring=jest.spyOn(Animated,'spring').mockImplementation((value:any)=>({start:()=>value.setValue(0),stop:jest.fn(),reset:jest.fn()}) as any);
+  const close=jest.fn();let tree!:TestRenderer.ReactTestRenderer;
+  await act(async()=>{tree=TestRenderer.create(React.createElement(HelpSheet,{title:'Подключить IT?',onClose:close,children:null}));});
+  try{
+    expect(handlers.onMoveShouldSetPanResponderCapture(null,{dy:30,dx:4})).toBe(true);
+    expect(handlers.onMoveShouldSetPanResponderCapture(null,{dy:-30,dx:4})).toBe(false);
+    await act(async()=>{handlers.onPanResponderGrant();handlers.onPanResponderMove(null,{dy:40});handlers.onPanResponderTerminate();});
+    expect(spring).toHaveBeenCalled();expect(close).not.toHaveBeenCalled();
+    await act(async()=>{handlers.onPanResponderRelease(null,{dy:120,vy:.2});handlers.onPanResponderRelease(null,{dy:120,vy:.2});});expect(close).toHaveBeenCalledTimes(1);
+  }finally{await act(async()=>tree.unmount());capture.mockRestore();timing.mockRestore();spring.mockRestore();}
+});
+
+test('inactive Help scenes release native blur layers',async()=>{
+  let tree!:TestRenderer.ReactTestRenderer;
+  await act(async()=>{tree=TestRenderer.create(React.createElement(HelpVisualEffectsContext.Provider,{value:false},React.createElement(HelpBlurSurface,{})));});
+  try{expect(tree.toJSON()).toBeNull();}finally{await act(async()=>tree.unmount());}
+});
 
 describe('Help approved prototype tokens and primitive geometry',()=>{
   let screen:TestRenderer.ReactTestRenderer|undefined;

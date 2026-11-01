@@ -489,7 +489,7 @@ export function HelpVoiceRecorder(props: Props) {
   const actionStyle = {
     position: 'absolute' as const,
     right: active ? -3 : 4,
-    bottom: active ? -3 : 4,
+    bottom: active ? -9 : 4,
     width: active ? 64 : 38,
     height: active ? 64 : 38,
     borderRadius: 32,
@@ -500,17 +500,16 @@ export function HelpVoiceRecorder(props: Props) {
   if (!active && !props.visible) return null;
   return <>
     {active ? <View testID={`help-voice-${phase}`} style={{
-      // Keep the floating pause/resume control inside its parent's hit area.
-      marginTop: 48,
-      height: 64,
-      borderRadius: 32,
-      borderWidth: 1,
-      borderColor: c.line,
-      backgroundColor: c.surface,
+      // Match the idle input height; controls stay inside the touch area.
+      marginTop: 0,
+      height: 48,
+      borderRadius: 24,
+      borderWidth: 0,
+      backgroundColor: c.panel,
       flexDirection: 'row',
       alignItems: 'center',
       paddingLeft: 12,
-      paddingRight: 74,
+      paddingRight: locked || paused ? 114 : 74,
       gap: 7
     }}>
       {paused ? <Pressable accessibilityRole="button" accessibilityLabel="Удалить запись" disabled={working} onPress={() => void finish('cancel')} style={{
@@ -608,10 +607,10 @@ export function HelpVoiceRecorder(props: Props) {
     }, haloStyle]}/> : null}
     {active && (locked || paused) ? <Pressable accessibilityRole="button" accessibilityLabel={paused ? 'Продолжить запись' : 'Приостановить запись'} disabled={working || props.disabled || paused && duration >= 60000} onPress={() => void (paused ? start(true) : pause())} style={{
       position: 'absolute',
-      right: 13,
-      bottom: 78,
-      width: 32,
-      height: 32,
+      right: 70,
+      bottom: 1,
+      width: 36,
+      height: 44,
       borderRadius: 16,
       backgroundColor: c.panel,
       alignItems: 'center',

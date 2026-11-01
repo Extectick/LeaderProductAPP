@@ -1,7 +1,7 @@
 import React from 'react';
 import TestRenderer,{act} from 'react-test-renderer';
 import {StyleSheet,View} from 'react-native';
-import { helpIsAtLatest, helpTimelineRows, helpVisibleRows } from '../src/features/help/helpTimelineModel';
+import { helpNavigationIndex, helpIsAtLatest, helpTimelineRows, helpVisibleRows } from '../src/features/help/helpTimelineModel';
 import type { HelpMessage } from '../src/features/help/helpApi';
 let mockFlashProps:any;
 let mockReducedMotion=true;
@@ -27,6 +27,17 @@ import {HelpMediaLoadingContext} from '../src/features/help/helpMediaLoading';
 
 const message=(sequence:number,date='2026-10-28T12:00:00Z')=>({id:sequence,sequence,createdAt:date}) as HelpMessage;
 describe('messenger viewport and read boundaries',()=>{
+  test('nonmonotonic dates keep recycled row keys unique',()=>{
+    const rows=helpTimelineRows([message(1),message(2,'2026-10-29T12:00:00Z'),message(3)]);
+    expect(new Set(rows.map(row=>row.key)).size).toBe(rows.length);
+  });
+  test('missing saved or unread anchors resolve to a visible neighbour',()=>{
+    const rows=helpTimelineRows([message(10),message(12)]);
+    expect(rows[helpNavigationIndex(rows,{kind:'anchor',key:1,messageId:11,sequence:11,offset:0})].message.id).toBe(12);
+    expect(rows[helpNavigationIndex(rows,{kind:'unread',key:2,messageId:10,sequence:10})].message.id).toBe(10);
+    expect(rows[helpNavigationIndex(rows,{kind:'anchor',key:3,messageId:99,sequence:99,offset:0})].message.id).toBe(12);
+    expect(helpNavigationIndex([],{kind:'latest',key:4})).toBe(-1);
+  });
   test('cells below composer or behind header are not read, partial tall cells remain readable',()=>{
     const rows=[{id:1,top:0,height:80},{id:2,top:70,height:500},{id:3,top:580,height:200}];
     expect(helpVisibleRows(rows,100,570).map(row=>row.id)).toEqual([2]);
@@ -65,6 +76,13 @@ describe('sticky date geometry and navigation integration',()=>{
     ref=React.createRef<HelpTimelineHandle>();
   });
   afterEach(async()=>{if(screen)await act(async()=>screen!.unmount());screen=undefined;jest.clearAllTimers();jest.useRealTimers();});
+  test('a still-visible inline day hides its sticky copy even when FlashList starts at the next message',async()=>{
+    mockLayouts[0]={y:110,height:44};mockLayouts[1]={y:154,height:100};
+    mockListApi.computeVisibleIndices=()=>({startIndex:1,endIndex:3});
+    await render();expect(floating()).toBeUndefined();
+    mockLayouts[0]={y:50,height:44};mockLayouts[1]={y:90,height:100};
+    await observe();expect(floating()!.props.date).toBe(firstDate);
+  });
   async function render(){
     await act(async()=>{screen=TestRenderer.create(React.createElement(HelpTimeline,{...props,ref}));});
     await act(async()=>mockFlashProps.onLayout({nativeEvent:{layout:{height:600}}}));
@@ -195,6 +213,32 @@ describe('sticky date geometry and navigation integration',()=>{
     expect(mockListApi.scrollToIndex).not.toHaveBeenCalled();
     expect(mockListApi.scrollToOffset).toHaveBeenLastCalledWith({offset:259,animated:false,skipFirstItemOffset:true});
     expect(props.onReady).toHaveBeenCalledTimes(1);
+  });
+  test('late history brings an unmeasured saved cell into the rendered window',async()=>{
+    const messages=props.messages;props={...props,messages:[],loading:true,onReady:jest.fn(),navigationTarget:null};
+    await render();
+    (mockLayouts[3] as any).isHeightMeasured=false;
+    mockListApi.scrollToIndex.mockImplementation(async()=>{mockLayouts[3]={y:364,height:100,...{isHeightMeasured:true}};});
+    mockListApi.scrollToOffset.mockImplementation(({offset}:any)=>{mockListApi.getAbsoluteLastScrollOffset=()=>offset;});
+    props={...props,messages,loading:false,navigationTarget:{key:96,kind:'anchor',messageId:2,sequence:2,offset:5}};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    await act(async()=>jest.advanceTimersByTimeAsync(100));
+    expect(mockListApi.scrollToIndex).toHaveBeenCalledTimes(1);
+    expect(mockListApi.scrollToIndex).toHaveBeenCalledWith({index:3,animated:false,viewOffset:-105});
+    expect(props.onReady).toHaveBeenCalledTimes(1);
+  });
+  test('a measured empty row cannot prevent the rest of the history opening',async()=>{
+    mockLayouts[2]={y:320,height:0,...{isHeightMeasured:true}};
+    props={...props,onReady:jest.fn(),navigationTarget:{key:97,kind:'anchor',messageId:2,sequence:2,offset:5}};
+    mockListApi.scrollToOffset.mockImplementation(({offset}:any)=>{mockListApi.getAbsoluteLastScrollOffset=()=>offset;});
+    await render();await act(async()=>jest.advanceTimersByTimeAsync(100));expect(props.onReady).toHaveBeenCalledTimes(1);
+  });
+  test('a stable measured long page opens even if native scrolling clamps its cached offset',async()=>{
+    props={...props,onReady:jest.fn(),navigationTarget:{key:98,kind:'anchor',messageId:2,sequence:2,offset:5}};
+    mockListApi.getAbsoluteLastScrollOffset=()=>80;
+    await render();await act(async()=>{mockFlashProps.onContentSizeChange(390,2000);await jest.advanceTimersByTimeAsync(250);});
+    expect(props.onReady).toHaveBeenCalledTimes(1);
+    expect(mockListApi.scrollToOffset).toHaveBeenCalledWith({offset:259,animated:false,skipFirstItemOffset:true});
   });
   test('opening a measured live answer hands the growing tail to follow without waiting for the answer to finish',async()=>{
     let content=1000,offset=0;

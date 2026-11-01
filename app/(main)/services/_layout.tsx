@@ -132,6 +132,9 @@ export default function ServicesLayout() {
           const name = (route as any)?.routeName || (route.name as string);
           let meta = headerMap[name as keyof typeof headerMap];
           const currentPath = String(pathname || '').split('?')[0];
+          // Options also run for the outgoing scene. Help owns its header even
+          // after pathname has changed back to the catalogue during transition.
+          const isHelpScreen = /^help(?:\/|$)/.test(name);
           const isCatalogPath = /^\/services\/?$/.test(currentPath);
           const isCatalogRoute = name === 'index' || name === 'index.web';
 
@@ -285,7 +288,7 @@ export default function ServicesLayout() {
                 showServerStatus={activeHeaderOverride?.showServerStatus ?? (!isCatalogPath && !isClientOrdersPath)}
               />
             ),
-            animation: isClientOrdersPath ? 'fade' : 'ios_from_left',
+            animation: isHelpScreen || isClientOrdersPath ? 'fade' : 'ios_from_left',
           };
         }}
       >

@@ -113,7 +113,51 @@ export const helpApi = createHelpApi();
 
 export async function uploadHelpFiles(files: HelpFile[], expectedUserId?: number): Promise<HelpAttachment[]> {
   if (!files.length || files.length > 10) throw new Error('Можно прикрепить от 1 до 10 файлов.');
-  const auth = await captureAuth(expectedUserId);
+  let auth = await captureAuth(expectedUserId);
+  if (Platform.OS === 'android') {
+    // Read local recordings on the native side. RN fetch/FormData can fail
+    // before issuing HTTP for file-backed multipart bodies on Android.
+    const fs:typeof import('expo-file-system/legacy') = require('expo-file-system/legacy');
+    const attachments:HelpAttachment[]=[];
+    for(const file of files){
+      await assertAuth(auth);
+      const info=await fs.getInfoAsync(file.uri);
+      if(!info.exists||info.isDirectory)throw new HelpApiError('Файл вложения недоступен. Выберите его заново или повторите запись.',0,'HELP_FILE_UNAVAILABLE');
+      await assertAuth(auth);
+      const upload=async()=>{
+        // The native multipart writer uses the URI basename as filename. Draft
+        // storage uses opaque names, so stage a named copy without altering it.
+        const name=file.name.replace(/[\\/\u0000-\u001f]/g,'_');
+        const root=fs.cacheDirectory;
+        if(!root)throw new HelpApiError('Не удалось открыть папку вложений.',0,'HELP_FILE_UNAVAILABLE');
+        const directory=`${root}help-upload-${Date.now()}-${Math.random().toString(36).slice(2)}/`;
+        const uri=directory+encodeURIComponent(name&&name!=='.'&&name!=='..'?name:'attachment');
+        await fs.makeDirectoryAsync(directory,{intermediates:true});
+        try{
+          await fs.copyAsync({from:file.uri,to:uri});
+          await assertAuth(auth);
+          const task=fs.createUploadTask(`${API_BASE_URL.replace(/\/$/,'')}/help/attachments`,uri,{
+            httpMethod:'POST',uploadType:fs.FileSystemUploadType.MULTIPART,fieldName:'files',mimeType:file.mimeType||'application/octet-stream',
+            headers:{Authorization:`Bearer ${auth.token}`},parameters:{},
+          });
+          const timer=setTimeout(()=>{void task.cancelAsync().catch(()=>{});},30000);
+          try{return await task.uploadAsync();}
+          catch{throw new HelpApiError('Не удалось загрузить вложение. Проверьте соединение и повторите отправку. Запись сохранена.',0,'HELP_UPLOAD_FAILED');}
+          finally{clearTimeout(timer);}
+        }finally{await fs.deleteAsync(directory,{idempotent:true}).catch(()=>{});}
+      };
+      let result=await upload();
+      await assertAuth(auth);
+      if(result?.status===401){auth=await refreshAuth(auth);result=await upload();await assertAuth(auth);}
+      if(!result)throw new HelpApiError('Загрузка вложения прервана. Повторите отправку.',408,'HELP_UPLOAD_TIMEOUT');
+      let body:any;try{body=JSON.parse(result.body);}catch{throw new HelpApiError('Сервер вернул некорректный ответ при загрузке вложения.',result.status);}
+      if(result.status<200||result.status>=300)throw new HelpApiError(typeof body.message==='string'?body.message:'Не удалось загрузить вложение.',result.status,body.error?.code);
+      const rows=(body.data??body).attachments;
+      if(!Array.isArray(rows)||rows.length!==1)throw new HelpApiError('Сервер не подтвердил загрузку вложения. Повторите отправку.',result.status);
+      attachments.push(rows[0]);
+    }
+    return attachments;
+  }
   const form = new FormData();
   for (const file of files) {
     if (Platform.OS === 'web') {

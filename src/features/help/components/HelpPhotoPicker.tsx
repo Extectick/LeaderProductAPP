@@ -26,6 +26,7 @@ type Props = {
 const identity=(file:HelpLocalFile)=>file.assetId||file.uri;
 const fromFile=(file:HelpLocalFile):Selection=>({photo:{id:identity(file),uri:file.uri,name:file.name,width:file.width||1,height:file.height||1,size:file.size},file});
 const message=(error:unknown)=>error instanceof Error?error.message:'Не удалось открыть фотографию. Попробуйте ещё раз.';
+export const helpPhotoSheetMaximumHeight=(windowHeight:number,topInset:number,bottomInset:number,keyboardTop:number|null)=>Math.max(180,Math.min(windowHeight-bottomInset,keyboardTop??Infinity)-topInset-108);
 
 /** Lives with the composer, so an in-flight selection survives closing the tray. */
 export function HelpPhotoPicker(props:Props) {
@@ -38,14 +39,14 @@ export function HelpPhotoPicker(props:Props) {
   const [selection,setSelection]=useState<Selection[]>(()=>props.files.map(fromFile));
   const chosen=useRef(selection);chosen.current=selection;
   const [preview,setPreview]=useState<{photos:HelpLibraryPhoto[];index:number;origin?:HelpPhotoRect}|null>(null);
-  const [cameraExpanded,setCameraExpanded]=useState(false),[cameraVisible,setCameraVisible]=useState(true),[keyboardHeight,setKeyboardHeight]=useState(0);
+  const [cameraExpanded,setCameraExpanded]=useState(false),[cameraVisible,setCameraVisible]=useState(true),[keyboardTop,setKeyboardTop]=useState<number|null>(null);
   const grid=useRef<View>(null),scrollOffset=useRef(new Animated.Value(0)).current;
   const [viewport,setViewport]=useState<HelpPhotoRect>();
   const height=useRef(new Animated.Value(0)).current,actualHeight=useRef(0),dragStart=useRef(0);
   const closedByPull=useRef(false),detachNativeScroll=useRef<(()=>void)|null>(null);
   const pullY=useSharedValue(0),gridScrollY=useSharedValue(0),gridMomentum=useSharedValue(false);
   const pullState=useSharedValue(0),touchX=useSharedValue(0),touchY=useSharedValue(0),pullAllowed=useSharedValue(false),pullHeight=useSharedValue(0),nativeCameraVisible=useSharedValue(true);
-  const maximumHeight=Math.max(180,window.height-insets.top-insets.bottom-108-keyboardHeight);
+  const maximumHeight=helpPhotoSheetMaximumHeight(window.height,insets.top,insets.bottom,keyboardTop);
   const collapsedHeight=Math.min(window.height*.6,maximumHeight);
   const geometry=useRef({collapsedHeight,maximumHeight});geometry.current={collapsedHeight,maximumHeight};
   const pending=selection.some(item=>item.pending),failed=selection.some(item=>item.failed),blocked=props.busy||pending;
@@ -126,7 +127,7 @@ export function HelpPhotoPicker(props:Props) {
     }
     if(changed){chosen.current=next;setSelection(next);}
   },[props.files,props.open]);
-  useEffect(()=>{if(props.open){closedByPull.current=false;cancelAnimation(pullY);pullY.value=0;pullState.value=0;setVisible(true);Keyboard.dismiss();}else setKeyboardHeight(0);},[props.open,pullY,pullState]);
+  useEffect(()=>{if(props.open){closedByPull.current=false;cancelAnimation(pullY);pullY.value=0;pullState.value=0;setVisible(true);Keyboard.dismiss();}else setKeyboardTop(null);},[props.open,pullY,pullState]);
   useEffect(()=>{
     setSettled(false);height.stopAnimation();
     if(!props.open&&closedByPull.current){height.setValue(0);setVisible(false);return;}
@@ -155,7 +156,14 @@ export function HelpPhotoPicker(props:Props) {
   useEffect(()=>{if(props.open)void checkPermission();},[props.open,checkPermission]);
   useEffect(()=>{if(!props.open)return;const listener=AppState.addEventListener('change',state=>{if(state==='active')void checkPermission();});return()=>listener.remove();},[props.open,checkPermission]);
   useEffect(()=>{if(!props.open||preview||cameraExpanded)return;const listener=BackHandler.addEventListener('hardwareBackPress',()=>{latest.current.onClose();return true;});return()=>listener.remove();},[props.open,preview,cameraExpanded]);
-  useEffect(()=>{if(!props.open||preview||cameraExpanded)return;const show=Keyboard.addListener('keyboardDidShow',event=>setKeyboardHeight(event.endCoordinates.height));const hide=Keyboard.addListener('keyboardDidHide',()=>setKeyboardHeight(0));return()=>{show.remove();hide.remove();};},[props.open,preview,cameraExpanded]);
+  useEffect(()=>{
+    if(!props.open||preview||cameraExpanded){setKeyboardTop(null);return;}
+    const metrics=Keyboard.metrics();
+    setKeyboardTop(Keyboard.isVisible()&&metrics&&metrics.height>0?metrics.screenY:null);
+    const show=Keyboard.addListener('keyboardDidShow',event=>setKeyboardTop(event.endCoordinates.height>0?event.endCoordinates.screenY??window.height-event.endCoordinates.height:null));
+    const hide=Keyboard.addListener('keyboardDidHide',()=>setKeyboardTop(null));
+    return()=>{show.remove();hide.remove();};
+  },[props.open,preview,cameraExpanded,window.height]);
 
   function commit(next:Selection[]){chosen.current=next;setSelection(next);latest.current.onFiles(next.flatMap(item=>item.file?[item.file]:[]));}
   async function select(photo:HelpLibraryPhoto){

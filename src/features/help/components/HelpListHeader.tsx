@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Modal, Platform, Pressable, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { Platform, Pressable, TextInput, View, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useHelpReducedMotion, useHelpTheme } from '../helpTheme';
+import { useHelpTheme } from '../helpTheme';
 import { HelpIcon } from './HelpPrimitives';
 import { HELP_LIST_META_WIDTH } from '../helpLayout';
 import { HelpHeaderFrame } from './HelpHeaderFrame';
+import {HelpDropdown, HelpDropdownAction} from './HelpDropdown';
 import { helpDevActions, helpDevRef, helpDevState } from '../helpDiagnostics';
 import { knowledgeApi } from '../../knowledge/api';
 
@@ -23,7 +24,6 @@ type Props = {
 
 export function HelpListHeader({ search, onSearch, archived, onArchive, onBack, canManage = false, scope = 'mine', onScope, onKnowledge, connecting=false }: Props) {
   const c = useHelpTheme();
-  const reducedMotion = useHelpReducedMotion();
   const window = useWindowDimensions();
   const menuButton = useRef<View>(null);
   const [menuVisible, setMenuVisible] = useState(false);
@@ -54,23 +54,10 @@ export function HelpListHeader({ search, onSearch, archived, onArchive, onBack, 
       <TextInput accessibilityLabel="Поиск обращений" value={search} onChangeText={onSearch} placeholder="Поиск" placeholderTextColor={c.muted} returnKeyType="search" autoCorrect={false} underlineColorAndroid="transparent" style={{ flex: 1, minWidth: 0, height: 44, padding: 0, color: c.text, fontSize: 16, includeFontPadding: false, textAlignVertical: 'center', ...(Platform.OS === 'web' ? { outlineStyle: 'none' } as any : {}) }} />
       {search ? <HelpIcon name="close" label="Очистить поиск" size={17} style={{ width: 28, height: 44 }} onPress={() => onSearch('')} /> : null}
     </HelpHeaderFrame>
-    {menuVisible ? <Modal transparent visible animationType={reducedMotion ? 'none' : 'fade'} onRequestClose={closeMenu} statusBarTranslucent>
-      <View style={{ flex: 1 }}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Закрыть меню поддержки" onPress={closeMenu} style={StyleSheet.absoluteFill} />
-        <View testID="help-header-menu" accessibilityViewIsModal style={{ position: 'absolute', top: menuTop, left: menuLeft, width: menuWidth, padding: 4, backgroundColor: c.elevated, borderRadius: 14, borderWidth: 1, borderColor: c.line, elevation: 8, shadowColor: '#000', shadowOpacity: .16, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } }}>
-          <Pressable accessibilityRole="button" accessibilityLabel={archived ? 'Показать открытые обращения' : 'Показать архив обращений'} onPress={archiveAction} style={({ pressed }) => ({ minHeight: 48, paddingHorizontal: 12, borderRadius: 10, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: pressed ? c.soft : 'transparent' })}>
-            <Ionicons name={archived ? 'chatbubbles-outline' : 'archive-outline'} size={22} color={c.text} />
-            <Text style={{ color: c.text, fontSize: 16, lineHeight: 22 }}>{archived ? 'Открытые обращения' : 'Архив'}</Text>
-          </Pressable>
-          {canManage ? <Pressable accessibilityRole="button" accessibilityLabel={scope === 'mine' ? 'Показать очередь IT' : 'Показать мои обращения'} onPress={scopeAction} style={({ pressed }) => ({ minHeight: 48, paddingHorizontal: 12, borderRadius: 10, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: pressed ? c.soft : 'transparent' })}>
-            <Ionicons name={scope === 'mine' ? 'people-outline' : 'person-outline'} size={22} color={c.text}/>
-            <Text style={{color:c.text,fontSize:16,lineHeight:22}}>{scope === 'mine' ? 'Очередь IT' : 'Мои обращения'}</Text>
-          </Pressable> : null}
-          {canReviewKnowledge && onKnowledge ? <Pressable accessibilityRole="button" accessibilityLabel="Проверка базы знаний" onPress={() => { closeMenu(); onKnowledge(); }} style={({ pressed }) => ({ minHeight: 48, paddingHorizontal: 12, borderRadius: 10, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: pressed ? c.soft : 'transparent' })}>
-            <Ionicons name="book-outline" size={22} color={c.text} /><Text style={{ color: c.text, fontSize: 16, lineHeight: 22 }}>База знаний</Text>
-          </Pressable> : null}
-        </View>
-      </View>
-    </Modal> : null}
+    {menuVisible ? <HelpDropdown testID="help-header-menu" label="Закрыть меню поддержки" onClose={closeMenu} top={menuTop} left={menuLeft} width={menuWidth}>
+      <HelpDropdownAction label={archived ? 'Открытые обращения' : 'Архив'} accessibilityLabel={archived ? 'Показать открытые обращения' : 'Показать архив обращений'} icon={archived ? 'chatbubbles-outline' : 'archive-outline'} onPress={archiveAction}/>
+      {canManage ? <HelpDropdownAction label={scope === 'mine' ? 'Очередь IT' : 'Мои обращения'} accessibilityLabel={scope === 'mine' ? 'Показать очередь IT' : 'Показать мои обращения'} icon={scope === 'mine' ? 'people-outline' : 'person-outline'} onPress={scopeAction}/> : null}
+      {canReviewKnowledge && onKnowledge ? <HelpDropdownAction label="База знаний" icon="book-outline" onPress={()=>{closeMenu();onKnowledge();}}/> : null}
+    </HelpDropdown> : null}
   </>;
 }

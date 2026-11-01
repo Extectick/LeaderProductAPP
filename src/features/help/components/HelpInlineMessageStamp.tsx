@@ -31,13 +31,13 @@ export function HelpInlineMessageStamp({ time, edited, status, reduced, muted, r
   muted: string; receiptColor: string; danger: string; onRetry?: () => void;
 }) {
   const pending = status === 'queued' || status === 'sending';
-  return <View testID="help-message-time" pointerEvents={status === 'failed' ? 'auto' : 'none'} style={{ position: 'absolute', right: 11, bottom: 8, flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+  return <View testID="help-message-time" pointerEvents={status === 'failed' ? 'auto' : 'none'} style={{ position: 'absolute', right: 11, bottom: 5, flexDirection: 'row', alignItems: 'flex-end', gap: 3 }}>
     {pending || status === 'failed' ? <View style={{ width: 18, height: 18, alignItems: 'center', justifyContent: 'center' }}>
       {status === 'failed' ? <Pressable accessibilityRole="button" accessibilityLabel="Не удалось отправить. Отправить снова" onPress={onRetry} hitSlop={12} style={{ width: 18, height: 18, alignItems: 'center', justifyContent: 'center' }}><Ionicons name="alert-circle-outline" size={16} color={danger}/></Pressable>
         : reduced ? <Ionicons accessibilityLabel="Отправляется" name="ellipse-outline" size={12} color={muted}/>
           : <ActivityIndicator accessibilityLabel="Отправляется" size={12} color={muted}/>}
     </View> : null}
     <Text style={[timeStyle, { color: muted }]}>{label(time, edited)}</Text>
-    {!pending && status !== 'failed' ? <View style={{ width: 18, height: 18, alignItems: 'center', justifyContent: 'center' }}><Ionicons testID="help-message-receipt" allowFontScaling={false} accessibilityLabel={status === 'read' ? 'Прочитано' : 'Отправлено'} name={status === 'read' ? 'checkmark-done' : 'checkmark'} size={15} color={receiptColor}/></View> : null}
+    {!pending && status !== 'failed' ? <View style={{ width: 18, height: 12, alignItems: 'center', justifyContent: 'center' }}><Ionicons testID="help-message-receipt" allowFontScaling={false} accessibilityLabel={status === 'read' ? 'Прочитано' : 'Отправлено'} name={status === 'read' ? 'checkmark-done' : 'checkmark'} size={15} color={receiptColor}/></View> : null}
   </View>;
 }

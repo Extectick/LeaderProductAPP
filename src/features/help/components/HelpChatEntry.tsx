@@ -1,29 +1,45 @@
-import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { Animated, Easing, type LayoutChangeEvent } from 'react-native';
-import { useHelpReducedMotion } from '../helpTheme';
+import React, {forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState} from 'react';
+import {useWindowDimensions, type LayoutChangeEvent} from 'react-native';
+import Reanimated, {cancelAnimation, Easing, runOnJS, useAnimatedStyle, useSharedValue, withTiming, type SharedValue} from 'react-native-reanimated';
+import {useHelpReducedMotion} from '../helpTheme';
 
-/** Independent implementation of Telegram's regular fragment motion: a short
- * 48dp horizontal offset with a 150ms decelerating fade after content is ready. */
-export type HelpChatEntryHandle = { reveal: () => void };
-export const HelpChatEntry = forwardRef<HelpChatEntryHandle, { ready: boolean; children: React.ReactNode; onLayout: (event: LayoutChangeEvent) => void; onEntered: () => void; backgroundColor: string }>(function HelpChatEntry({ ready: initiallyReady, children, onLayout, onEntered, backgroundColor }, ref) {
-  const [revealed, setRevealed] = useState(false);
-  const [animating,setAnimating]=useState(false);
-  const ready = initiallyReady || revealed;
-  useImperativeHandle(ref, () => ({ reveal: () => setRevealed(true) }), []);
-  const reduced = useHelpReducedMotion();
-  const progress = useRef(new Animated.Value(ready ? 1 : 0)).current;
-  const entered = useRef(onEntered); entered.current = onEntered;
-  const generation=useRef(0),didEnter=useRef(false);
-  useEffect(() => {
-    const token=++generation.current;
-    const finish=()=>{if(token===generation.current&&!didEnter.current){didEnter.current=true;setAnimating(false);entered.current();}};
-    progress.stopAnimation();
-    if(didEnter.current){progress.setValue(1);setAnimating(false);return;}
-    if (!ready || reduced) { setAnimating(false);progress.setValue(ready ? 1 : 0); if (ready) finish(); return; }
-    setAnimating(true);
-    const animation = Animated.timing(progress, { toValue: 1, duration: 150, easing: Easing.out(Easing.quad), useNativeDriver: true, isInteraction: false });
-    animation.start(({finished}) => { if (finished) finish(); });
-    return () => {++generation.current;animation.stop();};
-  }, [ready, reduced, progress]);
-  return <Animated.View testID="help-chat-viewport" onLayout={onLayout} renderToHardwareTextureAndroid={animating} needsOffscreenAlphaCompositing={animating} pointerEvents={ready ? 'auto' : 'none'} style={{ flex: 1, backgroundColor, opacity: ready ? progress : 0, transform: [{ translateX: ready ? progress.interpolate({ inputRange: [0, 1], outputRange: [48, 0] }) : 48 }] }}>{children}</Animated.View>;
+export type HelpChatEntryHandle = {reveal:()=>void; dismiss:()=>Promise<boolean>};
+type Props = {ready:boolean; children:React.ReactNode; onLayout:(event:LayoutChangeEvent)=>void; onEntered:()=>void; backgroundColor:string; progress?:SharedValue<number>};
+
+/** One UI-thread progress owns both directions. Keep the list below this opaque
+ * scene; bitmap snapshots and list remounts must not interrupt navigation. */
+export const HelpChatEntry=forwardRef<HelpChatEntryHandle,Props>(function HelpChatEntry({ready:initiallyReady,children,onLayout,onEntered,backgroundColor,progress:sharedProgress},ref){
+  const localProgress=useSharedValue(0),progress=sharedProgress??localProgress;
+  const reduced=useHelpReducedMotion(),width=Math.min(useWindowDimensions().width,900);
+  const [revealed,setRevealed]=useState(false),[exiting,setExiting]=useState(false);
+  const ready=initiallyReady||revealed;
+  const live=useRef({reduced,onEntered});live.current={reduced,onEntered};
+  const mounted=useRef(true),leaving=useRef(false),didEnter=useRef(false);
+  const completion=useRef<((finished:boolean)=>void)|null>(null),exitPromise=useRef<Promise<boolean>|null>(null);
+  const entered=useCallback(()=>{if(mounted.current&&!leaving.current&&!didEnter.current){didEnter.current=true;live.current.onEntered();}},[]);
+  const dismissed=useCallback(()=>{completion.current?.(true);completion.current=null;},[]);
+  useLayoutEffect(()=>{
+    mounted.current=true;progress.value=0;
+    return()=>{mounted.current=false;cancelAnimation(progress);completion.current?.(false);completion.current=null;};
+  },[progress]);
+  useEffect(()=>{
+    if(!ready||leaving.current||didEnter.current)return;
+    if(reduced){progress.value=1;entered();return;}
+    progress.value=withTiming(1,{duration:240,easing:Easing.out(Easing.cubic)},finished=>{if(finished)runOnJS(entered)();});
+  },[ready,reduced,progress,entered]);
+  useImperativeHandle(ref,()=>({
+    reveal:()=>setRevealed(true),
+    dismiss:()=>{
+      if(exitPromise.current)return exitPromise.current;
+      leaving.current=true;setExiting(true);cancelAnimation(progress);
+      const request=new Promise<boolean>(resolve=>{completion.current=resolve;});exitPromise.current=request;
+      if(live.current.reduced||!ready){progress.value=0;dismissed();}
+      else progress.value=withTiming(0,{duration:220,easing:Easing.out(Easing.cubic)},finished=>{if(finished)runOnJS(dismissed)();});
+      return request;
+    },
+  }),[progress,ready,dismissed]);
+  // FlashList must measure its first window inside the viewport. Parking an
+  // unmeasured long list offscreen can clip its cells and deadlock readiness.
+  const style=useAnimatedStyle(()=>({opacity:ready?1:0,transform:[{translateX:ready?width*(1-progress.value):0}]}),[width,ready]);
+  return <Reanimated.View testID="help-chat-viewport" onLayout={onLayout} pointerEvents={ready&&!exiting?'auto':'none'} style={[{flex:1,backgroundColor},style]}>{children}</Reanimated.View>;
 });

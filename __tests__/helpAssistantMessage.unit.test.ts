@@ -2,11 +2,32 @@ import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
 import { Text } from 'react-native';
 import type { HelpMessage } from '../src/features/help/helpApi';
-jest.mock('../context/ThemeContext',()=>({useTheme:()=>({theme:'dark'})}));
+jest.mock('../context/ThemeContext',()=>({useTheme:jest.fn(()=>({theme:'dark'}))}));
 jest.mock('@expo/vector-icons',()=>({Ionicons:'Ionicons'}));
 jest.mock('../src/features/help/helpDiagnostics',()=>({helpDevState:jest.fn()}));
+jest.mock('react-native-reanimated', () => ({
+  __esModule:true,default:{View:require('react-native').View},
+  useSharedValue:(value:number)=>require('react').useRef({value}).current,
+  useAnimatedStyle:(fn:()=>any)=>Object.defineProperties({},Object.fromEntries(Object.keys(fn()).map(key=>[key,{enumerable:true,get:()=>fn()[key]}]))),
+  cancelAnimation:jest.fn(),runOnJS:(fn:any)=>fn,withTiming:(value:number)=>value,Easing:{out:(fn:any)=>fn,quad:()=>0},
+}));
 import { HelpAssistantMessage } from '../src/features/help/components/HelpAssistantMessage';
+import {useTheme} from '../context/ThemeContext';
 const base={id:1,ticketId:1043,createdAt:'2026-10-30T10:00:00Z',text:'',assistantRun:{runId:'qa-1',eventId:1,ticketId:1043,status:'thinking',step:1,completedSteps:1,startedAt:0,updatedAt:0}} as HelpMessage;
+
+test('composer callback churn skips the assistant body and actions still use the newest callback',async()=>{
+  let view!:TestRenderer.ReactTestRenderer;
+  const message={...base,text:'Ответ',assistantRun:{...base.assistantRun!,status:'stopped' as const}};
+  const first=jest.fn(),latest=jest.fn();
+  await act(async()=>{view=TestRenderer.create(React.createElement(HelpAssistantMessage,{message,onRetry:first}));});
+  const before=jest.mocked(useTheme).mock.calls.length;
+  try{
+    await act(async()=>view.update(React.createElement(HelpAssistantMessage,{message,onRetry:latest})));
+    expect(jest.mocked(useTheme).mock.calls.length).toBe(before);
+    await act(async()=>view.root.findAll(node=>node.props.accessibilityLabel==='Повторить обработку ИИ')[0].props.onPress());
+    expect(first).not.toHaveBeenCalled();expect(latest).toHaveBeenCalledTimes(1);
+  }finally{await act(async()=>view.unmount());}
+});
 test('reasoning becomes the answer in one message with a single AI identity',async()=>{
   let view!:TestRenderer.ReactTestRenderer;
   await act(async()=>{view=TestRenderer.create(React.createElement(HelpAssistantMessage,{message:base}));});
@@ -22,6 +43,6 @@ test('reasoning becomes the answer in one message with a single AI identity',asy
   expect(text()).not.toContain('Анализ завершён');
   expect(text()).not.toContain('Изучаю описание');
   expect(view.root.findAllByType(Text).filter(node=>node.props.children==='Помощник · ИИ')).toHaveLength(0);
-  expect(view.root.findAll(node=>node.type==='Ionicons'&&node.props.name==='hardware-chip-outline')).toHaveLength(1);
+  expect(view.root.findAll(node=>node.type==='Ionicons'&&node.props.name==='hardware-chip-outline')).toHaveLength(0);
   await act(async()=>view.unmount());
 });

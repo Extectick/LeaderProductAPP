@@ -1,4 +1,5 @@
 import type { HelpMessage } from './helpApi';
+import type {HelpNavigationTarget} from './helpHistoryTypes';
 import { helpDayKey } from './helpUiUtils';
 
 export type HelpMessageGroup = { groupFirst: boolean; groupLast: boolean };
@@ -28,11 +29,21 @@ export function helpTimelineRows(messages: HelpMessage[], firstUnreadSequence?: 
   const rows:HelpTimelineRow[]=[];
   messages.forEach((message,index)=>{
     const day=helpDayKey(message.createdAt);
-    if(!index || helpDayKey(messages[index-1].createdAt)!==day)rows.push({key:`date:${day}`,kind:'date',message,date:message.createdAt,unread:false});
+    if(!index || helpDayKey(messages[index-1].createdAt)!==day)rows.push({key:`date:${day}:${message.id}`,kind:'date',message,date:message.createdAt,unread:false});
     if(message.sequence===firstUnreadSequence)rows.push({key:`unread:${message.sequence}`,kind:'unread',message,unread:true});
     rows.push({key:`message:${message.id}`,kind:'message',message,unread:false});
   });
   return rows;
+}
+
+/** A saved anchor can be deleted or hidden (for example a superseded assistant
+ * placeholder). Restore the nearest visible message instead of waiting forever. */
+export function helpNavigationIndex(rows:HelpTimelineRow[],target:HelpNavigationTarget):number {
+  if(target.kind==='latest')return rows.length-1;
+  const exact=rows.findIndex(row=>(target.kind==='unread'?row.kind==='unread':row.kind==='message')&&(row.message.id===target.messageId||row.message.sequence===target.sequence));
+  if(exact>=0)return exact;
+  const messages=rows.map((row,index)=>({row,index})).filter(item=>item.row.kind==='message');
+  return (target.sequence===undefined?messages[0]:messages.find(item=>item.row.message.sequence>=target.sequence!)??messages.at(-1))?.index??-1;
 }
 
 /** Ignore cells hidden beneath the floating header/composer, including recycled estimates. */

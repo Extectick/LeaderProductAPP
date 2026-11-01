@@ -1,6 +1,6 @@
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
-import { Animated, Modal, PanResponder, StyleSheet } from 'react-native';
+import { Animated, Modal, PanResponder, Pressable, StyleSheet } from 'react-native';
 const mockUseHelpTheme = jest.fn(() => ({surface:'#222222',text:'#ffffff',muted:'#999999',accent:'#3388ff',accentText:'#88bbff',outgoing:'#334455',elevated:'#333333',line:'#444444'}));
 jest.mock('@expo/vector-icons', () => ({Ionicons:'Ionicons'}));
 jest.mock('../src/features/help/helpTheme', () => ({useHelpReducedMotion:()=>false,useHelpTheme:()=>mockUseHelpTheme()}));
@@ -22,6 +22,11 @@ describe('Help message native layout and reply gestures', () => {
   });
   afterEach(async () => { if(screen) await act(async()=>screen.unmount()); jest.restoreAllMocks(); });
   const node = (id:string) => screen.root.findAll(n=>n.props.testID===id)[0];
+  test('reaction picker offers exactly the five current reactions',async()=>{
+    props.selected=true;await render();
+    const labels=[...new Set(screen.root.findAll(n=>typeof n.props.onPress==='function'&&String(n.props.accessibilityLabel??'').startsWith('Реакция ')).map(n=>n.props.accessibilityLabel))];
+    expect(labels).toEqual(['Реакция ❤️','Реакция 👍','Реакция 👎','Реакция 🤝','Реакция 🔥']);
+  });
   const g = (dx:number,dy=0) => ({dx,dy,numberActiveTouches:1});
   const event=(pageX:number)=>({nativeEvent:{pageX,touches:[{pageX}]}});
   const start=(pan:any,x=200)=>pan.onStartShouldSetPanResponderCapture(event(x));
@@ -243,7 +248,7 @@ describe('Help message native layout and reply gestures', () => {
     props.message={...props.message,text:'132'};
     await render();
     const firstStamp=StyleSheet.flatten(node('help-message-time').props.style);
-    expect(firstStamp).toMatchObject({position:'absolute',bottom:8,right:11});
+    expect(firstStamp).toMatchObject({position:'absolute',bottom:5,right:11});
     expect(node('help-message-stamp-reserve')).toBeDefined();
     expect(node('help-message-text').props.onTextLayout).toBeUndefined();
     expect(node('help-text-layout').props.onLayout).toBeUndefined();

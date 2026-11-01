@@ -179,6 +179,15 @@ describe('Android voice draft transitions', () => {
     }));
     await act(async () => mic().props.onPanResponderRelease());
   }
+  test('locking and pausing keep the input height and keep pause inside its touch area',async()=>{
+    await render();await lock();await tick(2000);
+    const locked=StyleSheet.flatten(tree.root.findByProps({testID:'help-voice-locked'}).props.style);
+    expect(locked).toMatchObject({height:48,marginTop:0,borderWidth:0});
+    expect(button('Приостановить запись').props.style).toMatchObject({bottom:1,height:44});
+    await act(async()=>button('Приостановить запись').props.onPress());
+    expect(StyleSheet.flatten(tree.root.findByProps({testID:'help-voice-paused'}).props.style)).toMatchObject({height:48,marginTop:0});
+    expect(props.onSend).not.toHaveBeenCalled();
+  });
   test('mic switches between single axes until locking, then ignores further dragging', async () => {
     await render();
     await act(async () => mic().props.onPanResponderGrant());

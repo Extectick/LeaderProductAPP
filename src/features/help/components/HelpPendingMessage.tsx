@@ -10,7 +10,7 @@ export function HelpPendingMessage({item,onRetry}:{item:HelpPending;onRetry:()=>
   const time=helpTime(new Date(item.createdAt).toISOString());
   const plainText=Boolean(item.input.text)&&!item.input.attachmentIds?.length&&!item.action;
   if(plainText)return <View testID={`help-pending-${item.key}`} style={{alignItems:'flex-end',paddingHorizontal:12,paddingVertical:4}}>
-    <View testID="help-pending-bubble" style={{maxWidth:'86%',minWidth:90,borderRadius:16,borderBottomRightRadius:4,backgroundColor:c.outgoing,paddingHorizontal:11,paddingVertical:8}}>
+    <View testID="help-pending-bubble" style={{maxWidth:'86%',minWidth:90,borderRadius:16,borderBottomRightRadius:4,backgroundColor:c.outgoing,paddingHorizontal:11,paddingVertical:6}}>
       <Text accessibilityLabel={item.input.text} style={[HELP_MESSAGE_TEXT_STYLE,{color:c.text}]}>{item.input.text}<HelpMessageStampReserve time={time}/></Text>
       <HelpInlineMessageStamp time={time} status={item.status??'queued'} reduced={reduced} muted={c.muted} receiptColor={c.muted} danger={c.danger} onRetry={onRetry}/>
     </View>

@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useContext, useEffect, useRef, useState } from 'react';
+import {HelpVisualEffectsContext} from '../helpVisualEffects';
 import { Animated, Image, Keyboard, Modal, PanResponder, Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -21,7 +22,8 @@ export function HelpAvatar({ id, name, uri, size = 34, muted = false }: { id: nu
 /** App headers and Help use the same material and edge falloff. */
 export function HelpBlurSurface({target,edge='top'}:{target?:React.RefObject<View|null>;edge?:'top'|'bottom'}) {
   const c=useHelpTheme();
-  return <AppEdgeBlur target={target} edge={edge} dark={c.dark} backgroundColor={c.background} testID="help-blur-surface"/>;
+  const enabled=useContext(HelpVisualEffectsContext);
+  return enabled ? <AppEdgeBlur target={target} edge={edge} dark={c.dark} backgroundColor={c.background} testID="help-blur-surface"/> : null;
 }
 export function HelpDock({ children, onHeight, target }: { children: React.ReactNode; onHeight?: (height: number) => void; target?: React.RefObject<View | null> }) {
   const c = useHelpTheme(); const insets = useSafeAreaInsets();
@@ -45,10 +47,24 @@ export function HelpSheet({ title, children, onClose, scrollOffset = 0 }: { titl
   const c = useHelpTheme(); const reduced=useHelpReducedMotion(); const insets = useSafeAreaInsets(); const y = useRef(new Animated.Value(260)).current;
   const callbacks=useRef({onClose,reduced});callbacks.current={onClose,reduced};
   useEffect(()=>{Animated.timing(y,{toValue:0,duration:reduced ? 0 : 180,useNativeDriver:true}).start();},[reduced]);
-  const close = () => Animated.timing(y, { toValue: 700, duration: callbacks.current.reduced ? 0 : 180, useNativeDriver: true }).start(()=>callbacks.current.onClose());
+  const closing=useRef(false),sheetHeight=useRef(700);
+  const close = () => {
+    if(closing.current)return;
+    closing.current=true;y.stopAnimation();
+    Animated.timing(y,{toValue:sheetHeight.current,duration:callbacks.current.reduced?0:180,useNativeDriver:true}).start(({finished})=>{if(finished)callbacks.current.onClose();});
+  };
+  useEffect(()=>()=>y.stopAnimation(),[y]);
   const offset = useRef(scrollOffset); offset.current = scrollOffset;
-  const pan = useRef(PanResponder.create({ onMoveShouldSetPanResponder: (_, g) => offset.current <= 0 && g.dy > 12 && Math.abs(g.dy) > Math.abs(g.dx) * 1.5, onPanResponderMove: (_, g) => y.setValue(Math.max(0, g.dy)), onPanResponderRelease: (_, g) => g.dy > 90 || g.vy > 1.1 ? close() : Animated.spring(y, { toValue: 0, useNativeDriver: true, damping: 22 }).start() })).current;
-  return <Modal transparent animationType="none" onRequestClose={close} statusBarTranslucent><View style={{flex:1,justifyContent:'flex-end',backgroundColor:'#00000057'}}><Pressable accessibilityLabel="Закрыть" onPress={close} style={StyleSheet.absoluteFill}/><Animated.View testID="help-sheet-surface" {...pan.panHandlers} style={{minHeight:260,backgroundColor:c.dark ? c.panel : c.headerSurface,borderTopLeftRadius:22,borderTopRightRadius:22,paddingHorizontal:18,paddingBottom:Math.max(24,insets.bottom+16),transform:[{translateY:y}]}}><View style={{height:30,alignItems:'center',justifyContent:'center'}}><View style={{width:42,height:5,borderRadius:3,backgroundColor:'#C9C9C4'}}/></View><View style={{flexDirection:'row',alignItems:'center',paddingBottom:14,minHeight:36}}><Text style={{flex:1,color:c.text,fontSize:18,fontWeight:'900',paddingRight:34}}>{title}</Text><HelpIcon name="close-outline" label="Закрыть" onPress={close} size={22} style={{position:'absolute',right:-6,top:-7}}/></View>{children}</Animated.View></View></Modal>;
+  const restore=()=>Animated.spring(y,{toValue:0,useNativeDriver:true,damping:24,stiffness:240,mass:1}).start();
+  const wantsDrag=(_:unknown,g:any)=>!closing.current&&offset.current<=0&&g.dy>8&&g.dy>Math.abs(g.dx)*1.5;
+  const pan=useRef(PanResponder.create({
+    onMoveShouldSetPanResponder:wantsDrag,onMoveShouldSetPanResponderCapture:wantsDrag,
+    onPanResponderGrant:()=>y.stopAnimation(),
+    onPanResponderMove:(_,g)=>y.setValue(Math.max(0,g.dy)),
+    onPanResponderRelease:(_,g)=>g.dy>90||g.dy>16&&g.vy>1.1?close():restore(),
+    onPanResponderTerminate:restore,onPanResponderTerminationRequest:()=>false,
+  })).current;
+  return <Modal transparent animationType="none" onRequestClose={close} statusBarTranslucent><View style={{flex:1,justifyContent:'flex-end',backgroundColor:'#00000057'}}><Pressable accessibilityLabel="Закрыть" onPress={close} style={StyleSheet.absoluteFill}/><Animated.View testID="help-sheet-surface" onLayout={e=>{sheetHeight.current=e.nativeEvent.layout.height+insets.bottom;}} {...pan.panHandlers} style={{minHeight:260,backgroundColor:c.dark ? c.panel : c.headerSurface,borderTopLeftRadius:22,borderTopRightRadius:22,paddingHorizontal:18,paddingBottom:Math.max(24,insets.bottom+16),transform:[{translateY:y}]}}><View style={{height:30,alignItems:'center',justifyContent:'center'}}><View style={{width:42,height:5,borderRadius:3,backgroundColor:'#C9C9C4'}}/></View><View style={{flexDirection:'row',alignItems:'center',paddingBottom:14,minHeight:36}}><Text style={{flex:1,color:c.text,fontSize:18,fontWeight:'900',paddingRight:34}}>{title}</Text><HelpIcon name="close-outline" label="Закрыть" onPress={close} size={22} style={{position:'absolute',right:-6,top:-7}}/></View>{children}</Animated.View></View></Modal>;
 }
 export function HelpTyping({ text, users, color, compact=false }: { text?: string; users?: readonly HelpTypingUser[]; color?: string; compact?:boolean }) {
   const c=useHelpTheme(); const reduced=useHelpReducedMotion(); const phases=useRef([0,1,2].map(()=>new Animated.Value(0))).current;

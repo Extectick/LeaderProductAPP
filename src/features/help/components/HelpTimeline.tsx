@@ -3,7 +3,7 @@ import { Animated, AppState, Easing, Platform, ScrollView, type ScrollViewProps,
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import type { HelpMessage } from '../helpApi';
 import type { HelpNavigationTarget, HelpViewportAnchor } from '../helpHistoryTypes';
-import { helpTimelineRows, helpVisibleRows, type HelpTimelineRow } from '../helpTimelineModel';
+import { helpTimelineRows, helpVisibleRows, helpNavigationIndex, type HelpTimelineRow } from '../helpTimelineModel';
 import { helpDateJumpMode } from '../helpDateNavigation';
 import { helpDevActions, helpDevEvent, helpDevProbe, helpDevState } from '../helpDiagnostics';
 import { helpDayKey } from '../helpUiUtils';
@@ -61,7 +61,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   const initialPosition = useRef<{ key: number; kind: HelpNavigationTarget['kind']; index: number; offset: number } | null>(null);
   if (!initialPosition.current && !loaded && rows.length && props.navigationTarget) {
     const target = props.navigationTarget;
-    const index = target.kind === 'latest' ? rows.length - 1 : rows.findIndex(row => (target.kind === 'unread' ? row.kind === 'unread' : row.kind === 'message') && (row.message.id === target.messageId || row.message.sequence === target.sequence));
+    const index = helpNavigationIndex(rows,target);
     if (index >= 0) initialPosition.current = { key: target.key, kind: target.kind, index, offset: target.offset ?? 0 };
   }
   const readyNotified = useRef(false);
@@ -86,13 +86,13 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   const [initialLoadingVisible,setInitialLoadingVisible]=useState(false);
   useEffect(()=>{
     setInitialLoadingVisible(false);
-    if(!props.loading||rows.length)return;
+    if(ready||!props.loading&&!rows.length)return;
     // Local disk hydration should not flash a network loader for a single frame.
     const timer=setTimeout(()=>setInitialLoadingVisible(true),200);
     return()=>clearTimeout(timer);
-  },[props.loading,rows.length]);
+  },[props.loading,rows.length,ready]);
   const readyRef = useRef(false), followingRef = useRef(false), mounted = useRef(true);
-  const openingLayout = useRef({active:false,key:0,frame:0,passes:0,signature:'',aligned:'',tailId:null as number|null});
+  const openingLayout = useRef({active:false,key:0,frame:0,passes:0,signature:'',aligned:'',requestedIndex:-1,tailId:null as number|null});
   const geometry = useRef({offset: 0, height: 0, content: 0});
   const lastAnchor = useRef<HelpViewportAnchor | null>(null), committedTarget = useRef<number | null>(null);
   const inNavigation = useRef(false), navigationGeneration = useRef(0), touched = useRef(false);
@@ -134,7 +134,11 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     const {startIndex, endIndex} = view.computeVisibleIndices();
     const first = view.getFirstItemOffset(), offset = view.getAbsoluteLastScrollOffset();
     const candidates = [];
-    for (let index = Math.max(0, startIndex); index <= Math.min(endIndex, rowsRef.current.length - 1); index++) {
+    // FlashList may report the first message as its first visible item while
+    // the shorter date/unread row immediately before it is still on screen.
+    // Inspect adjacent decorations and clip by their actual visual bounds.
+    const overscan=includeDecor?2:0;
+    for (let index = Math.max(0, startIndex-overscan); index <= Math.min(endIndex+overscan, rowsRef.current.length - 1); index++) {
       const layout = view.getLayout(index);
       if (layout && (includeDecor || rowsRef.current[index].kind==='message')) candidates.push({row: rowsRef.current[index], top: layout.y + first - offset, height: layout.height});
     }
@@ -310,22 +314,32 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     };
     requestAnimationFrame(finishLayout);
   }, [cancelJump,observe,scrollEnd,setFollow,stopIdleSave,updateMediaRange]);
-  const settleOpening = useCallback(() => {
+  const settleOpening = useCallback(():void => {
     const pending=openingLayout.current;
     if(!pending.active||pending.frame)return;
     const step=()=>{
       pending.frame=0;
       const view=list.current,target=live.current.navigationTarget;
       if(!mounted.current||!pending.active||!view||!target||target.key!==pending.key){pending.active=false;return;}
-      const index=target.kind==='latest'?rowsRef.current.length-1:rowsRef.current.findIndex(row=>(target.kind==='unread'?row.kind==='unread':row.kind==='message')&&(row.message.id===target.messageId||row.message.sequence===target.sequence));
+      const index=helpNavigationIndex(rowsRef.current,target);
       if(index<0){pending.active=false;return;}
       const readLayout=(rowIndex:number)=>{try{return view.getLayout(rowIndex);}catch{return undefined;}};
       const item=readLayout(index),range=view.computeVisibleIndices();
+      // Data can arrive after FlashList's empty onLoad. initialScrollIndex is
+      // then already consumed: an offscreen saved anchor will never measure
+      // until we explicitly bring its cell into the rendered window.
+      if((!item||item.isHeightMeasured===false||item.height<=0)&&pending.requestedIndex!==index){
+        pending.requestedIndex=index;
+        void view.scrollToIndex({index,animated:false,viewOffset:target.kind==='latest'?0:-(live.current.headerHeight+(target.offset??0))})
+          .then(()=>{if(mounted.current&&openingLayout.current.key===target.key)settleOpening();})
+          .catch(()=>{if(mounted.current)live.current.onError('Не удалось восстановить позицию в истории. Откройте последние сообщения.');});
+      }
       const visibleLayouts=[];
-      let measured=Boolean(item&&item.height>0&&item.isHeightMeasured!==false);
+      const hasMeasurement=(layout:ReturnType<typeof readLayout>)=>Boolean(layout&&layout.height>=0&&layout.isHeightMeasured!==false&&(layout.height>0||layout.isHeightMeasured===true));
+      let measured=hasMeasurement(item);
       for(let i=Math.max(0,range.startIndex);i<=Math.min(range.endIndex,rowsRef.current.length-1);i++){
         const layout=readLayout(i);visibleLayouts.push(layout?`${i}:${layout.y}:${layout.height}`:'pending');
-        if(!layout||layout.height<=0||layout.isHeightMeasured===false)measured=false;
+        if(!hasMeasurement(layout))measured=false;
       }
       const {height,content}=geometry.current,inset=hasNativeChatLayout?live.current.dockHeight+12:0;
       const end=Math.max(0,content+inset-height);
@@ -339,13 +353,17 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
       const tail=live.current.messages.at(-1);
       const liveTail=target.kind==='latest'&&(tail?.id!==pending.tailId||live.current.messages.some(message=>message.assistantRun&&['thinking','streaming'].includes(message.assistantRun.status)));
       const settled=pending.signature===signature&&Math.abs(view.getAbsoluteLastScrollOffset()-offset)<=1;
+      // Native padding/scroll clamping can leave FlashList's offset cache behind
+      // the actual viewport. A stable, fully measured and explicitly aligned
+      // window must not wait forever for an offset notification that won't come.
+      const alignedAndStable=pending.passes>=8&&pending.signature===signature&&pending.aligned===signature;
       // A short list is clamped at native offset zero. FlashList can still
       // report its initial-index offset after native bottom padding changes.
       // Once every visible row is measured, no offscreen anchor remains to resolve.
       const fits=content+inset<=height;
       // An active answer/new socket messages must not make opening wait for
       // the conversation to become idle. Hand its measured tail to native follow.
-      if(measured&&height>0&&content>0&&(settled||(fits||liveTail||target.kind==='latest'&&hasNativeChatLayout)&&pending.passes>0&&pending.aligned)){
+      if(measured&&height>0&&content>0&&(settled||alignedAndStable||(fits||liveTail||target.kind==='latest'&&hasNativeChatLayout)&&pending.passes>0&&pending.aligned)){
         pending.active=false;readyRef.current=true;setReady(true);inNavigation.current=false;setNavigating(false);
         setFollow(target.kind==='latest'&&!live.current.hasNewer);
         if(target.kind==='latest')scrollEnd(false);
@@ -381,12 +399,12 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     const target = props.navigationTarget;
     if (!loaded || !rows.length || !target || committedTarget.current === target.key) return;
     if(openingLayout.current.active&&openingLayout.current.key===target.key)return;
-    const index = target.kind === 'latest' ? rows.length - 1 : rows.findIndex(row => (target.kind==='unread' ? row.kind==='unread' : row.kind==='message') && (row.message.id === target.messageId || row.message.sequence === target.sequence));
+    const index = helpNavigationIndex(rows,target);
     if(index < 0) return;
     committedTarget.current=target.key;
     if(!readyRef.current&&target.kind!=='date'){
       inNavigation.current=true;
-      Object.assign(openingLayout.current,{active:true,key:target.key,passes:0,signature:'',aligned:'',tailId:live.current.messages.at(-1)?.id??null});
+      Object.assign(openingLayout.current,{active:true,key:target.key,passes:0,signature:'',aligned:'',requestedIndex:-1,tailId:live.current.messages.at(-1)?.id??null});
       settleOpening();return;
     }
     if (target.kind === 'latest') { lastNavigationMode.current = 'latest'; pinLatest(false); return; }
@@ -496,7 +514,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
       newerPending.current=true;void live.current.loadNewer().catch(()=>live.current.onError('Не удалось загрузить новые сообщения')).finally(()=>{newerPending.current=false;});
     }
   },[observe,setFollow,updateMediaRange,settleOpening]);
-  const NativeScroll=useMemo(()=>forwardRef<ScrollView,ScrollViewProps>((scrollProps,scrollRef)=><ScrollView {...scrollProps} ref={scrollRef} nativeID={props.nativeID}/>),[props.nativeID]);
+  const NativeScroll=useMemo(()=>forwardRef<ScrollView,ScrollViewProps>((scrollProps,scrollRef)=><ScrollView {...scrollProps} removeClippedSubviews={false} ref={scrollRef} nativeID={props.nativeID}/>),[props.nativeID]);
   const webProps = Platform.OS==='web' ? {
     onWheel:()=>{takeScrollControl();webIntent.current=Date.now()+500;},
     onTouchMove:()=>{takeScrollControl();webIntent.current=Date.now()+500;},
@@ -522,7 +540,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     const target = live.current.navigationTarget, seed = initialPosition.current;
     if (!readyRef.current && target && seed?.key === target.key && target.kind !== 'date') {
       committedTarget.current=target.key;inNavigation.current=true;
-      Object.assign(openingLayout.current,{active:true,key:target.key,passes:0,signature:'',aligned:'',tailId:live.current.messages.at(-1)?.id??null});
+      Object.assign(openingLayout.current,{active:true,key:target.key,passes:0,signature:'',aligned:'',requestedIndex:-1,tailId:live.current.messages.at(-1)?.id??null});
       settleOpening();
     }
     setLoaded(true); updateMediaRange(true); observe();
@@ -547,7 +565,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
         ListFooterComponent={props.footer}
       />
     </Animated.View>
-    {props.loadingOlder || (props.loading && !rows.length && initialLoadingVisible) ? <View pointerEvents="none" style={{position:'absolute',top:props.headerHeight,left:0,right:0}}><HelpHistoryStatus loading/></View> : null}
+    {props.loadingOlder || initialLoadingVisible&&!ready ? <View pointerEvents="none" style={{position:'absolute',top:props.headerHeight,left:0,right:0}}><HelpHistoryStatus loading/></View> : null}
     {outgoing ? <Animated.View testID={snapshotVisible?'help-timeline-transition':'help-timeline-preparation'} pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{position:'absolute',top:0,left:0,right:0,bottom:0,opacity:snapshotVisible?1:0,backgroundColor:c.background,overflow:'hidden',transform:[{translateY:transition.interpolate({inputRange:[0,1],outputRange:[0,direction*distance]})}]}}>{outgoing.rows.map(item=><View key={item.row.key} style={{position:'absolute',left:0,right:0,top:item.top}}>{renderRow(item.row,-1,mediaRangeRef.current,true)}</View>)}</Animated.View> : null}
     {!props.hideStickyDate && stickyDate ? <View style={{position:'absolute',top:Math.max(0,props.headerHeight-12),alignSelf:'center'}}><HelpDateSeparator compact date={stickyDate} onPress={()=>jumpDate(stickyDate)}/></View> : null}
     {rows.length > 0 ? <HelpJumpToLatest visible={showLatestButton} count={props.unreadCount} loading={props.loadingNewer} onPress={()=>{prepareJump();void props.onLatest().catch(()=>{cancelJump();props.onError('Не удалось открыть последние сообщения');});}} style={{position:'absolute',right:HELP_COMPOSER_ACTION_RIGHT,bottom:props.dockHeight+12}}/> : null}
