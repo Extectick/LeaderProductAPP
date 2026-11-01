@@ -372,17 +372,21 @@ describe('Help screen integration with service boundary', () => {
     await act(async()=>button('Новое обращение').props.onPress());
     expect(composer().props.value).toBe(''); expect(composer().props.files).toEqual([]);
   });
-  test('late first-send response does not navigate over or clear a newer draft',async()=>{
+  test.each(['Новый черновик','Первый вопрос'])('late first-send response cannot replace a newer draft or retain its pending row: %s',async(newDraft)=>{
     let resolveSend!:(value:HelpDetail)=>void;
     mockService.createTicket.mockImplementation(()=>new Promise<HelpDetail>(resolve=>{resolveSend=resolve;}));
     await render(); await act(async()=>button('Новое обращение').props.onPress());
     await act(async()=>composer().props.onChange('Первый вопрос'));
     let pending!:Promise<void>; await act(async()=>{pending=composer().props.onSend();});
+    mockService.pendingMessages=[{key:'abandoned-create',create:true,createdAt:1,status:'sending',input:{text:'Первый вопрос',clientMessageId:'abandoned-create'}}];
+    await act(async()=>screen.update(React.createElement(HelpScreen)));
     await act(async()=>button('Назад').props.onPress());
     await act(async()=>button('Новое обращение').props.onPress());
-    await act(async()=>composer().props.onChange('Новый черновик'));
+    await act(async()=>composer().props.onChange(newDraft));
+    mockService.pendingMessages=[];
     await act(async()=>{resolveSend(detail);await pending;});
-    expect(composer().props.value).toBe('Новый черновик');
+    expect(composer().props.value).toBe(newDraft);
+    expect(screen.root.findAllByType(HelpPendingMessage)).toHaveLength(0);
     expect(mockService.createTicket).toHaveBeenCalledTimes(1);
     expect(mockService.setDraft).not.toHaveBeenCalledWith('new:plain','');
   });

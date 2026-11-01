@@ -117,10 +117,11 @@ export default function HelpScreen() {
   const activeAssistant = (assistantPreview||assistantActions.stopAssistant) && mode === 'message' && lastAssistant?.assistantRun && ['thinking','streaming'].includes(lastAssistant.assistantRun.status) ? lastAssistant : undefined;
   const busy = sending || service.busy; const draftKey = active === 'new' ? `new:${source?.id ?? 'plain'}` : `ticket:${active}`;
   const creationEcho=useRef<{account:number;scene:number;item:HelpPending}|null>(null);
+  const creationRequest=useRef<{account:number;scene:number}|null>(null);
   let displayedPending=(assistantActions.pendingMessages??[]).filter(item=>(active==='new'?item.create:item.ticketId===active)&&!messages.some(message=>message.clientMessageId&&message.clientMessageId===item.input.clientMessageId));
   if(active==='new'){
-    const pending=displayedPending.at(-1);
-    if(pending)creationEcho.current={account:service.userId,scene:scene.key,item:pending};
+    const pending=pendingCreate;
+    if(pending&&creationRequest.current?.account===service.userId&&creationRequest.current.scene===scene.key)creationEcho.current={account:service.userId,scene:scene.key,item:pending};
     const echo=creationEcho.current;
     // The durable queue is cleared before createTicket finishes installing its
     // server page. Keep its visible row until that same scene becomes the chat.
@@ -325,7 +326,7 @@ export default function HelpScreen() {
       if (mode === 'edit' && editing) detail = await service.editMessage(editing.id, { text, ...(editing.kind === 'CLOSURE' ? { rating } : {}), attachmentIds: [...editAttachments.map(a => a.id), ...uploads.map(a => a.id)] });
       else if (mode === 'close' && ticket) detail = await service.closeTicket(ticket.id, { text, rating, attachmentIds: uploads.map(a => a.id) });
       else if (mode === 'reopen' && ticket) { if (!canReopenHelpTicket(ticket)) throw new Error('Прошло больше 3 дней. Создайте новое обращение.'); detail = await service.reopenTicket(ticket.id, { text, attachmentIds: uploads.map(a => a.id) }); }
-      else if (active === 'new') detail = await service.createTicket({ text, attachmentIds: uploads.map(a => a.id), sourceTicketId: source?.id });
+      else if (active === 'new') {creationRequest.current={account,scene:scene.key};detail = await service.createTicket({ text, attachmentIds: uploads.map(a => a.id), sourceTicketId: source?.id });}
       else detail = await service.sendMessage(active, { text, attachmentIds: uploads.map(a => a.id), replyToId: reply?.id });
       if (!detail) return false;committed=true;chosenFiles.forEach(file=>uploadCache.current.delete(file.uri));
       if(currentAccount.current!==account)return true;
