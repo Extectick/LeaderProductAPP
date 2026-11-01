@@ -1,6 +1,6 @@
 import React from 'react';
 import TestRenderer,{act} from 'react-test-renderer';
-import {Animated,Keyboard,PanResponder,Platform,StyleSheet,type View} from 'react-native';
+import {AccessibilityInfo,Animated,Keyboard,PanResponder,Platform,StyleSheet,type View} from 'react-native';
 let mockTheme:'light'|'dark'='light';
 jest.mock('../context/ThemeContext',()=>({useTheme:()=>({theme:mockTheme})}));
 jest.mock('@expo/vector-icons',()=>({Ionicons:'Ionicons'}));
@@ -9,9 +9,25 @@ jest.mock('../src/features/help/helpDiagnostics',()=>({helpDevRef:jest.fn(),help
 jest.mock('@react-native-masked-view/masked-view',()=> 'MaskedView');
 jest.mock('expo-linear-gradient',()=>({LinearGradient:'LinearGradient'}));
 jest.mock('react-native-safe-area-context',()=>({useSafeAreaInsets:()=>({top:0,right:0,bottom:34,left:0})}));
-import {helpThemeTokens} from '../src/features/help/helpTheme';
+import {helpThemeTokens,useHelpReducedMotion} from '../src/features/help/helpTheme';
 import {HelpBlurSurface,HelpDock,HelpIcon,HelpPrimaryButton,HelpSheet} from '../src/features/help/components/HelpPrimitives';
 import {HelpVisualEffectsContext} from '../src/features/help/helpVisualEffects';
+
+test('a long chat shares one motion subscription and a late query cannot undo a system change',async()=>{
+  let changed!:(value:boolean)=>void,resolve!:(value:boolean)=>void;
+  const remove=jest.fn();
+  const events=jest.spyOn(AccessibilityInfo,'addEventListener').mockImplementation((_event,listener)=>{changed=listener as any;return {remove};});
+  const query=jest.spyOn(AccessibilityInfo,'isReduceMotionEnabled').mockReturnValue(new Promise(done=>{resolve=done;}));
+  function Consumer(){return React.createElement('MotionPreference',{reduced:useHelpReducedMotion()});}
+  let tree!:TestRenderer.ReactTestRenderer;
+  try{
+    await act(async()=>{tree=TestRenderer.create(React.createElement(React.Fragment,null,Array.from({length:100},(_,key)=>React.createElement(Consumer,{key}))));});
+    expect(events).toHaveBeenCalledTimes(1);expect(query).toHaveBeenCalledTimes(1);
+    await act(async()=>{changed(true);resolve(false);});
+    expect(tree.root.findAllByType('MotionPreference' as any).every(node=>node.props.reduced===true)).toBe(true);
+    await act(async()=>tree.unmount());expect(remove).toHaveBeenCalledTimes(1);
+  }finally{if(tree)await act(async()=>tree.unmount());events.mockRestore();query.mockRestore();}
+});
 
 test('IT sheet captures downward drags over buttons, restores cancellation and dismisses once',async()=>{
   let handlers:any;

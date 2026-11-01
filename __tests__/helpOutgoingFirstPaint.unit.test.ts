@@ -23,9 +23,9 @@ test.each(['123', 'Длинный текст, который занимает н
     expect(node('help-message-text').props.onTextLayout).toBeUndefined();
     expect(node('help-text-layout').props.onLayout).toBeUndefined();
     expect(StyleSheet.flatten(node('help-message-stamp-reserve').props.style).opacity).toBe(0);
-    expect(StyleSheet.flatten(node('help-message-time').props.style)).toMatchObject({ position: 'absolute', right: 11, bottom: 8 });
+    expect(StyleSheet.flatten(node('help-message-time').props.style)).toMatchObject({ position: 'absolute', right: 11, bottom: 5 });
     await act(async () => view.update(React.createElement(HelpMessageBubble, { ...props, message: { ...message, text }, readByOthers: true })));
-    expect(StyleSheet.flatten(node('help-message-time').props.style)).toMatchObject({ position: 'absolute', right: 11, bottom: 8 });
+    expect(StyleSheet.flatten(node('help-message-time').props.style)).toMatchObject({ position: 'absolute', right: 11, bottom: 5 });
   } finally { await act(async () => view.unmount()); }
 });
 
@@ -38,7 +38,7 @@ test('pending, acknowledged and failed text share padding and metadata geometry'
     const node = (testID: string) => view.root.findAllByProps({ testID })[0];
     const pending = StyleSheet.flatten(node('help-pending-bubble').props.style);
     const stamp = StyleSheet.flatten(node('help-message-time').props.style);
-    expect(pending).toMatchObject({ minWidth: 90, paddingHorizontal: 11, paddingVertical: 8 });
+    expect(pending).toMatchObject({ minWidth: 90, paddingHorizontal: 11, paddingVertical: 6 });
     expect(node('help-message-stamp-reserve')).toBeDefined();
     await act(async () => view.update(React.createElement(HelpPendingMessage, { item: { ...item, status: 'failed' }, onRetry: retry })));
     expect(StyleSheet.flatten(node('help-message-time').props.style)).toEqual(stamp);

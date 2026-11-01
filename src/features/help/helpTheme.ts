@@ -1,6 +1,6 @@
 import { useTheme } from '@/context/ThemeContext';
 import { AccessibilityInfo } from 'react-native';
-import { useEffect, useState } from 'react';
+import { useSyncExternalStore } from 'react';
 
 /** Final prototype.css tokens; surface remains the incoming-message compatibility alias. */
 export function helpThemeTokens(dark: boolean) {
@@ -13,8 +13,26 @@ export function useHelpTheme() {
   return helpThemeTokens(theme === 'dark');
 }
 export type HelpTheme = ReturnType<typeof useHelpTheme>;
-export function useHelpReducedMotion() {
-  const [reduced,setReduced]=useState(false);
-  useEffect(()=>{let alive=true;void Promise.resolve(AccessibilityInfo.isReduceMotionEnabled()).then(value=>{if(alive)setReduced(Boolean(value));});const sub=AccessibilityInfo.addEventListener('reduceMotionChanged',setReduced);return()=>{alive=false;sub.remove();};},[]);
-  return reduced;
+// One native query/listener for the whole Help section, rather than one bridge
+// round trip and subscription for every mounted message, icon and attachment.
+let reducedMotion=false,motionGeneration=0,motionRevision=0;
+const motionListeners=new Set<()=>void>();
+let motionSubscription:ReturnType<typeof AccessibilityInfo.addEventListener>|null=null;
+const motionSnapshot=()=>reducedMotion;
+function publishMotion(value:boolean){
+  ++motionRevision;
+  if(reducedMotion===value)return;
+  reducedMotion=value;motionListeners.forEach(listener=>listener());
 }
+function subscribeMotion(listener:()=>void){
+  motionListeners.add(listener);
+  if(!motionSubscription){
+    const generation=++motionGeneration,revision=motionRevision;
+    motionSubscription=AccessibilityInfo.addEventListener('reduceMotionChanged',publishMotion);
+    void Promise.resolve(AccessibilityInfo.isReduceMotionEnabled()).then(value=>{
+      if(generation===motionGeneration&&revision===motionRevision)publishMotion(Boolean(value));
+    }).catch(()=>{});
+  }
+  return()=>{motionListeners.delete(listener);if(!motionListeners.size){++motionGeneration;motionSubscription?.remove();motionSubscription=null;}};
+}
+export function useHelpReducedMotion(){return useSyncExternalStore(subscribeMotion,motionSnapshot,()=>false);}

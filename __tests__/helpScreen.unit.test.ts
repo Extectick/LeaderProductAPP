@@ -119,6 +119,8 @@ describe('Help screen integration with service boundary', () => {
     mockService.tickets=[ticket];await render();
     const list=screen.root.findByProps({testID:'help-ticket-list'});
     await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());
+    expect(screen.root.findByProps({testID:'help-header-ticket-number'}).props.children).toBe('#1007');
+    expect(screen.root.findByProps({testID:'help-header-status'}).props.accessibilityLabel).toBe('Обращение открыто');
     await act(async()=>mockTimelineProps.onReady());
     expect(screen.root.findByProps({testID:'help-ticket-list'})).toBe(list);
     await act(async()=>button('Назад').props.onPress());

@@ -16,7 +16,7 @@ jest.mock('expo-image-picker', () => ({launchImageLibraryAsync:(...args:any[])=>
 jest.mock('../src/features/help/HelpAudioPlayback',()=>({useHelpAudioCommands:()=>({stop:mockStopPlayback})}));
 jest.mock('expo-linear-gradient', () => ({LinearGradient:'LinearGradient'}));
 jest.mock('@expo/vector-icons', () => ({Ionicons:'Ionicons'}));
-jest.mock('../src/features/help/helpTheme', () => ({useHelpTheme:()=>({surface:'#222222',text:'#ffffff',muted:'#999999',accent:'#3388ff',elevated:'#333333',line:'#444444'}),useHelpReducedMotion:()=>mockReducedMotion}));
+jest.mock('../src/features/help/helpTheme', () => ({useHelpTheme:()=>({surface:'#222222',panel:'#333333',text:'#ffffff',muted:'#999999',accent:'#3388ff',elevated:'#333333',line:'#444444'}),useHelpReducedMotion:()=>mockReducedMotion}));
 jest.mock('../src/features/help/components/HelpPrimitives', () => ({HelpIcon:'HelpIcon',HelpSheet:'HelpSheet'}));
 jest.mock('../src/features/help/components/HelpMedia', () => ({HelpImage:'HelpImage'}));
 jest.mock('../src/features/help/components/HelpPhotoPicker', () => ({HelpPhotoPicker:'HelpPhotoPicker'}));
@@ -351,7 +351,7 @@ describe('Help composer recorder lifecycle', () => {
     expect(field().props.style.height).toBe(145);expect(field().props.scrollEnabled).toBe(true);
     expect(entry().props.style.paddingBottom.__getValue()).toBe(0);
     const bottom=screen!.root.findAll(n=>n.props.testID==='help-composer-fade-bottom')[0];
-    expect(bottom.props.style).toMatchObject({bottom:0,height:12});expect(bottom.props.colors).toEqual(['#22222200','#22222280']);
+    expect(bottom.props.style).toMatchObject({bottom:0,height:12});expect(bottom.props.colors).toEqual(['#33333300','#33333380']);
     expect(screen!.root.findAll(n=>n.props.testID==='help-composer-fade-top')).toHaveLength(0);
   });
   test('top and bottom fades follow hidden text and reset on shrink, including closure input',async()=>{
@@ -361,7 +361,7 @@ describe('Help composer recorder lifecycle', () => {
     await act(async()=>field().props.onScroll({nativeEvent:{contentOffset:{y:100}}}));
     expect(exists('help-composer-fade-top')).toBe(true);expect(exists('help-composer-fade-bottom')).toBe(true);
     const top=screen!.root.findAll(n=>n.props.testID==='help-composer-fade-top')[0];
-    expect(top.props.colors).toEqual(['#22222280','#22222200']);
+    expect(top.props.colors).toEqual(['#33333380','#33333300']);
     await act(async()=>field().props.onScroll({nativeEvent:{contentOffset:{y:255}}}));
     expect(exists('help-composer-fade-top')).toBe(true);expect(exists('help-composer-fade-bottom')).toBe(false);
     await act(async()=>field().props.onContentSizeChange({nativeEvent:{contentSize:{height:44}}}));

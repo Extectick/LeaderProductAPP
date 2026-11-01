@@ -66,6 +66,16 @@ describe('Help accepted sends and history replay',()=>{
     history.readCachedHelpRange.mockResolvedValue([]);
     await act(async()=>{await service.refresh();});expect(service.messages.map(row=>row.id)).toEqual([1]);
   });
+  test('partial nonempty disk repair cannot drop a message already visible in the chat',async()=>{
+    const rows=[detail.messages[0],{id:2,ticketId:7,sequence:2}];
+    mockApi.detail.mockResolvedValue({...detail,messages:rows,lastSequence:2});history.readCachedHelpRange.mockResolvedValue(rows);
+    await open();
+    history.readCachedHelpTicket.mockResolvedValue({record:{ticket:detail.ticket,lastSequence:2,lastReadSequence:0,ranges:[{from:1,to:1}]}});
+    history.readCachedHelpRange.mockResolvedValue([{...rows[0],text:'edited'}]);
+    await act(async()=>{await service.refresh();});expect(service.messages.map(row=>row.id)).toEqual([1,2]);expect(service.messages[0].text).toBe('edited');
+    history.readCachedHelpTicket.mockResolvedValue({record:{ticket:detail.ticket,lastSequence:2,lastReadSequence:0,ranges:[{from:1,to:2}]}});
+    await act(async()=>{await service.refresh();});expect(service.messages.map(row=>row.id)).toEqual([1]);
+  });
 });
 
 describe('Help read cursor respects route focus',()=>{

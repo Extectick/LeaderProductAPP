@@ -43,6 +43,6 @@ test('reasoning becomes the answer in one message with a single AI identity',asy
   expect(text()).not.toContain('Анализ завершён');
   expect(text()).not.toContain('Изучаю описание');
   expect(view.root.findAllByType(Text).filter(node=>node.props.children==='Помощник · ИИ')).toHaveLength(0);
-  expect(view.root.findAll(node=>node.type==='Ionicons'&&node.props.name==='hardware-chip-outline')).toHaveLength(1);
+  expect(view.root.findAll(node=>node.type==='Ionicons'&&node.props.name==='hardware-chip-outline')).toHaveLength(0);
   await act(async()=>view.unmount());
 });

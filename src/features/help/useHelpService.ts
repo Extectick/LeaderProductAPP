@@ -282,10 +282,14 @@ export function useHelpService(isFocused = true) {
         if(!selected)continue;
         const shown=messagesRef.current,following=viewport.current?.atLatest===true&&!pageRef.current?.hasNewer;
         const from=shown[0]?.sequence??1,to=following?cached.record.lastSequence:shown.at(-1)?.sequence??cached.record.lastSequence;
-        const rows=await readCachedHelpRange(userId,id,from,to,1000);
+        const limit=Math.max(1000,shown.length+1);
+        const rows=await readCachedHelpRange(userId,id,from,to,limit);
         if(!current(account)||activeId.current!==id||generation!==detailGeneration.current||revision!==windowRevision.current)continue;
         const covered=cached.record.ranges?.some(range=>range.from<=from&&range.to>=to);
-        if(rows.length||!shown.length||cached.record.lastSequence===0||covered)updateMessages(shareHelpItems(shown,rows));
+        // A partial disk window cannot prove that omitted messages were deleted.
+        // Merge it until coverage is complete; updateMessages shares references once.
+        const complete=covered&&(rows.length<limit||(rows.at(-1)?.sequence??0)>=to);
+        updateMessages(complete||cached.record.lastSequence===0?rows:mergeHelpMessages(shown,rows));
         readSequence.current=Math.max(readSequence.current,cached.record.lastReadSequence);
         if(pageRef.current){pageRef.current={...pageRef.current,lastSequence:cached.record.lastSequence,lastReadSequence:readSequence.current,hasNewer:!following&&cached.record.lastSequence>(messagesRef.current.at(-1)?.sequence??0)};setHasNewer(pageRef.current.hasNewer);}
         rememberActive();
