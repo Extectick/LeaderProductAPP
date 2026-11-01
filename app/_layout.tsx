@@ -1,9 +1,9 @@
 // app/_layout.tsx
 import '@/utils/logbox';
-import { Slot, useSegments, ErrorBoundary as RouterErrorBoundary, type ErrorBoundaryProps } from 'expo-router';
+import { Slot, useSegments, usePathname, ErrorBoundary as RouterErrorBoundary, type ErrorBoundaryProps } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import React, { useCallback, useContext, useEffect, useMemo } from 'react';
-import { Platform, StatusBar, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { MD3LightTheme, PaperProvider } from 'react-native-paper';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -23,6 +23,7 @@ import { OtaUpdateStatusProvider } from '@/src/shared/ota/OtaUpdateStatusContext
 import { registerOtaBackgroundPrefetchTask } from '@/src/shared/ota/registerOtaBackgroundTask';
 import { initPushNotifications } from '@/utils/pushNotifications';
 import { captureException, setMonitoringScreen, setMonitoringUser } from '@/src/shared/monitoring';
+import {AppThemeSurface} from '@/components/Navigation/AppThemeSurface';
 
 if (Platform.OS !== 'web') {
   void SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -55,6 +56,7 @@ function InnerLayout() {
 }
 
 export default function RootLayout() {
+  const pathname=usePathname();
   const Root = Platform.OS === 'web' ? View : GestureHandlerRootView;
   const MaybeBottomSheetProvider = Platform.OS === 'web' ? React.Fragment : nativeBottomSheetProvider;
   const paperTheme = useMemo(() => ({
@@ -107,13 +109,13 @@ export default function RootLayout() {
         <PaperProvider theme={paperTheme}>
           <MaybeBottomSheetProvider>
             <ThemeProvider>
+              <AppThemeSurface routeKey={pathname}>
               <AuthProvider>
                 <TrackingProvider>
                   <NotificationViewportProvider>
                     <OtaUpdateStatusProvider enabled={appIsReady}>
                       <NotificationHost>
                         <UpdateGate>
-                          <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
                           {appIsReady ? (
                             <InnerLayout />
                           ) : (
@@ -125,6 +127,7 @@ export default function RootLayout() {
                   </NotificationViewportProvider>
                 </TrackingProvider>
               </AuthProvider>
+              </AppThemeSurface>
             </ThemeProvider>
           </MaybeBottomSheetProvider>
         </PaperProvider>

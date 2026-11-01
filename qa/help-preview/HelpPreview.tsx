@@ -1,5 +1,6 @@
 import {DurableHelpProbe} from './durableProbe';
 import ServicesPreview from './ServicesPreview';
+import {AppThemeSurface} from '../../components/Navigation/AppThemeSurface';
 /** Local visual fixture entry. Never imported by app/ or the production entry. */
 import React, { useEffect, useState } from 'react';
 import { Image, Platform, Pressable, ScrollView, StatusBar, Text, View, useWindowDimensions } from 'react-native';
@@ -13,7 +14,8 @@ import { HelpIcon } from '../../src/features/help/components/HelpPrimitives';
 import { useHelpTheme } from '../../src/features/help/helpTheme';
 import type { HelpAttachment, HelpMessage } from '../../src/features/help/helpApi';
 import HelpScreen from '../../src/features/help/HelpScreen';
-import {helpDevActions} from '../../src/features/help/helpDiagnostics';
+import {helpDevActions,helpDevState} from '../../src/features/help/helpDiagnostics';
+import * as SystemUI from 'expo-system-ui';
 import { installHelpCacheProbe } from './cacheProbe';
 import { FixtureCacheBoundary } from './FixtureCacheBoundary';
 import { NotificationHost } from '../../components/NotificationHost';
@@ -77,7 +79,7 @@ function Preview() {
   const [toolbarHeight, setToolbarHeight] = useState(0);
   const params = Platform.OS === 'web' ? new URLSearchParams(window.location.search) : new Map([['screen', 'chat'], ['ticketId', '1042']]);
   const [screenOverride,setScreenOverride] = useState<string | null>(null);
-  useEffect(()=>helpDevActions('preview', {'preview.screen':value=>setScreenOverride(String(value))}),[]);
+  useEffect(()=>helpDevActions('preview', {'preview.screen':value=>setScreenOverride(String(value)), 'preview.windowBackground':async()=>helpDevState({nativeWindowBackground:String(await SystemUI.getBackgroundColorAsync())})}),[]);
   const fullScreen = screenOverride ?? params.get('screen');
   const requestedHeight = Number(params.get('height'));
   const fixedHeight = requestedHeight >= 300 && requestedHeight <= 2000 ? requestedHeight : null;
@@ -95,7 +97,7 @@ function Preview() {
   useEffect(() => { if (Platform.OS !== 'web') { void setTheme('dark'); return; } const requested = params.get('theme'); if (requested === 'light' || requested === 'dark') void setTheme(requested); const w = Number(params.get('width')); if (w >= 280 && w <= 600) setWidth(w); if (params.get('composer') === 'long') setValue(Array.from({ length: 10 }, (_, i) => `${i + 1}. Проверка длинного текста в поле ввода.`).join('\n')); }, []);
   // No browser toolbar or fake insets on native: use the full real screen,
   // OS keyboard, safe area, PanResponder gestures and expo-audio recorder.
-  if (Platform.OS !== 'web') return <View testID="help-qa-surface" style={{ flex: 1, width: windowSize.width, backgroundColor: c.background }}><StatusBar barStyle={c.dark ? 'light-content' : 'dark-content'}/>{fullScreen === 'services' ? <ServicesPreview/> : <HelpScreen />}</View>;
+  if (Platform.OS !== 'web') return <AppThemeSurface routeKey={fullScreen??undefined}><View testID="help-qa-surface" style={{ flex: 1, width: windowSize.width, backgroundColor: c.background }}>{fullScreen === 'services' ? <ServicesPreview/> : <HelpScreen />}</View></AppThemeSurface>;
   const button = (label: string, onPress: () => void) => <Pressable key={label} accessibilityRole="button" onPress={onPress} style={{ backgroundColor: c.elevated, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7 }}><Text style={{ color: c.text, fontSize: 12 }}>{label}</Text></Pressable>;
   return <View style={{ ...(fixedHeight ? { flexGrow: 1, flexShrink: 0, minHeight: fixedHeight + toolbarHeight, overflow: 'visible' as const } : { flex: 1 }), backgroundColor: c.background, alignItems: 'center' }}>
     <View onLayout={event => setToolbarHeight(event.nativeEvent.layout.height)} style={{ width: '100%', flexShrink: 0, padding: 8, borderBottomWidth: 1, borderColor: c.line, gap: 6 }}>

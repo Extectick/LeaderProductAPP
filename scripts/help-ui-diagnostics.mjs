@@ -83,6 +83,8 @@ async function requireForeground(bridge) {
   if (state && state !== 'active') throw new Error(`The DEV app is ${state}. Bring it to the foreground before native layout measurements.`);
 }
 try {
+  // Cold Hermes targets may not register Runtime.evaluate until the domain is enabled.
+  await request('Runtime.enable');
   const bridge = 'globalThis.__LEADER_HELP_DEV__';
   let ready=false;
   for(let attempt=0;attempt<20&&!ready;attempt++) {

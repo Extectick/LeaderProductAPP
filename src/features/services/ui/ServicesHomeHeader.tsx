@@ -1,21 +1,20 @@
-import React, {useState} from 'react';
+import React from 'react';
 import {Image, Pressable, StyleSheet, Text, View} from 'react-native';
+import Svg, {Path} from 'react-native-svg';
 import {Ionicons} from '@expo/vector-icons';
 import {AppHeader} from '@/components/AppHeader';
 import {APP_TOOLBAR_LAYOUT as layout} from '@/components/ui/appToolbarLayout';
 import {useThemeColor} from '@/hooks/useThemeColor';
 import {servicesTokens} from './servicesTokens';
+import {COMPANY_WORDMARK_PATH,COMPANY_WORDMARK_VIEWBOX} from '../assets/companyWordmark';
 
-// Visible bounds inside the supplied transparent assets. Size the visible mark,
-// not its transparent canvas, and keep native bitmap decoding at its full aspect.
+// Size the visible company symbol, rather than its transparent bitmap canvas.
 const logoScale = layout.actionSize / 824;
 const wordmarkWidth = 164;
 const wordmarkHeight = 20;
-const wordmarkScale = wordmarkWidth / 2097;
 
 /** The catalogue alone owns the company lockup; service toolbars keep their own controls. */
 export function ServicesHomeHeader({avatar, onProfile}: {avatar?: React.ReactNode; onProfile: () => void}) {
-  const [wordmarkFailed,setWordmarkFailed] = useState(false);
   const avatarBackground = useThemeColor({light: '#EAF2FF', dark: '#203043'}, 'background');
   const accent = useThemeColor({light: '#2563EB', dark: '#68B0FF'}, 'text');
   return <AppHeader title="Лидер Продукт" icon="apps-outline" showBack={false} variant="flat" entranceMotion="none" showServerStatus={false}
@@ -24,9 +23,10 @@ export function ServicesHomeHeader({avatar, onProfile}: {avatar?: React.ReactNod
         <Image accessible={false} source={require('../../../../assets/images/icon.png')} resizeMode="contain" style={styles.logoImage}/>
       </View>
       <View accessibilityLabel="Лидер Продукт — мы всегда в рынке" style={styles.identity}>
-        <View style={styles.wordmarkViewport}>
-          {wordmarkFailed ? <Text testID="services-company-name-fallback" numberOfLines={1} maxFontSizeMultiplier={1.2} style={styles.wordmarkFallback}>ЛИДЕР ПРОДУКТ</Text>
-            : <Image testID="services-company-wordmark" accessible={false} source={require('../../../../assets/images/company-wordmark.png')} resizeMode="contain" onError={()=>setWordmarkFailed(true)} style={styles.wordmarkImage}/>}
+        <View testID="services-company-name" style={styles.wordmarkViewport}>
+          <Svg accessible={false} width="100%" height={wordmarkHeight} viewBox={COMPANY_WORDMARK_VIEWBOX} preserveAspectRatio="xMinYMid meet">
+            <Path d={COMPANY_WORDMARK_PATH} fill="#97BF20" fillRule="evenodd"/>
+          </Svg>
         </View>
         <Text numberOfLines={1} maxFontSizeMultiplier={1.3} style={styles.tagline}>мы всегда в рынке</Text>
       </View>
@@ -42,9 +42,7 @@ const styles = StyleSheet.create({
   logoViewport: {width: layout.actionSize, height: layout.actionSize},
   logoImage: {position:'absolute',width:1024*logoScale,height:1024*logoScale,left:-131*logoScale,top:-89*logoScale},
   identity: {flex: 1, minWidth: 0, justifyContent: 'center', gap: 0},
-  wordmarkViewport: {width:'100%',maxWidth:wordmarkWidth,height:wordmarkHeight,overflow:'hidden'},
-  wordmarkImage: {position:'absolute',width:2172*wordmarkScale,height:724*wordmarkScale,left:-45*wordmarkScale,top:(wordmarkHeight-228*wordmarkScale)/2-241*wordmarkScale,tintColor:'#97BF20'},
-  wordmarkFallback: {fontSize:16,lineHeight:wordmarkHeight,fontWeight:'800',color:'#97BF20',includeFontPadding:false},
+  wordmarkViewport: {width:'100%',maxWidth:wordmarkWidth,height:wordmarkHeight},
   tagline: {fontSize: 11, lineHeight: 14, color: '#C58B2D', includeFontPadding: false},
   avatar: {width: layout.actionSize, height: layout.actionSize, borderRadius: layout.actionSize / 2, overflow: 'hidden', alignItems: 'center', justifyContent: 'center'},
 });

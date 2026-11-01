@@ -1,6 +1,8 @@
 import { Stack, useGlobalSearchParams, usePathname, useRouter } from 'expo-router';
 import { AppHeader } from '@/components/AppHeader';
 import {ServicesHomeHeader} from '@/src/features/services/ui/ServicesHomeHeader';
+import {useThemeColor} from '@/hooks/useThemeColor';
+import {useTheme} from '@/context/ThemeContext';
 import React, { useEffect, useMemo, useRef } from 'react';
 import { useNotify } from '@/components/NotificationHost';
 import { Ionicons } from '@expo/vector-icons';
@@ -53,6 +55,8 @@ const headerMap: Record<string, HeaderMeta> = {
 };
 
 export default function ServicesLayout() {
+  const background=useThemeColor({},'background');
+  const {theme}=useTheme();
   const router = useRouter();
   const auth = React.useContext(AuthContext);
   const pathname = usePathname();
@@ -261,6 +265,8 @@ export default function ServicesLayout() {
             // Tracking owns a safe-area-aware toolbar above the map.
             headerShown: !serviceOwnsHeader(name) && !clientOrdersHeaderHidden && !showTrackingBottomSlot,
             headerTransparent: true,
+            contentStyle: {backgroundColor:background},
+            statusBarStyle: theme==='dark'?'light':'dark',
             headerShadowVisible: false,
             headerStatusBarHeight: 0,
             headerStyle: { backgroundColor: 'transparent' },
