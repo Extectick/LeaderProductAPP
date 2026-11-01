@@ -11,6 +11,38 @@ jest.mock('react-native-reanimated',()=>({
   withTiming:(target:number,_config:any,done?:any)=>{mockAnimations.push({target,done});return 0;},Easing:{out:(fn:any)=>fn,cubic:(x:number)=>x},
 }));
 import {HelpChatEntry,type HelpChatEntryHandle} from '../src/features/help/components/HelpChatEntry';
+import {Animated,View} from 'react-native';
+import {HelpMessageArrival,HelpMessageArrivalContext} from '../src/features/help/components/HelpMessageArrival';
+
+describe('message arrivals',()=>{
+  let tree:TestRenderer.ReactTestRenderer;
+  let timing:jest.SpyInstance;
+  const registry=new Set<string>();
+  beforeEach(()=>{mockReduced=false;registry.clear();timing=jest.spyOn(Animated,'timing').mockReturnValue({start:jest.fn(),stop:jest.fn(),reset:jest.fn()});});
+  afterEach(async()=>{if(tree)await act(async()=>tree.unmount());timing.mockRestore();});
+  function content(identity:string,animate:boolean){return React.createElement(HelpMessageArrivalContext.Provider,{value:registry},React.createElement(HelpMessageArrival,{identity,animate,children:React.createElement(View)}));}
+  test('new message rises once on the native driver and text changes do not restart it',async()=>{
+    await act(async()=>{tree=TestRenderer.create(content('client:send-1',true));});
+    expect(timing).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({toValue:1,duration:220,useNativeDriver:true,isInteraction:false}));
+    await act(async()=>tree.update(content('client:send-1',false)));expect(timing).toHaveBeenCalledTimes(1);
+  });
+  test('server acknowledgement uses the outbox identity without a second arrival',async()=>{
+    await act(async()=>{tree=TestRenderer.create(content('client:send-2',true));});
+    const progress=timing.mock.calls[0][0] as Animated.Value;
+    await act(async()=>progress.setValue(.5));
+    await act(async()=>tree.unmount());
+    await act(async()=>{tree=TestRenderer.create(content('client:send-2',true));});
+    expect(timing).toHaveBeenCalledTimes(2);
+    expect(timing.mock.calls[1]).toEqual([progress,expect.objectContaining({toValue:1,duration:110})]);
+    expect(tree.root.findByProps({testID:'help-message-arrival'}).props.style.transform[0].translateY.__getValue()).toBe(12);
+  });
+  test('history and reduced-motion messages appear immediately',async()=>{
+    await act(async()=>{tree=TestRenderer.create(content('message:old',false));});
+    expect(timing).not.toHaveBeenCalled();
+    mockReduced=true;await act(async()=>tree.update(content('client:new',true)));
+    expect(timing).not.toHaveBeenCalled();
+  });
+});
 
 describe('Help bidirectional scene motion',()=>{
   let tree:TestRenderer.ReactTestRenderer;

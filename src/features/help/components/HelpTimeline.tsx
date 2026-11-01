@@ -13,6 +13,7 @@ import { HelpDateSeparator, HelpUnreadSeparator, HelpHistoryStatus, HelpJumpToLa
 import { hasNativeChatLayout } from './HelpNativeChatLayout';
 import { HELP_COMPOSER_ACTION_RIGHT } from '../helpLayout';
 import { hiddenHelpLatest, updateHelpLatestAffordance } from '../helpJumpToLatestModel';
+import {HelpMessageArrival,HelpMessageArrivalContext,helpArrivalIdentity} from './HelpMessageArrival';
 
 export type HelpTimelineHandle = {
   save: () => void;
@@ -40,6 +41,7 @@ type Props = {
   renderMessage: (message: HelpMessage) => React.ReactElement;
   onReady?: () => void;
   header?: React.ReactElement | null; footer?: React.ReactElement | null;
+  bottomAligned?:boolean;
 };
 type MediaRange = {first: number; last: number};
 type OutgoingViewport = {rows: {row: HelpTimelineRow; top: number; height: number}[]; direction: number};
@@ -92,6 +94,15 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     return()=>clearTimeout(timer);
   },[props.loading,rows.length,ready]);
   const readyRef = useRef(false), followingRef = useRef(false), mounted = useRef(true);
+  const inheritedArrivals=useContext(HelpMessageArrivalContext),localArrivals=useRef(new Set<string>());
+  const arrivalWater=useRef({initialized:false,sequence:0,hasNewer:false});
+  const arrivalBatch=useMemo(()=>{
+    const before=arrivalWater.current,sequence=props.messages.reduce((sequence,message)=>Math.max(sequence,message.sequence),before.sequence);
+    const animate=before.initialized?readyRef.current&&followingRef.current&&!before.hasNewer&&!props.hasNewer&&!props.loadingNewer:Boolean(props.bottomAligned);
+    return {keys:new Set(animate?props.messages.filter(message=>message.sequence>before.sequence).map(helpArrivalIdentity):[]),
+      initialized:before.initialized||props.messages.length>0||!props.loading&&!props.bottomAligned,sequence,hasNewer:Boolean(props.hasNewer)};
+  },[props.messages,props.loading,props.hasNewer,props.loadingNewer,props.bottomAligned]);
+  useLayoutEffect(()=>{arrivalWater.current=arrivalBatch;},[arrivalBatch]);
   const openingLayout = useRef({active:false,key:0,frame:0,passes:0,signature:'',aligned:'',requestedIndex:-1,tailId:null as number|null});
   const geometry = useRef({offset: 0, height: 0, content: 0});
   const lastAnchor = useRef<HelpViewportAnchor | null>(null), committedTarget = useRef<number | null>(null);
@@ -279,7 +290,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     if (!reduced && dateSnapshot.current.rows.length) stageViewport({rows:dateSnapshot.current.rows,direction:1});
     void live.current.onDate(date).catch(error => { cancelJump(); live.current.onError(error instanceof Error ? error.message : 'Не удалось открыть сообщения за эту дату'); });
   }, [save,visible,cancelJump,reduced,stageViewport]);
-  const renderRow = useCallback((row: HelpTimelineRow,index=rowsRef.current.indexOf(row),range=mediaRangeRef.current,retained=false) => row.kind==='date' ? <HelpDateSeparator date={row.date!} onPress={()=>jumpDate(row.date!)}/> : row.kind==='unread' ? <HelpUnreadSeparator/> : <HelpMediaLoadingContext.Provider value={retained?'retained':index>=range.first&&index<=range.last?'visible':index>=range.first-4&&index<=range.last+4?'near':'deferred'}>{props.renderMessage(row.message)}</HelpMediaLoadingContext.Provider>, [jumpDate,props.renderMessage]);
+  const renderRow = useCallback((row: HelpTimelineRow,index=rowsRef.current.indexOf(row),range=mediaRangeRef.current,retained=false) => row.kind==='date' ? <HelpDateSeparator date={row.date!} onPress={()=>jumpDate(row.date!)}/> : row.kind==='unread' ? <HelpUnreadSeparator/> : <HelpMediaLoadingContext.Provider value={retained?'retained':index>=range.first&&index<=range.last?'visible':index>=range.first-4&&index<=range.last+4?'near':'deferred'}><HelpMessageArrival key={helpArrivalIdentity(row.message)} identity={helpArrivalIdentity(row.message)} animate={!retained&&arrivalBatch.keys.has(helpArrivalIdentity(row.message))}>{props.renderMessage(row.message)}</HelpMessageArrival></HelpMediaLoadingContext.Provider>, [jumpDate,props.renderMessage,arrivalBatch.keys]);
   // Keep the renderer stable through viewport/date updates. Real visual changes
   // from the screen (selection, search, receipts) still replace renderMessage.
   const renderItem = useCallback<ListRenderItem<HelpTimelineRow>>(({item,index,extraData}) => renderRow(item,index,extraData as MediaRange), [renderRow]);
@@ -514,7 +525,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
       newerPending.current=true;void live.current.loadNewer().catch(()=>live.current.onError('Не удалось загрузить новые сообщения')).finally(()=>{newerPending.current=false;});
     }
   },[observe,setFollow,updateMediaRange,settleOpening]);
-  const NativeScroll=useMemo(()=>forwardRef<ScrollView,ScrollViewProps>((scrollProps,scrollRef)=><ScrollView {...scrollProps} removeClippedSubviews={false} ref={scrollRef} nativeID={props.nativeID}/>),[props.nativeID]);
+  const NativeScroll=useMemo(()=>forwardRef<ScrollView,ScrollViewProps>((scrollProps,scrollRef)=><ScrollView {...scrollProps} contentContainerStyle={[scrollProps.contentContainerStyle,{flexGrow:1}]} removeClippedSubviews={false} ref={scrollRef} nativeID={props.nativeID}/>),[props.nativeID]);
   const webProps = Platform.OS==='web' ? {
     onWheel:()=>{takeScrollControl();webIntent.current=Date.now()+500;},
     onTouchMove:()=>{takeScrollControl();webIntent.current=Date.now()+500;},
@@ -529,7 +540,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     visible:visible().map(item=>({sequence:item.row.message.sequence,top:item.top,height:item.height}))})),[visible,currentDate,snapshotVisible]);
   const distance=Math.min(geometry.current.height || 500,620),direction=outgoing?.direction || 1;
   const maintainDisabled=!ready || navigating || following;
-  const startFromBottom=initialPosition.current?.kind==='latest';
+  const startFromBottom=Boolean(props.bottomAligned)||initialPosition.current?.kind==='latest';
   const maintainVisibleContentPosition=useMemo(()=>({disabled:maintainDisabled,startRenderingFromBottom:startFromBottom}),[maintainDisabled,startFromBottom]);
   const listStyle=useMemo(()=>({backgroundColor:c.background}),[c.background]);
   const listContentStyle=useMemo(()=>({paddingTop:props.headerHeight+12,paddingBottom:hasNativeChatLayout?0:props.dockHeight+12}),[props.headerHeight,props.dockHeight]);
@@ -545,7 +556,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     }
     setLoaded(true); updateMediaRange(true); observe();
   }, [settleOpening,updateMediaRange,observe]);
-  return <HelpImageCacheContext.Provider value={imageCache}><View style={{flex:1}}>
+  return <HelpMessageArrivalContext.Provider value={inheritedArrivals??localArrivals.current}><HelpImageCacheContext.Provider value={imageCache}><View style={{flex:1}}>
     <Animated.View testID="help-timeline-live-layer" style={{flex:1,opacity:ready||!rows.length?1:0,transform:[{translateY:outgoing?incomingTransition.interpolate({inputRange:[0,1],outputRange:[-direction*distance,0]}):0}]}}>
       <FlashList ref={list} data={rows} extraData={mediaRange} keyExtractor={rowKey} getItemType={rowType} renderItem={renderItem}
         initialScrollIndex={initialPosition.current?.index}
@@ -563,11 +574,12 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
         onContentSizeChange={(_width,height)=>{geometry.current.content=height;settleOpening();if(!hasNativeChatLayout && followingRef.current && readyRef.current && !inNavigation.current)scrollEnd(false);updateMediaRange(true);observe();}}
         ListHeaderComponent={props.header}
         ListFooterComponent={props.footer}
+        ListFooterComponentStyle={!rows.length&&props.bottomAligned?{flexGrow:1,justifyContent:'flex-end'}:undefined}
       />
     </Animated.View>
     {props.loadingOlder || initialLoadingVisible&&!ready ? <View pointerEvents="none" style={{position:'absolute',top:props.headerHeight,left:0,right:0}}><HelpHistoryStatus loading/></View> : null}
     {outgoing ? <Animated.View testID={snapshotVisible?'help-timeline-transition':'help-timeline-preparation'} pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{position:'absolute',top:0,left:0,right:0,bottom:0,opacity:snapshotVisible?1:0,backgroundColor:c.background,overflow:'hidden',transform:[{translateY:transition.interpolate({inputRange:[0,1],outputRange:[0,direction*distance]})}]}}>{outgoing.rows.map(item=><View key={item.row.key} style={{position:'absolute',left:0,right:0,top:item.top}}>{renderRow(item.row,-1,mediaRangeRef.current,true)}</View>)}</Animated.View> : null}
     {!props.hideStickyDate && stickyDate ? <View style={{position:'absolute',top:Math.max(0,props.headerHeight-12),alignSelf:'center'}}><HelpDateSeparator compact date={stickyDate} onPress={()=>jumpDate(stickyDate)}/></View> : null}
     {rows.length > 0 ? <HelpJumpToLatest visible={showLatestButton} count={props.unreadCount} loading={props.loadingNewer} onPress={()=>{prepareJump();void props.onLatest().catch(()=>{cancelJump();props.onError('Не удалось открыть последние сообщения');});}} style={{position:'absolute',right:HELP_COMPOSER_ACTION_RIGHT,bottom:props.dockHeight+12}}/> : null}
-  </View></HelpImageCacheContext.Provider>;
+  </View></HelpImageCacheContext.Provider></HelpMessageArrivalContext.Provider>;
 });

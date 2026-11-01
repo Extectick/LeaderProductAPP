@@ -24,6 +24,7 @@ jest.mock('../src/features/help/components/HelpNativeChatLayout',()=>({hasNative
 import {HelpTimeline,type HelpTimelineHandle} from '../src/features/help/components/HelpTimeline';
 import {HelpDateSeparator} from '../src/features/help/components/HelpTimelineIndicators';
 import {HelpMediaLoadingContext} from '../src/features/help/helpMediaLoading';
+import {HelpMessageArrival} from '../src/features/help/components/HelpMessageArrival';
 
 const message=(sequence:number,date='2026-10-28T12:00:00Z')=>({id:sequence,sequence,createdAt:date}) as HelpMessage;
 describe('messenger viewport and read boundaries',()=>{
@@ -90,6 +91,35 @@ describe('sticky date geometry and navigation integration',()=>{
     await observe();
   }
   async function observe(){await act(async()=>mockFlashProps.onScroll({nativeEvent:{contentOffset:{x:0,y:0},layoutMeasurement:{width:390,height:600},contentSize:{width:390,height:1000}}}));}
+  test('only a live appended tail is eligible for arrival, not initial history or edits',async()=>{
+    await render();
+    expect(screen!.root.findAllByType(HelpMessageArrival).every(row=>!row.props.animate)).toBe(true);
+    props={...props,messages:[...props.messages,message(3)]};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    expect(screen!.root.findAllByType(HelpMessageArrival).filter(row=>row.props.animate).map(row=>row.props.identity)).toEqual(['message:3']);
+    props={...props,messages:props.messages.map(row=>row.id===3?{...row,text:'edit'}:row)};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    expect(screen!.root.findAllByType(HelpMessageArrival).every(row=>!row.props.animate)).toBe(true);
+  });
+  test('loaded newer history is not mistaken for a newly received message',async()=>{
+    props={...props,hasNewer:true};await render();
+    props={...props,hasNewer:false,messages:[...props.messages,message(3)]};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    expect(screen!.root.findAllByType(HelpMessageArrival).every(row=>!row.props.animate)).toBe(true);
+  });
+  test('new conversation keeps an empty outbox at the bottom before its first server page',async()=>{
+    props={...props,messages:[],bottomAligned:true,footer:React.createElement(View,{testID:'first-pending-message'})};
+    await render();
+    expect(mockFlashProps.maintainVisibleContentPosition.startRenderingFromBottom).toBe(true);
+    expect(mockFlashProps.ListFooterComponentStyle).toMatchObject({flexGrow:1,justifyContent:'flex-end'});
+    let scroller!:TestRenderer.ReactTestRenderer;
+    await act(async()=>{scroller=TestRenderer.create(React.createElement(mockFlashProps.renderScrollComponent,{contentContainerStyle:{paddingTop:112}}));});
+    expect(StyleSheet.flatten(scroller.root.findByType(require('react-native').ScrollView).props.contentContainerStyle)).toMatchObject({flexGrow:1,paddingTop:112});
+    await act(async()=>scroller.unmount());
+    props={...props,messages:[message(10)],navigationTarget:{key:111,kind:'latest'}};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    expect(mockFlashProps.maintainVisibleContentPosition.startRenderingFromBottom).toBe(true);
+  });
   function floating(){return screen!.root.findAllByType(HelpDateSeparator).find(node=>StyleSheet.flatten(node.parent?.props.style)?.position==='absolute');}
   test('a future day separator does not hide the current day and compact pill sits4px below capsule',async()=>{
     await render();const date=floating()!;

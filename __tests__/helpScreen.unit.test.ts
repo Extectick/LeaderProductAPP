@@ -78,6 +78,7 @@ jest.mock('../src/features/help/useHelpService', () => ({ useHelpService: () => 
 import HelpScreen from '../src/features/help/HelpScreen';
 import {HelpChatPlayback} from '../src/features/help/components/HelpPlaybackScope';
 import {HelpChatEntry} from '../src/features/help/components/HelpChatEntry';
+import {HelpPendingMessage} from '../src/features/help/components/HelpPendingMessage';
 
 const ticket: HelpTicket = { id: 7, number: 1007, title: 'Принтер', status: 'OPEN', ownerId: 5, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), closedAt: null, sourceTicketId: null, sourceTicket: null, itRequested: false, members: [], unreadCount: 0, lastMessage: null, canReopen: false, aiEnabled: false };
 const detail: HelpDetail = { ticket, messages: [] };
@@ -311,12 +312,40 @@ describe('Help screen integration with service boundary', () => {
     expect(mockService.createTicket).not.toHaveBeenCalled(); expect(button('Новое обращение')).toBeTruthy();
   });
   test('first send creates once and clears draft only after success',async()=>{
+    mockNativeChatLayout=true;
     await render(); await act(async()=>button('Новое обращение').props.onPress());
+    await act(async()=>mockTimelineProps.onReady());
+    const entry=screen.root.findByType(HelpChatEntry),timeline=screen.root.findByProps({testID:'help-chat-scroll'}),input=composer();
+    const native=screen.root.findByType('HelpNativeChatLayout' as any);
+    expect(native.props.animateTail).toBe(true);
+    expect(mockTimelineProps.bottomAligned).toBe(true);
     await act(async()=>composer().props.onChange('Не печатает принтер'));
     await act(async()=>composer().props.onSend());
     expect(mockService.createTicket).toHaveBeenCalledTimes(1);
     expect(mockService.createTicket).toHaveBeenCalledWith({text:'Не печатает принтер',attachmentIds:[],sourceTicketId:undefined});
     expect(composer().props.value).toBe('');
+    expect(screen.root.findByType(HelpChatEntry)).toBe(entry);
+    expect(screen.root.findByProps({testID:'help-chat-scroll'})).toBe(timeline);
+    expect(composer()).toBe(input);
+    expect(screen.root.findByType('HelpNativeChatLayout' as any)).toBe(native);
+    expect(native.props.animateTail).toBe(true);
+    expect(mockTimelineProps.bottomAligned).toBe(true);
+  });
+  test('first message stays visible after the durable queue clears and before the chat page is installed',async()=>{
+    let resolve!:(value:HelpDetail)=>void;
+    mockService.createTicket.mockImplementation(()=>new Promise<HelpDetail>(done=>{resolve=done;}));
+    await render();await act(async()=>button('Новое обращение').props.onPress());
+    await act(async()=>composer().props.onChange('Первое сообщение'));
+    let request!:Promise<boolean>;await act(async()=>{request=composer().props.onSend();});
+    const pending={key:'first-create',create:true,createdAt:1,status:'sending',input:{text:'Первое сообщение',clientMessageId:'first-create'}};
+    mockService.pendingMessages=[pending];await act(async()=>screen.update(React.createElement(HelpScreen)));
+    expect(screen.root.findByType(HelpPendingMessage).props.item.key).toBe(pending.key);
+    mockService.pendingMessages=[];await act(async()=>screen.update(React.createElement(HelpScreen)));
+    expect(screen.root.findByType(HelpPendingMessage).props.item.key).toBe(pending.key);
+    mockService.selectedTicket=ticket;mockService.messages=[{id:91,ticketId:7,sequence:1,clientMessageId:'first-create',text:'Первое сообщение',authorId:5,createdAt:new Date().toISOString(),kind:'TEXT',attachments:[],reactions:[]}];
+    await act(async()=>{resolve({...detail,messages:mockService.messages});await request;});
+    expect(screen.root.findAllByType(HelpPendingMessage)).toHaveLength(0);
+    expect(mockTimelineProps.messages[0].clientMessageId).toBe('first-create');
   });
   test('network failure preserves draft instead of pretending sent',async()=>{
     mockService.createTicket.mockRejectedValueOnce(new Error('Сеть недоступна'));
