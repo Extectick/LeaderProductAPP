@@ -101,6 +101,16 @@ describe('sticky date geometry and navigation integration',()=>{
     await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
     expect(screen!.root.findAllByType(HelpMessageArrival).every(row=>!row.props.animate)).toBe(true);
   });
+  test('arrival remains eligible after IME or dragging releases follow',async()=>{
+    await render();await act(async()=>mockFlashProps.onScrollBeginDrag());
+    props={...props,messages:[...props.messages,message(3)]};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    expect(screen!.root.findAllByType(HelpMessageArrival).filter(row=>row.props.animate).map(row=>row.props.identity)).toEqual(['message:3']);
+    await act(async()=>jest.advanceTimersByTimeAsync(700));
+    props={...props,renderMessage:row=>React.createElement(View,{testID:'later-'+row.id})};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    expect(screen!.root.findAllByType(HelpMessageArrival).every(row=>!row.props.animate)).toBe(true);
+  });
   test('loaded newer history is not mistaken for a newly received message',async()=>{
     props={...props,hasNewer:true};await render();
     props={...props,hasNewer:false,messages:[...props.messages,message(3)]};

@@ -46,3 +46,20 @@ test('reasoning becomes the answer in one message with a single AI identity',asy
   expect(view.root.findAll(node=>node.type==='Ionicons'&&node.props.name==='hardware-chip-outline')).toHaveLength(0);
   await act(async()=>view.unmount());
 });
+
+test('live AI steps, completion marks and first answer animate with stable identities',async()=>{
+  const {HelpMessageArrival}=require('../src/features/help/components/HelpMessageArrival');
+  let view!:TestRenderer.ReactTestRenderer;
+  await act(async()=>{view=TestRenderer.create(React.createElement(HelpAssistantMessage,{message:base}));});
+  try{
+    expect(view.root.findAllByType(HelpMessageArrival).map(node=>node.props.identity)).toContain('assistant-check:qa-1:1:pending');
+    const next={...base,assistantRun:{...base.assistantRun!,step:2,completedSteps:2}};
+    await act(async()=>view.update(React.createElement(HelpAssistantMessage,{message:next})));
+    expect(view.root.findAllByType(HelpMessageArrival).map(node=>node.props.identity)).toEqual(expect.arrayContaining(['assistant-check:qa-1:1:done','assistant-step:qa-1:2']));
+    const answer={...next,text:'Начало',assistantRun:{...next.assistantRun,status:'streaming' as const}};
+    await act(async()=>view.update(React.createElement(HelpAssistantMessage,{message:answer})));
+    const first=view.root.findByType(HelpMessageArrival);expect(first.props.animate).toBe(true);
+    await act(async()=>view.update(React.createElement(HelpAssistantMessage,{message:{...answer,text:'Начало ответа'}})));
+    expect(view.root.findByType(HelpMessageArrival)).toBe(first);
+  }finally{await act(async()=>view.unmount());}
+});

@@ -98,9 +98,9 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   const arrivalWater=useRef({initialized:false,sequence:0,hasNewer:false});
   const arrivalBatch=useMemo(()=>{
     const before=arrivalWater.current,sequence=props.messages.reduce((sequence,message)=>Math.max(sequence,message.sequence),before.sequence);
-    const animate=before.initialized?readyRef.current&&followingRef.current&&!before.hasNewer&&!props.hasNewer&&!props.loadingNewer:Boolean(props.bottomAligned);
+    const animate=before.initialized?!before.hasNewer&&!props.hasNewer&&!props.loadingNewer:Boolean(props.bottomAligned);
     return {keys:new Set(animate?props.messages.filter(message=>message.sequence>before.sequence).map(helpArrivalIdentity):[]),
-      initialized:before.initialized||props.messages.length>0||!props.loading&&!props.bottomAligned,sequence,hasNewer:Boolean(props.hasNewer)};
+      initialized:before.initialized||props.messages.length>0||!props.loading&&!props.bottomAligned,sequence,hasNewer:Boolean(props.hasNewer),expiresAt:Date.now()+600};
   },[props.messages,props.loading,props.hasNewer,props.loadingNewer,props.bottomAligned]);
   useLayoutEffect(()=>{arrivalWater.current=arrivalBatch;},[arrivalBatch]);
   const openingLayout = useRef({active:false,key:0,frame:0,passes:0,signature:'',aligned:'',requestedIndex:-1,tailId:null as number|null});
@@ -290,7 +290,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     if (!reduced && dateSnapshot.current.rows.length) stageViewport({rows:dateSnapshot.current.rows,direction:1});
     void live.current.onDate(date).catch(error => { cancelJump(); live.current.onError(error instanceof Error ? error.message : 'Не удалось открыть сообщения за эту дату'); });
   }, [save,visible,cancelJump,reduced,stageViewport]);
-  const renderRow = useCallback((row: HelpTimelineRow,index=rowsRef.current.indexOf(row),range=mediaRangeRef.current,retained=false) => row.kind==='date' ? <HelpDateSeparator date={row.date!} onPress={()=>jumpDate(row.date!)}/> : row.kind==='unread' ? <HelpUnreadSeparator/> : <HelpMediaLoadingContext.Provider value={retained?'retained':index>=range.first&&index<=range.last?'visible':index>=range.first-4&&index<=range.last+4?'near':'deferred'}><HelpMessageArrival key={helpArrivalIdentity(row.message)} identity={helpArrivalIdentity(row.message)} animate={!retained&&arrivalBatch.keys.has(helpArrivalIdentity(row.message))}>{props.renderMessage(row.message)}</HelpMessageArrival></HelpMediaLoadingContext.Provider>, [jumpDate,props.renderMessage,arrivalBatch.keys]);
+  const renderRow = useCallback((row: HelpTimelineRow,index=rowsRef.current.indexOf(row),range=mediaRangeRef.current,retained=false) => row.kind==='date' ? <HelpDateSeparator date={row.date!} onPress={()=>jumpDate(row.date!)}/> : row.kind==='unread' ? <HelpUnreadSeparator/> : <HelpMediaLoadingContext.Provider value={retained?'retained':index>=range.first&&index<=range.last?'visible':index>=range.first-4&&index<=range.last+4?'near':'deferred'}><HelpMessageArrival key={helpArrivalIdentity(row.message)} identity={helpArrivalIdentity(row.message)} animate={!retained&&Date.now()<=arrivalBatch.expiresAt&&arrivalBatch.keys.has(helpArrivalIdentity(row.message))}>{props.renderMessage(row.message)}</HelpMessageArrival></HelpMediaLoadingContext.Provider>, [jumpDate,props.renderMessage,arrivalBatch.keys]);
   // Keep the renderer stable through viewport/date updates. Real visual changes
   // from the screen (selection, search, receipts) still replace renderMessage.
   const renderItem = useCallback<ListRenderItem<HelpTimelineRow>>(({item,index,extraData}) => renderRow(item,index,extraData as MediaRange), [renderRow]);

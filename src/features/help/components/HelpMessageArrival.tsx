@@ -7,7 +7,7 @@ export const HelpMessageArrivalContext=createContext<Set<string>|null>(null);
 export const helpArrivalIdentity=(message:{id:number;clientMessageId?:string|null})=>message.clientMessageId?`client:${message.clientMessageId}`:`message:${message.id}`;
 const motions=new WeakMap<Set<string>,Map<string,{progress:Animated.Value;motion:Animated.CompositeAnimation}>>();
 
-export function HelpMessageArrival({identity,animate,children}:{identity:string;animate:boolean;children:React.ReactNode}){
+export function HelpMessageArrival({identity,animate,children,distance=24}:{identity:string;animate:boolean;children:React.ReactNode;distance?:number}){
   const registry=useContext(HelpMessageArrivalContext),local=useRef(new Set<string>()),played=registry??local.current;
   const reduced=useHelpReducedMotion();
   const inherited=useMemo(()=>motions.get(played)?.get(identity),[identity,played]);
@@ -35,5 +35,5 @@ export function HelpMessageArrival({identity,animate,children}:{identity:string;
     // can take over. The weak registry releases the scene after navigation.
     // Content/acknowledgement updates must not restart an in-flight arrival.
   },[identity,played,progress,reduced,inherited]);
-  return <Animated.View testID="help-message-arrival" style={{transform:[{translateY:progress.interpolate({inputRange:[0,1],outputRange:[24,0]})}]}}>{children}</Animated.View>;
+  return <Animated.View testID="help-message-arrival" style={{transform:[{translateY:progress.interpolate({inputRange:[0,1],outputRange:[distance,0]})}]}}>{children}</Animated.View>;
 }

@@ -43,6 +43,10 @@ test('pending, acknowledged and failed text share padding and metadata geometry'
     const textMetrics = StyleSheet.flatten(pendingText.props.style);
     expect(pending).toMatchObject({ minWidth: 90, paddingHorizontal: 11, paddingVertical: 6 });
     expect(node('help-message-stamp-reserve')).toBeDefined();
+    expect(node('help-message-pending-clock').props.name).toBe('time-outline');
+    expect(node('help-message-time').findAllByType(require('react-native').Text)).toHaveLength(1);
+    expect(React.Children.toArray(node('help-message-time').props.children)[0]).toMatchObject({type:require('react-native').Text});
+    expect(view.root.findAllByType(require('react-native').ActivityIndicator)).toHaveLength(0);
     await act(async () => view.update(React.createElement(HelpPendingMessage, { item: { ...item, status: 'failed' }, onRetry: retry })));
     expect(StyleSheet.flatten(node('help-message-time').props.style)).toEqual(stamp);
     await act(async () => view.root.findAllByProps({ accessibilityLabel: 'Не удалось отправить. Отправить снова' })[0].props.onPress());

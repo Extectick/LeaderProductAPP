@@ -311,6 +311,31 @@ describe('Help screen integration with service boundary', () => {
     await act(async()=>button('Назад').props.onPress());
     expect(mockService.createTicket).not.toHaveBeenCalled(); expect(button('Новое обращение')).toBeTruthy();
   });
+  test('first send waits for keyboard geometry before enqueue and keeps one scene',async()=>{
+    const keyboard=require('../src/features/help/helpKeyboardTransition');
+    let finish!:()=>void;
+    const wait=jest.spyOn(keyboard,'settleHelpKeyboard').mockImplementation(()=>new Promise<void>(resolve=>{finish=resolve;}));
+    try{
+      await render();await act(async()=>button('Новое обращение').props.onPress());
+      const entry=screen.root.findByType(HelpChatEntry);
+      await act(async()=>composer().props.onChange('QA keyboard'));
+      let sending!:Promise<boolean>;
+      await act(async()=>{sending=composer().props.onSend();});
+      expect(mockService.createTicket).not.toHaveBeenCalled();
+      await act(async()=>{finish();await sending;});
+      expect(mockService.createTicket).toHaveBeenCalledTimes(1);
+      expect(screen.root.findByType(HelpChatEntry)).toBe(entry);
+    }finally{wait.mockRestore();}
+  });
+  test('header blur covers the status inset without an opaque header plate',async()=>{
+    await render();await act(async()=>button('Новое обращение').props.onPress());
+    expect(StyleSheet.flatten(screen.root.findByType(KeyboardAvoidingView).props.style).paddingTop).toBe(0);
+    for(const id of ['help-list-header-overlay','help-chat-header-overlay']){
+      const header=screen.root.findAllByProps({testID:id})[0];
+      expect(header.findAllByType('HelpBlurSurface' as any).length).toBe(1);
+      expect(StyleSheet.flatten(header.props.style).backgroundColor).toBeUndefined();
+    }
+  });
   test('first send creates once and clears draft only after success',async()=>{
     mockNativeChatLayout=true;
     await render(); await act(async()=>button('Новое обращение').props.onPress());
