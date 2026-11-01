@@ -1,10 +1,11 @@
 import React, {useEffect,useRef} from 'react';
-import {Animated,Easing,Pressable,StyleSheet,Text,TextInput,View} from 'react-native';
+import {Animated,Easing,Pressable,StyleSheet,TextInput,View} from 'react-native';
 import {Ionicons} from '@expo/vector-icons';
 import {HelpHeaderFrame} from './HelpHeaderFrame';
 import {useHelpReducedMotion,useHelpTheme} from '../helpTheme';
 import {HELP_LIST_META_WIDTH} from '../helpLayout';
 import {helpDevRef} from '../helpDiagnostics';
+import {HelpTicketHeading} from './HelpTicketHeading';
 
 export type HelpChatSearchFieldProps = {
   query:string;onQueryChange:(query:string)=>void;onClose:()=>void;onSubmit?:()=>void;autoFocus?:boolean;
@@ -29,7 +30,7 @@ export function HelpChatHeader({title,meta,onBack,onMenu,onSearch,search,menuAct
   const c=useHelpTheme();
   return <HelpHeaderFrame connecting={connecting} onBack={search?.onClose??onBack} trailing={search||onMenu ? <HelpMoreCloseButton key="menu" active={Boolean(search)||menuActive} activeLabel={search ? 'Закрыть поиск' : 'Закрыть меню обращения'} onPress={search?.onClose??onMenu!}/> : undefined}>
     <View key="content" style={{flex:1,minWidth:0,justifyContent:'center',gap:1}}>
-      {search ? <View style={{height:48,flexDirection:'row',alignItems:'center'}}><Ionicons name="search-outline" size={20} color={c.muted} accessible={false}/><TextInput testID="help-chat-search-input" accessibilityLabel="Поиск в переписке" value={search.query} onChangeText={search.onQueryChange} onSubmitEditing={search.onSubmit} autoFocus={search.autoFocus??false} placeholder="Поиск в переписке" placeholderTextColor={c.muted} autoCapitalize="none" autoCorrect={false} returnKeyType="search" clearButtonMode="never" maxLength={100} style={{flex:1,minWidth:0,height:48,paddingHorizontal:8,paddingVertical:0,color:c.text,fontSize:16,includeFontPadding:false}}/></View> : <><Text numberOfLines={1} style={{color:c.text,fontSize:15,lineHeight:20,fontWeight:'600'}}>{title}</Text>{meta ? <Text numberOfLines={1} style={{color:c.muted,fontSize:10,lineHeight:14}}>{meta}</Text> : null}</>}
+      {search ? <View style={{height:48,flexDirection:'row',alignItems:'center'}}><Ionicons name="search-outline" size={20} color={c.muted} accessible={false}/><TextInput testID="help-chat-search-input" accessibilityLabel="Поиск в переписке" value={search.query} onChangeText={search.onQueryChange} onSubmitEditing={search.onSubmit} autoFocus={search.autoFocus??false} placeholder="Поиск в переписке" placeholderTextColor={c.muted} autoCapitalize="none" autoCorrect={false} returnKeyType="search" clearButtonMode="never" maxLength={100} style={{flex:1,minWidth:0,height:48,paddingHorizontal:8,paddingVertical:0,color:c.text,fontSize:16,includeFontPadding:false}}/></View> : <HelpTicketHeading title={title} meta={meta}/>}
     </View>
   </HelpHeaderFrame>;
 }

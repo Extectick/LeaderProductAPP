@@ -111,6 +111,14 @@ describe('Help screen integration with service boundary', () => {
     await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());
     expect(composer().props.focusKey).toBe(0);expect(composer().props.quote).toBeUndefined();
   });
+  test('failed ticket opening returns to an interactive list and allows another attempt',async()=>{
+    mockService.tickets=[ticket];mockService.openTicket.mockRejectedValueOnce(new Error('Не удалось открыть обращение'));
+    await render();await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());
+    expect(screen.root.findAllByType(HelpChatEntry)).toHaveLength(0);
+    await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());
+    expect(mockService.openTicket).toHaveBeenCalledTimes(2);
+    expect(screen.root.findAllByType(HelpChatEntry)).toHaveLength(1);
+  });
   test('initial content growth motion stays disabled until entry completion',async()=>{
     mockNativeChatLayout=true;mockService.tickets=[ticket];await render();
     await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());

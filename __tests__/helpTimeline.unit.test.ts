@@ -91,7 +91,8 @@ describe('sticky date geometry and navigation integration',()=>{
     props.hideStickyDate=true;await render();
     expect(floating()).toBeUndefined();expect(props.onStickyDateChange).toHaveBeenLastCalledWith(firstDate);
     await act(async()=>ref.current!.jumpToDate());expect(props.onDate).toHaveBeenCalledWith(firstDate);
-    await act(async()=>ref.current!.jumpToDate(nextDate));expect(props.onDate).toHaveBeenLastCalledWith(nextDate);
+    // The next day's first row is already readable in this viewport.
+    await act(async()=>ref.current!.jumpToDate(nextDate));expect(props.onDate).toHaveBeenCalledTimes(1);
     await act(async()=>screen!.unmount());screen=undefined;
     expect(props.onStickyDateChange).toHaveBeenLastCalledWith(null);
   });
@@ -303,6 +304,7 @@ describe('sticky date geometry and navigation integration',()=>{
     mockLayouts[1]={y:120,height:100};await render();
     mockListApi.scrollToIndex.mockClear();mockListApi.scrollToOffset.mockClear();
     await act(async()=>ref.current!.jumpToDate(firstDate));
+    expect(props.onDate).not.toHaveBeenCalled();expect(props.onSave).not.toHaveBeenCalled();
     expect(screen!.root.findAllByProps({testID:'help-timeline-transition'})).toHaveLength(0);
     props={...props,navigationTarget:{key:1,kind:'date',messageId:1,sequence:1,animate:true}};
     await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
@@ -336,8 +338,8 @@ describe('sticky date geometry and navigation integration',()=>{
     props={...props,navigationTarget:{key:4,kind:'date',messageId:1,sequence:1,animate:true}};
     await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
     expect(mockFlashProps.maintainVisibleContentPosition.disabled).toBe(true);
-    props={...props,navigationTarget:{key:5,kind:'date',messageId:2,sequence:2,animate:true}};
-    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    await act(async()=>ref.current!.jumpToDate(nextDate));
+    expect(props.onDate).not.toHaveBeenCalled();
     expect(mockFlashProps.maintainVisibleContentPosition.disabled).toBe(false);
     await act(async()=>jest.advanceTimersByTimeAsync(400));
     expect(mockListApi.scrollToOffset).toHaveBeenCalledTimes(1);expect(props.onHighlight).not.toHaveBeenCalled();

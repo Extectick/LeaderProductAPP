@@ -2,16 +2,27 @@ import React from 'react';
 import { ActivityIndicator, Pressable, Text, View, type TextStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
-const timeStyle: TextStyle = { fontSize: 10, lineHeight: 12, fontVariant: ['tabular-nums'] };
+// Android's default font padding shifts short glyphs below the inline time.
+// Pending and accepted messages must keep the same line metrics on first paint.
+export const HELP_MESSAGE_TEXT_STYLE: TextStyle = { fontSize: 15, lineHeight: 21, includeFontPadding: false };
+const timeStyle: TextStyle = { fontSize: 10, lineHeight: 12, includeFontPadding: false, fontVariant: ['tabular-nums'] };
+// Keep reserve runs non-painting even if Fabric drops an inherited foreground.
+const reserveStyle: TextStyle = { color: 'rgba(0,0,0,0)', opacity: 0 };
 const label = (time: string, edited = false) => `${edited ? 'изменено ' : ''}${time}`;
+const reserveLabel = (time: string, edited = false) => {
+  // U+2007 has a tabular digit's advance; U+2008 has punctuation's advance.
+  // These glyphs cannot paint duplicate clock digits at any Text opacity.
+  // Word joiners keep the suffix together in Android's first native layout.
+  const clock = Array.from(time, char => /[0-9]/.test(char) ? '\u2007' : /[:.]/.test(char) ? '\u2008' : '\u00a0').join('\u2060');
+  return `${edited ? '\u2007\u2060'.repeat(10) + '\u00a0\u2060' : ''}${clock}`;
+};
 
-/** Reserve actual timestamp glyphs in the native text layout, before first
- * paint. The nonbreaking suffix wraps as one unit and the receipt slot fits
- * both delivery icons and the sending/error indicator. */
+/** Reserve clock/receipt advance in native text layout before first paint.
+ * The suffix contains only non-painting spaces and wraps as one unit. */
 export function HelpMessageStampReserve({ time, edited }: { time: string; edited?: boolean }) {
-  return <Text testID="help-message-stamp-reserve" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[timeStyle, { color: 'transparent' }]}>
-    {'\u2002\u2002'}{label(time, edited).replace(/ /g, '\u00a0')}{'\u00a0'}
-    <Text allowFontScaling={false} maxFontSizeMultiplier={1} style={{ fontSize: 15, lineHeight: 21 }}>{'\u2003\u2060\u2009\u2060'}</Text>
+  return <Text testID="help-message-stamp-reserve" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[timeStyle, reserveStyle]}>
+    {'\u2002\u2002'}{reserveLabel(time, edited)}{'\u2060\u00a0\u2060'}
+    <Text allowFontScaling={false} maxFontSizeMultiplier={1} style={[HELP_MESSAGE_TEXT_STYLE, reserveStyle]}>{'\u2003\u2060\u2009\u2060'}</Text>
   </Text>;
 }
 

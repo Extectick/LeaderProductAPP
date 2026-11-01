@@ -1,6 +1,7 @@
 import { BlurView, type BlurTint } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useMemo } from 'react';
+import { APP_EDGE_BLUR } from './appBlurTokens';
 import {
   Platform,
   StyleSheet,
@@ -10,8 +11,8 @@ import {
   type ViewStyle,
 } from 'react-native';
 
-const DEFAULT_WEB_BACKDROP_FILTER = 'blur(20px) saturate(160%)';
-const DEFAULT_BLUR_INTENSITY = 36;
+const DEFAULT_WEB_BACKDROP_FILTER = `blur(${APP_EDGE_BLUR.webRadius}px) saturate(160%)`;
+const DEFAULT_BLUR_INTENSITY = APP_EDGE_BLUR.intensity;
 
 type LiquidGlassSurfaceProps = {
   children?: React.ReactNode;

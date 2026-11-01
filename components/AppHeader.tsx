@@ -2,6 +2,8 @@ import { useTheme } from '@/context/ThemeContext';
 import { useNotificationViewport } from '@/context/NotificationViewportContext';
 import { useThemeColor } from '@/hooks/useThemeColor';
 import { LiquidGlassSurface } from '@/components/ui/LiquidGlassSurface';
+import { AppEdgeBlur, useScreenBlurTarget } from '@/components/ui/AppScreenBlur';
+import { APP_EDGE_BLUR } from '@/components/ui/appBlurTokens';
 import AppStatusIndicator from '@/src/shared/ui/AppStatusIndicator';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -20,7 +22,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const HEADER_RADIUS = 22;
-const BLUR_INTENSITY = 36;
+const BLUR_INTENSITY = APP_EDGE_BLUR.intensity;
 const SURFACE_OPACITY_LIGHT = 0.82;
 const SURFACE_OPACITY_DARK = 0.6;
 const SURFACE_OPACITY_ANDROID_BUMP = 0.08;
@@ -116,6 +118,7 @@ export function AppHeader({
   const isMobileWidth = width < 720;
   const isDocument = variant === 'document';
   const isFlat = variant === 'flat';
+  const screenBlurTarget = useScreenBlurTarget();
 
   const background = useThemeColor({}, 'background');
   const textColor = useThemeColor({}, 'text');
@@ -221,7 +224,7 @@ export function AppHeader({
   );
 
   const shellContent = isFlat ? (
-    <View style={{ backgroundColor: background }}>{headerContent}</View>
+    <View>{headerContent}</View>
   ) : isDocument ? (
     <View style={styles.documentShell}>
       <LiquidGlassSurface
@@ -229,7 +232,7 @@ export function AppHeader({
         overlayColor={resolvedSurfaceOverlayColor}
         blurTint={blurTint}
         blurIntensity={blurIntensity}
-        webBackdropFilter="blur(22px) saturate(160%)"
+        webBackdropFilter={`blur(${APP_EDGE_BLUR.webRadius}px) saturate(160%)`}
         style={styles.documentGlassShell}
       >
         {headerContent}
@@ -242,7 +245,7 @@ export function AppHeader({
         overlayColor={resolvedSurfaceOverlayColor}
         blurTint={blurTint}
         blurIntensity={blurIntensity}
-        webBackdropFilter="blur(22px) saturate(160%)"
+        webBackdropFilter={`blur(${APP_EDGE_BLUR.webRadius}px) saturate(160%)`}
         style={[styles.glassShell, dense && styles.glassShellDense]}
       >
         {headerContent}
@@ -280,8 +283,9 @@ export function AppHeader({
     <View
       pointerEvents="box-none"
       onLayout={handleWrapLayout}
-      style={[styles.wrap, tight && styles.wrapTight, (isDocument || isFlat) && styles.wrapDocument, { paddingTop: topPadding, paddingHorizontal: sidePadding }, isFlat && { backgroundColor: background }]}
+      style={[styles.wrap, tight && styles.wrapTight, (isDocument || isFlat) && styles.wrapDocument, { paddingTop: topPadding, paddingHorizontal: sidePadding }]}
     >
+      {isFlat ? <View pointerEvents="none" style={[StyleSheet.absoluteFill, { bottom: -APP_EDGE_BLUR.bottomFeather }]}><AppEdgeBlur target={screenBlurTarget} edge="bottom" backgroundColor={background} dark={isDark}/></View> : null}
       {animatedShell}
     </View>
   );

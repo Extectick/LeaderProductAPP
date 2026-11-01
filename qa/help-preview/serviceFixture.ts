@@ -31,11 +31,16 @@ export async function uploadFixtureAttachment(file: HelpLocalFile): Promise<Help
   return { id, name: file.name, mimeType: file.mimeType || 'application/octet-stream', kind: file.mimeType?.startsWith('image/') ? 'IMAGE' : file.mimeType?.startsWith('audio/') ? 'AUDIO' : 'FILE', size: file.size ?? 0, url, width: file.width, height: file.height };
 }
 
+// Keep the reference-card fixture available even after QA cache hydration.
+const withSourceFixture = (tickets: HelpTicket[]) => tickets.map(ticket => ticket.id === 1039 ? {
+  ...ticket, sourceTicketId: 1042, sourceTicket: { id: 1042, number: 1042, title: 'Не открывается заказ' },
+} : ticket);
+
 export function useHelpService() {
-  const [all, setAll] = useState<HelpTicket[]>(() => fixtureSnapshot()?.tickets ?? [
+  const [all, setAll] = useState<HelpTicket[]>(() => withSourceFixture(fixtureSnapshot()?.tickets ?? [
     { id: 1042, number: 1042, title: 'Не открывается заказ', status: 'OPEN', ownerId: OWNER.id, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), closedAt: null, sourceTicketId: null, sourceTicket: null, itRequested: true, members: [{ userId: IT.id, role: 'IT', user: IT }], unreadCount: 3, lastMessage: fixtures[7], canReopen: false, aiEnabled: false },
     ...[1041, 1040, 1039, 1038, 1037, 1036].map((id, i): HelpTicket => ({ id, number: id, title: ['Не печатает принтер', 'Ошибка при входе в 1С', 'Как выгрузить отчёт в Excel', 'Проверить обмен', 'Заказ не найден', 'Старая заявка'][i], status: i > 3 ? 'CLOSED' : 'OPEN', ownerId: OWNER.id, createdAt: new Date(Date.now() - (i + 1) * 86400000).toISOString(), updatedAt: new Date(Date.now() - (i + 1) * 86400000).toISOString(), closedAt: i > 3 ? new Date(Date.now() - (i === 4 ? 1 : 5) * 86400000).toISOString() : null, sourceTicketId: null, sourceTicket: null, itRequested: i % 2 === 0, members: i % 2 === 0 ? [{ userId: IT.id, role: 'IT', user: IT }, { userId: 203, role: 'IT', user: { id: 203, name: 'Алексей · IT', avatarUrl: null } }] : [], unreadCount: i % 3, lastMessage: message(20 + i, i > 3 ? 'Обращение завершено' : 'Проверяю, скоро вернусь с ответом'), canReopen: i === 4, aiEnabled: false })),
-  ]);
+  ]));
   const [selection, setSelection] = useState<number | null>(null), [messages, setMessages] = useState(fixtures), [query, setQuery] = useState('');
   const [typingUsers,setTypingUsers]=useState<Record<number,HelpTypingUser[]>>({1041:[{userId:IT.id,name:IT.name,avatarUrl:IT.avatarUrl}]});
   const [canManage, setCanManage] = useState(false), [extraRows, setExtraRows] = useState(0), [online, setOnline] = useState(true);
@@ -72,7 +77,7 @@ export function useHelpService() {
       if(!alive)return;
       // A first asynchronous disk load must not overwrite an interaction already in progress.
       if(saved&&!assistantTickets.current.size&&allRef.current.every(ticket=>ticket.id<=1042)){
-        allRef.current=saved.tickets;setAll(saved.tickets);histories.current=new Map(saved.histories);anchors.current=new Map(saved.anchors);readCursors.current=new Map(saved.readCursors);drafts.current=new Map(saved.drafts);assistantTickets.current=new Set(saved.assistantTickets);ticketSequence.current=saved.nextTicket;assistantMessageSequence.current=saved.nextAssistantMessage;
+        const tickets=withSourceFixture(saved.tickets);allRef.current=tickets;setAll(tickets);histories.current=new Map(saved.histories);anchors.current=new Map(saved.anchors);readCursors.current=new Map(saved.readCursors);drafts.current=new Map(saved.drafts);assistantTickets.current=new Set(saved.assistantTickets);ticketSequence.current=saved.nextTicket;assistantMessageSequence.current=saved.nextAssistantMessage;
         const id=selectionRef.current;if(id!==null&&saved.tickets.some(ticket=>ticket.id===id))void openTicket(id);
       }
       for(const [id,rows] of histories.current){const last=rows.at(-1);if(last?.assistantRun&&['thinking','streaming'].includes(last.assistantRun.status))startAssistant(id,last.id,true);}

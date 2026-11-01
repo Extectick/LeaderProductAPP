@@ -23,6 +23,15 @@ export function withOpacity(color: string, opacity: number) {
 
 export const servicesTokens = {
   density: 'medium' as ServiceDensity,
+  row: {
+    minHeight: 94,
+    gap: 16,
+    paddingVertical: 15,
+    paddingHorizontal: 4,
+    iconContainerSize: 56,
+    textInset: 76,
+    maxContentWidth: 760,
+  },
   page: {
     shellBackground: '#F8FAFC',
     topPadding: 12,

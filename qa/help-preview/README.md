@@ -17,6 +17,7 @@ Default URL: http://localhost:8100/?theme=dark&width=390
 - `?theme=light&width=320` tests compact/light layout.
 - `?theme=dark&width=390&composer=long` starts with an overflowing composer.
 - `?theme=dark&width=390&screen=list` renders the real **HelpScreen** list.
+- `?screen=services&theme=light&width=390` renders the real flat services catalog and shared AppHeader/blur without login. Catalog access, admin status, reachability and navigation are fixtures only in this QA resolver. Native photo-library/camera boundaries are replaced only for the web QA bundle.
 - `?theme=light&width=390&screen=chat&ticketId=1042` opens its real chat layout.
   Metro aliases only HelpScreen's service hook/router imports to in-memory QA
   fixtures. Production resolution and auth remain unchanged. List/archive/chat

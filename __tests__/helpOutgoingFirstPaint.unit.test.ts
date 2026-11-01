@@ -15,7 +15,7 @@ const message = { id: 1, ticketId: 4, authorId: 7, kind: 'TEXT', text: '123', cr
 const props = { message, userId: 7, open: true, canInteract: true, selected: false, highlighted: false, solution: false,
   resolve: jest.fn(), onMenu: jest.fn(), onDismissMenu: jest.fn(), onReply: jest.fn(), onCopy: jest.fn(), onEdit: jest.fn(), onForward: jest.fn(), onReaction: jest.fn(), onQuote: jest.fn(), onImage: jest.fn(), onFile: jest.fn(), onCloseTicket: jest.fn(), onRequestIt: jest.fn(), onError: jest.fn() };
 
-test.each(['123', 'Длинный текст, который занимает несколько строк и должен сразу оставить место для времени.'])('outgoing text is laid out with its timestamp before any measurement: %s', async text => {
+test.each(['h', '123', 'Длинный текст, который занимает несколько строк и должен сразу оставить место для времени.'])('outgoing text is laid out with its timestamp before any measurement: %s', async text => {
   let view!: TestRenderer.ReactTestRenderer;
   await act(async () => { view = TestRenderer.create(React.createElement(HelpMessageBubble, { ...props, message: { ...message, text } })); });
   try {
@@ -23,6 +23,7 @@ test.each(['123', 'Длинный текст, который занимает н
     expect(node('help-message-text').props.onTextLayout).toBeUndefined();
     expect(node('help-text-layout').props.onLayout).toBeUndefined();
     expect(node('help-message-stamp-reserve')).toBeDefined();
+    expect(StyleSheet.flatten(node('help-message-text').props.style)).toMatchObject({fontSize:15,lineHeight:21,includeFontPadding:false});
     expect(StyleSheet.flatten(node('help-message-time').props.style)).toMatchObject({ position: 'absolute', right: 11, bottom: 8 });
     await act(async () => view.update(React.createElement(HelpMessageBubble, { ...props, message: { ...message, text }, readByOthers: true })));
     expect(StyleSheet.flatten(node('help-message-time').props.style)).toMatchObject({ position: 'absolute', right: 11, bottom: 8 });
@@ -38,6 +39,8 @@ test('pending, acknowledged and failed text share padding and metadata geometry'
     const node = (testID: string) => view.root.findAllByProps({ testID })[0];
     const pending = StyleSheet.flatten(node('help-pending-bubble').props.style);
     const stamp = StyleSheet.flatten(node('help-message-time').props.style);
+    const pendingText = view.root.findAllByProps({accessibilityLabel:item.input.text})[0];
+    const textMetrics = StyleSheet.flatten(pendingText.props.style);
     expect(pending).toMatchObject({ minWidth: 90, paddingHorizontal: 11, paddingVertical: 8 });
     expect(node('help-message-stamp-reserve')).toBeDefined();
     await act(async () => view.update(React.createElement(HelpPendingMessage, { item: { ...item, status: 'failed' }, onRetry: retry })));
@@ -46,6 +49,7 @@ test('pending, acknowledged and failed text share padding and metadata geometry'
     expect(retry).toHaveBeenCalledTimes(1);
     await act(async () => view.update(React.createElement(HelpMessageBubble, props)));
     expect(StyleSheet.flatten(node('help-message-content').props.style)).toMatchObject({ paddingHorizontal: pending.paddingHorizontal, paddingVertical: pending.paddingVertical });
+    expect(StyleSheet.flatten(node('help-message-text').props.style)).toEqual(textMetrics);
     expect(StyleSheet.flatten(node('help-message-time').props.style)).toEqual(stamp);
   } finally { await act(async () => view.unmount()); }
 });

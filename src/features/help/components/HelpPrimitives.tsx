@@ -1,9 +1,8 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Image, Keyboard, Modal, PanResponder, Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { BlurView } from 'expo-blur';
-import MaskedView from '@react-native-masked-view/masked-view';
+import { AppEdgeBlur } from '@/components/ui/AppScreenBlur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useHelpTheme, useHelpReducedMotion } from '../helpTheme';
 import { helpColor, helpInitials } from '../helpUiUtils';
@@ -19,43 +18,20 @@ export function HelpAvatar({ id, name, uri, size = 34, muted = false }: { id: nu
   const [failedUri,setFailedUri]=useState<string|null>(null);
   return <View accessibilityLabel={name} style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: muted ? '#747D89' : helpColor(id), opacity:muted ? .7 : 1, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>{uri&&uri!==failedUri ? <Image onError={()=>setFailedUri(uri)} source={{ uri }} style={{ width: size, height: size, ...(muted ? {filter:'grayscale(1)'} as any : {}) }} /> : <Text style={{ color: '#FFF', fontSize: size * .32, fontWeight: '600' }}>{helpInitials(name) || 'IT'}</Text>}</View>;
 }
-/** One blur pass with a continuous alpha mask; no horizontal strip layers. */
+/** App headers and Help use the same material and edge falloff. */
 export function HelpBlurSurface({target,edge='top'}:{target?:React.RefObject<View|null>;edge?:'top'|'bottom'}) {
   const c=useHelpTheme();
-  const [laidOut,setLaidOut]=useState(false);
-  const [boundTarget,setBoundTarget]=useState<React.RefObject<View|null>|undefined>();
-  // Refs are populated after render and may be reused when switching list/chat.
-  // Give Expo an immutable target snapshot so it can detect a replaced native view.
-  useLayoutEffect(()=>{
-    if(Platform.OS!=='android')return;
-    let active=true;let frame:number|undefined;
-    const bind=()=>{
-      if(!active)return;
-      const node=target?.current??null;
-      setBoundTarget(previous=>previous?.current===node ? previous : node ? {current:node} : undefined);
-      if(target&&!node)frame=requestAnimationFrame(bind);
-    };
-    bind();
-    return()=>{active=false;if(frame!==undefined)cancelAnimationFrame(frame);};
-  });
-  const ready=Platform.OS!=='android'||(laidOut&&Boolean(boundTarget?.current));
-  const feather=edge==='top' ? 40 : 24;
-  const direction=edge==='top' ? 'to bottom' : 'to top';
-  const mask=`linear-gradient(${direction}, transparent 0, #00000018 ${feather*.25}px, #00000080 ${feather*.6}px, #000 ${feather}px)`;
-  if(Platform.OS==='web')return <View style={[StyleSheet.absoluteFill,{backdropFilter:'blur(10px)',WebkitBackdropFilter:'blur(10px)',maskImage:mask,WebkitMaskImage:mask} as any]}/>;
-  return <MaskedView testID="help-blur-surface" onLayout={event=>setLaidOut(event.nativeEvent.layout.width>0&&event.nativeEvent.layout.height>0)} style={StyleSheet.absoluteFill} maskElement={<View style={{flex:1,flexDirection:edge==='top' ? 'column' : 'column-reverse'}}><LinearGradient colors={edge==='top' ? ['#00000000','#00000018','#00000080','#000000'] : ['#000000','#00000080','#00000018','#00000000']} locations={edge==='top' ? [0,.25,.6,1] : [0,.4,.75,1]} style={{height:feather}}/><View style={{flex:1,backgroundColor:'#000'}}/></View>}>
-    {ready ? <BlurView blurTarget={Platform.OS==='android' ? boundTarget : target} blurMethod="dimezisBlurViewSdk31Plus" noiseEnabled={false} frameClearColor={c.background} intensity={30} tint={c.dark ? 'dark' : 'light'} style={StyleSheet.absoluteFill}/> : <View testID="help-blur-preparing" style={[StyleSheet.absoluteFill,{backgroundColor:c.background}]}/>}
-  </MaskedView>;
+  return <AppEdgeBlur target={target} edge={edge} dark={c.dark} backgroundColor={c.background} testID="help-blur-surface"/>;
 }
 export function HelpDock({ children, onHeight, target }: { children: React.ReactNode; onHeight?: (height: number) => void; target?: React.RefObject<View | null> }) {
   const c = useHelpTheme(); const insets = useSafeAreaInsets();
-  const [keyboardVisible, setKeyboardVisible] = useState(() => Keyboard.isVisible() && (Keyboard.metrics()?.height ?? 0) > 0);
+  const [keyboardVisible, setKeyboardVisible] = useState(() => Boolean(Keyboard.isVisible?.()) && (Keyboard.metrics?.()?.height ?? 0) > 0);
   useEffect(() => {
     const show = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', event => setKeyboardVisible(event.endCoordinates.height > 0));
     const hide = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => setKeyboardVisible(false));
     return () => { show.remove(); hide.remove(); };
   }, []);
-  useEffect(() => helpDevState({ keyboardVisible, keyboardHeight: Keyboard.metrics()?.height ?? 0 }), [keyboardVisible]);
+  useEffect(() => helpDevState({ keyboardVisible, keyboardHeight: Keyboard.metrics?.()?.height ?? 0 }), [keyboardVisible]);
   return <View ref={node => helpDevRef('dock', node)} onLayout={e => onHeight?.(e.nativeEvent.layout.height)} style={{ paddingHorizontal: 8, paddingTop: 8, paddingBottom: keyboardVisible ? 8 : insets.bottom + 8, position: 'relative' }}>
     <View testID="help-dock-backdrop" pointerEvents="none" style={[StyleSheet.absoluteFill, {top:-8}]}><HelpBlurSurface target={target}/></View>{children}
   </View>;

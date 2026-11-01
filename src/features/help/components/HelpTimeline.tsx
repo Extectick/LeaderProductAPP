@@ -257,6 +257,17 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   }, [reduced, save, stageViewport, visible]);
   const jumpDate = useCallback((date = currentDateRef.current) => {
     if (!date) return;
+    const day=helpDayKey(date),currentRows=rowsRef.current;
+    const first=currentRows.findIndex(row=>row.kind==='message'&&helpDayKey(row.message.createdAt)===day);
+    const previous=first>=0?currentRows.slice(0,first).filter(row=>row.kind==='message').at(-1):undefined;
+    const boundaryKnown=first>=0&&(currentRows[first].message.sequence===1||Boolean(previous&&helpDayKey(previous.message.createdAt)!==day));
+    const layout=boundaryKnown?list.current?.getLayout(first):undefined;
+    if(layout&&helpDateJumpMode({targetTop:layout.y+(list.current?.getFirstItemOffset()??0)-(list.current?.getAbsoluteLastScrollOffset()??geometry.current.offset),targetHeight:layout.height,viewportTop:live.current.headerHeight,viewportBottom:geometry.current.height-live.current.dockHeight})==='visible'){
+      // No save, snapshot, service lookup or follow change for the already
+      // visible beginning of this day: even an immediately cancelled copy flashes.
+      if(inNavigation.current||outgoingRef.current){++navigationGeneration.current;inNavigation.current=false;setNavigating(false);stopIdleSave();cancelJump();}
+      return;
+    }
     save();cancelJump();
     // Keep the old viewport while resolving the real first message of the day.
     // Merely tapping a date must not start a transition to a fictitious id 0.

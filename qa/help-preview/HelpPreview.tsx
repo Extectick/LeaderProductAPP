@@ -1,4 +1,5 @@
 import {DurableHelpProbe} from './durableProbe';
+import ServicesPreview from './ServicesPreview';
 /** Local visual fixture entry. Never imported by app/ or the production entry. */
 import React, { useEffect, useState } from 'react';
 import { Image, Platform, Pressable, ScrollView, StatusBar, Text, View, useWindowDimensions } from 'react-native';
@@ -100,7 +101,7 @@ function Preview() {
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 5 }}>{button(theme === 'dark' ? 'Светлая' : 'Тёмная', () => void setTheme(theme === 'dark' ? 'light' : 'dark'))}{[320, 390, 430].map(w => button(`${w}px`, () => setWidth(w)))}{button('Длинный ввод', () => setValue(Array.from({ length: 10 }, (_, i) => `${i + 1}. Проверка длинного текста в поле ввода.`).join('\n')))}{button('Очистить ввод', () => setValue(''))}{button('Закрытие', () => setMode('close'))}{button('Повторное открытие', () => setMode('reopen'))}{button('Обычный ввод', () => setMode('message'))}</View>
     </View>
     <View testID="help-qa-surface" style={{ width, ...(fixedHeight ? { height: fixedHeight, minHeight: fixedHeight, flexGrow: 0, flexShrink: 0 } : { maxWidth: '100%' as const, flex: 1, minHeight: 0, borderLeftWidth: 1, borderRightWidth: 1, borderColor: c.line }) }}>
-      {fullScreen ? <SafeAreaInsetsContext.Provider value={safeInsets}><HelpScreen /></SafeAreaInsetsContext.Provider> : <>
+      {fullScreen ? <SafeAreaInsetsContext.Provider value={safeInsets}>{fullScreen === 'services' ? <ServicesPreview/> : <HelpScreen />}</SafeAreaInsetsContext.Provider> : <>
       <View style={{ flexDirection: 'row', alignItems: 'center', padding: 8, gap: 8, borderBottomWidth: 1, borderColor: c.line, backgroundColor: c.headerSurface }}><HelpIcon name="arrow-back" label="Назад — QA" onPress={() => setNotice('QA: каталог не подключён')} /><View style={{ flex: 1 }}><Text numberOfLines={1} style={{ color: c.text, fontWeight: '600', fontSize: 16 }}>Не открывается заказ</Text><Text style={{ color: c.muted, fontSize: 11 }}>#1042 · 23.10.2026, 10:40 · QA</Text></View><HelpIcon name="ellipsis-horizontal" label="Действия — QA" onPress={() => setMode('close')} /></View>
       <ScrollView testID="help-qa-messages" keyboardShouldPersistTaps="handled" style={{ flex: 1 }} contentContainerStyle={{ paddingTop: 10, paddingBottom: 16 }}>
         <Text style={{ color: c.muted, textAlign: 'center', fontSize: 11, marginBottom: 12 }}>Сегодня</Text>

@@ -61,6 +61,21 @@ it('uses cache immediately on a cold start without waiting for a failing request
   expect(snapshot.services?.[0].enabled).toBe(true);
 });
 
+it('keeps a previously empty catalog in loading state while permissions are refreshed', async () => {
+  mockRead.mockResolvedValue([]);
+  mockRemote.mockResolvedValue([]);
+  await mount();
+  expect(snapshot.services).toEqual([]);
+  await act(async () => screen.unmount());
+  let resolve!: (services: any[]) => void;
+  mockRemote.mockReturnValue(new Promise(done => { resolve = done; }));
+  await mount();
+  expect(snapshot.loading).toBe(true);
+  await act(async () => { resolve([orders]); });
+  expect(snapshot.loading).toBe(false);
+  expect(snapshot.services?.map(item => item.key)).toEqual(['client_orders']);
+});
+
 it('does not request services or show network errors while known offline, including repeated refresh', async () => {
   mockOnline = false;
   await mount();

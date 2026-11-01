@@ -12,6 +12,8 @@ import { useOptionalLastServiceRoute } from '@/src/features/navigation/LastServi
 import { useOptionalUnsavedChanges } from '@/src/features/navigation/UnsavedChangesContext';
 import { ServicesHeaderSlotProvider, type ServicesHeaderOverride } from '@/src/features/services/headerSlotContext';
 import { useServerStatus } from '@/src/shared/network/useServerStatus';
+import { serviceOwnsHeader } from '@/src/features/navigation/serviceHeaderOwnership';
+import { ScreenBlurProvider } from '@/components/ui/AppScreenBlur';
 
 type HeaderMeta = {
   title: string;
@@ -124,13 +126,14 @@ export default function ServicesLayout() {
   const showCloudServiceInHeader = Boolean(serviceKey && guardedService?.kind === 'CLOUD');
 
   return (
-    <ServicesHeaderSlotProvider value={headerSlotContextValue}>
+    <ScreenBlurProvider><ServicesHeaderSlotProvider value={headerSlotContextValue}>
       <Stack
         screenOptions={({ route, navigation }) => {
           const name = (route as any)?.routeName || (route.name as string);
           let meta = headerMap[name as keyof typeof headerMap];
           const currentPath = String(pathname || '').split('?')[0];
           const isCatalogPath = /^\/services\/?$/.test(currentPath);
+          const isCatalogRoute = name === 'index' || name === 'index.web';
 
           const isAppeals = name?.includes('appeals');
           const isAppealsList = name === 'appeals' || name === 'appeals/index' || name === 'appeals/index.web';
@@ -252,7 +255,7 @@ export default function ServicesLayout() {
 
           return {
             // Tracking owns a safe-area-aware toolbar above the map.
-            headerShown: !clientOrdersHeaderHidden && !showTrackingBottomSlot && !/^\/services\/(stock_balances|help)(?:\/.*)?$/.test(currentPath),
+            headerShown: !serviceOwnsHeader(name) && !clientOrdersHeaderHidden && !showTrackingBottomSlot,
             headerTransparent: true,
             headerShadowVisible: false,
             headerStatusBarHeight: 0,
@@ -277,16 +280,19 @@ export default function ServicesLayout() {
                 surfaceVisible={activeHeaderOverride?.surfaceVisible ?? !isCatalogPath}
                 surfaceOverrideColor={activeHeaderOverride ? undefined : (isCatalogPath && catalogOffline ? 'rgba(254, 226, 226, 0.94)' : undefined)}
                 borderOverrideColor={activeHeaderOverride ? undefined : (isCatalogPath && catalogOffline ? 'rgba(248, 113, 113, 0.28)' : undefined)}
-                entranceMotion={activeHeaderOverride?.entranceMotion ?? (isClientOrdersPath ? 'none' : isCatalogPath ? 'fade' : 'slide')}
-                variant={activeHeaderOverride?.variant ?? (isClientOrdersPath ? 'document' : 'default')}
+                entranceMotion={activeHeaderOverride?.entranceMotion ?? (isClientOrdersPath || isCatalogRoute ? 'none' : 'slide')}
+                variant={activeHeaderOverride?.variant ?? (isCatalogRoute ? 'flat' : isClientOrdersPath ? 'document' : 'default')}
                 showServerStatus={activeHeaderOverride?.showServerStatus ?? (!isCatalogPath && !isClientOrdersPath)}
               />
             ),
             animation: isClientOrdersPath ? 'fade' : 'ios_from_left',
           };
         }}
-      />
-    </ServicesHeaderSlotProvider>
+      >
+        <Stack.Screen name="help/index" options={{ headerShown: false }} />
+        <Stack.Screen name="help/knowledge" options={{ headerShown: false }} />
+      </Stack>
+    </ServicesHeaderSlotProvider></ScreenBlurProvider>
   );
 }
 

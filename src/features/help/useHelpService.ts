@@ -18,6 +18,7 @@ import {readableHelpSequence} from './helpReadSequence';
 import { helpLocalDayBounds } from './helpDateNavigation';
 import {helpListCacheKey,helpViewCache,rememberHelpWindow,forgetHelpView,shareHelpItems} from './helpViewCache';
 import {helpDevEvent} from './helpDiagnostics';
+import {helpOpeningStorage} from './helpOpeningStorage';
 const isAccessRevoked=(error:unknown)=>error instanceof HelpApiError&&([401,403].includes(error.status)||(error.status===404&&!['HELP_MESSAGE_NOT_FOUND','HELP_DATE_MESSAGE_NOT_FOUND'].includes(error.code??'')));
 
 function detailPage(detail:HelpDetail):HelpHistoryPage {
@@ -186,7 +187,8 @@ export function useHelpService(isFocused = true) {
     const account=identity,generation=++detailGeneration.current;
     rememberActive();
     const hot=helpViewCache(identity).windows.get(id);
-    activeId.current=id;selectedRef.current=null;setSelectedTicket(null);updateMessages([]);pageRef.current=null;viewport.current=null;
+    const summary=ticketsRef.current.find(ticket=>ticket.id===id)??null;
+    activeId.current=id;selectedRef.current=summary;setSelectedTicket(summary);updateMessages([]);pageRef.current=null;viewport.current=null;
     readSequence.current=0;pendingRead.current=0;setLoading(true);setError(null);setNavigationTarget(null);setFirstUnreadSequence(null);
     setHasOlder(false);setHasNewer(false);setLoadingOlder(false);setLoadingNewer(false);paging.current={older:false,newer:false};
     let fallbackDetail:HelpDetail|undefined;
@@ -194,35 +196,45 @@ export function useHelpService(isFocused = true) {
     if(hot&&(!hot.anchor||hot.anchor.atLatest||hot.page.messages.some(message=>message.sequence===hot.anchor!.sequence))&&(!explicit?.messageId||hot.page.messages.some(message=>message.id===explicit.messageId))&&(!explicit?.sequence||hot.page.messages.some(message=>message.sequence===explicit.sequence))){
       selectedRef.current=hot.ticket;setSelectedTicket(hot.ticket);viewport.current=hot.anchor;applyPage(hot.page);
       setFirstUnreadSequence(hot.page.firstUnreadSequence);issueNavigation(initialHelpPosition(hot.anchor,hot.page.firstUnreadSequence,explicit));setLoading(false);
-      socketRef.current?.getSocket()?.emit('help:subscribe',{ticketId:id});void liveTicketRefresh.current(id);
+      socketRef.current?.getSocket()?.emit('help:subscribe',{ticketId:id});void liveTicketRefresh.current(id).catch(error=>{if(valid())report(error);});
       traceData('memory');
       return {ticket:hot.ticket,...hot.page};
     }
     try{
-      let cached=await readCachedHelpTicket(userId,id).catch(()=>null);if(!valid())return;
+      // SQLite may still be starting/replaying an outbox transaction. Give a
+      // fast cache first chance, then fetch without holding the screen hostage.
+      const storageBudget=server.isReachable?180:1500;
+      let cached=await helpOpeningStorage(readCachedHelpTicket(userId,id),null,storageBudget);if(!valid())return;
       const anchor=cached?.record.anchor??null;viewport.current=anchor;
       const cachedPosition=initialHelpPosition(anchor,cached?.record.firstUnreadSequence??null,explicit);
-      if(cachedPosition.sequence&&!cached?.page?.messages.some(message=>message.sequence===cachedPosition.sequence))cached=await readCachedHelpTicket(userId,id,cachedPosition.sequence).catch(()=>cached);
+      if(cachedPosition.sequence&&!cached?.page?.messages.some(message=>message.sequence===cachedPosition.sequence))cached=await helpOpeningStorage(readCachedHelpTicket(userId,id,cachedPosition.sequence),cached,storageBudget);
       if(!valid())return;
       if(cached){selectedRef.current=cached.record.ticket;setSelectedTicket(cached.record.ticket);
         if(cached.page&&(!explicit?.messageId||cached.page.messages.some(message=>message.id===explicit.messageId))&&(!explicit?.sequence||cached.page.messages.some(message=>message.sequence===explicit.sequence))){
           applyPage(cached.page);setFirstUnreadSequence(cached.record.firstUnreadSequence);issueNavigation(cachedPosition);setLoading(false);
-          socketRef.current?.getSocket()?.emit('help:subscribe',{ticketId:id});void liveTicketRefresh.current(id);
+          socketRef.current?.getSocket()?.emit('help:subscribe',{ticketId:id});void liveTicketRefresh.current(id).catch(error=>{if(valid())report(error);});
           traceData('sqlite');
           return {ticket:cached.record.ticket,...cached.page};
         }}
       const detail=await helpApi.detail(id);if(!valid())return;fallbackDetail=detail;
-      const tail=detailPage(detail);await persistPage(detail.ticket,tail);if(!valid())return;
+      const pendingStorage:Promise<void>[]=[];
+      const persistOpening=async(page:HelpHistoryPage)=>{
+        const work=persistPage(detail.ticket,page);pendingStorage.push(work);
+        await helpOpeningStorage(work.then(()=>true),false);
+      };
+      const tail=detailPage(detail);await persistOpening(tail);if(!valid())return;
       const position=initialHelpPosition(anchor,tail.firstUnreadSequence,explicit);let page=tail;
       if(position.kind!=='latest'){
         const target=position.sequence;
         const found=target?tail.messages.some(message=>message.sequence===target):tail.messages.some(message=>message.id===position.messageId);
         if(!found)page=await helpApi.messages(id,position.messageId&&!target?{aroundMessageId:position.messageId}:{around:target});
       }
-      if(!valid())return;if(page!==tail)await persistPage(detail.ticket,page);if(!valid())return;
+      if(!valid())return;if(page!==tail)await persistOpening(page);if(!valid())return;
       applyDetail({...detail,...page});setFirstUnreadSequence(tail.firstUnreadSequence);issueNavigation(position);
       socketRef.current?.getSocket()?.emit('help:subscribe',{ticketId:id});
-      void liveTicketRefresh.current(id);
+      // A slow commit is allowed to finish, but must not hold navigation or
+      // replace the mounted window after the reader has moved to another chat.
+      void Promise.all(pendingStorage).then(async()=>{if(valid())await liveTicketRefresh.current(id);}).catch(error=>{if(valid())report(error);});
       traceData('network');
       return {...detail,messages:page.messages};
     }catch(e){if(valid()){report(e);if(isAccessRevoked(e)){await revokeTicket(id);throw e;}if(e instanceof HelpApiError&&e.code==='HELP_MESSAGE_NOT_FOUND'&&fallbackDetail){applyDetail(fallbackDetail);issueNavigation({kind:'latest',animate:false});return fallbackDetail;}clearSelection();throw e;}return undefined;}

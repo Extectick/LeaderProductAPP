@@ -58,9 +58,9 @@ function getInitialSnapshotForRender() {
   // An empty snapshot is not authoritative on a newly mounted catalog until
   // the access list has been refreshed. Rendering it as final for one frame
   // caused the recurring "no services" flash before every successful load.
-  if (state.services === null && !state.loading) {
+  if (!state.services?.some((item) => item.visible) && !state.loading) {
     return {
-      services: null,
+      services: state.services,
       loading: true,
       error: null,
     };
@@ -81,13 +81,13 @@ async function loadServicesInternal(force = false) {
     }
 
     const fallbackServices = state.services;
-    setState({ loading: fallbackServices === null, error: null, services: fallbackServices });
+    setState({ loading: !fallbackServices?.some((item) => item.visible), error: null, services: fallbackServices });
 
     const cachedFallback = fallbackServices === null || force ? await readCachedServices() : null;
     if (!isCurrent()) return;
     const fallback = fallbackServices ?? (cachedFallback !== null ? mergeRemoteServices(CATALOG_BASE, cachedFallback) : null);
     // Hydrate authorized services before any network wait, including cold starts.
-    if (fallback !== null) setState({ services: fallback, loading: false, error: null });
+    if (fallback !== null) setState({ services: fallback, loading: !fallback.some((item) => item.visible) && getServerStatus().isReachable, error: null });
 
     try {
       if (!getServerStatus().isReachable) {

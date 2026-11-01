@@ -68,12 +68,12 @@ describe('Help blur startup and target lifecycle',()=>{
     if(screen)await act(async()=>screen!.unmount());
     screen=undefined;mockTheme='light';jest.restoreAllMocks();
   });
-  const layout=()=>screen!.root.findByProps({testID:'help-blur-surface'}).props.onLayout({nativeEvent:{layout:{x:0,y:0,width:390,height:90}}});
-  test('uses current-theme preparation until both layout and native target exist',async()=>{
+  const layout=()=>screen!.root.findByType('MaskedView' as any).props.onLayout({nativeEvent:{layout:{x:0,y:0,width:390,height:90}}});
+  test('stays transparent until both layout and native target exist',async()=>{
     const target:{current:View|null}={current:null};
     await act(async()=>{screen=TestRenderer.create(React.createElement(HelpBlurSurface,{target}));});
     expect(screen!.root.findAllByType('BlurView' as any)).toHaveLength(0);
-    expect(StyleSheet.flatten(screen!.root.findByProps({testID:'help-blur-preparing'}).props.style).backgroundColor).toBe('#151B22');
+    expect(StyleSheet.flatten(screen!.root.findByProps({testID:'app-blur-preparing'}).props.style).backgroundColor).toBeUndefined();
     await act(async()=>layout());
     expect(screen!.root.findAllByType('BlurView' as any)).toHaveLength(0);
     target.current={} as View;
@@ -98,7 +98,7 @@ describe('Help blur startup and target lifecycle',()=>{
   test('light mode supplies its own clear color without changing blur intensity or mask',async()=>{
     mockTheme='light';
     await act(async()=>{screen=TestRenderer.create(React.createElement(HelpBlurSurface,{target:{current:{} as View}}));});
-    expect(StyleSheet.flatten(screen!.root.findByProps({testID:'help-blur-preparing'}).props.style).backgroundColor).toBe('#F7F9FC');
+    expect(StyleSheet.flatten(screen!.root.findByProps({testID:'app-blur-preparing'}).props.style).backgroundColor).toBeUndefined();
     await act(async()=>layout());
     expect(screen!.root.findByType('BlurView' as any).props).toMatchObject({tint:'light',frameClearColor:'#F7F9FC',intensity:30,blurMethod:'dimezisBlurViewSdk31Plus'});
   });

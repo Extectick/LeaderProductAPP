@@ -1,0 +1,72 @@
+import React, { createContext, forwardRef, useCallback, useContext, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
+import { Platform, StyleSheet, View, type ViewProps } from 'react-native';
+import { BlurTargetView, BlurView } from 'expo-blur';
+import MaskedView from '@react-native-masked-view/masked-view';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useIsFocused } from 'expo-router/react-navigation';
+import { useTheme } from '@/context/ThemeContext';
+import { useThemeColor } from '@/hooks/useThemeColor';
+
+/** One set of edge/material settings for app headers, chat headers and docks. */
+import { APP_EDGE_BLUR } from './appBlurTokens';
+export { APP_EDGE_BLUR } from './appBlurTokens';
+type Target = React.RefObject<View | null>;
+const BlurContext = createContext<{ target?: Target; bind: (node: View | null) => void; release: (node: View | null) => void }>({ bind: () => {}, release: () => {} });
+export function ScreenBlurProvider({ children }: { children: React.ReactNode }) {
+  const [target, setTarget] = useState<Target>();
+  const bind = useCallback((node: View | null) => setTarget(previous => previous?.current === node ? previous : node ? { current: node } : undefined), []);
+  const release = useCallback((node: View | null) => setTarget(previous => previous?.current === node ? undefined : previous), []);
+  return <BlurContext.Provider value={{ target, bind, release }}>{children}</BlurContext.Provider>;
+}
+export const useScreenBlurTarget = () => useContext(BlurContext).target;
+
+/** Register only the focused scene; retained stack screens cannot steal its blur. */
+export const ScreenBlurTarget = forwardRef<View, ViewProps>(function ScreenBlurTarget({ children, onLayout, ...props }, ref) {
+  const own = useRef<View | null>(null), focused = useIsFocused();
+  const { bind, release } = useContext(BlurContext);
+  useImperativeHandle(ref, () => own.current as View);
+  useLayoutEffect(() => {
+    if (!focused) return;
+    const node = own.current;
+    bind(node);
+    return () => release(node);
+  }, [focused, bind, release]);
+  return <BlurTargetView {...props} ref={own} onLayout={event => { if (focused) bind(own.current); onLayout?.(event); }}>{children}</BlurTargetView>;
+});
+
+/** A transparent fade at the content edge; never paint an opaque loading plate. */
+export function AppEdgeBlur({ target, edge = 'top', backgroundColor, dark, testID = 'app-edge-blur' }: {
+  target?: Target; edge?: 'top' | 'bottom'; backgroundColor?: string; dark?: boolean; testID?: string;
+}) {
+  const { theme } = useTheme();
+  const appBackground = useThemeColor({}, 'background');
+  const [laidOut, setLaidOut] = useState(false);
+  const [boundTarget, setBoundTarget] = useState<Target>();
+  useLayoutEffect(() => {
+    if (Platform.OS !== 'android') return;
+    let alive = true, frame: number | undefined;
+    const bind = () => {
+      if (!alive) return;
+      const node = target?.current ?? null;
+      setBoundTarget(previous => previous?.current === node ? previous : node ? { current: node } : undefined);
+      if (target && !node) frame = requestAnimationFrame(bind);
+    };
+    bind();
+    return () => { alive = false; if (frame !== undefined) cancelAnimationFrame(frame); };
+  });
+  const ready = Platform.OS !== 'android' || laidOut && Boolean(boundTarget?.current);
+  const feather = edge === 'top' ? APP_EDGE_BLUR.topFeather : APP_EDGE_BLUR.bottomFeather;
+  const mask = `linear-gradient(${edge === 'top' ? 'to bottom' : 'to top'}, transparent 0, #00000018 ${feather * .25}px, #00000080 ${feather * .6}px, #000 ${feather}px)`;
+  if (Platform.OS === 'web') return <View testID={testID} pointerEvents="none" style={[StyleSheet.absoluteFill, {
+    backdropFilter: `blur(${APP_EDGE_BLUR.webRadius}px)`, WebkitBackdropFilter: `blur(${APP_EDGE_BLUR.webRadius}px)`, maskImage: mask, WebkitMaskImage: mask,
+  } as any]}/>;
+  return <MaskedView testID={testID} pointerEvents="none" onLayout={event => setLaidOut(event.nativeEvent.layout.width > 0 && event.nativeEvent.layout.height > 0)} style={StyleSheet.absoluteFill}
+    maskElement={<View style={{ flex: 1, flexDirection: edge === 'top' ? 'column' : 'column-reverse' }}>
+      <LinearGradient colors={edge === 'top' ? ['#00000000', '#00000018', '#00000080', '#000000'] : ['#000000', '#00000080', '#00000018', '#00000000']}
+        locations={edge === 'top' ? [0, .25, .6, 1] : [0, .4, .75, 1]} style={{ height: feather }}/><View style={{ flex: 1, backgroundColor: '#000' }}/>
+    </View>}>
+    {ready ? <BlurView blurTarget={Platform.OS === 'android' ? boundTarget : target} blurMethod="dimezisBlurViewSdk31Plus" noiseEnabled={false}
+      frameClearColor={backgroundColor ?? appBackground} intensity={APP_EDGE_BLUR.intensity} tint={(dark ?? theme === 'dark') ? 'dark' : 'light'} style={StyleSheet.absoluteFill}/>
+      : <View testID="app-blur-preparing" style={StyleSheet.absoluteFill}/>}
+  </MaskedView>;
+}

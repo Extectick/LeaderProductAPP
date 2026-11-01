@@ -16,6 +16,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {helpViewCache} from '../src/features/help/helpViewCache';
 import {useHelpService} from '../src/features/help/useHelpService';
 import {cacheHelpPage,readCachedHelpTicket,saveHelpViewport} from '../src/features/help/helpHistory';
+import * as helpHistory from '../src/features/help/helpHistory';
 import * as history from '../src/features/help/helpHistory';
 import {helpLocalDayBounds} from '../src/features/help/helpDateNavigation';
 import {HelpApiError} from '../src/features/help/helpApi';
@@ -44,6 +45,31 @@ test('saved message and offset open an older window; snapshot fetching never mar
   await render();await open();
   expect(service.navigationTarget).toMatchObject({kind:'anchor',sequence:80,offset:-17});
   expect(service.messages.some(message=>message.sequence===80)).toBe(true);expect(service.hasNewer).toBe(true);expect(mockApi.read).not.toHaveBeenCalled();
+});
+
+test('opening ticket 1 stays interactive and falls back to the server when its local snapshot never settles',async()=>{
+  mockApi.list.mockResolvedValue({tickets:[ticket(1,6)],nextCursor:null});
+  mockApi.detail.mockResolvedValue({ticket:ticket(1,6),...page(1,6,1,6)});
+  await render();
+  const read=jest.spyOn(helpHistory,'readCachedHelpTicket').mockImplementation(()=>new Promise(()=>{}));
+  try{
+    let opening!:ReturnType<typeof service.openTicket>;
+    await act(async()=>{opening=service.openTicket(1);});
+    // Header/back navigation belong to the known ticket while storage is busy.
+    expect(service.selectedTicket?.id).toBe(1);expect(service.loading).toBe(true);
+    await act(async()=>{await opening;});
+    expect(mockApi.detail).toHaveBeenCalledWith(1);
+    expect(service.messages).toHaveLength(6);expect(service.loading).toBe(false);
+  }finally{read.mockRestore();}
+});
+
+test('opening does not wait indefinitely for a queued local page write',async()=>{
+  await render();
+  const write=jest.spyOn(helpHistory,'cacheHelpPage').mockImplementation(()=>new Promise(()=>{}));
+  try{
+    await act(async()=>{await service.openTicket(7);});
+    expect(service.selectedTicket?.id).toBe(7);expect(service.messages.length).toBeGreaterThan(0);expect(service.loading).toBe(false);
+  }finally{write.mockRestore();}
 });
 test('cached older and newer pages remain navigable without the network',async()=>{
   await cacheHelpPage(5,ticket(),page(1,100));await cacheHelpPage(5,ticket(),page(101,200));
