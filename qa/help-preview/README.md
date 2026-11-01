@@ -64,6 +64,17 @@ adb shell am start -a android.intent.action.VIEW -d "leaderproduct-dev://expo-de
 Only the emulator/test app should be targeted. This is native component-flow QA,
 not authentication/API/persistence/push delivery validation.
 
+To inspect the actual services header on Android without desktop automation:
+
+```powershell
+node scripts/help-ui-diagnostics.mjs --port 8100 --action preview.screen --value services
+node scripts/help-ui-diagnostics.mjs --port 8100 --action fixture.theme --value light
+```
+
+Run these commands from the APP repository root. `preview.screen` with value
+`chat` returns to the default Help fixture. The override belongs only to this
+QA entry; it is never included in the application route or OTA bundle.
+
 Stop the terminal process with Ctrl+C. `npm start` binds localhost. If the Windows
 localhost IPv6 binding is inaccessible, explicitly use `npm run start:lan` and
 http://127.0.0.1:8100/; this exposes the secret-free QA fixtures on local interfaces.
