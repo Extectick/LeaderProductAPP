@@ -278,6 +278,10 @@ export function SheetModal({
   children: React.ReactNode;
   fullScreen?: boolean;
 }) {
+  // Paper PortalConsumer updates its host even when the inner Modal is hidden.
+  // Do not keep the unused inspector portal alive during every draft/keyboard update.
+  if (!visible) return null;
+
   return (
     <Portal>
       <PaperModal visible={visible} onDismiss={onClose} contentContainerStyle={[styles.modalBackdropPaper, fullScreen ? styles.modalBackdropPaperFull : null]}>

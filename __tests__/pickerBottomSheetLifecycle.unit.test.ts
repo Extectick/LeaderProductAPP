@@ -21,7 +21,9 @@ jest.mock('@expo/vector-icons', () => ({ MaterialCommunityIcons: 'Icon' }));
 jest.mock('react-native-reanimated', () => ({ __esModule: true, default: { View: 'AnimatedView' },
   Extrapolation: { CLAMP: 'clamp' }, interpolate: jest.fn(), useAnimatedStyle: () => ({}),
 }));
-jest.mock('react-native-paper', () => ({ Text: 'Text' }));
+jest.mock('react-native-paper', () => ({ Text: 'Text', Portal: 'PaperPortal', Modal: 'PaperModal',
+  Surface: 'Surface', Divider: 'Divider', IconButton: 'IconButton',
+}));
 jest.mock('@gorhom/bottom-sheet', () => {
   const React = require('react');
   return { BottomSheetModal: React.forwardRef((props: any, ref: any) => {
@@ -31,7 +33,7 @@ jest.mock('@gorhom/bottom-sheet', () => {
   }) };
 });
 
-import { PickerBottomSheet } from '../src/features/clientOrders/screen/mobile/ClientOrdersMobileUi';
+import { PickerBottomSheet, SheetModal } from '../src/features/clientOrders/screen/mobile/ClientOrdersMobileUi';
 
 describe('native picker sheet lifecycle', () => {
   let renderer: TestRenderer.ReactTestRenderer;
@@ -113,5 +115,22 @@ describe('native picker sheet lifecycle', () => {
     expect(mockPresent).toHaveBeenCalledTimes(2);
     await close();
     expect(mockClose).toHaveBeenCalledTimes(2);
+  });
+
+  it('never mounts an inactive inspector Paper portal while the draft keeps changing', async () => {
+    const render = (visible: boolean, revision: number) => React.createElement(SheetModal, {
+      visible, styles: {}, title: 'Inspector', onClose: mockClose,
+      children: React.createElement('Revision' as any, { revision }),
+    });
+    await act(async () => { renderer = TestRenderer.create(render(false, 1)); });
+    for (let revision = 2; revision < 60; revision++) {
+      await act(async () => renderer.update(render(false, revision)));
+    }
+    expect(renderer.toJSON()).toBeNull();
+    expect(renderer.root.findAllByType('PaperPortal' as any)).toHaveLength(0);
+    await act(async () => renderer.update(render(true, 60)));
+    expect(renderer.root.findAllByType('PaperPortal' as any)).toHaveLength(1);
+    await act(async () => renderer.update(render(false, 61)));
+    expect(renderer.toJSON()).toBeNull();
   });
 });
