@@ -11,5 +11,5 @@ function navigate(path = '/services/help') {
   params.delete('ticketId');
   window.location.search = params.toString();
 }
-const router = { replace: navigate, push: navigate };
+const router = { replace: navigate, push: navigate, dismissTo: navigate };
 export function useRouter() { return router; }

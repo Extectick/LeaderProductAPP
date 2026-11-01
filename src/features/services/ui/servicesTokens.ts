@@ -1,3 +1,5 @@
+import {APP_TOOLBAR_LAYOUT} from '@/components/ui/appToolbarLayout';
+
 export type ServiceDensity = 'medium';
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -25,11 +27,11 @@ export const servicesTokens = {
   density: 'medium' as ServiceDensity,
   row: {
     minHeight: 94,
-    gap: 16,
+    gap: APP_TOOLBAR_LAYOUT.gap,
     paddingVertical: 15,
-    paddingHorizontal: 4,
-    iconContainerSize: 56,
-    textInset: 76,
+    paddingHorizontal: APP_TOOLBAR_LAYOUT.inset,
+    iconContainerSize: APP_TOOLBAR_LAYOUT.actionSize,
+    textInset: APP_TOOLBAR_LAYOUT.actionSize + APP_TOOLBAR_LAYOUT.gap,
     maxContentWidth: 760,
   },
   page: {

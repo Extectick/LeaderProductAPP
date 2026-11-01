@@ -227,3 +227,100 @@ Hermes JSON, frame statistics and gfxinfo reports are under the workspace's
 - On emulator-5554, an adb swipe and mid-gesture screenshot confirmed the viewer no longer exposes adjacent full-size pages while shrinking. The viewer closed back to the gallery with all four selected photos retained.
 - A second adb swipe from the gallery’s first row moved the whole panel downward, then closed it. Runtime diagnostics retained four selected attachments and showed the normal composer again. The larger thumbnails and upper-right remove controls were visually checked in that final state.
 - Evidence is local only under the parent workspace `.local-tools/emulator-qa/`: `photos-dismiss-clipped.png`, `photos-after-dismiss.json`, `gallery-pull-middle.png`, `gallery-pull-after.json`, `photos-drafts-large.png`. No messages or photos were sent during these checks.
+
+
+---
+
+# Services home brand header — 2026-11-01
+
+## Source and scope
+
+- Brand reference: `C:/Users/extec/AppData/Local/Temp/codex-clipboard-559c1f9b-501f-485b-99c8-033743af3e32.png` (309x71).
+- Alignment reference: `C:/Users/extec/AppData/Local/Temp/codex-clipboard-fe9e976d-a098-4806-9c6f-7628a4a7226d.png` (576x201).
+- Final user instructions: brand belongs ONLY on the main services catalogue; one row with company symbol left, name/tagline in the middle, circular account avatar right; all control positions match the Help list toolbar. Exact tagline: `мы всегда в рынке`.
+- Source image contains the previous two-row arrangement; that arrangement and its earlier tagline are superseded by these instructions. This is an adaptation of the brand reference, not a full-screen clone.
+
+## Captures and normalization
+
+Evidence folder: `D:/LeaderProductProjects/LeaderProductMobileAPP/.local-tools/emulator-qa/services-brand/`.
+
+- `home-full-final.png`: browser screenshot, 520x846 pixels.
+- `home-final.png`: unchanged rendered pixels cropped to the app content (389x744), excluding the QA control panel.
+- `help-final.png`: unchanged Help list after the correction.
+- `home-light-320.png`, `home-dark-320.png`: compact layout checks.
+- `design-comparison.png`: single comparison board containing the source brand, the user positioning reference, the final main header, and the Help toolbar. Full context and readable header detail are both present.
+- Requested app width: 390 CSS px (observed content width 388.57 due to the fixture frame). No simulated device bezel/status bar was added. The provided alignment reference uses a larger raster scale and is normalized on the comparison board; geometry is verified directly from DOM bounds as well.
+
+## Findings and iterations
+
+1. Earlier version put the company lockup in the Help list. User corrected the target. Removed all identity/viewer changes from HelpScreen, HelpListHeader, useHelpService and the service data fixture. Help keeps its original toolbar.
+2. Earlier version used system text for the wordmark, smaller symbol and a separate row. Replaced the name with a transparent wordmark image prepared from the supplied reference, retained the existing company symbol, and moved branding into the 48px shared toolbar grid on the services screen.
+3. QA found the fixture avatar initials too dark in dark mode. Updated their theme color and captured the revised state.
+4. The refreshed upstream Help screen calls `router.dismissTo`; the old local fixture lacked it. Added that fixture alias, then verified home -> Help -> home through the UI.
+
+## Required fidelity surfaces
+
+- **Fonts/typography:** company name is rendered as a brand image, not a system-font approximation. Tagline uses the exact latest user copy, 12px/16px. Narrow 320px state shows the full name and tagline without horizontal overflow. The source is a small raster and is not treated as a supplied vector master.
+- **Spacing/layout:** shared constants define inset16, action48, gap8, top4 and bottom16. At 390px the home logo and profile avatar bounds are x82.0647 and x390.6585, y106.1049, 47.9911 square. Help Back/menu have exactly the same bounds: measured difference 0px on both axes. Header content height is 68px before safe-area insets.
+- **Colors/tokens:** company green and orange are retained instead of the earlier dark green/brown system heading. The same brand asset is used in both themes; the account action respects theme colors. Existing shared AppHeader edge blur remains in use.
+- **Image quality:** the existing transparent company symbol is enlarged to a 48px slot. The transparent wordmark is bundled locally, remains sharp at the displayed size, and introduces no white rectangle in dark mode. The actual account avatar continues to use the existing memory/disk image cache in ServicesLayout.
+- **Copy/content:** `Лидер Продукт` and `мы всегда в рынке`; no company identity added to Help or chat headers.
+
+## Validation and boundaries
+
+- Browser: 320/390 light, 320 dark; home -> Help -> home; original Help header preserved; final main menu left open.
+- Browser console: no new error entries after the final navigation checkpoint. Earlier live-edit errors (asset copy timing and missing fixture dismissTo) were resolved before final navigation.
+- TypeScript: passed. Targeted existing services/access, header ownership and Help screen checks: 3 suites / 63 tests passed.
+- The profile action retains the existing application route `/profile`; actual authenticated profile data/network are outside this fixture. No native APK rebuild is required for this JS/UI change, and no release was triggered during the design review.
+
+## Implementation checklist
+
+- [x] Brand only on main catalogue.
+- [x] Larger real company symbol and wordmark image.
+- [x] Correct tagline.
+- [x] Same navigation axes and 48px circles as Help.
+- [x] Existing avatar cache and profile route preserved.
+- [x] Shared blur and flat service rows preserved.
+- [x] Light/dark compact checks and final visual comparison.
+
+final result: passed
+
+
+---
+
+# Confirmed shared catalogue grid — 2026-11-01
+
+## Source and user decision
+
+- Selected revised concept: `C:/Users/extec/.codex/generated_images/01a17c17-500e-7761-9fad-324a50cb140f/exec-ea9de6d6-3d27-408a-a9de-495973cda647.png`.
+- Annotated source: `C:/Users/extec/AppData/Local/Temp/codex-clipboard-797376ca-cefa-4a02-ad2c-355ca274883e.png`.
+- User explicitly confirmed: align BOTH the icons and the text. Preserve 48px header navigation positions and use the same left column in catalogue rows. The generated image is a composition reference; confirmed 48px control geometry governs implementation rather than inferred raster dimensions.
+
+## Evidence
+
+Folder: `D:/LeaderProductProjects/LeaderProductMobileAPP/.local-tools/emulator-qa/services-brand-grid/`.
+
+- `comparison.png`: source and rendered implementation in the same visual comparison board, including dark/compact state.
+- `final-full.png`: full 520x846 browser capture; `final.png`: app-only crop389x744.
+- `light-320-full.png`, `dark-320-full.png`, `help-header-preserved.png`, `geometry-390.json`.
+- App width390 CSS px; observed inner content388.57px with the fixture frame. Pixel capture is at browser screenshot density; source is scaled only for the comparison board. UI bounds, not differently scaled rasters, establish exact axes.
+
+## Findings, fixes, final fidelity pass
+
+- [fixed] Service rows used24px inset,56px icon backgrounds and16px gap, whereas the header used16/48/8. Services now read the shared toolbar values. Both text blocks begin at72px relative to the app surface.
+- [fixed] Trailing chevron lacked a fixed action column. It now occupies a48px slot aligned below the avatar.
+- [fixed] A measured numeric row width introduced0.424px drift on the right edge in the browser. Rows now fill their parent's width directly; final icon-left, icon-width, text-left and trailing-left deltas are all exactly0px.
+- **Typography:** wordmark reduced from240px maximum width /26px frame to164px /20px. Tagline reduced to11px/14px; exact copy remains `мы всегда в рынке`. Catalogue body type remains16px/22px and13px/19px.
+- **Layout:**48x48 leading slots,8px gaps,16px margins. Full-width hover/press remains; no separators or visible row cards introduced. Loading placeholders follow the same icon and text columns.
+- **Colors:** existing company green/orange, theme colors and icon accent colors preserved.
+- **Assets:** existing local logo and transparent wordmark retained; no new generated asset needed for this implementation pass.
+- **Content:** company identity remains on the main catalogue only; the Help toolbar retains Back/search/menu.
+
+## Verification
+
+- Browser:390 light;320 light/dark; home -> Help -> home; final catalogue left open. No new console errors after the verification checkpoint.
+- Measured final leading slots x82.0647,width47.9911; text x138.0469; trailing slots x390.6585,width47.9911, identical between header and rows.
+- Existing targeted service/access and header-ownership checks:2 suites /16 tests passed. TypeScript passed for the grid update.
+- Existing application profile route/cache retained. No authenticated network or native APK release was exercised for this styling change.
+
+final result: passed

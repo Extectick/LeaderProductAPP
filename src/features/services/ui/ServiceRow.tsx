@@ -52,7 +52,7 @@ export default function ServiceRow({ icon, name, size, onPress, description, gra
     onPress={onPress}
     onHoverIn={() => setHovered(true)}
     onHoverOut={() => setHovered(false)}
-    style={({ pressed }) => [styles.row, { width: size, paddingHorizontal: 20 + servicesTokens.row.paddingHorizontal + Math.max(0, (size - servicesTokens.row.maxContentWidth) / 2), backgroundColor: pressed || hovered ? withOpacity(accent, 0.07) : backgroundColor ?? 'transparent', opacity: disabled ? 0.55 : 1 }, containerStyle]}
+    style={({ pressed }) => [styles.row, { width: '100%', paddingHorizontal: servicesTokens.row.paddingHorizontal + Math.max(0, (size - servicesTokens.row.maxContentWidth) / 2), backgroundColor: pressed || hovered ? withOpacity(accent, 0.07) : backgroundColor ?? 'transparent', opacity: disabled ? 0.55 : 1 }, containerStyle]}
   >
     <View style={[styles.icon, { backgroundColor: withOpacity(accent, 0.1) }]}>
       <Ionicons name={icon as any} size={iconSize} color={disabled ? secondary : accent}/>
@@ -61,13 +61,16 @@ export default function ServiceRow({ icon, name, size, onPress, description, gra
       <Text numberOfLines={2} style={[styles.title, { color: textColor ?? themeText }, textStyle]}>{name}</Text>
       {description ? <Text numberOfLines={2} style={[styles.description, { color: secondary }]}>{description}</Text> : null}
     </View>
-    <Ionicons name={disabled ? 'lock-closed-outline' : 'chevron-forward'} size={disabled ? 17 : 20} color={secondary}/>
+    <View pointerEvents="none" style={styles.trailing}>
+      <Ionicons name={disabled ? 'lock-closed-outline' : 'chevron-forward'} size={disabled ? 17 : 20} color={secondary}/>
+    </View>
   </Pressable>;
 }
 
 const styles = StyleSheet.create({
   row: { minHeight: servicesTokens.row.minHeight, flexDirection: 'row', alignItems: 'center', gap: servicesTokens.row.gap, paddingVertical: servicesTokens.row.paddingVertical, borderRadius: 0 },
-  icon: { width: servicesTokens.row.iconContainerSize, height: servicesTokens.row.iconContainerSize, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+  icon: { width: servicesTokens.row.iconContainerSize, height: servicesTokens.row.iconContainerSize, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  trailing: {width: servicesTokens.row.iconContainerSize, height: servicesTokens.row.iconContainerSize, alignItems: 'center', justifyContent: 'center'},
   copy: { flex: 1, minWidth: 0, gap: 4 },
   title: { fontSize: 16, lineHeight: 22, fontWeight: '600' },
   description: { fontSize: 13, lineHeight: 19, fontWeight: '400' },

@@ -53,7 +53,7 @@ const styles = StyleSheet.create({
   message: { fontSize: 14, lineHeight: 21, textAlign: 'center', maxWidth: 400 },
   loadingShell: { flex: 1, alignItems: 'center' },
   loadingRow: { minHeight: servicesTokens.row.minHeight, flexDirection: 'row', alignItems: 'center', gap: servicesTokens.row.gap, paddingHorizontal: servicesTokens.row.paddingHorizontal },
-  loadingIcon: { width: 56, height: 56, borderRadius: 17 },
+  loadingIcon: { width: servicesTokens.row.iconContainerSize, height: servicesTokens.row.iconContainerSize, borderRadius: 14 },
   loadingCopy: { flex: 1, gap: 11 },
   loadingTitle: { width: '61%', height: 16, borderRadius: 5 },
   loadingDescription: { width: '90%', height: 12, borderRadius: 4 },

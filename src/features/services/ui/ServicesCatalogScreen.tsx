@@ -16,6 +16,7 @@ import { getVisibleServices } from '../lib/grid';
 import { canOpenService, supportsServiceRoute } from '../lib/serviceAvailability';
 import { ServicesEmptyView, ServicesErrorView, ServicesLoadingView } from './ServiceStateViews';
 import { servicesTokens } from './servicesTokens';
+import {APP_TOOLBAR_LAYOUT as toolbar} from '@/components/ui/appToolbarLayout';
 
 /** The catalog keeps the same row geometry on phones, tablets and the web. */
 export default function ServicesCatalogScreen() {
@@ -27,7 +28,7 @@ export default function ServicesCatalogScreen() {
   const [containerWidth, setContainerWidth] = useState(width);
   const { headerBottomOffset } = useNotificationViewport();
   const insets = useSafeAreaInsets();
-  const headerTopInset = headerBottomOffset || (Platform.OS === 'web' ? 0 : insets.top) + 48;
+  const headerTopInset = headerBottomOffset || (Platform.OS === 'web' ? 0 : insets.top) + toolbar.top + toolbar.actionSize + toolbar.bottom;
   const background = useThemeColor({}, 'background');
   const textColor = useThemeColor({}, 'text');
   const rowWidth = Math.max(0, containerWidth);
@@ -46,7 +47,7 @@ export default function ServicesCatalogScreen() {
     const next = Math.round(event.nativeEvent.layout.width);
     if (next > 0) setContainerWidth(previous => previous === next ? previous : next);
   }}>
-    {loading && !visibleServices.length ? <ServicesLoadingView backgroundColor={background} textColor={textColor} columns={1} cardSize={Math.max(0, Math.min(rowWidth, servicesTokens.row.maxContentWidth) - 40)} gap={0} horizontalPadding={20} topPadding={headerTopInset + 4}/> :
+    {loading && !visibleServices.length ? <ServicesLoadingView backgroundColor={background} textColor={textColor} columns={1} cardSize={Math.min(rowWidth, servicesTokens.row.maxContentWidth)} gap={0} horizontalPadding={0} topPadding={headerTopInset + 4}/> :
       error && !visibleServices.length ? <ServicesErrorView backgroundColor={background} textColor={textColor} message={error}/> :
       <FlatList
         testID="services-list"

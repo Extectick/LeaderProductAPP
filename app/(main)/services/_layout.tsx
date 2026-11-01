@@ -1,5 +1,6 @@
 import { Stack, useGlobalSearchParams, usePathname, useRouter } from 'expo-router';
 import { AppHeader } from '@/components/AppHeader';
+import {ServicesHomeHeader} from '@/src/features/services/ui/ServicesHomeHeader';
 import React, { useEffect, useMemo, useRef } from 'react';
 import { useNotify } from '@/components/NotificationHost';
 import { Ionicons } from '@expo/vector-icons';
@@ -263,7 +264,7 @@ export default function ServicesLayout() {
             headerShadowVisible: false,
             headerStatusBarHeight: 0,
             headerStyle: { backgroundColor: 'transparent' },
-            header: () => (
+            header: () => isCatalogRoute ? <ServicesHomeHeader onProfile={() => router.push('/profile')} avatar={<MemoCatalogProfileAvatar offline={false} avatarUrl={profileAvatarUrl} avatarKey={profileAvatarKey} initials={profileInitials}/>}/> : (
               <AppHeader
                 title={activeHeaderOverride?.title ?? meta.title}
                 subtitle={activeHeaderOverride?.subtitle ?? (isClientOrdersPath ? undefined : meta.subtitle)}

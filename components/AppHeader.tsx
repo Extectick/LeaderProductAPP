@@ -49,6 +49,7 @@ const withOpacity = (color: string, opacity: number) => {
 };
 
 type Props = {
+  contentSlot?: React.ReactNode;
   title: string;
   subtitle?: string;
   icon: string;
@@ -89,6 +90,7 @@ export function getAppHeaderOverlayOffset(
 }
 
 export function AppHeader({
+  contentSlot,
   title,
   subtitle,
   icon,
@@ -158,7 +160,7 @@ export function AppHeader({
     };
   }, [setHeaderBottomOffset]);
 
-  const headerContent = (
+  const headerContent = contentSlot ?? (
     <View style={[styles.card, compact && styles.cardCompact, tight && styles.cardTight, dense && styles.cardDense, isDocument && styles.cardDocument, isFlat && styles.cardFlat]}>
       <View style={[styles.row, tight && styles.rowTight, dense && styles.rowDense, isDocument && styles.rowDocument]}>
         {showBack ? (
