@@ -37,11 +37,11 @@ test('pending, acknowledged and failed text share padding and metadata geometry'
   await act(async () => { view = TestRenderer.create(React.createElement(HelpPendingMessage, { item, onRetry: retry })); });
   try {
     const node = (testID: string) => view.root.findAllByProps({ testID })[0];
-    const pending = StyleSheet.flatten(node('help-pending-bubble').props.style);
+    const pending = StyleSheet.flatten(node('help-pending-content').props.style);
     const stamp = StyleSheet.flatten(node('help-message-time').props.style);
     const pendingText = view.root.findAllByProps({accessibilityLabel:item.input.text})[0];
     const textMetrics = StyleSheet.flatten(pendingText.props.style);
-    expect(pending).toMatchObject({ minWidth: 90, paddingHorizontal: 11, paddingVertical: 6 });
+    expect(pending).toMatchObject({ paddingHorizontal: 11, paddingVertical: 6 });
     expect(node('help-message-stamp-reserve')).toBeDefined();
     expect(node('help-message-pending-clock').props.name).toBe('time-outline');
     expect(node('help-message-time').findAllByType(require('react-native').Text)).toHaveLength(1);
@@ -56,4 +56,16 @@ test('pending, acknowledged and failed text share padding and metadata geometry'
     expect(StyleSheet.flatten(node('help-message-text').props.style)).toEqual(textMetrics);
     expect(StyleSheet.flatten(node('help-message-time').props.style)).toEqual(stamp);
   } finally { await act(async () => view.unmount()); }
+});
+
+test('queued reply already contains its quote before delivery',async()=>{
+ const quote={id:9,text:'Original question',author:{id:3,name:'Alex',avatarUrl:null},attachments:[]};
+ const item:HelpPending={key:'reply',ticketId:4,create:false,createdAt:1,status:'queued',input:{text:'Answer',replyToId:9},replyTo:quote};
+ const jump=jest.fn();let view!:TestRenderer.ReactTestRenderer;
+ await act(async()=>{view=TestRenderer.create(React.createElement(HelpPendingMessage,{item,onRetry:jest.fn(),onQuote:jump}));});
+ try{
+  expect(view.root.findAllByProps({testID:'help-message-quote'}).length).toBeGreaterThan(0);
+  await act(async()=>view.root.findAllByProps({accessibilityLabel:'Перейти к исходному сообщению'})[0].props.onPress());
+  expect(jump).toHaveBeenCalledWith(9);
+ }finally{await act(async()=>view.unmount());}
 });

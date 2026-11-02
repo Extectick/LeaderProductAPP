@@ -1,5 +1,5 @@
-import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
-import {ActivityIndicator, Animated, AppState, BackHandler, Easing, Keyboard, Linking, PanResponder, Pressable, Text, TextInput, useWindowDimensions, View} from 'react-native';
+import React, {useCallback, useEffect, useMemo, useRef, useState, useId} from 'react';
+import {ActivityIndicator, Animated, AppState, BackHandler, Keyboard, Linking, Pressable, Text, TextInput, useWindowDimensions, View} from 'react-native';
 import {Image} from 'expo-image';
 import {Ionicons} from '@expo/vector-icons';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
@@ -13,7 +13,7 @@ import {HelpPhotoPreview} from './HelpPhotoPreview';
 import {HelpPhotoCamera} from './HelpPhotoCamera';
 import {HelpNativeInput, hasNativeHelpInput} from './HelpNativeInput';
 import type {HelpLocalFile} from './HelpComposer';
-import type {HelpPhotoRect} from './HelpPhotoPortal';
+import {HelpPhotoPortal,useHelpPhotoPortalFrame,type HelpPhotoRect} from './HelpPhotoPortal';
 
 type Selection = {photo:HelpLibraryPhoto;file?:HelpLocalFile;pending?:boolean;failed?:boolean};
 type Props = {
@@ -42,25 +42,26 @@ export function HelpPhotoPicker(props:Props) {
   const [cameraExpanded,setCameraExpanded]=useState(false),[cameraVisible,setCameraVisible]=useState(true),[keyboardTop,setKeyboardTop]=useState<number|null>(null);
   const grid=useRef<View>(null),scrollOffset=useRef(new Animated.Value(0)).current;
   const [viewport,setViewport]=useState<HelpPhotoRect>();
-  const height=useRef(new Animated.Value(0)).current,actualHeight=useRef(0),dragStart=useRef(0);
+  const height=useSharedValue(0),dragStart=useSharedValue(0),resizing=useRef(false);
+  const portalId=useId(),portalFrame=useHelpPhotoPortalFrame();
+  const panelStyle=useAnimatedStyle(()=>({height:height.value}));
   const closedByPull=useRef(false),detachNativeScroll=useRef<(()=>void)|null>(null);
   const pullY=useSharedValue(0),gridScrollY=useSharedValue(0),gridMomentum=useSharedValue(false);
   const pullState=useSharedValue(0),touchX=useSharedValue(0),touchY=useSharedValue(0),pullAllowed=useSharedValue(false),pullHeight=useSharedValue(0),nativeCameraVisible=useSharedValue(true);
   const maximumHeight=helpPhotoSheetMaximumHeight(window.height,insets.top,insets.bottom,keyboardTop);
   const collapsedHeight=Math.min(window.height*.6,maximumHeight);
-  const geometry=useRef({collapsedHeight,maximumHeight});geometry.current={collapsedHeight,maximumHeight};
+  const overlayBottom=keyboardTop===null?insets.bottom:Math.max(0,(portalFrame?.y??0)+(portalFrame?.height??window.height)-keyboardTop);
   const pending=selection.some(item=>item.pending),failed=selection.some(item=>item.failed),blocked=props.busy||pending;
   const selectedIds=selection.filter(item=>!item.file||item.file.mimeType?.startsWith('image/')).map(item=>item.photo.id);
   const tileSize=(width-4)/3;
-  const callbacks=useRef({close:props.onClose,setExpanded});callbacks.current={close:props.onClose,setExpanded};
-  const measureGrid=useCallback(()=>grid.current?.measureInWindow((x,y,width,height)=>{if(width>0&&height>0&&mounted.current)setViewport(previous=>previous?.x===x&&previous.y===y&&previous.width===width&&previous.height===height?previous:{x,y,width,height});}),[]);
+  const measureGrid=useCallback(()=>{if(resizing.current)return;grid.current?.measureInWindow((x,y,width,height)=>{if(width>0&&height>0&&mounted.current)setViewport(previous=>previous?.x===x&&previous.y===y&&previous.width===width&&previous.height===height?previous:{x,y,width,height});});},[]);
   const beginPull=useCallback(()=>{if(mounted.current)setSettled(false);},[]);
   const settlePull=useCallback(()=>{if(mounted.current&&latest.current.open)setSettled(true);},[]);
   const closePulled=useCallback(()=>{
     if(!mounted.current||!latest.current.open)return;
     closedByPull.current=true;
     // The panel has already left the screen: release its dock in this commit.
-    height.setValue(0);setVisible(false);setExpanded(false);setPreview(null);setCameraExpanded(false);
+    height.value=0;setVisible(false);setExpanded(false);setPreview(null);setCameraExpanded(false);
     latest.current.onClose();
   },[height]);
   const setGridList=useCallback((list:FlatList<HelpLibraryPhoto|null>|null)=>{
@@ -112,7 +113,7 @@ export function HelpPhotoPicker(props:Props) {
     }),[props.open,preview,cameraExpanded,reduced,beginPull,settlePull,closePulled,pullAllowed,gridScrollY,gridMomentum,pullState,touchX,touchY,pullY,pullHeight]);
   const nativeScrollGesture=useMemo(()=>Gesture.Native().withTestId('help-photo-native-scroll').requireExternalGestureToFail(pullGesture).disallowInterruption(false),[pullGesture]);
 
-  useEffect(()=>{mounted.current=true;const id=height.addListener(({value})=>{actualHeight.current=value;});return()=>{mounted.current=false;++generation.current;height.removeListener(id);height.stopAnimation();detachNativeScroll.current?.();cancelAnimation(pullY);};},[height,pullY]);
+  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;++generation.current;cancelAnimation(height);detachNativeScroll.current?.();cancelAnimation(pullY);};},[height,pullY]);
   useEffect(()=>{props.onPreparing(pending||failed);},[pending,failed,props.onPreparing]);
   useEffect(()=>{props.onVisibility?.(visible);},[visible,props.onVisibility]);
   useEffect(()=>{if(!props.open&&!pending){const next=props.files.map(fromFile);chosen.current=next;setSelection(next);}},[props.files,props.open,pending]);
@@ -128,13 +129,20 @@ export function HelpPhotoPicker(props:Props) {
     if(changed){chosen.current=next;setSelection(next);}
   },[props.files,props.open]);
   useEffect(()=>{if(props.open){closedByPull.current=false;cancelAnimation(pullY);pullY.value=0;pullState.value=0;setVisible(true);Keyboard.dismiss();}else setKeyboardTop(null);},[props.open,pullY,pullState]);
+  const finishHeight=useCallback(()=>{
+    if(!mounted.current)return;
+    resizing.current=false;setSettled(true);
+    if(!latest.current.open){setVisible(false);setExpanded(false);setPreview(null);setCameraExpanded(false);}
+    else measureGrid();
+  },[measureGrid]);
   useEffect(()=>{
-    setSettled(false);height.stopAnimation();
-    if(!props.open&&closedByPull.current){height.setValue(0);setVisible(false);return;}
-    const animation=Animated.timing(height,{toValue:props.open?(expanded?maximumHeight:collapsedHeight):0,duration:reduced?0:220,easing:Easing.out(Easing.cubic),useNativeDriver:false});
-    animation.start(({finished})=>{if(finished&&mounted.current){setSettled(true);if(!latest.current.open){setVisible(false);setExpanded(false);setPreview(null);setCameraExpanded(false);}}});
-    return()=>animation.stop();
-  },[props.open,expanded,collapsedHeight,maximumHeight,reduced,height]);
+    setSettled(false);cancelAnimation(height);
+    if(!props.open&&closedByPull.current){height.value=0;setVisible(false);return;}
+    const target=props.open?(expanded?maximumHeight:collapsedHeight):0;
+    if(Math.abs(height.value-target)<.5){finishHeight();return;}
+    height.value=withTiming(target,{duration:reduced?0:220,easing:MotionEasing.out(MotionEasing.cubic)},finished=>{if(finished)runOnJS(finishHeight)();});
+    return()=>cancelAnimation(height);
+  },[props.open,expanded,collapsedHeight,maximumHeight,reduced,height,finishHeight]);
   useEffect(()=>{if(settled&&props.open)measureGrid();},[settled,props.open,measureGrid]);
 
   const loadPage=useCallback(async(reset=false)=>{
@@ -195,13 +203,20 @@ export function HelpPhotoPicker(props:Props) {
     const ready=all.map(item=>chosen.current.find(entry=>entry.photo.id===item.id)?.photo||item);
     setPreview({photos:ready,index:ready.findIndex(item=>item.id===photo.id),origin});
   }
-  const pan=useRef(PanResponder.create({
-    onMoveShouldSetPanResponder:(_,g)=>Math.abs(g.dy)>8&&Math.abs(g.dy)>Math.abs(g.dx)*1.2,
-    onPanResponderGrant:()=>{height.stopAnimation();setSettled(false);dragStart.current=actualHeight.current;},
-    onPanResponderMove:(_,g)=>height.setValue(Math.max(80,Math.min(geometry.current.maximumHeight,dragStart.current-g.dy))),
-    onPanResponderRelease:(_,g)=>{if(g.dy>100&&actualHeight.current<geometry.current.collapsedHeight*.8){callbacks.current.close();return;}const next=actualHeight.current>(geometry.current.maximumHeight+geometry.current.collapsedHeight)/2||g.vy<-.6;callbacks.current.setExpanded(next);Animated.timing(height,{toValue:next?geometry.current.maximumHeight:geometry.current.collapsedHeight,duration:180,useNativeDriver:false}).start(()=>setSettled(true));},
-    onPanResponderTerminate:()=>{Animated.timing(height,{toValue:geometry.current.collapsedHeight,duration:180,useNativeDriver:false}).start(()=>setSettled(true));callbacks.current.setExpanded(false);},
-  })).current;
+  const beginResize=useCallback(()=>{resizing.current=true;setSettled(false);},[]);
+  const endResize=useCallback((next:boolean)=>{if(!mounted.current)return;resizing.current=false;setExpanded(next);setSettled(true);measureGrid();},[measureGrid]);
+  const closeResize=useCallback(()=>{resizing.current=false;latest.current.onClose();},[]);
+  const resizeGesture=useMemo(()=>Gesture.Pan().withTestId('help-photo-resize').maxPointers(1).activeOffsetY([-8,8])
+    .onStart(()=>{cancelAnimation(height);dragStart.value=height.value;runOnJS(beginResize)();})
+    .onUpdate(event=>{height.value=Math.max(80,Math.min(maximumHeight,dragStart.value-event.translationY));})
+    .onEnd((event,success)=>{
+      if(!success)return;
+      if(event.translationY>100&&height.value<collapsedHeight*.8){runOnJS(closeResize)();return;}
+      const next=height.value>(maximumHeight+collapsedHeight)/2||event.velocityY< -600;
+      height.value=withSpring(next?maximumHeight:collapsedHeight,{damping:25,stiffness:280,mass:.8,overshootClamping:true},finished=>{if(finished)runOnJS(endResize)(next);});
+    })
+    .onFinalize((_,success)=>{if(!success)height.value=withSpring(expanded?maximumHeight:collapsedHeight,{damping:25,stiffness:280,mass:.8,overshootClamping:true},finished=>{if(finished)runOnJS(endResize)(expanded);});}),
+    [height,dragStart,maximumHeight,collapsedHeight,expanded,beginResize,endResize,closeResize]);
   useEffect(()=>helpDevActions('photo.picker',{
     'photos.close':()=>latest.current.onClose(),'photos.expand':()=>setExpanded(true),
     'photos.select':value=>{const photo=photos[Number(value)];if(photo)return select(photo);},
@@ -211,16 +226,17 @@ export function HelpPhotoPicker(props:Props) {
   useEffect(()=>helpDevState({photoPickerOpen:props.open,photoPermission:permission?permission.limited?'limited':permission.granted?'granted':'denied':'unknown',photoLoaded:photos.length,photoSelected:selectedIds.length,photoPreparing:pending,photoFailed:failed,photoPreview:Boolean(preview),photoCamera:cameraExpanded,photoExpanded:expanded}),[props.open,permission,photos.length,selectedIds.length,pending,failed,preview,cameraExpanded,expanded]);
 
   if(!visible)return null;
-  return <>
-    <Animated.View ref={node=>helpDevRef('photos.panel',node as unknown as View)} testID="help-photo-panel" onLayout={event=>setWidth(event.nativeEvent.layout.width)} style={{height,overflow:'hidden',marginTop:6}}>
+  return <HelpPhotoPortal id={portalId}><View testID="help-photo-overlay" pointerEvents="box-none" style={{position:'absolute',top:0,left:0,right:0,bottom:0}}>
+    <Pressable accessibilityLabel="Закрыть панель вложений" onPress={props.onClose} style={{position:'absolute',top:0,left:0,right:0,bottom:0}}/>
+    <Reanimated.View ref={(node:View|null)=>helpDevRef('photos.panel',node as unknown as View)} testID="help-photo-panel" onLayout={event=>setWidth(event.nativeEvent.layout.width)} style={[{position:'absolute',bottom:overlayBottom,left:8,right:8,overflow:'hidden'},panelStyle]}>
       <GestureHandlerRootView style={{flex:1}}>
       <Reanimated.View testID="help-photo-pull-surface" style={[{flex:1,borderRadius:18,overflow:'hidden',backgroundColor:c.panel},pullStyle]}>
-      <View {...pan.panHandlers} testID="help-photo-panel-handle" style={{height:48,alignItems:'center',justifyContent:'center'}}>
+      <GestureDetector gesture={resizeGesture}><View testID="help-photo-panel-handle" style={{height:48,alignItems:'center',justifyContent:'center'}}>
         <View style={{position:'absolute',top:5,width:32,height:3,borderRadius:2,backgroundColor:c.muted,opacity:.45}}/>
         <Text style={{color:c.text,fontSize:14,fontWeight:'600'}}>{selectedIds.length?`Выбрано фото: ${selectedIds.length}`:'Фотографии'}</Text>
         <Pressable accessibilityRole="button" accessibilityLabel="Выбрать файлы" disabled={blocked} onPress={props.onDocuments} style={{position:'absolute',left:2,width:44,height:44,alignItems:'center',justifyContent:'center'}}><Ionicons name="document-outline" size={21} color={c.muted}/></Pressable>
         <Pressable accessibilityRole="button" accessibilityLabel="Закрыть фотографии" onPress={props.onClose} style={{position:'absolute',right:2,width:44,height:44,alignItems:'center',justifyContent:'center'}}><Ionicons name="close" size={22} color={c.muted}/></Pressable>
-      </View>
+      </View></GestureDetector>
       {permission?.limited?<Pressable accessibilityRole="button" onPress={()=>void presentHelpPhotoPermissions().then(()=>checkPermission()).catch(e=>setError(message(e)))} style={{paddingHorizontal:12,paddingBottom:10}}><Text style={{fontSize:13,color:c.accentText}}>Открыты выбранные фото · Добавить ещё</Text></Pressable>:null}
       {error?<Text accessibilityLiveRegion="polite" style={{color:c.danger,fontSize:12,padding:8}}>{error}</Text>:null}
       <GestureDetector gesture={pullGesture}>
@@ -239,9 +255,9 @@ export function HelpPhotoPicker(props:Props) {
       </View>
       </Reanimated.View>
       </GestureHandlerRootView>
-    </Animated.View>
+    </Reanimated.View>
     {preview?<HelpPhotoPreview photos={preview.photos} index={preview.index} origin={preview.origin} selectedIds={selectedIds} caption={props.caption} onCaption={props.onCaption} onToggle={photo=>void select(photo)} onSend={photo=>send(photo)} onClose={()=>setPreview(null)} busy={blocked} error={error} sendDisabled={failed} limitReached={selection.length+props.existingCount>=10}/>:null}
-  </>;
+  </View></HelpPhotoPortal>;
 }
 
 function PhotoTile({photo,size,number,pending,disabled,onSelect,onPreview,index}:{photo:HelpLibraryPhoto;size:number;number:number;pending:boolean;disabled:boolean;onSelect:()=>void;onPreview:(origin:HelpPhotoRect)=>void;index:number}) {

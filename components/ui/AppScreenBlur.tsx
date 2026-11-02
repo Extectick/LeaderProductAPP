@@ -35,8 +35,8 @@ export const ScreenBlurTarget = forwardRef<View, ViewProps>(function ScreenBlurT
 });
 
 /** A transparent fade at the content edge; never paint an opaque loading plate. */
-export function AppEdgeBlur({ target, edge = 'top', backgroundColor, dark, testID = 'app-edge-blur' }: {
-  target?: Target; edge?: 'top' | 'bottom'; backgroundColor?: string; dark?: boolean; testID?: string;
+export function AppEdgeBlur({ target, edge = 'top', backgroundColor, dark, testID = 'app-edge-blur', intensity = APP_EDGE_BLUR.intensity, featherSize }: {
+  target?: Target; edge?: 'top' | 'bottom'; backgroundColor?: string; dark?: boolean; testID?: string; intensity?: number; featherSize?: number;
 }) {
   const { theme } = useTheme();
   const appBackground = useThemeColor({}, 'background');
@@ -55,7 +55,7 @@ export function AppEdgeBlur({ target, edge = 'top', backgroundColor, dark, testI
     return () => { alive = false; if (frame !== undefined) cancelAnimationFrame(frame); };
   });
   const ready = Platform.OS !== 'android' || laidOut && Boolean(boundTarget?.current);
-  const feather = edge === 'top' ? APP_EDGE_BLUR.topFeather : APP_EDGE_BLUR.bottomFeather;
+  const feather = featherSize ?? (edge === 'top' ? APP_EDGE_BLUR.topFeather : APP_EDGE_BLUR.bottomFeather);
   const mask = `linear-gradient(${edge === 'top' ? 'to bottom' : 'to top'}, transparent 0, #00000018 ${feather * .25}px, #00000080 ${feather * .6}px, #000 ${feather}px)`;
   if (Platform.OS === 'web') return <View testID={testID} pointerEvents="none" style={[StyleSheet.absoluteFill, {
     backdropFilter: `blur(${APP_EDGE_BLUR.webRadius}px)`, WebkitBackdropFilter: `blur(${APP_EDGE_BLUR.webRadius}px)`, maskImage: mask, WebkitMaskImage: mask,
@@ -66,7 +66,7 @@ export function AppEdgeBlur({ target, edge = 'top', backgroundColor, dark, testI
         locations={edge === 'top' ? [0, .25, .6, 1] : [0, .4, .75, 1]} style={{ height: feather }}/><View style={{ flex: 1, backgroundColor: '#000' }}/>
     </View>}>
     {ready ? <BlurView blurTarget={Platform.OS === 'android' ? boundTarget : target} blurMethod="dimezisBlurViewSdk31Plus" noiseEnabled={false}
-      frameClearColor={backgroundColor ?? appBackground} intensity={APP_EDGE_BLUR.intensity} tint={(dark ?? theme === 'dark') ? 'dark' : 'light'} style={StyleSheet.absoluteFill}/>
+      frameClearColor={backgroundColor ?? appBackground} intensity={intensity} tint={(dark ?? theme === 'dark') ? 'dark' : 'light'} style={StyleSheet.absoluteFill}/>
       : <View testID="app-blur-preparing" style={StyleSheet.absoluteFill}/>}
   </MaskedView>;
 }

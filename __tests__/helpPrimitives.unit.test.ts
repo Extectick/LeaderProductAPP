@@ -1,6 +1,17 @@
 import React from 'react';
 import TestRenderer,{act} from 'react-test-renderer';
 import {AccessibilityInfo,Animated,Keyboard,PanResponder,Platform,StyleSheet,type View} from 'react-native';
+jest.mock('react-native-gesture-handler',()=>{
+ const make=()=>{const result:any={handlers:{}};for(const key of ['withTestId','enabled','maxPointers','activeOffsetY','failOffsetX'])result[key]=()=>result;for(const key of ['onStart','onUpdate','onEnd','onFinalize'])result[key]=(fn:any)=>{result.handlers[key]=fn;return result;};return result;};
+ return {Gesture:{Pan:make},GestureDetector:'GestureDetector',GestureHandlerRootView:'GestureHandlerRootView'};
+});
+jest.mock('react-native-reanimated',()=>({
+ __esModule:true,default:{View:require('react-native').View},cancelAnimation:jest.fn(),runOnJS:(fn:any)=>fn,
+ useSharedValue:(value:any)=>require('react').useRef({value}).current,
+ useAnimatedStyle:(fn:any)=>({get height(){return fn().height;},get transform(){return fn().transform;}}),
+ withTiming:(value:any,_options:any,done:any)=>{done?.(true);return value;},
+ withSpring:(value:any)=>value,
+}));
 let mockTheme:'light'|'dark'='light';
 jest.mock('../context/ThemeContext',()=>({useTheme:()=>({theme:mockTheme})}));
 jest.mock('@expo/vector-icons',()=>({Ionicons:'Ionicons'}));
@@ -29,20 +40,18 @@ test('a long chat shares one motion subscription and a late query cannot undo a 
   }finally{if(tree)await act(async()=>tree.unmount());events.mockRestore();query.mockRestore();}
 });
 
-test('IT sheet captures downward drags over buttons, restores cancellation and dismisses once',async()=>{
-  let handlers:any;
-  const capture=jest.spyOn(PanResponder,'create').mockImplementation(config=>{handlers=config;return {panHandlers:{}} as any;});
-  const timing=jest.spyOn(Animated,'timing').mockImplementation((value:any,config:any)=>({start:(done?:any)=>{value.setValue(config.toValue);done?.({finished:true});},stop:jest.fn(),reset:jest.fn()}) as any);
-  const spring=jest.spyOn(Animated,'spring').mockImplementation((value:any)=>({start:()=>value.setValue(0),stop:jest.fn(),reset:jest.fn()}) as any);
+test('IT sheet grows upward, follows downward drag, restores cancellation and closes once',async()=>{
   const close=jest.fn();let tree!:TestRenderer.ReactTestRenderer;
   await act(async()=>{tree=TestRenderer.create(React.createElement(HelpSheet,{title:'Подключить IT?',onClose:close,children:null}));});
   try{
-    expect(handlers.onMoveShouldSetPanResponderCapture(null,{dy:30,dx:4})).toBe(true);
-    expect(handlers.onMoveShouldSetPanResponderCapture(null,{dy:-30,dx:4})).toBe(false);
-    await act(async()=>{handlers.onPanResponderGrant();handlers.onPanResponderMove(null,{dy:40});handlers.onPanResponderTerminate();});
-    expect(spring).toHaveBeenCalled();expect(close).not.toHaveBeenCalled();
-    await act(async()=>{handlers.onPanResponderRelease(null,{dy:120,vy:.2});handlers.onPanResponderRelease(null,{dy:120,vy:.2});});expect(close).toHaveBeenCalledTimes(1);
-  }finally{await act(async()=>tree.unmount());capture.mockRestore();timing.mockRestore();spring.mockRestore();}
+    const gesture=()=>tree.root.findByType('GestureDetector' as any).props.gesture.handlers;
+    const panel=()=>StyleSheet.flatten(tree.root.findAllByProps({testID:'help-sheet-surface'})[0].props.style);
+    const initial=panel().height;
+    act(()=>{gesture().onStart();gesture().onUpdate({translationY:-100});});expect(panel().height).toBe(initial+100);
+    act(()=>gesture().onFinalize({},false));expect(panel().height).toBe(initial);expect(close).not.toHaveBeenCalled();
+    act(()=>{gesture().onStart();gesture().onUpdate({translationY:120});gesture().onEnd({translationY:120,velocityY:100},true);gesture().onEnd({translationY:120,velocityY:100},true);});
+    expect(close).toHaveBeenCalledTimes(1);
+  }finally{await act(async()=>tree.unmount());}
 });
 
 test('inactive Help scenes release native blur layers',async()=>{
@@ -90,7 +99,7 @@ describe('Help approved prototype tokens and primitive geometry',()=>{
   });
   test('sheet uses 22px upper corners and minimum260 instead of rounded cards',async()=>{
     await act(async()=>{screen=TestRenderer.create(React.createElement(HelpSheet,{title:'Подключить IT?',onClose:jest.fn(),children:null}));});
-    expect(StyleSheet.flatten(screen!.root.findByProps({testID:'help-sheet-surface'}).props.style)).toMatchObject({minHeight:260,borderTopLeftRadius:22,borderTopRightRadius:22,paddingHorizontal:18,backgroundColor:'#FFFFFF'});
+    expect(StyleSheet.flatten(screen!.root.findByProps({testID:'help-sheet-surface'}).props.style)).toMatchObject({height:260,borderTopLeftRadius:22,borderTopRightRadius:22,paddingHorizontal:18,backgroundColor:'#EEF2F7'});
   });
 });
 
@@ -139,6 +148,6 @@ describe('Help blur startup and target lifecycle',()=>{
     await act(async()=>{screen=TestRenderer.create(React.createElement(HelpBlurSurface,{target:{current:{} as View}}));});
     expect(StyleSheet.flatten(screen!.root.findByProps({testID:'app-blur-preparing'}).props.style).backgroundColor).toBeUndefined();
     await act(async()=>layout());
-    expect(screen!.root.findByType('BlurView' as any).props).toMatchObject({tint:'light',frameClearColor:'#F7F9FC',intensity:30,blurMethod:'dimezisBlurViewSdk31Plus'});
+    expect(screen!.root.findByType('BlurView' as any).props).toMatchObject({tint:'light',frameClearColor:'#F7F9FC',intensity:18,blurMethod:'dimezisBlurViewSdk31Plus'});
   });
 });

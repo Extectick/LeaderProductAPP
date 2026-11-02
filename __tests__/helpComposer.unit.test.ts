@@ -80,9 +80,9 @@ describe('Help composer recorder lifecycle', () => {
     await act(async()=>screen!.root.findAll(n=>n.props.label==='Прикрепить файлы')[0].props.onPress());
     const picker=()=>screen!.root.findByType('HelpPhotoPicker' as any);
     expect(picker().props.open).toBe(true);expect(picker().props.caption).toBe('Подпись');
-    expect(screen!.root.findAllByProps({testID:'help-composer-surface'})).toHaveLength(0);
+    expect(StyleSheet.flatten(screen!.root.findAllByProps({testID:'help-composer-surface'})[0].props.style).opacity).toBe(0);
     await act(async()=>picker().props.onVisibility(true));await act(async()=>picker().props.onClose());
-    expect(screen!.root.findAllByProps({testID:'help-composer-surface'})).toHaveLength(0);
+    expect(StyleSheet.flatten(screen!.root.findAllByProps({testID:'help-composer-surface'})[0].props.style).opacity).toBe(0);
     await act(async()=>picker().props.onVisibility(false));
     expect(screen!.root.findAllByProps({testID:'help-attachment-drafts'}).length).toBeGreaterThan(0);
     expect(screen!.root.findByType(Image).props.source.uri).toBe('file://draft.jpg');expect(props.onFiles).not.toHaveBeenCalled();
@@ -512,11 +512,11 @@ describe('Help composer recorder lifecycle', () => {
     const selected=[{uri:'file://ready.jpg',name:'ready.jpg',mimeType:'image/jpeg'}];
     await act(async()=>tray().props.onSend(selected));expect(props.onSend).toHaveBeenCalledWith(undefined,selected);
     await act(async()=>tray().props.onPreparing(true));
-    expect(screen!.root.findAllByProps({testID:'help-composer-surface'})).toHaveLength(0);
+    expect(StyleSheet.flatten(screen!.root.findAllByProps({testID:'help-composer-surface'})[0].props.style).opacity).toBe(0);
     expect(tray().props.open).toBe(true);
     // The inline gallery owns the composer while open; check its restored
     // send button after closing the gallery, while preparation is still pending.
-    expect(screen!.root.findAll(n=>n.props.label==='Отправить сообщение')).toHaveLength(0);
+    expect(screen!.root.findAllByProps({testID:'help-composer-surface'})[0].props.pointerEvents).toBe('none');
     await act(async()=>tray().props.onClose());
     expect(screen!.root.findAll(n=>n.props.label==='Отправить сообщение')[0].props.disabled).toBe(true);
   });

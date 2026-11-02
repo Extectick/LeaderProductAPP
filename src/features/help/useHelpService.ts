@@ -93,7 +93,9 @@ export function useHelpService(isFocused = true) {
   const reactionWork=useRef(new Map<string,{targets:Map<string,{mine:boolean;revision:number}>;chain:Promise<unknown>;base:HelpMessage['reactions']}>());
   const reactionRevision=useRef(0);
   const updateMessages=useCallback((next:HelpMessage[])=>{
+    const originals=new Map([...messagesRef.current,...next].map(message=>[message.id,message]));
     const overlaid=next.map(message=>{
+      if(!message.replyTo&&message.replyToId){const source=originals.get(message.replyToId);if(source&&source.ticketId===message.ticketId)message={...message,replyTo:{id:source.id,text:source.text,author:source.author,attachments:source.attachments}};}
       const work=reactionWork.current.get(identity+':'+message.ticketId+':'+message.id);
       if(!work)return message;
       for(const [emoji,target] of work.targets)message=withHelpReaction(message,emoji,target.mine,userId);
@@ -411,7 +413,8 @@ export function useHelpService(isFocused = true) {
     const ticket=selectedRef.current?.id===id?selectedRef.current:ticketsRef.current.find(row=>row.id===id);if(!ticket)throw new Error('Обращение не открыто');
     const account=identity,navigation=detailGeneration.current,interaction=interactionRevision.current;
     const clientMessageId=input.clientMessageId||helpClientId();
-    const item:HelpPending={key:clientMessageId,ticketId:id,create:false,createdAt:Date.now(),status:'queued',input:{...input,clientMessageId}};
+    const source=input.replyToId?messagesRef.current.find(message=>message.ticketId===id&&message.id===input.replyToId):undefined;
+    const item:HelpPending={key:clientMessageId,ticketId:id,create:false,createdAt:Date.now(),status:'queued',input:{...input,clientMessageId},...(source?{replyTo:{id:source.id,text:source.text,author:source.author,attachments:source.attachments}}:{})};
     await saveHelpPending(userId,item);
     if(!current(account))throw new Error('Учётная запись изменилась');
     const delivered=(detail:HelpDetail)=>{

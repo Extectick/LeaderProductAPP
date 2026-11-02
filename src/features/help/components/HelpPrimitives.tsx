@@ -1,6 +1,8 @@
 import React, { useContext, useEffect, useRef, useState } from 'react';
 import {HelpVisualEffectsContext} from '../helpVisualEffects';
-import { Animated, Image, Keyboard, Modal, PanResponder, Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
+import { Animated, Image, Keyboard, Modal, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions, type ViewStyle } from 'react-native';
+import {Gesture,GestureDetector,GestureHandlerRootView} from 'react-native-gesture-handler';
+import Reanimated,{cancelAnimation,runOnJS,useAnimatedStyle,useSharedValue,withSpring,withTiming} from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppEdgeBlur } from '@/components/ui/AppScreenBlur';
@@ -23,7 +25,7 @@ export function HelpAvatar({ id, name, uri, size = 34, muted = false }: { id: nu
 export function HelpBlurSurface({target,edge='top'}:{target?:React.RefObject<View|null>;edge?:'top'|'bottom'}) {
   const c=useHelpTheme();
   const enabled=useContext(HelpVisualEffectsContext);
-  return enabled ? <AppEdgeBlur target={target} edge={edge} dark={c.dark} backgroundColor={c.background} testID="help-blur-surface"/> : null;
+  return enabled ? <AppEdgeBlur target={target} edge={edge} intensity={18} featherSize={64} dark={c.dark} backgroundColor={c.background} testID="help-blur-surface"/> : null;
 }
 export function HelpDock({ children, onHeight, target }: { children: React.ReactNode; onHeight?: (height: number) => void; target?: React.RefObject<View | null> }) {
   const c = useHelpTheme(); const insets = useSafeAreaInsets();
@@ -42,29 +44,39 @@ export function HelpPrimaryButton({ text, icon = 'add-outline', onPress, disable
   const c = useHelpTheme(); const reduced = useHelpReducedMotion();
   return <Pressable accessibilityRole="button" accessibilityState={{disabled:Boolean(disabled)}} disabled={disabled} onPress={onPress} style={({ pressed }) => ({ height: variant === 'dock' ? 48 : 44, borderRadius: variant === 'dock' ? 24 : 12, backgroundColor: disabled ? c.elevated : c.accent, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: pressed && !disabled ? .8 : 1, transform: [{ scale: pressed && !disabled && !reduced ? .96 : 1 }] })}><Ionicons name={icon} size={22} color={disabled ? c.muted : '#FFF'} /><Text style={{ color: disabled ? c.muted : '#FFF', fontSize: 14 }}>{text}</Text></Pressable>;
 }
-/** Sheets drag from their content, not just the handle. Scrollable children yield until at top. */
-export function HelpSheet({ title, children, onClose, scrollOffset = 0 }: { title: string; children: React.ReactNode; onClose: () => void; scrollOffset?: number }) {
-  const c = useHelpTheme(); const reduced=useHelpReducedMotion(); const insets = useSafeAreaInsets(); const y = useRef(new Animated.Value(260)).current;
-  const callbacks=useRef({onClose,reduced});callbacks.current={onClose,reduced};
-  useEffect(()=>{Animated.timing(y,{toValue:0,duration:reduced ? 0 : 180,useNativeDriver:true}).start();},[reduced]);
-  const closing=useRef(false),sheetHeight=useRef(700);
-  const close = () => {
-    if(closing.current)return;
-    closing.current=true;y.stopAnimation();
-    Animated.timing(y,{toValue:sheetHeight.current,duration:callbacks.current.reduced?0:180,useNativeDriver:true}).start(({finished})=>{if(finished)callbacks.current.onClose();});
-  };
-  useEffect(()=>()=>y.stopAnimation(),[y]);
-  const offset = useRef(scrollOffset); offset.current = scrollOffset;
-  const restore=()=>Animated.spring(y,{toValue:0,useNativeDriver:true,damping:24,stiffness:240,mass:1}).start();
-  const wantsDrag=(_:unknown,g:any)=>!closing.current&&offset.current<=0&&g.dy>8&&g.dy>Math.abs(g.dx)*1.5;
-  const pan=useRef(PanResponder.create({
-    onMoveShouldSetPanResponder:wantsDrag,onMoveShouldSetPanResponderCapture:wantsDrag,
-    onPanResponderGrant:()=>y.stopAnimation(),
-    onPanResponderMove:(_,g)=>y.setValue(Math.max(0,g.dy)),
-    onPanResponderRelease:(_,g)=>g.dy>90||g.dy>16&&g.vy>1.1?close():restore(),
-    onPanResponderTerminate:restore,onPanResponderTerminationRequest:()=>false,
-  })).current;
-  return <Modal transparent animationType="none" onRequestClose={close} statusBarTranslucent><View style={{flex:1,justifyContent:'flex-end',backgroundColor:'#00000057'}}><Pressable accessibilityLabel="Закрыть" onPress={close} style={StyleSheet.absoluteFill}/><Animated.View testID="help-sheet-surface" onLayout={e=>{sheetHeight.current=e.nativeEvent.layout.height+insets.bottom;}} {...pan.panHandlers} style={{minHeight:260,backgroundColor:c.dark ? c.panel : c.headerSurface,borderTopLeftRadius:22,borderTopRightRadius:22,paddingHorizontal:18,paddingBottom:Math.max(24,insets.bottom+16),transform:[{translateY:y}]}}><View style={{height:30,alignItems:'center',justifyContent:'center'}}><View style={{width:42,height:5,borderRadius:3,backgroundColor:'#C9C9C4'}}/></View><View style={{flexDirection:'row',alignItems:'center',paddingBottom:14,minHeight:36}}><Text style={{flex:1,color:c.text,fontSize:18,fontWeight:'900',paddingRight:34}}>{title}</Text><HelpIcon name="close-outline" label="Закрыть" onPress={close} size={22} style={{position:'absolute',right:-6,top:-7}}/></View>{children}</Animated.View></View></Modal>;
+/** Isolated UI-thread panel: dragging never resizes or rerenders the chat. */
+export function HelpSheet({title,children,onClose,scrollOffset=0,resizable=true}:{title:string;children:React.ReactNode;onClose:()=>void;scrollOffset?:number;resizable?:boolean}){
+  const c=useHelpTheme(),reduced=useHelpReducedMotion(),insets=useSafeAreaInsets(),window=useWindowDimensions();
+  const maximum=Math.max(260,window.height-insets.top-24),padding=Math.max(24,insets.bottom+16);
+  const [natural,setNatural]=useState(260),collapsed=Math.min(maximum,natural);
+  const height=useSharedValue(collapsed),y=useSharedValue(collapsed),start=useSharedValue(collapsed),closing=useSharedValue(false);
+  const latest=useRef(onClose);latest.current=onClose;
+  const dismissed=React.useCallback(()=>latest.current(),[]);
+  const close=React.useCallback(()=>{
+    if(closing.value)return;closing.value=true;cancelAnimation(height);
+    y.value=withTiming(height.value+padding,{duration:reduced?0:180},finished=>{if(finished)runOnJS(dismissed)();});
+  },[closing,height,y,padding,reduced,dismissed]);
+  useEffect(()=>{height.value=collapsed;y.value=withTiming(0,{duration:reduced?0:220});return()=>{cancelAnimation(y);cancelAnimation(height);};},[collapsed,height,y,reduced]);
+  const motion=useAnimatedStyle(()=>({height:height.value,transform:[{translateY:y.value}]}));
+  const pan=React.useMemo(()=>Gesture.Pan().withTestId('help-sheet-resize').enabled(scrollOffset<=0).maxPointers(1).activeOffsetY(resizable?[-8,8]:8).failOffsetX([-24,24])
+    .onStart(()=>{if(closing.value)return;cancelAnimation(height);start.value=height.value;})
+    .onUpdate(event=>{if(!closing.value)height.value=Math.max(80,Math.min(maximum,start.value-event.translationY));})
+    .onEnd((event,success)=>{
+      if(!success||closing.value)return;
+      if(height.value<collapsed*.7||(event.translationY>24&&event.velocityY>900)){runOnJS(close)();return;}
+      const next=height.value>(collapsed+maximum)/2||event.velocityY< -600?maximum:collapsed;
+      height.value=withSpring(next,{damping:25,stiffness:280,mass:.8,overshootClamping:true});
+    })
+    .onFinalize((_,success)=>{if(!success&&!closing.value)height.value=withSpring(start.value,{damping:25,stiffness:280,mass:.8,overshootClamping:true});}),
+    [scrollOffset,resizable,closing,height,start,maximum,collapsed,close]);
+  return <Modal transparent animationType="none" onRequestClose={close} statusBarTranslucent><GestureHandlerRootView style={{flex:1}}><View style={{flex:1,justifyContent:'flex-end',backgroundColor:'#00000057'}}>
+    <Pressable accessibilityLabel="Закрыть" onPress={close} style={StyleSheet.absoluteFill}/>
+    <GestureDetector gesture={pan}><Reanimated.View testID="help-sheet-surface" style={[{backgroundColor:c.panel,borderTopLeftRadius:22,borderTopRightRadius:22,paddingHorizontal:18,paddingBottom:padding,overflow:'hidden'},motion]}>
+      <View style={{height:30,alignItems:'center',justifyContent:'center'}}><View style={{width:42,height:5,borderRadius:3,backgroundColor:c.muted,opacity:.45}}/></View>
+      <View style={{flexDirection:'row',alignItems:'center',paddingBottom:14,minHeight:36}}><Text style={{flex:1,color:c.text,fontSize:18,fontWeight:'600',paddingRight:34}}>{title}</Text><HelpIcon name="close-outline" label="Закрыть" onPress={close} size={22} style={{position:'absolute',right:-6,top:-7}}/></View>
+      <View onLayout={event=>setNatural(Math.max(260,event.nativeEvent.layout.height+80+padding))}>{children}</View>
+    </Reanimated.View></GestureDetector>
+  </View></GestureHandlerRootView></Modal>;
 }
 export function HelpTyping({ text, users, color, compact=false }: { text?: string; users?: readonly HelpTypingUser[]; color?: string; compact?:boolean }) {
   const c=useHelpTheme(); const reduced=useHelpReducedMotion(); const phases=useRef([0,1,2].map(()=>new Animated.Value(0))).current;

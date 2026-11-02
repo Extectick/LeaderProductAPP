@@ -13,6 +13,7 @@ export function dispatchHelpPending(userId: number, item: HelpPending): Promise<
         await saveHelpPending(userId, sending);
         try {
             const detail = item.action === 'close' && item.ticketId ? await api.close(item.ticketId, { ...item.input, rating: item.input.rating ?? 0 }) : item.action === 'reopen' && item.ticketId ? await api.reopen(item.ticketId, item.input) : item.ticketId ? await api.send(item.ticketId, item.input) : await api.create(item.input);
+            if(item.replyTo)detail.messages=detail.messages.map(message=>!message.replyTo&&((Boolean(item.input.clientMessageId)&&message.clientMessageId===item.input.clientMessageId)||message.replyToId===item.replyTo!.id)?{...message,replyToId:item.replyTo!.id,replyTo:item.replyTo!}:message);
             await confirmHelpPending(userId, item.key, detail);
             return detail;
         }

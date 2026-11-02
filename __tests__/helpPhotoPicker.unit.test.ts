@@ -7,7 +7,7 @@ const mockPullTiming=jest.fn(),mockPullSpring=jest.fn();
 jest.mock('react-native-gesture-handler',()=>{
   const build=(kind:string)=>{
     const result:any={kind,config:{},handlers:{}};
-    for(const key of ['withTestId','manualActivation','maxPointers','enabled','requireExternalGestureToFail','disallowInterruption'])result[key]=(...args:unknown[])=>{result.config[key]=args.length===1?args[0]:args;return result;};
+    for(const key of ['activeOffsetY','withTestId','manualActivation','maxPointers','enabled','requireExternalGestureToFail','disallowInterruption'])result[key]=(...args:unknown[])=>{result.config[key]=args.length===1?args[0]:args;return result;};
     for(const key of ['onTouchesDown','onTouchesMove','onTouchesUp','onStart','onUpdate','onEnd','onFinalize'])result[key]=(handler:unknown)=>{result.handlers[key]=handler;return result;};
     return result;
   };
@@ -17,7 +17,7 @@ jest.mock('react-native-reanimated',()=>{
   const React=require('react'),RN=require('react-native');
   return{__esModule:true,default:{View:RN.View,FlatList:RN.FlatList},cancelAnimation:jest.fn(),runOnJS:(fn:unknown)=>fn,
     useSharedValue:(initial:unknown)=>React.useRef({value:initial}).current,
-    useAnimatedStyle:(fn:()=>any)=>({get transform(){return fn().transform;}}),
+    useAnimatedStyle:(fn:()=>any)=>({get transform(){return fn().transform;},get height(){return fn().height;}}),
     useAnimatedScrollHandler:(handlers:any)=>Object.assign((event:any)=>handlers.onScroll(event.nativeEvent||event),{handlers}),
     withTiming:(...args:unknown[])=>mockPullTiming(...args),withSpring:(...args:unknown[])=>mockPullSpring(...args),
     Easing:{out:(fn:unknown)=>fn,cubic:(value:number)=>value},
@@ -79,7 +79,7 @@ afterEach(async()=>{if(screen)await act(async()=>screen!.unmount());screen=undef
 test('gallery regression: opens at sixty percent with caption after the grid and back preserving selection',async()=>{
   props.files=[file(0)];props.caption='Мой текст';await render();
   const panel=screen!.root.findAllByProps({testID:'help-photo-panel'})[0];
-  expect(panel.props.style.height.__getValue()).toBeCloseTo(Math.min(Dimensions.get('window').height*.6,Dimensions.get('window').height-108));
+  expect(panel.props.style[1].height).toBeCloseTo(Math.min(Dimensions.get('window').height*.6,Dimensions.get('window').height-108));
   const children=panel.findAll(node=>['help-photo-grid-viewport','help-photo-caption'].includes(node.props.testID));
   expect(children[0].props.testID).toBe('help-photo-grid-viewport');expect(children[children.length-1].props.testID).toBe('help-photo-caption');
   expect(screen!.root.findByType(TextInput).props.value).toBe('Мой текст');
@@ -172,7 +172,7 @@ test('pending preparation blocks send until all selected photos are ready',async
 });
 
 describe('gallery pull',()=>{
-  const gesture=(kind='pan')=>screen!.root.findAllByType('GestureDetector' as any).find(item=>item.props.gesture.kind===kind)!.props.gesture;
+  const gesture=(kind='pan')=>screen!.root.findAllByType('GestureDetector' as any).find(item=>item.props.gesture.kind===kind&&(kind!=='pan'||item.props.gesture.config.withTestId==='help-photo-pull'))!.props.gesture;
   const manager=()=>({activate:jest.fn(),fail:jest.fn()});
   const touch=(x=50,y=50,count=1)=>({numberOfTouches:count,allTouches:[{absoluteX:x,absoluteY:y}]});
   const panel=()=>screen!.root.findAllByProps({testID:'help-photo-panel'})[0];
@@ -194,16 +194,16 @@ describe('gallery pull',()=>{
     expect(state.activate).not.toHaveBeenCalled();await press('Выбрать фотографию 1');expect(props.onFiles).toHaveBeenLastCalledWith([file(0)]);
   });
   test('short pull moves the whole surface without resizing grid and springs back with camera restored',async()=>{
-    await render();const before=panel().props.style.height.__getValue();const state=await startPull();expect(state.activate).toHaveBeenCalledTimes(1);expect(camera().props.tileVisible).toBe(false);
-    act(()=>gesture().handlers.onUpdate({translationY:32}));expect(surface().props.style[1].transform).toEqual([{translateY:32}]);expect(panel().props.style.height.__getValue()).toBe(before);
+    await render();const before=panel().props.style[1].height;const state=await startPull();expect(state.activate).toHaveBeenCalledTimes(1);expect(camera().props.tileVisible).toBe(false);
+    act(()=>gesture().handlers.onUpdate({translationY:32}));expect(surface().props.style[1].transform).toEqual([{translateY:32}]);expect(panel().props.style[1].height).toBe(before);
     await act(async()=>gesture().handlers.onEnd({velocityY:100},true));expect(mockPullSpring).toHaveBeenCalledWith(0,expect.objectContaining({overshootClamping:true}),expect.any(Function));
     expect(props.onClose).not.toHaveBeenCalled();expect(surface().props.style[1].transform).toEqual([{translateY:0}]);expect(camera().props.tileVisible).toBe(true);
   });
   test.each([{distance:180,velocity:100},{distance:30,velocity:1100}])('long or fast pull closes only after slide-out, preserves draft, and skips height collapse (%j)',async({distance,velocity})=>{
     props.files=[file(0)];props.caption='Не потерять';let finish!:()=>void;
-    mockPullTiming.mockImplementation((value,_options,callback)=>{finish=()=>callback(true);return value;});
-    await render();await startPull();act(()=>gesture().handlers.onUpdate({translationY:distance}));await act(async()=>gesture().handlers.onEnd({velocityY:velocity},true));
-    expect(props.onClose).not.toHaveBeenCalled();expect(panel().props.style.height.__getValue()).toBeGreaterThan(0);
+    await render();mockPullTiming.mockImplementation((value,_options,callback)=>{finish=()=>callback(true);return value;});
+    await startPull();act(()=>gesture().handlers.onUpdate({translationY:distance}));await act(async()=>gesture().handlers.onEnd({velocityY:velocity},true));
+    expect(props.onClose).not.toHaveBeenCalled();expect(panel().props.style[1].height).toBeGreaterThan(0);
     await act(async()=>finish());expect(props.onClose).toHaveBeenCalledTimes(1);expect(screen!.root.findAllByProps({testID:'help-photo-panel'})).toHaveLength(0);
     expect(props.onFiles).not.toHaveBeenCalled();expect(props.onCaption).not.toHaveBeenCalled();expect(mockDiscard).not.toHaveBeenCalled();
     const calls=(Animated.timing as jest.Mock).mock.calls.length;await update({open:false});expect((Animated.timing as jest.Mock).mock.calls).toHaveLength(calls);
@@ -217,4 +217,20 @@ describe('gallery pull',()=>{
     act(()=>grid().props.onScroll.handlers.onMomentumEnd());const multi=manager();act(()=>gesture().handlers.onTouchesDown(touch(50,50,2),multi));expect(multi.fail).toHaveBeenCalledTimes(1);
     expect(props.onClose).not.toHaveBeenCalled();
   });
+});
+
+test('attachment panel is an overlay and handle height updates do not commit draft or selection',async()=>{
+ await render();
+ const overlay=screen!.root.findAllByProps({testID:'help-photo-overlay'})[0];
+ expect(overlay.props.style.position).toBe('absolute');
+ const panel=()=>screen!.root.findAllByProps({testID:'help-photo-panel'})[0];
+ expect(panel().props.style[0].position).toBe('absolute');
+ const resize=screen!.root.findAllByType('GestureDetector' as any).find(n=>n.props.gesture.config.withTestId==='help-photo-resize')!.props.gesture.handlers;
+ const initial=panel().props.style[1].height;
+ await act(async()=>resize.onStart());
+ act(()=>resize.onUpdate({translationY:-50}));
+ expect(panel().props.style[1].height).toBeGreaterThanOrEqual(initial);
+ expect(props.onFiles).not.toHaveBeenCalled();expect(props.onCaption).not.toHaveBeenCalled();
+ await act(async()=>resize.onFinalize({},false));
+ expect(panel().props.style[1].height).toBe(initial);
 });

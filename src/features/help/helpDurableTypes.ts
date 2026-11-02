@@ -1,6 +1,7 @@
-import type { HelpCreateInput } from './helpApi';
+import type { HelpCreateInput, HelpMessage } from './helpApi';
 export type HelpPending = {
     key: string;
+    replyTo?: HelpMessage['replyTo'];
     ticketId?: number;
     create: boolean;
     action?: 'close' | 'reopen';

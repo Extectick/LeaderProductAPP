@@ -46,6 +46,13 @@ describe('Help accepted sends and history replay',()=>{
     await act(async()=>{done(accepted);});
     expect(service.messages.map(row=>row.id)).toEqual([100]);expect(service.navigationTarget?.kind).toBe('latest');expect(service.hasNewer).toBe(false);
   });
+  test('reply snapshot is durably queued before delivery and fills a partial server acknowledgement',async()=>{
+    await open();let done!:(value:any)=>void;outbox.dispatchHelpPending.mockReturnValue(new Promise(resolve=>{done=resolve;}));
+    await act(async()=>{await service.sendMessage(7,{text:'Reply',replyToId:1});});
+    expect(storage.saveHelpPending).toHaveBeenLastCalledWith(5,expect.objectContaining({replyTo:expect.objectContaining({id:1}),input:expect.objectContaining({replyToId:1})}));
+    await act(async()=>done({...accepted,messages:[{...accepted.messages[0],replyToId:1,replyTo:null}]}));
+    expect(service.messages[0].replyTo?.id).toBe(1);
+  });
   test('accepted send does not steal a later user scroll',async()=>{
     await open();let done!:(value:any)=>void;outbox.dispatchHelpPending.mockReturnValue(new Promise(resolve=>{done=resolve;}));
     await act(async()=>{await service.sendMessage(7,{text:'QA'});service.cancelNavigation();});
