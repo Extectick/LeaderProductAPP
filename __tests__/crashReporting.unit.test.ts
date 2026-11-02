@@ -31,7 +31,7 @@ test('native bootstrap is early, idempotent and removed when diagnostics are dis
 });
 
 test.each(['prod', 'dev'])('native diagnostics use the %s channel and reject cross-environment DSNs', channel => {
-  const host = channel === 'dev' ? 'dev.leader-product.ru' : 'api.leader-product.ru';
+  const host = channel === 'dev' ? 'dev.lidprod.ru' : 'sibvod.ru';
   const config = diagnosticConfig({ EXPO_PUBLIC_UPDATE_CHANNEL: channel, EXPO_PUBLIC_SENTRY_ENABLED: 'true',
     EXPO_PUBLIC_SENTRY_DSN: `https://public@${host}/sentry/3` });
   const native = nativeSource(config.dsn, config.channel);

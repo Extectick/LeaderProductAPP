@@ -12,7 +12,7 @@ function diagnosticConfig(env = process.env) {
   const enabled = env.EXPO_PUBLIC_SENTRY_ENABLED === 'true';
   const dsn = env.EXPO_PUBLIC_SENTRY_DSN || '';
   if (enabled) {
-    const expectedHost = channel === 'dev' ? 'dev.leader-product.ru' : 'api.leader-product.ru';
+    const expectedHost = channel === 'dev' ? 'dev.lidprod.ru' : 'sibvod.ru';
     let url;
     try { url = new URL(dsn); } catch { throw new Error('Invalid diagnostics DSN'); }
     if (!['dev', 'prod'].includes(channel) || url.protocol !== 'https:' || url.hostname !== expectedHost
