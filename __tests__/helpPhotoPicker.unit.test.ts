@@ -16,6 +16,7 @@ jest.mock('react-native-gesture-handler',()=>{
 jest.mock('react-native-reanimated',()=>{
   const React=require('react'),RN=require('react-native');
   return{__esModule:true,default:{View:RN.View,FlatList:RN.FlatList},cancelAnimation:jest.fn(),runOnJS:(fn:unknown)=>fn,
+    useDerivedValue:(fn:()=>unknown)=>({get value(){return fn();}}),
     useSharedValue:(initial:unknown)=>React.useRef({value:initial}).current,
     useAnimatedStyle:(fn:()=>any)=>({get transform(){return fn().transform;},get height(){return fn().height;}}),
     useAnimatedScrollHandler:(handlers:any)=>Object.assign((event:any)=>handlers.onScroll(event.nativeEvent||event),{handlers}),
@@ -51,7 +52,12 @@ const file=(index:number):HelpLocalFile=>({assetId:photos[index].id,uri:`file://
 function deferred<T>(){let resolve!:(value:T)=>void,reject!:(reason:Error)=>void;const promise=new Promise<T>((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};}
 let screen:TestRenderer.ReactTestRenderer|undefined,props:React.ComponentProps<typeof HelpPhotoPicker>;
 const node={measureInWindow:(callback:(x:number,y:number,w:number,h:number)=>void)=>callback(12,20,100,100)};
-async function render(){await act(async()=>{screen=TestRenderer.create(React.createElement(HelpPhotoPicker,props),{createNodeMock:()=>node});});}
+async function render(){
+ await act(async()=>{screen=TestRenderer.create(React.createElement(HelpPhotoPicker,props),{createNodeMock:()=>node});});
+ for(const view of screen!.root.findAll(item=>item.props.collapsable===false&&item.instance))view.instance.measureInWindow=node.measureInWindow;
+ const grid=screen!.root.findAllByProps({testID:'help-photo-grid-viewport'})[0];
+ if(grid)await act(async()=>grid.props.onLayout());
+}
 async function update(patch:Partial<typeof props>){props={...props,...patch};await act(async()=>screen!.update(React.createElement(HelpPhotoPicker,props)));}
 async function press(label:string){
   // RN's Jest View owns its measure method; createNodeMock covers host refs.
@@ -193,9 +199,9 @@ describe('gallery pull',()=>{
     await render();const state=manager();act(()=>{gesture().handlers.onTouchesDown(touch(),state);gesture().handlers.onTouchesMove(touch(51,53),state);gesture().handlers.onTouchesUp({},state);});
     expect(state.activate).not.toHaveBeenCalled();await press('Выбрать фотографию 1');expect(props.onFiles).toHaveBeenLastCalledWith([file(0)]);
   });
-  test('short pull moves the whole surface without resizing grid and springs back with camera restored',async()=>{
-    await render();const before=panel().props.style[1].height;const state=await startPull();expect(state.activate).toHaveBeenCalledTimes(1);expect(camera().props.tileVisible).toBe(false);
-    act(()=>gesture().handlers.onUpdate({translationY:32}));expect(surface().props.style[1].transform).toEqual([{translateY:32}]);expect(panel().props.style[1].height).toBe(before);
+  test('short pull keeps the camera visible and moves it with the surface',async()=>{
+    await render();const before=panel().props.style[1].height;const state=await startPull();expect(state.activate).toHaveBeenCalledTimes(1);expect(camera().props.tileVisible).toBe(true);
+    act(()=>gesture().handlers.onUpdate({translationY:32}));expect(surface().props.style[1].transform).toEqual([{translateY:32}]);expect(panel().props.style[1].height).toBe(before);expect(camera().props.sheetOffset.value).toBe(32);
     await act(async()=>gesture().handlers.onEnd({velocityY:100},true));expect(mockPullSpring).toHaveBeenCalledWith(0,expect.objectContaining({overshootClamping:true}),expect.any(Function));
     expect(props.onClose).not.toHaveBeenCalled();expect(surface().props.style[1].transform).toEqual([{translateY:0}]);expect(camera().props.tileVisible).toBe(true);
   });
@@ -233,4 +239,17 @@ test('attachment panel is an overlay and handle height updates do not commit dra
  expect(props.onFiles).not.toHaveBeenCalled();expect(props.onCaption).not.toHaveBeenCalled();
  await act(async()=>resize.onFinalize({},false));
  expect(panel().props.style[1].height).toBe(initial);
+});
+
+test('upward fling cannot expand the panel beyond its standard height',async()=>{
+ await render();
+ const panel=()=>screen!.root.findAllByProps({testID:'help-photo-panel'})[0];
+ const gesture=screen!.root.findAllByType('GestureDetector' as any).find(n=>n.props.gesture.config.withTestId==='help-photo-resize')!.props.gesture.handlers;
+ const standard=panel().props.style[1].height;
+ await act(async()=>gesture.onStart());
+ act(()=>gesture.onUpdate({translationY:-900}));
+ expect(panel().props.style[1].height).toBe(standard);
+ await act(async()=>gesture.onEnd({translationY:-900,velocityY:-2000},true));
+ expect(panel().props.style[1].height).toBe(standard);
+ expect(props.onClose).not.toHaveBeenCalled();
 });

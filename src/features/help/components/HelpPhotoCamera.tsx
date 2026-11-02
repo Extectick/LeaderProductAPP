@@ -9,6 +9,7 @@ import type { HelpLibraryPhoto } from '../helpPhotoLibrary';
 import { helpDevActions, helpDevState } from '../helpDiagnostics';
 import { useHelpReducedMotion, useHelpTheme } from '../helpTheme';
 import { HelpPhotoPortal, useHelpPhotoPortalFrame, type HelpPhotoRect } from './HelpPhotoPortal';
+import Reanimated, {useAnimatedStyle, type SharedValue} from 'react-native-reanimated';
 
 export type HelpPhotoCameraProps = {
   expanded:boolean;onExpand:()=>void;onClose:()=>void;onCapture:(photo:HelpLibraryPhoto)=>void;onError:(message:string)=>void;disabled?:boolean;
@@ -16,6 +17,8 @@ export type HelpPhotoCameraProps = {
   tileOrigin?:HelpPhotoRect;tileVisible?:boolean;layoutRevision?:number|string|boolean;
   /** The grid clips the portal camera exactly like its other cells. */
   viewport?:HelpPhotoRect;scrollOffset?:Animated.Value;
+  sheetOffset?:SharedValue<number>;
+  sheetViewportHeight?:SharedValue<number>;
 };
 let photoSequence=0;
 const validRect=(rect:HelpPhotoRect|undefined)=>Boolean(rect&&rect.width>0&&rect.height>0&&Object.values(rect).every(Number.isFinite));
@@ -34,6 +37,10 @@ export function HelpPhotoCamera(props:HelpPhotoCameraProps) {
   const tileRect=validRect(props.tileOrigin)?props.tileOrigin:measured;
   const showCamera=Boolean(permission?.granted&&active&&(props.expanded||(props.tileVisible!==false&&!props.disabled))&&validRect(tileRect));
   const floating=props.expanded||expandedSurface;
+  const sheetOffset=props.sheetOffset,sheetViewportHeight=props.sheetViewportHeight;
+  const fullHeight=host?.height??10000;
+  const sheetMotion=useAnimatedStyle(()=>({transform:[{translateY:floating?0:sheetOffset?.value??0}]}),[floating,sheetOffset]);
+  const sheetClip=useAnimatedStyle(()=>({maxHeight:floating?fullHeight:sheetViewportHeight?.value??fullHeight}),[floating,fullHeight,sheetViewportHeight]);
   if(props.expanded&&!wasExpanded.current)transitionScroll.current=scrollPosition.current;
   wasExpanded.current=props.expanded;
   const scrollTranslate=React.useMemo(()=>props.scrollOffset?Animated.multiply(props.scrollOffset,-1):0,[props.scrollOffset]);
@@ -96,20 +103,20 @@ export function HelpPhotoCamera(props:HelpPhotoCameraProps) {
     <View ref={tile} collapsable={false} onLayout={measure} style={{width:'100%',aspectRatio:1,backgroundColor:c.panel}}>
       <Pressable testID="help-photo-camera-tile" accessibilityRole="button" accessibilityLabel="Открыть камеру" accessibilityState={{disabled:Boolean(props.disabled||asking)}} disabled={props.disabled||asking} onPress={()=>void expand()} style={[StyleSheet.absoluteFill,{minWidth:48,minHeight:48,alignItems:'center',justifyContent:'center'}]}>{asking?<ActivityIndicator color={c.text}/>:<Ionicons name="camera" size={32} color={c.text}/>}</Pressable>
     </View>
-    <HelpPhotoPortal id={`camera-${id}`}><View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+    <HelpPhotoPortal id={`camera-${id}`}><Reanimated.View pointerEvents="box-none" style={[StyleSheet.absoluteFill,sheetMotion]}>
       {expandedSurface?<Animated.View onStartShouldSetResponder={()=>true} style={[StyleSheet.absoluteFill,{backgroundColor:'#000',opacity:progress}]}/>:null}
-      {showCamera?<Animated.View testID="help-photo-camera-clip" pointerEvents="none" style={{position:'absolute',left:interpolate(clip.x-(host?.x??0),0),top:interpolate(clip.y-(host?.y??0),0),width:interpolate(clip.width,host?.width??clip.width),height:interpolate(clip.height,host?.height??clip.height),overflow:'hidden'}}>
+      {showCamera?<Animated.View testID="help-photo-camera-clip" pointerEvents="none" style={{position:'absolute',left:interpolate(clip.x-(host?.x??0),0),top:interpolate(clip.y-(host?.y??0),0),width:interpolate(clip.width,host?.width??clip.width),height:interpolate(clip.height,host?.height??clip.height),overflow:'hidden'}}><Reanimated.View style={[{flex:1,overflow:'hidden'},sheetClip]}>
         <Animated.View testID="help-photo-camera-scroll" style={{position:'absolute',left:0,top:0,width:'100%',height:'100%',transform:[{translateY:floating?0:scrollTranslate}]}}>
           <Animated.View testID="help-photo-camera-frame" style={{position:'absolute',left:interpolate(base.x,0),top:interpolate(base.y-(floating?transitionScroll.current:0),0),width:interpolate(base.width,host?.width??base.width),height:interpolate(base.height,host?.height??base.height),overflow:'hidden',borderRadius:interpolate(3,0),backgroundColor:'#000'}}>
             <CameraView ref={camera} testID="help-photo-camera-preview" style={StyleSheet.absoluteFill} facing={facing} mode="picture" mute active={active} previewBlurRadius={floating?0:10} onCameraReady={()=>setReady(true)} onMountError={()=>{setReady(false);live.current.props.onError('Камера недоступна. Закройте другие приложения камеры и попробуйте ещё раз.');}}/>
             {!floating?<>{Platform.OS==='ios'?<BlurView intensity={55} tint="dark" style={StyleSheet.absoluteFill}/>:null}<View testID="help-photo-camera-icon" style={[StyleSheet.absoluteFill,{alignItems:'center',justifyContent:'center',backgroundColor:'#00000018'}]}><Ionicons name="camera" size={32} color="#FFF"/></View></>:null}
           </Animated.View>
         </Animated.View>
-      </Animated.View>:null}
+      </Reanimated.View></Animated.View>:null}
       {expandedSurface?<Animated.View testID="help-photo-camera-controls" style={[StyleSheet.absoluteFill,{opacity:progress}]} pointerEvents="box-none">
         <View style={{position:'absolute',top:insets.top+8,left:12,right:12,flexDirection:'row',alignItems:'center'}}><Pressable accessibilityRole="button" accessibilityLabel="Закрыть камеру" onPress={close} style={button}><Ionicons name="close" size={27} color="#FFF"/></Pressable><Text style={{flex:1,color:'#FFF',fontSize:16,fontWeight:'600',textAlign:'center',paddingRight:48}}>Фото</Text></View>
         <View style={{position:'absolute',bottom:Math.max(insets.bottom,16)+18,left:24,right:24,flexDirection:'row',alignItems:'center',justifyContent:'space-between'}}><View style={{width:48}}/><Pressable testID="help-photo-camera-shutter" accessibilityRole="button" accessibilityLabel="Сделать фото" accessibilityState={{disabled:!ready||taking||Boolean(props.disabled),busy:taking}} disabled={!ready||taking||props.disabled} onPress={()=>void capture()} style={{width:80,height:80,borderRadius:40,borderWidth:4,borderColor:'#FFF',padding:5,opacity:ready?1:.5}}><View style={{flex:1,borderRadius:32,backgroundColor:'#FFF',alignItems:'center',justifyContent:'center'}}>{taking?<ActivityIndicator color={c.accent}/>:null}</View></Pressable><Pressable accessibilityRole="button" accessibilityLabel="Переключить камеру" disabled={taking||props.disabled} onPress={flip} style={button}><Ionicons name="camera-reverse-outline" size={28} color="#FFF"/></Pressable></View>
       </Animated.View>:null}
-    </View></HelpPhotoPortal>
+    </Reanimated.View></HelpPhotoPortal>
   </>;
 }

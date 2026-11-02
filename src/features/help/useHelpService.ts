@@ -417,20 +417,23 @@ export function useHelpService(isFocused = true) {
     const item:HelpPending={key:clientMessageId,ticketId:id,create:false,createdAt:Date.now(),status:'queued',input:{...input,clientMessageId},...(source?{replyTo:{id:source.id,text:source.text,author:source.author,attachments:source.attachments}}:{})};
     await saveHelpPending(userId,item);
     if(!current(account))throw new Error('Учётная запись изменилась');
+    let accepted=false;
     const delivered=(detail:HelpDetail)=>{
+      if(accepted)return;accepted=true;
       if(!current(account))return;
       // Explicit Send goes to the accepted tail, even from an old history page.
       // A later user navigation/scroll still takes precedence over this response.
       if(activeId.current===id&&navigation===detailGeneration.current&&interaction===interactionRevision.current){
-        applyDetail(detail);issueNavigation({kind:'latest',animate:false});
+        const atLatest=viewport.current?.atLatest&&!pageRef.current?.hasNewer;
+        applyDetail(detail);
+        if(!atLatest)issueNavigation({kind:'latest',animate:false});
         const last=detail.messages.at(-1);if(last)viewport.current={messageId:last.id,sequence:last.sequence,offset:0,atLatest:!detail.hasNewer};
         setPendingMessages(old=>old.filter(pending=>pending.key!==clientMessageId));
       }
-      void liveTicketRefresh.current(id).catch(report);
     };
-    if(input.attachmentIds?.length){const detail=await mutate(()=>dispatchHelpPending(userId,item));delivered(detail);return detail;}
+    if(input.attachmentIds?.length){const detail=await mutate(()=>dispatchHelpPending(userId,item,delivered));delivered(detail);return detail;}
     // Acceptance means durable local enqueue. Delivery continues beyond this screen.
-    void dispatchHelpPending(userId,item).then(delivered).catch(error=>{if(current(account))report(error);});
+    void dispatchHelpPending(userId,item,delivered).then(delivered).catch(error=>{if(current(account))report(error);});
     return {...(pageRef.current??{}),ticket,messages:messagesRef.current.filter(message=>message.ticketId===id),queued:true};
   },[userId,current,identity,report,mutate,applyDetail,issueNavigation]);
   const stopAssistant=useCallback((id:number,runId:string)=>mutate(()=>helpApi.stopAssistant(id,runId)),[mutate,helpApi]);

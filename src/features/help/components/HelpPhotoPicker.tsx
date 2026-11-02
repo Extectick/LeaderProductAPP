@@ -4,7 +4,7 @@ import {Image} from 'expo-image';
 import {Ionicons} from '@expo/vector-icons';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {Gesture, GestureDetector, GestureHandlerRootView} from 'react-native-gesture-handler';
-import Reanimated, {cancelAnimation, Easing as MotionEasing, runOnJS, useAnimatedScrollHandler, useAnimatedStyle, useSharedValue, withSpring, withTiming} from 'react-native-reanimated';
+import Reanimated, {cancelAnimation, Easing as MotionEasing, runOnJS, useAnimatedScrollHandler, useAnimatedStyle, useDerivedValue, useSharedValue, withSpring, withTiming} from 'react-native-reanimated';
 import type {FlatList} from 'react-native';
 import {useHelpReducedMotion, useHelpTheme} from '../helpTheme';
 import {discardHelpPreparedPhoto, getHelpPhotoPermission, getHelpPhotoPreviewUri, loadHelpPhotoPage, prepareHelpPhoto, presentHelpPhotoPermissions, type HelpLibraryPhoto, type HelpPhotoPermission} from '../helpPhotoLibrary';
@@ -33,7 +33,7 @@ export function HelpPhotoPicker(props:Props) {
   const c=useHelpTheme(),reduced=useHelpReducedMotion(),window=useWindowDimensions(),insets=useSafeAreaInsets();
   const latest=useRef(props);latest.current=props;
   const mounted=useRef(true),generation=useRef(0),pageOffset=useRef(0),loadingPage=useRef(false),checkingPermission=useRef(false);
-  const [visible,setVisible]=useState(props.open),[settled,setSettled]=useState(false),[expanded,setExpanded]=useState(false);
+  const [visible,setVisible]=useState(props.open),[settled,setSettled]=useState(false);
   const [permission,setPermission]=useState<HelpPhotoPermission|null>(null),[loading,setLoading]=useState(false),[error,setError]=useState('');
   const [photos,setPhotos]=useState<HelpLibraryPhoto[]>([]),[hasMore,setHasMore]=useState(true),[width,setWidth]=useState(window.width-16);
   const [selection,setSelection]=useState<Selection[]>(()=>props.files.map(fromFile));
@@ -42,7 +42,7 @@ export function HelpPhotoPicker(props:Props) {
   const [cameraExpanded,setCameraExpanded]=useState(false),[cameraVisible,setCameraVisible]=useState(true),[keyboardTop,setKeyboardTop]=useState<number|null>(null);
   const grid=useRef<View>(null),scrollOffset=useRef(new Animated.Value(0)).current;
   const [viewport,setViewport]=useState<HelpPhotoRect>();
-  const height=useSharedValue(0),dragStart=useSharedValue(0),resizing=useRef(false);
+  const height=useSharedValue(0),measuredHeight=useSharedValue(0),dragStart=useSharedValue(0),resizing=useRef(false);
   const portalId=useId(),portalFrame=useHelpPhotoPortalFrame();
   const panelStyle=useAnimatedStyle(()=>({height:height.value}));
   const closedByPull=useRef(false),detachNativeScroll=useRef<(()=>void)|null>(null);
@@ -54,14 +54,14 @@ export function HelpPhotoPicker(props:Props) {
   const pending=selection.some(item=>item.pending),failed=selection.some(item=>item.failed),blocked=props.busy||pending;
   const selectedIds=selection.filter(item=>!item.file||item.file.mimeType?.startsWith('image/')).map(item=>item.photo.id);
   const tileSize=(width-4)/3;
-  const measureGrid=useCallback(()=>{if(resizing.current)return;grid.current?.measureInWindow((x,y,width,height)=>{if(width>0&&height>0&&mounted.current)setViewport(previous=>previous?.x===x&&previous.y===y&&previous.width===width&&previous.height===height?previous:{x,y,width,height});});},[]);
+  const measureGrid=useCallback(()=>{if(resizing.current)return;const baseline=height.value;grid.current?.measureInWindow((x,y,width,height)=>{if(width>0&&height>0&&mounted.current){measuredHeight.value=baseline;setViewport(previous=>previous?.x===x&&previous.y===y&&previous.width===width&&previous.height===height?previous:{x,y,width,height});}});},[height,measuredHeight]);
   const beginPull=useCallback(()=>{if(mounted.current)setSettled(false);},[]);
   const settlePull=useCallback(()=>{if(mounted.current&&latest.current.open)setSettled(true);},[]);
   const closePulled=useCallback(()=>{
     if(!mounted.current||!latest.current.open)return;
     closedByPull.current=true;
     // The panel has already left the screen: release its dock in this commit.
-    height.value=0;setVisible(false);setExpanded(false);setPreview(null);setCameraExpanded(false);
+    height.value=0;setVisible(false);setPreview(null);setCameraExpanded(false);
     latest.current.onClose();
   },[height]);
   const setGridList=useCallback((list:FlatList<HelpLibraryPhoto|null>|null)=>{
@@ -77,8 +77,10 @@ export function HelpPhotoPicker(props:Props) {
     onScroll:event=>{gridScrollY.value=Math.max(0,event.contentOffset.y);const show=event.contentOffset.y<tileSize;if(nativeCameraVisible.value!==show){nativeCameraVisible.value=show;runOnJS(setCameraVisible)(show);}},
     onMomentumBegin:()=>{gridMomentum.value=true;},onMomentumEnd:()=>{gridMomentum.value=false;},
   },[tileSize]);
+  const cameraOffset=useDerivedValue(()=>(measuredHeight.value>0?measuredHeight.value-height.value:0)+pullY.value);
+  const cameraViewportHeight=useDerivedValue(()=>Math.max(0,(viewport?.height??0)+height.value-measuredHeight.value));
   const pullStyle=useAnimatedStyle(()=>({transform:[{translateY:pullY.value}]}));
-  useEffect(()=>{pullAllowed.value=props.open&&settled&&!preview&&!cameraExpanded;pullHeight.value=expanded?maximumHeight:collapsedHeight;},[props.open,settled,preview,cameraExpanded,expanded,maximumHeight,collapsedHeight,pullAllowed,pullHeight]);
+  useEffect(()=>{pullAllowed.value=props.open&&settled&&!preview&&!cameraExpanded;pullHeight.value=collapsedHeight;},[props.open,settled,preview,cameraExpanded,collapsedHeight,pullAllowed,pullHeight]);
   const pullGesture=useMemo(()=>Gesture.Pan().withTestId('help-photo-pull').manualActivation(true).maxPointers(1)
     .enabled(props.open&&!preview&&!cameraExpanded)
     .onTouchesDown((event,manager)=>{
@@ -132,17 +134,17 @@ export function HelpPhotoPicker(props:Props) {
   const finishHeight=useCallback(()=>{
     if(!mounted.current)return;
     resizing.current=false;setSettled(true);
-    if(!latest.current.open){setVisible(false);setExpanded(false);setPreview(null);setCameraExpanded(false);}
+    if(!latest.current.open){setVisible(false);setPreview(null);setCameraExpanded(false);}
     else measureGrid();
   },[measureGrid]);
   useEffect(()=>{
-    setSettled(false);cancelAnimation(height);
+    resizing.current=true;setSettled(false);cancelAnimation(height);
     if(!props.open&&closedByPull.current){height.value=0;setVisible(false);return;}
-    const target=props.open?(expanded?maximumHeight:collapsedHeight):0;
+    const target=props.open?collapsedHeight:0;
     if(Math.abs(height.value-target)<.5){finishHeight();return;}
     height.value=withTiming(target,{duration:reduced?0:220,easing:MotionEasing.out(MotionEasing.cubic)},finished=>{if(finished)runOnJS(finishHeight)();});
     return()=>cancelAnimation(height);
-  },[props.open,expanded,collapsedHeight,maximumHeight,reduced,height,finishHeight]);
+  },[props.open,collapsedHeight,reduced,height,finishHeight]);
   useEffect(()=>{if(settled&&props.open)measureGrid();},[settled,props.open,measureGrid]);
 
   const loadPage=useCallback(async(reset=false)=>{
@@ -204,26 +206,25 @@ export function HelpPhotoPicker(props:Props) {
     setPreview({photos:ready,index:ready.findIndex(item=>item.id===photo.id),origin});
   }
   const beginResize=useCallback(()=>{resizing.current=true;setSettled(false);},[]);
-  const endResize=useCallback((next:boolean)=>{if(!mounted.current)return;resizing.current=false;setExpanded(next);setSettled(true);measureGrid();},[measureGrid]);
+  const endResize=useCallback(()=>{if(!mounted.current)return;resizing.current=false;setSettled(true);measureGrid();},[measureGrid]);
   const closeResize=useCallback(()=>{resizing.current=false;latest.current.onClose();},[]);
   const resizeGesture=useMemo(()=>Gesture.Pan().withTestId('help-photo-resize').maxPointers(1).activeOffsetY([-8,8])
     .onStart(()=>{cancelAnimation(height);dragStart.value=height.value;runOnJS(beginResize)();})
-    .onUpdate(event=>{height.value=Math.max(80,Math.min(maximumHeight,dragStart.value-event.translationY));})
+    .onUpdate(event=>{height.value=Math.max(80,Math.min(collapsedHeight,dragStart.value-event.translationY));})
     .onEnd((event,success)=>{
       if(!success)return;
       if(event.translationY>100&&height.value<collapsedHeight*.8){runOnJS(closeResize)();return;}
-      const next=height.value>(maximumHeight+collapsedHeight)/2||event.velocityY< -600;
-      height.value=withSpring(next?maximumHeight:collapsedHeight,{damping:25,stiffness:280,mass:.8,overshootClamping:true},finished=>{if(finished)runOnJS(endResize)(next);});
+      height.value=withSpring(collapsedHeight,{damping:25,stiffness:280,mass:.8,overshootClamping:true},finished=>{if(finished)runOnJS(endResize)();});
     })
-    .onFinalize((_,success)=>{if(!success)height.value=withSpring(expanded?maximumHeight:collapsedHeight,{damping:25,stiffness:280,mass:.8,overshootClamping:true},finished=>{if(finished)runOnJS(endResize)(expanded);});}),
-    [height,dragStart,maximumHeight,collapsedHeight,expanded,beginResize,endResize,closeResize]);
+    .onFinalize((_,success)=>{if(!success)height.value=withSpring(collapsedHeight,{damping:25,stiffness:280,mass:.8,overshootClamping:true},finished=>{if(finished)runOnJS(endResize)();});}),
+    [height,dragStart,collapsedHeight,beginResize,endResize,closeResize]);
   useEffect(()=>helpDevActions('photo.picker',{
-    'photos.close':()=>latest.current.onClose(),'photos.expand':()=>setExpanded(true),
+    'photos.close':()=>latest.current.onClose(),
     'photos.select':value=>{const photo=photos[Number(value)];if(photo)return select(photo);},
     'photos.preview':value=>{const photo=photos[Number(value)];if(photo)showPhoto(photo);},
     'photos.refresh':()=>checkPermission(),
   }));
-  useEffect(()=>helpDevState({photoPickerOpen:props.open,photoPermission:permission?permission.limited?'limited':permission.granted?'granted':'denied':'unknown',photoLoaded:photos.length,photoSelected:selectedIds.length,photoPreparing:pending,photoFailed:failed,photoPreview:Boolean(preview),photoCamera:cameraExpanded,photoExpanded:expanded}),[props.open,permission,photos.length,selectedIds.length,pending,failed,preview,cameraExpanded,expanded]);
+  useEffect(()=>helpDevState({photoPickerOpen:props.open,photoPermission:permission?permission.limited?'limited':permission.granted?'granted':'denied':'unknown',photoLoaded:photos.length,photoSelected:selectedIds.length,photoPreparing:pending,photoFailed:failed,photoPreview:Boolean(preview),photoCamera:cameraExpanded,photoExpanded:false}),[props.open,permission,photos.length,selectedIds.length,pending,failed,preview,cameraExpanded]);
 
   if(!visible)return null;
   return <HelpPhotoPortal id={portalId}><View testID="help-photo-overlay" pointerEvents="box-none" style={{position:'absolute',top:0,left:0,right:0,bottom:0}}>
@@ -243,7 +244,7 @@ export function HelpPhotoPicker(props:Props) {
       <View ref={grid} collapsable={false} onLayout={measureGrid} testID="help-photo-grid-viewport" style={{flex:1,minHeight:0,overflow:'hidden'}}>
       <GestureDetector gesture={nativeScrollGesture}>
       <Reanimated.FlatList ref={setGridList} testID="help-photo-grid" data={[null,...photos]} keyExtractor={item=>item?.id||'camera'} numColumns={3} extraData={selection} initialNumToRender={18} maxToRenderPerBatch={12} windowSize={5} removeClippedSubviews={false} keyboardShouldPersistTaps="handled" onScroll={gridScroll} scrollEventThrottle={16} bounces={false} overScrollMode="never" onEndReached={()=>{if(permission?.granted&&hasMore&&!loading)void loadPage();}} onEndReachedThreshold={1} columnWrapperStyle={{gap:2}} contentContainerStyle={{gap:2,paddingBottom:4}}
-        renderItem={({item,index})=>item?<PhotoTile photo={item} size={tileSize} number={selectedIds.indexOf(item.id)+1} pending={selection.some(entry=>entry.photo.id===item.id&&entry.pending)} disabled={props.busy} onSelect={()=>void select(item)} onPreview={origin=>showPhoto(item,origin)} index={index}/>:<View style={{width:tileSize,height:tileSize}}><HelpPhotoCamera expanded={cameraExpanded} onExpand={()=>{Keyboard.dismiss();setCameraExpanded(true);}} onClose={()=>setCameraExpanded(false)} onCapture={photo=>{setCameraExpanded(false);setPhotos(old=>[photo,...old]);void select(photo);showPhoto(photo);}} onError={value=>setError(value)} disabled={props.busy||chosen.current.length+props.existingCount>=10} tileVisible={props.open&&settled&&Boolean(permission)&&cameraVisible&&!preview} viewport={viewport} tileOrigin={viewport?{x:viewport.x,y:viewport.y,width:tileSize,height:tileSize}:undefined} scrollOffset={scrollOffset}/></View>}
+        renderItem={({item,index})=>item?<PhotoTile photo={item} size={tileSize} number={selectedIds.indexOf(item.id)+1} pending={selection.some(entry=>entry.photo.id===item.id&&entry.pending)} disabled={props.busy} onSelect={()=>void select(item)} onPreview={origin=>showPhoto(item,origin)} index={index}/>:<View style={{width:tileSize,height:tileSize}}><HelpPhotoCamera expanded={cameraExpanded} onExpand={()=>{Keyboard.dismiss();setCameraExpanded(true);}} onClose={()=>setCameraExpanded(false)} onCapture={photo=>{setCameraExpanded(false);setPhotos(old=>[photo,...old]);void select(photo);showPhoto(photo);}} onError={value=>setError(value)} disabled={props.busy||chosen.current.length+props.existingCount>=10} tileVisible={props.open&&Boolean(viewport)&&Boolean(permission)&&cameraVisible&&!preview} viewport={viewport} tileOrigin={viewport?{x:viewport.x,y:viewport.y,width:tileSize,height:tileSize}:undefined} scrollOffset={scrollOffset} sheetOffset={cameraOffset} sheetViewportHeight={cameraViewportHeight}/></View>}
         ListFooterComponent={<View style={{padding:16,alignItems:'center',gap:12}}>{loading?<ActivityIndicator color={c.accent}/>:null}{permission&&!permission.granted?<><Text style={{color:c.muted,textAlign:'center',fontSize:14}}>Разрешите доступ к фотографиям, чтобы выбрать их здесь.</Text><Pressable accessibilityRole="button" accessibilityLabel="Разрешить доступ к фотографиям" onPress={()=>void (permission.canAskAgain?checkPermission(true):Linking.openSettings())} style={{padding:12}}><Text style={{color:c.accentText,fontWeight:'600'}}>{permission.canAskAgain?'Разрешить доступ':'Открыть настройки'}</Text></Pressable></>:permission?.granted&&!photos.length&&!loading?<Text style={{color:c.muted}}>Фотографий пока нет. Можно сделать снимок.</Text>:null}</View>}/>
       </GestureDetector>
       </View>

@@ -7,6 +7,7 @@ let mockMounts=0,mockUnmounts=0,mockCameraProps:any;
 let mockAppState:(state:string)=>void=()=>{},mockBack:()=>boolean=()=>false;
 const mockActions:Record<string,Record<string,(value?:unknown)=>unknown>>={};
 jest.mock('@expo/vector-icons',()=>({Ionicons:'Ionicons'}));
+jest.mock('react-native-reanimated',()=>({__esModule:true,default:{View:require('react-native').View},useAnimatedStyle:(fn:()=>unknown)=>fn()}));
 jest.mock('expo-blur',()=>({BlurView:'BlurView'}));
 jest.mock('expo-camera',()=>{
   const React=require('react');return{useCameraPermissions:()=>[mockPermission,mockRequestPermission,mockRefreshPermission],CameraView:React.forwardRef((props:any,ref:any)=>{mockCameraProps=props;React.useImperativeHandle(ref,()=>({takePictureAsync:mockTakePicture}));React.useEffect(()=>{mockMounts++;return()=>mockUnmounts++;},[]);return React.createElement('CameraView',props);})};

@@ -25,7 +25,7 @@ export function HelpAvatar({ id, name, uri, size = 34, muted = false }: { id: nu
 export function HelpBlurSurface({target,edge='top'}:{target?:React.RefObject<View|null>;edge?:'top'|'bottom'}) {
   const c=useHelpTheme();
   const enabled=useContext(HelpVisualEffectsContext);
-  return enabled ? <AppEdgeBlur target={target} edge={edge} intensity={18} featherSize={64} dark={c.dark} backgroundColor={c.background} testID="help-blur-surface"/> : null;
+  return enabled ? <AppEdgeBlur target={target} edge={edge} intensity={14} featherSize={104} dark={c.dark} backgroundColor={c.background} testID="help-blur-surface"/> : null;
 }
 export function HelpDock({ children, onHeight, target }: { children: React.ReactNode; onHeight?: (height: number) => void; target?: React.RefObject<View | null> }) {
   const c = useHelpTheme(); const insets = useSafeAreaInsets();

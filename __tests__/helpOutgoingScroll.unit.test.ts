@@ -10,7 +10,7 @@ jest.mock('@shopify/flash-list',()=>{
 });
 jest.mock('@expo/vector-icons',()=>({Ionicons:'Ionicons'}));
 jest.mock('../src/features/help/helpTheme',()=>({useHelpReducedMotion:()=>false,useHelpTheme:()=>({background:'#151B22',panel:'#1E2730',muted:'#A6B0BE',accentText:'#68B0FF'})}));
-jest.mock('../src/features/help/helpDiagnostics',()=>({helpDevActions:()=>()=>{},helpDevProbe:()=>()=>{},helpDevState:jest.fn()}));
+jest.mock('../src/features/help/helpDiagnostics',()=>({helpDevEvent:jest.fn(),helpDevActions:()=>()=>{},helpDevProbe:()=>()=>{},helpDevState:jest.fn()}));
 jest.mock('../src/features/help/components/HelpNativeChatLayout',()=>({hasNativeChatLayout:false}));
 import {HelpTimeline,type HelpTimelineHandle} from '../src/features/help/components/HelpTimeline';
 import {HelpJumpToLatest} from '../src/features/help/components/HelpTimelineIndicators';
@@ -23,11 +23,11 @@ describe('outgoing-message bottom anchor',()=>{
     Object.assign(mockApi,{computeVisibleIndices:()=>({startIndex:0,endIndex:2}),getFirstItemOffset:()=>0,getAbsoluteLastScrollOffset:()=>0,getLayout:(i:number)=>({y:i*100,height:100}),getNativeScrollRef:()=>null,scrollToEnd:jest.fn(),scrollToIndex:jest.fn().mockResolvedValue(undefined),scrollToOffset:jest.fn()});
     props={messages:[message(1),message(2)],nativeID:'outgoing-scroll',headerHeight:100,dockHeight:60,online:true,active:true,navigationTarget:{key:1,kind:'latest',animate:true},loadOlder:jest.fn(),loadNewer:jest.fn(),onLatest:jest.fn(),onDate:jest.fn(),onSave:jest.fn(),onRead:jest.fn(),onFollow:jest.fn(),onHighlight:jest.fn(),onError:jest.fn(),renderMessage:()=>React.createElement(View)};
     await act(async()=>{view=TestRenderer.create(React.createElement(HelpTimeline,{...props,ref}));});
-    await act(async()=>{mockProps.onLayout({nativeEvent:{layout:{height:600}}});mockProps.onLoad();});
+    await act(async()=>{mockProps.onLayout({nativeEvent:{layout:{height:600}}});mockProps.onContentSizeChange(390,1000);mockProps.onLoad();jest.advanceTimersByTime(1000);});
   });
   afterEach(async()=>{await act(async()=>view.unmount());jest.clearAllTimers();jest.useRealTimers();});
   const scroll=(offset:number,content:number)=>mockProps.onScroll({nativeEvent:{contentOffset:{x:0,y:offset},layoutMeasurement:{width:390,height:600},contentSize:{width:390,height:content}}});
-  const arrows=()=>view.root.findAllByType(HelpJumpToLatest);
+  const arrows=()=>view.root.findAllByType(HelpJumpToLatest).filter(node=>node.props.visible);
   test('sending at the tail never aligns the last cell to its top or flashes a down arrow during layout',async()=>{
     expect(mockApi.scrollToIndex).not.toHaveBeenCalled();
     expect(arrows()).toHaveLength(0);

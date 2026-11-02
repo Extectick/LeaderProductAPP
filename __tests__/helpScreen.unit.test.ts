@@ -130,6 +130,18 @@ describe('Help screen integration with service boundary', () => {
   });
   function button(label:string){return screen.root.findAll(node=>node.props.accessibilityLabel===label && typeof node.props.onPress==='function')[0];}
   function composer(){return screen.root.findByType('HelpComposer' as any);}
+  test('attachment overlay cannot start chat back navigation',async()=>{
+    await render();await act(async()=>button('Новое обращение').props.onPress());
+    const pan=()=>screen.root.findAll(n=>n.props.testID==='help-screen-navigation')[0].props;
+    const move={dx:120,dy:0,numberActiveTouches:1};
+    expect(composer().props.navigationReady).toBe(true);
+    await act(async()=>composer().props.onAttachmentVisibility(true));
+    pan().onStartShouldSetPanResponderCapture();
+    expect(pan().onMoveShouldSetPanResponderCapture(null,move)).toBe(false);
+    await act(async()=>composer().props.onAttachmentVisibility(false));
+    pan().onStartShouldSetPanResponderCapture();
+    expect(pan().onMoveShouldSetPanResponderCapture(null,move)).toBe(true);
+  });
   test('chat list shows a loading animation instead of action errors while its request is pending',async()=>{
     mockService.loading=true;mockService.error='Не удалось выполнить действие';await render();
     expect(screen.root.findByProps({testID:'help-chats-loading'}).props.accessibilityRole).toBe('progressbar');
