@@ -15,7 +15,7 @@ $expected = "package: name='com.leaderproduct.app' versionCode='$($version.versi
 if (-not $info.Contains($expected) -or $info.Contains('application-debuggable')) { throw 'Unexpected package/version/build type' }
 if ($info -notmatch "native-code:.*'arm64-v8a'.*'x86_64'") { throw 'Phone and emulator ABIs required' }
 $manifest = (& (Join-Path $buildTools 'aapt.exe') dump xmltree $ApkPath AndroidManifest.xml) -join "`n"
-if ($LASTEXITCODE -ne 0 -or -not $manifest.Contains('https://dev.leader-product.ru/ota/update')) { throw 'Wrong OTA endpoint' }
+if ($LASTEXITCODE -ne 0 -or -not $manifest.Contains('https://dev.lidprod.ru/ota/update')) { throw 'Wrong OTA endpoint' }
 $privateConfig = Get-Content -LiteralPath $CredentialFile -Raw | ConvertFrom-Json
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $zip = [System.IO.Compression.ZipFile]::OpenRead($ApkPath)
@@ -26,7 +26,7 @@ try {
     $memory = [System.IO.MemoryStream]::new()
     try { $stream.CopyTo($memory); $bundleText = [System.Text.Encoding]::UTF8.GetString($memory.ToArray()) }
     finally { $stream.Dispose(); $memory.Dispose() }
-    if (-not $bundleText.Contains('https://dev.leader-product.ru')) { throw 'Missing dev API' }
+    if (-not $bundleText.Contains('https://dev.lidprod.ru')) { throw 'Missing dev API' }
     if ($bundleText.Contains('http://192.168.30.244:3000')) { throw 'Local-only API in APK' }
     if (-not $bundleText.Contains([string]$privateConfig.dsn)) { throw 'Missing dev Sentry DSN' }
     foreach ($key in @('authToken','webhookSecret','readToken','adminPassword')) {

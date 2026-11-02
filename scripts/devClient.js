@@ -8,7 +8,7 @@ const env = {
   LEADER_DEV_CLIENT: '1',
   NODE_ENV: 'development',
   EXPO_PUBLIC_UPDATE_CHANNEL: 'dev',
-  EXPO_PUBLIC_API_URL_DEV: process.env.LEADER_DEV_API_URL || 'https://dev.leader-product.ru',
+  EXPO_PUBLIC_API_URL_DEV: process.env.LEADER_DEV_API_URL || 'https://dev.lidprod.ru',
   EXPO_PUBLIC_OTA_UPDATE_URL: '',
 };
 const action = process.argv[2] || 'start';

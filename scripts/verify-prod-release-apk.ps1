@@ -17,10 +17,10 @@ if ($info.Contains('application-debuggable')) { throw 'Production APK must not b
 if ($info -notmatch "native-code:.*'arm64-v8a'.*'x86_64'") { throw 'Phone and emulator ABIs are required' }
 $manifest = (& (Join-Path $buildTools 'aapt.exe') dump xmltree $ApkPath AndroidManifest.xml) -join "`n"
 if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect manifest' }
-foreach ($required in @('https://api.leader-product.ru/ota/update','expo-channel-name','prod','FOREGROUND_SERVICE_LOCATION','ACCESS_BACKGROUND_LOCATION','RECEIVE_BOOT_COMPLETED')) {
+foreach ($required in @('https://sibvod.ru/ota/update','expo-channel-name','prod','FOREGROUND_SERVICE_LOCATION','ACCESS_BACKGROUND_LOCATION','RECEIVE_BOOT_COMPLETED')) {
     if (-not $manifest.Contains($required)) { throw "Missing manifest setting: $required" }
 }
-if ($manifest.Contains('https://dev.leader-product.ru/ota/update')) { throw 'Dev OTA endpoint in production APK' }
+if ($manifest.Contains('https://dev.lidprod.ru/ota/update')) { throw 'Dev OTA endpoint in production APK' }
 $privateConfig = Get-Content -LiteralPath 'C:\ProgramData\LeaderProduct\GlitchTipProd\credentials.json' -Raw | ConvertFrom-Json
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $ApkPath).Path)
@@ -30,10 +30,10 @@ try {
     $stream = $bundle.Open(); $memory = [System.IO.MemoryStream]::new()
     try { $stream.CopyTo($memory); $text = [System.Text.Encoding]::UTF8.GetString($memory.ToArray()) }
     finally { $stream.Dispose(); $memory.Dispose() }
-    foreach ($required in @('https://api.leader-product.ru','https://tiles.openfreemap.org/styles/liberty',[string]$privateConfig.dsn)) {
+    foreach ($required in @('https://sibvod.ru','https://tiles.openfreemap.org/styles/liberty',[string]$privateConfig.dsn)) {
         if (-not $text.Contains($required)) { throw 'Production API/map/diagnostic configuration missing from bundle' }
     }
-    if ($text.Contains('https://dev.leader-product.ru') -or $text.Contains('http://192.168.30.244:3000')) { throw 'Development API found in production bundle' }
+    if ($text.Contains('https://dev.lidprod.ru') -or $text.Contains('http://192.168.30.244:3000')) { throw 'Development API found in production bundle' }
     foreach ($key in @('authToken','readToken','adminPassword')) {
         $secret = [string]$privateConfig.$key
         if ($secret -and ($text.Contains($secret) -or $manifest.Contains($secret))) { throw 'Private credential found in APK' }

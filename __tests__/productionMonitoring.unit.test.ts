@@ -11,7 +11,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   process.env.EXPO_PUBLIC_SENTRY_ENABLED = 'true';
   process.env.EXPO_PUBLIC_UPDATE_CHANNEL = 'prod';
-  process.env.EXPO_PUBLIC_SENTRY_DSN = 'https://public@api.leader-product.ru/sentry/3';
+  process.env.EXPO_PUBLIC_SENTRY_DSN = 'https://public@sibvod.ru/sentry/3';
   process.env.EXPO_PUBLIC_SENTRY_RELEASE = 'com.leaderproduct.app@0.1.26+25-ota.test';
 });
 

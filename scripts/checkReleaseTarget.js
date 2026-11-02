@@ -1,0 +1,10 @@
+const assert = require('node:assert/strict');
+const channel = process.env.EXPO_PUBLIC_UPDATE_CHANNEL;
+const branch = process.env.GITHUB_REF_NAME;
+assert.ok(channel === 'dev' ? branch === 'dev' : channel === 'prod' && ['main', 'production'].includes(branch), 'Select a branch matching the release channel');
+const origin = channel === 'dev' ? 'https://dev.lidprod.ru' : 'https://sibvod.ru';
+assert.equal(process.env.EXPO_PUBLIC_API_URL_DEV, origin, 'Wrong release API');
+assert.equal(process.env.EXPO_PUBLIC_OTA_UPDATE_URL, origin + '/ota/update', 'Wrong native OTA URL');
+if (process.env.S3_ENDPOINT) assert.equal(process.env.S3_ENDPOINT, origin, 'Wrong storage endpoint');
+if (channel === 'dev' && process.env.S3_BUCKET) assert.equal(process.env.S3_BUCKET, 'leader-product-dev', 'Development must use its own bucket');
+console.log('Release target verified: ' + channel + ' -> ' + origin);

@@ -20,9 +20,9 @@ try {
     $env:NODE_ENV = 'production'
     $env:BABEL_ENV = 'production'
     $env:EXPO_NO_DOTENV = '1'
-    $env:EXPO_PUBLIC_API_URL_DEV = 'https://dev.leader-product.ru'
+    $env:EXPO_PUBLIC_API_URL_DEV = 'https://dev.lidprod.ru'
     $env:EXPO_PUBLIC_UPDATE_CHANNEL = 'dev'
-    $env:EXPO_PUBLIC_OTA_UPDATE_URL = 'https://dev.leader-product.ru/ota/update'
+    $env:EXPO_PUBLIC_OTA_UPDATE_URL = 'https://dev.lidprod.ru/ota/update'
     $env:EXPO_PUBLIC_MAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty'
     $env:EXPO_PUBLIC_SENTRY_ENABLED = 'true'
     $env:EXPO_PUBLIC_SENTRY_DSN = [string]$config.dsn

@@ -6,7 +6,7 @@ try {
     $env:NODE_ENV = 'development'
     $env:LEADER_DEV_CLIENT = '1'
     $env:EXPO_PUBLIC_UPDATE_CHANNEL = 'dev'
-    $env:EXPO_PUBLIC_API_URL_DEV = if ($env:LEADER_DEV_API_URL) { $env:LEADER_DEV_API_URL } else { 'https://dev.leader-product.ru' }
+    $env:EXPO_PUBLIC_API_URL_DEV = if ($env:LEADER_DEV_API_URL) { $env:LEADER_DEV_API_URL } else { 'https://dev.lidprod.ru' }
     $env:EXPO_PUBLIC_OTA_UPDATE_URL = ''
     $env:TEMP = 'C:\Share\GradleTemp'
     $env:TMP = 'C:\Share\GradleTemp'

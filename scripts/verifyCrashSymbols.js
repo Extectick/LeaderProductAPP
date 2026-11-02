@@ -19,7 +19,7 @@ async function main() {
   const dsn = new URL(process.env.EXPO_PUBLIC_SENTRY_DSN);
   const development = process.env.EXPO_PUBLIC_UPDATE_CHANNEL === 'dev';
   const environment = development ? 'development' : 'production';
-  assert.equal(dsn.hostname, development ? 'dev.leader-product.ru' : 'api.leader-product.ru');
+  assert.equal(dsn.hostname, development ? 'dev.lidprod.ru' : 'sibvod.ru');
   const base = process.env.SENTRY_URL.replace(/\/$/, '');
   assert.match(base, /^http:\/\/127\.0\.0\.1:\d+$/);
   const codeFile = 'app:///index.android.bundle';
