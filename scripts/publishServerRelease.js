@@ -9,7 +9,7 @@ async function main() {
   if (!['apk', 'ota'].includes(kind)) throw Error('Expected apk or ota');
   const metadata = JSON.parse(fs.readFileSync(filename));
   const channel = process.env.EXPO_PUBLIC_UPDATE_CHANNEL;
-  if (!['dev', 'prod'].includes(channel) || metadata.channel !== channel || metadata.commitSha !== process.env.GITHUB_SHA) throw Error('Release channel/commit mismatch');
+  if (!['dev', 'prod'].includes(channel) || metadata.channel !== channel || metadata.commitSha !== (process.env.RELEASE_COMMIT_SHA || process.env.GITHUB_SHA)) throw Error('Release channel/commit mismatch');
   const container = channel === 'dev' ? 'leader_api_dev' : 'leader_api_prod';
   const inspect = JSON.parse(execFileSync('docker', ['inspect', container], { encoding: 'utf8' }))[0];
   const env = Object.fromEntries(inspect.Config.Env.map(line => { const p = line.indexOf('='); return [line.slice(0, p), line.slice(p + 1)]; }));
@@ -23,7 +23,10 @@ async function main() {
     credentials: { accessKeyId: process.env.AWS_ACCESS_KEY_ID, secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY } });
   for (const key of keys) await s3.send(new HeadObjectCommand({ Bucket: env.S3_BUCKET, Key: key }));
   const remoteFile = '/tmp/leader-release-' + process.env.GITHUB_RUN_ID + '-' + kind + '.json';
-  execFileSync('docker', ['cp', path.resolve(filename), container + ':' + remoteFile], { stdio: 'pipe' });
+  // docker cp creates root-owned files in sticky /tmp. Write as the API user,
+  // so both creation and cleanup work without granting root to release scripts.
+  const writeFile = "require('fs').writeFileSync(process.argv[1],require('fs').readFileSync(0),{mode:0o600})";
+  execFileSync('docker', ['exec', '-i', container, 'node', '-e', writeFile, remoteFile], { input: fs.readFileSync(filename), stdio: ['pipe', 'pipe', 'pipe'] });
   try { execFileSync('docker', ['exec', container, 'node', 'scripts/publish-' + (kind === 'apk' ? 'apk-update' : 'ota-update') + '-db.js', remoteFile], { stdio: 'inherit' }); }
   finally { execFileSync('docker', ['exec', container, 'rm', '-f', remoteFile], { stdio: 'pipe' }); }
 }
