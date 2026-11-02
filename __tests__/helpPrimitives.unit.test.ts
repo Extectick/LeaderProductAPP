@@ -148,6 +148,6 @@ describe('Help blur startup and target lifecycle',()=>{
     await act(async()=>{screen=TestRenderer.create(React.createElement(HelpBlurSurface,{target:{current:{} as View}}));});
     expect(StyleSheet.flatten(screen!.root.findByProps({testID:'app-blur-preparing'}).props.style).backgroundColor).toBeUndefined();
     await act(async()=>layout());
-    expect(screen!.root.findByType('BlurView' as any).props).toMatchObject({tint:'light',frameClearColor:'#F7F9FC',intensity:18,blurMethod:'dimezisBlurViewSdk31Plus'});
+    expect(screen!.root.findByType('BlurView' as any).props).toMatchObject({tint:'light',frameClearColor:'#F7F9FC',intensity:14,blurMethod:'dimezisBlurViewSdk31Plus'});
   });
 });
