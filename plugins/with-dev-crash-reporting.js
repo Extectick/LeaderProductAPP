@@ -20,7 +20,7 @@ function patchMainApplication(source, enabled) {
 module.exports = function withDevCrashReporting(config) {
   const enabled = process.env.EXPO_PUBLIC_UPDATE_CHANNEL === 'dev' && process.env.EXPO_PUBLIC_SENTRY_ENABLED === 'true';
   const dsn = process.env.EXPO_PUBLIC_SENTRY_DSN || '';
-  if (enabled && !/^https:\/\/[^\s]+@dev\.leader-product\.ru\/sentry\/\d+$/.test(dsn)) throw new Error('Dev diagnostics requires its own HTTPS DSN');
+  if (enabled && !/^https:\/\/[^\s]+@dev\.lidprod\.ru\/sentry\/\d+$/.test(dsn)) throw new Error('Dev diagnostics requires its own HTTPS DSN');
   config = withMainApplication(config, (mod) => {
     if (mod.modResults.language !== 'kt') throw new Error('Expected Kotlin MainApplication');
     if (enabled && !/PackageList\(this\)\.packages\.apply/.test(mod.modResults.contents)) throw new Error('Missing native package list');
