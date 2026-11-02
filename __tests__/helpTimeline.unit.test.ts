@@ -1,7 +1,7 @@
 import React from 'react';
 import TestRenderer,{act} from 'react-test-renderer';
 import {StyleSheet,View} from 'react-native';
-import { helpNavigationIndex, helpIsAtLatest, helpTimelineRows, helpVisibleRows } from '../src/features/help/helpTimelineModel';
+import { helpNavigationIndex, helpIsAtLatest, helpTimelineRows, helpVisibleRows, helpTimelineEntries, helpMessageGroups } from '../src/features/help/helpTimelineModel';
 import type { HelpMessage } from '../src/features/help/helpApi';
 let mockFlashProps:any;
 let mockReducedMotion=true;
@@ -59,6 +59,32 @@ describe('messenger viewport and read boundaries',()=>{
   });
 });
 
+describe('outbox row identity',()=>{
+  const pending={key:'qa-stable',ticketId:7,create:false,createdAt:Date.parse('2026-10-28T12:00:00Z'),status:'sending' as const,input:{text:'QA stable receipt',clientMessageId:'qa-stable'}};
+  test('acknowledgement retains the same cell and date keys without a duplicate outbox row',()=>{
+    const before=helpTimelineRows([],null,[pending]);
+    const after=helpTimelineRows([{...message(40),clientMessageId:pending.key}],null,[pending]);
+    expect(before.map(row=>row.kind)).toEqual(['date','pending']);
+    expect(after.map(row=>row.kind)).toEqual(['date','message']);
+    expect(before.map(row=>row.key)).toEqual(after.map(row=>row.key));
+    expect(after.filter(row=>row.pending)).toHaveLength(0);
+  });
+  test('pending rows cannot become a persisted history anchor or unread boundary',()=>{
+    const rows=helpTimelineRows([],0,[pending]);
+    expect(rows.some(row=>row.kind==='unread')).toBe(false);
+    expect(helpNavigationIndex(rows,{key:1,kind:'anchor',messageId:-1,sequence:0})).toBe(-1);
+    expect(helpNavigationIndex(rows,{key:2,kind:'latest'})).toBe(rows.length-1);
+  });
+  test('receipt preserves group margins for both the accepted message and its neighbour',()=>{
+    const previous={...message(1),authorId:5,authorRole:'USER' as const,kind:'TEXT' as const};
+    const before=helpTimelineEntries([previous],[pending],5).map(entry=>entry.message);
+    const accepted={...before[1],id:40,sequence:40};
+    const beforeGroups=helpMessageGroups(before),afterGroups=helpMessageGroups([previous,accepted]);
+    expect(beforeGroups.get(previous.id)).toEqual(afterGroups.get(previous.id));
+    expect(beforeGroups.get(before[1].id)).toEqual(afterGroups.get(accepted.id));
+  });
+});
+
 describe('sticky date geometry and navigation integration',()=>{
   let screen:TestRenderer.ReactTestRenderer|undefined;
   let props:React.ComponentProps<typeof HelpTimeline>;
@@ -90,6 +116,21 @@ describe('sticky date geometry and navigation integration',()=>{
     await act(async()=>mockFlashProps.onLoad());
     await observe();
   }
+  test('server receipt updates a stable list holder instead of moving a footer into the list',async()=>{
+    const pending={key:'qa-cell',ticketId:7,create:false,createdAt:Date.parse(nextDate),status:'sending' as const,input:{text:'QA',clientMessageId:'qa-cell'}};
+    props={...props,pendingMessages:[pending],renderPending:()=>React.createElement(View,{testID:'pending-cell'})};
+    await render();
+    const pendingRow=mockFlashProps.data.find((row:any)=>row.pending);
+    const type=mockFlashProps.getItemType(pendingRow);
+    const holder=screen!.root.findAllByType('TimelineRow' as any).at(-1);
+    const accepted={...message(3,nextDate),clientMessageId:'qa-cell'};
+    props={...props,pendingMessages:[],messages:[...props.messages,accepted]};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    const acceptedRow=mockFlashProps.data.find((row:any)=>row.message.id===3);
+    expect(acceptedRow.key).toBe(pendingRow.key);
+    expect(mockFlashProps.getItemType(acceptedRow)).toBe(type);
+    expect(screen!.root.findAllByType('TimelineRow' as any).at(-1)).toBe(holder);
+  });
   async function observe(){await act(async()=>mockFlashProps.onScroll({nativeEvent:{contentOffset:{x:0,y:0},layoutMeasurement:{width:390,height:600},contentSize:{width:390,height:1000}}}));}
   test('only a live appended tail is eligible for arrival, not initial history or edits',async()=>{
     await render();

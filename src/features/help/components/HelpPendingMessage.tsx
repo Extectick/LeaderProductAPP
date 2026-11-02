@@ -7,18 +7,18 @@ import type {HelpPending} from '../helpDurableTypes';
 import {useHelpReducedMotion,useHelpTheme} from '../helpTheme';
 import {helpTime} from '../helpUiUtils';
 import {HELP_MESSAGE_TEXT_STYLE,HelpInlineMessageStamp,HelpMessageStampReserve} from './HelpInlineMessageStamp';
-export function HelpPendingMessage({item,onRetry,onQuote,resolve}:{item:HelpPending;onRetry:()=>void;onQuote?:(id:number)=>void;resolve?:ResolveHelpMedia}){
+export function HelpPendingMessage({item,onRetry,onQuote,resolve,groupFirst=true,groupLast=true}:{item:HelpPending;groupFirst?:boolean;groupLast?:boolean;onRetry:()=>void;onQuote?:(id:number)=>void;resolve?:ResolveHelpMedia}){
   const c=useHelpTheme(),reduced=useHelpReducedMotion(),failed=item.status==='failed';
   const time=helpTime(new Date(item.createdAt).toISOString());
   const plainText=Boolean(item.input.text)&&!item.input.attachmentIds?.length&&!item.action;
-  if(plainText)return <View testID={`help-pending-${item.key}`} style={{alignItems:'flex-end',paddingHorizontal:12,paddingVertical:4}}>
-    <View testID="help-pending-bubble" style={{maxWidth:'86%',minWidth:90,borderRadius:16,borderBottomRightRadius:4,backgroundColor:c.outgoing}}>
+  if(plainText)return <View testID={`help-pending-${item.key}`} style={{alignItems:'flex-end',marginHorizontal:12,marginTop:groupFirst?4:1,marginBottom:groupLast?4:1}}>
+    <View testID="help-pending-bubble" style={{maxWidth:'86%',minWidth:90,borderRadius:16,borderTopRightRadius:groupFirst?16:4,borderBottomRightRadius:groupLast?16:4,backgroundColor:c.outgoing}}>
       {item.replyTo?<HelpMessageQuote quote={item.replyTo} onQuote={onQuote} resolve={resolve}/>:null}
       <View testID="help-pending-content" style={{paddingHorizontal:11,paddingVertical:6}}><Text accessibilityLabel={item.input.text} style={[HELP_MESSAGE_TEXT_STYLE,{color:c.text}]}>{item.input.text}<HelpMessageStampReserve time={time}/></Text>
       <HelpInlineMessageStamp time={time} status={item.status??'queued'} reduced={reduced} muted={c.muted} receiptColor={c.muted} danger={c.danger} onRetry={onRetry}/></View>
     </View>
   </View>;
-  return <View testID={`help-pending-${item.key}`} style={{alignItems:'flex-end',paddingHorizontal:12,paddingVertical:4}}>
+  return <View testID={`help-pending-${item.key}`} style={{alignItems:'flex-end',marginHorizontal:12,marginVertical:4}}>
     <View style={{maxWidth:'86%',borderRadius:16,borderBottomRightRadius:4,backgroundColor:c.outgoing,padding:12,gap:5}}>
       {item.replyTo?<HelpMessageQuote quote={item.replyTo} onQuote={onQuote} resolve={resolve}/>:null}
       <Text selectable style={{color:c.text,fontSize:15,lineHeight:22}}>{item.input.text||`Вложения: ${item.input.attachmentIds?.length??0}`}</Text>

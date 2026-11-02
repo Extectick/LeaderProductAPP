@@ -2,6 +2,7 @@ import React, { forwardRef, useCallback, useContext, useEffect, useImperativeHan
 import { Animated, AppState, Easing, Platform, ScrollView, type ScrollViewProps, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import type { HelpMessage } from '../helpApi';
+import type {HelpPending} from '../helpDurableTypes';
 import type { HelpNavigationTarget, HelpViewportAnchor } from '../helpHistoryTypes';
 import { helpTimelineRows, helpVisibleRows, helpNavigationIndex, type HelpTimelineRow } from '../helpTimelineModel';
 import { helpDateJumpMode } from '../helpDateNavigation';
@@ -25,6 +26,7 @@ export type HelpTimelineHandle = {
   scrollToEnd: (params?: {animated?: boolean}) => void;
 };
 type Props = {
+  pendingMessages?:readonly HelpPending[]; renderPending?:(item:HelpPending)=>React.ReactElement;
   messages: HelpMessage[]; nativeID: string; headerHeight: number; dockHeight: number;
   navigationTarget?: HelpNavigationTarget | null; firstUnreadSequence?: number | null;
   hasOlder?: boolean; hasNewer?: boolean; loadingOlder?: boolean; loadingNewer?: boolean;
@@ -46,7 +48,7 @@ type Props = {
 type MediaRange = {first: number; last: number};
 type OutgoingViewport = {rows: {row: HelpTimelineRow; top: number; height: number}[]; direction: number};
 const rowKey = (row: HelpTimelineRow) => row.key;
-const rowType = (row: HelpTimelineRow) => row.kind;
+const rowType = (row: HelpTimelineRow) => row.kind==='pending'?'message':row.kind;
 
 /** FlashList owns history anchors; native layout owns composer geometry only while following the tail. */
 export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpTimeline(props, ref) {
@@ -55,7 +57,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   const localImageCache=useMemo(() => createHelpImageCache(), []);
   const imageCache=parentImageCache??localImageCache;
   const list = useRef<FlashListRef<HelpTimelineRow>>(null), live = useRef(props); live.current = props;
-  const rows = useMemo(() => helpTimelineRows(props.messages, props.firstUnreadSequence), [props.messages, props.firstUnreadSequence]);
+  const rows = useMemo(() => helpTimelineRows(props.messages, props.firstUnreadSequence,props.pendingMessages), [props.messages, props.firstUnreadSequence,props.pendingMessages]);
   const rowsRef = useRef(rows); rowsRef.current = rows;
   const hasImages = useMemo(() => props.messages.some(message => message.attachments?.some(attachment => attachment.kind==='IMAGE') || message.replyTo?.attachments?.some(attachment => attachment.kind==='IMAGE')), [props.messages]);
   const hasImagesRef = useRef(hasImages); hasImagesRef.current = hasImages;
@@ -290,7 +292,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     if (!reduced && dateSnapshot.current.rows.length) stageViewport({rows:dateSnapshot.current.rows,direction:1});
     void live.current.onDate(date).catch(error => { cancelJump(); live.current.onError(error instanceof Error ? error.message : 'Не удалось открыть сообщения за эту дату'); });
   }, [save,visible,cancelJump,reduced,stageViewport]);
-  const renderRow = useCallback((row: HelpTimelineRow,index=rowsRef.current.indexOf(row),range=mediaRangeRef.current,retained=false) => row.kind==='date' ? <HelpDateSeparator date={row.date!} onPress={()=>jumpDate(row.date!)}/> : row.kind==='unread' ? <HelpUnreadSeparator/> : <HelpMediaLoadingContext.Provider value={retained?'retained':index>=range.first&&index<=range.last?'visible':index>=range.first-4&&index<=range.last+4?'near':'deferred'}><HelpMessageArrival key={helpArrivalIdentity(row.message)} identity={helpArrivalIdentity(row.message)} animate={!retained&&Date.now()<=arrivalBatch.expiresAt&&arrivalBatch.keys.has(helpArrivalIdentity(row.message))}>{props.renderMessage(row.message)}</HelpMessageArrival></HelpMediaLoadingContext.Provider>, [jumpDate,props.renderMessage,arrivalBatch.keys]);
+  const renderRow = useCallback((row: HelpTimelineRow,index=rowsRef.current.indexOf(row),range=mediaRangeRef.current,retained=false) => row.kind==='date' ? <HelpDateSeparator date={row.date!} onPress={()=>jumpDate(row.date!)}/> : row.kind==='unread' ? <HelpUnreadSeparator/> : <HelpMediaLoadingContext.Provider value={retained?'retained':index>=range.first&&index<=range.last?'visible':index>=range.first-4&&index<=range.last+4?'near':'deferred'}><HelpMessageArrival key={helpArrivalIdentity(row.message)} identity={helpArrivalIdentity(row.message)} animate={!retained&&(row.kind==='pending'||Date.now()<=arrivalBatch.expiresAt&&arrivalBatch.keys.has(helpArrivalIdentity(row.message)))}>{row.kind==='pending'?props.renderPending?.(row.pending!):props.renderMessage(row.message)}</HelpMessageArrival></HelpMediaLoadingContext.Provider>, [jumpDate,props.renderMessage,props.renderPending,arrivalBatch.keys]);
   // Keep the renderer stable through viewport/date updates. Real visual changes
   // from the screen (selection, search, receipts) still replace renderMessage.
   const renderItem = useCallback<ListRenderItem<HelpTimelineRow>>(({item,index,extraData}) => renderRow(item,index,extraData as MediaRange), [renderRow]);

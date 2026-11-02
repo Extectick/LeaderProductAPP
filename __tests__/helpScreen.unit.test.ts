@@ -20,6 +20,7 @@ jest.mock('@shopify/flash-list',()=>{
 let mockFocused = true;
 let mockNativeChatLayout = false;
 let mockNativeImeLayout = false;
+let mockNativeStableImeLayout = false;
 let mockTimelineProps:any;
 const mockPlayback:any={};
 const mockUseAudioController=jest.fn((_options:any)=>mockPlayback);
@@ -34,7 +35,7 @@ jest.mock('../src/features/help/HelpAudioPlayback',()=>({
   useHelpAudioPlayback:()=>mockPlayback,
 }));
 jest.mock('../src/features/help/components/HelpNativeChatLayout', () => ({
-  get hasNativeChatLayout() { return mockNativeChatLayout; }, get hasNativeImeLayout() { return mockNativeImeLayout; }, HelpNativeChatLayout:'HelpNativeChatLayout',
+  get hasNativeChatLayout() { return mockNativeChatLayout; }, get hasNativeImeLayout() { return mockNativeImeLayout; },get hasNativeStableImeLayout(){return mockNativeStableImeLayout;}, HelpNativeChatLayout:'HelpNativeChatLayout',
 }));
 jest.mock('../context/ThemeContext', () => ({ useTheme: () => ({theme:'light'}) }));
 jest.mock('expo-router', () => ({ useRouter: () => mockRouter, useLocalSearchParams: () => ({}) }));
@@ -56,7 +57,7 @@ jest.mock('../src/features/help/components/HelpTimeline',()=>{
   return {HelpTimeline:React.forwardRef((props:any,ref:any)=>{
     mockTimelineProps=props;
     React.useImperativeHandle(ref,()=>({save:jest.fn(),prepareJump:jest.fn(),cancelJump:jest.fn(),jumpToDate:mockTimelineDateJump,scrollTo:jest.fn(),scrollToEnd:jest.fn()}));
-    return React.createElement(ScrollView,{testID:'help-chat-scroll',nativeID:props.nativeID,onLayout:()=>{},onScrollBeginDrag:()=>{},contentContainerStyle:{paddingBottom:mockNativeChatLayout?0:props.dockHeight+12}},props.header,props.messages.map((message:any)=>React.createElement(React.Fragment,{key:message.id},props.renderMessage(message))),props.footer);
+    return React.createElement(ScrollView,{testID:'help-chat-scroll',nativeID:props.nativeID,onLayout:()=>{},onScrollBeginDrag:()=>{},contentContainerStyle:{paddingBottom:mockNativeChatLayout?0:props.dockHeight+12}},props.header,props.messages.map((message:any)=>React.createElement(React.Fragment,{key:message.id},props.renderMessage(message))),(props.pendingMessages??[]).map((item:any)=>React.createElement(React.Fragment,{key:item.key},props.renderPending(item))),props.footer);
   })};
 });
 
@@ -89,7 +90,7 @@ describe('Help screen integration with service boundary', () => {
     mockFocused = true;
     mockAttachmentDrafts.load.mockReset().mockResolvedValue([]);mockAttachmentDrafts.save.mockReset().mockImplementation(async(_user:any,_key:any,files:any)=>files);mockAttachmentDrafts.clear.mockReset().mockResolvedValue(undefined);mockAttachmentDrafts.hold.mockReset().mockImplementation(()=>jest.fn());
     mockNativeChatLayout = false;
-    mockNativeImeLayout = false;
+    mockNativeImeLayout = false;mockNativeStableImeLayout=false;
     mockTimelineProps=undefined;mockUseAudioController.mockClear();mockTimelineDateJump.mockClear();
     Object.assign(mockPlayback,{current:null,positionSeconds:0,durationSeconds:0,progress:0,playing:false,loading:false,ready:false,error:null,speed:1,toggle:jest.fn().mockResolvedValue(undefined),setSpeed:jest.fn(),stop:jest.fn(),seek:jest.fn().mockResolvedValue(undefined),play:jest.fn().mockResolvedValue(undefined)});
     Object.assign(mockService,{tickets:[],selectedTicket:null,messages:[],loading:false,busy:false,error:null,online:true,connected:true,canManage:false,userId:5,typingByTicket:{},hasMore:false,
@@ -124,9 +125,12 @@ describe('Help screen integration with service boundary', () => {
     expect(screen.root.findByProps({testID:'help-header-status'}).props.accessibilityLabel).toBe('Обращение открыто');
     await act(async()=>mockTimelineProps.onReady());
     expect(screen.root.findByProps({testID:'help-ticket-list'})).toBe(list);
+    const progress=screen.root.findByType(HelpChatEntry).props.progress!;
     await act(async()=>button('Назад').props.onPress());
     expect(screen.root.findByProps({testID:'help-ticket-list'})).toBe(list);
     expect(screen.root.findAllByProps({testID:'help-chat-viewport'})).toHaveLength(0);
+    act(()=>{progress.value=1;});
+    expect(StyleSheet.flatten(screen.root.findByProps({testID:'help-list-scene'}).props.style).transform).toEqual([{translateX:0}]);
   });
   function button(label:string){return screen.root.findAll(node=>node.props.accessibilityLabel===label && typeof node.props.onPress==='function')[0];}
   function composer(){return screen.root.findByType('HelpComposer' as any);}
@@ -188,6 +192,18 @@ describe('Help screen integration with service boundary', () => {
     expect(viewport().bottom).toBe(before);expect(mockTimelineProps.dockHeight).toBe(0);expect(StyleSheet.flatten(screen.root.findByProps({testID:'help-chat-dock-layout'}).props.style).bottom).toBe(0);
   });
   async function archiveAction(label:string){await act(async()=>button('Меню поддержки').props.onPress());await act(async()=>button(label).props.onPress());}
+  test('stable native IME keeps Yoga bounds fixed while reporting occlusion to visibility tracking',async()=>{
+    mockNativeChatLayout=true;mockNativeImeLayout=true;mockNativeStableImeLayout=true;
+    await render();await act(async()=>button('Новое обращение').props.onPress());
+    const viewport=()=>StyleSheet.flatten(screen.root.findByProps({testID:'help-chat-visible-viewport'}).props.style);
+    const before=viewport().bottom;
+    await act(async()=>screen.root.findByType('HelpNativeChatLayout' as any).props.onImeInsetChange(250));
+    expect(viewport().bottom).toBe(before);
+    expect(StyleSheet.flatten(screen.root.findByProps({testID:'help-chat-dock-layout'}).props.style).bottom).toBe(0);
+    expect(mockTimelineProps.dockHeight).toBe(250);
+    await act(async()=>screen.root.findByType('HelpNativeChatLayout' as any).props.onImeInsetChange(0));
+    expect(viewport().bottom).toBe(before);expect(mockTimelineProps.dockHeight).toBe(0);
+  });
   test('a completed right swipe anywhere in the chat navigates back and preserves the draft',async()=>{
     await render();await act(async()=>button('Новое обращение').props.onPress());
     await act(async()=>composer().props.onChange('Черновик перед свайпом'));

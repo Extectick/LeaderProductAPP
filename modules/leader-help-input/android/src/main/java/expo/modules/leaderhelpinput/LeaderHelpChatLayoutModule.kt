@@ -1,6 +1,7 @@
 package expo.modules.leaderhelpinput
 
 import android.content.Context
+import android.graphics.Rect
 import android.animation.ValueAnimator
 import android.content.pm.ApplicationInfo
 import android.os.Build
@@ -30,7 +31,7 @@ import kotlin.math.roundToInt
 class LeaderHelpChatLayoutModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("LeaderHelpChatLayout")
-    Constants("tailMotionVersion" to 2, "imeInsetsVersion" to 3)
+    Constants("tailMotionVersion" to 2, "imeInsetsVersion" to 4)
     View(LeaderHelpChatLayoutView::class) {
       Events("onImeInsetChange")
       Prop("scrollId") { view: LeaderHelpChatLayoutView, id: String -> view.scrollId = id }
@@ -102,6 +103,9 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
   private var scroll: ScrollView? = null
   private var dock: View? = null
   private var viewport: View? = null
+  private val viewportClip = Rect()
+  private var viewportClipHeight = -1
+  private var viewportClipWidth = -1
   private val density = resources.displayMetrics.density
   private val debug = context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
   private val nativeIdKey = resources.getIdentifier("view_tag_native_id", "id", context.packageName)
@@ -214,6 +218,7 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
   }
   override fun onDetachedFromWindow() {
     releaseImeOwnership()
+    viewport?.clipBounds = null
     stopMotion(false); motionContent = null
     ViewCompat.setWindowInsetsAnimationCallback(this, null)
     imeMotionUntil = 0L; geometryMotionUntil = 0L
@@ -221,7 +226,7 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
     imeAnimating = false; imeBottom = 0; imeTargetBottom = 0; lastEmittedImeInset = -1f; dockImeTranslation = 0f
     if (viewTreeObserver.isAlive) viewTreeObserver.removeOnPreDrawListener(beforeDraw)
     dock?.removeOnLayoutChangeListener(dockLayout)
-    scroll = null; dock = null; viewport = null
+    scroll = null; dock = null; viewport = null; viewportClipHeight = -1; viewportClipWidth = -1
     super.onDetachedFromWindow()
   }
 
@@ -252,8 +257,11 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
     val layoutDockBottom = layoutWindowTop(footer) + footer.height
     dockImeTranslation = containerBottom - effectiveImeInset - layoutDockBottom
     footer.translationY = dockImeTranslation
-    if (viewport?.isAttachedToWindow != true) viewport = findNativeView(rootView, viewportId)
-    viewport?.let { resizeViewport(list, it, layoutWindowTop(footer) + dockImeTranslation) }
+    if (viewport?.isAttachedToWindow != true) {
+      viewport = findNativeView(rootView, viewportId)
+      viewportClipHeight = -1; viewportClipWidth = -1
+    }
+    viewport?.let { clipViewport(it, layoutWindowTop(footer) + dockImeTranslation) }
     if (list.height == 0) return
     if (!imeAnimating && abs(effectiveImeInset - lastEmittedImeInset) > .5f) {
       lastEmittedImeInset = effectiveImeInset
@@ -307,25 +315,16 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
       if (frames.size > 240) frames.removeFirst()
     }
   }
-  private fun resizeViewport(list: ScrollView, visible: View, dockTop: Float) {
-    // All nodes on this branch are flex:1 wrappers around the native scroll
-    // view. Resize the same branch on the UI thread, including its clip/blur
-    // target, so keyboard dismissal can reveal rows immediately as well.
-    // Yoga receives the settled inset afterwards and converges to this layout.
-    val branch = mutableListOf<View>()
-    var child: View? = list
-    while (child != null && child !== visible && branch.size < 32) {
-      branch.add(child)
-      child = child.parent as? View
-    }
-    if (child !== visible) return
-    val newHeight = max(0, (dockTop - layoutWindowTop(visible)).roundToInt())
-    if (visible.height != newHeight) visible.layout(visible.left, visible.top, visible.right, visible.top + newHeight)
-    for (view in branch.asReversed()) {
-      val parent = view.parent as? View ?: continue
-      val bottom = max(view.top, parent.height - parent.paddingBottom)
-      if (view.bottom != bottom) view.layout(view.left, view.top, view.right, bottom)
-    }
+  private fun clipViewport(visible: View, dockTop: Float) {
+    // Keep FlashList's measured viewport stable during IME motion. Relaying
+    // every frame through View.layout caused Fabric/FlashList measurement work
+    // to race native scrolling. Padding owns the scroll range; clipping owns
+    // visibility. Neither requires re-laying out the list's ancestor chain.
+    val height = (dockTop - layoutWindowTop(visible)).roundToInt().coerceIn(0, visible.height)
+    if (height == viewportClipHeight && visible.width == viewportClipWidth) return
+    viewportClipHeight = height; viewportClipWidth = visible.width
+    viewportClip.set(0, 0, visible.width, height)
+    visible.clipBounds = if (height == visible.height) null else viewportClip
   }
   private fun windowHeight(): Float = if (Build.VERSION.SDK_INT >= 30) {
     (context.getSystemService(Context.WINDOW_SERVICE) as WindowManager).currentWindowMetrics.bounds.height().toFloat()
@@ -345,6 +344,6 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
     }
     return null
   }
-  fun diagnostics(): Map<String, Any> = if (!debug) emptyMap() else mapOf("following" to following, "tailMotionVersion" to 2, "imeInsetsVersion" to 3, "frames" to frames.toList())
+  fun diagnostics(): Map<String, Any> = if (!debug) emptyMap() else mapOf("following" to following, "tailMotionVersion" to 2, "imeInsetsVersion" to 4, "frames" to frames.toList())
   fun resetDiagnostics() { frames.clear() }
 }

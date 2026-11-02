@@ -1,4 +1,5 @@
 import type { HelpMessage } from './helpApi';
+import type { HelpPending } from './helpDurableTypes';
 import type {HelpNavigationTarget} from './helpHistoryTypes';
 import { helpDayKey } from './helpUiUtils';
 
@@ -24,14 +25,27 @@ export function helpMessageGroups(messages: readonly HelpMessage[], firstUnreadS
   }]));
 }
 
-export type HelpTimelineRow = { key:string; kind:'message'|'date'|'unread'; message: HelpMessage; date?: string; unread: boolean };
-export function helpTimelineRows(messages: HelpMessage[], firstUnreadSequence?: number | null): HelpTimelineRow[] {
-  const rows:HelpTimelineRow[]=[];
-  messages.forEach((message,index)=>{
+export type HelpTimelineRow = { key:string; kind:'message'|'pending'|'date'|'unread'; message: HelpMessage; pending?:HelpPending; date?: string; unread: boolean };
+/** Presentation only: pending entries never enter history/read persistence. */
+export function helpTimelineEntries(messages:HelpMessage[],pending:readonly HelpPending[]=[],authorId:number|null=null) {
+  const accepted=new Set(messages.flatMap(message=>message.clientMessageId?[message.clientMessageId]:[]));
+  const entries:{message:HelpMessage;pending?:HelpPending}[]=messages.map(message=>({message}));
+  for(const item of pending){
+    const clientMessageId=item.input.clientMessageId||item.key;
+    if(accepted.has(clientMessageId))continue;
+    accepted.add(clientMessageId);
+    entries.push({pending:item,message:{id:-(entries.length+1),ticketId:item.ticketId??0,sequence:0,clientMessageId,authorId,author:null,authorRole:'USER',kind:item.action==='close'?'CLOSURE':'TEXT',text:item.input.text,createdAt:new Date(item.createdAt).toISOString(),editedAt:null,replyToId:item.input.replyToId??null,replyTo:item.replyTo??null,forwardedFromId:null,rating:null,attachments:[],reactions:[]}});
+  }
+  return entries;
+}
+export function helpTimelineRows(messages: HelpMessage[], firstUnreadSequence?: number | null, pending:readonly HelpPending[]=[]): HelpTimelineRow[] {
+  const rows:HelpTimelineRow[]=[],entries=helpTimelineEntries(messages,pending);
+  entries.forEach(({message,pending},index)=>{
     const day=helpDayKey(message.createdAt);
-    if(!index || helpDayKey(messages[index-1].createdAt)!==day)rows.push({key:`date:${day}:${message.id}`,kind:'date',message,date:message.createdAt,unread:false});
-    if(message.sequence===firstUnreadSequence)rows.push({key:`unread:${message.sequence}`,kind:'unread',message,unread:true});
-    rows.push({key:`message:${message.id}`,kind:'message',message,unread:false});
+    const identity=message.clientMessageId?`client:${message.clientMessageId}`:`message:${message.id}`;
+    if(!index || helpDayKey(entries[index-1].message.createdAt)!==day)rows.push({key:`date:${day}:${identity}`,kind:'date',message,date:message.createdAt,unread:false});
+    if(!pending&&message.sequence===firstUnreadSequence)rows.push({key:`unread:${message.sequence}`,kind:'unread',message,unread:true});
+    rows.push({key:identity,kind:pending?'pending':'message',message,pending,unread:false});
   });
   return rows;
 }

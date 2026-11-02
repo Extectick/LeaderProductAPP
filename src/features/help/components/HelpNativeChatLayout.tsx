@@ -6,6 +6,7 @@ import {useHelpReducedMotion} from '../helpTheme';
 
 const layoutModule = Platform.OS === 'android' ? requireOptionalNativeModule('LeaderHelpChatLayout') : null;
 export const hasNativeChatLayout = Boolean(layoutModule);
+export const hasNativeStableImeLayout = (layoutModule?.imeInsetsVersion ?? 0) >= 4;
 export const hasNativeImeLayout = (layoutModule?.imeInsetsVersion ?? 0) >= 2;
 const NativeLayout = hasNativeChatLayout ? requireNativeViewManager<any>('LeaderHelpChatLayout') : null;
 
