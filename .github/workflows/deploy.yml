@@ -1,157 +1,41 @@
-name: Build & Deploy APP
-
+name: Build Web Image
 on:
   push:
-    branches: [main, production]
-  release:
-    types: [published]
+    branches: [dev, main, production]
   workflow_dispatch:
-    inputs:
-      image_tag:
-        description: 'Docker image tag to publish/deploy'
-        required: false
-        default: latest
-      git_ref:
-        description: 'Git branch/tag/commit to checkout on the production server'
-        required: false
-        default: main
-      deploy:
-        description: 'Deploy to production after image push'
-        required: false
-        type: boolean
-        default: true
-
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: extectick/leaderproductapp
-
+permissions:
+  contents: read
+  packages: write
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    environment: ${{ (github.event_name == 'release' || github.ref_name == 'main' || github.ref_name == 'production' || github.event_name == 'workflow_dispatch') && 'production' || 'development' }}
-    outputs:
-      image_tag: ${{ steps.vars.outputs.image_tag }}
-      git_ref: ${{ steps.vars.outputs.git_ref }}
-      deploy: ${{ steps.vars.outputs.deploy }}
-
+    environment: ${{ github.ref_name == 'dev' && 'development' || 'production' }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set deploy vars
-        id: vars
-        shell: bash
+      - uses: actions/checkout@v4
+      - name: Validate release branch
+        env:
+          REF: ${{ github.ref_name }}
         run: |
-          deploy=false
-          git_ref="${GITHUB_REF_NAME}"
-          image_tag=dev
-          publish_latest=false
-
-          if [ "${GITHUB_EVENT_NAME}" = "release" ]; then
-            image_tag="${{ github.event.release.tag_name }}"
-            git_ref="${{ github.event.release.tag_name }}"
-            deploy=true
-            publish_latest=true
-          elif [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-            image_tag="${{ inputs.image_tag }}"
-            git_ref="${{ inputs.git_ref }}"
-            deploy="${{ inputs.deploy }}"
-            [ -n "$image_tag" ] || image_tag=latest
-            [ -n "$git_ref" ] || git_ref=main
-            [ "$image_tag" = "latest" ] && publish_latest=true
-          elif [ "${GITHUB_REF_NAME}" = "main" ] || [ "${GITHUB_REF_NAME}" = "production" ]; then
-            image_tag=latest
-            git_ref="${GITHUB_REF_NAME}"
-            deploy=true
-            publish_latest=true
-          fi
-
-          {
-            echo "tags<<EOF"
-            echo "${REGISTRY}/${IMAGE_NAME}:${image_tag}"
-            echo "${REGISTRY}/${IMAGE_NAME}:${GITHUB_SHA}"
-            if [ "$publish_latest" = "true" ] && [ "$image_tag" != "latest" ]; then
-              echo "${REGISTRY}/${IMAGE_NAME}:latest"
-            fi
-            echo "EOF"
-            echo "image_tag=$image_tag"
-            echo "git_ref=$git_ref"
-            echo "deploy=$deploy"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
+          case "$REF" in dev|main|production) ;; *) exit 1;; esac
+      - uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and push
-        uses: docker/build-push-action@v6
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile.web
           push: true
-          tags: ${{ steps.vars.outputs.tags }}
+          tags: |
+            ghcr.io/extectick/leaderproductapp:${{ github.sha }}
+            ghcr.io/extectick/leaderproductapp:${{ github.ref_name == 'dev' && 'dev' || 'latest' }}
           build-args: |
-            EXPO_PUBLIC_API_URL_DEV=https://api.leader-product.ru
+            EXPO_PUBLIC_API_URL_DEV=${{ github.ref_name == 'dev' && 'https://dev.lidprod.ru' || 'https://sibvod.ru' }}
             EXPO_PUBLIC_MAP_STYLE_URL=https://tiles.openfreemap.org/styles/liberty
             EXPO_PUBLIC_TELEGRAM_BOT_USERNAME=${{ secrets.EXPO_PUBLIC_TELEGRAM_BOT_USERNAME }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-  deploy-production:
-    needs: build-and-push
-    if: needs.build-and-push.outputs.deploy == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: read
-    environment: production
-
-    steps:
-      - name: Deploy production APP
-        uses: appleboy/ssh-action@v1
-        env:
-          GHCR_TOKEN: ${{ github.token }}
-          GHCR_USER: ${{ github.actor }}
-          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
-          GIT_REF: ${{ needs.build-and-push.outputs.git_ref }}
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          envs: GHCR_TOKEN,GHCR_USER,IMAGE_TAG,GIT_REF
-          script: |
-            set -euo pipefail
-
-            image="ghcr.io/extectick/leaderproductapp:$IMAGE_TAG"
-            printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
-            docker pull "$image"
-
-            if docker container inspect leader_app >/dev/null 2>&1; then
-              docker rm -f leader_app
-            fi
-
-            docker run -d \
-              --name leader_app \
-              --restart unless-stopped \
-              --publish 127.0.0.1:8088:80 \
-              "$image"
-
-            for attempt in $(seq 1 20); do
-              if curl --fail --silent --show-error http://127.0.0.1:8088/ >/dev/null; then
-                docker ps --filter name=leader_app
-                exit 0
-              fi
-              sleep 2
-            done
-
-            docker logs leader_app
-            exit 1
+      - name: Hosting is managed separately
+        run: echo "Web image published. This host has no web application service; API/nginx must not be replaced by the web build." >> "$GITHUB_STEP_SUMMARY"

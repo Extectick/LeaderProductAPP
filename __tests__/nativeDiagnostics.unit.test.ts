@@ -11,7 +11,7 @@ jest.mock('../utils/logger', () => ({ logger: { info: jest.fn(), warn: jest.fn()
 beforeEach(() => {
   jest.resetModules(); jest.clearAllMocks(); mockNative.enabled = true;
   process.env.EXPO_PUBLIC_SENTRY_ENABLED = 'true'; process.env.EXPO_PUBLIC_UPDATE_CHANNEL = 'dev';
-  process.env.EXPO_PUBLIC_SENTRY_DSN = 'https://public@dev.leader-product.ru/sentry/1';
+  process.env.EXPO_PUBLIC_SENTRY_DSN = 'https://public@dev.lidprod.ru/sentry/1';
 });
 
 test('preserves the early native SDK/privacy hook and restores identity before profile loads', () => {

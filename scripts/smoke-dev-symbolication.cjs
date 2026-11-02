@@ -6,12 +6,12 @@ const { TraceMap, eachMapping } = require('@jridgewell/trace-mapping');
 const root = path.resolve(__dirname, '..');
 const cfg = JSON.parse(fs.readFileSync(process.env.CRASH_CREDENTIAL_FILE || 'C:/ProgramData/LeaderProduct/GlitchTipDev/credentials.json'));
 const backendUrl = process.env.CRASH_BACKEND_URL || cfg.sentryUrl;
-const ingestBase = process.env.CRASH_INGEST_BASE || 'https://dev.leader-product.ru/sentry';
+const ingestBase = process.env.CRASH_INGEST_BASE || 'https://dev.lidprod.ru/sentry';
 if (!['http://127.0.0.1:19010', 'http://127.0.0.1:19000'].includes(backendUrl)) throw Error('Private backend URL required');
-if (!['http://127.0.0.1:19010', 'https://dev.leader-product.ru/sentry'].includes(ingestBase)) throw Error('Dev ingest URL required');
+if (!['http://127.0.0.1:19010', 'https://dev.lidprod.ru/sentry'].includes(ingestBase)) throw Error('Dev ingest URL required');
 const version = JSON.parse(fs.readFileSync(path.join(root, 'app.version.json')));
 const dsn = new URL(cfg.dsn);
-if (dsn.hostname !== 'dev.leader-product.ru' || cfg.project !== 'leader-app-dev') throw Error('Dev guard failed');
+if (dsn.hostname !== 'dev.lidprod.ru' || cfg.project !== 'leader-app-dev') throw Error('Dev guard failed');
 async function main() {
   const eventId = process.argv[2] || crypto.randomBytes(16).toString('hex');
   if (!/^[a-f0-9]{32}$/.test(eventId)) throw Error('Invalid event ID');
