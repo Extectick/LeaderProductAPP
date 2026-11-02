@@ -11,6 +11,7 @@ import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import android.view.WindowInsets
 import android.view.WindowManager
+import android.view.Window
 import android.widget.ScrollView
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsAnimationCompat
@@ -29,7 +30,7 @@ import kotlin.math.roundToInt
 class LeaderHelpChatLayoutModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("LeaderHelpChatLayout")
-    Constants("tailMotionVersion" to 2, "imeInsetsVersion" to 2)
+    Constants("tailMotionVersion" to 2, "imeInsetsVersion" to 3)
     View(LeaderHelpChatLayoutView::class) {
       Events("onImeInsetChange")
       Prop("scrollId") { view: LeaderHelpChatLayoutView, id: String -> view.scrollId = id }
@@ -37,6 +38,7 @@ class LeaderHelpChatLayoutModule : Module() {
       Prop("viewportId") { view: LeaderHelpChatLayoutView, id: String -> view.viewportId = id }
       Prop("allowFollow") { view: LeaderHelpChatLayoutView, value: Boolean -> view.allowFollow = value }
       Prop("reducedMotion") { view: LeaderHelpChatLayoutView, value: Boolean -> view.reducedMotion = value }
+      Prop("manageIme") { view: LeaderHelpChatLayoutView, value: Boolean -> view.manageIme = value }
       AsyncFunction("diagnostics") { view: LeaderHelpChatLayoutView -> view.diagnostics() }
       AsyncFunction("resetDiagnostics") { view: LeaderHelpChatLayoutView -> view.resetDiagnostics() }
     }
@@ -48,6 +50,42 @@ class LeaderHelpChatLayoutModule : Module() {
  */
 class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoView(context, appContext) {
   private val onImeInsetChange by EventDispatcher()
+  // adjustResize applies the target root height before/after the IME animation.
+  // Keep this screen's window stable and use animated insets as the sole owner
+  // of chat/dock geometry. Restore the Activity's mode on navigation away.
+  private var managedWindow: Window? = null
+  private var previousSoftInputMode = 0
+  private var appliedSoftInputMode = 0
+  var manageIme = false
+    set(value) {
+      if (field == value) return
+      field = value
+      updateImeOwnership()
+    }
+  private fun updateImeOwnership() {
+    // API 30+ delivers IME insets independently of legacy adjustResize.
+    // Older Android versions retain the existing resize compatibility path.
+    if (manageIme && isAttachedToWindow && Build.VERSION.SDK_INT >= 30) {
+      val window = appContext.currentActivity?.window ?: return
+      if (managedWindow === window) return
+      releaseImeOwnership()
+      previousSoftInputMode = window.attributes.softInputMode
+      appliedSoftInputMode = (previousSoftInputMode and WindowManager.LayoutParams.SOFT_INPUT_MASK_ADJUST.inv()) or WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
+      managedWindow = window
+      window.setSoftInputMode(appliedSoftInputMode)
+      ViewCompat.requestApplyInsets(this)
+    } else releaseImeOwnership()
+  }
+  private fun releaseImeOwnership() {
+    managedWindow?.let { window ->
+      val current = window.attributes.softInputMode
+      val mask = WindowManager.LayoutParams.SOFT_INPUT_MASK_ADJUST
+      if ((current and mask) == (appliedSoftInputMode and mask)) {
+        window.setSoftInputMode((current and mask.inv()) or (previousSoftInputMode and mask))
+      }
+    }
+    managedWindow = null
+  }
   var scrollId = ""
   var dockId = ""
   var viewportId = ""
@@ -164,6 +202,7 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
   override fun onAttachedToWindow() {
     super.onAttachedToWindow()
     ViewCompat.setWindowInsetsAnimationCallback(this, imeAnimation)
+    updateImeOwnership()
     viewTreeObserver.addOnPreDrawListener(beforeDraw)
     ViewCompat.requestApplyInsets(this)
   }
@@ -174,6 +213,7 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
     return super.onApplyWindowInsets(insets)
   }
   override fun onDetachedFromWindow() {
+    releaseImeOwnership()
     stopMotion(false); motionContent = null
     ViewCompat.setWindowInsetsAnimationCallback(this, null)
     imeMotionUntil = 0L; geometryMotionUntil = 0L
@@ -186,6 +226,8 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
   }
 
   private fun synchronize() {
+    if (!manageIme) return
+    if (managedWindow == null) updateImeOwnership()
     if (scroll?.isAttachedToWindow != true) scroll = findNativeView(rootView, scrollId) as? ScrollView
     if (dock?.isAttachedToWindow != true) {
       dock?.removeOnLayoutChangeListener(dockLayout)
@@ -303,6 +345,6 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
     }
     return null
   }
-  fun diagnostics(): Map<String, Any> = if (!debug) emptyMap() else mapOf("following" to following, "tailMotionVersion" to 2, "imeInsetsVersion" to 2, "frames" to frames.toList())
+  fun diagnostics(): Map<String, Any> = if (!debug) emptyMap() else mapOf("following" to following, "tailMotionVersion" to 2, "imeInsetsVersion" to 3, "frames" to frames.toList())
   fun resetDiagnostics() { frames.clear() }
 }

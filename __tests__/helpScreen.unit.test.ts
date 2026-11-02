@@ -520,6 +520,16 @@ describe('Help screen integration with service boundary', () => {
     mockFocused=true; await act(async()=>screen.update(React.createElement(HelpScreen)));
     expect(add).toHaveBeenCalledTimes(2);
   });
+  test('native keyboard ownership follows chat focus and releases when another screen covers it',async()=>{
+    mockNativeChatLayout=true;mockNativeImeLayout=true;
+    await render();await act(async()=>button('Новое обращение').props.onPress());
+    const native=()=>screen.root.findByType('HelpNativeChatLayout' as any);
+    expect(native().props.manageIme).toBe(true);
+    mockFocused=false;await act(async()=>screen.update(React.createElement(HelpScreen)));
+    expect(native().props.manageIme).toBe(false);
+    mockFocused=true;await act(async()=>screen.update(React.createElement(HelpScreen)));
+    expect(native().props.manageIme).toBe(true);
+  });
   async function openWithMessage() {
     await render(); await act(async()=>button('Новое обращение').props.onPress());
     await act(async()=>composer().props.onChange('Первый вопрос'));
