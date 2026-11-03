@@ -20,7 +20,7 @@ import {scheduleHelpInputFocus} from '../helpInputFocus';
 import {HelpVoiceRecorder,hasNativeHelpVoice} from './HelpVoiceRecorder';
 import {HelpExpandedEditor,type HelpTextSelection} from './HelpExpandedEditor';
 
-export type HelpLocalFile = { uri: string; name: string; mimeType?: string; file?: File; size?: number; width?: number; height?: number; assetId?: string };
+export type HelpLocalFile = { durationMs?: number; uri: string; name: string; mimeType?: string; file?: File; size?: number; width?: number; height?: number; assetId?: string };
 export type HelpComposeMode = 'message' | 'close' | 'reopen' | 'edit';
 type Props = { blurTarget?:React.RefObject<View|null>; navigationReady?:boolean; onAttachmentVisibility?:(visible:boolean)=>void; screenActive?:boolean; voiceDraftKey?:string; value: string; onChange: (text: string) => void; files: HelpLocalFile[]; onFiles: (files: HelpLocalFile[]) => void; onSend: (voice?: HelpLocalFile, selectedFiles?: HelpLocalFile[], retainVoiceDraft?:boolean) => Promise<boolean | void>; busy: boolean; mode: HelpComposeMode; rating: number; onRating: (rating: number) => void; onCancelMode: () => void; quote?: { name: string; text: string; onPress: () => void; thumbnail?: HelpAttachment }; resolve?: ResolveHelpMedia; recordingAreaHeight?: number; onCancelQuote: () => void; error: (message: string) => void; focusKey?: number; onResize: () => void; disabled?: boolean; sendBlocked?:boolean; onStopAssistant?:()=>void; editClosure?: boolean; existingFiles?: HelpAttachment[]; onRemoveExisting?: (id: string) => void };
 

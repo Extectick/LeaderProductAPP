@@ -55,3 +55,11 @@ test('retry resumes after the last durable uploaded file without losing the file
   expect(mockUpload.mock.calls.map(call=>call[0])).toEqual([[files[0]],[files[1]],[files[1]]]);
   expect(mockSend).toHaveBeenCalledWith(17,expect.objectContaining({attachmentIds:['a','b']}));
 });
+
+test('media geometry and voice duration survive the server receipt before inspection completes',async()=>{
+ const item={...operation('media-metadata'),localFiles:[{uri:'file://photo.jpg',name:'photo.jpg',mimeType:'image/jpeg',width:600,height:800},{uri:'file://voice.m4a',name:'voice.m4a',mimeType:'audio/mp4',durationMs:4200}]};
+ mockUpload.mockResolvedValueOnce([{id:'photo'}]).mockResolvedValueOnce([{id:'voice'}]);
+ mockSend.mockResolvedValue({ticket:{id:17},messages:[{clientMessageId:'media-metadata',attachments:[{id:'photo'},{id:'voice'}]}]});
+ const receipt=jest.fn();await dispatchHelpPending(1,item,receipt);
+ expect(receipt.mock.calls[0][0].messages[0].attachments).toEqual([expect.objectContaining({id:'photo',width:600,height:800}),expect.objectContaining({id:'voice',durationMs:4200})]);
+});

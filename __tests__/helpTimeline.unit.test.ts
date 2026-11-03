@@ -330,11 +330,12 @@ describe('sticky date geometry and navigation integration',()=>{
     // At80 only24 of the44px touch row remain below headerHeight100; at51
     // just1px of the pill remains below the capsule bottom84. Both are visible.
     mockLayouts[0]={y:rowTop,height:44};await render();
-    expect(floating()).toBeUndefined();expect(props.onStickyDateChange).toHaveBeenLastCalledWith(null);
+    expect(floating()!.props.date).toBe(firstDate);
+    expect(screen!.root.findAllByProps({testID:'help-inline-date-clip'})[0].props.style.opacity).toBe(0);
   });
   test('sticky date appears only after the inline pill fully clears the capsule boundary',async()=>{
-    mockLayouts[0]={y:51,height:44};await render();expect(floating()).toBeUndefined();
-    mockLayouts[0]={y:50,height:44};await observe();
+    mockLayouts[0]={y:110,height:44};await render();expect(floating()).toBeUndefined();
+    mockLayouts[0]={y:100,height:44};await observe();
     expect(floating()!.props.date).toBe(firstDate);expect(props.onStickyDateChange).toHaveBeenLastCalledWith(firstDate);
   });
   test('a partly clipped future-day pill cannot suppress the first visible message day',async()=>{

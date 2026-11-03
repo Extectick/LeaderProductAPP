@@ -93,12 +93,12 @@ beforeEach(()=>{
 });
 afterEach(async()=>{if(screen)await act(async()=>screen!.unmount());screen=undefined;jest.restoreAllMocks();});
 
-test('gallery regression: fills available height and width with the message editor after the grid',async()=>{
+test('gallery regression: opens at 56 percent with a separate message widget',async()=>{
   props.files=[file(0)];props.caption='Мой текст';await render();
   const panel=screen!.root.findAllByProps({testID:'help-photo-panel'})[0];
-  expect(panel.props.style[1].height).toBeCloseTo(Dimensions.get('window').height);
+  expect(panel.props.style[1].height).toBeCloseTo(Dimensions.get('window').height*.56);
   const children=panel.findAll(node=>['help-photo-grid-viewport','help-photo-caption'].includes(node.props.testID));
-  expect(children[0].props.testID).toBe('help-photo-grid-viewport');expect(children[children.length-1].props.testID).toBe('help-photo-caption');
+  expect(children[0].props.testID).toBe('help-photo-grid-viewport');expect(panel.findAllByProps({testID:'help-photo-caption'})).toHaveLength(0);
   expect(screen!.root.findAllByType(TextInput).length).toBeGreaterThan(0);expect(props.caption).toBe('Мой текст');
   await press('Закрыть фотографии');expect(props.onClose).toHaveBeenCalledTimes(1);expect(props.onFiles).not.toHaveBeenCalled();
   await update({open:false});expect(props.onFiles).not.toHaveBeenCalled();
@@ -166,7 +166,7 @@ test('attachment surface reaches both horizontal edges and the bottom, keeping o
   const panel=screen!.root.findAllByProps({testID:'help-photo-panel'})[0];
   expect(StyleSheet.flatten(panel.props.style)).toMatchObject({left:0,right:0,bottom:0});
   const caption=screen!.root.findAllByProps({testID:'help-photo-caption'})[0];
-  expect(StyleSheet.flatten(caption.props.style).margin).toBe(0);
+  expect(StyleSheet.flatten(caption.props.style)).toMatchObject({position:'absolute',left:8,right:8,borderRadius:24});
 });
 
 test('permanent library denial still calls native permission request on CTA and retains skeleton on denial',async()=>{
@@ -335,7 +335,7 @@ test('late portal mount gets the current animated height instead of a cached zer
   expect(StyleSheet.flatten(panel.props.style).height).toBeGreaterThan(0);
 });
 
-test('caption keyboard reduces only the file panel and does not dismiss the editor',async()=>{
+test('caption keyboard overlays the file panel without resizing or moving it',async()=>{
  const listeners:Record<string,(event:any)=>void>={};
  jest.spyOn(Keyboard,'addListener').mockImplementation((name,listener:any)=>{listeners[name]=listener;return{remove:jest.fn()};});
  const dismiss=jest.spyOn(Keyboard,'dismiss').mockImplementation(()=>{});await render();dismiss.mockClear();
@@ -345,9 +345,11 @@ test('caption keyboard reduces only the file panel and does not dismiss the edit
  expect(dismiss).not.toHaveBeenCalled();expect(props.onClose).not.toHaveBeenCalled();
  const panel=screen!.root.findAllByProps({testID:'help-photo-panel'})[0];
  expect(panel.props.style[0]).toMatchObject({left:0,right:0});
- expect(StyleSheet.flatten(panel.props.style).height).toBe(400);
+ expect(StyleSheet.flatten(panel.props.style).height).toBeCloseTo(Dimensions.get('window').height*.56);
+ expect(StyleSheet.flatten(panel.props.style).bottom).toBe(0);
+ expect(screen!.root.findAllByProps({testID:'help-photo-caption'})[0].props.style.bottom).toBeGreaterThan(8);
  await act(async()=>listeners.keyboardDidHide({}));
- expect(StyleSheet.flatten(screen!.root.findAllByProps({testID:'help-photo-panel'})[0].props.style).height).toBe(Dimensions.get('window').height);
+ expect(StyleSheet.flatten(screen!.root.findAllByProps({testID:'help-photo-panel'})[0].props.style).height).toBeCloseTo(Dimensions.get('window').height*.56);
 });
 
 test('camera discards a delayed grid measurement from the previous opening',async()=>{

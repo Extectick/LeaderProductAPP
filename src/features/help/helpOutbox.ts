@@ -28,6 +28,12 @@ export function dispatchHelpPending(userId: number, item: HelpPending, onAccepte
             const input = {...item.input, attachmentIds: [...(item.input.attachmentIds ?? []), ...uploadedFileIds]};
             const detail = item.action === 'close' && item.ticketId ? await api.close(item.ticketId, { ...input, rating: input.rating ?? 0 }) : item.action === 'reopen' && item.ticketId ? await api.reopen(item.ticketId, input) : item.ticketId ? await api.send(item.ticketId, input) : await api.create(input);
             if(item.replyTo)detail.messages=detail.messages.map(message=>!message.replyTo&&((Boolean(item.input.clientMessageId)&&message.clientMessageId===item.input.clientMessageId)||message.replyToId===item.replyTo!.id)?{...message,replyToId:item.replyTo!.id,replyTo:item.replyTo!}:message);
+            // Preserve local media geometry through acknowledgement; server metadata
+            // may be incomplete until its asynchronous media inspection finishes.
+            detail.messages=detail.messages.map(message=>message.clientMessageId===item.input.clientMessageId?{...message,attachments:message.attachments.map(attachment=>{
+                const local=item.localFiles?.[uploadedFileIds.indexOf(attachment.id)];
+                return local?{...attachment,width:attachment.width??local.width,height:attachment.height??local.height,durationMs:attachment.durationMs??local.durationMs}:attachment;
+            })}:message);
             // The server has accepted the message. Paint its receipt immediately;
             // keep the durable acknowledgement awaited before resolving delivery.
             notifyAccepted(onAccepted, detail);

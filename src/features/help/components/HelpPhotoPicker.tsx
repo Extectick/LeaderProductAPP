@@ -47,9 +47,11 @@ export function HelpPhotoPicker(props:Props) {
   const pullY=useSharedValue(0),gridScrollY=useSharedValue(0),gridMomentum=useSharedValue(false);
   const pullState=useSharedValue(0),touchX=useSharedValue(0),touchY=useSharedValue(0),pullAllowed=useSharedValue(false),pullHeight=useSharedValue(0),nativeCameraVisible=useSharedValue(true);
   const maximumHeight=helpPhotoSheetMaximumHeight(window.height,insets.top,insets.bottom,keyboardTop);
-  const panelHeight=maximumHeight;
+  const panelHeight=Math.min(window.height*.56,helpPhotoSheetMaximumHeight(window.height,insets.top,insets.bottom,null));
+  const [captionHeight,setCaptionHeight]=useState(46);
   const captionFocused=useRef(false);
-  const overlayBottom=keyboardTop===null?0:Math.max(0,(portalFrame?.y??0)+(portalFrame?.height??window.height)-keyboardTop);
+  const overlayBottom=0;
+  const captionBottom=keyboardTop===null?insets.bottom+8:Math.max(0,(portalFrame?.y??0)+(portalFrame?.height??window.height)-keyboardTop)+8;
   const pending=selection.some(item=>item.pending),failed=selection.some(item=>item.failed),blocked=props.busy||pending;
   const selectedIds=selection.filter(item=>!item.file||item.file.mimeType?.startsWith('image/')).map(item=>item.photo.id);
   const tileSize=(width-4)/3;
@@ -268,7 +270,7 @@ export function HelpPhotoPicker(props:Props) {
     <Pressable accessibilityLabel="Закрыть панель вложений" onPress={props.onClose} style={{position:'absolute',top:0,left:0,right:0,bottom:0}}/>
     <HelpPhotoPanel height={height} layoutHeight={panelLayoutHeight} bottom={overlayBottom} onWidth={setWidth}>
       <GestureHandlerRootView style={{flex:1}}>
-      <Reanimated.View testID="help-photo-pull-surface" style={[{flex:1,overflow:'hidden',backgroundColor:c.panel},pullStyle]}>
+      <Reanimated.View testID="help-photo-pull-surface" style={[{flex:1,borderTopLeftRadius:22,borderTopRightRadius:22,overflow:'hidden',backgroundColor:c.panel},pullStyle]}>
       <GestureDetector gesture={resizeGesture}><View testID="help-photo-panel-handle" style={{height:48,alignItems:'center',justifyContent:'center'}}>
         <View style={{position:'absolute',top:5,width:32,height:3,borderRadius:2,backgroundColor:c.muted,opacity:.45}}/>
         <Text style={{color:c.text,fontSize:14,fontWeight:'600'}}>{selectedIds.length?`Выбрано фото: ${selectedIds.length}`:'Фотографии'}</Text>
@@ -280,24 +282,25 @@ export function HelpPhotoPicker(props:Props) {
       <GestureDetector gesture={pullGesture}>
       <View ref={grid} collapsable={false} onLayout={measureGrid} testID="help-photo-grid-viewport" style={{flex:1,minHeight:0,overflow:'hidden'}}>
       <GestureDetector gesture={nativeScrollGesture}>
-      <Reanimated.FlatList testID="help-photo-grid" data={galleryItems} keyExtractor={item=>item?'skeleton'in item?item.skeleton:item.id:'camera'} numColumns={3} extraData={selection} initialNumToRender={18} maxToRenderPerBatch={12} windowSize={5} removeClippedSubviews={false} keyboardShouldPersistTaps="handled" onScroll={gridScroll} scrollEventThrottle={16} bounces={false} overScrollMode="never" onEndReached={()=>{if(permission?.granted&&hasMore&&!loading)void loadPage();}} onEndReachedThreshold={1} columnWrapperStyle={{gap:2}} contentContainerStyle={{gap:2}}
+      <Reanimated.FlatList testID="help-photo-grid" data={galleryItems} keyExtractor={item=>item?'skeleton'in item?item.skeleton:item.id:'camera'} numColumns={3} extraData={selection} initialNumToRender={18} maxToRenderPerBatch={12} windowSize={5} removeClippedSubviews={false} keyboardShouldPersistTaps="handled" onScroll={gridScroll} scrollEventThrottle={16} bounces={false} overScrollMode="never" onEndReached={()=>{if(permission?.granted&&hasMore&&!loading)void loadPage();}} onEndReachedThreshold={1} columnWrapperStyle={{gap:2}} contentContainerStyle={{gap:2,paddingBottom:captionHeight+insets.bottom+16}}
         renderItem={({item,index})=>item&&'skeleton'in item?<View testID="help-photo-permission-skeleton" accessible={false} importantForAccessibility="no-hide-descendants" style={{width:tileSize,height:tileSize,backgroundColor:c.elevated,opacity:.55}}/>:item?<PhotoTile photo={item} size={tileSize} number={selectedIds.indexOf(item.id)+1} pending={selection.some(entry=>entry.photo.id===item.id&&entry.pending)} disabled={props.busy} onSelect={()=>void select(item)} onPreview={origin=>showPhoto(item,origin)} index={index}/>:<View style={{width:tileSize,height:tileSize}}><HelpPhotoCamera onPermissionSettled={restorePanel} expanded={cameraExpanded} onExpand={()=>{Keyboard.dismiss();setCameraExpanded(true);}} onClose={()=>setCameraExpanded(false)} onCapture={photo=>{setCameraExpanded(false);setPhotos(old=>[photo,...old]);void select(photo);showPhoto(photo);}} onError={value=>setError(value)} disabled={props.busy||chosen.current.length+props.existingCount>=10} tileVisible={props.open&&Boolean(viewport)&&Boolean(permission)&&cameraVisible&&!preview} viewport={viewport} tileOrigin={viewport?{x:viewport.x,y:viewport.y,width:tileSize,height:tileSize}:undefined} scrollOffsetShared={gridScrollY} sheetOffset={cameraOffset} sheetViewportHeight={cameraViewportHeight}/></View>}
         ListFooterComponent={permission?.granted?<View style={{padding:16,alignItems:'center',gap:12}}>{loading?<ActivityIndicator color={c.accent}/>:!photos.length?<Text style={{color:c.muted}}>Фотографий пока нет. Можно сделать снимок.</Text>:null}</View>:null}/>
       </GestureDetector>
       {needsPermission?<View testID="help-photo-permission-overlay" pointerEvents="box-none" style={{position:'absolute',top:tileSize,left:0,right:0,bottom:0,alignItems:'center',justifyContent:'center',padding:20}}><View style={{maxWidth:320,padding:18,borderRadius:18,gap:12,alignItems:'center',backgroundColor:c.surface}}><Ionicons name="images-outline" size={28} color={c.accentText}/><Text style={{color:c.text,fontSize:16,fontWeight:'600',textAlign:'center'}}>Откройте доступ к фотографиям</Text><Text style={{color:c.muted,fontSize:13,lineHeight:18,textAlign:'center'}}>{permission?.canAskAgain?'Покажем фотографии здесь. Вы сможете выбрать несколько снимков.':'Система больше не показывает запрос. Доступ можно разрешить в настройках приложения.'}</Text><Pressable accessibilityRole="button" accessibilityLabel="Разрешить доступ к фотографиям" disabled={loading} onPress={()=>void checkPermission(true)} style={{minHeight:44,paddingHorizontal:18,borderRadius:22,backgroundColor:c.accent,justifyContent:'center',opacity:loading?.6:1}}>{loading?<ActivityIndicator color="#FFF"/>:<Text style={{color:'#FFF',fontSize:14,fontWeight:'600'}}>Дать доступ</Text>}</Pressable></View></View>:null}
       </View>
       </GestureDetector>
-      <View testID="help-photo-caption" style={{margin:0,paddingBottom:insets.bottom,flexShrink:0,minHeight:46+insets.bottom,backgroundColor:c.surface}}>
+
+      </Reanimated.View>
+      </GestureHandlerRootView>
+    </HelpPhotoPanel>
+      <View testID="help-photo-caption" onLayout={event=>setCaptionHeight(event.nativeEvent.layout.height)} style={{position:'absolute',left:8,right:8,bottom:captionBottom,minHeight:46,borderRadius:24,backgroundColor:c.panel,shadowColor:'#000',shadowOpacity:.12,shadowRadius:10,elevation:3}}>
         <TextInput testID="help-photo-message-input" accessibilityLabel="Сообщение к вложениям" value={props.caption} onChangeText={props.onCaption}
           placeholder="Сообщение…" placeholderTextColor={c.muted} multiline editable={!props.busy}
           onFocus={()=>{captionFocused.current=true;}} onBlur={()=>{captionFocused.current=false;}}
           textAlignVertical="top" underlineColorAndroid="transparent" scrollEnabled
           style={{minHeight:46,maxHeight:150,marginRight:48,paddingHorizontal:16,paddingTop:12,paddingBottom:12,fontSize:17,lineHeight:22,color:c.text}}/>
-        <Pressable accessibilityRole="button" accessibilityLabel={selectedIds.length?`Отправить фотографии: ${selectedIds.length}`:'Отправить сообщение'} disabled={blocked||failed||(!props.caption.trim()&&!selection.some(item=>item.file)&&!props.existingCount)} onPress={()=>void send()} style={{position:'absolute',right:4,bottom:insets.bottom+4,width:38,height:38,borderRadius:19,alignItems:'center',justifyContent:'center',backgroundColor:c.accent,opacity:blocked||failed||(!props.caption.trim()&&!selection.some(item=>item.file)&&!props.existingCount)?.45:1}}>{pending?<ActivityIndicator color="#FFF"/>:<Ionicons name="arrow-up" size={23} color="#FFF"/>}{selectedIds.length?<View style={{position:'absolute',right:-3,top:-5,minWidth:19,height:19,paddingHorizontal:4,borderRadius:10,backgroundColor:c.accent,borderWidth:2,borderColor:c.surface,alignItems:'center',justifyContent:'center'}}><Text style={{color:'#FFF',fontSize:10,fontWeight:'700'}}>{selectedIds.length}</Text></View>:null}</Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel={selectedIds.length?`Отправить фотографии: ${selectedIds.length}`:'Отправить сообщение'} disabled={blocked||failed||(!props.caption.trim()&&!selection.some(item=>item.file)&&!props.existingCount)} onPress={()=>void send()} style={{position:'absolute',right:4,bottom:4,width:38,height:38,borderRadius:19,alignItems:'center',justifyContent:'center',backgroundColor:c.accent,opacity:blocked||failed||(!props.caption.trim()&&!selection.some(item=>item.file)&&!props.existingCount)?.45:1}}>{pending?<ActivityIndicator color="#FFF"/>:<Ionicons name="arrow-up" size={23} color="#FFF"/>}{selectedIds.length?<View style={{position:'absolute',right:-3,top:-5,minWidth:19,height:19,paddingHorizontal:4,borderRadius:10,backgroundColor:c.accent,borderWidth:2,borderColor:c.surface,alignItems:'center',justifyContent:'center'}}><Text style={{color:'#FFF',fontSize:10,fontWeight:'700'}}>{selectedIds.length}</Text></View>:null}</Pressable>
       </View>
-      </Reanimated.View>
-      </GestureHandlerRootView>
-    </HelpPhotoPanel>
     {preview?<HelpPhotoPreview captionEditable photos={preview.photos} index={preview.index} origin={preview.origin} selectedIds={selectedIds} caption={props.caption} onCaption={props.onCaption} onToggle={photo=>void select(photo)} onSend={photo=>send(photo)} onClose={()=>setPreview(null)} busy={blocked} error={error} sendDisabled={failed} limitReached={selection.length+props.existingCount>=10}/>:null}
   </View></HelpPhotoPortal>;
 }
