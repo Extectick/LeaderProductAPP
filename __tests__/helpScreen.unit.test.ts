@@ -638,6 +638,20 @@ describe('Help screen integration with service boundary', () => {
     expect(mockTimelineProps.hideStickyDate).toBe(true);
     await act(async()=>mockTimelineProps.onStickyDateChange(date));
     const overlay=()=>screen.root.findByProps({testID:'help-sticky-date-overlay'});
+    expect(StyleSheet.flatten(overlay().props.style).opacity).toBe(0);
+    expect(overlay().props.pointerEvents).toBe('none');
+    await act(async()=>mockTimelineProps.onHistoryScroll(true));
+    expect(StyleSheet.flatten(overlay().props.style).opacity).toBe(1);
+    expect(overlay().props.pointerEvents).toBe('box-none');
+    jest.useFakeTimers();
+    try{
+      await act(async()=>mockTimelineProps.onHistoryScroll(true));
+      await act(async()=>jest.advanceTimersByTime(1700));
+      expect(StyleSheet.flatten(overlay().props.style).opacity).toBe(0);
+      await act(async()=>mockTimelineProps.onHistoryScroll(true));
+      await act(async()=>mockTimelineProps.onHistoryScroll(false));
+      expect(StyleSheet.flatten(overlay().props.style).opacity).toBe(0);
+    }finally{jest.useRealTimers();}
     const initialTop=StyleSheet.flatten(overlay().props.style).top;
     expect(initialTop).toBe(56);expect(initialTop-(68-16)).toBe(4);
     let ancestor=overlay().parent;while(ancestor){expect(ancestor.type).not.toBe('BlurTargetView');ancestor=ancestor.parent;}

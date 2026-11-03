@@ -29,6 +29,7 @@ jest.mock('../src/features/help/helpPhotoLibrary',()=>({
   prepareHelpPhoto:(...args:unknown[])=>mockPrepare(...args),discardHelpPreparedPhoto:(...args:unknown[])=>mockDiscard(...args),
   getHelpPhotoPreviewUri:(...args:unknown[])=>mockPreviewUri(...args),presentHelpPhotoPermissions:jest.fn(),
 }));
+jest.mock('../src/features/help/components/HelpPrimitives',()=>({HelpBlurSurface:'HelpBlurSurface'}));
 jest.mock('expo-image',()=>({Image:'ExpoImage'}));
 jest.mock('@expo/vector-icons',()=>({Ionicons:'Ionicons'}));
 jest.mock('react-native-safe-area-context',()=>({useSafeAreaInsets:()=>({top:0,bottom:0,left:0,right:0})}));
@@ -39,6 +40,11 @@ jest.mock('../src/features/help/components/HelpPhotoPreview',()=>({HelpPhotoPrev
 jest.mock('../src/features/help/components/HelpNativeInput',()=>({hasNativeHelpInput:false,HelpNativeInput:'HelpNativeInput'}));
 import {HelpPhotoPicker,helpPhotoSheetMaximumHeight} from '../src/features/help/components/HelpPhotoPicker';
 
+test('the attachment caption cannot summon a keyboard while the tray is open',async()=>{
+  await render();
+  const caption=screen!.root.findAll(node=>node.props.accessibilityLabel==='Подпись к фотографиям')[0];
+  expect(caption.props.editable).toBe(false);
+});
 test('photo sheet keeps the same available height with overlay and resized Android keyboards',()=>{
   expect(helpPhotoSheetMaximumHeight(800,24,0,500)).toBe(368);
   expect(helpPhotoSheetMaximumHeight(500,24,0,500)).toBe(368);

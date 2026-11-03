@@ -33,6 +33,16 @@ describe('photo camera lifecycle and explicit capture',()=>{
   async function render(){await act(async()=>{screen=TestRenderer.create(tree());});}
   async function update(next:Partial<HelpPhotoCameraProps>){props={...props,...next};await act(async()=>screen!.update(tree()));}
   const control=(label:string)=>screen!.root.findAllByProps({accessibilityLabel:label}).find(node=>node.props.onPress)!;
+  test('camera follows the same UI scroll value as the gallery and releases it for fullscreen',async()=>{
+    const offset={value:37};props.scrollOffsetShared=offset as any;
+    await render();
+    const motion=()=>StyleSheet.flatten(screen!.root.findAllByProps({testID:'help-photo-camera-scroll'})[0].props.style).transform;
+    expect(motion()).toEqual([{translateY:-37}]);
+    offset.value=84;await update({});
+    expect(motion()).toEqual([{translateY:-84}]);
+    await update({expanded:true});
+    expect(motion()).toEqual([{translateY:0}]);
+  });
   async function ready(){await act(async()=>mockCameraProps.onCameraReady());}
   test('camera regression: visible gallery requests preview permission once without opening or capturing',async()=>{
     mockPermission={granted:false,canAskAgain:true};props.tileVisible=false;await render();expect(mockRequestPermission).not.toHaveBeenCalled();expect(mockMounts).toBe(0);

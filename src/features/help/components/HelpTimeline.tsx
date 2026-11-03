@@ -34,6 +34,7 @@ type Props = {
   loading?: boolean; online: boolean; active: boolean; unreadCount?: number;
   hideLatestButton?: boolean;
   hideStickyDate?: boolean;
+  onHistoryScroll?: (towardOlder:boolean) => void;
   onStickyDateChange?: (date: string | null) => void;
   loadOlder: () => Promise<unknown>; loadNewer: () => Promise<unknown>;
   onLatest: () => Promise<unknown>; onSave: (anchor: HelpViewportAnchor, options?: {deferTrim?:boolean}) => unknown;
@@ -549,6 +550,9 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     settleOpening();
     updateMediaRange();
     if(!readyRef.current || inNavigation.current)return;
+    if(userScrollSession.current&&Math.abs(e.contentSize.height-previous.content)<1&&Math.abs(e.layoutMeasurement.height-previous.height)<1&&Math.abs(e.contentOffset.y-previous.offset)>1){
+      live.current.onHistoryScroll?.(e.contentOffset.y<previous.offset);
+    }
     const policy=updateHelpLatestAffordance(latestAffordance.current,{
       delta:e.contentOffset.y-previous.offset,
       gap:e.contentSize.height+(hasNativeChatLayout?currentBottomInset()+12:0)-e.contentOffset.y-e.layoutMeasurement.height,

@@ -1,11 +1,11 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState, useId} from 'react';
-import {ActivityIndicator, Animated, AppState, BackHandler, Keyboard, Linking, Pressable, Text, TextInput, useWindowDimensions, View} from 'react-native';
+import {ActivityIndicator, AppState, BackHandler, Keyboard, Linking, Pressable, Text, TextInput, useWindowDimensions, View} from 'react-native';
 import {Image} from 'expo-image';
 import {Ionicons} from '@expo/vector-icons';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {Gesture, GestureDetector, GestureHandlerRootView} from 'react-native-gesture-handler';
 import Reanimated, {cancelAnimation, Easing as MotionEasing, runOnJS, useAnimatedScrollHandler, useAnimatedStyle, useDerivedValue, useSharedValue, withSpring, withTiming} from 'react-native-reanimated';
-import type {FlatList} from 'react-native';
+import {HelpBlurSurface} from './HelpPrimitives';
 import {useHelpReducedMotion, useHelpTheme} from '../helpTheme';
 import {discardHelpPreparedPhoto, getHelpPhotoPermission, getHelpPhotoPreviewUri, loadHelpPhotoPage, prepareHelpPhoto, presentHelpPhotoPermissions, type HelpLibraryPhoto, type HelpPhotoPermission} from '../helpPhotoLibrary';
 import {helpDevActions, helpDevRef, helpDevState} from '../helpDiagnostics';
@@ -17,7 +17,7 @@ import {HelpPhotoPortal,useHelpPhotoPortalFrame,type HelpPhotoRect} from './Help
 
 type Selection = {photo:HelpLibraryPhoto;file?:HelpLocalFile;pending?:boolean;failed?:boolean};
 type Props = {
-  open:boolean; onClose:()=>void; files:HelpLocalFile[]; onFiles:(files:HelpLocalFile[])=>void;
+  blurTarget?:React.RefObject<View|null>; open:boolean; onClose:()=>void; files:HelpLocalFile[]; onFiles:(files:HelpLocalFile[])=>void;
   caption:string; onCaption:(text:string)=>void; onSend:(files:HelpLocalFile[])=>Promise<boolean|void>;
   onPreparing:(preparing:boolean)=>void; onError:(message:string)=>void; onDocuments:()=>void;
   busy:boolean; existingCount:number;
@@ -40,12 +40,12 @@ export function HelpPhotoPicker(props:Props) {
   const chosen=useRef(selection);chosen.current=selection;
   const [preview,setPreview]=useState<{photos:HelpLibraryPhoto[];index:number;origin?:HelpPhotoRect}|null>(null);
   const [cameraExpanded,setCameraExpanded]=useState(false),[cameraVisible,setCameraVisible]=useState(true),[keyboardTop,setKeyboardTop]=useState<number|null>(null);
-  const grid=useRef<View>(null),scrollOffset=useRef(new Animated.Value(0)).current;
+  const grid=useRef<View>(null);
   const [viewport,setViewport]=useState<HelpPhotoRect>();
   const height=useSharedValue(0),measuredHeight=useSharedValue(0),dragStart=useSharedValue(0),resizing=useRef(false);
   const portalId=useId(),portalFrame=useHelpPhotoPortalFrame();
   const panelStyle=useAnimatedStyle(()=>({height:height.value}));
-  const closedByPull=useRef(false),detachNativeScroll=useRef<(()=>void)|null>(null);
+  const closedByPull=useRef(false);
   const pullY=useSharedValue(0),gridScrollY=useSharedValue(0),gridMomentum=useSharedValue(false);
   const pullState=useSharedValue(0),touchX=useSharedValue(0),touchY=useSharedValue(0),pullAllowed=useSharedValue(false),pullHeight=useSharedValue(0),nativeCameraVisible=useSharedValue(true);
   const maximumHeight=helpPhotoSheetMaximumHeight(window.height,insets.top,insets.bottom,keyboardTop);
@@ -64,15 +64,6 @@ export function HelpPhotoPicker(props:Props) {
     height.value=0;setVisible(false);setPreview(null);setCameraExpanded(false);
     latest.current.onClose();
   },[height]);
-  const setGridList=useCallback((list:FlatList<HelpLibraryPhoto|null>|null)=>{
-    detachNativeScroll.current?.();detachNativeScroll.current=null;
-    const scroll=list?.getNativeScrollRef();if(!scroll)return;
-    // Keep the portal camera's existing RN Animated value driven on native,
-    // alongside Reanimated's UI-thread scroll offset used for gesture arbitration.
-    const nativeEvents=Animated as typeof Animated & {attachNativeEvent:(view:unknown,name:string,mapping:unknown[])=>{detach:()=>void}};
-    const binding=nativeEvents.attachNativeEvent(scroll,'onScroll',[{nativeEvent:{contentOffset:{y:scrollOffset}}}]);
-    detachNativeScroll.current=()=>binding.detach();
-  },[scrollOffset]);
   const gridScroll=useAnimatedScrollHandler({
     onScroll:event=>{gridScrollY.value=Math.max(0,event.contentOffset.y);const show=event.contentOffset.y<tileSize;if(nativeCameraVisible.value!==show){nativeCameraVisible.value=show;runOnJS(setCameraVisible)(show);}},
     onMomentumBegin:()=>{gridMomentum.value=true;},onMomentumEnd:()=>{gridMomentum.value=false;},
@@ -115,7 +106,7 @@ export function HelpPhotoPicker(props:Props) {
     }),[props.open,preview,cameraExpanded,reduced,beginPull,settlePull,closePulled,pullAllowed,gridScrollY,gridMomentum,pullState,touchX,touchY,pullY,pullHeight]);
   const nativeScrollGesture=useMemo(()=>Gesture.Native().withTestId('help-photo-native-scroll').requireExternalGestureToFail(pullGesture).disallowInterruption(false),[pullGesture]);
 
-  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;++generation.current;cancelAnimation(height);detachNativeScroll.current?.();cancelAnimation(pullY);};},[height,pullY]);
+  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;++generation.current;cancelAnimation(height);cancelAnimation(pullY);};},[height,pullY]);
   useEffect(()=>{props.onPreparing(pending||failed);},[pending,failed,props.onPreparing]);
   useEffect(()=>{props.onVisibility?.(visible);},[visible,props.onVisibility]);
   useEffect(()=>{if(!props.open&&!pending){const next=props.files.map(fromFile);chosen.current=next;setSelection(next);}},[props.files,props.open,pending]);
@@ -131,6 +122,12 @@ export function HelpPhotoPicker(props:Props) {
     if(changed){chosen.current=next;setSelection(next);}
   },[props.files,props.open]);
   useEffect(()=>{if(props.open){closedByPull.current=false;cancelAnimation(pullY);pullY.value=0;pullState.value=0;setVisible(true);Keyboard.dismiss();}else setKeyboardTop(null);},[props.open,pullY,pullState]);
+  // Release the touch shield even if a closing animation is interrupted.
+  useEffect(()=>{
+    if(props.open)return;
+    const timer=setTimeout(()=>{if(!latest.current.open){setVisible(false);setPreview(null);setCameraExpanded(false);}},260);
+    return()=>clearTimeout(timer);
+  },[props.open]);
   const finishHeight=useCallback(()=>{
     if(!mounted.current)return;
     resizing.current=false;setSettled(true);
@@ -227,7 +224,8 @@ export function HelpPhotoPicker(props:Props) {
   useEffect(()=>helpDevState({photoPickerOpen:props.open,photoPermission:permission?permission.limited?'limited':permission.granted?'granted':'denied':'unknown',photoLoaded:photos.length,photoSelected:selectedIds.length,photoPreparing:pending,photoFailed:failed,photoPreview:Boolean(preview),photoCamera:cameraExpanded,photoExpanded:false}),[props.open,permission,photos.length,selectedIds.length,pending,failed,preview,cameraExpanded]);
 
   if(!visible)return null;
-  return <HelpPhotoPortal id={portalId}><View testID="help-photo-overlay" pointerEvents="box-none" style={{position:'absolute',top:0,left:0,right:0,bottom:0}}>
+  return <HelpPhotoPortal id={portalId}><View testID="help-photo-overlay" pointerEvents={props.open?'box-none':'none'} style={{position:'absolute',top:0,left:0,right:0,bottom:0}}>
+    <View testID="help-photo-navigation-blur" pointerEvents="none" style={{position:'absolute',bottom:0,left:0,right:0,height:insets.bottom+8}}><HelpBlurSurface target={props.blurTarget}/></View>
     <Pressable accessibilityLabel="Закрыть панель вложений" onPress={props.onClose} style={{position:'absolute',top:0,left:0,right:0,bottom:0}}/>
     <Reanimated.View ref={(node:View|null)=>helpDevRef('photos.panel',node as unknown as View)} testID="help-photo-panel" onLayout={event=>setWidth(event.nativeEvent.layout.width)} style={[{position:'absolute',bottom:overlayBottom,left:8,right:8,overflow:'hidden'},panelStyle]}>
       <GestureHandlerRootView style={{flex:1}}>
@@ -243,21 +241,21 @@ export function HelpPhotoPicker(props:Props) {
       <GestureDetector gesture={pullGesture}>
       <View ref={grid} collapsable={false} onLayout={measureGrid} testID="help-photo-grid-viewport" style={{flex:1,minHeight:0,overflow:'hidden'}}>
       <GestureDetector gesture={nativeScrollGesture}>
-      <Reanimated.FlatList ref={setGridList} testID="help-photo-grid" data={[null,...photos]} keyExtractor={item=>item?.id||'camera'} numColumns={3} extraData={selection} initialNumToRender={18} maxToRenderPerBatch={12} windowSize={5} removeClippedSubviews={false} keyboardShouldPersistTaps="handled" onScroll={gridScroll} scrollEventThrottle={16} bounces={false} overScrollMode="never" onEndReached={()=>{if(permission?.granted&&hasMore&&!loading)void loadPage();}} onEndReachedThreshold={1} columnWrapperStyle={{gap:2}} contentContainerStyle={{gap:2,paddingBottom:4}}
-        renderItem={({item,index})=>item?<PhotoTile photo={item} size={tileSize} number={selectedIds.indexOf(item.id)+1} pending={selection.some(entry=>entry.photo.id===item.id&&entry.pending)} disabled={props.busy} onSelect={()=>void select(item)} onPreview={origin=>showPhoto(item,origin)} index={index}/>:<View style={{width:tileSize,height:tileSize}}><HelpPhotoCamera expanded={cameraExpanded} onExpand={()=>{Keyboard.dismiss();setCameraExpanded(true);}} onClose={()=>setCameraExpanded(false)} onCapture={photo=>{setCameraExpanded(false);setPhotos(old=>[photo,...old]);void select(photo);showPhoto(photo);}} onError={value=>setError(value)} disabled={props.busy||chosen.current.length+props.existingCount>=10} tileVisible={props.open&&Boolean(viewport)&&Boolean(permission)&&cameraVisible&&!preview} viewport={viewport} tileOrigin={viewport?{x:viewport.x,y:viewport.y,width:tileSize,height:tileSize}:undefined} scrollOffset={scrollOffset} sheetOffset={cameraOffset} sheetViewportHeight={cameraViewportHeight}/></View>}
+      <Reanimated.FlatList testID="help-photo-grid" data={[null,...photos]} keyExtractor={item=>item?.id||'camera'} numColumns={3} extraData={selection} initialNumToRender={18} maxToRenderPerBatch={12} windowSize={5} removeClippedSubviews={false} keyboardShouldPersistTaps="handled" onScroll={gridScroll} scrollEventThrottle={16} bounces={false} overScrollMode="never" onEndReached={()=>{if(permission?.granted&&hasMore&&!loading)void loadPage();}} onEndReachedThreshold={1} columnWrapperStyle={{gap:2}} contentContainerStyle={{gap:2,paddingBottom:4}}
+        renderItem={({item,index})=>item?<PhotoTile photo={item} size={tileSize} number={selectedIds.indexOf(item.id)+1} pending={selection.some(entry=>entry.photo.id===item.id&&entry.pending)} disabled={props.busy} onSelect={()=>void select(item)} onPreview={origin=>showPhoto(item,origin)} index={index}/>:<View style={{width:tileSize,height:tileSize}}><HelpPhotoCamera expanded={cameraExpanded} onExpand={()=>{Keyboard.dismiss();setCameraExpanded(true);}} onClose={()=>setCameraExpanded(false)} onCapture={photo=>{setCameraExpanded(false);setPhotos(old=>[photo,...old]);void select(photo);showPhoto(photo);}} onError={value=>setError(value)} disabled={props.busy||chosen.current.length+props.existingCount>=10} tileVisible={props.open&&Boolean(viewport)&&Boolean(permission)&&cameraVisible&&!preview} viewport={viewport} tileOrigin={viewport?{x:viewport.x,y:viewport.y,width:tileSize,height:tileSize}:undefined} scrollOffsetShared={gridScrollY} sheetOffset={cameraOffset} sheetViewportHeight={cameraViewportHeight}/></View>}
         ListFooterComponent={<View style={{padding:16,alignItems:'center',gap:12}}>{loading?<ActivityIndicator color={c.accent}/>:null}{permission&&!permission.granted?<><Text style={{color:c.muted,textAlign:'center',fontSize:14}}>Разрешите доступ к фотографиям, чтобы выбрать их здесь.</Text><Pressable accessibilityRole="button" accessibilityLabel="Разрешить доступ к фотографиям" onPress={()=>void (permission.canAskAgain?checkPermission(true):Linking.openSettings())} style={{padding:12}}><Text style={{color:c.accentText,fontWeight:'600'}}>{permission.canAskAgain?'Разрешить доступ':'Открыть настройки'}</Text></Pressable></>:permission?.granted&&!photos.length&&!loading?<Text style={{color:c.muted}}>Фотографий пока нет. Можно сделать снимок.</Text>:null}</View>}/>
       </GestureDetector>
       </View>
       </GestureDetector>
       <View testID="help-photo-caption" style={{margin:8,flexShrink:0,minHeight:46,borderRadius:24,backgroundColor:c.surface}}>
-        {hasNativeHelpInput?<HelpNativeInput value={props.caption} onChange={props.onCaption} placeholder="Сообщение…" color={c.text} hintColor={c.muted} accentColor={c.accent} editable={!props.busy} reducedMotion={reduced} onGeometry={measureGrid}/>:<TextInput accessibilityLabel="Подпись к фотографиям" value={props.caption} onChangeText={props.onCaption} editable={!props.busy} placeholder="Сообщение…" placeholderTextColor={c.muted} multiline textAlignVertical="center" style={{color:c.text,fontSize:18,lineHeight:22,paddingLeft:45,paddingRight:47,paddingVertical:12,minHeight:46,maxHeight:145,includeFontPadding:false}}/>}
+        {hasNativeHelpInput?<HelpNativeInput value={props.caption} onChange={props.onCaption} placeholder="Сообщение…" color={c.text} hintColor={c.muted} accentColor={c.accent} editable={false} reducedMotion={reduced} onGeometry={measureGrid}/>:<TextInput accessibilityLabel="Подпись к фотографиям" value={props.caption} onChangeText={props.onCaption} editable={false} placeholder="Сообщение…" placeholderTextColor={c.muted} multiline textAlignVertical="center" style={{color:c.text,fontSize:18,lineHeight:22,paddingLeft:45,paddingRight:47,paddingVertical:12,minHeight:46,maxHeight:145,includeFontPadding:false}}/>}
         <Pressable testID="help-photo-back" accessibilityRole="button" accessibilityLabel="Назад к сообщению" onPress={props.onClose} style={{position:'absolute',left:1,bottom:1,width:44,height:44,alignItems:'center',justifyContent:'center'}}><Ionicons name="arrow-back" size={24} color={c.text}/></Pressable>
         <Pressable accessibilityRole="button" accessibilityLabel={selectedIds.length?`Отправить фотографии: ${selectedIds.length}`:'Отправить сообщение'} disabled={blocked||failed||(!props.caption.trim()&&!selection.some(item=>item.file)&&!props.existingCount)} onPress={()=>void send()} style={{position:'absolute',right:4,bottom:4,width:38,height:38,borderRadius:19,alignItems:'center',justifyContent:'center',backgroundColor:c.accent,opacity:blocked||failed||(!props.caption.trim()&&!selection.some(item=>item.file)&&!props.existingCount)?.45:1}}>{pending?<ActivityIndicator color="#FFF"/>:<Ionicons name="arrow-up" size={23} color="#FFF"/>}{selectedIds.length?<View style={{position:'absolute',right:-3,top:-5,minWidth:19,height:19,paddingHorizontal:4,borderRadius:10,backgroundColor:c.accent,borderWidth:2,borderColor:c.surface,alignItems:'center',justifyContent:'center'}}><Text style={{color:'#FFF',fontSize:10,fontWeight:'700'}}>{selectedIds.length}</Text></View>:null}</Pressable>
       </View>
       </Reanimated.View>
       </GestureHandlerRootView>
     </Reanimated.View>
-    {preview?<HelpPhotoPreview photos={preview.photos} index={preview.index} origin={preview.origin} selectedIds={selectedIds} caption={props.caption} onCaption={props.onCaption} onToggle={photo=>void select(photo)} onSend={photo=>send(photo)} onClose={()=>setPreview(null)} busy={blocked} error={error} sendDisabled={failed} limitReached={selection.length+props.existingCount>=10}/>:null}
+    {preview?<HelpPhotoPreview captionEditable={false} photos={preview.photos} index={preview.index} origin={preview.origin} selectedIds={selectedIds} caption={props.caption} onCaption={props.onCaption} onToggle={photo=>void select(photo)} onSend={photo=>send(photo)} onClose={()=>setPreview(null)} busy={blocked} error={error} sendDisabled={failed} limitReached={selection.length+props.existingCount>=10}/>:null}
   </View></HelpPhotoPortal>;
 }
 

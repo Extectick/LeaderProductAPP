@@ -37,7 +37,7 @@ export function HelpListHeader({ search, onSearch, archived, onArchive, onBack, 
   const [anchor, setAnchor] = useState({ x: window.width - 64, y: 36, width: 48, height: 48 });
   const menuWidth = archived || canManage || canReviewKnowledge ? 224 : 160;
   const menuLeft = Math.max(12, Math.min(window.width - menuWidth - 12, anchor.x + anchor.width - menuWidth));
-  const menuTop = Math.max(12, Math.min(window.height - (canManage ? 120 : 72) - (canReviewKnowledge ? 48 : 0), anchor.y + anchor.height + 6));
+  const menuTop = Math.max(12, Math.min(window.height - (canManage ? 120 : 72) - (canReviewKnowledge ? 48 : 0), anchor.y + anchor.height - 4));
   const openMenu = () => {
     menuButton.current?.measureInWindow((x, y, width, height) => setAnchor({ x, y, width, height }));
     setMenuVisible(true);

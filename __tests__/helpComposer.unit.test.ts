@@ -80,6 +80,24 @@ describe('Help composer recorder lifecycle', () => {
     expect(screen!.root.findAll(n=>n.props.accessibilityLabel==='Удерживайте для записи голосового сообщения. Проведите вверх, чтобы закрепить запись').length).toBeGreaterThan(0);
     expect(mockRecorder.prepareToRecordAsync).not.toHaveBeenCalled();
   });
+  test('inactive scenes and attachment overlays cannot focus the underlying composer',async()=>{
+    Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});
+    props.value='QA focus';props.screenActive=true;props.navigationReady=true;
+    await render();
+    const entry=()=>screen!.root.findByType(TextInput);
+    expect(entry().props.editable).toBe(true);
+    await act(async()=>screen!.root.findAll(n=>n.props.label==='Прикрепить файлы')[0].props.onPress());
+    expect(entry().props.editable).toBe(false);
+    const picker=()=>screen!.root.findByType('HelpPhotoPicker' as any);
+    await act(async()=>picker().props.onVisibility(true));
+    await act(async()=>picker().props.onClose());
+    expect(entry().props.editable).toBe(false);
+    await act(async()=>picker().props.onVisibility(false));
+    expect(entry().props.editable).toBe(true);
+    props.screenActive=false;
+    await act(async()=>screen!.update(React.createElement(HelpComposer,props)));
+    expect(entry().props.editable).toBe(false);
+  });
   test('gallery regression: one composer in the tray, then back restores selected thumbnails above input',async()=>{
     Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});
     props.value='Подпись';props.files=[{uri:'file://draft.jpg',name:'draft.jpg',mimeType:'image/jpeg'}];await render();

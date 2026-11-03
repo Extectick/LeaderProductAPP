@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 // Android's default font padding shifts short glyphs below the inline time.
 // Pending and accepted messages must keep the same line metrics on first paint.
 export const HELP_MESSAGE_TEXT_STYLE: TextStyle = { fontSize: 15, lineHeight: 21, includeFontPadding: false };
-const timeStyle: TextStyle = { fontSize: 10, lineHeight: 12, includeFontPadding: false, fontVariant: ['tabular-nums'] };
+const timeStyle: TextStyle = { fontSize: 10, lineHeight: 14, includeFontPadding: false, fontVariant: ['tabular-nums'] };
 // Keep reserve runs non-painting even if Fabric drops an inherited foreground.
 const reserveStyle: TextStyle = { color: 'rgba(0,0,0,0)', opacity: 0 };
 const label = (time: string, edited = false) => `${edited ? 'изменено ' : ''}${time}`;
@@ -31,12 +31,12 @@ export function HelpInlineMessageStamp({ time, edited, status, reduced, muted, r
   muted: string; receiptColor: string; danger: string; onRetry?: () => void;
 }) {
   const pending = status === 'queued' || status === 'sending';
-  return <View testID="help-message-time" pointerEvents={status === 'failed' ? 'auto' : 'none'} style={{ position: 'absolute', right: 11, bottom: 5, flexDirection: 'row', alignItems: 'flex-end', gap: 3 }}>
+  return <View testID="help-message-time" pointerEvents={status === 'failed' ? 'auto' : 'none'} style={{ position: 'absolute', right: 11, bottom: 5, flexDirection: 'row', alignItems: 'center', gap: 3 }}>
     <Text style={[timeStyle, { color: muted }]}>{label(time, edited)}</Text>
-    {pending || status === 'failed' ? <View style={{ width: 18, height: 12, alignItems: 'center', justifyContent: 'center' }}>
+    {pending || status === 'failed' ? <View style={{ width: 18, height: 14, alignItems: 'center', justifyContent: 'center' }}>
       {status === 'failed' ? <Pressable accessibilityRole="button" accessibilityLabel="Не удалось отправить. Отправить снова" onPress={onRetry} hitSlop={12} style={{ width: 18, height: 18, alignItems: 'center', justifyContent: 'center' }}><Ionicons name="alert-circle-outline" size={16} color={danger}/></Pressable>
-        : <Ionicons testID="help-message-pending-clock" accessibilityLabel="Сообщение ещё не доставлено" name="time-outline" size={14} color={muted}/>}
+        : <Ionicons testID="help-message-pending-clock" accessibilityLabel="Сообщение ещё не доставлено" name="time-outline" size={14} style={{lineHeight:14,includeFontPadding:false}} color={muted}/>}
     </View> : null}
-    {!pending && status !== 'failed' ? <View style={{ width: 18, height: 12, alignItems: 'center', justifyContent: 'center' }}><Ionicons testID="help-message-receipt" allowFontScaling={false} accessibilityLabel={status === 'read' ? 'Прочитано' : 'Отправлено'} name={status === 'read' ? 'checkmark-done' : 'checkmark'} size={15} color={receiptColor}/></View> : null}
+    {!pending && status !== 'failed' ? <View style={{ width: 18, height: 14, alignItems: 'center', justifyContent: 'center' }}><Ionicons testID="help-message-receipt" allowFontScaling={false} accessibilityLabel={status === 'read' ? 'Прочитано' : 'Отправлено'} name={status === 'read' ? 'checkmark-done' : 'checkmark'} size={14} style={{lineHeight:14,includeFontPadding:false}} color={receiptColor}/></View> : null}
   </View>;
 }
