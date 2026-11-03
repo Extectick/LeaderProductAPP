@@ -157,6 +157,14 @@ describe('sticky date geometry and navigation integration',()=>{
     expect(layer().opacity).toBe(1);
     expect(screen!.root.findByType(HelpMessageArrival).props.deferred).toBe(false);
   });
+  test('missing first-cell measurements cannot keep a saved outgoing message invisible',async()=>{
+    props={...props,messages:[],bottomAligned:true,renderPending:()=>React.createElement(View)};
+    await render();mockLayouts=[];
+    props={...props,pendingMessages:[{key:'qa-layout-timeout',ticketId:null,create:true,createdAt:Date.parse(nextDate),input:{text:'QA',clientMessageId:'qa-layout-timeout'}}]};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    await act(async()=>jest.advanceTimersByTimeAsync(700));
+    expect(StyleSheet.flatten(screen!.root.findByProps({testID:'help-timeline-live-layer'}).props.style).opacity).toBe(1);
+  });
   test('only a live appended tail is eligible for arrival, not initial history or edits',async()=>{
     await render();
     expect(screen!.root.findAllByType(HelpMessageArrival).every(row=>!row.props.animate)).toBe(true);
