@@ -2,6 +2,7 @@ package expo.modules.leaderhelpinput
 
 import android.content.Context
 import android.graphics.Rect
+import android.graphics.Color
 import android.animation.ValueAnimator
 import android.content.pm.ApplicationInfo
 import android.os.Build
@@ -57,6 +58,8 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
   private var managedWindow: Window? = null
   private var previousSoftInputMode = 0
   private var appliedSoftInputMode = 0
+  private var previousNavigationColor = Color.TRANSPARENT
+  private var previousNavigationContrast = true
   var manageIme = false
     set(value) {
       if (field == value) return
@@ -73,12 +76,20 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
       previousSoftInputMode = window.attributes.softInputMode
       appliedSoftInputMode = (previousSoftInputMode and WindowManager.LayoutParams.SOFT_INPUT_MASK_ADJUST.inv()) or WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
       managedWindow = window
+      previousNavigationColor = window.navigationBarColor
+      if (Build.VERSION.SDK_INT >= 29) {
+        previousNavigationContrast = window.isNavigationBarContrastEnforced
+        window.isNavigationBarContrastEnforced = false
+      }
+      window.navigationBarColor = Color.TRANSPARENT
       window.setSoftInputMode(appliedSoftInputMode)
       ViewCompat.requestApplyInsets(this)
     } else releaseImeOwnership()
   }
   private fun releaseImeOwnership() {
     managedWindow?.let { window ->
+      window.navigationBarColor = previousNavigationColor
+      if (Build.VERSION.SDK_INT >= 29) window.isNavigationBarContrastEnforced = previousNavigationContrast
       val current = window.attributes.softInputMode
       val mask = WindowManager.LayoutParams.SOFT_INPUT_MASK_ADJUST
       if ((current and mask) == (appliedSoftInputMode and mask)) {
@@ -173,7 +184,7 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
   // pinned natively; only the incremental content displacement is eased.
   private val motionFrame = object : Choreographer.FrameCallback {
     override fun doFrame(frameTimeNanos: Long) {
-      if (!isAttachedToWindow || !allowFollow || !following || reducedMotion || geometryOwnsMotion()) { stopMotion(false); return }
+      if (!isAttachedToWindow || !allowFollow || !following || reducedMotion || imeOwnsMotion()) { stopMotion(false); return }
       val dt = if (motionFrameTime == 0L) 1f / 60f else ((frameTimeNanos - motionFrameTime) / 1_000_000_000f).coerceIn(.001f, .05f)
       motionFrameTime = frameTimeNanos
       val omega = 26f
@@ -188,7 +199,7 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
     }
   }
   private fun moveContentBy(delta: Int, content: View) {
-    if (delta == 0 || reducedMotion || geometryOwnsMotion() || Build.VERSION.SDK_INT >= 26 && !ValueAnimator.areAnimatorsEnabled()) return
+    if (delta == 0 || reducedMotion || imeOwnsMotion() || Build.VERSION.SDK_INT >= 26 && !ValueAnimator.areAnimatorsEnabled()) return
     motionContent = content
     motionOffset = (motionOffset + delta).coerceIn(-heightLimit(), heightLimit())
     content.translationY = motionOffset
@@ -202,6 +213,7 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
     val now = SystemClock.uptimeMillis()
     return now < imeMotionUntil || now < geometryMotionUntil
   }
+  private fun imeOwnsMotion(): Boolean = imeAnimating || SystemClock.uptimeMillis() < imeMotionUntil
   private fun stopMotion(preserveViewport: Boolean) {
     if (motionPosted) Choreographer.getInstance().removeFrameCallback(motionFrame)
     if (preserveViewport && abs(motionOffset) > .1f) scroll?.let { it.scrollTo(it.scrollX, max(0, (it.scrollY - motionOffset).roundToInt())) }
@@ -296,7 +308,10 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
     // Cover delayed Yoga/list measurements after the final keyboard frame too.
     if (geometryChanged) {
       geometryMotionUntil = SystemClock.uptimeMillis() + 100L
-      stopMotion(false)
+      // Composer animation is independent of message arrival. Preserve the
+      // content spring while the dock changes size, so older rows move with
+      // the arriving message instead of snapping to the new bottom offset.
+      if (imeOwnsMotion() || list.height != lastHeight || list.width != lastWidth) stopMotion(false)
     }
     // Release on the very first upward movement from a settled tail. Being
     // within a "near bottom" threshold is not consent to keep snapping down
@@ -308,7 +323,7 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
     list.clipToPadding = false
     if (list.paddingBottom != inset) list.setPadding(list.paddingLeft, list.paddingTop, list.paddingRight, inset)
     val end = max(0, content.height + inset - list.height)
-    if (allowFollow && following && !geometryOwnsMotion() && !geometryChanged && suppressMotionFrames == 0 && lastContent >= 0 && lastHeight > 0 && lastInset >= 0 && content.height != lastContent) {
+    if (allowFollow && following && !imeOwnsMotion() && list.height == lastHeight && list.width == lastWidth && suppressMotionFrames == 0 && lastContent >= 0 && lastHeight > 0 && lastInset >= 0 && content.height != lastContent) {
       val previousEnd = max(0, lastContent + lastInset - lastHeight)
       val contentOnlyEnd = max(0, content.height + lastInset - lastHeight)
       moveContentBy(contentOnlyEnd - previousEnd, content)
