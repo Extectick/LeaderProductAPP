@@ -150,7 +150,7 @@ export function HelpComposer(props: Props) {
       await recorder.stop();
       const uri = recorder.uri;
       if (uri && action !== 'cancel' && duration >= 350 && state.mounted) {
-        const web = Platform.OS === 'web'; const file: HelpLocalFile = { uri, name: `Голосовое-${Date.now()}.${web ? 'webm' : 'm4a'}`, mimeType: web ? 'audio/webm' : 'audio/mp4' };
+        const web = Platform.OS === 'web'; const file: HelpLocalFile = { uri, name: `Голосовое-${Date.now()}.${web ? 'webm' : 'm4a'}`, mimeType: web ? 'audio/webm' : 'audio/mp4', durationMs:duration };
         if (action === 'send') await latest.current.onSend(file);
         else latest.current.onFiles([...latest.current.files, file]);
       }
@@ -236,7 +236,13 @@ export function HelpComposer(props: Props) {
       }else{
         const result=await DocumentPicker.getDocumentAsync({type:'*/*',multiple:true,copyToCacheDirectory:true});
         if(result.canceled)return;
-        appendPicked(result.assets.map(asset=>({uri:asset.uri,name:asset.name,mimeType:asset.mimeType,size:asset.size??asset.file?.size,file:asset.file})));
+        if(result.assets.length>remaining){latest.current.error('В одном сообщении можно прикрепить до 10 файлов.');return;}
+        if(result.assets.some(asset=>(asset.size??asset.file?.size??0)>MAX_ATTACHMENT_BYTES)){latest.current.error('Размер каждого файла должен быть не больше 20 МБ.');return;}
+        const selected=await Promise.all(result.assets.map(async asset=>{
+          const geometry=asset.mimeType?.startsWith('image/')?await new Promise<{width?:number;height?:number}>(resolve=>Image.getSize(asset.uri,(width,height)=>resolve({width,height}),()=>resolve({}))):{};
+          return {uri:asset.uri,name:asset.name,mimeType:asset.mimeType,size:asset.size??asset.file?.size,file:asset.file,...geometry};
+        }));
+        appendPicked(selected);
       }
     } catch(error) {
       if(life.current.mounted){

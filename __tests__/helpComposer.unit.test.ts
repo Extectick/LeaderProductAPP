@@ -585,4 +585,12 @@ describe('Help composer recorder lifecycle', () => {
     await act(async()=>screen!.root.findByType('HelpPhotoPicker' as any).props.onDocuments());
     expect(mockPicker).toHaveBeenCalledTimes(1);expect(mockPhotoPicker).not.toHaveBeenCalled();expect(screen!.root.findByType('HelpPhotoPicker' as any).props.open).toBe(false);
   });
+  test('image chosen as a document has its final dimensions before entering the draft',async()=>{
+    Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});
+    const size=jest.spyOn(Image,'getSize').mockImplementation((_uri,success:any)=>{success(600,900);return Promise.resolve({width:600,height:900});});
+    mockPicker.mockResolvedValue({canceled:false,assets:[{uri:'file://portrait.png',name:'portrait.png',mimeType:'image/png',size:500}]});await render();
+    await act(async()=>screen!.root.findByType('HelpPhotoPicker' as any).props.onDocuments());
+    expect(props.onFiles).toHaveBeenCalledWith([expect.objectContaining({width:600,height:900,name:'portrait.png'})]);size.mockRestore();
+  });
+
 });
