@@ -149,8 +149,10 @@ export function HelpPhotoPicker(props:Props) {
     // `open`. Re-establish both panel geometry and its camera clipping on return.
     setVisible(true);setSettled(false);resizing.current=true;
     cancelAnimation(height);cancelAnimation(pullY);pullY.value=0;pullState.value=0;
-    height.value=withTiming(collapsedHeight,{duration:reduced?0:220,easing:MotionEasing.out(MotionEasing.cubic)},finished=>{if(finished)runOnJS(finishHeight)();});
+    height.value=collapsedHeight;finishHeight();
   }, [preview,cameraExpanded,height,pullY,pullState,collapsedHeight,reduced,finishHeight]);
+
+  const restorePanelRef=useRef(restorePanel);restorePanelRef.current=restorePanel;
 
   const loadPage=useCallback(async(reset=false)=>{
     if(loadingPage.current)return;
@@ -162,11 +164,11 @@ export function HelpPhotoPicker(props:Props) {
   },[]);
   const checkPermission=useCallback(async(request=false,allowRequest=true)=>{
     if(checkingPermission.current)return;checkingPermission.current=true;
-    const token=generation.current;setLoading(true);
+    const token=generation.current;let requested=request;setLoading(true);
     try{let result=await getHelpPhotoPermission(request);if(!mounted.current||token!==generation.current)return;
-      if(!request&&allowRequest&&!result.granted&&result.canAskAgain){result=await getHelpPhotoPermission(true);if(!mounted.current||token!==generation.current)return;}
+      if(!request&&allowRequest&&!result.granted&&result.canAskAgain){requested=true;result=await getHelpPhotoPermission(true);if(!mounted.current||token!==generation.current)return;}
       setPermission(result);if(result.granted)await loadPage(true);
-    }catch(e){if(mounted.current)setError(message(e));}finally{checkingPermission.current=false;if(mounted.current)setLoading(false);}
+    }catch(e){if(mounted.current)setError(message(e));}finally{checkingPermission.current=false;if(mounted.current){setLoading(false);if(requested)restorePanelRef.current();}}
   },[loadPage]);
   useEffect(()=>{if(props.open)void checkPermission();},[props.open,checkPermission]);
   useEffect(()=>{
@@ -255,7 +257,7 @@ export function HelpPhotoPicker(props:Props) {
       <View ref={grid} collapsable={false} onLayout={measureGrid} testID="help-photo-grid-viewport" style={{flex:1,minHeight:0,overflow:'hidden'}}>
       <GestureDetector gesture={nativeScrollGesture}>
       <Reanimated.FlatList testID="help-photo-grid" data={[null,...photos]} keyExtractor={item=>item?.id||'camera'} numColumns={3} extraData={selection} initialNumToRender={18} maxToRenderPerBatch={12} windowSize={5} removeClippedSubviews={false} keyboardShouldPersistTaps="handled" onScroll={gridScroll} scrollEventThrottle={16} bounces={false} overScrollMode="never" onEndReached={()=>{if(permission?.granted&&hasMore&&!loading)void loadPage();}} onEndReachedThreshold={1} columnWrapperStyle={{gap:2}} contentContainerStyle={{gap:2,paddingBottom:4}}
-        renderItem={({item,index})=>item?<PhotoTile photo={item} size={tileSize} number={selectedIds.indexOf(item.id)+1} pending={selection.some(entry=>entry.photo.id===item.id&&entry.pending)} disabled={props.busy} onSelect={()=>void select(item)} onPreview={origin=>showPhoto(item,origin)} index={index}/>:<View style={{width:tileSize,height:tileSize}}><HelpPhotoCamera expanded={cameraExpanded} onExpand={()=>{Keyboard.dismiss();setCameraExpanded(true);}} onClose={()=>setCameraExpanded(false)} onCapture={photo=>{setCameraExpanded(false);setPhotos(old=>[photo,...old]);void select(photo);showPhoto(photo);}} onError={value=>setError(value)} disabled={props.busy||chosen.current.length+props.existingCount>=10} tileVisible={props.open&&Boolean(viewport)&&Boolean(permission)&&cameraVisible&&!preview} viewport={viewport} tileOrigin={viewport?{x:viewport.x,y:viewport.y,width:tileSize,height:tileSize}:undefined} scrollOffsetShared={gridScrollY} sheetOffset={cameraOffset} sheetViewportHeight={cameraViewportHeight}/></View>}
+        renderItem={({item,index})=>item?<PhotoTile photo={item} size={tileSize} number={selectedIds.indexOf(item.id)+1} pending={selection.some(entry=>entry.photo.id===item.id&&entry.pending)} disabled={props.busy} onSelect={()=>void select(item)} onPreview={origin=>showPhoto(item,origin)} index={index}/>:<View style={{width:tileSize,height:tileSize}}><HelpPhotoCamera onPermissionSettled={restorePanel} expanded={cameraExpanded} onExpand={()=>{Keyboard.dismiss();setCameraExpanded(true);}} onClose={()=>setCameraExpanded(false)} onCapture={photo=>{setCameraExpanded(false);setPhotos(old=>[photo,...old]);void select(photo);showPhoto(photo);}} onError={value=>setError(value)} disabled={props.busy||chosen.current.length+props.existingCount>=10} tileVisible={props.open&&Boolean(viewport)&&Boolean(permission)&&cameraVisible&&!preview} viewport={viewport} tileOrigin={viewport?{x:viewport.x,y:viewport.y,width:tileSize,height:tileSize}:undefined} scrollOffsetShared={gridScrollY} sheetOffset={cameraOffset} sheetViewportHeight={cameraViewportHeight}/></View>}
         ListFooterComponent={<View style={{padding:16,alignItems:'center',gap:12}}>{loading?<ActivityIndicator color={c.accent}/>:null}{permission&&!permission.granted?<><Text style={{color:c.muted,textAlign:'center',fontSize:14}}>Разрешите доступ к фотографиям, чтобы выбрать их здесь.</Text><Pressable accessibilityRole="button" accessibilityLabel="Разрешить доступ к фотографиям" onPress={()=>void (permission.canAskAgain?checkPermission(true):Linking.openSettings())} style={{padding:12}}><Text style={{color:c.accentText,fontWeight:'600'}}>{permission.canAskAgain?'Разрешить доступ':'Открыть настройки'}</Text></Pressable></>:permission?.granted&&!photos.length&&!loading?<Text style={{color:c.muted}}>Фотографий пока нет. Можно сделать снимок.</Text>:null}</View>}/>
       </GestureDetector>
       </View>

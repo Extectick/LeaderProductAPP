@@ -50,6 +50,14 @@ describe('photo camera lifecycle and explicit capture',()=>{
     mockPermission={granted:true,canAskAgain:true};await update({});expect(mockMounts).toBe(1);expect(mockCameraProps.previewBlurRadius).toBe(10);
     await update({tileVisible:false});await update({tileVisible:true});expect(mockRequestPermission).toHaveBeenCalledTimes(1);
   });
+  test.each([true,false])('permission completion notifies the sheet after grant=%s without relying on app lifecycle events',async granted=>{
+    mockPermission={granted:false,canAskAgain:true};props.onPermissionSettled=jest.fn();
+    let resolve!:(permission:{granted:boolean})=>void;
+    mockRequestPermission.mockReturnValue(new Promise(done=>{resolve=done;}));
+    await render();expect(props.onPermissionSettled).not.toHaveBeenCalled();
+    await act(async()=>resolve({granted}));
+    expect(props.onPermissionSettled).toHaveBeenCalledTimes(1);expect(props.onExpand).not.toHaveBeenCalled();
+  });
   test('camera regression: preview and centered icon follow native grid scroll inside its clip',async()=>{
     const offset=new Animated.Value(0);props.scrollOffset=offset;props.viewport={x:10,y:500,width:360,height:300};await render();
     const style=(id:string)=>StyleSheet.flatten(screen!.root.findAllByProps({testID:id})[0].props.style);

@@ -12,6 +12,7 @@ import { HelpPhotoPortal, useHelpPhotoPortalFrame, type HelpPhotoRect } from './
 import Reanimated, {useAnimatedStyle, type SharedValue} from 'react-native-reanimated';
 
 export type HelpPhotoCameraProps = {
+  onPermissionSettled?:()=>void;
   expanded:boolean;onExpand:()=>void;onClose:()=>void;onCapture:(photo:HelpLibraryPhoto)=>void;onError:(message:string)=>void;disabled?:boolean;
   /** Window coordinates from the picker; update while its first row scrolls. */
   tileOrigin?:HelpPhotoRect;tileVisible?:boolean;layoutRevision?:number|string|boolean;
@@ -55,7 +56,7 @@ export function HelpPhotoCamera(props:HelpPhotoCameraProps) {
     // for the live thumbnail too, rather than waiting for the fullscreen camera.
     if(!permission||permission.granted||!permission.canAskAgain||!active||props.tileVisible===false||props.disabled||autoRequested.current||life.current.asking)return;
     autoRequested.current=true;life.current.asking=true;setAsking(true);
-    void live.current.requestPermission().catch(()=>{}).finally(()=>{life.current.asking=false;if(life.current.mounted)setAsking(false);});
+    void live.current.requestPermission().catch(()=>{}).finally(()=>{life.current.asking=false;if(life.current.mounted){setAsking(false);live.current.props.onPermissionSettled?.();}});
   },[permission,active,props.tileVisible,props.disabled]);
   useEffect(()=>{progress.stopAnimation();if(props.expanded)setExpandedSurface(true);if(reduced){progress.setValue(props.expanded?1:0);setExpandedSurface(props.expanded);}else Animated.timing(progress,{toValue:props.expanded?1:0,duration:230,useNativeDriver:false}).start(({finished})=>{if(finished&&life.current.mounted&&!live.current.props.expanded)setExpandedSurface(false);});},[props.expanded,progress,reduced]);
   const measure=useCallback(()=>tile.current?.measureInWindow((x,y,width,height)=>{if(width>0&&height>0&&life.current.mounted)setMeasured(previous=>previous?.x===x&&previous.y===y&&previous.width===width&&previous.height===height?previous:{x,y,width,height});}),[]);
@@ -75,7 +76,7 @@ export function HelpPhotoCamera(props:HelpPhotoCameraProps) {
     life.current.asking=true;setAsking(true);
     try{const result=await current.requestPermission();if(!life.current.mounted||live.current.props.disabled)return;if(result.granted)live.current.props.onExpand();else live.current.props.onError('Для съёмки фото нужен доступ к камере.');}
     catch{if(life.current.mounted)live.current.props.onError('Не удалось запросить доступ к камере.');}
-    finally{life.current.asking=false;if(life.current.mounted)setAsking(false);}
+    finally{life.current.asking=false;if(life.current.mounted){setAsking(false);live.current.props.onPermissionSettled?.();}}
   },[]);
   const close=useCallback(()=>{life.current.generation++;live.current.props.onClose();},[]);
   useEffect(()=>{if(!props.expanded)return;const subscription=BackHandler.addEventListener('hardwareBackPress',()=>{close();return true;});return()=>subscription.remove();},[props.expanded,close]);

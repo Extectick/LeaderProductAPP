@@ -284,3 +284,16 @@ test('focus return after permission denial refreshes access without triggering a
   await act(async()=>listeners.focus());
   expect(mockPermission.mock.calls).toEqual([[false]]);
 });
+
+
+test('permission completion restores the panel even when Android emits no AppState or focus event',async()=>{
+  mockPermission.mockResolvedValueOnce({granted:false,limited:false,canAskAgain:true}).mockResolvedValueOnce({granted:true,limited:false,canAskAgain:true});
+  mockPullTiming.mockImplementation(()=>0);await render();
+  const panel=()=>screen!.root.findAllByProps({testID:'help-photo-panel'})[0].props.style[1].height;
+  expect(panel()).toBeGreaterThan(0);
+  // The second (camera) dialog can interrupt the same sheet independently.
+  await update({open:false});await update({open:true});
+  expect(panel()).toBe(0);
+  await act(async()=>screen!.root.findByType('HelpPhotoCamera' as any).props.onPermissionSettled());
+  expect(panel()).toBeGreaterThan(0);expect(props.onClose).not.toHaveBeenCalled();
+});
