@@ -1,6 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, AppState, Easing, Image, Keyboard, PanResponder, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import Reanimated,{Easing as UiEasing,useAnimatedStyle,withTiming} from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
@@ -232,7 +233,11 @@ export function HelpComposer(props: Props) {
     if (next !== height) { setHeight(next); props.onResize(); }
   }
   const overflowing = contentHeight > height + 1;
-  const multiline=(hasNativeHelpInput?visualLines>1:contentHeight>COMPOSER_LINE_HEIGHT+1)||props.value.includes('\n');
+  const multiline=Boolean(props.value)&&((hasNativeHelpInput?visualLines>1:contentHeight>COMPOSER_LINE_HEIGHT+1)||props.value.includes('\n'));
+  // The input already animates its native height. Its surrounding action area
+  // must use the same clock instead of dropping its 88dp minimum to 48dp in a
+  // single frame when the last line/expanded-editor affordance disappears.
+  const rowMinimum=useAnimatedStyle(()=>({minHeight:withTiming(!voiceActive&&multiline?88:48,{duration:reduced?0:180,easing:UiEasing.out(UiEasing.cubic)})}),[voiceActive,multiline,reduced]);
   useEffect(()=>{if(expanded||!restoreSelection.current)return;const range=restoreSelection.current;restoreSelection.current=null;const timer=setTimeout(()=>{if(hasNativeHelpInput)void(input.current as HelpNativeInputHandle)?.restore(props.value,range);else{(input.current as TextInput)?.setNativeProps({selection:range});input.current?.focus();}},60);return()=>clearTimeout(timer);},[expanded]);
   function closeEditor(range:HelpTextSelection){selection.current=range;restoreSelection.current=range;setExpanded(false);}
   const placeholder = props.mode === 'reopen' ? 'Что случилось снова?' : 'Сообщение…';
@@ -261,7 +266,7 @@ export function HelpComposer(props: Props) {
         <Image accessibilityLabel={`Фото ${index+1}: ${file.name}`} source={{uri:file.uri}} resizeMode="cover" style={{width:DRAFT_PHOTO_SIZE,height:DRAFT_PHOTO_SIZE,borderRadius:10}}/>
       </HelpDraftPhoto> : <View key={`${file.uri}-${index}`} style={{ flexDirection: 'row', alignItems: 'center', borderRadius: 12, backgroundColor: c.elevated, overflow:'hidden', minHeight:52, paddingLeft:10 }}><Ionicons name={file.mimeType?.startsWith('audio/') ? 'mic-outline' : 'document-outline'} color={c.accentText} size={18} /><Text numberOfLines={1} style={{ color: c.text, maxWidth: 130, marginLeft: 6, fontSize: 12 }}>{file.name}</Text><HelpIcon name="close" label={`Убрать ${file.name}`} size={16} style={{ width: 44, height: 52 }} disabled={props.busy||props.disabled} onPress={() => props.onFiles(props.files.filter((_, i) => i !== index))} /></View>)}
     </ScrollView> : null}
-    <View testID="help-composer-input-row" style={{position:'relative',minHeight:!voiceActive&&multiline?88:48}}>
+    <Reanimated.View testID="help-composer-input-row" style={[{position:'relative'},rowMinimum]}>
     {/* Android EditText reports viewport size while its text Layout is invalid.
         Measure a noninteractive Text with identical font/width instead, so resize
         does not depend on (or feed back into) the animated parent's layout. */}
@@ -276,7 +281,7 @@ export function HelpComposer(props: Props) {
       {!voiceActive?<HelpIcon name="attach-outline" label="Прикрепить файлы" disabled={props.navigationReady===false || props.busy || props.disabled || recording || starting} onPress={() => {if(Platform.OS==='web')setAttachmentMenu(true);else{Keyboard.dismiss();setPhotoPickerOpen(value=>!value);}}} color={c.muted} size={24} rotation={40} style={{ position: 'absolute', bottom: 4, left: 4, width: 36, height: 38 }} />:null}
       {hasNativeHelpVoice&&props.mode==='message'&&!props.onStopAssistant?<HelpVoiceRecorder screenActive={props.screenActive} draftKey={props.voiceDraftKey??'composer'} visible={!hasText&&!photoPickerOpen} disabled={props.busy||Boolean(props.disabled)} onActive={setVoiceActive} onSend={voice=>props.onSend(voice,undefined,true)} error={props.error}/>:null}
       {!voiceActive&&!(hasNativeHelpVoice&&props.mode==='message'&&!hasText&&!photoPickerOpen&&!props.onStopAssistant)? props.onStopAssistant && !hasText ? <HelpIcon name="stop" label="Остановить ответ ИИ" color="#FFF" size={20} style={{ position: 'absolute', right: 4, bottom: 4, width: 38, height: 38, borderRadius: 19, backgroundColor: c.accent }} onPress={props.onStopAssistant}/> : props.mode === 'message' && !hasText && !photoPickerOpen ? <Animated.View {...gestures.panHandlers} accessible accessibilityRole="button" accessibilityLabel="Удерживайте для записи голосового сообщения. Проведите вверх, чтобы закрепить запись" onAccessibilityTap={() => void start(true)} style={{ position: 'absolute', right: 4, bottom: 4, width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: recording && !locked ? '#DB5059' : c.accent, opacity: props.busy || props.disabled ? .4 : 1, transform: [{ scale: pulse }] }}>{starting ? <ActivityIndicator color="#FFF" size="small" /> : <Ionicons name={locked ? 'lock-closed' : 'mic'} size={22} color="#FFF" />}</Animated.View> : <HelpIcon name={props.mode === 'close' || props.mode === 'edit' ? 'checkmark' : 'arrow-up'} label={props.mode === 'close' ? 'Закрыть обращение' : props.mode === 'edit' ? 'Сохранить изменения' : 'Отправить сообщение'} disabled={!canSend} color="#FFF" size={22} style={{ position: 'absolute', right: 4, bottom: 4, width: 38, height: 38, borderRadius: 19, backgroundColor: c.accent }} onPress={() => void props.onSend().then(result=>{if(result!==false)setPhotoPickerOpen(false);})} />:null}
-    </View>
+    </Reanimated.View>
   </View>
     {expanded?<HelpExpandedEditor value={props.value} onChange={props.onChange} selection={selection.current} onDone={closeEditor}/>:null}
     {Platform.OS !== 'web' ? <HelpPhotoPicker open={photoPickerOpen} onVisibility={setPhotoPickerVisible} onClose={()=>setPhotoPickerOpen(false)} files={props.files} onFiles={props.onFiles} caption={props.value} onCaption={props.onChange} onSend={files=>props.onSend(undefined,files)} onPreparing={setPreparingPhotos} onError={props.error} onDocuments={()=>{setPhotoPickerOpen(false);void pick('files');}} busy={props.busy||Boolean(props.disabled)} existingCount={props.existingFiles?.length??0}/> : null}

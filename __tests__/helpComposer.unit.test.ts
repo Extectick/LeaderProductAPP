@@ -10,6 +10,12 @@ const mockPicker = jest.fn();
 const mockPhotoPicker = jest.fn();
 const mockStopPlayback=jest.fn();
 let mockReducedMotion = true;
+const mockRowTiming=jest.fn((value:number,_config?:unknown)=>value);
+jest.mock('react-native-reanimated',()=>({
+  __esModule:true,default:{View:require('react-native').View},
+  useAnimatedStyle:(fn:()=>unknown)=>fn(),withTiming:(...args:[number,unknown])=>mockRowTiming(...args),
+  Easing:{out:(fn:unknown)=>fn,cubic:(value:number)=>value},
+}));
 jest.mock('expo-audio', () => ({RecordingPresets:{HIGH_QUALITY:{}},getRecordingPermissionsAsync:(...args:any[])=>mockGetPermission(...args),requestRecordingPermissionsAsync:(...args:any[])=>mockPermission(...args),setAudioModeAsync:(...args:any[])=>mockAudioMode(...args),useAudioRecorder:()=>mockRecorder,useAudioRecorderState:()=>({isRecording:false,durationMillis:0})}));
 jest.mock('expo-document-picker', () => ({getDocumentAsync:(...args:any[])=>mockPicker(...args)}));
 jest.mock('expo-image-picker', () => ({launchImageLibraryAsync:(...args:any[])=>mockPhotoPicker(...args)}));
@@ -126,11 +132,18 @@ describe('Help composer recorder lifecycle', () => {
   test('reply and input share one surface while their controls stay in separate rows',async()=>{
     props.value='Line one\nLine two';props.quote={name:'Support',text:'Original message',onPress:jest.fn()};await render();
     const preview=screen!.root.findByProps({testID:'help-reply-preview'}),surface=screen!.root.findByProps({testID:'help-composer-surface'}),row=screen!.root.findByProps({testID:'help-composer-input-row'});
-    expect(preview.parent?.props.testID).toBe('help-composer-surface');expect(surface.findAllByProps({testID:'help-reply-preview'}).length).toBeGreaterThan(0);expect(row.props.style.minHeight).toBe(88);
+    expect(preview.parent?.props.testID).toBe('help-composer-surface');expect(surface.findAllByProps({testID:'help-reply-preview'}).length).toBeGreaterThan(0);expect(StyleSheet.flatten(row.props.style).minHeight).toBe(88);
     const expand=row.findAll(node=>node.props.label==='Развернуть редактор сообщения')[0];expect(expand.props.name).toBe('resize-outline');expect(expand.props.style).toMatchObject({top:0,right:0,width:44,height:44});
     const cancel=preview.findAll(node=>node.props.label==='Отменить ответ')[0];expect(cancel.props.style).toMatchObject({width:44,height:44});
     await act(async()=>cancel.props.onPress());expect(props.onCancelQuote).toHaveBeenCalledTimes(1);
     expect(screen!.root.findAllByType('HelpExpandedEditor' as any)).toHaveLength(0);expect(props.onChange).not.toHaveBeenCalled();await act(async()=>expand.props.onPress());expect(screen!.root.findAllByType('HelpExpandedEditor' as any)).toHaveLength(1);
+  });
+  test('clearing a multiline draft animates the action area down to one line on the UI clock',async()=>{
+    mockReducedMotion=false;props.value='Line one\nLine two';await render();
+    expect(mockRowTiming).toHaveBeenLastCalledWith(88,expect.objectContaining({duration:180}));
+    props={...props,value:''};await act(async()=>screen!.update(React.createElement(HelpComposer,props)));
+    expect(mockRowTiming).toHaveBeenLastCalledWith(48,expect.objectContaining({duration:180}));
+    expect(screen!.root.findAll(node=>node.props.label==='Развернуть редактор сообщения')).toHaveLength(0);
   });
   test('height growth is interruptible and scoped to the composer, with reduced-motion fallback',async()=>{
     mockReducedMotion=false;

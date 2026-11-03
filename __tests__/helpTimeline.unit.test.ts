@@ -5,6 +5,7 @@ import { helpNavigationIndex, helpIsAtLatest, helpTimelineRows, helpVisibleRows,
 import type { HelpMessage } from '../src/features/help/helpApi';
 let mockFlashProps:any;
 let mockReducedMotion=true;
+let mockNativeChatLayout=false;
 let mockLayouts:{y:number;height:number}[]=[];
 const mockListApi:any={};
 jest.mock('@shopify/flash-list',()=>{
@@ -20,7 +21,7 @@ jest.mock('@shopify/flash-list',()=>{
 jest.mock('@expo/vector-icons',()=>({Ionicons:'Ionicons'}));
 jest.mock('../src/features/help/helpTheme',()=>({useHelpReducedMotion:()=>mockReducedMotion,useHelpTheme:()=>({background:'#151B22',surface:'#222B35',line:'#33404E',panel:'#1E2730',muted:'#A6B0BE',accentText:'#68B0FF'})}));
 jest.mock('../src/features/help/helpDiagnostics',()=>({helpDevActions:()=>()=>{},helpDevProbe:()=>()=>{},helpDevState:jest.fn(),helpDevEvent:jest.fn()}));
-jest.mock('../src/features/help/components/HelpNativeChatLayout',()=>({hasNativeChatLayout:false}));
+jest.mock('../src/features/help/components/HelpNativeChatLayout',()=>({get hasNativeChatLayout(){return mockNativeChatLayout;}}));
 import {HelpTimeline,type HelpTimelineHandle} from '../src/features/help/components/HelpTimeline';
 import {HelpDateSeparator} from '../src/features/help/components/HelpTimelineIndicators';
 import {HelpMediaLoadingContext} from '../src/features/help/helpMediaLoading';
@@ -93,6 +94,7 @@ describe('sticky date geometry and navigation integration',()=>{
   beforeEach(()=>{
     jest.useFakeTimers();
     mockReducedMotion=true;
+    mockNativeChatLayout=false;
     mockFlashProps=undefined;
     // The first day's separator has already passed the header. The next day's
     // separator is visible lower in the list and must not hide the current day.
@@ -132,6 +134,21 @@ describe('sticky date geometry and navigation integration',()=>{
     expect(screen!.root.findAllByType('TimelineRow' as any).at(-1)).toBe(holder);
   });
   async function observe(){await act(async()=>mockFlashProps.onScroll({nativeEvent:{contentOffset:{x:0,y:0},layoutMeasurement:{width:390,height:600},contentSize:{width:390,height:1000}}}));}
+  test('binding a created ticket retains native tail following without another scroll command',async()=>{
+    mockNativeChatLayout=true;
+    const nativeEnd=jest.fn();mockListApi.getNativeScrollRef=()=>({scrollToEnd:nativeEnd});
+    await render();nativeEnd.mockClear();mockListApi.scrollToEnd.mockClear();
+    props={...props,navigationTarget:{key:881,kind:'latest',animate:false}};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    await act(async()=>jest.advanceTimersByTimeAsync(100));
+    expect(nativeEnd).not.toHaveBeenCalled();expect(mockListApi.scrollToEnd).not.toHaveBeenCalled();
+    expect(props.onFollow).toHaveBeenLastCalledWith(true);
+    // An actual history gesture still requires explicit positioning to Latest.
+    await act(async()=>mockFlashProps.onScrollBeginDrag());
+    props={...props,navigationTarget:{key:882,kind:'latest',animate:false}};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    expect(nativeEnd).toHaveBeenCalled();
+  });
   test('read visibility follows dock frame measurements without rerendering the timeline',async()=>{
     const obscuredBottom={current:60};props={...props,obscuredBottom};
     await render();
@@ -146,12 +163,14 @@ describe('sticky date geometry and navigation integration',()=>{
   test('first optimistic cell waits for settled tail geometry before playing its arrival',async()=>{
     props={...props,messages:[],bottomAligned:true,renderPending:()=>React.createElement(View)};
     await render();
+    mockLayouts=[{y:400,height:44},{y:444,height:84,isHeightMeasured:false} as any];
     const pending={key:'qa-first-layout',ticketId:null,create:true,createdAt:Date.parse(nextDate),status:'sending' as const,input:{text:'QA',clientMessageId:'qa-first-layout'}};
     props={...props,pendingMessages:[pending]};
     await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
     const layer=()=>StyleSheet.flatten(screen!.root.findByProps({testID:'help-timeline-live-layer'}).props.style);
     expect(layer().opacity).toBe(0);
     expect(screen!.root.findByType(HelpMessageArrival).props.deferred).toBe(true);
+    await act(async()=>jest.advanceTimersByTimeAsync(100));expect(layer().opacity).toBe(0);
     mockLayouts=[{y:400,height:44},{y:444,height:84}];
     await act(async()=>jest.advanceTimersByTimeAsync(100));
     expect(layer().opacity).toBe(1);

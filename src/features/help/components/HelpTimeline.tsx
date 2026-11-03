@@ -73,13 +73,15 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
       const view=list.current,last=view?.getLayout(rowsRef.current.length-1);
       const offset=view?.getAbsoluteLastScrollOffset()??geometry.current.offset;
       const first=view?.getFirstItemOffset()??0;
-      const bottom=last?last.y+last.height+first-offset:NaN;
       const expected=geometry.current.height-currentBottomInset()-12;
       const signature=JSON.stringify([last?.y,last?.height,last?.width,first,offset,expected]);
       stable=signature===previous?stable+1:0;previous=signature;
       // An empty FlashList can briefly expose estimated cell geometry on its
       // first insertion. Reveal only the settled tail, then run its arrival.
-      if((last&&last.height>0&&stable>=1&&Math.abs(bottom-expected)<=2)||Date.now()>=deadline){setFirstContentSettled(true);return;}
+      // FlashList's cached absolute end may differ from native padding/clamp.
+      // Wait for measured, stable geometry rather than an exact cached offset.
+      const measured=last&&last.height>0&&(last.width??1)>0&&last.isHeightMeasured!==false;
+      if((measured&&stable>=2&&geometry.current.height>0)||Date.now()>=deadline){setFirstContentSettled(true);return;}
       frame=requestAnimationFrame(probe);
     };
     frame=requestAnimationFrame(probe);
@@ -443,7 +445,14 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
       Object.assign(openingLayout.current,{active:true,key:target.key,passes:0,signature:'',aligned:'',requestedIndex:-1,tailId:live.current.messages.at(-1)?.id??null});
       settleOpening();return;
     }
-    if (target.kind === 'latest') { lastNavigationMode.current = 'latest'; pinLatest(false); return; }
+    if (target.kind === 'latest') {
+      lastNavigationMode.current = 'latest';
+      // Creation can bind the server ticket while its optimistic row already
+      // follows the native tail. Re-pinning races the shrinking composer and
+      // ScrollView's range reconciliation; retain the existing native owner.
+      if(hasNativeChatLayout&&followingRef.current&&!live.current.hasNewer){cancelJump();observe();return;}
+      pinLatest(false);return;
+    }
     const targetLayout=list.current?.getLayout(index);
     const targetWasLoaded=!dateSnapshot.current || dateSnapshot.current.loadedIds.has(rows[index].message.id);
     const dateMode=target.kind==='date'?helpDateJumpMode({

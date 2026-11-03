@@ -1,6 +1,11 @@
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
-import { Animated } from 'react-native';
+import { Animated,StyleSheet } from 'react-native';
+jest.mock('react-native-gesture-handler',()=>({Gesture:{Pan:jest.fn()},GestureDetector:'GestureDetector',GestureHandlerRootView:'GestureHandlerRootView'}));
+jest.mock('react-native-reanimated',()=>({
+  __esModule:true,default:{View:require('react-native').View},cancelAnimation:jest.fn(),runOnJS:(fn:any)=>fn,
+  useSharedValue:(value:any)=>require('react').useRef({value}).current,useAnimatedStyle:(fn:()=>unknown)=>fn(),withTiming:(value:unknown)=>value,withSpring:(value:unknown)=>value,
+}));
 jest.mock('../context/ThemeContext', () => ({ useTheme: () => ({ theme: 'light' }) }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 jest.mock('expo-blur', () => ({ BlurView: 'BlurView' }));
@@ -14,6 +19,14 @@ import { HelpChatHeader, HelpMoreCloseButton } from '../src/features/help/compon
 describe('Help message search navigation and literal highlighting', () => {
   let screen: TestRenderer.ReactTestRenderer | undefined;
   afterEach(async () => { if (screen) await act(async () => screen!.unmount()); screen = undefined; jest.restoreAllMocks(); });
+
+  test('assigning the created ticket number preserves chat header geometry',async()=>{
+    const base={title:'New ticket',meta:'',onBack:jest.fn(),onMenu:jest.fn()};
+    await act(async()=>{screen=TestRenderer.create(React.createElement(HelpChatHeader,base));});
+    const style=StyleSheet.flatten(screen!.root.findByProps({testID:'help-header'}).props.style);
+    await act(async()=>screen!.update(React.createElement(HelpChatHeader,{...base,number:5,status:'OPEN'})));
+    expect(StyleSheet.flatten(screen!.root.findByProps({testID:'help-header'}).props.style)).toEqual(style);
+  });
 
   test('search symbols are literal, with no regex interpretation or lost text', () => {
     const text = 'Ошибка [1C]+. Проверили [1c]+ повторно.';

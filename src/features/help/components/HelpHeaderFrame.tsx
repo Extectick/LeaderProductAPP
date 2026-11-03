@@ -7,9 +7,9 @@ import {helpDevRef} from '../helpDiagnostics';
 import {HelpIcon} from './HelpPrimitives';
 import {APP_TOOLBAR_LAYOUT as layout} from '@/components/ui/appToolbarLayout';
 
-export function HelpHeaderFrame({children,onBack,trailing,connecting=false,eyebrow}:{children:React.ReactNode;onBack:()=>void;trailing?:React.ReactNode;connecting?:boolean;eyebrow?:string}) {
+export function HelpHeaderFrame({children,onBack,trailing,connecting=false,eyebrow,reserveEyebrow=false}:{children:React.ReactNode;onBack:()=>void;trailing?:React.ReactNode;connecting?:boolean;eyebrow?:string;reserveEyebrow?:boolean}) {
   const c=useHelpTheme(),reducedMotion=useHelpReducedMotion();
-  return <View ref={node=>helpDevRef('header.surface',node)} testID="help-header" style={{paddingHorizontal:HELP_LIST_INSET,paddingTop:eyebrow?16:layout.top,paddingBottom:layout.bottom}}>
+  return <View ref={node=>helpDevRef('header.surface',node)} testID="help-header" style={{paddingHorizontal:HELP_LIST_INSET,paddingTop:eyebrow||reserveEyebrow?16:layout.top,paddingBottom:layout.bottom}}>
     {eyebrow?<Text testID="help-header-ticket-number" style={{position:'absolute',top:0,left:HELP_LIST_INSET+4,color:c.muted,fontSize:9,lineHeight:12,includeFontPadding:false,opacity:.75}}>{eyebrow}</Text>:null}
     <View style={{flexDirection:'row',alignItems:'center',gap:layout.gap}}>
       <HelpIcon name="chevron-back" label="Назад" onPress={onBack} color={c.text} size={24} style={{width:layout.actionSize,height:layout.actionSize,backgroundColor:c.panel,borderRadius:layout.actionSize/2}}/>
