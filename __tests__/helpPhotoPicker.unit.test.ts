@@ -42,15 +42,17 @@ jest.mock('../src/features/help/components/HelpNativeInput',()=>({hasNativeHelpI
 import {HelpPhotoPortalProvider} from '../src/features/help/components/HelpPhotoPortal';
 import {HelpPhotoPicker,helpPhotoSheetMaximumHeight} from '../src/features/help/components/HelpPhotoPicker';
 
-test('the attachment tray has no text input and returns to the composer without losing selection',async()=>{
-  await render();
-  expect(screen!.root.findAllByType(TextInput)).toHaveLength(0);
-  await press('Назад к сообщению');expect(props.onClose).toHaveBeenCalledTimes(1);
+test('attachment tray edits the shared message draft and closing preserves it',async()=>{
+  props.caption='Черновик';await render();
+  const input=screen!.root.findAllByProps({testID:'help-photo-message-input'})[0];
+  expect(input.props.value).toBe('Черновик');
+  await act(async()=>input.props.onChangeText('Фото и сообщение'));expect(props.onCaption).toHaveBeenCalledWith('Фото и сообщение');
+  await press('Закрыть фотографии');expect(props.onClose).toHaveBeenCalledTimes(1);
 });
 test('photo sheet keeps the same available height with overlay and resized Android keyboards',()=>{
-  expect(helpPhotoSheetMaximumHeight(800,24,0,500)).toBe(368);
-  expect(helpPhotoSheetMaximumHeight(500,24,0,500)).toBe(368);
-  expect(helpPhotoSheetMaximumHeight(800,24,20,null)).toBe(648);
+  expect(helpPhotoSheetMaximumHeight(800,24,0,500)).toBe(476);
+  expect(helpPhotoSheetMaximumHeight(500,24,0,500)).toBe(476);
+  expect(helpPhotoSheetMaximumHeight(800,24,20,null)).toBe(756);
 });
 import type {HelpLibraryPhoto} from '../src/features/help/helpPhotoLibrary';
 import type {HelpLocalFile} from '../src/features/help/components/HelpComposer';
@@ -91,14 +93,14 @@ beforeEach(()=>{
 });
 afterEach(async()=>{if(screen)await act(async()=>screen!.unmount());screen=undefined;jest.restoreAllMocks();});
 
-test('gallery regression: opens at sixty percent with caption after the grid and back preserving selection',async()=>{
+test('gallery regression: fills available height and width with the message editor after the grid',async()=>{
   props.files=[file(0)];props.caption='Мой текст';await render();
   const panel=screen!.root.findAllByProps({testID:'help-photo-panel'})[0];
-  expect(panel.props.style[1].height).toBeCloseTo(Math.min(Dimensions.get('window').height*.6,Dimensions.get('window').height-108));
+  expect(panel.props.style[1].height).toBeCloseTo(Dimensions.get('window').height);
   const children=panel.findAll(node=>['help-photo-grid-viewport','help-photo-caption'].includes(node.props.testID));
   expect(children[0].props.testID).toBe('help-photo-grid-viewport');expect(children[children.length-1].props.testID).toBe('help-photo-caption');
-  expect(screen!.root.findAllByType(TextInput)).toHaveLength(0);expect(props.caption).toBe('Мой текст');
-  await press('Назад к сообщению');expect(props.onClose).toHaveBeenCalledTimes(1);expect(props.onFiles).not.toHaveBeenCalled();
+  expect(screen!.root.findAllByType(TextInput).length).toBeGreaterThan(0);expect(props.caption).toBe('Мой текст');
+  await press('Закрыть фотографии');expect(props.onClose).toHaveBeenCalledTimes(1);expect(props.onFiles).not.toHaveBeenCalled();
   await update({open:false});expect(props.onFiles).not.toHaveBeenCalled();
 });
 
@@ -108,7 +110,7 @@ test('gallery regression: a late keyboard event is dismissed without raising the
   const dismiss=jest.spyOn(Keyboard,'dismiss').mockImplementation(()=>{});await render();expect(dismiss).toHaveBeenCalledTimes(1);
   await act(async()=>listeners.keyboardDidShow({endCoordinates:{height:280}}));
   expect(props.onClose).not.toHaveBeenCalled();expect(dismiss).toHaveBeenCalledTimes(2);
-  expect(screen!.root.findAllByType(TextInput)).toHaveLength(0);expect(props.onCaption).not.toHaveBeenCalled();
+  expect(screen!.root.findAllByType(TextInput).length).toBeGreaterThan(0);expect(props.onCaption).not.toHaveBeenCalled();
 });
 
 test('gallery regression: bottom send uses selected photos in their chosen order',async()=>{
@@ -314,7 +316,7 @@ test('permission completion restores committed layout even when native animation
   mockPermission.mockReturnValueOnce(permission.promise).mockResolvedValueOnce({granted:true,limited:false,canAskAgain:true});
   await render();
   const panel=()=>screen!.root.findAllByProps({testID:'help-photo-panel'})[0];
-  expect(StyleSheet.flatten(panel().props.style).height).toBe(0);
+  expect(StyleSheet.flatten(panel().props.style).height).toBeGreaterThan(0);
   await act(async()=>permission.resolve({granted:false,limited:false,canAskAgain:true}));
   await press('Разрешить доступ к фотографиям');
   // A new Fabric layout can reapply this initial animated value after the camera mounts.
@@ -330,5 +332,35 @@ test('late portal mount gets the current animated height instead of a cached zer
   mockStaticAnimatedStyle=true;
   await act(async()=>{screen=TestRenderer.create(React.createElement(HelpPhotoPortalProvider,{children:React.createElement(HelpPhotoPicker,props)}),{createNodeMock:()=>node});});
   const panel=screen!.root.findAllByProps({testID:'help-photo-panel'})[0];
-  expect(panel.props.style[1].height).toBeGreaterThan(0);
+  expect(StyleSheet.flatten(panel.props.style).height).toBeGreaterThan(0);
+});
+
+test('caption keyboard reduces only the file panel and does not dismiss the editor',async()=>{
+ const listeners:Record<string,(event:any)=>void>={};
+ jest.spyOn(Keyboard,'addListener').mockImplementation((name,listener:any)=>{listeners[name]=listener;return{remove:jest.fn()};});
+ const dismiss=jest.spyOn(Keyboard,'dismiss').mockImplementation(()=>{});await render();dismiss.mockClear();
+ const input=screen!.root.findAllByProps({testID:'help-photo-message-input'})[0];
+ await act(async()=>input.props.onFocus());
+ await act(async()=>listeners.keyboardDidShow({endCoordinates:{screenY:400,height:280}}));
+ expect(dismiss).not.toHaveBeenCalled();expect(props.onClose).not.toHaveBeenCalled();
+ const panel=screen!.root.findAllByProps({testID:'help-photo-panel'})[0];
+ expect(panel.props.style[0]).toMatchObject({left:0,right:0});
+ expect(StyleSheet.flatten(panel.props.style).height).toBe(400);
+ await act(async()=>listeners.keyboardDidHide({}));
+ expect(StyleSheet.flatten(screen!.root.findAllByProps({testID:'help-photo-panel'})[0].props.style).height).toBe(Dimensions.get('window').height);
+});
+
+test('camera discards a delayed grid measurement from the previous opening',async()=>{
+ await render();
+ let oldMeasurement!:(x:number,y:number,width:number,height:number)=>void;
+ const oldGrid=screen!.root.findAllByProps({testID:'help-photo-grid-viewport'})[0];
+ oldGrid.instance.measureInWindow=(callback:typeof oldMeasurement)=>{oldMeasurement=callback;};
+ await act(async()=>oldGrid.props.onLayout());
+ await update({open:false});await update({open:true});
+ await act(async()=>oldMeasurement(0,600,360,100));
+ expect(camera().props.viewport?.y).not.toBe(600);
+ const newGrid=screen!.root.findAllByProps({testID:'help-photo-grid-viewport'})[0];
+ newGrid.instance.measureInWindow=(callback:typeof oldMeasurement)=>callback(0,48,360,600);
+ await act(async()=>newGrid.props.onLayout());
+ expect(camera().props.viewport).toEqual({x:0,y:48,width:360,height:600});
 });

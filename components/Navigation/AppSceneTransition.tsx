@@ -14,12 +14,12 @@ export const AppSceneTransition=forwardRef<AppSceneTransitionHandle,AppSceneTran
   // Measure while hidden; otherwise the first frame can expose half a page or
   // change travel distance after the animation has already started.
   const [width,setWidth]=useState(0);
-  const [revealed,setRevealed]=useState(false),[exiting,setExiting]=useState(false);
+  const [revealed,setRevealed]=useState(false),[exiting,setExiting]=useState(false),[settled,setSettled]=useState(false);
   const ready=(initiallyReady||revealed)&&width>0;
   const live=useRef({reduced,onEntered});live.current={reduced,onEntered};
   const mounted=useRef(true),leaving=useRef(false),didEnter=useRef(false);
   const completion=useRef<((finished:boolean)=>void)|null>(null),exitPromise=useRef<Promise<boolean>|null>(null);
-  const entered=useCallback(()=>{if(mounted.current&&!leaving.current&&!didEnter.current){didEnter.current=true;live.current.onEntered?.();}},[]);
+  const entered=useCallback(()=>{if(mounted.current&&!leaving.current&&!didEnter.current){didEnter.current=true;setSettled(true);live.current.onEntered?.();}},[]);
   const dismissed=useCallback(()=>{completion.current?.(true);completion.current=null;},[]);
   useLayoutEffect(()=>{
     mounted.current=true;progress.value=0;
@@ -43,7 +43,10 @@ export const AppSceneTransition=forwardRef<AppSceneTransitionHandle,AppSceneTran
   }),[progress,ready,dismissed]);
   // Hidden lists measure inside the viewport before their first reveal.
   const style=useAnimatedStyle(()=>({opacity:ready?1:0,transform:[{translateX:ready?width*(1-progress.value):0}]}),[width,ready]);
-  return <Reanimated.View testID={sceneTestID} onLayout={event=>{const measured=event.nativeEvent.layout.width;if(measured>0)setWidth(previous=>Math.abs(previous-measured)>.5?measured:previous);onLayout?.(event);}} pointerEvents={ready&&!exiting&&interactive?'auto':'none'} style={[{flex:1,backgroundColor},style]}>{children}</Reanimated.View>;
+  // Fabric may reapply an animated style's initial transform when IME/portal
+  // updates commit. Persist the completed scene position in React as well.
+  // Remove that override before an intentional exit so the UI thread owns it.
+  return <Reanimated.View testID={sceneTestID} onLayout={event=>{const measured=event.nativeEvent.layout.width;if(measured>0)setWidth(previous=>Math.abs(previous-measured)>.5?measured:previous);onLayout?.(event);}} pointerEvents={ready&&!exiting&&interactive?'auto':'none'} style={[{flex:1,backgroundColor},style,settled&&!exiting?{opacity:1,transform:[{translateX:0}]}:undefined]}>{children}</Reanimated.View>;
 });
 
 /** Retain the previous page and move it with the exact same foreground progress. */
