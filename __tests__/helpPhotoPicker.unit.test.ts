@@ -4,6 +4,7 @@ import {AppState, Animated, Dimensions, Keyboard, PanResponder, TextInput} from 
 
 const mockPermission=jest.fn(),mockPage=jest.fn(),mockPrepare=jest.fn(),mockDiscard=jest.fn(),mockPreviewUri=jest.fn();
 const mockPullTiming=jest.fn(),mockPullSpring=jest.fn();
+let mockStaticAnimatedStyle=false;
 jest.mock('react-native-gesture-handler',()=>{
   const build=(kind:string)=>{
     const result:any={kind,config:{},handlers:{}};
@@ -18,7 +19,7 @@ jest.mock('react-native-reanimated',()=>{
   return{__esModule:true,default:{View:RN.View,FlatList:RN.FlatList},cancelAnimation:jest.fn(),runOnJS:(fn:unknown)=>fn,
     useDerivedValue:(fn:()=>unknown)=>({get value(){return fn();}}),
     useSharedValue:(initial:unknown)=>React.useRef({value:initial}).current,
-    useAnimatedStyle:(fn:()=>any)=>({get transform(){return fn().transform;},get height(){return fn().height;}}),
+    useAnimatedStyle:(fn:()=>any)=>{const initial=React.useRef(fn()).current;return mockStaticAnimatedStyle?initial:({get transform(){return fn().transform;},get height(){return fn().height;}});},
     useAnimatedScrollHandler:(handlers:any)=>Object.assign((event:any)=>handlers.onScroll(event.nativeEvent||event),{handlers}),
     withTiming:(...args:unknown[])=>mockPullTiming(...args),withSpring:(...args:unknown[])=>mockPullSpring(...args),
     Easing:{out:(fn:unknown)=>fn,cubic:(value:number)=>value},
@@ -38,6 +39,7 @@ jest.mock('../src/features/help/helpDiagnostics',()=>({helpDevActions:()=>()=>{}
 jest.mock('../src/features/help/components/HelpPhotoCamera',()=>({HelpPhotoCamera:'HelpPhotoCamera'}));
 jest.mock('../src/features/help/components/HelpPhotoPreview',()=>({HelpPhotoPreview:'HelpPhotoPreview'}));
 jest.mock('../src/features/help/components/HelpNativeInput',()=>({hasNativeHelpInput:false,HelpNativeInput:'HelpNativeInput'}));
+import {HelpPhotoPortalProvider} from '../src/features/help/components/HelpPhotoPortal';
 import {HelpPhotoPicker,helpPhotoSheetMaximumHeight} from '../src/features/help/components/HelpPhotoPicker';
 
 test('the attachment tray has no text input and returns to the composer without losing selection',async()=>{
@@ -75,6 +77,7 @@ const camera=()=>screen!.root.findByType('HelpPhotoCamera' as any);
 const onFiles=()=>props.onFiles as jest.Mock;
 
 beforeEach(()=>{
+  mockStaticAnimatedStyle=false;
   jest.clearAllMocks();
   mockPullTiming.mockImplementation((value,_options,callback)=>{callback?.(true);return value;});
   mockPullSpring.mockImplementation((value,_options,callback)=>{callback?.(true);return value;});
@@ -296,4 +299,12 @@ test('permission completion restores the panel even when Android emits no AppSta
   expect(panel()).toBe(0);
   await act(async()=>screen!.root.findByType('HelpPhotoCamera' as any).props.onPermissionSettled());
   expect(panel()).toBeGreaterThan(0);expect(props.onClose).not.toHaveBeenCalled();
+});
+
+
+test('late portal mount gets the current animated height instead of a cached zero initial style',async()=>{
+  mockStaticAnimatedStyle=true;
+  await act(async()=>{screen=TestRenderer.create(React.createElement(HelpPhotoPortalProvider,{children:React.createElement(HelpPhotoPicker,props)}),{createNodeMock:()=>node});});
+  const panel=screen!.root.findAllByProps({testID:'help-photo-panel'})[0];
+  expect(panel.props.style[1].height).toBeGreaterThan(0);
 });

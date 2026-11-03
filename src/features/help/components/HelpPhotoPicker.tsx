@@ -4,7 +4,7 @@ import {Image} from 'expo-image';
 import {Ionicons} from '@expo/vector-icons';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {Gesture, GestureDetector, GestureHandlerRootView} from 'react-native-gesture-handler';
-import Reanimated, {cancelAnimation, Easing as MotionEasing, runOnJS, useAnimatedScrollHandler, useAnimatedStyle, useDerivedValue, useSharedValue, withSpring, withTiming} from 'react-native-reanimated';
+import Reanimated, {cancelAnimation, Easing as MotionEasing, runOnJS, useAnimatedScrollHandler, useAnimatedStyle, useDerivedValue, useSharedValue, withSpring, withTiming, type SharedValue} from 'react-native-reanimated';
 import {HelpBlurSurface} from './HelpPrimitives';
 import {useHelpReducedMotion, useHelpTheme} from '../helpTheme';
 import {discardHelpPreparedPhoto, getHelpPhotoPermission, getHelpPhotoPreviewUri, loadHelpPhotoPage, prepareHelpPhoto, presentHelpPhotoPermissions, type HelpLibraryPhoto, type HelpPhotoPermission} from '../helpPhotoLibrary';
@@ -43,7 +43,6 @@ export function HelpPhotoPicker(props:Props) {
   const [viewport,setViewport]=useState<HelpPhotoRect>();
   const height=useSharedValue(0),measuredHeight=useSharedValue(0),dragStart=useSharedValue(0),resizing=useRef(false);
   const portalId=useId(),portalFrame=useHelpPhotoPortalFrame();
-  const panelStyle=useAnimatedStyle(()=>({height:height.value}));
   const closedByPull=useRef(false);
   const pullY=useSharedValue(0),gridScrollY=useSharedValue(0),gridMomentum=useSharedValue(false);
   const pullState=useSharedValue(0),touchX=useSharedValue(0),touchY=useSharedValue(0),pullAllowed=useSharedValue(false),pullHeight=useSharedValue(0),nativeCameraVisible=useSharedValue(true);
@@ -242,7 +241,7 @@ export function HelpPhotoPicker(props:Props) {
   return <HelpPhotoPortal id={portalId}><View testID="help-photo-overlay" pointerEvents={props.open?'box-none':'none'} style={{position:'absolute',top:0,left:0,right:0,bottom:0}}>
     <View testID="help-photo-navigation-blur" pointerEvents="none" style={{position:'absolute',bottom:0,left:0,right:0,height:insets.bottom+8}}><HelpBlurSurface target={props.blurTarget}/></View>
     <Pressable accessibilityLabel="Закрыть панель вложений" onPress={props.onClose} style={{position:'absolute',top:0,left:0,right:0,bottom:0}}/>
-    <Reanimated.View ref={(node:View|null)=>helpDevRef('photos.panel',node as unknown as View)} testID="help-photo-panel" onLayout={event=>setWidth(event.nativeEvent.layout.width)} style={[{position:'absolute',bottom:overlayBottom,left:8,right:8,overflow:'hidden'},panelStyle]}>
+    <HelpPhotoPanel height={height} bottom={overlayBottom} onWidth={setWidth}>
       <GestureHandlerRootView style={{flex:1}}>
       <Reanimated.View testID="help-photo-pull-surface" style={[{flex:1,borderRadius:18,overflow:'hidden',backgroundColor:c.panel},pullStyle]}>
       <GestureDetector gesture={resizeGesture}><View testID="help-photo-panel-handle" style={{height:48,alignItems:'center',justifyContent:'center'}}>
@@ -268,9 +267,19 @@ export function HelpPhotoPicker(props:Props) {
       </View>
       </Reanimated.View>
       </GestureHandlerRootView>
-    </Reanimated.View>
+    </HelpPhotoPanel>
     {preview?<HelpPhotoPreview captionEditable={false} photos={preview.photos} index={preview.index} origin={preview.origin} selectedIds={selectedIds} caption={props.caption} onCaption={props.onCaption} onToggle={photo=>void select(photo)} onSend={photo=>send(photo)} onClose={()=>setPreview(null)} busy={blocked} error={error} sendDisabled={failed} limitReached={selection.length+props.existingCount>=10}/>:null}
   </View></HelpPhotoPortal>;
+}
+
+/** The portal mounts this later than the picker. Bind its animated style here,
+ * so Reanimated's initial native style reads the current height, not the zero
+ * captured before permission dialogs and before the portal view existed. */
+function HelpPhotoPanel({height,bottom,onWidth,children}:{height:SharedValue<number>;bottom:number;onWidth:(width:number)=>void;children:React.ReactNode}) {
+  const panelStyle=useAnimatedStyle(()=>({height:height.value}),[height]);
+  return <Reanimated.View ref={(node:View|null)=>helpDevRef('photos.panel',node as unknown as View)} testID="help-photo-panel"
+    onLayout={event=>onWidth(event.nativeEvent.layout.width)}
+    style={[{position:'absolute',bottom,left:8,right:8,overflow:'hidden'},panelStyle]}>{children}</Reanimated.View>;
 }
 
 function PhotoTile({photo,size,number,pending,disabled,onSelect,onPreview,index}:{photo:HelpLibraryPhoto;size:number;number:number;pending:boolean;disabled:boolean;onSelect:()=>void;onPreview:(origin:HelpPhotoRect)=>void;index:number}) {
