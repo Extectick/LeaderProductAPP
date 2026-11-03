@@ -419,6 +419,8 @@ export function OtaUpdateStatusProvider({
     [checkBinaryUpdateBeforeOta, phase, updatesEnabled]
   );
 
+  const requestCheckRef = React.useRef(requestCheck);
+  requestCheckRef.current = requestCheck;
   React.useEffect(() => {
     if (!updatesEnabled) return undefined;
 
@@ -427,18 +429,18 @@ export function OtaUpdateStatusProvider({
       if (!mountedRef.current || !isActive()) return;
       const now = Date.now();
       if (source !== 'initial' && now - lastCheckAtRef.current < ACTIVE_CHECK_INTERVAL_MS) return;
-      void requestCheck(source);
+      void requestCheckRef.current(source);
     };
 
+    let activeInterval: ReturnType<typeof setInterval> | undefined;
     const initialTimer = setTimeout(() => {
       runActiveCheck('initial');
+      // Start the cadence after the initial check. Phase transitions must not
+      // rearm the 30-second startup timer or replace the resume subscription.
+      activeInterval = setInterval(() => runActiveCheck('active'), ACTIVE_CHECK_INTERVAL_MS);
+      (activeInterval as any)?.unref?.();
     }, INITIAL_ACTIVE_CHECK_DELAY_MS);
     (initialTimer as any)?.unref?.();
-
-    const activeInterval = setInterval(() => {
-      runActiveCheck('active');
-    }, ACTIVE_CHECK_INTERVAL_MS);
-    (activeInterval as any)?.unref?.();
 
     const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
       const now = Date.now();
@@ -452,15 +454,15 @@ export function OtaUpdateStatusProvider({
       if (inactiveFor < RESUME_BACKGROUND_MIN_MS && checkAge < RESUME_CHECK_INTERVAL_MS) return;
       if (checkAge < RESUME_CHECK_INTERVAL_MS) return;
 
-      void requestCheck('resume');
+      void requestCheckRef.current('resume');
     });
 
     return () => {
       clearTimeout(initialTimer);
-      clearInterval(activeInterval);
+      if (activeInterval) clearInterval(activeInterval);
       subscription.remove();
     };
-  }, [requestCheck, updatesEnabled]);
+  }, [updatesEnabled]);
 
   const reloadUpdate = React.useCallback(async () => {
     if (!updatesEnabled) return;

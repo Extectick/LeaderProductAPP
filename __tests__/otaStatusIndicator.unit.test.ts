@@ -169,6 +169,26 @@ describe('OTA status indicator', () => {
     resetMocks();
   });
 
+  it('keeps automatic checks fifteen minutes apart after an idle result', async () => {
+    jest.useFakeTimers();
+    let complete!: (result: {isAvailable:boolean}) => void;
+    mockCheckForUpdateAsync.mockResolvedValue({ isAvailable: false }).mockImplementationOnce(() => new Promise(resolve => { complete=resolve; }));
+    let renderer!: TestRenderer.ReactTestRenderer;
+    try {
+      await act(async () => { renderer = TestRenderer.create(React.createElement(OtaUpdateStatusProvider, { enabled: true })); });
+      await act(async () => { await jest.advanceTimersByTimeAsync(30_000); });
+      expect(mockCheckForUpdateAsync).toHaveBeenCalledTimes(1);
+      await act(async () => { complete({isAvailable:false}); });
+      await act(async () => { await jest.advanceTimersByTimeAsync(60_000); });
+      expect(mockCheckForUpdateAsync).toHaveBeenCalledTimes(1);
+      await act(async () => { await jest.advanceTimersByTimeAsync(14 * 60_000); });
+      expect(mockCheckForUpdateAsync).toHaveBeenCalledTimes(2);
+    } finally {
+      if (renderer) await act(async () => renderer.unmount());
+      jest.useRealTimers();
+    }
+  });
+
   it('downloads an OTA update and marks it ready without automatic reload', async () => {
     mockCheckForUpdateAsync.mockResolvedValue({ isAvailable: true, isRollBackToEmbedded: false });
     mockFetchUpdateAsync.mockResolvedValue({ isNew: true, isRollBackToEmbedded: false });
