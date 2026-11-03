@@ -26,6 +26,7 @@ export type HelpTimelineHandle = {
   scrollToEnd: (params?: {animated?: boolean}) => void;
 };
 type Props = {
+  obscuredBottom?:{current:number};
   pendingMessages?:readonly HelpPending[]; renderPending?:(item:HelpPending)=>React.ReactElement;
   messages: HelpMessage[]; nativeID: string; headerHeight: number; dockHeight: number;
   navigationTarget?: HelpNavigationTarget | null; firstUnreadSequence?: number | null;
@@ -57,6 +58,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   const localImageCache=useMemo(() => createHelpImageCache(), []);
   const imageCache=parentImageCache??localImageCache;
   const list = useRef<FlashListRef<HelpTimelineRow>>(null), live = useRef(props); live.current = props;
+  const currentBottomInset=useCallback(()=>live.current.obscuredBottom?.current??live.current.dockHeight,[]);
   const rows = useMemo(() => helpTimelineRows(props.messages, props.firstUnreadSequence,props.pendingMessages), [props.messages, props.firstUnreadSequence,props.pendingMessages]);
   const rowsRef = useRef(rows); rowsRef.current = rows;
   const hasImages = useMemo(() => props.messages.some(message => message.attachments?.some(attachment => attachment.kind==='IMAGE') || message.replyTo?.attachments?.some(attachment => attachment.kind==='IMAGE')), [props.messages]);
@@ -157,7 +159,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     }
     return candidates;
   }, []);
-  const visible = useCallback((includeDecor=false) => helpVisibleRows(viewportRows(includeDecor), live.current.headerHeight, geometry.current.height - live.current.dockHeight), [viewportRows]);
+  const visible = useCallback((includeDecor=false) => helpVisibleRows(viewportRows(includeDecor), live.current.headerHeight, geometry.current.height - currentBottomInset()), [viewportRows]);
   const save = useCallback((leaving=false) => {
     if (lastAnchor.current && readyRef.current && !inNavigation.current && (leaving || (!dragging.current && !momentum.current && Date.now()>=webIntent.current))) {
       // Leaving during a fling must persist its fresh anchor, but trimming the
@@ -175,7 +177,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     const {content,offset,height}=geometry.current;
     // The 64dp affordance threshold must never own native scrolling. Only an
     // actual, settled bottom (or an explicit Latest action) can reacquire it.
-    const atEnd=!live.current.hasNewer && content+(hasNativeChatLayout?live.current.dockHeight+12:0)-offset-height<=2;
+    const atEnd=!live.current.hasNewer && content+(hasNativeChatLayout?currentBottomInset()+12:0)-offset-height<=2;
     // Content growth, AI replacement and composer collapse are not user intent
     // to leave the tail. Only a completed gesture may release/reacquire follow.
     if(userWasScrolling) setFollow(atEnd);
@@ -194,7 +196,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
       offset:first.top - live.current.headerHeight, atLatest:followingRef.current && !live.current.hasNewer};
     const currentDay=helpDayKey(first.row.message.createdAt);
     const capsuleBottom=Math.max(0,live.current.headerHeight-16);
-    const visibleBottom=geometry.current.height-live.current.dockHeight;
+    const visibleBottom=geometry.current.height-currentBottomInset();
     // Read receipts need at least 32 visible pixels. Date pills are only 24 high,
     // centered inside a 44px touch row, so inspect their actual visual bounds.
     // Keep one date until the inline pill fully passes behind the header.
@@ -279,7 +281,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     const previous=first>=0?currentRows.slice(0,first).filter(row=>row.kind==='message').at(-1):undefined;
     const boundaryKnown=first>=0&&(currentRows[first].message.sequence===1||Boolean(previous&&helpDayKey(previous.message.createdAt)!==day));
     const layout=boundaryKnown?list.current?.getLayout(first):undefined;
-    if(layout&&helpDateJumpMode({targetTop:layout.y+(list.current?.getFirstItemOffset()??0)-(list.current?.getAbsoluteLastScrollOffset()??geometry.current.offset),targetHeight:layout.height,viewportTop:live.current.headerHeight,viewportBottom:geometry.current.height-live.current.dockHeight})==='visible'){
+    if(layout&&helpDateJumpMode({targetTop:layout.y+(list.current?.getFirstItemOffset()??0)-(list.current?.getAbsoluteLastScrollOffset()??geometry.current.offset),targetHeight:layout.height,viewportTop:live.current.headerHeight,viewportBottom:geometry.current.height-currentBottomInset()})==='visible'){
       // No save, snapshot, service lookup or follow change for the already
       // visible beginning of this day: even an immediately cancelled copy flashes.
       if(inNavigation.current||outgoingRef.current){++navigationGeneration.current;inNavigation.current=false;setNavigating(false);stopIdleSave();cancelJump();}
@@ -354,10 +356,10 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
         const layout=readLayout(i);visibleLayouts.push(layout?`${i}:${layout.y}:${layout.height}`:'pending');
         if(!hasMeasurement(layout))measured=false;
       }
-      const {height,content}=geometry.current,inset=hasNativeChatLayout?live.current.dockHeight+12:0;
+      const {height,content}=geometry.current,inset=hasNativeChatLayout?currentBottomInset()+12:0;
       const end=Math.max(0,content+inset-height);
       const offset=target.kind==='latest'?end:Math.min(end,Math.max(0,(item?.y??0)+view.getFirstItemOffset()-live.current.headerHeight-(target.offset??0)));
-      const signature=JSON.stringify([offset,item?.y,item?.height,height,content,live.current.headerHeight,live.current.dockHeight,visibleLayouts]);
+      const signature=JSON.stringify([offset,item?.y,item?.height,height,content,live.current.headerHeight,currentBottomInset(),visibleLayouts]);
       if(measured&&height>0&&content>0&&pending.aligned!==signature){
         if(target.kind==='latest')scrollEnd(false);
         else view.scrollToOffset({offset,animated:false,skipFirstItemOffset:true});
@@ -482,7 +484,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
       setFollow(false);
       if(target.kind==='message' && target.messageId)live.current.onHighlight(target.messageId);
       const finish=()=>{if(!mounted.current || generation!==navigationGeneration.current)return;cancelJump();inNavigation.current=false;setNavigating(false);updateMediaRange(true);observe();};
-      if (!opening && (target.kind === 'message' || target.kind === 'date') && (live.current.hasNewer || geometry.current.content+(hasNativeChatLayout?live.current.dockHeight+12:0)-geometry.current.offset-geometry.current.height>40)) {
+      if (!opening && (target.kind === 'message' || target.kind === 'date') && (live.current.hasNewer || geometry.current.content+(hasNativeChatLayout?currentBottomInset()+12:0)-geometry.current.offset-geometry.current.height>40)) {
         latestAffordance.current={visible:true,up:100,down:0};setLatestAvailable(true);
       }
       if(outgoingRef.current && !reduced) {
@@ -509,7 +511,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     if(!readyRef.current || inNavigation.current)return;
     const policy=updateHelpLatestAffordance(latestAffordance.current,{
       delta:e.contentOffset.y-previous.offset,
-      gap:e.contentSize.height+(hasNativeChatLayout?live.current.dockHeight+12:0)-e.contentOffset.y-e.layoutMeasurement.height,
+      gap:e.contentSize.height+(hasNativeChatLayout?currentBottomInset()+12:0)-e.contentOffset.y-e.layoutMeasurement.height,
       hasNewer:Boolean(live.current.hasNewer),
       manual:userScrollSession.current && Math.abs(e.contentSize.height-previous.content)<1 && Math.abs(e.layoutMeasurement.height-previous.height)<1,
     });
@@ -523,7 +525,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     if(e.contentOffset.y < live.current.headerHeight+preloadDistance && live.current.hasOlder && !live.current.loadingOlder && !olderPending.current){
       olderPending.current=true;void live.current.loadOlder().catch(()=>live.current.onError('Не удалось загрузить историю')).finally(()=>{olderPending.current=false;});
     }
-    if(e.contentSize.height-e.contentOffset.y-e.layoutMeasurement.height < live.current.dockHeight+preloadDistance && live.current.hasNewer && !live.current.loadingNewer && !newerPending.current){
+    if(e.contentSize.height-e.contentOffset.y-e.layoutMeasurement.height < currentBottomInset()+preloadDistance && live.current.hasNewer && !live.current.loadingNewer && !newerPending.current){
       newerPending.current=true;void live.current.loadNewer().catch(()=>live.current.onError('Не удалось загрузить новые сообщения')).finally(()=>{newerPending.current=false;});
     }
   },[observe,setFollow,updateMediaRange,settleOpening]);

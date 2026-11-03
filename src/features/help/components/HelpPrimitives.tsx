@@ -27,7 +27,7 @@ export function HelpBlurSurface({target,edge='top'}:{target?:React.RefObject<Vie
   const enabled=useContext(HelpVisualEffectsContext);
   return enabled ? <AppEdgeBlur target={target} edge={edge} intensity={14} featherSize={104} dark={c.dark} backgroundColor={c.background} testID="help-blur-surface"/> : null;
 }
-export function HelpDock({ children, onHeight, target, stableKeyboardLayout=false }: { children: React.ReactNode; onHeight?: (height: number) => void; target?: React.RefObject<View | null>; stableKeyboardLayout?:boolean }) {
+export function HelpDock({ children, onHeight, onHeightFrame, target, stableKeyboardLayout=false }: { children: React.ReactNode; onHeight?: (height: number) => void; onHeightFrame?:(height:number)=>void; target?: React.RefObject<View | null>; stableKeyboardLayout?:boolean }) {
   const c = useHelpTheme(); const insets = useSafeAreaInsets();
   const {width}=useWindowDimensions();
   // On Android, safe-area can briefly report navigation-bar space while the
@@ -39,6 +39,7 @@ export function HelpDock({ children, onHeight, target, stableKeyboardLayout=fals
   heightCallback.current=onHeight;
   useEffect(()=>()=>{if(heightTimer.current)clearTimeout(heightTimer.current);},[]);
   const reportHeight=(height:number)=>{
+    if(height>0)onHeightFrame?.(height);
     if(height<=0||!heightCallback.current)return;
     if(!stableKeyboardLayout||measuredHeight.current===0){measuredHeight.current=height;heightCallback.current(height);return;}
     measuredHeight.current=height;

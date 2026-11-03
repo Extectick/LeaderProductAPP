@@ -132,6 +132,17 @@ describe('sticky date geometry and navigation integration',()=>{
     expect(screen!.root.findAllByType('TimelineRow' as any).at(-1)).toBe(holder);
   });
   async function observe(){await act(async()=>mockFlashProps.onScroll({nativeEvent:{contentOffset:{x:0,y:0},layoutMeasurement:{width:390,height:600},contentSize:{width:390,height:1000}}}));}
+  test('read visibility follows dock frame measurements without rerendering the timeline',async()=>{
+    const obscuredBottom={current:60};props={...props,obscuredBottom};
+    await render();
+    // A growing composer covers the second message while the read debounce is pending.
+    obscuredBottom.current=250;
+    await act(async()=>jest.advanceTimersByTimeAsync(700));
+    expect(props.onRead).toHaveBeenLastCalledWith(1);
+    obscuredBottom.current=60;await observe();
+    await act(async()=>jest.advanceTimersByTimeAsync(700));
+    expect(props.onRead).toHaveBeenLastCalledWith(2);
+  });
   test('only a live appended tail is eligible for arrival, not initial history or edits',async()=>{
     await render();
     expect(screen!.root.findAllByType(HelpMessageArrival).every(row=>!row.props.animate)).toBe(true);

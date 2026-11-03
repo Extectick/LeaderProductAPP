@@ -41,12 +41,13 @@ test('native keyboard dock ignores transient navigation insets without keyboard 
 });
 
 test('native dock coalesces composer animation heights without delaying the initial measurement',async()=>{
-  jest.useFakeTimers();const changed=jest.fn();let tree!:TestRenderer.ReactTestRenderer;
+  jest.useFakeTimers();const changed=jest.fn(),frame=jest.fn();let tree!:TestRenderer.ReactTestRenderer;
   try{
-    await act(async()=>{tree=TestRenderer.create(React.createElement(HelpDock,{stableKeyboardLayout:true,onHeight:changed,children:null}));});
+    await act(async()=>{tree=TestRenderer.create(React.createElement(HelpDock,{stableKeyboardLayout:true,onHeight:changed,onHeightFrame:frame,children:null}));});
     const layout=(height:number)=>tree.root.findByProps({testID:'help-dock-backdrop'}).parent!.props.onLayout({nativeEvent:{layout:{height}}});
     act(()=>layout(64));expect(changed).toHaveBeenLastCalledWith(64);
     act(()=>{layout(80);layout(100);layout(64);});expect(changed).toHaveBeenCalledTimes(1);
+    expect(frame.mock.calls.map(call=>call[0])).toEqual([64,80,100,64]);
     await act(async()=>jest.advanceTimersByTime(60));
     expect(changed).toHaveBeenCalledTimes(2);expect(changed).toHaveBeenLastCalledWith(64);
     act(()=>layout(90));await act(async()=>tree.unmount());
