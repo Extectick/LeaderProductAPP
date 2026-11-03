@@ -39,6 +39,7 @@ test('chat entry waits for a ready viewport and completes on the shared scene cl
   const ref=React.createRef<HelpChatEntryHandle>(),child=jest.fn(()=>null);
   const onEntered=jest.fn(),props={ref,ready:false,onEntered,onLayout:jest.fn(),backgroundColor:'#151b22',children:React.createElement(child)};
   await act(async () => {view=TestRenderer.create(React.createElement(HelpChatEntry,props));});
+  await act(async()=>view.root.findAllByProps({testID:'help-chat-viewport'})[0].props.onLayout({nativeEvent:{layout:{width:390,height:800}}}));
   expect(StyleSheet.flatten(view.root.findAllByProps({testID:'help-chat-viewport'})[0].props.style).opacity).toBe(0);
   expect(onEntered).not.toHaveBeenCalled();
   await act(async () => ref.current!.reveal());
@@ -52,6 +53,7 @@ test('chat entry waits for a ready viewport and completes on the shared scene cl
 test('unmounted entry ignores a late native animation completion',async()=>{
   let view!:TestRenderer.ReactTestRenderer;const ref=React.createRef<HelpChatEntryHandle>(),onEntered=jest.fn();
   await act(async()=>{view=TestRenderer.create(React.createElement(HelpChatEntry,{ref,ready:false,onEntered,onLayout:jest.fn(),backgroundColor:'#151b22',children:null}));});
+  await act(async()=>view.root.findAllByProps({testID:'help-chat-viewport'})[0].props.onLayout({nativeEvent:{layout:{width:390,height:800}}}));
   await act(async()=>ref.current!.reveal());const callback=mockSceneJobs.at(-1)!.done;
   await act(async()=>view.unmount());await act(async()=>callback?.(true));
   expect(onEntered).not.toHaveBeenCalled();

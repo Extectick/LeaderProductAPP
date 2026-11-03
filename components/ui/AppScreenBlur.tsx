@@ -40,27 +40,39 @@ export function AppEdgeBlur({ target, edge = 'top', backgroundColor, dark, testI
 }) {
   const { theme } = useTheme();
   const appBackground = useThemeColor({}, 'background');
-  const [laidOut, setLaidOut] = useState(false);
+  const focused = useIsFocused();
+  const [surfaceHeight, setSurfaceHeight] = useState(0);
   const [boundTarget, setBoundTarget] = useState<Target>();
   useLayoutEffect(() => {
     if (Platform.OS !== 'android') return;
     let alive = true, frame: number | undefined;
     const bind = () => {
       if (!alive) return;
-      const node = target?.current ?? null;
+      const node = focused ? target?.current ?? null : null;
       setBoundTarget(previous => previous?.current === node ? previous : node ? { current: node } : undefined);
-      if (target && !node) frame = requestAnimationFrame(bind);
+      if (focused && target && !node) frame = requestAnimationFrame(bind);
     };
     bind();
     return () => { alive = false; if (frame !== undefined) cancelAnimationFrame(frame); };
   });
-  const ready = Platform.OS !== 'android' || laidOut && Boolean(boundTarget?.current);
-  const feather = featherSize ?? (edge === 'top' ? APP_EDGE_BLUR.topFeather : APP_EDGE_BLUR.bottomFeather);
+  // Native-stack retains the outgoing scene during its transition. Its live
+  // blur must not keep sampling the incoming page (or its own faded chrome).
+  // Also never draw one commit with a previously bound Android capture target.
+  const ready = Platform.OS !== 'android' || surfaceHeight > 0 && Boolean(target?.current) && boundTarget?.current === target?.current;
+  const requestedFeather = featherSize ?? (edge === 'top' ? APP_EDGE_BLUR.topFeather : APP_EDGE_BLUR.bottomFeather);
+  // Short docks still reach full blur at the screen edge. A fixed 104dp
+  // gradient must not extend past a 60dp surface and get clipped halfway.
+  const feather = Math.min(requestedFeather, surfaceHeight || requestedFeather);
+  const measureSurface = (event: {nativeEvent: {layout: {width:number;height:number}}}) => {
+    const {width,height}=event.nativeEvent.layout;
+    setSurfaceHeight(previous=>width>0&&height>0?Math.abs(previous-height)>.5?height:previous:0);
+  };
   const mask = `linear-gradient(${edge === 'top' ? 'to bottom' : 'to top'}, transparent 0, #00000018 ${feather * .25}px, #00000080 ${feather * .6}px, #000 ${feather}px)`;
-  if (Platform.OS === 'web') return <View testID={testID} pointerEvents="none" style={[StyleSheet.absoluteFill, {
+  if (!focused) return null;
+  if (Platform.OS === 'web') return <View testID={testID} pointerEvents="none" onLayout={measureSurface} style={[StyleSheet.absoluteFill, {
     backdropFilter: `blur(${APP_EDGE_BLUR.webRadius}px)`, WebkitBackdropFilter: `blur(${APP_EDGE_BLUR.webRadius}px)`, maskImage: mask, WebkitMaskImage: mask,
   } as any]}/>;
-  return <MaskedView testID={testID} pointerEvents="none" onLayout={event => setLaidOut(event.nativeEvent.layout.width > 0 && event.nativeEvent.layout.height > 0)} style={StyleSheet.absoluteFill}
+  return <MaskedView testID={testID} pointerEvents="none" onLayout={measureSurface} style={StyleSheet.absoluteFill}
     maskElement={<View style={{ flex: 1, flexDirection: edge === 'top' ? 'column' : 'column-reverse' }}>
       <LinearGradient colors={edge === 'top' ? ['#00000000', '#00000018', '#00000080', '#000000'] : ['#000000', '#00000080', '#00000018', '#00000000']}
         locations={edge === 'top' ? [0, .25, .6, 1] : [0, .4, .75, 1]} style={{ height: feather }}/><View style={{ flex: 1, backgroundColor: '#000' }}/>

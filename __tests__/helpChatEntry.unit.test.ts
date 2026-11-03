@@ -57,7 +57,15 @@ describe('Help bidirectional scene motion',()=>{
   const entered=jest.fn();
   beforeEach(()=>{mockReduced=false;mockAnimations.length=0;entered.mockClear();ref=React.createRef();});
   afterEach(async()=>{if(tree)await act(async()=>tree.unmount());});
-  async function render(ready=true,progress={value:1} as SharedValue<number>){await act(async()=>{tree=TestRenderer.create(React.createElement(HelpChatEntry,{ref,ready,progress,onLayout:jest.fn(),onEntered:entered,backgroundColor:'#fff',children:null}));});return progress;}
+  const layout=async(width=390)=>act(async()=>tree.root.findByProps({testID:'help-chat-viewport'}).props.onLayout({nativeEvent:{layout:{x:0,y:0,width,height:800}}}));
+  async function render(ready=true,progress={value:1} as SharedValue<number>,measured=true){await act(async()=>{tree=TestRenderer.create(React.createElement(HelpChatEntry,{ref,ready,progress,onLayout:jest.fn(),onEntered:entered,backgroundColor:'#fff',children:null}));});if(measured)await layout();return progress;}
+  test('a ready cached screen stays hidden until its actual native width is measured',async()=>{
+    await render(true,undefined,false);
+    const viewport=()=>tree.root.findByProps({testID:'help-chat-viewport'});
+    expect(viewport().props.style[1].opacity).toBe(0);expect(mockAnimations).toHaveLength(0);
+    await layout(390);
+    expect(viewport().props.style[1].transform).toEqual([{translateX:390}]);expect(mockAnimations.map(x=>x.target)).toEqual([1]);
+  });
   test('prepares unmeasured history inside the viewport while hidden',async()=>{
     await render(false);
     const style=tree.root.findByProps({testID:'help-chat-viewport'}).props.style[1];

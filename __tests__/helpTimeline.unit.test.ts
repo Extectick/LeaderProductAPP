@@ -6,6 +6,12 @@ import type { HelpMessage } from '../src/features/help/helpApi';
 let mockFlashProps:any;
 let mockReducedMotion=true;
 let mockNativeChatLayout=false;
+const mockTailTiming=jest.fn((value:number,_config:any)=>value);
+const mockTailCancel=jest.fn();
+jest.mock('react-native-reanimated',()=>({
+  __esModule:true,default:{View:require('react-native').View},runOnUI:(fn:any)=>fn,useSharedValue:(value:number)=>require('react').useRef({value}).current,
+  useAnimatedStyle:(fn:()=>any)=>fn(),withTiming:(value:number,config:any)=>mockTailTiming(value,config),cancelAnimation:(value:any)=>mockTailCancel(value),Easing:{out:(fn:any)=>fn,cubic:(x:number)=>x},
+}));
 let mockLayouts:{y:number;height:number}[]=[];
 const mockListApi:any={};
 jest.mock('@shopify/flash-list',()=>{
@@ -117,6 +123,56 @@ describe('sticky date geometry and navigation integration',()=>{
     mockListApi.getChildContainerDimensions=()=>({width:390,height:464});
     await render();
     expect(floating()).toBeUndefined();
+  });
+  test('appending a short native history animates its older rows with the arriving row',async()=>{
+    mockReducedMotion=false;mockNativeChatLayout=true;props={...props,bottomAligned:true};
+    let height=300;mockListApi.getChildContainerDimensions=()=>({width:390,height});
+    await render();mockTailTiming.mockClear();
+    height=360;props={...props,messages:[...props.messages,message(3,nextDate)]};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    expect(mockTailTiming).toHaveBeenCalledWith(0,expect.objectContaining({duration:220}));
+    expect(require('../src/features/help/helpDiagnostics').helpDevEvent).toHaveBeenCalledWith('timeline.tailShift',expect.objectContaining({delta:60,native:true}));
+    mockTailTiming.mockClear();height=420;
+    props={...props,messages:[message(0,'2026-10-26T12:00:00Z'),...props.messages]};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    expect(mockTailTiming).not.toHaveBeenCalled();
+  });
+  test('unmeasured and temporarily unavailable FlashList geometry cannot break a layout commit',async()=>{
+    mockReducedMotion=false;await render();
+    const window=jest.fn(()=>{throw new Error('LayoutManager is not initialized');});
+    mockListApi.getWindowSize=window;mockListApi.getLayout=()=>undefined;
+    await act(async()=>mockFlashProps.onCommitLayoutEffect());
+    expect(window).not.toHaveBeenCalled();
+    mockListApi.getLayout=(index:number)=>mockLayouts[index];
+    await act(async()=>mockFlashProps.onCommitLayoutEffect());
+    expect(window).toHaveBeenCalledTimes(1);
+  });
+  test('inactive updates retain the geometry baseline without animating on return',async()=>{
+    mockReducedMotion=false;mockNativeChatLayout=true;props={...props,bottomAligned:true};
+    let height=300;mockListApi.getChildContainerDimensions=()=>({width:390,height});
+    await render();mockTailTiming.mockClear();mockTailCancel.mockClear();
+    height=360;props={...props,active:false,messages:[...props.messages,message(3,nextDate)]};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    expect(mockTailTiming).not.toHaveBeenCalled();expect(mockTailCancel).toHaveBeenCalled();
+    props={...props,active:true};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    height=400;props={...props,messages:[...props.messages,message(4,nextDate)]};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    expect(require('../src/features/help/helpDiagnostics').helpDevEvent).toHaveBeenLastCalledWith('timeline.tailShift',expect.objectContaining({delta:40,native:true}));
+  });
+  test('manual drag and explicit positioning cancel presentation motion',async()=>{
+    mockReducedMotion=false;await render();mockTailCancel.mockClear();
+    await act(async()=>mockFlashProps.onScrollBeginDrag());
+    expect(mockTailCancel).toHaveBeenCalledTimes(1);
+    await act(async()=>ref.current!.scrollTo({y:200}));
+    expect(mockTailCancel).toHaveBeenCalledTimes(2);
+    await act(async()=>ref.current!.scrollToEnd());
+    expect(mockTailCancel).toHaveBeenCalledTimes(3);
+  });
+  test('dock-owned latest control receives state without mounting a second timeline control',async()=>{
+    const onLatestState=jest.fn();props={...props,onLatestState,unreadCount:3};await render();
+    expect(onLatestState).toHaveBeenLastCalledWith({visible:false,count:3,loading:false});
+    expect(screen!.root.findAllByType(require('../src/features/help/components/HelpTimelineIndicators').HelpJumpToLatest)).toHaveLength(0);
   });
   async function render(){
     await act(async()=>{screen=TestRenderer.create(React.createElement(HelpTimeline,{...props,ref}));});

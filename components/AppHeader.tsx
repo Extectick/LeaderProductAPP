@@ -287,7 +287,7 @@ export function AppHeader({
       onLayout={handleWrapLayout}
       style={[styles.wrap, tight && styles.wrapTight, (isDocument || isFlat) && styles.wrapDocument, { paddingTop: topPadding, paddingHorizontal: sidePadding }]}
     >
-      {isFlat ? <View pointerEvents="none" style={[StyleSheet.absoluteFill, { bottom: -APP_EDGE_BLUR.bottomFeather }]}><AppEdgeBlur target={screenBlurTarget} edge="bottom" backgroundColor={background} dark={isDark}/></View> : null}
+      {isFlat ? <View pointerEvents="none" style={StyleSheet.absoluteFill}><AppEdgeBlur target={screenBlurTarget} edge="bottom" backgroundColor={background} dark={isDark}/></View> : null}
       {animatedShell}
     </View>
   );

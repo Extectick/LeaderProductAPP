@@ -1,6 +1,7 @@
 import React from 'react';
 import TestRenderer,{act} from 'react-test-renderer';
 import {AccessibilityInfo,Animated,Keyboard,PanResponder,Platform,StyleSheet,type View} from 'react-native';
+jest.mock('expo-router/react-navigation',()=>({useIsFocused:()=>true}));
 jest.mock('react-native-gesture-handler',()=>{
  const make=()=>{const result:any={handlers:{}};for(const key of ['withTestId','enabled','maxPointers','activeOffsetY','failOffsetX'])result[key]=()=>result;for(const key of ['onStart','onUpdate','onEnd','onFinalize'])result[key]=(fn:any)=>{result.handlers[key]=fn;return result;};return result;};
  return {Gesture:{Pan:make},GestureDetector:'GestureDetector',GestureHandlerRootView:'GestureHandlerRootView'};
@@ -109,9 +110,9 @@ describe('Help approved prototype tokens and primitive geometry',()=>{
     expect(StyleSheet.flatten(typeof button.props.style==='function' ? button.props.style({pressed:false}) : button.props.style)).toMatchObject({width:40,height:40,borderRadius:20,backgroundColor:'#EAF2FF'});
     expect(button.props.accessibilityState.selected).toBe(true);
   });
-  test('dock keeps keyboard-aware padding and feather starts 8px above it',async()=>{
+  test('dock blur starts at the composer edge and extends through the safe area',async()=>{
     await act(async()=>{screen=TestRenderer.create(React.createElement(HelpDock,{children:null}));});
-    expect(StyleSheet.flatten(screen!.root.findByProps({testID:'help-dock-backdrop'}).props.style).top).toBe(-8);
+    expect(StyleSheet.flatten(screen!.root.findByProps({testID:'help-dock-backdrop'}).props.style).top).toBe(8);
     expect(StyleSheet.flatten(screen!.root.findByProps({testID:'help-dock-backdrop'}).parent!.props.style)).toMatchObject({paddingHorizontal:8,paddingTop:8,paddingBottom:42});
   });
   test('zero-height keyboard reports cannot remove the dock safe area during opening',async()=>{

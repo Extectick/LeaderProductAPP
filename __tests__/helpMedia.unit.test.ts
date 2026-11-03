@@ -56,7 +56,7 @@ describe('Help media geometry and lifecycle', () => {
   async function renderImage(proximity:Proximity='visible') { await act(async()=>{screen=TestRenderer.create(imageTree(proximity));}); }
   async function updateImage(proximity:Proximity='visible') { await act(async()=>screen!.update(imageTree(proximity))); }
   const originalImage = () => screen!.root.findByType('CachedImage' as any);
-  async function renderGallery() { props = { attachments: [file, { ...file, id: 'photo-2', name: 'Второй.jpg' }], initialIndex: 0, resolve: props.resolve, onClose: jest.fn(), onError: props.onError }; await act(async () => { screen = TestRenderer.create(React.createElement(HelpGallery, props)); }); }
+  async function renderGallery(extra:Record<string,unknown>={}) { props = { attachments: [file, { ...file, id: 'photo-2', name: 'Второй.jpg' }], initialIndex: 0, resolve: props.resolve, onClose: jest.fn(), onError: props.onError,...extra }; await act(async () => { screen = TestRenderer.create(React.createElement(HelpGallery, props)); });await act(async()=>byId('help-gallery-stage').props.onLayout({nativeEvent:{layout:{width:300,height:600,y:70}}})); }
   async function tick(time: number) { now = time; const callbacks = [...frames.values()]; frames.clear(); await act(async () => callbacks.forEach(cb => cb(time))); }
   test('compact audio shares one caption row with timestamp and adds no vertical padding', async () => {
     props.captionRight = React.createElement(Text, { testID: 'stamp' }, '12:34'); await renderAudio();
@@ -357,12 +357,102 @@ describe('Help media geometry and lifecycle', () => {
     expect(byId('help-gallery-footer').findAll(n => n.type === Text && n.props.children === 'Второй.jpg').length).toBe(1);
   });
   test('gesture termination restores image and never dismisses; reduced motion close calls once', async () => {
-    await renderGallery(); const stage = byId('help-gallery-stage');
-    act(() => stage.props.onPanResponderMove(null, { dy: 180 }));
+    await renderGallery(); const stage = byId('help-gallery-gesture');
+    act(() => {stage.props.onPanResponderGrant(null);stage.props.onPanResponderMove(null, { dx:0,dy:180 });});
     act(() => stage.props.onPanResponderTerminate()); expect(props.onClose).not.toHaveBeenCalled();
-    act(() => stage.props.onPanResponderRelease(null, { dy: 140, vy: 0 }));
+    act(() => {stage.props.onPanResponderGrant(null);stage.props.onPanResponderMove(null,{dx:0,dy:140});stage.props.onPanResponderRelease(null, { dx:0,dy:140,vy:0 });});
     act(() => byLabel('Закрыть изображение').props.onPress());
     expect(props.onClose).toHaveBeenCalledTimes(1);
+  });
+  const galleryTransform=(name:string)=>StyleSheet.flatten(byId('help-gallery-transition').props.style).transform.find((entry:any)=>name in entry)[name].__getValue();
+  const galleryCurrent=()=>screen!.root.findAll(n=>n.props.testID==='help-gallery-cell').find(node=>StyleSheet.flatten(node.props.style).left===0)!.findByType(HelpImage).props.attachment.id;
+  const galleryDrag=(dx:number,dy:number)=>{const surface=byId('help-gallery-gesture');surface.props.onPanResponderGrant(null);surface.props.onPanResponderMove(null,{dx,dy});return surface;};
+  test('gallery touch overlay owns native touch-down and follows a downward pull without fading the photo',async()=>{
+    await renderGallery();const surface=byId('help-gallery-gesture');
+    expect(surface.props).toMatchObject({collapsable:false,pointerEvents:'box-only'});expect(surface.props.onStartShouldSetPanResponder()).toBe(true);expect(surface.props.onPanResponderTerminationRequest()).toBe(false);
+    expect(byId('help-gallery-stage').props.onPanResponderMove).toBeUndefined();
+    await act(async()=>{surface.props.onPanResponderGrant(null);surface.props.onPanResponderMove(null,{dx:4,dy:1});surface.props.onPanResponderMove(null,{dx:2,dy:100});});
+    expect(galleryTransform('translateY')).toBe(100);expect(galleryTransform('scale')).toBeLessThan(1);
+    expect(StyleSheet.flatten(byId('help-gallery-transition').props.style).opacity.__getValue()).toBe(1);
+    expect(StyleSheet.flatten(byId('help-gallery-backdrop').props.style).opacity.__getValue()).toBeLessThan(1);expect(props.onClose).not.toHaveBeenCalled();
+    expect(StyleSheet.flatten(byId('help-gallery-transition').props.style).overflow).toBe('hidden');
+  });
+  test('gallery horizontal swipes page both directions and never dismiss a diagonal paging gesture',async()=>{
+    await renderGallery();
+    await act(async()=>{const surface=galleryDrag(-200,20);surface.props.onPanResponderRelease(null,{dx:-200,dy:120,vx:-1,vy:.5});});
+    expect(galleryCurrent()).toBe('photo-2');expect(props.onClose).not.toHaveBeenCalled();expect(galleryTransform('translateY')).toBe(0);
+    await act(async()=>{const surface=galleryDrag(200,2);surface.props.onPanResponderRelease(null,{dx:200,dy:2,vx:1,vy:0});});
+    expect(galleryCurrent()).toBe('photo-1');expect(props.onClose).not.toHaveBeenCalled();
+  });
+  test('gallery short pull springs back and boundary paging never wraps around',async()=>{
+    await renderGallery();
+    await act(async()=>{const surface=galleryDrag(3,35);surface.props.onPanResponderRelease(null,{dx:3,dy:35,vx:0,vy:0});});
+    expect(galleryTransform('translateY')).toBe(0);expect(galleryTransform('scale')).toBe(1);expect(props.onClose).not.toHaveBeenCalled();
+    await act(async()=>{const surface=galleryDrag(180,2);surface.props.onPanResponderRelease(null,{dx:180,dy:2,vx:1,vy:0});});
+    expect(galleryCurrent()).toBe('photo-1');expect(StyleSheet.flatten(byId('help-gallery-pager').props.style).transform[0].translateX.__getValue()).toBe(0);
+  });
+  test('gallery mounts only the selected image and its immediate neighbors',async()=>{
+    await renderGallery({attachments:Array.from({length:20},(_,i)=>({...file,id:`image-${i}`})),initialIndex:10});
+    expect(screen!.root.findAllByType(HelpImage)).toHaveLength(3);expect(galleryCurrent()).toBe('image-10');
+    await act(async()=>byLabel('Следующее изображение').props.onPress());expect(galleryCurrent()).toBe('image-11');
+    expect(screen!.root.findAllByType(HelpImage)).toHaveLength(3);
+  });
+  test('gallery pinch and zoomed panning take precedence over dismiss and paging',async()=>{
+    await renderGallery();const surface=byId('help-gallery-gesture');
+    const two=(distance:number)=>({nativeEvent:{touches:[{pageX:0,pageY:0},{pageX:distance,pageY:0}]}});
+    await act(async()=>{surface.props.onPanResponderGrant(two(20));surface.props.onPanResponderMove(two(50),{dx:0,dy:0});surface.props.onPanResponderRelease(two(50),{dx:0,dy:0,vx:0,vy:0});});
+    await act(async()=>{const current=galleryDrag(-200,180);current.props.onPanResponderRelease(null,{dx:-200,dy:180,vx:-1,vy:1});});
+    expect(galleryCurrent()).toBe('photo-1');expect(props.onClose).not.toHaveBeenCalled();expect(galleryTransform('translateY')).toBe(0);
+  });
+  test('gallery touch overlay supports double-tap zoom/reset without swallowing toolbar buttons',async()=>{
+    await renderGallery();const surface=byId('help-gallery-gesture'),event={nativeEvent:{touches:[{pageX:100,pageY:200}],changedTouches:[{pageX:100,pageY:200}]}},g={dx:0,dy:0,vx:0,vy:0};
+    const tap=()=>{surface.props.onPanResponderGrant(event);surface.props.onPanResponderRelease(event,g);};
+    const zoomScale=()=>screen!.root.findAll(n=>n.props.testID==='help-gallery-cell').find(node=>StyleSheet.flatten(node.props.style).left===0)!.props.style.transform[2].scale.__getValue();
+    await act(async()=>{tap();now=180;tap();});expect(zoomScale()).toBe(2.5);expect(props.onClose).not.toHaveBeenCalled();
+    await act(async()=>{now=500;tap();now=650;tap();});expect(zoomScale()).toBe(1);
+    await act(async()=>byLabel('Следующее изображение').props.onPress());expect(galleryCurrent()).toBe('photo-2');
+    await act(async()=>byLabel('Закрыть изображение').props.onPress());expect(props.onClose).toHaveBeenCalledTimes(1);
+  });
+  test('external page selection cancels stale paging completion and never reuses another photo origin',async()=>{
+    mockReduced=false;const jobs:{done?:(event:{finished:boolean})=>void}[]=[];
+    jest.spyOn(Animated,'timing').mockImplementation(()=>({start:(done?:any)=>jobs.push({done}),stop:jest.fn(),reset:jest.fn()} as any));
+    await renderGallery({attachments:[0,1,2].map(id=>({...file,id:`photo-${id}`})),origin:{x:40,y:400,width:100,height:100}});
+    await act(async()=>{const surface=galleryDrag(-180,2);surface.props.onPanResponderRelease(null,{dx:-180,dy:2,vx:-1,vy:0});});const old=jobs.at(-1)!.done;
+    props={...props,initialIndex:2};await act(async()=>screen!.update(React.createElement(HelpGallery,props)));
+    expect(galleryCurrent()).toBe('photo-2');expect(galleryTransform('translateY')).toBe(0);expect(galleryTransform('scale')).toBe(1);
+    await act(async()=>old?.({finished:true}));expect(galleryCurrent()).toBe('photo-2');
+  });
+  test('gallery page identity changes only after the native slide and its offset resets with the committed page',async()=>{
+    mockReduced=false;const jobs:{value:any;config:any;done?:(event:{finished:boolean})=>void}[]=[];
+    jest.spyOn(Animated,'timing').mockImplementation((value:any,config:any)=>({start:(done?:any)=>{jobs.push({value,config,done});},stop:jest.fn(),reset:jest.fn()} as any));
+    await renderGallery();
+    await act(async()=>{const surface=galleryDrag(-180,2);surface.props.onPanResponderRelease(null,{dx:-180,dy:2,vx:-1,vy:0});});
+    expect(galleryCurrent()).toBe('photo-1');expect(jobs.at(-1)!.config).toMatchObject({toValue:-300,duration:180,useNativeDriver:true});
+    await act(async()=>{const job=jobs.at(-1)!;job.value.setValue(job.config.toValue);job.done?.({finished:true});});
+    expect(galleryCurrent()).toBe('photo-2');expect(StyleSheet.flatten(byId('help-gallery-pager').props.style).transform[0].translateX.__getValue()).toBe(0);
+  });
+  test('gallery cancelled native paging never changes the current photo',async()=>{
+    mockReduced=false;const jobs:{done?:(event:{finished:boolean})=>void}[]=[];
+    jest.spyOn(Animated,'timing').mockImplementation(()=>({start:(done?:any)=>jobs.push({done}),stop:jest.fn(),reset:jest.fn()} as any));
+    await renderGallery();
+    await act(async()=>{const surface=galleryDrag(-180,2);surface.props.onPanResponderRelease(null,{dx:-180,dy:2,vx:-1,vy:0});});
+    await act(async()=>jobs.at(-1)!.done?.({finished:false}));expect(galleryCurrent()).toBe('photo-1');expect(props.onClose).not.toHaveBeenCalled();
+  });
+  test('gallery empty input remains closable and cannot download',async()=>{
+    await renderGallery({attachments:[],initialIndex:100});expect(byLabel('Скачать').props.disabled).toBe(true);
+    await act(async()=>byLabel('Закрыть изображение').props.onPress());expect(props.onClose).toHaveBeenCalledTimes(1);
+  });
+  test.each([true,false])('gallery downward dismissal keeps following the finger until animation completion (tile=%s)',async(hasOrigin)=>{
+    mockReduced=false;let finishAnimation:undefined|(()=>void);
+    jest.spyOn(Animated,'timing').mockImplementation((value:any,config:any)=>({start:(done?:any)=>{value.setValue(config.toValue);done?.({finished:true});},stop:jest.fn(),reset:jest.fn()} as any));
+    jest.spyOn(Animated,'parallel').mockImplementation((animations:any)=>({start:(done?:any)=>{finishAnimation=()=>{animations.forEach((animation:any)=>animation.start());done?.({finished:true});};},stop:jest.fn(),reset:jest.fn()} as any));
+    await renderGallery(hasOrigin?{origin:{x:40,y:420,width:100,height:100}}:{});
+    await act(async()=>{const surface=galleryDrag(2,150);surface.props.onPanResponderRelease(null,{dx:2,dy:150,vx:0,vy:1});});
+    expect(galleryTransform('translateY')).toBe(150);expect(props.onClose).not.toHaveBeenCalled();
+    await act(async()=>finishAnimation!());expect(props.onClose).toHaveBeenCalledTimes(1);
+    expect(StyleSheet.flatten(byId('help-gallery-backdrop').props.style).opacity.__getValue()).toBe(0);
+    const transforms=StyleSheet.flatten(byId('help-gallery-transition').props.style).transform;
+    expect(transforms.some((entry:any)=>'scaleX'in entry||'scaleY'in entry)).toBe(false);
   });
   test('interrupted dismiss animation cannot close after gallery unmount', async () => {
     mockReduced = false;

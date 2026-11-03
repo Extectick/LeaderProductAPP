@@ -12,7 +12,6 @@ import { useHelpService } from './useHelpService';
 import {publishHelpActivity} from './helpActivity';
 import {isHelpConnectionIssue} from './helpConnectionState';
 import {matchingPendingCreate} from './helpPendingCreate';
-import {settleHelpKeyboard} from './helpKeyboardTransition';
 import type { HelpAttachment, HelpMessage, HelpTicket } from './helpApi';
 import {API_BASE_URL} from '@/utils/config';
 import { useHelpTheme, useHelpReducedMotion } from './helpTheme';
@@ -20,7 +19,8 @@ import { canEditHelpMessage, canReopenHelpTicket, helpCreated, helpTime, stableH
 import type {HelpTypingUser} from './helpTypingModel';
 import { HelpAvatar, HelpBlurSurface, HelpDock, HelpIcon, HelpNotice, HelpPrimaryButton, HelpSheet, HelpTyping } from './components/HelpPrimitives';
 import { HelpComposer, type HelpComposeMode, type HelpLocalFile } from './components/HelpComposer';
-import { HelpNativeChatLayout, hasNativeChatLayout, hasNativeImeLayout, hasNativeStableImeLayout } from './components/HelpNativeChatLayout';
+import { HelpNativeChatLayout, hasNativeChatLayout, hasNativeImeLayout, hasNativeStableImeLayout, hasNativeDockControls } from './components/HelpNativeChatLayout';
+import {HelpDockControls} from './components/HelpDockControls';
 import { HelpMessageBubble } from './components/HelpMessageBubble';
 import {HelpPendingMessage} from './components/HelpPendingMessage';
 import type {HelpPending} from './helpDurableTypes';
@@ -34,17 +34,18 @@ import {HelpDropdown, HelpDropdownAction} from './components/HelpDropdown';
 import {useHelpKeyboardInset} from './useHelpKeyboardInset';
 import {HelpVisualEffectsContext} from './helpVisualEffects';
 import { HelpPlaybackScope, HelpChatPlayback } from './components/HelpPlaybackScope';
-import { HelpDateSeparator } from './components/HelpTimelineIndicators';
+import { HelpDateSeparator, HelpJumpToLatest } from './components/HelpTimelineIndicators';
 import { HelpChatEntry, type HelpChatEntryHandle } from './components/HelpChatEntry';
 import {useAppSceneUnderlayMotion} from '@/components/Navigation/AppSceneTransition';
+import {dismissHelpSceneKeyboard} from './helpSceneKeyboard';
 import {HelpMessageArrivalContext} from './components/HelpMessageArrival';
 import { HelpTicketReference } from './components/HelpTicketReference';
 import { createHelpImageCache, HelpImageCacheContext } from './helpMediaLoading';
 import { createHelpMessageLayoutCache, HelpMessageLayoutCacheContext } from './helpMessageLayoutCache';
-import { HelpTimeline, type HelpTimelineHandle } from './components/HelpTimeline';
+import { HelpTimeline, type HelpTimelineHandle, type HelpLatestControlState } from './components/HelpTimeline';
 import { HelpChatSearchDock, HelpChatSearchArrows, HelpChatSearchResults } from './components/HelpChatSearch';
 import { helpMessageGroups, helpTimelineEntries } from './helpTimelineModel';
-import { HELP_LIST_INSET, HELP_LIST_META_WIDTH } from './helpLayout';
+import { HELP_LIST_INSET, HELP_LIST_META_WIDTH, HELP_COMPOSER_ACTION_RIGHT } from './helpLayout';
 import { helpDevActions, helpDevEvent, helpDevRef, helpDevState } from './helpDiagnostics';
 import { downloadHelpAttachment, HelpGallery, type HelpImageOrigin } from './components/HelpMedia';
 import { HelpPhotoPortalProvider } from './components/HelpPhotoPortal';
@@ -56,7 +57,7 @@ type ReturnContext = { active: number | 'new'; filter: 'OPEN' | 'CLOSED'; source
 
 export default function HelpScreen() {
   const nativeLayoutId = useId();
-  const nativeScrollId = `help-chat-scroll-${nativeLayoutId}`, nativeDockId = `help-chat-dock-${nativeLayoutId}`, nativeViewportId = `help-chat-visible-${nativeLayoutId}`;
+  const nativeScrollId = `help-chat-scroll-${nativeLayoutId}`, nativeDockId = `help-chat-dock-${nativeLayoutId}`, nativeControlsId = `help-chat-controls-${nativeLayoutId}`, nativeViewportId = `help-chat-visible-${nativeLayoutId}`;
   const isFocused = useIsFocused();
   const service = useHelpService(isFocused); const c = useHelpTheme(); const insets = useSafeAreaInsets(); const router = useRouter(); const params = useLocalSearchParams<{ ticketId?: string;messageId?:string;eventId?:string }>();
   const imageCache=useMemo(()=>createHelpImageCache(),[service.userId]);
@@ -72,6 +73,7 @@ export default function HelpScreen() {
   const returningToList=useRef(false);
   const [listSceneHeaderHeight,setListSceneHeaderHeight]=useState(68+insets.top);
   const [entrySettled,setEntrySettled]=useState(false);
+  const [entryKeyboardReady,setEntryKeyboardReady]=useState(true),[leavingChat,setLeavingChat]=useState(false),[sceneWidth,setSceneWidth]=useState(0);
   const [attachmentsVisible,setAttachmentsVisible]=useState(false);
   const [timelineReady,setTimelineReady]=useState(false);
   const chatEntry = useRef<HelpChatEntryHandle>(null);
@@ -79,13 +81,14 @@ export default function HelpScreen() {
   const arrivalRegistry=useMemo(()=>new Set<string>(),[service.userId,scene.key]);
   const listBlurTarget = useRef<View>(null);
   const [active, setActive] = useState<number | 'new' | null>(null); const [filter, setFilter] = useState<'OPEN' | 'CLOSED'>('OPEN'); const [scope, setScope] = useState<'mine' | 'queue'>('mine');
-  const listMotion=useAppSceneUnderlayMotion(chatProgress,active!==null);
+  const listMotion=useAppSceneUnderlayMotion(chatProgress,active!==null,sceneWidth);
   const [search, setSearch] = useState(''); const [order, setOrder] = useState<number[]>([]); const [draft, setDraft] = useState(''); const [files, setFiles] = useState<HelpLocalFile[]>([]); const [source, setSource] = useState<SourceTicket | null>(null);
   const [listDrafts,setListDrafts]=useState<Record<number,string>>({});
   const [mode, setMode] = useState<HelpComposeMode>('message'); const [rating, setRating] = useState(0); const [reply, setReply] = useState<HelpMessage | null>(null); const [editing, setEditing] = useState<HelpMessage | null>(null); const [editAttachments, setEditAttachments] = useState<HelpAttachment[]>([]); const [focusKey, setFocusKey] = useState(0);
   const [overlay, setOverlay] = useState<Overlay | null>(null); const [selectedMessage, setSelectedMessage] = useState<number | null>(null); const [notice, setNotice] = useState(''); const [gallery, setGallery] = useState<{ images: HelpAttachment[]; index: number; origin?:HelpImageOrigin } | null>(null);
   const [highlighted, setHighlighted] = useState<number | null>(null); const [dockHeight, setDockHeight] = useState(64); const [sending, setSending] = useState(false); const [sheetOffset, setSheetOffset] = useState(0);
   const [chatViewportHeight,setChatViewportHeight]=useState(0);
+  const [latestControl,setLatestControl]=useState<HelpLatestControlState>({visible:false,count:0,loading:false});
   const [nativeFollow,setNativeFollow]=useState(false);
   const [chatSearchOpen,setChatSearchOpen]=useState(false),[chatSearchQuery,setChatSearchQuery]=useState('');
   const [chatResults,setChatResults]=useState<HelpMessage[]>([]),[chatSearchTotal,setChatSearchTotal]=useState(0),[chatSearchCursor,setChatSearchCursor]=useState<number|null>(null);
@@ -117,6 +120,7 @@ export default function HelpScreen() {
   const onDockHeightFrame=useCallback((height:number)=>{measuredDockHeight.current=height;obscuredBottom.current=height+imeInsetRef.current;},[]);
   useLayoutEffect(()=>{setImeInset(0);setTimelineReady(false);setNativeFollow(false);},[scene.key]);
   useLayoutEffect(()=>{if(active===null)chatProgress.value=0;},[active,chatProgress]);
+  useLayoutEffect(()=>{setLatestControl({visible:false,count:0,loading:false});},[scene.key,active===null]);
   const chatBounds = useRef<View>(null);
   const measureKeyboard = useHelpKeyboardInset(chatBounds, isFocused && active !== null && !hasNativeImeLayout, setImeInset);
   const boundedChat = hasNativeImeLayout || Platform.OS === 'android';
@@ -130,6 +134,16 @@ export default function HelpScreen() {
     const lastInput = [...service.messages].reverse().find(message => message.authorId === service.userId)?.sequence ?? 0;
     return service.messages.filter(message => message.text || !message.assistantRun || !(message.assistantRun.stopReason === 'superseded' || message.sequence < lastInput && ['thinking','streaming'].includes(message.assistantRun.status)));
   }, [ticket?.id, service.messages, service.userId]);
+  function openGallery(images:HelpAttachment[],index:number,origin?:HelpImageOrigin){
+    const selected=images[index];if(!selected)return;
+    const ordered=new Map<string,HelpAttachment>();
+    // Only real message attachments participate; quoted thumbnails are not
+    // additional messages in the photo history.
+    for(const message of messages)for(const attachment of message.attachments)if(attachment.kind==='IMAGE')ordered.set(attachment.id,attachment);
+    for(const attachment of images)if(attachment.kind==='IMAGE'&&!ordered.has(attachment.id))ordered.set(attachment.id,attachment);
+    const history=[...ordered.values()],selectedIndex=history.findIndex(attachment=>attachment.id===selected.id);
+    if(selectedIndex<0)return;Keyboard.dismiss();setGallery({images:history,index:selectedIndex,origin});
+  }
   const lastAssistant = [...messages].reverse().find(message => message.assistantRun);
   const assistantActions=service as unknown as {lastCreatedOperation?:{key:string;ticketId:number;text:string;sourceTicketId?:number};pendingMessages?:HelpPending[];retryPendingOperation?:(key:string)=>Promise<unknown>;stopAssistant?:(ticketId:number,runId:string)=>Promise<unknown>;retryAssistant?:(ticketId:number,runId:string)=>Promise<unknown>;aiEnabled?:boolean};
   const recoverablePending=(assistantActions.pendingMessages??[]).filter(item=>item.status==='failed'||item.status==='queued'&&(item.attempts??0)>0);
@@ -242,7 +256,12 @@ export default function HelpScreen() {
     const openedAt = Date.now();
     helpDevEvent('chat.open.request', { ticketId: id, openedAt });
     saveDraftNow();
-    const generation=++navigationGeneration.current; Keyboard.dismiss(); setOverlay(null); setSelectedMessage(null); setMode('message'); setReply(null); setEditing(null); setFiles([]); setSource(null); setActive(id); followBottom.current = true;
+    const generation=++navigationGeneration.current,account=service.userId;
+    if(!promote){
+      setLeavingChat(false);setEntryKeyboardReady(false);
+      void dismissHelpSceneKeyboard().then(()=>{if(screenMounted.current&&generation===navigationGeneration.current&&account===currentAccount.current)setEntryKeyboardReady(true);});
+    }
+    setOverlay(null); setSelectedMessage(null); setMode('message'); setReply(null); setEditing(null); setFiles([]); setSource(null); setActive(id); followBottom.current = true;
     try {
       await service.openTicket(id,messageId?{messageId}:undefined);
       helpDevEvent('chat.open.data', { ticketId: id, openedAt, elapsedMs: Date.now() - openedAt });
@@ -250,7 +269,7 @@ export default function HelpScreen() {
       if(generation!==navigationGeneration.current)return;
       // A failed open must release the retained list and invisible entry. Keeping
       // active=id with no selected ticket leaves the previous list unresponsive.
-      returningToList.current=false;chatProgress.value=0;setEntrySettled(false);setListHeaderHeight(listSceneHeaderHeight);setActive(null);service.clearSelection();
+      returningToList.current=false;setLeavingChat(false);chatProgress.value=0;setEntrySettled(false);setListHeaderHeight(listSceneHeaderHeight);setActive(null);service.clearSelection();
       tell(e instanceof Error ? e.message : 'Не удалось открыть обращение');
     }
   }
@@ -269,17 +288,21 @@ export default function HelpScreen() {
   async function list(next: 'OPEN' | 'CLOSED' = filter) {
     if(returningToList.current)return;
     const navigation=++navigationGeneration.current,account=service.userId;
-    saveDraftNow();setEntrySettled(false);setFocusKey(0);Keyboard.dismiss();
+    saveDraftNow();setFocusKey(0);
     if(active!==null){
-      returningToList.current=true;setNativeFollow(false);
-      const finished=await chatEntry.current?.dismiss();returningToList.current=false;
-      if(finished===false||navigation!==navigationGeneration.current||account!==currentAccount.current)return;
+      returningToList.current=true;setLeavingChat(true);
+      await dismissHelpSceneKeyboard();
+      if(!screenMounted.current||navigation!==navigationGeneration.current||account!==currentAccount.current){returningToList.current=false;setLeavingChat(false);return;}
+      setNativeFollow(false);
+      const finished=await chatEntry.current?.dismiss();returningToList.current=false;setLeavingChat(false);
+      if(finished===false||!screenMounted.current||navigation!==navigationGeneration.current||account!==currentAccount.current)return;
     }
     setEntrySettled(false);setFocusKey(0);setListHeaderHeight(listSceneHeaderHeight);
     setActive(null);service.clearSelection();setMode('message');setFiles([]);setReply(null);setEditing(null);setSource(null);setOrder([]);setFilter(next);stack.current=[];
-    void service.loadTickets(next,scope,false,search.trim());
+    if(active!==null&&next===filter)void service.loadTickets(next,scope,false,search.trim(),true);
+    else void service.loadTickets(next,scope,false,search.trim());
   }
-  function newTicket(linked: SourceTicket | null = null) { setScene(previous=>({key:previous.key+1,bottomAligned:true}));setEntrySettled(false); ++navigationGeneration.current; saveDraftNow(); Keyboard.dismiss(); stack.current = []; service.clearSelection(); setActive('new'); setSource(linked); setDraft(''); setFiles([]); setMode('message'); setReply(null); setEditing(null); setSelectedMessage(null); followBottom.current = true; setFocusKey(n => n + 1); }
+  function newTicket(linked: SourceTicket | null = null) { setScene(previous=>({key:previous.key+1,bottomAligned:true}));setEntrySettled(false);setLeavingChat(false);setEntryKeyboardReady(false); const navigation=++navigationGeneration.current,account=service.userId;void dismissHelpSceneKeyboard().then(()=>{if(screenMounted.current&&navigation===navigationGeneration.current&&account===currentAccount.current)setEntryKeyboardReady(true);}); saveDraftNow(); stack.current = []; service.clearSelection(); setActive('new'); setSource(linked); setDraft(''); setFiles([]); setMode('message'); setReply(null); setEditing(null); setSelectedMessage(null); followBottom.current = true; setFocusKey(n => n + 1); }
   function cancelMode() { ++navigationGeneration.current; setMode('message'); setDraft(regularDraft.current.text); setFiles(regularDraft.current.files); setReply(regularDraft.current.reply); setEditing(null); Keyboard.dismiss(); }
   async function back() {
     Keyboard.dismiss();
@@ -288,8 +311,9 @@ export default function HelpScreen() {
     if (mode !== 'message') { cancelMode(); return; }
     const previous = stack.current.pop();
     if (previous) {
-      setScene(scene=>({key:scene.key+1,bottomAligned:previous.active==='new'}));
+      setScene(scene=>({key:scene.key+1,bottomAligned:previous.active==='new'}));setEntrySettled(false);setLeavingChat(false);setEntryKeyboardReady(false);
       const restoreNavigation = ++navigationGeneration.current, restoreAccount = service.userId;
+      void dismissHelpSceneKeyboard().then(()=>{if(screenMounted.current&&restoreNavigation===navigationGeneration.current&&restoreAccount===currentAccount.current)setEntryKeyboardReady(true);});
       restoredDraft.current = {key: previous.active === 'new' ? `new:${previous.source?.id ?? 'plain'}` : `ticket:${previous.active}`, text: previous.draft};
       saveDraftNow(); Keyboard.dismiss(); setActive(previous.active); setSource(previous.source); setFilter(previous.filter); setMode(previous.mode); setReply(previous.reply); setEditing(previous.edit); setEditAttachments(previous.editAttachments); setRating(previous.rating); setFiles(previous.files); draftLoaded.current = false;
       if (previous.active === 'new') service.clearSelection(); else await run(() => service.openTicket(previous.active as number));
@@ -358,11 +382,9 @@ export default function HelpScreen() {
     if (mode === 'edit' && editing && !canEditHelpMessage(editing, service.userId)) { tell('Редактировать сообщение можно только в течение часа.'); return false; }
     if(selectedFiles&&!voice)changeFiles(chosenFiles);
     const draftRevision = draftRevisions.current.get(draftKey)??0;
-    const keyboardSettled=mode==='message'&&!voice&&!chosenFiles.length?settleHelpKeyboard(imeInset>0,()=>{if(screenMounted.current&&currentAccount.current===account&&navigationGeneration.current===navigation)setImeInset(0);}):Promise.resolve();
     submitLock.current = true; setSending(true);
     const releaseFiles=[holdHelpAttachmentFiles(chosenFiles)];let committed=false;
     try {
-      await keyboardSettled;
       if(!screenMounted.current||currentAccount.current!==account||navigationGeneration.current!==navigation||draftScope.current.key!==draftKey)return false;
       if(mode==='message'&&!voice){chosenFiles=await persistFiles(chosenFiles,draftKey,account,draftRevision);releaseFiles.push(holdHelpAttachmentFiles(chosenFiles));}
       if(currentAccount.current!==account)return false;
@@ -454,7 +476,7 @@ export default function HelpScreen() {
   const listHeader = <HelpListHeader connecting={!service.connected} onKnowledge={assistantPreview ? undefined : () => router.push('/services/help/knowledge')} search={search} onSearch={setSearch} archived={filter === 'CLOSED'} onArchive={() => list(filter === 'OPEN' ? 'CLOSED' : 'OPEN')} onBack={() => void back()} canManage={service.canManage} scope={scope} onScope={()=>{const next=scope==='mine' ? 'queue' : 'mine';setScope(next);setOrder([]);void service.loadTickets(filter,next,false,search.trim());}} />; const header = active === null ? listHeader : <HelpChatHeader connecting={!service.connected} search={chatSearchOpen && (ticket || active === 'new') ? {query:chatSearchQuery,onQueryChange:setChatSearchQuery,onClose:closeSearch,onSubmit:()=>Keyboard.dismiss(),autoFocus:true} : undefined} menuActive={overlay?.kind==='menu'} onSearch={ticket?()=>{saveDraftNow();Keyboard.dismiss();setChatSearchOpen(true);}:undefined} title={ticket?.title || (active==='new' ? 'Новое обращение' : 'Обращение')} number={ticket?.number} status={ticket?.status} meta={ticket ? helpCreated(ticket.createdAt) : ''} onBack={()=>void back()} onMenu={ticket || assistantPreview || active === 'new' ? ()=>{Keyboard.dismiss();setOverlay(previous=>previous?.kind==='menu'?null:{kind:'menu'});} : undefined}/>;
 
   return <HelpVisualEffectsContext.Provider value={isFocused}><HelpImageCacheContext.Provider value={imageCache}><HelpMessageLayoutCacheContext.Provider value={messageLayoutCache}><HelpPhotoPortalProvider><HelpPlaybackScope userId={service.userId} ticketId={typeof active === 'number' ? active : null} onError={tell}><KeyboardAvoidingView testID="help-screen-navigation" {...chatSwipeBack.panHandlers} style={{ flex: 1, backgroundColor: c.background, paddingTop: 0 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-    <View ref={chatBounds} onLayout={measureKeyboard} style={{ flex: 1, width: '100%', maxWidth: 900, alignSelf: 'center' }}>
+    <View ref={chatBounds} onLayout={event=>{setSceneWidth(event.nativeEvent.layout.width);measureKeyboard();}} style={{ flex: 1, width: '100%', maxWidth: 900, alignSelf: 'center' }}>
       {recoverablePending.length > 0 ? <Pressable accessibilityRole="button" accessibilityLabel="Восстановить отправку" disabled={busy} onPress={() => void run(() => Promise.all(recoverablePending.map(item=>service.retryPendingOperation(item.key))))} style={{position:'absolute',top:listHeaderHeight+8,left:8,right:8,zIndex:6,padding:10,borderRadius:12,backgroundColor:c.elevated}}><Text style={{color:c.accentText,fontSize:13,textAlign:'center'}}>Восстановить отправку ({recoverablePending.length})</Text></Pressable> : null}
       {service.error&&!(active===null&&service.loading)&&!isHelpConnectionIssue(service.error) ? <Pressable accessibilityRole="button" onPress={() => void run(() => active===null?service.loadTickets(filter,scope,false,search.trim()):service.retryPending())} style={{ position:'absolute',top:listHeaderHeight+8,left:8,right:8,zIndex:6,paddingVertical: 7, paddingHorizontal: 14, borderRadius:12,backgroundColor: c.danger + '15' }}><Text style={{ color: c.danger, fontSize: 12 }} numberOfLines={2}>{service.error} · Повторить</Text></Pressable> : null}
       <Reanimated.View testID="help-list-scene" key="help-list-scene" pointerEvents={active===null?'auto':'none'} accessibilityElementsHidden={active!==null} importantForAccessibility={active===null?'auto':'no-hide-descendants'} style={[active===null?{flex:1}:StyleSheet.absoluteFill,listMotion]}>
@@ -465,27 +487,33 @@ export default function HelpScreen() {
           ListEmptyComponent={<View style={{ alignItems: 'center', justifyContent:'center', minHeight:service.loading?300:undefined, padding: 35, gap: 12 }}>{service.loading ? <View testID="help-chats-loading" accessibilityRole="progressbar" accessibilityLabel="Загрузка чатов" style={{alignItems:'center',gap:14}}><ActivityIndicator size="large" color={c.accent}/><Text accessibilityLiveRegion="polite" style={{color:c.muted,fontSize:14}}>Загружаем чаты…</Text></View> : <><Ionicons name={filter === 'CLOSED' ? 'archive-outline' : 'chatbubbles-outline'} color={c.muted} size={38} /><Text style={{ color: c.text, fontSize: 16, fontWeight: '600' }}>{search ? 'Ничего не найдено' : filter === 'CLOSED' ? 'Закрытых обращений пока нет' : 'Расскажите, чем помочь'}</Text><Text style={{ color: c.muted, textAlign: 'center', fontSize: 13 }}>{search ? 'Попробуйте другой запрос' : 'Ваши сообщения и вложения увидят специалисты IT.'}</Text></>}</View>}
           ListFooterComponent={null}
           renderItem={({item})=><TicketRow ticket={item} draft={listDrafts[item.id]} typing={service.typingByTicket[item.id]} onPress={()=>{void open(item.id);}} onMenu={()=>{Keyboard.dismiss();setOverlay({kind:'row',ticket:item});}}/>}
-        /></BlurTargetView><View testID="help-list-header-overlay" onLayout={event=>{if(active===null){setListHeaderHeight(event.nativeEvent.layout.height);setListSceneHeaderHeight(event.nativeEvent.layout.height);}}} style={{position:'absolute',top:0,left:0,right:0,zIndex:2,paddingTop:insets.top}}><View pointerEvents="none" style={[StyleSheet.absoluteFill,{bottom:-24}]}><HelpBlurSurface target={listBlurTarget} edge="bottom" featherSize={104}/></View>{listHeader}</View><View style={{ position: 'absolute', bottom: 0, left: 0, right: 0 }}><HelpDock target={active===null?listBlurTarget:undefined}><View style={{ paddingHorizontal: HELP_LIST_INSET - 8 }}><HelpPrimaryButton text="Новое обращение" onPress={() => newTicket()} /></View></HelpDock></View>
+        /></BlurTargetView><View testID="help-list-header-overlay" onLayout={event=>{if(active===null){setListHeaderHeight(event.nativeEvent.layout.height);setListSceneHeaderHeight(event.nativeEvent.layout.height);}}} style={{position:'absolute',top:0,left:0,right:0,zIndex:2,paddingTop:insets.top}}><View pointerEvents="none" style={StyleSheet.absoluteFill}><HelpBlurSurface target={listBlurTarget} edge="bottom" featherSize={104}/></View>{listHeader}</View><View style={{ position: 'absolute', bottom: 0, left: 0, right: 0 }}><HelpDock target={active===null?listBlurTarget:undefined}><View style={{ paddingHorizontal: HELP_LIST_INSET - 8 }}><HelpPrimaryButton text="Новое обращение" onPress={() => newTicket()} /></View></HelpDock></View>
       </Reanimated.View>
-      {active !== null ? <HelpChatEntry key={`${service.userId}:${scene.key}`} ref={chatEntry} progress={chatProgress} ready={active==='new'||Boolean(ticket)||timelineReady} backgroundColor={c.background} onEntered={()=>{setEntrySettled(true);helpDevEvent('chat.open.transitionFinished',{ticketId:typeof active==='number'?active:null,finishedAt:Date.now()});}} onLayout={event=>setChatViewportHeight(event.nativeEvent.layout.height)}>
+      {active !== null ? <HelpChatEntry key={`${service.userId}:${scene.key}`} ref={chatEntry} progress={chatProgress} ready={entryKeyboardReady&&(active==='new'||timelineReady)} interactive={!leavingChat} backgroundColor={c.background} onEntered={()=>{setEntrySettled(true);helpDevEvent('chat.open.transitionFinished',{ticketId:typeof active==='number'?active:null,finishedAt:Date.now()});}} onLayout={event=>setChatViewportHeight(event.nativeEvent.layout.height)}>
         <HelpMessageArrivalContext.Provider value={arrivalRegistry}>
         <View nativeID={nativeViewportId} collapsable={false} testID="help-chat-visible-viewport" style={boundedChat?{position:'absolute',top:0,left:0,right:0,bottom:hasNativeStableImeLayout?0:dockHeight+imeInset,overflow:'hidden'}:{flex:1}}><BlurTargetView ref={blurTarget} style={{ flex: 1 }}>
           <HelpTimeline obscuredBottom={hasNativeStableImeLayout?obscuredBottom:undefined} pendingMessages={displayedPending} renderPending={item=><HelpPendingMessage {...pendingGroups.get(item.key)} item={item} onQuote={jump} resolve={service.mediaSource} onRetry={()=>void run(()=>assistantActions.retryPendingOperation!(item.key))}/>} bottomAligned={scene.bottomAligned} key={`${service.userId}:${scene.key}`} onReady={()=>{setTimelineReady(true);chatEntry.current?.reveal();}} ref={scroll} messages={messages} nativeID={nativeScrollId} headerHeight={listHeaderHeight} dockHeight={boundedChat?(hasNativeStableImeLayout?dockHeight+imeInset:0):dockHeight+imeInset}
             navigationTarget={service.navigationTarget} firstUnreadSequence={service.firstUnreadSequence} hasOlder={service.hasOlder} hasNewer={service.hasNewer}
             loadingOlder={service.loadingOlder} loadingNewer={service.loadingNewer} loading={service.loading} online={service.online}
-            hideStickyDate onHistoryScroll={historyScroll} onStickyDateChange={setStickyDate} hideLatestButton={chatSearchOpen} active={isFocused && !chatSearchList && !overlay && !gallery} unreadCount={ticket?.unreadCount}
+            hideStickyDate onLatestState={setLatestControl} onHistoryScroll={historyScroll} onStickyDateChange={setStickyDate} hideLatestButton={chatSearchOpen} active={isFocused && !chatSearchList && !overlay && !gallery} unreadCount={ticket?.unreadCount}
             loadOlder={service.loadOlder} loadNewer={service.loadNewer} onLatest={async()=>{if(await(scroll.current?.waitForJumpReady?.()??true))return service.jumpToLatest();}} onDate={async date=>{if(await(scroll.current?.waitForJumpReady?.()??true))return service.jumpToDate(date);}} onUserScroll={service.cancelNavigation} onSave={(anchor,options)=>service.saveViewport(anchor,typeof active==='number'?active:undefined,options)} onRead={service.markVisibleRead}
             onFollow={value=>{followBottom.current=value;setNativeFollow(value);}} onHighlight={highlight} onError={tell}
-            header={<>{sourceLink ? <HelpTicketReference ticket={service.tickets.find(row=>row.id===sourceLink.id)??sourceLink} onPress={()=>void openSource()}/> : null}</>} footer={<>{ticket && service.typingByTicket[ticket.id]?.length ? <View style={{ paddingHorizontal:16,paddingVertical:8 }}><HelpTyping users={service.typingByTicket[ticket.id]} /></View> : null}</>} renderMessage={message=>message.assistantRun ? <HelpAssistantMessage message={message} onConnectOnec={isOwner && message.assistantRun?.action?.type === 'connect_onec' ? () => { Keyboard.dismiss(); router.push({ pathname: '/profile/settings', params: { section: 'onec', ...(message.assistantRun?.action?.baseKey ? { base: message.assistantRun.action.baseKey } : {}), returnTicket: String(message.ticketId), returnRun: message.assistantRun!.runId } } as any); } : undefined} onRetry={assistantPreview ? ()=>assistantPreview.retry(message.ticketId,message.assistantRun!.runId) : assistantActions.retryAssistant?()=>void run(()=>assistantActions.retryAssistant!(message.ticketId,message.assistantRun!.runId)):undefined}/> : <HelpMessageBubble {...messageGroups.get(message.id)} message={message} readByOthers={message.authorId===service.userId && Boolean(ticket?.members.some(member=>member.userId!==service.userId && (member.lastReadSequence??0)>=message.sequence))} searchQuery={chatSearchOpen?chatSearchQuery:undefined} userId={service.userId} open={mode === 'message' && ticket?.status === 'OPEN' && isParticipant} canInteract={isParticipant} selected={selectedMessage === message.id} highlighted={highlighted === message.id} solution={isOwner && ticket?.status === 'OPEN' && message.id === lastIncoming?.id} resolve={service.mediaSource} onDismissMenu={() => setSelectedMessage(null)} onMenu={() => { Keyboard.dismiss(); setSelectedMessage(selectedMessage === message.id ? null : message.id); }} onReply={() => replyTo(message)} onCopy={() => void run(async () => { await Clipboard.setStringAsync(message.text || message.attachments.map(a => a.name).join('\n')); setSelectedMessage(null); tell('Скопировано'); })} onEdit={() => startMode('edit', message)} onForward={() => { Keyboard.dismiss(); setSelectedMessage(null); setOverlay({ kind: 'forward', message }); void service.loadTickets('OPEN', scope); }} onReaction={emoji => {if(isParticipant)void run(() => service.toggleReaction(message, emoji));}} onQuote={jump} onImage={(images, index, origin) => { Keyboard.dismiss(); setGallery({ images, index, origin }); }} onFile={file => void run(() => downloadHelpAttachment(file, service.mediaSource))} onCloseTicket={() => startMode('close')} onRequestIt={() => { Keyboard.dismiss(); setOverlay({ kind: 'it' }); }} onError={tell} />}/>
+            header={<>{sourceLink ? <HelpTicketReference ticket={service.tickets.find(row=>row.id===sourceLink.id)??sourceLink} onPress={()=>void openSource()}/> : null}</>} footer={<>{ticket && service.typingByTicket[ticket.id]?.length ? <View style={{ paddingHorizontal:16,paddingVertical:8 }}><HelpTyping users={service.typingByTicket[ticket.id]} /></View> : null}</>} renderMessage={message=>message.assistantRun ? <HelpAssistantMessage message={message} onConnectOnec={isOwner && message.assistantRun?.action?.type === 'connect_onec' ? () => { Keyboard.dismiss(); router.push({ pathname: '/profile/settings', params: { section: 'onec', ...(message.assistantRun?.action?.baseKey ? { base: message.assistantRun.action.baseKey } : {}), returnTicket: String(message.ticketId), returnRun: message.assistantRun!.runId } } as any); } : undefined} onRetry={assistantPreview ? ()=>assistantPreview.retry(message.ticketId,message.assistantRun!.runId) : assistantActions.retryAssistant?()=>void run(()=>assistantActions.retryAssistant!(message.ticketId,message.assistantRun!.runId)):undefined}/> : <HelpMessageBubble {...messageGroups.get(message.id)} message={message} readByOthers={message.authorId===service.userId && Boolean(ticket?.members.some(member=>member.userId!==service.userId && (member.lastReadSequence??0)>=message.sequence))} searchQuery={chatSearchOpen?chatSearchQuery:undefined} userId={service.userId} open={mode === 'message' && ticket?.status === 'OPEN' && isParticipant} canInteract={isParticipant} selected={selectedMessage === message.id} highlighted={highlighted === message.id} solution={isOwner && ticket?.status === 'OPEN' && message.id === lastIncoming?.id} resolve={service.mediaSource} onDismissMenu={() => setSelectedMessage(null)} onMenu={() => { Keyboard.dismiss(); setSelectedMessage(selectedMessage === message.id ? null : message.id); }} onReply={() => replyTo(message)} onCopy={() => void run(async () => { await Clipboard.setStringAsync(message.text || message.attachments.map(a => a.name).join('\n')); setSelectedMessage(null); tell('Скопировано'); })} onEdit={() => startMode('edit', message)} onForward={() => { Keyboard.dismiss(); setSelectedMessage(null); setOverlay({ kind: 'forward', message }); void service.loadTickets('OPEN', scope); }} onReaction={emoji => {if(isParticipant)void run(() => service.toggleReaction(message, emoji));}} onQuote={jump} onImage={openGallery} onFile={file => void run(() => downloadHelpAttachment(file, service.mediaSource))} onCloseTicket={() => startMode('close')} onRequestIt={() => { Keyboard.dismiss(); setOverlay({ kind: 'it' }); }} onError={tell} />}/>
         </BlurTargetView></View>
         {active === 'new'&&!displayedPending.length ? <View testID="help-new-ticket-hint" pointerEvents="none" style={{position:'absolute',top:listHeaderHeight+30,left:30,right:30}}><Text style={{ color: c.muted, textAlign: 'center', fontSize: 13, lineHeight: 19 }}>Опишите, что случилось. Обращение будет создано после первого сообщения.{ '\n' }{assistantPreview||assistantActions.aiEnabled ? 'Помощник подготовит ответ. Можно закрыть приложение — сообщим, когда ответ будет готов.' : 'Ваше сообщение получат специалисты IT.'}</Text></View> : null}
         {chatSearchOpen && chatSearchList ? <View testID="help-chat-search-results-overlay" style={{position:'absolute',top:listHeaderHeight,left:0,right:0,bottom:dockHeight+imeInset,backgroundColor:c.background,zIndex:1}}><HelpChatSearchResults messages={chatResults} query={chatSearchQuery} selectedId={chatResults[chatResultIndex]?.id} loading={chatSearchLoading} hasMore={chatSearchCursor!==null} onLoadMore={()=>void moreSearch()} onSelect={message=>void showSearchResult(message,chatResults.findIndex(item=>item.id===message.id))} error={chatSearchError}/></View> : null}
-        <View testID="help-chat-header-overlay" onLayout={event=>setListHeaderHeight(event.nativeEvent.layout.height)} style={{position:'absolute',top:0,left:0,right:0,zIndex:2,paddingTop:insets.top}}><View pointerEvents="none" style={[StyleSheet.absoluteFill,{bottom:-24}]}><HelpBlurSurface target={blurTarget} edge="bottom" featherSize={104}/></View>{header}<HelpChatPlayback onJump={jump}/></View>
+        <View testID="help-chat-header-overlay" onLayout={event=>setListHeaderHeight(event.nativeEvent.layout.height)} style={{position:'absolute',top:0,left:0,right:0,zIndex:2,paddingTop:insets.top}}><View pointerEvents="none" style={StyleSheet.absoluteFill}><HelpBlurSurface target={blurTarget} edge="bottom" featherSize={104}/></View>{header}<HelpChatPlayback onJump={jump}/></View>
         {stickyDate ? <Reanimated.View testID="help-sticky-date-overlay" pointerEvents={dateInteractive?'box-none':'none'} style={[{position:'absolute',top:Math.max(0,listHeaderHeight-12),alignSelf:'center',zIndex:3},dateStyle]}><HelpDateSeparator compact date={stickyDate} onPress={()=>scroll.current?.jumpToDate(stickyDate)}/></Reanimated.View> : null}
-        {chatSearchOpen && !chatSearchList ? <HelpChatSearchArrows total={chatSearchTotal} selectedIndex={chatResultIndex} loading={chatSearchLoading} canPrevious={chatResultIndex>0} canNext={chatResultIndex+1<chatResults.length || chatSearchCursor!==null} onPrevious={()=>{if(chatResultIndex>0)void showSearchResult(chatResults[chatResultIndex-1],chatResultIndex-1);}} onNext={nextSearch} style={{position:'absolute',right:8,bottom:dockHeight+imeInset+12}}/> : null}
-        <View nativeID={nativeDockId} testID="help-chat-dock-layout" style={{ position: 'absolute', bottom: boundedChat&&!hasNativeStableImeLayout?imeInset:0, left: 0, right: 0 }}>{notice ? <HelpNotice key={notice} text={notice} onDone={() => setNotice('')} /> : null}<HelpDock onHeightFrame={hasNativeStableImeLayout?onDockHeightFrame:undefined} stableKeyboardLayout={hasNativeStableImeLayout} target={blurTarget} onHeight={setDockHeight}>
-          {chatSearchOpen ? <HelpChatSearchDock query={chatSearchQuery} total={chatSearchTotal} selectedIndex={chatResultIndex} loading={chatSearchLoading} showList={chatSearchList} onToggleList={()=>setChatSearchList(value=>!value)} error={chatSearchError}/> : ticket?.status === 'CLOSED' && mode === 'message' ? !isOwner ? <HelpPrimaryButton text="Закрыт" icon="lock-closed-outline" disabled onPress={()=>{}}/> : <View>{canReopenHelpTicket(ticket) ? <HelpPrimaryButton text="Открыть повторно" icon="sync-outline" onPress={()=>startMode('reopen')}/> : <><View style={{flexDirection:'row',justifyContent:'center',alignItems:'center',gap:6,paddingHorizontal:8,paddingBottom:9}}><Ionicons name="lock-closed-outline" size={15} color={c.muted}/><Text style={{color:c.muted,fontSize:12,lineHeight:18}}>Закрыт{ticket.closedAt ? ' · прошло больше 3 дней' : ''}</Text></View><HelpPrimaryButton text="Создать новое обращение" onPress={()=>newTicket({id:ticket.id,number:ticket.number,title:ticket.title})}/></>}</View> : ticket&&!isParticipant ? <HelpPrimaryButton text="Взять обращение" icon="headset-outline" disabled={busy||!service.canManage} onPress={()=>void run(()=>service.claimTicket(ticket.id))}/> : <HelpComposer blurTarget={blurTarget} navigationReady={entrySettled} onAttachmentVisibility={setAttachmentsVisible} screenActive={isFocused&&entrySettled} voiceDraftKey={`${encodeURIComponent(API_BASE_URL)}:${service.userId}:${draftKey}`} key={`${service.userId}:${scene.key}:${mode}`} value={draft} onChange={changeDraft} files={files} onFiles={changeFiles} onSend={submit} sendBlocked={Boolean(pendingCreate)||queuedOwnCreate} onStopAssistant={activeAssistant?.assistantRun ? ()=>{if(assistantPreview)assistantPreview.stop(activeAssistant.ticketId,activeAssistant.assistantRun!.runId);else void run(()=>assistantActions.stopAssistant!(activeAssistant.ticketId,activeAssistant.assistantRun!.runId));} : undefined} busy={busy} mode={mode} rating={rating} onRating={setRating} onCancelMode={cancelMode} quote={reply ? {name:reply.author?.name||'Сообщение',text:reply.text||'Вложение',thumbnail:reply.attachments.find(item=>item.kind==='IMAGE'),onPress:()=>jump(reply.id)} : undefined} resolve={service.mediaSource} recordingAreaHeight={Math.max(0,chatViewportHeight-listHeaderHeight-dockHeight-imeInset+8)} onCancelQuote={()=>setReply(null)} error={tell} focusKey={focusKey} onResize={()=>{ composerResizingUntil.current=Date.now()+320; scrollBottom(false); }} disabled={active==='new'?queuedOwnCreate:!ticket} editClosure={editing?.kind==='CLOSURE'} existingFiles={mode==='edit' ? editAttachments : undefined} onRemoveExisting={id=>setEditAttachments(values=>values.filter(a=>a.id!==id))}/>}
-        </HelpDock></View>{hasNativeChatLayout ? <HelpNativeChatLayout manageIme={isFocused} key={`${service.userId}:${scene.key}`} scrollId={nativeScrollId} dockId={nativeDockId} viewportId={nativeViewportId} allowFollow={nativeFollow && !service.hasNewer} animateTail={entrySettled&&timelineReady} onImeInsetChange={hasNativeImeLayout ? setImeInset : undefined}/> : null}
+        <View nativeID={nativeDockId} testID="help-chat-dock-layout" pointerEvents="box-none" style={{ position: 'absolute', bottom: boundedChat&&!hasNativeStableImeLayout?imeInset:0, left: 0, right: 0 }}>
+          {notice ? <HelpNotice key={notice} text={notice} onDone={() => setNotice('')} /> : null}<HelpDock onHeightFrame={hasNativeStableImeLayout?onDockHeightFrame:undefined} stableKeyboardLayout={hasNativeStableImeLayout} target={blurTarget} onHeight={setDockHeight}>
+          {chatSearchOpen ? <HelpChatSearchDock query={chatSearchQuery} total={chatSearchTotal} selectedIndex={chatResultIndex} loading={chatSearchLoading} showList={chatSearchList} onToggleList={()=>setChatSearchList(value=>!value)} error={chatSearchError}/> : ticket?.status === 'CLOSED' && mode === 'message' ? !isOwner ? <HelpPrimaryButton text="Закрыт" icon="lock-closed-outline" disabled onPress={()=>{}}/> : <View>{canReopenHelpTicket(ticket) ? <HelpPrimaryButton text="Открыть повторно" icon="sync-outline" onPress={()=>startMode('reopen')}/> : <><View style={{flexDirection:'row',justifyContent:'center',alignItems:'center',gap:6,paddingHorizontal:8,paddingBottom:9}}><Ionicons name="lock-closed-outline" size={15} color={c.muted}/><Text style={{color:c.muted,fontSize:12,lineHeight:18}}>Закрыт{ticket.closedAt ? ' · прошло больше 3 дней' : ''}</Text></View><HelpPrimaryButton text="Создать новое обращение" onPress={()=>newTicket({id:ticket.id,number:ticket.number,title:ticket.title})}/></>}</View> : ticket&&!isParticipant ? <HelpPrimaryButton text="Взять обращение" icon="headset-outline" disabled={busy||!service.canManage} onPress={()=>void run(()=>service.claimTicket(ticket.id))}/> : <HelpComposer blurTarget={blurTarget} navigationReady={entrySettled&&!leavingChat} onAttachmentVisibility={setAttachmentsVisible} screenActive={isFocused&&entrySettled} voiceDraftKey={`${encodeURIComponent(API_BASE_URL)}:${service.userId}:${draftKey}`} key={`${service.userId}:${scene.key}:${mode}`} value={draft} onChange={changeDraft} files={files} onFiles={changeFiles} onSend={submit} sendBlocked={Boolean(pendingCreate)||queuedOwnCreate} onStopAssistant={activeAssistant?.assistantRun ? ()=>{if(assistantPreview)assistantPreview.stop(activeAssistant.ticketId,activeAssistant.assistantRun!.runId);else void run(()=>assistantActions.stopAssistant!(activeAssistant.ticketId,activeAssistant.assistantRun!.runId));} : undefined} busy={busy} mode={mode} rating={rating} onRating={setRating} onCancelMode={cancelMode} quote={reply ? {name:reply.author?.name||'Сообщение',text:reply.text||'Вложение',thumbnail:reply.attachments.find(item=>item.kind==='IMAGE'),onPress:()=>jump(reply.id)} : undefined} resolve={service.mediaSource} recordingAreaHeight={Math.max(0,chatViewportHeight-listHeaderHeight-dockHeight-imeInset+8)} onCancelQuote={()=>setReply(null)} error={tell} focusKey={focusKey} onResize={()=>{ composerResizingUntil.current=Date.now()+320; scrollBottom(false); }} disabled={active==='new'?queuedOwnCreate:!ticket} editClosure={editing?.kind==='CLOSURE'} existingFiles={mode==='edit' ? editAttachments : undefined} onRemoveExisting={id=>setEditAttachments(values=>values.filter(a=>a.id!==id))}/>}
+        </HelpDock></View>
+        <HelpDockControls nativeID={nativeControlsId} nativeSynced={hasNativeDockControls} dockHeight={dockHeight} imeInset={boundedChat?imeInset:0}>{bottom=><>
+          <HelpJumpToLatest visible={latestControl.visible&&entrySettled&&!chatSearchOpen&&isFocused} count={latestControl.count} loading={latestControl.loading} onPress={()=>{scroll.current?.prepareJump();void(async()=>{if(await(scroll.current?.waitForJumpReady?.()??true))await service.jumpToLatest();})().catch(()=>{scroll.current?.cancelJump();tell('Не удалось открыть последние сообщения');});}} style={{position:'absolute',right:HELP_COMPOSER_ACTION_RIGHT,bottom}}/>
+          {chatSearchOpen && !chatSearchList ? <HelpChatSearchArrows total={chatSearchTotal} selectedIndex={chatResultIndex} loading={chatSearchLoading} canPrevious={chatResultIndex>0} canNext={chatResultIndex+1<chatResults.length || chatSearchCursor!==null} onPrevious={()=>{if(chatResultIndex>0)void showSearchResult(chatResults[chatResultIndex-1],chatResultIndex-1);}} onNext={nextSearch} style={{position:'absolute',right:HELP_COMPOSER_ACTION_RIGHT-5,bottom}}/> : null}
+        </>}
+        </HelpDockControls>
+        {hasNativeChatLayout ? <HelpNativeChatLayout manageIme={isFocused} key={`${service.userId}:${scene.key}`} scrollId={nativeScrollId} dockId={nativeDockId} controlsId={nativeControlsId} viewportId={nativeViewportId} allowFollow={nativeFollow && !service.hasNewer} animateTail={entrySettled&&timelineReady} onImeInsetChange={hasNativeImeLayout ? setImeInset : undefined}/> : null}
         </HelpMessageArrivalContext.Provider>
       </HelpChatEntry> : null}
     </View>

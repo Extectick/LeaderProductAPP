@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useRef, useState } from 'react';
+import React, { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Image, Modal, PanResponder, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions, type ImageStyle, type StyleProp } from 'react-native';
 import { Image as CachedImage } from 'expo-image';
 import { HelpImageCacheContext, HelpMediaLoadingContext } from '../helpMediaLoading';
@@ -178,64 +178,153 @@ function HelpAudioView({ attachment, captionRight, onError, ready, loading, play
     </View><View testID="help-audio-caption" style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, minHeight: 12 }}><Text numberOfLines={1} style={{ fontSize: 10, lineHeight: 12, color: c.muted, fontVariant: ['tabular-nums'] }}>{helpDuration(progress * (duration || 0))} / {duration ? helpDuration(duration) : helpFileSize(attachment.size)}</Text>{captionRight}</View></View>
   </View>;
 }
+const viewerClamp=(value:number,min:number,max:number)=>Math.max(min,Math.min(max,value));
+const viewerIndex=(index:number,length:number)=>viewerClamp(Number.isFinite(index)?Math.floor(index):0,0,Math.max(0,length-1));
+const viewerTouchDistance=(event:any)=>{const touches=event?.nativeEvent?.touches??[];return touches.length<2?0:Math.hypot(touches[0].pageX-touches[1].pageX,touches[0].pageY-touches[1].pageY);};
+const identityViewerTransform=[{translateX:0},{translateY:0},{scale:1}];
+
 export function HelpGallery({ attachments, initialIndex, resolve, onClose, onError, origin }: { attachments: HelpAttachment[]; initialIndex: number; resolve: ResolveHelpMedia; onClose: () => void; onError: (text: string) => void; origin?: HelpImageOrigin }) {
-  const [index, setIndex] = useState(Math.max(0, Math.min(attachments.length - 1, initialIndex))); const [downloadMenu, setDownloadMenu] = useState(false); const [busy, setBusy] = useState(false);
-  const y = useRef(new Animated.Value(0)).current; const reveal = useRef(new Animated.Value(0)).current; const insets = useSafeAreaInsets(); const size = useWindowDimensions();
-  const reduced = useHelpReducedMotion(); const life = useRef({ alive: true, closing: false, downloading: false });
-  const latest = useRef({ onClose, onError }); latest.current = { onClose, onError };
-  const motion = useRef<Animated.CompositeAnimation | undefined>(undefined);
-  const imageHeight = Math.max(100, size.height - insets.top - Math.max(insets.bottom, 12) - 140);
-  useEffect(() => { life.current.alive = true; return () => { life.current.alive = false; motion.current?.stop(); y.stopAnimation(); reveal.stopAnimation(); }; }, [y, reveal]);
-  useEffect(() => { if (life.current.closing) return; motion.current?.stop(); if (reduced) reveal.setValue(1); else { motion.current = Animated.spring(reveal, { toValue: 1, useNativeDriver: true, damping: 24 }); motion.current.start(); } }, [reduced, reveal]);
-  const finish = (down: boolean) => {
-    if (life.current.closing || !life.current.alive) return;
-    life.current.closing = true; motion.current?.stop();
-    if (reduced) { latest.current.onClose(); return; }
-    motion.current = Animated.timing(down ? y : reveal, { toValue: down ? size.height : 0, duration: 180, useNativeDriver: true });
-    motion.current.start(({ finished }) => { if (finished && life.current.alive) latest.current.onClose(); });
+  const [index,setIndex]=useState(()=>viewerIndex(initialIndex,attachments.length)),[downloadMenu,setDownloadMenu]=useState(false),[busy,setBusy]=useState(false);
+  const insets=useSafeAreaInsets(),size=useWindowDimensions(),reduced=useHelpReducedMotion();
+  const [stage,setStage]=useState({width:size.width,height:Math.max(100,size.height-insets.top-Math.max(insets.bottom,12)-140),y:insets.top+50});
+  const [laidOut,setLaidOut]=useState(false);
+  const reveal=useRef(new Animated.Value(0)).current,backdrop=useRef(new Animated.Value(0)).current;
+  const dragX=useRef(new Animated.Value(0)).current,dragY=useRef(new Animated.Value(0)).current,dismissX=useRef(new Animated.Value(0)).current;
+  const zoom=useRef(new Animated.Value(1)).current,panX=useRef(new Animated.Value(0)).current,panY=useRef(new Animated.Value(0)).current;
+  const life=useRef({alive:true,closing:false,downloading:false,switching:false});
+  const latest=useRef({attachments,resolve,onClose,onError,origin,reduced,size});latest.current={attachments,resolve,onClose,onError,origin,reduced,size};
+  const currentIndex=useRef(index);currentIndex.current=index;
+  const viewport=useRef(stage);viewport.current=stage;
+  const firstId=useRef(attachments[viewerIndex(initialIndex,attachments.length)]?.id);
+  const motion=useRef<Animated.CompositeAnimation|undefined>(undefined);
+  const pendingPage=useRef<number|null>(null);
+  const pageGeneration=useRef(0),externalPage=useRef({initialIndex,length:attachments.length});
+  const lastTap=useRef<{at:number;x:number;y:number}|null>(null);
+  const touch=useRef({mode:'' as ''|'horizontal'|'vertical'|'pinch'|'pan',distance:0,scale:1,x:0,y:0,startScale:1,startX:0,startY:0});
+  const attachment=attachments[index];
+  const tile=attachment?.id===firstId.current&&origin&&origin.width>0&&origin.height>0?origin:undefined;
+  useEffect(()=>{life.current.alive=true;return()=>{life.current.alive=false;motion.current?.stop();[reveal,backdrop,dragX,dragY,dismissX,zoom,panX,panY].forEach(value=>value.stopAnimation());};},[reveal,backdrop,dragX,dragY,dismissX,zoom,panX,panY]);
+  useEffect(()=>{
+    if(!laidOut||life.current.closing)return;
+    motion.current?.stop();
+    if(reduced){reveal.setValue(1);backdrop.setValue(1);return;}
+    motion.current=Animated.parallel([Animated.timing(reveal,{toValue:1,duration:230,useNativeDriver:true}),Animated.timing(backdrop,{toValue:1,duration:230,useNativeDriver:true})]);motion.current.start();
+  },[laidOut,reduced,reveal,backdrop]);
+  const resetZoom=()=>{touch.current.scale=1;touch.current.x=0;touch.current.y=0;zoom.setValue(1);panX.setValue(0);panY.setValue(0);};
+  useEffect(()=>{
+    const previous=externalPage.current;externalPage.current={initialIndex,length:attachments.length};
+    if(previous.initialIndex===initialIndex&&previous.length===attachments.length)return;
+    const next=viewerIndex(previous.initialIndex!==initialIndex?initialIndex:currentIndex.current,attachments.length);
+    ++pageGeneration.current;motion.current?.stop();pendingPage.current=null;life.current.switching=false;lastTap.current=null;
+    currentIndex.current=next;setIndex(next);dragX.setValue(0);dragY.setValue(0);dismissX.setValue(0);reveal.setValue(1);backdrop.setValue(1);resetZoom();
+  },[initialIndex,attachments.length,dragX,dragY,dismissX,reveal,backdrop,zoom,panX,panY]);
+  useLayoutEffect(()=>{
+    if(pendingPage.current!==index)return;
+    // Commit the next cell positions before resetting the native offset. Doing
+    // this in the animation callback can briefly snap back to the old photo.
+    pendingPage.current=null;dragX.setValue(0);dragY.setValue(0);dismissX.setValue(0);backdrop.setValue(1);resetZoom();life.current.switching=false;
+  },[index,dragX,dragY,dismissX,backdrop,zoom,panX,panY]);
+  const settleZoom=()=>{const scale=viewerClamp(touch.current.scale,1,4);touch.current.scale=scale;zoom.setValue(scale);if(scale<=1.05)resetZoom();};
+  const toggleZoom=()=>{
+    if(!life.current.alive||life.current.closing||life.current.switching)return;
+    const scale=touch.current.scale>1.05?1:2.5;touch.current.scale=scale;touch.current.x=0;touch.current.y=0;motion.current?.stop();
+    if(latest.current.reduced){zoom.setValue(scale);panX.setValue(0);panY.setValue(0);return;}
+    motion.current=Animated.parallel([Animated.timing(zoom,{toValue:scale,duration:180,useNativeDriver:true}),Animated.timing(panX,{toValue:0,duration:180,useNativeDriver:true}),Animated.timing(panY,{toValue:0,duration:180,useNativeDriver:true})]);motion.current.start();
   };
-  const restore = () => { if (life.current.closing) return; motion.current?.stop(); if (reduced) y.setValue(0); else { motion.current = Animated.spring(y, { toValue: 0, damping: 24, useNativeDriver: true }); motion.current.start(); } };
-  const gesture = useRef({ finish, restore }); gesture.current = { finish, restore };
-  const pan = useRef(PanResponder.create({
-    onMoveShouldSetPanResponder: (_, g) => !life.current.closing && g.dy > 10 && Math.abs(g.dy) > Math.abs(g.dx),
-    onPanResponderGrant: () => y.stopAnimation(),
-    onPanResponderMove: (_, g) => { if (!life.current.closing) y.setValue(Math.max(0, g.dy)); },
-    onPanResponderRelease: (_, g) => g.dy > 110 || (g.dy > 10 && g.vy > 1.1) ? gesture.current.finish(true) : gesture.current.restore(),
-    onPanResponderTerminate: () => gesture.current.restore(),
-    onPanResponderTerminationRequest: () => true,
+  const restore=()=>{
+    if(!life.current.alive||life.current.closing)return;motion.current?.stop();
+    if(latest.current.reduced){dragX.setValue(0);dragY.setValue(0);dismissX.setValue(0);backdrop.setValue(1);return;}
+    motion.current=Animated.parallel([Animated.spring(dragX,{toValue:0,damping:24,useNativeDriver:true}),Animated.spring(dragY,{toValue:0,damping:24,useNativeDriver:true}),Animated.spring(dismissX,{toValue:0,damping:24,useNativeDriver:true}),Animated.timing(backdrop,{toValue:1,duration:180,useNativeDriver:true})]);motion.current.start();
+  };
+  const finish=(down:boolean)=>{
+    if(life.current.closing||!life.current.alive)return;life.current.closing=true;lastTap.current=null;motion.current?.stop();
+    if(latest.current.reduced){latest.current.onClose();return;}
+    const current=latest.current,currentPhoto=current.attachments[currentIndex.current];
+    const returnToTile=Boolean(current.origin&&current.origin.width>0&&current.origin.height>0&&currentPhoto?.id===firstId.current);
+    const duration=returnToTile?210:190;
+    // Backdrop has its own clock: returning dragY to zero must not darken it again.
+    motion.current=Animated.parallel([
+      Animated.timing(reveal,{toValue:0,duration,useNativeDriver:true}),Animated.timing(backdrop,{toValue:0,duration,useNativeDriver:true}),
+      Animated.timing(dragX,{toValue:0,duration,useNativeDriver:true}),
+      Animated.timing(dragY,{toValue:returnToTile?0:down?current.size.height:0,duration,useNativeDriver:true}),Animated.timing(dismissX,{toValue:0,duration,useNativeDriver:true}),
+      Animated.timing(zoom,{toValue:1,duration,useNativeDriver:true}),Animated.timing(panX,{toValue:0,duration,useNativeDriver:true}),Animated.timing(panY,{toValue:0,duration,useNativeDriver:true}),
+    ]);
+    motion.current.start(({finished})=>{if(finished&&life.current.alive)latest.current.onClose();});
+  };
+  const changePhoto=(delta:number)=>{
+    if(!life.current.alive||life.current.closing||life.current.switching)return;
+    const next=viewerIndex(currentIndex.current+delta,latest.current.attachments.length);if(next===currentIndex.current){restore();return;}
+    life.current.switching=true;lastTap.current=null;motion.current?.stop();
+    const generation=++pageGeneration.current;
+    const switched=()=>{if(!life.current.alive||life.current.closing||generation!==pageGeneration.current)return;pendingPage.current=next;currentIndex.current=next;setIndex(next);setDownloadMenu(false);};
+    if(latest.current.reduced){switched();return;}
+    motion.current=Animated.timing(dragX,{toValue:delta>0?-viewport.current.width:viewport.current.width,duration:180,useNativeDriver:true});motion.current.start(({finished})=>{if(finished)switched();else if(generation===pageGeneration.current&&life.current.alive&&!life.current.closing){life.current.switching=false;restore();}});
+  };
+  const actions=useRef({finish,restore,changePhoto,settleZoom,toggleZoom});actions.current={finish,restore,changePhoto,settleZoom,toggleZoom};
+  const pan=useRef(PanResponder.create({
+    onStartShouldSetPanResponder:()=>life.current.alive&&!life.current.closing&&!life.current.switching,
+    onMoveShouldSetPanResponder:(event,g)=>life.current.alive&&!life.current.closing&&!life.current.switching&&((event?.nativeEvent?.touches?.length??0)>1||Math.abs(g.dx)>9||g.dy>9),
+    onPanResponderGrant:event=>{if(!life.current.alive||life.current.closing||life.current.switching)return;motion.current?.stop();reveal.setValue(1);backdrop.setValue(1);[dragX,dragY,dismissX].forEach(value=>value.stopAnimation());const current=touch.current;current.distance=viewerTouchDistance(event);current.startScale=current.scale;current.startX=current.x;current.startY=current.y;current.mode=current.distance?'pinch':current.scale>1.05?'pan':'';},
+    onPanResponderMove:(event,g)=>{
+      if(!life.current.alive||life.current.closing||life.current.switching)return;
+      const current=touch.current,distance=viewerTouchDistance(event);
+      if(distance){lastTap.current=null;if(current.mode!=='pinch'||!current.distance){current.distance=distance;current.startScale=current.scale;dragX.setValue(0);dragY.setValue(0);dismissX.setValue(0);backdrop.setValue(1);}current.mode='pinch';current.scale=viewerClamp(current.startScale*distance/current.distance,1,4);zoom.setValue(current.scale);return;}
+      if(current.mode==='pinch')return;
+      if(current.mode==='pan'){const xBound=viewport.current.width*(current.scale-1)/2,yBound=viewport.current.height*(current.scale-1)/2;current.x=viewerClamp(current.startX+g.dx,-xBound,xBound);current.y=viewerClamp(current.startY+g.dy,-yBound,yBound);panX.setValue(current.x);panY.setValue(current.y);return;}
+      // Lock an intentional axis, not the small diagonal jitter at touch-down.
+      if(!current.mode){if(g.dy>8&&g.dy>Math.abs(g.dx)*1.15){current.mode='vertical';dragX.setValue(0);}else if(Math.abs(g.dx)>8&&Math.abs(g.dx)>Math.abs(g.dy)*1.15)current.mode='horizontal';else return;}
+      if(current.mode==='horizontal'){const edge=g.dx>0&&currentIndex.current===0||g.dx<0&&currentIndex.current>=latest.current.attachments.length-1;dragX.setValue(g.dx*(edge?.25:1));}
+      else{const y=Math.max(0,g.dy);dragY.setValue(y);dismissX.setValue(g.dx*.6);backdrop.setValue(1-viewerClamp(y/Math.max(160,viewport.current.height*.6),0,1));}
+    },
+    onPanResponderRelease:(event,g)=>{
+      const mode=touch.current.mode;touch.current.mode='';
+      if(mode!=='pinch'&&Math.abs(g.dx)<8&&Math.abs(g.dy)<8){const point=event?.nativeEvent?.changedTouches?.[0]??event?.nativeEvent,at=performance.now(),x=point?.pageX??0,y=point?.pageY??0,previous=lastTap.current;if(previous&&at-previous.at<280&&Math.hypot(x-previous.x,y-previous.y)<36){lastTap.current=null;actions.current.toggleZoom();}else{lastTap.current={at,x,y};actions.current.restore();}return;}
+      lastTap.current=null;
+      if(mode==='pinch'||mode==='pan'){actions.current.settleZoom();return;}
+      if(mode==='horizontal'){if(Math.abs(g.dx)>viewport.current.width*.2||Math.abs(g.vx)>.7)actions.current.changePhoto(g.dx<0?1:-1);else actions.current.restore();}
+      else if(mode==='vertical'&&(g.dy>Math.min(110,viewport.current.height*.18)||g.dy>25&&g.vy>.8))actions.current.finish(true);else actions.current.restore();
+    },
+    onPanResponderTerminate:()=>{touch.current.mode='';actions.current.settleZoom();actions.current.restore();},
+    onPanResponderTerminationRequest:()=>false,
   })).current;
-  const download = async (all: boolean) => {
-    if (life.current.downloading) return;
-    life.current.downloading = true; setDownloadMenu(false); setBusy(true);
-    try { for (const file of all ? attachments : [attachments[index]]) { if (!life.current.alive) break; await downloadHelpAttachment(file, resolve); } }
-    catch { if (life.current.alive) latest.current.onError('Не удалось скачать изображение'); }
-    finally { life.current.downloading = false; if (life.current.alive) setBusy(false); }
+  const download=async(all:boolean)=>{
+    if(!life.current.alive||life.current.downloading||life.current.closing||!latest.current.attachments.length)return;
+    life.current.downloading=true;setDownloadMenu(false);setBusy(true);
+    const files=all?latest.current.attachments:[latest.current.attachments[currentIndex.current]];
+    try{for(const file of files){if(!life.current.alive)break;if(file)await downloadHelpAttachment(file,latest.current.resolve);}}
+    catch{if(life.current.alive)latest.current.onError('Не удалось скачать изображение');}
+    finally{life.current.downloading=false;if(life.current.alive)setBusy(false);}
   };
-  const requestDownload = () => attachments.length > 1 ? setDownloadMenu(value => !value) : void download(false);
-  const close = () => finish(false);
-  const opacity = Animated.multiply(reveal, y.interpolate({ inputRange: [0, size.height], outputRange: [1, .1], extrapolate: 'clamp' }));
-  const roundButton = { width: 40, height: 40, borderRadius: 20, backgroundColor: '#FFFFFF16' };
-  return <Modal transparent animationType="none" onRequestClose={() => downloadMenu ? setDownloadMenu(false) : close()} statusBarTranslucent>
-    <View style={{ flex: 1, overflow: 'hidden' }}>
-      <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: '#090B10', opacity }]} />
-      <Animated.View style={{ flex: 1, opacity }}>
-        <View style={{ paddingTop: insets.top + 5, paddingBottom: 5, paddingHorizontal: 12, gap: 6, flexDirection: 'row', alignItems: 'center', zIndex: 3 }}>
-          <Text style={{ flex: 1, fontSize: 13, color: '#C9D1DD' }}>{index + 1} из {attachments.length}</Text>
-          <HelpIcon name="download-outline" label="Скачать" disabled={busy} onPress={requestDownload} color="#FFF" style={roundButton} />
-          <HelpIcon name="close-outline" label="Закрыть изображение" onPress={close} color="#FFF" style={roundButton} />
-        </View>
-        <View testID="help-gallery-stage" {...pan.panHandlers} style={{ flex: 1, minHeight: 0, position: 'relative' }}>
-          <Animated.View style={{ flex: 1, transform: [{ translateY: Animated.add(y, reveal.interpolate({ inputRange: [0, 1], outputRange: [origin ? origin.y + origin.height / 2 - (insets.top + 50 + imageHeight / 2) : 0, 0] })) }, { translateX: reveal.interpolate({ inputRange: [0, 1], outputRange: [origin ? origin.x + origin.width / 2 - size.width / 2 : 0, 0] }) }, { scaleX: reveal.interpolate({ inputRange: [0, 1], outputRange: [origin ? origin.width / size.width : .9, 1] }) }, { scaleY: reveal.interpolate({ inputRange: [0, 1], outputRange: [origin ? origin.height / imageHeight : .9, 1] }) }] }}>
-            <HelpImage attachment={attachments[index]} resolve={resolve} resizeMode="contain" style={{ width: '100%', height: '100%' }} />
+  const requestDownload=()=>{if(!life.current.closing){if(attachments.length>1)setDownloadMenu(value=>!value);else void download(false);}};
+  const close=()=>finish(false),dismissRange=Math.max(160,stage.height*.6);
+  const ratio=attachment?.width&&attachment?.height&&Number.isFinite(attachment.width)&&Number.isFinite(attachment.height)&&attachment.width>0&&attachment.height>0?attachment.width/attachment.height:stage.width/stage.height;
+  const imageWidth=Math.min(stage.width,stage.height*ratio),imageHeight=Math.min(stage.height,stage.width/ratio);
+  const tileScale=tile?Math.min(tile.width/imageWidth,tile.height/imageHeight):.92;
+  const roundButton={width:40,height:40,borderRadius:20,backgroundColor:'#FFFFFF16'};
+  return <Modal transparent animationType="none" onRequestClose={()=>downloadMenu?setDownloadMenu(false):close()} statusBarTranslucent navigationBarTranslucent>
+    <View style={{flex:1,overflow:'hidden'}}>
+      <Animated.View testID="help-gallery-backdrop" pointerEvents="none" style={[StyleSheet.absoluteFill,{backgroundColor:'#090B10',opacity:backdrop}]}/>
+      <View style={{flex:1}}>
+        <Animated.View style={{paddingTop:insets.top+5,paddingBottom:5,paddingHorizontal:12,gap:6,flexDirection:'row',alignItems:'center',zIndex:3,opacity:backdrop}}>
+          <Text testID="help-gallery-position" accessibilityLiveRegion="polite" style={{flex:1,fontSize:13,color:'#C9D1DD'}}>{attachment?index+1:0} из {attachments.length}</Text>
+          <HelpIcon name="download-outline" label="Скачать" disabled={busy||!attachment} onPress={requestDownload} color="#FFF" style={roundButton}/>
+          <HelpIcon name="close-outline" label="Закрыть изображение" onPress={close} color="#FFF" style={roundButton}/>
+        </Animated.View>
+        <View testID="help-gallery-stage" onLayout={event=>{const layout=event.nativeEvent.layout;if(layout.width>0&&layout.height>0){setStage(previous=>previous.width===layout.width&&previous.height===layout.height&&previous.y===layout.y?previous:{width:layout.width,height:layout.height,y:layout.y});setLaidOut(true);}}} style={{flex:1,minHeight:0,position:'relative'}}>
+          <Animated.View testID="help-gallery-transition" collapsable={false} style={{flex:1,overflow:'hidden',opacity:laidOut?(tile?1:reveal):0,transform:[{translateY:Animated.add(dragY,reveal.interpolate({inputRange:[0,1],outputRange:[tile?tile.y+tile.height/2-stage.y-stage.height/2:0,0]}))},{translateX:Animated.add(dismissX,reveal.interpolate({inputRange:[0,1],outputRange:[tile?tile.x+tile.width/2-stage.width/2:0,0]}))},{scale:Animated.multiply(reveal.interpolate({inputRange:[0,1],outputRange:[tileScale,1]}),dragY.interpolate({inputRange:[0,dismissRange],outputRange:[1,.56],extrapolate:'clamp'}))}]}}>
+            <Animated.View testID="help-gallery-pager" style={{flex:1,transform:[{translateX:dragX}]}}>{attachments.slice(Math.max(0,index-1),index+2).map((file,offset)=>{const cellIndex=Math.max(0,index-1)+offset,current=cellIndex===index;return <Animated.View key={file.id} testID="help-gallery-cell" pointerEvents="none" style={{position:'absolute',left:(cellIndex-index)*stage.width,top:0,width:stage.width,height:stage.height,transform:current?[{translateX:panX},{translateY:panY},{scale:zoom}]:identityViewerTransform}}><HelpMediaLoadingContext.Provider value={current?'visible':'near'}><HelpImage attachment={file} resolve={resolve} resizeMode="contain" style={{width:'100%',height:'100%'}}/></HelpMediaLoadingContext.Provider></Animated.View>;})}</Animated.View>
           </Animated.View>
-          {attachments.length > 1 ? <><HelpIcon name="chevron-back" label="Предыдущее изображение" disabled={index === 0} onPress={() => setIndex(i => Math.max(0, i - 1))} color="#FFF" style={{ position: 'absolute', left: 8, top: '50%', marginTop: -20, width: 34, height: 40, borderRadius: 20, backgroundColor: '#00000088' }} /><HelpIcon name="chevron-forward" label="Следующее изображение" disabled={index === attachments.length - 1} onPress={() => setIndex(i => Math.min(attachments.length - 1, i + 1))} color="#FFF" style={{ position: 'absolute', right: 8, top: '50%', marginTop: -20, width: 34, height: 40, borderRadius: 20, backgroundColor: '#00000088' }} /></> : null}
+          {/* Own native touch-down above the image, rather than asking its
+              parent to steal an already claimed image/scroll responder. */}
+          <View testID="help-gallery-gesture" collapsable={false} pointerEvents="box-only" {...pan.panHandlers} style={[StyleSheet.absoluteFill,Platform.OS==='web'?{touchAction:'none',userSelect:'none'} as any:undefined]}/>
+          {attachments.length>1?<Animated.View pointerEvents="box-none" style={[StyleSheet.absoluteFill,{opacity:backdrop}]}><HelpIcon name="chevron-back" label="Предыдущее изображение" disabled={index===0} onPress={()=>changePhoto(-1)} color="#FFF" style={{position:'absolute',left:8,top:'50%',marginTop:-20,width:34,height:40,borderRadius:20,backgroundColor:'#00000088'}}/><HelpIcon name="chevron-forward" label="Следующее изображение" disabled={index===attachments.length-1} onPress={()=>changePhoto(1)} color="#FFF" style={{position:'absolute',right:8,top:'50%',marginTop:-20,width:34,height:40,borderRadius:20,backgroundColor:'#00000088'}}/></Animated.View>:null}
         </View>
-        <View testID="help-gallery-footer" style={{ alignItems: 'center', gap: 12, padding: 12, paddingBottom: Math.max(insets.bottom, 12) }}>
-          <Text numberOfLines={1} style={{ maxWidth: '100%', fontSize: 12, color: '#C9D1DD' }}>{attachments[index].name}</Text>
-          <Pressable accessibilityRole="button" accessibilityLabel="Скачать изображение" disabled={busy} onPress={requestDownload} style={{ flexDirection: 'row', alignItems: 'center', gap: 7, paddingVertical: 10, paddingHorizontal: 22, borderRadius: 22, backgroundColor: '#FFFFFF19' }}><Ionicons name="download-outline" size={18} color="#FFF" /><Text style={{ color: '#FFF', fontSize: 14 }}>{busy ? 'Скачивание…' : 'Скачать изображение'}</Text></Pressable>
-        </View>
-      </Animated.View>
-      {downloadMenu ? <><Pressable accessibilityLabel="Закрыть выбор скачивания" onPress={() => setDownloadMenu(false)} style={StyleSheet.absoluteFill} /><View accessibilityRole="menu" style={{ position: 'absolute', bottom: Math.max(insets.bottom, 12) + 103, left: 12, right: 12, padding: 5, borderWidth: 1, borderColor: '#FFFFFF22', borderRadius: 15, backgroundColor: '#242B37' }}><Pressable accessibilityRole="menuitem" onPress={() => void download(false)} style={{ padding: 13 }}><Text style={{ color: '#FFF', fontSize: 14 }}>Только это изображение</Text></Pressable><Pressable accessibilityRole="menuitem" onPress={() => void download(true)} style={{ padding: 13 }}><Text style={{ color: '#FFF', fontSize: 14 }}>Все изображения ({attachments.length})</Text></Pressable></View></> : null}
+        <Animated.View testID="help-gallery-footer" style={{alignItems:'center',gap:12,padding:12,paddingBottom:Math.max(insets.bottom,12),opacity:backdrop}}>
+          <Text numberOfLines={1} style={{maxWidth:'100%',fontSize:12,color:'#C9D1DD'}}>{attachment?.name??'Изображение недоступно'}</Text>
+          <Pressable accessibilityRole="button" accessibilityLabel="Скачать изображение" disabled={busy||!attachment} onPress={requestDownload} style={{flexDirection:'row',alignItems:'center',gap:7,paddingVertical:10,paddingHorizontal:22,borderRadius:22,backgroundColor:'#FFFFFF19'}}><Ionicons name="download-outline" size={18} color="#FFF"/><Text style={{color:'#FFF',fontSize:14}}>{busy?'Скачивание…':'Скачать изображение'}</Text></Pressable>
+        </Animated.View>
+      </View>
+      {downloadMenu?<><Pressable accessibilityLabel="Закрыть выбор скачивания" onPress={()=>setDownloadMenu(false)} style={StyleSheet.absoluteFill}/><View accessibilityRole="menu" style={{position:'absolute',bottom:Math.max(insets.bottom,12)+103,left:12,right:12,padding:5,borderWidth:1,borderColor:'#FFFFFF22',borderRadius:15,backgroundColor:'#242B37'}}><Pressable accessibilityRole="menuitem" onPress={()=>void download(false)} style={{padding:13}}><Text style={{color:'#FFF',fontSize:14}}>Только это изображение</Text></Pressable><Pressable accessibilityRole="menuitem" onPress={()=>void download(true)} style={{padding:13}}><Text style={{color:'#FFF',fontSize:14}}>Все изображения ({attachments.length})</Text></Pressable></View></>:null}
     </View>
   </Modal>;
 }

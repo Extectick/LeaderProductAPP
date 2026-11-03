@@ -58,7 +58,7 @@ export function HelpDock({ children, onHeight, onHeightFrame, target, stableKeyb
   }, [stableKeyboardLayout]);
   useEffect(() => helpDevState({ keyboardVisible, keyboardHeight: Keyboard.metrics?.()?.height ?? 0 }), [keyboardVisible]);
   return <View ref={node => helpDevRef('dock', node)} onLayout={e => reportHeight(e.nativeEvent.layout.height)} style={{ paddingHorizontal: 8, paddingTop: 8, paddingBottom: stableKeyboardLayout ? restingInset.current.bottom+8 : keyboardVisible ? 8 : insets.bottom + 8, position: 'relative' }}>
-    <View testID="help-dock-backdrop" pointerEvents="none" style={[StyleSheet.absoluteFill, {top:-8}]}><HelpBlurSurface target={target}/></View>{children}
+    <View testID="help-dock-backdrop" pointerEvents="none" style={[StyleSheet.absoluteFill, {top:8}]}><HelpBlurSurface target={target}/></View>{children}
   </View>;
 }
 export function HelpPrimaryButton({ text, icon = 'add-outline', onPress, disabled, variant = 'dock' }: { text: string; icon?: HelpIconName; onPress: () => void; disabled?: boolean; variant?: 'dock'|'sheet' }) {
