@@ -646,7 +646,7 @@ describe('Help screen integration with service boundary', () => {
     jest.useFakeTimers();
     try{
       await act(async()=>mockTimelineProps.onHistoryScroll(true));
-      await act(async()=>jest.advanceTimersByTime(1700));
+      await act(async()=>jest.advanceTimersByTime(2100));
       expect(StyleSheet.flatten(overlay().props.style).opacity).toBe(0);
       await act(async()=>mockTimelineProps.onHistoryScroll(true));
       await act(async()=>mockTimelineProps.onHistoryScroll(false));

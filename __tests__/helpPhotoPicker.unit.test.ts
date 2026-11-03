@@ -40,10 +40,10 @@ jest.mock('../src/features/help/components/HelpPhotoPreview',()=>({HelpPhotoPrev
 jest.mock('../src/features/help/components/HelpNativeInput',()=>({hasNativeHelpInput:false,HelpNativeInput:'HelpNativeInput'}));
 import {HelpPhotoPicker,helpPhotoSheetMaximumHeight} from '../src/features/help/components/HelpPhotoPicker';
 
-test('the attachment caption cannot summon a keyboard while the tray is open',async()=>{
+test('the attachment tray has no text input and returns to the composer without losing selection',async()=>{
   await render();
-  const caption=screen!.root.findAll(node=>node.props.accessibilityLabel==='Подпись к фотографиям')[0];
-  expect(caption.props.editable).toBe(false);
+  expect(screen!.root.findAllByType(TextInput)).toHaveLength(0);
+  await press('Назад к сообщению');expect(props.onClose).toHaveBeenCalledTimes(1);
 });
 test('photo sheet keeps the same available height with overlay and resized Android keyboards',()=>{
   expect(helpPhotoSheetMaximumHeight(800,24,0,500)).toBe(368);
@@ -94,18 +94,18 @@ test('gallery regression: opens at sixty percent with caption after the grid and
   expect(panel.props.style[1].height).toBeCloseTo(Math.min(Dimensions.get('window').height*.6,Dimensions.get('window').height-108));
   const children=panel.findAll(node=>['help-photo-grid-viewport','help-photo-caption'].includes(node.props.testID));
   expect(children[0].props.testID).toBe('help-photo-grid-viewport');expect(children[children.length-1].props.testID).toBe('help-photo-caption');
-  expect(screen!.root.findByType(TextInput).props.value).toBe('Мой текст');
+  expect(screen!.root.findAllByType(TextInput)).toHaveLength(0);expect(props.caption).toBe('Мой текст');
   await press('Назад к сообщению');expect(props.onClose).toHaveBeenCalledTimes(1);expect(props.onFiles).not.toHaveBeenCalled();
   await update({open:false});expect(props.onFiles).not.toHaveBeenCalled();
 });
 
-test('gallery regression: typing keeps gallery open and resizing never dismisses the caption keyboard',async()=>{
+test('gallery regression: a late keyboard event is dismissed without raising the attachment panel',async()=>{
   const listeners:Record<string,(event:any)=>void>={};
   jest.spyOn(Keyboard,'addListener').mockImplementation((name,listener:any)=>{listeners[name]=listener;return{remove:jest.fn()};});
   const dismiss=jest.spyOn(Keyboard,'dismiss').mockImplementation(()=>{});await render();expect(dismiss).toHaveBeenCalledTimes(1);
   await act(async()=>listeners.keyboardDidShow({endCoordinates:{height:280}}));
-  expect(props.onClose).not.toHaveBeenCalled();expect(dismiss).toHaveBeenCalledTimes(1);
-  await act(async()=>screen!.root.findByType(TextInput).props.onChangeText('Подпись'));expect(props.onCaption).toHaveBeenCalledWith('Подпись');
+  expect(props.onClose).not.toHaveBeenCalled();expect(dismiss).toHaveBeenCalledTimes(2);
+  expect(screen!.root.findAllByType(TextInput)).toHaveLength(0);expect(props.onCaption).not.toHaveBeenCalled();
 });
 
 test('gallery regression: bottom send uses selected photos in their chosen order',async()=>{

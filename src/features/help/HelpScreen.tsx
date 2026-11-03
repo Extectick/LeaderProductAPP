@@ -105,7 +105,7 @@ export default function HelpScreen() {
     if(!towardOlder){hideFloatingDate();return;}
     if(dateTimer.current)clearTimeout(dateTimer.current);
     setDateInteractive(true);dateOpacity.value=withTiming(1,{duration:120});
-    dateTimer.current=setTimeout(hideFloatingDate,1600);
+    dateTimer.current=setTimeout(hideFloatingDate,2000);
   },[dateOpacity,hideFloatingDate]);
   useEffect(()=>{hideFloatingDate();return()=>{if(dateTimer.current)clearTimeout(dateTimer.current);cancelAnimation(dateOpacity);};},[scene.key,hideFloatingDate,dateOpacity]);
   const listScroll=useRef<FlashListRef<HelpTicket>>(null);

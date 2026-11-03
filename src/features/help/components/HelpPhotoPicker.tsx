@@ -1,5 +1,5 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState, useId} from 'react';
-import {ActivityIndicator, AppState, BackHandler, Keyboard, Linking, Pressable, Text, TextInput, useWindowDimensions, View} from 'react-native';
+import {ActivityIndicator, AppState, BackHandler, Keyboard, Linking, Pressable, Text, useWindowDimensions, View} from 'react-native';
 import {Image} from 'expo-image';
 import {Ionicons} from '@expo/vector-icons';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
@@ -11,7 +11,6 @@ import {discardHelpPreparedPhoto, getHelpPhotoPermission, getHelpPhotoPreviewUri
 import {helpDevActions, helpDevRef, helpDevState} from '../helpDiagnostics';
 import {HelpPhotoPreview} from './HelpPhotoPreview';
 import {HelpPhotoCamera} from './HelpPhotoCamera';
-import {HelpNativeInput, hasNativeHelpInput} from './HelpNativeInput';
 import type {HelpLocalFile} from './HelpComposer';
 import {HelpPhotoPortal,useHelpPhotoPortalFrame,type HelpPhotoRect} from './HelpPhotoPortal';
 
@@ -165,9 +164,8 @@ export function HelpPhotoPicker(props:Props) {
   useEffect(()=>{if(!props.open||preview||cameraExpanded)return;const listener=BackHandler.addEventListener('hardwareBackPress',()=>{latest.current.onClose();return true;});return()=>listener.remove();},[props.open,preview,cameraExpanded]);
   useEffect(()=>{
     if(!props.open||preview||cameraExpanded){setKeyboardTop(null);return;}
-    const metrics=Keyboard.metrics();
-    setKeyboardTop(Keyboard.isVisible()&&metrics&&metrics.height>0?metrics.screenY:null);
-    const show=Keyboard.addListener('keyboardDidShow',event=>setKeyboardTop(event.endCoordinates.height>0?event.endCoordinates.screenY??window.height-event.endCoordinates.height:null));
+    setKeyboardTop(null);
+    const show=Keyboard.addListener('keyboardDidShow',()=>{setKeyboardTop(null);Keyboard.dismiss();});
     const hide=Keyboard.addListener('keyboardDidHide',()=>setKeyboardTop(null));
     return()=>{show.remove();hide.remove();};
   },[props.open,preview,cameraExpanded,window.height]);
@@ -248,8 +246,7 @@ export function HelpPhotoPicker(props:Props) {
       </View>
       </GestureDetector>
       <View testID="help-photo-caption" style={{margin:8,flexShrink:0,minHeight:46,borderRadius:24,backgroundColor:c.surface}}>
-        {hasNativeHelpInput?<HelpNativeInput value={props.caption} onChange={props.onCaption} placeholder="Сообщение…" color={c.text} hintColor={c.muted} accentColor={c.accent} editable={false} reducedMotion={reduced} onGeometry={measureGrid}/>:<TextInput accessibilityLabel="Подпись к фотографиям" value={props.caption} onChangeText={props.onCaption} editable={false} placeholder="Сообщение…" placeholderTextColor={c.muted} multiline textAlignVertical="center" style={{color:c.text,fontSize:18,lineHeight:22,paddingLeft:45,paddingRight:47,paddingVertical:12,minHeight:46,maxHeight:145,includeFontPadding:false}}/>}
-        <Pressable testID="help-photo-back" accessibilityRole="button" accessibilityLabel="Назад к сообщению" onPress={props.onClose} style={{position:'absolute',left:1,bottom:1,width:44,height:44,alignItems:'center',justifyContent:'center'}}><Ionicons name="arrow-back" size={24} color={c.text}/></Pressable>
+        <Pressable testID="help-photo-back" accessibilityRole="button" accessibilityLabel="Назад к сообщению" onPress={props.onClose} style={{minHeight:46,marginRight:48,paddingHorizontal:16,flexDirection:'row',gap:8,alignItems:'center'}}><Ionicons name="checkmark" size={20} color={c.accentText}/><Text style={{fontSize:16,fontWeight:'600',color:c.accentText}}>Готово</Text></Pressable>
         <Pressable accessibilityRole="button" accessibilityLabel={selectedIds.length?`Отправить фотографии: ${selectedIds.length}`:'Отправить сообщение'} disabled={blocked||failed||(!props.caption.trim()&&!selection.some(item=>item.file)&&!props.existingCount)} onPress={()=>void send()} style={{position:'absolute',right:4,bottom:4,width:38,height:38,borderRadius:19,alignItems:'center',justifyContent:'center',backgroundColor:c.accent,opacity:blocked||failed||(!props.caption.trim()&&!selection.some(item=>item.file)&&!props.existingCount)?.45:1}}>{pending?<ActivityIndicator color="#FFF"/>:<Ionicons name="arrow-up" size={23} color="#FFF"/>}{selectedIds.length?<View style={{position:'absolute',right:-3,top:-5,minWidth:19,height:19,paddingHorizontal:4,borderRadius:10,backgroundColor:c.accent,borderWidth:2,borderColor:c.surface,alignItems:'center',justifyContent:'center'}}><Text style={{color:'#FFF',fontSize:10,fontWeight:'700'}}>{selectedIds.length}</Text></View>:null}</Pressable>
       </View>
       </Reanimated.View>
