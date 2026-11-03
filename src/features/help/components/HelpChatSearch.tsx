@@ -7,6 +7,7 @@ import { helpDate, helpTime } from '../helpUiUtils';
 import { HELP_LIST_INSET } from '../helpLayout';
 import { HelpChatHeader } from './HelpChatHeader';
 import { HelpAvatar, HelpIcon } from './HelpPrimitives';
+import type {HelpDockControlPresentation} from './HelpTimelineIndicators';
 
 function literalSearch(query: string) {
   const value = query.trim();
@@ -87,15 +88,24 @@ export function HelpChatSearchDock({ query, total = 0, selectedIndex = -1, loadi
   </View>;
 }
 
-export type HelpChatSearchArrowsProps = Pick<HelpChatSearchProps,'loading'|'total'|'selectedIndex'|'canPrevious'|'canNext'|'onPrevious'|'onNext'> & {style?:StyleProp<ViewStyle>};
+export type HelpChatSearchArrowsProps = Pick<HelpChatSearchProps,'loading'|'total'|'selectedIndex'|'canPrevious'|'canNext'|'onPrevious'|'onNext'> & {style?:StyleProp<ViewStyle>;presentation?:HelpDockControlPresentation};
 
 /** Floating right-side controls; root aligns their center with the composer's action button. */
-export function HelpChatSearchArrows({loading=false,total=0,selectedIndex=-1,canPrevious,canNext,onPrevious,onNext,style}:HelpChatSearchArrowsProps) {
+export function HelpChatSearchArrows({loading=false,total=0,selectedIndex=-1,canPrevious,canNext,onPrevious,onNext,style,presentation='full'}:HelpChatSearchArrowsProps) {
   const c=useHelpTheme();
+  const nextDisabled=loading||!(canNext??(selectedIndex>=0&&selectedIndex+1<total)),previousDisabled=loading||!(canPrevious??selectedIndex>0);
   const button={width:48,height:48,borderRadius:24,backgroundColor:c.panel,borderWidth:StyleSheet.hairlineWidth,borderColor:c.line,elevation:2};
+  if(presentation==='interaction')return <View testID="help-chat-search-arrows" pointerEvents="box-none" style={[{gap:8,alignItems:'center'},style]}>
+    <Pressable accessibilityRole="button" accessibilityLabel="Следующий результат поиска, раньше" disabled={nextDisabled} accessibilityState={{disabled:nextDisabled}} onPress={onNext} style={{width:48,height:48,borderRadius:24,backgroundColor:'transparent'}}/>
+    <Pressable accessibilityRole="button" accessibilityLabel="Предыдущий результат поиска, позже" disabled={previousDisabled} accessibilityState={{disabled:previousDisabled}} onPress={onPrevious} style={{width:48,height:48,borderRadius:24,backgroundColor:'transparent'}}/>
+  </View>;
+  if(presentation==='visual')return <View testID="help-chat-search-arrows-visual" pointerEvents="none" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[{gap:8,alignItems:'center'},style]}>
+    <View accessible={false} style={[button,{alignItems:'center',justifyContent:'center',opacity:nextDisabled ? .38 : 1}]}><Ionicons name="chevron-up" size={25} color={c.accentText} accessible={false}/></View>
+    <View accessible={false} style={[button,{alignItems:'center',justifyContent:'center',opacity:previousDisabled ? .38 : 1}]}><Ionicons name="chevron-down" size={25} color={c.accentText} accessible={false}/></View>
+  </View>;
   return <View testID="help-chat-search-arrows" style={[{gap:8,alignItems:'center'},style]}>
-    <HelpIcon name="chevron-up" label="Следующий результат поиска, раньше" onPress={onNext} disabled={loading||!(canNext??(selectedIndex>=0&&selectedIndex+1<total))} size={25} style={button}/>
-    <HelpIcon name="chevron-down" label="Предыдущий результат поиска, позже" onPress={onPrevious} disabled={loading||!(canPrevious??selectedIndex>0)} size={25} style={button}/>
+    <HelpIcon name="chevron-up" label="Следующий результат поиска, раньше" onPress={onNext} disabled={nextDisabled} size={25} style={button}/>
+    <HelpIcon name="chevron-down" label="Предыдущий результат поиска, позже" onPress={onPrevious} disabled={previousDisabled} size={25} style={button}/>
   </View>;
 }
 

@@ -33,7 +33,7 @@ export function HelpPhotoCamera(props:HelpPhotoCameraProps) {
   const [active,setActive]=useState(AppState.currentState==='active'),[measured,setMeasured]=useState<HelpPhotoRect>();
   const camera=useRef<CameraView>(null),tile=useRef<View>(null),progress=useRef(new Animated.Value(props.expanded?1:0)).current;
   const life=useRef({mounted:true,pending:false,asking:false,generation:0});
-  const autoRequested=useRef(false),scrollPosition=useRef(0),transitionScroll=useRef(0),wasExpanded=useRef(props.expanded);
+  const scrollPosition=useRef(0),transitionScroll=useRef(0),wasExpanded=useRef(props.expanded);
   const live=useRef({props,permission,requestPermission,refreshPermission,ready,active});live.current={props,permission,requestPermission,refreshPermission,ready,active};
   const tileRect=validRect(props.tileOrigin)?props.tileOrigin:measured;
   const showCamera=Boolean(permission?.granted&&active&&(props.expanded||(props.tileVisible!==false&&!props.disabled))&&validRect(tileRect));
@@ -51,13 +51,6 @@ export function HelpPhotoCamera(props:HelpPhotoCameraProps) {
   useEffect(()=>{life.current.mounted=true;const listener=AppState.addEventListener('change',state=>{setActive(state==='active');if(state!=='active'){life.current.generation++;setReady(false);}else void live.current.refreshPermission().catch(()=>{});});return()=>{life.current.mounted=false;life.current.generation++;listener.remove();progress.stopAnimation();};},[progress]);
   useEffect(()=>{if(!showCamera)setReady(false);},[showCamera]);
   useEffect(()=>{if(!props.expanded)life.current.generation++;},[props.expanded]);
-  useEffect(()=>{
-    // Gallery permission has finished before tileVisible becomes true. Ask once
-    // for the live thumbnail too, rather than waiting for the fullscreen camera.
-    if(!permission||permission.granted||!permission.canAskAgain||!active||props.tileVisible===false||props.disabled||autoRequested.current||life.current.asking)return;
-    autoRequested.current=true;life.current.asking=true;setAsking(true);
-    void live.current.requestPermission().catch(()=>{}).finally(()=>{life.current.asking=false;if(life.current.mounted){setAsking(false);live.current.props.onPermissionSettled?.();}});
-  },[permission,active,props.tileVisible,props.disabled]);
   useEffect(()=>{progress.stopAnimation();if(props.expanded)setExpandedSurface(true);if(reduced){progress.setValue(props.expanded?1:0);setExpandedSurface(props.expanded);}else Animated.timing(progress,{toValue:props.expanded?1:0,duration:230,useNativeDriver:false}).start(({finished})=>{if(finished&&life.current.mounted&&!live.current.props.expanded)setExpandedSurface(false);});},[props.expanded,progress,reduced]);
   const measure=useCallback(()=>tile.current?.measureInWindow((x,y,width,height)=>{if(width>0&&height>0&&life.current.mounted)setMeasured(previous=>previous?.x===x&&previous.y===y&&previous.width===width&&previous.height===height?previous:{x,y,width,height});}),[]);
   useEffect(()=>{if(validRect(props.tileOrigin))setMeasured(props.tileOrigin);},[props.tileOrigin?.x,props.tileOrigin?.y,props.tileOrigin?.width,props.tileOrigin?.height]);
@@ -72,9 +65,8 @@ export function HelpPhotoCamera(props:HelpPhotoCameraProps) {
   const expand=useCallback(async()=>{
     const current=live.current;if(current.props.disabled||life.current.asking||!life.current.mounted)return;
     if(current.permission?.granted){current.props.onExpand();return;}
-    if(current.permission?.canAskAgain===false){current.props.onError('Разрешите доступ к камере в настройках приложения.');return;}
     life.current.asking=true;setAsking(true);
-    try{const result=await current.requestPermission();if(!life.current.mounted||live.current.props.disabled)return;if(result.granted)live.current.props.onExpand();else live.current.props.onError('Для съёмки фото нужен доступ к камере.');}
+    try{const result=await current.requestPermission();if(!life.current.mounted||live.current.props.disabled)return;if(result.granted)live.current.props.onExpand();else live.current.props.onError(result.canAskAgain===false?'Система больше не показывает запрос. Разрешите доступ к камере в настройках приложения.':'Для съёмки фото нужен доступ к камере.');}
     catch{if(life.current.mounted)live.current.props.onError('Не удалось запросить доступ к камере.');}
     finally{life.current.asking=false;if(life.current.mounted){setAsking(false);live.current.props.onPermissionSettled?.();}}
   },[]);

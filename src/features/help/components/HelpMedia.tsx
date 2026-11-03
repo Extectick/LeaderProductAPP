@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useContext, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Image, Modal, PanResponder, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions, type ImageStyle, type StyleProp } from 'react-native';
 import { Image as CachedImage } from 'expo-image';
 import { HelpImageCacheContext, HelpMediaLoadingContext } from '../helpMediaLoading';
@@ -54,9 +54,9 @@ export function HelpImage({ attachment, resolve, style, resizeMode = 'cover', on
     setResult({id:attachment.id,url:attachment.url,resolver:resolve,error:!(restored&&allowOriginal)});
   };
   const original=current?.source && !current.error && (allowOriginal||current.loaded) ? current.source : undefined;
-  return <View testID="help-progressive-image" style={[style,{overflow:'hidden',backgroundColor:c.elevated}]}>
+  return <View testID="help-progressive-image" style={[style,{overflow:'hidden',backgroundColor:resizeMode==='contain'?'transparent':c.elevated}]}>
     {thumbnail ? <Image testID="help-image-preview" source={{uri:thumbnail}} resizeMode={resizeMode} style={StyleSheet.absoluteFill} blurRadius={2}/> : null}
-    {original ? Platform.OS==='web' ? <Image accessibilityLabel={attachment.name} source={original} style={StyleSheet.absoluteFill} resizeMode={resizeMode} onLoad={loaded} onError={failed}/> : <CachedImage testID="help-image-original" accessibilityLabel={attachment.name} source={original} style={StyleSheet.absoluteFill} contentFit={resizeMode} placeholder={thumbnail?{uri:thumbnail}:undefined} placeholderContentFit={resizeMode} cachePolicy="memory-disk" recyclingKey={original.cacheKey??attachment.id} priority={proximity==='visible'?'high':'low'} transition={reduced||restored?0:120} onLoad={loaded} onError={failed}/> : null}
+    {original ? Platform.OS==='web' ? <Image accessibilityLabel={attachment.name} source={original} style={StyleSheet.absoluteFill} resizeMode={resizeMode} onLoad={loaded} onError={failed}/> : <CachedImage testID="help-image-original" accessibilityLabel={attachment.name} source={original} style={StyleSheet.absoluteFill} contentFit={resizeMode} placeholder={thumbnail?{uri:thumbnail}:undefined} placeholderContentFit={resizeMode} cachePolicy="memory-disk" recyclingKey={original.cacheKey??attachment.id} priority={proximity==='visible'?'high':'low'} transition={resizeMode==='contain'||reduced||restored?0:120} onLoad={loaded} onError={failed}/> : null}
     {!current?.loaded ? <View pointerEvents="none" style={[StyleSheet.absoluteFill,{alignItems:'center',justifyContent:'center'}]}>{current?.error ? <Ionicons name="image-outline" accessibilityLabel="Изображение недоступно" size={24} color={c.muted}/> : allowOriginal ? <View style={{padding:9,borderRadius:22,backgroundColor:'#00000038'}}><ActivityIndicator color="#FFFFFF"/></View> : null}</View> : null}
   </View>;
 }
@@ -189,7 +189,7 @@ export function HelpGallery({ attachments, initialIndex, resolve, onClose, onErr
   const [stage,setStage]=useState({width:size.width,height:Math.max(100,size.height-insets.top-Math.max(insets.bottom,12)-140),y:insets.top+50});
   const [laidOut,setLaidOut]=useState(false);
   const reveal=useRef(new Animated.Value(0)).current,backdrop=useRef(new Animated.Value(0)).current;
-  const dragX=useRef(new Animated.Value(0)).current,dragY=useRef(new Animated.Value(0)).current,dismissX=useRef(new Animated.Value(0)).current;
+  const dragX=useRef(new Animated.Value(-viewerIndex(initialIndex,attachments.length)*size.width)).current,dragY=useRef(new Animated.Value(0)).current,dismissX=useRef(new Animated.Value(0)).current;
   const zoom=useRef(new Animated.Value(1)).current,panX=useRef(new Animated.Value(0)).current,panY=useRef(new Animated.Value(0)).current;
   const life=useRef({alive:true,closing:false,downloading:false,switching:false});
   const latest=useRef({attachments,resolve,onClose,onError,origin,reduced,size});latest.current={attachments,resolve,onClose,onError,origin,reduced,size};
@@ -197,7 +197,6 @@ export function HelpGallery({ attachments, initialIndex, resolve, onClose, onErr
   const viewport=useRef(stage);viewport.current=stage;
   const firstId=useRef(attachments[viewerIndex(initialIndex,attachments.length)]?.id);
   const motion=useRef<Animated.CompositeAnimation|undefined>(undefined);
-  const pendingPage=useRef<number|null>(null);
   const pageGeneration=useRef(0),externalPage=useRef({initialIndex,length:attachments.length});
   const lastTap=useRef<{at:number;x:number;y:number}|null>(null);
   const touch=useRef({mode:'' as ''|'horizontal'|'vertical'|'pinch'|'pan',distance:0,scale:1,x:0,y:0,startScale:1,startX:0,startY:0});
@@ -215,15 +214,9 @@ export function HelpGallery({ attachments, initialIndex, resolve, onClose, onErr
     const previous=externalPage.current;externalPage.current={initialIndex,length:attachments.length};
     if(previous.initialIndex===initialIndex&&previous.length===attachments.length)return;
     const next=viewerIndex(previous.initialIndex!==initialIndex?initialIndex:currentIndex.current,attachments.length);
-    ++pageGeneration.current;motion.current?.stop();pendingPage.current=null;life.current.switching=false;lastTap.current=null;
-    currentIndex.current=next;setIndex(next);dragX.setValue(0);dragY.setValue(0);dismissX.setValue(0);reveal.setValue(1);backdrop.setValue(1);resetZoom();
+    ++pageGeneration.current;motion.current?.stop();life.current.switching=false;lastTap.current=null;
+    currentIndex.current=next;setIndex(next);dragX.setValue(-next*viewport.current.width);dragY.setValue(0);dismissX.setValue(0);reveal.setValue(1);backdrop.setValue(1);resetZoom();
   },[initialIndex,attachments.length,dragX,dragY,dismissX,reveal,backdrop,zoom,panX,panY]);
-  useLayoutEffect(()=>{
-    if(pendingPage.current!==index)return;
-    // Commit the next cell positions before resetting the native offset. Doing
-    // this in the animation callback can briefly snap back to the old photo.
-    pendingPage.current=null;dragX.setValue(0);dragY.setValue(0);dismissX.setValue(0);backdrop.setValue(1);resetZoom();life.current.switching=false;
-  },[index,dragX,dragY,dismissX,backdrop,zoom,panX,panY]);
   const settleZoom=()=>{const scale=viewerClamp(touch.current.scale,1,4);touch.current.scale=scale;zoom.setValue(scale);if(scale<=1.05)resetZoom();};
   const toggleZoom=()=>{
     if(!life.current.alive||life.current.closing||life.current.switching)return;
@@ -233,8 +226,8 @@ export function HelpGallery({ attachments, initialIndex, resolve, onClose, onErr
   };
   const restore=()=>{
     if(!life.current.alive||life.current.closing)return;motion.current?.stop();
-    if(latest.current.reduced){dragX.setValue(0);dragY.setValue(0);dismissX.setValue(0);backdrop.setValue(1);return;}
-    motion.current=Animated.parallel([Animated.spring(dragX,{toValue:0,damping:24,useNativeDriver:true}),Animated.spring(dragY,{toValue:0,damping:24,useNativeDriver:true}),Animated.spring(dismissX,{toValue:0,damping:24,useNativeDriver:true}),Animated.timing(backdrop,{toValue:1,duration:180,useNativeDriver:true})]);motion.current.start();
+    if(latest.current.reduced){dragX.setValue(-currentIndex.current*viewport.current.width);dragY.setValue(0);dismissX.setValue(0);backdrop.setValue(1);return;}
+    motion.current=Animated.parallel([Animated.spring(dragX,{toValue:-currentIndex.current*viewport.current.width,damping:24,useNativeDriver:true}),Animated.spring(dragY,{toValue:0,damping:24,useNativeDriver:true}),Animated.spring(dismissX,{toValue:0,damping:24,useNativeDriver:true}),Animated.timing(backdrop,{toValue:1,duration:180,useNativeDriver:true})]);motion.current.start();
   };
   const finish=(down:boolean)=>{
     if(life.current.closing||!life.current.alive)return;life.current.closing=true;lastTap.current=null;motion.current?.stop();
@@ -245,20 +238,22 @@ export function HelpGallery({ attachments, initialIndex, resolve, onClose, onErr
     // Backdrop has its own clock: returning dragY to zero must not darken it again.
     motion.current=Animated.parallel([
       Animated.timing(reveal,{toValue:0,duration,useNativeDriver:true}),Animated.timing(backdrop,{toValue:0,duration,useNativeDriver:true}),
-      Animated.timing(dragX,{toValue:0,duration,useNativeDriver:true}),
+      Animated.timing(dragX,{toValue:-currentIndex.current*viewport.current.width,duration,useNativeDriver:true}),
       Animated.timing(dragY,{toValue:returnToTile?0:down?current.size.height:0,duration,useNativeDriver:true}),Animated.timing(dismissX,{toValue:0,duration,useNativeDriver:true}),
       Animated.timing(zoom,{toValue:1,duration,useNativeDriver:true}),Animated.timing(panX,{toValue:0,duration,useNativeDriver:true}),Animated.timing(panY,{toValue:0,duration,useNativeDriver:true}),
     ]);
     motion.current.start(({finished})=>{if(finished&&life.current.alive)latest.current.onClose();});
   };
+  // Native paging owns absolute page positions. Committing a new current index
+  // only changes the bounded preload window, never resets/rebases the pixels.
   const changePhoto=(delta:number)=>{
     if(!life.current.alive||life.current.closing||life.current.switching)return;
     const next=viewerIndex(currentIndex.current+delta,latest.current.attachments.length);if(next===currentIndex.current){restore();return;}
     life.current.switching=true;lastTap.current=null;motion.current?.stop();
     const generation=++pageGeneration.current;
-    const switched=()=>{if(!life.current.alive||life.current.closing||generation!==pageGeneration.current)return;pendingPage.current=next;currentIndex.current=next;setIndex(next);setDownloadMenu(false);};
-    if(latest.current.reduced){switched();return;}
-    motion.current=Animated.timing(dragX,{toValue:delta>0?-viewport.current.width:viewport.current.width,duration:180,useNativeDriver:true});motion.current.start(({finished})=>{if(finished)switched();else if(generation===pageGeneration.current&&life.current.alive&&!life.current.closing){life.current.switching=false;restore();}});
+    const switched=()=>{if(!life.current.alive||life.current.closing||generation!==pageGeneration.current)return;currentIndex.current=next;setIndex(next);setDownloadMenu(false);dragY.setValue(0);dismissX.setValue(0);backdrop.setValue(1);resetZoom();life.current.switching=false;};
+    if(latest.current.reduced){dragX.setValue(-next*viewport.current.width);switched();return;}
+    motion.current=Animated.timing(dragX,{toValue:-next*viewport.current.width,duration:180,useNativeDriver:true});motion.current.start(({finished})=>{if(finished)switched();else if(generation===pageGeneration.current&&life.current.alive&&!life.current.closing){life.current.switching=false;restore();}});
   };
   const actions=useRef({finish,restore,changePhoto,settleZoom,toggleZoom});actions.current={finish,restore,changePhoto,settleZoom,toggleZoom};
   const pan=useRef(PanResponder.create({
@@ -268,12 +263,12 @@ export function HelpGallery({ attachments, initialIndex, resolve, onClose, onErr
     onPanResponderMove:(event,g)=>{
       if(!life.current.alive||life.current.closing||life.current.switching)return;
       const current=touch.current,distance=viewerTouchDistance(event);
-      if(distance){lastTap.current=null;if(current.mode!=='pinch'||!current.distance){current.distance=distance;current.startScale=current.scale;dragX.setValue(0);dragY.setValue(0);dismissX.setValue(0);backdrop.setValue(1);}current.mode='pinch';current.scale=viewerClamp(current.startScale*distance/current.distance,1,4);zoom.setValue(current.scale);return;}
+      if(distance){lastTap.current=null;if(current.mode!=='pinch'||!current.distance){current.distance=distance;current.startScale=current.scale;dragX.setValue(-currentIndex.current*viewport.current.width);dragY.setValue(0);dismissX.setValue(0);backdrop.setValue(1);}current.mode='pinch';current.scale=viewerClamp(current.startScale*distance/current.distance,1,4);zoom.setValue(current.scale);return;}
       if(current.mode==='pinch')return;
       if(current.mode==='pan'){const xBound=viewport.current.width*(current.scale-1)/2,yBound=viewport.current.height*(current.scale-1)/2;current.x=viewerClamp(current.startX+g.dx,-xBound,xBound);current.y=viewerClamp(current.startY+g.dy,-yBound,yBound);panX.setValue(current.x);panY.setValue(current.y);return;}
       // Lock an intentional axis, not the small diagonal jitter at touch-down.
-      if(!current.mode){if(g.dy>8&&g.dy>Math.abs(g.dx)*1.15){current.mode='vertical';dragX.setValue(0);}else if(Math.abs(g.dx)>8&&Math.abs(g.dx)>Math.abs(g.dy)*1.15)current.mode='horizontal';else return;}
-      if(current.mode==='horizontal'){const edge=g.dx>0&&currentIndex.current===0||g.dx<0&&currentIndex.current>=latest.current.attachments.length-1;dragX.setValue(g.dx*(edge?.25:1));}
+      if(!current.mode){if(g.dy>8&&g.dy>Math.abs(g.dx)*1.15){current.mode='vertical';dragX.setValue(-currentIndex.current*viewport.current.width);}else if(Math.abs(g.dx)>8&&Math.abs(g.dx)>Math.abs(g.dy)*1.15)current.mode='horizontal';else return;}
+      if(current.mode==='horizontal'){const edge=g.dx>0&&currentIndex.current===0||g.dx<0&&currentIndex.current>=latest.current.attachments.length-1;dragX.setValue(-currentIndex.current*viewport.current.width+g.dx*(edge?.25:1));}
       else{const y=Math.max(0,g.dy);dragY.setValue(y);dismissX.setValue(g.dx*.6);backdrop.setValue(1-viewerClamp(y/Math.max(160,viewport.current.height*.6),0,1));}
     },
     onPanResponderRelease:(event,g)=>{
@@ -310,9 +305,9 @@ export function HelpGallery({ attachments, initialIndex, resolve, onClose, onErr
           <HelpIcon name="download-outline" label="Скачать" disabled={busy||!attachment} onPress={requestDownload} color="#FFF" style={roundButton}/>
           <HelpIcon name="close-outline" label="Закрыть изображение" onPress={close} color="#FFF" style={roundButton}/>
         </Animated.View>
-        <View testID="help-gallery-stage" onLayout={event=>{const layout=event.nativeEvent.layout;if(layout.width>0&&layout.height>0){setStage(previous=>previous.width===layout.width&&previous.height===layout.height&&previous.y===layout.y?previous:{width:layout.width,height:layout.height,y:layout.y});setLaidOut(true);}}} style={{flex:1,minHeight:0,position:'relative'}}>
+        <View testID="help-gallery-stage" onLayout={event=>{const layout=event.nativeEvent.layout;if(layout.width>0&&layout.height>0){setStage(previous=>previous.width===layout.width&&previous.height===layout.height&&previous.y===layout.y?previous:{width:layout.width,height:layout.height,y:layout.y});if(Math.abs(viewport.current.width-layout.width)>.5)dragX.setValue(-currentIndex.current*layout.width);setLaidOut(true);}}} style={{flex:1,minHeight:0,position:'relative'}}>
           <Animated.View testID="help-gallery-transition" collapsable={false} style={{flex:1,overflow:'hidden',opacity:laidOut?(tile?1:reveal):0,transform:[{translateY:Animated.add(dragY,reveal.interpolate({inputRange:[0,1],outputRange:[tile?tile.y+tile.height/2-stage.y-stage.height/2:0,0]}))},{translateX:Animated.add(dismissX,reveal.interpolate({inputRange:[0,1],outputRange:[tile?tile.x+tile.width/2-stage.width/2:0,0]}))},{scale:Animated.multiply(reveal.interpolate({inputRange:[0,1],outputRange:[tileScale,1]}),dragY.interpolate({inputRange:[0,dismissRange],outputRange:[1,.56],extrapolate:'clamp'}))}]}}>
-            <Animated.View testID="help-gallery-pager" style={{flex:1,transform:[{translateX:dragX}]}}>{attachments.slice(Math.max(0,index-1),index+2).map((file,offset)=>{const cellIndex=Math.max(0,index-1)+offset,current=cellIndex===index;return <Animated.View key={file.id} testID="help-gallery-cell" pointerEvents="none" style={{position:'absolute',left:(cellIndex-index)*stage.width,top:0,width:stage.width,height:stage.height,transform:current?[{translateX:panX},{translateY:panY},{scale:zoom}]:identityViewerTransform}}><HelpMediaLoadingContext.Provider value={current?'visible':'near'}><HelpImage attachment={file} resolve={resolve} resizeMode="contain" style={{width:'100%',height:'100%'}}/></HelpMediaLoadingContext.Provider></Animated.View>;})}</Animated.View>
+            <Animated.View testID="help-gallery-pager" style={{flex:1,transform:[{translateX:dragX}]}}>{attachments.slice(Math.max(0,index-1),index+2).map((file,offset)=>{const cellIndex=Math.max(0,index-1)+offset,current=cellIndex===index;return <Animated.View key={file.id} testID="help-gallery-cell" accessibilityLabel={current?'Текущее изображение':undefined} pointerEvents="none" style={{position:'absolute',left:cellIndex*stage.width,top:0,width:stage.width,height:stage.height,transform:current?[{translateX:panX},{translateY:panY},{scale:zoom}]:identityViewerTransform}}><HelpMediaLoadingContext.Provider value={current?'visible':'near'}><HelpImage attachment={file} resolve={resolve} resizeMode="contain" style={{width:'100%',height:'100%'}}/></HelpMediaLoadingContext.Provider></Animated.View>;})}</Animated.View>
           </Animated.View>
           {/* Own native touch-down above the image, rather than asking its
               parent to steal an already claimed image/scroll responder. */}

@@ -16,5 +16,8 @@ export function HelpNativeChatLayout({scrollId, dockId, controlsId, viewportId, 
   const reducedMotion = useHelpReducedMotion();
   useEffect(() => helpDevProbe('chat', () => ref.current?.diagnostics()), []);
   useEffect(() => helpDevActions('chat.native', {'chat.resetMetrics': () => ref.current?.resetDiagnostics()}), []);
-  return NativeLayout ? <NativeLayout ref={ref} scrollId={scrollId} dockId={dockId} {...(hasNativeDockControls?{controlsId:controlsId??''}:{})} allowFollow={allowFollow} {...(layoutModule?.tailMotionVersion ? {reducedMotion:reducedMotion||!animateTail} : {})} {...(layoutModule?.imeInsetsVersion ? {viewportId,onImeInsetChange:(event:any)=>onImeInsetChange?.(event.nativeEvent.inset)} : {})} {...((layoutModule?.imeInsetsVersion??0)>=3?{manageIme}:{})} pointerEvents="none" accessible={false} style={{position:'absolute',width:0,height:0}}/> : null;
+  // Keep message pixels beneath the header/dock glass. Native viewport clipping
+  // at the composer's top removes the very capture the bottom BlurView needs.
+  // Scroll padding, tail following and read occlusion still use the dock bounds.
+  return NativeLayout ? <NativeLayout ref={ref} scrollId={scrollId} dockId={dockId} {...(hasNativeDockControls?{controlsId:controlsId??''}:{})} allowFollow={allowFollow} {...(layoutModule?.tailMotionVersion ? {reducedMotion:reducedMotion||!animateTail} : {})} {...(layoutModule?.imeInsetsVersion ? {viewportId:'',onImeInsetChange:(event:any)=>onImeInsetChange?.(event.nativeEvent.inset)} : {})} {...((layoutModule?.imeInsetsVersion??0)>=3?{manageIme}:{})} pointerEvents="none" accessible={false} style={{position:'absolute',width:0,height:0}}/> : null;
 }

@@ -78,6 +78,16 @@ describe('photo preview draft interactions',()=>{
     await act(async()=>control('Следующее фото').props.onPress());expect(screen!.root.findByProps({testID:'help-photo-preview-image'}).props.source.uri).toBe(photos[3].uri);
     expect(identified('help-photo-preview-caption').props.value).toBe('Подпись');expect(props.onSend).not.toHaveBeenCalled();
   });
+  test('paging preserves the decoded neighbor and absolute cell position instead of rebasing it',async()=>{
+    await render();
+    const before=screen!.root.findAllByType('ExpoImage' as any).find(image=>image.props.source.uri===photos[3].uri)!;
+    const position=()=>StyleSheet.flatten(before.parent!.props.style).left;
+    const left=position();
+    await act(async()=>control('Следующее фото').props.onPress());
+    const after=screen!.root.findByProps({testID:'help-photo-preview-image'});
+    expect(after).toBe(before);expect(position()).toBe(left);
+    expect(after.props).toMatchObject({contentFit:'contain',transition:0,source:{uri:photos[3].uri}});
+  });
   test('selection limit blocks adding but allows removing the selected photo',async()=>{
     props.limitReached=true;await render();expect(identified('help-photo-preview-select').props.disabled).toBe(false);
     await act(async()=>control('Следующее фото').props.onPress());expect(identified('help-photo-preview-select').props.disabled).toBe(true);

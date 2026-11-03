@@ -78,6 +78,12 @@ describe('Help message search navigation and literal highlighting', () => {
     expect(screen!.root.findAllByProps({ accessibilityLabel: 'Следующий результат поиска, раньше' })).toHaveLength(0);
     expect(screen!.root.findAllByProps({ testID: 'help-chat-search-input' }).length).toBeGreaterThan(0);
   });
+  test('legacy search visual has no duplicate interactive or accessible arrow buttons',async()=>{
+    await act(async()=>{screen=TestRenderer.create(React.createElement(HelpChatSearchArrows,{presentation:'visual',total:3,selectedIndex:1,onNext:jest.fn(),onPrevious:jest.fn()}));});
+    expect(screen!.root.findByProps({testID:'help-chat-search-arrows-visual'}).props.pointerEvents).toBe('none');
+    expect(screen!.root.findAll(node=>node.props.accessibilityRole==='button'||typeof node.props.onPress==='function'||node.props.accessibilityLabel!==undefined)).toHaveLength(0);
+    expect(screen!.root.findAllByType('Ionicons' as any).map(node=>node.props.name)).toEqual(['chevron-up','chevron-down']);
+  });
 
   test('the bottom panel owns the result count and result-list action', async () => {
     const toggle = jest.fn();

@@ -44,9 +44,9 @@ describe('photo camera lifecycle and explicit capture',()=>{
     expect(motion()).toEqual([{translateY:0}]);
   });
   async function ready(){await act(async()=>mockCameraProps.onCameraReady());}
-  test('camera regression: visible gallery requests preview permission once without opening or capturing',async()=>{
+  test('camera regression: visible gallery waits for camera tap before requesting permission',async()=>{
     mockPermission={granted:false,canAskAgain:true};props.tileVisible=false;await render();expect(mockRequestPermission).not.toHaveBeenCalled();expect(mockMounts).toBe(0);
-    await update({tileVisible:true});expect(mockRequestPermission).toHaveBeenCalledTimes(1);expect(props.onExpand).not.toHaveBeenCalled();expect(mockTakePicture).not.toHaveBeenCalled();
+    await update({tileVisible:true});expect(mockRequestPermission).not.toHaveBeenCalled();await act(async()=>control('Открыть камеру').props.onPress());expect(mockRequestPermission).toHaveBeenCalledTimes(1);expect(props.onExpand).toHaveBeenCalledTimes(1);expect(mockTakePicture).not.toHaveBeenCalled();
     mockPermission={granted:true,canAskAgain:true};await update({});expect(mockMounts).toBe(1);expect(mockCameraProps.previewBlurRadius).toBe(10);
     await update({tileVisible:false});await update({tileVisible:true});expect(mockRequestPermission).toHaveBeenCalledTimes(1);
   });
@@ -54,9 +54,9 @@ describe('photo camera lifecycle and explicit capture',()=>{
     mockPermission={granted:false,canAskAgain:true};props.onPermissionSettled=jest.fn();
     let resolve!:(permission:{granted:boolean})=>void;
     mockRequestPermission.mockReturnValue(new Promise(done=>{resolve=done;}));
-    await render();expect(props.onPermissionSettled).not.toHaveBeenCalled();
+    await render();await act(async()=>control('Открыть камеру').props.onPress());expect(props.onPermissionSettled).not.toHaveBeenCalled();
     await act(async()=>resolve({granted}));
-    expect(props.onPermissionSettled).toHaveBeenCalledTimes(1);expect(props.onExpand).not.toHaveBeenCalled();
+    expect(props.onPermissionSettled).toHaveBeenCalledTimes(1);expect(props.onExpand).toHaveBeenCalledTimes(granted?1:0);
   });
   test('camera regression: preview and centered icon follow native grid scroll inside its clip',async()=>{
     const offset=new Animated.Value(0);props.scrollOffset=offset;props.viewport={x:10,y:500,width:360,height:300};await render();
@@ -70,9 +70,9 @@ describe('photo camera lifecycle and explicit capture',()=>{
     await update({expanded:false});expect(mockCameraProps.previewBlurRadius).toBe(10);expect(style('help-photo-camera-scroll').transform[0].translateY.__getValue()).toBe(-45);
     expect(mockMounts).toBe(1);expect(mockUnmounts).toBe(0);expect(mockTakePicture).not.toHaveBeenCalled();
   });
-  test('permanent denial reports actionable text without prompting again',async()=>{
-    mockPermission={granted:false,canAskAgain:false};await render();await act(async()=>control('Открыть камеру').props.onPress());
-    expect(mockRequestPermission).not.toHaveBeenCalled();expect(props.onError).toHaveBeenCalledWith('Разрешите доступ к камере в настройках приложения.');expect(props.onExpand).not.toHaveBeenCalled();
+  test('permanent denial checks the native request on tap without navigating to settings',async()=>{
+    mockPermission={granted:false,canAskAgain:false};mockRequestPermission.mockResolvedValue(mockPermission);await render();await act(async()=>control('Открыть камеру').props.onPress());
+    expect(mockRequestPermission).toHaveBeenCalledTimes(1);expect(props.onError).toHaveBeenCalledWith('Система больше не показывает запрос. Разрешите доступ к камере в настройках приложения.');expect(props.onExpand).not.toHaveBeenCalled();
   });
   test('a denied request keeps the tile and never opens a camera',async()=>{
     mockPermission={granted:false,canAskAgain:true};mockRequestPermission.mockResolvedValue({granted:false});await render();await act(async()=>control('Открыть камеру').props.onPress());

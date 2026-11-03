@@ -3,6 +3,7 @@ import {BackHandler,Keyboard,Platform,Pressable,ScrollView,StyleSheet,Text,TextI
 import Reanimated,{useSharedValue} from 'react-native-reanimated';
 import {Ionicons, MaterialCommunityIcons} from '@expo/vector-icons';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
+import {useIsFocused} from 'expo-router/react-navigation';
 import {useTheme} from '@/context/ThemeContext';
 import {useHelpTheme,useHelpReducedMotion} from '../../help/helpTheme';
 import {ScreenBlurProvider,ScreenBlurTarget} from '@/components/ui/AppScreenBlur';
@@ -35,6 +36,7 @@ const filterOptions:Partial<Record<AdminTabKey,{key:string;label:string}[]>>={
 export default function AdminDirectory({onExit,onProfile,administratorName='Администратор'}:{onExit:()=>void;onProfile:()=>void;administratorName?:string}) {
   const {users,departments}=useAdminData();
   const t=useHelpTheme(),{setTheme}=useTheme(),insets=useSafeAreaInsets(),reducedMotion=useHelpReducedMotion();
+  const focused=useIsFocused();
   const [section,setSection]=useState<AdminTabKey|null>(null),[query,setQuery]=useState(''),[sheet,setSheet]=useState<Sheet>(null);
   const [directoryQuery,setDirectoryQuery]=useState(''),[sceneKey,setSceneKey]=useState(0);
   const scene=useRef<AppSceneTransitionHandle>(null),closing=useRef(false),progress=useSharedValue(0);
@@ -51,9 +53,9 @@ export default function AdminDirectory({onExit,onProfile,administratorName='Ад
     try {const finished=await scene.current?.dismiss();if(finished===false)return;setSection(null);setQueuedUserId(null);setQuery('');}
     finally {closing.current=false;}
   },[section]);
-  useEffect(()=>{const sub=BackHandler.addEventListener('hardwareBackPress',()=>{
+  useEffect(()=>{if(!focused)return;const sub=BackHandler.addEventListener('hardwareBackPress',()=>{
     if(sheet){setSheet(null);return true;} if(section){void closeSection();return true;} onExit();return true;
-  });return()=>sub.remove();},[section,sheet,closeSection,onExit]);
+  });return()=>sub.remove();},[focused,section,sheet,closeSection,onExit]);
   const openSection=(key:AdminTabKey)=>{if(closing.current)return;Keyboard.dismiss();setQuery('');setCreateRequest(0);setSectionFilter('all');setSceneKey(value=>value+1);setSection(key);};
   const openPending=()=>{setQueuedUserId(pending[0]?.id??null);openSection('users');};
   const rowSurface=({pressed,hovered}:any)=>({backgroundColor:pressed?t.soft:hovered?t.panel:'transparent'});

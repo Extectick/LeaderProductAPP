@@ -18,6 +18,6 @@ describe('native dock controls ABI compatibility',()=>{
     await act(async()=>{tree=TestRenderer.create(React.createElement(Component,{scrollId:'scroll',dockId:'dock',controlsId:'controls',viewportId:'viewport'}));});
     const props=tree!.root.findByType('NativeChatLayout' as any).props;
     expect(props.controlsId).toBe(capable?'controls':undefined);
-    expect(props.dockId).toBe('dock');expect(props.viewportId).toBe('viewport');expect(props.manageIme).toBe(true);
+    expect(props.dockId).toBe('dock');expect(props.viewportId).toBe('');expect(props.manageIme).toBe(true);
   });
 });

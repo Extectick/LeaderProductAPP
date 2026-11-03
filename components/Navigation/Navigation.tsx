@@ -38,7 +38,7 @@ function ServicesRouteGuard() {
     previousPathRef.current = currentPath || null;
     if (!lastService) return;
 
-    if (currentPath === '/services' && previousPath.startsWith('/services/')) {
+    if (currentPath === '/services' && (previousPath.startsWith('/services/') || previousPath === '/admin' || previousPath.startsWith('/admin/'))) {
       lastService.clearLastServiceRoute();
       return;
     }

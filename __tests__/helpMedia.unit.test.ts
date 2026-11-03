@@ -230,6 +230,11 @@ describe('Help media geometry and lifecycle', () => {
     expect(props.resolve).toHaveBeenCalledWith(props.attachment);
     expect(originalImage().props.priority).toBe('low');
   });
+  test('fullscreen contain keeps the dark viewer visible in letterboxing without a theme-colored canvas or crossfade',async()=>{
+    props.resizeMode='contain';mockReduced=false;await renderImage();
+    expect(StyleSheet.flatten(byId('help-progressive-image').props.style).backgroundColor).toBe('transparent');
+    expect(originalImage().props).toMatchObject({contentFit:'contain',transition:0});
+  });
   test('preview stays visible while the original is resolving and loading, with account-scoped cache key intact', async()=>{
     let finish!:(source:any)=>void;
     props.resolve.mockReturnValue(new Promise(resolve=>{finish=resolve;}));
@@ -365,7 +370,7 @@ describe('Help media geometry and lifecycle', () => {
     expect(props.onClose).toHaveBeenCalledTimes(1);
   });
   const galleryTransform=(name:string)=>StyleSheet.flatten(byId('help-gallery-transition').props.style).transform.find((entry:any)=>name in entry)[name].__getValue();
-  const galleryCurrent=()=>screen!.root.findAll(n=>n.props.testID==='help-gallery-cell').find(node=>StyleSheet.flatten(node.props.style).left===0)!.findByType(HelpImage).props.attachment.id;
+  const galleryCurrent=()=>screen!.root.findAll(n=>n.props.testID==='help-gallery-cell').find(node=>node.props.accessibilityLabel==='Текущее изображение')!.findByType(HelpImage).props.attachment.id;
   const galleryDrag=(dx:number,dy:number)=>{const surface=byId('help-gallery-gesture');surface.props.onPanResponderGrant(null);surface.props.onPanResponderMove(null,{dx,dy});return surface;};
   test('gallery touch overlay owns native touch-down and follows a downward pull without fading the photo',async()=>{
     await renderGallery();const surface=byId('help-gallery-gesture');
@@ -397,6 +402,15 @@ describe('Help media geometry and lifecycle', () => {
     await act(async()=>byLabel('Следующее изображение').props.onPress());expect(galleryCurrent()).toBe('image-11');
     expect(screen!.root.findAllByType(HelpImage)).toHaveLength(3);
   });
+  test('gallery retains the decoded next image in the same absolute cell after paging',async()=>{
+    await renderGallery();
+    const before=screen!.root.findAllByType(HelpImage).find(image=>image.props.attachment.id==='photo-2')!;
+    const parent=before.parent!.parent!;
+    const left=StyleSheet.flatten(parent.props.style).left;
+    await act(async()=>byLabel('Следующее изображение').props.onPress());
+    const after=screen!.root.findAllByType(HelpImage).find(image=>image.props.attachment.id==='photo-2')!;
+    expect(after).toBe(before);expect(StyleSheet.flatten(parent.props.style).left).toBe(left);
+  });
   test('gallery pinch and zoomed panning take precedence over dismiss and paging',async()=>{
     await renderGallery();const surface=byId('help-gallery-gesture');
     const two=(distance:number)=>({nativeEvent:{touches:[{pageX:0,pageY:0},{pageX:distance,pageY:0}]}});
@@ -407,7 +421,7 @@ describe('Help media geometry and lifecycle', () => {
   test('gallery touch overlay supports double-tap zoom/reset without swallowing toolbar buttons',async()=>{
     await renderGallery();const surface=byId('help-gallery-gesture'),event={nativeEvent:{touches:[{pageX:100,pageY:200}],changedTouches:[{pageX:100,pageY:200}]}},g={dx:0,dy:0,vx:0,vy:0};
     const tap=()=>{surface.props.onPanResponderGrant(event);surface.props.onPanResponderRelease(event,g);};
-    const zoomScale=()=>screen!.root.findAll(n=>n.props.testID==='help-gallery-cell').find(node=>StyleSheet.flatten(node.props.style).left===0)!.props.style.transform[2].scale.__getValue();
+    const zoomScale=()=>screen!.root.findAll(n=>n.props.testID==='help-gallery-cell').find(node=>node.props.accessibilityLabel==='Текущее изображение')!.props.style.transform[2].scale.__getValue();
     await act(async()=>{tap();now=180;tap();});expect(zoomScale()).toBe(2.5);expect(props.onClose).not.toHaveBeenCalled();
     await act(async()=>{now=500;tap();now=650;tap();});expect(zoomScale()).toBe(1);
     await act(async()=>byLabel('Следующее изображение').props.onPress());expect(galleryCurrent()).toBe('photo-2');
@@ -422,14 +436,14 @@ describe('Help media geometry and lifecycle', () => {
     expect(galleryCurrent()).toBe('photo-2');expect(galleryTransform('translateY')).toBe(0);expect(galleryTransform('scale')).toBe(1);
     await act(async()=>old?.({finished:true}));expect(galleryCurrent()).toBe('photo-2');
   });
-  test('gallery page identity changes only after the native slide and its offset resets with the committed page',async()=>{
+  test('gallery page commit keeps the settled native offset and never rebases the loaded photo',async()=>{
     mockReduced=false;const jobs:{value:any;config:any;done?:(event:{finished:boolean})=>void}[]=[];
     jest.spyOn(Animated,'timing').mockImplementation((value:any,config:any)=>({start:(done?:any)=>{jobs.push({value,config,done});},stop:jest.fn(),reset:jest.fn()} as any));
     await renderGallery();
     await act(async()=>{const surface=galleryDrag(-180,2);surface.props.onPanResponderRelease(null,{dx:-180,dy:2,vx:-1,vy:0});});
     expect(galleryCurrent()).toBe('photo-1');expect(jobs.at(-1)!.config).toMatchObject({toValue:-300,duration:180,useNativeDriver:true});
     await act(async()=>{const job=jobs.at(-1)!;job.value.setValue(job.config.toValue);job.done?.({finished:true});});
-    expect(galleryCurrent()).toBe('photo-2');expect(StyleSheet.flatten(byId('help-gallery-pager').props.style).transform[0].translateX.__getValue()).toBe(0);
+    expect(galleryCurrent()).toBe('photo-2');expect(StyleSheet.flatten(byId('help-gallery-pager').props.style).transform[0].translateX.__getValue()).toBe(-300);
   });
   test('gallery cancelled native paging never changes the current photo',async()=>{
     mockReduced=false;const jobs:{done?:(event:{finished:boolean})=>void}[]=[];

@@ -285,6 +285,19 @@ describe('sticky date geometry and navigation integration',()=>{
     await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
     expect(mockFlashProps.maintainVisibleContentPosition.startRenderingFromBottom).toBe(true);
   });
+  test('a short complete conversation stays bottom aligned after reopening a saved non-tail anchor',async()=>{
+    mockListApi.getChildContainerDimensions=()=>({width:390,height:150});
+    props={...props,onReady:jest.fn(),navigationTarget:{key:120,kind:'anchor',messageId:2,sequence:2,offset:5},hasOlder:false,hasNewer:false};
+    for(let attempt=0;attempt<2;attempt++){
+      mockListApi.scrollToEnd.mockClear();mockListApi.scrollToOffset.mockClear();
+      await render();await act(async()=>jest.advanceTimersByTimeAsync(100));
+      expect(mockFlashProps.maintainVisibleContentPosition.startRenderingFromBottom).toBe(true);
+      expect(mockListApi.scrollToEnd).toHaveBeenCalled();
+      expect(mockListApi.scrollToOffset).not.toHaveBeenCalled();
+      expect(props.onFollow).toHaveBeenLastCalledWith(true);
+      await act(async()=>screen!.unmount());screen=undefined;
+    }
+  });
   function floating(){return screen!.root.findAllByType(HelpDateSeparator).find(node=>StyleSheet.flatten(node.parent?.props.style)?.position==='absolute');}
   test('a future day separator does not hide the current day and compact pill sits4px below capsule',async()=>{
     await render();const date=floating()!;

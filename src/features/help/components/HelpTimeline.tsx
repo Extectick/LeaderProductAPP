@@ -107,13 +107,21 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   }
   const itemStartOffset=useCallback(()=>{
     const view=list.current,first=view?.getFirstItemOffset()??0;
-    if(!view||!rowsRef.current.length||!view.getLayout(0)||!(live.current.bottomAligned||initialPosition.current?.kind==='latest'))return first;
+    if(!view||!rowsRef.current.length||!view.getLayout(0))return first;
     const window=view.getWindowSize?.(),content=view.getChildContainerDimensions?.();
     if(!window||!content)return first;
     // FlashList applies a separate margin to short bottom-aligned histories;
     // getFirstItemOffset() excludes it. Include the library's same margin in
     // visibility/anchor math, or an on-screen date gets a duplicate sticky pill.
     return first+Math.max(0,window.height-content.height-first);
+  },[]);
+  const shortCompleteHistory=useCallback(()=>{
+    if(live.current.hasOlder||live.current.hasNewer||!rowsRef.current.length)return false;
+    try{
+      const view=list.current;if(!view?.getLayout(0))return false;
+      const window=view.getWindowSize?.(),content=view.getChildContainerDimensions?.();
+      return Boolean(window?.height&&content?.height&&content.height+(view.getFirstItemOffset?.()??0)<=window.height+.5);
+    }catch{return false;}
   },[]);
   const readyNotified = useRef(false);
   const notifyReady = useCallback(() => {
@@ -361,8 +369,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     if(!measured)return;
     const {window,content,first}=measured;
     if(!window||!content||!window.height||!content.height)return;
-    const aligned=Boolean(live.current.bottomAligned)||initialPosition.current?.kind==='latest';
-    const next={content:content.height,margin:aligned?Math.max(0,window.height-content.height-first):0,width:window.width,height:window.height};
+    const next={content:content.height,margin:Math.max(0,window.height-content.height-first),width:window.width,height:window.height};
     const row=rowsRef.current.at(-1),message=row?.message;
     const key=JSON.stringify([row?.key,message?.text,message?.kind,message?.attachments?.map(item=>[item.id,item.width,item.height])]);
     const firstKey=rowsRef.current[0]?.key??'',previous=tailRevision.current;
@@ -440,10 +447,11 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
       }
       const {height,content}=geometry.current,inset=hasNativeChatLayout?currentBottomInset()+12:0;
       const end=Math.max(0,content+inset-height);
-      const offset=target.kind==='latest'?end:Math.min(end,Math.max(0,(item?.y??0)+itemStartOffset()-live.current.headerHeight-(target.offset??0)));
+      const tailTarget=target.kind==='latest'||(target.kind==='anchor'||target.kind==='unread')&&shortCompleteHistory();
+      const offset=tailTarget?end:Math.min(end,Math.max(0,(item?.y??0)+itemStartOffset()-live.current.headerHeight-(target.offset??0)));
       const signature=JSON.stringify([offset,item?.y,item?.height,height,content,live.current.headerHeight,currentBottomInset(),visibleLayouts]);
       if(measured&&height>0&&content>0&&pending.aligned!==signature){
-        if(target.kind==='latest')scrollEnd(false);
+        if(tailTarget)scrollEnd(false);
         else view.scrollToOffset({offset,animated:false,skipFirstItemOffset:true});
         pending.aligned=signature;
       }
@@ -462,8 +470,8 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
       // the conversation to become idle. Hand its measured tail to native follow.
       if(measured&&height>0&&content>0&&(settled||alignedAndStable||(fits||liveTail||target.kind==='latest'&&hasNativeChatLayout)&&pending.passes>0&&pending.aligned)){
         pending.active=false;readyRef.current=true;setReady(true);inNavigation.current=false;setNavigating(false);
-        setFollow(target.kind==='latest'&&!live.current.hasNewer);
-        if(target.kind==='latest')scrollEnd(false);
+        setFollow(tailTarget&&!live.current.hasNewer);
+        if(tailTarget)scrollEnd(false);
         if(target.kind==='message'&&target.messageId)live.current.onHighlight(target.messageId);
         helpDevEvent('chat.open.positioned',{target:target.kind,initialIndex:true,settlePasses:pending.passes,elapsedMs:Date.now()-mountedAt.current});
         updateMediaRange(true);observe();return;
@@ -475,7 +483,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
       if(++pending.passes%32!==0)pending.frame=requestAnimationFrame(step);
     };
     pending.frame=requestAnimationFrame(step);
-  },[observe,scrollEnd,setFollow,updateMediaRange,itemStartOffset,currentBottomInset]);
+  },[observe,scrollEnd,setFollow,updateMediaRange,itemStartOffset,currentBottomInset,shortCompleteHistory]);
   useImperativeHandle(ref, () => ({save:()=>save(true),prepareJump,cancelJump,jumpToDate:jumpDate,
     waitForJumpReady,scrollTo: ({y,animated}) => {resetTailMotion();touched.current=true;setFollow(false);list.current?.scrollToOffset({offset:y,animated,skipFirstItemOffset:true});},
     scrollToEnd: ({animated} = {}) => pinLatest(animated),
@@ -638,7 +646,9 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     visible:visible().map(item=>({sequence:item.row.message.sequence,top:item.top,height:item.height}))})),[visible,currentDate,snapshotVisible]);
   const distance=Math.min(geometry.current.height || 500,620),direction=outgoing?.direction || 1;
   const maintainDisabled=!ready || navigating || following;
-  const startFromBottom=Boolean(props.bottomAligned)||initialPosition.current?.kind==='latest';
+  // Bottom alignment is a layout property, independent of how the history was
+  // opened. A saved anchor must never turn a short conversation into a top list.
+  const startFromBottom=true;
   const maintainVisibleContentPosition=useMemo(()=>({disabled:maintainDisabled,startRenderingFromBottom:startFromBottom}),[maintainDisabled,startFromBottom]);
   const listStyle=useMemo(()=>({backgroundColor:c.background}),[c.background]);
   const listContentStyle=useMemo(()=>({paddingTop:props.headerHeight+12,paddingBottom:hasNativeChatLayout?0:props.dockHeight+12}),[props.headerHeight,props.dockHeight]);

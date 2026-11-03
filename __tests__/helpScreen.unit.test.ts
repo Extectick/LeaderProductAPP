@@ -126,8 +126,16 @@ describe('Help screen integration with service boundary', () => {
   test('Help has no duplicate section title and returns to the existing catalogue route',async()=>{
     mockRouter.dismissTo.mockClear();mockRouter.replace.mockClear();await render();
     expect(screen.root.findAllByType(Text).some(node=>node.props.children==='Поддержка')).toBe(false);
+    let exitFrame!:FrameRequestCallback;
+    jest.spyOn(global,'requestAnimationFrame').mockImplementation(callback=>{exitFrame=callback;return 1;});
     await act(async()=>button('Назад').props.onPress());
+    expect(mockRouter.dismissTo).not.toHaveBeenCalled();
+    expect(screen.root.findByProps({testID:'help-screen-navigation'}).props.pointerEvents).toBe('none');
+    await act(async()=>exitFrame(0));
     expect(mockRouter.dismissTo).toHaveBeenCalledWith('/services');expect(mockRouter.replace).not.toHaveBeenCalled();
+    mockFocused=false;await act(async()=>screen.update(React.createElement(HelpScreen)));
+    mockFocused=true;await act(async()=>screen.update(React.createElement(HelpScreen)));
+    expect(screen.root.findByProps({testID:'help-screen-navigation'}).props.pointerEvents).toBe('auto');
   });
   test('the same list instance survives opening, entry completion and returning from a chat',async()=>{
     mockService.tickets=[ticket];await render();
@@ -451,7 +459,7 @@ describe('Help screen integration with service boundary', () => {
     await render();await act(async()=>button('Новое обращение').props.onPress());
     await act(async()=>composer().props.onChange('Сохранённый вопрос'));
     await act(async()=>composer().props.onSend());
-    expect(composer().props.value).toBe('');expect(composer().props.disabled).toBe(true);
+    expect(composer().props.value).toBe('');expect(composer().props.disabled).toBe(false);expect(composer().props.sendBlocked).toBe(true);
     mockService.pendingMessages=[];mockService.lastCreatedOperation={key:pending.key,ticketId:ticket.id,text:pending.input.text};
     await act(async()=>screen.update(React.createElement(HelpScreen)));
     expect(mockService.openTicket).toHaveBeenCalledWith(ticket.id,undefined);
@@ -470,6 +478,23 @@ describe('Help screen integration with service boundary', () => {
     await act(async()=>screen.update(React.createElement(HelpScreen)));
     expect(mockService.openTicket).not.toHaveBeenCalled();
     expect(composer().props.value).toBe(pending.input.text);expect(composer().props.files).toEqual(files);
+  });
+  test('typing the next correction before the first ticket acknowledgement transfers its draft to that chat',async()=>{
+    const item={key:'first-with-correction',create:true,status:'sending',createdAt:1,input:{text:'Первый вопрос',clientMessageId:'first-with-correction'}};
+    let resolveSend!:(value:HelpDetail)=>void,pending!:Promise<boolean>;
+    mockService.createTicket.mockImplementation(async(_input:any,onQueued:(item:any)=>Promise<void>)=>{await onQueued(item);return new Promise<HelpDetail>(resolve=>{resolveSend=resolve;});});
+    await render();await act(async()=>button('Новое обращение').props.onPress());
+    await act(async()=>composer().props.onChange('Первый вопрос'));
+    await act(async()=>{pending=composer().props.onSend();});
+    const correctionFiles=[{uri:'file://correction.jpg',name:'correction.jpg',mimeType:'image/jpeg'}];
+    await act(async()=>{composer().props.onChange('Ещё уточнение');composer().props.onFiles(correctionFiles);});
+    mockService.lastCreatedOperation={key:item.key,ticketId:ticket.id,text:item.input.text};
+    await act(async()=>{resolveSend(detail);await pending;});
+    expect(mockService.openTicket).toHaveBeenCalledWith(ticket.id,undefined);
+    expect(composer().props.value).toBe('Ещё уточнение');expect(composer().props.files).toEqual(correctionFiles);
+    expect(mockService.setDraft).toHaveBeenCalledWith(`ticket:${ticket.id}`,'Ещё уточнение');
+    expect(mockAttachmentDrafts.save).toHaveBeenCalledWith(5,`ticket:${ticket.id}`,correctionFiles);
+    expect(composer().props.disabled).toBe(false);expect(composer().props.sendBlocked).toBe(false);
   });
   test('network failure preserves draft instead of pretending sent',async()=>{
     mockService.createTicket.mockRejectedValueOnce(new Error('Сеть недоступна'));
@@ -674,6 +699,31 @@ describe('Help screen integration with service boundary', () => {
     await act(async()=>button('Поиск в переписке').props.onPress());
     const search=controls().findByProps({testID:'help-chat-search-arrows'});
     expect(StyleSheet.flatten(search.props.style)).toMatchObject({...anchor,right:8});
+  });
+  test('legacy APK shares native dock motion visually while full-scene proxies retain valid touch bounds',async()=>{
+    mockNativeChatLayout=true;mockNativeImeLayout=true;mockNativeStableImeLayout=true;mockNativeDockControls=false;
+    await openWithMessage();await act(async()=>mockTimelineProps.onReady());
+    await act(async()=>mockTimelineProps.onLatestState({visible:true,count:2,loading:false}));
+    const dock=()=>screen.root.findByProps({testID:'help-chat-dock-layout'});
+    const controls=()=>screen.root.findByProps({testID:'help-dock-controls'});
+    const visual=()=>dock().findByProps({testID:'help-jump-to-latest-motion'});
+    const proxy=()=>controls().findAllByProps({testID:'help-jump-to-latest'}).find(node=>node.props.accessibilityRole==='button')!;
+    const visualBottom=StyleSheet.flatten(visual().props.style).bottom;
+    const proxyBottom=StyleSheet.flatten(proxy().parent!.props.style).bottom as number;
+    expect(StyleSheet.flatten(visual().props.style)).toMatchObject({bottom:'100%',marginBottom:12});
+    expect(dock().findByProps({testID:'help-dock-controls-native-visual'}).props.pointerEvents).toBe('none');
+    expect(visual().props.importantForAccessibility).toBe('no-hide-descendants');
+    expect(proxy().props.accessibilityLabel).toBe('К последним сообщениям. Новых: 2');
+    expect(StyleSheet.flatten(proxy().props.style).backgroundColor).toBe('transparent');
+    await act(async()=>screen.root.findByType('HelpNativeChatLayout' as any).props.onImeInsetChange(260));
+    expect(StyleSheet.flatten(visual().props.style).bottom).toBe(visualBottom);
+    expect(StyleSheet.flatten(proxy().parent!.props.style).bottom).toBe(proxyBottom+260);
+    await act(async()=>screen.root.findByType('HelpNativeChatLayout' as any).props.onImeInsetChange(0));
+    expect(StyleSheet.flatten(proxy().parent!.props.style).bottom).toBe(proxyBottom);
+    await act(async()=>button('Действия с обращением').props.onPress());
+    await act(async()=>button('Поиск в переписке').props.onPress());
+    expect(dock().findByProps({testID:'help-chat-search-arrows-visual'}).props.pointerEvents).toBe('none');
+    expect(controls().findByProps({testID:'help-chat-search-arrows'})).toBeTruthy();
   });
   test('image viewer pages through loaded message images without quoted previews or duplicate ids',async()=>{
     await openWithMessage();const first=mockService.messages[0];

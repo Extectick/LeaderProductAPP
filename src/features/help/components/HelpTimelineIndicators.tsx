@@ -24,13 +24,15 @@ export function HelpUnreadSeparator({ count }: { count?: number }) {
   </View>;
 }
 
-export function HelpJumpToLatest({ onPress, count = 0, loading = false, visible = true, style }: { onPress: () => void; count?: number; loading?: boolean; visible?: boolean; style?: StyleProp<ViewStyle> }) {
+export type HelpDockControlPresentation='full'|'visual'|'interaction';
+export function HelpJumpToLatest({ onPress, count = 0, loading = false, visible = true, style, presentation='full' }: { onPress: () => void; count?: number; loading?: boolean; visible?: boolean; style?: StyleProp<ViewStyle>;presentation?:HelpDockControlPresentation }) {
   const c = useHelpTheme();
   const reduced = useHelpReducedMotion();
   const [mounted, setMounted] = useState(visible);
   const progress = useRef(new Animated.Value(visible ? 1 : 0)).current;
   const generation = useRef(0);
   useEffect(() => {
+    if(presentation==='interaction')return;
     const current = ++generation.current;
     progress.stopAnimation();
     if (reduced) { progress.setValue(visible ? 1 : 0); setMounted(visible); return; }
@@ -38,13 +40,21 @@ export function HelpJumpToLatest({ onPress, count = 0, loading = false, visible 
     const animation = Animated.timing(progress, { toValue: visible ? 1 : 0, duration: 280, easing: Easing.out(Easing.quad), useNativeDriver: true, isInteraction: false });
     animation.start(({ finished }) => { if (finished && !visible && current === generation.current) setMounted(false); });
     return () => animation.stop();
-  }, [visible, reduced, progress]);
+  }, [visible, reduced, progress,presentation]);
   const unread = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+  const label=unread ? `К последним сообщениям. Новых: ${unread}` : 'К последним сообщениям';
+  // Old native clients can move only the composer. Their visual control lives
+  // in that same moving dock, while this transparent semantic/hit target stays
+  // inside a full-scene sibling and reconciles after the IME settles.
+  if(presentation==='interaction')return visible?<View pointerEvents="box-none" style={style}><Pressable testID="help-jump-to-latest" accessibilityRole="button" accessibilityLabel={label} accessibilityState={{busy:loading,disabled:loading}} disabled={loading} onPress={onPress} hitSlop={3} style={{width:HELP_COMPOSER_ACTION_SIZE,height:HELP_COMPOSER_ACTION_SIZE,borderRadius:HELP_COMPOSER_ACTION_SIZE/2,backgroundColor:'transparent'}}/></View>:null;
   if (!mounted) return null;
-  return <Animated.View testID="help-jump-to-latest-motion" pointerEvents={visible ? 'auto' : 'none'} accessibilityElementsHidden={!visible} importantForAccessibility={visible ? 'auto' : 'no-hide-descendants'} style={[style, { opacity: progress, transform: [{ translateY: progress.interpolate({inputRange:[0,1],outputRange:[80,0]}) }, { scale: progress.interpolate({inputRange:[0,1],outputRange:[.7,1]}) }] }]}><Pressable testID="help-jump-to-latest" accessibilityRole="button" accessibilityLabel={unread ? `К последним сообщениям. Новых: ${unread}` : 'К последним сообщениям'} accessibilityState={{ busy: loading, disabled: loading || !visible }} disabled={loading || !visible} onPress={onPress} hitSlop={3} style={({ pressed }) => ({ width: HELP_COMPOSER_ACTION_SIZE, height: HELP_COMPOSER_ACTION_SIZE, borderRadius: HELP_COMPOSER_ACTION_SIZE / 2, backgroundColor: c.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: c.line, alignItems: 'center', justifyContent: 'center', elevation: 3, shadowColor: '#000', shadowOpacity: .12, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, opacity: pressed ? .8 : 1, transform: [{ scale: pressed && !reduced ? .96 : 1 }] })}>
-    {loading && !reduced ? <ActivityIndicator size="small" color={c.accentText} /> : <Ionicons name="chevron-down" size={22} color={c.accentText} accessible={false} />}
-    {unread > 0 ? <View pointerEvents="none" style={{ position: 'absolute', top: -7, alignSelf: 'center', minWidth: 22, height: 22, borderRadius: 11, paddingHorizontal: 5, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: c.background }}><Text style={{ color: '#FFF', fontSize: 10, lineHeight: 14, fontWeight: '700' }}>{unread > 99 ? '99+' : unread}</Text></View> : null}
-  </Pressable></Animated.View>;
+  const semantic=visible&&presentation!=='visual';
+  const buttonStyle=({pressed}:{pressed:boolean}):ViewStyle=>({ width: HELP_COMPOSER_ACTION_SIZE, height: HELP_COMPOSER_ACTION_SIZE, borderRadius: HELP_COMPOSER_ACTION_SIZE / 2, backgroundColor: c.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: c.line, alignItems: 'center', justifyContent: 'center', elevation: 3, shadowColor: '#000', shadowOpacity: .12, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, opacity: pressed ? .8 : 1, transform: [{ scale: pressed && !reduced ? .96 : 1 }] });
+  const content=<>
+    {loading && !reduced ? <ActivityIndicator size="small" color={c.accentText} accessible={false} /> : <Ionicons name="chevron-down" size={22} color={c.accentText} accessible={false} />}
+    {unread > 0 ? <View pointerEvents="none" style={{ position: 'absolute', top: -7, alignSelf: 'center', minWidth: 22, height: 22, borderRadius: 11, paddingHorizontal: 5, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: c.background }}><Text accessible={false} importantForAccessibility="no" style={{ color: '#FFF', fontSize: 10, lineHeight: 14, fontWeight: '700' }}>{unread > 99 ? '99+' : unread}</Text></View> : null}
+  </>;
+  return <Animated.View testID="help-jump-to-latest-motion" pointerEvents={semantic ? 'auto' : 'none'} accessibilityElementsHidden={!semantic} importantForAccessibility={semantic ? 'auto' : 'no-hide-descendants'} style={[style, { opacity: progress, transform: [{ translateY: progress.interpolate({inputRange:[0,1],outputRange:[80,0]}) }, { scale: progress.interpolate({inputRange:[0,1],outputRange:[.7,1]}) }] }]}>{presentation==='visual'?<View testID="help-jump-to-latest-visual" accessible={false} importantForAccessibility="no-hide-descendants" pointerEvents="none" style={buttonStyle({pressed:false})}>{content}</View>:<Pressable testID="help-jump-to-latest" accessibilityRole="button" accessibilityLabel={label} accessibilityState={{busy:loading,disabled:loading||!visible}} disabled={loading||!visible} onPress={onPress} hitSlop={3} style={buttonStyle}>{content}</Pressable>}</Animated.View>;
 }
 
 export function HelpHistoryStatus({ loading = false, offline = false, error, onRetry }: { loading?: boolean; offline?: boolean; error?: string | null; onRetry?: () => void }) {

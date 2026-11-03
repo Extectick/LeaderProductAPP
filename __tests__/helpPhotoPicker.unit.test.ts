@@ -116,10 +116,10 @@ test('gallery regression: bottom send uses selected photos in their chosen order
   expect(props.onSend).toHaveBeenCalledWith([file(1),file(0)]);expect(props.onClose).toHaveBeenCalledTimes(1);
 });
 
-test('closed picker does not access library; opening checks permission and requests only when allowed to ask',async()=>{
+test('closed picker does not access library; denied opening shows skeleton and requests only on CTA',async()=>{
   props.open=false;await render();expect(mockPermission).not.toHaveBeenCalled();expect(mockPage).not.toHaveBeenCalled();
   mockPermission.mockResolvedValueOnce({granted:false,limited:false,canAskAgain:true}).mockResolvedValueOnce({granted:true,limited:true,canAskAgain:true});
-  await update({open:true});expect(mockPermission.mock.calls).toEqual([[false],[true]]);expect(mockPage).toHaveBeenCalledWith(0);
+  await update({open:true});expect(mockPermission.mock.calls).toEqual([[false]]);expect(mockPage).not.toHaveBeenCalled();expect(screen!.root.findAllByProps({testID:'help-photo-permission-skeleton'}).length).toBeGreaterThan(0);await press('Разрешить доступ к фотографиям');expect(mockPermission.mock.calls).toEqual([[false],[true]]);expect(mockPage).toHaveBeenCalledWith(0);
   expect(screen!.root.findAll(item=>item.children.includes('Открыты выбранные фото · Добавить ещё')).length).toBeGreaterThan(0);
 });
 test('asynchronous preparations retain the chosen order, even when the second photo finishes first',async()=>{
@@ -157,6 +157,25 @@ test('denied library permission does not request again and camera remains availa
   mockPermission.mockResolvedValue({granted:false,limited:false,canAskAgain:false});await render();
   expect(mockPermission.mock.calls).toEqual([[false]]);expect(mockPage).not.toHaveBeenCalled();expect(camera().props.disabled).toBe(false);
   await act(async()=>camera().props.onExpand());expect(camera().props.expanded).toBe(true);
+});
+
+test('attachment surface reaches both horizontal edges and the bottom, keeping only internal safe padding',async()=>{
+  await render();
+  const panel=screen!.root.findAllByProps({testID:'help-photo-panel'})[0];
+  expect(StyleSheet.flatten(panel.props.style)).toMatchObject({left:0,right:0,bottom:0});
+  const caption=screen!.root.findAllByProps({testID:'help-photo-caption'})[0];
+  expect(StyleSheet.flatten(caption.props.style).margin).toBe(0);
+});
+
+test('permanent library denial still calls native permission request on CTA and retains skeleton on denial',async()=>{
+  mockPermission.mockResolvedValue({granted:false,limited:false,canAskAgain:false});
+  await render();expect(mockPermission.mock.calls).toEqual([[false]]);
+  expect(screen!.root.findAllByProps({testID:'help-photo-permission-overlay'}).length).toBeGreaterThan(0);
+  await press('Разрешить доступ к фотографиям');
+  expect(mockPermission.mock.calls).toEqual([[false],[true]]);
+  expect(mockPage).not.toHaveBeenCalled();
+  expect(screen!.root.findAllByProps({testID:'help-photo-permission-skeleton'}).length).toBeGreaterThan(0);
+  expect(props.onClose).not.toHaveBeenCalled();
 });
 test('closing the tray preserves an in-flight choice for the same composer',async()=>{
   const pending=deferred<HelpLocalFile>();mockPrepare.mockReturnValue(pending.promise);await render();await press('Выбрать фотографию 1');await update({open:false});
@@ -297,6 +316,7 @@ test('permission completion restores committed layout even when native animation
   const panel=()=>screen!.root.findAllByProps({testID:'help-photo-panel'})[0];
   expect(StyleSheet.flatten(panel().props.style).height).toBe(0);
   await act(async()=>permission.resolve({granted:false,limited:false,canAskAgain:true}));
+  await press('Разрешить доступ к фотографиям');
   // A new Fabric layout can reapply this initial animated value after the camera mounts.
   expect(panel().props.style[1].height).toBe(0);
   expect(StyleSheet.flatten(panel().props.style).height).toBeGreaterThan(0);

@@ -23,10 +23,10 @@ export function HelpAvatar({ id, name, uri, size = 34, muted = false }: { id: nu
   return <View accessibilityLabel={name} style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: muted ? '#747D89' : helpColor(id), opacity:muted ? .7 : 1, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>{uri&&uri!==failedUri ? <Image onError={()=>setFailedUri(uri)} source={{ uri }} style={{ width: size, height: size, ...(muted ? {filter:'grayscale(1)'} as any : {}) }} /> : <Text style={{ color: '#FFF', fontSize: size * .32, fontWeight: '600' }}>{helpInitials(name) || 'IT'}</Text>}</View>;
 }
 /** App headers and Help use the same material and edge falloff. */
-export function HelpBlurSurface({target,edge='top',featherSize=104}:{target?:React.RefObject<View|null>;edge?:'top'|'bottom';featherSize?:number}) {
+export function HelpBlurSurface({target,edge='top',featherSize}:{target?:React.RefObject<View|null>;edge?:'top'|'bottom';featherSize?:number}) {
   const c=useHelpTheme();
   const enabled=useContext(HelpVisualEffectsContext);
-  return enabled ? <AppEdgeBlur target={target} edge={edge} intensity={14} featherSize={featherSize} dark={c.dark} backgroundColor={c.background} testID="help-blur-surface"/> : null;
+  return enabled ? <AppEdgeBlur target={target} edge={edge} featherSize={featherSize} dark={c.dark} backgroundColor={c.background} testID="help-blur-surface"/> : null;
 }
 export function HelpDock({ children, onHeight, onHeightFrame, target, stableKeyboardLayout=false }: { children: React.ReactNode; onHeight?: (height: number) => void; onHeightFrame?:(height:number)=>void; target?: React.RefObject<View | null>; stableKeyboardLayout?:boolean }) {
   const c = useHelpTheme(); const insets = useSafeAreaInsets();
