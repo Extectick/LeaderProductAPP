@@ -429,6 +429,20 @@ describe('Help screen integration with service boundary', () => {
     expect(mockService.openTicket).toHaveBeenCalledWith(ticket.id,undefined);
     expect(composer().props.disabled).toBe(false);expect(composer().props.value).toBe('');
   });
+  test('a delivered old creation cannot clear a later scene with the same text and new files',async()=>{
+    const pending={key:'old-creation',create:true,createdAt:1,status:'failed',input:{text:'Одинаковый вопрос',clientMessageId:'old-creation'}};
+    mockService.createTicket.mockImplementation(async(_input:any,onQueued:(item:any)=>Promise<void>)=>{await onQueued(pending);mockService.pendingMessages=[pending];throw new Error('Сеть недоступна');});
+    await render();await act(async()=>button('Новое обращение').props.onPress());
+    await act(async()=>composer().props.onChange(pending.input.text));await act(async()=>composer().props.onSend());
+    await act(async()=>button('Назад').props.onPress());await act(async()=>button('Новое обращение').props.onPress());
+    const files=[{uri:'file://new-photo.jpg',name:'new-photo.jpg',mimeType:'image/jpeg'}];
+    await act(async()=>{composer().props.onChange(pending.input.text);composer().props.onFiles(files);});
+    mockService.openTicket.mockClear();mockService.pendingMessages=[];
+    mockService.lastCreatedOperation={key:pending.key,ticketId:ticket.id,text:pending.input.text};
+    await act(async()=>screen.update(React.createElement(HelpScreen)));
+    expect(mockService.openTicket).not.toHaveBeenCalled();
+    expect(composer().props.value).toBe(pending.input.text);expect(composer().props.files).toEqual(files);
+  });
   test('network failure preserves draft instead of pretending sent',async()=>{
     mockService.createTicket.mockRejectedValueOnce(new Error('Сеть недоступна'));
     await render(); await act(async()=>button('Новое обращение').props.onPress());

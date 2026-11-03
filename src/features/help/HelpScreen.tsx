@@ -139,8 +139,11 @@ export default function HelpScreen() {
     if(!created||busy||consumedCreations.current.has(created.key))return;
     consumedCreations.current.add(created.key);
     const echo=creationEcho.current;
-    const clearedOwnDraft=echo?.account===service.userId&&echo.scene===scene.key&&echo.item.key===created.key&&earlyClearedCreations.current.has(created.key)&&!draft.trim();
-    if(!seenPendingCreates.current.has(created.key)||active!=='new'||(!clearedOwnDraft&&created.text.trim()!==draft.trim())||(created.sourceTicketId??null)!==(source?.id??null))return;
+    const ownScene=echo?.account===service.userId&&echo.scene===scene.key&&echo.item.key===created.key;
+    const clearedOwnDraft=ownScene&&earlyClearedCreations.current.has(created.key)&&!draft.trim();
+    const unchangedRestoredDraft=(draftRevisions.current.get(draftKey)??0)===0;
+    const matchesDraft=clearedOwnDraft||(ownScene||unchangedRestoredDraft)&&created.text.trim()===draft.trim();
+    if(!seenPendingCreates.current.has(created.key)||active!=='new'||!matchesDraft||(created.sourceTicketId??null)!==(source?.id??null))return;
     sentDraftRevisions.current.set(draftKey,draftRevisions.current.get(draftKey)??0);fileDrafts.current.set(draftKey,[]);
     void clearHelpAttachmentDraft(service.userId,draftKey).catch(()=>tell('Не удалось очистить вложения черновика.'));
     setDraft('');setFiles([]);restoredDraft.current={key:`ticket:${created.ticketId}`,text:''};
