@@ -23,8 +23,8 @@ export function HelpPendingMessage({item,onRetry,onQuote,resolve,groupFirst=true
       {item.replyTo?<HelpMessageQuote quote={item.replyTo} onQuote={onQuote} resolve={resolve}/>:null}
       <Text selectable style={{color:c.text,fontSize:15,lineHeight:22}}>{item.input.text||`Вложения: ${item.input.attachmentIds?.length??0}`}</Text>
       <View style={{flexDirection:'row',alignItems:'center',justifyContent:'flex-end',gap:6}}>
-        {failed?<Pressable accessibilityRole="button" accessibilityLabel="Не удалось отправить. Отправить снова" onPress={onRetry} hitSlop={12} style={{width:18,height:18,alignItems:'center',justifyContent:'center'}}><Ionicons name="alert-circle-outline" size={16} color={c.danger}/></Pressable>:<Ionicons testID="help-message-pending-clock" accessibilityLabel="Сообщение ещё не доставлено" name="time-outline" size={14} color={c.muted}/>}
-        <Text style={{fontSize:10,lineHeight:12,color:c.muted}}>{helpTime(new Date(item.createdAt).toISOString())}</Text>
+        {failed?<Pressable accessibilityRole="button" accessibilityLabel="Не удалось отправить. Отправить снова" onPress={onRetry} hitSlop={12} style={{width:18,height:18,alignItems:'center',justifyContent:'center'}}><Ionicons name="alert-circle-outline" size={16} color={c.danger}/></Pressable>:<Ionicons testID="help-message-pending-clock" accessibilityLabel="Сообщение ещё не доставлено" name="time-outline" size={14} style={{lineHeight:14,includeFontPadding:false}} color={c.muted}/>}
+        <Text style={{fontSize:10,lineHeight:14,includeFontPadding:false,color:c.muted}}>{helpTime(new Date(item.createdAt).toISOString())}</Text>
       </View>
     </View>
   </View>;

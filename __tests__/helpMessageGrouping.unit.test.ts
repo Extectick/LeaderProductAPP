@@ -1,6 +1,6 @@
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, PanResponder } from 'react-native';
 import type { HelpMessage } from '../src/features/help/helpApi';
 import { helpMessageGroups, helpMessagesCanGroup, helpTimelineRows } from '../src/features/help/helpTimelineModel';
 
@@ -72,7 +72,8 @@ describe('consecutive Help message groups', () => {
 
 describe('grouped message presentation', () => {
   let screen: TestRenderer.ReactTestRenderer | undefined;
-  afterEach(async () => { if (screen) await act(async () => screen!.unmount()); screen = undefined; });
+  beforeEach(()=>{jest.spyOn(PanResponder,'create').mockImplementation(config=>({panHandlers:config} as any));});
+  afterEach(async () => { if (screen) await act(async () => screen!.unmount()); screen = undefined; jest.restoreAllMocks(); });
   const bubbles = () => screen!.root.findAllByType(HelpMessageBubble);
   const node = (bubble: TestRenderer.ReactTestInstance, id: string) => bubble.findAll(item => item.props.testID === id)[0];
 
@@ -100,7 +101,10 @@ describe('grouped message presentation', () => {
     rendered.forEach((bubble, index) => {
       expect(node(bubble, 'help-message-time')).toBeDefined();
       expect(node(bubble, 'help-message-avatar-slot')).toBeDefined();
+      const touch=node(bubble, `help-message-${index+1}`).props;
+      touch.onStartShouldSetPanResponderCapture({nativeEvent:{pageX:200}});
       node(bubble, 'help-message-bubble').props.onLongPress();
+      touch.onTouchEnd();
       expect(onMenu[index]).toHaveBeenCalledTimes(1);
     });
     const first = StyleSheet.flatten(node(rendered[0], 'help-message-bubble').props.style);
