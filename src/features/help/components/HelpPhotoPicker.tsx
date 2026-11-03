@@ -143,6 +143,15 @@ export function HelpPhotoPicker(props:Props) {
   },[props.open,collapsedHeight,reduced,height,finishHeight]);
   useEffect(()=>{if(settled&&props.open)measureGrid();},[settled,props.open,measureGrid]);
 
+  const restorePanel = useCallback(() => {
+    if (!mounted.current || !latest.current.open || preview || cameraExpanded) return;
+    // Permission dialogs can interrupt UI-thread animations without changing
+    // `open`. Re-establish both panel geometry and its camera clipping on return.
+    setVisible(true);setSettled(false);resizing.current=true;
+    cancelAnimation(height);cancelAnimation(pullY);pullY.value=0;pullState.value=0;
+    height.value=withTiming(collapsedHeight,{duration:reduced?0:220,easing:MotionEasing.out(MotionEasing.cubic)},finished=>{if(finished)runOnJS(finishHeight)();});
+  }, [preview,cameraExpanded,height,pullY,pullState,collapsedHeight,reduced,finishHeight]);
+
   const loadPage=useCallback(async(reset=false)=>{
     if(loadingPage.current)return;
     loadingPage.current=true;setLoading(true);setError('');const token=generation.current,offset=reset?0:pageOffset.current;
@@ -151,16 +160,22 @@ export function HelpPhotoPicker(props:Props) {
     }catch(e){if(mounted.current&&token===generation.current)setError(message(e));}
     finally{loadingPage.current=false;if(mounted.current&&token===generation.current)setLoading(false);}
   },[]);
-  const checkPermission=useCallback(async(request=false)=>{
+  const checkPermission=useCallback(async(request=false,allowRequest=true)=>{
     if(checkingPermission.current)return;checkingPermission.current=true;
     const token=generation.current;setLoading(true);
     try{let result=await getHelpPhotoPermission(request);if(!mounted.current||token!==generation.current)return;
-      if(!request&&!result.granted&&result.canAskAgain){result=await getHelpPhotoPermission(true);if(!mounted.current||token!==generation.current)return;}
+      if(!request&&allowRequest&&!result.granted&&result.canAskAgain){result=await getHelpPhotoPermission(true);if(!mounted.current||token!==generation.current)return;}
       setPermission(result);if(result.granted)await loadPage(true);
     }catch(e){if(mounted.current)setError(message(e));}finally{checkingPermission.current=false;if(mounted.current)setLoading(false);}
   },[loadPage]);
   useEffect(()=>{if(props.open)void checkPermission();},[props.open,checkPermission]);
-  useEffect(()=>{if(!props.open)return;const listener=AppState.addEventListener('change',state=>{if(state==='active')void checkPermission();});return()=>listener.remove();},[props.open,checkPermission]);
+  useEffect(()=>{
+    if(!props.open)return;
+    const resume=()=>{if(!mounted.current||!latest.current.open)return;restorePanel();void checkPermission(false,false);};
+    const state=AppState.addEventListener('change',value=>{if(value==='active')resume();});
+    const focus=AppState.addEventListener('focus',resume);
+    return()=>{state.remove();focus.remove();};
+  },[props.open,checkPermission,restorePanel]);
   useEffect(()=>{if(!props.open||preview||cameraExpanded)return;const listener=BackHandler.addEventListener('hardwareBackPress',()=>{latest.current.onClose();return true;});return()=>listener.remove();},[props.open,preview,cameraExpanded]);
   useEffect(()=>{
     if(!props.open||preview||cameraExpanded){setKeyboardTop(null);return;}

@@ -1,12 +1,12 @@
 import React, {forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState} from 'react';
-import {Platform} from 'react-native';
+import {AppState, Keyboard, Platform, TextInput} from 'react-native';
 import {requireNativeViewManager, requireOptionalNativeModule} from 'expo-modules-core';
 import {helpDevActions, helpDevProbe, helpDevRef} from '../helpDiagnostics';
 import {isDetachedHelpInputFocusError} from '../helpInputFocus';
 
 export const hasNativeHelpInput = Platform.OS === 'android' && (requireOptionalNativeModule('LeaderHelpInput')?.apiVersion ?? 0) >= 1;
 const NativeInput = hasNativeHelpInput ? requireNativeViewManager<any>('LeaderHelpInput') : null;
-export type HelpNativeInputHandle = {focus: () => void; restore: (text:string,selection:{start:number;end:number}) => Promise<void>};
+export type HelpNativeInputHandle = {focus: () => void; blur: () => void; restore: (text:string,selection:{start:number;end:number}) => Promise<void>};
 type Props = {
   value: string; onChange: (value: string) => void; placeholder: string;
   color: string; hintColor: string; accentColor: string; editable: boolean; reducedMotion: boolean;
@@ -17,6 +17,18 @@ type Props = {
 
 export const HelpNativeInput = forwardRef<HelpNativeInputHandle, Props>(function HelpNativeInput(props, forwardedRef) {
   const native = useRef<any>(null);
+  const dismissTarget = useRef<TextInput>(null);
+  const wasEditable = useRef(props.editable);
+  // This Expo EditText is not registered with RN TextInput.State, so
+  // Keyboard.dismiss cannot blur it. Transfer focus to a managed input that
+  // never opens IME, then blur it through RN's existing native command.
+  const blur = useCallback(() => {
+    if (AppState.currentState === 'active' && Keyboard.isVisible?.()) dismissTarget.current?.focus();
+  }, []);
+  useLayoutEffect(() => {
+    if (wasEditable.current && !props.editable) blur();
+    wasEditable.current = props.editable;
+  }, [props.editable, blur]);
   const mounted=useRef(false);
   useLayoutEffect(()=>{mounted.current=true;return()=>{mounted.current=false;native.current=null;};},[]);
   const attach=useCallback((node:any)=>{native.current=node;helpDevRef('composer.input',node?.nativeRef?.current??null);},[]);
@@ -26,10 +38,10 @@ export const HelpNativeInput = forwardRef<HelpNativeInputHandle, Props>(function
     console.warn('[help] native input focus failed',{code:typeof detail?.code==='string'?detail.code.slice(0,80):'UNKNOWN',name:typeof detail?.name==='string'?detail.name.slice(0,80):'Error'});
   },[]);
   const [eventCount, setEventCount] = useState(0);
-  useImperativeHandle(forwardedRef, () => ({focus: () => {
+  useImperativeHandle(forwardedRef, () => ({blur, focus: () => {
     const node=native.current;if(!mounted.current||!node||!props.editable)return;
     try{void Promise.resolve(node.focusInput()).catch(focusFailure);}catch(error){focusFailure(error);}
-  },restore:async(text,selection)=>{const node=native.current;if(!mounted.current||!node||!props.editable)return;try{if(node.restoreInput)await node.restoreInput(text,selection.start,selection.end);else await node.focusInput();}catch(error){focusFailure(error);}}}), [props.editable,focusFailure]);
+  },restore:async(text,selection)=>{const node=native.current;if(!mounted.current||!node||!props.editable)return;try{if(node.restoreInput)await node.restoreInput(text,selection.start,selection.end);else await node.focusInput();}catch(error){focusFailure(error);}}}), [props.editable,focusFailure,blur]);
   useEffect(() => helpDevProbe('composer', () => native.current?.diagnostics()), []);
   useEffect(() => helpDevActions('composer.native', {
     'composer.resetMetrics': () => native.current?.resetDiagnostics(),
@@ -39,7 +51,7 @@ export const HelpNativeInput = forwardRef<HelpNativeInputHandle, Props>(function
     'composer.delete': value => { const count=Number(value); if(Number.isSafeInteger(count))return native.current?.testDelete(count); },
   }), []);
   if (!NativeInput) return null;
-  return <NativeInput ref={attach}
+  return <><NativeInput ref={attach}
     testID="help-native-input" style={{alignSelf:'stretch',minHeight:46}}
     textState={{text:props.value,eventCount}} placeholder={props.placeholder}
     textColor={props.color} hintColor={props.hintColor} accentColor={props.accentColor}
@@ -47,4 +59,10 @@ export const HelpNativeInput = forwardRef<HelpNativeInputHandle, Props>(function
     onTextEdited={(event:any) => { setEventCount(event.nativeEvent.eventCount); props.onChange(event.nativeEvent.text); }}
     onSelectionChanged={(event:any)=>props.onSelection?.({start:event.nativeEvent.start,end:event.nativeEvent.end})}
     onGeometry={(event:any) => {props.onGeometry(event.nativeEvent.height,event.nativeEvent.contentHeight);if(event.nativeEvent.lines)props.onLines?.(event.nativeEvent.lines);}}/>
+    <TextInput ref={dismissTarget} testID="help-native-input-dismiss-target"
+      accessible={false} importantForAccessibility="no-hide-descendants" pointerEvents="none"
+      showSoftInputOnFocus={false} caretHidden contextMenuHidden
+      onFocus={() => dismissTarget.current?.blur()}
+      style={{position:'absolute',width:1,height:1,opacity:0}}/>
+  </>;
 });

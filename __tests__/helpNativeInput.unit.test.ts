@@ -1,7 +1,7 @@
 import React from 'react';
 import TestRenderer, {act} from 'react-test-renderer';
 
-jest.mock('react-native', () => ({Platform:{OS:'android'}}));
+jest.mock('react-native', () => ({Platform:{OS:'android'},AppState:{currentState:'active'},Keyboard:{isVisible:jest.fn(()=>true)},TextInput:'DismissTarget'}));
 jest.mock('expo-modules-core', () => ({requireOptionalNativeModule:()=>({apiVersion:1}),requireNativeViewManager:()=> 'NativeHelpInput'}));
 const mockProbe=jest.fn(()=>jest.fn()),mockActions=jest.fn(()=>jest.fn());
 jest.mock('../src/features/help/helpDiagnostics',()=>({helpDevProbe:(...args:any[])=>mockProbe(...args),helpDevActions:(...args:any[])=>mockActions(...args),helpDevRef:jest.fn()}));
@@ -40,4 +40,22 @@ test('fullscreen return restores text and selection through a production native 
   await ref.current.restore('Дополненный текст',{start:2,end:7});
   expect(restoreInput).toHaveBeenCalledWith('Дополненный текст',2,7);
   await act(async()=>tree.unmount());
+});
+
+test('disabling the unmanaged editor dismisses IME through a non-visible managed input without changing text',async()=>{
+  const focus=jest.fn(),blur=jest.fn(),changed=jest.fn();
+  const props={value:'Черновик',onChange:changed,onGeometry:jest.fn(),placeholder:'',color:'#fff',hintColor:'#999',accentColor:'#38f',editable:true,reducedMotion:true};
+  let tree!:TestRenderer.ReactTestRenderer;
+  await act(async()=>{tree=TestRenderer.create(React.createElement(HelpNativeInput,props),{createNodeMock:element=>element.type==='DismissTarget'?{focus,blur}:{}});});
+  try{
+    expect(focus).not.toHaveBeenCalled();
+    await act(async()=>tree.update(React.createElement(HelpNativeInput,{...props,editable:false})));
+    expect(focus).toHaveBeenCalledTimes(1);
+    const target=tree.root.findByType('DismissTarget' as any);
+    expect(target.props.showSoftInputOnFocus).toBe(false);expect(target.props.accessible).toBe(false);
+    await act(async()=>target.props.onFocus());expect(blur).toHaveBeenCalledTimes(1);
+    expect(changed).not.toHaveBeenCalled();expect(tree.root.findByType('NativeHelpInput' as any).props.textState.text).toBe('Черновик');
+    await act(async()=>tree.update(React.createElement(HelpNativeInput,props)));
+    expect(focus).toHaveBeenCalledTimes(1);
+  }finally{await act(async()=>tree.unmount());}
 });

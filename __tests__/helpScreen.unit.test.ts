@@ -94,10 +94,21 @@ describe('Help screen integration with service boundary', () => {
     mockTimelineProps=undefined;mockUseAudioController.mockClear();mockTimelineDateJump.mockClear();
     Object.assign(mockPlayback,{current:null,positionSeconds:0,durationSeconds:0,progress:0,playing:false,loading:false,ready:false,error:null,speed:1,toggle:jest.fn().mockResolvedValue(undefined),setSpeed:jest.fn(),stop:jest.fn(),seek:jest.fn().mockResolvedValue(undefined),play:jest.fn().mockResolvedValue(undefined)});
     Object.assign(mockService,{queueFileTicket:undefined,tickets:[],selectedTicket:null,messages:[],pendingMessages:[],lastCreatedOperation:null,loading:false,busy:false,error:null,online:true,connected:true,canManage:false,userId:5,typingByTicket:{},hasMore:false,
-      loadTickets:jest.fn().mockResolvedValue(undefined),clearSelection:jest.fn(()=>{mockService.selectedTicket=null;}),openTicket:jest.fn(async()=>{mockService.selectedTicket=ticket;return detail;}),getDraft:jest.fn().mockResolvedValue(''),setDraft:jest.fn().mockResolvedValue(undefined),emitTyping:jest.fn(),createTicket:jest.fn(async()=>{mockService.selectedTicket=ticket;return detail;}),sendMessage:jest.fn().mockResolvedValue(detail),uploadAttachments:jest.fn(),closeTicket:jest.fn().mockResolvedValue(detail),reopenTicket:jest.fn(),editMessage:jest.fn(),toggleReaction:jest.fn(),mediaSource:jest.fn(),loadOlder:jest.fn(),loadNewer:jest.fn(),jumpToLatest:jest.fn().mockResolvedValue(undefined),jumpToMessage:jest.fn().mockResolvedValue(undefined),saveViewport:jest.fn(),markVisibleRead:jest.fn(),searchMessages:jest.fn().mockResolvedValue({messages:[],total:0,nextCursor:null}),retryPending:jest.fn(),markAllRead:jest.fn(),requestIt:jest.fn(),claimTicket:jest.fn()});
+      loadTickets:jest.fn().mockResolvedValue(undefined),clearSelection:jest.fn(()=>{mockService.selectedTicket=null;}),openTicket:jest.fn(async()=>{mockService.selectedTicket=ticket;return detail;}),getDraft:jest.fn().mockResolvedValue(''),setDraft:jest.fn().mockResolvedValue(undefined),emitTyping:jest.fn(),createTicket:jest.fn(async()=>{mockService.selectedTicket=ticket;return detail;}),sendMessage:jest.fn().mockResolvedValue(detail),uploadAttachments:jest.fn(),closeTicket:jest.fn().mockResolvedValue(detail),reopenTicket:jest.fn(),editMessage:jest.fn(),toggleReaction:jest.fn(),mediaSource:jest.fn(),loadOlder:jest.fn(),loadNewer:jest.fn(),jumpToLatest:jest.fn().mockResolvedValue(undefined),jumpToMessage:jest.fn().mockResolvedValue(undefined),saveViewport:jest.fn(),markVisibleRead:jest.fn(),searchMessages:jest.fn().mockResolvedValue({messages:[],total:0,nextCursor:null}),retryPending:jest.fn(),retryPendingOperation:jest.fn().mockResolvedValue(undefined),markAllRead:jest.fn(),requestIt:jest.fn(),claimTicket:jest.fn()});
   });
   afterEach(async()=>{if(screen)await act(async()=>screen.unmount());jest.restoreAllMocks();});
   async function render(){await act(async()=>{screen=TestRenderer.create(React.createElement(HelpScreen));});}
+  test('recovery action ignores healthy sends and retries only interrupted operations without blocking the composer',async()=>{
+    const item={key:'upload',ticketId:7,create:false,createdAt:1,input:{text:'QA'},status:'sending',attempts:0};
+    mockService.pendingMessages=[item];mockService.pendingCount=1;mockService.tickets=[ticket];
+    await render();await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());
+    expect(button('Восстановить отправку')).toBeUndefined();
+    mockService.pendingMessages=[item,{...item,key:'retry',status:'queued',attempts:1}];
+    await act(async()=>screen.update(React.createElement(HelpScreen)));
+    await act(async()=>button('Восстановить отправку').props.onPress());
+    expect(mockService.retryPendingOperation).toHaveBeenCalledWith('retry');expect(mockService.retryPendingOperation).toHaveBeenCalledTimes(1);
+    expect(mockService.retryPending).not.toHaveBeenCalled();expect(composer().props.busy).toBe(false);
+  });
   test('old native chat layout receives the keyboard offset on both composer and timeline',async()=>{
     jest.replaceProperty(Platform,'OS','android');
     let inset!: (height:number)=>void;

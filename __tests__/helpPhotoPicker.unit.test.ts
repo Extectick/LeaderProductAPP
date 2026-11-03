@@ -1,6 +1,6 @@
 import React from 'react';
 import TestRenderer, {act} from 'react-test-renderer';
-import {Animated, Dimensions, Keyboard, PanResponder, TextInput} from 'react-native';
+import {AppState, Animated, Dimensions, Keyboard, PanResponder, TextInput} from 'react-native';
 
 const mockPermission=jest.fn(),mockPage=jest.fn(),mockPrepare=jest.fn(),mockDiscard=jest.fn(),mockPreviewUri=jest.fn();
 const mockPullTiming=jest.fn(),mockPullSpring=jest.fn();
@@ -258,4 +258,29 @@ test('upward fling cannot expand the panel beyond its standard height',async()=>
  await act(async()=>gesture.onEnd({translationY:-900,velocityY:-2000},true));
  expect(panel().props.style[1].height).toBe(standard);
  expect(props.onClose).not.toHaveBeenCalled();
+});
+
+test('returning from a permission dialog restores an interrupted panel without reopening it or losing selection',async()=>{
+  const listeners:Record<string,(event?:any)=>void>={};
+  jest.spyOn(AppState,'addEventListener').mockImplementation((name,listener:any)=>{listeners[name]=listener;return{remove:jest.fn()};});
+  // Simulate an animation interrupted at zero height by a system permission window.
+  mockPullTiming.mockImplementationOnce(()=>0);
+  props.files=[file(0)];await render();
+  const panel=()=>screen!.root.findAllByProps({testID:'help-photo-panel'})[0].props.style[1].height;
+  expect(panel()).toBe(0);
+  mockPermission.mockClear();
+  await act(async()=>listeners.focus());
+  expect(panel()).toBeGreaterThan(0);expect(props.onClose).not.toHaveBeenCalled();expect(props.onFiles).not.toHaveBeenCalled();
+  expect(mockPermission).toHaveBeenCalledWith(false);
+  await update({open:false});
+  await act(async()=>listeners.focus());
+  expect(screen!.root.findAllByProps({testID:'help-photo-panel'})).toHaveLength(0);
+});
+
+test('focus return after permission denial refreshes access without triggering another permission prompt',async()=>{
+  const listeners:Record<string,(event?:any)=>void>={};
+  jest.spyOn(AppState,'addEventListener').mockImplementation((name,listener:any)=>{listeners[name]=listener;return{remove:jest.fn()};});
+  mockPermission.mockResolvedValue({granted:false,limited:false,canAskAgain:true});await render();mockPermission.mockClear();
+  await act(async()=>listeners.focus());
+  expect(mockPermission.mock.calls).toEqual([[false]]);
 });
