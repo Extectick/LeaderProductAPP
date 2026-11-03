@@ -27,16 +27,35 @@ export function HelpBlurSurface({target,edge='top'}:{target?:React.RefObject<Vie
   const enabled=useContext(HelpVisualEffectsContext);
   return enabled ? <AppEdgeBlur target={target} edge={edge} intensity={14} featherSize={104} dark={c.dark} backgroundColor={c.background} testID="help-blur-surface"/> : null;
 }
-export function HelpDock({ children, onHeight, target }: { children: React.ReactNode; onHeight?: (height: number) => void; target?: React.RefObject<View | null> }) {
+export function HelpDock({ children, onHeight, target, stableKeyboardLayout=false }: { children: React.ReactNode; onHeight?: (height: number) => void; target?: React.RefObject<View | null>; stableKeyboardLayout?:boolean }) {
   const c = useHelpTheme(); const insets = useSafeAreaInsets();
+  const {width}=useWindowDimensions();
+  // On Android, safe-area can briefly report navigation-bar space while the
+  // IME is moving. Native already owns that movement; changing dock padding
+  // in response adds a second layout jump. Capture the screen's resting inset.
+  const restingInset=useRef({width,bottom:insets.bottom});
+  if(restingInset.current.width!==width)restingInset.current={width,bottom:insets.bottom};
+  const heightTimer=useRef<ReturnType<typeof setTimeout>|null>(null),measuredHeight=useRef(0),heightCallback=useRef(onHeight);
+  heightCallback.current=onHeight;
+  useEffect(()=>()=>{if(heightTimer.current)clearTimeout(heightTimer.current);},[]);
+  const reportHeight=(height:number)=>{
+    if(height<=0||!heightCallback.current)return;
+    if(!stableKeyboardLayout||measuredHeight.current===0){measuredHeight.current=height;heightCallback.current(height);return;}
+    measuredHeight.current=height;
+    if(heightTimer.current)clearTimeout(heightTimer.current);
+    // Native follows every layout frame. JS only needs the settled occlusion
+    // for read visibility/search controls; do not rerender the chat at 60 Hz.
+    heightTimer.current=setTimeout(()=>{heightTimer.current=null;heightCallback.current?.(measuredHeight.current);},60);
+  };
   const [keyboardVisible, setKeyboardVisible] = useState(() => Boolean(Keyboard.isVisible?.()) && (Keyboard.metrics?.()?.height ?? 0) > 0);
   useEffect(() => {
+    if(stableKeyboardLayout)return;
     const show = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', event => setKeyboardVisible(event.endCoordinates.height > 0));
     const hide = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => setKeyboardVisible(false));
     return () => { show.remove(); hide.remove(); };
-  }, []);
+  }, [stableKeyboardLayout]);
   useEffect(() => helpDevState({ keyboardVisible, keyboardHeight: Keyboard.metrics?.()?.height ?? 0 }), [keyboardVisible]);
-  return <View ref={node => helpDevRef('dock', node)} onLayout={e => onHeight?.(e.nativeEvent.layout.height)} style={{ paddingHorizontal: 8, paddingTop: 8, paddingBottom: keyboardVisible ? 8 : insets.bottom + 8, position: 'relative' }}>
+  return <View ref={node => helpDevRef('dock', node)} onLayout={e => reportHeight(e.nativeEvent.layout.height)} style={{ paddingHorizontal: 8, paddingTop: 8, paddingBottom: stableKeyboardLayout ? restingInset.current.bottom+8 : keyboardVisible ? 8 : insets.bottom + 8, position: 'relative' }}>
     <View testID="help-dock-backdrop" pointerEvents="none" style={[StyleSheet.absoluteFill, {top:-8}]}><HelpBlurSurface target={target}/></View>{children}
   </View>;
 }

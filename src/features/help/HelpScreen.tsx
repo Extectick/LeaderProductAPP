@@ -96,7 +96,7 @@ export default function HelpScreen() {
   const listScroll=useRef<FlashListRef<HelpTicket>>(null);
   const listPaging=useRef(false);
   const [imeInset,setImeInset]=useState(0);
-  useLayoutEffect(()=>{setImeInset(0);setTimelineReady(false);},[scene.key]);
+  useLayoutEffect(()=>{setImeInset(0);setTimelineReady(false);setNativeFollow(false);},[scene.key]);
   useLayoutEffect(()=>{if(active===null)chatProgress.value=0;},[active,chatProgress]);
   const chatBounds = useRef<View>(null);
   const measureKeyboard = useHelpKeyboardInset(chatBounds, isFocused && active !== null && !hasNativeImeLayout, setImeInset);
@@ -163,7 +163,7 @@ export default function HelpScreen() {
       .finally(()=>{if(generation===chatSearchGeneration.current)setChatSearchLoading(false);});},300);
     return()=>{clearTimeout(timer);++chatSearchGeneration.current;};
   },[chatSearchOpen,chatSearchQuery,active,service.userId]);
-  useEffect(()=>{setChatSearchOpen(false);setChatSearchQuery('');setChatSearchList(false);setNativeFollow(false);},[active,service.userId]);
+  useEffect(()=>{setChatSearchOpen(false);setChatSearchQuery('');setChatSearchList(false);},[active,service.userId]);
   useEffect(()=>()=>{if(highlightTimer.current)clearTimeout(highlightTimer.current);},[]);
   function highlight(id:number){setHighlighted(id);if(highlightTimer.current)clearTimeout(highlightTimer.current);highlightTimer.current=setTimeout(()=>setHighlighted(null),1600);}
   async function showSearchResult(message:HelpMessage,index:number,dismissKeyboard=true){
@@ -346,17 +346,16 @@ export default function HelpScreen() {
         const filesClearing=clearHelpAttachmentDraft(account,draftKey).then(()=>[] as HelpLocalFile[]);
         const clearing=Promise.all([service.setDraft(draftKey,''),filesClearing]);
         fileDrafts.current.set(draftKey,[]);filePersistence.current.set(draftKey,{revision:draftRevision,promise:filesClearing});
-        await clearing;
         if(screenMounted.current&&unchanged()&&navigationGeneration.current===navigation){setDraft('');setFiles([]);setReply(null);}
+        await clearing;
       }
       if(!screenMounted.current||navigationGeneration.current!==navigation||!unchanged())return true;
       if (mode === 'message' && voice) setReply(null);
       if (active === 'new') { restoredDraft.current = {key:`ticket:${detail.ticket.id}`,text:voice ? draft : ''}; setActive(detail.ticket.id); setSource(null); await service.setDraft(`ticket:${detail.ticket.id}`, voice ? draft : ''); }
       if(currentAccount.current!==account||navigationGeneration.current!==navigation)return true;
       if (mode !== 'message') { setMode('message'); setDraft(regularDraft.current.text); setFiles(regularDraft.current.files); setReply(regularDraft.current.reply); setEditing(null); Keyboard.dismiss(); }
-      followBottom.current = true;
       if(mode === 'message') {
-        if(active!=='new')scroll.current?.scrollToEnd({animated:false});else scrollBottom(false);
+        if(!hasNativeChatLayout){followBottom.current=true;if(active!=='new')scroll.current?.scrollToEnd({animated:false});else scrollBottom(false);}
       } else if(active!=='new')await service.jumpToLatest();else scrollBottom();
       return true;
     } catch (e) {
@@ -387,8 +386,8 @@ export default function HelpScreen() {
       </Reanimated.View>
       {active !== null ? <HelpChatEntry key={`${service.userId}:${scene.key}`} ref={chatEntry} progress={chatProgress} ready={active==='new'||Boolean(ticket)||timelineReady} backgroundColor={c.background} onEntered={()=>{setEntrySettled(true);helpDevEvent('chat.open.transitionFinished',{ticketId:typeof active==='number'?active:null,finishedAt:Date.now()});}} onLayout={event=>setChatViewportHeight(event.nativeEvent.layout.height)}>
         <HelpMessageArrivalContext.Provider value={arrivalRegistry}>
-        <View nativeID={nativeViewportId} collapsable={false} testID="help-chat-visible-viewport" style={boundedChat?{position:'absolute',top:0,left:0,right:0,bottom:dockHeight+(hasNativeStableImeLayout?0:imeInset),overflow:'hidden'}:{flex:1}}><BlurTargetView ref={blurTarget} style={{ flex: 1 }}>
-          <HelpTimeline pendingMessages={displayedPending} renderPending={item=><HelpPendingMessage {...pendingGroups.get(item.key)} item={item} onQuote={jump} resolve={service.mediaSource} onRetry={()=>void run(()=>assistantActions.retryPendingOperation!(item.key))}/>} bottomAligned={scene.bottomAligned} key={`${service.userId}:${scene.key}`} onReady={()=>{setTimelineReady(true);chatEntry.current?.reveal();}} ref={scroll} messages={messages} nativeID={nativeScrollId} headerHeight={listHeaderHeight} dockHeight={boundedChat?(hasNativeStableImeLayout?imeInset:0):dockHeight+imeInset}
+        <View nativeID={nativeViewportId} collapsable={false} testID="help-chat-visible-viewport" style={boundedChat?{position:'absolute',top:0,left:0,right:0,bottom:hasNativeStableImeLayout?0:dockHeight+imeInset,overflow:'hidden'}:{flex:1}}><BlurTargetView ref={blurTarget} style={{ flex: 1 }}>
+          <HelpTimeline pendingMessages={displayedPending} renderPending={item=><HelpPendingMessage {...pendingGroups.get(item.key)} item={item} onQuote={jump} resolve={service.mediaSource} onRetry={()=>void run(()=>assistantActions.retryPendingOperation!(item.key))}/>} bottomAligned={scene.bottomAligned} key={`${service.userId}:${scene.key}`} onReady={()=>{setTimelineReady(true);chatEntry.current?.reveal();}} ref={scroll} messages={messages} nativeID={nativeScrollId} headerHeight={listHeaderHeight} dockHeight={boundedChat?(hasNativeStableImeLayout?dockHeight+imeInset:0):dockHeight+imeInset}
             navigationTarget={service.navigationTarget} firstUnreadSequence={service.firstUnreadSequence} hasOlder={service.hasOlder} hasNewer={service.hasNewer}
             loadingOlder={service.loadingOlder} loadingNewer={service.loadingNewer} loading={service.loading} online={service.online}
             hideStickyDate onStickyDateChange={setStickyDate} hideLatestButton={chatSearchOpen} active={isFocused && !chatSearchList && !overlay && !gallery} unreadCount={ticket?.unreadCount}
@@ -400,7 +399,7 @@ export default function HelpScreen() {
         <View testID="help-chat-header-overlay" onLayout={event=>setListHeaderHeight(event.nativeEvent.layout.height)} style={{position:'absolute',top:0,left:0,right:0,zIndex:2,paddingTop:insets.top}}><View pointerEvents="none" style={StyleSheet.absoluteFill}><HelpBlurSurface target={blurTarget} edge="bottom"/></View>{header}<HelpChatPlayback onJump={jump}/></View>
         {stickyDate ? <View testID="help-sticky-date-overlay" style={{position:'absolute',top:Math.max(0,listHeaderHeight-12),alignSelf:'center',zIndex:3}}><HelpDateSeparator compact date={stickyDate} onPress={()=>scroll.current?.jumpToDate(stickyDate)}/></View> : null}
         {chatSearchOpen && !chatSearchList ? <HelpChatSearchArrows total={chatSearchTotal} selectedIndex={chatResultIndex} loading={chatSearchLoading} canPrevious={chatResultIndex>0} canNext={chatResultIndex+1<chatResults.length || chatSearchCursor!==null} onPrevious={()=>{if(chatResultIndex>0)void showSearchResult(chatResults[chatResultIndex-1],chatResultIndex-1);}} onNext={nextSearch} style={{position:'absolute',right:8,bottom:dockHeight+imeInset+12}}/> : null}
-        <View nativeID={nativeDockId} testID="help-chat-dock-layout" style={{ position: 'absolute', bottom: boundedChat&&!hasNativeStableImeLayout?imeInset:0, left: 0, right: 0 }}>{notice ? <HelpNotice key={notice} text={notice} onDone={() => setNotice('')} /> : null}<HelpDock target={blurTarget} onHeight={setDockHeight}>
+        <View nativeID={nativeDockId} testID="help-chat-dock-layout" style={{ position: 'absolute', bottom: boundedChat&&!hasNativeStableImeLayout?imeInset:0, left: 0, right: 0 }}>{notice ? <HelpNotice key={notice} text={notice} onDone={() => setNotice('')} /> : null}<HelpDock stableKeyboardLayout={hasNativeStableImeLayout} target={blurTarget} onHeight={setDockHeight}>
           {chatSearchOpen ? <HelpChatSearchDock query={chatSearchQuery} total={chatSearchTotal} selectedIndex={chatResultIndex} loading={chatSearchLoading} showList={chatSearchList} onToggleList={()=>setChatSearchList(value=>!value)} error={chatSearchError}/> : ticket?.status === 'CLOSED' && mode === 'message' ? !isOwner ? <HelpPrimaryButton text="Закрыт" icon="lock-closed-outline" disabled onPress={()=>{}}/> : <View>{canReopenHelpTicket(ticket) ? <HelpPrimaryButton text="Открыть повторно" icon="sync-outline" onPress={()=>startMode('reopen')}/> : <><View style={{flexDirection:'row',justifyContent:'center',alignItems:'center',gap:6,paddingHorizontal:8,paddingBottom:9}}><Ionicons name="lock-closed-outline" size={15} color={c.muted}/><Text style={{color:c.muted,fontSize:12,lineHeight:18}}>Закрыт{ticket.closedAt ? ' · прошло больше 3 дней' : ''}</Text></View><HelpPrimaryButton text="Создать новое обращение" onPress={()=>newTicket({id:ticket.id,number:ticket.number,title:ticket.title})}/></>}</View> : ticket&&!isParticipant ? <HelpPrimaryButton text="Взять обращение" icon="headset-outline" disabled={busy||!service.canManage} onPress={()=>void run(()=>service.claimTicket(ticket.id))}/> : <HelpComposer navigationReady={entrySettled} onAttachmentVisibility={setAttachmentsVisible} screenActive={isFocused} voiceDraftKey={`${encodeURIComponent(API_BASE_URL)}:${service.userId}:${draftKey}`} key={`${service.userId}:${scene.key}:${mode}`} value={draft} onChange={changeDraft} files={files} onFiles={changeFiles} onSend={submit} sendBlocked={Boolean(pendingCreate)} onStopAssistant={activeAssistant?.assistantRun ? ()=>{if(assistantPreview)assistantPreview.stop(activeAssistant.ticketId,activeAssistant.assistantRun!.runId);else void run(()=>assistantActions.stopAssistant!(activeAssistant.ticketId,activeAssistant.assistantRun!.runId));} : undefined} busy={busy} mode={mode} rating={rating} onRating={setRating} onCancelMode={cancelMode} quote={reply ? {name:reply.author?.name||'Сообщение',text:reply.text||'Вложение',thumbnail:reply.attachments.find(item=>item.kind==='IMAGE'),onPress:()=>jump(reply.id)} : undefined} resolve={service.mediaSource} recordingAreaHeight={Math.max(0,chatViewportHeight-listHeaderHeight-dockHeight-imeInset+8)} onCancelQuote={()=>setReply(null)} error={tell} focusKey={focusKey} onResize={()=>{ composerResizingUntil.current=Date.now()+320; scrollBottom(false); }} disabled={active!=='new'&&!ticket} editClosure={editing?.kind==='CLOSURE'} existingFiles={mode==='edit' ? editAttachments : undefined} onRemoveExisting={id=>setEditAttachments(values=>values.filter(a=>a.id!==id))}/>}
         </HelpDock></View>{hasNativeChatLayout ? <HelpNativeChatLayout manageIme={isFocused} key={`${service.userId}:${scene.key}`} scrollId={nativeScrollId} dockId={nativeDockId} viewportId={nativeViewportId} allowFollow={nativeFollow && !service.hasNewer} animateTail={entrySettled&&timelineReady} onImeInsetChange={hasNativeImeLayout ? setImeInset : undefined}/> : null}
         </HelpMessageArrivalContext.Provider>

@@ -197,12 +197,14 @@ describe('Help screen integration with service boundary', () => {
     await render();await act(async()=>button('Новое обращение').props.onPress());
     const viewport=()=>StyleSheet.flatten(screen.root.findByProps({testID:'help-chat-visible-viewport'}).props.style);
     const before=viewport().bottom;
+    const dock=mockTimelineProps.dockHeight;
+    expect(before).toBe(0);
     await act(async()=>screen.root.findByType('HelpNativeChatLayout' as any).props.onImeInsetChange(250));
     expect(viewport().bottom).toBe(before);
     expect(StyleSheet.flatten(screen.root.findByProps({testID:'help-chat-dock-layout'}).props.style).bottom).toBe(0);
-    expect(mockTimelineProps.dockHeight).toBe(250);
+    expect(mockTimelineProps.dockHeight).toBe(dock+250);
     await act(async()=>screen.root.findByType('HelpNativeChatLayout' as any).props.onImeInsetChange(0));
-    expect(viewport().bottom).toBe(before);expect(mockTimelineProps.dockHeight).toBe(0);
+    expect(viewport().bottom).toBe(before);expect(mockTimelineProps.dockHeight).toBe(dock);
   });
   test('a completed right swipe anywhere in the chat navigates back and preserves the draft',async()=>{
     await render();await act(async()=>button('Новое обращение').props.onPress());
@@ -372,6 +374,8 @@ describe('Help screen integration with service boundary', () => {
     const native=screen.root.findByType('HelpNativeChatLayout' as any);
     expect(native.props.animateTail).toBe(true);
     expect(mockTimelineProps.bottomAligned).toBe(true);
+    await act(async()=>mockTimelineProps.onFollow(true));
+    expect(native.props.allowFollow).toBe(true);
     await act(async()=>composer().props.onChange('Не печатает принтер'));
     await act(async()=>composer().props.onSend());
     expect(mockService.createTicket).toHaveBeenCalledTimes(1);
@@ -381,6 +385,7 @@ describe('Help screen integration with service boundary', () => {
     expect(screen.root.findByProps({testID:'help-chat-scroll'})).toBe(timeline);
     expect(composer()).toBe(input);
     expect(screen.root.findByType('HelpNativeChatLayout' as any)).toBe(native);
+    expect(native.props.allowFollow).toBe(true);
     expect(native.props.animateTail).toBe(true);
     expect(mockTimelineProps.bottomAligned).toBe(true);
   });

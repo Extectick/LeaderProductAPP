@@ -19,10 +19,40 @@ jest.mock('expo-blur',()=>({BlurView:'BlurView'}));
 jest.mock('../src/features/help/helpDiagnostics',()=>({helpDevRef:jest.fn(),helpDevState:jest.fn()}));
 jest.mock('@react-native-masked-view/masked-view',()=> 'MaskedView');
 jest.mock('expo-linear-gradient',()=>({LinearGradient:'LinearGradient'}));
-jest.mock('react-native-safe-area-context',()=>({useSafeAreaInsets:()=>({top:0,right:0,bottom:34,left:0})}));
+let mockSafeAreaBottom=34;
+jest.mock('react-native-safe-area-context',()=>({useSafeAreaInsets:()=>({top:0,right:0,bottom:mockSafeAreaBottom,left:0})}));
 import {helpThemeTokens,useHelpReducedMotion} from '../src/features/help/helpTheme';
 import {HelpBlurSurface,HelpDock,HelpIcon,HelpPrimaryButton,HelpSheet} from '../src/features/help/components/HelpPrimitives';
 import {HelpVisualEffectsContext} from '../src/features/help/helpVisualEffects';
+
+test('native keyboard dock ignores transient navigation insets without keyboard JS subscriptions',async()=>{
+  const listener=jest.spyOn(Keyboard,'addListener');let tree!:TestRenderer.ReactTestRenderer;
+  try{
+    await act(async()=>{tree=TestRenderer.create(React.createElement(HelpDock,{stableKeyboardLayout:true,children:null}));});
+    const padding=()=>StyleSheet.flatten(tree.root.findByProps({testID:'help-dock-backdrop'}).parent!.props.style).paddingBottom;
+    expect(padding()).toBe(42);expect(listener).not.toHaveBeenCalled();
+    mockSafeAreaBottom=122;
+    await act(async()=>tree.update(React.createElement(HelpDock,{stableKeyboardLayout:true,children:null})));
+    expect(padding()).toBe(42);
+    mockSafeAreaBottom=34;
+    await act(async()=>tree.update(React.createElement(HelpDock,{stableKeyboardLayout:true,children:null})));
+    expect(padding()).toBe(42);
+  }finally{mockSafeAreaBottom=34;if(tree)await act(async()=>tree.unmount());listener.mockRestore();}
+});
+
+test('native dock coalesces composer animation heights without delaying the initial measurement',async()=>{
+  jest.useFakeTimers();const changed=jest.fn();let tree!:TestRenderer.ReactTestRenderer;
+  try{
+    await act(async()=>{tree=TestRenderer.create(React.createElement(HelpDock,{stableKeyboardLayout:true,onHeight:changed,children:null}));});
+    const layout=(height:number)=>tree.root.findByProps({testID:'help-dock-backdrop'}).parent!.props.onLayout({nativeEvent:{layout:{height}}});
+    act(()=>layout(64));expect(changed).toHaveBeenLastCalledWith(64);
+    act(()=>{layout(80);layout(100);layout(64);});expect(changed).toHaveBeenCalledTimes(1);
+    await act(async()=>jest.advanceTimersByTime(60));
+    expect(changed).toHaveBeenCalledTimes(2);expect(changed).toHaveBeenLastCalledWith(64);
+    act(()=>layout(90));await act(async()=>tree.unmount());
+    await act(async()=>jest.advanceTimersByTime(100));expect(changed).toHaveBeenCalledTimes(2);
+  }finally{if(tree)await act(async()=>tree.unmount());jest.useRealTimers();}
+});
 
 test('a long chat shares one motion subscription and a late query cannot undo a system change',async()=>{
   let changed!:(value:boolean)=>void,resolve!:(value:boolean)=>void;
