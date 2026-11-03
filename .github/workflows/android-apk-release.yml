@@ -211,7 +211,9 @@ jobs:
 
       - name: Generate Android native project
         if: ${{ steps.strategy.outputs.apk_required == 'true' }}
-        run: npx expo prebuild --platform android --clean --non-interactive
+        run: |
+          node scripts/createAdminGitCatalog.cjs
+          npx expo prebuild --platform android --clean --non-interactive
 
       - name: Verify generated native tracking
         if: ${{ steps.strategy.outputs.apk_required == 'true' }}

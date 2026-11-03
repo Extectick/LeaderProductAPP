@@ -1,0 +1,22 @@
+[
+  {
+    "section": "Отделы",
+    "listAndCardVisible": true
+  },
+  {
+    "section": "Роли и права",
+    "listAndCardVisible": true
+  },
+  {
+    "section": "Сервисы",
+    "listAndCardVisible": true
+  },
+  {
+    "section": "База знаний",
+    "listAndCardVisible": true
+  },
+  {
+    "section": "Обновления",
+    "listAndCardVisible": true
+  }
+]

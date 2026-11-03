@@ -1,3 +1,141 @@
+# Admin — application integration, 2026-11-03
+
+The accepted design is now the actual `admin` route. UI lives in `src/features/admin/redesign`; the isolated preview exports those same components and injects FixtureAdminProvider. Application data comes only from LiveAdminProvider and the existing authenticated API; no fixtures/example releases are imported into the main entry. The legacy outer admin header is disabled before rendering the route. Common Help scene motion and transparent header/blur remain shared.
+
+User profile editing loads full details first, includes channel IDs, 1C mapping, optional email, phone/middle name and existing profile statuses. Save/moderate/reset use actual endpoints, serialized actions and visible errors. Role permissions are loaded from the API. Service metadata edits do not rewrite access; changes to role/department grants retain existing denies, individual and department-role exceptions. Knowledge and release history load on demand. APK/OTA grouping uses platform/channel/runtime; Git changes use actual published commit SHAs with ancestry and exclude merge subjects. Preview OTA examples cannot enter application history.
+
+Evidence: `67-app-shared-directory-native.png`, `68-app-shared-profile-native.png`, presentation copy `69-app-profile-preview.png`. Browser opened the same source components through fixture injection and showed the complete profile including newly retained middle-name/phone fields. Native opened the shared directory and loaded the user card. The first native observation preceded the JS bundle finishing and was empty; the next observation was stable, with no render error. Pixel geometry remains the accepted grid; native screenshots are unscaled 1080x2400.
+
+Validation: complete application TypeScript program has zero diagnostics; 22 focused model/provider/navigation tests passed. Read-only live dev API inspection confirmed users, roles, departments, permissions, services, APK and OTA endpoints return HTTP 200. `/knowledge/documents` returns 404 on this dev deployment; the UI reports that the knowledge source is not connected and offers retry. No real user password, permissions, orders or documents were modified by verification. Browser/native UI validation uses synthetic data; API integration contracts are separately covered by provider tests and live read-only requests. Main Metro on 8081 could not be started because automatic command approval rejected that action; no claim of an authenticated main-app end-to-end test is made. Dev publication is tracked separately by CI/release evidence.
+
+final result: passed (UI/integration scope; knowledge backend unavailable)
+
+---
+
+# Admin — shared scene navigation and transparent card headers, 2026-11-03
+
+Scope: the user's requested Help-style section transitions, followed by removing the opaque user-card header and applying the same header style to all admin cards. Reference behavior is the existing Help chat entry source; visual references are the accepted directory (`20-directory-final-native.png`) and previous user card (`16-user-card-native.png`).
+
+One motion implementation now lives in `components/Navigation/AppSceneTransition.tsx`. HelpChatEntry adapts it; HelpScreen and the admin directory share its underlay hook. The six admin section screens include their headers in the translated scene. The directory remains mounted underneath, preserving search and scroll state; it cannot accept input while covered. Exit awaits completion before unmounting. Existing 240/220 ms timing, cubic-out curve, reduced-motion behavior and double-dismiss protection are preserved.
+
+One `qa/admin-preview/AdminSceneHeader.tsx` now provides the transparent absolute header, caption, toolbar grid and actual shared AppEdgeBlur for directory, section lists and editors. The user card now uses DesignEditor, matching department, role, service, document, 1C selection and password forms. Its ScrollView occupies the whole screen with a top content inset; content can pass behind the header's blur. Each retained scene/editor has its own blur provider/target. There is no opaque header wrapper.
+
+Evidence: native 58/59 show section and return, `60-section-motion-native.mp4` records both directions, and `61-motion-contact-sheet.png` samples entry frames. Native captures 62/63 show the user card before/after scrolling, 64 shows the department card. `66-header-comparison.png` opens accepted directory/old card/new card/scrolled card/department together, using identical native scale and top crops (1080px source -> 270px columns); `65-user-header-preview.png` is a presentation crop. The scrolled capture visibly shows blurred content behind the caption and toolbar. No text/controls shift vertically between header variants; 48dp controls and shared 8/16dp grid remain intact.
+
+Validation: isolated admin TypeScript program reports 0 diagnostics. 68 focused tests pass across HelpScreen, HelpChatEntry and helpNavigationMotion; the latter's obsolete RN Animated/150ms expectations were updated to the existing Reanimated completion contract. Browser verified section open/back with the directory query retained, no console errors, and the user header's computed transparent background, absolute positioning, blur(10px) and shared gradient mask. Android verified section opening, double Back returning to the directory, scrolled user-card blur, department card and normal return. Browser also opened the role bottom sheet from the refactored user card. Screen recording is visual transition evidence, not a frame-time performance benchmark. No unrelated product tests or releases performed.
+
+Resolved P1: user profile used a separate in-flow static header, preventing content from passing under a blur. Resolved P2: section navigation replaced the page instantly rather than reusing Help's transition. No actionable P0/P1/P2 visual mismatches remain in this scope. Actual admin app routes are not yet replaced by the QA redesign; shared Help motion extraction is in application source.
+
+final result: passed
+
+---
+
+# Admin — read-only release history, 2026-11-03
+
+Source: accepted shared admin style and `docs/design/admin-redesign/screenshots/36-updates-native.png`. Latest instruction replaces release editing with a version/date list, nested collapsible OTA history and Git comments. This content/interaction override supersedes the earlier update cards.
+
+Implemented in `qa/admin-preview/AdminUpdatesPreview.tsx`: collapsed APK rows -> nested OTA rows -> original Git comments; separate fold for APK changes. Both levels expose expanded state. Search matches versions and commit text. Removed update creation from the section menu and removed the release editor/upload/publication flow from this preview.
+
+Evidence: browser captures `49-release-history-list-web.png`, `50-release-history-ota-web.png`, `51-release-history-comments-web.png`; native captures 52/53/54 with corresponding names. Native pixels 1080 × 2400, density 2.625, width 411.43 dp. Comparison source and new states cropped only at system chrome y=63..2337 and downsampled proportionally to 390 × 821. Full comparison input opened: `56-release-history-comparison.png`; focused header input opened: `57-release-history-header-comparison.png`. Presentation copy: `55-release-history-preview.png`.
+
+Fidelity: same platform type hierarchy, 48 dp toolbar, 50 dp row circles, text/chevron columns, Help colors and edge blur. Nested content aligns to the main text column, with smaller standard Ionicons for OTA/Git. Copy now shows versions and dated history rather than draft/rollout management. Long original Git subjects wrap without clipping in the opened Android view. Debug gear is native development chrome. No custom image assets are needed.
+
+Resolved [P1]: update management UI contradicted the requested history-only flow. The before/after comparison shows only version/date rows initially, and nested history after expansion. No actionable P0/P1/P2 visual mismatches remain for this scope.
+
+Data provenance: 2 APK versions from actual local build metadata; 53 original non-merge Git subjects from bounded commit ranges. Metadata has build dates, so they are labeled “Собрано”, not publication dates. OTA examples are explicitly marked “Пример”; their dates are labeled “Изменения от”. An actual OTA publication ledger is not connected, and the examples are not asserted to be factual releases. All dates render in Asia/Novosibirsk.
+
+Validation: isolated preview TypeScript program returned 0 diagnostics. Browser opened both hierarchy levels and searched an actual Git fix (`composer resizing`), with no console errors. Android opened the version and OTA, rendered comments, then collapsed the version and removed nested OTA rows from its accessibility tree. No unrelated tests rerun. Real publication, API data and production are unchanged.
+
+final result: passed
+
+---
+
+# Admin — remaining sections, integrations and shared HelpSheet, 2026-11-03
+
+## Comparison targets and scope
+
+- Visual truth: selected `docs/design/admin-redesign/concepts/02.png` plus the already accepted users list/card, captured in `screenshots/24-users-preview.png` and `16-user-card-native.png` under the same admin-redesign directory. This is an extension of that selected system, not an independently approved pixel mock for every new form.
+- Latest overrides: extend the design to departments, roles, services, knowledge and updates; add original 1C user/physical-person mapping with easier search; display Telegram/MAX user IDs and 1C full name; add a convenient app-password reset form; replace every bottom selector/menu/confirmation with the actual Help bottom sheet.
+- Source contracts inspected: `UsersEditorModal.tsx`, `useUsersActions.ts`, `onecLpAppService.ts`, `userService.ts`. Original 1C selection automatically fills an empty physical-person binding; app password minimum is 6 characters. Preview retains these contracts and separates password reset from general profile saving.
+- Primary implementation: `qa/admin-preview`, browser `http://127.0.0.1:8110/?theme=light`, separate installed Android package `com.leaderproduct.admin.dev`.
+
+## Rendered comparison evidence
+
+- Native raw captures `36-{departments,roles,services,knowledge,updates}-native.png` and `37-*-card-native.png`: 1080 × 2400, density 2.625, 411.43 dp screen width. For composition boards, crop only system chrome at y=63..2337 and downsample proportionally to 390 × 821. No aspect stretching. Accepted user-reference and new native screens therefore use equal viewport/density normalization.
+- Source and implementation opened in the same comparison inputs: `44-admin-lists-comparison.png`, `45-admin-content-comparison.png`, `46-admin-cards-comparison.png`, `47-admin-content-cards.png`. Boards compare toolbar geometry, row axes, type hierarchy, circles and grouped forms across sections.
+- Focused integration evidence: browser captures `38-onec-search-web.png`, `40-user-links-web.png`; IDs are explicitly synthetic fixture values. The first reset capture `39-password-reset-web.png` was taken during opening transition and is retained only as intermediate evidence, not as a stable full-screen geometry comparison.
+- Shared bottom-sheet evidence: browser `41-shared-help-sheet-web.png`, Android `42-help-role-sheet-native.png` and `43-help-sheet-dismissed-native.png`. Actual `resource-id=help-sheet-surface` observed at `[0,1518][1080,2400]`. A downward drag dismissed it; the native tree subsequently had no such surface. `48-help-sheet-preview.png` is the proportionally resized presentation copy.
+- Browser screenshots retain the previously documented Windows/IAB density resampling; native captures establish crisp type and actual geometry. No duplicate device chrome is drawn in the app.
+
+## Findings, fixes and iterations
+
+1. [P1, fixed] Five sections still used the legacy interfaces. Replaced QA section views with flat lists and grouped cards, a shared search toolbar and menu-only filters/create actions. Post-fix boards 44–47 show matching horizontal axes and typography.
+2. [P2, fixed] Service role/department switches all appeared off while access was open to everyone. Added explicit “Ограничить доступ”; choices appear only when restricting. Empty restricted selection is rejected. Availability changes update the corresponding local list entry.
+3. [P2, fixed] Validation feedback could fall below the visible part of long forms. Shared editor displays an immediately visible error above the bottom inset. Browser verified invalid rollout 101 -> visible error, then 25 -> saved draft. Permission-count grammar was corrected.
+4. [P1, fixed] Initial Fast Refresh retained user drafts without the newly added channel-account shape, causing a null-property render error. Added a guarded fallback to the current fixture record. Reloaded the verification tab; then opened profiles, searched 1C, selected a user, observed auto-filled physical person and saved without recurrence. The console retains the resolved earlier error; no new matching errors occurred during subsequent verification.
+5. [P2, fixed by latest request] Handcrafted fade modals differed from the Help interaction. Every bottom menu/filter/selector/confirmation now routes through `DesignSheet` -> the existing `HelpSheet`; no copy of its animation or gesture implementation was created. Native capture 42 and actual swipe dismissal verify the post-fix state. Full-screen editors remain full-screen.
+
+## Required fidelity surfaces
+
+- Typography: platform system family, 12/18 captions, 16/22 semibold list titles, 14/20 secondary text, 22/28 card titles; full 1C names wrap, messenger IDs remain selectable. Standard count inflections corrected.
+- Spacing/layout: shared 48 dp header circles, 8 dp gaps, 16 dp outer inset; 50 dp row icons, 76 dp card icons, flat rows without separators. Content scrolls beneath the common edge blur. Native comparison boards show no clipping or horizontal overflow in captured states.
+- Colors/tokens: `useHelpTheme`, shared toolbar and blur tokens used throughout. Switch thumbs explicitly white with blue active tracks; older card captures predate that final thumb adjustment, with post-fix native user-switch evidence visible behind sheet 42. Sheet material/radius/handle/backdrop come directly from `HelpSheet`.
+- Images/assets: all visible symbols use existing Ionicons/MaterialCommunityIcons; no custom raster assets or hand-drawn substitutes. Debug Tools gear remains development-only chrome.
+- Copy/content: section labels and user overrides retained. Knowledge preview stays read-only, with documents, drafts and archive; no live document publishing workflow is revived. Release versions, 1C directory people and channel IDs are local example records.
+
+## Focused validation
+
+- Browser: department creation; role-parent selection with inherited permissions disabled; save service availability; read a knowledge document and filter AI drafts; validate/update a release draft; search 1C by partial surname, select matching full name, auto-fill physical person; view Telegram/MAX IDs; validate empty reset password, enter a fictional matching pair and open the confirmation, then cancel without changing a credential.
+- Android: opened all five new lists and their cards, recorded in `native-section-check.json`; opened the shared role sheet, dragged it down and verified dismissal. Existing APK received all changes through Fast Refresh.
+- TypeScript: isolated admin-preview program and its imported dependencies returned 0 diagnostics after the latest shared-sheet changes. No unrelated historical test suites were rerun.
+- This is design-preview acceptance. Password reset stores only local metadata, never the entered password; account resets, real 1C/Telegram/MAX requests, file upload and release publication do not run against a server.
+
+## Follow-up polish / boundaries
+
+Physical-device keyboard behavior, large production directories and exhaustive screen-reader traversal are not covered. Android system chrome and the debug gear are intentionally retained. UI state and fixtures reset on a full reload. Main APP admin routes and production are unchanged.
+
+final result: passed
+
+---
+
+# Admin — selected directory and users prototype, 2026-11-03
+
+## Scope and visual evidence
+
+- Source visual truth: `docs/design/admin-redesign/concepts/02.png`, 852 × 1846, identical selected composition to the user's attachment `codex-clipboard-7aeabdd8-7f84-4600-b8d8-2809e0685c45.png`.
+- Subsequent user instructions extend that style to users and cards, remove the inline status/count panel, move it into filters, and place pending users first. These override the earlier users screenshot; no separate approved card mock was supplied.
+- Browser: `http://127.0.0.1:8110/?theme=light`. Measured CSS viewport 390 × 844, devicePixelRatio 1.4, Windows viewport override 546 × 1182. Raw IAB captures are 390 × 844 with the browser's scaled page in their upper-left 279 × 603 region; preserved originals and normalized copies are distinct. This capture resampling softens glyphs and does not establish exact font raster parity.
+- Full-view source/implementation comparison opened together: `docs/design/admin-redesign/screenshots/22-directory-final-comparison.png`. Source downsampled proportionally to 390 × 844; implementation's rendered region normalized to that size. Focused header comparison: `23-directory-header-detail.png`.
+- Native evidence: `20-directory-final-native.png`, `19-users-final-native.png`, `16-user-card-native.png`, 1080 × 2400, density 2.625, emulator-5554 / com.leaderproduct.admin.dev. Native screenshots verify crisp type, controls and actual rendering independently of IAB capture scaling. `24-users-preview.png` and `25-user-card-preview.png` crop only Android system chrome and resize proportionally (390 × 821); they are presentation copies, not 1:1 reference comparisons.
+
+## Findings and comparison history
+
+1. [P1, fixed] Legacy purple tabs/cards remained after the directory design selection. Replaced the QA landing page with the selected flat section directory, Help palette, 48 dp toolbar actions, 8 dp toolbar gaps and 16 dp header inset. The actual APP admin entry is unchanged.
+2. [P2, fixed] The first comparison showed icon variants and the trailing chevron column drifting from the shared header grid. Reused closer Ionicons/MaterialCommunityIcons and moved the trailing column onto the toolbar action axis. Post-fix evidence: comparisons 22/23 and native capture 20.
+3. [P1, fixed] Users still opened the legacy list/editor. Added the flat users list and grouped profile/editor to the isolated fixture app. Search, filtering, editing, department/role pickers and moderation remain interactive. Pending first ordering is stable; other users retain their order.
+4. [P2, fixed] Inline status tabs and employee count were unwanted. Removed the list header entirely; moved status choices and counts to the filter sheet. Browser snapshot and native capture 19 show pending Кузнецова Анна first, with no inline filter panel. Filter-sheet evidence: `21-users-filters-final-web.png`.
+5. [P2, fixed] Closing a nested picker could briefly render fallback rejection copy. Picker/confirmation modals now mount only for their actual state; choosing IT then saving returned to the list with the updated department. Pending text contrast increased for both theme palettes. The pending callout can grow for wrapped text instead of clipping at fixed height.
+
+## Required fidelity surfaces
+
+- Typography: platform system type; caption 12/18, section labels 17/22 bold, secondary text 14/20, users 16/22 semibold. Native rendering inspected for wrapping, glyph clipping and hierarchy. Generated mock antialiasing and browser capture blur are not copied into the UI.
+- Spacing/layout: shared Help toolbar geometry; flat full-width press/hover rows, 50 dp section/user circles, aligned text columns, scroll-under-header list and shared edge blur. Cards group editable fields and review actions. Device chrome is native and retained.
+- Colors/tokens: actual `useHelpTheme`, `APP_TOOLBAR_LAYOUT`, `AppEdgeBlur` and ScreenBlurTarget; no screenshot background or custom gradient approximation. Light reference hierarchy preserved; solid shared background intentionally replaces the generated mock's subtle texture.
+- Images/icons: supplied design contains standard icons and initial avatars, no custom raster artwork to synthesize. Real Ionicons/MaterialCommunityIcons used; avatar colors deterministic between list and profile. Minor standard glyph shape differences are P3.
+- Copy/content: directory labels match the chosen mock. Users are explicitly local fixture identities; status, department and count reflect fixture state. Latest instruction removes status controls/count from the list and retains them only in filters.
+
+## Primary interactions checked
+
+Browser: open users; search Кузнецова (one result); open profile; choose IT; save and observe changed row; reopen and confirm pending profile (count 1 -> 0 and updated status); clear search; filter Склад (3 results); reload disposable fixture; verify pending user first; open filter sheet and verify moved status/count. Browser error log contained no errors. Android: open updated directory/users/profile without reinstall; verify pending first and absence of inline status panel using the native accessibility tree. Four edited TSX files passed syntax transpilation; no unrelated historical test suites rerun.
+
+## Boundaries and follow-up polish
+
+This passes the requested design-preview scope. Live authorization, server CRUD, notification delivery and exhaustive role management are not tested by this fixture. Other admin sections retain existing forms. Physical-device accessibility/font scaling and platform-specific keyboard feel remain follow-up checks. Debug Tools floating gear belongs to the dev client and is visible only in native development captures.
+
+final result: passed
+
+---
+
 # Help — native composer and synchronized chat, 2026-10-28
 
 The earlier JS clipping approach below still allowed one frame with a new text

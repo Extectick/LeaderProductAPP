@@ -1,102 +1,22 @@
-import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
-import { useTabBarSpacerHeight } from '@/components/Navigation/TabBarSpacer';
-import { createAdminStyles } from '@/components/admin/adminStyles';
-import { useTheme } from '@/context/ThemeContext';
-import { useThemeColor } from '@/hooks/useThemeColor';
-import { Redirect } from 'expo-router';
-import React, { useMemo } from 'react';
-import { Platform, useWindowDimensions, View } from 'react-native';
-import { ActivityIndicator, Text } from 'react-native-paper';
-import useAdminScreen from '../hooks/useAdminScreen';
-import DepartmentsTab from '../tabs/departments/DepartmentsTab';
-import RolesTab from '../tabs/roles/RolesTab';
-import ServicesTab from '../tabs/services/ServicesTab';
-import UpdatesTab from '../tabs/updates/UpdatesTab';
-import UsersTab from '../tabs/users/UsersTab';
-import AdminDesktopLayout from './AdminDesktopLayout';
-import AdminMobileLayout from './AdminMobileLayout';
-import { ADMIN_DESKTOP_BREAKPOINT, styles } from './styles';
-import { KnowledgeReviewPanel } from '@/src/features/knowledge/KnowledgeReviewPanel';
-import { knowledgeApi } from '@/src/features/knowledge/api';
+import React,{useContext} from 'react';
+import {ActivityIndicator,View,Text} from 'react-native';
+import {Redirect,useRouter} from 'expo-router';
+import {useIsAdmin} from '@/hooks/useIsAdmin';
+import {AuthContext} from '@/context/AuthContext';
+import {useHelpTheme} from '../../help/helpTheme';
+import {LiveAdminProvider} from '../redesign/LiveAdminProvider';
+import {useAdminData} from '../redesign/AdminDataContext';
+import AdminDirectory from '../redesign/AdminDirectory';
+import {DesignButton} from '../redesign/AdminDesignPrimitives';
 
-export default function AdminScreen() {
-  const controller = useAdminScreen();
-  const { width } = useWindowDimensions();
-  const { theme, themes } = useTheme();
-  const colors = themes[theme];
-  const background = useThemeColor({}, 'background');
-  const topInset = useHeaderContentTopInset();
-  const tabBarSpacer = useTabBarSpacerHeight();
-  const isDesktop = Platform.OS === 'web' && width >= ADMIN_DESKTOP_BREAKPOINT;
-  const legacyStyles = useMemo(() => createAdminStyles(colors), [colors]);
-
-  if (controller.isCheckingAdmin) {
-    return (
-      <View style={[styles.centerRoot, { backgroundColor: background }]}>
-        <ActivityIndicator />
-        <Text>Проверяем права администратора</Text>
-      </View>
-    );
-  }
-
-  if (!controller.isAdmin) {
-    return <Redirect href={{ pathname: '/access-denied', params: { reason: 'no_permission' } }} />;
-  }
-
-  const tabs = (
-    <>
-      <UsersTab
-        active={controller.activeTab === 'users'}
-        styles={legacyStyles}
-        colors={colors}
-        btnGradient={[colors.tint, colors.tint]}
-        queuedUserId={controller.queuedUserId}
-        onConsumeQueuedUser={() => controller.setQueuedUserId(null)}
-      />
-      <DepartmentsTab
-        active={controller.activeTab === 'departments'}
-        styles={legacyStyles}
-        colors={colors}
-        onOpenUser={(userId) => {
-          controller.setQueuedUserId(userId);
-          controller.setActiveTab('users');
-        }}
-      />
-      <RolesTab active={controller.activeTab === 'roles'} styles={legacyStyles} colors={colors} />
-      <ServicesTab active={controller.activeTab === 'services'} styles={legacyStyles} colors={colors} />
-      {controller.activeTab === 'knowledge' ? <KnowledgeReviewPanel client={knowledgeApi} /> : null}
-      <UpdatesTab
-        active={controller.activeTab === 'updates'}
-        styles={legacyStyles}
-        colors={colors}
-        isWide={isDesktop}
-      />
-    </>
-  );
-
-  const layout = isDesktop ? (
-    <AdminDesktopLayout activeTab={controller.activeTab} onTabChange={controller.setActiveTab}>
-      {tabs}
-    </AdminDesktopLayout>
-  ) : (
-    <AdminMobileLayout activeTab={controller.activeTab} onTabChange={controller.setActiveTab}>
-      {tabs}
-    </AdminMobileLayout>
-  );
-
-  return (
-    <View style={[styles.root, { backgroundColor: background }]}>
-      <View
-        style={[
-          isDesktop ? styles.container : styles.mobileContainer,
-          {
-            paddingTop: topInset,
-            paddingBottom: isDesktop ? 0 : tabBarSpacer,
-          },
-        ]}
-      >
-        {layout}
-      </View>
-    </View>
-  );
+export default function AdminScreen(){
+  const {isAdmin,isCheckingAdmin}=useIsAdmin(),t=useHelpTheme(),auth=useContext(AuthContext);
+  if(isCheckingAdmin)return <View style={{flex:1,justifyContent:'center',backgroundColor:t.background}}><ActivityIndicator color={t.accent}/></View>;
+  if(!isAdmin)return <Redirect href={{pathname:'/access-denied',params:{reason:'no_permission'}}}/>;
+  return <LiveAdminProvider key={auth?.profile?.id}><AdminContent/></LiveAdminProvider>;
+}
+function AdminContent(){
+  const model=useAdminData(),t=useHelpTheme(),router=useRouter(),auth=useContext(AuthContext);
+  if(model.loading||model.error)return <View style={{flex:1,justifyContent:'center',padding:24,gap:16,backgroundColor:t.background}}>{model.error?<><Text style={{color:t.danger}}>{model.error}</Text><DesignButton label="Повторить загрузку" onPress={()=>void model.reload()}/><DesignButton label="Вернуться к сервисам" secondary onPress={()=>router.replace('/services')}/></>:<ActivityIndicator color={t.accent}/>}</View>;
+  return <AdminDirectory onExit={()=>router.canGoBack()?router.back():router.replace('/services')} onProfile={()=>router.push('/profile')} administratorName={[auth?.profile?.firstName,auth?.profile?.lastName].filter(Boolean).join(' ')||'Администратор'}/>;
 }

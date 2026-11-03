@@ -1,0 +1,13 @@
+const {spawn}=require('node:child_process');
+const fs=require('node:fs');
+const path=require('node:path');
+const root=path.resolve(__dirname,'..');
+const cachedNode=path.resolve(root,'../.local-tools/node-v24.22.1-win-x64/node.exe');
+const runtime=process.env.LEADER_NODE_BINARY || (Number(process.versions.node.split('.')[0])<24&&fs.existsSync(cachedNode)?cachedNode:process.execPath);
+const web=process.argv.includes('--web');
+require('./createAdminReleaseHistory.cjs').generateHistory();
+require('./createAdminGitCatalog.cjs').generate();
+const args=[require.resolve('expo/bin/cli'), 'start', ...(web?['--web']:['--dev-client','--scheme','leaderproduct-admin-dev']), '--host','lan','--port','8110'];
+const child=spawn(runtime,args,{cwd:path.join(root,'qa/admin-preview'),stdio:'inherit',windowsHide:true,env:{...process.env,NODE_ENV:'development'}});
+child.on('error',e=>{console.error(e.message);process.exitCode=1;});
+child.on('exit',code=>{process.exitCode=code??1;});

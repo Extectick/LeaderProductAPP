@@ -1,0 +1,11 @@
+{
+  "expo": {
+    "name": "Администрирование DEV",
+    "slug": "leader-admin-design-preview",
+    "scheme": "leaderproduct-admin-dev",
+    "platforms": ["android", "web"],
+    "android": { "package": "com.leaderproduct.admin.dev" },
+    "web": { "bundler": "metro", "output": "single" },
+    "updates": { "enabled": false }
+  }
+}

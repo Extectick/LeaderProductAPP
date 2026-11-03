@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, BackHandler, Keyboard, KeyboardAvoidingView, PanResponder, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, BackHandler, Keyboard, KeyboardAvoidingView, PanResponder, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Reanimated, {useAnimatedStyle, useSharedValue, withTiming, cancelAnimation} from 'react-native-reanimated';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -36,6 +36,7 @@ import {HelpVisualEffectsContext} from './helpVisualEffects';
 import { HelpPlaybackScope, HelpChatPlayback } from './components/HelpPlaybackScope';
 import { HelpDateSeparator } from './components/HelpTimelineIndicators';
 import { HelpChatEntry, type HelpChatEntryHandle } from './components/HelpChatEntry';
+import {useAppSceneUnderlayMotion} from '@/components/Navigation/AppSceneTransition';
 import {HelpMessageArrivalContext} from './components/HelpMessageArrival';
 import { HelpTicketReference } from './components/HelpTicketReference';
 import { createHelpImageCache, HelpImageCacheContext } from './helpMediaLoading';
@@ -67,7 +68,7 @@ export default function HelpScreen() {
   const screenMounted=useRef(true);useEffect(()=>{screenMounted.current=true;return()=>{screenMounted.current=false;};},[]);
   const draftRevisions = useRef(new Map<string,number>());
   const sentDraftRevisions = useRef(new Map<string,number>());
-  const chatProgress=useSharedValue(0),viewportSize=useWindowDimensions();
+  const chatProgress=useSharedValue(0);
   const returningToList=useRef(false);
   const [listSceneHeaderHeight,setListSceneHeaderHeight]=useState(68+insets.top);
   const [entrySettled,setEntrySettled]=useState(false);
@@ -78,7 +79,7 @@ export default function HelpScreen() {
   const arrivalRegistry=useMemo(()=>new Set<string>(),[service.userId,scene.key]);
   const listBlurTarget = useRef<View>(null);
   const [active, setActive] = useState<number | 'new' | null>(null); const [filter, setFilter] = useState<'OPEN' | 'CLOSED'>('OPEN'); const [scope, setScope] = useState<'mine' | 'queue'>('mine');
-  const listMotion=useAnimatedStyle(()=>({transform:[{translateX:active===null?0:-Math.min(viewportSize.width*.25,120)*chatProgress.value}]}),[viewportSize.width,active===null]);
+  const listMotion=useAppSceneUnderlayMotion(chatProgress,active!==null);
   const [search, setSearch] = useState(''); const [order, setOrder] = useState<number[]>([]); const [draft, setDraft] = useState(''); const [files, setFiles] = useState<HelpLocalFile[]>([]); const [source, setSource] = useState<SourceTicket | null>(null);
   const [listDrafts,setListDrafts]=useState<Record<number,string>>({});
   const [mode, setMode] = useState<HelpComposeMode>('message'); const [rating, setRating] = useState(0); const [reply, setReply] = useState<HelpMessage | null>(null); const [editing, setEditing] = useState<HelpMessage | null>(null); const [editAttachments, setEditAttachments] = useState<HelpAttachment[]>([]); const [focusKey, setFocusKey] = useState(0);
