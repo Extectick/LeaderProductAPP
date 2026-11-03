@@ -356,7 +356,7 @@ export default function HelpScreen() {
     if (mode === 'edit' && editing && !canEditHelpMessage(editing, service.userId)) { tell('Редактировать сообщение можно только в течение часа.'); return false; }
     if(selectedFiles&&!voice)changeFiles(chosenFiles);
     const draftRevision = draftRevisions.current.get(draftKey)??0;
-    const keyboardSettled=mode==='message'&&!voice?settleHelpKeyboard(imeInset>0,()=>{if(screenMounted.current&&currentAccount.current===account&&navigationGeneration.current===navigation)setImeInset(0);}):Promise.resolve();
+    const keyboardSettled=mode==='message'&&!voice&&!chosenFiles.length?settleHelpKeyboard(imeInset>0,()=>{if(screenMounted.current&&currentAccount.current===account&&navigationGeneration.current===navigation)setImeInset(0);}):Promise.resolve();
     submitLock.current = true; setSending(true);
     const releaseFiles=[holdHelpAttachmentFiles(chosenFiles)];let committed=false;
     try {
@@ -364,6 +364,31 @@ export default function HelpScreen() {
       if(!screenMounted.current||currentAccount.current!==account||navigationGeneration.current!==navigation||draftScope.current.key!==draftKey)return false;
       if(mode==='message'&&!voice){chosenFiles=await persistFiles(chosenFiles,draftKey,account,draftRevision);releaseFiles.push(holdHelpAttachmentFiles(chosenFiles));}
       if(currentAccount.current!==account)return false;
+      if (mode === 'message' && chosenFiles.length && !(voice && active === 'new') && !assistantPreview && service.queueFileTicket) {
+        const clearQueuedDraft = async (item?: HelpPending) => {
+          committed=true;
+          if(active==='new'&&item){creationEcho.current={account,scene:scene.key,item};seenPendingCreates.current.add(item.key);earlyClearedCreations.current.add(item.key);}
+          if(voice||(draftRevisions.current.get(draftKey)??0)!==draftRevision||currentAccount.current!==account)return;
+          sentDraftRevisions.current.set(draftKey,draftRevision);
+          fileDrafts.current.set(draftKey,[]);
+          const clearing=clearHelpAttachmentDraft(account,draftKey).then(()=>[] as HelpLocalFile[]);
+          filePersistence.current.set(draftKey,{revision:draftRevision,promise:clearing});
+          if(screenMounted.current&&navigationGeneration.current===navigation){setDraft('');setFiles([]);setReply(null);}
+          await Promise.all([service.setDraft(draftKey,''),clearing]).catch(()=>{if(screenMounted.current&&currentAccount.current===account)tell('Сообщение в очереди, но не удалось очистить черновик.');});
+        };
+        if(active==='new'){
+          creationRequest.current={account,scene:scene.key};
+          await service.queueFileTicket({text:voice?'':draft.trim(),sourceTicketId:source?.id},chosenFiles,clearQueuedDraft);
+        }else{
+          await service.sendMessage(active,{text:voice?'':draft.trim(),replyToId:reply?.id},chosenFiles);
+          await clearQueuedDraft();
+        }
+        if(screenMounted.current&&currentAccount.current===account&&navigationGeneration.current===navigation){
+          if(voice)setReply(null);
+          if(!hasNativeChatLayout){followBottom.current=true;scroll.current?.scrollToEnd({animated:false});}
+        }
+        return true;
+      }
       const uploads: HelpAttachment[] = [];
       for (const file of chosenFiles) { let upload = uploadCache.current.get(file.uri); if (!upload) { [upload] = await service.uploadAttachments([file]); if(currentAccount.current!==account) return false; uploadCache.current.set(file.uri, upload); } uploads.push(upload); }
       if(currentAccount.current!==account) return false;

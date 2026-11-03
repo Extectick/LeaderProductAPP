@@ -1,3 +1,4 @@
+jest.mock('../src/features/help/helpAttachmentDrafts',()=>({saveHelpAttachmentDraft:jest.fn(async(_user:number,_key:string,files:unknown[])=>files),clearHelpAttachmentDraft:jest.fn(async()=>{})}));
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
 
@@ -66,6 +67,32 @@ describe('Help accepted sends and history replay',()=>{
     expect(service.messages.map(row=>row.id)).toEqual([1]);expect(service.busy).toBe(false);
     await act(async()=>{done(accepted);});
     expect(service.messages.map(row=>row.id)).toEqual([100]);expect(service.navigationTarget?.kind).toBe('latest');expect(service.hasNewer).toBe(false);
+  });
+  test('file message releases the composer after durable enqueue while the network is pending',async()=>{
+    await open();let done!:(value:any)=>void;
+    outbox.dispatchHelpPending.mockReturnValue(new Promise(resolve=>{done=resolve;}));
+    const files=[{uri:'file:///photo.jpg',name:'photo.jpg',mimeType:'image/jpeg'}];
+    let result:any;await act(async()=>{result=await service.sendMessage(7,{text:'С файлом'},files);});
+    expect(result.queued).toBe(true);expect(service.busy).toBe(false);
+    expect(service.pendingMessages).toEqual([expect.objectContaining({localFiles:files,input:expect.objectContaining({text:'С файлом'})})]);
+    expect(storage.saveHelpPending).toHaveBeenCalledWith(5,expect.objectContaining({localFiles:files}));
+    await act(async()=>done(accepted));
+    expect(service.messages.map(row=>row.id)).toEqual([100]);
+  });
+  test('failed durable file enqueue never starts delivery or removes the composer draft',async()=>{
+    await open();storage.saveHelpPending.mockRejectedValueOnce(new Error('disk full'));
+    await act(async()=>{await expect(service.sendMessage(7,{text:'Keep draft'},[{uri:'file:///a.pdf',name:'a.pdf'}])).rejects.toThrow('disk full');});
+    expect(outbox.dispatchHelpPending).not.toHaveBeenCalled();expect(service.pendingMessages).toEqual([]);
+    expect(require('../src/features/help/helpAttachmentDrafts').clearHelpAttachmentDraft).toHaveBeenCalledWith(5,'outbox:qa-send');
+  });
+  test('first file message is queued without waiting for ticket creation',async()=>{
+    await open();let done!:(value:any)=>void;
+    outbox.dispatchHelpPending.mockReturnValue(new Promise(resolve=>{done=resolve;}));
+    const queued=jest.fn(),files=[{uri:'file:///a.pdf',name:'a.pdf'}];
+    await act(async()=>{await service.queueFileTicket({text:'Новый вопрос'},files,queued);});
+    expect(queued).toHaveBeenCalledWith(expect.objectContaining({create:true,localFiles:files}));
+    expect(service.busy).toBe(false);expect(service.pendingMessages[0].create).toBe(true);
+    await act(async()=>done(accepted));
   });
   test('reply snapshot is durably queued before delivery and fills a partial server acknowledgement',async()=>{
     await open();let done!:(value:any)=>void;outbox.dispatchHelpPending.mockReturnValue(new Promise(resolve=>{done=resolve;}));

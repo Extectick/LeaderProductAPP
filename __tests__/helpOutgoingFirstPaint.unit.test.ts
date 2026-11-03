@@ -69,3 +69,17 @@ test('queued reply already contains its quote before delivery',async()=>{
   expect(jump).toHaveBeenCalledWith(9);
  }finally{await act(async()=>view.unmount());}
 });
+
+
+test('a queued file bubble shows local thumbnails and names before upload completes',async()=>{
+  const files=[{uri:'file:///draft/photo.jpg',name:'photo.jpg',mimeType:'image/jpeg'},{uri:'file:///draft/document.pdf',name:'document.pdf',mimeType:'application/pdf'}];
+  const item:HelpPending={key:'local-files',ticketId:4,create:false,createdAt:1,status:'sending',input:{text:'Документы'},localFiles:files};
+  let view!:TestRenderer.ReactTestRenderer;
+  await act(async()=>{view=TestRenderer.create(React.createElement(HelpPendingMessage,{item,onRetry:jest.fn()}));});
+  try{
+    expect(view.root.findByType(require('react-native').Image).props.source.uri).toBe(files[0].uri);
+    const text=view.root.findAllByType(require('react-native').Text).map(node=>node.props.children);
+    expect(text).toContain('photo.jpg');expect(text).toContain('document.pdf');
+    expect(view.root.findAllByProps({testID:'help-pending-content'})).toHaveLength(0);
+  }finally{await act(async()=>view.unmount());}
+});

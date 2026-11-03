@@ -93,7 +93,7 @@ describe('Help screen integration with service boundary', () => {
     mockNativeImeLayout = false;mockNativeStableImeLayout=false;
     mockTimelineProps=undefined;mockUseAudioController.mockClear();mockTimelineDateJump.mockClear();
     Object.assign(mockPlayback,{current:null,positionSeconds:0,durationSeconds:0,progress:0,playing:false,loading:false,ready:false,error:null,speed:1,toggle:jest.fn().mockResolvedValue(undefined),setSpeed:jest.fn(),stop:jest.fn(),seek:jest.fn().mockResolvedValue(undefined),play:jest.fn().mockResolvedValue(undefined)});
-    Object.assign(mockService,{tickets:[],selectedTicket:null,messages:[],pendingMessages:[],lastCreatedOperation:null,loading:false,busy:false,error:null,online:true,connected:true,canManage:false,userId:5,typingByTicket:{},hasMore:false,
+    Object.assign(mockService,{queueFileTicket:undefined,tickets:[],selectedTicket:null,messages:[],pendingMessages:[],lastCreatedOperation:null,loading:false,busy:false,error:null,online:true,connected:true,canManage:false,userId:5,typingByTicket:{},hasMore:false,
       loadTickets:jest.fn().mockResolvedValue(undefined),clearSelection:jest.fn(()=>{mockService.selectedTicket=null;}),openTicket:jest.fn(async()=>{mockService.selectedTicket=ticket;return detail;}),getDraft:jest.fn().mockResolvedValue(''),setDraft:jest.fn().mockResolvedValue(undefined),emitTyping:jest.fn(),createTicket:jest.fn(async()=>{mockService.selectedTicket=ticket;return detail;}),sendMessage:jest.fn().mockResolvedValue(detail),uploadAttachments:jest.fn(),closeTicket:jest.fn().mockResolvedValue(detail),reopenTicket:jest.fn(),editMessage:jest.fn(),toggleReaction:jest.fn(),mediaSource:jest.fn(),loadOlder:jest.fn(),loadNewer:jest.fn(),jumpToLatest:jest.fn().mockResolvedValue(undefined),jumpToMessage:jest.fn().mockResolvedValue(undefined),saveViewport:jest.fn(),markVisibleRead:jest.fn(),searchMessages:jest.fn().mockResolvedValue({messages:[],total:0,nextCursor:null}),retryPending:jest.fn(),markAllRead:jest.fn(),requestIt:jest.fn(),claimTicket:jest.fn()});
   });
   afterEach(async()=>{if(screen)await act(async()=>screen.unmount());jest.restoreAllMocks();});
@@ -458,6 +458,33 @@ describe('Help screen integration with service boundary', () => {
     await act(async()=>composer().props.onChange('Новый текст'));
     await act(async()=>resolveDraft('Старый текст'));
     expect(composer().props.value).toBe('Новый текст');
+  });
+  test('file enqueue clears the composer without waiting for upload or keyboard dismissal',async()=>{
+    const keyboard=require('react-native').Keyboard;
+    jest.spyOn(keyboard,'isVisible').mockReturnValue(true);
+    const dismiss=jest.spyOn(keyboard,'dismiss');
+    mockService.tickets=[ticket];mockService.queueFileTicket=jest.fn();
+    await render();await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());
+    const files=[{uri:'file://draft.pdf',name:'draft.pdf'}];
+    await act(async()=>{composer().props.onChange('Документ');composer().props.onFiles(files);});
+    dismiss.mockClear();
+    await act(async()=>{expect(await composer().props.onSend()).toBe(true);});
+    expect(mockService.uploadAttachments).not.toHaveBeenCalled();
+    expect(mockService.sendMessage).toHaveBeenCalledWith(7,{text:'Документ',replyToId:undefined},files);
+    expect(dismiss).not.toHaveBeenCalled();expect(composer().props.value).toBe('');expect(composer().props.files).toEqual([]);expect(composer().props.busy).toBe(false);
+  });
+  test('first file enqueue paints the pending message and clears only the submitted draft',async()=>{
+    const files=[{uri:'file://photo.jpg',name:'photo.jpg',mimeType:'image/jpeg'}];
+    mockService.queueFileTicket=jest.fn(async(input:any,localFiles:any,onQueued:any)=>{
+      const item={key:'queued-file-create',create:true,status:'queued',createdAt:Date.now(),input,localFiles};
+      mockService.pendingMessages=[item];await onQueued(item);return item;
+    });
+    await render();await act(async()=>button('Новое обращение').props.onPress());
+    await act(async()=>{composer().props.onChange('С фото');composer().props.onFiles(files);});
+    await act(async()=>{expect(await composer().props.onSend()).toBe(true);});
+    expect(mockService.uploadAttachments).not.toHaveBeenCalled();expect(mockService.createTicket).not.toHaveBeenCalled();
+    expect(composer().props.files).toEqual([]);expect(composer().props.value).toBe('');expect(composer().props.busy).toBe(false);
+    expect(screen.root.findAllByType(HelpPendingMessage)).toHaveLength(1);
   });
   test('account switch clears active text, attachments and overlays',async()=>{
     await render(); await act(async()=>button('Новое обращение').props.onPress());

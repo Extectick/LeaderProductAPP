@@ -1,3 +1,4 @@
+import type {HelpLocalFile} from './components/HelpComposer';
 import {withHelpReaction} from './helpReactions';
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, Platform } from 'react-native';
@@ -410,14 +411,33 @@ export function useHelpService(isFocused = true) {
     finally{const remaining=await readHelpPending(userId);if(current(account))setPendingCount(remaining.length);}
   }, [identity,userId,current]);
   const createTicket = useCallback((input: HelpCreateInput,onQueued?:(item:HelpPending)=>void|Promise<void>) => mutate(()=>durableSend(input,undefined,undefined,onQueued),true),[mutate,durableSend]);
-  const sendMessage = useCallback(async(id:number,input:HelpMessageInput):Promise<HelpDetail>=>{
+  const prepareFileMessage = useCallback(async (item: HelpPending, files: HelpLocalFile[]) => {
+    const drafts = files.length ? require('./helpAttachmentDrafts') as typeof import('./helpAttachmentDrafts') : null;
+    const localFiles = drafts ? await drafts.saveHelpAttachmentDraft(userId, `outbox:${item.key}`, files) : undefined;
+    const prepared = {...item, ...(localFiles ? {localFiles} : {})};
+    try { await saveHelpPending(userId, prepared); }
+    catch (error) { if(localFiles)await drafts!.clearHelpAttachmentDraft(userId, `outbox:${item.key}`).catch(()=>{}); throw error; }
+    return prepared;
+  }, [userId]);
+  const queueFileTicket = useCallback(async (input: HelpCreateInput, files: HelpLocalFile[], onQueued: (item: HelpPending)=>void|Promise<void>) => {
+    const account=identity, key=input.clientMessageId||helpClientId();
+    const item=await prepareFileMessage({key,create:true,createdAt:Date.now(),status:'queued',input:{...input,clientMessageId:key,clientTicketId:input.clientTicketId||helpClientId()}},files);
+    if(!current(account))throw new Error('Учётная запись изменилась');
+    setPendingMessages(old=>[...old.filter(row=>row.key!==key),item]);
+    // The callback only clears the submitted draft; networking does not own the editor.
+    try { await onQueued(item); }
+    finally { void dispatchHelpPending(userId,item).then(detail=>{if(current(account))applyDetail(detail,true);}).catch(error=>{if(current(account))report(error);}); }
+    return item;
+  }, [identity,userId,current,prepareFileMessage,applyDetail,report]);
+  const sendMessage = useCallback(async(id:number,input:HelpMessageInput,files:HelpLocalFile[]=[]):Promise<HelpDetail>=>{
     const ticket=selectedRef.current?.id===id?selectedRef.current:ticketsRef.current.find(row=>row.id===id);if(!ticket)throw new Error('Обращение не открыто');
     const account=identity,navigation=detailGeneration.current,interaction=interactionRevision.current;
     const clientMessageId=input.clientMessageId||helpClientId();
     const source=input.replyToId?messagesRef.current.find(message=>message.ticketId===id&&message.id===input.replyToId):undefined;
-    const item:HelpPending={key:clientMessageId,ticketId:id,create:false,createdAt:Date.now(),status:'queued',input:{...input,clientMessageId},...(source?{replyTo:{id:source.id,text:source.text,author:source.author,attachments:source.attachments}}:{})};
-    await saveHelpPending(userId,item);
+    const draftItem:HelpPending={key:clientMessageId,ticketId:id,create:false,createdAt:Date.now(),status:'queued',input:{...input,clientMessageId},...(source?{replyTo:{id:source.id,text:source.text,author:source.author,attachments:source.attachments}}:{})};
+    const item=await prepareFileMessage(draftItem,files);
     if(!current(account))throw new Error('Учётная запись изменилась');
+    setPendingMessages(old=>[...old.filter(row=>row.key!==item.key),item]);
     let accepted=false;
     const delivered=(detail:HelpDetail)=>{
       if(accepted)return;accepted=true;
@@ -432,11 +452,10 @@ export function useHelpService(isFocused = true) {
         setPendingMessages(old=>old.filter(pending=>pending.key!==clientMessageId));
       }
     };
-    if(input.attachmentIds?.length){const detail=await mutate(()=>dispatchHelpPending(userId,item,delivered));delivered(detail);return detail;}
     // Acceptance means durable local enqueue. Delivery continues beyond this screen.
     void dispatchHelpPending(userId,item,delivered).then(delivered).catch(error=>{if(current(account))report(error);});
     return {...(pageRef.current??{}),ticket,messages:messagesRef.current.filter(message=>message.ticketId===id),queued:true};
-  },[userId,current,identity,report,mutate,applyDetail,issueNavigation]);
+  },[userId,current,identity,report,prepareFileMessage,applyDetail,issueNavigation]);
   const stopAssistant=useCallback((id:number,runId:string)=>mutate(()=>helpApi.stopAssistant(id,runId)),[mutate,helpApi]);
   const retryAssistant=useCallback((id:number,runId:string)=>mutate(()=>helpApi.retryAssistant(id,runId)),[mutate,helpApi]);
   const editMessage = useCallback((id:number,input:{text:string;rating?:number;attachmentIds?:string[]})=>mutate(()=>helpApi.edit(id,input)),[mutate]);
@@ -588,5 +607,5 @@ export function useHelpService(isFocused = true) {
   return {tickets,selectedTicket,messages,pendingMessages,lastCreatedOperation,retryPendingOperation,loading,busy,error,pendingCount,connected:connected&&server.isReachable&&!connectionIssue,online:server.isReachable,canManage,userId,typingByTicket,hasMore,
     hasOlder,hasNewer,loadingOlder,loadingNewer,navigationTarget,firstUnreadSequence,loadNewer,jumpToMessage,jumpToLatest,jumpToDate,cancelNavigation,saveViewport,markVisibleRead,searchMessages,
     aiEnabled,stopAssistant,retryAssistant,loadTickets,openTicket,clearSelection,createTicket,sendMessage,editMessage,closeTicket,reopenTicket,requestIt,claimTicket,markAllRead,toggleReaction,
-    uploadAttachments,mediaSource,loadOlder,emitTyping,getDraft,getDrafts,setDraft,retryPending,refresh};
+    queueFileTicket,uploadAttachments,mediaSource,loadOlder,emitTyping,getDraft,getDrafts,setDraft,retryPending,refresh};
 }

@@ -1,7 +1,7 @@
 import React, { useContext, useEffect, useRef, useState } from 'react';
 import {HelpVisualEffectsContext} from '../helpVisualEffects';
 import { Animated, Image, Keyboard, Modal, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions, type ViewStyle } from 'react-native';
-import {Gesture,GestureDetector,GestureHandlerRootView} from 'react-native-gesture-handler';
+import {Pressable as NativePressable,Gesture,GestureDetector,GestureHandlerRootView} from 'react-native-gesture-handler';
 import Reanimated,{cancelAnimation,runOnJS,useAnimatedStyle,useSharedValue,withSpring,withTiming} from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -13,9 +13,10 @@ import {helpTypingLabel,type HelpTypingUser} from '../helpTypingModel';
 import { helpDevRef, helpDevState } from '../helpDiagnostics';
 
 export type HelpIconName = keyof typeof Ionicons.glyphMap;
-export function HelpIcon({ name, label, onPress, active, disabled, color, size = 22, rotation = 0, style }: { name: HelpIconName; label: string; onPress?: () => void; active?: boolean; disabled?: boolean; color?: string; size?: number; rotation?: number; style?: ViewStyle }) {
+export function HelpIcon({ name, label, onPress, active, disabled, color, size = 22, rotation = 0, style, nativeTouch = false }: { name: HelpIconName; label: string; onPress?: () => void; active?: boolean; disabled?: boolean; color?: string; size?: number; rotation?: number; style?: ViewStyle; nativeTouch?:boolean }) {
   const c = useHelpTheme(); const reduced = useHelpReducedMotion();
-  return <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{disabled:Boolean(disabled),selected:Boolean(active)}} disabled={disabled} onPress={onPress} style={({ pressed }) => [{ width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? c.soft : 'transparent', opacity: disabled ? .38 : pressed ? .65 : 1, transform: [{ scale: pressed && !disabled && !reduced ? .96 : 1 }] }, style]}><Ionicons name={name} size={size} color={color ?? c.accentText} style={rotation ? {transform:[{rotate:`${rotation}deg`}]} : undefined} /></Pressable>;
+  const Button = nativeTouch ? NativePressable : Pressable;
+  return <Button accessibilityRole="button" accessibilityLabel={label} accessibilityState={{disabled:Boolean(disabled),selected:Boolean(active)}} disabled={disabled} onPress={onPress} style={({ pressed }) => [{ width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? c.soft : 'transparent', opacity: disabled ? .38 : pressed ? .65 : 1, transform: [{ scale: pressed && !disabled && !reduced ? .96 : 1 }] }, style]}><Ionicons name={name} size={size} color={color ?? c.accentText} style={rotation ? {transform:[{rotate:`${rotation}deg`}]} : undefined} /></Button>;
 }
 export function HelpAvatar({ id, name, uri, size = 34, muted = false }: { id: number; name: string; uri?: string | null; size?: number; muted?: boolean }) {
   const [failedUri,setFailedUri]=useState<string|null>(null);
