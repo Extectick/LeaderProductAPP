@@ -1,6 +1,6 @@
 import React from 'react';
 import TestRenderer, {act} from 'react-test-renderer';
-import {AppState, Animated, Dimensions, Keyboard, PanResponder, TextInput} from 'react-native';
+import {AppState, Animated, Dimensions, Keyboard, PanResponder, StyleSheet, TextInput} from 'react-native';
 
 const mockPermission=jest.fn(),mockPage=jest.fn(),mockPrepare=jest.fn(),mockDiscard=jest.fn(),mockPreviewUri=jest.fn();
 const mockPullTiming=jest.fn(),mockPullSpring=jest.fn();
@@ -289,18 +289,22 @@ test('focus return after permission denial refreshes access without triggering a
 });
 
 
-test('permission completion restores the panel even when Android emits no AppState or focus event',async()=>{
-  mockPermission.mockResolvedValueOnce({granted:false,limited:false,canAskAgain:true}).mockResolvedValueOnce({granted:true,limited:false,canAskAgain:true});
-  mockPullTiming.mockImplementation(()=>0);await render();
-  const panel=()=>screen!.root.findAllByProps({testID:'help-photo-panel'})[0].props.style[1].height;
-  expect(panel()).toBeGreaterThan(0);
-  // The second (camera) dialog can interrupt the same sheet independently.
-  await update({open:false});await update({open:true});
-  expect(panel()).toBe(0);
+test('permission completion restores committed layout even when native animation has a cached zero style',async()=>{
+  mockStaticAnimatedStyle=true;mockPullTiming.mockImplementation(()=>0);
+  const permission=deferred<{granted:boolean;limited:boolean;canAskAgain:boolean}>();
+  mockPermission.mockReturnValueOnce(permission.promise).mockResolvedValueOnce({granted:true,limited:false,canAskAgain:true});
+  await render();
+  const panel=()=>screen!.root.findAllByProps({testID:'help-photo-panel'})[0];
+  expect(StyleSheet.flatten(panel().props.style).height).toBe(0);
+  await act(async()=>permission.resolve({granted:false,limited:false,canAskAgain:true}));
+  // A new Fabric layout can reapply this initial animated value after the camera mounts.
+  expect(panel().props.style[1].height).toBe(0);
+  expect(StyleSheet.flatten(panel().props.style).height).toBeGreaterThan(0);
   await act(async()=>screen!.root.findByType('HelpPhotoCamera' as any).props.onPermissionSettled());
-  expect(panel()).toBeGreaterThan(0);expect(props.onClose).not.toHaveBeenCalled();
+  await update({caption:'Сохранённый текст'});
+  expect(StyleSheet.flatten(panel().props.style).height).toBeGreaterThan(0);
+  expect(props.onClose).not.toHaveBeenCalled();expect(props.onCaption).not.toHaveBeenCalled();
 });
-
 
 test('late portal mount gets the current animated height instead of a cached zero initial style',async()=>{
   mockStaticAnimatedStyle=true;

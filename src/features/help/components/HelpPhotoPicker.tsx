@@ -32,7 +32,7 @@ export function HelpPhotoPicker(props:Props) {
   const c=useHelpTheme(),reduced=useHelpReducedMotion(),window=useWindowDimensions(),insets=useSafeAreaInsets();
   const latest=useRef(props);latest.current=props;
   const mounted=useRef(true),generation=useRef(0),pageOffset=useRef(0),loadingPage=useRef(false),checkingPermission=useRef(false);
-  const [visible,setVisible]=useState(props.open),[settled,setSettled]=useState(false);
+  const [visible,setVisible]=useState(props.open),[settled,setSettled]=useState(false),[panelLayoutHeight,setPanelLayoutHeight]=useState(0);
   const [permission,setPermission]=useState<HelpPhotoPermission|null>(null),[loading,setLoading]=useState(false),[error,setError]=useState('');
   const [photos,setPhotos]=useState<HelpLibraryPhoto[]>([]),[hasMore,setHasMore]=useState(true),[width,setWidth]=useState(window.width-16);
   const [selection,setSelection]=useState<Selection[]>(()=>props.files.map(fromFile));
@@ -59,7 +59,7 @@ export function HelpPhotoPicker(props:Props) {
     if(!mounted.current||!latest.current.open)return;
     closedByPull.current=true;
     // The panel has already left the screen: release its dock in this commit.
-    height.value=0;setVisible(false);setPreview(null);setCameraExpanded(false);
+    height.value=0;setPanelLayoutHeight(0);setVisible(false);setPreview(null);setCameraExpanded(false);
     latest.current.onClose();
   },[height]);
   const gridScroll=useAnimatedScrollHandler({
@@ -123,15 +123,15 @@ export function HelpPhotoPicker(props:Props) {
   // Release the touch shield even if a closing animation is interrupted.
   useEffect(()=>{
     if(props.open)return;
-    const timer=setTimeout(()=>{if(!latest.current.open){setVisible(false);setPreview(null);setCameraExpanded(false);}},260);
+    const timer=setTimeout(()=>{if(!latest.current.open){height.value=0;setPanelLayoutHeight(0);setVisible(false);setPreview(null);setCameraExpanded(false);}},260);
     return()=>clearTimeout(timer);
-  },[props.open]);
+  },[props.open,height]);
   const finishHeight=useCallback(()=>{
     if(!mounted.current)return;
-    resizing.current=false;setSettled(true);
+    resizing.current=false;setSettled(true);setPanelLayoutHeight(height.value);
     if(!latest.current.open){setVisible(false);setPreview(null);setCameraExpanded(false);}
     else measureGrid();
-  },[measureGrid]);
+  },[measureGrid,height]);
   useEffect(()=>{
     resizing.current=true;setSettled(false);cancelAnimation(height);
     if(!props.open&&closedByPull.current){height.value=0;setVisible(false);return;}
@@ -148,7 +148,7 @@ export function HelpPhotoPicker(props:Props) {
     // `open`. Re-establish both panel geometry and its camera clipping on return.
     setVisible(true);setSettled(false);resizing.current=true;
     cancelAnimation(height);cancelAnimation(pullY);pullY.value=0;pullState.value=0;
-    height.value=collapsedHeight;finishHeight();
+    height.value=collapsedHeight;setPanelLayoutHeight(collapsedHeight);finishHeight();
   }, [preview,cameraExpanded,height,pullY,pullState,collapsedHeight,reduced,finishHeight]);
 
   const restorePanelRef=useRef(restorePanel);restorePanelRef.current=restorePanel;
@@ -217,7 +217,7 @@ export function HelpPhotoPicker(props:Props) {
     setPreview({photos:ready,index:ready.findIndex(item=>item.id===photo.id),origin});
   }
   const beginResize=useCallback(()=>{resizing.current=true;setSettled(false);},[]);
-  const endResize=useCallback(()=>{if(!mounted.current)return;resizing.current=false;setSettled(true);measureGrid();},[measureGrid]);
+  const endResize=useCallback(()=>{if(!mounted.current)return;resizing.current=false;setSettled(true);setPanelLayoutHeight(height.value);measureGrid();},[measureGrid,height]);
   const closeResize=useCallback(()=>{resizing.current=false;latest.current.onClose();},[]);
   const resizeGesture=useMemo(()=>Gesture.Pan().withTestId('help-photo-resize').maxPointers(1).activeOffsetY([-8,8])
     .onStart(()=>{cancelAnimation(height);dragStart.value=height.value;runOnJS(beginResize)();})
@@ -241,7 +241,7 @@ export function HelpPhotoPicker(props:Props) {
   return <HelpPhotoPortal id={portalId}><View testID="help-photo-overlay" pointerEvents={props.open?'box-none':'none'} style={{position:'absolute',top:0,left:0,right:0,bottom:0}}>
     <View testID="help-photo-navigation-blur" pointerEvents="none" style={{position:'absolute',bottom:0,left:0,right:0,height:insets.bottom+8}}><HelpBlurSurface target={props.blurTarget}/></View>
     <Pressable accessibilityLabel="Закрыть панель вложений" onPress={props.onClose} style={{position:'absolute',top:0,left:0,right:0,bottom:0}}/>
-    <HelpPhotoPanel height={height} bottom={overlayBottom} onWidth={setWidth}>
+    <HelpPhotoPanel height={height} layoutHeight={panelLayoutHeight} bottom={overlayBottom} onWidth={setWidth}>
       <GestureHandlerRootView style={{flex:1}}>
       <Reanimated.View testID="help-photo-pull-surface" style={[{flex:1,borderRadius:18,overflow:'hidden',backgroundColor:c.panel},pullStyle]}>
       <GestureDetector gesture={resizeGesture}><View testID="help-photo-panel-handle" style={{height:48,alignItems:'center',justifyContent:'center'}}>
@@ -275,11 +275,13 @@ export function HelpPhotoPicker(props:Props) {
 /** The portal mounts this later than the picker. Bind its animated style here,
  * so Reanimated's initial native style reads the current height, not the zero
  * captured before permission dialogs and before the portal view existed. */
-function HelpPhotoPanel({height,bottom,onWidth,children}:{height:SharedValue<number>;bottom:number;onWidth:(width:number)=>void;children:React.ReactNode}) {
+function HelpPhotoPanel({height,layoutHeight,bottom,onWidth,children}:{height:SharedValue<number>;layoutHeight:number;bottom:number;onWidth:(width:number)=>void;children:React.ReactNode}) {
+  // Keep Fabric's committed Yoga size aligned with the completed animation.
+  // A camera/permission subtree commit must not restore the initial zero size.
   const panelStyle=useAnimatedStyle(()=>({height:height.value}),[height]);
   return <Reanimated.View ref={(node:View|null)=>helpDevRef('photos.panel',node as unknown as View)} testID="help-photo-panel"
     onLayout={event=>onWidth(event.nativeEvent.layout.width)}
-    style={[{position:'absolute',bottom,left:8,right:8,overflow:'hidden'},panelStyle]}>{children}</Reanimated.View>;
+    style={[{position:'absolute',bottom,left:8,right:8,overflow:'hidden'},panelStyle,{height:layoutHeight}]}>{children}</Reanimated.View>;
 }
 
 function PhotoTile({photo,size,number,pending,disabled,onSelect,onPreview,index}:{photo:HelpLibraryPhoto;size:number;number:number;pending:boolean;disabled:boolean;onSelect:()=>void;onPreview:(origin:HelpPhotoRect)=>void;index:number}) {
