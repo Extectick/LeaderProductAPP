@@ -329,3 +329,18 @@ test('caption keyboard reduces only the file panel and does not dismiss the edit
  await act(async()=>listeners.keyboardDidHide({}));
  expect(StyleSheet.flatten(screen!.root.findAllByProps({testID:'help-photo-panel'})[0].props.style).height).toBe(Dimensions.get('window').height);
 });
+
+test('camera discards a delayed grid measurement from the previous opening',async()=>{
+ await render();
+ let oldMeasurement!:(x:number,y:number,width:number,height:number)=>void;
+ const oldGrid=screen!.root.findAllByProps({testID:'help-photo-grid-viewport'})[0];
+ oldGrid.instance.measureInWindow=(callback:typeof oldMeasurement)=>{oldMeasurement=callback;};
+ await act(async()=>oldGrid.props.onLayout());
+ await update({open:false});await update({open:true});
+ await act(async()=>oldMeasurement(0,600,360,100));
+ expect(camera().props.viewport?.y).not.toBe(600);
+ const newGrid=screen!.root.findAllByProps({testID:'help-photo-grid-viewport'})[0];
+ newGrid.instance.measureInWindow=(callback:typeof oldMeasurement)=>callback(0,48,360,600);
+ await act(async()=>newGrid.props.onLayout());
+ expect(camera().props.viewport).toEqual({x:0,y:48,width:360,height:600});
+});

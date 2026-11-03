@@ -53,7 +53,16 @@ export function HelpPhotoPicker(props:Props) {
   const pending=selection.some(item=>item.pending),failed=selection.some(item=>item.failed),blocked=props.busy||pending;
   const selectedIds=selection.filter(item=>!item.file||item.file.mimeType?.startsWith('image/')).map(item=>item.photo.id);
   const tileSize=(width-4)/3;
-  const measureGrid=useCallback(()=>{if(resizing.current)return;const baseline=height.value;grid.current?.measureInWindow((x,y,width,height)=>{if(width>0&&height>0&&mounted.current){measuredHeight.value=baseline;setViewport(previous=>previous?.x===x&&previous.y===y&&previous.width===width&&previous.height===height?previous:{x,y,width,height});}});},[height,measuredHeight]);
+  const gridRevision=useRef(0);
+  const measureGrid=useCallback(()=>{
+    if(resizing.current||!latest.current.open)return;
+    const baseline=height.value,revision=gridRevision.current;
+    grid.current?.measureInWindow((x,y,width,height)=>{
+      if(width>0&&height>0&&mounted.current&&latest.current.open&&!resizing.current&&revision===gridRevision.current){
+        measuredHeight.value=baseline;setViewport(previous=>previous?.x===x&&previous.y===y&&previous.width===width&&previous.height===height?previous:{x,y,width,height});
+      }
+    });
+  },[height,measuredHeight]);
   const beginPull=useCallback(()=>{if(mounted.current)setSettled(false);},[]);
   const settlePull=useCallback(()=>{if(mounted.current&&latest.current.open)setSettled(true);},[]);
   const closePulled=useCallback(()=>{
@@ -120,7 +129,7 @@ export function HelpPhotoPicker(props:Props) {
     }
     if(changed){chosen.current=next;setSelection(next);}
   },[props.files,props.open]);
-  useEffect(()=>{if(props.open){closedByPull.current=false;cancelAnimation(pullY);pullY.value=0;pullState.value=0;setVisible(true);Keyboard.dismiss();}else{if(captionFocused.current){captionFocused.current=false;Keyboard.dismiss();}setKeyboardTop(null);}},[props.open,pullY,pullState]);
+  useEffect(()=>{++gridRevision.current;setViewport(undefined);measuredHeight.value=0;if(props.open){closedByPull.current=false;cancelAnimation(pullY);pullY.value=0;pullState.value=0;setVisible(true);Keyboard.dismiss();}else{if(captionFocused.current){captionFocused.current=false;Keyboard.dismiss();}setKeyboardTop(null);}},[props.open,pullY,pullState,measuredHeight]);
   // Release the touch shield even if a closing animation is interrupted.
   useEffect(()=>{
     if(props.open)return;
@@ -144,7 +153,15 @@ export function HelpPhotoPicker(props:Props) {
     const completion=setTimeout(()=>{if(mounted.current){height.value=target;finishHeight();}},260);
     return()=>{clearTimeout(completion);cancelAnimation(height);};
   },[props.open,panelHeight,reduced,height,finishHeight]);
-  useEffect(()=>{if(settled&&props.open)measureGrid();},[settled,props.open,measureGrid]);
+  useEffect(()=>{
+    if(!settled||!props.open)return;
+    // The portal commits after its owner. Measure after that native commit,
+    // not only before it; IME layout and a previous close can leave old bounds.
+    let alive=true,frame:number;const until=Date.now()+280;
+    const tick=()=>{if(!alive)return;measureGrid();if(Date.now()<until)frame=requestAnimationFrame(tick);};
+    frame=requestAnimationFrame(tick);
+    return()=>{alive=false;cancelAnimationFrame(frame);};
+  },[settled,props.open,panelHeight,measureGrid]);
 
   const restorePanel = useCallback(() => {
     if (!mounted.current || !latest.current.open || preview || cameraExpanded) return;
