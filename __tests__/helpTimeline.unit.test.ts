@@ -143,6 +143,20 @@ describe('sticky date geometry and navigation integration',()=>{
     await act(async()=>jest.advanceTimersByTimeAsync(700));
     expect(props.onRead).toHaveBeenLastCalledWith(2);
   });
+  test('first optimistic cell waits for settled tail geometry before playing its arrival',async()=>{
+    props={...props,messages:[],bottomAligned:true,renderPending:()=>React.createElement(View)};
+    await render();
+    const pending={key:'qa-first-layout',ticketId:null,create:true,createdAt:Date.parse(nextDate),status:'sending' as const,input:{text:'QA',clientMessageId:'qa-first-layout'}};
+    props={...props,pendingMessages:[pending]};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    const layer=()=>StyleSheet.flatten(screen!.root.findByProps({testID:'help-timeline-live-layer'}).props.style);
+    expect(layer().opacity).toBe(0);
+    expect(screen!.root.findByType(HelpMessageArrival).props.deferred).toBe(true);
+    mockLayouts=[{y:400,height:44},{y:444,height:84}];
+    await act(async()=>jest.advanceTimersByTimeAsync(100));
+    expect(layer().opacity).toBe(1);
+    expect(screen!.root.findByType(HelpMessageArrival).props.deferred).toBe(false);
+  });
   test('only a live appended tail is eligible for arrival, not initial history or edits',async()=>{
     await render();
     expect(screen!.root.findAllByType(HelpMessageArrival).every(row=>!row.props.animate)).toBe(true);

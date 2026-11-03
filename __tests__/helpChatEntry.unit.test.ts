@@ -42,6 +42,13 @@ describe('message arrivals',()=>{
     mockReduced=true;await act(async()=>tree.update(content('client:new',true)));
     expect(timing).not.toHaveBeenCalled();
   });
+  test('measurement deferral does not consume the first arrival',async()=>{
+    const render=(deferred:boolean)=>React.createElement(HelpMessageArrivalContext.Provider,{value:registry},React.createElement(HelpMessageArrival,{identity:'client:measured',animate:true,deferred,children:React.createElement(View)}));
+    await act(async()=>{tree=TestRenderer.create(render(true));});
+    expect(timing).not.toHaveBeenCalled();expect(registry.has('client:measured')).toBe(false);
+    await act(async()=>tree.update(render(false)));
+    expect(timing).toHaveBeenCalledTimes(1);expect(registry.has('client:measured')).toBe(true);
+  });
 });
 
 describe('Help bidirectional scene motion',()=>{

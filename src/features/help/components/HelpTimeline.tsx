@@ -64,6 +64,27 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   const hasImages = useMemo(() => props.messages.some(message => message.attachments?.some(attachment => attachment.kind==='IMAGE') || message.replyTo?.attachments?.some(attachment => attachment.kind==='IMAGE')), [props.messages]);
   const hasImagesRef = useRef(hasImages); hasImagesRef.current = hasImages;
   const [following, setFollowing] = useState(false), [ready, setReady] = useState(false), [loaded, setLoaded] = useState(false), [navigating,setNavigating] = useState(false);
+  const [firstContentSettled,setFirstContentSettled]=useState(!props.bottomAligned||rows.length>0);
+  useLayoutEffect(()=>{
+    if(firstContentSettled||!rows.length)return;
+    let frame=0,previous='',stable=0;
+    const deadline=Date.now()+600;
+    const probe=()=>{
+      const view=list.current,last=view?.getLayout(rowsRef.current.length-1);
+      const offset=view?.getAbsoluteLastScrollOffset()??geometry.current.offset;
+      const first=view?.getFirstItemOffset()??0;
+      const bottom=last?last.y+last.height+first-offset:NaN;
+      const expected=geometry.current.height-currentBottomInset()-12;
+      const signature=JSON.stringify([last?.y,last?.height,last?.width,first,offset,expected]);
+      stable=signature===previous?stable+1:0;previous=signature;
+      // An empty FlashList can briefly expose estimated cell geometry on its
+      // first insertion. Reveal only the settled tail, then run its arrival.
+      if((last&&last.height>0&&stable>=1&&Math.abs(bottom-expected)<=2)||Date.now()>=deadline){setFirstContentSettled(true);return;}
+      frame=requestAnimationFrame(probe);
+    };
+    frame=requestAnimationFrame(probe);
+    return()=>cancelAnimationFrame(frame);
+  },[firstContentSettled,rows.length,currentBottomInset]);
   const initialPosition = useRef<{ key: number; kind: HelpNavigationTarget['kind']; index: number; offset: number } | null>(null);
   if (!initialPosition.current && !loaded && rows.length && props.navigationTarget) {
     const target = props.navigationTarget;
@@ -294,7 +315,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     if (!reduced && dateSnapshot.current.rows.length) stageViewport({rows:dateSnapshot.current.rows,direction:1});
     void live.current.onDate(date).catch(error => { cancelJump(); live.current.onError(error instanceof Error ? error.message : 'Не удалось открыть сообщения за эту дату'); });
   }, [save,visible,cancelJump,reduced,stageViewport]);
-  const renderRow = useCallback((row: HelpTimelineRow,index=rowsRef.current.indexOf(row),range=mediaRangeRef.current,retained=false) => row.kind==='date' ? <HelpDateSeparator date={row.date!} onPress={()=>jumpDate(row.date!)}/> : row.kind==='unread' ? <HelpUnreadSeparator/> : <HelpMediaLoadingContext.Provider value={retained?'retained':index>=range.first&&index<=range.last?'visible':index>=range.first-4&&index<=range.last+4?'near':'deferred'}><HelpMessageArrival key={helpArrivalIdentity(row.message)} identity={helpArrivalIdentity(row.message)} animate={!retained&&(row.kind==='pending'||Date.now()<=arrivalBatch.expiresAt&&arrivalBatch.keys.has(helpArrivalIdentity(row.message)))}>{row.kind==='pending'?props.renderPending?.(row.pending!):props.renderMessage(row.message)}</HelpMessageArrival></HelpMediaLoadingContext.Provider>, [jumpDate,props.renderMessage,props.renderPending,arrivalBatch.keys]);
+  const renderRow = useCallback((row: HelpTimelineRow,index=rowsRef.current.indexOf(row),range=mediaRangeRef.current,retained=false) => row.kind==='date' ? <HelpDateSeparator date={row.date!} onPress={()=>jumpDate(row.date!)}/> : row.kind==='unread' ? <HelpUnreadSeparator/> : <HelpMediaLoadingContext.Provider value={retained?'retained':index>=range.first&&index<=range.last?'visible':index>=range.first-4&&index<=range.last+4?'near':'deferred'}><HelpMessageArrival key={helpArrivalIdentity(row.message)} identity={helpArrivalIdentity(row.message)} deferred={!retained&&!firstContentSettled} animate={!retained&&(row.kind==='pending'||Date.now()<=arrivalBatch.expiresAt&&arrivalBatch.keys.has(helpArrivalIdentity(row.message)))}>{row.kind==='pending'?props.renderPending?.(row.pending!):props.renderMessage(row.message)}</HelpMessageArrival></HelpMediaLoadingContext.Provider>, [jumpDate,props.renderMessage,props.renderPending,arrivalBatch.keys,firstContentSettled]);
   // Keep the renderer stable through viewport/date updates. Real visual changes
   // from the screen (selection, search, receipts) still replace renderMessage.
   const renderItem = useCallback<ListRenderItem<HelpTimelineRow>>(({item,index,extraData}) => renderRow(item,index,extraData as MediaRange), [renderRow]);
@@ -561,7 +582,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     setLoaded(true); updateMediaRange(true); observe();
   }, [settleOpening,updateMediaRange,observe]);
   return <HelpMessageArrivalContext.Provider value={inheritedArrivals??localArrivals.current}><HelpImageCacheContext.Provider value={imageCache}><View style={{flex:1}}>
-    <Animated.View testID="help-timeline-live-layer" style={{flex:1,opacity:ready||!rows.length?1:0,transform:[{translateY:outgoing?incomingTransition.interpolate({inputRange:[0,1],outputRange:[-direction*distance,0]}):0}]}}>
+    <Animated.View testID="help-timeline-live-layer" style={{flex:1,opacity:(ready||!rows.length)&&(!rows.length||firstContentSettled)?1:0,transform:[{translateY:outgoing?incomingTransition.interpolate({inputRange:[0,1],outputRange:[-direction*distance,0]}):0}]}}>
       <FlashList ref={list} data={rows} extraData={mediaRange} keyExtractor={rowKey} getItemType={rowType} renderItem={renderItem}
         initialScrollIndex={initialPosition.current?.index}
         initialScrollIndexParams={initialPosition.current ? {viewOffset:initialPosition.current.kind==='latest'?0:-(props.headerHeight+initialPosition.current.offset)} : undefined}

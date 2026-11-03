@@ -7,13 +7,16 @@ export const HelpMessageArrivalContext=createContext<Set<string>|null>(null);
 export const helpArrivalIdentity=(message:{id:number;clientMessageId?:string|null})=>message.clientMessageId?`client:${message.clientMessageId}`:`message:${message.id}`;
 const motions=new WeakMap<Set<string>,Map<string,{progress:Animated.Value;motion:Animated.CompositeAnimation}>>();
 
-export function HelpMessageArrival({identity,animate,children,distance=24}:{identity:string;animate:boolean;children:React.ReactNode;distance?:number}){
+export function HelpMessageArrival({identity,animate,children,distance=24,deferred=false}:{identity:string;animate:boolean;children:React.ReactNode;distance?:number;deferred?:boolean}){
   const registry=useContext(HelpMessageArrivalContext),local=useRef(new Set<string>()),played=registry??local.current;
   const reduced=useHelpReducedMotion();
   const inherited=useMemo(()=>motions.get(played)?.get(identity),[identity,played]);
   const progress=useMemo(()=>inherited?.progress??new Animated.Value(1),[inherited,identity,played]);
   const latestAnimate=useRef(animate);latestAnimate.current=animate;
+  const wasDeferred=useRef(false);
   useLayoutEffect(()=>{
+    if(deferred){wasDeferred.current=true;progress.setValue(reduced?1:0);return;}
+    const released=wasDeferred.current;wasDeferred.current=false;
     const play=latestAnimate.current&&!played.has(identity)&&!reduced;
     played.add(identity);
     if(played.size>1000)played.delete(played.values().next().value!);
@@ -26,6 +29,7 @@ export function HelpMessageArrival({identity,animate,children,distance=24}:{iden
     // Static history dispatches no value updates. A fast acknowledgement keeps
     // the pending position even when detaching the footer stops its native driver.
     if(!play){
+      if(released)progress.setValue(1);
       if(reduced&&motions.get(played)?.has(identity)){progress.stopAnimation();progress.setValue(1);motions.get(played)?.delete(identity);}
       else if(inherited){let active=true;progress.stopAnimation(value=>{if(active&&value<1)begin(Math.max(1,220*(1-value)));});return()=>{active=false;};}
       return;
@@ -34,6 +38,6 @@ export function HelpMessageArrival({identity,animate,children,distance=24}:{iden
     // The bounded driver outlives a pending footer unmount so the server row
     // can take over. The weak registry releases the scene after navigation.
     // Content/acknowledgement updates must not restart an in-flight arrival.
-  },[identity,played,progress,reduced,inherited]);
+  },[identity,played,progress,reduced,inherited,deferred]);
   return <Animated.View testID="help-message-arrival" style={{transform:[{translateY:progress.interpolate({inputRange:[0,1],outputRange:[distance,0]})}]}}>{children}</Animated.View>;
 }
