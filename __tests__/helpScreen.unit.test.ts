@@ -93,7 +93,7 @@ describe('Help screen integration with service boundary', () => {
     mockNativeImeLayout = false;mockNativeStableImeLayout=false;
     mockTimelineProps=undefined;mockUseAudioController.mockClear();mockTimelineDateJump.mockClear();
     Object.assign(mockPlayback,{current:null,positionSeconds:0,durationSeconds:0,progress:0,playing:false,loading:false,ready:false,error:null,speed:1,toggle:jest.fn().mockResolvedValue(undefined),setSpeed:jest.fn(),stop:jest.fn(),seek:jest.fn().mockResolvedValue(undefined),play:jest.fn().mockResolvedValue(undefined)});
-    Object.assign(mockService,{tickets:[],selectedTicket:null,messages:[],loading:false,busy:false,error:null,online:true,connected:true,canManage:false,userId:5,typingByTicket:{},hasMore:false,
+    Object.assign(mockService,{tickets:[],selectedTicket:null,messages:[],pendingMessages:[],lastCreatedOperation:null,loading:false,busy:false,error:null,online:true,connected:true,canManage:false,userId:5,typingByTicket:{},hasMore:false,
       loadTickets:jest.fn().mockResolvedValue(undefined),clearSelection:jest.fn(()=>{mockService.selectedTicket=null;}),openTicket:jest.fn(async()=>{mockService.selectedTicket=ticket;return detail;}),getDraft:jest.fn().mockResolvedValue(''),setDraft:jest.fn().mockResolvedValue(undefined),emitTyping:jest.fn(),createTicket:jest.fn(async()=>{mockService.selectedTicket=ticket;return detail;}),sendMessage:jest.fn().mockResolvedValue(detail),uploadAttachments:jest.fn(),closeTicket:jest.fn().mockResolvedValue(detail),reopenTicket:jest.fn(),editMessage:jest.fn(),toggleReaction:jest.fn(),mediaSource:jest.fn(),loadOlder:jest.fn(),loadNewer:jest.fn(),jumpToLatest:jest.fn().mockResolvedValue(undefined),jumpToMessage:jest.fn().mockResolvedValue(undefined),saveViewport:jest.fn(),markVisibleRead:jest.fn(),searchMessages:jest.fn().mockResolvedValue({messages:[],total:0,nextCursor:null}),retryPending:jest.fn(),markAllRead:jest.fn(),requestIt:jest.fn(),claimTicket:jest.fn()});
   });
   afterEach(async()=>{if(screen)await act(async()=>screen.unmount());jest.restoreAllMocks();});
@@ -379,7 +379,7 @@ describe('Help screen integration with service boundary', () => {
     await act(async()=>composer().props.onChange('Не печатает принтер'));
     await act(async()=>composer().props.onSend());
     expect(mockService.createTicket).toHaveBeenCalledTimes(1);
-    expect(mockService.createTicket).toHaveBeenCalledWith({text:'Не печатает принтер',attachmentIds:[],sourceTicketId:undefined});
+    expect(mockService.createTicket).toHaveBeenCalledWith({text:'Не печатает принтер',attachmentIds:[],sourceTicketId:undefined},expect.any(Function));
     expect(composer().props.value).toBe('');
     expect(screen.root.findByType(HelpChatEntry)).toBe(entry);
     expect(screen.root.findByProps({testID:'help-chat-scroll'})).toBe(timeline);
@@ -404,6 +404,30 @@ describe('Help screen integration with service boundary', () => {
     await act(async()=>{resolve({...detail,messages:mockService.messages});await request;});
     expect(screen.root.findAllByType(HelpPendingMessage)).toHaveLength(0);
     expect(mockTimelineProps.messages[0].clientMessageId).toBe('first-create');
+  });
+  test('new appeal composer clears after durable enqueue and keeps the queued row on network failure',async()=>{
+    const pending={key:'queued-first-create',create:true,createdAt:1,status:'queued',input:{text:'Первое обращение',clientMessageId:'queued-first-create'}};
+    mockService.createTicket.mockImplementation(async(_input:any,onQueued:(item:any)=>Promise<void>)=>{await onQueued(pending);mockService.pendingMessages=[pending];throw new Error('Сеть недоступна');});
+    await render();await act(async()=>button('Новое обращение').props.onPress());await act(async()=>composer().props.onChange('Первое обращение'));
+    let accepted=false;await act(async()=>{accepted=await composer().props.onSend();});
+    expect(accepted).toBe(true);
+    expect(composer().props.value).toBe('');
+    expect(mockService.setDraft).toHaveBeenCalledWith('new:plain','');
+    await act(async()=>screen.update(React.createElement(HelpScreen)));
+    expect(screen.root.findByType(HelpPendingMessage).props.item.key).toBe(pending.key);
+  });
+  test('a background retry binds the created ticket after its original draft was cleared',async()=>{
+    const pending={key:'retried-first-create',create:true,createdAt:1,status:'failed',input:{text:'Сохранённый вопрос',clientMessageId:'retried-first-create'}};
+    // Storage events may be coalesced before the screen sees the queue snapshot.
+    mockService.createTicket.mockImplementation(async(_input:any,onQueued:(item:any)=>Promise<void>)=>{await onQueued(pending);throw new Error('Сеть недоступна');});
+    await render();await act(async()=>button('Новое обращение').props.onPress());
+    await act(async()=>composer().props.onChange('Сохранённый вопрос'));
+    await act(async()=>composer().props.onSend());
+    expect(composer().props.value).toBe('');expect(composer().props.disabled).toBe(true);
+    mockService.pendingMessages=[];mockService.lastCreatedOperation={key:pending.key,ticketId:ticket.id,text:pending.input.text};
+    await act(async()=>screen.update(React.createElement(HelpScreen)));
+    expect(mockService.openTicket).toHaveBeenCalledWith(ticket.id,undefined);
+    expect(composer().props.disabled).toBe(false);expect(composer().props.value).toBe('');
   });
   test('network failure preserves draft instead of pretending sent',async()=>{
     mockService.createTicket.mockRejectedValueOnce(new Error('Сеть недоступна'));
@@ -471,7 +495,7 @@ describe('Help screen integration with service boundary', () => {
     const send=composer().props.onSend;
     await act(async()=>{composer().props.onFiles([{uri:'file://stale.jpg',name:'stale.jpg'}]);result=await send(undefined,photos);});
     expect(result).toBe(true);expect(mockService.uploadAttachments.mock.calls.map(([files]:any[])=>files[0].name)).toEqual(['first.jpg','second.jpg']);
-    expect(mockService.createTicket).toHaveBeenCalledWith({text:'Подпись',attachmentIds:['first.jpg','second.jpg'],sourceTicketId:undefined});
+    expect(mockService.createTicket).toHaveBeenCalledWith({text:'Подпись',attachmentIds:['first.jpg','second.jpg'],sourceTicketId:undefined},expect.any(Function));
     expect(mockAttachmentDrafts.clear).toHaveBeenCalledWith(5,'new:plain');expect(composer().props.files).toEqual([]);
   });
   test('failed explicit photo upload returns false and persists the selected array without sending a partial message',async()=>{

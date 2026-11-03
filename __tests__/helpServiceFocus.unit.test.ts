@@ -35,10 +35,31 @@ describe('Help accepted sends and history replay',()=>{
     history.readCachedHelpTicket.mockReset().mockResolvedValue(null);
     history.readCachedHelpRange.mockReset().mockResolvedValue(detail.messages);
     storage.readHelpPending.mockReset().mockResolvedValue([]);
+    storage.saveHelpPending.mockReset().mockResolvedValue(undefined);
     outbox.dispatchHelpPending.mockReset();
   });
   afterEach(async()=>{if(screen)await act(async()=>screen.unmount());history.readCachedHelpTicket.mockReset().mockResolvedValue(null);history.readCachedHelpRange.mockReset().mockResolvedValue(detail.messages);storage.readHelpPending.mockReset().mockResolvedValue([]);});
   async function open(){await act(async()=>{screen=TestRenderer.create(React.createElement(Harness,{focused:true}));});await act(async()=>{await service.openTicket(7);});}
+  test('creation notifies the composer only after its durable write and before delivery completes',async()=>{
+    await open();await act(async()=>service.clearSelection());
+    let saved!:()=>void,delivered!:(value:any)=>void;
+    storage.saveHelpPending.mockImplementationOnce(()=>new Promise<void>(resolve=>{saved=resolve;}));
+    outbox.dispatchHelpPending.mockReturnValue(new Promise(resolve=>{delivered=resolve;}));
+    const queued=jest.fn();let request!:ReturnType<typeof service.createTicket>;
+    await act(async()=>{request=service.createTicket({text:'QA durable creation'},queued);});
+    expect(queued).not.toHaveBeenCalled();expect(outbox.dispatchHelpPending).not.toHaveBeenCalled();
+    await act(async()=>saved());
+    expect(queued).toHaveBeenCalledWith(expect.objectContaining({create:true,input:expect.objectContaining({text:'QA durable creation'})}));
+    expect(outbox.dispatchHelpPending).toHaveBeenCalledTimes(1);
+    await act(async()=>{delivered(accepted);await request;});
+  });
+  test('a failed outbox write cannot clear the creation draft or start delivery',async()=>{
+    await open();await act(async()=>service.clearSelection());
+    storage.saveHelpPending.mockRejectedValueOnce(new Error('Outbox write failed'));
+    const queued=jest.fn();
+    await act(async()=>{await expect(service.createTicket({text:'QA retained draft'},queued)).rejects.toThrow('Outbox write failed');});
+    expect(queued).not.toHaveBeenCalled();expect(outbox.dispatchHelpPending).not.toHaveBeenCalled();
+  });
   test('accepted text replaces an older window with its server-confirmed tail',async()=>{
     await open();let done!:(value:any)=>void;outbox.dispatchHelpPending.mockReturnValue(new Promise(resolve=>{done=resolve;}));
     await act(async()=>{await service.sendMessage(7,{text:'QA',clientMessageId:'qa-send'});});
@@ -52,6 +73,16 @@ describe('Help accepted sends and history replay',()=>{
     expect(storage.saveHelpPending).toHaveBeenLastCalledWith(5,expect.objectContaining({replyTo:expect.objectContaining({id:1}),input:expect.objectContaining({replyToId:1})}));
     await act(async()=>done({...accepted,messages:[{...accepted.messages[0],replyToId:1,replyTo:null}]}));
     expect(service.messages[0].replyTo?.id).toBe(1);
+  });
+  test('new appeal queue callback runs only after durable save and before network delivery',async()=>{
+    await open();
+    const order:string[]=[];
+    storage.saveHelpPending.mockImplementation(async()=>{order.push('saved');});
+    outbox.dispatchHelpPending.mockImplementation(async()=>{order.push('network');return accepted;});
+    let queued:any;
+    await act(async()=>{await service.createTicket({text:'Первое обращение'},item=>{order.push('queued');queued=item;});});
+    expect(order).toEqual(['saved','queued','network']);
+    expect(queued).toMatchObject({create:true,status:'queued',input:{text:'Первое обращение'}});
   });
   test('accepted send does not steal a later user scroll',async()=>{
     await open();let done!:(value:any)=>void;outbox.dispatchHelpPending.mockReturnValue(new Promise(resolve=>{done=resolve;}));

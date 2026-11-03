@@ -93,6 +93,16 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     const index = helpNavigationIndex(rows,target);
     if (index >= 0) initialPosition.current = { key: target.key, kind: target.kind, index, offset: target.offset ?? 0 };
   }
+  const itemStartOffset=useCallback(()=>{
+    const view=list.current,first=view?.getFirstItemOffset()??0;
+    if(!view||!rowsRef.current.length||!view.getLayout(0)||!(live.current.bottomAligned||initialPosition.current?.kind==='latest'))return first;
+    const window=view.getWindowSize?.(),content=view.getChildContainerDimensions?.();
+    if(!window||!content)return first;
+    // FlashList applies a separate margin to short bottom-aligned histories;
+    // getFirstItemOffset() excludes it. Include the library's same margin in
+    // visibility/anchor math, or an on-screen date gets a duplicate sticky pill.
+    return first+Math.max(0,window.height-content.height-first);
+  },[]);
   const readyNotified = useRef(false);
   const notifyReady = useCallback(() => {
     if (readyNotified.current) return;
@@ -168,9 +178,9 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   }, []);
   const viewportRows = useCallback((includeDecor=false) => {
     const view = list.current;
-    if (!view) return [];
+    if (!view || !rowsRef.current.length) return [];
     const {startIndex, endIndex} = view.computeVisibleIndices();
-    const first = view.getFirstItemOffset(), offset = view.getAbsoluteLastScrollOffset();
+    const first = itemStartOffset(), offset = view.getAbsoluteLastScrollOffset();
     const candidates = [];
     // FlashList may report the first message as its first visible item while
     // the shorter date/unread row immediately before it is still on screen.
@@ -181,7 +191,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
       if (layout && (includeDecor || rowsRef.current[index].kind==='message')) candidates.push({row: rowsRef.current[index], top: layout.y + first - offset, height: layout.height});
     }
     return candidates;
-  }, []);
+  }, [itemStartOffset]);
   const visible = useCallback((includeDecor=false) => helpVisibleRows(viewportRows(includeDecor), live.current.headerHeight, geometry.current.height - currentBottomInset()), [viewportRows]);
   const save = useCallback((leaving=false) => {
     if (lastAnchor.current && readyRef.current && !inNavigation.current && (leaving || (!dragging.current && !momentum.current && Date.now()>=webIntent.current))) {
@@ -290,13 +300,13 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     const old = visible(true);
     const target = rowsRef.current.findIndex(row => row.kind==='message' && row.message.sequence === sequence);
     const targetLayout = target >= 0 ? list.current?.getLayout(target) : undefined;
-    const distance = targetLayout ? Math.abs(targetLayout.y + (list.current?.getFirstItemOffset() || 0) - geometry.current.offset) : Infinity;
+    const distance = targetLayout ? Math.abs(targetLayout.y + itemStartOffset() - geometry.current.offset) : Infinity;
     if (distance < geometry.current.height) return;
     if (old.length) {
       const snapshot = {rows:old,direction:sequence !== undefined && sequence < old[0].row.message.sequence ? 1 : -1};
       stageViewport(snapshot);
     }
-  }, [reduced, save, stageViewport, visible]);
+  }, [reduced, save, stageViewport, visible,itemStartOffset]);
   const jumpDate = useCallback((date = currentDateRef.current) => {
     if (!date) return;
     const day=helpDayKey(date),currentRows=rowsRef.current;
@@ -304,7 +314,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     const previous=first>=0?currentRows.slice(0,first).filter(row=>row.kind==='message').at(-1):undefined;
     const boundaryKnown=first>=0&&(currentRows[first].message.sequence===1||Boolean(previous&&helpDayKey(previous.message.createdAt)!==day));
     const layout=boundaryKnown?list.current?.getLayout(first):undefined;
-    if(layout&&helpDateJumpMode({targetTop:layout.y+(list.current?.getFirstItemOffset()??0)-(list.current?.getAbsoluteLastScrollOffset()??geometry.current.offset),targetHeight:layout.height,viewportTop:live.current.headerHeight,viewportBottom:geometry.current.height-currentBottomInset()})==='visible'){
+    if(layout&&helpDateJumpMode({targetTop:layout.y+itemStartOffset()-(list.current?.getAbsoluteLastScrollOffset()??geometry.current.offset),targetHeight:layout.height,viewportTop:live.current.headerHeight,viewportBottom:geometry.current.height-currentBottomInset()})==='visible'){
       // No save, snapshot, service lookup or follow change for the already
       // visible beginning of this day: even an immediately cancelled copy flashes.
       if(inNavigation.current||outgoingRef.current){++navigationGeneration.current;inNavigation.current=false;setNavigating(false);stopIdleSave();cancelJump();}
@@ -316,7 +326,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     dateSnapshot.current={rows:visible(true),loadedIds:new Set(rowsRef.current.filter(row=>row.kind==='message').map(row=>row.message.id))};
     if (!reduced && dateSnapshot.current.rows.length) stageViewport({rows:dateSnapshot.current.rows,direction:1});
     void live.current.onDate(date).catch(error => { cancelJump(); live.current.onError(error instanceof Error ? error.message : 'Не удалось открыть сообщения за эту дату'); });
-  }, [save,visible,cancelJump,reduced,stageViewport]);
+  }, [save,visible,cancelJump,reduced,stageViewport,itemStartOffset,currentBottomInset]);
   const renderRow = useCallback((row: HelpTimelineRow,index=rowsRef.current.indexOf(row),range=mediaRangeRef.current,retained=false) => row.kind==='date' ? <HelpDateSeparator date={row.date!} onPress={()=>jumpDate(row.date!)}/> : row.kind==='unread' ? <HelpUnreadSeparator/> : <HelpMediaLoadingContext.Provider value={retained?'retained':index>=range.first&&index<=range.last?'visible':index>=range.first-4&&index<=range.last+4?'near':'deferred'}><HelpMessageArrival key={helpArrivalIdentity(row.message)} identity={helpArrivalIdentity(row.message)} deferred={!retained&&!firstContentSettled} animate={!retained&&(row.kind==='pending'||Date.now()<=arrivalBatch.expiresAt&&arrivalBatch.keys.has(helpArrivalIdentity(row.message)))}>{row.kind==='pending'?props.renderPending?.(row.pending!):props.renderMessage(row.message)}</HelpMessageArrival></HelpMediaLoadingContext.Provider>, [jumpDate,props.renderMessage,props.renderPending,arrivalBatch.keys,firstContentSettled]);
   // Keep the renderer stable through viewport/date updates. Real visual changes
   // from the screen (selection, search, receipts) still replace renderMessage.
@@ -381,7 +391,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
       }
       const {height,content}=geometry.current,inset=hasNativeChatLayout?currentBottomInset()+12:0;
       const end=Math.max(0,content+inset-height);
-      const offset=target.kind==='latest'?end:Math.min(end,Math.max(0,(item?.y??0)+view.getFirstItemOffset()-live.current.headerHeight-(target.offset??0)));
+      const offset=target.kind==='latest'?end:Math.min(end,Math.max(0,(item?.y??0)+itemStartOffset()-live.current.headerHeight-(target.offset??0)));
       const signature=JSON.stringify([offset,item?.y,item?.height,height,content,live.current.headerHeight,currentBottomInset(),visibleLayouts]);
       if(measured&&height>0&&content>0&&pending.aligned!==signature){
         if(target.kind==='latest')scrollEnd(false);
@@ -416,7 +426,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
       if(++pending.passes%32!==0)pending.frame=requestAnimationFrame(step);
     };
     pending.frame=requestAnimationFrame(step);
-  },[observe,scrollEnd,setFollow,updateMediaRange]);
+  },[observe,scrollEnd,setFollow,updateMediaRange,itemStartOffset,currentBottomInset]);
   useImperativeHandle(ref, () => ({save:()=>save(true),prepareJump,cancelJump,jumpToDate:jumpDate,
     waitForJumpReady,scrollTo: ({y,animated}) => {touched.current=true;setFollow(false);list.current?.scrollToOffset({offset:y,animated,skipFirstItemOffset:true});},
     scrollToEnd: ({animated} = {}) => pinLatest(animated),
@@ -456,7 +466,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     const targetLayout=list.current?.getLayout(index);
     const targetWasLoaded=!dateSnapshot.current || dateSnapshot.current.loadedIds.has(rows[index].message.id);
     const dateMode=target.kind==='date'?helpDateJumpMode({
-      targetTop:targetWasLoaded&&targetLayout?targetLayout.y+(list.current?.getFirstItemOffset()||0)-geometry.current.offset:undefined,
+      targetTop:targetWasLoaded&&targetLayout?targetLayout.y+itemStartOffset()-geometry.current.offset:undefined,
       targetHeight:targetLayout?.height,viewportTop:props.headerHeight,viewportBottom:geometry.current.height-props.dockHeight,
     }):null;
     lastNavigationMode.current=dateMode??target.kind;
@@ -483,7 +493,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     void (async()=>{
       // FlashList uses positive viewOffset to move farther down. Saved offset is relative to the uncovered top.
       if(dateMode==='near' && targetLayout){
-        const offset=Math.max(0,targetLayout.y+(list.current?.getFirstItemOffset()||0)-props.headerHeight-targetOffset);
+        const offset=Math.max(0,targetLayout.y+itemStartOffset()-props.headerHeight-targetOffset);
         // A measured nearby row needs one scroll, not FlashList's multi-pass
         // preparation for an unmeasured distant index.
         list.current?.scrollToOffset({offset,animated,skipFirstItemOffset:true});
@@ -503,7 +513,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
           const currentIndex=rowsRef.current.findIndex(row=>row.key===rows[index].key);
           const layout=currentIndex>=0?list.current?.getLayout(currentIndex):undefined;
           if(!layout || !list.current)break;
-          const offset=Math.max(0,layout.y+list.current.getFirstItemOffset()-live.current.headerHeight-targetOffset);
+          const offset=Math.max(0,layout.y+itemStartOffset()-live.current.headerHeight-targetOffset);
           if(Math.abs(list.current.getAbsoluteLastScrollOffset()-offset)>.5)list.current.scrollToOffset({offset,skipFirstItemOffset:true,animated:false});
           stable=Math.abs(offset-previous)<.5?stable+1:0;previous=offset;
           if(stable>=3)break;
@@ -526,7 +536,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
       }
       else finish();
     })().catch(()=>{if(!mounted.current || generation!==navigationGeneration.current)return;inNavigation.current=false;setNavigating(false);readyRef.current=true;setReady(true);cancelJump();live.current.onError('Не удалось перейти к сообщению. Попробуйте ещё раз.');});
-  }, [props.navigationTarget,rows,loaded,props.headerHeight,props.dockHeight,reduced,cancelJump,observe,scrollEnd,setFollow,stopIdleSave,transition,incomingTransition,stageViewport,updateMediaRange,visible,pinLatest,settleOpening]);
+  }, [props.navigationTarget,rows,loaded,props.headerHeight,props.dockHeight,reduced,cancelJump,observe,scrollEnd,setFollow,stopIdleSave,transition,incomingTransition,stageViewport,updateMediaRange,visible,pinLatest,settleOpening,itemStartOffset,currentBottomInset]);
   // Empty/new conversations have no anchor to resolve.
   useEffect(()=>{if(!props.loading && !rows.length){readyRef.current=true;setReady(true);setFollow(!props.hasNewer);}},[props.loading,rows.length,props.hasNewer,setFollow]);
   useEffect(()=>{if(!props.navigationTarget && loaded && rows.length && !readyRef.current){readyRef.current=true;setReady(true);setFollow(!props.hasNewer);scrollEnd(false);}},[loaded,rows.length,props.navigationTarget,props.hasNewer,setFollow,scrollEnd]);

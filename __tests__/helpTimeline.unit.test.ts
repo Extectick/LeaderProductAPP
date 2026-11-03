@@ -99,7 +99,7 @@ describe('sticky date geometry and navigation integration',()=>{
     // The first day's separator has already passed the header. The next day's
     // separator is visible lower in the list and must not hide the current day.
     mockLayouts=[{y:40,height:44},{y:90,height:100},{y:320,height:44},{y:364,height:100}];
-    Object.assign(mockListApi,{computeVisibleIndices:()=>({startIndex:0,endIndex:3}),getFirstItemOffset:()=>0,getAbsoluteLastScrollOffset:()=>0,getLayout:(index:number)=>mockLayouts[index],scrollToEnd:jest.fn(),scrollToIndex:jest.fn().mockResolvedValue(undefined),scrollToOffset:jest.fn(),getNativeScrollRef:()=>null});
+    Object.assign(mockListApi,{computeVisibleIndices:()=>({startIndex:0,endIndex:3}),getFirstItemOffset:()=>0,getAbsoluteLastScrollOffset:()=>0,getLayout:(index:number)=>mockLayouts[index],getWindowSize:()=>({width:390,height:600}),getChildContainerDimensions:()=>undefined,scrollToEnd:jest.fn(),scrollToIndex:jest.fn().mockResolvedValue(undefined),scrollToOffset:jest.fn(),getNativeScrollRef:()=>null});
     props={messages:[message(1,firstDate),message(2,nextDate)],nativeID:'timeline-test',headerHeight:100,dockHeight:60,online:true,active:true,
       loadOlder:jest.fn().mockResolvedValue(undefined),loadNewer:jest.fn().mockResolvedValue(undefined),onLatest:jest.fn().mockResolvedValue(undefined),onDate:jest.fn().mockResolvedValue(undefined),onSave:jest.fn(),onRead:jest.fn(),onFollow:jest.fn(),onHighlight:jest.fn(),onError:jest.fn(),onStickyDateChange:jest.fn(),renderMessage:row=>React.createElement(View,{testID:`message-${row.id}`})};
     ref=React.createRef<HelpTimelineHandle>();
@@ -111,6 +111,12 @@ describe('sticky date geometry and navigation integration',()=>{
     await render();expect(floating()).toBeUndefined();
     mockLayouts[0]={y:50,height:44};mockLayouts[1]={y:90,height:100};
     await observe();expect(floating()!.props.date).toBe(firstDate);
+  });
+  test('short bottom-aligned histories include the library margin and keep one date pill',async()=>{
+    props={...props,bottomAligned:true};
+    mockListApi.getChildContainerDimensions=()=>({width:390,height:464});
+    await render();
+    expect(floating()).toBeUndefined();
   });
   async function render(){
     await act(async()=>{screen=TestRenderer.create(React.createElement(HelpTimeline,{...props,ref}));});

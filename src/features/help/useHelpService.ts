@@ -394,7 +394,7 @@ export function useHelpService(isFocused = true) {
     finally { if (operation.current === account) operation.current = null; if (current(account)) setBusy(false); }
   }, [identity, current, report, applyDetail,persistPage,issueNavigation]);
 
-  const durableSend = useCallback(async (input: HelpCreateInput & {rating?:number}, ticketId?: number, action?: 'close' | 'reopen'): Promise<HelpDetail> => {
+  const durableSend = useCallback(async (input: HelpCreateInput & {rating?:number}, ticketId?: number, action?: 'close' | 'reopen', onQueued?: (item:HelpPending)=>void|Promise<void>): Promise<HelpDetail> => {
     const account = identity;
     const saved = await readHelpPending(userId);
     const previous = input.clientMessageId?saved.find(item=>item.input.clientMessageId===input.clientMessageId):undefined;
@@ -405,10 +405,11 @@ export function useHelpService(isFocused = true) {
     const queued = await readHelpPending(userId);
     if (!current(account)) throw new Error('Учётная запись изменилась');
     setPendingCount(queued.length);
+    if(!ticketId&&onQueued){setPendingMessages(queued);await onQueued(item);}
     try{return await dispatchHelpPending(userId,item);}
     finally{const remaining=await readHelpPending(userId);if(current(account))setPendingCount(remaining.length);}
   }, [identity,userId,current]);
-  const createTicket = useCallback((input: HelpCreateInput) => mutate(()=>durableSend(input),true),[mutate,durableSend]);
+  const createTicket = useCallback((input: HelpCreateInput,onQueued?:(item:HelpPending)=>void|Promise<void>) => mutate(()=>durableSend(input,undefined,undefined,onQueued),true),[mutate,durableSend]);
   const sendMessage = useCallback(async(id:number,input:HelpMessageInput):Promise<HelpDetail>=>{
     const ticket=selectedRef.current?.id===id?selectedRef.current:ticketsRef.current.find(row=>row.id===id);if(!ticket)throw new Error('Обращение не открыто');
     const account=identity,navigation=detailGeneration.current,interaction=interactionRevision.current;
