@@ -81,7 +81,10 @@ export function HelpPhotoPicker(props:Props) {
     onMomentumBegin:()=>{gridMomentum.value=true;},onMomentumEnd:()=>{gridMomentum.value=false;},
   },[tileSize]);
   const cameraOffset=useDerivedValue(()=>(measuredHeight.value>0?measuredHeight.value-height.value:0)+pullY.value);
-  const cameraViewportHeight=useDerivedValue(()=>Math.max(0,(viewport?.height??0)+height.value-measuredHeight.value));
+  // Camera lives in a sibling portal. Clip it above the floating composer,
+  // otherwise its native surface could paint over the message field with IME open.
+  const captionWindowTop=(portalFrame?.y??0)+(portalFrame?.height??window.height)-captionBottom-captionHeight;
+  const cameraViewportHeight=useDerivedValue(()=>Math.max(0,Math.min((viewport?.height??0)+height.value-measuredHeight.value,captionWindowTop-(viewport?.y??0))));
   const pullStyle=useAnimatedStyle(()=>({transform:[{translateY:pullY.value}]}));
   useEffect(()=>{pullAllowed.value=props.open&&settled&&!preview&&!cameraExpanded;pullHeight.value=panelHeight;},[props.open,settled,preview,cameraExpanded,panelHeight,pullAllowed,pullHeight]);
   const pullGesture=useMemo(()=>Gesture.Pan().withTestId('help-photo-pull').manualActivation(true).maxPointers(1)

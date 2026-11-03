@@ -366,3 +366,16 @@ test('camera discards a delayed grid measurement from the previous opening',asyn
  await act(async()=>newGrid.props.onLayout());
  expect(camera().props.viewport).toEqual({x:0,y:48,width:360,height:600});
 });
+
+test('portal camera is clipped above the floating message widget while keyboard overlays the gallery',async()=>{
+ const listeners:Record<string,(event:any)=>void>={};
+ jest.spyOn(Keyboard,'addListener').mockImplementation((name,listener:any)=>{listeners[name]=listener;return{remove:jest.fn()};});
+ await render();
+ const grid=screen!.root.findAllByProps({testID:'help-photo-grid-viewport'})[0];
+ grid.instance.measureInWindow=(callback:any)=>callback(0,300,300,500);
+ await act(async()=>grid.props.onLayout());
+ await act(async()=>screen!.root.findAllByProps({testID:'help-photo-message-input'})[0].props.onFocus());
+ await act(async()=>listeners.keyboardDidShow({endCoordinates:{screenY:400,height:280}}));
+ expect(camera().props.sheetViewportHeight.value).toBe(46);
+ expect(StyleSheet.flatten(screen!.root.findAllByProps({testID:'help-photo-panel'})[0].props.style).height).toBeCloseTo(Dimensions.get('window').height*.56);
+});
