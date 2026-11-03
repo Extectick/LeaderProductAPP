@@ -31,7 +31,7 @@ import kotlin.math.roundToInt
 class LeaderHelpChatLayoutModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("LeaderHelpChatLayout")
-    Constants("tailMotionVersion" to 2, "imeInsetsVersion" to 4)
+    Constants("tailMotionVersion" to 2, "imeInsetsVersion" to 5)
     View(LeaderHelpChatLayoutView::class) {
       Events("onImeInsetChange")
       Prop("scrollId") { view: LeaderHelpChatLayoutView, id: String -> view.scrollId = id }
@@ -129,6 +129,15 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
   private var imeTargetBottom = 0
   private var lastEmittedImeInset = -1f
   private var dockImeTranslation = 0f
+  private var imePresentationContent: View? = null
+  private fun keyboardTop(bottom: Int, containerBottom: Float): Float {
+    if (bottom <= 0) return containerBottom
+    // The stable dock already contains the resting navigation-bar safe area.
+    // IME insets include that same bar; subtract it once before translating.
+    val navigation = ViewCompat.getRootWindowInsets(this)
+      ?.getInsetsIgnoringVisibility(WindowInsetsCompat.Type.navigationBars())?.bottom ?: 0
+    return windowHeight() - max(0, bottom - navigation)
+  }
   // Edge-to-edge windows do not necessarily resize the React root for IME.
   // Follow the real keyboard on the UI thread, then publish its settled inset
   // so Yoga can reconcile the viewport once, without a per-frame JS round trip.
@@ -220,6 +229,7 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
     releaseImeOwnership()
     viewport?.clipBounds = null
     stopMotion(false); motionContent = null
+    imePresentationContent?.translationY = 0f; imePresentationContent = null
     ViewCompat.setWindowInsetsAnimationCallback(this, null)
     imeMotionUntil = 0L; geometryMotionUntil = 0L
     dock?.translationY = 0f
@@ -250,10 +260,10 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
     }
     val container = footer.parent as? View ?: return
     val containerBottom = layoutWindowTop(container) + container.height
-    val keyboardTop = if (imeBottom > 0) windowHeight() - imeBottom else containerBottom
+    val currentKeyboardTop = keyboardTop(imeBottom, containerBottom)
     // Subtract only the occlusion still inside this container. An OS-resized
     // root already ends at keyboardTop and must not receive the inset twice.
-    val effectiveImeInset = max(0f, containerBottom - keyboardTop)
+    val effectiveImeInset = max(0f, containerBottom - currentKeyboardTop)
     val layoutDockBottom = layoutWindowTop(footer) + footer.height
     dockImeTranslation = containerBottom - effectiveImeInset - layoutDockBottom
     footer.translationY = dockImeTranslation
@@ -271,7 +281,13 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
     // Presentation transforms must not change scroll range or clamp the saved anchor.
     val listTop = layoutWindowTop(list)
     val dockTop = layoutWindowTop(footer) + dockImeTranslation
-    val inset = max(0, (listTop + list.height - dockTop).roundToInt()) + (12 * density).roundToInt()
+    val visualInset = max(0, (listTop + list.height - dockTop).roundToInt()) + (12 * density).roundToInt()
+    // Settle ScrollView's range once at the target IME geometry. While following
+    // the tail, compensate only its presentation on animation frames: setPadding
+    // on every frame requests a full list layout and competes with Fabric.
+    val targetDockTop = layoutWindowTop(footer) + min(containerBottom, keyboardTop(imeTargetBottom, containerBottom)) - layoutDockBottom
+    val targetInset = max(0, (listTop + list.height - targetDockTop).roundToInt()) + (12 * density).roundToInt()
+    val inset = if (imeAnimating && allowFollow && following) targetInset else if (imeAnimating) list.paddingBottom else visualInset
     val geometryChanged = inset != lastInset || list.height != lastHeight || list.width != lastWidth
     val changed = geometryChanged || content.height != lastContent
     // FlashList also changes content height while its viewport/composer is
@@ -302,6 +318,13 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
     // the old range in this pass, so finish the same bottom anchor after layout.
     if (changed) settleFrames = 2
     if (allowFollow && following && (changed || settleFrames > 0)) list.scrollTo(list.scrollX, end)
+    if (imeAnimating && allowFollow && following) {
+      imePresentationContent = content
+      content.translationY = (inset - visualInset).toFloat()
+    } else if (imePresentationContent != null) {
+      imePresentationContent?.translationY = 0f
+      imePresentationContent = null
+    }
     if (!changed && settleFrames > 0) settleFrames--
     lastInset = inset; lastHeight = list.height; lastWidth = list.width; lastContent = content.height; lastScroll = list.scrollY
     if (debug) {
@@ -344,6 +367,6 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
     }
     return null
   }
-  fun diagnostics(): Map<String, Any> = if (!debug) emptyMap() else mapOf("following" to following, "tailMotionVersion" to 2, "imeInsetsVersion" to 4, "frames" to frames.toList())
+  fun diagnostics(): Map<String, Any> = if (!debug) emptyMap() else mapOf("following" to following, "tailMotionVersion" to 2, "imeInsetsVersion" to 5, "frames" to frames.toList())
   fun resetDiagnostics() { frames.clear() }
 }
