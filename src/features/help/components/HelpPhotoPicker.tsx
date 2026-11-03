@@ -1,5 +1,5 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState, useId} from 'react';
-import {ActivityIndicator, AppState, BackHandler, Keyboard, Linking, Pressable, Text, useWindowDimensions, View} from 'react-native';
+import {ActivityIndicator, AppState, BackHandler, Keyboard, Linking, Pressable, Text, TextInput, useWindowDimensions, View} from 'react-native';
 import {Image} from 'expo-image';
 import {Ionicons} from '@expo/vector-icons';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
@@ -25,7 +25,7 @@ type Props = {
 const identity=(file:HelpLocalFile)=>file.assetId||file.uri;
 const fromFile=(file:HelpLocalFile):Selection=>({photo:{id:identity(file),uri:file.uri,name:file.name,width:file.width||1,height:file.height||1,size:file.size},file});
 const message=(error:unknown)=>error instanceof Error?error.message:'Не удалось открыть фотографию. Попробуйте ещё раз.';
-export const helpPhotoSheetMaximumHeight=(windowHeight:number,topInset:number,bottomInset:number,keyboardTop:number|null)=>Math.max(180,Math.min(windowHeight-bottomInset,keyboardTop??Infinity)-topInset-108);
+export const helpPhotoSheetMaximumHeight=(windowHeight:number,topInset:number,bottomInset:number,keyboardTop:number|null)=>Math.max(180,Math.min(windowHeight-bottomInset,keyboardTop??Infinity)-topInset);
 
 /** Lives with the composer, so an in-flight selection survives closing the tray. */
 export function HelpPhotoPicker(props:Props) {
@@ -34,7 +34,7 @@ export function HelpPhotoPicker(props:Props) {
   const mounted=useRef(true),generation=useRef(0),pageOffset=useRef(0),loadingPage=useRef(false),checkingPermission=useRef(false);
   const [visible,setVisible]=useState(props.open),[settled,setSettled]=useState(false),[panelLayoutHeight,setPanelLayoutHeight]=useState(0);
   const [permission,setPermission]=useState<HelpPhotoPermission|null>(null),[loading,setLoading]=useState(false),[error,setError]=useState('');
-  const [photos,setPhotos]=useState<HelpLibraryPhoto[]>([]),[hasMore,setHasMore]=useState(true),[width,setWidth]=useState(window.width-16);
+  const [photos,setPhotos]=useState<HelpLibraryPhoto[]>([]),[hasMore,setHasMore]=useState(true),[width,setWidth]=useState(window.width);
   const [selection,setSelection]=useState<Selection[]>(()=>props.files.map(fromFile));
   const chosen=useRef(selection);chosen.current=selection;
   const [preview,setPreview]=useState<{photos:HelpLibraryPhoto[];index:number;origin?:HelpPhotoRect}|null>(null);
@@ -47,7 +47,8 @@ export function HelpPhotoPicker(props:Props) {
   const pullY=useSharedValue(0),gridScrollY=useSharedValue(0),gridMomentum=useSharedValue(false);
   const pullState=useSharedValue(0),touchX=useSharedValue(0),touchY=useSharedValue(0),pullAllowed=useSharedValue(false),pullHeight=useSharedValue(0),nativeCameraVisible=useSharedValue(true);
   const maximumHeight=helpPhotoSheetMaximumHeight(window.height,insets.top,insets.bottom,keyboardTop);
-  const collapsedHeight=Math.min(window.height*.6,maximumHeight);
+  const panelHeight=maximumHeight;
+  const captionFocused=useRef(false);
   const overlayBottom=keyboardTop===null?insets.bottom:Math.max(0,(portalFrame?.y??0)+(portalFrame?.height??window.height)-keyboardTop);
   const pending=selection.some(item=>item.pending),failed=selection.some(item=>item.failed),blocked=props.busy||pending;
   const selectedIds=selection.filter(item=>!item.file||item.file.mimeType?.startsWith('image/')).map(item=>item.photo.id);
@@ -69,7 +70,7 @@ export function HelpPhotoPicker(props:Props) {
   const cameraOffset=useDerivedValue(()=>(measuredHeight.value>0?measuredHeight.value-height.value:0)+pullY.value);
   const cameraViewportHeight=useDerivedValue(()=>Math.max(0,(viewport?.height??0)+height.value-measuredHeight.value));
   const pullStyle=useAnimatedStyle(()=>({transform:[{translateY:pullY.value}]}));
-  useEffect(()=>{pullAllowed.value=props.open&&settled&&!preview&&!cameraExpanded;pullHeight.value=collapsedHeight;},[props.open,settled,preview,cameraExpanded,collapsedHeight,pullAllowed,pullHeight]);
+  useEffect(()=>{pullAllowed.value=props.open&&settled&&!preview&&!cameraExpanded;pullHeight.value=panelHeight;},[props.open,settled,preview,cameraExpanded,panelHeight,pullAllowed,pullHeight]);
   const pullGesture=useMemo(()=>Gesture.Pan().withTestId('help-photo-pull').manualActivation(true).maxPointers(1)
     .enabled(props.open&&!preview&&!cameraExpanded)
     .onTouchesDown((event,manager)=>{
@@ -119,7 +120,7 @@ export function HelpPhotoPicker(props:Props) {
     }
     if(changed){chosen.current=next;setSelection(next);}
   },[props.files,props.open]);
-  useEffect(()=>{if(props.open){closedByPull.current=false;cancelAnimation(pullY);pullY.value=0;pullState.value=0;setVisible(true);Keyboard.dismiss();}else setKeyboardTop(null);},[props.open,pullY,pullState]);
+  useEffect(()=>{if(props.open){closedByPull.current=false;cancelAnimation(pullY);pullY.value=0;pullState.value=0;setVisible(true);Keyboard.dismiss();}else{if(captionFocused.current){captionFocused.current=false;Keyboard.dismiss();}setKeyboardTop(null);}},[props.open,pullY,pullState]);
   // Release the touch shield even if a closing animation is interrupted.
   useEffect(()=>{
     if(props.open)return;
@@ -135,11 +136,14 @@ export function HelpPhotoPicker(props:Props) {
   useEffect(()=>{
     resizing.current=true;setSettled(false);cancelAnimation(height);
     if(!props.open&&closedByPull.current){height.value=0;setVisible(false);return;}
-    const target=props.open?collapsedHeight:0;
+    const target=props.open?panelHeight:0;
     if(Math.abs(height.value-target)<.5){finishHeight();return;}
     height.value=withTiming(target,{duration:reduced?0:220,easing:MotionEasing.out(MotionEasing.cubic)},finished=>{if(finished)runOnJS(finishHeight)();});
-    return()=>cancelAnimation(height);
-  },[props.open,collapsedHeight,reduced,height,finishHeight]);
+    if(props.open)setPanelLayoutHeight(target);
+    // Permission/IME interruption must not leave a half-height touch shield.
+    const completion=setTimeout(()=>{if(mounted.current){height.value=target;finishHeight();}},260);
+    return()=>{clearTimeout(completion);cancelAnimation(height);};
+  },[props.open,panelHeight,reduced,height,finishHeight]);
   useEffect(()=>{if(settled&&props.open)measureGrid();},[settled,props.open,measureGrid]);
 
   const restorePanel = useCallback(() => {
@@ -148,8 +152,8 @@ export function HelpPhotoPicker(props:Props) {
     // `open`. Re-establish both panel geometry and its camera clipping on return.
     setVisible(true);setSettled(false);resizing.current=true;
     cancelAnimation(height);cancelAnimation(pullY);pullY.value=0;pullState.value=0;
-    height.value=collapsedHeight;setPanelLayoutHeight(collapsedHeight);finishHeight();
-  }, [preview,cameraExpanded,height,pullY,pullState,collapsedHeight,reduced,finishHeight]);
+    height.value=panelHeight;setPanelLayoutHeight(panelHeight);finishHeight();
+  }, [preview,cameraExpanded,height,pullY,pullState,panelHeight,reduced,finishHeight]);
 
   const restorePanelRef=useRef(restorePanel);restorePanelRef.current=restorePanel;
 
@@ -181,10 +185,13 @@ export function HelpPhotoPicker(props:Props) {
   useEffect(()=>{
     if(!props.open||preview||cameraExpanded){setKeyboardTop(null);return;}
     setKeyboardTop(null);
-    const show=Keyboard.addListener('keyboardDidShow',()=>{setKeyboardTop(null);Keyboard.dismiss();});
+    const show=Keyboard.addListener('keyboardDidShow',event=>{
+      if(captionFocused.current)setKeyboardTop(event.endCoordinates.screenY);
+      else{setKeyboardTop(null);Keyboard.dismiss();}
+    });
     const hide=Keyboard.addListener('keyboardDidHide',()=>setKeyboardTop(null));
     return()=>{show.remove();hide.remove();};
-  },[props.open,preview,cameraExpanded,window.height]);
+  },[props.open,preview,cameraExpanded]);
 
   function commit(next:Selection[]){chosen.current=next;setSelection(next);latest.current.onFiles(next.flatMap(item=>item.file?[item.file]:[]));}
   async function select(photo:HelpLibraryPhoto){
@@ -221,14 +228,14 @@ export function HelpPhotoPicker(props:Props) {
   const closeResize=useCallback(()=>{resizing.current=false;latest.current.onClose();},[]);
   const resizeGesture=useMemo(()=>Gesture.Pan().withTestId('help-photo-resize').maxPointers(1).activeOffsetY([-8,8])
     .onStart(()=>{cancelAnimation(height);dragStart.value=height.value;runOnJS(beginResize)();})
-    .onUpdate(event=>{height.value=Math.max(80,Math.min(collapsedHeight,dragStart.value-event.translationY));})
+    .onUpdate(event=>{height.value=Math.max(80,Math.min(panelHeight,dragStart.value-event.translationY));})
     .onEnd((event,success)=>{
       if(!success)return;
-      if(event.translationY>100&&height.value<collapsedHeight*.8){runOnJS(closeResize)();return;}
-      height.value=withSpring(collapsedHeight,{damping:25,stiffness:280,mass:.8,overshootClamping:true},finished=>{if(finished)runOnJS(endResize)();});
+      if(event.translationY>100&&height.value<panelHeight*.8){runOnJS(closeResize)();return;}
+      height.value=withSpring(panelHeight,{damping:25,stiffness:280,mass:.8,overshootClamping:true},finished=>{if(finished)runOnJS(endResize)();});
     })
-    .onFinalize((_,success)=>{if(!success)height.value=withSpring(collapsedHeight,{damping:25,stiffness:280,mass:.8,overshootClamping:true},finished=>{if(finished)runOnJS(endResize)();});}),
-    [height,dragStart,collapsedHeight,beginResize,endResize,closeResize]);
+    .onFinalize((_,success)=>{if(!success)height.value=withSpring(panelHeight,{damping:25,stiffness:280,mass:.8,overshootClamping:true},finished=>{if(finished)runOnJS(endResize)();});}),
+    [height,dragStart,panelHeight,beginResize,endResize,closeResize]);
   useEffect(()=>helpDevActions('photo.picker',{
     'photos.close':()=>latest.current.onClose(),
     'photos.select':value=>{const photo=photos[Number(value)];if(photo)return select(photo);},
@@ -243,7 +250,7 @@ export function HelpPhotoPicker(props:Props) {
     <Pressable accessibilityLabel="Закрыть панель вложений" onPress={props.onClose} style={{position:'absolute',top:0,left:0,right:0,bottom:0}}/>
     <HelpPhotoPanel height={height} layoutHeight={panelLayoutHeight} bottom={overlayBottom} onWidth={setWidth}>
       <GestureHandlerRootView style={{flex:1}}>
-      <Reanimated.View testID="help-photo-pull-surface" style={[{flex:1,borderRadius:18,overflow:'hidden',backgroundColor:c.panel},pullStyle]}>
+      <Reanimated.View testID="help-photo-pull-surface" style={[{flex:1,overflow:'hidden',backgroundColor:c.panel},pullStyle]}>
       <GestureDetector gesture={resizeGesture}><View testID="help-photo-panel-handle" style={{height:48,alignItems:'center',justifyContent:'center'}}>
         <View style={{position:'absolute',top:5,width:32,height:3,borderRadius:2,backgroundColor:c.muted,opacity:.45}}/>
         <Text style={{color:c.text,fontSize:14,fontWeight:'600'}}>{selectedIds.length?`Выбрано фото: ${selectedIds.length}`:'Фотографии'}</Text>
@@ -262,13 +269,17 @@ export function HelpPhotoPicker(props:Props) {
       </View>
       </GestureDetector>
       <View testID="help-photo-caption" style={{margin:8,flexShrink:0,minHeight:46,borderRadius:24,backgroundColor:c.surface}}>
-        <Pressable testID="help-photo-back" accessibilityRole="button" accessibilityLabel="Назад к сообщению" onPress={props.onClose} style={{minHeight:46,marginRight:48,paddingHorizontal:16,flexDirection:'row',gap:8,alignItems:'center'}}><Ionicons name="checkmark" size={20} color={c.accentText}/><Text style={{fontSize:16,fontWeight:'600',color:c.accentText}}>Готово</Text></Pressable>
+        <TextInput testID="help-photo-message-input" accessibilityLabel="Сообщение к вложениям" value={props.caption} onChangeText={props.onCaption}
+          placeholder="Сообщение…" placeholderTextColor={c.muted} multiline editable={!props.busy}
+          onFocus={()=>{captionFocused.current=true;}} onBlur={()=>{captionFocused.current=false;}}
+          textAlignVertical="top" underlineColorAndroid="transparent" scrollEnabled
+          style={{minHeight:46,maxHeight:150,marginRight:48,paddingHorizontal:16,paddingTop:12,paddingBottom:12,fontSize:17,lineHeight:22,color:c.text}}/>
         <Pressable accessibilityRole="button" accessibilityLabel={selectedIds.length?`Отправить фотографии: ${selectedIds.length}`:'Отправить сообщение'} disabled={blocked||failed||(!props.caption.trim()&&!selection.some(item=>item.file)&&!props.existingCount)} onPress={()=>void send()} style={{position:'absolute',right:4,bottom:4,width:38,height:38,borderRadius:19,alignItems:'center',justifyContent:'center',backgroundColor:c.accent,opacity:blocked||failed||(!props.caption.trim()&&!selection.some(item=>item.file)&&!props.existingCount)?.45:1}}>{pending?<ActivityIndicator color="#FFF"/>:<Ionicons name="arrow-up" size={23} color="#FFF"/>}{selectedIds.length?<View style={{position:'absolute',right:-3,top:-5,minWidth:19,height:19,paddingHorizontal:4,borderRadius:10,backgroundColor:c.accent,borderWidth:2,borderColor:c.surface,alignItems:'center',justifyContent:'center'}}><Text style={{color:'#FFF',fontSize:10,fontWeight:'700'}}>{selectedIds.length}</Text></View>:null}</Pressable>
       </View>
       </Reanimated.View>
       </GestureHandlerRootView>
     </HelpPhotoPanel>
-    {preview?<HelpPhotoPreview captionEditable={false} photos={preview.photos} index={preview.index} origin={preview.origin} selectedIds={selectedIds} caption={props.caption} onCaption={props.onCaption} onToggle={photo=>void select(photo)} onSend={photo=>send(photo)} onClose={()=>setPreview(null)} busy={blocked} error={error} sendDisabled={failed} limitReached={selection.length+props.existingCount>=10}/>:null}
+    {preview?<HelpPhotoPreview captionEditable photos={preview.photos} index={preview.index} origin={preview.origin} selectedIds={selectedIds} caption={props.caption} onCaption={props.onCaption} onToggle={photo=>void select(photo)} onSend={photo=>send(photo)} onClose={()=>setPreview(null)} busy={blocked} error={error} sendDisabled={failed} limitReached={selection.length+props.existingCount>=10}/>:null}
   </View></HelpPhotoPortal>;
 }
 
@@ -281,7 +292,7 @@ function HelpPhotoPanel({height,layoutHeight,bottom,onWidth,children}:{height:Sh
   const panelStyle=useAnimatedStyle(()=>({height:height.value}),[height]);
   return <Reanimated.View ref={(node:View|null)=>helpDevRef('photos.panel',node as unknown as View)} testID="help-photo-panel"
     onLayout={event=>onWidth(event.nativeEvent.layout.width)}
-    style={[{position:'absolute',bottom,left:8,right:8,overflow:'hidden'},panelStyle,{height:layoutHeight}]}>{children}</Reanimated.View>;
+    style={[{position:'absolute',bottom,left:0,right:0,overflow:'hidden'},panelStyle,{height:layoutHeight}]}>{children}</Reanimated.View>;
 }
 
 function PhotoTile({photo,size,number,pending,disabled,onSelect,onPreview,index}:{photo:HelpLibraryPhoto;size:number;number:number;pending:boolean;disabled:boolean;onSelect:()=>void;onPreview:(origin:HelpPhotoRect)=>void;index:number}) {
