@@ -326,7 +326,7 @@ export default function ProfileSelectionScreen() {
 
   return (
     <BrandedBackground speed={1.3}>
-      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
+      <StatusBar barStyle="light-content" />
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
         <KeyboardAvoidingView
           style={{ flex: 1 }}

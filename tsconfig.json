@@ -2,6 +2,10 @@
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true,
+    "customConditions": [
+      "react-native",
+      "react-native-legacy-deep-imports"
+    ],
     "paths": {
       "@/*": [
         "./*"
@@ -15,6 +19,7 @@
   ],
   "exclude": [
     "__tests__",
-    "public-order"
+    "public-order",
+    "tmp_*.tsx"
   ]
 }

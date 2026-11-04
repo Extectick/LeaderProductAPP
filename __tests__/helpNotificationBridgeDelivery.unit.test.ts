@@ -1,4 +1,5 @@
 import React from 'react';
+jest.mock('../src/features/help/components/HelpAiIcon',()=>({HelpAiIcon:'HelpAiIcon'}));
 import TestRenderer,{act} from 'react-test-renderer';
 let mockActive=true,mockNotice:(value:any)=>void;
 const mockNotify=jest.fn(),mockPush=jest.fn(),mockAck=jest.fn(),mockMark=jest.fn(async()=>{}),mockSync=jest.fn(async()=>{});

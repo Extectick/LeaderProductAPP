@@ -1,6 +1,6 @@
 import React from 'react';
 import type { FlatListProps, RefreshControlProps } from 'react-native';
-import { FlatList, RefreshControl } from 'react-native-gesture-handler';
+import { LegacyFlatList as FlatList, LegacyRefreshControl as RefreshControl } from 'react-native-gesture-handler';
 
 // Both the native scroll view AND SwipeRefreshLayout wait for the horizontal
 // recognizer. Disabling refresh from a JS onStart callback is already too late.

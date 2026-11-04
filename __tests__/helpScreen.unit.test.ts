@@ -69,7 +69,7 @@ jest.mock('../src/features/help/components/HelpPrimitives', () => {
     HelpIcon: ({label,onPress,disabled}:any) => React.createElement(Pressable,{accessibilityLabel:label,onPress,disabled}),
     HelpPrimaryButton: ({text,onPress,disabled}:any) => React.createElement(Pressable,{accessibilityLabel:text,onPress,disabled}),
     HelpDock: ({children}:any) => React.createElement(View,null,children),
-    HelpBlurSurface: 'HelpBlurSurface',
+    HelpBlurSurface: (props:any) => React.useContext(require('../src/features/help/helpVisualEffects').HelpVisualEffectsContext) ? React.createElement('HelpBlurSurface',props) : null,
     HelpAvatar: () => React.createElement(View),
     HelpTyping: ({text}:any) => React.createElement(Text,null,text),
     HelpNotice: ({text}:any) => React.createElement(Text,null,text),
@@ -432,14 +432,27 @@ describe('Help screen integration with service boundary', () => {
     expect(screen.root.findByType(HelpChatEntry)).toBe(entry);
   });
   test('header blur covers the status inset without an opaque header plate',async()=>{
-    await render();await act(async()=>button('Новое обращение').props.onPress());
+    await render();
+    expect(screen.root.findByProps({testID:'help-list-header-overlay'}).findAllByType('HelpBlurSurface' as any)).toHaveLength(1);
+    await act(async()=>button('Новое обращение').props.onPress());
     expect(StyleSheet.flatten(screen.root.findByType(KeyboardAvoidingView).props.style).paddingTop).toBe(0);
-    for(const id of ['help-list-header-overlay','help-chat-header-overlay']){
-      const header=screen.root.findAllByProps({testID:id})[0];
-      expect(header.findAllByType('HelpBlurSurface' as any).length).toBe(1);
-      expect(StyleSheet.flatten(header.props.style).backgroundColor).toBeUndefined();
-      expect(StyleSheet.flatten(header.findByType('HelpBlurSurface' as any).parent!.props.style)).toMatchObject({top:0,bottom:-64,left:0,right:0});
-    }
+    const header=screen.root.findByProps({testID:'help-chat-header-overlay'});
+    expect(header.findAllByType('HelpBlurSurface' as any)).toHaveLength(1);
+    expect(StyleSheet.flatten(header.props.style).backgroundColor).toBeUndefined();
+    expect(StyleSheet.flatten(header.findByProps({testID:'help-chat-header-backdrop'}).props.style)).toMatchObject({top:0,bottom:-36,left:0,right:0});
+  });
+  test('retained ticket list releases its blur after chat entry and restores it on back',async()=>{
+    await render();
+    const list=screen.root.findByProps({testID:'help-ticket-list'});
+    const header=()=>screen.root.findByProps({testID:'help-list-header-overlay'});
+    expect(header().findAllByType('HelpBlurSurface' as any)).toHaveLength(1);
+    await act(async()=>button('Новое обращение').props.onPress());
+    await act(async()=>screen.root.findByType(HelpChatEntry).props.onEntered());
+    expect(header().findAllByType('HelpBlurSurface' as any)).toHaveLength(0);
+    expect(screen.root.findByProps({testID:'help-ticket-list'})).toBe(list);
+    await act(async()=>button('Назад').props.onPress());
+    expect(header().findAllByType('HelpBlurSurface' as any)).toHaveLength(1);
+    expect(screen.root.findByProps({testID:'help-ticket-list'})).toBe(list);
   });
   test('first send creates once and clears draft only after success',async()=>{
     mockNativeChatLayout=true;

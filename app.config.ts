@@ -70,6 +70,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     },
   },
   web: {
+    output: "single",
     favicon: "./assets/images/favicon.png",
   },
 
@@ -119,6 +120,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   } as any,
 
   plugins: [
+    // Traccar 1.1.4 ships Kotlin 2.4 metadata; use its required compiler.
+    ["expo-build-properties", { android: { kotlinVersion: "2.4.20" } }],
     ...(developmentClient ? [
       ["expo-dev-client", { launchMode: "most-recent", addGeneratedScheme: false }] as [string, Record<string, unknown>],
       "./plugins/with-dev-client-last-bundle",

@@ -32,7 +32,7 @@ test('date row keys do not change when today becomes yesterday at midnight', () 
     expect(helpDate(value)).toBe('Сегодня');
     jest.setSystemTime(new Date(2026, 0, 2, 0, 1)); const after = helpTimelineRows(messages);
     expect(helpDate(value)).toBe('Вчера');
-    expect(after.map(row => row.key)).toEqual(before.map(row => row.key)); expect(after[0].key).toBe('date:2026-01-01');
+    expect(after.map(row => row.key)).toEqual(before.map(row => row.key)); expect(after[0].key).toBe('date:2026-01-01:message:1');
   } finally { jest.useRealTimers(); }
 });
 test('formatting and 600-message grouping never construct Intl formatters per item', () => {

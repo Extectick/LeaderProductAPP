@@ -111,41 +111,54 @@ export function ProductImageGalleryDialog({ productImagePreview, setProductImage
   const move = (delta: number) => setProductImagePreview(prev => prev ? {
     ...prev, index: Math.max(0, Math.min(prev.images.length - 1, prev.index + delta)),
   } : prev);
-  return <Dialog open={!!productImagePreview} onClose={close} fullScreen aria-label="Изображение товара"
-    onKeyDown={event => {
-      if (event.key === 'ArrowLeft') { event.preventDefault(); move(-1); }
-      if (event.key === 'ArrowRight') { event.preventDefault(); move(1); }
-    }}
-    PaperProps={{ sx: { bgcolor: '#0B1220', color: '#fff', borderRadius: 0 } }}>
-    <DialogTitle sx={{ p: isPhoneDialog ? 1.5 : 2, pt: 'max(12px, env(safe-area-inset-top))', flexShrink: 0 }}>
-      <Stack direction="row" alignItems="center" spacing={1.5} sx={{ px: 1.5, py: 1, borderRadius: 2, bgcolor: 'rgba(15,23,42,.82)' }}>
-        <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Typography title={productImagePreview?.title} sx={{ fontSize: 14, fontWeight: 700, lineHeight: 1.35 }} noWrap>{productImagePreview?.title}</Typography>
-          {productImagePreview?.subtitle ? <Typography sx={{ fontSize: 12, color: '#CBD5E1' }}>{productImagePreview.subtitle}</Typography> : null}
-        </Box>
-        {images.length > 1 ? <Typography sx={{ color: '#CBD5E1', fontSize: 12 }}>{index + 1}/{images.length}</Typography> : null}
-        <IconButton aria-label="Закрыть фото" onClick={close} sx={{ color: '#fff', width: 44, height: 44, bgcolor: 'rgba(255,255,255,.12)', borderRadius: 1.5 }}><CloseIcon /></IconButton>
-      </Stack>
-    </DialogTitle>
-    <DialogContent sx={{ position: 'relative', p: 0, minHeight: 0, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
-      {active ? <Box component="img" key={active.key} src={failed ? PRODUCT_IMAGE_PLACEHOLDER_URI : active.previewUrl}
-        alt={productImagePreview?.title || 'Изображение товара'} onLoad={() => setLoaded(true)}
-        onError={() => { setFailed(true); setLoaded(true); }}
-        sx={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', opacity: loaded ? 1 : 0 }} /> : null}
-      {active && !loaded ? <CircularProgress aria-label="Загрузка фото" sx={{ position: 'absolute', color: '#fff' }} /> : null}
-      {images.length > 1 ? <>
-        <IconButton aria-label="Предыдущее фото" disabled={index === 0} onClick={() => move(-1)}
-          sx={{ position: 'absolute', left: 12, color: '#fff', bgcolor: 'rgba(15,23,42,.8)', '&.Mui-disabled': { color: '#64748B' }, width: 44, height: 44 }}><BackIcon /></IconButton>
-        <IconButton aria-label="Следующее фото" disabled={index === images.length - 1} onClick={() => move(1)}
-          sx={{ position: 'absolute', right: 12, color: '#fff', bgcolor: 'rgba(15,23,42,.8)', '&.Mui-disabled': { color: '#64748B' }, width: 44, height: 44 }}><NextIcon /></IconButton>
-      </> : null}
-    </DialogContent>
-    {images.length > 1 ? <Stack direction="row" spacing={1} sx={{ flexShrink: 0, overflowX: 'auto', p: 1.5, pb: 'max(12px, env(safe-area-inset-bottom))' }}>
-      {images.map((image, nextIndex) => <Box component="button" type="button" key={image.key} aria-label={`Фото ${nextIndex + 1}`}
-        aria-pressed={nextIndex === index} onClick={() => setProductImagePreview(prev => prev ? { ...prev, index: nextIndex } : prev)}
-        sx={{ width: 54, height: 54, flexShrink: 0, p: 0, overflow: 'hidden', borderRadius: 1.25, border: nextIndex === index ? '2px solid #2563EB' : '1px solid #64748B', cursor: 'pointer' }}>
-        <WebProductImage src={image.thumbUrl} alt="" sx={{ width: '100%', height: '100%' }} />
-      </Box>)}
-    </Stack> : <Box sx={{ height: 'env(safe-area-inset-bottom)', flexShrink: 0 }} />}
-  </Dialog>;
+  return (
+    <Dialog open={!!productImagePreview} onClose={close} fullScreen aria-label="Изображение товара"
+      onKeyDown={event => {
+        if (event.key === 'ArrowLeft') { event.preventDefault(); move(-1); }
+        if (event.key === 'ArrowRight') { event.preventDefault(); move(1); }
+      }}
+      slotProps={{
+        paper: { sx: { bgcolor: '#0B1220', color: '#fff', borderRadius: 0 } }
+      }}>
+      <DialogTitle sx={{ p: isPhoneDialog ? 1.5 : 2, pt: 'max(12px, env(safe-area-inset-top))', flexShrink: 0 }}>
+        <Stack
+          direction="row"
+          spacing={1.5}
+          sx={{
+            alignItems: "center",
+            px: 1.5,
+            py: 1,
+            borderRadius: 2,
+            bgcolor: 'rgba(15,23,42,.82)'
+          }}>
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Typography title={productImagePreview?.title} sx={{ fontSize: 14, fontWeight: 700, lineHeight: 1.35 }} noWrap>{productImagePreview?.title}</Typography>
+            {productImagePreview?.subtitle ? <Typography sx={{ fontSize: 12, color: '#CBD5E1' }}>{productImagePreview.subtitle}</Typography> : null}
+          </Box>
+          {images.length > 1 ? <Typography sx={{ color: '#CBD5E1', fontSize: 12 }}>{index + 1}/{images.length}</Typography> : null}
+          <IconButton aria-label="Закрыть фото" onClick={close} sx={{ color: '#fff', width: 44, height: 44, bgcolor: 'rgba(255,255,255,.12)', borderRadius: 1.5 }}><CloseIcon /></IconButton>
+        </Stack>
+      </DialogTitle>
+      <DialogContent sx={{ position: 'relative', p: 0, minHeight: 0, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+        {active ? <Box component="img" key={active.key} src={failed ? PRODUCT_IMAGE_PLACEHOLDER_URI : active.previewUrl}
+          alt={productImagePreview?.title || 'Изображение товара'} onLoad={() => setLoaded(true)}
+          onError={() => { setFailed(true); setLoaded(true); }}
+          sx={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', opacity: loaded ? 1 : 0 }} /> : null}
+        {active && !loaded ? <CircularProgress aria-label="Загрузка фото" sx={{ position: 'absolute', color: '#fff' }} /> : null}
+        {images.length > 1 ? <>
+          <IconButton aria-label="Предыдущее фото" disabled={index === 0} onClick={() => move(-1)}
+            sx={{ position: 'absolute', left: 12, color: '#fff', bgcolor: 'rgba(15,23,42,.8)', '&.Mui-disabled': { color: '#64748B' }, width: 44, height: 44 }}><BackIcon /></IconButton>
+          <IconButton aria-label="Следующее фото" disabled={index === images.length - 1} onClick={() => move(1)}
+            sx={{ position: 'absolute', right: 12, color: '#fff', bgcolor: 'rgba(15,23,42,.8)', '&.Mui-disabled': { color: '#64748B' }, width: 44, height: 44 }}><NextIcon /></IconButton>
+        </> : null}
+      </DialogContent>
+      {images.length > 1 ? <Stack direction="row" spacing={1} sx={{ flexShrink: 0, overflowX: 'auto', p: 1.5, pb: 'max(12px, env(safe-area-inset-bottom))' }}>
+        {images.map((image, nextIndex) => <Box component="button" type="button" key={image.key} aria-label={`Фото ${nextIndex + 1}`}
+          aria-pressed={nextIndex === index} onClick={() => setProductImagePreview(prev => prev ? { ...prev, index: nextIndex } : prev)}
+          sx={{ width: 54, height: 54, flexShrink: 0, p: 0, overflow: 'hidden', borderRadius: 1.25, border: nextIndex === index ? '2px solid #2563EB' : '1px solid #64748B', cursor: 'pointer' }}>
+          <WebProductImage src={image.thumbUrl} alt="" sx={{ width: '100%', height: '100%' }} />
+        </Box>)}
+      </Stack> : <Box sx={{ height: 'env(safe-area-inset-bottom)', flexShrink: 0 }} />}
+    </Dialog>
+  );
 }

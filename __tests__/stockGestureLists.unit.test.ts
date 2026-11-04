@@ -1,7 +1,7 @@
 import React from 'react';
 import TestRenderer,{act} from 'react-test-renderer';
 import {StockFlatList,StockRefreshControl,StockSwipeRefContext} from '../src/features/stockBalances/StockGestureLists';
-jest.mock('react-native-gesture-handler',()=>({FlatList:'GestureList',RefreshControl:'GestureRefresh'}));
+jest.mock('react-native-gesture-handler',()=>({LegacyFlatList:'GestureList',LegacyRefreshControl:'GestureRefresh'}));
 it('makes both native scrolling and refresh wait for the same horizontal gesture',()=>{
   const ref=React.createRef<any>();let view!:TestRenderer.ReactTestRenderer;
   const refresh=jest.fn();

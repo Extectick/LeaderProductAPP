@@ -1,5 +1,5 @@
 import React from 'react';
-import {Image, Pressable, StyleSheet, Text, View} from 'react-native';
+import {Image, Platform, Pressable, StyleSheet, Text, View} from 'react-native';
 import Svg, {Path} from 'react-native-svg';
 import {Ionicons} from '@expo/vector-icons';
 import {AppHeader} from '@/components/AppHeader';
@@ -24,7 +24,7 @@ export function ServicesHomeHeader({avatar, onProfile}: {avatar?: React.ReactNod
       </View>
       <View accessibilityLabel="Лидер Продукт — мы всегда в рынке" style={styles.identity}>
         <View testID="services-company-name" style={styles.wordmarkViewport}>
-          <Svg accessible={false} width="100%" height={wordmarkHeight} viewBox={COMPANY_WORDMARK_VIEWBOX} preserveAspectRatio="xMinYMid meet">
+          <Svg {...(Platform.OS === 'web' ? { 'aria-hidden': true, focusable: false } : { accessible: false })} width="100%" height={wordmarkHeight} viewBox={COMPANY_WORDMARK_VIEWBOX} preserveAspectRatio="xMinYMid meet">
             <Path d={COMPANY_WORDMARK_PATH} fill="#97BF20" fillRule="evenodd"/>
           </Svg>
         </View>

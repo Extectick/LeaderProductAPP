@@ -64,15 +64,28 @@ test('web uses the same bounded fade toward the upper screen edge',async()=>{
 });
 
 
-test.each(['top','bottom'] as const)('progressive %s blur increases radius toward chrome with a transparent content edge',async edge=>{
- await act(async()=>{tree=Renderer.create(React.createElement(AppEdgeBlur,{target:{current:{id:'help'} as any},edge,progressive:true,intensity:34,testID:'progressive'}));});
- await act(async()=>tree.root.findAll(node=>node.props.testID==='progressive'&&typeof node.props.onLayout==='function')[0].props.onLayout({nativeEvent:{layout:{width:390,height:144}}}));
- const blurs=tree.root.findAllByType('BlurView' as any);
- expect(blurs.map(blur=>blur.props.intensity)).toEqual([34*.28,34*.6,34]);
- for(const layer of tree.root.findAllByType('MaskedView' as any)){
-  const mask=layer.props.maskElement;const gradient=mask.props.children[0];
-  expect(mask.props.style.flexDirection).toBe(edge==='top'?'column':'column-reverse');
-  expect(gradient.props.colors[edge==='top'?0:3]).toBe('#00000000');
-  expect(gradient.props.locations).toEqual([...gradient.props.locations].sort((a,b)=>a-b));
- }
+test.each(['top','bottom'] as const)('%s edge uses one blur/tint pass and a transparent content edge',async edge=>{
+ await act(async()=>{tree=Renderer.create(React.createElement(AppEdgeBlur,{target:{current:{id:'help'} as any},edge}));});
+ await act(async()=>tree.root.findByType('MaskedView' as any).props.onLayout({nativeEvent:{layout:{width:390,height:144}}}));
+ expect(tree.root.findAllByType('BlurView' as any)).toHaveLength(1);
+ expect(tree.root.findAllByType('MaskedView' as any)).toHaveLength(1);
+ const mask=tree.root.findByType('MaskedView' as any).props.maskElement,gradient=mask.props.children[0];
+ expect(gradient.props.colors[edge==='top'?0:3]).toBe('#00000000');
+ expect(gradient.props.colors[edge==='top'?3:0]).toBe('#000000');
+});
+
+test('a target that never attaches cannot keep requesting animation frames',async()=>{
+ const frames:FrameRequestCallback[]=[];
+ jest.spyOn(global,'requestAnimationFrame').mockImplementation(callback=>{frames.push(callback);return frames.length;});
+ jest.spyOn(global,'cancelAnimationFrame').mockImplementation(()=>{});
+ const target={current:null as any};
+ await mount(target);
+ let callbacks=0;
+ while(frames.length&&callbacks<32){const callback=frames.shift()!;await act(async()=>callback(callbacks++));}
+ expect(frames).toHaveLength(0);
+ expect(callbacks).toBeLessThan(32);
+ expect(tree.root.findAllByType('BlurView' as any)).toHaveLength(0);
+ target.current={id:'late-help'};
+ await act(async()=>tree.update(React.createElement(AppEdgeBlur,{target})));
+ expect(tree.root.findAllByType('BlurView' as any)).toHaveLength(1);
 });

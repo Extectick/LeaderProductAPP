@@ -1,5 +1,9 @@
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
+jest.mock('@react-native-async-storage/async-storage', () =>
+  require('@react-native-async-storage/async-storage/jest/async-storage-mock')
+);
+
 // Unit tests must never reach the network. Replacing jest-expo's lazy native
 // fetch getter also keeps jest.resetModules() from loading torn-down Expo
 // native modules while Jest inspects globals between tests.

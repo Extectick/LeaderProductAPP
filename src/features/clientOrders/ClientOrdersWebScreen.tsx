@@ -110,13 +110,14 @@ import {
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import {
   flexRender,
-  getCoreRowModel,
-  useReactTable,
+  useTable,
   type ColumnDef,
   type ColumnOrderState,
   type ColumnSizingState,
 } from '@tanstack/react-table';
 import React from 'react';
+
+import { draftTableFeatures } from './screen/desktop/draftItemsTableFeatures';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useWindowDimensions } from 'react-native';
 import {
@@ -268,7 +269,13 @@ function InvoiceRequestWebField({ workspace, wide }: { workspace: any; wide: boo
         <Menu anchorEl={invoiceMenuAnchor} open={!!invoiceMenuAnchor} onClose={() => setInvoiceMenuAnchor(null)}>
           {invoices.map((invoice) => (
             <MenuItem key={invoice.id} onClick={() => void download(invoice)} disabled={!!downloadingId}>
-              <Stack direction="row" alignItems="center" spacing={0.8} sx={{ minWidth: 240 }}>
+              <Stack
+                direction="row"
+                spacing={0.8}
+                sx={{
+                  alignItems: "center",
+                  minWidth: 240
+                }}>
                 <Ionicons name="document-text-outline" size={17} color="#DC2626" />
                 <Box sx={{ minWidth: 0 }}>
                   <Typography sx={{ fontSize: 11.5, fontWeight: 900 }}>{getClientOrderInvoiceActionLabel(invoice)}</Typography>
@@ -315,7 +322,9 @@ function InvoiceRequestWebField({ workspace, wide }: { workspace: any; wide: boo
           onChange={(event) => workspace.patchDraft({ invoiceRequested: event.target.checked })}
           size="small"
           sx={{ p: 0.15, color: '#94A3B8', '&.Mui-checked': { color: '#2563EB' } }}
-          inputProps={{ 'aria-label': 'Отправить счёт автоматически' }}
+          slotProps={{
+            input: { 'aria-label': 'Отправить счёт автоматически' }
+          }}
         />
       </Box>
     </Box>
@@ -433,7 +442,14 @@ function SelectionButton(props: { label: string; value?: string | null; onClick:
       <Typography sx={{ position: 'absolute', top: -5, left: 10, px: 0.35, bgcolor: '#FFFFFF', fontSize: 10, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em', lineHeight: 1 }}>
         {props.label}
       </Typography>
-      <Stack direction="row" spacing={0.75} alignItems="center" sx={{ minWidth: 0, width: '100%' }}>
+      <Stack
+        direction="row"
+        spacing={0.75}
+        sx={{
+          alignItems: "center",
+          minWidth: 0,
+          width: '100%'
+        }}>
         <Typography sx={{ fontSize: 11, fontWeight: 800, color: '#0F172A', textAlign: 'left', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: '26px' }}>{props.value || 'Выбрать'}</Typography>
         {props.loading ? <CircularProgress size={15} thickness={4.5} /> : null}
       </Stack>
@@ -558,13 +574,15 @@ function CompactSelectField(props: {
         size="small"
         value={props.value}
         onChange={(event) => props.onChange(event.target.value)}
-        SelectProps={{
-          displayEmpty: true,
-          renderValue: (selected) => props.renderValue ? props.renderValue(String(selected || '')) : String(selected || ''),
-        }}
         sx={{
           '& .MuiInputBase-root': { height: 32, borderRadius: '6px', fontSize: 11, fontWeight: 800 },
           '& .MuiSelect-select': { py: 0, lineHeight: '32px' },
+        }}
+        slotProps={{
+          select: {
+            displayEmpty: true,
+            renderValue: (selected) => props.renderValue ? props.renderValue(String(selected || '')) : String(selected || ''),
+          }
         }}
       >
         {props.children}
@@ -993,48 +1011,6 @@ function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookup
             setOpen(true);
           }}
           onKeyDown={handleKeyDown}
-          InputProps={(showDetailsAction || beforeDetailsAdornment || showSearchLoadingAdornment) ? {
-            readOnly: !!disabled,
-            endAdornment: (
-              <Stack direction="row" alignItems="center" spacing={0.1} sx={{ mr: -0.4 }}>
-                {beforeDetailsAdornment}
-                {showSearchLoadingAdornment ? (
-                  <Box sx={{ width: 24, height: 24, display: 'grid', placeItems: 'center' }}>
-                    <CircularProgress size={15} thickness={4.5} />
-                  </Box>
-                ) : null}
-                {showDetailsAction ? (
-                  <Tooltip title={detailsTooltip || (detailsDisabled ? 'Сначала выберите значение' : 'Открыть карточку')} arrow>
-                    <span>
-                      <IconButton
-                        size="small"
-                        disabled={detailsDisabled}
-                        onMouseDown={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                        }}
-                        onClick={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          if (!detailsDisabled) onOpenDetails?.();
-                        }}
-                        sx={{
-                          width: 24,
-                          height: 24,
-                          color: detailsDisabled ? '#CBD5E1' : '#64748B',
-                          transition: 'background-color 140ms ease, color 140ms ease, transform 90ms ease',
-                          '&:hover': { bgcolor: detailsDisabled ? 'transparent' : '#EFF6FF', color: detailsDisabled ? '#CBD5E1' : '#2563EB' },
-                          '&:active': detailsDisabled ? {} : { transform: 'scale(0.92)' },
-                        }}
-                      >
-                        <Ionicons name="search-outline" size={14} />
-                      </IconButton>
-                    </span>
-                  </Tooltip>
-                ) : null}
-              </Stack>
-            ),
-          } : disabled ? { readOnly: true } : undefined}
           sx={[
             {
               '& .MuiInputBase-root': { height: dense ? 28 : 30, borderRadius: flat ? 0 : '6px', fontSize: 10.5, fontWeight: 800, alignItems: 'center', bgcolor: flat ? 'transparent' : disabled ? '#F8FAFC' : '#FFFFFF' },
@@ -1050,6 +1026,56 @@ function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookup
               '& .MuiInputBase-root.Mui-focused .MuiOutlinedInput-notchedOutline': { borderBottom: '1px solid #2563EB' },
             } : {},
           ]}
+          slotProps={{
+            input: (showDetailsAction || beforeDetailsAdornment || showSearchLoadingAdornment) ? {
+              readOnly: !!disabled,
+              endAdornment: (
+                <Stack
+                  direction="row"
+                  spacing={0.1}
+                  sx={{
+                    alignItems: "center",
+                    mr: -0.4
+                  }}>
+                  {beforeDetailsAdornment}
+                  {showSearchLoadingAdornment ? (
+                    <Box sx={{ width: 24, height: 24, display: 'grid', placeItems: 'center' }}>
+                      <CircularProgress size={15} thickness={4.5} />
+                    </Box>
+                  ) : null}
+                  {showDetailsAction ? (
+                    <Tooltip title={detailsTooltip || (detailsDisabled ? 'Сначала выберите значение' : 'Открыть карточку')} arrow>
+                      <span>
+                        <IconButton
+                          size="small"
+                          disabled={detailsDisabled}
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                          }}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            if (!detailsDisabled) onOpenDetails?.();
+                          }}
+                          sx={{
+                            width: 24,
+                            height: 24,
+                            color: detailsDisabled ? '#CBD5E1' : '#64748B',
+                            transition: 'background-color 140ms ease, color 140ms ease, transform 90ms ease',
+                            '&:hover': { bgcolor: detailsDisabled ? 'transparent' : '#EFF6FF', color: detailsDisabled ? '#CBD5E1' : '#2563EB' },
+                            '&:active': detailsDisabled ? {} : { transform: 'scale(0.92)' },
+                          }}
+                        >
+                          <Ionicons name="search-outline" size={14} />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                  ) : null}
+                </Stack>
+              ),
+            } : disabled ? { readOnly: true } : undefined
+          }}
         />
         <Popper
           open={open && !disabled}
@@ -1088,7 +1114,13 @@ function QuickLookupField<T extends { guid?: string | null }>(props: QuickLookup
                     '&:active': { transform: 'scale(0.99)', backgroundColor: '#DBEAFE' },
                   }}
                 >
-                  <Stack direction="row" spacing={0.75} alignItems="flex-start" sx={{ minWidth: 0 }}>
+                  <Stack
+                    direction="row"
+                    spacing={0.75}
+                    sx={{
+                      alignItems: "flex-start",
+                      minWidth: 0
+                    }}>
                     <Box sx={{ width: 16, pt: 0.1, flexShrink: 0, display: 'flex', justifyContent: 'center' }}>
                       {selected ? <Ionicons name="checkmark-circle" size={15} color="#16A34A" /> : null}
                     </Box>
@@ -1680,8 +1712,10 @@ export default function ClientOrdersWebScreen() {
         checked={counterpartyManagerOnly}
         size="small"
         tabIndex={-1}
-        inputProps={{ readOnly: true }}
         sx={{ p: 0, color: '#64748B', '&.Mui-checked': { color: '#2563EB' } }}
+        slotProps={{
+          input: { readOnly: true }
+        }}
       />
       <Typography sx={{ fontSize: 11, fontWeight: 900, lineHeight: 1 }}>Мои</Typography>
     </Box>
@@ -1913,7 +1947,9 @@ export default function ClientOrdersWebScreen() {
         }}
       >
         <Stack spacing={0.45}>
-          <Stack direction="row" spacing={0.35} alignItems="flex-start">
+          <Stack direction="row" spacing={0.35} sx={{
+            alignItems: "flex-start"
+          }}>
             {!itemReadOnly ? (
               <IconButton
                 size="small"
@@ -1961,7 +1997,13 @@ export default function ClientOrdersWebScreen() {
               pl: itemReadOnly ? (ui.narrowPriceWidth <= 66 ? 1.35 : 1.6) : (ui.narrowPriceWidth <= 66 ? 3.1 : 4.1),
             }}
           >
-            <Stack direction="row" spacing={0.25} alignItems="center" sx={{ minWidth: 0 }}>
+            <Stack
+              direction="row"
+              spacing={0.25}
+              sx={{
+                alignItems: "center",
+                minWidth: 0
+              }}>
               <IconButton
                 size="small"
                 disabled={itemReadOnly}
@@ -2128,7 +2170,7 @@ export default function ClientOrdersWebScreen() {
     return { width, min };
   }, [draftItemsPackageLayoutKey, draftItemsTableWidth, quantityColumnWidth, useCompactTable, workspace.readOnly]);
 
-  const draftItemColumns = React.useMemo<ColumnDef<DraftItem>[]>(() => {
+  const draftItemColumns = React.useMemo<ColumnDef<typeof draftTableFeatures, DraftItem>[]>(() => {
     const { width, min } = draftItemsColumnLayout;
 
     return [
@@ -2168,7 +2210,7 @@ export default function ClientOrdersWebScreen() {
             </Box>
           );
         },
-      } as ColumnDef<DraftItem>] : []),
+      } as ColumnDef<typeof draftTableFeatures, DraftItem>] : []),
       {
         accessorKey: 'productName',
         header: 'Товар',
@@ -2184,7 +2226,14 @@ export default function ClientOrdersWebScreen() {
           const issueText = cancelled ? `Отменено${cancelReason ? `: ${cancelReason}` : ''}` : [...lineErrors, ...lineWarnings].join(' ');
           const imageUri = getDraftItemImageUri(item);
           return (
-            <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0, py: 0.1 }}>
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{
+                alignItems: "center",
+                minWidth: 0,
+                py: 0.1
+              }}>
               <Tooltip title="Открыть изображение" arrow>
                 <Box
                   component="button"
@@ -2261,7 +2310,15 @@ export default function ClientOrdersWebScreen() {
           const quantityControlWidth = getQuantityControlWidthPx(item.quantity, 14, useCompactTable ? 38 : 44, useCompactTable ? 58 : 66);
           const quantityError = !itemReadOnly && !isValidQuantityValue(item);
           return (
-            <Stack direction="row" alignItems="center" spacing={0.15} sx={{ width: quantityControlWidth, maxWidth: '100%', mx: 'auto' }}>
+            <Stack
+              direction="row"
+              spacing={0.15}
+              sx={{
+                alignItems: "center",
+                width: quantityControlWidth,
+                maxWidth: '100%',
+                mx: 'auto'
+              }}>
               <IconButton
                 size="small"
                 disabled={itemReadOnly}
@@ -2422,10 +2479,10 @@ export default function ClientOrdersWebScreen() {
     setDraftItemsColumnSizing({});
     setDraftItemsColumnOrder((current) => (workspace.readOnly && current.includes('actions') ? current.filter((columnId) => columnId !== 'actions') : current));
   }, [draftItemsTableWidth, workspace.readOnly]);
-  const draftItemsTable = useReactTable({
+  const draftItemsTable = useTable({
+    features: draftTableFeatures,
     data: filteredDraftItems,
     columns: draftItemColumns,
-    getCoreRowModel: getCoreRowModel(),
     columnResizeMode: 'onChange',
     state: {
       columnSizing: draftItemsColumnSizing,
@@ -2464,7 +2521,14 @@ export default function ClientOrdersWebScreen() {
               onChange={(value) => workspace.setFilters((prev) => ({ ...prev, search: value }))}
             />
             {workspace.ordersConnectionNotice ? (
-              <Stack direction="row" spacing={0.75} alignItems="center" sx={{ px: 0.6, py: 0.35 }}>
+              <Stack
+                direction="row"
+                spacing={0.75}
+                sx={{
+                  alignItems: "center",
+                  px: 0.6,
+                  py: 0.35
+                }}>
                 <Ionicons name="cloud-offline-outline" size={15} color="#64748B" />
                 <Typography sx={{ color: '#64748B', fontSize: 11, lineHeight: '16px' }}>
                   {workspace.ordersConnectionNotice}
@@ -2507,14 +2571,22 @@ export default function ClientOrdersWebScreen() {
               onOpenDetails={() => void openReferenceDetails('counterparty', filterCounterparty?.guid)}
               detailsDisabled={!filterCounterparty?.guid}
             />
-            <Stack direction="row" spacing={0.55} alignItems="center">
+            <Stack direction="row" spacing={0.55} sx={{
+              alignItems: "center"
+            }}>
               <Button
                 variant="contained"
                 color="secondary"
                 onClick={() => void createDocumentFromList()}
                 sx={{ flex: 1, textTransform: 'none', fontWeight: 900, borderRadius: '7px', bgcolor: '#0F172A', minHeight: 32 }}
               >
-                <Stack direction="row" spacing={0.7} alignItems="center" justifyContent="center">
+                <Stack
+                  direction="row"
+                  spacing={0.7}
+                  sx={{
+                    alignItems: "center",
+                    justifyContent: "center"
+                  }}>
                   <DocumentPlusIcon color="#FFFFFF" size={17} />
                   <span>Новый заказ</span>
                 </Stack>
@@ -2529,7 +2601,9 @@ export default function ClientOrdersWebScreen() {
                 }}
               />
             </Stack>
-            <Stack direction="row" spacing={0.45} flexWrap="wrap" useFlexGap>
+            <Stack direction="row" spacing={0.45} useFlexGap sx={{
+              flexWrap: "wrap"
+            }}>
               <Chip size="small" label={workspace.statusCounts.all} sx={{ height: 22, fontSize: 10.5, fontWeight: 900 }} />
               <Chip size="small" label={`Черн. ${workspace.statusCounts.draft}`} sx={{ height: 22, fontSize: 10.5, fontWeight: 800 }} />
               <Chip size="small" label={`Оч. ${workspace.statusCounts.queued}`} sx={{ height: 22, fontSize: 10.5, fontWeight: 800 }} />
@@ -2569,7 +2643,13 @@ export default function ClientOrdersWebScreen() {
                   >
                     <CardContent sx={{ px: 0.9, py: 0.65, '&:last-child': { pb: 0.65 } }}>
                       <Stack spacing={0.35}>
-                        <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={0.7}>
+                        <Stack
+                          direction="row"
+                          spacing={0.7}
+                          sx={{
+                            justifyContent: "space-between",
+                            alignItems: "flex-start"
+                          }}>
                           <Typography sx={{ fontSize: 13.5, fontWeight: 900, lineHeight: 1.05, minWidth: 0, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             {orderListTitle(order)}
                           </Typography>
@@ -2580,7 +2660,14 @@ export default function ClientOrdersWebScreen() {
                         <Typography sx={{ fontSize: 11.5, color: '#475569', fontWeight: 900, lineHeight: 1.1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {order.counterparty?.name || 'Контрагент не выбран'}
                         </Typography>
-                        <Stack direction="row" spacing={0.35} useFlexGap flexWrap="wrap" alignItems="center">
+                        <Stack
+                          direction="row"
+                          spacing={0.35}
+                          useFlexGap
+                          sx={{
+                            flexWrap: "wrap",
+                            alignItems: "center"
+                          }}>
                           <Typography sx={{ fontSize: 9.5, color: '#0F172A', fontWeight: 900, borderRadius: '999px', bgcolor: '#F1F5F9', px: 0.65, py: 0.15, lineHeight: 1.25 }}>
                             {formatMoney(order.totalAmount || 0, order.currency)}
                           </Typography>
@@ -2592,7 +2679,16 @@ export default function ClientOrdersWebScreen() {
                           </Typography>
                           {invoice.visible ? (
                             <Tooltip title={invoice.label}>
-                              <Stack direction="row" spacing={0.25} alignItems="center" sx={{ borderRadius: '999px', bgcolor: '#F1F5F9', px: 0.65, py: 0.15 }}>
+                              <Stack
+                                direction="row"
+                                spacing={0.25}
+                                sx={{
+                                  alignItems: "center",
+                                  borderRadius: '999px',
+                                  bgcolor: '#F1F5F9',
+                                  px: 0.65,
+                                  py: 0.15
+                                }}>
                                 <Ionicons name={invoiceWebIcon(invoice.state)} size={11} color={invoice.color} />
                                 <Typography sx={{ fontSize: 9.5, color: invoice.color, fontWeight: 900, lineHeight: 1.25 }}>
                                   {invoice.listLabel}
@@ -2616,11 +2712,19 @@ export default function ClientOrdersWebScreen() {
         {showEditorPane ? <Paper ref={editorPaneRef} elevation={0} sx={{ flex: 1, minWidth: 0, width: '100%', mx: 0, alignSelf: 'stretch', minHeight: isSinglePane ? `calc(100vh - ${pageTopInset}px)` : 0, borderRadius: 0, border: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', bgcolor: '#FFFFFF' }}>
           {!workspace.hasEditableDocument ? (
             <Box sx={{ flex: 1, display: 'grid', placeItems: 'center', p: 2 }}>
-              <Stack spacing={1.2} alignItems="center" sx={{ maxWidth: 360, textAlign: 'center' }}>
+              <Stack
+                spacing={1.2}
+                sx={{
+                  alignItems: "center",
+                  maxWidth: 360,
+                  textAlign: 'center'
+                }}>
                 <Typography sx={{ fontSize: 22, fontWeight: 900 }}>Создайте заказ</Typography>
                 <Typography sx={{ color: '#64748B', fontSize: 13 }}>Откройте новый документ. Если есть черновик, он откроется автоматически.</Typography>
                 <Button variant="contained" onClick={() => void createDocumentFromList()} sx={{ textTransform: 'none', fontWeight: 900, minHeight: 36, px: 2 }}>
-                  <Stack direction="row" spacing={ui.toolbarGap / 10} alignItems="center">
+                  <Stack direction="row" spacing={ui.toolbarGap / 10} sx={{
+                    alignItems: "center"
+                  }}>
                     <DocumentPlusIcon color="#FFFFFF" size={18} />
                     <span>Создать заказ</span>
                   </Stack>
@@ -2631,8 +2735,20 @@ export default function ClientOrdersWebScreen() {
             <>
               <Box sx={{ position: 'sticky', top: 0, zIndex: 2, px: 1.4, py: 1, borderBottom: '1px solid #E2E8F0', background: workspace.readOnly ? '#F8FAFC' : '#FFFFFF' }}>
                 <Stack spacing={0.8}>
-                  <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
-                    <Stack direction="row" alignItems="center" spacing={0.5} sx={{ minWidth: 0 }}>
+                  <Stack
+                    direction="row"
+                    spacing={1}
+                    sx={{
+                      justifyContent: "space-between",
+                      alignItems: "center"
+                    }}>
+                    <Stack
+                      direction="row"
+                      spacing={0.5}
+                      sx={{
+                        alignItems: "center",
+                        minWidth: 0
+                      }}>
                       {isSinglePane ? (
                         <ToolbarIconButton title="К списку" icon="arrow-back-outline" color="#0F172A" buttonSize={ui.actionButtonSize} iconSize={ui.actionIconSize} onClick={() => {
                           void workspace.confirmDiscardIfNeeded().then((canLeave: boolean) => {
@@ -2641,7 +2757,13 @@ export default function ClientOrdersWebScreen() {
                         }} />
                       ) : null}
                     <Box sx={{ minWidth: 0 }}>
-                      <Stack direction="row" spacing={0.75} alignItems="center" sx={{ minWidth: 0 }}>
+                      <Stack
+                        direction="row"
+                        spacing={0.75}
+                        sx={{
+                          alignItems: "center",
+                          minWidth: 0
+                        }}>
                         <Typography component="button" type="button" aria-label={`${title}. Скопировать ссылку для клиента`} title="Скопировать ссылку для клиента" disabled={orderSharing.copying || workspace.mutationLocked || workspace.loadingDetail} onClick={() => void orderSharing.copy()} sx={{ fontSize: 18, fontWeight: 900, lineHeight: 1.1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', border: 0, p: 0, background: 'transparent', color: 'inherit', textAlign: 'left', cursor: 'pointer', '&:disabled': { cursor: 'default', opacity: 0.65 } }}>{orderSharing.copying ? 'Копирую ссылку…' : title}</Typography>
                         {!workspace.draftMode ? <Chip size="small" label={getOrderDisplayStatusLabelWithQueue(workspace.selectedOrder)} sx={{ height: 20, fontSize: 10, fontWeight: 800, ...(workspace.selectedOrder ? orderStatusChipSx(workspace.selectedOrder) : {}) }} /> : null}
                       </Stack>
@@ -2690,7 +2812,14 @@ export default function ClientOrdersWebScreen() {
                         </Box>
                       </Box>
                     ) : null}
-                    <Stack direction="row" spacing={0.45} justifyContent="flex-end" useFlexGap flexWrap={isSinglePane || effectiveEditorPaneWidth < 1160 ? 'wrap' : 'nowrap'}>
+                    <Stack
+                      direction="row"
+                      spacing={0.45}
+                      useFlexGap
+                      sx={{
+                        justifyContent: "flex-end",
+                        flexWrap: isSinglePane || effectiveEditorPaneWidth < 1160 ? 'wrap' : 'nowrap'
+                      }}>
                       <ToolbarIconButton
                         title={toolbarUsesDeleteDraft ? 'Удалить черновик' : toolbarUsesRestore ? 'Восстановить заказ' : 'Отменить заказ'}
                         icon={toolbarUsesDeleteDraft ? 'trash-outline' : toolbarUsesRestore ? 'refresh-outline' : 'close-circle-outline'}
@@ -2879,7 +3008,9 @@ export default function ClientOrdersWebScreen() {
                     <Paper variant="outlined" sx={{ borderRadius: '10px', p: 1, borderColor: '#F59E0B', background: '#FFFBEB' }}>
                       <Stack spacing={0.7}>
                         <Typography sx={{ fontSize: 12.5, fontWeight: 900, color: '#92400E' }}>Выберите организацию</Typography>
-                        <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                        <Stack direction="row" spacing={1} useFlexGap sx={{
+                          flexWrap: "wrap"
+                        }}>
                           {(workspace.settings?.organizations || []).map((item) => (
                             <Button key={item.guid} variant="contained" onClick={() => void workspace.setOrganization(item)} sx={{ textTransform: 'none', fontWeight: 800, borderRadius: '8px', minHeight: 30 }}>{item.name}</Button>
                           ))}
@@ -2914,27 +3045,30 @@ export default function ClientOrdersWebScreen() {
                           <Stack
                             direction="row"
                             spacing={1}
-                            alignItems="center"
-                            justifyContent="space-between"
                             useFlexGap
-                            flexWrap="wrap"
                             sx={{
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              flexWrap: "wrap",
                               minHeight: 38,
                               bgcolor: '#F8FAFC',
                               borderBottom: '1px solid #E2E8F0',
                               px: 1,
-                              py: 0.35,
-                            }}
-                          >
-                            <Stack direction="row" spacing={0.6} alignItems="center" sx={{ minWidth: 0, flex: '1 1 560px' }}>
+                              py: 0.35
+                            }}>
+                            <Stack
+                              direction="row"
+                              spacing={0.6}
+                              sx={{
+                                alignItems: "center",
+                                minWidth: 0,
+                                flex: '1 1 560px'
+                              }}>
                               <TextField
                                 size="small"
                                 placeholder="Поиск товара"
                                 value={itemsSearch}
                                 onChange={(event) => setItemsSearch(event.target.value)}
-                                InputProps={{
-                                  startAdornment: <Ionicons name="search-outline" size={15} color="#64748B" />,
-                                }}
                                 sx={{
                                   minWidth: 260,
                                   maxWidth: 460,
@@ -2951,6 +3085,11 @@ export default function ClientOrdersWebScreen() {
                                   '& .MuiOutlinedInput-notchedOutline': { border: 0 },
                                   '& .MuiInputBase-root.Mui-focused': { boxShadow: 'inset 0 0 0 1px #2563EB, 0 0 0 3px rgba(37, 99, 235, 0.10)' },
                                   '& .MuiInputBase-input': { py: 0, lineHeight: '30px' },
+                                }}
+                                slotProps={{
+                                  input: {
+                                    startAdornment: <Ionicons name="search-outline" size={15} color="#64748B" />,
+                                  }
                                 }}
                               />
                               <ToolbarIconButton
@@ -2987,7 +3126,13 @@ export default function ClientOrdersWebScreen() {
                                 flexShrink: 0,
                               }}
                             >
-                              <Stack direction="row" spacing={1.1} justifyContent="flex-end" alignItems="center">
+                              <Stack
+                                direction="row"
+                                spacing={1.1}
+                                sx={{
+                                  justifyContent: "flex-end",
+                                  alignItems: "center"
+                                }}>
                                 <Box>
                                   <Typography sx={{ fontSize: 9.5, fontWeight: 900, color: '#64748B', lineHeight: 1, textTransform: 'uppercase', letterSpacing: 0 }}>
                                     Сумма
@@ -3163,7 +3308,12 @@ export default function ClientOrdersWebScreen() {
                   ) : null}
 
                   <Box sx={{ display: 'none' }}>
-                    <Stack direction="row" justifyContent="space-between" alignItems="center">
+                    <Stack
+                      direction="row"
+                      sx={{
+                        justifyContent: "space-between",
+                        alignItems: "center"
+                      }}>
                       <Box>
                         <Typography sx={{ fontSize: 16, fontWeight: 900 }}>Добавить товары</Typography>
                       </Box>
@@ -3186,7 +3336,13 @@ export default function ClientOrdersWebScreen() {
       <Drawer anchor={isPhoneDialog ? 'bottom' : 'right'} open={headerOpen} onClose={() => setHeaderOpen(false)}>
         <Box sx={{ width: isPhoneDialog ? '100vw' : 520, maxWidth: '100vw', height: isPhoneDialog ? '96vh' : '100%', borderTopLeftRadius: isPhoneDialog ? '18px' : 0, borderTopRightRadius: isPhoneDialog ? '18px' : 0, display: 'flex', flexDirection: 'column', backgroundColor: '#FFFFFF' }}>
           <Box sx={{ px: 1.5, py: 1.25, borderBottom: '1px solid #E2E8F0' }}>
-            <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{
+                alignItems: "center",
+                justifyContent: "space-between"
+              }}>
               <Box sx={{ minWidth: 0 }}>
                 <Typography sx={{ fontSize: 20, fontWeight: 900 }}>Шапка документа</Typography>
                 <Typography sx={{ color: '#64748B', fontSize: 12 }}>Значения по умолчанию можно изменить вручную.</Typography>
@@ -3201,7 +3357,9 @@ export default function ClientOrdersWebScreen() {
                   <Stack spacing={0.75}>
                     <Typography sx={{ fontWeight: 900 }}>Нет организации по умолчанию</Typography>
                     <Typography sx={{ color: '#92400E', fontSize: 12 }}>Выберите организацию. Она сохранится для следующих заказов.</Typography>
-                    <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+                    <Stack direction="row" spacing={0.75} useFlexGap sx={{
+                      flexWrap: "wrap"
+                    }}>
                       {(workspace.settings?.organizations || []).map((item) => (
                         <Button key={item.guid} variant="contained" onClick={() => void workspace.setOrganization(item)} sx={{ textTransform: 'none', fontWeight: 800, minHeight: 30 }}>
                           {item.name}
@@ -3297,9 +3455,17 @@ export default function ClientOrdersWebScreen() {
         <Box sx={{ width: isPhoneDialog ? '100vw' : pickerKind === 'product' ? 860 : pickerKind === 'deliveryAddress' ? 620 : 380, maxWidth: '100vw', height: isPhoneDialog ? '96vh' : '100%', borderTopLeftRadius: isPhoneDialog ? '18px' : 0, borderTopRightRadius: isPhoneDialog ? '18px' : 0, display: 'flex', flexDirection: 'column', backgroundColor: '#FFFFFF' }}>
           <Box sx={{ p: 1.25, borderBottom: '1px solid #D8E2F0', backgroundColor: '#FFFFFF' }}>
             <Stack spacing={1.25}>
-              <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
+              <Stack
+                direction="row"
+                spacing={1}
+                sx={{
+                  alignItems: "center",
+                  justifyContent: "space-between"
+                }}>
                 <Typography sx={{ fontSize: 18, fontWeight: 900 }}>{pickerTitle}</Typography>
-                <Stack direction="row" alignItems="center" spacing={0.5}>
+                <Stack direction="row" spacing={0.5} sx={{
+                  alignItems: "center"
+                }}>
                   {pickerLoading ? <CircularProgress size={18} /> : null}
                   {pickerKind === 'product' ? <>
                     <Tooltip title="Только товары с остатком"><IconButton aria-label="Только товары с остатком" aria-pressed={productInStockOnly} onClick={() => setProductInStockOnly(prev => !prev)} sx={{ width: 40, height: 40, color: productInStockOnly ? '#15803D' : '#64748B', bgcolor: productInStockOnly ? '#F0FDF4' : '#F1F5F9' }}><MaterialCommunityIcons name="warehouse" size={22} /></IconButton></Tooltip>
@@ -3310,21 +3476,25 @@ export default function ClientOrdersWebScreen() {
                   </IconButton>
                 </Stack>
               </Stack>
-              <Stack direction={isPhoneDialog ? 'column' : 'row'} spacing={0.8} alignItems={isPhoneDialog ? 'stretch' : 'center'}>
+              <Stack direction={isPhoneDialog ? 'column' : 'row'} spacing={0.8} sx={{
+                alignItems: isPhoneDialog ? 'stretch' : 'center'
+              }}>
                 <TextField
                   size="small"
                   label="Поиск"
                   value={pickerSearch}
                   onChange={(e) => setPickerSearch(e.target.value)}
                   disabled={pickerNeedsOrderContext(pickerKind) && !hasOrderContext}
-                  InputProps={pickerLoading ? {
-                    endAdornment: (
-                      <Box sx={{ width: 24, height: 24, display: 'grid', placeItems: 'center', mr: -0.4 }}>
-                        <CircularProgress size={16} thickness={4.5} />
-                      </Box>
-                    ),
-                  } : undefined}
                   sx={{ flex: 1 }}
+                  slotProps={{
+                    input: pickerLoading ? {
+                      endAdornment: (
+                        <Box sx={{ width: 24, height: 24, display: 'grid', placeItems: 'center', mr: -0.4 }}>
+                          <CircularProgress size={16} thickness={4.5} />
+                        </Box>
+                      ),
+                    } : undefined
+                  }}
                 />
                 {pickerKind === 'counterparty' || pickerKind === 'filterCounterparty' ? (
                   <Box
@@ -3356,8 +3526,10 @@ export default function ClientOrdersWebScreen() {
                       checked={counterpartyManagerOnly}
                       size="small"
                       tabIndex={-1}
-                      inputProps={{ readOnly: true }}
                       sx={{ p: 0, color: '#64748B', '&.Mui-checked': { color: '#2563EB' } }}
+                      slotProps={{
+                        input: { readOnly: true }
+                      }}
                     />
                     <Typography sx={{ fontSize: 12, fontWeight: 900, lineHeight: 1 }}>Мои</Typography>
                   </Box>
@@ -3453,7 +3625,9 @@ export default function ClientOrdersWebScreen() {
               <MenuItem value="FIXED_DATE">Фиксированная дата</MenuItem>
             </TextField>
             {settingsDraft.deliveryDateMode === 'OFFSET_DAYS' ? <TextField type="number" label="Смещение, дней" value={settingsDraft.deliveryDateOffsetDays} onChange={(e) => setSettingsDraft((prev) => ({ ...prev, deliveryDateOffsetDays: Number(e.target.value) }))} /> : null}
-            {settingsDraft.deliveryDateMode === 'FIXED_DATE' ? <TextField type="date" label="Дата" InputLabelProps={{ shrink: true }} value={settingsDraft.fixedDeliveryDate} onChange={(e) => setSettingsDraft((prev) => ({ ...prev, fixedDeliveryDate: e.target.value }))} /> : null}
+            {settingsDraft.deliveryDateMode === 'FIXED_DATE' ? <TextField type="date" label="Дата" value={settingsDraft.fixedDeliveryDate} onChange={(e) => setSettingsDraft((prev) => ({ ...prev, fixedDeliveryDate: e.target.value }))} slotProps={{
+              inputLabel: { shrink: true }
+            }} /> : null}
           </Stack>
         </DialogContent>
         <DialogActions>
@@ -3473,16 +3647,22 @@ export default function ClientOrdersWebScreen() {
           closeOrderContextMenu();
           if (guid) void orderSharing.copyFromList(guid);
         }}>
-          <Stack direction="row" spacing={1} alignItems="center"><Ionicons name="link-outline" size={16} color="#2563EB" /><Typography sx={{ fontSize: 13, fontWeight: 800 }}>Ссылка для клиента</Typography></Stack>
+          <Stack direction="row" spacing={1} sx={{
+            alignItems: "center"
+          }}><Ionicons name="link-outline" size={16} color="#2563EB" /><Typography sx={{ fontSize: 13, fontWeight: 800 }}>Ссылка для клиента</Typography></Stack>
         </MenuItem>
         <MenuItem onClick={openContextOrder}>
-          <Stack direction="row" spacing={1} alignItems="center">
+          <Stack direction="row" spacing={1} sx={{
+            alignItems: "center"
+          }}>
             <Ionicons name="document-text-outline" size={16} color="#0F172A" />
             <Typography sx={{ fontSize: 13, fontWeight: 800 }}>Открыть</Typography>
           </Stack>
         </MenuItem>
         <MenuItem onClick={() => void runContextOrderDangerAction()} sx={{ color: orderContextMenu?.order.status === 'CANCELLED' ? '#2563EB' : '#DC2626' }}>
-          <Stack direction="row" spacing={1} alignItems="center">
+          <Stack direction="row" spacing={1} sx={{
+            alignItems: "center"
+          }}>
             <Ionicons
               name={orderContextMenu?.order.status === 'DRAFT' ? 'trash-outline' : orderContextMenu?.order.status === 'CANCELLED' ? 'refresh-outline' : 'close-circle-outline'}
               size={16}
@@ -3495,7 +3675,9 @@ export default function ClientOrdersWebScreen() {
         </MenuItem>
         {orderContextMenu?.order.status === 'CANCELLED' ? (
           <MenuItem onClick={() => void runContextOrderDeleteAction()} sx={{ color: '#DC2626' }}>
-            <Stack direction="row" spacing={1} alignItems="center">
+            <Stack direction="row" spacing={1} sx={{
+              alignItems: "center"
+            }}>
               <Ionicons name="trash-outline" size={16} color="#DC2626" />
               <Typography sx={{ fontSize: 13, fontWeight: 800 }}>Удалить из списка</Typography>
             </Stack>
@@ -3523,7 +3705,9 @@ export default function ClientOrdersWebScreen() {
 
       <Menu anchorEl={documentMenuAnchor} open={!!documentMenuAnchor} onClose={() => setDocumentMenuAnchor(null)}>
         <MenuItem disabled={workspace.mutationLocked || orderSharing.copying} onClick={() => { setDocumentMenuAnchor(null); void orderSharing.copy(); }}>
-          <Stack direction="row" spacing={1} alignItems="center"><Ionicons name="link-outline" size={16} color="#2563EB" /><Typography sx={{ fontSize: 13, fontWeight: 800 }}>Ссылка для клиента</Typography></Stack>
+          <Stack direction="row" spacing={1} sx={{
+            alignItems: "center"
+          }}><Ionicons name="link-outline" size={16} color="#2563EB" /><Typography sx={{ fontSize: 13, fontWeight: 800 }}>Ссылка для клиента</Typography></Stack>
         </MenuItem>
       </Menu>
       <OrderShareFeedback message={orderSharing.feedback} onDismiss={orderSharing.dismissFeedback} />

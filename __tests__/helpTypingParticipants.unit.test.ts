@@ -1,4 +1,5 @@
 import React from 'react';
+jest.mock('react-native-reanimated',()=>require('./mocks/reanimated'));
 import TestRenderer,{act} from 'react-test-renderer';
 import {Text,Image} from 'react-native';
 jest.mock('@expo/vector-icons',()=>({Ionicons:'Ionicons'}));

@@ -35,8 +35,8 @@ export const ScreenBlurTarget = forwardRef<View, ViewProps>(function ScreenBlurT
 });
 
 /** A transparent fade at the content edge; never paint an opaque loading plate. */
-export function AppEdgeBlur({ target, edge = 'top', backgroundColor, dark, testID = 'app-edge-blur', intensity = APP_EDGE_BLUR.intensity, featherSize, progressive = false }: {
-  target?: Target; edge?: 'top' | 'bottom'; backgroundColor?: string; dark?: boolean; testID?: string; intensity?: number; featherSize?: number; progressive?: boolean;
+export function AppEdgeBlur({ target, edge = 'top', backgroundColor, dark, testID = 'app-edge-blur', intensity = APP_EDGE_BLUR.intensity, featherSize }: {
+  target?: Target; edge?: 'top' | 'bottom'; backgroundColor?: string; dark?: boolean; testID?: string; intensity?: number; featherSize?: number;
 }) {
   const { theme } = useTheme();
   const appBackground = useThemeColor({}, 'background');
@@ -45,12 +45,14 @@ export function AppEdgeBlur({ target, edge = 'top', backgroundColor, dark, testI
   const [boundTarget, setBoundTarget] = useState<Target>();
   useLayoutEffect(() => {
     if (Platform.OS !== 'android') return;
-    let alive = true, frame: number | undefined;
+    let alive = true, frame: number | undefined, attempts = 0;
     const bind = () => {
       if (!alive) return;
       const node = focused ? target?.current ?? null : null;
       setBoundTarget(previous => previous?.current === node ? previous : node ? { current: node } : undefined);
-      if (focused && target && !node) frame = requestAnimationFrame(bind);
+      // A retained/portal target may never attach. Allow the initial native
+      // commit to finish, then wait for another render instead of polling forever.
+      if (focused && target && !node && ++attempts < 8) frame = requestAnimationFrame(bind);
     };
     bind();
     return () => { alive = false; if (frame !== undefined) cancelAnimationFrame(frame); };
@@ -72,23 +74,8 @@ export function AppEdgeBlur({ target, edge = 'top', backgroundColor, dark, testI
   if (Platform.OS === 'web') return <View testID={testID} pointerEvents="none" onLayout={measureSurface} style={[StyleSheet.absoluteFill, {
     backdropFilter: `blur(${APP_EDGE_BLUR.webRadius}px)`, WebkitBackdropFilter: `blur(${APP_EDGE_BLUR.webRadius}px)`, maskImage: mask, WebkitMaskImage: mask,
   } as any]}/>;
-  if(progressive)return <View testID={testID} pointerEvents="none" onLayout={measureSurface} style={StyleSheet.absoluteFill}>
-    {!ready?<View testID="app-blur-preparing" style={StyleSheet.absoluteFill}/>:null}
-    {[.28,.6,1].map((strength,index)=>{
-      const start=index*.22;
-      const colors=['#00000000','#00000000','#00000080','#000000'] as const;
-      const locations=[0,start+.01,Math.min(.95,start+.3),1] as const;
-      return <MaskedView key={strength} testID={`${testID}-layer-${index}`} pointerEvents="none" style={StyleSheet.absoluteFill}
-        maskElement={<View style={{flex:1,flexDirection:edge==='top'?'column':'column-reverse'}}>
-          <LinearGradient colors={edge==='top'?colors:[...colors].reverse() as any}
-            locations={edge==='top'?locations:[...locations].reverse().map(value=>1-value) as any} style={{height:feather}}/>
-          <View style={{flex:1,backgroundColor:'#000'}}/>
-        </View>}>
-        {ready?<BlurView blurTarget={Platform.OS==='android'?boundTarget:target} blurMethod="dimezisBlurViewSdk31Plus" noiseEnabled={false}
-          frameClearColor={backgroundColor??appBackground} intensity={intensity*strength} tint={(dark??theme==='dark')?'dark':'light'} style={StyleSheet.absoluteFill}/>:null}
-      </MaskedView>;
-    })}
-  </View>;
+  // One masked blur per edge. Stacking blurred/tinted surfaces compounds the
+  // material opacity and adds offscreen render passes on every moving frame.
   return <MaskedView testID={testID} pointerEvents="none" onLayout={measureSurface} style={StyleSheet.absoluteFill}
     maskElement={<View style={{ flex: 1, flexDirection: edge === 'top' ? 'column' : 'column-reverse' }}>
       <LinearGradient colors={edge === 'top' ? ['#00000000', '#00000018', '#00000080', '#000000'] : ['#000000', '#00000080', '#00000018', '#00000000']}

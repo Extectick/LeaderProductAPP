@@ -31,8 +31,12 @@ for (const [file, indent] of [['src/utils/props.ts', '  '], ['build/utils/props.
 }
 
 const native = 'android/src/main/java/expo/modules/camera/ExpoCameraView.kt';
+patch(native, 'import android.graphics.Color', 'import android.graphics.ImageFormat',
+  'import android.graphics.Color\nimport android.graphics.ImageFormat');
 patch(native, 'import android.graphics.RenderEffect', 'import android.graphics.ImageFormat',
   'import android.graphics.ImageFormat\nimport android.graphics.RenderEffect\nimport android.graphics.Shader');
+patch(native, 'import androidx.core.graphics.drawable.toDrawable', 'import androidx.core.content.ContextCompat',
+  'import androidx.core.content.ContextCompat\nimport androidx.core.graphics.drawable.toDrawable');
 patch(native, 'import android.os.Build', 'import android.os.Bundle', 'import android.os.Build\nimport android.os.Bundle');
 patch(native, '  fun setPreviewBlurRadius(radius: Float?)', '  private val scope = CoroutineScope(', `  // Once opted in, keep the same TextureView while switching tile/full camera.
   private var compatiblePreviewEnabled = false

@@ -29,7 +29,7 @@ patch('src/BlurView.types.ts', 'frameClearColor?: string;', 'export type BlurVie
 
 patch('build/BlurView.js', 'noiseEnabled = true,', "const { tint = 'default', intensity", "const { tint = 'default', noiseEnabled = true, intensity");
 patch('build/BlurView.js', 'frameClearColor, intensity', 'noiseEnabled = true, intensity', 'noiseEnabled = true, frameClearColor, intensity');
-patch('build/BlurView.js', "...(Platform.OS === 'android' ? { noiseEnabled } : {}),", 'ref: this.blurViewRef, tint: tint,', "ref: this.blurViewRef, tint: tint, ...(Platform.OS === 'android' ? { noiseEnabled } : {}),");
+patch('build/BlurView.js', "...(Platform.OS === 'android' ? { noiseEnabled } : {}),", 'ref: this.blurViewRef,', "ref: this.blurViewRef, ...(Platform.OS === 'android' ? { noiseEnabled } : {}),");
 patch('build/BlurView.js', "...(Platform.OS === 'android' ? { frameClearColor } : {}),", 'blurTargetId: this.state.blurTargetId,', "...(Platform.OS === 'android' ? { frameClearColor } : {}), blurTargetId: this.state.blurTargetId,");
 patch(source, 'noiseEnabled = true,', "      tint = 'default',", "      tint = 'default',\n      noiseEnabled = true,");
 patch(source, '      frameClearColor,', '      noiseEnabled = true,', '      noiseEnabled = true,\n      frameClearColor,');

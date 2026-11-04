@@ -1,8 +1,9 @@
 import React from 'react';
+jest.mock('../qa/help-preview/fixturePersistence',()=>({fixtureSnapshot:()=>null,loadFixtureSnapshot:async()=>null,saveFixtureSnapshot:async()=>{}}));
 import { Image } from 'react-native';
 import TestRenderer, { act } from 'react-test-renderer';
 const mockActions: Record<string, (value?: unknown) => unknown> = {};
-jest.mock('../src/features/help/helpDiagnostics', () => ({ helpDevState: jest.fn(), helpDevActions: (_owner: string, actions: Record<string, (value?: unknown) => unknown>) => { Object.assign(mockActions, actions); return () => {}; } }));
+jest.mock('../src/features/help/helpDiagnostics', () => ({ helpDevEvent:jest.fn(),helpDevState: jest.fn(), helpDevActions: (_owner: string, actions: Record<string, (value?: unknown) => unknown>) => { Object.assign(mockActions, actions); return () => {}; } }));
 jest.mock('../qa/help-preview/HelpPreview', () => {
   const owner = { id: 101, name: 'Вы', avatarUrl: null }, specialist = { id: 202, name: 'IT', avatarUrl: null };
   const message = (id: number, text: string, own = false, extra = {}) => ({ id, ticketId: 1042, sequence: id, text, authorId: own ? 101 : 202, author: own ? owner : specialist, authorRole: own ? 'USER' : 'IT', kind: 'TEXT', clientMessageId: null, createdAt: '2026-10-28T10:00:00.000Z', editedAt: null, replyToId: null, replyTo: null, forwardedFromId: null, rating: null, attachments: [], reactions: [], ...extra });

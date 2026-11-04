@@ -8,6 +8,8 @@ const CHECK_ON_LAUNCH_META = 'expo.modules.updates.EXPO_UPDATES_CHECK_ON_LAUNCH'
 const LAUNCH_WAIT_META = 'expo.modules.updates.EXPO_UPDATES_LAUNCH_WAIT_MS';
 const CUSTOM_INIT_PROPERTY = 'EX_UPDATES_CUSTOM_INIT';
 const COROUTINES_DEPENDENCY = "implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'";
+// Declare lifecycle APIs used by LeaderStartupOverlay directly, rather than via SDK internals.
+const LIFECYCLE_DEPENDENCY = "implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.10.0'";
 const SPLASHSCREEN_DEPENDENCY = "implementation 'androidx.core:core-splashscreen:1.2.0'";
 
 function normalizeActivityName(name, packageName) {
@@ -147,7 +149,7 @@ function upsertGradleProperty(contents, key, value) {
 
 function ensureCoroutinesDependency(buildGradle) {
   let result = buildGradle;
-  for (const dependency of [COROUTINES_DEPENDENCY, SPLASHSCREEN_DEPENDENCY]) {
+  for (const dependency of [COROUTINES_DEPENDENCY, SPLASHSCREEN_DEPENDENCY, LIFECYCLE_DEPENDENCY]) {
     if (!result.includes(dependency)) {
       result = result.replace(/dependencies\s*\{/, `dependencies {\n    ${dependency}`);
     }

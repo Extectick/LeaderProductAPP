@@ -1,6 +1,7 @@
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
 import { Animated, AppState, Image, PanResponder, Platform, StyleSheet, TextInput } from 'react-native';
+jest.mock('react-native-gesture-handler', () => ({ Pressable: require('react-native').Pressable }));
 
 const mockRecorder = { prepareToRecordAsync: jest.fn(), record: jest.fn(), stop: jest.fn(), getStatus: jest.fn(() => ({durationMillis:1000})), uri: 'file://voice.m4a' };
 const mockPermission = jest.fn();

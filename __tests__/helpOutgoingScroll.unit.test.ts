@@ -1,4 +1,5 @@
 import React from 'react';
+jest.mock('react-native-reanimated',()=>require('./mocks/reanimated'));
 import TestRenderer, {act} from 'react-test-renderer';
 import {View} from 'react-native';
 import type {HelpMessage} from '../src/features/help/helpApi';

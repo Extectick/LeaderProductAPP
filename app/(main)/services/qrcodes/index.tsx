@@ -7,7 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 // legacy API для кэш-директории/кодировок
 import * as FileSystem from 'expo-file-system/legacy';
 import { LinearGradient } from 'expo-linear-gradient';
-import * as MediaLibrary from 'expo-media-library';
+import * as MediaLibrary from 'expo-media-library/legacy';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Skeleton } from 'moti/skeleton';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';

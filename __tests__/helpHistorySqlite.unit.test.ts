@@ -5,7 +5,8 @@ const sqliteTest=Number(process.versions.node.split('.')[0])>=22?test:test.skip;
 let mockFailMessageId=0;
 let mockMessageWriteCalls=0;
 const mockConnections:any[]=[];
-const mockDatabaseFile=require("node:path").join(process.cwd(),"tmp",`help-read-${process.pid}-${Date.now()}.db`);
+const mockDatabaseDirectory=require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(),'leader-help-read-'));
+const mockDatabaseFile=require('node:path').join(mockDatabaseDirectory,'history.db');
 jest.mock('expo-sqlite',()=>({openDatabaseAsync:async()=>{
   const {DatabaseSync}=require('node:sqlite'),connection=new DatabaseSync(mockDatabaseFile);
   const db:any={databasePath:'help-history-test',execAsync:async(sql:string)=>connection.exec(sql),
@@ -54,7 +55,7 @@ sqliteTest('a 250-message page uses bounded SQL batches and opens its saved anch
   expect(snapshot?.record.anchor?.offset).toBe(12);
 });
 
-afterAll(async()=>{for(const db of mockConnections)await db.closeAsync();for(const suffix of ['', '-wal','-shm'])try{require('node:fs').unlinkSync(mockDatabaseFile+suffix);}catch{}});
+afterAll(async()=>{for(const db of mockConnections)await db.closeAsync();for(const suffix of ['', '-wal','-shm'])try{require('node:fs').unlinkSync(mockDatabaseFile+suffix);}catch{}require('node:fs').rmSync(mockDatabaseDirectory,{recursive:true,force:true});});
 sqliteTest('read snapshots are consistent without waiting behind an unrelated writer',async()=>{
   await writeHistoryChange('native:read',7,{ticket,page});
   const {withSQLiteWriteTransaction}=require('../src/shared/storage/sqliteWriteQueue');

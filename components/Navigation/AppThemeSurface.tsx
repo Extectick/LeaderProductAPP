@@ -22,7 +22,7 @@ export function AppThemeSurface({children,routeKey}:{children:React.ReactNode;ro
     return()=>subscription.remove();
   },[background,routeKey]);
   return <NavigationThemeProvider value={navigationTheme}><View testID="app-theme-surface" style={{flex:1,backgroundColor:background}}>
-    <StatusBar translucent backgroundColor="transparent" barStyle={dark?'light-content':'dark-content'}/>
+    <StatusBar barStyle={dark?'light-content':'dark-content'}/>
     {children}
   </View></NavigationThemeProvider>;
 }

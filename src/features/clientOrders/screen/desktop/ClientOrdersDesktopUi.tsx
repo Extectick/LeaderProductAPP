@@ -216,21 +216,28 @@ export function DeliveryDateField(props: {
           disabled={disabled}
           onClick={() => setOpen(true)}
           onFocus={() => setOpen(true)}
-          InputProps={{
-            readOnly: true,
-            endAdornment: <Ionicons name="calendar-outline" size={15} color="#64748B" />,
-          }}
           fullWidth
           sx={{
             '& .MuiInputBase-root': { height: 30, borderRadius: '8px', fontSize: 10.5, fontWeight: 800 },
             '& .MuiInputBase-input': { py: 0, lineHeight: '30px' },
             '& .MuiInputBase-input.Mui-disabled': { WebkitTextFillColor: '#64748B' },
           }}
+          slotProps={{
+            input: {
+              readOnly: true,
+              endAdornment: <Ionicons name="calendar-outline" size={15} color="#64748B" />,
+            }
+          }}
         />
         <Popper open={open && !disabled} anchorEl={anchorRef.current} placement="bottom-start" sx={{ zIndex: 1500, width: anchorRef.current?.clientWidth || 260 }}>
           <Paper variant="outlined" sx={{ mt: 0.35, borderRadius: '8px', overflow: 'hidden', boxShadow: '0 12px 32px rgba(15, 23, 42, 0.16)', p: 1 }}>
             <Stack spacing={0.8}>
-              <Stack direction="row" justifyContent="space-between" alignItems="center">
+              <Stack
+                direction="row"
+                sx={{
+                  justifyContent: "space-between",
+                  alignItems: "center"
+                }}>
                 <IconButton size="small" disabled={!canPrevMonth} onClick={() => moveMonth(-1)} sx={{ width: 24, height: 24 }}>
                   <Ionicons name="chevron-back-outline" size={14} />
                 </IconButton>
@@ -301,7 +308,13 @@ export function ReferenceDetailsDialog(props: {
   return (
     <Dialog open={props.open} onClose={props.onClose} maxWidth="md" fullWidth fullScreen={props.fullScreen}>
       <DialogTitle sx={{ pb: 1 }}>
-        <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={2}>
+        <Stack
+          direction="row"
+          spacing={2}
+          sx={{
+            justifyContent: "space-between",
+            alignItems: "flex-start"
+          }}>
           <Box sx={{ minWidth: 0 }}>
             <Typography sx={{ fontSize: 20, fontWeight: 900 }}>{props.details?.title || 'Карточка реквизита'}</Typography>
             {props.details?.subtitle ? <Typography sx={{ color: '#64748B', fontSize: 12 }}>{props.details.subtitle}</Typography> : null}
@@ -313,7 +326,9 @@ export function ReferenceDetailsDialog(props: {
       </DialogTitle>
       <DialogContent dividers>
         {props.loading ? (
-          <Stack direction="row" spacing={1} alignItems="center">
+          <Stack direction="row" spacing={1} sx={{
+            alignItems: "center"
+          }}>
             <CircularProgress size={18} />
             <Typography sx={{ color: '#64748B', fontSize: 13 }}>Загрузка карточки...</Typography>
           </Stack>

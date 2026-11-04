@@ -97,7 +97,7 @@ type Props = BottomTabBarProps & {
   items: BottomTabItem[];
 };
 
-export default function FloatingTabBar({ items, state, navigation, insets }: Props) {
+export default function FloatingTabBar({ items, state, emitter, navigateToTab, insets }: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const setTabBarHeight = useContext(BottomTabBarHeightCallbackContext);
@@ -262,7 +262,7 @@ export default function FloatingTabBar({ items, state, navigation, insets }: Pro
                     return;
                   }
 
-                  const event = navigation.emit({
+                  const event = emitter.emit({
                     type: 'tabPress',
                     target: route.key,
                     canPreventDefault: true,
@@ -272,12 +272,12 @@ export default function FloatingTabBar({ items, state, navigation, insets }: Pro
                     if (Platform.OS !== 'web') {
                       void Haptics.selectionAsync();
                     }
-                    navigation.navigate(route.name);
+                    navigateToTab(route.key);
                   }
                 };
 
                 const onLongPress = () => {
-                  navigation.emit({ type: 'tabLongPress', target: route.key });
+                  emitter.emit({ type: 'tabLongPress', target: route.key });
                 };
 
                   return (

@@ -1,6 +1,6 @@
 import React from 'react';
 import TestRenderer,{act} from 'react-test-renderer';
-jest.mock('react-native',()=>({Platform:{OS:'android'}}));
+jest.mock('react-native',()=>({Platform:{OS:'android'},TextInput:'TextInput',AppState:{currentState:'active'}}));
 jest.mock('expo-modules-core',()=>({requireOptionalNativeModule:()=>({apiVersion:1}),requireNativeViewManager:()=> 'NativeHelpInput'}));
 jest.mock('../src/features/help/helpDiagnostics',()=>({helpDevProbe:()=>()=>{},helpDevActions:()=>()=>{},helpDevRef:jest.fn()}));
 import {HelpNativeInput} from '../src/features/help/components/HelpNativeInput';

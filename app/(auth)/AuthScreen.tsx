@@ -1150,7 +1150,7 @@ export default function AuthScreen() {
   // РЕНДЕР
   return (
     <BrandedBackground speed={1.5}>
-      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
+      <StatusBar barStyle="light-content" />
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
         <KeyboardAvoidingView
           style={{ flex: 1 }}

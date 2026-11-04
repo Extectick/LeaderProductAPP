@@ -1,6 +1,7 @@
 import React from 'react';
+jest.mock('../qa/help-preview/fixturePersistence',()=>({fixtureSnapshot:()=>null,loadFixtureSnapshot:async()=>null,saveFixtureSnapshot:async()=>{}}));
 import TestRenderer, { act } from 'react-test-renderer';
-jest.mock('../src/features/help/helpDiagnostics', () => ({helpDevState:jest.fn(),helpDevActions:()=>()=>{}}));
+jest.mock('../src/features/help/helpDiagnostics', () => ({helpDevEvent:jest.fn(),helpDevState:jest.fn(),helpDevActions:()=>()=>{}}));
 jest.mock('../qa/help-preview/HelpPreview', () => {
   const owner={id:101,name:'Вы',avatarUrl:null},it={id:202,name:'IT',avatarUrl:null};
   const message=(id:number,text:string,own=false,extra={})=>({id,ticketId:1042,sequence:id,text,authorId:own?101:202,author:own?owner:it,authorRole:own?'USER':'IT',kind:'TEXT',clientMessageId:null,createdAt:'2026-10-30T10:00:00.000Z',editedAt:null,replyToId:null,replyTo:null,forwardedFromId:null,rating:null,attachments:[],reactions:[],...extra});
@@ -19,7 +20,7 @@ describe('new ticket assistant integration in the QA service',()=>{
     expect(service.messages).toHaveLength(2);
     expect(service.messages[0]).toMatchObject({authorId:101,ticketId:1043});
     expect(service.messages[1]).toMatchObject({authorId:303,assistantRun:{ticketId:1043,status:'thinking'}});
-    await act(async()=>jest.runAllTimers());
+    await act(async()=>jest.advanceTimersByTime(60_000));
     expect(service.messages).toHaveLength(2);
     expect(service.messages[1]).toMatchObject({assistantRun:{status:'completed',completedSteps:4}});
     expect(service.messages[1].text).toContain('модель принтера');
@@ -28,7 +29,7 @@ describe('new ticket assistant integration in the QA service',()=>{
     await act(async()=>{await service.createTicket({text:'Первый вопрос'});});
     await act(async()=>{service.assistantPreview.setScenario('question');});
     await act(async()=>{await service.createTicket({text:'Второй вопрос'});});
-    await act(async()=>jest.runAllTimers());
+    await act(async()=>jest.advanceTimersByTime(60_000));
     expect(service.selectedTicket?.id).toBe(1044);
     expect(service.messages[1].text).toContain('Уточните');
     await act(async()=>{await service.openTicket(1043);});
@@ -39,12 +40,12 @@ describe('new ticket assistant integration in the QA service',()=>{
   test('error retry replaces the same row and stop prevents late events',async()=>{
     await act(async()=>{service.assistantPreview.setScenario('error');});
     await act(async()=>{await service.createTicket({text:'Ошибка печати'});});
-    await act(async()=>jest.runAllTimers());
+    await act(async()=>jest.advanceTimersByTime(60_000));
     const row=service.messages[1];expect(row.assistantRun?.status).toBe('error');
     await act(async()=>{service.assistantPreview.retry(1043,row.assistantRun!.runId);});
     expect(service.messages[1].id).toBe(row.id);
     expect(service.messages[1].assistantRun?.runId).not.toBe(row.assistantRun?.runId);
-    await act(async()=>{service.assistantPreview.stop(1043,service.messages[1].assistantRun!.runId);jest.runAllTimers();});
+    await act(async()=>{service.assistantPreview.stop(1043,service.messages[1].assistantRun!.runId);jest.advanceTimersByTime(60_000);});
     expect(service.messages[1].assistantRun?.status).toBe('stopped');
     expect(service.messages).toHaveLength(2);
   });

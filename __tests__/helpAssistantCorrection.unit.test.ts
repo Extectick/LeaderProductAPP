@@ -1,6 +1,7 @@
 import React from 'react';
+jest.mock('../qa/help-preview/fixturePersistence',()=>({fixtureSnapshot:()=>null,loadFixtureSnapshot:async()=>null,saveFixtureSnapshot:async()=>{}}));
 import TestRenderer, { act } from 'react-test-renderer';
-jest.mock('../src/features/help/helpDiagnostics',()=>({helpDevState:jest.fn(),helpDevActions:()=>()=>{}}));
+jest.mock('../src/features/help/helpDiagnostics',()=>({helpDevEvent:jest.fn(),helpDevState:jest.fn(),helpDevActions:()=>()=>{}}));
 jest.mock('../qa/help-preview/HelpPreview',()=>{
   const owner={id:101,name:'Вы',avatarUrl:null},it={id:202,name:'IT',avatarUrl:null};
   const message=(id:number,text:string,own=false,extra={})=>({id,ticketId:1042,sequence:id,text,authorId:own?101:202,author:own?owner:it,authorRole:own?'USER':'IT',kind:'TEXT',clientMessageId:null,createdAt:'2026-10-30T10:00:00Z',editedAt:null,replyToId:null,replyTo:null,forwardedFromId:null,rating:null,attachments:[],reactions:[],...extra});
@@ -26,10 +27,10 @@ test('a correction keeps the task and original context, retires old progress, an
     expect(service.messages.at(-2)!.text).toBe('Бумага есть, ошибка подключения USB');
     expect(current.sequence).toBe(service.messages.at(-2)!.sequence+1);
     expect(service.messages.filter(row=>row.assistantRun&&['thinking','streaming'].includes(row.assistantRun.status))).toHaveLength(1);
-    await act(async()=>{service.assistantPreview.stop(1043,current.assistantRun!.runId);jest.runAllTimers();});
+    await act(async()=>{service.assistantPreview.stop(1043,current.assistantRun!.runId);jest.advanceTimersByTime(60_000);});
     expect(service.messages.at(-1)!.assistantRun!.status).toBe('stopped');
     await act(async()=>service.assistantPreview.retry(1043,current.assistantRun!.runId));
-    await act(async()=>jest.runAllTimers());
+    await act(async()=>jest.advanceTimersByTime(60_000));
     expect(service.messages.at(-1)!.text).toContain('модель принтера');
     expect(service.messages.at(-1)!.assistantRun).toMatchObject({status:'completed',contextMessageCount:2});
   } finally {

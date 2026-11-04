@@ -14,6 +14,9 @@ function patchFile(relativePath, patches) {
   let changed = false;
 
   for (const patch of patches) {
+    if (patch.upstream && source.includes(patch.upstream)) {
+      continue;
+    }
     if (source.includes(patch.after)) {
       continue;
     }
@@ -31,9 +34,10 @@ function patchFile(relativePath, patches) {
   }
 }
 
-patchFile('node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java', [
+patchFile('node_modules/expo-task-manager/android/src/main/java/expo/modules/taskmanager/TaskService.java', [
   {
     name: 'keep application context',
+    upstream: 'mContextRef = new WeakReference<>(context.getApplicationContext());',
     before: `  public TaskService(Context context) {
     super();
     mContextRef = new WeakReference<>(context);
@@ -63,7 +67,7 @@ patchFile('node_modules/expo-task-manager/android/src/main/java/expo/modules/tas
   },
 ]);
 
-patchFile('node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/repository/TasksPersistence.java', [
+patchFile('node_modules/expo-task-manager/android/src/main/java/expo/modules/taskmanager/repository/TasksPersistence.java', [
   {
     name: 'guard clear null preferences',
     before: `  public void clearTaskPersistence(SharedPreferences preferences, String but) {
