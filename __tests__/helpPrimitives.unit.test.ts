@@ -112,7 +112,7 @@ describe('Help approved prototype tokens and primitive geometry',()=>{
   });
   test('dock blur starts at the composer edge and extends through the safe area',async()=>{
     await act(async()=>{screen=TestRenderer.create(React.createElement(HelpDock,{children:null}));});
-    expect(StyleSheet.flatten(screen!.root.findByProps({testID:'help-dock-backdrop'}).props.style).top).toBe(-36);
+    expect(StyleSheet.flatten(screen!.root.findByProps({testID:'help-dock-backdrop'}).props.style).top).toBe(-64);
     expect(StyleSheet.flatten(screen!.root.findByProps({testID:'help-dock-backdrop'}).parent!.props.style)).toMatchObject({paddingHorizontal:8,paddingTop:8,paddingBottom:42});
   });
   test('zero-height keyboard reports cannot remove the dock safe area during opening',async()=>{
@@ -180,7 +180,7 @@ describe('Help blur startup and target lifecycle',()=>{
     await act(async()=>{screen=TestRenderer.create(React.createElement(HelpBlurSurface,{target:{current:{} as View}}));});
     expect(StyleSheet.flatten(screen!.root.findByProps({testID:'app-blur-preparing'}).props.style).backgroundColor).toBeUndefined();
     await act(async()=>layout());
-    expect(screen!.root.findByType('BlurView' as any).props).toMatchObject({tint:'light',frameClearColor:'#F7F9FC',intensity:58,blurMethod:'dimezisBlurViewSdk31Plus'});
+    expect(screen!.root.findByType('BlurView' as any).props).toMatchObject({tint:'light',frameClearColor:'#F7F9FC',intensity:34,blurMethod:'dimezisBlurViewSdk31Plus'});
   });
 });
 

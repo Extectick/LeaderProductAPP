@@ -438,7 +438,7 @@ describe('Help screen integration with service boundary', () => {
       const header=screen.root.findAllByProps({testID:id})[0];
       expect(header.findAllByType('HelpBlurSurface' as any).length).toBe(1);
       expect(StyleSheet.flatten(header.props.style).backgroundColor).toBeUndefined();
-      expect(StyleSheet.flatten(header.findByType('HelpBlurSurface' as any).parent!.props.style)).toMatchObject({top:0,bottom:-36,left:0,right:0});
+      expect(StyleSheet.flatten(header.findByType('HelpBlurSurface' as any).parent!.props.style)).toMatchObject({top:0,bottom:-64,left:0,right:0});
     }
   });
   test('first send creates once and clears draft only after success',async()=>{
