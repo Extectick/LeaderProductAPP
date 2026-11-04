@@ -16,6 +16,22 @@ async function serialized(key: string, work: () => Promise<void>) {
 }
 export async function readHistoryRecord(scope: string, id: number) { return (await read(scope, id))?.record ?? null; }
 export async function readHistoryMessage(scope:string,id:number,messageId:number){return (await read(scope,id))?.messages[messageId]?.message??null;}
+export async function listHistoryTicketIds(scope:string):Promise<number[]> {
+  const prefix=`help:history:v1:${scope}:`;
+  return (await AsyncStorage.getAllKeys()).filter(key=>key.startsWith(prefix)).map(key=>Number(key.slice(prefix.length))).filter(id=>Number.isSafeInteger(id)&&id>0);
+}
+/** The web format stores one document per ticket; parse it once for this read. */
+export async function readHistoryDelta(scope:string,id:number,messageIds:readonly number[]):Promise<{record:HelpHistoryRecord;messages:HelpMessage[];deletedMessageIds:number[]}|null> {
+  const value=await read(scope,id);if(!value)return null;
+  const messages:HelpMessage[]=[],deletedMessageIds:number[]=[];
+  for(const messageId of new Set(messageIds)){
+    if(!Number.isSafeInteger(messageId)||messageId<=0)continue;
+    const row=value.messages[messageId];if(!row)continue;
+    if(row.message)messages.push(row.message);
+    else if(row.message===null&&Number.isSafeInteger(row.version)&&row.version>=0)deletedMessageIds.push(messageId);
+  }
+  return {record:value.record,messages,deletedMessageIds};
+}
 export async function listHistoryRecords(scope: string): Promise<HelpHistoryRecord[]> {
   const keys = (await AsyncStorage.getAllKeys()).filter(key => key.startsWith(`help:history:v1:${scope}:`));
   const values = await AsyncStorage.multiGet(keys);

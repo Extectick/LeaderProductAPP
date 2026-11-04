@@ -6,7 +6,8 @@ import Reanimated,{Easing as UiEasing,useAnimatedStyle,withTiming} from 'react-n
 import { LinearGradient } from 'expo-linear-gradient';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
-import { RecordingPresets, getRecordingPermissionsAsync, requestRecordingPermissionsAsync, setAudioModeAsync, useAudioRecorder, useAudioRecorderState } from 'expo-audio';
+import { RecordingPresets, getRecordingPermissionsAsync, requestRecordingPermissionsAsync, setAudioModeAsync, useAudioRecorder } from 'expo-audio';
+import { useHelpRecorderState } from '../useHelpRecorderState';
 import { useHelpTheme, useHelpReducedMotion } from '../helpTheme';
 import { useHelpAudioCommands } from '../HelpAudioPlayback';
 import { helpDuration } from '../helpUiUtils';
@@ -54,8 +55,9 @@ export function HelpComposer(props: Props & FocusSuspension) {
   useEffect(()=>{setPhotoPickerOpen(false);},[props.closeAttachmentsKey]);
   useLayoutEffect(()=>{props.onAttachmentVisibility?.(photoPickerOpen||photoPickerVisible);},[photoPickerOpen,photoPickerVisible,props.onAttachmentVisibility]);
   useEffect(()=>()=>props.onAttachmentVisibility?.(false),[props.onAttachmentVisibility]);
-  const recorder = useAudioRecorder({ ...RecordingPresets.HIGH_QUALITY, isMeteringEnabled: true }); const recordState = useAudioRecorderState(recorder, 80);
+  const recorder = useAudioRecorder({ ...RecordingPresets.HIGH_QUALITY, isMeteringEnabled: true });
   const [recording, setRecording] = useState(false); const [locked, setLocked] = useState(false); const [starting, setStarting] = useState(false); const [meter, setMeter] = useState<number[]>([]);
+  const recordState = useHelpRecorderState(recorder, recording);
   const life = useRef({ mounted: true, starting: false, recording: false, locked: false, ending: false, permissionPending: false, permissionInterrupted: false, appState: AppState.currentState ?? 'active', resumeActive: null as null | (() => void), release: null as null | 'send' | 'cancel' | 'stage' });
   const latest = useRef(props); latest.current = props; const pulse = useRef(new Animated.Value(1)).current;
   const animatedHeight = useRef(new Animated.Value(COMPOSER_LINE_HEIGHT)).current;

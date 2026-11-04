@@ -4,7 +4,7 @@ jest.mock('@react-native-async-storage/async-storage',()=>{
 });
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { initialHelpPosition, mergeHelpMessages, mergeHelpRanges, reconcileHelpWindow, trimHelpWindow } from '../src/features/help/helpHistoryModel';
-import { readHistoryMessages,readHistoryRecord,removeHistoryTicket,writeHistoryChange } from '../src/features/help/helpHistoryDatabase.web';
+import { readHistoryDelta,listHistoryTicketIds,readHistoryMessages,readHistoryRecord,removeHistoryTicket,writeHistoryChange } from '../src/features/help/helpHistoryDatabase.web';
 import type { HelpMessage,HelpTicket } from '../src/features/help/helpApi';
 import type { HelpHistoryPage,HelpSyncResult } from '../src/features/help/helpHistoryTypes';
 
@@ -13,6 +13,20 @@ const ticket={id:7,title:'Support',lastSequence:300,lastReadSequence:100,lastMes
 const page=(from:number,to:number,eventCursor=10):HelpHistoryPage=>({messages:Array.from({length:to-from+1},(_,i)=>message(from+i)),nextCursor:from>1?from:null,olderCursor:from>1?from:null,newerCursor:to<300?to:null,hasOlder:from>1,hasNewer:to<300,lastSequence:300,lastReadSequence:100,firstUnreadSequence:101,eventCursor,snapshotCursor:eventCursor});
 const sync=(overrides:Partial<HelpSyncResult>={}):HelpSyncResult=>({ticket,events:[],messages:[],deletedMessageIds:[],nextCursor:20,eventCursor:20,snapshotCursor:20,hasMore:false,lastSequence:300,lastReadSequence:100,firstUnreadSequence:101,...overrides});
 beforeEach(async()=>{await AsyncStorage.clear();});
+
+test('web delta selects committed rows and versioned tombstones in one document read; ID sweeps read keys only',async()=>{
+  await writeHistoryChange('dev:delta',7,{ticket,page:page(1,600)});
+  await writeHistoryChange('dev:delta',7,{sync:sync({messages:[message(599,'stream')],deletedMessageIds:[2]})});
+  (AsyncStorage.getItem as jest.Mock).mockClear();
+  const delta=await readHistoryDelta('dev:delta',7,[599,2,999]);
+  expect(delta?.messages.map(row=>[row.id,row.text])).toEqual([[599,'stream']]);
+  expect(delta?.deletedMessageIds).toEqual([2]);
+  expect(AsyncStorage.getItem).toHaveBeenCalledTimes(1);
+  (AsyncStorage.getItem as jest.Mock).mockClear();
+  expect(await listHistoryTicketIds('dev:delta')).toEqual([7]);
+  expect(await listHistoryTicketIds('dev:other')).toEqual([]);
+  expect(AsyncStorage.getItem).not.toHaveBeenCalled();
+});
 
 test('opening priority is explicit target, saved history, unread boundary, latest',()=>{
   const anchor={messageId:80,sequence:80,offset:-12,atLatest:false};

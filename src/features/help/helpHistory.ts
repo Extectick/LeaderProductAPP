@@ -1,11 +1,12 @@
 import { API_BASE_URL } from '@/utils/config';
 import type { HelpTicket } from './helpApi';
-import { readHistorySnapshot, listHistoryRecords, readHistoryMessage, readHistoryMessages, readHistoryRecord, removeHistoryTicket, writeHistoryChange, writeAccountChanges } from './helpHistoryDatabase';
+import { readHistoryDelta, readHistorySnapshot, listHistoryRecords, readHistoryMessage, readHistoryMessages, readHistoryRecord, removeHistoryTicket, writeHistoryChange, writeAccountChanges } from './helpHistoryDatabase';
 import { validHelpAnchor } from './helpHistoryModel';
 import type { HelpCachedWindow, HelpHistoryPage, HelpSyncResult, HelpViewportAnchor, HelpHistoryWindowSelector } from './helpHistoryTypes';
 
 export const helpHistoryScope = (userId: number) => `${encodeURIComponent(API_BASE_URL)}:${userId}`;
 export const readCachedHelpRecord = (userId:number,ticketId:number) => readHistoryRecord(helpHistoryScope(userId),ticketId);
+export const readCachedHelpDelta = (userId:number,ticketId:number,messageIds:readonly number[]) => readHistoryDelta(helpHistoryScope(userId),ticketId,messageIds);
 export async function readCachedHelpTickets(userId: number) {
   return (await listHistoryRecords(helpHistoryScope(userId))).map(row => row.ticket);
 }

@@ -5,11 +5,11 @@ let mockReady:Function;const mockHandlers:Record<string,Function>={};
 const mockSocket={connected:true,on:jest.fn((event:string,fn:Function)=>{mockHandlers[event]=fn;}),emit:jest.fn((_event:string,_value:any,ack?:Function)=>ack?.({ok:true}))};
 const mockDisconnect=jest.fn();
 jest.mock('../src/features/help/helpSocket',()=>({createHelpSocket:(_id:number,ready:Function)=>{mockReady=ready;Promise.resolve().then(()=>{ready(mockSocket);mockHandlers.connect?.();});return{getSocket:()=>mockSocket,disconnect:mockDisconnect};}}));
-let mockCursor=0,mockCommitFailure=false;
+let mockCursor=0,mockCommitFailure=false,mockHistoryIds:number[]=[];
 let mockWriteGate:((changes:any[],cursor?:number)=>Promise<void>)|null=null;
 const mockWrite=jest.fn(async(_scope:string,changes:any[],cursor?:number)=>{if(mockCommitFailure)throw new Error('Disk failure');await mockWriteGate?.(changes,cursor);if(cursor!==undefined)mockCursor=cursor;});
 const mockRemove=jest.fn(async()=>{});
-jest.mock('../src/features/help/helpHistoryDatabase',()=>({readAccountValue:async()=>String(mockCursor),writeAccountChanges:(...args:any[])=>mockWrite(...args),readHistoryRecord:async()=>null,listHistoryRecords:async()=>[],removeHistoryTicket:(...args:any[])=>mockRemove(...args),resetHelpDownloadedState:async()=>{},maintainHelpHistory:async()=>({removedMessages:0,evictedTickets:0})}));
+jest.mock('../src/features/help/helpHistoryDatabase',()=>({readAccountValue:async()=>String(mockCursor),writeAccountChanges:(...args:any[])=>mockWrite(...args),readHistoryRecord:async()=>null,listHistoryRecords:async()=>[],listHistoryTicketIds:async()=>mockHistoryIds,removeHistoryTicket:(...args:any[])=>mockRemove(...args),resetHelpDownloadedState:async()=>{},maintainHelpHistory:async()=>({removedMessages:0,evictedTickets:0})}));
 jest.mock('../src/features/help/helpStorage',()=>({readHelpPending:async()=>[],helpClientId:()=>Math.random().toString()}));
 jest.mock('../src/features/help/helpOutbox',()=>({dispatchHelpPending:jest.fn()}));
 const mockApi={events:jest.fn(),sync:jest.fn(),config:jest.fn(),list:jest.fn()};
@@ -18,7 +18,7 @@ import {acquireHelpAccount} from '../src/features/help/helpAccountSync';
 import {HelpApiError} from '../src/features/help/helpApi';
 const event={id:10,ticketId:7,messageId:1,type:'MESSAGE_CREATED',actorId:9,createdAt:new Date().toISOString()};
 const result={ticket:{id:7},messages:[],events:[event],deletedMessageIds:[],nextCursor:10,eventCursor:10,snapshotCursor:10,hasMore:false,lastSequence:1,lastReadSequence:0,firstUnreadSequence:1};
-beforeEach(()=>{jest.useFakeTimers();mockCursor=0;mockCommitFailure=false;mockWriteGate=null;mockRemove.mockReset().mockResolvedValue(undefined);mockWrite.mockClear();mockDisconnect.mockClear();Object.keys(mockHandlers).forEach(k=>delete mockHandlers[k]);mockApi.events.mockReset().mockImplementation(async(after:number)=>({events:after<10?[event]:[],nextCursor:Math.max(after,10),hasMore:false}));mockApi.sync.mockReset().mockResolvedValue(result);});
+beforeEach(()=>{jest.useFakeTimers();mockCursor=0;mockCommitFailure=false;mockHistoryIds=[];mockWriteGate=null;mockRemove.mockReset().mockResolvedValue(undefined);mockWrite.mockClear();mockDisconnect.mockClear();Object.keys(mockHandlers).forEach(k=>delete mockHandlers[k]);mockApi.events.mockReset().mockImplementation(async(after:number)=>({events:after<10?[event]:[],nextCursor:Math.max(after,10),hasMore:false}));mockApi.sync.mockReset().mockResolvedValue(result);});
 afterEach(()=>jest.useRealTimers());
 test('one account owns a single socket; historical replay persists but does not show startup banners',async()=>{
   const notices:any[]=[];const first=acquireHelpAccount(5,n=>notices.push(n)),second=acquireHelpAccount(5,n=>notices.push(n));
@@ -37,7 +37,37 @@ test('ticket requests share one in-flight sync and a fresh socket event is prese
   try{await connection.refresh();mockApi.sync.mockClear();let complete!:(value:any)=>void;mockApi.sync.mockReturnValueOnce(new Promise(done=>{complete=done;}));
     const a=connection.syncTicket(99),b=connection.syncTicket(99);await Promise.resolve();await Promise.resolve();expect(mockApi.sync).toHaveBeenCalledTimes(1);complete({...result,ticket:{id:99}});await Promise.all([a,b]);
     const latest={...event,id:11};mockApi.events.mockImplementation(async(after:number)=>({events:after<11?[latest]:[],nextCursor:11,hasMore:false}));
+    mockApi.sync.mockResolvedValue({...result,events:[latest],nextCursor:11,eventCursor:11,snapshotCursor:11});
     mockHandlers['help:event'](latest);await connection.refresh();expect(mockCursor).toBe(11);expect(notices.filter(n=>n.type==='event').map(n=>n.event.id)).toEqual([11]);
+  }finally{connection.release();}
+});
+
+test('replay catches up after joining a ticket request whose snapshot predates its event',async()=>{
+  const connection=acquireHelpAccount(82,()=>{});
+  let complete!:(value:any)=>void;
+  try{
+    await connection.refresh();mockApi.sync.mockClear();
+    mockApi.sync.mockReturnValueOnce(new Promise(done=>{complete=done;}));
+    const old=connection.syncTicket(7);await Promise.resolve();await Promise.resolve();
+    const newer={...event,id:11};
+    mockApi.events.mockImplementation(async(after:number)=>({events:after<11?[newer]:[],nextCursor:11,hasMore:false}));
+    mockApi.sync.mockResolvedValue({...result,events:[newer],nextCursor:11,eventCursor:11,snapshotCursor:11});
+    const replay=connection.refresh();await Promise.resolve();await Promise.resolve();
+    expect(mockCursor).toBe(10);
+    complete(result);await Promise.all([old,replay]);
+    expect(mockApi.sync).toHaveBeenCalledTimes(2);
+    expect(mockWrite.mock.calls.flatMap(call=>call[1]).at(-1)?.change.sync.nextCursor).toBe(11);
+    expect(mockCursor).toBe(11);
+  }finally{complete?.(result);connection.release();}
+});
+
+test('an incomplete ticket snapshot cannot acknowledge a newer account event',async()=>{
+  const connection=acquireHelpAccount(83,()=>{});
+  try{
+    await connection.refresh();
+    mockApi.events.mockImplementation(async(after:number)=>({events:after<11?[{...event,id:11}]:[],nextCursor:11,hasMore:false}));
+    await expect(connection.refresh()).rejects.toThrow('не достигла курсора');
+    expect(mockCursor).toBe(10);
   }finally{connection.release();}
 });
 
@@ -71,5 +101,32 @@ test('replay awaits revoked-ticket removal before advancing the account cursor',
     release();await replay;
     expect(mockCursor).toBe(10);expect(notices).toContainEqual({type:'revoked',ticketId:7});
     expect(mockWrite.mock.calls.every(call=>call[1].length===0)).toBe(true);
+  }finally{release();connection.release();}
+});
+
+test('committed ticket hints contain all changed and deleted IDs after the final page',async()=>{
+  mockApi.sync.mockResolvedValueOnce({...result,messages:[{id:1}],deletedMessageIds:[2],hasMore:true})
+    .mockResolvedValue({...result,messages:[{id:1},{id:3}],nextCursor:11,eventCursor:11,snapshotCursor:11});
+  const notices:any[]=[],connection=acquireHelpAccount(84,notice=>notices.push(notice));
+  try{
+    await connection.refresh();
+    const commits=notices.filter(notice=>notice.type==='ticket');
+    expect(commits).toHaveLength(1);
+    expect(new Set(commits[0].changedMessageIds)).toEqual(new Set([1,2,3]));
+    expect(mockWrite.mock.calls.flatMap(call=>call[1])).toHaveLength(2);
+  }finally{connection.release();}
+});
+
+test('visibility reconciliation reads cached IDs and removes revoked history before its cursor commit',async()=>{
+  mockHistoryIds=[7,8];
+  mockApi.events.mockImplementation(async(after:number)=>({events:after<10?[event]:[],nextCursor:10,hasMore:false,visibilityComplete:true,visibleTicketIds:[7]}));
+  let release!:()=>void,entered!:()=>void;
+  const gate=new Promise<void>(resolve=>{release=resolve;}),started=new Promise<void>(resolve=>{entered=resolve;});
+  mockRemove.mockImplementation(async(_scope:string,id:number)=>{expect(id).toBe(8);entered();await gate;});
+  const connection=acquireHelpAccount(85,()=>{});
+  try{
+    const replay=connection.refresh();await started;expect(mockCursor).toBe(0);
+    mockHistoryIds=[7];release();await replay;
+    expect(mockCursor).toBe(10);expect(mockRemove).toHaveBeenCalledTimes(1);
   }finally{release();connection.release();}
 });

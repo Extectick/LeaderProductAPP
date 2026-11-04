@@ -78,6 +78,29 @@ export async function listHistoryRecords(scope: string): Promise<HelpHistoryReco
     }>('SELECT data FROM help_history_tickets WHERE scope=?', scope);
     return rows.flatMap(row=>{const record=parseRecord(row.data);return record?[record]:[];});
 }
+/** Visibility sweeps need IDs only; do not deserialize private history metadata. */
+export async function listHistoryTicketIds(scope:string):Promise<number[]> {
+    const rows=await(await database()).getAllAsync<{ticket_id:number}>('SELECT ticket_id FROM help_history_tickets WHERE scope=?',scope);
+    return rows.map(row=>row.ticket_id).filter(id=>Number.isSafeInteger(id)&&id>0);
+}
+/** Read committed metadata and just the hinted rows from one WAL snapshot.
+ * An absent row may be evicted or not downloaded: only tombstones prove deletion. */
+export async function readHistoryDelta(scope:string,ticketId:number,messageIds:readonly number[]):Promise<{record:HelpHistoryRecord;messages:HelpMessage[];deletedMessageIds:number[]}|null> {
+    return withHistoryReadSnapshot(async tx=>{
+        const row=await tx.getFirstAsync<{data:string}>('SELECT data FROM help_history_tickets WHERE scope=? AND ticket_id=?',scope,ticketId);
+        const record=row?parseRecord(row.data):null;if(!record)return null;
+        const ids=[...new Set(messageIds.filter(id=>Number.isSafeInteger(id)&&id>0))],messages:HelpMessage[]=[],deletedMessageIds:number[]=[];
+        for(let start=0;start<ids.length;start+=200){
+            const batch=ids.slice(start,start+200);
+            const rows=await tx.getAllAsync<{message_id:number;version:number;data:string}>(`SELECT message_id,version,data FROM help_history_messages WHERE scope=? AND ticket_id=? AND message_id IN (${batch.map(()=>'?').join(',')})`,scope,ticketId,...batch);
+            for(const changed of rows){
+                if(changed.data==='null'){if(Number.isSafeInteger(changed.version)&&changed.version>=0)deletedMessageIds.push(changed.message_id);}
+                else messages.push(JSON.parse(changed.data));
+            }
+        }
+        return {record,messages,deletedMessageIds};
+    });
+}
 export async function readHistoryMessages(scope: string, ticketId: number, from: number, to: number, limit = 100, descending = false): Promise<HelpMessage[]> {
     const rows = await (await database()).getAllAsync<{
         data: string;

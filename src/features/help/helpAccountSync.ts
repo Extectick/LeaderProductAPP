@@ -8,7 +8,7 @@ import { createHelpApi, HelpApiError } from './helpApi';
 import type { HelpEvent } from './helpHistoryTypes';
 import type { HelpHistoryChange } from './helpHistoryRecord';
 import { helpHistoryScope } from './helpHistory';
-import { readAccountValue, writeAccountChanges, readHistoryRecord, listHistoryRecords, removeHistoryTicket, maintainHelpHistory,resetHelpDownloadedState } from './helpHistoryDatabase';
+import { readAccountValue, writeAccountChanges, readHistoryRecord, listHistoryRecords, listHistoryTicketIds, removeHistoryTicket, maintainHelpHistory,resetHelpDownloadedState } from './helpHistoryDatabase';
 import { readHelpPending, helpClientId } from './helpStorage';
 import { dispatchHelpPending } from './helpOutbox';
 export type HelpAccountNotice = {
@@ -17,6 +17,8 @@ export type HelpAccountNotice = {
 } | {
     type: 'ticket';
     ticketId: number;
+    /** IDs whose authoritative rows were committed; omitted for a full repair. */
+    changedMessageIds?: number[];
 } | {
     type: 'revoked';
     ticketId: number;
@@ -58,10 +60,17 @@ function createAccount(userId: number) {
             });
         });presenceTail=work;return work;
     };
-    async function syncTicket(id: number): Promise<HelpHistoryChange[]> {
+    async function syncTicket(id: number, requiredCursor = 0): Promise<HelpHistoryChange[]> {
         const pending = jobs.get(id);
-        if (pending)
-            return pending;
+        if (pending) {
+            const changes = await pending;
+            // A request started before this account event may have an older
+            // RepeatableRead snapshot. Joining it alone cannot acknowledge the
+            // newer event; its owner removes the job before this continuation.
+            if (valid() && changes.length && (changes.at(-1)?.sync?.nextCursor ?? 0) < requiredCursor)
+                return [...changes, ...await syncTicket(id, requiredCursor)];
+            return changes;
+        }
         const work = (async () => {
             const changes: HelpHistoryChange[] = [];
             let cursor = (await readHistoryRecord(scope, id))?.syncCursor ?? 0;
@@ -76,7 +85,13 @@ function createAccount(userId: number) {
                 changes.push(change);
                 cursor = result.nextCursor;
                 if (!result.hasMore) {
-                    emit({ type: 'ticket', ticketId: id });
+                    if (cursor < requiredCursor)
+                        throw new Error('Синхронизация обращения не достигла курсора события');
+                    const changedMessageIds = [...new Set(changes.flatMap(change => [
+                        ...(change.sync?.messages ?? []).map(message => message.id),
+                        ...(change.sync?.deletedMessageIds ?? []),
+                    ]))];
+                    emit({ type: 'ticket', ticketId: id, ...(changedMessageIds.length <= 600 ? { changedMessageIds } : {}) });
                     return changes;
                 }
             }
@@ -151,15 +166,17 @@ function createAccount(userId: number) {
                     }
                     if (result.visibilityComplete && result.visibleTicketIds) {
                         const visible = new Set(result.visibleTicketIds);
-                        for (const record of await listHistoryRecords(scope))
-                            if (!visible.has(record.ticket.id)) {
-                                await removeHistoryTicket(scope, record.ticket.id);
-                                emit({ type: 'revoked', ticketId: record.ticket.id });
+                        for (const id of await listHistoryTicketIds(scope))
+                            if (!visible.has(id)) {
+                                await removeHistoryTicket(scope, id);
+                                emit({ type: 'revoked', ticketId: id });
                             }
                     }
-                    const ids = [...new Set(result.events.map(event => event.ticketId))];
-                    for (const id of ids)
-                        await syncTicket(id);
+                    const required = new Map<number, number>();
+                    for (const event of result.events)
+                        required.set(event.ticketId, Math.max(required.get(event.ticketId) ?? 0, event.id));
+                    for (const [id, through] of required)
+                        await syncTicket(id, through);
                     if (!valid())
                         return;
                     const next = result.resyncRequired ? (result.snapshotCursor ?? result.nextCursor) : result.nextCursor;

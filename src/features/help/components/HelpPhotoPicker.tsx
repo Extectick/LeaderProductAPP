@@ -97,12 +97,13 @@ export function HelpPhotoPicker(props:Props) {
   },[tileSize,headerHeight]);
   useAnimatedReaction(()=>gridTarget.value,(value,previous)=>{if(previous!==null&&value!==previous)scrollTo(gridList,0,value,false);},[gridList]);
   const cameraFrame=useFrameCallback(()=>{
+    if(!nativeCameraVisible.value)return;
     // Animated refs are opaque on the UI runtime (Reanimated 4.7+ maps them
     // to shareable objects). Only the public APIs may dereference them.
     const rect=measure(grid);
     if(rect&&rect.height>0){cameraOffset.value=rect.pageY-measuredGridY.value;cameraViewportHeight.value=Math.max(0,Math.min(rect.height,height.value)-headerHeight-Math.max(0,insets.top-(viewportHeight.value-height.value))-captionHeight.value);}
   },false);
-  useEffect(()=>{cameraFrame.setActive(visible&&Boolean(viewport)&&!preview);return()=>cameraFrame.setActive(false);},[cameraFrame,visible,viewport,preview]);
+  useEffect(()=>{cameraFrame.setActive(visible&&Boolean(viewport)&&cameraVisible&&!preview&&!cameraExpanded);return()=>cameraFrame.setActive(false);},[cameraFrame,visible,viewport,cameraVisible,preview,cameraExpanded]);
   const pullStyle=useAnimatedStyle(()=>({transform:[{translateY:pullY.value}],borderTopLeftRadius:Math.min(22,Math.max(0,viewportHeight.value-height.value)),borderTopRightRadius:Math.min(22,Math.max(0,viewportHeight.value-height.value))}));
   useEffect(()=>{pullAllowed.value=props.open&&visible&&!preview&&!cameraExpanded;pullHeight.value=panelHeight;expansionLimit.value=maximumHeight;viewportHeight.value=availableHeight;},[props.open,visible,preview,cameraExpanded,panelHeight,maximumHeight,availableHeight,pullAllowed,pullHeight,expansionLimit,viewportHeight]);
   const finishExpansion=useCallback(()=>{if(!mounted.current)return;setExpanded(true);resizing.current=false;setSettled(true);setPanelLayoutHeight(height.value);measureGrid();},[height,measureGrid]);

@@ -170,7 +170,7 @@ test('event arriving during an in-flight replay triggers a second replay',async(
   let resolve!:(value:unknown)=>void;mockApi.sync.mockReturnValueOnce(new Promise(done=>{resolve=done;}));
   await act(async()=>{mockApi.events.mockResolvedValueOnce({events:[{id:11,ticketId:7}],nextCursor:11,hasMore:false});mockHandlers['help:event']({id:11,ticketId:7});});
   await act(async()=>{mockApi.events.mockResolvedValueOnce({events:[{id:11,ticketId:7}],nextCursor:11,hasMore:false});mockHandlers['help:event']({id:11,ticketId:7});});
-  await act(async()=>{resolve({ticket:ticket(),events:[],messages:[],deletedMessageIds:[],nextCursor:10,eventCursor:10,snapshotCursor:10,hasMore:false,lastSequence:200,lastReadSequence:200,firstUnreadSequence:null});await service.refresh();});
+  await act(async()=>{resolve({ticket:ticket(),events:[],messages:[],deletedMessageIds:[],nextCursor:11,eventCursor:11,snapshotCursor:11,hasMore:false,lastSequence:200,lastReadSequence:200,firstUnreadSequence:null});await service.refresh();});
   expect(mockApi.sync.mock.calls.length).toBeGreaterThanOrEqual(2);
 });
 test('active history trims only after idle anchor save and explicitly restores the fresh anchor',async()=>{

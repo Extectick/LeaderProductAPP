@@ -499,6 +499,15 @@ test('opening attachments measures an opaque Reanimated UI ref without invoking 
  expect(()=>frame()).not.toThrow();
  expect(measure).toHaveBeenCalledWith(expect.objectContaining({current:expect.anything()}));
 });
+test('camera geometry does not measure the grid while its tile is offscreen and resumes on return',async()=>{
+ await render();
+ const frame=(useFrameCallback as jest.Mock).mock.calls.slice(-1)[0][0];
+ const scroll=(y:number)=>screen!.root.findAllByProps({testID:'help-photo-grid'})[0].props.onScroll({nativeEvent:{contentOffset:{y},contentSize:{height:4000},layoutMeasurement:{height:800}}});
+ await act(async()=>scroll(1600));
+ (measure as jest.Mock).mockClear();frame();expect(measure).not.toHaveBeenCalled();
+ await act(async()=>scroll(0));
+ (measure as jest.Mock).mockReturnValueOnce(null);frame();expect(measure).toHaveBeenCalledTimes(1);
+});
 test('scrolling attachments passes the opaque animated ref straight to scrollTo',async()=>{
  await render();
  const update=(useAnimatedReaction as jest.Mock).mock.calls[0][1];

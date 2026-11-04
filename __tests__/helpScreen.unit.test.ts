@@ -454,6 +454,31 @@ describe('Help screen integration with service boundary', () => {
     expect(header().findAllByType('HelpBlurSurface' as any)).toHaveLength(1);
     expect(screen.root.findByProps({testID:'help-ticket-list'})).toBe(list);
   });
+  test('typing preserves timeline data, renderers and chrome while row actions use the current draft',async()=>{
+    const message={id:91,ticketId:7,sequence:1,text:'Первый текст',authorId:5,authorRole:'USER',createdAt:new Date().toISOString(),kind:'TEXT',attachments:[],reactions:[]} as any;
+    const pending={key:'queued-photo',ticketId:7,create:false,createdAt:1,status:'queued',input:{text:'Фото',clientMessageId:'queued-photo'},localFiles:[{uri:'file://photo.jpg',name:'photo.jpg',mimeType:'image/jpeg'}]};
+    mockService.tickets=[ticket];mockService.messages=[message];mockService.pendingMessages=[pending];
+    await render();await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());
+    const before=mockTimelineProps;
+    const previousRow=before.renderMessage(message);
+    await act(async()=>composer().props.onChange('Новый черновик'));
+    for(const key of ['messages','pendingMessages','renderMessage','renderPending','header','footer'])expect(mockTimelineProps[key]).toBe(before[key]);
+    // A retained row callback must capture the draft at invocation, not at render.
+    await act(async()=>previousRow.props.onEdit());
+    expect(composer().props.mode).toBe('edit');
+    await act(async()=>composer().props.onCancelMode());
+    expect(composer().props.value).toBe('Новый черновик');
+    const previousRenderer=mockTimelineProps.renderMessage;
+    await act(async()=>mockTimelineProps.renderMessage(message).props.onMenu());
+    expect(mockTimelineProps.renderMessage).not.toBe(previousRenderer);
+    expect(mockTimelineProps.renderMessage(message).props.selected).toBe(true);
+    mockService.selectedTicket={...ticket,members:[{userId:6,lastReadSequence:1}]};
+    await act(async()=>screen.update(React.createElement(HelpScreen)));
+    expect(mockTimelineProps.renderMessage(message).props.readByOthers).toBe(true);
+    mockService.messages=[{...message,clientMessageId:'queued-photo'}];
+    await act(async()=>screen.update(React.createElement(HelpScreen)));
+    expect(mockTimelineProps.pendingMessages).toHaveLength(0);
+  });
   test('first send creates once and clears draft only after success',async()=>{
     mockNativeChatLayout=true;
     await render(); await act(async()=>button('Новое обращение').props.onPress());
@@ -488,6 +513,9 @@ describe('Help screen integration with service boundary', () => {
     expect(screen.root.findByType(HelpPendingMessage).props.item.key).toBe(pending.key);
     mockService.pendingMessages=[];await act(async()=>screen.update(React.createElement(HelpScreen)));
     expect(screen.root.findByType(HelpPendingMessage).props.item.key).toBe(pending.key);
+    const echoed=mockTimelineProps.pendingMessages;
+    await act(async()=>mockTimelineProps.onLatestState({visible:true,count:0,loading:false}));
+    expect(mockTimelineProps.pendingMessages).toBe(echoed);
     mockService.selectedTicket=ticket;mockService.messages=[{id:91,ticketId:7,sequence:1,clientMessageId:'first-create',text:'Первое сообщение',authorId:5,createdAt:new Date().toISOString(),kind:'TEXT',attachments:[],reactions:[]}];
     await act(async()=>{resolve({...detail,messages:mockService.messages});await request;});
     expect(screen.root.findAllByType(HelpPendingMessage)).toHaveLength(0);
