@@ -242,7 +242,7 @@ export function NotificationHost({ children }: Props) {
                     <Image source={{ uri: item.avatarUrl }} style={[styles.avatar,messageVariant?{width:42,height:42,borderRadius:21}:null]} />
                   ) : (
                     <View style={[styles.iconWrap, { backgroundColor: item.avatarColor||iconBg },messageVariant?{width:42,height:42,borderRadius:21}:null]}>
-                      <Ionicons name={iconName as any} size={messageVariant?23:20} color={messageVariant?'#FFF':iconTint} />
+                      {item.avatarContent??<Ionicons name={iconName as any} size={messageVariant?23:20} color={messageVariant?'#FFF':iconTint} />}
                     </View>
                   )}
                   <View style={styles.content}>

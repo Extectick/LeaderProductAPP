@@ -19,6 +19,7 @@ jest.mock('@shopify/flash-list',()=>{
 });
 let mockFocused = true;
 let mockNativeChatLayout = false;
+let mockNativeAtomicTailMotion = false;
 let mockNativeImeLayout = false;
 let mockNativeStableImeLayout = false;
 let mockNativeDockControls = false;
@@ -36,7 +37,7 @@ jest.mock('../src/features/help/HelpAudioPlayback',()=>({
   useHelpAudioPlayback:()=>mockPlayback,
 }));
 jest.mock('../src/features/help/components/HelpNativeChatLayout', () => ({
-  get hasNativeChatLayout() { return mockNativeChatLayout; }, get hasNativeImeLayout() { return mockNativeImeLayout; },get hasNativeStableImeLayout(){return mockNativeStableImeLayout;},get hasNativeDockControls(){return mockNativeDockControls;}, HelpNativeChatLayout:'HelpNativeChatLayout',
+  get hasNativeChatLayout() { return mockNativeChatLayout; }, get hasNativeAtomicTailMotion() { return mockNativeAtomicTailMotion; }, get hasNativeImeLayout() { return mockNativeImeLayout; },get hasNativeStableImeLayout(){return mockNativeStableImeLayout;},get hasNativeDockControls(){return mockNativeDockControls;}, HelpNativeChatLayout:'HelpNativeChatLayout',
 }));
 jest.mock('../context/ThemeContext', () => ({ useTheme: () => ({theme:'light'}) }));
 jest.mock('expo-router', () => ({ useRouter: () => mockRouter, useLocalSearchParams: () => ({}) }));
@@ -90,7 +91,7 @@ describe('Help screen integration with service boundary', () => {
     jest.spyOn(PanResponder,'create').mockImplementation(config=>({panHandlers:config} as any));
     mockFocused = true;
     mockAttachmentDrafts.load.mockReset().mockResolvedValue([]);mockAttachmentDrafts.save.mockReset().mockImplementation(async(_user:any,_key:any,files:any)=>files);mockAttachmentDrafts.clear.mockReset().mockResolvedValue(undefined);mockAttachmentDrafts.hold.mockReset().mockImplementation(()=>jest.fn());
-    mockNativeChatLayout = false;
+    mockNativeChatLayout = false;mockNativeAtomicTailMotion=false;
     mockNativeImeLayout = false;mockNativeStableImeLayout=false;mockNativeDockControls=false;
     mockTimelineProps=undefined;mockUseAudioController.mockClear();mockTimelineDateJump.mockClear();
     Object.assign(mockPlayback,{current:null,positionSeconds:0,durationSeconds:0,progress:0,playing:false,loading:false,ready:false,error:null,speed:1,toggle:jest.fn().mockResolvedValue(undefined),setSpeed:jest.fn(),stop:jest.fn(),seek:jest.fn().mockResolvedValue(undefined),play:jest.fn().mockResolvedValue(undefined)});
@@ -99,6 +100,16 @@ describe('Help screen integration with service boundary', () => {
   });
   afterEach(async()=>{if(screen)await act(async()=>screen.unmount());jest.restoreAllMocks();});
   async function render(){await act(async()=>{screen=TestRenderer.create(React.createElement(HelpScreen));});}
+  test('default list is owned by the service; later searches still debounce a request',async()=>{
+    jest.useFakeTimers();
+    try{
+      await render();await act(async()=>jest.advanceTimersByTimeAsync(300));
+      expect(mockService.loadTickets).not.toHaveBeenCalled();
+      await act(async()=>screen.root.findByType(TextInput).props.onChangeText('принтер'));
+      await act(async()=>jest.advanceTimersByTimeAsync(300));
+      expect(mockService.loadTickets).toHaveBeenLastCalledWith('OPEN','mine',false,'принтер');
+    }finally{jest.useRealTimers();}
+  });
   test('recovery action ignores healthy sends and retries only interrupted operations without blocking the composer',async()=>{
     const item={key:'upload',ticketId:7,create:false,createdAt:1,input:{text:'QA'},status:'sending',attempts:0};
     mockService.pendingMessages=[item];mockService.pendingCount=1;mockService.tickets=[ticket];

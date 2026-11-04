@@ -1,5 +1,10 @@
 export type HelpTailGeometry={content:number;margin:number;width:number;height:number};
 
+/** Versioned presentation policy. These values ship in OTA; the native owner
+ * measures/pins geometry independently of the selected presentation curve. */
+export type HelpTailMotionConfig={version:1;enabled:boolean;durationMs:number;curve:'spring'|'cubic'|'quint';maxViewport:number;entryDistanceDp:number};
+export const HELP_TAIL_MOTION:HelpTailMotionConfig={version:1,enabled:true,durationMs:220,curve:'spring',maxViewport:1,entryDistanceDp:24};
+
 // FlashList retains at least two viewports around the visible cells. A whole
 // viewport can therefore move together, including a photo/album taller than a
 // text row; capping this at a text-sized 120 px made the rest jump immediately.

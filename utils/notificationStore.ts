@@ -1,4 +1,5 @@
 import { Linking } from 'react-native';
+import type { ReactNode } from 'react';
 
 export type NotificationType = 'info' | 'success' | 'warning' | 'error';
 
@@ -7,6 +8,7 @@ export type NotificationPayload = {
   variant?: 'default' | 'message';
   groupKey?: string;
   avatarColor?: string;
+  avatarContent?: ReactNode;
   onPresented?: () => void;
   title?: string;
   message: string;
@@ -64,6 +66,7 @@ export function pushNotification(payload: NotificationPayload) {
     variant: payload.variant ?? 'default',
     groupKey: payload.groupKey ?? '',
     avatarColor: payload.avatarColor ?? '',
+    avatarContent: payload.avatarContent ?? null,
     onPresented: payload.onPresented ?? (() => {}),
     title: payload.title ?? '',
     message: payload.message,

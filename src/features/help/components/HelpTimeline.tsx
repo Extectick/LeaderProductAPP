@@ -1,5 +1,5 @@
 import React, {createContext, forwardRef, useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Animated, AppState, Easing, Platform, ScrollView, type ScrollViewProps, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
+import { Animated, AppState, Easing, Platform, ScrollView, type ScrollViewProps, View, type ViewProps, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import Reanimated,{cancelAnimation,Easing as UiEasing,runOnUI,useAnimatedStyle,useSharedValue,withTiming} from 'react-native-reanimated';
 import type { HelpMessage } from '../helpApi';
@@ -12,11 +12,11 @@ import { helpDayKey } from '../helpUiUtils';
 import { createHelpImageCache, HelpImageCacheContext, HelpMediaLoadingContext } from '../helpMediaLoading';
 import { useHelpReducedMotion, useHelpTheme } from '../helpTheme';
 import { HelpDateSeparator, HelpUnreadSeparator, HelpHistoryStatus, HelpJumpToLatest } from './HelpTimelineIndicators';
-import { hasNativeChatLayout } from './HelpNativeChatLayout';
+import { hasNativeChatLayout, hasNativeAtomicTailMotion } from './HelpNativeChatLayout';
 import { HELP_COMPOSER_ACTION_RIGHT } from '../helpLayout';
 import { HELP_LATEST_SCROLL_BEZIER, helpLatestNavigationMotion, hiddenHelpLatest, updateHelpLatestAffordance } from '../helpJumpToLatestModel';
 import {HelpMessageArrival,HelpMessageArrivalContext,HelpArrivalGeometryContext,helpArrivalIdentity} from './HelpMessageArrival';
-import {helpTailDisplacement,helpTailMotionLimit,helpTailHistoryChange,type HelpTailGeometry} from '../helpTailMotion';
+import {HELP_TAIL_MOTION,helpTailDisplacement,helpTailMotionLimit,helpTailHistoryChange,type HelpTailGeometry} from '../helpTailMotion';
 
 const InlineDateClipContext=createContext('');
 function ClippedHelpDate({rowKey,date,retained,onPress}:{rowKey:string;date:string;retained:boolean;onPress:()=>void}){
@@ -44,6 +44,8 @@ type Props = {
   hideLatestButton?: boolean;
   onLatestState?:(state:HelpLatestControlState)=>void;
   hideStickyDate?: boolean;
+  /** Defer offscreen work until the parent scene finishes its entrance. */
+  entrySettled?: boolean;
   onHistoryScroll?: (towardOlder:boolean) => void;
   onStickyDateChange?: (date: string | null) => void;
   loadOlder: () => Promise<unknown>; loadNewer: () => Promise<unknown>;
@@ -72,17 +74,22 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   const currentBottomInset=useCallback(()=>live.current.obscuredBottom?.current??live.current.dockHeight,[]);
   const rows = useMemo(() => helpTimelineRows(props.messages, props.firstUnreadSequence,props.pendingMessages), [props.messages, props.firstUnreadSequence,props.pendingMessages]);
   const rowsRef = useRef(rows); rowsRef.current = rows;
+  // Native snapshots match logical identities, never recycled View instances.
+  // Preserve FlashList's root layout/ref/onLayout contract and stop native
+  // traversal at the cell boundary instead of walking each message's children.
+  const TailCell=useMemo(()=>forwardRef<View,ViewProps&{index:number}>(({index,...cellProps},cellRef)=><View {...cellProps} ref={cellRef} collapsable={false} nativeID={`${props.nativeID}:cell:${rowsRef.current[index]?.key??index}`}/>),[props.nativeID]);
   const tailShift=useSharedValue(0);
   const tailStyle=useAnimatedStyle(()=>({transform:[{translateY:tailShift.value}]}));
   const tailGeometry=useRef<HelpTailGeometry|null>(null),tailRevision=useRef({keys:[] as string[],last:'',history:false});
   const resetTailMotion=useCallback(()=>{
+    if(hasNativeAtomicTailMotion)return;
     runOnUI(()=>{'worklet';cancelAnimation(tailShift);tailShift.value=0;})();
   },[tailShift]);
   useLayoutEffect(()=>{if(!props.active||reduced)resetTailMotion();},[props.active,reduced,resetTailMotion]);
   const hasImages = useMemo(() => props.messages.some(message => message.attachments?.some(attachment => attachment.kind==='IMAGE') || message.replyTo?.attachments?.some(attachment => attachment.kind==='IMAGE')), [props.messages]);
   const hasImagesRef = useRef(hasImages); hasImagesRef.current = hasImages;
   const [following, setFollowing] = useState(false), [ready, setReady] = useState(false), [loaded, setLoaded] = useState(false), [navigating,setNavigating] = useState(false);
-  const [firstContentSettled,setFirstContentSettled]=useState(!props.bottomAligned||rows.length>0);
+  const [firstContentSettled,setFirstContentSettled]=useState(hasNativeAtomicTailMotion||!props.bottomAligned||rows.length>0);
   useLayoutEffect(()=>{
     if(firstContentSettled||!rows.length)return;
     let frame=0,previous='',stable=0;
@@ -138,7 +145,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   }, []);
   // Reveal after the positioned list commits, rather than from onLoad itself.
   // The entry owns its reveal state, so this does not rerender the chat's rows.
-  useEffect(() => { if (ready) notifyReady(); }, [ready,notifyReady]);
+  useLayoutEffect(() => { if (ready) notifyReady(); }, [ready,notifyReady]);
   const latestAffordance = useRef(hiddenHelpLatest());
   const [latestAvailable, setLatestAvailable] = useState(false);
   const mountedAt = useRef(Date.now()), openingReported = useRef(false);
@@ -376,7 +383,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     if (!reduced && dateSnapshot.current.rows.length) stageViewport({rows:dateSnapshot.current.rows,direction:1});
     void live.current.onDate(date).catch(error => { cancelJump(); live.current.onError(error instanceof Error ? error.message : 'Не удалось открыть сообщения за эту дату'); });
   }, [save,visible,cancelJump,reduced,stageViewport,itemStartOffset,currentBottomInset,resetTailMotion]);
-  const renderRow = useCallback((row: HelpTimelineRow,index=rowsRef.current.indexOf(row),range=mediaRangeRef.current,retained=false) => row.kind==='date' ? <ClippedHelpDate rowKey={row.key} date={row.date!} retained={retained} onPress={()=>jumpDate(row.date!)}/> : row.kind==='unread' ? <HelpUnreadSeparator/> : <HelpMediaLoadingContext.Provider value={retained?'retained':index>=range.first&&index<=range.last?'visible':index>=range.first-4&&index<=range.last+4?'near':'deferred'}><HelpMessageArrival key={helpArrivalIdentity(row.message)} identity={helpArrivalIdentity(row.message)} distance={followingRef.current&&tailGeometry.current?0:24} deferred={!retained&&!firstContentSettled} animate={!retained&&(row.kind==='pending'||Date.now()<=arrivalBatch.expiresAt&&arrivalBatch.keys.has(helpArrivalIdentity(row.message)))}><HelpArrivalGeometryContext.Provider value={!retained&&followingRef.current&&Boolean(tailGeometry.current)}>{row.kind==='pending'?props.renderPending?.(row.pending!):props.renderMessage(row.message)}</HelpArrivalGeometryContext.Provider></HelpMessageArrival></HelpMediaLoadingContext.Provider>, [jumpDate,props.renderMessage,props.renderPending,arrivalBatch.keys,firstContentSettled]);
+  const renderRow = useCallback((row: HelpTimelineRow,index=rowsRef.current.indexOf(row),range=mediaRangeRef.current,retained=false) => row.kind==='date' ? <ClippedHelpDate rowKey={row.key} date={row.date!} retained={retained} onPress={()=>jumpDate(row.date!)}/> : row.kind==='unread' ? <HelpUnreadSeparator/> : <HelpMediaLoadingContext.Provider value={retained?'retained':index>=range.first&&index<=range.last?'visible':index>=range.first-4&&index<=range.last+4?'near':'deferred'}><HelpMessageArrival key={helpArrivalIdentity(row.message)} identity={helpArrivalIdentity(row.message)} distance={followingRef.current&&(hasNativeAtomicTailMotion||tailGeometry.current)?0:24} deferred={!retained&&!firstContentSettled} animate={!retained&&(row.kind==='pending'||Date.now()<=arrivalBatch.expiresAt&&arrivalBatch.keys.has(helpArrivalIdentity(row.message)))}><HelpArrivalGeometryContext.Provider value={!retained&&followingRef.current&&(hasNativeAtomicTailMotion||Boolean(tailGeometry.current))}>{row.kind==='pending'?props.renderPending?.(row.pending!):props.renderMessage(row.message)}</HelpArrivalGeometryContext.Provider></HelpMessageArrival></HelpMediaLoadingContext.Provider>, [jumpDate,props.renderMessage,props.renderPending,arrivalBatch.keys,firstContentSettled]);
   // Keep the renderer stable through viewport/date updates. Real visual changes
   // from the screen (selection, search, receipts) still replace renderMessage.
   const renderItem = useCallback<ListRenderItem<HelpTimelineRow>>(({item,index,extraData}) => renderRow(item,index,extraData as MediaRange), [renderRow]);
@@ -386,6 +393,9 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     else list.current?.scrollToEnd({animated});
   }, []);
   const synchronizeTailMotion=useCallback(()=>{
+    // v3 observes actual Android cells and pins/compensates before one draw.
+    // Do not read estimated JS geometry or enqueue a second presentation clock.
+    if(hasNativeAtomicTailMotion)return;
     const view=list.current;
     // The ref can precede FlashList's layout manager on a cold/empty mount.
     // getLayout is safe there; the dimension getters are not.
@@ -403,7 +413,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     if(tailGeometry.current&&(Math.abs(tailGeometry.current.width-next.width)>.5||Math.abs(tailGeometry.current.height-next.height)>.5))resetTailMotion();
     // Geometry, not text/type or a receipt timer, owns this motion. Late image
     // dimensions, voice controls and streamed text all lift the same viewport.
-    const delta=helpTailDisplacement(tailGeometry.current,next,{active:live.current.active&&readyRef.current&&followingRef.current&&!inNavigation.current&&!dragging.current&&!momentum.current&&!live.current.hasNewer&&!live.current.loadingOlder&&!live.current.loadingNewer&&!reduced,liveGrowth:!tailRevision.current.history});
+    const delta=helpTailDisplacement(tailGeometry.current,next,{active:!hasNativeAtomicTailMotion&&HELP_TAIL_MOTION.enabled&&live.current.active&&readyRef.current&&followingRef.current&&!inNavigation.current&&!dragging.current&&!momentum.current&&!live.current.hasNewer&&!live.current.loadingOlder&&!live.current.loadingNewer&&!reduced,liveGrowth:!tailRevision.current.history});
     tailGeometry.current=next;
     if(!delta)return;
     // Position the real scroll range first, then ease only its presentation.
@@ -413,7 +423,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     runOnUI((distance:number,limit:number)=>{
       'worklet';
       tailShift.value=Math.max(-limit,Math.min(limit,tailShift.value+distance));
-      tailShift.value=withTiming(0,{duration:220,easing:UiEasing.out(UiEasing.cubic)});
+      tailShift.value=withTiming(0,{duration:HELP_TAIL_MOTION.durationMs,easing:UiEasing.out(UiEasing.cubic)});
     })(delta,helpTailMotionLimit(next.height));
     helpDevEvent('timeline.tailShift',{delta,native:hasNativeChatLayout,at:Date.now()});
   },[reduced,scrollEnd,tailShift,resetTailMotion]);
@@ -699,7 +709,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   } : {};
   useEffect(()=>helpDevActions('timeline',{'timeline.latest':()=>live.current.onLatest(),'timeline.save':()=>save(),'timeline.date':value=>jumpDate(typeof value==='string'?value:undefined),'timeline.resetMetrics':()=>{scrollFrames.current=[];}}),[jumpDate,save]);
   useEffect(()=>helpDevProbe('timeline',async()=>({ready:readyRef.current,following:followingRef.current,anchor:lastAnchor.current,
-    loadedCount:rowsRef.current.length,geometry:geometry.current,navigating:inNavigation.current,currentDate,scrollFrames:scrollFrames.current,navigationMode:lastNavigationMode.current,
+    loadedCount:rowsRef.current.length,geometry:geometry.current,navigating:inNavigation.current,currentDate,scrollFrames:scrollFrames.current,navigationMode:lastNavigationMode.current,tailMotionOwner:hasNativeAtomicTailMotion?'native':'js',
     latestAffordance:latestAffordance.current,latestRequest:latestRequest.current,userScrollSession:userScrollSession.current,dragging:dragging.current,momentum:momentum.current,bottomInset:currentBottomInset(),
     outgoingVisible:snapshotVisible,outgoingRows:outgoingRef.current?.rows.length??0,
     visible:visible().map(item=>({sequence:item.row.message.sequence,top:item.top,height:item.height}))})),[visible,currentDate,snapshotVisible]);
@@ -726,10 +736,10 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   }, [settleOpening,updateMediaRange,observe]);
   return <HelpMessageArrivalContext.Provider value={inheritedArrivals??localArrivals.current}><HelpImageCacheContext.Provider value={imageCache}><InlineDateClipContext.Provider value={hiddenDateKeys}><View style={{flex:1}}>
     <Animated.View testID="help-timeline-live-layer" style={{flex:1,opacity:(ready||!rows.length)&&(!rows.length||firstContentSettled)?1:0,transform:[{translateY:outgoing?(outgoing.latest&&snapshotVisible?transition:incomingTransition).interpolate({inputRange:[0,1],outputRange:[-direction*distance,0]}):0}]}}>
-      <Reanimated.View testID="help-timeline-tail-motion" style={[{flex:1},tailStyle]}><FlashList ref={list} data={rows} extraData={mediaRange} keyExtractor={rowKey} getItemType={rowType} renderItem={renderItem}
+      <Reanimated.View testID="help-timeline-tail-motion" style={[{flex:1},tailStyle]}><FlashList ref={list} data={rows} extraData={mediaRange} keyExtractor={rowKey} getItemType={rowType} renderItem={renderItem} CellRendererComponent={hasNativeAtomicTailMotion?TailCell:undefined}
         initialScrollIndex={initialPosition.current?.index}
         initialScrollIndexParams={initialPosition.current ? {viewOffset:initialPosition.current.kind==='latest'?0:-(props.headerHeight+initialPosition.current.offset)} : undefined}
-        drawDistance={Math.max(1200,geometry.current.height*2)}
+        drawDistance={ready&&props.entrySettled!==false?Math.max(1200,geometry.current.height*2):320}
         renderScrollComponent={NativeScroll} {...webProps} testID="help-chat-scroll" style={listStyle}
         contentContainerStyle={listContentStyle}
         maintainVisibleContentPosition={maintainVisibleContentPosition}

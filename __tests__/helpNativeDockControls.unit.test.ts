@@ -20,4 +20,15 @@ describe('native dock controls ABI compatibility',()=>{
     expect(props.controlsId).toBe(capable?'controls':undefined);
     expect(props.dockId).toBe('dock');expect(props.viewportId).toBe('');expect(props.manageIme).toBe(true);
   });
+  test.each([undefined,1,2,3])('sends the OTA motion policy only to atomic native ABI (%s)',async(version)=>{
+    mockNativeModule={imeInsetsVersion:5,tailMotionVersion:version};
+    let Component!:React.ComponentType<any>;
+    jest.isolateModules(()=>{const module=require('../src/features/help/components/HelpNativeChatLayout');Component=module.HelpNativeChatLayout;expect(module.hasNativeAtomicTailMotion).toBe(version===3);});
+    await act(async()=>{tree=TestRenderer.create(React.createElement(Component,{scrollId:'scroll',dockId:'dock',animateTail:version===3}));});
+    const props=tree!.root.findByType('NativeChatLayout' as any).props;
+    if(version===3)expect(props.tailMotionConfig).toEqual({version:1,enabled:true,durationMs:220,curve:'spring',maxViewport:1,entryDistanceDp:24});
+    else expect(props).not.toHaveProperty('tailMotionConfig');
+    if(version)expect(props.reducedMotion).toBe(version!==3);
+    else expect(props).not.toHaveProperty('reducedMotion');
+  });
 });

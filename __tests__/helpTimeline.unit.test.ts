@@ -6,6 +6,7 @@ import type { HelpMessage } from '../src/features/help/helpApi';
 let mockFlashProps:any;
 let mockReducedMotion=true;
 let mockNativeChatLayout=false;
+let mockNativeAtomicTailMotion=false;
 const mockTailTiming=jest.fn((value:number,_config:any)=>value);
 const mockTailCancel=jest.fn();
 jest.mock('react-native-reanimated',()=>({
@@ -27,7 +28,7 @@ jest.mock('@shopify/flash-list',()=>{
 jest.mock('@expo/vector-icons',()=>({Ionicons:'Ionicons'}));
 jest.mock('../src/features/help/helpTheme',()=>({useHelpReducedMotion:()=>mockReducedMotion,useHelpTheme:()=>({background:'#151B22',surface:'#222B35',line:'#33404E',panel:'#1E2730',muted:'#A6B0BE',accentText:'#68B0FF'})}));
 jest.mock('../src/features/help/helpDiagnostics',()=>({helpDevActions:()=>()=>{},helpDevProbe:()=>()=>{},helpDevState:jest.fn(),helpDevEvent:jest.fn()}));
-jest.mock('../src/features/help/components/HelpNativeChatLayout',()=>({get hasNativeChatLayout(){return mockNativeChatLayout;}}));
+jest.mock('../src/features/help/components/HelpNativeChatLayout',()=>({get hasNativeChatLayout(){return mockNativeChatLayout;},get hasNativeAtomicTailMotion(){return mockNativeAtomicTailMotion;}}));
 import {HelpTimeline,type HelpTimelineHandle} from '../src/features/help/components/HelpTimeline';
 import {HelpDateSeparator} from '../src/features/help/components/HelpTimelineIndicators';
 import {HelpMediaLoadingContext} from '../src/features/help/helpMediaLoading';
@@ -101,6 +102,7 @@ describe('sticky date geometry and navigation integration',()=>{
     jest.useFakeTimers();
     mockReducedMotion=true;
     mockNativeChatLayout=false;
+    mockNativeAtomicTailMotion=false;
     mockFlashProps=undefined;
     // The first day's separator has already passed the header. The next day's
     // separator is visible lower in the list and must not hide the current day.
@@ -123,6 +125,54 @@ describe('sticky date geometry and navigation integration',()=>{
     mockListApi.getChildContainerDimensions=()=>({width:390,height:464});
     await render();
     expect(floating()).toBeUndefined();
+  });
+  test('atomic native layout owns appended media and late geometry without a JS or nested answer clock',async()=>{
+    mockReducedMotion=false;mockNativeChatLayout=true;mockNativeAtomicTailMotion=true;
+    let height=1600;mockListApi.getChildContainerDimensions=()=>({width:390,height});
+    props={...props,renderMessage:row=>row.text?React.createElement(HelpMessageArrival,{identity:`answer:${row.id}`,animate:true},React.createElement(View)):React.createElement(View)};
+    await render();mockTailTiming.mockClear();mockTailCancel.mockClear();
+    const timing=jest.spyOn(Animated,'timing');
+    try{
+      for(const growth of [60,88,360,620]){
+        height+=growth;props={...props,messages:[...props.messages,{...message(props.messages.length+1,nextDate),text:'New answer'}]};
+        await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+        await act(async()=>mockFlashProps.onCommitLayoutEffect());
+        expect(screen!.root.findAllByType(HelpMessageArrival).filter(item=>item.props.identity.startsWith('message:')).at(-1)!.props.distance).toBe(0);
+      }
+      height+=180;await act(async()=>mockFlashProps.onContentSizeChange(390,height));
+      expect(mockTailTiming).not.toHaveBeenCalled();expect(mockTailCancel).not.toHaveBeenCalled();expect(timing).not.toHaveBeenCalled();
+      expect(mockFlashProps.CellRendererComponent).toBeDefined();
+    }finally{timing.mockRestore();}
+  });
+  test('native cell identity survives an optimistic receipt and preserves FlashList measurement props',async()=>{
+    mockNativeChatLayout=true;mockNativeAtomicTailMotion=true;
+    const pending={key:'native-receipt',ticketId:7,create:false,createdAt:Date.parse(nextDate),status:'sending' as const,input:{text:'Photo',clientMessageId:'native-receipt'}};
+    props={...props,pendingMessages:[pending],renderPending:()=>React.createElement(View)};
+    await render();
+    const Cell=mockFlashProps.CellRendererComponent,index=mockFlashProps.data.length-1,onLayout=jest.fn(),cellRef=React.createRef<View>();
+    let cell!:TestRenderer.ReactTestRenderer;
+    await act(async()=>{cell=TestRenderer.create(React.createElement(Cell,{index,onLayout,ref:cellRef,style:{top:345},children:React.createElement(View,{testID:'child'})}));});
+    try{
+      const native=()=>cell.root.findByType(View).props;
+      expect(native().nativeID).toBe('timeline-test:cell:client:native-receipt');expect(native().onLayout).toBe(onLayout);expect(native().style).toEqual({top:345});expect(native().collapsable).toBe(false);
+      props={...props,pendingMessages:[],messages:[...props.messages,{...message(3,nextDate),clientMessageId:pending.key}]};
+      await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+      expect(mockFlashProps.CellRendererComponent).toBe(Cell);
+      await act(async()=>cell.update(React.createElement(Cell,{index,onLayout,ref:cellRef,style:{top:345}})));
+      expect(native().nativeID).toBe('timeline-test:cell:client:native-receipt');
+    }finally{await act(async()=>cell.unmount());}
+  });
+  test('atomic native first insertion is visible immediately without a deferred JS arrival',async()=>{
+    mockReducedMotion=false;mockNativeChatLayout=true;mockNativeAtomicTailMotion=true;
+    props={...props,messages:[],bottomAligned:true};await render();
+    const timing=jest.spyOn(Animated,'timing');
+    try{
+      props={...props,messages:[message(1,nextDate)]};
+      await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+      const arrival=screen!.root.findByType(HelpMessageArrival);
+      expect(arrival.props.deferred).toBe(false);expect(arrival.props.distance).toBe(0);
+      expect(timing.mock.calls.some(([,config])=>config.duration===220&&config.toValue===1)).toBe(false);
+    }finally{timing.mockRestore();}
   });
   test('appending a short native history animates its older rows with the arriving row',async()=>{
     mockReducedMotion=false;mockNativeChatLayout=true;props={...props,bottomAligned:true};
@@ -436,6 +486,17 @@ describe('sticky date geometry and navigation integration',()=>{
     expect(mockListApi.scrollToIndex).not.toHaveBeenCalled();
     expect(mockListApi.scrollToOffset).toHaveBeenLastCalledWith({offset:259,animated:false,skipFirstItemOffset:true});
     expect(props.onReady).toHaveBeenCalled();
+  });
+  test('opening measures the visible window before expanding offscreen work after the entrance',async()=>{
+    props={...props,entrySettled:false,onReady:jest.fn(),navigationTarget:{key:190,kind:'anchor',messageId:2,sequence:2,offset:5,animate:false}};
+    mockListApi.scrollToOffset.mockImplementation(({offset}:any)=>{mockListApi.getAbsoluteLastScrollOffset=()=>offset;});
+    await render();
+    expect(mockFlashProps.drawDistance).toBe(320);
+    await act(async()=>jest.advanceTimersByTimeAsync(80));
+    expect(props.onReady).toHaveBeenCalled();
+    expect(mockFlashProps.drawDistance).toBe(320);
+    props={...props,entrySettled:true};await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    expect(mockFlashProps.drawDistance).toBeGreaterThanOrEqual(1200);
   });
   test('initial positioning keeps estimates hidden and owns the anchor until measured rows stop changing',async()=>{
     props={...props,onReady:jest.fn(),navigationTarget:{key:92,kind:'anchor',messageId:2,sequence:2,offset:5,animate:false}};

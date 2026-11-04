@@ -1,4 +1,4 @@
-import { useContext, useEffect, useRef } from 'react';
+import React, { useContext, useEffect, useRef } from 'react';
 import { AppState, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { AuthContext } from '@/context/AuthContext';
@@ -15,6 +15,7 @@ import { subscribeHelpPushReceived, type HelpPushNotice } from './helpNotificati
 import { helpNotificationRoute } from './helpNotificationPolicy';
 import { helpAssistantAvatarColor, helpHasAssistantAvatar } from './helpAssistant';
 import { useHelpTheme } from './helpTheme';
+import { HelpAiIcon } from './components/HelpAiIcon';
 
 export function HelpNotificationsBridge() {
   const auth=useContext(AuthContext),router=useRouter(),notify=useNotify(),colors=useHelpTheme();
@@ -53,7 +54,7 @@ export function HelpNotificationsBridge() {
         if(!record&&repaired){await account.syncTicket(notice.ticketId);record=await readHistoryRecord(helpHistoryScope(userId),notice.ticketId);}
         if(!record){
           if(notice.recipientUserId!==userId||!notice.body&&!notice.preview)return;const c=colorsRef.current;
-          notify({id:`help:${userId}:${eventId}`,variant:'message',groupKey:`help:${userId}:${notice.ticketId}`,title:notice.ticketTitle||notice.title||'Помощь',message:notice.preview||notice.body||'Новое сообщение',icon:notice.assistant?'hardware-chip-outline':'headset-outline',avatarColor:notice.assistant?helpAssistantAvatarColor(notice.ticketId):c.accent,backgroundColor:c.surface,textColor:c.text,borderColor:c.line,durationMs:5200,dismissKeys:[`help:${userId}`,`help:${userId}:${notice.ticketId}`],onPresented:()=>{if(!alive)return;remember(eventId);void markHelpNotificationPresented(userId,eventId).then(()=>{if(alive)acknowledgeHelpEvent(userId,eventId,'banner');}).catch(()=>{});},onPress:()=>{if(alive)router.push({pathname:'/services/help',params:{ticketId:String(notice.ticketId),...(notice.messageId?{messageId:String(notice.messageId)}:{}),eventId:String(eventId)}} as any);}});return;
+          notify({id:`help:${userId}:${eventId}`,variant:'message',groupKey:`help:${userId}:${notice.ticketId}`,title:notice.ticketTitle||notice.title||'Помощь',message:notice.preview||notice.body||'Новое сообщение',icon:notice.assistant?'':'headset-outline',avatarContent:notice.assistant?<HelpAiIcon size={25}/>:null,avatarColor:notice.assistant?helpAssistantAvatarColor(notice.ticketId):c.accent,backgroundColor:c.surface,textColor:c.text,borderColor:c.line,durationMs:5200,dismissKeys:[`help:${userId}`,`help:${userId}:${notice.ticketId}`],onPresented:()=>{if(!alive)return;remember(eventId);void markHelpNotificationPresented(userId,eventId).then(()=>{if(alive)acknowledgeHelpEvent(userId,eventId,'banner');}).catch(()=>{});},onPress:()=>{if(alive)router.push({pathname:'/services/help',params:{ticketId:String(notice.ticketId),...(notice.messageId?{messageId:String(notice.messageId)}:{}),eventId:String(eventId)}} as any);}});return;
         }
         let message=notice.messageId?await readCachedHelpMessage(userId,notice.ticketId,notice.messageId):record.ticket.lastMessage;
         if(notice.messageId&&!message&&repaired){const page=await api.messages(notice.ticketId,{aroundMessageId:notice.messageId});await cacheHelpPage(userId,record.ticket,page);message=page.messages.find(row=>row.id===notice.messageId)??null;}
@@ -64,7 +65,7 @@ export function HelpNotificationsBridge() {
         const c=colorsRef.current;
         notify({id:`help:${userId}:${eventId}`,variant:'message',groupKey:`help:${userId}:${ticket.id}`,title:ticket.title,
           message:message?.text||notice.preview||notice.body||(message?.attachments?.length?'Новое вложение':'Новое сообщение'),
-          icon:assistant?'hardware-chip-outline':'headset-outline',avatarUrl:assistant?undefined:member?.user.avatarUrl||undefined,
+          icon:assistant?'':'headset-outline',avatarContent:assistant?<HelpAiIcon size={25}/>:null,avatarUrl:assistant?undefined:member?.user.avatarUrl||undefined,
           avatarColor:assistant?helpAssistantAvatarColor(ticket.id):c.accent,backgroundColor:c.surface,textColor:c.text,borderColor:c.line,
           durationMs:5200,dismissKeys:[`help:${userId}`,`help:${userId}:${ticket.id}`],
           onPresented:()=>{if(!alive)return;remember(eventId);void markHelpNotificationPresented(userId,eventId).then(()=>{if(alive)acknowledgeHelpEvent(userId,eventId,'banner');}).catch(()=>{});},

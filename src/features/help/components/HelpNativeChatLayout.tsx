@@ -3,9 +3,11 @@ import {Platform} from 'react-native';
 import {requireNativeViewManager, requireOptionalNativeModule} from 'expo-modules-core';
 import {helpDevActions, helpDevProbe} from '../helpDiagnostics';
 import {useHelpReducedMotion} from '../helpTheme';
+import {HELP_TAIL_MOTION} from '../helpTailMotion';
 
 const layoutModule = Platform.OS === 'android' ? requireOptionalNativeModule('LeaderHelpChatLayout') : null;
 export const hasNativeChatLayout = Boolean(layoutModule);
+export const hasNativeAtomicTailMotion = (layoutModule?.tailMotionVersion ?? 0) >= 3;
 export const hasNativeStableImeLayout = (layoutModule?.imeInsetsVersion ?? 0) >= 4;
 export const hasNativeImeLayout = (layoutModule?.imeInsetsVersion ?? 0) >= 2;
 export const hasNativeDockControls = (layoutModule?.dockControlsVersion ?? 0) >= 1;
@@ -19,5 +21,5 @@ export function HelpNativeChatLayout({scrollId, dockId, controlsId, viewportId, 
   // Keep message pixels beneath the header/dock glass. Native viewport clipping
   // at the composer's top removes the very capture the bottom BlurView needs.
   // Scroll padding, tail following and read occlusion still use the dock bounds.
-  return NativeLayout ? <NativeLayout ref={ref} scrollId={scrollId} dockId={dockId} {...(hasNativeDockControls?{controlsId:controlsId??''}:{})} allowFollow={allowFollow} {...(layoutModule?.tailMotionVersion ? {reducedMotion:reducedMotion||!animateTail} : {})} {...(layoutModule?.imeInsetsVersion ? {viewportId:'',onImeInsetChange:(event:any)=>onImeInsetChange?.(event.nativeEvent.inset)} : {})} {...((layoutModule?.imeInsetsVersion??0)>=3?{manageIme}:{})} pointerEvents="none" accessible={false} style={{position:'absolute',width:0,height:0}}/> : null;
+  return NativeLayout ? <NativeLayout ref={ref} scrollId={scrollId} dockId={dockId} {...(hasNativeDockControls?{controlsId:controlsId??''}:{})} allowFollow={allowFollow} {...(layoutModule?.tailMotionVersion ? {reducedMotion:reducedMotion||!animateTail} : {})} {...(hasNativeAtomicTailMotion?{tailMotionConfig:HELP_TAIL_MOTION}:{})} {...(layoutModule?.imeInsetsVersion ? {viewportId:'',onImeInsetChange:(event:any)=>onImeInsetChange?.(event.nativeEvent.inset)} : {})} {...((layoutModule?.imeInsetsVersion??0)>=3?{manageIme}:{})} pointerEvents="none" accessible={false} style={{position:'absolute',width:0,height:0}}/> : null;
 }
