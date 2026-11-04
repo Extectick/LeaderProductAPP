@@ -3,7 +3,11 @@ import type { HelpHistoryPage, HelpHistoryRange, HelpNavigationTarget, HelpViewp
 
 export function mergeHelpMessages(previous: HelpMessage[], incoming: HelpMessage[]) {
   const messages = new Map(previous.map(message => [message.id, message]));
-  incoming.forEach(message => messages.set(message.id, message));
+  incoming.forEach(message => {
+    const previous=messages.get(message.id);
+    if(previous?.assistantRun&&message.assistantRun&&message.assistantRun.eventId<previous.assistantRun.eventId)return;
+    messages.set(message.id, message);
+  });
   return [...messages.values()].sort((a, b) => a.sequence - b.sequence);
 }
 

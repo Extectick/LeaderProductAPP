@@ -3,7 +3,7 @@ jest.mock('@react-native-async-storage/async-storage',()=>{
   return {getItem:jest.fn(async(key:string)=>values.get(key)??null),setItem:jest.fn(async(key:string,value:string)=>{values.set(key,value);}),removeItem:jest.fn(async(key:string)=>{values.delete(key);}),clear:jest.fn(async()=>values.clear()),getAllKeys:jest.fn(async()=>[...values.keys()]),multiGet:jest.fn(async(keys:string[])=>keys.map(key=>[key,values.get(key)??null]))};
 });
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { initialHelpPosition, mergeHelpRanges, reconcileHelpWindow, trimHelpWindow } from '../src/features/help/helpHistoryModel';
+import { initialHelpPosition, mergeHelpMessages, mergeHelpRanges, reconcileHelpWindow, trimHelpWindow } from '../src/features/help/helpHistoryModel';
 import { readHistoryMessages,readHistoryRecord,removeHistoryTicket,writeHistoryChange } from '../src/features/help/helpHistoryDatabase.web';
 import type { HelpMessage,HelpTicket } from '../src/features/help/helpApi';
 import type { HelpHistoryPage,HelpSyncResult } from '../src/features/help/helpHistoryTypes';
@@ -50,6 +50,17 @@ test('slow older snapshots cannot undo edits or resurrect tombstoned messages',a
   await writeHistoryChange('dev:1',7,{sync:sync({messages:[message(1,'edited')],deletedMessageIds:[2]})});
   await writeHistoryChange('dev:1',7,{ticket,page:page(1,3,11)});
   expect((await readHistoryMessages('dev:1',7,1,3)).map(row=>[row.id,row.text])).toEqual([[1,'edited'],[3,'message 3']]);
+});
+
+test('an older assistant snapshot cannot rewind a completed stream or replace persisted analysis',async()=>{
+  const run={runId:'ai-1',eventId:30,ticketId:7,status:'completed' as const,step:4,completedSteps:4,startedAt:1,updatedAt:30,activityVersion:1 as const,activities:[{id:'a',kind:'analysis' as const,label:'Анализ',status:'completed' as const,text:'Проверка завершена'}]};
+  const final={...message(2,'Ответ'),assistantRun:run};
+  const stale={...final,text:'',assistantRun:{...run,eventId:20,status:'thinking' as const,activities:[]}};
+  expect(mergeHelpMessages([final],[stale])[0]).toBe(final);
+  await writeHistoryChange('dev:1',7,{ticket,page:page(1,3)});
+  await writeHistoryChange('dev:1',7,{sync:sync({messages:[final],snapshotCursor:30,nextCursor:30})});
+  await writeHistoryChange('dev:1',7,{ticket,page:{...page(1,3,20),messages:[stale]}});
+  expect((await readHistoryMessages('dev:1',7,2,2))[0]).toMatchObject(final);
 });
 test('concurrent anchor save and replay retain both cursor and exact offset',async()=>{
   await writeHistoryChange('dev:1',7,{ticket,page:page(1,3)});

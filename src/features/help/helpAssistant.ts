@@ -14,7 +14,32 @@ export type HelpAssistantRun = {
   stopReason?: 'user' | 'superseded';
   action?: { type: 'connect_onec'; baseKey?: string };
   scenario?: HelpAssistantScenario;
+  activityVersion?: 1;
+  activities?: HelpAssistantActivity[];
+  phase?: string;
+  draftText?: string;
+  error?: string;
+  retryAt?: number;
+  suggestions?: string[];
+  metrics?: { startedAt: number; elapsedMs: number; firstAnalysisMs?: number; firstTokenMs?: number };
+  generation?: { model: string; decision: string; usage?: { inputTokens: number; outputTokens: number; totalTokens: number; reasoningTokens?: number } | null };
 };
+export type HelpAssistantActivity = {
+  id: string; kind: 'analysis' | 'knowledge' | 'tool' | 'status'; label: string;
+  status: 'running' | 'completed' | 'failed' | 'stopped'; text?: string;
+  startedAt?: number; completedAt?: number;
+};
+
+export function helpAssistantPhaseLabel(run: HelpAssistantRun) {
+  if (run.phase === 'retrying') return 'Восстанавливаю связь с ИИ';
+  if (run.phase === 'queued') return 'Запрос принят';
+  if (run.phase === 'knowledge') return 'Ищу инструкции';
+  if (run.phase === 'connecting') return 'Подключаюсь к ИИ';
+  if (run.phase === 'tool') return 'Проверяю данные в 1С';
+  if (run.phase === 'validating') return 'Проверяю ответ';
+  if (run.phase === 'answer' || run.status === 'streaming') return 'Подготавливаю ответ';
+  return 'Анализирую задачу';
+}
 export type HelpAssistantPreview = {
   scenario: HelpAssistantScenario;
   setScenario: (scenario: HelpAssistantScenario) => void;

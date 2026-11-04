@@ -38,7 +38,14 @@ export class FixtureAssistant {
     if(resume){job.run={...resume.run,updatedAt:now,scenario};job.text=resume.text;}
     this.jobs.set(ticketId, job);
     const publish = () => {
-      job.run = { ...job.run, eventId: job.run.eventId + 1, updatedAt: Date.now() };
+      const active=job.run.status==='thinking'||job.run.status==='streaming';
+      job.run = { ...job.run, eventId: job.run.eventId + 1, updatedAt: Date.now(), activityVersion:1,
+        phase:job.run.step===0?'queued':job.run.step===1?'knowledge':job.run.step===2?'analysis':'answer',
+        metrics:{startedAt:job.run.startedAt,elapsedMs:Date.now()-job.run.startedAt},
+        ...(scenario==='question'&&job.run.status==='completed'?{suggestions:['После входа','При открытии документа','При печати']}:{}),
+        activities:job.run.step===0?[]:[{id:'knowledge',kind:'knowledge',label:job.run.step===1?'Ищу инструкции компании':'Проверены доступные инструкции',status:job.run.step===1&&active?'running':'completed'},
+          ...(job.run.step>=2?[{id:'analysis',kind:'analysis' as const,label:'Кратко об анализе',status:active?'running' as const:'completed' as const,text:'Сначала уточню, на каком шаге возникла проблема, и предложу безопасную проверку. Если её недостаточно, подключим специалиста IT.'}]:[])],
+      };
       emit({ ...job.run }, job.text);
     };
     const schedule = (work: () => void, ms: number) => { job.timer = setTimeout(() => { if (this.jobs.get(ticketId) === job) work(); }, ms); };

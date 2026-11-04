@@ -63,3 +63,28 @@ test('live AI steps, completion marks and first answer animate with stable ident
     expect(view.root.findByType(HelpMessageArrival)).toBe(first);
   }finally{await act(async()=>view.unmount());}
 });
+
+test('real activity streams before the answer, retains analysis after completion and submits a suggestion once',async()=>{
+  let view!:TestRenderer.ReactTestRenderer;const reply=jest.fn();
+  const activity={id:'analysis',kind:'analysis' as const,label:'Кратко об анализе',status:'running' as const,text:'Проверю подключение.'};
+  const message={...base,assistantRun:{...base.assistantRun!,activityVersion:1 as const,phase:'analysis',activities:[activity]}};
+  await act(async()=>{view=TestRenderer.create(React.createElement(HelpAssistantMessage,{message,onSuggestion:reply}));});
+  const texts=()=>JSON.stringify(view.toJSON());
+  try{
+    expect(texts()).toContain('Проверю подключение.');expect(texts()).not.toContain('Изучаю описание проблемы');
+    const partial={...message,assistantRun:{...message.assistantRun,status:'streaming' as const,draftText:'Откройте настройки.'}};
+    await act(async()=>view.update(React.createElement(HelpAssistantMessage,{message:partial,onSuggestion:reply})));
+    expect(texts()).toContain('Откройте настройки.');
+    const stopped={...partial,assistantRun:{...partial.assistantRun,status:'stopped' as const,stopReason:'user' as const}};
+    await act(async()=>view.update(React.createElement(HelpAssistantMessage,{message:stopped,onSuggestion:reply})));
+    expect(texts()).toContain('Незавершённый ответ');expect(texts()).toContain('Откройте настройки.');
+    const complete={...partial,text:'Откройте настройки.',assistantRun:{...partial.assistantRun,status:'completed' as const,suggestions:['Windows 11','Windows 10']}};
+    await act(async()=>view.update(React.createElement(HelpAssistantMessage,{message:complete,onSuggestion:reply})));
+    expect(texts()).not.toContain('Формируется ответ');
+    await act(async()=>view.root.findAll(node=>node.props.accessibilityLabel==='Показать ход анализа')[0].props.onPress());
+    expect(texts()).toContain('Проверю подключение.');
+    const option=view.root.findByProps({testID:'help-ai-suggestions'}).findAll(node=>node.props.accessibilityRole==='button')[0];
+    await act(async()=>{option.props.onPress();option.props.onPress();});
+    expect(reply).toHaveBeenCalledTimes(1);expect(reply).toHaveBeenCalledWith('Windows 11');
+  }finally{await act(async()=>view.unmount());}
+});
