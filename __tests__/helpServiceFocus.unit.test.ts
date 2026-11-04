@@ -14,6 +14,9 @@ const mockApi={config:jest.fn(),list:jest.fn(),detail:jest.fn(),read:jest.fn(),s
 jest.mock('../src/features/help/helpApi',()=>({createHelpApi:()=>mockApi,HelpApiError:class extends Error {},loadHelpMedia:jest.fn(),uploadHelpFiles:jest.fn()}));
 jest.mock('../src/features/help/helpStorage',()=>({helpClientId:()=> 'qa-send',saveHelpPending:jest.fn(async()=>{}),readHelpPending:jest.fn(async()=>[]),readLastCreatedOperation:jest.fn(async()=>null),subscribeHelpOutbox:jest.fn(()=>()=>{}),getHelpDraft:jest.fn(),setHelpDraft:jest.fn()}));
 jest.mock('../src/features/help/helpHistory',()=>({
+  // Metadata-only reconciliation shares the fixture record, without changing
+  // the history/coverage scenarios exercised below.
+  readCachedHelpRecord:jest.fn(async(...args:unknown[])=>(await require('../src/features/help/helpHistory').readCachedHelpTicket(...args))?.record??null),
   readCachedHelpTickets:jest.fn(async()=>[]),readCachedHelpTicket:jest.fn(async()=>null),cacheHelpTickets:jest.fn(async()=>{}),cacheHelpPage:jest.fn(async()=>{}),cacheHelpSync:jest.fn(async()=>{}),forgetHelpTicket:jest.fn(async()=>{}),saveHelpViewport:jest.fn(async()=>{}),readCachedHelpMessage:jest.fn(async()=>null),readCachedHelpRange:jest.fn(async()=>[{id:1,ticketId:7,sequence:1}]),
 }));
 import { useHelpService } from '../src/features/help/useHelpService';
