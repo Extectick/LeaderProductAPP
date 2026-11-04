@@ -6,16 +6,19 @@ const mockSocket={connected:true,on:jest.fn((event:string,fn:Function)=>{mockHan
 const mockDisconnect=jest.fn();
 jest.mock('../src/features/help/helpSocket',()=>({createHelpSocket:(_id:number,ready:Function)=>{mockReady=ready;Promise.resolve().then(()=>{ready(mockSocket);mockHandlers.connect?.();});return{getSocket:()=>mockSocket,disconnect:mockDisconnect};}}));
 let mockCursor=0,mockCommitFailure=false;
-const mockWrite=jest.fn(async(_scope:string,_changes:any[],cursor?:number)=>{if(mockCommitFailure)throw new Error('Disk failure');if(cursor!==undefined)mockCursor=cursor;});
-jest.mock('../src/features/help/helpHistoryDatabase',()=>({readAccountValue:async()=>String(mockCursor),writeAccountChanges:(...args:any[])=>mockWrite(...args),readHistoryRecord:async()=>null,listHistoryRecords:async()=>[],removeHistoryTicket:async()=>{},resetHelpDownloadedState:async()=>{},maintainHelpHistory:async()=>({removedMessages:0,evictedTickets:0})}));
+let mockWriteGate:((changes:any[],cursor?:number)=>Promise<void>)|null=null;
+const mockWrite=jest.fn(async(_scope:string,changes:any[],cursor?:number)=>{if(mockCommitFailure)throw new Error('Disk failure');await mockWriteGate?.(changes,cursor);if(cursor!==undefined)mockCursor=cursor;});
+const mockRemove=jest.fn(async()=>{});
+jest.mock('../src/features/help/helpHistoryDatabase',()=>({readAccountValue:async()=>String(mockCursor),writeAccountChanges:(...args:any[])=>mockWrite(...args),readHistoryRecord:async()=>null,listHistoryRecords:async()=>[],removeHistoryTicket:(...args:any[])=>mockRemove(...args),resetHelpDownloadedState:async()=>{},maintainHelpHistory:async()=>({removedMessages:0,evictedTickets:0})}));
 jest.mock('../src/features/help/helpStorage',()=>({readHelpPending:async()=>[],helpClientId:()=>Math.random().toString()}));
 jest.mock('../src/features/help/helpOutbox',()=>({dispatchHelpPending:jest.fn()}));
 const mockApi={events:jest.fn(),sync:jest.fn(),config:jest.fn(),list:jest.fn()};
 jest.mock('../src/features/help/helpApi',()=>({createHelpApi:()=>mockApi,HelpApiError:class extends Error{status:number;constructor(message:string,status:number){super(message);this.status=status;}}}));
 import {acquireHelpAccount} from '../src/features/help/helpAccountSync';
+import {HelpApiError} from '../src/features/help/helpApi';
 const event={id:10,ticketId:7,messageId:1,type:'MESSAGE_CREATED',actorId:9,createdAt:new Date().toISOString()};
 const result={ticket:{id:7},messages:[],events:[event],deletedMessageIds:[],nextCursor:10,eventCursor:10,snapshotCursor:10,hasMore:false,lastSequence:1,lastReadSequence:0,firstUnreadSequence:1};
-beforeEach(()=>{jest.useFakeTimers();mockCursor=0;mockCommitFailure=false;mockWrite.mockClear();mockDisconnect.mockClear();Object.keys(mockHandlers).forEach(k=>delete mockHandlers[k]);mockApi.events.mockReset().mockImplementation(async(after:number)=>({events:after<10?[event]:[],nextCursor:Math.max(after,10),hasMore:false}));mockApi.sync.mockReset().mockResolvedValue(result);});
+beforeEach(()=>{jest.useFakeTimers();mockCursor=0;mockCommitFailure=false;mockWriteGate=null;mockRemove.mockReset().mockResolvedValue(undefined);mockWrite.mockClear();mockDisconnect.mockClear();Object.keys(mockHandlers).forEach(k=>delete mockHandlers[k]);mockApi.events.mockReset().mockImplementation(async(after:number)=>({events:after<10?[event]:[],nextCursor:Math.max(after,10),hasMore:false}));mockApi.sync.mockReset().mockResolvedValue(result);});
 afterEach(()=>jest.useRealTimers());
 test('one account owns a single socket; historical replay persists but does not show startup banners',async()=>{
   const notices:any[]=[];const first=acquireHelpAccount(5,n=>notices.push(n)),second=acquireHelpAccount(5,n=>notices.push(n));
@@ -36,4 +39,37 @@ test('ticket requests share one in-flight sync and a fresh socket event is prese
     const latest={...event,id:11};mockApi.events.mockImplementation(async(after:number)=>({events:after<11?[latest]:[],nextCursor:11,hasMore:false}));
     mockHandlers['help:event'](latest);await connection.refresh();expect(mockCursor).toBe(11);expect(notices.filter(n=>n.type==='event').map(n=>n.event.id)).toEqual([11]);
   }finally{connection.release();}
+});
+
+test('replay writes each ticket page once and waits for the final durable page before its account cursor',async()=>{
+  const second={...event,id:11,ticketId:8};
+  mockApi.events.mockImplementation(async(after:number)=>({events:after<11?[event,second]:[],nextCursor:Math.max(after,11),hasMore:false}));
+  mockApi.sync.mockImplementation(async(id:number)=>({...result,ticket:{id},nextCursor:11,eventCursor:11}));
+  let release!:()=>void,entered!:()=>void;
+  const gate=new Promise<void>(resolve=>{release=resolve;}),started=new Promise<void>(resolve=>{entered=resolve;});
+  mockWriteGate=async changes=>{if(changes[0]?.ticketId===8){entered();await gate;}};
+  const connection=acquireHelpAccount(80,()=>{});
+  try{
+    const replay=connection.refresh();await started;
+    expect(mockCursor).toBe(0);
+    expect(mockWrite.mock.calls.filter(call=>call[2]!==undefined)).toHaveLength(0);
+    release();await replay;
+    expect(mockCursor).toBe(11);
+    expect(mockWrite.mock.calls.flatMap(call=>call[1]).map(change=>change.ticketId)).toEqual([7,8]);
+    expect(mockWrite.mock.calls.filter(call=>call[2]!==undefined).every(call=>call[1].length===0)).toBe(true);
+  }finally{release();connection.release();}
+});
+
+test('replay awaits revoked-ticket removal before advancing the account cursor',async()=>{
+  mockApi.sync.mockRejectedValue(new HelpApiError('Access revoked',403));
+  let release!:()=>void,entered!:()=>void;
+  const gate=new Promise<void>(resolve=>{release=resolve;}),started=new Promise<void>(resolve=>{entered=resolve;});
+  mockRemove.mockImplementation(async()=>{entered();await gate;});
+  const notices:any[]=[],connection=acquireHelpAccount(81,notice=>notices.push(notice));
+  try{
+    const replay=connection.refresh();await started;expect(mockCursor).toBe(0);
+    release();await replay;
+    expect(mockCursor).toBe(10);expect(notices).toContainEqual({type:'revoked',ticketId:7});
+    expect(mockWrite.mock.calls.every(call=>call[1].length===0)).toBe(true);
+  }finally{release();connection.release();}
 });

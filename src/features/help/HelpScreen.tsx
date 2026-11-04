@@ -221,13 +221,13 @@ export default function HelpScreen() {
   useEffect(() => { if (!active) return; const generation = ++draftGeneration.current; setFiles(fileDrafts.current.get(draftKey)??[]); if (restoredDraft.current?.key === draftKey) { setDraft(restoredDraft.current.text); restoredDraft.current = null; draftLoaded.current = true; return; } draftLoaded.current = false; setDraft(''); void Promise.all([service.getDraft(draftKey),fileDrafts.current.has(draftKey)?Promise.resolve(fileDrafts.current.get(draftKey)!):loadHelpAttachmentDraft(service.userId,draftKey)]).then(([value,attachments]) => { if (generation === draftGeneration.current) { setDraft(value); setFiles(attachments); fileDrafts.current.set(draftKey,attachments); draftLoaded.current = true; } }).catch(() => { if (generation === draftGeneration.current) draftLoaded.current = true; }); return () => { ++draftGeneration.current; }; }, [draftKey, service.userId]);
   useEffect(() => { if (!active || mode !== 'message' || !draftLoaded.current) return; const revision=draftRevisions.current.get(draftKey)??0;const timer = setTimeout(() => { if((draftRevisions.current.get(draftKey)??0)===revision&&sentDraftRevisions.current.get(draftKey)!==revision)void service.setDraft(draftKey, draft); }, 250); return () => clearTimeout(timer); }, [draft, active, mode, draftKey, service.setDraft]);
   useEffect(() => { if (active === null && service.tickets.length && !order.length) setOrder(stableHelpOrder(service.tickets, []).map(t => t.id)); }, [service.tickets, active, order.length]);
-  const listQueryRequest=useRef<typeof service.loadTickets|null>(null);
+  const listQueryRequest=useRef<{load:typeof service.loadTickets;key:string}|null>(null);
   useEffect(() => {
-    const previous=listQueryRequest.current;
-    listQueryRequest.current=service.loadTickets;
+    const key=JSON.stringify([filter,scope,search.trim()]),previous=listQueryRequest.current;
+    listQueryRequest.current={load:service.loadTickets,key};
     // useHelpService already loads the default list on mount/account change.
     // Only filter/search changes belong to this debounced request.
-    if((!previous||previous!==service.loadTickets)&&filter==='OPEN'&&scope==='mine'&&!search.trim())return;
+    if((!previous||previous.load!==service.loadTickets||previous.key===key)&&filter==='OPEN'&&scope==='mine'&&!search.trim())return;
     const timer=setTimeout(()=>{setOrder([]);void service.loadTickets(filter,scope,false,search.trim());},250);
     return()=>clearTimeout(timer);
   },[search,filter,scope,service.loadTickets]);
@@ -269,7 +269,7 @@ export default function HelpScreen() {
   useFocusEffect(useCallback(() => { return () => { if (typeof active === 'number') service.emitTyping(active, false); }; }, [active, service.emitTyping]));
 
   useEffect(() => helpDevActions('screen', {
-    'screen.back': () => back(), 'screen.list': () => list(), 'screen.new': () => newTicket(),
+    'screen.back': () => back(), 'screen.list': () => list(), 'screen.new': () => newTicket(), 'screen.send': () => submit(),
     'screen.open': value => { const id=Number(value); if(Number.isSafeInteger(id)&&id>0)return open(id); },
     'screen.search': value => { if(typeof value==='string')setSearch(value); },
     'screen.chatSearch': value => {if(typeof value==='string'){setChatSearchOpen(true);setChatSearchQuery(value);}},

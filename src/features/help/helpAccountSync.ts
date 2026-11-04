@@ -158,21 +158,18 @@ function createAccount(userId: number) {
                             }
                     }
                     const ids = [...new Set(result.events.map(event => event.ticketId))];
-                    const changes: {
-                        ticketId: number;
-                        change: HelpHistoryChange;
-                    }[] = [];
-                    for (const id of ids) {
-                        for (const change of await syncTicket(id))
-                            changes.push({ ticketId: id, change });
-                    }
+                    for (const id of ids)
+                        await syncTicket(id);
                     if (!valid())
                         return;
                     const next = result.resyncRequired ? (result.snapshotCursor ?? result.nextCursor) : result.nextCursor;
                     if (!result.resyncRequired && next < cursor || result.hasMore && next === cursor)
                         throw new Error('Некорректный курсор списка обращений');
-                    // Account cursor cannot commit ahead of any corresponding ticket data.
-                    await writeAccountChanges(scope, changes, next, undefined, Boolean(result.resyncRequired));
+                    // syncTicket already durably commits every page (and awaits
+                    // revoked-ticket removal). Advance only after all succeed;
+                    // a crash before this commit replays idempotently. Rewriting
+                    // those pages here doubled SQLite work for every event batch.
+                    await writeAccountChanges(scope, [], next, undefined, Boolean(result.resyncRequired));
                     emit({type:'healthy'});
                     for (const event of result.events)
                         if (liveEvents.delete(event.id))

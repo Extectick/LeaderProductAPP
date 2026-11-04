@@ -88,6 +88,7 @@ export function createHelpApi(expectedUserId?: number) {
   config: () => helpRequest<HelpConfig>('/config'),
   list: (status: string, scope: string, cursor?: string | number, query = '') => helpRequest<{ tickets: HelpTicket[]; nextCursor: string | number | null }>(`/tickets?status=${status}&scope=${scope}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${query ? `&q=${encodeURIComponent(query)}` : ''}`),
   detail: (id: number) => helpRequest<HelpDetail>(`/tickets/${id}`),
+  summaries: (ids:number[]) => helpRequest<{tickets:HelpTicket[]}>('/tickets/summaries','POST',{ids}),
   messages: (id: number, query: HelpHistoryQuery | number = {}) => {
     const options = typeof query === 'number' ? {before:query} : query;
     const params = new URLSearchParams({limit:String(options.limit ?? 100)});

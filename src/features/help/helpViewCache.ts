@@ -3,11 +3,21 @@ import type { HelpHistoryPage, HelpViewportAnchor } from './helpHistoryTypes';
 
 export type HelpViewWindow = {ticket: HelpTicket; page: HelpHistoryPage; anchor: HelpViewportAnchor | null};
 type ViewCache = {lists: Map<string, HelpTicket[]>; windows: Map<number, HelpViewWindow>};
+/** Search strings create separate list snapshots; keep typing from retaining
+ * an unbounded number of full ticket/member/thumbnail graphs. Existing entries
+ * keep their order so updating a list while iterating cannot revisit it. */
+class HelpListSnapshots extends Map<string, HelpTicket[]> {
+  override set(key:string,value:HelpTicket[]) {
+    super.set(key,value);
+    if(this.size>24)this.delete(this.keys().next().value!);
+    return this;
+  }
+}
 const scopes = new Map<string, ViewCache>();
 export const helpListCacheKey = (status: string, scope: string, query = '') => JSON.stringify([status,scope,query]);
 export function helpViewCache(identity: string): ViewCache {
   let cache = scopes.get(identity);
-  if (!cache) { cache = {lists:new Map(),windows:new Map()}; scopes.set(identity,cache); }
+  if (!cache) { cache = {lists:new HelpListSnapshots(),windows:new Map()}; scopes.set(identity,cache); }
   if (scopes.size > 8) scopes.delete(scopes.keys().next().value!);
   return cache;
 }

@@ -2,7 +2,7 @@ import * as SQLite from 'expo-sqlite';
 import { assertSQLiteAvailable, manageSQLiteConnection, withSQLiteActivity } from '@/src/shared/storage/sqliteLifecycle';
 import { withSQLiteWriteTransaction } from '@/src/shared/storage/sqliteWriteQueue';
 import type { HelpMessage } from './helpApi';
-import type { HelpHistoryRecord } from './helpHistoryTypes';
+import type { HelpHistoryRecord, HelpHistoryWindowSelector } from './helpHistoryTypes';
 import type { HelpPending } from './helpDurableTypes';
 import { updateHelpHistoryRecord, type HelpHistoryChange } from './helpHistoryRecord';
 function parseRecord(raw:string):HelpHistoryRecord|null {
@@ -67,10 +67,10 @@ async function database() {
     return opening;
 }
 export async function readHistoryRecord(scope: string, ticketId: number): Promise<HelpHistoryRecord | null> {
-    const row = await (await database()).getFirstAsync<{
-        data: string;
-    }>('SELECT data FROM help_history_tickets WHERE scope=? AND ticket_id=?', scope, ticketId);
-    return row ? parseRecord(row.data) : null;
+    return withHistoryReadSnapshot(async tx=>{
+        const row=await tx.getFirstAsync<{data:string}>('SELECT data FROM help_history_tickets WHERE scope=? AND ticket_id=?',scope,ticketId);
+        return row?parseRecord(row.data):null;
+    });
 }
 export async function listHistoryRecords(scope: string): Promise<HelpHistoryRecord[]> {
     const rows = await (await database()).getAllAsync<{
@@ -100,9 +100,13 @@ async function applyChange(tx: SQLite.SQLiteDatabase, scope: string, ticketId: n
     if (!record)
         return;
     const version = change.sync?.snapshotCursor ?? change.sync?.eventCursor ?? change.page?.snapshotCursor ?? change.page?.eventCursor ?? 0;
-    for (const message of change.sync?.messages ?? change.page?.messages ?? []) {
-        await tx.runAsync(`INSERT INTO help_history_messages(scope,ticket_id,message_id,sequence,version,data) VALUES(?,?,?,?,?,?)
-        ON CONFLICT(scope,ticket_id,message_id) DO UPDATE SET sequence=excluded.sequence,version=excluded.version,data=excluded.data WHERE excluded.version>=help_history_messages.version`, scope, ticketId, message.id, message.sequence, version, JSON.stringify(message));
+    const messages=change.sync?.messages ?? change.page?.messages ?? [];
+    // 100 rows / 600 parameters also fit older SQLite variable limits. One
+    // bridge call per page, with the same version guard and enclosing transaction.
+    for (let start=0;start<messages.length;start+=100) {
+        const batch=messages.slice(start,start+100);
+        await tx.runAsync(`INSERT INTO help_history_messages(scope,ticket_id,message_id,sequence,version,data) VALUES ${batch.map(()=>'(?,?,?,?,?,?)').join(',')}
+        ON CONFLICT(scope,ticket_id,message_id) DO UPDATE SET sequence=excluded.sequence,version=excluded.version,data=excluded.data WHERE excluded.version>=help_history_messages.version`, ...batch.flatMap(message=>[scope,ticketId,message.id,message.sequence,version,JSON.stringify(message)]));
     }
     // Keep a versioned tombstone so a slower old page cannot resurrect a deleted row.
     for (const id of change.sync?.deletedMessageIds ?? [])
@@ -136,7 +140,7 @@ export async function removeHistoryTicket(scope: string, ticketId: number) {
         await tx.runAsync('DELETE FROM help_history_tickets WHERE scope=? AND ticket_id=?', scope, ticketId);
     });
 }
-export async function readHistorySnapshot(scope: string, ticketId: number, sequence?: number): Promise<{
+export async function readHistorySnapshot(scope: string, ticketId: number, window?: HelpHistoryWindowSelector): Promise<{
     record: HelpHistoryRecord;
     messages: HelpMessage[];
 } | null> {
@@ -150,7 +154,7 @@ export async function readHistorySnapshot(scope: string, ticketId: number, seque
         }>('SELECT data FROM help_history_tickets WHERE scope=? AND ticket_id=?', scope, ticketId);
         if (!row)
             return;
-        const record=parseRecord(row.data);if(!record)return;const target=sequence??record.lastSequence;
+        const record=parseRecord(row.data);if(!record)return;const sequence=typeof window==='function'?window(record):window,target=sequence??record.lastSequence;
         const range = record.ranges.find(r => target >= r.from && target <= r.to) ?? (!sequence ? record.ranges.at(-1) : undefined);
         if (!range) {
             result = { record, messages: [] };

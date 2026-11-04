@@ -27,3 +27,14 @@ test('different null, missing and nested fields invalidate old rows',()=>{
   expect(shareHelpItems(previous,[{id:1,values:[1,2]}] as any)).not.toBe(previous);
   expect(shareHelpItems(previous,[{id:1,optional:null,values:[2,1]}])).not.toBe(previous);
 });
+
+test('search snapshots stay bounded and updates during invalidation cannot revisit entries',()=>{
+  const lists=helpViewCache('bounded-search:1').lists;
+  for(let n=0;n<100;n++)lists.set(`query:${n}`,[{id:n}] as any);
+  expect(lists.size).toBe(24);
+  expect(lists.has('query:0')).toBe(false);
+  expect(lists.has('query:99')).toBe(true);
+  let visited=0;
+  for(const [key,rows] of lists){if(++visited>24)throw new Error('revisited a cache entry');lists.set(key,rows.slice());}
+  expect(visited).toBe(24);
+});

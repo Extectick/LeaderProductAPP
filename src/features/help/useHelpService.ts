@@ -11,7 +11,7 @@ import { dispatchHelpPending } from './helpOutbox';
 import { useServerStatus } from '@/src/shared/network/useServerStatus';
 import { HelpApiError, createHelpApi, loadHelpMedia, uploadHelpFiles, type HelpTicket, type HelpMessage, type HelpDetail, type HelpCreateInput, type HelpMessageInput, type HelpCloseInput, type HelpAttachment, type HelpMediaSource, type HelpFile } from './helpApi';
 import { getHelpDraft, getHelpDrafts, setHelpDraft, helpClientId, readHelpPending, readLastCreatedOperation, subscribeHelpOutbox, saveHelpPending, removeHelpPending, sameHelpPayload } from './helpStorage';
-import { cacheHelpPage, cacheHelpSync, cacheHelpTickets, findCachedHelpDate, forgetHelpTicket, readCachedHelpMessage, readCachedHelpRange, readCachedHelpTicket, readCachedHelpTickets, saveHelpViewport } from './helpHistory';
+import { cacheHelpPage, cacheHelpSync, cacheHelpTickets, findCachedHelpDate, forgetHelpTicket, readCachedHelpMessage, readCachedHelpRange, readCachedHelpRecord, readCachedHelpTicket, readCachedHelpTickets, saveHelpViewport } from './helpHistory';
 import { initialHelpPosition, reconcileHelpWindow, trimHelpWindow, validHelpAnchor } from './helpHistoryModel';
 import type { HelpHistoryPage, HelpNavigationTarget, HelpViewportAnchor } from './helpHistoryTypes';
 import {isHelpConnectionIssue} from './helpConnectionState';
@@ -89,6 +89,7 @@ export function useHelpService(isFocused = true) {
   const media = useRef(new Map<string, Promise<HelpMediaSource>>());
   const typingTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const liveTicketRefresh = useRef<(id: number)=>Promise<void>>(async()=>{});
+  const revokeTicketRef = useRef<(id:number)=>Promise<void>>(async()=>{});
   const current = useCallback((scope: string) => mounted.current && identityRef.current === scope, []);
   const report = useCallback((e: unknown) => {if(isHelpConnectionIssue(e)){setConnectionIssue(true);return;}setError(e instanceof Error ? e.message : 'Не удалось выполнить действие');}, []);
   const reactionWork=useRef(new Map<string,{targets:Map<string,{mine:boolean;revision:number}>;chain:Promise<unknown>;base:HelpMessage['reactions']}>());
@@ -173,9 +174,31 @@ export function useHelpService(isFocused = true) {
         const known = new Set(result.tickets.map(t=>t.id));
         // A recently active older ticket can displace the window's last row. Recheck that
         // row's ACL/status before retaining it; never keep stale data after revoked access.
-        const displaced = await Promise.all(previous.filter(t=>!known.has(t.id)).map(async t=> {
-          try { return (await helpApi.detail(t.id)).ticket; } catch(e) { if(isAccessRevoked(e))await forgetHelpTicket(userId,t.id).catch(()=>{}); return null; }
-        }));
+        const missing=previous.filter(t=>!known.has(t.id)),displaced:HelpTicket[]=[];
+        for(let start=0;start<missing.length;start+=200){
+          if(!current(account)||generation!==listGeneration.current)return;
+          const ids=missing.slice(start,start+200).map(ticket=>ticket.id);
+          let summaries:HelpTicket[];
+          try{summaries=(await helpApi.summaries(ids)).tickets;}
+          catch(error){
+            // Older API installations can coexist with a newer app during rollout.
+            // Keep that fallback bounded instead of flooding the connection pool.
+            if(!(error instanceof HelpApiError)||error.status!==404)throw error;
+            summaries=[];
+            for(let offset=0;offset<ids.length;offset+=4){
+              if(!current(account)||generation!==listGeneration.current)return;
+              const batch=await Promise.all(ids.slice(offset,offset+4).map(async id=>{
+                try{return (await helpApi.detail(id)).ticket;}
+                catch(error){if(isAccessRevoked(error))return null;throw error;}
+              }));
+              summaries.push(...batch.filter((ticket):ticket is HelpTicket=>ticket!==null));
+            }
+          }
+          if(!current(account)||generation!==listGeneration.current)return;
+          const allowed=new Set(summaries.map(ticket=>ticket.id));
+          await Promise.all(ids.filter(id=>!allowed.has(id)).map(id=>revokeTicketRef.current(id)));
+          displaced.push(...summaries);
+        }
         result.tickets.push(...displaced.filter((t):t is HelpTicket=>!!t && t.status===status && (scope==='queue'||t.members.some(m=>m.userId===userId))));
       }
       if (!current(account) || generation !== listGeneration.current || mutation !== mutationGeneration.current) return;
@@ -194,9 +217,12 @@ export function useHelpService(isFocused = true) {
     setHasOlder(false);setHasNewer(false);setLoadingOlder(false);setLoadingNewer(false);setNavigationTarget(null);setFirstUnreadSequence(null);setLoading(false);
   },[updateMessages,rememberActive]);
   const revokeTicket=useCallback(async(id:number)=>{
+    if(!current(identity))return;
     if(activeId.current===id)clearSelection();forgetHelpView(identity,id);
-    await forgetHelpTicket(userId,id).catch(report);setTickets(old=>old.filter(ticket=>ticket.id!==id));
-  },[userId,identity,clearSelection,report]);
+    await forgetHelpTicket(userId,id).catch(error=>{if(current(identity))report(error);});
+    if(current(identity))setTickets(old=>old.filter(ticket=>ticket.id!==id));
+  },[userId,identity,clearSelection,report,current]);
+  revokeTicketRef.current=revokeTicket;
   const openTicket=useCallback(async(id:number,explicit?:{messageId?:number;sequence?:number})=>{
     const openedAt=Date.now();
     const traceData=(source:string)=>helpDevEvent('chat.open.cache',{ticketId:id,source,elapsedMs:Date.now()-openedAt,openedAt});
@@ -209,9 +235,10 @@ export function useHelpService(isFocused = true) {
     setHasOlder(false);setHasNewer(false);setLoadingOlder(false);setLoadingNewer(false);paging.current={older:false,newer:false};
     let fallbackDetail:HelpDetail|undefined;
     const valid=()=>current(account)&&generation===detailGeneration.current&&activeId.current===id;
-    if(hot&&(!hot.anchor||hot.anchor.atLatest||hot.page.messages.some(message=>message.sequence===hot.anchor!.sequence))&&(!explicit?.messageId||hot.page.messages.some(message=>message.id===explicit.messageId))&&(!explicit?.sequence||hot.page.messages.some(message=>message.sequence===explicit.sequence))){
+    const hotPosition=hot?initialHelpPosition(hot.anchor,hot.page.firstUnreadSequence,explicit):null;
+    if(hot&&hotPosition&&(!hotPosition.sequence||hot.page.messages.some(message=>message.sequence===hotPosition.sequence))&&(!hotPosition.messageId||hot.page.messages.some(message=>message.id===hotPosition.messageId))){
       selectedRef.current=hot.ticket;setSelectedTicket(hot.ticket);viewport.current=hot.anchor;applyPage(hot.page);
-      setFirstUnreadSequence(hot.page.firstUnreadSequence);issueNavigation(initialHelpPosition(hot.anchor,hot.page.firstUnreadSequence,explicit));setLoading(false);
+      setFirstUnreadSequence(hot.page.firstUnreadSequence);issueNavigation(hotPosition);setLoading(false);
       socketRef.current?.getSocket()?.emit('help:subscribe',{ticketId:id});void liveTicketRefresh.current(id).catch(error=>{if(valid())report(error);});
       traceData('memory');
       return {ticket:hot.ticket,...hot.page};
@@ -220,10 +247,9 @@ export function useHelpService(isFocused = true) {
       // SQLite may still be starting/replaying an outbox transaction. Give a
       // fast cache first chance, then fetch without holding the screen hostage.
       const storageBudget=server.isReachable?180:1500;
-      let cached=await helpOpeningStorage(readCachedHelpTicket(userId,id),null,storageBudget);if(!valid())return;
+      const cached=await helpOpeningStorage(readCachedHelpTicket(userId,id,record=>initialHelpPosition(record.anchor,record.firstUnreadSequence,explicit).sequence),null,storageBudget);if(!valid())return;
       const anchor=cached?.record.anchor??null;viewport.current=anchor;
       const cachedPosition=initialHelpPosition(anchor,cached?.record.firstUnreadSequence??null,explicit);
-      if(cachedPosition.sequence&&!cached?.page?.messages.some(message=>message.sequence===cachedPosition.sequence))cached=await helpOpeningStorage(readCachedHelpTicket(userId,id,cachedPosition.sequence),cached,storageBudget);
       if(!valid())return;
       if(cached){selectedRef.current=cached.record.ticket;setSelectedTicket(cached.record.ticket);
         if(cached.page&&(!explicit?.messageId||cached.page.messages.some(message=>message.id===explicit.messageId))&&(!explicit?.sequence||cached.page.messages.some(message=>message.sequence===explicit.sequence))){
@@ -234,28 +260,34 @@ export function useHelpService(isFocused = true) {
         }}
       const detail=await helpApi.detail(id);if(!valid())return;fallbackDetail=detail;
       const pendingStorage:Promise<void>[]=[];
-      const persistOpening=async(page:HelpHistoryPage)=>{
-        const work=persistPage(detail.ticket,page);pendingStorage.push(work);
-        await helpOpeningStorage(work.then(()=>true),false);
+      const persistOpening=(page:HelpHistoryPage)=>{
+        // Opening can show a server snapshot immediately. Do not mutate that
+        // page when storage finishes; versioned replay reconciles it below.
+        const work=cacheHelpPage(userId,detail.ticket,page).catch(error=>{if(valid())report(error);});pendingStorage.push(work);
       };
-      const tail=detailPage(detail);await persistOpening(tail);if(!valid())return;
+      const tail=detailPage(detail);persistOpening(tail);
       const position=initialHelpPosition(anchor,tail.firstUnreadSequence,explicit);let page=tail;
       if(position.kind!=='latest'){
         const target=position.sequence;
         const found=target?tail.messages.some(message=>message.sequence===target):tail.messages.some(message=>message.id===position.messageId);
         if(!found)page=await helpApi.messages(id,position.messageId&&!target?{aroundMessageId:position.messageId}:{around:target});
       }
-      if(!valid())return;if(page!==tail)await persistOpening(page);if(!valid())return;
+      if(!valid())return;if(page!==tail)persistOpening(page);
       applyDetail({...detail,...page});setFirstUnreadSequence(tail.firstUnreadSequence);issueNavigation(position);
       socketRef.current?.getSocket()?.emit('help:subscribe',{ticketId:id});
       // A slow commit is allowed to finish, but must not hold navigation or
       // replace the mounted window after the reader has moved to another chat.
-      void Promise.all(pendingStorage).then(async()=>{if(valid())await liveTicketRefresh.current(id);}).catch(error=>{if(valid())report(error);});
+      void Promise.all(pendingStorage).then(async()=>{
+        // Apply already committed edits/tombstones even if the next network sync
+        // fails. This refreshes the installed window without issuing navigation.
+        if(valid())await committedRef.current(id);
+        if(valid())await liveTicketRefresh.current(id);
+      }).catch(error=>{if(valid())report(error);});
       traceData('network');
       return {...detail,messages:page.messages};
     }catch(e){if(valid()){report(e);if(isAccessRevoked(e)){await revokeTicket(id);throw e;}if(e instanceof HelpApiError&&e.code==='HELP_MESSAGE_NOT_FOUND'&&fallbackDetail){applyDetail(fallbackDetail);issueNavigation({kind:'latest',animate:false});return fallbackDetail;}clearSelection();throw e;}return undefined;}
     finally{if(valid())setLoading(false);}
-  },[identity,userId,current,helpApi,updateMessages,applyDetail,applyPage,issueNavigation,persistPage,report,revokeTicket,clearSelection,rememberActive,server.isReachable]);
+  },[identity,userId,current,helpApi,updateMessages,applyDetail,applyPage,issueNavigation,report,revokeTicket,clearSelection,rememberActive,server.isReachable]);
   const loadPage=useCallback(async(direction:'older'|'newer')=>{
     const id=activeId.current,account=identity,generation=detailGeneration.current,old=messagesRef.current;
     if(!id||!old.length||paging.current[direction]||!(direction==='older'?pageRef.current?.hasOlder:pageRef.current?.hasNewer))return;
@@ -286,27 +318,27 @@ export function useHelpService(isFocused = true) {
         // Outbox visibility must not depend on a downloaded history snapshot.
         const pending=await readHelpPending(userId);if(!current(account))return;
         setPendingMessages(pending);setPendingCount(pending.length);
-        const cached=await readCachedHelpTicket(userId,id);if(!current(account)||!cached)return;
+        const record=await readCachedHelpRecord(userId,id);if(!current(account)||!record)return;
         const selected=activeId.current===id;
         // Opening/navigation owns its page. A background replay may update it
         // only after that page is installed, and only while its window is current.
         if(selected&&(!pageRef.current||!selectedRef.current||generation!==detailGeneration.current||revision!==windowRevision.current))continue;
-        if(selected&&cached.record.lastSequence<(pageRef.current?.lastSequence??0))continue;
-        applyDetail({ticket:cached.record.ticket,messages:[]},true);
-        const hot=helpViewCache(identity).windows.get(id);if(hot)hot.ticket=cached.record.ticket;
+        if(selected&&record.lastSequence<(pageRef.current?.lastSequence??0))continue;
+        applyDetail({ticket:record.ticket,messages:[]},true);
+        const hot=helpViewCache(identity).windows.get(id);if(hot)hot.ticket=record.ticket;
         if(!selected)continue;
         const shown=messagesRef.current,following=viewport.current?.atLatest===true&&!pageRef.current?.hasNewer;
-        const from=shown[0]?.sequence??1,to=following?cached.record.lastSequence:shown.at(-1)?.sequence??cached.record.lastSequence;
+        const from=shown[0]?.sequence??1,to=following?record.lastSequence:shown.at(-1)?.sequence??record.lastSequence;
         const limit=Math.max(1000,shown.length+1);
         const rows=await readCachedHelpRange(userId,id,from,to,limit);
         if(!current(account)||activeId.current!==id||generation!==detailGeneration.current||revision!==windowRevision.current)continue;
-        const covered=cached.record.ranges?.some(range=>range.from<=from&&range.to>=to);
+        const covered=record.ranges?.some(range=>range.from<=from&&range.to>=to);
         // A partial disk window cannot prove that omitted messages were deleted.
         // Merge it until coverage is complete; updateMessages shares references once.
         const complete=covered&&(rows.length<limit||(rows.at(-1)?.sequence??0)>=to);
-        updateMessages(complete||cached.record.lastSequence===0?rows:mergeHelpMessages(shown,rows));
-        readSequence.current=Math.max(readSequence.current,cached.record.lastReadSequence);
-        if(pageRef.current){pageRef.current={...pageRef.current,lastSequence:cached.record.lastSequence,lastReadSequence:readSequence.current,hasNewer:!following&&cached.record.lastSequence>(messagesRef.current.at(-1)?.sequence??0)};setHasNewer(pageRef.current.hasNewer);}
+        updateMessages(complete||record.lastSequence===0?rows:mergeHelpMessages(shown,rows));
+        readSequence.current=Math.max(readSequence.current,record.lastReadSequence);
+        if(pageRef.current){pageRef.current={...pageRef.current,lastSequence:record.lastSequence,lastReadSequence:readSequence.current,hasNewer:!following&&record.lastSequence>(messagesRef.current.at(-1)?.sequence??0)};setHasNewer(pageRef.current.hasNewer);}
         rememberActive();
       }while(committedAgain.current.has(id)&&current(account));
     })();

@@ -25,3 +25,5 @@ export type HelpHistoryRecord = {
   lastSequence: number; updatedAt: number;
 };
 export type HelpCachedWindow = { record: HelpHistoryRecord; page: HelpHistoryPage | null };
+/** Resolve an opening anchor from metadata inside the same read snapshot. */
+export type HelpHistoryWindowSelector = number | ((record: HelpHistoryRecord) => number | undefined);
