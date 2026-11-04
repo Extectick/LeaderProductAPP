@@ -1,5 +1,5 @@
 import React from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from 'react-native';
 import { Button, Text } from 'react-native-paper';
 import Animated, { FadeIn, ReduceMotion } from 'react-native-reanimated';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -21,6 +21,8 @@ export default function ProfileSettingsScreen() {
   const { section, base, returnTicket, returnRun } = useLocalSearchParams<{ section: string; base?: string; returnTicket?: string; returnRun?: string }>();
   const { profile, refresh } = useProfileData();
   const router = useRouter();
+  const currentUser = React.useRef(profile?.id); currentUser.current = profile?.id;
+  const helpTicket = typeof returnTicket === 'string' && /^[1-9]\d*$/.test(returnTicket) && Number.isSafeInteger(Number(returnTicket)) ? returnTicket : undefined;
   if (!profile || !isProfileSection(section)) return <View style={styles.content}><Text>Раздел недоступен</Text><Button onPress={() => router.replace('/profile')}>В профиль</Button></View>;
   const version = getAppVersionInfo();
   const employee = profile.employeeProfile;
@@ -33,10 +35,20 @@ export default function ProfileSettingsScreen() {
         {section === 'notifications' && <NotificationSettingsSection />}
         {section === 'tracking' && <><TrackingToggle /><TrackingAdminHealthCard /></>}
         {section === 'onec' && <ProfileOnecConnections key={profile.id} userId={profile.id} initialBase={base}
-          onConnected={returnTicket && /^\d+$/.test(returnTicket) && returnRun ? async () => {
-            const r = await httpRequest(`/help/tickets/${returnTicket}/assistant/retry`, { method: 'POST', body: { runId: returnRun }, expectedUserId: profile.id, networkRetryCount: 0 });
-            if (!r.ok) throw new Error('1С подключена. Вернитесь в чат, чтобы продолжить обращение.');
-            router.back();
+          onConnected={helpTicket ? async (signal) => {
+            if (signal.aborted || currentUser.current !== profile.id) return;
+            let retryFailed = false;
+            if (typeof returnRun === 'string' && returnRun.trim()) {
+              try {
+                const r = await httpRequest(`/help/tickets/${helpTicket}/assistant/retry`, { method: 'POST', body: { runId: returnRun }, signal, expectedUserId: profile.id, networkRetryCount: 0 });
+                retryFailed = !r.ok;
+              } catch { retryFailed = true; }
+            }
+            if (signal.aborted || currentUser.current !== profile.id) return;
+            // The profile has its own stack: back() may lead to the app home.
+            // Target the originating chat even when its history was restored.
+            router.dismissTo({ pathname: '/services/help', params: { ticketId: helpTicket } });
+            if (retryFailed) Alert.alert('1С подключена', 'Не удалось автоматически продолжить ответ ИИ. Нажмите «Повторить» в чате или отправьте новое сообщение.');
           } : undefined} />}
         {section === 'security' && <>
           <Fact title="Вход через Telegram" value={profile.authMethods?.telegramLinked || profile.telegramId ? profile.telegramUsername ? `@${profile.telegramUsername}` : 'Подключён' : 'Не подключён'} icon="message-outline" />

@@ -6,7 +6,7 @@ import { ActivityIndicator, Text } from 'react-native-paper';
 import { ProfileAction, profileSettingsStyles as styles } from './ProfileSettingsPrimitives';
 import { loadOnecConnections, removeOnecConnection, saveOnecConnection, type OnecConnection } from '../api/onecConnections';
 
-export function ProfileOnecConnections({ userId, initialBase, onConnected }: { userId: number; initialBase?: string; onConnected?: () => Promise<void> }) {
+export function ProfileOnecConnections({ userId, initialBase, onConnected }: { userId: number; initialBase?: string; onConnected?: (signal: AbortSignal) => Promise<void> }) {
   const [rows, setRows] = useState<OnecConnection[]>([]), [selected, setSelected] = useState(initialBase || '');
   const [loading, setLoading] = useState(true), [busy, setBusy] = useState(false), [notice, setNotice] = useState(''), [error, setError] = useState('');
   const [resetKey, reset] = useState(0);
@@ -31,7 +31,7 @@ export function ProfileOnecConnections({ userId, initialBase, onConnected }: { u
       if (version !== epoch.current) return;
       setRows(old => old.map(row => row.baseKey === value.baseKey ? value : row)); reset(x => x + 1);
       setNotice(connected ? 'Подключение проверено. Можно пользоваться 1С в чате.' : 'Доступ отозван. ИИ больше не использует это подключение.');
-      if (connected && onConnected) await onConnected();
+      if (connected && onConnected) await onConnected(controller.signal);
     } catch (e) { if (version === epoch.current && !controller.signal.aborted) setError(e instanceof Error ? e.message : 'Подключение не выполнено.'); }
     finally { if (version === epoch.current) setBusy(false); }
   }
