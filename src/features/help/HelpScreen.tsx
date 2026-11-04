@@ -215,7 +215,7 @@ export default function HelpScreen() {
   const scrollBottom = (animated = true) => { if (!hasNativeChatLayout && followBottom.current) requestAnimationFrame(() => { if (followBottom.current) scroll.current?.scrollToEnd({ animated }); }); };
   const draftTicketIds=service.tickets.map(item=>item.id).join(',');
   useEffect(()=>{setListDrafts({});},[service.userId]);
-  useEffect(()=>{if(active!==null)return;let alive=true;const account=service.userId;void (service.getDrafts?service.getDrafts(service.tickets.map(item=>`ticket:${item.id}`)).then(values=>service.tickets.map(item=>[item.id,values[`ticket:${item.id}`]??''] as const)):Promise.all(service.tickets.map(async item=>[item.id,await service.getDraft(`ticket:${item.id}`)] as const))).then(values=>{if(alive&&currentAccount.current===account)setListDrafts(Object.fromEntries(values));}).catch(()=>{});return()=>{alive=false;};},[active,service.userId,draftTicketIds,service.getDraft]);
+  useEffect(()=>{if(active!==null)return;let alive=true;const account=service.userId;void (service.getDrafts?service.getDrafts(service.tickets.map(item=>`ticket:${item.id}`)).then(values=>service.tickets.map(item=>[item.id,values[`ticket:${item.id}`]??''] as const)):Promise.all(service.tickets.map(async item=>[item.id,await service.getDraft(`ticket:${item.id}`)] as const))).then(values=>{if(alive&&currentAccount.current===account)setListDrafts(previous=>{const next=Object.fromEntries(values);return Object.keys(previous).length===values.length&&values.every(([id,text])=>previous[id]===text)?previous:next;});}).catch(()=>{});return()=>{alive=false;};},[active,service.userId,draftTicketIds,service.getDraft]);
   useEffect(() => { ++draftGeneration.current; draftLoaded.current = false; restoredDraft.current = null; setActive(null); setDraft(''); setFiles([]); setSource(null); setMode('message'); setReply(null); setEditing(null); setEditAttachments([]); setGallery(null); setOverlay(null); setNotice(''); setSelectedMessage(null); setOrder([]); setFilter('OPEN'); setScope('mine'); setSending(false); submitLock.current=false; earlyClearedCreations.current.clear(); stack.current = []; uploadCache.current.clear(); fileDrafts.current.clear(); filePersistence.current.clear(); draftRevisions.current.clear(); sentDraftRevisions.current.clear(); regularDraft.current = {text:'',files:[],reply:null}; deepLink.current = undefined; }, [service.userId]);
   useEffect(() => { if (!active) return; const generation = ++draftGeneration.current; setFiles(fileDrafts.current.get(draftKey)??[]); if (restoredDraft.current?.key === draftKey) { setDraft(restoredDraft.current.text); restoredDraft.current = null; draftLoaded.current = true; return; } draftLoaded.current = false; setDraft(''); void Promise.all([service.getDraft(draftKey),fileDrafts.current.has(draftKey)?Promise.resolve(fileDrafts.current.get(draftKey)!):loadHelpAttachmentDraft(service.userId,draftKey)]).then(([value,attachments]) => { if (generation === draftGeneration.current) { setDraft(value); setFiles(attachments); fileDrafts.current.set(draftKey,attachments); draftLoaded.current = true; } }).catch(() => { if (generation === draftGeneration.current) draftLoaded.current = true; }); return () => { ++draftGeneration.current; }; }, [draftKey, service.userId]);
   useEffect(() => { if (!active || mode !== 'message' || !draftLoaded.current) return; const revision=draftRevisions.current.get(draftKey)??0;const timer = setTimeout(() => { if((draftRevisions.current.get(draftKey)??0)===revision&&sentDraftRevisions.current.get(draftKey)!==revision)void service.setDraft(draftKey, draft); }, 250); return () => clearTimeout(timer); }, [draft, active, mode, draftKey, service.setDraft]);
@@ -319,15 +319,17 @@ export default function HelpScreen() {
       if(finished===false||!screenMounted.current||navigation!==navigationGeneration.current||account!==currentAccount.current)return;
     }
     setEntrySettled(false);setFocusKey(0);setListHeaderHeight(listSceneHeaderHeight);
-    setActive(null);service.clearSelection();setMode('message');setFiles([]);setReply(null);setEditing(null);setSource(null);setOrder([]);setFilter(next);stack.current=[];
+    // The list is retained behind the chat. Keep its row order when revealing it;
+    // updatedAt may have changed while reading, but that must not move siblings.
+    setActive(null);service.clearSelection();setMode('message');setFiles([]);setReply(null);setEditing(null);setSource(null);setFilter(next);stack.current=[];
     if(active!==null&&next===filter)void service.loadTickets(next,scope,false,search.trim(),true);
     else void service.loadTickets(next,scope,false,search.trim());
   }
   function newTicket(linked: SourceTicket | null = null) { setScene(previous=>({key:previous.key+1,bottomAligned:true}));setEntrySettled(false);setLeavingChat(false);setEntryKeyboardReady(false); const navigation=++navigationGeneration.current,account=service.userId;void dismissHelpSceneKeyboard().then(()=>{if(screenMounted.current&&navigation===navigationGeneration.current&&account===currentAccount.current)setEntryKeyboardReady(true);}); saveDraftNow(); stack.current = []; service.clearSelection(); setActive('new'); setSource(linked); setDraft(''); setFiles([]); setMode('message'); setReply(null); setEditing(null); setSelectedMessage(null); followBottom.current = true; setFocusKey(n => n + 1); }
   function cancelMode() { ++navigationGeneration.current; setMode('message'); setDraft(regularDraft.current.text); setFiles(regularDraft.current.files); setReply(regularDraft.current.reply); setEditing(null); Keyboard.dismiss(); }
   async function back() {
-    Keyboard.dismiss();
     if(attachmentsVisible){setCloseAttachmentsKey(key=>key+1);return;}
+    Keyboard.dismiss();
     if (gallery) { setGallery(null); return; } if (overlay) { setOverlay(null); return; } if (selectedMessage !== null) { setSelectedMessage(null); return; }
     if(chatSearchOpen){closeSearch();return;}
     if (mode !== 'message') { cancelMode(); return; }
@@ -381,6 +383,10 @@ export default function HelpScreen() {
     return () => window.removeEventListener('popstate',onPop,true);
   }, []));
   const visible = useMemo(() => stableHelpOrder(service.tickets.filter(t => t.status === filter), order), [service.tickets, filter, order]);
+  const listActions=useRef({open,menu:(item:HelpTicket)=>{Keyboard.dismiss();setOverlay({kind:'row',ticket:item});}});
+  listActions.current={open,menu:(item:HelpTicket)=>{Keyboard.dismiss();setOverlay({kind:'row',ticket:item});}};
+  const listExtraData=useMemo(()=>({drafts:listDrafts,typing:service.typingByTicket}),[listDrafts,service.typingByTicket]);
+  const renderTicketRow=useCallback(({item}:{item:HelpTicket})=><TicketRow ticket={item} draft={listDrafts[item.id]} typing={service.typingByTicket[item.id]} onPress={()=>{void listActions.current.open(item.id);}} onMenu={()=>listActions.current.menu(item)}/>,[listDrafts,service.typingByTicket]);
   const sourceLink = ticket ? ticket.sourceTicket : source;
   async function openSource() {
     if (!sourceLink || !active) return;
@@ -478,7 +484,7 @@ export default function HelpScreen() {
       if (mode === 'message' && voice) setReply(null);
       if (active === 'new') { restoredDraft.current = {key:`ticket:${detail.ticket.id}`,text:voice ? draft : ''}; setActive(detail.ticket.id); setSource(null); await service.setDraft(`ticket:${detail.ticket.id}`, voice ? draft : ''); }
       if(currentAccount.current!==account||navigationGeneration.current!==navigation)return true;
-      if (mode !== 'message') { setMode('message'); setDraft(regularDraft.current.text); setFiles(regularDraft.current.files); setReply(regularDraft.current.reply); setEditing(null); Keyboard.dismiss(); }
+      if (mode !== 'message') { setMode('message'); setDraft(regularDraft.current.text); setFiles(regularDraft.current.files); setReply(regularDraft.current.reply); setEditing(null); }
       if(mode === 'message') {
         if(!hasNativeChatLayout){followBottom.current=true;if(active!=='new')scroll.current?.scrollToEnd({animated:false});else scrollBottom(false);}
       } else if(active!=='new')await service.jumpToLatest();else scrollBottom();
@@ -510,12 +516,12 @@ export default function HelpScreen() {
       {service.error&&!(active===null&&service.loading)&&!isHelpConnectionIssue(service.error) ? <Pressable accessibilityRole="button" onPress={() => void run(() => active===null?service.loadTickets(filter,scope,false,search.trim()):service.retryPending())} style={{ position:'absolute',top:listHeaderHeight+8,left:8,right:8,zIndex:6,paddingVertical: 7, paddingHorizontal: 14, borderRadius:12,backgroundColor: c.danger + '15' }}><Text style={{ color: c.danger, fontSize: 12 }} numberOfLines={2}>{service.error} · Повторить</Text></Pressable> : null}
       <Reanimated.View testID="help-list-scene" key="help-list-scene" pointerEvents={active===null?'auto':'none'} accessibilityElementsHidden={active!==null} importantForAccessibility={active===null?'auto':'no-hide-descendants'} style={[active===null?{flex:1}:StyleSheet.absoluteFill,listMotion]}>
 
-        <BlurTargetView ref={listBlurTarget} style={{ flex: 1 }}><FlashList ref={listScroll} testID="help-ticket-list" data={visible} keyExtractor={item=>String(item.id)} extraData={[listDrafts,service.typingByTicket]} style={{backgroundColor:c.background}} keyboardShouldPersistTaps="handled" contentContainerStyle={{paddingTop:listSceneHeaderHeight,paddingBottom:100}} drawDistance={300}
+        <BlurTargetView ref={listBlurTarget} style={{ flex: 1 }}><FlashList ref={listScroll} testID="help-ticket-list" data={visible} keyExtractor={item=>String(item.id)} extraData={listExtraData} style={{backgroundColor:c.background}} keyboardShouldPersistTaps="handled" contentContainerStyle={{paddingTop:listSceneHeaderHeight,paddingBottom:100}} drawDistance={300}
           onScroll={e=>helpDevState({listScrollY:e.nativeEvent.contentOffset.y})} scrollEventThrottle={160}
           onEndReachedThreshold={.5} onEndReached={()=>{if(active!==null||!service.hasMore||service.loading||listPaging.current)return;listPaging.current=true;void service.loadTickets(filter,scope,true,search.trim()).finally(()=>{listPaging.current=false;});}}
           ListEmptyComponent={<View style={{ alignItems: 'center', justifyContent:'center', minHeight:service.loading?300:undefined, padding: 35, gap: 12 }}>{service.loading ? <View testID="help-chats-loading" accessibilityRole="progressbar" accessibilityLabel="Загрузка чатов" style={{alignItems:'center',gap:14}}><ActivityIndicator size="large" color={c.accent}/><Text accessibilityLiveRegion="polite" style={{color:c.muted,fontSize:14}}>Загружаем чаты…</Text></View> : <><Ionicons name={filter === 'CLOSED' ? 'archive-outline' : 'chatbubbles-outline'} color={c.muted} size={38} /><Text style={{ color: c.text, fontSize: 16, fontWeight: '600' }}>{search ? 'Ничего не найдено' : filter === 'CLOSED' ? 'Закрытых обращений пока нет' : 'Расскажите, чем помочь'}</Text><Text style={{ color: c.muted, textAlign: 'center', fontSize: 13 }}>{search ? 'Попробуйте другой запрос' : 'Ваши сообщения и вложения увидят специалисты IT.'}</Text></>}</View>}
           ListFooterComponent={null}
-          renderItem={({item})=><TicketRow ticket={item} draft={listDrafts[item.id]} typing={service.typingByTicket[item.id]} onPress={()=>{void open(item.id);}} onMenu={()=>{Keyboard.dismiss();setOverlay({kind:'row',ticket:item});}}/>}
+          renderItem={renderTicketRow}
         /></BlurTargetView><View testID="help-list-header-overlay" onLayout={event=>{if(active===null){setListHeaderHeight(event.nativeEvent.layout.height);setListSceneHeaderHeight(event.nativeEvent.layout.height);}}} style={{position:'absolute',top:0,left:0,right:0,zIndex:2,paddingTop:insets.top}}><View pointerEvents="none" style={[StyleSheet.absoluteFill,{bottom:-36}]}><HelpBlurSurface target={listBlurTarget} edge="bottom"/></View>{listHeader}</View><View style={{ position: 'absolute', bottom: 0, left: 0, right: 0 }}><HelpDock target={active===null?listBlurTarget:undefined}><View style={{ paddingHorizontal: HELP_LIST_INSET - 8 }}><HelpPrimaryButton text="Новое обращение" onPress={() => newTicket()} /></View></HelpDock></View>
       </Reanimated.View>
       {active !== null ? <HelpChatEntry key={`${service.userId}:${scene.key}`} ref={chatEntry} progress={chatProgress} ready={entryKeyboardReady&&(active==='new'||timelineReady)} interactive={!leavingChat} backgroundColor={c.background} onEntered={()=>{setEntrySettled(true);helpDevEvent('chat.open.transitionFinished',{ticketId:typeof active==='number'?active:null,finishedAt:Date.now()});}} onLayout={event=>setChatViewportHeight(event.nativeEvent.layout.height)}>

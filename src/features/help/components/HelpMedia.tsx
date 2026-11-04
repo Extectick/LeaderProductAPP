@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Image, Modal, PanResponder, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions, type ImageStyle, type StyleProp } from 'react-native';
 import { Image as CachedImage } from 'expo-image';
 import { HelpImageCacheContext, HelpMediaLoadingContext } from '../helpMediaLoading';
@@ -36,23 +36,30 @@ export function HelpImage({ attachment, resolve, style, resizeMode = 'cover', on
       .catch(()=>{if(alive)setResult({id:attachment.id,url:attachment.url,resolver:resolve,error:true});});
     return()=>{alive=false;};
   },[attachment.id,attachment.url,resolve,allowOriginal,cached]);
-  const loaded=(event:any)=>{
+  // RN Web reloads an Image when its event callbacks change. Keep those stable
+  // across decode/stream/layout updates, while reading the newest presentation.
+  const presentation=useRef({attachment,current,restored,allowOriginal,onAspectRatio});
+  presentation.current={attachment,current,restored,allowOriginal,onAspectRatio};
+  const loaded=useCallback((event:any)=>{
     if(identity.current.id!==attachment.id||identity.current.url!==attachment.url||identity.current.resolve!==resolve)return;
-    if(current?.source)cache?.remember(resolve,attachment,current.source);
-    setResult(previous=>previous?.id===attachment.id && previous.url===attachment.url && previous.resolver===resolve?{...previous,loaded:true}:previous);
+    const {attachment:latestAttachment,current,onAspectRatio}=presentation.current;
+    if(current?.source)cache?.remember(resolve,latestAttachment,current.source);
+    setResult(previous=>previous?.id===attachment.id && previous.url===attachment.url && previous.resolver===resolve&&!previous.loaded?{...previous,loaded:true}:previous);
     const native=event.source?undefined:event.nativeEvent;
     const target=native?.target??native?.currentTarget??event.target??event.currentTarget;
     const width=event.source?.width??native?.source?.width??target?.naturalWidth??0;
     const height=event.source?.height??native?.source?.height??target?.naturalHeight??0;
     if(Number.isFinite(width)&&Number.isFinite(height)&&width>0&&height>0)onAspectRatio?.(width/height);
-  };
-  const failed=()=>{
+  },[attachment.id,attachment.url,resolve,cache]);
+  const failed=useCallback(()=>{
     if(identity.current.id!==attachment.id||identity.current.url!==attachment.url||identity.current.resolve!==resolve)return;
-    cache?.forget(resolve,attachment);
+    const {attachment:latestAttachment,restored,allowOriginal}=presentation.current;
+    cache?.forget(resolve,latestAttachment);
     // Native cache eviction may require a fresh authorised source. Retry that
     // once for a real cell; transition copies never start their own requests.
-    setResult({id:attachment.id,url:attachment.url,resolver:resolve,error:!(restored&&allowOriginal)});
-  };
+    const error=!(restored&&allowOriginal);
+    setResult(previous=>previous?.id===attachment.id&&previous.url===attachment.url&&previous.resolver===resolve&&!previous.source&&previous.error===error?previous:{id:attachment.id,url:attachment.url,resolver:resolve,error});
+  },[attachment.id,attachment.url,resolve,cache]);
   const original=current?.source && !current.error && (allowOriginal||current.loaded) ? current.source : undefined;
   return <View testID="help-progressive-image" style={[style,{overflow:'hidden',backgroundColor:resizeMode==='contain'?'transparent':c.elevated}]}>
     {thumbnail ? <Image testID="help-image-preview" source={{uri:thumbnail}} resizeMode={resizeMode} style={StyleSheet.absoluteFill} blurRadius={2}/> : null}

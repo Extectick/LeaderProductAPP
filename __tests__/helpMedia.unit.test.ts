@@ -321,6 +321,20 @@ describe('Help media geometry and lifecycle', () => {
     expect(originalImage().props.source).toBe(source);
     expect(props.resolve).toHaveBeenCalledTimes(1);
   });
+  test('decode callbacks stay stable across loaded state and layout metadata updates',async()=>{
+    props.onAspectRatio=jest.fn();await renderImage();
+    const loaded=originalImage().props.onLoad,failed=originalImage().props.onError;
+    await act(async()=>loaded({source:{width:400,height:300}}));
+    expect(originalImage().props.onLoad).toBe(loaded);
+    expect(originalImage().props.onError).toBe(failed);
+    const latestRatio=jest.fn();props={...props,attachment:{...props.attachment,width:400,height:300},onAspectRatio:latestRatio};
+    await updateImage();
+    expect(originalImage().props.onLoad).toBe(loaded);
+    expect(originalImage().props.onError).toBe(failed);
+    await act(async()=>loaded({source:{width:400,height:300}}));
+    expect(latestRatio).toHaveBeenCalledWith(4/3);
+    expect(props.resolve).toHaveBeenCalledTimes(1);
+  });
   test('a retained copy cannot start downloading an original that has not loaded',async()=>{
     await renderImage('retained');
     expect(props.resolve).not.toHaveBeenCalled();

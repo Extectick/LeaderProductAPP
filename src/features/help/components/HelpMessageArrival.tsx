@@ -4,17 +4,19 @@ import {useHelpReducedMotion} from '../helpTheme';
 
 /** Shared by the outbox footer and confirmed rows for one chat scene. */
 export const HelpMessageArrivalContext=createContext<Set<string>|null>(null);
+/** Descendant AI steps/answers share the timeline lift instead of starting a second translation. */
+export const HelpArrivalGeometryContext=createContext(false);
 export const helpArrivalIdentity=(message:{id:number;clientMessageId?:string|null})=>message.clientMessageId?`client:${message.clientMessageId}`:`message:${message.id}`;
 const motions=new WeakMap<Set<string>,Map<string,{progress:Animated.Value;motion:Animated.CompositeAnimation}>>();
 
 export function HelpMessageArrival({identity,animate,children,distance=24,deferred=false}:{identity:string;animate:boolean;children:React.ReactNode;distance?:number;deferred?:boolean}){
   const registry=useContext(HelpMessageArrivalContext),local=useRef(new Set<string>()),played=registry??local.current;
-  const reduced=useHelpReducedMotion();
+  const reduced=useHelpReducedMotion(),geometryOwned=useContext(HelpArrivalGeometryContext);
   const inherited=useMemo(()=>motions.get(played)?.get(identity),[identity,played]);
   const progress=useMemo(()=>inherited?.progress??new Animated.Value(1),[inherited,identity,played]);
   // The timeline can own the entire row's lift. Keep that decision for this
   // cell's lifetime so a quick receipt/geometry commit cannot change its path.
-  const arrivalDistance=useRef(distance).current;
+  const arrivalDistance=useRef(geometryOwned?0:distance).current;
   const latestAnimate=useRef(animate);latestAnimate.current=animate;
   const wasDeferred=useRef(false);
   useLayoutEffect(()=>{

@@ -55,7 +55,7 @@ export function HelpPhotoPicker(props:Props) {
   const panelHeight=expanded||keyboardTop!==null?maximumHeight:collapsedHeight;
   const headerTopInset=insets.top;
   const headerHeight=48+headerTopInset,captionInset=keyboardTop===null?insets.bottom:0;
-  const captionFocused=useRef(false);
+  const captionFocused=useRef(false),keepKeyboardOnClose=useRef(false);
   const expansionLimit=useSharedValue(maximumHeight),gridTarget=useSharedValue(0),gridMaximum=useSharedValue(0);
   const captionHeight=useSharedValue(58+insets.bottom);
   const measuredGridY=useSharedValue(0),cameraOffset=useSharedValue(0),cameraViewportHeight=useSharedValue(0);
@@ -101,7 +101,7 @@ export function HelpPhotoPicker(props:Props) {
     const rect=measure(grid);
     if(rect&&rect.height>0){cameraOffset.value=rect.pageY-measuredGridY.value;cameraViewportHeight.value=Math.max(0,rect.height-headerHeight-captionHeight.value);}
   },false);
-  useEffect(()=>{cameraFrame.setActive(props.open&&Boolean(viewport)&&!preview);return()=>cameraFrame.setActive(false);},[cameraFrame,props.open,viewport,preview]);
+  useEffect(()=>{cameraFrame.setActive(visible&&Boolean(viewport)&&!preview);return()=>cameraFrame.setActive(false);},[cameraFrame,visible,viewport,preview]);
   const pullStyle=useAnimatedStyle(()=>({transform:[{translateY:pullY.value}],borderTopLeftRadius:Math.min(22,Math.max(0,expansionLimit.value-height.value)),borderTopRightRadius:Math.min(22,Math.max(0,expansionLimit.value-height.value))}));
   // The attachment toolbar follows the sheet beneath the persistent chat
   // toolbar. Its last pixels fade as the two bars meet, rather than stacking.
@@ -181,16 +181,14 @@ export function HelpPhotoPicker(props:Props) {
     if(changed){chosen.current=next;setSelection(next);}
   },[props.files,props.open]);
   useEffect(()=>{
-    ++gridRevision.current;setViewport(undefined);measuredHeight.value=0;setExpanded(false);
-    cancelAnimation(gridTarget);gridTarget.value=0;gridScrollY.value=0;gridMomentum.value=false;
-    nativeCameraVisible.value=true;setCameraVisible(true);
+    cancelAnimation(gridTarget);gridMomentum.value=false;
     if(props.open){
+      ++gridRevision.current;setViewport(undefined);measuredHeight.value=0;setExpanded(false);
+      gridTarget.value=0;gridScrollY.value=0;nativeCameraVisible.value=true;setCameraVisible(true);
       // A new opening starts at the camera row even when a closing transition
       // was interrupted. Old native scroll/inertia must not survive the sheet.
-      closedByPull.current=false;
+      closedByPull.current=false;keepKeyboardOnClose.current=false;
       cancelAnimation(pullY);pullY.value=0;pullState.value=0;setVisible(true);Keyboard.dismiss();
-    }else{
-      if(captionFocused.current){captionFocused.current=false;Keyboard.dismiss();}setKeyboardTop(null);
     }
   },[props.open,pullY,pullState,measuredHeight,gridTarget,gridScrollY,gridMomentum,nativeCameraVisible]);
   // Release the touch shield even if a closing animation is interrupted.
@@ -202,20 +200,29 @@ export function HelpPhotoPicker(props:Props) {
   const finishHeight=useCallback(()=>{
     if(!mounted.current)return;
     resizing.current=false;setSettled(true);setPanelLayoutHeight(height.value);
-    if(!latest.current.open){setVisible(false);setPreview(null);setCameraExpanded(false);}
+    if(!latest.current.open){
+      height.value=0;pullY.value=0;setPanelLayoutHeight(0);setVisible(false);setPreview(null);setCameraExpanded(false);
+      if(captionFocused.current){captionFocused.current=false;if(!keepKeyboardOnClose.current)Keyboard.dismiss();}
+    }
     else measureGrid();
-  },[measureGrid,height]);
+  },[measureGrid,height,pullY]);
   useEffect(()=>{
     resizing.current=true;setSettled(false);cancelAnimation(height);
     if(!props.open&&closedByPull.current){height.value=0;setVisible(false);return;}
-    const target=props.open?panelHeight:0;
+    if(!props.open){
+      // Preserve the grid's committed size while the entire sheet slides away.
+      // Collapsing its height reflows/remounts the cells before it leaves view.
+      pullY.value=withTiming(height.value+12,{duration:reduced?0:220,easing:MotionEasing.out(MotionEasing.cubic)},finished=>{if(finished)runOnJS(finishHeight)();});
+      return()=>cancelAnimation(pullY);
+    }
+    const target=panelHeight;
     if(Math.abs(height.value-target)<.5){finishHeight();return;}
     height.value=withTiming(target,{duration:reduced?0:220,easing:MotionEasing.out(MotionEasing.cubic)},finished=>{if(finished)runOnJS(finishHeight)();});
     if(props.open)setPanelLayoutHeight(target);
     // Permission/IME interruption must not leave a half-height touch shield.
     const completion=setTimeout(()=>{if(mounted.current){height.value=target;finishHeight();}},260);
     return()=>{clearTimeout(completion);cancelAnimation(height);};
-  },[props.open,panelHeight,reduced,height,finishHeight]);
+  },[props.open,panelHeight,reduced,height,pullY,finishHeight]);
   useEffect(()=>{
     if(!settled||!props.open)return;
     // The portal commits after its owner. Measure after that native commit,
@@ -293,7 +300,8 @@ export function HelpPhotoPicker(props:Props) {
       catch(e){if(mounted.current&&chosen.current.includes(entry)){commit(chosen.current.map(item=>item===entry?{photo,failed:true}:item));setError(message(e));}return;}
     }
     if(!mounted.current||(!files.length&&!latest.current.caption.trim()&&!latest.current.existingCount))return;
-    try{const result=await latest.current.onSend(files);if(result!==false&&mounted.current){setPreview(null);latest.current.onClose();}}
+    const hadKeyboard=Keyboard.isVisible?.()??captionFocused.current;
+    try{const result=await latest.current.onSend(files);if(result!==false&&mounted.current){keepKeyboardOnClose.current=hadKeyboard;setPreview(null);latest.current.onClose();}}
     catch(e){if(mounted.current)setError(message(e));}
   }
   function showPhoto(photo:HelpLibraryPhoto,origin?:HelpPhotoRect){
@@ -330,7 +338,7 @@ export function HelpPhotoPicker(props:Props) {
   return <HelpPhotoPortal id={portalId}><View testID="help-photo-overlay" pointerEvents={props.open?'box-none':'none'} style={{position:'absolute',top:0,left:0,right:0,bottom:0}}>
     <View testID="help-photo-navigation-blur" pointerEvents="none" style={{position:'absolute',bottom:0,left:0,right:0,height:insets.bottom+8}}><HelpBlurSurface target={props.blurTarget}/></View>
     <Pressable accessibilityLabel="Закрыть панель вложений" onPress={props.onClose} style={{position:'absolute',top:chatHeaderHeight,left:0,right:0,bottom:0}}/>
-    <KeyboardAvoidingView testID="help-photo-keyboard-frame" pointerEvents="box-none" behavior="height" enabled={props.open&&!preview&&!cameraExpanded} style={StyleSheet.absoluteFill}>
+    <KeyboardAvoidingView testID="help-photo-keyboard-frame" pointerEvents="box-none" behavior="height" enabled={visible&&!preview&&!cameraExpanded} style={StyleSheet.absoluteFill}>
     <HelpPhotoPanel height={height} layoutHeight={panelLayoutHeight} bottom={0} onWidth={setWidth}>
       <GestureHandlerRootView style={{flex:1}}>
       <Reanimated.View testID="help-photo-pull-surface" style={[{flex:1,overflow:'hidden',backgroundColor:c.panel},pullStyle]}>
@@ -340,7 +348,7 @@ export function HelpPhotoPicker(props:Props) {
       <View ref={grid} collapsable={false} onLayout={measureGrid} testID="help-photo-grid-viewport" style={{flex:1,minHeight:0,overflow:'hidden'}}>
       <GestureDetector gesture={nativeScrollGesture}>
       <BlurTargetView ref={gridBlur} style={{flex:1}}><Reanimated.FlatList ref={gridList} testID="help-photo-grid" data={galleryItems} keyExtractor={item=>item?'skeleton'in item?item.skeleton:item.id:'camera'} numColumns={3} extraData={selection} initialNumToRender={18} maxToRenderPerBatch={12} windowSize={5} removeClippedSubviews={false} keyboardShouldPersistTaps="handled" onScroll={gridScroll} scrollEventThrottle={16} bounces={false} overScrollMode="never" onEndReached={()=>{if(permission?.granted&&hasMore&&!loading)void loadPage();}} onEndReachedThreshold={1} columnWrapperStyle={{gap:2}} contentContainerStyle={{gap:2,paddingTop:headerHeight,paddingBottom:58+captionInset}}
-        renderItem={({item,index})=>item&&'skeleton'in item?<View testID="help-photo-permission-skeleton" accessible={false} importantForAccessibility="no-hide-descendants" style={{width:tileSize,height:tileSize,backgroundColor:c.line,opacity:.65}}/>:item?<PhotoTile photo={item} size={tileSize} number={selectedIds.indexOf(item.id)+1} pending={selection.some(entry=>entry.photo.id===item.id&&entry.pending)} disabled={props.busy} onSelect={()=>void select(item)} onPreview={origin=>showPhoto(item,origin)} index={index}/>:<View style={{width:tileSize,height:tileSize}}><HelpPhotoCamera onPermissionSettled={restorePanel} expanded={cameraExpanded} onExpand={()=>{Keyboard.dismiss();setCameraExpanded(true);}} onClose={()=>setCameraExpanded(false)} onCapture={photo=>{setCameraExpanded(false);setPhotos(old=>[photo,...old]);void select(photo);showPhoto(photo);}} onError={value=>setError(value)} disabled={props.busy||chosen.current.length+props.existingCount>=10} tileVisible={props.open&&Boolean(viewport)&&Boolean(permission)&&cameraVisible&&!preview} viewport={viewport?{...viewport,y:viewport.y+headerHeight,height:Math.max(0,viewport.height-headerHeight)}:undefined} tileOrigin={viewport?{x:viewport.x,y:viewport.y+headerHeight,width:tileSize,height:tileSize}:undefined} scrollOffsetShared={gridScrollY} sheetOffset={cameraOffset} sheetViewportHeight={cameraViewportHeight}/></View>}
+        renderItem={({item,index})=>item&&'skeleton'in item?<View testID="help-photo-permission-skeleton" accessible={false} importantForAccessibility="no-hide-descendants" style={{width:tileSize,height:tileSize,backgroundColor:c.line,opacity:.65}}/>:item?<PhotoTile photo={item} size={tileSize} number={selectedIds.indexOf(item.id)+1} pending={selection.some(entry=>entry.photo.id===item.id&&entry.pending)} disabled={props.busy} onSelect={()=>void select(item)} onPreview={origin=>showPhoto(item,origin)} index={index}/>:<View style={{width:tileSize,height:tileSize}}><HelpPhotoCamera onPermissionSettled={restorePanel} expanded={cameraExpanded} onExpand={()=>{Keyboard.dismiss();setCameraExpanded(true);}} onClose={()=>setCameraExpanded(false)} onCapture={photo=>{setCameraExpanded(false);setPhotos(old=>[photo,...old]);void select(photo);showPhoto(photo);}} onError={value=>setError(value)} disabled={props.busy||chosen.current.length+props.existingCount>=10} tileVisible={visible&&Boolean(viewport)&&Boolean(permission)&&cameraVisible&&!preview} viewport={viewport?{...viewport,y:viewport.y+headerHeight,height:Math.max(0,viewport.height-headerHeight)}:undefined} tileOrigin={viewport?{x:viewport.x,y:viewport.y+headerHeight,width:tileSize,height:tileSize}:undefined} scrollOffsetShared={gridScrollY} sheetOffset={cameraOffset} sheetViewportHeight={cameraViewportHeight}/></View>}
         ListFooterComponent={permission?.granted?<View style={{padding:16,alignItems:'center',gap:12}}>{loading?<ActivityIndicator color={c.accent}/>:!photos.length?<Text style={{color:c.muted}}>Фотографий пока нет. Можно сделать снимок.</Text>:null}</View>:null}/></BlurTargetView>
       </GestureDetector>
       {needsPermission?<View testID="help-photo-permission-overlay" pointerEvents="box-none" style={{position:'absolute',top:headerHeight+tileSize,left:0,right:0,bottom:58+captionInset,alignItems:'center',justifyContent:'center'}}>
@@ -362,7 +370,7 @@ export function HelpPhotoPicker(props:Props) {
         <View pointerEvents="none" style={[StyleSheet.absoluteFill,{backgroundColor:c.panel+'B8'}]}><HelpBlurSurface target={gridBlur} edge="top" featherSize={16}/></View>
         <View testID="help-photo-caption-surface" style={{minHeight:46,marginHorizontal:8,borderRadius:24,backgroundColor:c.surface,borderWidth:StyleSheet.hairlineWidth,borderColor:c.line}}>
         <TextInput testID="help-photo-message-input" accessibilityLabel="Сообщение к вложениям" value={props.caption} onChangeText={props.onCaption}
-          placeholder="Сообщение…" placeholderTextColor={c.muted} multiline editable={!props.busy}
+          placeholder="Сообщение…" placeholderTextColor={c.muted} multiline editable
           onFocus={()=>{captionFocused.current=true;}} onBlur={()=>{captionFocused.current=false;}}
           textAlignVertical="top" underlineColorAndroid="transparent" scrollEnabled
           style={{minHeight:46,maxHeight:150,marginRight:48,paddingHorizontal:16,paddingTop:12,paddingBottom:12,fontSize:17,lineHeight:22,color:c.text}}/>

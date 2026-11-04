@@ -14,3 +14,12 @@ export function helpTailDisplacement(previous:HelpTailGeometry|null,next:HelpTai
   const limit=helpTailMotionLimit(next.height);
   return Number.isFinite(delta)&&Math.abs(delta)>.5?Math.max(-limit,Math.min(limit,delta)):0;
 }
+
+/** A removed/replaced AI placeholder is not a page prepend. Only newly loaded
+ * messages before an existing row (or a disjoint window) suppress tail motion. */
+export function helpTailHistoryChange(previous:readonly string[],next:readonly string[]){
+  if(!previous.length||!next.length)return false;
+  const known=new Set(previous),retained=next.findIndex(key=>known.has(key));
+  if(retained<0)return true;
+  return next.slice(0,retained).some(key=>key.startsWith('message:')||key.startsWith('client:'));
+}

@@ -377,3 +377,28 @@ test('camera discards a delayed grid measurement from the previous opening',asyn
  expect(camera().props.viewport).toEqual({x:0,y:96,width:360,height:552});
  expect(camera().props.sheetViewportHeight.value).toBe(494);
 });
+
+
+test('back closes by sliding the intact sheet down before releasing its portal',async()=>{
+  await render();const panel=()=>screen!.root.findAllByProps({testID:'help-photo-panel'})[0];
+  const before=StyleSheet.flatten(panel().props.style).height;let finish!:()=>void;
+  mockPullTiming.mockImplementation((value,_options,callback)=>{finish=()=>callback(true);return value;});
+  await update({open:false});
+  expect(StyleSheet.flatten(panel().props.style).height).toBe(before);
+  expect(screen!.root.findAllByProps({testID:'help-photo-pull-surface'})[0].props.style[1].transform).toEqual([{translateY:before+12}]);
+  expect(camera().props.tileVisible).toBe(true);
+  await act(async()=>finish());
+  expect(screen!.root.findAllByProps({testID:'help-photo-panel'})).toHaveLength(0);
+});
+
+
+test('sending locks attachment actions without disabling the focused caption or dismissing IME',async()=>{
+  props.caption='Фото';props.files=[file(0)];await render();
+  const input=()=>screen!.root.findAllByProps({testID:'help-photo-message-input'})[0];
+  const dismiss=jest.spyOn(Keyboard,'dismiss');dismiss.mockClear();
+  await act(async()=>input().props.onFocus());
+  await update({busy:true});
+  expect(input().props.editable).toBe(true);
+  expect(screen!.root.findAll(item=>item.props.accessibilityLabel==='Отправить фотографии: 1')[0].props.disabled).toBe(true);
+  expect(dismiss).not.toHaveBeenCalled();
+});

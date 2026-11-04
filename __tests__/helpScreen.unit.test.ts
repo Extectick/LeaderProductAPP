@@ -152,6 +152,28 @@ describe('Help screen integration with service boundary', () => {
     act(()=>{progress.value=1;});
     expect(StyleSheet.flatten(screen.root.findByProps({testID:'help-list-scene'}).props.style).transform).toEqual([{translateX:0}]);
   });
+  test('returning reveals the retained row order and updates only the changed ticket',async()=>{
+    const older={...ticket,id:8,number:1008,title:'Сеть',updatedAt:'2026-10-01T10:00:00Z'};
+    const original={...ticket,updatedAt:'2026-10-02T10:00:00Z'};
+    mockService.tickets=[original,older];
+    mockService.openTicket.mockImplementation(async()=>{mockService.selectedTicket=older;return {ticket:older,messages:[]};});
+    await render();
+    const list=()=>screen.root.findByProps({testID:'help-ticket-list'});
+    const ids=()=>list().props.data.map((row:HelpTicket)=>row.id);
+    expect(ids()).toEqual([7,8]);
+    await act(async()=>screen.root.findByProps({testID:'help-ticket-row-8'}).props.onPress());
+    const extraData=list().props.extraData,renderItem=list().props.renderItem;
+    await act(async()=>composer().props.onChange('Уточнение'));
+    expect(list().props.extraData).toBe(extraData);expect(list().props.renderItem).toBe(renderItem);
+    const updated={...older,updatedAt:'2026-11-04T10:00:00Z',unreadCount:2};
+    mockService.tickets=[updated,original];
+    await act(async()=>screen.update(React.createElement(HelpScreen)));
+    expect(ids()).toEqual([7,8]);
+    await act(async()=>button('Назад').props.onPress());
+    expect(ids()).toEqual([7,8]);
+    expect(list().props.data[0]).toBe(original);expect(list().props.data[1]).toBe(updated);
+    expect(mockService.loadTickets).toHaveBeenLastCalledWith('OPEN','mine',false,'',true);
+  });
   test('a cached ticket does not slide in before its message viewport is positioned',async()=>{
     mockService.tickets=[ticket];await render();
     await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());
@@ -182,6 +204,12 @@ describe('Help screen integration with service boundary', () => {
     const move={dx:120,dy:0,numberActiveTouches:1};
     expect(composer().props.navigationReady).toBe(true);
     await act(async()=>composer().props.onAttachmentVisibility(true));
+    const closeKey=composer().props.closeAttachmentsKey;
+    const dismiss=jest.spyOn(Keyboard,'dismiss');dismiss.mockClear();
+    await act(async()=>button('Назад').props.onPress());
+    expect(composer().props.closeAttachmentsKey).toBe(closeKey+1);
+    expect(dismiss).not.toHaveBeenCalled();
+    expect(composer().props.navigationReady).toBe(true);
     pan().onStartShouldSetPanResponderCapture();
     expect(pan().onMoveShouldSetPanResponderCapture(null,move)).toBe(false);
     await act(async()=>composer().props.onAttachmentVisibility(false));

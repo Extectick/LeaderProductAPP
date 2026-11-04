@@ -1,4 +1,4 @@
-import {helpTailDisplacement,helpTailMotionLimit} from '../src/features/help/helpTailMotion';
+import {helpTailDisplacement,helpTailMotionLimit,helpTailHistoryChange} from '../src/features/help/helpTailMotion';
 const before={width:390,height:800,content:300,margin:400};
 const active={active:true,liveGrowth:true};
 
@@ -26,4 +26,12 @@ test('a shorter replacement eases down and rapid accumulated growth stays inside
   expect(helpTailDisplacement({...before,content:1300},{...before,content:300},active)).toBe(-800);
   expect(helpTailMotionLimit(320)).toBe(320);
   expect(helpTailMotionLimit(Infinity)).toBe(0);
+});
+test('superseded AI removal keeps streaming motion while real older pages stay anchored',()=>{
+  const before=['date:one','message:1','date:two','message:2'];
+  expect(helpTailHistoryChange(before,['date:two','message:2'])).toBe(false);
+  expect(helpTailHistoryChange(before,['date:new','message:0',...before])).toBe(true);
+  expect(helpTailHistoryChange(before,['date:renamed','message:1','date:two','message:2'])).toBe(false);
+  expect(helpTailHistoryChange(before,['date:other','message:9'])).toBe(true);
+  expect(helpTailHistoryChange([],before)).toBe(false);
 });

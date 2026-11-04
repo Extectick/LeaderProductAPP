@@ -1,6 +1,6 @@
 import React from 'react';
 import TestRenderer,{act} from 'react-test-renderer';
-import {StyleSheet,View} from 'react-native';
+import {Animated,StyleSheet,View} from 'react-native';
 import { helpNavigationIndex, helpIsAtLatest, helpTimelineRows, helpVisibleRows, helpTimelineEntries, helpMessageGroups } from '../src/features/help/helpTimelineModel';
 import type { HelpMessage } from '../src/features/help/helpApi';
 let mockFlashProps:any;
@@ -156,6 +156,32 @@ describe('sticky date geometry and navigation integration',()=>{
     height+=180;await act(async()=>mockFlashProps.onCommitLayoutEffect());
     expect(require('../src/features/help/helpDiagnostics').helpDevEvent).toHaveBeenLastCalledWith('timeline.tailShift',expect.objectContaining({delta:180,native:true}));
     expect(mockTailTiming).toHaveBeenCalledTimes(1);
+  });
+  test('incoming AI answer shares the measured stack motion without a nested arrival clock',async()=>{
+    mockReducedMotion=false;mockNativeChatLayout=true;
+    let height=1600;mockListApi.getChildContainerDimensions=()=>({width:390,height});
+    props={...props,renderMessage:row=>row.text?React.createElement(HelpMessageArrival,{identity:`answer:${row.id}`,animate:true},React.createElement(View)):React.createElement(View)};
+    await render();
+    const timing=jest.spyOn(Animated,'timing');mockTailTiming.mockClear();
+    try{
+      height+=180;props={...props,messages:props.messages.map((row,index)=>index===1?{...row,text:'Ответ ИИ'}:row)};
+      await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+      expect(mockTailTiming).toHaveBeenCalledTimes(1);
+      expect(timing).not.toHaveBeenCalled();
+      height+=44;await act(async()=>mockFlashProps.onCommitLayoutEffect());
+      expect(mockTailTiming).toHaveBeenCalledTimes(2);
+    }finally{timing.mockRestore();}
+  });
+  test('removing a superseded AI placeholder does not disable later streaming on the same message',async()=>{
+    mockReducedMotion=false;mockNativeChatLayout=true;
+    let height=1600;mockListApi.getChildContainerDimensions=()=>({width:390,height});
+    await render();mockTailTiming.mockClear();
+    height-=100;props={...props,messages:props.messages.slice(1)};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    expect(mockTailTiming).toHaveBeenCalledTimes(1);
+    height+=44;await act(async()=>mockFlashProps.onCommitLayoutEffect());
+    expect(mockTailTiming).toHaveBeenCalledTimes(2);
+    expect(require('../src/features/help/helpDiagnostics').helpDevEvent).toHaveBeenLastCalledWith('timeline.tailShift',expect.objectContaining({delta:44}));
   });
   test('unmeasured and temporarily unavailable FlashList geometry cannot break a layout commit',async()=>{
     mockReducedMotion=false;await render();

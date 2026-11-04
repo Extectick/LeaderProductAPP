@@ -101,16 +101,28 @@ export function HelpComposer(props: Props) {
     if (height !== next) { setHeight(next); props.onResize(); }
   }, [props.value]);
 
+  const restorePhotoKeyboard=useRef(false);
   const attachmentLocked=photoPickerOpen||photoPickerVisible;
   // Sending is not an editing lock: disabling the native EditText transfers
   // focus to its dismiss target and closes the IME on every queued message.
   const inputEnabled=props.screenActive!==false&&props.navigationReady!==false&&!attachmentLocked&&!(props.busy&&props.mode!=='message')&&!props.disabled&&!recording&&!starting&&!expanded&&!voiceActive;
   const sendText=()=>{
-    // A desktop/web button can take focus on pointer-down. Return it before
-    // awaiting upload/ack, rather than reopening the keyboard seconds later.
-    if(props.mode==='message'&&inputEnabled)input.current?.focus();
+    // Native send buttons keep the EditText focused themselves. Calling focus
+    // here reopens a keyboard the user deliberately hid before sending.
     return props.onSend().then(result=>{if(result!==false)setPhotoPickerOpen(false);});
   };
+  const sendPhotos=async(files:HelpLocalFile[])=>{
+    restorePhotoKeyboard.current=Keyboard.isVisible?.()??false;
+    try{const result=await props.onSend(undefined,files);if(result===false)restorePhotoKeyboard.current=false;return result;}
+    catch(error){restorePhotoKeyboard.current=false;throw error;}
+  };
+  useLayoutEffect(()=>{
+    if(!inputEnabled||attachmentLocked||!restorePhotoKeyboard.current)return;
+    restorePhotoKeyboard.current=false;
+    // Transfer the still-open IME from the disappearing caption to this field.
+    // Never revive it if the user dismissed it while the send was pending.
+    if(Keyboard.isVisible?.())input.current?.focus();
+  },[inputEnabled,attachmentLocked]);
   const focusedRequest=useRef<number|undefined>(undefined);
   useEffect(()=>{
     if(attachmentLocked||props.screenActive===false)Keyboard.dismiss();
@@ -314,6 +326,6 @@ export function HelpComposer(props: Props) {
     </Reanimated.View>
   </View>
     {expanded?<HelpExpandedEditor value={props.value} onChange={props.onChange} selection={selection.current} onDone={closeEditor}/>:null}
-    {Platform.OS !== 'web' ? <HelpPhotoPicker blurTarget={props.blurTarget} open={photoPickerOpen} onVisibility={setPhotoPickerVisible} onClose={()=>setPhotoPickerOpen(false)} files={props.files} onFiles={props.onFiles} caption={props.value} onCaption={props.onChange} onSend={files=>props.onSend(undefined,files)} onPreparing={setPreparingPhotos} onError={props.error} onDocuments={()=>{setPhotoPickerOpen(false);void pick('files');}} busy={props.busy||Boolean(props.disabled)} existingCount={props.existingFiles?.length??0}/> : null}
+    {Platform.OS !== 'web' ? <HelpPhotoPicker blurTarget={props.blurTarget} open={photoPickerOpen} onVisibility={setPhotoPickerVisible} onClose={()=>setPhotoPickerOpen(false)} files={props.files} onFiles={props.onFiles} caption={props.value} onCaption={props.onChange} onSend={sendPhotos} onPreparing={setPreparingPhotos} onError={props.error} onDocuments={()=>{setPhotoPickerOpen(false);void pick('files');}} busy={props.busy||Boolean(props.disabled)} existingCount={props.existingFiles?.length??0}/> : null}
   </View>;
 }

@@ -98,6 +98,7 @@ describe('photo preview draft interactions',()=>{
     let reject!:(error:Error)=>void;props.onSend=jest.fn(()=>new Promise<void>((_,fail)=>{reject=fail;}));await render();
     await act(async()=>{identified('help-photo-preview-send').props.onPress();identified('help-photo-preview-send').props.onPress();});
     expect(props.onSend).toHaveBeenCalledTimes(1);expect(identified('help-photo-preview-send').props.disabled).toBe(true);
+    expect(identified('help-photo-preview-caption').props.editable).toBe(true);
     await act(async()=>reject(new Error('private URL must not be displayed')));
     expect(screen!.root.findAllByProps({accessibilityRole:'alert'})[0].props.children).toBe('Не удалось отправить фото. Попробуйте ещё раз.');
     expect(identified('help-photo-preview-caption').props.value).toBe('Подпись');expect(props.onClose).not.toHaveBeenCalled();

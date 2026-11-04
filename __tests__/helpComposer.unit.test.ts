@@ -61,20 +61,36 @@ describe('Help composer recorder lifecycle', () => {
   }
   function mic(){return screen!.root.findAll(n=>typeof n.props.onPanResponderGrant==='function')[0];}
   function deferred<T>(){let resolve!:(value:T)=>void;let reject!:(reason:Error)=>void;const promise=new Promise<T>((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};}
-  test('sending a message keeps the field editable and returns focus before its acknowledgement',async()=>{
+  test.each([false,true])('sending preserves keyboard visibility (%s) and leaves the field editable',async(keyboardVisible)=>{
     Object.defineProperty(Platform,'OS',{configurable:true,value:'web'});
     const dismiss=jest.spyOn(require('react-native').Keyboard,'dismiss').mockImplementation(()=>{}),pending=deferred<void>();
     props={...props,value:'Ещё вопрос',onSend:jest.fn(()=>pending.promise)};
     await act(async()=>{screen=TestRenderer.create(React.createElement(HelpComposer,props));});
+    jest.spyOn(require('react-native').Keyboard,'isVisible').mockReturnValue(keyboardVisible);
     const focus=jest.spyOn(screen!.root.findByType(TextInput).instance,'focus');
     await act(async()=>screen!.root.findAll(n=>n.props.label==='Отправить сообщение')[0].props.onPress());
-    expect(focus).toHaveBeenCalledTimes(1);
+    expect(focus).not.toHaveBeenCalled();
     props={...props,busy:true,sendBlocked:true};
     await act(async()=>screen!.update(React.createElement(HelpComposer,props)));
     expect(screen!.root.findByType(TextInput).props.editable).toBe(true);
     expect(screen!.root.findAll(n=>n.props.label==='Отправить сообщение')[0].props.disabled).toBe(true);
     expect(dismiss).not.toHaveBeenCalled();
     await act(async()=>pending.resolve());
+  });
+  test.each([false,true])('photo send transfers only a still-open caption keyboard (%s)',async(keyboardVisible)=>{
+    Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});
+    props.value='Подпись';await render();
+    const visible=jest.spyOn(require('react-native').Keyboard,'isVisible').mockReturnValue(keyboardVisible);
+    await act(async()=>screen!.root.findAll(n=>n.props.label==='Прикрепить файлы')[0].props.onPress());
+    const picker=()=>screen!.root.findByType('HelpPhotoPicker' as any);
+    await act(async()=>picker().props.onVisibility(true));
+    const focus=jest.spyOn(screen!.root.findByType(TextInput).instance,'focus');
+    await act(async()=>picker().props.onSend([{uri:'file://draft.jpg',name:'draft.jpg'}]));
+    await act(async()=>picker().props.onClose());
+    expect(focus).not.toHaveBeenCalled();
+    await act(async()=>picker().props.onVisibility(false));
+    expect(focus).toHaveBeenCalledTimes(keyboardVisible?1:0);
+    visible.mockRestore();
   });
   test('AI correction can send a draft while the previous reply is processing',async()=>{
     Object.defineProperty(Platform,'OS',{configurable:true,value:'web'});

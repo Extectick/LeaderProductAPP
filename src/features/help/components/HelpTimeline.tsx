@@ -15,8 +15,8 @@ import { HelpDateSeparator, HelpUnreadSeparator, HelpHistoryStatus, HelpJumpToLa
 import { hasNativeChatLayout } from './HelpNativeChatLayout';
 import { HELP_COMPOSER_ACTION_RIGHT } from '../helpLayout';
 import { HELP_LATEST_SCROLL_BEZIER, helpLatestNavigationMotion, hiddenHelpLatest, updateHelpLatestAffordance } from '../helpJumpToLatestModel';
-import {HelpMessageArrival,HelpMessageArrivalContext,helpArrivalIdentity} from './HelpMessageArrival';
-import {helpTailDisplacement,helpTailMotionLimit,type HelpTailGeometry} from '../helpTailMotion';
+import {HelpMessageArrival,HelpMessageArrivalContext,HelpArrivalGeometryContext,helpArrivalIdentity} from './HelpMessageArrival';
+import {helpTailDisplacement,helpTailMotionLimit,helpTailHistoryChange,type HelpTailGeometry} from '../helpTailMotion';
 
 const InlineDateClipContext=createContext('');
 function ClippedHelpDate({rowKey,date,retained,onPress}:{rowKey:string;date:string;retained:boolean;onPress:()=>void}){
@@ -74,7 +74,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   const rowsRef = useRef(rows); rowsRef.current = rows;
   const tailShift=useSharedValue(0);
   const tailStyle=useAnimatedStyle(()=>({transform:[{translateY:tailShift.value}]}));
-  const tailGeometry=useRef<HelpTailGeometry|null>(null),tailRevision=useRef({first:'',last:'',history:false});
+  const tailGeometry=useRef<HelpTailGeometry|null>(null),tailRevision=useRef({keys:[] as string[],last:'',history:false});
   const resetTailMotion=useCallback(()=>{
     runOnUI(()=>{'worklet';cancelAnimation(tailShift);tailShift.value=0;})();
   },[tailShift]);
@@ -376,7 +376,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     if (!reduced && dateSnapshot.current.rows.length) stageViewport({rows:dateSnapshot.current.rows,direction:1});
     void live.current.onDate(date).catch(error => { cancelJump(); live.current.onError(error instanceof Error ? error.message : 'Не удалось открыть сообщения за эту дату'); });
   }, [save,visible,cancelJump,reduced,stageViewport,itemStartOffset,currentBottomInset,resetTailMotion]);
-  const renderRow = useCallback((row: HelpTimelineRow,index=rowsRef.current.indexOf(row),range=mediaRangeRef.current,retained=false) => row.kind==='date' ? <ClippedHelpDate rowKey={row.key} date={row.date!} retained={retained} onPress={()=>jumpDate(row.date!)}/> : row.kind==='unread' ? <HelpUnreadSeparator/> : <HelpMediaLoadingContext.Provider value={retained?'retained':index>=range.first&&index<=range.last?'visible':index>=range.first-4&&index<=range.last+4?'near':'deferred'}><HelpMessageArrival key={helpArrivalIdentity(row.message)} identity={helpArrivalIdentity(row.message)} distance={followingRef.current&&tailGeometry.current?0:24} deferred={!retained&&!firstContentSettled} animate={!retained&&(row.kind==='pending'||Date.now()<=arrivalBatch.expiresAt&&arrivalBatch.keys.has(helpArrivalIdentity(row.message)))}>{row.kind==='pending'?props.renderPending?.(row.pending!):props.renderMessage(row.message)}</HelpMessageArrival></HelpMediaLoadingContext.Provider>, [jumpDate,props.renderMessage,props.renderPending,arrivalBatch.keys,firstContentSettled]);
+  const renderRow = useCallback((row: HelpTimelineRow,index=rowsRef.current.indexOf(row),range=mediaRangeRef.current,retained=false) => row.kind==='date' ? <ClippedHelpDate rowKey={row.key} date={row.date!} retained={retained} onPress={()=>jumpDate(row.date!)}/> : row.kind==='unread' ? <HelpUnreadSeparator/> : <HelpMediaLoadingContext.Provider value={retained?'retained':index>=range.first&&index<=range.last?'visible':index>=range.first-4&&index<=range.last+4?'near':'deferred'}><HelpMessageArrival key={helpArrivalIdentity(row.message)} identity={helpArrivalIdentity(row.message)} distance={followingRef.current&&tailGeometry.current?0:24} deferred={!retained&&!firstContentSettled} animate={!retained&&(row.kind==='pending'||Date.now()<=arrivalBatch.expiresAt&&arrivalBatch.keys.has(helpArrivalIdentity(row.message)))}><HelpArrivalGeometryContext.Provider value={!retained&&followingRef.current&&Boolean(tailGeometry.current)}>{row.kind==='pending'?props.renderPending?.(row.pending!):props.renderMessage(row.message)}</HelpArrivalGeometryContext.Provider></HelpMessageArrival></HelpMediaLoadingContext.Provider>, [jumpDate,props.renderMessage,props.renderPending,arrivalBatch.keys,firstContentSettled]);
   // Keep the renderer stable through viewport/date updates. Real visual changes
   // from the screen (selection, search, receipts) still replace renderMessage.
   const renderItem = useCallback<ListRenderItem<HelpTimelineRow>>(({item,index,extraData}) => renderRow(item,index,extraData as MediaRange), [renderRow]);
@@ -397,9 +397,9 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     const {window,content,first}=measured;
     if(!window||!content||!window.height||!content.height)return;
     const next={content:content.height,margin:Math.max(0,window.height-content.height-first),width:window.width,height:window.height};
-    const firstKey=rowsRef.current[0]?.key??'',lastKey=rowsRef.current.at(-1)?.key??'',previous=tailRevision.current;
-    const historyChanged=Boolean(previous.first&&previous.first!==firstKey);
-    tailRevision.current={first:firstKey,last:lastKey,history:historyChanged||previous.history&&previous.last===lastKey};
+    const keys=rowsRef.current.map(row=>row.key),lastKey=keys.at(-1)??'',previous=tailRevision.current;
+    const historyChanged=helpTailHistoryChange(previous.keys,keys);
+    tailRevision.current={keys,last:lastKey,history:historyChanged||previous.history&&previous.last===lastKey};
     if(tailGeometry.current&&(Math.abs(tailGeometry.current.width-next.width)>.5||Math.abs(tailGeometry.current.height-next.height)>.5))resetTailMotion();
     // Geometry, not text/type or a receipt timer, owns this motion. Late image
     // dimensions, voice controls and streamed text all lift the same viewport.
