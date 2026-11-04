@@ -65,6 +65,7 @@ on:
 jobs:
   build-upload:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     outputs:
       apk_required: ${{ steps.strategy.outputs.apk_required }}
     environment: ${{ ((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && 'development' || 'production' }}
@@ -227,10 +228,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # SDK 58 release shrinking exceeds a 2 GB heap. Public Linux runners
+          # have 16 GB RAM; leave room for Kotlin/native workers and the OS.
           if grep -q '^org.gradle.jvmargs=' gradle.properties; then
-            sed -i 's/^org.gradle.jvmargs=.*/org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8/' gradle.properties
+            sed -i 's/^org.gradle.jvmargs=.*/org.gradle.jvmargs=-Xmx6144m -XX:MaxMetaspaceSize=1024m -XX:+UseParallelGC -Dfile.encoding=UTF-8/' gradle.properties
           else
-            printf '\norg.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8\n' >> gradle.properties
+            printf '\norg.gradle.jvmargs=-Xmx6144m -XX:MaxMetaspaceSize=1024m -XX:+UseParallelGC -Dfile.encoding=UTF-8\n' >> gradle.properties
           fi
 
       - name: Build APK

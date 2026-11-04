@@ -65,6 +65,12 @@ using its original npm lockfile and Expo SDK 57. The same 153 tests and the
 snapshot's full TypeScript check pass there as well. The snapshot and patch
 are private development artifacts under `.dev-runtime/`; no OTA has been
 published for that SDK 57 runtime by this correction. Following the owner's
-request to ship SDK 58, the release target is APK 0.1.45 / versionCode 44 and
-runtime 0.1.45. It includes this correction and the SDK 58 native libraries;
+request to ship SDK 58, the release target is APK 0.1.46 / versionCode 45 and
+runtime 0.1.46. It includes this correction and the SDK 58 native libraries;
 subsequent OTA exports must target that new runtime.
+
+The initial 0.1.45 APK candidate failed in release R8 shrinking with a Java heap
+exhaustion at the old CI limit of 2 GB; it was never published as an APK. The CI
+heap is now 6 GB with 1 GB metaspace and Parallel GC, within the public Linux
+runner's 16 GB RAM. The signed APK build has a 60-minute timeout. A fresh native
+version keeps the retry explicit; OTA 0.1.45.1 remains isolated to its runtime.
