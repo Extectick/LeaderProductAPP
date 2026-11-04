@@ -26,7 +26,7 @@ export function HelpAvatar({ id, name, uri, size = 34, muted = false }: { id: nu
 export function HelpBlurSurface({target,edge='top',featherSize}:{target?:React.RefObject<View|null>;edge?:'top'|'bottom';featherSize?:number}) {
   const c=useHelpTheme();
   const enabled=useContext(HelpVisualEffectsContext);
-  return enabled ? <AppEdgeBlur target={target} edge={edge} intensity={58} featherSize={featherSize??96} dark={c.dark} backgroundColor={c.background} testID="help-blur-surface"/> : null;
+  return enabled ? <AppEdgeBlur target={target} edge={edge} intensity={34} featherSize={featherSize??144} dark={c.dark} backgroundColor={c.background} testID="help-blur-surface"/> : null;
 }
 export function HelpDock({ children, onHeight, onHeightFrame, target, stableKeyboardLayout=false }: { children: React.ReactNode; onHeight?: (height: number) => void; onHeightFrame?:(height:number)=>void; target?: React.RefObject<View | null>; stableKeyboardLayout?:boolean }) {
   const c = useHelpTheme(); const insets = useSafeAreaInsets();
@@ -58,7 +58,7 @@ export function HelpDock({ children, onHeight, onHeightFrame, target, stableKeyb
   }, [stableKeyboardLayout]);
   useEffect(() => helpDevState({ keyboardVisible, keyboardHeight: Keyboard.metrics?.()?.height ?? 0 }), [keyboardVisible]);
   return <View ref={node => helpDevRef('dock', node)} onLayout={e => reportHeight(e.nativeEvent.layout.height)} style={{ paddingHorizontal: 8, paddingTop: 8, paddingBottom: stableKeyboardLayout ? restingInset.current.bottom+8 : keyboardVisible ? 8 : insets.bottom + 8, position: 'relative' }}>
-    <View testID="help-dock-backdrop" pointerEvents="none" style={[StyleSheet.absoluteFill, {top:-36}]}><HelpBlurSurface target={target}/></View>{children}
+    <View testID="help-dock-backdrop" pointerEvents="none" style={[StyleSheet.absoluteFill, {top:-64}]}><HelpBlurSurface target={target}/></View>{children}
   </View>;
 }
 export function HelpPrimaryButton({ text, icon = 'add-outline', onPress, disabled, variant = 'dock' }: { text: string; icon?: HelpIconName; onPress: () => void; disabled?: boolean; variant?: 'dock'|'sheet' }) {

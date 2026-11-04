@@ -41,6 +41,7 @@ jest.mock('../src/features/help/helpDiagnostics',()=>({helpDevActions:()=>()=>{}
 jest.mock('../src/features/help/components/HelpPhotoCamera',()=>({HelpPhotoCamera:'HelpPhotoCamera'}));
 jest.mock('../src/features/help/components/HelpPhotoPreview',()=>({HelpPhotoPreview:'HelpPhotoPreview'}));
 jest.mock('../src/features/help/components/HelpNativeInput',()=>({hasNativeHelpInput:false,HelpNativeInput:'HelpNativeInput'}));
+import {useAnimatedReaction} from 'react-native-reanimated';
 import {HelpPhotoPortalProvider} from '../src/features/help/components/HelpPhotoPortal';
 import {HelpPhotoPicker,helpPhotoSheetMaximumHeight} from '../src/features/help/components/HelpPhotoPicker';
 
@@ -219,6 +220,8 @@ describe('gallery pull',()=>{
   async function startPull(){const state=manager();await act(async()=>{gesture().handlers.onTouchesDown(touch(),state);gesture().handlers.onTouchesMove(touch(50,70),state);gesture().handlers.onStart();});return state;}
   test('native scroll waits for downward pull only; middle-list touch cannot transfer at the edge',async()=>{
     await render();expect(gesture('native').config.requireExternalGestureToFail).toBe(gesture());expect(gesture().config.manualActivation).toBe(true);
+    const resize=screen!.root.findAllByType('GestureDetector' as any).find(node=>node.props.gesture.config.withTestId==='help-photo-resize')!.props.gesture.handlers;
+    await act(async()=>{resize.onStart();resize.onUpdate({translationY:-2000});resize.onEnd({translationY:-2000,velocityY:-1000},true);});
     await act(async()=>grid().props.onScroll({contentOffset:{y:120}}));
     const state=manager();act(()=>gesture().handlers.onTouchesDown(touch(),state));expect(state.fail).toHaveBeenCalledTimes(1);
     await act(async()=>grid().props.onScroll({contentOffset:{y:0}}));act(()=>gesture().handlers.onTouchesMove(touch(50,130),state));expect(state.activate).not.toHaveBeenCalled();
@@ -236,6 +239,25 @@ describe('gallery pull',()=>{
     await act(async()=>gesture().handlers.onEnd({velocityY:-500},true));
     expect(StyleSheet.flatten(panel().props.style).height).toBeCloseTo(Dimensions.get('window').height);
     expect(props.onClose).not.toHaveBeenCalled();
+  });
+  test('one upward drag spends travel on the whole pane before scrolling its files',async()=>{
+    await render();await act(async()=>grid().props.onScroll({contentOffset:{y:0},contentSize:{height:2400},layoutMeasurement:{height:500}}));
+    const state=manager();act(()=>{gesture().handlers.onTouchesDown(touch(),state);gesture().handlers.onTouchesMove(touch(50,30),state);gesture().handlers.onStart();});
+    const readOffset=(useAnimatedReaction as jest.Mock).mock.calls[0][0];
+    const growth=Dimensions.get('window').height*.4;
+    act(()=>gesture().handlers.onUpdate({translationY:-50}));expect(readOffset()).toBe(0);
+    act(()=>gesture().handlers.onUpdate({translationY:-(growth+40)}));
+    expect(panel().props.style[1].height).toBeCloseTo(Dimensions.get('window').height);expect(readOffset()).toBeCloseTo(40);
+  });
+  test('downward drag from the top lowers the full pane before it can close',async()=>{
+    props.files=[file(0)];await render();
+    const resize=screen!.root.findAllByType('GestureDetector' as any).find(node=>node.props.gesture.config.withTestId==='help-photo-resize')!.props.gesture.handlers;
+    await act(async()=>{resize.onStart();resize.onUpdate({translationY:-2000});resize.onEnd({translationY:-2000,velocityY:-1000},true);});
+    const state=manager();act(()=>{gesture().handlers.onTouchesDown(touch(),state);gesture().handlers.onTouchesMove(touch(50,90),state);gesture().handlers.onStart();gesture().handlers.onUpdate({translationY:100});});
+    expect(panel().props.style[1].height).toBeCloseTo(Dimensions.get('window').height-100);
+    await act(async()=>gesture().handlers.onEnd({velocityY:100},true));
+    expect(StyleSheet.flatten(panel().props.style).height).toBeCloseTo(Dimensions.get('window').height*.6);
+    expect(props.onClose).not.toHaveBeenCalled();expect(props.onFiles).not.toHaveBeenCalled();
   });
   test('tap within slop does not activate and photo selection stays available',async()=>{
     await render();const state=manager();act(()=>{gesture().handlers.onTouchesDown(touch(),state);gesture().handlers.onTouchesMove(touch(51,53),state);gesture().handlers.onTouchesUp({},state);});
@@ -374,8 +396,8 @@ test('camera discards a delayed grid measurement from the previous opening',asyn
  const newGrid=screen!.root.findAllByProps({testID:'help-photo-grid-viewport'})[0];
  newGrid.instance.measureInWindow=(callback:typeof oldMeasurement)=>callback(0,48,360,600);
  await act(async()=>newGrid.props.onLayout());
- expect(camera().props.viewport).toEqual({x:0,y:96,width:360,height:552});
- expect(camera().props.sheetViewportHeight.value).toBe(494);
+ expect(camera().props.viewport).toEqual({x:0,y:88,width:360,height:560});
+ expect(camera().props.sheetViewportHeight.value).toBe(502);
 });
 
 
@@ -401,4 +423,13 @@ test('sending locks attachment actions without disabling the focused caption or 
   expect(input().props.editable).toBe(true);
   expect(screen!.root.findAll(item=>item.props.accessibilityLabel==='Отправить фотографии: 1')[0].props.disabled).toBe(true);
   expect(dismiss).not.toHaveBeenCalled();
+});
+
+test('opaque compact attachment toolbar remains above files and the rising pane covers chat chrome',async()=>{
+ await act(async()=>{screen=TestRenderer.create(React.createElement(HelpPhotoPortalProvider,{foreground:React.createElement('ChatHeader' as any),headerHeight:100,children:React.createElement(HelpPhotoPicker,props)}),{createNodeMock:()=>node});});
+ const host=screen!.root.findAllByProps({testID:'help-photo-portal-host'})[0],chat=screen!.root.findAllByProps({testID:'help-photo-foreground'})[0];
+ expect(StyleSheet.flatten(host.props.style).zIndex).toBeGreaterThan(StyleSheet.flatten(chat.props.style).zIndex!);
+ const toolbar=screen!.root.findAllByProps({testID:'help-photo-panel-handle'})[0];
+ expect(StyleSheet.flatten(toolbar.props.style)).toMatchObject({height:40,backgroundColor:'#111'});
+ expect(toolbar.findAllByType('HelpBlurSurface' as any)).toHaveLength(0);
 });
