@@ -18,7 +18,7 @@ jest.mock('react-native-gesture-handler',()=>{
 jest.mock('react-native-reanimated',()=>{
   const React=require('react'),RN=require('react-native');
   return{__esModule:true,default:{View:RN.View,FlatList:RN.FlatList},cancelAnimation:jest.fn(),runOnJS:(fn:unknown)=>fn,
-    useAnimatedRef:()=>React.useRef(null),useAnimatedReaction:jest.fn(),useFrameCallback:()=>({setActive:jest.fn()}),measure:jest.fn(),scrollTo:jest.fn(),withDecay:jest.fn(),
+    useAnimatedRef:()=>React.useRef(null),useAnimatedReaction:jest.fn(),useFrameCallback:jest.fn(()=>({setActive:jest.fn()})),measure:jest.fn(),scrollTo:jest.fn(),withDecay:jest.fn(),
     useDerivedValue:(fn:()=>unknown)=>({get value(){return fn();}}),
     useSharedValue:(initial:unknown)=>React.useRef({value:initial}).current,
     useAnimatedStyle:(fn:()=>any)=>{const initial=React.useRef(fn()).current;return mockStaticAnimatedStyle?initial:({get transform(){return fn().transform;},get height(){return fn().height;}});},
@@ -42,7 +42,7 @@ jest.mock('../src/features/help/helpDiagnostics',()=>({helpDevActions:()=>()=>{}
 jest.mock('../src/features/help/components/HelpPhotoCamera',()=>({HelpPhotoCamera:'HelpPhotoCamera'}));
 jest.mock('../src/features/help/components/HelpPhotoPreview',()=>({HelpPhotoPreview:'HelpPhotoPreview'}));
 jest.mock('../src/features/help/components/HelpNativeInput',()=>({hasNativeHelpInput:false,HelpNativeInput:'HelpNativeInput'}));
-import {useAnimatedReaction} from 'react-native-reanimated';
+import {measure,scrollTo,useAnimatedReaction,useFrameCallback} from 'react-native-reanimated';
 import {HelpPhotoPortalProvider} from '../src/features/help/components/HelpPhotoPortal';
 import {HelpPhotoPicker,helpPhotoSheetMaximumHeight} from '../src/features/help/components/HelpPhotoPicker';
 
@@ -485,4 +485,25 @@ test('file caption and navigation draw no blur or translucent background plate',
  expect(screen!.root.findAllByProps({testID:'help-photo-navigation-blur'})).toHaveLength(0);
  const caption=screen!.root.findAllByProps({testID:'help-photo-caption'})[0];
  expect(StyleSheet.flatten(caption.props.style).backgroundColor).toBeUndefined();
+});
+
+
+test('opening attachments measures an opaque Reanimated UI ref without invoking it',async()=>{
+ await render();
+ // Our ref mock is intentionally an object, like the Reanimated 4.7 UI handle.
+ // Previously the first camera frame called grid() and threw TypeError here.
+ const frame=(useFrameCallback as jest.Mock).mock.calls.slice(-1)[0][0];
+ (measure as jest.Mock).mockReturnValueOnce(null);
+ expect(()=>frame()).not.toThrow();
+ (measure as jest.Mock).mockReturnValueOnce({pageY:100,height:800});
+ expect(()=>frame()).not.toThrow();
+ expect(measure).toHaveBeenCalledWith(expect.objectContaining({current:expect.anything()}));
+});
+test('scrolling attachments passes the opaque animated ref straight to scrollTo',async()=>{
+ await render();
+ const update=(useAnimatedReaction as jest.Mock).mock.calls[0][1];
+ expect(()=>update(120,0)).not.toThrow();
+ expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({current:expect.anything()}),0,120,false);
+ (scrollTo as jest.Mock).mockClear();
+ update(0,null);expect(scrollTo).not.toHaveBeenCalled();
 });

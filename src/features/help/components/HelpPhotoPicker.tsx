@@ -95,9 +95,10 @@ export function HelpPhotoPicker(props:Props) {
     onScroll:event=>{gridScrollY.value=Math.max(0,event.contentOffset.y);gridMaximum.value=Math.max(0,(event.contentSize?.height??0)-(event.layoutMeasurement?.height??0));const show=event.contentOffset.y<tileSize+headerHeight;if(nativeCameraVisible.value!==show){nativeCameraVisible.value=show;runOnJS(setCameraVisible)(show);}},
     onMomentumBegin:()=>{gridMomentum.value=true;},onMomentumEnd:()=>{gridMomentum.value=false;},
   },[tileSize,headerHeight]);
-  useAnimatedReaction(()=>gridTarget.value,(value,previous)=>{if(previous!==null&&value!==previous&&(gridList() as unknown)!==-1)scrollTo(gridList,0,value,false);},[gridList]);
+  useAnimatedReaction(()=>gridTarget.value,(value,previous)=>{if(previous!==null&&value!==previous)scrollTo(gridList,0,value,false);},[gridList]);
   const cameraFrame=useFrameCallback(()=>{
-    if((grid() as unknown)===-1)return;
+    // Animated refs are opaque on the UI runtime (Reanimated 4.7+ maps them
+    // to shareable objects). Only the public APIs may dereference them.
     const rect=measure(grid);
     if(rect&&rect.height>0){cameraOffset.value=rect.pageY-measuredGridY.value;cameraViewportHeight.value=Math.max(0,Math.min(rect.height,height.value)-headerHeight-Math.max(0,insets.top-(viewportHeight.value-height.value))-captionHeight.value);}
   },false);
