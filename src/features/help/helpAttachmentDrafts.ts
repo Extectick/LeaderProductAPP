@@ -82,7 +82,7 @@ export function saveHelpAttachmentDraft(userId: number, key: string, files: read
           uri = `${root}attachment-${helpClientId()}.${extension}`;
           created.push(uri); await FileSystem.copyAsync({ from: file.uri, to: uri });
         }
-        durable.push({ uri, name: file.name, mimeType: file.mimeType, size: info.size ?? file.size, width: file.width, height: file.height, ...(file.assetId ? { assetId: file.assetId } : {}) });
+        durable.push({ uri, name: file.name, mimeType: file.mimeType, size: info.size ?? file.size, durationMs:file.durationMs, width: file.width, height: file.height, ...(file.assetId ? { assetId: file.assetId } : {}) });
       }
       if (durable.length) await AsyncStorage.setItem(storage, JSON.stringify({ version: 1, files: durable } satisfies Manifest));
       else await AsyncStorage.removeItem(storage);

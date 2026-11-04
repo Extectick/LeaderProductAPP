@@ -57,6 +57,7 @@ export function HelpPhotoPicker(props:Props) {
   const headerHeight=48+headerTopInset,captionInset=keyboardTop===null?insets.bottom:0;
   const captionFocused=useRef(false);
   const expansionLimit=useSharedValue(maximumHeight),gridTarget=useSharedValue(0),gridMaximum=useSharedValue(0);
+  const captionHeight=useSharedValue(58+insets.bottom);
   const measuredGridY=useSharedValue(0),cameraOffset=useSharedValue(0),cameraViewportHeight=useSharedValue(0);
   const gridBaseline=useRef<{revision:number;width:number}|null>(null);
   const pending=selection.some(item=>item.pending),failed=selection.some(item=>item.failed),blocked=props.busy||pending;
@@ -74,7 +75,7 @@ export function HelpPhotoPicker(props:Props) {
         // Keep one coordinate origin while this opening moves. The UI-thread
         // probe below follows real sheet/IME geometry, including parent motion.
         if(gridBaseline.current?.revision!==revision||gridBaseline.current.width!==width){
-          gridBaseline.current={revision,width};measuredGridY.value=y;cameraOffset.value=0;cameraViewportHeight.value=Math.max(0,height-headerHeight);
+          gridBaseline.current={revision,width};measuredGridY.value=y;cameraOffset.value=0;cameraViewportHeight.value=Math.max(0,height-headerHeight-captionHeight.value);
           measuredHeight.value=baseline;setViewport({x,y,width,height});
         }
       }
@@ -98,7 +99,7 @@ export function HelpPhotoPicker(props:Props) {
   const cameraFrame=useFrameCallback(()=>{
     if((grid() as unknown)===-1)return;
     const rect=measure(grid);
-    if(rect&&rect.height>0){cameraOffset.value=rect.pageY-measuredGridY.value;cameraViewportHeight.value=Math.max(0,rect.height-headerHeight);}
+    if(rect&&rect.height>0){cameraOffset.value=rect.pageY-measuredGridY.value;cameraViewportHeight.value=Math.max(0,rect.height-headerHeight-captionHeight.value);}
   },false);
   useEffect(()=>{cameraFrame.setActive(props.open&&Boolean(viewport)&&!preview);return()=>cameraFrame.setActive(false);},[cameraFrame,props.open,viewport,preview]);
   const pullStyle=useAnimatedStyle(()=>({transform:[{translateY:pullY.value}],borderTopLeftRadius:Math.min(22,Math.max(0,expansionLimit.value-height.value)),borderTopRightRadius:Math.min(22,Math.max(0,expansionLimit.value-height.value))}));
@@ -357,7 +358,7 @@ export function HelpPhotoPicker(props:Props) {
         <Pressable accessibilityRole="button" accessibilityLabel="Выбрать файлы" disabled={blocked} onPress={props.onDocuments} style={{position:'absolute',left:2,top:headerTopInset+2,width:44,height:44,alignItems:'center',justifyContent:'center'}}><Ionicons name="document-outline" size={21} color={c.muted}/></Pressable>
         <Pressable accessibilityRole="button" accessibilityLabel="Закрыть фотографии" onPress={props.onClose} style={{position:'absolute',right:2,top:headerTopInset+2,width:44,height:44,alignItems:'center',justifyContent:'center'}}><Ionicons name="close" size={22} color={c.muted}/></Pressable>
       </Reanimated.View></GestureDetector>
-      <View testID="help-photo-caption" style={{position:'absolute',left:0,right:0,bottom:0,margin:0,paddingTop:8,paddingBottom:captionInset+4,minHeight:58+captionInset}}>
+      <View testID="help-photo-caption" onLayout={event=>{captionHeight.value=event.nativeEvent.layout.height;}} style={{position:'absolute',left:0,right:0,bottom:0,margin:0,paddingTop:8,paddingBottom:captionInset+4,minHeight:58+captionInset}}>
         <View pointerEvents="none" style={[StyleSheet.absoluteFill,{backgroundColor:c.panel+'B8'}]}><HelpBlurSurface target={gridBlur} edge="top" featherSize={16}/></View>
         <View testID="help-photo-caption-surface" style={{minHeight:46,marginHorizontal:8,borderRadius:24,backgroundColor:c.surface,borderWidth:StyleSheet.hairlineWidth,borderColor:c.line}}>
         <TextInput testID="help-photo-message-input" accessibilityLabel="Сообщение к вложениям" value={props.caption} onChangeText={props.onCaption}

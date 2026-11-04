@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, AppState, Keyboard, PanResponder, Platform, Pressable, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -8,6 +8,7 @@ import { getRecordingPermissionsAsync, requestRecordingPermissionsAsync, setAudi
 import * as FileSystem from 'expo-file-system/legacy';
 import { useHelpReducedMotion, useHelpTheme } from '../helpTheme';
 import { useHelpAudioCommands } from '../HelpAudioPlayback';
+import {HelpPhotoPortal,useHelpPhotoPortalFrame} from './HelpPhotoPortal';
 import { helpDuration } from '../helpUiUtils';
 import type { HelpLocalFile } from './HelpComposer';
 type Snapshot = {
@@ -79,6 +80,8 @@ export function HelpVoiceRecorder(props: Props) {
       updateInterval: 80
     }),
     playback = useAudioPlayerStatus(player);
+  const host=useHelpPhotoPortalFrame(),pausePortal=useId(),actionRef=useRef<View>(null);
+  const [actionRect,setActionRect]=useState<{x:number;y:number;width:number;height:number}>();
   const latest = useRef(props);
   latest.current = props;
   const state = useRef({
@@ -354,7 +357,8 @@ export function HelpVoiceRecorder(props: Props) {
             uri: file.uri,
             name: `voice-${Date.now()}.m4a`,
             mimeType: 'audio/mp4',
-            size: file.size
+            size: file.size,
+            durationMs:file.durationMs
           }
         };
       }
@@ -497,6 +501,23 @@ export function HelpVoiceRecorder(props: Props) {
     justifyContent: 'center' as const,
     backgroundColor: phase === 'holding' ? '#DB5059' : c.accent
   };
+  useEffect(()=>{
+    if(!locked){setActionRect(undefined);return;}
+    let alive=true,frame:number;const until=Date.now()+280;
+    const tick=()=>{if(!alive)return;actionRef.current?.measureInWindow((x,y,width,height)=>{if(alive&&width>0&&height>0)setActionRect(previous=>previous?.x===x&&previous.y===y?previous:{x,y,width,height});});if(Date.now()<until)frame=requestAnimationFrame(tick);};
+    frame=requestAnimationFrame(tick);return()=>{alive=false;cancelAnimationFrame(frame);};
+  },[locked]);
+  const pauseControl=active && (locked || paused) ? <Pressable accessibilityRole="button" accessibilityLabel={paused ? 'Продолжить запись' : 'Приостановить запись'} disabled={working || props.disabled || paused && duration >= 60000} onPress={() => void (paused ? start(true) : pause())} style={{
+      position: 'absolute',
+      ...(locked&&host&&actionRect?{left:actionRect.x-host.x+(actionRect.width-36)/2,top:Math.max(8,actionRect.y-host.y-60)}:{right:locked?11:70,bottom:locked?72:1}),
+      width: 36,
+      height: 44,
+      borderRadius: 16,
+      backgroundColor: c.panel,
+      alignItems: 'center',
+      justifyContent: 'center',
+      opacity: paused && duration >= 60000 ? .4 : 1
+    }}><Ionicons name={paused ? 'mic' : 'pause'} size={18} color={c.accentText} /></Pressable> : null;
   if (!active && !props.visible) return null;
   return <>
     {active ? <View testID={`help-voice-${phase}`} style={{
@@ -509,7 +530,7 @@ export function HelpVoiceRecorder(props: Props) {
       flexDirection: 'row',
       alignItems: 'center',
       paddingLeft: 12,
-      paddingRight: locked || paused ? 114 : 74,
+      paddingRight: paused ? 114 : 74,
       gap: 7
     }}>
       {paused ? <Pressable accessibilityRole="button" accessibilityLabel="Удалить запись" disabled={working} onPress={() => void finish('cancel')} style={{
@@ -605,18 +626,7 @@ export function HelpVoiceRecorder(props: Props) {
       backgroundColor: c.accent,
       opacity: phase === 'holding' || locked ? .16 : 0,
     }, haloStyle]}/> : null}
-    {active && (locked || paused) ? <Pressable accessibilityRole="button" accessibilityLabel={paused ? 'Продолжить запись' : 'Приостановить запись'} disabled={working || props.disabled || paused && duration >= 60000} onPress={() => void (paused ? start(true) : pause())} style={{
-      position: 'absolute',
-      right: 70,
-      bottom: 1,
-      width: 36,
-      height: 44,
-      borderRadius: 16,
-      backgroundColor: c.panel,
-      alignItems: 'center',
-      justifyContent: 'center',
-      opacity: paused && duration >= 60000 ? .4 : 1
-    }}><Ionicons name={paused ? 'mic' : 'pause'} size={18} color={c.accentText} /></Pressable> : null}
+    {locked&&host&&actionRect?<HelpPhotoPortal id={`voice-pause-${pausePortal}`}>{pauseControl}</HelpPhotoPortal>:pauseControl}
     {phase === 'holding' ? <View pointerEvents="none" style={{
       position: 'absolute',
       right: 13,
@@ -626,7 +636,7 @@ export function HelpVoiceRecorder(props: Props) {
       gap: 6
     }}><Ionicons name="lock-closed-outline" size={18} color={c.muted} /><Ionicons name="chevron-up" size={14} color={c.muted} /></View> : null}
     {/* Keep the responder mounted while an upward gesture changes mic into send. */}
-    <GestureDetector gesture={gesture}><Reanimated.View collapsable={false} testID="help-voice-drag-button" accessible={!locked && !paused} accessibilityRole="button" accessibilityLabel={locked || paused ? undefined : 'Удерживайте для записи голосового сообщения. Проведите вверх, чтобы закрепить запись'} onAccessibilityTap={() => void start(false, true)} style={[{
+    <GestureDetector gesture={gesture}><Reanimated.View ref={actionRef} collapsable={false} testID="help-voice-drag-button" accessible={!locked && !paused} accessibilityRole="button" accessibilityLabel={locked || paused ? undefined : 'Удерживайте для записи голосового сообщения. Проведите вверх, чтобы закрепить запись'} onAccessibilityTap={() => void start(false, true)} style={[{
       ...actionStyle,
       opacity: props.disabled ? .4 : 1
     },dragStyle]}>{locked || paused ? <Pressable testID="help-voice-send" accessibilityRole="button" accessibilityLabel="Отправить запись" disabled={working || props.disabled} onPress={() => void finish('send')} style={{width:'100%',height:'100%',alignItems:'center',justifyContent:'center'}}>{working ? <ActivityIndicator color="#FFF" /> : <Ionicons name="arrow-up" size={32} color="#FFF" />}</Pressable> : phase === 'preparing' ? <ActivityIndicator color="#FFF" /> : <Ionicons name="mic" size={active ? 32 : 22} color="#FFF" />}</Reanimated.View></GestureDetector>

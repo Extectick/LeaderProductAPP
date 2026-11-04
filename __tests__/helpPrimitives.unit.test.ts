@@ -112,7 +112,7 @@ describe('Help approved prototype tokens and primitive geometry',()=>{
   });
   test('dock blur starts at the composer edge and extends through the safe area',async()=>{
     await act(async()=>{screen=TestRenderer.create(React.createElement(HelpDock,{children:null}));});
-    expect(StyleSheet.flatten(screen!.root.findByProps({testID:'help-dock-backdrop'}).props.style).top).toBe(8);
+    expect(StyleSheet.flatten(screen!.root.findByProps({testID:'help-dock-backdrop'}).props.style).top).toBe(-36);
     expect(StyleSheet.flatten(screen!.root.findByProps({testID:'help-dock-backdrop'}).parent!.props.style)).toMatchObject({paddingHorizontal:8,paddingTop:8,paddingBottom:42});
   });
   test('zero-height keyboard reports cannot remove the dock safe area during opening',async()=>{
@@ -180,6 +180,16 @@ describe('Help blur startup and target lifecycle',()=>{
     await act(async()=>{screen=TestRenderer.create(React.createElement(HelpBlurSurface,{target:{current:{} as View}}));});
     expect(StyleSheet.flatten(screen!.root.findByProps({testID:'app-blur-preparing'}).props.style).backgroundColor).toBeUndefined();
     await act(async()=>layout());
-    expect(screen!.root.findByType('BlurView' as any).props).toMatchObject({tint:'light',frameClearColor:'#F7F9FC',intensity:30,blurMethod:'dimezisBlurViewSdk31Plus'});
+    expect(screen!.root.findByType('BlurView' as any).props).toMatchObject({tint:'light',frameClearColor:'#F7F9FC',intensity:58,blurMethod:'dimezisBlurViewSdk31Plus'});
   });
+});
+
+test('IT sheet cannot stretch upward or snap to a tall expanded state',async()=>{
+ let tree!:TestRenderer.ReactTestRenderer;
+ await act(async()=>{tree=TestRenderer.create(React.createElement(HelpSheet,{title:'Подключить IT?',resizable:false,maxHeight:420,onClose:jest.fn(),children:null}));});
+ const panel=()=>StyleSheet.flatten(tree.root.findAllByProps({testID:'help-sheet-surface'})[0].props.style);
+ const gesture=tree.root.findByType('GestureDetector' as any).props.gesture.handlers,initial=panel().height;
+ act(()=>{gesture.onStart();gesture.onUpdate({translationY:-1000});gesture.onEnd({translationY:-1000,velocityY:-2000},true);});
+ expect(panel().height).toBe(initial);expect(panel().height).toBeLessThanOrEqual(420);
+ await act(async()=>tree.unmount());
 });

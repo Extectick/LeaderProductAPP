@@ -1,4 +1,4 @@
-import React, { forwardRef, useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, {createContext, forwardRef, useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, AppState, Easing, Platform, ScrollView, type ScrollViewProps, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import Reanimated,{cancelAnimation,Easing as UiEasing,runOnUI,useAnimatedStyle,useSharedValue,withTiming} from 'react-native-reanimated';
@@ -18,6 +18,12 @@ import { HELP_LATEST_SCROLL_BEZIER, helpLatestNavigationMotion, hiddenHelpLatest
 import {HelpMessageArrival,HelpMessageArrivalContext,helpArrivalIdentity} from './HelpMessageArrival';
 import {helpTailDisplacement,helpTailMotionLimit,type HelpTailGeometry} from '../helpTailMotion';
 
+const InlineDateClipContext=createContext('');
+function ClippedHelpDate({rowKey,date,retained,onPress}:{rowKey:string;date:string;retained:boolean;onPress:()=>void}){
+  const keys=useContext(InlineDateClipContext);
+  const hidden=retained||keys.split('|').includes(rowKey);
+  return <View testID="help-inline-date-clip" pointerEvents={hidden?'none':'auto'} accessibilityElementsHidden={hidden} importantForAccessibility={hidden?'no-hide-descendants':'auto'} style={{opacity:hidden?0:1}}><HelpDateSeparator date={date} onPress={onPress}/></View>;
+}
 export type HelpTimelineHandle = {
   save: () => void;
   prepareJump: (sequence?: number) => boolean;
@@ -178,6 +184,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   const dateSnapshot = useRef<{rows:{row:HelpTimelineRow;top:number;height:number}[];loadedIds:Set<number>}|null>(null);
   const lastNavigationMode = useRef('none');
   const [currentDate, setCurrentDate] = useState('');
+  const [hiddenDateKeys,setHiddenDateKeys]=useState('');
   const currentDateRef = useRef(currentDate); currentDateRef.current = currentDate;
   const lastDiagnosticAt=useRef(0);
   const [mediaRange,setMediaRange]=useState<MediaRange>({first:0,last:-1});
@@ -249,7 +256,9 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     lastAnchor.current = {messageId:first.row.message.id, sequence:first.row.message.sequence,
       offset:first.top - live.current.headerHeight, atLatest:followingRef.current && !live.current.hasNewer};
     const currentDay=helpDayKey(first.row.message.createdAt);
-    const capsuleBottom=Math.max(0,live.current.headerHeight-16);
+    const capsuleBottom=live.current.headerHeight+12;
+    const hiddenDates=viewportRows(true).filter(item=>item.row.kind==='date'&&item.top+(item.height-24)/2<capsuleBottom).map(item=>item.row.key).sort().join('|');
+    setHiddenDateKeys(previous=>previous===hiddenDates?previous:hiddenDates);
     const visibleBottom=geometry.current.height-currentBottomInset();
     // Read receipts need at least 32 visible pixels. Date pills are only 24 high,
     // centered inside a 44px touch row, so inspect their actual visual bounds.
@@ -257,7 +266,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     const dateVisible=viewportRows(true).some(item=>{
       if(item.row.kind!=='date'||item.height<=0||helpDayKey(item.row.date!)!==currentDay)return false;
       const pillTop=item.top+(item.height-24)/2;
-      return pillTop+24>capsuleBottom&&pillTop<visibleBottom;
+      return pillTop>=capsuleBottom&&pillTop<visibleBottom;
     });
     const nextDate=dateVisible?'':first.row.message.createdAt;
     setCurrentDate(previous=>previous && nextDate && helpDayKey(previous)===helpDayKey(nextDate)?previous:nextDate);
@@ -367,7 +376,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     if (!reduced && dateSnapshot.current.rows.length) stageViewport({rows:dateSnapshot.current.rows,direction:1});
     void live.current.onDate(date).catch(error => { cancelJump(); live.current.onError(error instanceof Error ? error.message : 'Не удалось открыть сообщения за эту дату'); });
   }, [save,visible,cancelJump,reduced,stageViewport,itemStartOffset,currentBottomInset,resetTailMotion]);
-  const renderRow = useCallback((row: HelpTimelineRow,index=rowsRef.current.indexOf(row),range=mediaRangeRef.current,retained=false) => row.kind==='date' ? <HelpDateSeparator date={row.date!} onPress={()=>jumpDate(row.date!)}/> : row.kind==='unread' ? <HelpUnreadSeparator/> : <HelpMediaLoadingContext.Provider value={retained?'retained':index>=range.first&&index<=range.last?'visible':index>=range.first-4&&index<=range.last+4?'near':'deferred'}><HelpMessageArrival key={helpArrivalIdentity(row.message)} identity={helpArrivalIdentity(row.message)} distance={followingRef.current&&tailGeometry.current?0:24} deferred={!retained&&!firstContentSettled} animate={!retained&&(row.kind==='pending'||Date.now()<=arrivalBatch.expiresAt&&arrivalBatch.keys.has(helpArrivalIdentity(row.message)))}>{row.kind==='pending'?props.renderPending?.(row.pending!):props.renderMessage(row.message)}</HelpMessageArrival></HelpMediaLoadingContext.Provider>, [jumpDate,props.renderMessage,props.renderPending,arrivalBatch.keys,firstContentSettled]);
+  const renderRow = useCallback((row: HelpTimelineRow,index=rowsRef.current.indexOf(row),range=mediaRangeRef.current,retained=false) => row.kind==='date' ? <ClippedHelpDate rowKey={row.key} date={row.date!} retained={retained} onPress={()=>jumpDate(row.date!)}/> : row.kind==='unread' ? <HelpUnreadSeparator/> : <HelpMediaLoadingContext.Provider value={retained?'retained':index>=range.first&&index<=range.last?'visible':index>=range.first-4&&index<=range.last+4?'near':'deferred'}><HelpMessageArrival key={helpArrivalIdentity(row.message)} identity={helpArrivalIdentity(row.message)} distance={followingRef.current&&tailGeometry.current?0:24} deferred={!retained&&!firstContentSettled} animate={!retained&&(row.kind==='pending'||Date.now()<=arrivalBatch.expiresAt&&arrivalBatch.keys.has(helpArrivalIdentity(row.message)))}>{row.kind==='pending'?props.renderPending?.(row.pending!):props.renderMessage(row.message)}</HelpMessageArrival></HelpMediaLoadingContext.Provider>, [jumpDate,props.renderMessage,props.renderPending,arrivalBatch.keys,firstContentSettled]);
   // Keep the renderer stable through viewport/date updates. Real visual changes
   // from the screen (selection, search, receipts) still replace renderMessage.
   const renderItem = useCallback<ListRenderItem<HelpTimelineRow>>(({item,index,extraData}) => renderRow(item,index,extraData as MediaRange), [renderRow]);
@@ -715,7 +724,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     }
     setLoaded(true); updateMediaRange(true); observe();
   }, [settleOpening,updateMediaRange,observe]);
-  return <HelpMessageArrivalContext.Provider value={inheritedArrivals??localArrivals.current}><HelpImageCacheContext.Provider value={imageCache}><View style={{flex:1}}>
+  return <HelpMessageArrivalContext.Provider value={inheritedArrivals??localArrivals.current}><HelpImageCacheContext.Provider value={imageCache}><InlineDateClipContext.Provider value={hiddenDateKeys}><View style={{flex:1}}>
     <Animated.View testID="help-timeline-live-layer" style={{flex:1,opacity:(ready||!rows.length)&&(!rows.length||firstContentSettled)?1:0,transform:[{translateY:outgoing?(outgoing.latest&&snapshotVisible?transition:incomingTransition).interpolate({inputRange:[0,1],outputRange:[-direction*distance,0]}):0}]}}>
       <Reanimated.View testID="help-timeline-tail-motion" style={[{flex:1},tailStyle]}><FlashList ref={list} data={rows} extraData={mediaRange} keyExtractor={rowKey} getItemType={rowType} renderItem={renderItem}
         initialScrollIndex={initialPosition.current?.index}
@@ -740,5 +749,5 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     {outgoing ? <Animated.View testID={snapshotVisible?'help-timeline-transition':'help-timeline-preparation'} pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{position:'absolute',top:0,left:0,right:0,bottom:0,opacity:snapshotVisible?1:0,backgroundColor:c.background,overflow:'hidden',transform:[{translateY:transition.interpolate({inputRange:[0,1],outputRange:[0,direction*distance]})}]}}>{outgoing.rows.map(item=><View key={item.row.key} style={{position:'absolute',left:0,right:0,top:item.top}}>{renderRow(item.row,-1,mediaRangeRef.current,true)}</View>)}</Animated.View> : null}
     {!props.hideStickyDate && stickyDate ? <View style={{position:'absolute',top:Math.max(0,props.headerHeight-12),alignSelf:'center'}}><HelpDateSeparator compact date={stickyDate} onPress={()=>jumpDate(stickyDate)}/></View> : null}
     {rows.length > 0 && !props.onLatestState ? <HelpJumpToLatest visible={showLatestButton} count={props.unreadCount} loading={props.loadingNewer||navigating&&latestRequest.current} onPress={()=>{if(!prepareJump())return;void props.onLatest().catch(()=>{cancelJump();inNavigation.current=false;setNavigating(false);props.onError('Не удалось открыть последние сообщения');});}} style={{position:'absolute',right:HELP_COMPOSER_ACTION_RIGHT,bottom:props.dockHeight+12}}/> : null}
-  </View></HelpImageCacheContext.Provider></HelpMessageArrivalContext.Provider>;
+  </View></InlineDateClipContext.Provider></HelpImageCacheContext.Provider></HelpMessageArrivalContext.Provider>;
 });

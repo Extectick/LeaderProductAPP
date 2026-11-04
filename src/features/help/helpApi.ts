@@ -7,7 +7,7 @@ import type { HelpEvent, HelpHistoryPage, HelpHistoryQuery, HelpSearchResult, He
 import type { HelpAssistantRun } from './helpAssistant';
 
 export type HelpUser = { id: number; name: string; avatarUrl: string | null };
-export type HelpAttachment = { id: string; name: string; mimeType: string; size: number; kind: 'IMAGE' | 'AUDIO' | 'FILE'; url: string; width?: number | null; height?: number | null; thumbnailDataUri?: string | null; position?: number };
+export type HelpAttachment = { localUri?: string; durationMs?: number; id: string; name: string; mimeType: string; size: number; kind: 'IMAGE' | 'AUDIO' | 'FILE'; url: string; width?: number | null; height?: number | null; thumbnailDataUri?: string | null; position?: number };
 export type HelpMessage = {
   ticketStatusChange?: 'CLOSED' | 'REOPENED' | null;
   assistantRun?: HelpAssistantRun;

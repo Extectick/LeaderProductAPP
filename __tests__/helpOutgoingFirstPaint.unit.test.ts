@@ -71,15 +71,24 @@ test('queued reply already contains its quote before delivery',async()=>{
 });
 
 
-test('a queued file bubble shows local thumbnails and names before upload completes',async()=>{
+test('queued files use the full album and file tile before upload completes',async()=>{
   const files=[{uri:'file:///draft/photo.jpg',name:'photo.jpg',mimeType:'image/jpeg'},{uri:'file:///draft/document.pdf',name:'document.pdf',mimeType:'application/pdf'}];
   const item:HelpPending={key:'local-files',ticketId:4,create:false,createdAt:1,status:'sending',input:{text:'Документы'},localFiles:files};
   let view!:TestRenderer.ReactTestRenderer;
   await act(async()=>{view=TestRenderer.create(React.createElement(HelpPendingMessage,{item,onRetry:jest.fn()}));});
   try{
-    expect(view.root.findByType(require('react-native').Image).props.source.uri).toBe(files[0].uri);
+    expect(view.root.findByType('HelpImage' as any).props.attachment.localUri).toBe(files[0].uri);
+    expect(view.root.findAllByProps({testID:'help-attachment-uploading'}).length).toBeGreaterThan(0);
     const text=view.root.findAllByType(require('react-native').Text).map(node=>node.props.children);
-    expect(text).toContain('photo.jpg');expect(text).toContain('document.pdf');
+    expect(text).not.toContain('photo.jpg');expect(text).toContain('document.pdf');
     expect(view.root.findAllByProps({testID:'help-pending-content'})).toHaveLength(0);
   }finally{await act(async()=>view.unmount());}
+});
+
+test('queued voice is already a voice player with its local duration and upload state',async()=>{
+ const item:HelpPending={key:'voice',ticketId:4,create:false,createdAt:1,status:'sending',input:{text:''},localFiles:[{uri:'file://voice.m4a',name:'voice.m4a',mimeType:'audio/mp4',size:2500,durationMs:4200}]};
+ let view!:TestRenderer.ReactTestRenderer;await act(async()=>{view=TestRenderer.create(React.createElement(HelpPendingMessage,{item,onRetry:jest.fn()}));});
+ const audio=view.root.findByType('HelpAudio' as any);expect(audio.props.uploading).toBe(true);expect(audio.props.attachment.durationMs).toBe(4200);
+ expect(view.root.findAllByType(require('react-native').Text).some(node=>node.props.children==='voice.m4a')).toBe(false);
+ await act(async()=>view.unmount());
 });

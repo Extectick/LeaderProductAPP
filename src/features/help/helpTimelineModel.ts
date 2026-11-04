@@ -1,3 +1,4 @@
+import {helpPendingMessage} from './helpPendingPresentation';
 import type { HelpMessage } from './helpApi';
 import type { HelpPending } from './helpDurableTypes';
 import type {HelpNavigationTarget} from './helpHistoryTypes';
@@ -34,7 +35,7 @@ export function helpTimelineEntries(messages:HelpMessage[],pending:readonly Help
     const clientMessageId=item.input.clientMessageId||item.key;
     if(accepted.has(clientMessageId))continue;
     accepted.add(clientMessageId);
-    entries.push({pending:item,message:{id:-(entries.length+1),ticketId:item.ticketId??0,sequence:0,clientMessageId,authorId,author:null,authorRole:'USER',kind:item.action==='close'?'CLOSURE':'TEXT',text:item.input.text,createdAt:new Date(item.createdAt).toISOString(),editedAt:null,replyToId:item.input.replyToId??null,replyTo:item.replyTo??null,forwardedFromId:null,rating:null,attachments:[],reactions:[]}});
+    entries.push({pending:item,message:{id:-(entries.length+1),ticketId:item.ticketId??0,sequence:0,clientMessageId,authorId,author:null,authorRole:'USER',kind:item.action==='close'?'CLOSURE':'TEXT',text:item.input.text,createdAt:new Date(item.createdAt).toISOString(),editedAt:null,replyToId:item.input.replyToId??null,replyTo:item.replyTo??null,forwardedFromId:null,rating:null,attachments:helpPendingMessage(item,authorId??0).attachments,reactions:[]}});
   }
   return entries;
 }

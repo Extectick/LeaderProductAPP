@@ -169,7 +169,7 @@ describe('Help screen integration with service boundary', () => {
     await act(async()=>button('Назад').props.onPress());
     expect(screen.root.findByType(HelpChatEntry).props.interactive).toBe(false);
     expect(composer().props.screenActive).toBe(true);expect(composer().props.navigationReady).toBe(false);
-    expect(screen.root.findByType('HelpNativeChatLayout' as any).props.animateTail).toBe(true);
+    expect(screen.root.findByType('HelpNativeChatLayout' as any).props.animateTail).toBe(false);
     await act(async()=>hidden());
     expect(screen.root.findAllByType(HelpChatEntry)).toHaveLength(0);expect(remove).toHaveBeenCalledTimes(1);
     expect(mockService.loadTickets).toHaveBeenLastCalledWith('OPEN','mine',false,'',true);
@@ -217,12 +217,12 @@ describe('Help screen integration with service boundary', () => {
     expect(mockService.openTicket).toHaveBeenCalledTimes(2);
     expect(screen.root.findAllByType(HelpChatEntry)).toHaveLength(1);
   });
-  test('initial content growth motion stays disabled until entry completion',async()=>{
+  test('timeline owns content growth while native layout keeps keyboard ownership',async()=>{
     mockNativeChatLayout=true;mockNativeImeLayout=true;mockService.tickets=[ticket];await render();
     await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());
     expect(screen.root.findByType('HelpNativeChatLayout' as any).props.animateTail).toBe(false);
     await act(async()=>{mockTimelineProps.onReady();screen.root.findByType(HelpChatEntry).props.onEntered();});
-    expect(screen.root.findByType('HelpNativeChatLayout' as any).props.animateTail).toBe(true);
+    expect(screen.root.findByType('HelpNativeChatLayout' as any).props.animateTail).toBe(false);
   });
   test('native keyboard reduces the actual chat viewport without duplicating the inset inside the list',async()=>{
     mockNativeChatLayout=true;mockNativeImeLayout=true;mockService.tickets=[ticket];await render();
@@ -399,7 +399,7 @@ describe('Help screen integration with service boundary', () => {
       const header=screen.root.findAllByProps({testID:id})[0];
       expect(header.findAllByType('HelpBlurSurface' as any).length).toBe(1);
       expect(StyleSheet.flatten(header.props.style).backgroundColor).toBeUndefined();
-      expect(StyleSheet.flatten(header.findByType('HelpBlurSurface' as any).parent!.props.style)).toMatchObject({top:0,bottom:0,left:0,right:0});
+      expect(StyleSheet.flatten(header.findByType('HelpBlurSurface' as any).parent!.props.style)).toMatchObject({top:0,bottom:-36,left:0,right:0});
     }
   });
   test('first send creates once and clears draft only after success',async()=>{
@@ -408,7 +408,7 @@ describe('Help screen integration with service boundary', () => {
     await act(async()=>mockTimelineProps.onReady());
     const entry=screen.root.findByType(HelpChatEntry),timeline=screen.root.findByProps({testID:'help-chat-scroll'}),input=composer();
     const native=screen.root.findByType('HelpNativeChatLayout' as any);
-    expect(native.props.animateTail).toBe(true);
+    expect(native.props.animateTail).toBe(false);
     expect(mockTimelineProps.bottomAligned).toBe(true);
     await act(async()=>mockTimelineProps.onFollow(true));
     expect(native.props.allowFollow).toBe(true);
@@ -422,7 +422,7 @@ describe('Help screen integration with service boundary', () => {
     expect(composer()).toBe(input);
     expect(screen.root.findByType('HelpNativeChatLayout' as any)).toBe(native);
     expect(native.props.allowFollow).toBe(true);
-    expect(native.props.animateTail).toBe(true);
+    expect(native.props.animateTail).toBe(false);
     expect(mockTimelineProps.bottomAligned).toBe(true);
   });
   test('first message stays visible after the durable queue clears and before the chat page is installed',async()=>{

@@ -26,11 +26,11 @@ export function HelpImage({ attachment, resolve, style, resizeMode = 'cover', on
   const [result,setResult]=useState<{id:string;url:string;resolver:ResolveHelpMedia;source?:HelpMediaSource;error?:boolean;loaded?:boolean}>();
   const cached=cache?.read(resolve,attachment);
   const own=result?.id===attachment.id && result.url===attachment.url && result.resolver===resolve?result:undefined;
-  const current=own??(cached?{id:attachment.id,url:attachment.url,resolver:resolve,source:cached,loaded:true}:undefined);
+  const current=attachment.localUri?{id:attachment.id,url:attachment.url,resolver:resolve,source:{uri:attachment.localUri},loaded:true}:own??(cached?{id:attachment.id,url:attachment.url,resolver:resolve,source:cached,loaded:true}:undefined);
   const restored=Boolean(!own&&cached);
   const thumbnail=attachment.thumbnailDataUri && /^data:image\/(jpeg|webp|png);base64,/.test(attachment.thumbnailDataUri) && attachment.thumbnailDataUri.length<=3072 ? attachment.thumbnailDataUri : undefined;
   useEffect(()=>{
-    if(!allowOriginal||cached)return;
+    if(attachment.localUri||!allowOriginal||cached)return;
     let alive=true;
     void resolve(attachment).then(source=>{if(alive)setResult(previous=>previous?.id===attachment.id && previous.url===attachment.url && previous.resolver===resolve && previous.source?.uri===source.uri?previous:{id:attachment.id,url:attachment.url,resolver:resolve,source});})
       .catch(()=>{if(alive)setResult({id:attachment.id,url:attachment.url,resolver:resolve,error:true});});
@@ -76,9 +76,10 @@ export async function downloadHelpAttachment(attachment: HelpAttachment, resolve
     if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(result.uri, { mimeType: attachment.mimeType, dialogTitle: 'Сохранить файл' });
   }
 }
-type HelpAudioProps = { attachment: HelpAttachment; resolve: ResolveHelpMedia; onError: (text: string) => void; captionRight?: React.ReactNode; messageId?: number; author?: string; createdAt?: string; ticketId?: number };
+type HelpAudioProps = { uploading?:boolean; attachment: HelpAttachment; resolve: ResolveHelpMedia; onError: (text: string) => void; captionRight?: React.ReactNode; messageId?: number; author?: string; createdAt?: string; ticketId?: number };
 export function HelpAudio(props: HelpAudioProps) {
   const playback = useHelpAudioPlayback();
+  if(props.uploading)return <HelpAudioView {...props} ready={false} loading playing={false} currentTime={0} duration={(props.attachment.durationMs??0)/1000} rate={1} onPlay={async()=>{}} onSeek={async()=>{}}/>;
   const identity = `${props.ticketId ?? ''}:${props.messageId ?? ''}:${props.attachment.id}`;
   // Keep native hooks outside the shared path: recycled rows must not allocate
   // players or download audio merely by entering the rendering window.
@@ -91,7 +92,7 @@ function SharedHelpAudio(props: HelpAudioProps & { messageId: number; playback: 
   const active = playback.current?.attachment.id === attachment.id && playback.current.messageId === messageId && (ticketId === undefined || playback.current.ticketId === undefined || playback.current.ticketId === ticketId);
   return <HelpAudioView key={active ? 'active' : 'inactive'} {...props}
     ready={active && playback.ready} loading={active && playback.loading} playing={active && playback.playing}
-    currentTime={active ? playback.positionSeconds : 0} duration={active ? playback.durationSeconds : 0} rate={playback.speed}
+    currentTime={active ? playback.positionSeconds : 0} duration={active ? playback.durationSeconds : (attachment.durationMs??0)/1000} rate={playback.speed}
     onPlay={() => active ? playback.toggle() : playback.play({ attachment, messageId, author, createdAt, ticketId }, resolve)}
     onSeek={async seconds => { if (active) await playback.seek(seconds); }}/>
 }
@@ -132,7 +133,7 @@ function StandaloneHelpAudio(props: HelpAudioProps) {
     finally { if (current()) { life.pending = false; setLoading(false); } }
   };
   return <HelpAudioView {...props} ready={prepared && status.isLoaded !== false} loading={loading || (prepared && status.isLoaded === false)}
-    playing={prepared && status.playing} currentTime={prepared ? status.currentTime : 0} duration={prepared ? status.duration : 0} rate={status.playbackRate}
+    playing={prepared && status.playing} currentTime={prepared ? status.currentTime : 0} duration={prepared ? status.duration : (attachment.durationMs??0)/1000} rate={status.playbackRate}
     onPlay={play} onSeek={async seconds => { if (lifecycle.current.mounted && lifecycle.current.prepared) await player.seekTo(seconds); }}/>
 }
 type HelpAudioViewProps = Pick<HelpAudioProps, 'attachment' | 'captionRight' | 'onError'> & { ready: boolean; loading: boolean; playing: boolean; currentTime: number; duration: number; rate: number; onPlay: () => Promise<void>; onSeek: (seconds: number) => Promise<void> };

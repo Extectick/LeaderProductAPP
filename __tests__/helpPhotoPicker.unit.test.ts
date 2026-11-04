@@ -374,5 +374,6 @@ test('camera discards a delayed grid measurement from the previous opening',asyn
  const newGrid=screen!.root.findAllByProps({testID:'help-photo-grid-viewport'})[0];
  newGrid.instance.measureInWindow=(callback:typeof oldMeasurement)=>callback(0,48,360,600);
  await act(async()=>newGrid.props.onLayout());
- expect(camera().props.viewport).toEqual({x:0,y:48,width:360,height:600});
+ expect(camera().props.viewport).toEqual({x:0,y:96,width:360,height:552});
+ expect(camera().props.sheetViewportHeight.value).toBe(494);
 });

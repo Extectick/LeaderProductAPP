@@ -26,7 +26,7 @@ export function HelpAvatar({ id, name, uri, size = 34, muted = false }: { id: nu
 export function HelpBlurSurface({target,edge='top',featherSize}:{target?:React.RefObject<View|null>;edge?:'top'|'bottom';featherSize?:number}) {
   const c=useHelpTheme();
   const enabled=useContext(HelpVisualEffectsContext);
-  return enabled ? <AppEdgeBlur target={target} edge={edge} featherSize={featherSize} dark={c.dark} backgroundColor={c.background} testID="help-blur-surface"/> : null;
+  return enabled ? <AppEdgeBlur target={target} edge={edge} intensity={58} featherSize={featherSize??96} dark={c.dark} backgroundColor={c.background} testID="help-blur-surface"/> : null;
 }
 export function HelpDock({ children, onHeight, onHeightFrame, target, stableKeyboardLayout=false }: { children: React.ReactNode; onHeight?: (height: number) => void; onHeightFrame?:(height:number)=>void; target?: React.RefObject<View | null>; stableKeyboardLayout?:boolean }) {
   const c = useHelpTheme(); const insets = useSafeAreaInsets();
@@ -58,7 +58,7 @@ export function HelpDock({ children, onHeight, onHeightFrame, target, stableKeyb
   }, [stableKeyboardLayout]);
   useEffect(() => helpDevState({ keyboardVisible, keyboardHeight: Keyboard.metrics?.()?.height ?? 0 }), [keyboardVisible]);
   return <View ref={node => helpDevRef('dock', node)} onLayout={e => reportHeight(e.nativeEvent.layout.height)} style={{ paddingHorizontal: 8, paddingTop: 8, paddingBottom: stableKeyboardLayout ? restingInset.current.bottom+8 : keyboardVisible ? 8 : insets.bottom + 8, position: 'relative' }}>
-    <View testID="help-dock-backdrop" pointerEvents="none" style={[StyleSheet.absoluteFill, {top:8}]}><HelpBlurSurface target={target}/></View>{children}
+    <View testID="help-dock-backdrop" pointerEvents="none" style={[StyleSheet.absoluteFill, {top:-36}]}><HelpBlurSurface target={target}/></View>{children}
   </View>;
 }
 export function HelpPrimaryButton({ text, icon = 'add-outline', onPress, disabled, variant = 'dock' }: { text: string; icon?: HelpIconName; onPress: () => void; disabled?: boolean; variant?: 'dock'|'sheet' }) {
@@ -66,9 +66,9 @@ export function HelpPrimaryButton({ text, icon = 'add-outline', onPress, disable
   return <Pressable accessibilityRole="button" accessibilityState={{disabled:Boolean(disabled)}} disabled={disabled} onPress={onPress} style={({ pressed }) => ({ height: variant === 'dock' ? 48 : 44, borderRadius: variant === 'dock' ? 24 : 12, backgroundColor: disabled ? c.elevated : c.accent, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: pressed && !disabled ? .8 : 1, transform: [{ scale: pressed && !disabled && !reduced ? .96 : 1 }] })}><Ionicons name={icon} size={22} color={disabled ? c.muted : '#FFF'} /><Text style={{ color: disabled ? c.muted : '#FFF', fontSize: 14 }}>{text}</Text></Pressable>;
 }
 /** Isolated UI-thread panel: dragging never resizes or rerenders the chat. */
-export function HelpSheet({title,children,onClose,scrollOffset=0,resizable=true}:{title:string;children:React.ReactNode;onClose:()=>void;scrollOffset?:number;resizable?:boolean}){
+export function HelpSheet({title,children,onClose,scrollOffset=0,resizable=true,maxHeight}:{title:string;children:React.ReactNode;onClose:()=>void;scrollOffset?:number;resizable?:boolean;maxHeight?:number}){
   const c=useHelpTheme(),reduced=useHelpReducedMotion(),insets=useSafeAreaInsets(),window=useWindowDimensions();
-  const maximum=Math.max(260,window.height-insets.top-24),padding=Math.max(24,insets.bottom+16);
+  const maximum=Math.min(maxHeight??Infinity,Math.max(180,window.height-insets.top-24)),padding=Math.max(24,insets.bottom+16);
   const [natural,setNatural]=useState(260),collapsed=Math.min(maximum,natural);
   const height=useSharedValue(collapsed),y=useSharedValue(collapsed),start=useSharedValue(collapsed),closing=useSharedValue(false);
   const latest=useRef(onClose);latest.current=onClose;
@@ -81,11 +81,11 @@ export function HelpSheet({title,children,onClose,scrollOffset=0,resizable=true}
   const motion=useAnimatedStyle(()=>({height:height.value,transform:[{translateY:y.value}]}));
   const pan=React.useMemo(()=>Gesture.Pan().withTestId('help-sheet-resize').enabled(scrollOffset<=0).maxPointers(1).activeOffsetY(resizable?[-8,8]:8).failOffsetX([-24,24])
     .onStart(()=>{if(closing.value)return;cancelAnimation(height);start.value=height.value;})
-    .onUpdate(event=>{if(!closing.value)height.value=Math.max(80,Math.min(maximum,start.value-event.translationY));})
+    .onUpdate(event=>{if(!closing.value)height.value=Math.max(80,Math.min(resizable?maximum:collapsed,start.value-event.translationY));})
     .onEnd((event,success)=>{
       if(!success||closing.value)return;
       if(height.value<collapsed*.7||(event.translationY>24&&event.velocityY>900)){runOnJS(close)();return;}
-      const next=height.value>(collapsed+maximum)/2||event.velocityY< -600?maximum:collapsed;
+      const next=resizable&&(height.value>(collapsed+maximum)/2||event.velocityY< -600)?maximum:collapsed;
       height.value=withSpring(next,{damping:25,stiffness:280,mass:.8,overshootClamping:true});
     })
     .onFinalize((_,success)=>{if(!success&&!closing.value)height.value=withSpring(start.value,{damping:25,stiffness:280,mass:.8,overshootClamping:true});}),
