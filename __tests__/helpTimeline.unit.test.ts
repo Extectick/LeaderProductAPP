@@ -136,6 +136,26 @@ describe('sticky date geometry and navigation integration',()=>{
     props={...props,messages:[message(0,'2026-10-26T12:00:00Z'),...props.messages]};
     await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
     expect(mockTailTiming).not.toHaveBeenCalled();
+    // The following layout commit may contain the real sizes of prepended
+    // cells; it must not reclassify that history load as a live tail arrival.
+    height=440;await act(async()=>mockFlashProps.onCommitLayoutEffect());
+    expect(mockTailTiming).not.toHaveBeenCalled();
+  });
+  test.each([['TEXT',60],['AUDIO',88],['IMAGE',360]])('%s lifts a long native history by its measured height on one clock',async(kind,growth)=>{
+    mockReducedMotion=false;mockNativeChatLayout=true;
+    let height=1600;mockListApi.getChildContainerDimensions=()=>({width:390,height});
+    await render();mockTailTiming.mockClear();
+    height+=growth;props={...props,messages:[...props.messages,{...message(3,nextDate),kind} as HelpMessage]};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    expect(require('../src/features/help/helpDiagnostics').helpDevEvent).toHaveBeenCalledWith('timeline.tailShift',expect.objectContaining({delta:growth,native:true}));
+    expect(screen!.root.findAllByType(HelpMessageArrival).at(-1)!.props.distance).toBe(0);
+    expect(mockTailTiming).toHaveBeenCalledTimes(1);
+    // Media metadata can settle after upload/cache I/O, beyond the old 600 ms
+    // text-key timer. Its geometry still belongs to the same whole-list path.
+    await act(async()=>jest.advanceTimersByTimeAsync(1000));mockTailTiming.mockClear();
+    height+=180;await act(async()=>mockFlashProps.onCommitLayoutEffect());
+    expect(require('../src/features/help/helpDiagnostics').helpDevEvent).toHaveBeenLastCalledWith('timeline.tailShift',expect.objectContaining({delta:180,native:true}));
+    expect(mockTailTiming).toHaveBeenCalledTimes(1);
   });
   test('unmeasured and temporarily unavailable FlashList geometry cannot break a layout commit',async()=>{
     mockReducedMotion=false;await render();
@@ -481,6 +501,30 @@ describe('sticky date geometry and navigation integration',()=>{
     await waiting;
     expect(prepared).toBe(true);
     expect(StyleSheet.flatten(screen!.root.findAllByProps({testID:'help-timeline-transition'})[0].props.style).opacity).toBe(1);
+  });
+  test('latest retains a nearby viewport until ready, blocks repeat taps and animates both fragments once',async()=>{
+    mockReducedMotion=false;await render();
+    const timing=jest.spyOn(require('react-native').Animated,'timing');
+    try{
+      let accepted=false;
+      await act(async()=>{accepted=ref.current!.prepareJump();});
+      expect(accepted).toBe(true);expect(ref.current!.prepareJump()).toBe(false);
+      const live=()=>StyleSheet.flatten(screen!.root.findAllByProps({testID:'help-timeline-live-layer'})[0].props.style);
+      expect(live().transform[0].translateY.__getValue()).toBe(0);
+      const waiting=ref.current!.waitForJumpReady();
+      await act(async()=>jest.advanceTimersByTimeAsync(70));expect(await waiting).toBe(true);
+      props={...props,navigationTarget:{kind:'latest',key:902,animate:true}};
+      mockListApi.scrollToEnd.mockClear();
+      await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+      expect(ref.current!.prepareJump()).toBe(false);
+      await act(async()=>jest.advanceTimersByTimeAsync(70));
+      expect(timing.mock.calls.filter(([,config]:any)=>config.duration===600)).toHaveLength(1);
+      const positions=mockListApi.scrollToEnd.mock.calls.length;
+      await act(async()=>jest.advanceTimersByTimeAsync(700));
+      expect(mockListApi.scrollToEnd.mock.calls.length).toBe(positions);
+      expect(screen!.root.findAllByProps({testID:'help-timeline-transition'})).toHaveLength(0);
+      expect(props.onFollow).toHaveBeenLastCalledWith(true);
+    }finally{timing.mockRestore();}
   });
   test('touching the old viewport cancels a still-preparing date jump',async()=>{
     mockReducedMotion=false;await render();

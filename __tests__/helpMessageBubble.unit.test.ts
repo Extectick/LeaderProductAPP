@@ -7,6 +7,7 @@ jest.mock('../src/features/help/helpTheme', () => ({useHelpReducedMotion:()=>fal
 jest.mock('../src/features/help/components/HelpPrimitives', () => ({HelpIcon:'HelpIcon',HelpAvatar:'HelpAvatar'}));
 jest.mock('../src/features/help/components/HelpMedia', () => ({HelpAudio:'HelpAudio',HelpImage:'HelpImage'}));
 import { HelpMessageBubble } from '../src/features/help/components/HelpMessageBubble';
+import { HelpPendingMessage } from '../src/features/help/components/HelpPendingMessage';
 import { createHelpMessageLayoutCache, HelpMessageLayoutCacheContext } from '../src/features/help/helpMessageLayoutCache';
 
 describe('Help message native layout and reply gestures', () => {
@@ -22,6 +23,43 @@ describe('Help message native layout and reply gestures', () => {
   });
   afterEach(async () => { if(screen) await act(async()=>screen.unmount()); jest.restoreAllMocks(); });
   const node = (id:string) => screen.root.findAll(n=>n.props.testID===id)[0];
+  test('photo outbox reserves the accepted album geometry before upload acknowledgement',async()=>{
+    const files=[{uri:'file:///one.jpg',name:'one.jpg',mimeType:'image/jpeg',width:900,height:1600},{uri:'file:///two.jpg',name:'two.jpg',mimeType:'image/jpeg',width:1600,height:900}];
+    const item:any={key:'media',ticketId:12,create:false,input:{text:'Подпись',clientMessageId:'media'},localFiles:files,createdAt:Date.now(),status:'sending'};
+    await act(async()=>{screen=TestRenderer.create(React.createElement(HelpPendingMessage,{item,onRetry:jest.fn()}));});
+    const pendingAlbum=StyleSheet.flatten(node('help-image-album').props.style);
+    expect(pendingAlbum.height).toBeGreaterThan(64);
+    const pendingContent=StyleSheet.flatten(node('help-message-content').props.style);
+    expect(node('help-message-text').props.children).toBe('Подпись');
+    props.message={...props.message,text:'Подпись',attachments:files.map((file,index)=>({id:`accepted-${index}`,kind:'IMAGE',name:file.name,mimeType:file.mimeType,size:0,url:file.uri,width:file.width,height:file.height})),reactions:[]};
+    await act(async()=>screen.update(React.createElement(HelpMessageBubble,props)));
+    expect(StyleSheet.flatten(node('help-image-album').props.style)).toEqual(pendingAlbum);
+    expect(StyleSheet.flatten(node('help-message-content').props.style)).toEqual(pendingContent);
+  });
+  test('voice outbox uses the same waveform and timestamp slot as its accepted receipt',async()=>{
+    const item:any={key:'voice',ticketId:12,create:false,input:{text:''},localFiles:[{uri:'file:///voice.m4a',name:'voice.m4a',mimeType:'audio/mp4',size:4096}],createdAt:Date.now(),status:'sending'};
+    const retry=jest.fn();
+    await act(async()=>{screen=TestRenderer.create(React.createElement(HelpPendingMessage,{item,onRetry:retry}));});
+    let player=screen.root.findByType('HelpAudio' as any);
+    const pendingContent=StyleSheet.flatten(node('help-message-content').props.style);
+    expect(player.props.messageId).toBeUndefined();
+    expect(player.props.captionRight).toBeTruthy();
+    expect(screen.root.findAll(n=>n.props.testID==='help-message-text')).toHaveLength(0);
+    let stampScreen:TestRenderer.ReactTestRenderer;
+    await act(async()=>{stampScreen=TestRenderer.create(player.props.captionRight);});
+    expect(stampScreen!.root.findAll(n=>n.props.testID==='help-message-pending-clock').length).toBeGreaterThan(0);
+    await act(async()=>screen.update(React.createElement(HelpPendingMessage,{item:{...item,status:'failed'},onRetry:retry})));
+    player=screen.root.findByType('HelpAudio' as any);
+    await act(async()=>stampScreen!.update(player.props.captionRight));
+    const retryButton=stampScreen!.root.findAll(n=>n.props.accessibilityLabel==='Не удалось отправить. Отправить снова'&&typeof n.props.onPress==='function')[0];
+    await act(async()=>retryButton.props.onPress());expect(retry).toHaveBeenCalledTimes(1);
+    await act(async()=>stampScreen!.unmount());
+    props.message={...props.message,text:'',attachments:[{id:'voice',kind:'AUDIO',url:'https://voice',name:'voice.m4a',mimeType:'audio/mp4',size:4096}],reactions:[]};
+    await act(async()=>screen.update(React.createElement(HelpMessageBubble,props)));
+    player=screen.root.findByType('HelpAudio' as any);
+    expect(player.props.captionRight).toBeTruthy();
+    expect(StyleSheet.flatten(node('help-message-content').props.style)).toEqual(pendingContent);
+  });
   test('reaction picker offers exactly the five current reactions',async()=>{
     props.selected=true;await render();
     const labels=[...new Set(screen.root.findAll(n=>typeof n.props.onPress==='function'&&String(n.props.accessibilityLabel??'').startsWith('Реакция ')).map(n=>n.props.accessibilityLabel))];

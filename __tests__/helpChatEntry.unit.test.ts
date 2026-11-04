@@ -50,6 +50,21 @@ describe('message arrivals',()=>{
     await act(async()=>tree.update(render(false)));
     expect(timing).toHaveBeenCalledTimes(1);expect(registry.has('client:measured')).toBe(true);
   });
+  test('whole-list arrival claims its identity without starting a second row clock',async()=>{
+    await act(async()=>{tree=TestRenderer.create(React.createElement(HelpMessageArrivalContext.Provider,{value:registry},React.createElement(HelpMessageArrival,{identity:'client:shared-photo',animate:true,distance:0,children:React.createElement(View)})));});
+    expect(registry.has('client:shared-photo')).toBe(true);expect(timing).not.toHaveBeenCalled();
+    await act(async()=>tree.update(content('client:shared-photo',true)));
+    expect(timing).not.toHaveBeenCalled();
+    expect(tree.root.findByProps({testID:'help-message-arrival'}).props.style.transform[0].translateY.__getValue()).toBe(0);
+  });
+  test('first-cell reveal keeps its path when a quick receipt enables whole-list motion',async()=>{
+    await act(async()=>{tree=TestRenderer.create(content('client:first-receipt',true));});
+    const progress=timing.mock.calls[0][0] as Animated.Value;
+    await act(async()=>progress.setValue(.5));
+    await act(async()=>tree.update(React.createElement(HelpMessageArrivalContext.Provider,{value:registry},React.createElement(HelpMessageArrival,{identity:'client:first-receipt',animate:true,distance:0,children:React.createElement(View)}))));
+    expect(timing).toHaveBeenCalledTimes(1);
+    expect(tree.root.findByProps({testID:'help-message-arrival'}).props.style.transform[0].translateY.__getValue()).toBe(12);
+  });
 });
 
 describe('Help bidirectional scene motion',()=>{

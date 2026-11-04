@@ -12,12 +12,15 @@ export function HelpMessageArrival({identity,animate,children,distance=24,deferr
   const reduced=useHelpReducedMotion();
   const inherited=useMemo(()=>motions.get(played)?.get(identity),[identity,played]);
   const progress=useMemo(()=>inherited?.progress??new Animated.Value(1),[inherited,identity,played]);
+  // The timeline can own the entire row's lift. Keep that decision for this
+  // cell's lifetime so a quick receipt/geometry commit cannot change its path.
+  const arrivalDistance=useRef(distance).current;
   const latestAnimate=useRef(animate);latestAnimate.current=animate;
   const wasDeferred=useRef(false);
   useLayoutEffect(()=>{
     if(deferred){wasDeferred.current=true;progress.setValue(reduced?1:0);return;}
     const released=wasDeferred.current;wasDeferred.current=false;
-    const play=latestAnimate.current&&!played.has(identity)&&!reduced;
+    const play=latestAnimate.current&&!played.has(identity)&&!reduced&&arrivalDistance>0;
     played.add(identity);
     if(played.size>1000)played.delete(played.values().next().value!);
     const begin=(duration:number)=>{
@@ -38,6 +41,6 @@ export function HelpMessageArrival({identity,animate,children,distance=24,deferr
     // The bounded driver outlives a pending footer unmount so the server row
     // can take over. The weak registry releases the scene after navigation.
     // Content/acknowledgement updates must not restart an in-flight arrival.
-  },[identity,played,progress,reduced,inherited,deferred]);
-  return <Animated.View testID="help-message-arrival" style={{transform:[{translateY:progress.interpolate({inputRange:[0,1],outputRange:[distance,0]})}]}}>{children}</Animated.View>;
+  },[identity,played,progress,reduced,inherited,deferred,arrivalDistance]);
+  return <Animated.View testID="help-message-arrival" style={{transform:[{translateY:progress.interpolate({inputRange:[0,1],outputRange:[arrivalDistance,0]})}]}}>{children}</Animated.View>;
 }

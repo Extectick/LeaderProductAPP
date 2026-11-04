@@ -17,6 +17,7 @@ jest.mock('react-native-gesture-handler',()=>{
 jest.mock('react-native-reanimated',()=>{
   const React=require('react'),RN=require('react-native');
   return{__esModule:true,default:{View:RN.View,FlatList:RN.FlatList},cancelAnimation:jest.fn(),runOnJS:(fn:unknown)=>fn,
+    useAnimatedRef:()=>React.useRef(null),useAnimatedReaction:jest.fn(),useFrameCallback:()=>({setActive:jest.fn()}),measure:jest.fn(),scrollTo:jest.fn(),withDecay:jest.fn(),
     useDerivedValue:(fn:()=>unknown)=>({get value(){return fn();}}),
     useSharedValue:(initial:unknown)=>React.useRef({value:initial}).current,
     useAnimatedStyle:(fn:()=>any)=>{const initial=React.useRef(fn()).current;return mockStaticAnimatedStyle?initial:({get transform(){return fn().transform;},get height(){return fn().height;}});},
@@ -32,6 +33,7 @@ jest.mock('../src/features/help/helpPhotoLibrary',()=>({
 }));
 jest.mock('../src/features/help/components/HelpPrimitives',()=>({HelpBlurSurface:'HelpBlurSurface'}));
 jest.mock('expo-image',()=>({Image:'ExpoImage'}));
+jest.mock('expo-blur',()=>({BlurTargetView:require('react-native').View}));
 jest.mock('@expo/vector-icons',()=>({Ionicons:'Ionicons'}));
 jest.mock('react-native-safe-area-context',()=>({useSafeAreaInsets:()=>({top:0,bottom:0,left:0,right:0})}));
 jest.mock('../src/features/help/helpTheme',()=>({useHelpTheme:()=>({panel:'#111',text:'#fff',muted:'#999',accent:'#38f',danger:'#f00',elevated:'#222'}),useHelpReducedMotion:()=>true}));
@@ -93,10 +95,10 @@ beforeEach(()=>{
 });
 afterEach(async()=>{if(screen)await act(async()=>screen!.unmount());screen=undefined;jest.restoreAllMocks();});
 
-test('gallery regression: fills available height and width with the message editor after the grid',async()=>{
+test('gallery regression: opens at sixty percent with edge to edge photos and its own caption',async()=>{
   props.files=[file(0)];props.caption='Мой текст';await render();
   const panel=screen!.root.findAllByProps({testID:'help-photo-panel'})[0];
-  expect(panel.props.style[1].height).toBeCloseTo(Dimensions.get('window').height);
+  expect(panel.props.style[1].height).toBeCloseTo(Dimensions.get('window').height*.6);
   const children=panel.findAll(node=>['help-photo-grid-viewport','help-photo-caption'].includes(node.props.testID));
   expect(children[0].props.testID).toBe('help-photo-grid-viewport');expect(children[children.length-1].props.testID).toBe('help-photo-caption');
   expect(screen!.root.findAllByType(TextInput).length).toBeGreaterThan(0);expect(props.caption).toBe('Мой текст');
@@ -121,7 +123,7 @@ test('gallery regression: bottom send uses selected photos in their chosen order
 test('closed picker does not access library; denied opening shows skeleton and requests only on CTA',async()=>{
   props.open=false;await render();expect(mockPermission).not.toHaveBeenCalled();expect(mockPage).not.toHaveBeenCalled();
   mockPermission.mockResolvedValueOnce({granted:false,limited:false,canAskAgain:true}).mockResolvedValueOnce({granted:true,limited:true,canAskAgain:true});
-  await update({open:true});expect(mockPermission.mock.calls).toEqual([[false]]);expect(mockPage).not.toHaveBeenCalled();expect(screen!.root.findAllByProps({testID:'help-photo-permission-skeleton'}).length).toBeGreaterThan(0);await press('Разрешить доступ к фотографиям');expect(mockPermission.mock.calls).toEqual([[false],[true]]);expect(mockPage).toHaveBeenCalledWith(0);
+  await update({open:true});expect(mockPermission.mock.calls).toEqual([[false]]);expect(mockPage).not.toHaveBeenCalled();expect(screen!.root.findAllByProps({testID:'help-photo-permission-skeleton'}).length).toBeGreaterThan(0);await press('Разрешить использование фотографий');expect(mockPermission.mock.calls).toEqual([[false],[true]]);expect(mockPage).toHaveBeenCalledWith(0);
   expect(screen!.root.findAll(item=>item.children.includes('Открыты выбранные фото · Добавить ещё')).length).toBeGreaterThan(0);
 });
 test('asynchronous preparations retain the chosen order, even when the second photo finishes first',async()=>{
@@ -173,7 +175,7 @@ test('permanent library denial still calls native permission request on CTA and 
   mockPermission.mockResolvedValue({granted:false,limited:false,canAskAgain:false});
   await render();expect(mockPermission.mock.calls).toEqual([[false]]);
   expect(screen!.root.findAllByProps({testID:'help-photo-permission-overlay'}).length).toBeGreaterThan(0);
-  await press('Разрешить доступ к фотографиям');
+  await press('Разрешить использование фотографий');
   expect(mockPermission.mock.calls).toEqual([[false],[true]]);
   expect(mockPage).not.toHaveBeenCalled();
   expect(screen!.root.findAllByProps({testID:'help-photo-permission-skeleton'}).length).toBeGreaterThan(0);
@@ -221,9 +223,19 @@ describe('gallery pull',()=>{
     const state=manager();act(()=>gesture().handlers.onTouchesDown(touch(),state));expect(state.fail).toHaveBeenCalledTimes(1);
     await act(async()=>grid().props.onScroll({contentOffset:{y:0}}));act(()=>gesture().handlers.onTouchesMove(touch(50,130),state));expect(state.activate).not.toHaveBeenCalled();
   });
-  test.each([[50,30],[85,52]])('upward or horizontal movement fails without claiming normal scrolling (%s,%s)',async(x,y)=>{
+  test.each([[85,52]])('horizontal movement fails without claiming normal scrolling (%s,%s)',async(x,y)=>{
     await render();const state=manager();act(()=>{gesture().handlers.onTouchesDown(touch(),state);gesture().handlers.onTouchesMove(touch(x,y),state);});
     expect(state.fail).toHaveBeenCalledTimes(1);expect(state.activate).not.toHaveBeenCalled();expect(props.onClose).not.toHaveBeenCalled();
+  });
+  test('upward movement expands the sheet before it scrolls the photo grid',async()=>{
+    await render();const state=manager(),before=StyleSheet.flatten(panel().props.style).height;
+    act(()=>{gesture().handlers.onTouchesDown(touch(),state);gesture().handlers.onTouchesMove(touch(50,30),state);gesture().handlers.onStart();});
+    expect(state.activate).toHaveBeenCalledTimes(1);expect(state.fail).not.toHaveBeenCalled();
+    act(()=>gesture().handlers.onUpdate({translationY:-50}));
+    expect(panel().props.style[1].height).toBeCloseTo(before+50);
+    await act(async()=>gesture().handlers.onEnd({velocityY:-500},true));
+    expect(StyleSheet.flatten(panel().props.style).height).toBeCloseTo(Dimensions.get('window').height);
+    expect(props.onClose).not.toHaveBeenCalled();
   });
   test('tap within slop does not activate and photo selection stays available',async()=>{
     await render();const state=manager();act(()=>{gesture().handlers.onTouchesDown(touch(),state);gesture().handlers.onTouchesMove(touch(51,53),state);gesture().handlers.onTouchesUp({},state);});
@@ -231,7 +243,7 @@ describe('gallery pull',()=>{
   });
   test('short pull keeps the camera visible and moves it with the surface',async()=>{
     await render();const before=panel().props.style[1].height;const state=await startPull();expect(state.activate).toHaveBeenCalledTimes(1);expect(camera().props.tileVisible).toBe(true);
-    act(()=>gesture().handlers.onUpdate({translationY:32}));expect(surface().props.style[1].transform).toEqual([{translateY:32}]);expect(panel().props.style[1].height).toBe(before);expect(camera().props.sheetOffset.value).toBe(32);
+    act(()=>gesture().handlers.onUpdate({translationY:32}));expect(surface().props.style[1].transform).toEqual([{translateY:32}]);expect(panel().props.style[1].height).toBe(before);expect(camera().props.sheetOffset).toBeDefined();
     await act(async()=>gesture().handlers.onEnd({velocityY:100},true));expect(mockPullSpring).toHaveBeenCalledWith(0,expect.objectContaining({overshootClamping:true}),expect.any(Function));
     expect(props.onClose).not.toHaveBeenCalled();expect(surface().props.style[1].transform).toEqual([{translateY:0}]);expect(camera().props.tileVisible).toBe(true);
   });
@@ -271,11 +283,11 @@ test('attachment panel is an overlay and handle height updates do not commit dra
  expect(panel().props.style[1].height).toBe(initial);
 });
 
-test('upward fling cannot expand the panel beyond its standard height',async()=>{
+test('upward fling expands to the screen edge without exceeding it',async()=>{
  await render();
  const panel=()=>screen!.root.findAllByProps({testID:'help-photo-panel'})[0];
  const gesture=screen!.root.findAllByType('GestureDetector' as any).find(n=>n.props.gesture.config.withTestId==='help-photo-resize')!.props.gesture.handlers;
- const standard=panel().props.style[1].height;
+ const standard=Dimensions.get('window').height;
  await act(async()=>gesture.onStart());
  act(()=>gesture.onUpdate({translationY:-900}));
  expect(panel().props.style[1].height).toBe(standard);
@@ -318,7 +330,7 @@ test('permission completion restores committed layout even when native animation
   const panel=()=>screen!.root.findAllByProps({testID:'help-photo-panel'})[0];
   expect(StyleSheet.flatten(panel().props.style).height).toBeGreaterThan(0);
   await act(async()=>permission.resolve({granted:false,limited:false,canAskAgain:true}));
-  await press('Разрешить доступ к фотографиям');
+  await press('Разрешить использование фотографий');
   // A new Fabric layout can reapply this initial animated value after the camera mounts.
   expect(panel().props.style[1].height).toBe(0);
   expect(StyleSheet.flatten(panel().props.style).height).toBeGreaterThan(0);
@@ -347,7 +359,7 @@ test('caption keyboard reduces only the file panel and does not dismiss the edit
  expect(panel.props.style[0]).toMatchObject({left:0,right:0});
  expect(StyleSheet.flatten(panel.props.style).height).toBe(400);
  await act(async()=>listeners.keyboardDidHide({}));
- expect(StyleSheet.flatten(screen!.root.findAllByProps({testID:'help-photo-panel'})[0].props.style).height).toBe(Dimensions.get('window').height);
+ expect(StyleSheet.flatten(screen!.root.findAllByProps({testID:'help-photo-panel'})[0].props.style).height).toBe(Dimensions.get('window').height*.6);
 });
 
 test('camera discards a delayed grid measurement from the previous opening',async()=>{

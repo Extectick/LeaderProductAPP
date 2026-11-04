@@ -1,4 +1,4 @@
-import { hiddenHelpLatest, updateHelpLatestAffordance as update } from '../src/features/help/helpJumpToLatestModel';
+import { helpLatestNavigationMotion as motion, hiddenHelpLatest, updateHelpLatestAffordance as update } from '../src/features/help/helpJumpToLatestModel';
 
 test('opening an old window and layout changes cannot show the arrow', () => {
   const hidden = hiddenHelpLatest();
@@ -21,4 +21,12 @@ test('returning down 100dp hides it and the physical bottom clears the intent', 
 });
 test('a paginated window end is not the conversation end', () => {
   expect(update(hiddenHelpLatest(), { delta: -120, gap: 0, manual: true, hasNewer: true }).visible).toBe(true);
+});
+
+test('latest navigation preserves nearby geometry and skips distant history with one viewport', () => {
+  expect(motion({ gap: 1, viewportHeight: 600, hasNewer: false }).mode).toBe('none');
+  expect(motion({ gap: 180, viewportHeight: 600, hasNewer: false })).toEqual({ mode: 'near', duration: 600, distance: 180 });
+  expect(motion({ gap: 60000, viewportHeight: 600, hasNewer: false })).toEqual({ mode: 'viewport', duration: 400, distance: 600 });
+  expect(motion({ gap: 0, viewportHeight: 600, hasNewer: true }).mode).toBe('viewport');
+  expect(motion({ gap: 180, viewportHeight: 600, hasNewer: false, reducedMotion: true }).mode).toBe('instant');
 });

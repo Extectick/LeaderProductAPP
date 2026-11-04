@@ -1,32 +1,29 @@
-import {helpTailDisplacement} from '../src/features/help/helpTailMotion';
+import {helpTailDisplacement,helpTailMotionLimit} from '../src/features/help/helpTailMotion';
 const before={width:390,height:800,content:300,margin:400};
 const active={active:true,liveGrowth:true};
-test('short native histories compensate the inner alignment margin even when native range stays fixed',()=>{
-  expect(helpTailDisplacement(before,{...before,content:360,margin:340},{...active,native:true})).toBe(60);
-});
-test('crossing into a scrollable native history compensates only the short-history part',()=>{
-  expect(helpTailDisplacement({...before,content:680,margin:20},{...before,content:760,margin:0},{...active,native:true})).toBe(20);
-  expect(helpTailDisplacement({...before,content:900,margin:0},{...before,content:980,margin:0},{...active,native:true})).toBe(0);
-});
-test('web uses intrinsic row growth for short and long histories',()=>{
-  expect(helpTailDisplacement(before,{...before,content:360,margin:340},{...active,native:false})).toBe(60);
-  expect(helpTailDisplacement({...before,content:900,margin:0},{...before,content:980,margin:0},{...active,native:false})).toBe(80);
-});
-test('keyboard geometry, history prepend and reading away from the end do not get an arrival animation',()=>{
-  const next={...before,content:360,margin:340};
-  expect(helpTailDisplacement(before,next,{...active,native:true,active:false})).toBe(0);
-  expect(helpTailDisplacement(before,next,{...active,native:true,liveGrowth:false})).toBe(0);
-  expect(helpTailDisplacement(before,{...next,height:500},{...active,native:true})).toBe(0);
-  expect(helpTailDisplacement(null,next,{...active,native:true})).toBe(0);
-});
-test('replacement with a shorter answer eases down without an overshoot',()=>{
-  expect(helpTailDisplacement(before,{...before,content:250,margin:450},{...active,native:true})).toBe(-50);
+
+test.each([['text',60],['voice',88],['photo',360],['album',620]])('%s uses the full measured growth in both short and long histories',(_kind,growth)=>{
+  expect(helpTailDisplacement(before,{...before,content:before.content+growth,margin:Math.max(0,before.margin-growth)},active)).toBe(growth);
+  const long={...before,content:1600,margin:0};
+  expect(helpTailDisplacement(long,{...long,content:long.content+growth},active)).toBe(growth);
 });
 
-test('large growth and shrink stay within nearby rendered cells in either direction',()=>{
-  expect(helpTailDisplacement(before,{...before,content:1300,margin:0},{...active,native:false})).toBe(120);
-  expect(helpTailDisplacement({...before,content:1300},{...before,content:300},{...active,native:false})).toBe(-120);
-  const short={...before,height:320};
-  expect(helpTailDisplacement(short,{...short,content:1300},{...active,native:false})).toBe(80);
-  expect(helpTailDisplacement(short,{...short,margin:1400},{...active,native:true})).toBe(-80);
+test('crossing from bottom alignment to scrolling has one continuous owner',()=>{
+  expect(helpTailDisplacement({...before,content:680,margin:20},{...before,content:1040,margin:0},active)).toBe(360);
+});
+
+test('keyboard geometry, history prepend and reading away from the end do not get an arrival animation',()=>{
+  const next={...before,content:660,margin:40};
+  expect(helpTailDisplacement(before,next,{...active,active:false})).toBe(0);
+  expect(helpTailDisplacement(before,next,{...active,liveGrowth:false})).toBe(0);
+  expect(helpTailDisplacement(before,{...next,height:500},active)).toBe(0);
+  expect(helpTailDisplacement(null,next,active)).toBe(0);
+});
+
+test('a shorter replacement eases down and rapid accumulated growth stays inside rendered viewports',()=>{
+  expect(helpTailDisplacement(before,{...before,content:250,margin:450},active)).toBe(-50);
+  expect(helpTailDisplacement(before,{...before,content:1300,margin:0},active)).toBe(800);
+  expect(helpTailDisplacement({...before,content:1300},{...before,content:300},active)).toBe(-800);
+  expect(helpTailMotionLimit(320)).toBe(320);
+  expect(helpTailMotionLimit(Infinity)).toBe(0);
 });

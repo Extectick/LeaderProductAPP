@@ -1,4 +1,6 @@
-import React from 'react';
+import React, {useCallback,useMemo} from 'react';
+import {HelpMessageBubble} from './HelpMessageBubble';
+import type {HelpAttachment,HelpMessage} from '../helpApi';
 import {HelpMessageQuote} from './HelpMessageQuote';
 import type {ResolveHelpMedia} from './HelpMedia';
 import {Image,Pressable,Text,View} from 'react-native';
@@ -11,6 +13,7 @@ export function HelpPendingMessage({item,onRetry,onQuote,resolve,groupFirst=true
   const c=useHelpTheme(),reduced=useHelpReducedMotion(),failed=item.status==='failed';
   const time=helpTime(new Date(item.createdAt).toISOString());
   const plainText=Boolean(item.input.text)&&!item.input.attachmentIds?.length&&!item.localFiles?.length&&!item.action;
+  if(item.localFiles?.length&&!item.input.attachmentIds?.length&&!item.action)return <HelpPendingMedia item={item} onRetry={onRetry} onQuote={onQuote} resolve={resolve} groupFirst={groupFirst} groupLast={groupLast}/>;
   if(plainText)return <View testID={`help-pending-${item.key}`} style={{alignItems:'flex-end',marginHorizontal:12,marginTop:groupFirst?4:1,marginBottom:groupLast?4:1}}>
     <View testID="help-pending-bubble" style={{maxWidth:'86%',minWidth:90,borderRadius:16,borderTopRightRadius:groupFirst?16:4,borderBottomRightRadius:groupLast?16:4,backgroundColor:c.outgoing}}>
       {item.replyTo?<HelpMessageQuote quote={item.replyTo} onQuote={onQuote} resolve={resolve}/>:null}
@@ -32,4 +35,28 @@ export function HelpPendingMessage({item,onRetry,onQuote,resolve,groupFirst=true
       </View>
     </View>
   </View>;
+}
+
+const pendingMediaNoop=()=>{};
+/** The outbox and server receipt use the same album, voice player and caption
+ * geometry. Upload acknowledgement changes delivery state, never a 64px file
+ * placeholder into an entire photograph under the following reader. */
+function HelpPendingMedia({item,onRetry,onQuote,resolve,groupFirst,groupLast}:Parameters<typeof HelpPendingMessage>[0]){
+  const message=useMemo<HelpMessage>(()=>({
+    id:0,ticketId:item.ticketId??0,sequence:0,clientMessageId:item.input.clientMessageId??item.key,
+    authorId:0,author:null,authorRole:'USER',kind:'TEXT',text:item.input.text,
+    createdAt:new Date(item.createdAt).toISOString(),editedAt:null,
+    replyToId:item.replyTo?.id??null,replyTo:item.replyTo??null,forwardedFromId:null,rating:null,reactions:[],
+    attachments:(item.localFiles??[]).map((file,index)=>({id:`pending:${item.key}:${index}`,name:file.name,
+      mimeType:file.mimeType??'application/octet-stream',size:file.size??0,
+      kind:file.mimeType?.startsWith('image/')?'IMAGE':file.mimeType?.startsWith('audio/')?'AUDIO':'FILE',
+      url:file.uri,width:file.width,height:file.height,position:index})),
+  }),[item.key,item.ticketId,item.input.text,item.input.clientMessageId,item.createdAt,item.replyTo,item.localFiles]);
+  const localResolve=useCallback<ResolveHelpMedia>((file:HelpAttachment)=>file.id.startsWith(`pending:${item.key}:`)?Promise.resolve({uri:file.url}):resolve?resolve(file):Promise.resolve({uri:file.url}),[item.key,resolve]);
+  return <View testID={`help-pending-${item.key}`}><HelpMessageBubble message={message} userId={0} open={false} canInteract={false}
+    selected={false} highlighted={false} solution={false} groupFirst={groupFirst} groupLast={groupLast}
+    deliveryStatus={item.status??'queued'} onRetry={onRetry} resolve={localResolve}
+    onMenu={pendingMediaNoop} onDismissMenu={pendingMediaNoop} onReply={pendingMediaNoop} onCopy={pendingMediaNoop}
+    onEdit={pendingMediaNoop} onForward={pendingMediaNoop} onReaction={pendingMediaNoop} onQuote={onQuote??pendingMediaNoop}
+    onImage={pendingMediaNoop} onFile={pendingMediaNoop} onCloseTicket={pendingMediaNoop} onRequestIt={pendingMediaNoop} onError={pendingMediaNoop}/></View>;
 }
