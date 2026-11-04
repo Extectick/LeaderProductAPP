@@ -729,6 +729,42 @@ describe('Help screen integration with service boundary', () => {
     await act(async()=>screen.update(React.createElement(HelpScreen)));
   }
   function bubble(){return screen.root.findByType('HelpMessageBubble' as any);}
+  test('questions live in the measured dock, preserve the composer and send chosen answers through the normal durable send', async () => {
+    await openWithMessage();
+    const originalComposer = composer();
+    mockService.messages = [...mockService.messages, { ...mockService.messages[0], id: 32, sequence: 2, authorId: 0, authorRole: 'SYSTEM', text: 'Уточните систему.', assistantRun: { runId: 'questions', status: 'completed', questions: [{ id: 'os', header: 'Система', question: 'Какая ОС?', multiSelect: false, options: [{ label: 'Windows 11' }] }] } }];
+    await act(async () => screen.update(React.createElement(HelpScreen)));
+    await act(async () => screen.root.findByType(HelpChatEntry).props.onEntered());
+    expect(composer()).toBe(originalComposer);
+    expect(screen.root.findByProps({ testID: 'help-chat-dock-layout' }).findByProps({ testID: 'help-question-panel' })).toBeTruthy();
+    expect(screen.root.findByType('HelpAssistantMessage' as any).props.onSuggestion).toBeUndefined();
+    mockService.sendMessage.mockClear();
+    await act(async () => button('Windows 11').props.onPress());
+    expect(mockService.sendMessage).not.toHaveBeenCalled();
+    await act(async () => button('Отправить ответы').props.onPress());
+    expect(mockService.sendMessage).toHaveBeenCalledWith(7, { text: 'Какая ОС?\nОтвет: Windows 11', attachmentIds: [], replyToId: undefined });
+  });
+  test('AI IT button opens confirmation; cancelling leaves the ticket with AI and double confirmation sends once', async () => {
+    await openWithMessage();
+    mockService.messages = [...mockService.messages, { ...mockService.messages[0], id: 32, sequence: 2, authorId: 0, authorRole: 'SYSTEM', text: 'Можно вызвать специалиста.', assistantRun: { runId: 'it-offer', status: 'completed', action: { type: 'request_it' } } }];
+    await act(async () => screen.update(React.createElement(HelpScreen)));
+    const offer = () => screen.root.findByType('HelpAssistantMessage' as any);
+    await act(async () => offer().props.onRequestIt());
+    expect(mockService.requestIt).not.toHaveBeenCalled();
+    await act(async () => button('Отмена').props.onPress());
+    expect(mockService.requestIt).not.toHaveBeenCalled();
+    await act(async () => offer().props.onRequestIt());
+    let resolve!: () => void;
+    mockService.requestIt.mockImplementation(() => new Promise<void>(done => { resolve = done; }));
+    const confirm = button('Подтвердить вызов');
+    await act(async () => { confirm.props.onPress(); confirm.props.onPress(); });
+    expect(mockService.requestIt).toHaveBeenCalledTimes(1);
+    expect(mockService.requestIt).toHaveBeenCalledWith(7);
+    await act(async () => resolve());
+    mockService.selectedTicket = { ...ticket, itRequested: true };
+    await act(async () => screen.update(React.createElement(HelpScreen)));
+    expect(offer().props.onRequestIt).toBeUndefined();
+  });
   test('latest and search controls use a full scene native sibling throughout keyboard movement',async()=>{
     mockNativeChatLayout=true;mockNativeImeLayout=true;mockNativeStableImeLayout=true;mockNativeDockControls=true;
     await openWithMessage();await act(async()=>mockTimelineProps.onReady());

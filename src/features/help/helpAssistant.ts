@@ -12,7 +12,8 @@ export type HelpAssistantRun = {
   step: number; completedSteps: number; startedAt: number; updatedAt: number;
   taskId?: string; taskStartSequence?: number; contextMessageCount?: number;
   stopReason?: 'user' | 'superseded';
-  action?: { type: 'connect_onec'; baseKey?: string };
+  action?: { type: 'connect_onec'; baseKey?: string } | { type: 'request_it'; baseKey?: never };
+  handoffReason?: 'no_knowledge' | 'source_unavailable' | 'user_requested' | 'model_handoff';
   scenario?: HelpAssistantScenario;
   activityVersion?: 1;
   activities?: HelpAssistantActivity[];
@@ -21,8 +22,13 @@ export type HelpAssistantRun = {
   error?: string;
   retryAt?: number;
   suggestions?: string[];
+  questions?: HelpAssistantQuestion[];
   metrics?: { startedAt: number; elapsedMs: number; firstAnalysisMs?: number; firstTokenMs?: number };
   generation?: { model: string; decision: string; usage?: { inputTokens: number; outputTokens: number; totalTokens: number; reasoningTokens?: number } | null };
+};
+export type HelpAssistantQuestion = {
+  id: string; header: string; question: string;
+  options: { label: string; description?: string }[]; multiSelect: boolean;
 };
 export type HelpAssistantActivity = {
   id: string; kind: 'analysis' | 'knowledge' | 'tool' | 'status'; label: string;

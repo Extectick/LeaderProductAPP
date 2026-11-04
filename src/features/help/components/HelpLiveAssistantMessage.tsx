@@ -6,6 +6,7 @@ import { helpAssistantPhaseLabel, type HelpAssistantActivity } from '../helpAssi
 import { useHelpReducedMotion, useHelpTheme } from '../helpTheme';
 import { helpTime } from '../helpUiUtils';
 import {HelpAiIcon} from './HelpAiIcon';
+import {HelpAssistantItAction} from './HelpAssistantItAction';
 
 function AnswerText({ text }: { text: string }) {
   const c = useHelpTheme();
@@ -27,14 +28,14 @@ function ActivityRow({ item }: { item: HelpAssistantActivity }) {
   </View>;
 }
 
-export function HelpLiveAssistantMessage({ message, onRetry, onConnectOnec, onSuggestion, diagnostics }: {
+export function HelpLiveAssistantMessage({ message, onRetry, onConnectOnec, onSuggestion, onRequestIt }: {
   message: HelpMessage; onRetry?: () => void; onConnectOnec?: () => void;
-  onSuggestion?: (text: string) => void; diagnostics?: boolean;
+  onSuggestion?: (text: string) => void; onRequestIt?: () => void;
 }) {
   const c = useHelpTheme(), reduced = useHelpReducedMotion(), run = message.assistantRun!;
   const active = run.status === 'thinking' || run.status === 'streaming';
   const [expanded, setExpanded] = useState<boolean | null>(null), [now, setNow] = useState(Date.now);
-  const [selected, setSelected] = useState<string | null>(null), [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [selected, setSelected] = useState<string | null>(null);
   const submission = useRef(false);
   const log=useRef<ScrollView>(null),followLog=useRef(true);
   const logAtEnd=(event:any)=>event.nativeEvent.contentSize.height-event.nativeEvent.layoutMeasurement.height-event.nativeEvent.contentOffset.y<24;
@@ -70,16 +71,8 @@ export function HelpLiveAssistantMessage({ message, onRetry, onConnectOnec, onSu
     {onSuggestion && run.status === 'completed' && !selected && run.suggestions?.length ? <View testID="help-ai-suggestions" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
       {run.suggestions.map(value => <Pressable key={value} accessibilityRole="button" onPress={() => { if (submission.current) return; submission.current = true; setSelected(value); onSuggestion(value); }} style={{ minHeight: 44, paddingHorizontal: 14, paddingVertical: 10, justifyContent: 'center', borderRadius: 16, borderWidth: 1, borderColor: c.line }}><Text style={{ color: c.accentText, fontSize: 13 }}>{value}</Text></Pressable>)}
     </View> : null}
+    <HelpAssistantItAction run={run} onRequestIt={onRequestIt}/>
     {run.action?.type === 'connect_onec' && onConnectOnec ? <Pressable accessibilityRole="button" accessibilityLabel="Подключить 1С" onPress={onConnectOnec} style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 8 }}><Ionicons name="lock-closed-outline" size={17} color={c.accentText}/><Text style={{ color: c.accentText }}>Подключить 1С</Text></Pressable> : null}
-    {diagnostics && run.metrics ? <View>
-      <Pressable accessibilityRole="button" onPress={() => setShowDiagnostics(!showDiagnostics)} style={{ minHeight: 36, justifyContent: 'center' }}><Text style={{ fontSize: 11, color: c.muted }}>Диагностика запуска {showDiagnostics ? '⌃' : '⌄'}</Text></Pressable>
-      {showDiagnostics ? <Text selectable style={{ fontSize: 11, lineHeight: 17, color: c.muted }}>{[
-        run.generation?.model, `Длительность: ${(elapsed / 1000).toFixed(1)} с`,
-        run.metrics.firstAnalysisMs !== undefined ? `Первое пояснение: ${(run.metrics.firstAnalysisMs / 1000).toFixed(1)} с` : null,
-        run.metrics.firstTokenMs !== undefined ? `Начало ответа: ${(run.metrics.firstTokenMs / 1000).toFixed(1)} с` : null,
-        run.generation?.usage ? `Токены: ${run.generation.usage.totalTokens}; рассуждение: ${run.generation.usage.reasoningTokens ?? 'не сообщено'}` : 'Использование токенов не сообщено',
-      ].filter(Boolean).join('\n')}</Text> : null}
-    </View> : null}
     {message.text ? <Text style={{ alignSelf: 'flex-end', color: c.muted, fontSize: 10 }}>{helpTime(message.createdAt)}</Text> : null}
   </View>;
 }
