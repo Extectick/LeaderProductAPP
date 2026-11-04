@@ -7,6 +7,8 @@ import { useHelpReducedMotion, useHelpTheme } from '../helpTheme';
 import { helpTime } from '../helpUiUtils';
 import {HelpAiIcon} from './HelpAiIcon';
 import {HelpAssistantItAction} from './HelpAssistantItAction';
+import {HelpAssistantFiles} from './HelpAssistantFiles';
+import type {ResolveHelpMedia} from './HelpMedia';
 
 function AnswerText({ text }: { text: string }) {
   const c = useHelpTheme();
@@ -28,7 +30,8 @@ function ActivityRow({ item }: { item: HelpAssistantActivity }) {
   </View>;
 }
 
-export function HelpLiveAssistantMessage({ message, onRetry, onConnectOnec, onSuggestion, onRequestIt }: {
+export function HelpLiveAssistantMessage({ message, onRetry, onConnectOnec, onSuggestion, onRequestIt, resolve, onFileError }: {
+  resolve?: ResolveHelpMedia; onFileError?: (text: string) => void;
   message: HelpMessage; onRetry?: () => void; onConnectOnec?: () => void;
   onSuggestion?: (text: string) => void; onRequestIt?: () => void;
 }) {
@@ -71,6 +74,7 @@ export function HelpLiveAssistantMessage({ message, onRetry, onConnectOnec, onSu
     {onSuggestion && run.status === 'completed' && !selected && run.suggestions?.length ? <View testID="help-ai-suggestions" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
       {run.suggestions.map(value => <Pressable key={value} accessibilityRole="button" onPress={() => { if (submission.current) return; submission.current = true; setSelected(value); onSuggestion(value); }} style={{ minHeight: 44, paddingHorizontal: 14, paddingVertical: 10, justifyContent: 'center', borderRadius: 16, borderWidth: 1, borderColor: c.line }}><Text style={{ color: c.accentText, fontSize: 13 }}>{value}</Text></Pressable>)}
     </View> : null}
+    <HelpAssistantFiles attachments={message.attachments || []} resolve={resolve} onError={onFileError}/>
     <HelpAssistantItAction run={run} onRequestIt={onRequestIt}/>
     {run.action?.type === 'connect_onec' && onConnectOnec ? <Pressable accessibilityRole="button" accessibilityLabel="Подключить 1С" onPress={onConnectOnec} style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 8 }}><Ionicons name="lock-closed-outline" size={17} color={c.accentText}/><Text style={{ color: c.accentText }}>Подключить 1С</Text></Pressable> : null}
     {message.text ? <Text style={{ alignSelf: 'flex-end', color: c.muted, fontSize: 10 }}>{helpTime(message.createdAt)}</Text> : null}

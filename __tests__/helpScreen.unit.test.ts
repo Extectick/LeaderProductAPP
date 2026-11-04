@@ -756,6 +756,74 @@ describe('Help screen integration with service boundary', () => {
     mockService.messages=[{id:31,ticketId:7,sequence:1,authorId:5,authorRole:'USER',author:{id:5,name:'Я'},kind:'TEXT',text:'Исходное сообщение',createdAt:new Date().toISOString(),attachments:[],reactions:[]}];
     await act(async()=>screen.update(React.createElement(HelpScreen)));
   }
+
+  test('question and ordinary message drafts remain separate through mode switches and final submission', async () => {
+    await openWithMessage();
+    await act(async () => composer().props.onChange('Отдельный черновик'));
+    mockService.messages = [...mockService.messages, { ...mockService.messages[0], id: 32, sequence: 2, authorId: 0, authorRole: 'SYSTEM', text: 'Уточните систему.', assistantRun: { runId: 'draft-modes', status: 'completed', questions: [{ id: 'os', header: 'Система', question: 'Какая ОС?', multiSelect: false, options: [] }] } }];
+    await act(async () => screen.update(React.createElement(HelpScreen)));
+    await act(async () => screen.root.findByType(HelpChatEntry).props.onEntered());
+    expect(composer().props.value).toBe('Отдельный черновик');
+    await act(async () => button('Развернуть вопросы ИИ').props.onPress());
+    expect(composer().props.value).toBe('');
+    await act(async () => composer().props.onChange('Windows 11'));
+    await act(async () => button('Обычное сообщение').props.onPress());
+    expect(composer().props.value).toBe('Отдельный черновик');
+    await act(async () => button('Развернуть вопросы ИИ').props.onPress());
+    expect(composer().props.value).toBe('Windows 11');
+    mockService.sendMessage.mockClear().mockImplementation(async (_id: number, input: any) => {
+      mockService.messages = [...mockService.messages, { ...mockService.messages[0], id: 33, sequence: 3, authorId: 5, text: input.text }];
+      return { ...detail, messages: mockService.messages };
+    });
+    await act(async () => button('Проверить ответы').props.onPress());
+    expect(mockService.sendMessage).not.toHaveBeenCalled();
+    await act(async () => button('Отправить ответы').props.onPress());
+    expect(mockService.sendMessage.mock.calls[0][1].text).toBe('Какая ОС?\nОтвет: Windows 11');
+    expect(composer().props.value).toBe('Отдельный черновик');
+    expect(composer().props.questionActionLabel).toBeUndefined();
+  });
+  test('photo-picker sends only stage files for the questionnaire until the explicit review submission', async () => {
+    await openWithMessage();
+    mockService.messages = [...mockService.messages, { ...mockService.messages[0], id: 32, sequence: 2, authorId: 0, authorRole: 'SYSTEM', text: 'Нужен файл.', assistantRun: { runId: 'file-answer', status: 'completed', questions: [{ id: 'log', header: 'Лог', question: 'Пришлите лог', multiSelect: false, options: [] }] } }];
+    await act(async () => screen.update(React.createElement(HelpScreen)));
+    await act(async () => screen.root.findByType(HelpChatEntry).props.onEntered());
+    mockService.sendMessage.mockClear();
+    const file = { uri: 'file://diagnostics.txt', name: 'diagnostics.txt', mimeType: 'text/plain', size: 12 };
+    const uploaded = { id: 'attached-file', kind: 'FILE', name: file.name, mimeType: file.mimeType, size: 12, url: '/help/attachments/attached-file' };
+    mockService.uploadAttachments.mockResolvedValue([uploaded]);
+    let staged: boolean | undefined;
+    await act(async () => { staged = await composer().props.onSend(undefined, [file]); });
+    expect(staged).toBe(true);
+    expect(mockService.sendMessage).not.toHaveBeenCalled();
+    expect(mockService.uploadAttachments).not.toHaveBeenCalled();
+    expect(composer().props.files).toEqual([file]);
+    await act(async () => button('Отправить ответы').props.onPress());
+    expect(mockService.sendMessage).toHaveBeenCalledTimes(1);
+    expect(mockService.sendMessage.mock.calls[0][1].text).toContain('вложен');
+    expect(mockService.sendMessage.mock.calls[0][1].attachmentIds).toEqual(['attached-file']);
+  });
+
+
+  test('typing during questionnaire send keeps the new text and the previous ordinary draft', async () => {
+    await openWithMessage();
+    await act(async () => composer().props.onChange('Черновик сообщения'));
+    mockService.messages = [...mockService.messages, { ...mockService.messages[0], id: 32, sequence: 2, authorId: 0, authorRole: 'SYSTEM', text: 'Уточните систему.', assistantRun: { runId: 'send-race', status: 'completed', questions: [{ id: 'os', header: 'Система', question: 'Какая ОС?', multiSelect: false, options: [] }] } }];
+    await act(async () => screen.update(React.createElement(HelpScreen)));
+    await act(async () => screen.root.findByType(HelpChatEntry).props.onEntered());
+    await act(async () => button('Развернуть вопросы ИИ').props.onPress());
+    await act(async () => composer().props.onChange('Windows 11'));
+    await act(async () => button('Проверить ответы').props.onPress());
+    let release!: (value: any) => void;
+    mockService.sendMessage.mockClear().mockImplementation(() => new Promise(resolve => { release = resolve; }));
+    await act(async () => button('Отправить ответы').props.onPress());
+    expect(mockService.sendMessage.mock.calls[0][1].text).toBe('Какая ОС?\nОтвет: Windows 11');
+    await act(async () => composer().props.onChange('Windows 11 — новое уточнение'));
+    mockService.messages = [...mockService.messages, { ...mockService.messages[0], id: 33, sequence: 3, authorId: 5, text: 'Какая ОС?\nОтвет: Windows 11' }];
+    await act(async () => release({ ...detail, messages: mockService.messages }));
+    expect(composer().props.value).toBe('Черновик сообщения\n\nWindows 11 — новое уточнение');
+    expect(composer().props.questionActionLabel).toBeUndefined();
+  });
+
   function bubble(){return screen.root.findByType('HelpMessageBubble' as any);}
   test('questions live in the measured dock, preserve the composer and send chosen answers through the normal durable send', async () => {
     await openWithMessage();
@@ -768,6 +836,8 @@ describe('Help screen integration with service boundary', () => {
     expect(screen.root.findByType('HelpAssistantMessage' as any).props.onSuggestion).toBeUndefined();
     mockService.sendMessage.mockClear();
     await act(async () => button('Windows 11').props.onPress());
+    expect(mockService.sendMessage).not.toHaveBeenCalled();
+    await act(async () => button('Проверить ответы').props.onPress());
     expect(mockService.sendMessage).not.toHaveBeenCalled();
     await act(async () => button('Отправить ответы').props.onPress());
     expect(mockService.sendMessage).toHaveBeenCalledWith(7, { text: 'Какая ОС?\nОтвет: Windows 11', attachmentIds: [], replyToId: undefined });

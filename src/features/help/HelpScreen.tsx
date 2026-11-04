@@ -18,9 +18,9 @@ import { useHelpTheme, useHelpReducedMotion } from './helpTheme';
 import { canEditHelpMessage, canReopenHelpTicket, helpCreated, helpTime, stableHelpOrder } from './helpUiUtils';
 import type {HelpTypingUser} from './helpTypingModel';
 import { HelpAvatar, HelpBlurSurface, HelpDock, HelpIcon, HelpNotice, HelpPrimaryButton, HelpSheet, HelpTyping } from './components/HelpPrimitives';
-import { HelpComposer, type HelpComposeMode, type HelpLocalFile } from './components/HelpComposer';
-import { HelpQuestionPanel, type HelpQuestionPanelHandle } from './components/HelpQuestionPanel';
-import { helpQuestions } from './helpQuestions';
+import { HelpComposer, type HelpComposeMode, type HelpLocalFile, type HelpComposerHandle } from './components/HelpComposer';
+import { HelpQuestionPanel, type HelpQuestionPanelHandle, type HelpQuestionInputMode, type HelpQuestionChange } from './components/HelpQuestionPanel';
+import { helpQuestions, mergeQuestionMessageDraft } from './helpQuestions';
 import { HelpNativeChatLayout, hasNativeChatLayout, hasNativeImeLayout, hasNativeStableImeLayout, hasNativeDockControls, hasNativeAtomicTailMotion } from './components/HelpNativeChatLayout';
 import {HelpDockControls} from './components/HelpDockControls';
 import { HelpMessageBubble } from './components/HelpMessageBubble';
@@ -145,6 +145,12 @@ export default function HelpScreen() {
   const canRequestIt = Boolean(isOwner && ticket?.status === 'OPEN' && !ticket.itRequested && !ticket.members.some(member => member.role === 'IT'));
   const itRequestLock = useRef(false);
   const questionPanel = useRef<HelpQuestionPanelHandle>(null);
+  const composerActions = useRef<HelpComposerHandle>(null);
+  const questionSubmission = useRef<{userId:number;key:string;identity:string;revision:number;text:string;navigation:number;filesKey:string;started:boolean}|null>(null);
+  const questionChatDraft = useRef<{userId:number;key:string;text:string;identity:string}|null>(null);
+  const [questionMode, setQuestionMode] = useState<{identity:string;value:HelpQuestionInputMode}>({identity:'',value:'message'});
+  const [questionPosition,setQuestionPosition] = useState({index:0,review:false});
+  const questionPositionChanged = useCallback((next:HelpQuestionChange)=>setQuestionPosition(previous=>previous.index===next.index&&previous.review===next.review?previous:{index:next.index,review:next.review}),[]);
   const [dismissedQuestions, setDismissedQuestions] = useState('');
   const [requestingIt, setRequestingIt] = useState(false);
   const isParticipant = Boolean(isOwner || ticket?.members.some(member => member.userId === service.userId));
@@ -176,6 +182,59 @@ export default function HelpScreen() {
   const questionMessage = useMemo(() => canRequestIt && mode === 'message' && lastAssistant && dismissedQuestions !== questionIdentity && !messages.some(message => message.authorId === service.userId && message.sequence > lastAssistant.sequence) && !(assistantActions.pendingMessages??[]).some(item => item.ticketId === ticket?.id) ? lastAssistant : null, [canRequestIt, mode, lastAssistant, dismissedQuestions, questionIdentity, messages, service.userId, assistantActions.pendingMessages, ticket?.id]);
   const questions = useMemo(() => questionMessage ? helpQuestions(questionMessage) : [], [questionMessage]);
   const questionDraftKey = `questions:${questionIdentity}`;
+  const questionInputMode:HelpQuestionInputMode = questions.length && questionMode.identity===questionIdentity ? questionMode.value : 'message';
+  const isQuestionInput = questionInputMode==='question';
+  function startQuestionSubmit() {
+    const snapshot={userId:service.userId,key:draftKey,identity:questionIdentity,revision:draftRevisions.current.get(draftKey)??0,text:draft,navigation:navigationGeneration.current,filesKey:JSON.stringify(files.map(file=>file.uri)),started:false};
+    questionSubmission.current=snapshot;
+    return snapshot;
+  }
+  function switchQuestionInput(next:HelpQuestionInputMode) {
+    if(sending || service.busy || next===questionInputMode)return;
+    if(next==='question') {
+      questionChatDraft.current={userId:service.userId,key:draftKey,text:draft,identity:questionIdentity};
+      void service.setDraft(draftKey,draft).catch(()=>tell('Не удалось сохранить черновик сообщения.'));
+      setDraft(questionPanel.current?.getDraftText() || '');
+    } else {
+      questionPanel.current?.capture(draft);
+      const saved=questionChatDraft.current;
+      setDraft(saved?.userId===service.userId&&saved.key===draftKey?saved.text:'');
+    }
+    draftRevisions.current.set(draftKey,(draftRevisions.current.get(draftKey)??0)+1);
+    setQuestionMode({identity:questionIdentity,value:next});
+  }
+  useLayoutEffect(()=>{
+    if(mode!=='message'||!draftLoaded.current)return;
+    const saved=questionChatDraft.current;
+    if(questions.length && saved?.identity!==questionIdentity) {
+      const text=questionMode.value==='question'&&saved?.userId===service.userId&&saved.key===draftKey?saved.text:draft;
+      questionChatDraft.current={userId:service.userId,key:draftKey,text,identity:questionIdentity};
+      const value:HelpQuestionInputMode=text.trim()||files.length?'message':'question';
+      setQuestionMode({identity:questionIdentity,value});
+      if(value==='question')setDraft(questionPanel.current?.getDraftText()||'');
+      else if(text!==draft)setDraft(text);
+    } else if(!questions.length && questionMode.value==='question') {
+      if(saved?.userId===service.userId&&saved.key===draftKey) {
+        const snapshot=questionSubmission.current;
+        const consumed=snapshot?.userId===service.userId&&snapshot.key===draftKey&&snapshot.identity===saved.identity&&snapshot.started&&snapshot.revision===(draftRevisions.current.get(draftKey)??0);
+        const text=consumed?saved.text:mergeQuestionMessageDraft(saved.text,draft);
+        setDraft(text); saved.text=text; questionSubmission.current=null;
+        if(text)sentDraftRevisions.current.delete(draftKey);
+        void service.setDraft(draftKey,text).catch(()=>tell('Не удалось сохранить черновик сообщения.'));
+      }
+      setQuestionMode({identity:'',value:'message'});
+    }
+  },[questions.length,questionIdentity,draftKey,service.userId,mode,draft,files,questionMode.value]);
+  async function submitComposer(voice?:HelpLocalFile,selected?:HelpLocalFile[],retain?:boolean) {
+    if(isQuestionInput && !voice) {
+      if(selected)changeFiles(selected);
+      const result=await questionPanel.current?.answer(draft,selected?{count:selected.length,names:selected.map(file=>file.name),keys:selected.map(file=>file.uri)}:undefined);
+      // A photo-picker send stages files into the reviewed answer, then closes
+      // the picker. Only the panel's explicit final action sends to the API.
+      return selected?true:result??false;
+    }
+    return submit(voice,selected,retain);
+  }
   const creationEcho=useRef<{account:number;scene:number;item:HelpPending}|null>(null);
   const creationRequest=useRef<{account:number;scene:number}|null>(null);
   const acceptedClientIds=useMemo(()=>new Set(messages.flatMap(message=>message.clientMessageId?[message.clientMessageId]:[])),[messages]);
@@ -248,7 +307,7 @@ export default function HelpScreen() {
   useEffect(()=>{if(active!==null)return;let alive=true;const account=service.userId;void (service.getDrafts?service.getDrafts(service.tickets.map(item=>`ticket:${item.id}`)).then(values=>service.tickets.map(item=>[item.id,values[`ticket:${item.id}`]??''] as const)):Promise.all(service.tickets.map(async item=>[item.id,await service.getDraft(`ticket:${item.id}`)] as const))).then(values=>{if(alive&&currentAccount.current===account)setListDrafts(previous=>{const next=Object.fromEntries(values);return Object.keys(previous).length===values.length&&values.every(([id,text])=>previous[id]===text)?previous:next;});}).catch(()=>{});return()=>{alive=false;};},[active,service.userId,draftTicketIds,service.getDraft]);
   useEffect(() => { ++draftGeneration.current; draftLoaded.current = false; restoredDraft.current = null; setActive(null); setDraft(''); setFiles([]); setSource(null); setMode('message'); setReply(null); setEditing(null); setEditAttachments([]); setGallery(null); setOverlay(null); setNotice(''); setSelectedMessage(null); setOrder([]); setFilter('OPEN'); setScope('mine'); setSending(false); submitLock.current=false; earlyClearedCreations.current.clear(); stack.current = []; uploadCache.current.clear(); fileDrafts.current.clear(); filePersistence.current.clear(); draftRevisions.current.clear(); sentDraftRevisions.current.clear(); regularDraft.current = {text:'',files:[],reply:null}; deepLink.current = undefined; }, [service.userId]);
   useEffect(() => { if (!active) return; const generation = ++draftGeneration.current; setFiles(fileDrafts.current.get(draftKey)??[]); if (restoredDraft.current?.key === draftKey) { setDraft(restoredDraft.current.text); restoredDraft.current = null; draftLoaded.current = true; return; } draftLoaded.current = false; setDraft(''); void Promise.all([service.getDraft(draftKey),fileDrafts.current.has(draftKey)?Promise.resolve(fileDrafts.current.get(draftKey)!):loadHelpAttachmentDraft(service.userId,draftKey)]).then(([value,attachments]) => { if (generation === draftGeneration.current) { setDraft(value); setFiles(attachments); fileDrafts.current.set(draftKey,attachments); draftLoaded.current = true; } }).catch(() => { if (generation === draftGeneration.current) draftLoaded.current = true; }); return () => { ++draftGeneration.current; }; }, [draftKey, service.userId]);
-  useEffect(() => { if (!active || mode !== 'message' || !draftLoaded.current) return; const revision=draftRevisions.current.get(draftKey)??0;const timer = setTimeout(() => { if((draftRevisions.current.get(draftKey)??0)===revision&&sentDraftRevisions.current.get(draftKey)!==revision)void service.setDraft(draftKey, draft); }, 250); return () => clearTimeout(timer); }, [draft, active, mode, draftKey, service.setDraft]);
+  useEffect(() => { if (!active || mode !== 'message' || !draftLoaded.current) return; const revision=draftRevisions.current.get(draftKey)??0;const timer = setTimeout(() => { if((draftRevisions.current.get(draftKey)??0)===revision&&sentDraftRevisions.current.get(draftKey)!==revision){if(isQuestionInput)questionPanel.current?.capture(draft);else void service.setDraft(draftKey, draft);} }, 250); return () => clearTimeout(timer); }, [draft, active, mode, draftKey, service.setDraft, isQuestionInput, questionIdentity]);
   useEffect(() => { if (active === null && service.tickets.length && !order.length) setOrder(stableHelpOrder(service.tickets, []).map(t => t.id)); }, [service.tickets, active, order.length]);
   const listQueryRequest=useRef<{load:typeof service.loadTickets;key:string}|null>(null);
   useEffect(() => {
@@ -344,7 +403,7 @@ export default function HelpScreen() {
     void promise.catch(()=>{if(filePersistence.current.get(key)?.promise===promise)filePersistence.current.delete(key);});
     return promise;
   }
-  function saveDraftNow() { scroll.current?.save(); if (active && mode === 'message') { const sent=sentDraftRevisions.current.get(draftKey)===(draftRevisions.current.get(draftKey)??0);void persistFiles(sent?[]:files).catch(()=>tell('Не удалось сохранить вложения черновика.')); void service.setDraft(draftKey, sent?'':draft).catch(()=>tell('Не удалось сохранить черновик.')); } }
+  function saveDraftNow() { scroll.current?.save(); if (active && mode === 'message') { const sent=sentDraftRevisions.current.get(draftKey)===(draftRevisions.current.get(draftKey)??0);void persistFiles(sent?[]:files).catch(()=>tell('Не удалось сохранить вложения черновика.')); if(isQuestionInput)questionPanel.current?.capture(draft); const saved=questionChatDraft.current; void service.setDraft(draftKey, isQuestionInput&&saved?.userId===service.userId&&saved.key===draftKey?saved.text:sent?'':draft).catch(()=>tell('Не удалось сохранить черновик.')); } }
   async function list(next: 'OPEN' | 'CLOSED' = filter) {
     if(returningToList.current)return;
     const navigation=++navigationGeneration.current,account=service.userId;
@@ -438,11 +497,18 @@ export default function HelpScreen() {
   }
   function replyTo(message: HelpMessage) { if (mode !== 'message' || ticket?.status !== 'OPEN' || !isParticipant) return; setReply(message); setSelectedMessage(null); setFocusKey(n => n + 1); }
   function jump(id: number) { followBottom.current=false;scroll.current?.prepareJump(messages.find(message=>message.id===id)?.sequence);void (async()=>{if(await(scroll.current?.waitForJumpReady?.()??true))await service.jumpToMessage(id);})().catch(e=>{scroll.current?.cancelJump();tell(e instanceof Error?e.message:'Исходное сообщение недоступно');}); }
-  async function submit(voice?: HelpLocalFile, selectedFiles?: HelpLocalFile[], retainVoiceDraft=false, answerText?:string):Promise<boolean> {
+  async function submit(voice?: HelpLocalFile, selectedFiles?: HelpLocalFile[], retainVoiceDraft=false, answerText?:string, questionCheckpoint?:NonNullable<typeof questionSubmission.current>):Promise<boolean> {
     const inputText = answerText ?? draft.trim();
+    if(isQuestionInput&&!questionCheckpoint)questionCheckpoint=startQuestionSubmit();
     if(pendingCreate||queuedOwnCreate){tell('Это обращение уже ожидает отправки. Повтор доступен у сохранённого сообщения.');return false;}
     const account = renderAccount;
+    const savedChat=questionChatDraft.current;
+    const restoreChatText=isQuestionInput&&savedChat?.userId===account&&savedChat.key===draftKey?savedChat.text:'';
     const navigation = navigationGeneration.current;
+    if(questionCheckpoint) {
+      if(questionCheckpoint.userId!==account||questionCheckpoint.key!==draftKey||questionCheckpoint.navigation!==navigation||questionCheckpoint.identity!==questionIdentity)return false;
+      if(questionCheckpoint.filesKey!==JSON.stringify(files.map(file=>file.uri))){tell('Вложения изменились. Проверьте ответы перед отправкой.');return false;}
+    }
     if (submitLock.current || !active || !screenMounted.current || currentAccount.current!==account || draftScope.current.key!==draftKey || draftScope.current.mode!==mode) return false;
     let chosenFiles=voice?[voice]:[...(selectedFiles??files)];
     if (mode === 'reopen' && !inputText) { tell('Напишите, что случилось снова.'); return false; }
@@ -450,7 +516,8 @@ export default function HelpScreen() {
     if (chosenFiles.length+(mode==='edit'?editAttachments.length:0)>10){tell('В одном сообщении можно прикрепить до 10 файлов.');return false;}
     if (mode === 'edit' && editing && !canEditHelpMessage(editing, service.userId)) { tell('Редактировать сообщение можно только в течение часа.'); return false; }
     if(selectedFiles&&!voice)changeFiles(chosenFiles);
-    const draftRevision = draftRevisions.current.get(draftKey)??0;
+    const draftRevision = questionCheckpoint?.revision ?? draftRevisions.current.get(draftKey)??0;
+    if(questionCheckpoint)questionCheckpoint.started=true;
     submitLock.current = true; setSending(true);
     const releaseFiles=[holdHelpAttachmentFiles(chosenFiles)];let committed=false;
     try {
@@ -466,8 +533,8 @@ export default function HelpScreen() {
           fileDrafts.current.set(draftKey,[]);
           const clearing=clearHelpAttachmentDraft(account,draftKey).then(()=>[] as HelpLocalFile[]);
           filePersistence.current.set(draftKey,{revision:draftRevision,promise:clearing});
-          if(screenMounted.current&&navigationGeneration.current===navigation){setDraft('');setFiles([]);setReply(null);}
-          await Promise.all([service.setDraft(draftKey,''),clearing]).catch(()=>{if(screenMounted.current&&currentAccount.current===account)tell('Сообщение в очереди, но не удалось очистить черновик.');});
+          if(screenMounted.current&&navigationGeneration.current===navigation){setDraft(restoreChatText);setFiles([]);setReply(null);}
+          await Promise.all([service.setDraft(draftKey,restoreChatText),clearing]).catch(()=>{if(screenMounted.current&&currentAccount.current===account)tell('Сообщение в очереди, но не удалось очистить черновик.');});
         };
         if(active==='new'){
           creationRequest.current={account,scene:scene.key};
@@ -503,8 +570,8 @@ export default function HelpScreen() {
           fileDrafts.current.set(draftKey,[]);
           const filesClearing=clearHelpAttachmentDraft(account,draftKey).then(()=>[] as HelpLocalFile[]);
           filePersistence.current.set(draftKey,{revision:draftRevision,promise:filesClearing});
-          setDraft('');setFiles([]);setReply(null);
-          await Promise.all([service.setDraft(draftKey,''),filesClearing]).catch(()=>{if(screenMounted.current&&currentAccount.current===account)tell('Сообщение сохранено в очереди, но черновик не удалось очистить полностью.');});
+          setDraft(restoreChatText);setFiles([]);setReply(null);
+          await Promise.all([service.setDraft(draftKey,restoreChatText),filesClearing]).catch(()=>{if(screenMounted.current&&currentAccount.current===account)tell('Сообщение сохранено в очереди, но черновик не удалось очистить полностью.');});
         });
       }
       else detail = await service.sendMessage(active, { text, attachmentIds: uploads.map(a => a.id), replyToId: reply?.id });
@@ -515,9 +582,9 @@ export default function HelpScreen() {
       if (mode === 'message' && !voice && unchanged()&&!alreadyClearedAtEnqueue) {
         sentDraftRevisions.current.set(draftKey,draftRevision);
         const filesClearing=clearHelpAttachmentDraft(account,draftKey).then(()=>[] as HelpLocalFile[]);
-        const clearing=Promise.all([service.setDraft(draftKey,''),filesClearing]);
+        const clearing=Promise.all([service.setDraft(draftKey,restoreChatText),filesClearing]);
         fileDrafts.current.set(draftKey,[]);filePersistence.current.set(draftKey,{revision:draftRevision,promise:filesClearing});
-        if(screenMounted.current&&unchanged()&&navigationGeneration.current===navigation){setDraft('');setFiles([]);setReply(null);}
+        if(screenMounted.current&&unchanged()&&navigationGeneration.current===navigation){setDraft(restoreChatText);setFiles([]);setReply(null);}
         await clearing;
       }
       if(!screenMounted.current||navigationGeneration.current!==navigation||!unchanged())return true;
@@ -537,7 +604,7 @@ export default function HelpScreen() {
         tell(committed?'Сообщение отправлено, но не удалось обновить черновик.':queuedCreate?'Сообщение сохранено в очереди и будет отправлено автоматически.':e instanceof Error ? e.message : 'Сообщение не отправлено. Черновик сохранён.');
       }
       return committed||queuedCreate;
-    } finally { releaseFiles.forEach(release=>release());if(currentAccount.current===account){submitLock.current = false;if(screenMounted.current)setSending(false);} }
+    } finally { if(!committed&&questionSubmission.current===questionCheckpoint)questionSubmission.current=null; if(committed&&restoreChatText&&currentAccount.current===account)sentDraftRevisions.current.delete(draftKey); releaseFiles.forEach(release=>release());if(currentAccount.current===account){submitLock.current = false;if(screenMounted.current)setSending(false);} }
   }
   function changeDraft(text: string) { if(mode==='message')draftRevisions.current.set(draftKey,(draftRevisions.current.get(draftKey)??0)+1); draftLoaded.current = true; ++draftGeneration.current; setDraft(text); if (typeof active === 'number' && Date.now() - typingAt.current > 1800) { typingAt.current = Date.now(); service.emitTyping(active, Boolean(text.trim())); } }
   function changeFiles(value: HelpLocalFile[]) { if(mode==='message'){draftRevisions.current.set(draftKey,(draftRevisions.current.get(draftKey)??0)+1);++draftGeneration.current;draftLoaded.current=true;void persistFiles(value).catch(()=>{if(currentAccount.current===service.userId)tell('Не удалось сохранить вложения черновика.');});} setFiles(value); }
@@ -547,7 +614,7 @@ export default function HelpScreen() {
   const timelineActions=useRef({service,run,jump,openGallery,replyTo,startMode,scope,router,assistantPreview,assistantActions,isParticipant,openSource});
   timelineActions.current={service,run,jump,openGallery,replyTo,startMode,scope,router,assistantPreview,assistantActions,isParticipant,openSource};
   const renderPending=useCallback((item:HelpPending)=><HelpPendingMessage {...pendingGroups.get(item.key)} item={item} onQuote={id=>timelineActions.current.jump(id)} resolve={service.mediaSource} onRetry={()=>void timelineActions.current.run(()=>timelineActions.current.assistantActions.retryPendingOperation!(item.key))}/>,[pendingGroups,service.mediaSource]);
-  const renderMessage=useCallback((message:HelpMessage)=>message.assistantRun ? <HelpAssistantMessage message={message} onRequestIt={canRequestIt && !busy && message.id === lastAssistant?.id ? () => { Keyboard.dismiss(); setOverlay({ kind: 'it' }); } : undefined} onConnectOnec={isOwner && message.assistantRun?.action?.type === 'connect_onec' ? () => { Keyboard.dismiss(); timelineActions.current.router.push({ pathname: '/profile/settings', params: { section: 'onec', ...(message.assistantRun?.action?.baseKey ? { base: message.assistantRun.action.baseKey } : {}), returnTicket: String(message.ticketId), returnRun: message.assistantRun!.runId } } as any); } : undefined} onRetry={assistantPreview ? ()=>timelineActions.current.assistantPreview?.retry(message.ticketId,message.assistantRun!.runId) : assistantActions.retryAssistant?()=>void timelineActions.current.run(()=>timelineActions.current.assistantActions.retryAssistant!(message.ticketId,message.assistantRun!.runId)):undefined}/> : <HelpMessageBubble {...messageGroups.get(message.id)} message={message} readByOthers={message.authorId===service.userId && Boolean(ticket?.members.some(member=>member.userId!==service.userId && (member.lastReadSequence??0)>=message.sequence))} searchQuery={chatSearchOpen?chatSearchQuery:undefined} userId={service.userId} open={mode === 'message' && ticket?.status === 'OPEN' && isParticipant} canInteract={isParticipant} selected={selectedMessage === message.id} highlighted={highlighted === message.id} solution={isOwner && ticket?.status === 'OPEN' && message.id === lastIncoming?.id} resolve={service.mediaSource} onDismissMenu={() => setSelectedMessage(null)} onMenu={() => { Keyboard.dismiss(); setSelectedMessage(previous=>previous === message.id ? null : message.id); }} onReply={() => timelineActions.current.replyTo(message)} onCopy={() => void timelineActions.current.run(async () => { await Clipboard.setStringAsync(message.text || message.attachments.map(a => a.name).join('\n')); setSelectedMessage(null); tell('Скопировано'); })} onEdit={() => timelineActions.current.startMode('edit', message)} onForward={() => { Keyboard.dismiss(); setSelectedMessage(null); setOverlay({ kind: 'forward', message }); void timelineActions.current.service.loadTickets('OPEN', timelineActions.current.scope); }} onReaction={emoji => {if(timelineActions.current.isParticipant)void timelineActions.current.run(() => timelineActions.current.service.toggleReaction(message, emoji));}} onQuote={id=>timelineActions.current.jump(id)} onImage={(images,index,origin)=>timelineActions.current.openGallery(images,index,origin)} onFile={file => void timelineActions.current.run(() => downloadHelpAttachment(file, timelineActions.current.service.mediaSource))} onCloseTicket={() => timelineActions.current.startMode('close')} onRequestIt={() => { Keyboard.dismiss(); setOverlay({ kind: 'it' }); }} onError={tell} />, [messageGroups,ticket,service.userId,service.mediaSource,mode,isParticipant,isOwner,selectedMessage,highlighted,chatSearchOpen,chatSearchQuery,canRequestIt,busy,lastAssistant?.id,lastIncoming?.id,Boolean(assistantPreview),Boolean(assistantActions.retryAssistant)]);
+  const renderMessage=useCallback((message:HelpMessage)=>message.assistantRun ? <HelpAssistantMessage message={message} resolve={service.mediaSource} onFileError={tell} onRequestIt={canRequestIt && !busy && message.id === lastAssistant?.id ? () => { Keyboard.dismiss(); setOverlay({ kind: 'it' }); } : undefined} onConnectOnec={isOwner && message.assistantRun?.action?.type === 'connect_onec' ? () => { Keyboard.dismiss(); timelineActions.current.router.push({ pathname: '/profile/settings', params: { section: 'onec', ...(message.assistantRun?.action?.baseKey ? { base: message.assistantRun.action.baseKey } : {}), returnTicket: String(message.ticketId), returnRun: message.assistantRun!.runId } } as any); } : undefined} onRetry={assistantPreview ? ()=>timelineActions.current.assistantPreview?.retry(message.ticketId,message.assistantRun!.runId) : assistantActions.retryAssistant?()=>void timelineActions.current.run(()=>timelineActions.current.assistantActions.retryAssistant!(message.ticketId,message.assistantRun!.runId)):undefined}/> : <HelpMessageBubble {...messageGroups.get(message.id)} message={message} readByOthers={message.authorId===service.userId && Boolean(ticket?.members.some(member=>member.userId!==service.userId && (member.lastReadSequence??0)>=message.sequence))} searchQuery={chatSearchOpen?chatSearchQuery:undefined} userId={service.userId} open={mode === 'message' && ticket?.status === 'OPEN' && isParticipant} canInteract={isParticipant} selected={selectedMessage === message.id} highlighted={highlighted === message.id} solution={isOwner && ticket?.status === 'OPEN' && message.id === lastIncoming?.id} resolve={service.mediaSource} onDismissMenu={() => setSelectedMessage(null)} onMenu={() => { Keyboard.dismiss(); setSelectedMessage(previous=>previous === message.id ? null : message.id); }} onReply={() => timelineActions.current.replyTo(message)} onCopy={() => void timelineActions.current.run(async () => { await Clipboard.setStringAsync(message.text || message.attachments.map(a => a.name).join('\n')); setSelectedMessage(null); tell('Скопировано'); })} onEdit={() => timelineActions.current.startMode('edit', message)} onForward={() => { Keyboard.dismiss(); setSelectedMessage(null); setOverlay({ kind: 'forward', message }); void timelineActions.current.service.loadTickets('OPEN', timelineActions.current.scope); }} onReaction={emoji => {if(timelineActions.current.isParticipant)void timelineActions.current.run(() => timelineActions.current.service.toggleReaction(message, emoji));}} onQuote={id=>timelineActions.current.jump(id)} onImage={(images,index,origin)=>timelineActions.current.openGallery(images,index,origin)} onFile={file => void timelineActions.current.run(() => downloadHelpAttachment(file, timelineActions.current.service.mediaSource))} onCloseTicket={() => timelineActions.current.startMode('close')} onRequestIt={() => { Keyboard.dismiss(); setOverlay({ kind: 'it' }); }} onError={tell} />, [messageGroups,ticket,service.userId,service.mediaSource,mode,isParticipant,isOwner,selectedMessage,highlighted,chatSearchOpen,chatSearchQuery,canRequestIt,busy,lastAssistant?.id,lastIncoming?.id,Boolean(assistantPreview),Boolean(assistantActions.retryAssistant)]);
   const sourceReference=useMemo(()=>sourceLink?(service.tickets.find(row=>row.id===sourceLink.id)??sourceLink):null,[sourceLink,service.tickets]);
   const timelineHeader=useMemo(()=><>{sourceReference?<HelpTicketReference ticket={sourceReference} onPress={()=>void timelineActions.current.openSource()}/>:null}</>,[sourceReference]);
   const typingUsers=ticket?service.typingByTicket[ticket.id]:undefined;
@@ -596,8 +663,8 @@ export default function HelpScreen() {
         <View nativeID={nativeDockId} testID="help-chat-dock-layout" pointerEvents="box-none" style={{ position: 'absolute', bottom: boundedChat&&!hasNativeStableImeLayout?imeInset:0, left: 0, right: 0 }}>
           {legacyDockControls?<View testID="help-dock-controls-native-visual" pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={StyleSheet.absoluteFill}>{renderDockControls(dockHeight+12,'visual')}</View>:null}
           {notice ? <HelpNotice key={notice} text={notice} onDone={() => setNotice('')} /> : null}<HelpDock onHeightFrame={hasNativeStableImeLayout?onDockHeightFrame:undefined} stableKeyboardLayout={hasNativeStableImeLayout} target={blurTarget} onHeight={setDockHeight}>
-          {!chatSearchOpen && questions.length > 0 ? <HelpQuestionPanel key={questionIdentity} ref={questionPanel} questions={questions} draft={draft} disabled={busy || !entrySettled} maxBodyHeight={Math.max(64,Math.min(160,(chatViewportHeight-imeInset-120)*0.3))} loadDraft={()=>service.getDraft(questionDraftKey)} saveDraft={value=>service.setDraft(questionDraftKey,value)} onDraftChange={changeDraft} onWriteAnswer={()=>setFocusKey(value=>value+1)} onSubmit={text=>submit(undefined,undefined,false,text)} onDismiss={()=>setDismissedQuestions(questionIdentity)}/> : null}
-          {chatSearchOpen ? <HelpChatSearchDock query={chatSearchQuery} total={chatSearchTotal} selectedIndex={chatResultIndex} loading={chatSearchLoading} showList={chatSearchList} onToggleList={()=>setChatSearchList(value=>!value)} error={chatSearchError}/> : ticket?.status === 'CLOSED' && mode === 'message' ? !isOwner ? <HelpPrimaryButton text="Закрыт" icon="lock-closed-outline" disabled onPress={()=>{}}/> : <View>{canReopenHelpTicket(ticket) ? <HelpPrimaryButton text="Открыть повторно" icon="sync-outline" onPress={()=>startMode('reopen')}/> : <><View style={{flexDirection:'row',justifyContent:'center',alignItems:'center',gap:6,paddingHorizontal:8,paddingBottom:9}}><Ionicons name="lock-closed-outline" size={15} color={c.muted}/><Text style={{color:c.muted,fontSize:12,lineHeight:18}}>Закрыт{ticket.closedAt ? ' · прошло больше 3 дней' : ''}</Text></View><HelpPrimaryButton text="Создать новое обращение" onPress={()=>newTicket({id:ticket.id,number:ticket.number,title:ticket.title})}/></>}</View> : ticket&&!isParticipant ? <HelpPrimaryButton text="Взять обращение" icon="headset-outline" disabled={busy||!service.canManage} onPress={()=>void run(()=>service.claimTicket(ticket.id))}/> : <HelpComposer focusSuspended={Boolean(gallery)} closeAttachmentsKey={closeAttachmentsKey} blurTarget={blurTarget} navigationReady={entrySettled&&!leavingChat} onAttachmentVisibility={setAttachmentsVisible} screenActive={isFocused&&entrySettled} voiceDraftKey={`${encodeURIComponent(API_BASE_URL)}:${service.userId}:${draftKey}`} key={`${service.userId}:${scene.key}:${mode}`} value={draft} onChange={changeDraft} files={files} onFiles={changeFiles} onSend={(voice,selected,retain)=>questions.length && !voice && !selected ? questionPanel.current?.answer(draft) ?? Promise.resolve(false) : submit(voice,selected,retain)} sendBlocked={Boolean(pendingCreate)||queuedOwnCreate||active!=='new'&&!ticket} onStopAssistant={activeAssistant?.assistantRun ? ()=>{if(assistantPreview)assistantPreview.stop(activeAssistant.ticketId,activeAssistant.assistantRun!.runId);else void run(()=>assistantActions.stopAssistant!(activeAssistant.ticketId,activeAssistant.assistantRun!.runId));} : undefined} busy={busy} mode={mode} rating={rating} onRating={setRating} onCancelMode={cancelMode} quote={reply ? {name:reply.author?.name||'Сообщение',text:reply.text||'Вложение',thumbnail:reply.attachments.find(item=>item.kind==='IMAGE'),onPress:()=>jump(reply.id)} : undefined} resolve={service.mediaSource} recordingAreaHeight={Math.max(0,chatViewportHeight-listHeaderHeight-dockHeight-imeInset+8)} onCancelQuote={()=>setReply(null)} error={tell} focusKey={focusKey} onResize={()=>{ composerResizingUntil.current=Date.now()+320; scrollBottom(false); }} disabled={active!=='new'&&!ticket&&!entrySettled} editClosure={editing?.kind==='CLOSURE'} existingFiles={mode==='edit' ? editAttachments : undefined} onRemoveExisting={id=>setEditAttachments(values=>values.filter(a=>a.id!==id))}/>}
+          {!chatSearchOpen && questions.length > 0 ? <HelpQuestionPanel key={questionIdentity} ref={questionPanel} questions={questions} draft={draft} inputMode={questionInputMode} onInputModeChange={switchQuestionInput} onQuestionChange={questionPositionChanged} attachmentCount={files.length} attachmentNames={files.map(file=>file.name)} attachmentKeys={files.map(file=>file.uri)} onAttachFiles={()=>void composerActions.current?.pickFiles()} disabled={busy || !entrySettled} maxBodyHeight={Math.max(64,Math.min(160,(chatViewportHeight-imeInset-120)*0.3))} loadDraft={()=>service.getDraft(questionDraftKey)} saveDraft={value=>service.setDraft(questionDraftKey,value)} onDraftChange={text=>{if(isQuestionInput)changeDraft(text);}} onWriteAnswer={()=>{switchQuestionInput('question');setFocusKey(value=>value+1);}} onSubmitStart={startQuestionSubmit} onSubmit={(text,snapshot)=>snapshot && snapshot===questionSubmission.current?submit(undefined,undefined,false,text,questionSubmission.current):Promise.resolve(false)} onDismiss={()=>{switchQuestionInput('message');setDismissedQuestions(questionIdentity);}}/> : null}
+          {chatSearchOpen ? <HelpChatSearchDock query={chatSearchQuery} total={chatSearchTotal} selectedIndex={chatResultIndex} loading={chatSearchLoading} showList={chatSearchList} onToggleList={()=>setChatSearchList(value=>!value)} error={chatSearchError}/> : ticket?.status === 'CLOSED' && mode === 'message' ? !isOwner ? <HelpPrimaryButton text="Закрыт" icon="lock-closed-outline" disabled onPress={()=>{}}/> : <View>{canReopenHelpTicket(ticket) ? <HelpPrimaryButton text="Открыть повторно" icon="sync-outline" onPress={()=>startMode('reopen')}/> : <><View style={{flexDirection:'row',justifyContent:'center',alignItems:'center',gap:6,paddingHorizontal:8,paddingBottom:9}}><Ionicons name="lock-closed-outline" size={15} color={c.muted}/><Text style={{color:c.muted,fontSize:12,lineHeight:18}}>Закрыт{ticket.closedAt ? ' · прошло больше 3 дней' : ''}</Text></View><HelpPrimaryButton text="Создать новое обращение" onPress={()=>newTicket({id:ticket.id,number:ticket.number,title:ticket.title})}/></>}</View> : ticket&&!isParticipant ? <HelpPrimaryButton text="Взять обращение" icon="headset-outline" disabled={busy||!service.canManage} onPress={()=>void run(()=>service.claimTicket(ticket.id))}/> : <HelpComposer ref={composerActions} inputHint={isQuestionInput?`Ответ на вопрос ${questionPosition.index+1}…`:undefined} questionActionLabel={isQuestionInput?(questionPosition.review?'Проверить ответы':questionPosition.index<questions.length-1?'Далее':'Проверить ответы'):undefined} focusSuspended={Boolean(gallery)} closeAttachmentsKey={closeAttachmentsKey} blurTarget={blurTarget} navigationReady={entrySettled&&!leavingChat} onAttachmentVisibility={setAttachmentsVisible} screenActive={isFocused&&entrySettled} voiceDraftKey={`${encodeURIComponent(API_BASE_URL)}:${service.userId}:${draftKey}`} key={`${service.userId}:${scene.key}:${mode}`} value={draft} onChange={changeDraft} files={files} onFiles={changeFiles} onSend={submitComposer} sendBlocked={Boolean(pendingCreate)||queuedOwnCreate||active!=='new'&&!ticket} onStopAssistant={activeAssistant?.assistantRun ? ()=>{if(assistantPreview)assistantPreview.stop(activeAssistant.ticketId,activeAssistant.assistantRun!.runId);else void run(()=>assistantActions.stopAssistant!(activeAssistant.ticketId,activeAssistant.assistantRun!.runId));} : undefined} busy={busy} mode={mode} rating={rating} onRating={setRating} onCancelMode={cancelMode} quote={reply ? {name:reply.author?.name||'Сообщение',text:reply.text||'Вложение',thumbnail:reply.attachments.find(item=>item.kind==='IMAGE'),onPress:()=>jump(reply.id)} : undefined} resolve={service.mediaSource} recordingAreaHeight={Math.max(0,chatViewportHeight-listHeaderHeight-dockHeight-imeInset+8)} onCancelQuote={()=>setReply(null)} error={tell} focusKey={focusKey} onResize={()=>{ composerResizingUntil.current=Date.now()+320; scrollBottom(false); }} disabled={active!=='new'&&!ticket&&!entrySettled} editClosure={editing?.kind==='CLOSURE'} existingFiles={mode==='edit' ? editAttachments : undefined} onRemoveExisting={id=>setEditAttachments(values=>values.filter(a=>a.id!==id))}/>}
         </HelpDock></View>
         <HelpDockControls nativeID={nativeControlsId} nativeSynced={hasNativeDockControls} dockHeight={dockHeight} imeInset={boundedChat?imeInset:0}>{bottom=><>
           {renderDockControls(bottom,legacyDockControls?'interaction':'full')}

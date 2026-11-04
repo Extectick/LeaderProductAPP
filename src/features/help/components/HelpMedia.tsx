@@ -67,20 +67,42 @@ export function HelpImage({ attachment, resolve, style, resizeMode = 'cover', on
     {!current?.loaded ? <View pointerEvents="none" style={[StyleSheet.absoluteFill,{alignItems:'center',justifyContent:'center'}]}>{current?.error ? <Ionicons name="image-outline" accessibilityLabel="Изображение недоступно" size={24} color={c.muted}/> : allowOriginal ? <View style={{padding:9,borderRadius:22,backgroundColor:'#00000038'}}><ActivityIndicator color="#FFFFFF"/></View> : null}</View> : null}
   </View>;
 }
-export async function downloadHelpAttachment(attachment: HelpAttachment, resolve: ResolveHelpMedia) {
+let helpDownloadSequence = 0;
+export async function downloadHelpAttachment(attachment: HelpAttachment, resolve: ResolveHelpMedia, signal?: AbortSignal) {
+  const checkActive = () => {
+    if (signal?.aborted) {
+      const error = new Error('Загрузка отменена'); error.name = 'AbortError'; throw error;
+    }
+  };
+  checkActive();
   const source = await resolve(attachment);
+  checkActive();
   if (Platform.OS === 'web') {
-    const response = await fetch(source.uri, { headers: source.headers });
+    const response = await fetch(source.uri, { headers: source.headers, ...(signal ? { signal } : {}) });
+    checkActive();
     if (!response.ok) throw new Error('Не удалось скачать файл');
-    const url = URL.createObjectURL(await response.blob());
-    const link = document.createElement('a'); link.href = url; link.download = attachment.name; link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    const blob = await response.blob();
+    checkActive();
+    const url = URL.createObjectURL(blob);
+    try {
+      checkActive();
+      const link = document.createElement('a'); link.href = url; link.download = attachment.name; link.click();
+    } finally { setTimeout(() => URL.revokeObjectURL(url), 60000); }
   } else {
     const filename = attachment.name.replace(/[^\p{L}\p{N}._-]/gu, '_');
-    const path = `${FileSystem.cacheDirectory}help-${attachment.id}-${filename}`;
-    const result = await FileSystem.downloadAsync(source.uri, path, { headers: source.headers });
-    if (result.status !== 200) throw new Error('Не удалось скачать файл');
-    if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(result.uri, { mimeType: attachment.mimeType, dialogTitle: 'Сохранить файл' });
+    // Cancellable requests own a unique temporary path, so cleanup can never
+    // remove another view's download of the same attachment.
+    const path = `${FileSystem.cacheDirectory}help-${attachment.id}-${signal ? `${++helpDownloadSequence}-` : ''}${filename}`;
+    try {
+      const result = await FileSystem.downloadAsync(source.uri, path, { headers: source.headers });
+      checkActive();
+      if (result.status !== 200) throw new Error('Не удалось скачать файл');
+      const canShare = await Sharing.isAvailableAsync();
+      checkActive();
+      if (canShare) await Sharing.shareAsync(result.uri, { mimeType: attachment.mimeType, dialogTitle: 'Сохранить файл' });
+    } finally {
+      if (signal?.aborted) await FileSystem.deleteAsync(path, { idempotent: true }).catch(() => {});
+    }
   }
 }
 type HelpAudioProps = { uploading?:boolean; attachment: HelpAttachment; resolve: ResolveHelpMedia; onError: (text: string) => void; captionRight?: React.ReactNode; messageId?: number; author?: string; createdAt?: string; ticketId?: number };

@@ -23,9 +23,22 @@ export function helpQuestions(message: HelpMessage): HelpAssistantQuestion[] {
     options: suggestions.filter(value => !questionLike(value)).map(label => ({ label })) }];
 }
 
-export type HelpQuestionDraft = { index: number; collapsed: boolean;
-  answers: Record<string, { selected: string[]; text: string }> };
-export const emptyHelpQuestionDraft = (): HelpQuestionDraft => ({ index: 0, collapsed: false, answers: {} });
+export type HelpQuestionAnswer = { selected: string[]; text: string; fileCount?: number; fileNames?: string[]; fileKeys?: string[] };
+export type HelpQuestionDraft = { index: number; collapsed: boolean; review?: boolean;
+  answers: Record<string, HelpQuestionAnswer> };
+export const emptyHelpQuestionDraft = (): HelpQuestionDraft => ({ index: 0, collapsed: false, review: false, answers: Object.create(null) });
+
+export function helpQuestionAnswer(draft: HelpQuestionDraft, id: string): HelpQuestionAnswer | undefined {
+  return Object.prototype.hasOwnProperty.call(draft.answers, id) ? draft.answers[id] : undefined;
+}
+
+export function helpQuestionAnswerText(answer: HelpQuestionAnswer | undefined, attachmentCount?: number, attachmentNames?: string[], attachmentKeys?: string[]) {
+  if (!answer) return '';
+  const matchingFiles = answer.fileKeys?.length && attachmentKeys ? answer.fileKeys.some(key => attachmentKeys.includes(key))
+    : answer.fileNames?.length && attachmentNames ? answer.fileNames.some(name => attachmentNames.includes(name)) : true;
+  const hasFiles = (answer.fileCount || 0) > 0 && matchingFiles && (attachmentCount === undefined || attachmentCount > 0);
+  return [...answer.selected, answer.text.trim(), hasFiles ? 'См. вложение' : ''].filter(Boolean).join('; ');
+}
 
 export function restoreHelpQuestionDraft(raw: string, questions: HelpAssistantQuestion[]): HelpQuestionDraft {
   const result = emptyHelpQuestionDraft();
@@ -33,11 +46,15 @@ export function restoreHelpQuestionDraft(raw: string, questions: HelpAssistantQu
     const value = JSON.parse(raw);
     result.index = Number.isInteger(value?.index) ? Math.max(0, Math.min(questions.length - 1, value.index)) : 0;
     result.collapsed = value?.collapsed === true;
+    result.review = value?.review === true;
     for (const question of questions) {
       const answer = value?.answers?.[question.id];
       if (!answer) continue;
       result.answers[question.id] = {
         text: typeof answer.text === 'string' ? answer.text.slice(0, 4000) : '',
+        fileCount: Number.isInteger(answer.fileCount) ? Math.max(0, Math.min(10, answer.fileCount)) : 0,
+        fileNames: Array.isArray(answer.fileNames) ? answer.fileNames.filter((name: unknown): name is string => typeof name === 'string').slice(0, 10).map((name: string) => name.slice(0, 200)) : [],
+        fileKeys: Array.isArray(answer.fileKeys) ? answer.fileKeys.filter((key: unknown): key is string => typeof key === 'string').slice(0, 10).map((key: string) => key.slice(0, 2000)) : [],
         selected: Array.isArray(answer.selected) ? [...new Set(answer.selected.filter((label: unknown): label is string =>
           typeof label === 'string' && question.options.some(option => option.label === label)))].slice(0, question.multiSelect ? 4 : 1) as string[] : [],
       };
@@ -46,10 +63,17 @@ export function restoreHelpQuestionDraft(raw: string, questions: HelpAssistantQu
   return result;
 }
 
-export function formatHelpQuestionAnswers(questions: HelpAssistantQuestion[], draft: HelpQuestionDraft) {
+export function formatHelpQuestionAnswers(questions: HelpAssistantQuestion[], draft: HelpQuestionDraft, attachmentCount?: number, attachmentNames?: string[], attachmentKeys?: string[]) {
   return questions.map(question => {
-    const answer = draft.answers[question.id];
-    if (!answer || !answer.selected.length && !answer.text.trim()) throw new Error('Ответьте на каждый вопрос.');
-    return `${question.question}\nОтвет: ${[...answer.selected, answer.text.trim()].filter(Boolean).join('; ')}`;
+    const answer = helpQuestionAnswerText(helpQuestionAnswer(draft, question.id), attachmentCount, attachmentNames, attachmentKeys);
+    if (!answer) throw new Error('Ответьте на каждый вопрос.');
+    return `${question.question}\nОтвет: ${answer}`;
   }).join('\n\n');
+}
+
+/** Preserve both unsent drafts when typing races the questionnaire send. */
+export function mergeQuestionMessageDraft(backup: string, edited: string) {
+  if (!backup || backup === edited) return edited;
+  if (!edited) return backup;
+  return `${backup}\n\n${edited}`;
 }
