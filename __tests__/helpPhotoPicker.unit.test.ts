@@ -4,7 +4,8 @@ import {AppState, Animated, Dimensions, Keyboard, PanResponder, StyleSheet, Text
 
 const mockPermission=jest.fn(),mockPage=jest.fn(),mockPrepare=jest.fn(),mockDiscard=jest.fn(),mockPreviewUri=jest.fn();
 const mockPullTiming=jest.fn(),mockPullSpring=jest.fn();
-let mockStaticAnimatedStyle=false;
+let mockStaticAnimatedStyle=false,mockReducedMotion=true;
+let mockTopInset=0;
 jest.mock('react-native-gesture-handler',()=>{
   const build=(kind:string)=>{
     const result:any={kind,config:{},handlers:{}};
@@ -35,8 +36,8 @@ jest.mock('../src/features/help/components/HelpPrimitives',()=>({HelpBlurSurface
 jest.mock('expo-image',()=>({Image:'ExpoImage'}));
 jest.mock('expo-blur',()=>({BlurTargetView:require('react-native').View}));
 jest.mock('@expo/vector-icons',()=>({Ionicons:'Ionicons'}));
-jest.mock('react-native-safe-area-context',()=>({useSafeAreaInsets:()=>({top:0,bottom:0,left:0,right:0})}));
-jest.mock('../src/features/help/helpTheme',()=>({useHelpTheme:()=>({panel:'#111',text:'#fff',muted:'#999',accent:'#38f',danger:'#f00',elevated:'#222'}),useHelpReducedMotion:()=>true}));
+jest.mock('react-native-safe-area-context',()=>({useSafeAreaInsets:()=>({top:mockTopInset,bottom:0,left:0,right:0})}));
+jest.mock('../src/features/help/helpTheme',()=>({useHelpTheme:()=>({panel:'#111',text:'#fff',muted:'#999',accent:'#38f',danger:'#f00',elevated:'#222'}),useHelpReducedMotion:()=>mockReducedMotion}));
 jest.mock('../src/features/help/helpDiagnostics',()=>({helpDevActions:()=>()=>{},helpDevRef:()=>{},helpDevState:()=>{}}));
 jest.mock('../src/features/help/components/HelpPhotoCamera',()=>({HelpPhotoCamera:'HelpPhotoCamera'}));
 jest.mock('../src/features/help/components/HelpPhotoPreview',()=>({HelpPhotoPreview:'HelpPhotoPreview'}));
@@ -82,7 +83,7 @@ const camera=()=>screen!.root.findByType('HelpPhotoCamera' as any);
 const onFiles=()=>props.onFiles as jest.Mock;
 
 beforeEach(()=>{
-  mockStaticAnimatedStyle=false;
+  mockStaticAnimatedStyle=false;mockReducedMotion=true;mockTopInset=0;
   jest.clearAllMocks();
   mockPullTiming.mockImplementation((value,_options,callback)=>{callback?.(true);return value;});
   mockPullSpring.mockImplementation((value,_options,callback)=>{callback?.(true);return value;});
@@ -218,13 +219,12 @@ describe('gallery pull',()=>{
   const surface=()=>screen!.root.findAllByProps({testID:'help-photo-pull-surface'})[0];
   const grid=()=>screen!.root.findAllByProps({testID:'help-photo-grid'})[0];
   async function startPull(){const state=manager();await act(async()=>{gesture().handlers.onTouchesDown(touch(),state);gesture().handlers.onTouchesMove(touch(50,70),state);gesture().handlers.onStart();});return state;}
-  test('native scroll waits for downward pull only; middle-list touch cannot transfer at the edge',async()=>{
+  test('one vertical handler owns both the full grid and panel, including edge transfer',async()=>{
     await render();expect(gesture('native').config.requireExternalGestureToFail).toBe(gesture());expect(gesture().config.manualActivation).toBe(true);
     const resize=screen!.root.findAllByType('GestureDetector' as any).find(node=>node.props.gesture.config.withTestId==='help-photo-resize')!.props.gesture.handlers;
     await act(async()=>{resize.onStart();resize.onUpdate({translationY:-2000});resize.onEnd({translationY:-2000,velocityY:-1000},true);});
     await act(async()=>grid().props.onScroll({contentOffset:{y:120}}));
-    const state=manager();act(()=>gesture().handlers.onTouchesDown(touch(),state));expect(state.fail).toHaveBeenCalledTimes(1);
-    await act(async()=>grid().props.onScroll({contentOffset:{y:0}}));act(()=>gesture().handlers.onTouchesMove(touch(50,130),state));expect(state.activate).not.toHaveBeenCalled();
+    const state=manager();act(()=>{gesture().handlers.onTouchesDown(touch(),state);gesture().handlers.onTouchesMove(touch(50,130),state);});expect(state.fail).not.toHaveBeenCalled();expect(state.activate).toHaveBeenCalledTimes(1);expect(grid().props.scrollEnabled).toBe(false);
   });
   test.each([[85,52]])('horizontal movement fails without claiming normal scrolling (%s,%s)',async(x,y)=>{
     await render();const state=manager();act(()=>{gesture().handlers.onTouchesDown(touch(),state);gesture().handlers.onTouchesMove(touch(x,y),state);});
@@ -241,7 +241,7 @@ describe('gallery pull',()=>{
     expect(props.onClose).not.toHaveBeenCalled();
   });
   test('one upward drag spends travel on the whole pane before scrolling its files',async()=>{
-    await render();await act(async()=>grid().props.onScroll({contentOffset:{y:0},contentSize:{height:2400},layoutMeasurement:{height:500}}));
+    await render();await act(async()=>grid().props.onContentSizeChange(390,2400));
     const state=manager();act(()=>{gesture().handlers.onTouchesDown(touch(),state);gesture().handlers.onTouchesMove(touch(50,30),state);gesture().handlers.onStart();});
     const readOffset=(useAnimatedReaction as jest.Mock).mock.calls[0][0];
     const growth=Dimensions.get('window').height*.4;
@@ -258,6 +258,52 @@ describe('gallery pull',()=>{
     await act(async()=>gesture().handlers.onEnd({velocityY:100},true));
     expect(StyleSheet.flatten(panel().props.style).height).toBeCloseTo(Dimensions.get('window').height*.6);
     expect(props.onClose).not.toHaveBeenCalled();expect(props.onFiles).not.toHaveBeenCalled();
+  });
+  test('reversing a drag crosses list top and expands again before scrolling, with a fixed viewport',async()=>{
+    await render();await act(async()=>grid().props.onScroll({contentOffset:{y:0},contentSize:{height:2400},layoutMeasurement:{height:500}}));
+    const state=manager(),growth=Dimensions.get('window').height*.4;
+    act(()=>{gesture().handlers.onTouchesDown(touch(),state);gesture().handlers.onTouchesMove(touch(50,30),state);gesture().handlers.onStart();});
+    const readOffset=(useAnimatedReaction as jest.Mock).mock.calls[0][0];
+    act(()=>gesture().handlers.onUpdate({translationY:-(growth+120)}));expect(readOffset()).toBeCloseTo(120);
+    act(()=>gesture().handlers.onUpdate({translationY:-80}));expect(readOffset()).toBe(0);expect(panel().props.style[1].height).toBeCloseTo(Dimensions.get('window').height*.6+80);
+    act(()=>gesture().handlers.onUpdate({translationY:-(growth+30)}));expect(readOffset()).toBeCloseTo(30);
+    const viewport=screen!.root.findAllByProps({testID:'help-photo-grid-viewport'})[0];
+    expect(viewport.props.style[0].height).toBe(Dimensions.get('window').height);
+  });
+  test('status-bar inset follows the drag before React commits expansion without changing grid padding',async()=>{
+    mockTopInset=24;await render();
+    const state=manager();act(()=>{gesture().handlers.onTouchesDown(touch(),state);gesture().handlers.onTouchesMove(touch(50,30),state);gesture().handlers.onStart();});
+    const full=Dimensions.get('window').height,growth=full*.4;
+    act(()=>gesture().handlers.onUpdate({translationY:-(growth-12)}));
+    expect(StyleSheet.flatten(screen!.root.findAllByProps({testID:'help-photo-panel-handle'})[0].props.style).height).toBeCloseTo(52);
+    expect(grid().props.contentContainerStyle.paddingTop).toBe(40);
+    act(()=>gesture().handlers.onUpdate({translationY:-growth}));
+    expect(StyleSheet.flatten(screen!.root.findAllByProps({testID:'help-photo-panel-handle'})[0].props.style).height).toBeCloseTo(64);
+    expect(grid().props.contentContainerStyle.paddingTop).toBe(40);
+  });
+  test('lowering the handle clears grid offset so the next swipe lifts a partially open sheet',async()=>{
+    await render();act(()=>grid().props.onContentSizeChange(390,2400));
+    const state=manager(),growth=Dimensions.get('window').height*.4;
+    act(()=>{gesture().handlers.onTouchesDown(touch(),state);gesture().handlers.onTouchesMove(touch(50,30),state);gesture().handlers.onStart();gesture().handlers.onUpdate({translationY:-(growth+100)});});
+    await act(async()=>gesture().handlers.onEnd({velocityY:-100},true));
+    const resize=screen!.root.findAllByType('GestureDetector' as any).find(node=>node.props.gesture.config.withTestId==='help-photo-resize')!.props.gesture.handlers;
+    await act(async()=>{resize.onStart();resize.onUpdate({translationY:growth});resize.onEnd({translationY:0,velocityY:0},true);});
+    const readOffset=(useAnimatedReaction as jest.Mock).mock.calls[0][0];expect(readOffset()).toBe(0);
+    const next=manager();act(()=>{gesture().handlers.onTouchesDown(touch(),next);gesture().handlers.onTouchesMove(touch(50,30),next);gesture().handlers.onStart();gesture().handlers.onUpdate({translationY:-50});});
+    expect(readOffset()).toBe(0);expect(panel().props.style[1].height).toBeCloseTo(Dimensions.get('window').height*.6+50);
+  });
+  test('fling carries the same velocity through the fullscreen boundary',async()=>{
+    mockReducedMotion=false;await render();
+    const decay=require('react-native-reanimated').withDecay as jest.Mock;
+    const range=Dimensions.get('window').height*.4;decay.mockReturnValue(range+160);
+    await act(async()=>grid().props.onScroll({contentOffset:{y:0},contentSize:{height:2400},layoutMeasurement:{height:500}}));
+    const state=manager();act(()=>{gesture().handlers.onTouchesDown(touch(),state);gesture().handlers.onTouchesMove(touch(50,30),state);gesture().handlers.onStart();gesture().handlers.onUpdate({translationY:-100});});
+    await act(async()=>gesture().handlers.onEnd({velocityY:-1200},true));
+    expect(decay).toHaveBeenCalledWith(expect.objectContaining({velocity:1200}),expect.any(Function));
+    const [readMotion,applyMotion]=(useAnimatedReaction as jest.Mock).mock.calls[1];
+    act(()=>applyMotion(range-1));expect(panel().props.style[1].height).toBeCloseTo(Dimensions.get('window').height-1);
+    act(()=>applyMotion(range+1));expect((useAnimatedReaction as jest.Mock).mock.calls[0][0]()).toBeCloseTo(1);
+    act(()=>applyMotion(readMotion()));expect((useAnimatedReaction as jest.Mock).mock.calls[0][0]()).toBeCloseTo(160);
   });
   test('tap within slop does not activate and photo selection stays available',async()=>{
     await render();const state=manager();act(()=>{gesture().handlers.onTouchesDown(touch(),state);gesture().handlers.onTouchesMove(touch(51,53),state);gesture().handlers.onTouchesUp({},state);});
@@ -282,8 +328,8 @@ describe('gallery pull',()=>{
     await render();await startPull();act(()=>gesture().handlers.onUpdate({translationY:60}));await act(async()=>gesture().handlers.onFinalize({},false));
     expect(surface().props.style[1].transform).toEqual([{translateY:0}]);expect(props.onClose).not.toHaveBeenCalled();expect(props.onFiles).not.toHaveBeenCalled();expect(camera().props.tileVisible).toBe(true);
   });
-  test('momentum and multitouch cannot become a close gesture',async()=>{
-    await render();act(()=>grid().props.onScroll.handlers.onMomentumBegin());const momentum=manager();act(()=>gesture().handlers.onTouchesDown(touch(),momentum));expect(momentum.fail).toHaveBeenCalledTimes(1);
+  test('momentum can be interrupted while multitouch cannot become a close gesture',async()=>{
+    await render();act(()=>grid().props.onScroll.handlers.onMomentumBegin());const momentum=manager();act(()=>gesture().handlers.onTouchesDown(touch(),momentum));expect(momentum.fail).not.toHaveBeenCalled();
     act(()=>grid().props.onScroll.handlers.onMomentumEnd());const multi=manager();act(()=>gesture().handlers.onTouchesDown(touch(50,50,2),multi));expect(multi.fail).toHaveBeenCalledTimes(1);
     expect(props.onClose).not.toHaveBeenCalled();
   });
@@ -432,4 +478,11 @@ test('opaque compact attachment toolbar remains above files and the rising pane 
  const toolbar=screen!.root.findAllByProps({testID:'help-photo-panel-handle'})[0];
  expect(StyleSheet.flatten(toolbar.props.style)).toMatchObject({height:40,backgroundColor:'#111'});
  expect(toolbar.findAllByType('HelpBlurSurface' as any)).toHaveLength(0);
+});
+
+test('file caption and navigation draw no blur or translucent background plate',async()=>{
+ await render();expect(screen!.root.findAllByType('HelpBlurSurface' as any)).toHaveLength(0);
+ expect(screen!.root.findAllByProps({testID:'help-photo-navigation-blur'})).toHaveLength(0);
+ const caption=screen!.root.findAllByProps({testID:'help-photo-caption'})[0];
+ expect(StyleSheet.flatten(caption.props.style).backgroundColor).toBeUndefined();
 });

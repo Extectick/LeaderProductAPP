@@ -35,8 +35,8 @@ export const ScreenBlurTarget = forwardRef<View, ViewProps>(function ScreenBlurT
 });
 
 /** A transparent fade at the content edge; never paint an opaque loading plate. */
-export function AppEdgeBlur({ target, edge = 'top', backgroundColor, dark, testID = 'app-edge-blur', intensity = APP_EDGE_BLUR.intensity, featherSize }: {
-  target?: Target; edge?: 'top' | 'bottom'; backgroundColor?: string; dark?: boolean; testID?: string; intensity?: number; featherSize?: number;
+export function AppEdgeBlur({ target, edge = 'top', backgroundColor, dark, testID = 'app-edge-blur', intensity = APP_EDGE_BLUR.intensity, featherSize, progressive = false }: {
+  target?: Target; edge?: 'top' | 'bottom'; backgroundColor?: string; dark?: boolean; testID?: string; intensity?: number; featherSize?: number; progressive?: boolean;
 }) {
   const { theme } = useTheme();
   const appBackground = useThemeColor({}, 'background');
@@ -72,6 +72,23 @@ export function AppEdgeBlur({ target, edge = 'top', backgroundColor, dark, testI
   if (Platform.OS === 'web') return <View testID={testID} pointerEvents="none" onLayout={measureSurface} style={[StyleSheet.absoluteFill, {
     backdropFilter: `blur(${APP_EDGE_BLUR.webRadius}px)`, WebkitBackdropFilter: `blur(${APP_EDGE_BLUR.webRadius}px)`, maskImage: mask, WebkitMaskImage: mask,
   } as any]}/>;
+  if(progressive)return <View testID={testID} pointerEvents="none" onLayout={measureSurface} style={StyleSheet.absoluteFill}>
+    {!ready?<View testID="app-blur-preparing" style={StyleSheet.absoluteFill}/>:null}
+    {[.28,.6,1].map((strength,index)=>{
+      const start=index*.22;
+      const colors=['#00000000','#00000000','#00000080','#000000'] as const;
+      const locations=[0,start+.01,Math.min(.95,start+.3),1] as const;
+      return <MaskedView key={strength} testID={`${testID}-layer-${index}`} pointerEvents="none" style={StyleSheet.absoluteFill}
+        maskElement={<View style={{flex:1,flexDirection:edge==='top'?'column':'column-reverse'}}>
+          <LinearGradient colors={edge==='top'?colors:[...colors].reverse() as any}
+            locations={edge==='top'?locations:[...locations].reverse().map(value=>1-value) as any} style={{height:feather}}/>
+          <View style={{flex:1,backgroundColor:'#000'}}/>
+        </View>}>
+        {ready?<BlurView blurTarget={Platform.OS==='android'?boundTarget:target} blurMethod="dimezisBlurViewSdk31Plus" noiseEnabled={false}
+          frameClearColor={backgroundColor??appBackground} intensity={intensity*strength} tint={(dark??theme==='dark')?'dark':'light'} style={StyleSheet.absoluteFill}/>:null}
+      </MaskedView>;
+    })}
+  </View>;
   return <MaskedView testID={testID} pointerEvents="none" onLayout={measureSurface} style={StyleSheet.absoluteFill}
     maskElement={<View style={{ flex: 1, flexDirection: edge === 'top' ? 'column' : 'column-reverse' }}>
       <LinearGradient colors={edge === 'top' ? ['#00000000', '#00000018', '#00000080', '#000000'] : ['#000000', '#00000080', '#00000018', '#00000000']}

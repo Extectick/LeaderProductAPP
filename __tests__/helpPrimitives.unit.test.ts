@@ -148,7 +148,7 @@ describe('Help blur startup and target lifecycle',()=>{
     if(screen)await act(async()=>screen!.unmount());
     screen=undefined;mockTheme='light';jest.restoreAllMocks();
   });
-  const layout=()=>screen!.root.findByType('MaskedView' as any).props.onLayout({nativeEvent:{layout:{x:0,y:0,width:390,height:90}}});
+  const layout=()=>screen!.root.findAll(node=>node.props.testID==='help-blur-surface'&&typeof node.props.onLayout==='function')[0].props.onLayout({nativeEvent:{layout:{x:0,y:0,width:390,height:90}}});
   test('stays transparent until both layout and native target exist',async()=>{
     const target:{current:View|null}={current:null};
     await act(async()=>{screen=TestRenderer.create(React.createElement(HelpBlurSurface,{target}));});
@@ -159,7 +159,7 @@ describe('Help blur startup and target lifecycle',()=>{
     target.current={} as View;
     await act(async()=>frames[frames.length-1](0));
     expect(screen!.root.findAllByProps({testID:'help-blur-preparing'})).toHaveLength(0);
-    const blur=screen!.root.findByType('BlurView' as any);
+    const blur=screen!.root.findAllByType('BlurView' as any).slice(-1)[0];
     expect(blur.props).toMatchObject({tint:'dark',frameClearColor:'#151B22',noiseEnabled:false});
     expect(blur.props.blurTarget.current).toBe(target.current);
     expect(StyleSheet.flatten(blur.props.style).backgroundColor).toBeUndefined();
@@ -168,11 +168,11 @@ describe('Help blur startup and target lifecycle',()=>{
     const first={} as View;const second={} as View;const target={current:first};
     await act(async()=>{screen=TestRenderer.create(React.createElement(HelpBlurSurface,{target}));});
     await act(async()=>layout());
-    const oldBinding=screen!.root.findByType('BlurView' as any).props.blurTarget;
+    const oldBinding=screen!.root.findAllByType('BlurView' as any).slice(-1)[0].props.blurTarget;
     target.current=second;
     await act(async()=>screen!.update(React.createElement(HelpBlurSurface,{target,edge:'bottom'})));
     expect(oldBinding.current).toBe(first);
-    const next=screen!.root.findByType('BlurView' as any).props.blurTarget;
+    const next=screen!.root.findAllByType('BlurView' as any).slice(-1)[0].props.blurTarget;
     expect(next).not.toBe(oldBinding);expect(next.current).toBe(second);
   });
   test('light mode supplies its own clear color without changing blur intensity or mask',async()=>{
@@ -180,7 +180,7 @@ describe('Help blur startup and target lifecycle',()=>{
     await act(async()=>{screen=TestRenderer.create(React.createElement(HelpBlurSurface,{target:{current:{} as View}}));});
     expect(StyleSheet.flatten(screen!.root.findByProps({testID:'app-blur-preparing'}).props.style).backgroundColor).toBeUndefined();
     await act(async()=>layout());
-    expect(screen!.root.findByType('BlurView' as any).props).toMatchObject({tint:'light',frameClearColor:'#F7F9FC',intensity:34,blurMethod:'dimezisBlurViewSdk31Plus'});
+    expect(screen!.root.findAllByType('BlurView' as any).slice(-1)[0].props).toMatchObject({tint:'light',frameClearColor:'#F7F9FC',intensity:34,blurMethod:'dimezisBlurViewSdk31Plus'});
   });
 });
 
