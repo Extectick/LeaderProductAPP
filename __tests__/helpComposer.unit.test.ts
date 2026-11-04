@@ -92,6 +92,46 @@ describe('Help composer recorder lifecycle', () => {
     expect(focus).toHaveBeenCalledTimes(keyboardVisible?1:0);
     visible.mockRestore();
   });
+  test('a photo viewer consumes pending focus instead of replaying it when the viewer closes',async()=>{
+    Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});
+    props={...props,focusKey:1,navigationReady:false,screenActive:false};
+    const frames:FrameRequestCallback[]=[];
+    jest.spyOn(global,'requestAnimationFrame').mockImplementation(callback=>{frames.push(callback);return frames.length;});
+    jest.spyOn(global,'cancelAnimationFrame').mockImplementation(()=>{});
+    await render();
+    const input=screen!.root.findByType(TextInput),focus=jest.spyOn(input.instance,'focus');focus.mockClear();
+    expect(frames).toHaveLength(0);
+    props={...props,navigationReady:true,screenActive:true};
+    await act(async()=>screen!.update(React.createElement(HelpComposer,props)));
+    expect(frames).toHaveLength(1);
+    props={...props,focusSuspended:true};
+    await act(async()=>screen!.update(React.createElement(HelpComposer,props)));
+    await act(async()=>frames[0](0));
+    props={...props,focusSuspended:false};
+    await act(async()=>screen!.update(React.createElement(HelpComposer,props)));
+    expect(input.props.editable).toBe(true);expect(focus).not.toHaveBeenCalled();
+    expect(frames).toHaveLength(1);
+    props={...props,focusKey:2};
+    await act(async()=>screen!.update(React.createElement(HelpComposer,props)));
+    await act(async()=>frames[1](0));
+    expect(focus).toHaveBeenCalledTimes(1);
+  });
+  test('closing photos while a send is pending cannot restore focus after its acknowledgement',async()=>{
+    Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});
+    const pending=deferred<void>();props={...props,value:'Подпись',onSend:jest.fn(()=>pending.promise)};await render();
+    jest.spyOn(require('react-native').Keyboard,'isVisible').mockReturnValue(true);
+    await act(async()=>screen!.root.findAll(n=>n.props.label==='Прикрепить файлы')[0].props.onPress());
+    const picker=()=>screen!.root.findByType('HelpPhotoPicker' as any);
+    await act(async()=>picker().props.onVisibility(true));
+    const focus=jest.spyOn(screen!.root.findByType(TextInput).instance,'focus');
+    let sending!:Promise<unknown>;
+    focus.mockClear();
+    await act(async()=>{sending=picker().props.onSend([{uri:'file://draft.jpg',name:'draft.jpg'}]);});
+    await act(async()=>{picker().props.onClose();picker().props.onVisibility(false);});
+    await act(async()=>{pending.resolve();await sending;});
+    props={...props,busy:false};await act(async()=>screen!.update(React.createElement(HelpComposer,props)));
+    expect(focus).not.toHaveBeenCalled();
+  });
   test('AI correction can send a draft while the previous reply is processing',async()=>{
     Object.defineProperty(Platform,'OS',{configurable:true,value:'web'});
     const stop=jest.fn();props={...props,value:'Следующий вопрос',files:[{uri:'file://draft.pdf',name:'draft.pdf'}],onStopAssistant:stop};

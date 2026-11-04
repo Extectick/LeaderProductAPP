@@ -22,6 +22,7 @@ import {HelpExpandedEditor,type HelpTextSelection} from './HelpExpandedEditor';
 
 export type HelpLocalFile = { durationMs?: number; uri: string; name: string; mimeType?: string; file?: File; size?: number; width?: number; height?: number; assetId?: string };
 export type HelpComposeMode = 'message' | 'close' | 'reopen' | 'edit';
+type FocusSuspension = {focusSuspended?:boolean};
 type Props = { closeAttachmentsKey?:number; blurTarget?:React.RefObject<View|null>; navigationReady?:boolean; onAttachmentVisibility?:(visible:boolean)=>void; screenActive?:boolean; voiceDraftKey?:string; value: string; onChange: (text: string) => void; files: HelpLocalFile[]; onFiles: (files: HelpLocalFile[]) => void; onSend: (voice?: HelpLocalFile, selectedFiles?: HelpLocalFile[], retainVoiceDraft?:boolean) => Promise<boolean | void>; busy: boolean; mode: HelpComposeMode; rating: number; onRating: (rating: number) => void; onCancelMode: () => void; quote?: { name: string; text: string; onPress: () => void; thumbnail?: HelpAttachment }; resolve?: ResolveHelpMedia; recordingAreaHeight?: number; onCancelQuote: () => void; error: (message: string) => void; focusKey?: number; onResize: () => void; disabled?: boolean; sendBlocked?:boolean; onStopAssistant?:()=>void; editClosure?: boolean; existingFiles?: HelpAttachment[]; onRemoveExisting?: (id: string) => void };
 
 const COMPOSER_LINE_HEIGHT = 22;
@@ -40,7 +41,7 @@ function HelpDraftPhoto({children,name,disabled,onRemove}:{children:React.ReactN
   </View>;
 }
 
-export function HelpComposer(props: Props) {
+export function HelpComposer(props: Props & FocusSuspension) {
   const [voiceActive,setVoiceActive]=useState(false),[expanded,setExpanded]=useState(false),[visualLines,setVisualLines]=useState(1);
   const selection=useRef<HelpTextSelection>({start:0,end:0});
   const restoreSelection=useRef<HelpTextSelection|null>(null);
@@ -103,17 +104,23 @@ export function HelpComposer(props: Props) {
 
   const restorePhotoKeyboard=useRef(false);
   const attachmentLocked=photoPickerOpen||photoPickerVisible;
+  const photoVisible=useRef(attachmentLocked);photoVisible.current=attachmentLocked;
+  const focusedRequest=useRef<number|undefined>(undefined);
+  const focusSuspended=attachmentLocked||Boolean(props.focusSuspended)||props.screenActive===false||expanded||voiceActive||recording||starting;
   // Sending is not an editing lock: disabling the native EditText transfers
   // focus to its dismiss target and closes the IME on every queued message.
-  const inputEnabled=props.screenActive!==false&&props.navigationReady!==false&&!attachmentLocked&&!(props.busy&&props.mode!=='message')&&!props.disabled&&!recording&&!starting&&!expanded&&!voiceActive;
+  const inputEnabled=!focusSuspended&&props.navigationReady!==false&&!(props.busy&&props.mode!=='message')&&!props.disabled;
   const sendText=()=>{
     // Native send buttons keep the EditText focused themselves. Calling focus
     // here reopens a keyboard the user deliberately hid before sending.
     return props.onSend().then(result=>{if(result!==false)setPhotoPickerOpen(false);});
   };
   const sendPhotos=async(files:HelpLocalFile[])=>{
-    restorePhotoKeyboard.current=Keyboard.isVisible?.()??false;
-    try{const result=await props.onSend(undefined,files);if(result===false)restorePhotoKeyboard.current=false;return result;}
+    const hadKeyboard=Keyboard.isVisible?.()??false;
+    // Permission to transfer focus belongs to this completed send, never to a
+    // pending upload or to opening/closing a photo viewer.
+    restorePhotoKeyboard.current=false;
+    try{const result=await props.onSend(undefined,files);restorePhotoKeyboard.current=result!==false&&hadKeyboard&&Boolean(Keyboard.isVisible?.())&&photoVisible.current;return result;}
     catch(error){restorePhotoKeyboard.current=false;throw error;}
   };
   useLayoutEffect(()=>{
@@ -123,15 +130,19 @@ export function HelpComposer(props: Props) {
     // Never revive it if the user dismissed it while the send was pending.
     if(Keyboard.isVisible?.())input.current?.focus();
   },[inputEnabled,attachmentLocked]);
-  const focusedRequest=useRef<number|undefined>(undefined);
-  useEffect(()=>{
-    if(attachmentLocked||props.screenActive===false)Keyboard.dismiss();
-  },[attachmentLocked,props.screenActive]);
+  useLayoutEffect(()=>{
+    if(!focusSuspended)return;
+    // An interrupted autofocus is consumed, not queued behind a modal. Only a
+    // new explicit request (reply/edit/new chat) can focus after returning.
+    if(attachmentLocked||props.focusSuspended||expanded||voiceActive||recording||starting)focusedRequest.current=props.focusKey;
+    restorePhotoKeyboard.current=false;restoreSelection.current=null;
+    input.current?.blur();Keyboard.dismiss();
+  },[focusSuspended,attachmentLocked,props.focusSuspended,expanded,voiceActive,recording,starting,props.focusKey]);
   useEffect(()=>{
     if(!props.focusKey||!inputEnabled||focusedRequest.current===props.focusKey)return;
+    focusedRequest.current=props.focusKey;
     return scheduleHelpInputFocus(()=>{
       if(!input.current)return null;
-      focusedRequest.current=props.focusKey;
       return input.current;
     });
   },[props.focusKey,inputEnabled]);
@@ -280,7 +291,7 @@ export function HelpComposer(props: Props) {
   // must use the same clock instead of dropping its 88dp minimum to 48dp in a
   // single frame when the last line/expanded-editor affordance disappears.
   const rowMinimum=useAnimatedStyle(()=>({minHeight:withTiming(!voiceActive&&multiline?88:48,{duration:reduced?0:180,easing:UiEasing.out(UiEasing.cubic)})}),[voiceActive,multiline,reduced]);
-  useEffect(()=>{if(expanded||!restoreSelection.current)return;if(!inputEnabled){restoreSelection.current=null;return;}const range=restoreSelection.current;restoreSelection.current=null;const timer=setTimeout(()=>{if(hasNativeHelpInput)void(input.current as HelpNativeInputHandle)?.restore(props.value,range);else{(input.current as TextInput)?.setNativeProps({selection:range});input.current?.focus();}},60);return()=>clearTimeout(timer);},[expanded,inputEnabled]);
+  useEffect(()=>{if(expanded||!restoreSelection.current)return;if(!inputEnabled){restoreSelection.current=null;return;}const range=restoreSelection.current;restoreSelection.current=null;return scheduleHelpInputFocus(()=>{if(hasNativeHelpInput){void(input.current as HelpNativeInputHandle)?.restore(props.value,range);return null;}(input.current as TextInput)?.setNativeProps({selection:range});return input.current;});},[expanded,inputEnabled]);
   function closeEditor(range:HelpTextSelection){selection.current=range;restoreSelection.current=range;setExpanded(false);}
   const placeholder = props.mode === 'reopen' ? 'Что случилось снова?' : 'Сообщение…';
   const recordingBottom = props.recordingAreaHeight == null ? 125 : Math.max(composerHeight + 8, composerHeight + props.recordingAreaHeight / 2 - recordingCardHeight / 2);

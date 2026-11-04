@@ -42,7 +42,8 @@ test('fullscreen return restores text and selection through a production native 
   await act(async()=>tree.unmount());
 });
 
-test('disabling the unmanaged editor dismisses IME through a non-visible managed input without changing text',async()=>{
+test.each([false,true])('suspending the unmanaged editor clears focus even with hidden IME (%s)',async keyboardVisible=>{
+  require('react-native').Keyboard.isVisible.mockReturnValue(keyboardVisible);
   const focus=jest.fn(),blur=jest.fn(),changed=jest.fn();
   const props={value:'Черновик',onChange:changed,onGeometry:jest.fn(),placeholder:'',color:'#fff',hintColor:'#999',accentColor:'#38f',editable:true,reducedMotion:true};
   let tree!:TestRenderer.ReactTestRenderer;

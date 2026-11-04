@@ -1,5 +1,5 @@
 import React, {forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState} from 'react';
-import {AppState, Keyboard, Platform, TextInput} from 'react-native';
+import {AppState, Platform, TextInput} from 'react-native';
 import {requireNativeViewManager, requireOptionalNativeModule} from 'expo-modules-core';
 import {helpDevActions, helpDevProbe, helpDevRef} from '../helpDiagnostics';
 import {isDetachedHelpInputFocusError} from '../helpInputFocus';
@@ -23,7 +23,9 @@ export const HelpNativeInput = forwardRef<HelpNativeInputHandle, Props>(function
   // Keyboard.dismiss cannot blur it. Transfer focus to a managed input that
   // never opens IME, then blur it through RN's existing native command.
   const blur = useCallback(() => {
-    if (AppState.currentState === 'active' && Keyboard.isVisible?.()) dismissTarget.current?.focus();
+    // Hiding IME does not clear this unmanaged EditText's native focus. A photo
+    // Modal would otherwise restore it (and reopen IME) when its window closes.
+    if (AppState.currentState === 'active') dismissTarget.current?.focus();
   }, []);
   useLayoutEffect(() => {
     if (wasEditable.current && !props.editable) blur();
