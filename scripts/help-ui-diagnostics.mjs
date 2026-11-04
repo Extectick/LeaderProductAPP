@@ -11,6 +11,9 @@ const command = option('--action', '');
 const input = option('--value', undefined);
 const output = option('--out', '');
 const stepsFile = option('--steps', '');
+const probeNames=option('--probes','');
+const snapshotOptions=probeNames?{probes:probeNames==='none'?[]:probeNames.split(',').filter(Boolean)}:{};
+const snapshotExpression=bridge=>`${bridge}.snapshot(${JSON.stringify(snapshotOptions)})`;
 const waitMs = Number(option('--wait', '350'));
 // Hermes CDP's UTF-8 bridge rejects raw surrogate pairs in source expressions.
 // Keep emoji/non-ASCII values as JS escapes; native IME still receives Unicode.
@@ -39,17 +42,17 @@ await new Promise((resolve, reject) => {
   ws.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true });
   ws.addEventListener('error', () => { clearTimeout(timer); reject(new Error('Hermes connection failed')); }, { once: true });
 });
-async function request(method, params = {}) {
+async function request(method, params = {}, timeoutMs = 5000) {
   const id = ++sequence;
   const result = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { pending.delete(id); reject(new Error('Hermes request timeout')); }, 5000);
+    const timer = setTimeout(() => { pending.delete(id); reject(new Error(`Hermes request timeout: ${method}`)); }, timeoutMs);
     pending.set(id, { resolve, reject, timer });
     ws.send(JSON.stringify({ id, method, params }));
   });
   return result;
 }
 async function evaluate(expression) {
-  const result = await request('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
+  const result = await request('Runtime.evaluate', { expression, awaitPromise: false, returnByValue: true });
   if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text);
   return result.result?.value;
 }
@@ -58,10 +61,13 @@ async function evaluate(expression) {
 async function evaluateAsync(expression) {
   const key=JSON.stringify(`__helpInspectorResult_${process.pid}_${++sequence}`);
   try {
-    await evaluate(`globalThis[${key}]={ready:false}; Promise.resolve(${expression}).then(value=>{if(globalThis[${key}])globalThis[${key}]={ready:true,value};},error=>{if(globalThis[${key}])globalThis[${key}]={ready:true,error:String(error)};}); true`);
+    // Run async work on RN's event loop. Inspector evaluations do not always
+    // drain RN/Hermes Promise jobs; a native timer task provides that checkpoint.
+    await evaluate(`globalThis[${key}]={ready:false}; setTimeout(()=>{Promise.resolve(${expression}).then(value=>{if(globalThis[${key}])globalThis[${key}]={ready:true,value};},error=>{if(globalThis[${key}])globalThis[${key}]={ready:true,error:String(error)};});},0); true`);
     const deadline=Date.now()+10000;
     while(Date.now()<deadline) {
-      const result=await evaluate(`globalThis[${key}]`);
+      const encoded=await evaluate(`JSON.stringify(globalThis[${key}])`);
+      const result=encoded?JSON.parse(encoded):undefined;
       if(result?.ready) { if(result.error)throw new Error(result.error);return result.value; }
       await new Promise(resolve=>setTimeout(resolve,50));
     }
@@ -71,7 +77,7 @@ async function evaluateAsync(expression) {
 async function act(bridge, name, value) {
   // The bridge module loads before React mounts the screen's command handlers.
   for(let attempt=0;attempt<30;attempt++) {
-    if(await evaluateAsync(`${bridge}.snapshot().then(s=>s.actions.includes(${jsValue(name)}))`)) {
+    if(await evaluateAsync(`${bridge}.snapshot({probes:[],geometry:false}).then(s=>s.actions.includes(${jsValue(name)}))`)) {
       return evaluateAsync(`${bridge}.act(${jsValue(name)}, ${jsValue(value)})`);
     }
     await new Promise(resolve=>setTimeout(resolve,100));
@@ -83,8 +89,16 @@ async function requireForeground(bridge) {
   if (state && state !== 'active') throw new Error(`The DEV app is ${state}. Bring it to the foreground before native layout measurements.`);
 }
 try {
-  // Cold Hermes targets may not register Runtime.evaluate until the domain is enabled.
-  await request('Runtime.enable');
+  // Evaluation does not require Runtime event subscriptions. RN 0.86 can defer
+  // Runtime.enable's acknowledgement while replaying console/context events;
+  // waiting for that unrelated subscription used to block all QA inspection.
+  // The inspector socket may open before its native session has attached. Probe
+  // readiness with a read-only expression; never retry actions on a timeout.
+  let runtimeReady=false;
+  for(let attempt=0;attempt<5&&!runtimeReady;attempt++){
+    try{await request('Runtime.evaluate',{expression:'1',returnByValue:true},5000);runtimeReady=true;}
+    catch(error){if(attempt===4)throw error;}
+  }
   const bridge = 'globalThis.__LEADER_HELP_DEV__';
   let ready=false;
   for(let attempt=0;attempt<20&&!ready;attempt++) {
@@ -106,7 +120,7 @@ try {
       if (step.action) await act(bridge,step.action,step.value);
       await new Promise(resolve => setTimeout(resolve, delay));
       if (step.snapshot) {
-        data.push({name:step.snapshot,...await evaluateAsync(`${bridge}.snapshot()`)});
+        data.push({name:step.snapshot,...await evaluateAsync(snapshotExpression(bridge))});
         // Keep completed measurements if Fast Refresh replaces Hermes mid-run.
         if(output)await writeFile(output, `${JSON.stringify(data,null,2)}\n`);
       }
@@ -116,7 +130,7 @@ try {
       await act(bridge,command,input);
       await new Promise(resolve => setTimeout(resolve, waitMs));
     }
-    data = await evaluateAsync(`${bridge}.snapshot()`);
+    data = await evaluateAsync(snapshotExpression(bridge));
   }
   const json = JSON.stringify(data, null, 2);
   if (output) await writeFile(output, `${json}\n`);

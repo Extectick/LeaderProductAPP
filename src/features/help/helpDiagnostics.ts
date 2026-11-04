@@ -53,9 +53,10 @@ export function helpDevProbe(name: string, probe: () => Promise<unknown>) {
   return () => { if(probes.get(name)===probe)probes.delete(name); };
 }
 
-async function snapshot() {
+type SnapshotOptions={probes?:readonly string[];geometry?:boolean};
+async function snapshot(options:SnapshotOptions={}) {
   const rects: Record<string, Rect> = {};
-  await Promise.all([...nodes].map(([name, node]) => new Promise<void>(resolve => {
+  await Promise.all((options.geometry===false?[]:[...nodes]).map(([name, node]) => new Promise<void>(resolve => {
     if (typeof node.measureInWindow !== 'function') { resolve(); return; }
     const timer = setTimeout(resolve, 200);
     node.measureInWindow((x, y, width, height) => {
@@ -66,7 +67,10 @@ async function snapshot() {
   })));
   const menuAxis = rects['header.menu']?.centerX;
   const deviations = Object.entries(rects).filter(([key]) => key.startsWith('list.meta.') || key.startsWith('list.unread.')).map(([, rect]) => Math.abs(rect.centerX - (menuAxis ?? rect.centerX)));
-  const native = Object.fromEntries(await Promise.all([...probes].map(async ([name,probe]) => [name,await probe()])));
+  const native = Object.fromEntries(await Promise.all([...probes].filter(([name])=>!options.probes||options.probes.includes(name)).map(([name,probe])=>new Promise<[string,unknown]>(resolve=>{
+    const timer=setTimeout(()=>resolve([name,{error:'timeout'}]),500);
+    Promise.resolve().then(probe).then(value=>{clearTimeout(timer);resolve([name,value]);},()=>{clearTimeout(timer);resolve([name,{error:'probe_failed'}]);});
+  }))));
   return { version: 1, fixtureControls, viewport: Dimensions.get('window'), density: PixelRatio.get(), state: { ...state }, rects, native, rightAxisMaxDeviation: menuAxis === undefined ? null : Math.max(0, ...deviations), actions: fixtureControls ? [...actions.values()].flatMap(group => Object.keys(group)) : [], events: events.slice(-80) };
 }
 

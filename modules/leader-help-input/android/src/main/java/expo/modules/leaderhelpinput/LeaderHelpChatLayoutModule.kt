@@ -18,28 +18,45 @@ import android.widget.ScrollView
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsAnimationCompat
 import androidx.core.view.WindowInsetsCompat
+import com.facebook.react.views.scroll.ReactScrollViewHelper
+import com.facebook.react.views.scroll.ScrollEventType
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import expo.modules.kotlin.records.Field
+import expo.modules.kotlin.records.Record
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.abs
 import kotlin.math.exp
+import kotlin.math.pow
 import kotlin.math.roundToInt
+
+/** OTA owns presentation policy; geometry ownership remains native. */
+class HelpTailMotionConfig : Record {
+  @Field var version = 1
+  @Field var enabled = true
+  @Field var durationMs = 220.0
+  @Field var curve = "spring"
+  @Field var maxViewport = 1.0
+  @Field var entryDistanceDp = 24.0
+}
 
 class LeaderHelpChatLayoutModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("LeaderHelpChatLayout")
-    Constants("tailMotionVersion" to 2, "imeInsetsVersion" to 5)
+    Constants("tailMotionVersion" to 3, "imeInsetsVersion" to 5, "dockControlsVersion" to 1)
     View(LeaderHelpChatLayoutView::class) {
       Events("onImeInsetChange")
       Prop("scrollId") { view: LeaderHelpChatLayoutView, id: String -> view.scrollId = id }
       Prop("dockId") { view: LeaderHelpChatLayoutView, id: String -> view.dockId = id }
+      Prop("controlsId") { view: LeaderHelpChatLayoutView, id: String -> view.controlsId = id }
       Prop("viewportId") { view: LeaderHelpChatLayoutView, id: String -> view.viewportId = id }
       Prop("allowFollow") { view: LeaderHelpChatLayoutView, value: Boolean -> view.allowFollow = value }
       Prop("reducedMotion") { view: LeaderHelpChatLayoutView, value: Boolean -> view.reducedMotion = value }
+      Prop("tailMotionConfig") { view: LeaderHelpChatLayoutView, value: HelpTailMotionConfig -> view.setTailMotionConfig(value) }
       Prop("manageIme") { view: LeaderHelpChatLayoutView, value: Boolean -> view.manageIme = value }
       AsyncFunction("diagnostics") { view: LeaderHelpChatLayoutView -> view.diagnostics() }
       AsyncFunction("resetDiagnostics") { view: LeaderHelpChatLayoutView -> view.resetDiagnostics() }
@@ -58,8 +75,6 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
   private var managedWindow: Window? = null
   private var previousSoftInputMode = 0
   private var appliedSoftInputMode = 0
-  private var previousNavigationColor = Color.TRANSPARENT
-  private var previousNavigationContrast = true
   var manageIme = false
     set(value) {
       if (field == value) return
@@ -76,9 +91,7 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
       previousSoftInputMode = window.attributes.softInputMode
       appliedSoftInputMode = (previousSoftInputMode and WindowManager.LayoutParams.SOFT_INPUT_MASK_ADJUST.inv()) or WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
       managedWindow = window
-      previousNavigationColor = window.navigationBarColor
       if (Build.VERSION.SDK_INT >= 29) {
-        previousNavigationContrast = window.isNavigationBarContrastEnforced
         window.isNavigationBarContrastEnforced = false
       }
       window.navigationBarColor = Color.TRANSPARENT
@@ -87,9 +100,13 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
     } else releaseImeOwnership()
   }
   private fun releaseImeOwnership() {
+    releaseControls()
     managedWindow?.let { window ->
-      window.navigationBarColor = previousNavigationColor
-      if (Build.VERSION.SDK_INT >= 29) window.isNavigationBarContrastEnforced = previousNavigationContrast
+      // Edge-to-edge chrome belongs to the app, not the temporary IME owner.
+      // Restoring the Activity's old contrast scrim can flash a dark system-bar
+      // layer on Help -> catalogue (some OEMs omit it from screen recordings).
+      window.navigationBarColor = Color.TRANSPARENT
+      if (Build.VERSION.SDK_INT >= 29) window.isNavigationBarContrastEnforced = false
       val current = window.attributes.softInputMode
       val mask = WindowManager.LayoutParams.SOFT_INPUT_MASK_ADJUST
       if ((current and mask) == (appliedSoftInputMode and mask)) {
@@ -100,19 +117,40 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
   }
   var scrollId = ""
   var dockId = ""
+  var controlsId = ""
+    set(value) {
+      if (field == value) return
+      releaseControls()
+      field = value
+      postInvalidateOnAnimation()
+    }
   var viewportId = ""
   var allowFollow = false
     set(value) {
       if (field != value) {
         field = value; following = value
-        if (value) { settleFrames = 2; suppressMotionFrames = 2; postInvalidateOnAnimation() }
+        if (value) { nativeDragging = false; settleFrames = 2; suppressMotionFrames = 2; postInvalidateOnAnimation() }
         else stopMotion(true)
       }
     }
   var reducedMotion = false
     set(value) { field = value; if (value) stopMotion(false) }
+  private var tailMotionEnabled = true
+  private var tailDurationMs = 220f
+  private var tailCurve = "spring"
+  private var tailMaxViewport = 1f
+  private var tailEntryDistanceDp = 24f
+  fun setTailMotionConfig(value: HelpTailMotionConfig) {
+    tailMotionEnabled = value.version == 1 && value.enabled
+    tailDurationMs = if (value.durationMs.isFinite()) value.durationMs.toFloat().coerceIn(80f, 1200f) else 220f
+    tailCurve = if (value.curve in setOf("spring", "cubic", "quint")) value.curve else "spring"
+    tailMaxViewport = if (value.maxViewport.isFinite()) value.maxViewport.toFloat().coerceIn(0f, 3f) else 1f
+    tailEntryDistanceDp = if (value.entryDistanceDp.isFinite()) value.entryDistanceDp.toFloat().coerceIn(0f, 1024f) else 24f
+    if (!tailMotionEnabled || tailMaxViewport == 0f) stopMotion(false)
+  }
   private var scroll: ScrollView? = null
   private var dock: View? = null
+  private var controls: View? = null
   private var viewport: View? = null
   private val viewportClip = Rect()
   private var viewportClipHeight = -1
@@ -133,6 +171,14 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
   private var motionVelocity = 0f
   private var motionFrameTime = 0L
   private var motionPosted = false
+  private var motionElapsed = 0f
+  private var motionStartOffset = 0f
+  private data class TailAnchor(val id: String, val view: View, val top: Int)
+  private val tailAnchors = ArrayList<TailAnchor>(16)
+  private var tailCellsDirty = true
+  private var lastTailDelta = 0
+  private var nativeDragging = false
+  private var tailRangeRepairs = 0
   private var imeMotionUntil = 0L
   private var geometryMotionUntil = 0L
   private var imeAnimating = false
@@ -141,6 +187,10 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
   private var lastEmittedImeInset = -1f
   private var dockImeTranslation = 0f
   private var imePresentationContent: View? = null
+  private fun releaseControls() {
+    controls?.translationY = 0f
+    controls = null
+  }
   private fun keyboardTop(bottom: Int, containerBottom: Float): Float {
     if (bottom <= 0) return containerBottom
     // The stable dock already contains the resting navigation-bar safe area.
@@ -184,14 +234,23 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
   // pinned natively; only the incremental content displacement is eased.
   private val motionFrame = object : Choreographer.FrameCallback {
     override fun doFrame(frameTimeNanos: Long) {
-      if (!isAttachedToWindow || !allowFollow || !following || reducedMotion || imeOwnsMotion()) { stopMotion(false); return }
+      if (!isAttachedToWindow || !allowFollow || !following || reducedMotion || !tailMotionEnabled || imeOwnsMotion()) { stopMotion(false); return }
       val dt = if (motionFrameTime == 0L) 1f / 60f else ((frameTimeNanos - motionFrameTime) / 1_000_000_000f).coerceIn(.001f, .05f)
       motionFrameTime = frameTimeNanos
-      val omega = 26f
-      val term = motionVelocity + omega * motionOffset
-      val decay = exp((-omega * dt).toDouble()).toFloat()
-      motionVelocity = (motionVelocity - omega * term * dt) * decay
-      motionOffset = (motionOffset + term * dt) * decay
+      if (tailCurve == "spring") {
+        // Critically damped and frame-rate independent. New geometry adds to
+        // position while preserving velocity, including streamed answers.
+        val omega = 6000f / tailDurationMs
+        val term = motionVelocity + omega * motionOffset
+        val decay = exp((-omega * dt).toDouble()).toFloat()
+        motionVelocity = (motionVelocity - omega * term * dt) * decay
+        motionOffset = (motionOffset + term * dt) * decay
+      } else {
+        motionElapsed += dt * 1000f
+        val remaining = (1f - motionElapsed / tailDurationMs).coerceIn(0f, 1f)
+        motionOffset = motionStartOffset * remaining.pow(if (tailCurve == "quint") 5 else 3)
+        motionVelocity = 0f
+      }
       if (abs(motionOffset) < .2f * density && abs(motionVelocity) < 3f * density) { stopMotion(false); return }
       motionContent?.translationY = motionOffset
       postInvalidateOnAnimation()
@@ -199,16 +258,17 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
     }
   }
   private fun moveContentBy(delta: Int, content: View) {
-    if (delta == 0 || reducedMotion || imeOwnsMotion() || Build.VERSION.SDK_INT >= 26 && !ValueAnimator.areAnimatorsEnabled()) return
+    if (delta == 0 || reducedMotion || !tailMotionEnabled || imeOwnsMotion() || Build.VERSION.SDK_INT >= 26 && !ValueAnimator.areAnimatorsEnabled()) return
     motionContent = content
     motionOffset = (motionOffset + delta).coerceIn(-heightLimit(), heightLimit())
+    motionStartOffset = motionOffset; motionElapsed = 0f
     content.translationY = motionOffset
     if (!motionPosted) {
       motionPosted = true; motionFrameTime = 0L
       Choreographer.getInstance().postFrameCallback(motionFrame)
     }
   }
-  private fun heightLimit(): Float = min(density * 120f, max(density * 24f, (scroll?.height ?: 0) * .8f))
+  private fun heightLimit(): Float = (scroll?.height ?: 0) * tailMaxViewport
   private fun geometryOwnsMotion(): Boolean {
     val now = SystemClock.uptimeMillis()
     return now < imeMotionUntil || now < geometryMotionUntil
@@ -218,17 +278,88 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
     if (motionPosted) Choreographer.getInstance().removeFrameCallback(motionFrame)
     if (preserveViewport && abs(motionOffset) > .1f) scroll?.let { it.scrollTo(it.scrollX, max(0, (it.scrollY - motionOffset).roundToInt())) }
     motionContent?.translationY = 0f
-    motionOffset = 0f; motionVelocity = 0f; motionFrameTime = 0L; motionPosted = false
+    motionOffset = 0f; motionVelocity = 0f; motionFrameTime = 0L; motionPosted = false; motionElapsed = 0f; motionStartOffset = 0f
+  }
+  // Raw layout coordinates deliberately exclude every presentation transform.
+  // A cell can be recycled to a new message: both its View and nativeID must
+  // still match before it can anchor the previous viewport.
+  private fun cellTop(view: View, content: View): Int? {
+    var current = view
+    var top = 0
+    while (current !== content) {
+      top += current.top
+      current = current.parent as? View ?: return null
+    }
+    return top + content.top
+  }
+  private fun retainedTailAnchor(content: View): Pair<TailAnchor, Int>? {
+    for (anchor in tailAnchors) {
+      if (!anchor.view.isAttachedToWindow || anchor.view.height == 0 || anchor.view.getTag(nativeIdKey) != anchor.id) continue
+      val top = cellTop(anchor.view, content) ?: continue
+      return anchor to top
+    }
+    return null
+  }
+  private fun rememberTailAnchors(content: View, list: ScrollView) {
+    tailAnchors.clear()
+    if (nativeIdKey == 0) return
+    val prefix = "$scrollId:cell:"
+    val candidates = ArrayList<TailAnchor>()
+    fun visit(view: View, top: Int) {
+      val id = view.getTag(nativeIdKey) as? String
+      if (id?.startsWith(prefix) == true) {
+        val visualTop = top - list.scrollY
+        // Include the presentation displacement so rows being animated out of
+        // the viewport remain candidates until their visible pixels leave.
+        if (view.height > 0 && visualTop + view.height + motionOffset > 0 && visualTop + motionOffset < list.height) candidates.add(TailAnchor(id, view, top))
+        return // Never traverse the potentially large media/bubble subtree.
+      }
+      if (view is ViewGroup) for (index in 0 until view.childCount) {
+        val child = view.getChildAt(index)
+        visit(child, top + child.top)
+      }
+    }
+    visit(content, content.top)
+    candidates.sortBy { it.top }
+    // Keep both ends of the visible window; removal of an AI placeholder or
+    // recycling one end must not discard every retained logical anchor.
+    if (candidates.size <= 16) tailAnchors.addAll(candidates)
+    else { tailAnchors.addAll(candidates.take(8)); tailAnchors.addAll(candidates.takeLast(8)) }
+    tailCellsDirty = false
   }
   private val frames = ArrayDeque<Map<String, Any>>()
   private val beforeDraw = ViewTreeObserver.OnPreDrawListener { synchronize(); true }
+  private val afterLayout = ViewTreeObserver.OnGlobalLayoutListener { tailCellsDirty = true }
   private val dockLayout = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> synchronize() }
+  // ReactScrollView publishes this on the UI thread when it intercepts the
+  // real gesture, before moving any pixels and before JS receives begin-drag.
+  // Offset changes alone are not intent: FlashList also writes scroll offsets
+  // after measurement without changing the native content/viewport height.
+  private val scrollIntent = object : ReactScrollViewHelper.ScrollListener {
+    override fun onScroll(scrollView: ViewGroup?, scrollEventType: ScrollEventType?, xVelocity: Float, yVelocity: Float) {
+      if (scrollView !== scroll) return
+      when (scrollEventType) {
+        ScrollEventType.BEGIN_DRAG -> {
+          nativeDragging = true
+          following = false
+          stopMotion(true)
+        }
+        ScrollEventType.END_DRAG, ScrollEventType.MOMENTUM_END -> nativeDragging = false
+        else -> Unit
+      }
+    }
+    override fun onLayout(scrollView: ViewGroup?) {
+      if (scrollView === scroll) tailCellsDirty = true
+    }
+  }
 
   override fun onAttachedToWindow() {
     super.onAttachedToWindow()
     ViewCompat.setWindowInsetsAnimationCallback(this, imeAnimation)
     updateImeOwnership()
     viewTreeObserver.addOnPreDrawListener(beforeDraw)
+    viewTreeObserver.addOnGlobalLayoutListener(afterLayout)
+    ReactScrollViewHelper.addScrollListener(scrollIntent)
     ViewCompat.requestApplyInsets(this)
   }
   override fun onApplyWindowInsets(insets: WindowInsets): WindowInsets {
@@ -246,7 +377,10 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
     imeMotionUntil = 0L; geometryMotionUntil = 0L
     dock?.translationY = 0f
     imeAnimating = false; imeBottom = 0; imeTargetBottom = 0; lastEmittedImeInset = -1f; dockImeTranslation = 0f
-    if (viewTreeObserver.isAlive) viewTreeObserver.removeOnPreDrawListener(beforeDraw)
+    if (viewTreeObserver.isAlive) { viewTreeObserver.removeOnPreDrawListener(beforeDraw); viewTreeObserver.removeOnGlobalLayoutListener(afterLayout) }
+    ReactScrollViewHelper.removeScrollListener(scrollIntent)
+    nativeDragging = false
+    tailAnchors.clear(); tailCellsDirty = true
     dock?.removeOnLayoutChangeListener(dockLayout)
     scroll = null; dock = null; viewport = null; viewportClipHeight = -1; viewportClipWidth = -1
     super.onDetachedFromWindow()
@@ -279,6 +413,14 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
     val layoutDockBottom = layoutWindowTop(footer) + footer.height
     dockImeTranslation = containerBottom - effectiveImeInset - layoutDockBottom
     footer.translationY = dockImeTranslation
+    // This sibling covers the full scene, so controls above the composer keep
+    // valid Android touch/accessibility bounds. Move both in this same IME
+    // callback/pre-draw; JS receives only settled insets and owns no IME frames.
+    if (controls?.isAttachedToWindow != true) {
+      releaseControls()
+      controls = findNativeView(rootView, controlsId)
+    }
+    controls?.translationY = dockImeTranslation
     if (viewport?.isAttachedToWindow != true) {
       viewport = findNativeView(rootView, viewportId)
       viewportClipHeight = -1; viewportClipWidth = -1
@@ -302,6 +444,8 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
     val inset = if (imeAnimating && allowFollow && following) targetInset else if (imeAnimating) list.paddingBottom else visualInset
     val geometryChanged = inset != lastInset || list.height != lastHeight || list.width != lastWidth
     val changed = geometryChanged || content.height != lastContent
+    val retained = retainedTailAnchor(content)
+    val cellMoved = retained != null && retained.first.top != retained.second
     // FlashList also changes content height while its viewport/composer is
     // being resized. That is geometry reconciliation, not a new-message entry.
     // Cancel the presentation spring and pin the tail in this very same frame.
@@ -313,26 +457,31 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
       // the arriving message instead of snapping to the new bottom offset.
       if (imeOwnsMotion() || list.height != lastHeight || list.width != lastWidth) stopMotion(false)
     }
-    // Release on the very first upward movement from a settled tail. Being
-    // within a "near bottom" threshold is not consent to keep snapping down
-    // while the user starts reading history. Reacquisition belongs exclusively
-    // to the explicit allowFollow false -> true transition from JS.
-    // Ignore geometry/clamp corrections during the two settling frames: the
-    // composer can change the range before Android has laid out its new padding.
-    if (allowFollow && following && !changed && !geometryOwnsMotion() && settleFrames == 0 && list.scrollY < lastScroll) { following = false; stopMotion(true) }
     list.clipToPadding = false
     if (list.paddingBottom != inset) list.setPadding(list.paddingLeft, list.paddingTop, list.paddingRight, inset)
     val end = max(0, content.height + inset - list.height)
-    if (allowFollow && following && !imeOwnsMotion() && list.height == lastHeight && list.width == lastWidth && suppressMotionFrames == 0 && lastContent >= 0 && lastHeight > 0 && lastInset >= 0 && content.height != lastContent) {
-      val previousEnd = max(0, lastContent + lastInset - lastHeight)
-      val contentOnlyEnd = max(0, content.height + lastInset - lastHeight)
-      moveContentBy(contentOnlyEnd - previousEnd, content)
-    }
-    if (suppressMotionFrames > 0) suppressMotionFrames--
     // setPadding requests another Android layout. ScrollView may clamp against
     // the old range in this pass, so finish the same bottom anchor after layout.
     if (changed) settleFrames = 2
-    if (allowFollow && following && (changed || settleFrames > 0)) list.scrollTo(list.scrollX, end)
+    // Owning the tail is an invariant, not a reaction to size notifications.
+    // A late FlashList measurement can reset a short list's offset while its
+    // content height stays equal to the viewport. Repair that write before
+    // this draw; a genuine drag has already released ownership above.
+    if (allowFollow && following && !nativeDragging && list.scrollY != end) {
+      if (!changed && settleFrames == 0) tailRangeRepairs++
+      list.scrollTo(list.scrollX, end)
+    }
+    // Pin and compensate in this same pre-draw pass, using actual retained
+    // pixels instead of FlashList estimates or content-height notifications.
+    // This captures short-list margin changes even when content.height and
+    // scrollY are unchanged, and naturally ignores history prepends.
+    lastTailDelta = 0
+    val canMoveTail = allowFollow && following && !imeOwnsMotion() && list.height == lastHeight && list.width == lastWidth && suppressMotionFrames == 0 && lastInset >= 0
+    if (retained != null && canMoveTail) {
+      lastTailDelta = retained.first.top - retained.second + list.scrollY - lastScroll + lastInset - inset
+      moveContentBy(lastTailDelta, content)
+    }
+    if (suppressMotionFrames > 0) suppressMotionFrames--
     if (imeAnimating && allowFollow && following) {
       imePresentationContent = content
       content.translationY = (inset - visualInset).toFloat()
@@ -341,6 +490,12 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
       imePresentationContent = null
     }
     if (!changed && settleFrames > 0) settleFrames--
+    val wasEmpty = tailAnchors.isEmpty()
+    if (tailCellsDirty || changed || cellMoved || list.scrollY != lastScroll || retained == null) rememberTailAnchors(content, list)
+    if (canMoveTail && wasEmpty && tailAnchors.isNotEmpty()) {
+      lastTailDelta = (tailEntryDistanceDp * density).roundToInt()
+      moveContentBy(lastTailDelta, content)
+    }
     lastInset = inset; lastHeight = list.height; lastWidth = list.width; lastContent = content.height; lastScroll = list.scrollY
     if (debug) {
       val gap = dockTop - (listTop + content.bottom - list.scrollY)
@@ -348,8 +503,12 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
         "geometryChanged" to changed, "geometryMotionSuppressed" to geometryOwnsMotion(), "settleFrames" to settleFrames, "offset" to list.scrollY / density,
         "end" to end / density, "inset" to inset / density, "gap" to gap / density, "dockTop" to dockTop / density,
         "presentationOffset" to motionOffset / density, "motionActive" to motionPosted,
+        "tailDelta" to lastTailDelta / density, "tailAnchors" to tailAnchors.size,
+        "nativeDragging" to nativeDragging, "tailRangeRepairs" to tailRangeRepairs,
         "imeBottom" to imeBottom / density, "imeAnimating" to imeAnimating,
-        "dockImeTranslation" to dockImeTranslation / density))
+        "dockImeTranslation" to dockImeTranslation / density,
+        "controlsAttached" to (controls?.isAttachedToWindow == true),
+        "controlsImeTranslation" to (controls?.translationY ?: 0f) / density))
       if (frames.size > 240) frames.removeFirst()
     }
   }
@@ -382,6 +541,6 @@ class LeaderHelpChatLayoutView(context: Context, appContext: AppContext) : ExpoV
     }
     return null
   }
-  fun diagnostics(): Map<String, Any> = if (!debug) emptyMap() else mapOf("following" to following, "tailMotionVersion" to 2, "imeInsetsVersion" to 5, "frames" to frames.toList())
+  fun diagnostics(): Map<String, Any> = if (!debug) emptyMap() else mapOf("following" to following, "tailMotionVersion" to 3, "imeInsetsVersion" to 5, "dockControlsVersion" to 1, "tailMotionEnabled" to tailMotionEnabled, "tailDurationMs" to tailDurationMs, "tailCurve" to tailCurve, "tailMaxViewport" to tailMaxViewport, "controlsAttached" to (controls?.isAttachedToWindow == true), "controlsImeTranslation" to (controls?.translationY ?: 0f) / density, "frames" to frames.toList())
   fun resetDiagnostics() { frames.clear() }
 }

@@ -4,6 +4,11 @@ plugins {
 }
 group = 'expo.modules.leaderhelpinput'
 version = '1.0.0'
+dependencies {
+  // The native tail owner observes ReactScrollView's synchronous drag events.
+  // Resolve the same React Android version supplied by the app/Expo plugin.
+  implementation 'com.facebook.react:react-android'
+}
 android {
   namespace 'expo.modules.leaderhelpinput'
   defaultConfig { versionCode 1; versionName '1.0.0' }
