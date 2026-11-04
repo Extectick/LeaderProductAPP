@@ -4,7 +4,7 @@ import { Alert, Button, CssBaseline, IconButton, Skeleton, ThemeProvider, create
 import { ProductImageGalleryDialog, type ProductImageGallery } from '../src/features/clientOrders/components/ProductImageGalleryDialog';
 import { ManagerContactDialog, type ManagerContacts } from './ManagerContactDialog';
 import { getOrderDeliveryLabel, type PublicOrderDelivery } from './delivery';
-import ChatIcon from '@mui/icons-material/ChatBubbleOutline';
+import ChatIcon from '@mui/icons-material/ChatBubbleOutlineOutlined';
 import DeliveryIcon from '@mui/icons-material/LocalShippingOutlined';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import ImageIcon from '@mui/icons-material/ImageOutlined';
