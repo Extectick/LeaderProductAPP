@@ -7,9 +7,10 @@ import {normalizeEntityTarget,parseEntityLink,type EntityTarget} from '../../sha
 import {EntityCardContext} from './EntityCardContext';
 import {entityCardReducer,initialEntityCardState} from './entityCardState';
 import {takeEntityLinkIntent} from '../../shared/entityLinkIntent';
+import type {EntityCardHostProps} from './EntityCardHost.types';
 
 // Defer the card/profile module graph until first use, without fetching a remote JS chunk.
-const EntityCardHost=lazy(async()=>({default:require('./EntityCardHost').default}));
+const EntityCardHost=lazy<React.ComponentType<EntityCardHostProps>>(async()=>({default:require('./EntityCardHost').default}));
 
 /** App-wide presentation only: underlying routes, drafts and chat lists remain mounted. */
 export function EntityCardProvider({children}:{children:React.ReactNode}){
