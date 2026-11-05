@@ -10,6 +10,7 @@ import type {HelpClientContext} from './helpClientContext';
 export type HelpUser = { id: number; name: string; avatarUrl: string | null };
 export type HelpAttachment = { localUri?: string; durationMs?: number; id: string; name: string; mimeType: string; size: number; kind: 'IMAGE' | 'AUDIO' | 'FILE'; url: string; width?: number | null; height?: number | null; thumbnailDataUri?: string | null; position?: number };
 export type HelpMessage = {
+  itStatusChange?: 'REQUESTED' | 'JOINED' | 'AI_RESUMED' | null;
   ticketStatusChange?: 'CLOSED' | 'REOPENED' | null;
   assistantRun?: HelpAssistantRun;
   id: number; ticketId: number; sequence: number; clientMessageId: string | null;

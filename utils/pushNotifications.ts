@@ -17,6 +17,7 @@ const PUSH_TOKEN_KEY = 'pushToken';
 const PROFILE_CHANNEL_ID = 'profile-status';
 const APPEAL_MESSAGE_CHANNEL_ID = 'appeal-message';
 const HELP_MESSAGE_CHANNEL_ID = 'help-message';
+const HELP_IT_REQUEST_CHANNEL_ID = 'help-it-request';
 const TRACKING_PUSH_TASK = 'TRACKING_V2_LOCATION_REQUEST';
 
 let notificationsModule: typeof import('expo-notifications') | null = null;
@@ -106,6 +107,10 @@ export async function initPushNotifications() {
     });
     await Notifications.setNotificationChannelAsync(HELP_MESSAGE_CHANNEL_ID, {
       name: 'Помощь — сообщения IT', importance: Notifications.AndroidImportance.HIGH,
+      vibrationPattern: [0, 250, 200, 250], lightColor: '#3289FF', enableVibrate: true,
+    });
+    await Notifications.setNotificationChannelAsync(HELP_IT_REQUEST_CHANNEL_ID, {
+      name: 'Помощь — вызов IT-специалиста', importance: Notifications.AndroidImportance.HIGH,
       vibrationPattern: [0, 250, 200, 250], lightColor: '#3289FF', enableVibrate: true,
     });
   }
