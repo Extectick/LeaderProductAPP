@@ -11,7 +11,7 @@ interface ThemeContextType {
   addTheme: (name: string, colors: ThemeColors) => void;
 }
 
-const ThemeContext = createContext<ThemeContextType>({
+export const ThemeContext = createContext<ThemeContextType>({
   theme: 'light',
   themes: Colors,
   setTheme: async () => {},

@@ -3,7 +3,6 @@ import TestRenderer,{act} from 'react-test-renderer';
 import {TextInput} from 'react-native';
 jest.mock('../context/AuthContext',()=>({AuthContext:require('react').createContext(null)}));
 jest.mock('../utils/config',()=>({API_BASE_URL:'https://dev.example.test'}));
-jest.mock('../utils/profileGate',()=>({getProfileGate:()=> 'active'}));
 let mockHost:any;
 jest.mock('../src/features/entityCards/EntityCardHost',()=>({__esModule:true,default:(props:any)=>{mockHost=props;return null;}}));
 import {AuthContext} from '../context/AuthContext';
@@ -40,5 +39,32 @@ test('account change immediately removes old panel; late dismissal cannot affect
   await act(async()=>view.update(tree(2)));expect(navigation.isOpen).toBe(false);
   await act(async()=>navigation.openEntity(user));expect(mockHost.userId).toBe(2);
   await act(async()=>oldDismiss());expect(navigation.isOpen).toBe(true);expect(mockHost.userId).toBe(2);
+ }finally{await act(async()=>view.unmount());}
+});
+
+test('authenticated employee can inspect another profile without an active profile-type payload',async()=>{
+ let view!:TestRenderer.ReactTestRenderer;
+ const auth={isAuthenticated:true,isLoading:false,profile:{id:42,role:{name:'employee'},currentProfileType:null,employeeProfile:null}};
+ await act(async()=>{view=TestRenderer.create(React.createElement(AuthContext.Provider,{value:auth as any},React.createElement(EntityCardProvider,null,React.createElement(Draft))));});
+ try{
+  expect(navigation.status).toBe('ready');
+  await act(async()=>{expect(navigation.openEntity(user)).toBe(true);});
+  expect(mockHost.userId).toBe(42);expect(mockHost.state.frames[0].target).toEqual(user);
+ }finally{await act(async()=>view.unmount());}
+});
+
+test.each([[false,'ACTIVE','authentication-required'],[true,'BLOCKED','blocked']])('a missing or blocked session cannot open a profile',async(authenticated,profileStatus,status)=>{
+ let view!:TestRenderer.ReactTestRenderer;
+ await act(async()=>{view=TestRenderer.create(React.createElement(AuthContext.Provider,{value:{isAuthenticated:authenticated,isLoading:false,profile:{id:42,profileStatus}} as any},React.createElement(EntityCardProvider,null,React.createElement(Draft))));});
+ try{expect(navigation.status).toBe(status);expect(navigation.openEntity(user)).toBe(false);expect(navigation.isOpen).toBe(false);}
+ finally{await act(async()=>view.unmount());}
+});
+
+test('losing authentication updates the link status even when no panel is open',async()=>{
+ let view!:TestRenderer.ReactTestRenderer;await act(async()=>{view=TestRenderer.create(tree(42));});
+ try{
+  expect(navigation.status).toBe('ready');
+  await act(async()=>{view.update(React.createElement(AuthContext.Provider,{value:{isAuthenticated:false,isLoading:false,profile:{id:42}} as any},React.createElement(EntityCardProvider,null,React.createElement(Draft))));});
+  expect(navigation.status).toBe('authentication-required');expect(navigation.openEntity(user)).toBe(false);
  }finally{await act(async()=>view.unmount());}
 });

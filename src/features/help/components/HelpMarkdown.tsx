@@ -50,7 +50,7 @@ export const HelpMarkdown = memo(function HelpMarkdown({ text }: { text: string 
           const target=parseEntityLink(url);
           if(target){
             const label=(items:Node[]):string=>items.map(item=>item.children.length?label(item.children):item.token.content).join('');
-            return <Text key={key} accessibilityRole="link" accessibilityHint="Открыть карточку в приложении" onPress={()=>{if(!entities.openEntity(target,label(children)))Alert.alert('Карточка недоступна','Для просмотра войдите в приложение.');}} style={{color:c.accentText,textDecorationLine:'underline'}}>{content()}</Text>;
+            return <Text key={key} accessibilityRole="link" accessibilityHint="Открыть карточку в приложении" onPress={()=>{if(!entities.openEntity(target,label(children)))Alert.alert('Карточка недоступна',entities.status==='authentication-required'?'Для просмотра войдите в приложение.':entities.status==='blocked'?'Учётная запись заблокирована.':'Не удалось подключить просмотр карточек. Полностью перезагрузите приложение; в development client используйте Reload.');}} style={{color:c.accentText,textDecorationLine:'underline'}}>{content()}</Text>;
           }
           return safeLink(url) ? <Text key={key} accessibilityRole="link" accessibilityHint="Открыть ссылку" onPress={() => void openLink(url)} style={{ color: c.accentText, textDecorationLine: 'underline' }}>{content()}</Text> : <Text key={key}>{content()}</Text>;
         }

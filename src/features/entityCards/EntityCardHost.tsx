@@ -7,10 +7,12 @@ import {HELP_VIEWER_HEADER_HEIGHT} from '../help/components/HelpViewerLayout';
 import {EntityCardViewer} from './EntityCardViewer';
 import {EntityCardBody} from './EntityCardBody';
 import type {EntityCardHostProps} from './EntityCardHost.types';
+import {EntityCardPortalContext,useEntityCardPortalContext} from './EntityCardPortalContext';
 
 const EntityScroll=BottomSheetScrollView as React.ComponentType<React.PropsWithChildren<ScrollViewProps>>;
 /** Native sheet owns its pan/scroll animation; the Help timeline keeps its own geometry owner. */
 export default function EntityCardHost(props:EntityCardHostProps){
+ const portalContext=useEntityCardPortalContext();
  const c=useHelpTheme(),insets=useSafeAreaInsets(),modal=useRef<BottomSheetModal>(null),presented=useRef(false);
  const [menuOpen,setMenuOpen]=useState(false);
  const latest=useRef(props);latest.current=props;
@@ -26,8 +28,8 @@ export default function EntityCardHost(props:EntityCardHostProps){
   keyboardBehavior="interactive" keyboardBlurBehavior="none" android_keyboardInputMode="adjustResize" enableBlurKeyboardOnGesture
   backdropComponent={renderBackdrop} handleComponent={null} onDismiss={props.onDismiss}
   backgroundStyle={{backgroundColor:c.background,borderTopLeftRadius:0,borderTopRightRadius:0}}>
-  <View testID="entity-card-panel" style={{flex:1,backgroundColor:c.background}} accessibilityViewIsModal>
+  <EntityCardPortalContext value={portalContext}><View testID="entity-card-panel" style={{flex:1,backgroundColor:c.background}} accessibilityViewIsModal>
    <EntityCardViewer {...props} bottomInset={insets.bottom} onMenuOpenChange={setMenuOpen}><EntityCardBody {...props} contentTopInset={HELP_VIEWER_HEADER_HEIGHT} ScrollComponent={EntityScroll}/></EntityCardViewer>
-  </View>
+  </View></EntityCardPortalContext>
  </BottomSheetModal>;
 }

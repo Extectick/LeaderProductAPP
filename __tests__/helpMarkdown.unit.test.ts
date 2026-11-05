@@ -1,6 +1,6 @@
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
-import { Linking, ScrollView, StyleSheet, Text } from 'react-native';
+import { Alert, Linking, ScrollView, StyleSheet, Text } from 'react-native';
 jest.mock('../context/ThemeContext', () => ({ useTheme: () => ({ theme: 'dark' }) }));
 import { HelpMarkdown } from '../src/features/help/components/HelpMarkdown';
 import {EntityCardContext} from '../src/features/entityCards/EntityCardContext';
@@ -80,4 +80,15 @@ test('unknown internal versions and malformed targets stay readable without navi
  const view=await render('[Сотрудник](leaderproduct://entity/v2/user/121) [Некорректный](leaderproduct://entity/v1/user/0)');
  try{expect(content(view)).toContain('Сотрудник');expect(content(view)).toContain('Некорректный');expect(view.root.findAllByType(Text).filter(node=>node.props.accessibilityRole==='link')).toHaveLength(0);}
  finally{await act(async()=>view.unmount());}
+});
+
+test('missing card provider is not reported as a signed-out account',async()=>{
+ const alert=jest.spyOn(Alert,'alert').mockImplementation(()=>{});
+ const view=await render('[Профиль](leaderproduct://entity/v1/user/121)');
+ try{
+  const link=view.root.findAllByType(Text).find(node=>node.props.accessibilityRole==='link')!;
+  await act(async()=>link.props.onPress());
+  expect(alert).toHaveBeenCalledWith('Карточка недоступна',expect.stringContaining('Reload'));
+  expect(alert.mock.calls[0][1]).not.toContain('войдите');
+ }finally{alert.mockRestore();await act(async()=>view.unmount());}
 });

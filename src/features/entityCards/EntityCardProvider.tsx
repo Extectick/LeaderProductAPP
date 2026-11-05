@@ -2,9 +2,8 @@ import React,{lazy,Suspense,useCallback,useContext,useEffect,useMemo,useReducer,
 import {BackHandler,Keyboard,Platform} from 'react-native';
 import {AuthContext} from '@/context/AuthContext';
 import {API_BASE_URL} from '@/utils/config';
-import {getProfileGate} from '@/utils/profileGate';
 import {normalizeEntityTarget,parseEntityLink,type EntityTarget} from '../../shared/entityLinks';
-import {EntityCardContext} from './EntityCardContext';
+import {EntityCardContext,type EntityCardNavigation} from './EntityCardContext';
 import {entityCardReducer,initialEntityCardState} from './entityCardState';
 import {takeEntityLinkIntent} from '../../shared/entityLinkIntent';
 import type {EntityCardHostProps} from './EntityCardHost.types';
@@ -15,7 +14,11 @@ const EntityCardHost=lazy<React.ComponentType<EntityCardHostProps>>(async()=>({d
 /** App-wide presentation only: underlying routes, drafts and chat lists remain mounted. */
 export function EntityCardProvider({children}:{children:React.ReactNode}){
  const auth=useContext(AuthContext);
- const account=auth?.isAuthenticated&&auth.profile?.id&&getProfileGate(auth.profile)==='active'?`${API_BASE_URL}:${auth.profile.id}`:'';
+ // Opening a read-only panel does not require selecting an active profile type.
+ // Employee/profile permissions are enforced by the existing authenticated API.
+ const blocked=auth?.profile?.profileStatus==='BLOCKED';
+ const account=auth?.isAuthenticated&&auth.profile?.id&&!blocked?`${API_BASE_URL}:${auth.profile.id}`:'';
+ const status=blocked?'blocked':account?'ready':'authentication-required';
  const [state,dispatch]=useReducer(entityCardReducer,initialEntityCardState);
  const currentAccount=useRef(account);currentAccount.current=account;
  const scrollOffsets=useRef(new Map<number,number>());
@@ -45,7 +48,7 @@ export function EntityCardProvider({children}:{children:React.ReactNode}){
   window.addEventListener('keydown',onKey,true);
   return()=>{subscription.remove();window.removeEventListener('keydown',onKey,true);};
  },[back,visible]);
- const navigation=useMemo(()=>({isOpen:visible,openEntity,openEntityLink,close,back}),[visible,openEntity,openEntityLink,close,back]);
+ const navigation=useMemo<EntityCardNavigation>(()=>({isOpen:visible,status,openEntity,openEntityLink,close,back}),[visible,status,openEntity,openEntityLink,close,back]);
  const session=state.session;
  return <EntityCardContext.Provider value={navigation}>
   {children}
