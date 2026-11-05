@@ -1,5 +1,5 @@
 import {HelpAssistantQuestionStatus, type HelpAssistantQuestionState} from './HelpAssistantQuestionStatus';
-import React, { useRef, useState } from 'react';
+import React, { memo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { HelpMessage } from '../helpApi';
@@ -13,7 +13,9 @@ import {HelpStreamingAnswer,HelpStreamingAnalysis} from './HelpStreamingText';
 import {helpActivityLabel} from '../helpActivityPresentation';
 import {HelpHtmlAttachments} from './HelpHtmlContext';
 
-function ActivityRow({ item,live }: { item: HelpAssistantActivity;live:boolean }) {
+// API chunks can replace activity objects without changing their presentation.
+// Primitive props let completed rows skip reconciliation during answer streaming.
+const ActivityRow = memo(function ActivityRow({ live, ...item }: HelpAssistantActivity & {live:boolean}) {
   const c = useHelpTheme();
   const icon = item.status === 'failed' ? 'alert-circle-outline' : item.kind === 'analysis' ? 'bulb-outline'
     : item.status === 'completed' ? 'checkmark' : item.kind === 'knowledge' ? 'search-outline' : 'ellipse-outline';
@@ -24,7 +26,7 @@ function ActivityRow({ item,live }: { item: HelpAssistantActivity;live:boolean }
     </View>
     <HelpStreamingAnalysis identity={item.id} text={item.text||''} active={live&&item.kind==='analysis'&&item.status==='running'} completed={item.status==='completed'}/>
   </View>;
-}
+});
 
 export function HelpLiveAssistantMessage({ message, questionState, onRetry, onConnectOnec, onSuggestion, onRequestIt, resolve, onFileError }: {
   resolve?: ResolveHelpMedia; onFileError?: (text: string) => void;
@@ -55,7 +57,7 @@ export function HelpLiveAssistantMessage({ message, questionState, onRetry, onCo
           onScrollBeginDrag={()=>{followLog.current=false;}} onScrollEndDrag={event=>{followLog.current=logAtEnd(event);}}
           onMomentumScrollEnd={event=>{followLog.current=logAtEnd(event);}}
           onContentSizeChange={()=>{if(active&&followLog.current)log.current?.scrollToEnd({animated:false});}}>
-          {activities.map(item => <ActivityRow key={item.id} item={item} live={active}/>)}
+          {activities.map(item => <ActivityRow key={item.id} id={item.id} kind={item.kind} status={item.status} label={item.label} text={item.text} live={active}/>)}
         </ScrollView>
       </View> : null}
       {run.error ? <Text accessibilityRole="alert" style={{ color: run.status === 'error' ? c.danger : c.muted, fontSize: 13, lineHeight: 19, marginTop: 6 }}>{run.error}</Text> : null}

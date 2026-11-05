@@ -1,4 +1,4 @@
-import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
+import React, { memo, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Image, Modal, PanResponder, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions, type ImageStyle, type StyleProp } from 'react-native';
 import { Image as CachedImage } from 'expo-image';
 import { HelpImageCacheContext, HelpMediaLoadingContext } from '../helpMediaLoading';
@@ -128,11 +128,22 @@ export function HelpAudio(props: HelpAudioProps) {
 function SharedHelpAudio(props: HelpAudioProps & { messageId: number; playback: HelpAudioPlaybackController }) {
   const { attachment, resolve, messageId, author = '', createdAt = '', ticketId, playback } = props;
   const active = playback.current?.attachment.id === attachment.id && playback.current.messageId === messageId && (ticketId === undefined || playback.current.ticketId === undefined || playback.current.ticketId === ticketId);
-  return <HelpAudioView key={active ? 'active' : 'inactive'} {...props}
+  const latest = useRef({ attachment, resolve, messageId, author, createdAt, ticketId, playback, active });
+  latest.current = { attachment, resolve, messageId, author, createdAt, ticketId, playback, active };
+  const onPlay = useCallback(() => {
+    const value = latest.current;
+    return value.active ? value.playback.toggle() : value.playback.play({ attachment: value.attachment, messageId: value.messageId, author: value.author, createdAt: value.createdAt, ticketId: value.ticketId }, value.resolve);
+  }, []);
+  const onSeek = useCallback(async (seconds: number) => {
+    const value = latest.current;
+    if (value.active) await value.playback.seek(seconds);
+  }, []);
+  // Only presentation data crosses the memo boundary. The shared controller
+  // changes on every position sample, including for all inactive voice rows.
+  return <HelpAudioView key={active ? 'active' : 'inactive'} attachment={attachment} captionRight={props.captionRight} onError={props.onError}
     ready={active && playback.ready} loading={active && playback.loading} playing={active && playback.playing}
     currentTime={active ? playback.positionSeconds : 0} duration={active ? playback.durationSeconds : (attachment.durationMs??0)/1000} rate={playback.speed}
-    onPlay={() => active ? playback.toggle() : playback.play({ attachment, messageId, author, createdAt, ticketId }, resolve)}
-    onSeek={async seconds => { if (active) await playback.seek(seconds); }}/>
+    onPlay={onPlay} onSeek={onSeek}/>
 }
 function StandaloneHelpAudio(props: HelpAudioProps) {
   const { attachment, resolve } = props;
@@ -175,7 +186,10 @@ function StandaloneHelpAudio(props: HelpAudioProps) {
     onPlay={play} onSeek={async seconds => { if (lifecycle.current.mounted && lifecycle.current.prepared) await player.seekTo(seconds); }}/>
 }
 type HelpAudioViewProps = Pick<HelpAudioProps, 'attachment' | 'captionRight' | 'onError'> & { ready: boolean; loading: boolean; playing: boolean; currentTime: number; duration: number; rate: number; onPlay: () => Promise<void>; onSeek: (seconds: number) => Promise<void> };
-function HelpAudioView({ attachment, captionRight, onError, ready, loading, playing, currentTime, duration, rate, onPlay, onSeek }: HelpAudioViewProps) {
+const HelpAudioBars = memo(function HelpAudioBars({ color, dimmed = false }: { color: string; dimmed?: boolean }) {
+  return <>{decorativeTrackBars.map((height, i) => <View key={i} style={{ width: 3, height: height * .65, borderRadius: 3, backgroundColor: color, ...(dimmed ? { opacity: .3 } : {}) }} />)}</>;
+});
+const HelpAudioView = memo(function HelpAudioView({ attachment, captionRight, onError, ready, loading, playing, currentTime, duration, rate, onPlay, onSeek }: HelpAudioViewProps) {
   const c = useHelpTheme();
   const [progress, setProgress] = useState(0); const [width, setWidth] = useState(180);
   const alive = useRef(true); const latest = useRef({ onError, onPlay, onSeek, ready }); latest.current = { onError, onPlay, onSeek, ready };
@@ -209,14 +223,14 @@ function HelpAudioView({ attachment, captionRight, onError, ready, loading, play
     {loading ? <Pressable accessibilityRole="button" accessibilityLabel="Загрузка голосового сообщения" accessibilityState={{ busy: true }} onPress={() => void play()} style={{ backgroundColor: c.accentText, width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator testID="help-audio-loading" size="small" color="#FFF"/></Pressable> : <HelpIcon name={playing ? 'pause' : 'play'} label={playing ? 'Пауза' : 'Воспроизвести голосовое сообщение'} color="#FFF" size={20} style={{ backgroundColor: c.accentText, width: 36, height: 36, borderRadius: 18 }} onPress={() => void play()} />}
     <View style={{ flex: 1, minWidth: 0 }}><View testID="help-audio-seek" accessible accessibilityRole="adjustable" accessibilityLabel="Позиция голосового сообщения" accessibilityState={{ disabled: !ready }} accessibilityValue={{ min: 0, max: Math.floor(duration || 0), now: Math.floor(progress * (duration || 0)) }} accessibilityActions={[{ name: 'increment', label: 'Вперёд на 5 секунд' }, { name: 'decrement', label: 'Назад на 5 секунд' }]} onAccessibilityAction={e => { if (['increment', 'decrement'].includes(e.nativeEvent.actionName)) void seekTime(progress * duration + (e.nativeEvent.actionName === 'increment' ? 5 : -5)); }} onLayout={e => setWidth(e.nativeEvent.layout.width)} onStartShouldSetResponder={() => ready} onMoveShouldSetResponder={() => ready} onResponderGrant={e => seek(e.nativeEvent.locationX)} onResponderMove={e => seek(e.nativeEvent.locationX)} style={{ height: 28, justifyContent: 'center', overflow: 'hidden', borderRadius: 5 }}>
       <View testID="help-audio-decorative-track" pointerEvents="none" aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-        {decorativeTrackBars.map((height, i) => <View key={i} style={{ width: 3, height: height * .65, borderRadius: 3, backgroundColor: c.accentText, opacity: .3 }} />)}
+        <HelpAudioBars color={c.accentText} dimmed/>
       </View>
       <View testID="help-audio-progress" pointerEvents="none" aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ position: 'absolute', left: 0, top: 0, height: 28, width: `${progress * 100}%`, overflow: 'hidden' }}>
-        <View style={{ width, height: 28, flexDirection: 'row', alignItems: 'center', gap: 3 }}>{decorativeTrackBars.map((height, i) => <View key={i} style={{ width: 3, height: height * .65, borderRadius: 3, backgroundColor: c.accentText }} />)}</View>
+        <View style={{ width, height: 28, flexDirection: 'row', alignItems: 'center', gap: 3 }}><HelpAudioBars color={c.accentText}/></View>
       </View>
     </View><View testID="help-audio-caption" style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, minHeight: 12 }}><Text numberOfLines={1} style={{ fontSize: 10, lineHeight: 12, color: c.muted, fontVariant: ['tabular-nums'] }}>{helpDuration(progress * (duration || 0))} / {duration ? helpDuration(duration) : helpFileSize(attachment.size)}</Text>{captionRight}</View></View>
   </View>;
-}
+});
 const viewerClamp=(value:number,min:number,max:number)=>Math.max(min,Math.min(max,value));
 const viewerIndex=(index:number,length:number)=>viewerClamp(Number.isFinite(index)?Math.floor(index):0,0,Math.max(0,length-1));
 const viewerTouchDistance=(event:any)=>{const touches=event?.nativeEvent?.touches??[];return touches.length<2?0:Math.hypot(touches[0].pageX-touches[1].pageX,touches[0].pageY-touches[1].pageY);};

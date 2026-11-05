@@ -3,7 +3,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import isEqual from 'fast-deep-equal';
 import { jwtDecode } from 'jwt-decode';
-import React, { createContext, ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import React, { createContext, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 
 import { Profile } from '@/src/entities/user/types';
@@ -69,7 +69,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   }, []);
 
-  const signOut = async () => {
+  const signOut = useCallback(async () => {
     stopPushRegistration.current?.();stopPushRegistration.current=null;
     addMonitoringBreadcrumb('auth_signout_start');
     await setMonitoringUser(null);
@@ -88,7 +88,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     setAuthenticated(false); // контекст -> guest
     await setProfile(null);  // чистим профиль в контексте
     addMonitoringBreadcrumb('auth_signout_done');
-  };
+  }, [setProfile]);
 
   useEffect(() => {
     return onAuthSessionExpired((event) => {
@@ -259,17 +259,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   },[isAuthenticated,profileState?.id]);
 
   usePresenceHeartbeat(isAuthenticated);
+  const value = useMemo(() => ({ isLoading, isAuthenticated, profile: profileState, setAuthenticated, setProfile, signOut }),
+    [isLoading, isAuthenticated, profileState, setAuthenticated, setProfile, signOut]);
 
   return (
     <AuthContext.Provider
-      value={{
-        isLoading,
-        isAuthenticated,
-        profile: profileState,
-        setAuthenticated,
-        setProfile,
-        signOut
-      }}
+      value={value}
     >
       {children}
     </AuthContext.Provider>

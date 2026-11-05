@@ -232,9 +232,8 @@ async function invalidateAuthSession(reason: string, status?: number) {
   notifyAuthSessionExpired({ reason, status, at: Date.now() });
 }
 
-async function ensureTokenStorageScope(): Promise<boolean> {
-  const entries = await AsyncStorage.multiGet([AUTH_API_BASE_URL_KEY]);
-  const storedBaseUrl = entries[0]?.[1] || '';
+async function ensureTokenStorageScope(knownBaseUrl?: string): Promise<boolean> {
+  const storedBaseUrl = knownBaseUrl ?? ((await AsyncStorage.multiGet([AUTH_API_BASE_URL_KEY]))[0]?.[1] || '');
   const [accessToken, refreshToken] = await Promise.all([
     migrateLegacyTokenIfNeeded(ACCESS_KEY),
     migrateLegacyTokenIfNeeded(REFRESH_KEY),
@@ -257,7 +256,17 @@ async function ensureTokenStorageScope(): Promise<boolean> {
 }
 
 export async function getAccessToken(): Promise<string | null> {
-  if (!(await ensureTokenStorageScope())) return null;
+  const storedBaseUrl = (await AsyncStorage.multiGet([AUTH_API_BASE_URL_KEY]))[0]?.[1] || '';
+  // A scoped, populated store needs only a fresh access-token read. Reading
+  // and migrating both tokens on every Help account fence triples native I/O.
+  // Never retain this value across calls: another runtime may rotate or clear it.
+  if (storedBaseUrl === API_BASE_URL) {
+    const accessToken = await secureGet(ACCESS_KEY);
+    if (accessToken) return accessToken;
+  }
+  // Missing/legacy tokens and unknown/changed API scopes keep the full repair
+  // path, including refresh-only sessions and the final fresh access read.
+  if (!(await ensureTokenStorageScope(storedBaseUrl))) return null;
   return secureGet(ACCESS_KEY);
 }
 

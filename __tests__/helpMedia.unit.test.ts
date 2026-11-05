@@ -12,7 +12,7 @@ jest.mock('expo-file-system/legacy', () => ({ cacheDirectory: 'file://cache/', d
 jest.mock('expo-sharing', () => ({ isAvailableAsync: jest.fn().mockResolvedValue(true), shareAsync: jest.fn().mockResolvedValue(undefined) }));
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 20, bottom: 20, left: 0, right: 0 }) }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
-jest.mock('../src/features/help/helpTheme', () => ({ useHelpTheme: () => ({ muted: '#999999', accent: '#3388ff', accentText: '#68B0FF', elevated: '#333333' }), useHelpReducedMotion: () => mockReduced }));
+jest.mock('../src/features/help/helpTheme', () => ({ useHelpTheme: jest.fn(() => ({ muted: '#999999', accent: '#3388ff', accentText: '#68B0FF', elevated: '#333333' })), useHelpReducedMotion: () => mockReduced }));
 jest.mock('../src/features/help/components/HelpPrimitives', () => ({ HelpIcon: 'HelpIcon' }));
 import { HelpAudio, HelpGallery, HelpImage } from '../src/features/help/components/HelpMedia';
 import { createHelpImageCache, HelpImageCacheContext, HelpMediaLoadingContext } from '../src/features/help/helpMediaLoading';
@@ -152,6 +152,29 @@ describe('Help media geometry and lifecycle', () => {
     expect(playback.toggle).not.toHaveBeenCalled(); expect(playback.seek).not.toHaveBeenCalled();
     await act(async () => screen!.unmount()); screen = undefined;
     expect(playback.stop).toHaveBeenCalledTimes(1); // Rows never stop the persistent player on virtualization.
+  });
+  test('inactive voice presentation skips other-track position samples and keeps fresh actions', async () => {
+    await renderSharedAudio();
+    const theme = require('../src/features/help/helpTheme').useHelpTheme as jest.Mock;
+    const before = theme.mock.calls.length;
+    const oldPlay = byLabel('Воспроизвести голосовое сообщение').props.onPress;
+    for (let position = 1; position <= 10; position++) {
+      playback = { ...playback, current: { attachment: voice, messageId: 99, author: '', createdAt: '', ticketId: 7 }, playing: true, positionSeconds: position, play: jest.fn().mockResolvedValue(undefined) };
+      await updateSharedAudio();
+    }
+    expect(theme.mock.calls.length).toBe(before);
+    expect(byId('help-audio-progress').props.style.width).toBe('0%');
+    await act(async () => oldPlay());
+    expect(playback.play).toHaveBeenCalledWith(expect.objectContaining({ messageId: 41 }), props.resolve);
+  });
+  test('active voice progress advances without rebuilding decorative bars', async () => {
+    await renderSharedAudio(); activateSharedAudio({ positionSeconds: 2, playing: true }); await updateSharedAudio();
+    const bars = () => byId('help-audio-decorative-track').findAll(node => node.props.style?.opacity === .3);
+    const before = bars().map(node => node.props.style);
+    expect(before.length).toBeGreaterThan(0);
+    await tick(50);
+    expect(parseFloat(byId('help-audio-progress').props.style.width)).toBeCloseTo(20.5);
+    bars().forEach((node, index) => expect(node.props.style).toBe(before[index]));
   });
   test('shared loading appears only on the matching attachment and message', async () => {
     await renderSharedAudio(); activateSharedAudio({ loading: true, ready: false }); await updateSharedAudio();

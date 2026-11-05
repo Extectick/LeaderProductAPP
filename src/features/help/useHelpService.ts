@@ -98,9 +98,14 @@ export function useHelpService(isFocused = true) {
   const reactionWork=useRef(new Map<string,{targets:Map<string,{mine:boolean;revision:number}>;chain:Promise<unknown>;base:HelpMessage['reactions']}>());
   const reactionRevision=useRef(0);
   const updateMessages=useCallback((next:HelpMessage[])=>{
-    const originals=new Map([...messagesRef.current,...next].map(message=>[message.id,message]));
+    let originals:Map<number,HelpMessage>|undefined;
     const overlaid=next.map(message=>{
-      if(!message.replyTo&&message.replyToId){const source=originals.get(message.replyToId);if(source&&source.ticketId===message.ticketId)message={...message,replyTo:{id:source.id,text:source.text,author:source.author,attachments:source.attachments}};}
+      if(!message.replyTo&&message.replyToId){
+        // Most stream updates need no quote repair. Build the lookup only when
+        // needed, preserving next-window precedence and forward references.
+        if(!originals){originals=new Map();for(const source of messagesRef.current)originals.set(source.id,source);for(const source of next)originals.set(source.id,source);}
+        const source=originals.get(message.replyToId);if(source&&source.ticketId===message.ticketId)message={...message,replyTo:{id:source.id,text:source.text,author:source.author,attachments:source.attachments}};
+      }
       const work=reactionWork.current.get(identity+':'+message.ticketId+':'+message.id);
       if(!work)return message;
       for(const [emoji,target] of work.targets)message=withHelpReaction(message,emoji,target.mine,userId);

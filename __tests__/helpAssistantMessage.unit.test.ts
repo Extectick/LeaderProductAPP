@@ -14,7 +14,29 @@ jest.mock('react-native-reanimated', () => ({
 import { HelpAssistantMessage } from '../src/features/help/components/HelpAssistantMessage';
 import {useTheme} from '../context/ThemeContext';
 import {helpTime} from '../src/features/help/helpUiUtils';
+import * as activityPresentation from '../src/features/help/helpActivityPresentation';
 const base={id:1,ticketId:1043,createdAt:'2026-10-30T10:00:00Z',text:'',assistantRun:{runId:'qa-1',eventId:1,ticketId:1043,status:'thinking',step:1,completedSteps:1,startedAt:0,updatedAt:0}} as HelpMessage;
+
+test('answer chunks skip unchanged activity rows but every displayed activity field stays current',async()=>{
+  const label=jest.spyOn(activityPresentation,'helpActivityLabel');
+  let view!:TestRenderer.ReactTestRenderer;
+  let item={id:'lookup',kind:'knowledge' as const,status:'completed' as const,label:'Найдены инструкции: 2',text:'Проверка'} as import('../src/features/help/helpAssistant').HelpAssistantActivity;
+  let chunk=0;
+  const tree=()=>React.createElement(HelpAssistantMessage,{message:{...base,assistantRun:{...base.assistantRun!,activityVersion:1,activities:[{...item}],draftText:`Ответ ${chunk++}`}}});
+  try{
+    await act(async()=>{view=TestRenderer.create(tree());});
+    const initial=label.mock.calls.length;
+    for(let i=0;i<10;i++)await act(async()=>view.update(tree()));
+    expect(label).toHaveBeenCalledTimes(initial);
+    for(const change of [{label:'Другая операция'},{text:'Обновлённое описание'},{status:'failed' as const},{kind:'analysis' as const},{id:'next'}]){
+      const before=label.mock.calls.length;item={...item,...change};
+      await act(async()=>view.update(tree()));
+      expect(label).toHaveBeenCalledTimes(before+1);
+      expect(label).toHaveBeenLastCalledWith(expect.objectContaining(item));
+    }
+    expect(JSON.stringify(view.toJSON())).toContain('Другая операция');
+  }finally{if(view)await act(async()=>view.unmount());label.mockRestore();}
+});
 
 test('composer callback churn skips the assistant body and actions still use the newest callback',async()=>{
   let view!:TestRenderer.ReactTestRenderer;

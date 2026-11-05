@@ -56,6 +56,23 @@ test('stream progress reads one committed row and retains the other 599 objects;
   expect(service.navigationTarget?.key).toBe(key);
 });
 
+test('lazy quote repair keeps previous sources, next-window precedence, forward references and ticket fences',async()=>{
+  const retainedQuote={id:99,text:'Server quote',author:null,attachments:[]};
+  await persist({messages:[
+    {...msg(597),replyToId:70100,replyTo:null},
+    {...msg(598),replyToId:70600,replyTo:null},
+    {...msg(599),replyToId:70100,replyTo:retainedQuote},
+    msg(600,'Updated source later in the next window'),
+    {...msg(595),ticketId:8},
+    {...msg(596),replyToId:70595,replyTo:null},
+  ]});
+  await committed([70595,70596,70597,70598,70599,70600]);
+  expect(service.messages.find(row=>row.id===70597)?.replyTo).toMatchObject({id:70100,text:'Message 100'});
+  expect(service.messages.find(row=>row.id===70598)?.replyTo).toMatchObject({id:70600,text:'Updated source later in the next window'});
+  expect(service.messages.find(row=>row.id===70599)?.replyTo).toEqual(retainedQuote);
+  expect(service.messages.find(row=>row.id===70596)?.replyTo).toBeNull();
+});
+
 test('committed deletions preserve the reading window and do not append a distant tail or delete a missing ID',async()=>{
   await act(async()=>{await service.saveViewport({messageId:70150,sequence:150,offset:-18,atLatest:false},7);});
   const key=service.navigationTarget?.key,first=service.messages[0];
