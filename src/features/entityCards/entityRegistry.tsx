@@ -20,12 +20,13 @@ export type EntityCardContentProps = {
   ScrollComponent?: React.ComponentType<ScrollViewProps>;
   scrollOffset?: number;
   onScrollOffsetChange?: (offset: number) => void;
+  contentTopInset?: number;
 };
 type State = { scope: string; result?: EntityCardResult; error?: EntityCardError; loading?: boolean };
 
 /** The caller owns the sheet, gesture coordinator and navigation history. This component owns only card data. */
 export function EntityCardContent({ target, onOpen, onTitleChange, onConnect, ScrollComponent = ScrollView,
-  scrollOffset = 0, onScrollOffsetChange }: EntityCardContentProps) {
+  scrollOffset = 0, onScrollOffsetChange, contentTopInset = 0 }: EntityCardContentProps) {
   const auth = React.useContext(AuthContext), userId = auth?.isAuthenticated ? auth.profile?.id : undefined;
   const colors = useEntityColors();
   let targetKey: string;
@@ -59,12 +60,12 @@ export function EntityCardContent({ target, onOpen, onTitleChange, onConnect, Sc
   }, [scope, attempt, rowsLimit]);
 
   const current = state.scope === scope ? state : undefined;
-  if (!current?.result && !current?.error) return <View testID="entity-card-loading" style={styles.center} accessibilityLiveRegion="polite">
+  if (!current?.result && !current?.error) return <View testID="entity-card-loading" style={[styles.center,{paddingTop:28+contentTopInset}]} accessibilityLiveRegion="polite">
     <ActivityIndicator color={colors.tint} /><Text style={{ color: colors.secondaryText }}>Загружаю карточку…</Text>
   </View>;
   if (current.error && !current.result) {
     const error = current.error;
-    return <View testID={`entity-card-error-${error.kind}`} style={styles.center} accessibilityLiveRegion="polite">
+    return <View testID={`entity-card-error-${error.kind}`} style={[styles.center,{paddingTop:28+contentTopInset}]} accessibilityLiveRegion="polite">
       <Text style={[styles.errorText, { color: colors.text }]}>{error.message}</Text>
       {error.kind === 'connect' && target.source === 'onec' && onConnect ? <Pressable accessibilityRole="button" onPress={() => onConnect(target.baseKey)} style={[styles.button, { backgroundColor: colors.tint }]}>
         <Text style={[styles.buttonText, { color: colors.buttonText }]}>Подключить 1С</Text>
@@ -77,8 +78,8 @@ export function EntityCardContent({ target, onOpen, onTitleChange, onConnect, Sc
   const result = current.result!;
   const Renderer = result.kind === 'entity' && result.data.view !== 'user' ? entityCardRegistry[result.data.view] : GenericEntityCard;
   const canShowMore = result.kind === 'entity' && result.data.tables.some(table => table.truncated) && rowsLimit < 1000;
-  return <ScrollComponent testID="entity-card-scroll" style={styles.scroll} contentContainerStyle={styles.content}
-    keyboardShouldPersistTaps="handled" scrollEventThrottle={16} contentOffset={{ x: 0, y: Math.max(0, scrollOffset) }}
+  return <ScrollComponent testID="entity-card-scroll" style={styles.scroll} contentContainerStyle={[styles.content,{paddingTop:18+contentTopInset}]}
+    keyboardShouldPersistTaps="handled" scrollEventThrottle={16} showsVerticalScrollIndicator={false} showsHorizontalScrollIndicator={false} contentOffset={{ x: 0, y: Math.max(0, scrollOffset) }}
     onScroll={event => { const y = event.nativeEvent.contentOffset.y; if (Number.isFinite(y)) onScrollOffsetChange?.(Math.max(0, y)); }}>
     {result.kind === 'profile' ? <ProfileView userId={result.profile.id} profileOverride={result.profile} disableAppearAnimation />
       : <Renderer data={result.data} onOpen={onOpen} />}

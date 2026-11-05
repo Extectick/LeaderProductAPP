@@ -1,23 +1,18 @@
 import React,{useCallback,useContext,useEffect,useRef,useState} from 'react';
 import {Animated,Easing,Modal,PanResponder,Platform,Pressable,StyleSheet,Text,useWindowDimensions,View} from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
-import {Ionicons} from '@expo/vector-icons';
 import type {HelpHtmlArtifact} from '../helpHtml';
 import {useHelpReducedMotion,useHelpTheme} from '../helpTheme';
 import {HelpHtmlSurface} from './HelpHtmlSurface';
-import {APP_TOOLBAR_LAYOUT} from '@/components/ui/appToolbarLayout';
 import {AuthContext} from '@/context/AuthContext';
-import {HelpIcon} from './HelpPrimitives';
 import {copyHelpHtmlLink,downloadHelpHtml} from '../helpHtmlActions';
-import {BlurTargetView} from 'expo-blur';
-import {HelpBlurSurface} from './HelpPrimitives';
-const HEADER_HEIGHT=16+APP_TOOLBAR_LAYOUT.actionSize+APP_TOOLBAR_LAYOUT.bottom;
+import {HelpViewerLayout,HELP_VIEWER_HEADER_HEIGHT} from './HelpViewerLayout';
+const HEADER_HEIGHT=HELP_VIEWER_HEADER_HEIGHT;
 export type HelpHtmlOrigin={x:number;y:number;width:number;height:number};
 
 /** Presentation leaves the conversation and its native motion owner mounted. */
 export function HelpHtmlViewer({artifact,origin,onClose,link,expectedUserId}:{artifact:HelpHtmlArtifact;origin?:HelpHtmlOrigin;onClose:()=>void;link?:string;expectedUserId?:number}){
  const c=useHelpTheme(),reduced=useHelpReducedMotion(),insets=useSafeAreaInsets(),window=useWindowDimensions();
- const blurTarget=useRef<View>(null);
  const auth=useContext(AuthContext),userId=auth?.isAuthenticated?auth.profile?.id:undefined;
  const [menu,setMenu]=useState(false),[busy,setBusy]=useState(false),[notice,setNotice]=useState('');
  const operation=useRef<AbortController|null>(null),scope=useRef({id:artifact.id,userId,expectedUserId,link});scope.current={id:artifact.id,userId,expectedUserId,link};
@@ -68,18 +63,14 @@ export function HelpHtmlViewer({artifact,origin,onClose,link,expectedUserId}:{ar
    <Animated.View style={[StyleSheet.absoluteFill,{backgroundColor:c.background,opacity:progress}]}/>
    <Animated.View style={{position:'absolute',top:insets.top,left:0,width,height,backgroundColor:c.background,overflow:'hidden',opacity:ready?1:0,transform}}>
     <Animated.View style={{flex:1,opacity:start?progress.interpolate({inputRange:[0,.35,1],outputRange:[0,0,1]}):1}}>
-     <BlurTargetView ref={blurTarget} style={{flex:1,paddingBottom:insets.bottom}}><HelpHtmlSurface variant={artifact.full!} label={artifact.title} topInset={HEADER_HEIGHT} onReady={()=>setFullReady(true)} onScroll={offset=>{scroll.current=offset;}}/></BlurTargetView>
-     <View testID="help-html-viewer-header" style={{position:'absolute',top:0,left:0,right:0,zIndex:2,height:HEADER_HEIGHT,paddingTop:16,paddingBottom:APP_TOOLBAR_LAYOUT.bottom,flexDirection:'row',alignItems:'center',gap:APP_TOOLBAR_LAYOUT.gap,paddingHorizontal:APP_TOOLBAR_LAYOUT.inset,backgroundColor:'transparent'}}>
-      <View pointerEvents="none" style={[StyleSheet.absoluteFill,{bottom:-36}]}><HelpBlurSurface target={blurTarget} edge="bottom"/></View>
-      <HelpIcon name="chevron-back" label="Закрыть просмотр" onPress={close} color={c.text} size={24} style={{width:APP_TOOLBAR_LAYOUT.actionSize,height:APP_TOOLBAR_LAYOUT.actionSize,backgroundColor:c.panel,borderRadius:APP_TOOLBAR_LAYOUT.actionSize/2}}/>
-      <Text accessibilityRole="header" style={{flex:1,textAlign:'center',fontSize:17,fontWeight:'600',color:c.text}}>Просмотр</Text>
-      <Pressable testID="help-html-menu-button" accessibilityRole="button" accessibilityLabel="Действия с HTML" accessibilityState={{expanded:menu,busy}} onPress={()=>setMenu(value=>!value)} style={({pressed})=>({width:APP_TOOLBAR_LAYOUT.actionSize,height:APP_TOOLBAR_LAYOUT.actionSize,borderRadius:APP_TOOLBAR_LAYOUT.actionSize/2,backgroundColor:c.panel,alignItems:'center',justifyContent:'center',opacity:pressed ? .65 : 1})}><Ionicons name="ellipsis-horizontal" size={24} color={c.text}/></Pressable>
-     </View>
+     <HelpViewerLayout testIDPrefix="help-html" onBack={close} menuLabel="Действия с HTML" bottomInset={insets.bottom} menuOpen={menu} onMenuOpenChange={setMenu} actions={[
+      {id:'download',label:'Скачать',icon:'download-outline',onPress:()=>void action('download'),disabled:!expectedUserId||userId!==expectedUserId,busy},
+      {id:'link',label:'Ссылка',icon:'link-outline',onPress:()=>void action('link'),disabled:!link||!expectedUserId||userId!==expectedUserId,busy},
+     ]}>
+      <HelpHtmlSurface variant={artifact.full!} label={artifact.title} topInset={HEADER_HEIGHT} onReady={()=>setFullReady(true)} onScroll={offset=>{scroll.current=offset;}}/>
+     </HelpViewerLayout>
      {notice?<View pointerEvents="none" style={{position:'absolute',left:16,right:16,bottom:insets.bottom+16,alignItems:'center'}}><Text accessibilityLiveRegion="polite" style={{backgroundColor:c.panel,color:c.text,borderRadius:12,paddingHorizontal:14,paddingVertical:10,fontSize:13}}>{notice}</Text></View>:null}
-     {menu?<View testID="help-html-menu-layer" pointerEvents="box-none" style={[StyleSheet.absoluteFill,{zIndex:3}]}><Pressable testID="help-html-menu-dismiss" accessibilityLabel="Закрыть меню просмотра" onPress={()=>setMenu(false)} style={StyleSheet.absoluteFill}/><View testID="help-html-menu" accessibilityRole="menu" style={{position:'absolute',right:APP_TOOLBAR_LAYOUT.inset,top:HEADER_HEIGHT-8,minWidth:180,padding:6,borderRadius:16,backgroundColor:c.panel,elevation:6,boxShadow:'0 4px 18px #00000018'}}>
-      <Pressable testID="help-html-download" accessibilityRole="menuitem" disabled={busy||!expectedUserId||userId!==expectedUserId} accessibilityState={{disabled:busy||!expectedUserId||userId!==expectedUserId}} onPress={()=>void action('download')} style={{minHeight:48,paddingHorizontal:12,flexDirection:'row',alignItems:'center',gap:12,opacity:busy ? .5 : 1}}><Ionicons name="download-outline" size={21} color={c.text}/><Text style={{fontSize:15,color:c.text}}>Скачать</Text></Pressable>
-      <Pressable testID="help-html-link" accessibilityRole="menuitem" disabled={busy||!link||!expectedUserId||userId!==expectedUserId} accessibilityState={{disabled:busy||!link||!expectedUserId||userId!==expectedUserId}} onPress={()=>void action('link')} style={{minHeight:48,paddingHorizontal:12,flexDirection:'row',alignItems:'center',gap:12,opacity:busy||!link ? .5 : 1}}><Ionicons name="link-outline" size={21} color={c.text}/><Text style={{fontSize:15,color:c.text}}>Ссылка</Text></Pressable>
-     </View></View>:null}
+
     </Animated.View>
     {start&&artifact.compact?<Animated.View pointerEvents="none" style={{position:'absolute',left:(width-start.width)/2,top:(height-start.height)/2,width:start.width,height:start.height,opacity:progress.interpolate({inputRange:[0,.45,.8,1],outputRange:[1,1,0,0]}),transform:[{scaleX:width/start.width},{scaleY:height/start.height}]}}><HelpHtmlSurface compact variant={artifact.compact} label={artifact.title} onReady={()=>setCompactReady(true)}/></Animated.View>:null}
    </Animated.View>

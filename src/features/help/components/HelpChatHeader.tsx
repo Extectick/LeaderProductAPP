@@ -12,15 +12,15 @@ export type HelpChatSearchFieldProps = {
 };
 
 /** Keep this control mounted across header modes so both directions use the same animation value. */
-export function HelpMoreCloseButton({active,onPress,activeLabel='Закрыть'}:{active:boolean;onPress:()=>void;activeLabel?:string}) {
-  const c=useHelpTheme();const reduced=useHelpReducedMotion();const progress=useRef(new Animated.Value(active ? 1 : 0)).current;
+export function HelpMoreCloseButton({active,onPress,activeLabel='Закрыть',label='Действия с обращением',morphToClose=true,testID='help-header-more-close',busy=false}:{active:boolean;onPress:()=>void;activeLabel?:string;label?:string;morphToClose?:boolean;testID?:string;busy?:boolean}) {
+  const c=useHelpTheme();const reduced=useHelpReducedMotion();const showClose=active&&morphToClose;const progress=useRef(new Animated.Value(showClose ? 1 : 0)).current;
   useEffect(()=>{
     progress.stopAnimation();
-    if(reduced){progress.setValue(active ? 1 : 0);return;}
-    const animation=Animated.timing(progress,{toValue:active ? 1 : 0,duration:180,easing:Easing.out(Easing.cubic),useNativeDriver:true});
+    if(reduced){progress.setValue(showClose ? 1 : 0);return;}
+    const animation=Animated.timing(progress,{toValue:showClose ? 1 : 0,duration:180,easing:Easing.out(Easing.cubic),useNativeDriver:true});
     animation.start();return()=>animation.stop();
-  },[active,reduced,progress]);
-  return <Pressable ref={node=>helpDevRef('header.menu',node)} testID="help-header-more-close" accessibilityRole="button" accessibilityLabel={active ? activeLabel : 'Действия с обращением'} accessibilityState={{expanded:active}} onPress={onPress} style={({pressed})=>({width:HELP_LIST_META_WIDTH,height:48,borderRadius:24,backgroundColor:c.panel,alignItems:'center',justifyContent:'center',opacity:pressed ? .65 : 1})}>
+  },[showClose,reduced,progress]);
+  return <Pressable ref={node=>helpDevRef('header.menu',node)} testID={testID} accessibilityRole="button" accessibilityLabel={active&&morphToClose ? activeLabel : label} accessibilityState={{expanded:active,...(busy?{busy:true}:{})}} onPress={onPress} style={({pressed})=>({width:HELP_LIST_META_WIDTH,height:48,borderRadius:24,backgroundColor:c.panel,alignItems:'center',justifyContent:'center',opacity:pressed ? .65 : 1})}>
     <Animated.View pointerEvents="none" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[StyleSheet.absoluteFill,{alignItems:'center',justifyContent:'center',opacity:progress.interpolate({inputRange:[0,.6,1],outputRange:[1,0,0]}),transform:[{rotate:progress.interpolate({inputRange:[0,1],outputRange:['0deg','90deg']})},{scale:progress.interpolate({inputRange:[0,1],outputRange:[1,.65]})}]}]}><Ionicons name="ellipsis-horizontal" size={24} color={c.text}/></Animated.View>
     <Animated.View pointerEvents="none" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[StyleSheet.absoluteFill,{alignItems:'center',justifyContent:'center',opacity:progress.interpolate({inputRange:[0,.25,1],outputRange:[0,0,1]}),transform:[{rotate:progress.interpolate({inputRange:[0,1],outputRange:['-90deg','0deg']})},{scale:progress.interpolate({inputRange:[0,1],outputRange:[.65,1]})}]}]}><Ionicons name="close-outline" size={26} color={c.text}/></Animated.View>
   </Pressable>;

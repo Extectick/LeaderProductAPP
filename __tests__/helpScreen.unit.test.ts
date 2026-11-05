@@ -214,7 +214,7 @@ describe('Help screen integration with service boundary', () => {
     await act(async()=>list().props.onScroll({nativeEvent:{contentOffset:{y:300}}}));
     const anchorPolicy=list().props.maintainVisibleContentPosition;
     expect(anchorPolicy).toEqual({disabled:false});
-    const fresh={...ticket,id:9,number:1009,updatedAt:'2026-11-05T12:00:00Z'};
+    const fresh={...ticket,id:9,number:1009,updatedAt:new Date(Date.parse(ticket.updatedAt)+60000).toISOString()};
     mockService.tickets=[older,fresh,ticket];
     await act(async()=>screen.update(React.createElement(HelpScreen)));
     expect(list().props.data.map((row:HelpTicket)=>row.id)).toEqual([9,7,8]);

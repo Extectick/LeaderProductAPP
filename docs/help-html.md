@@ -62,10 +62,16 @@ surfaces when ordinary text cells recycle. Pool types are not unique per ID;
 the chat's existing native motion/anchor owner is unchanged.
 
 The full viewer leaves Help mounted, including its draft, list position and
-native keyboard/motion owner. Its floating header begins at the top safe area
-and matches the chat header's 80 dp geometry: back arrow left, centered “Просмотр”
-and a permanent ellipsis right. It uses the shared HelpBlurSurface/BlurTargetView
-edge material instead of a separate solid header. The full document reserves
+native keyboard/motion owner. HTML and linked profile/product/order cards render
+the same `HelpViewerLayout`. It owns content capture, floating header and action
+menu. The header renders the existing `HelpHeaderFrame` used by Help chat, with
+its plain center variant and title “Просмотр”; the existing `HelpMoreCloseButton`
+provides a permanent ellipsis. Back, spacing, title and control sizing therefore
+have one implementation. Existing chat/search defaults remain unchanged.
+
+The common floating header begins at the top safe area and shares the chat's
+80 dp geometry, using `HelpBlurSurface`/`BlurTargetView` instead of a separate
+solid header. The full document reserves
 the header's initial inset and scrolls beneath it. Standalone HTML exports do
 not contain this application header inset. The
 preview expansion morph uses the measured square origin, a matching compact

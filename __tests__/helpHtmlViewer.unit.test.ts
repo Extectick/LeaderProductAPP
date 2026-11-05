@@ -12,6 +12,9 @@ jest.mock('../src/features/help/helpHtmlActions',()=>({downloadHelpHtml:jest.fn(
 import {AuthContext} from '../context/AuthContext';
 import {HelpHtmlViewer} from '../src/features/help/components/HelpHtmlViewer';
 import {copyHelpHtmlLink,downloadHelpHtml} from '../src/features/help/helpHtmlActions';
+import {HelpHeaderFrame} from '../src/features/help/components/HelpHeaderFrame';
+import {HelpMoreCloseButton} from '../src/features/help/components/HelpChatHeader';
+import {HelpViewerLayout} from '../src/features/help/components/HelpViewerLayout';
 import type {HelpHtmlArtifact} from '../src/features/help/helpHtml';
 const id='8cb01504-f89b-4e55-ad30-f8f6eb686547',link=`leaderproduct://services/help?ticketId=50&htmlId=${id}`;
 const artifact:HelpHtmlArtifact={version:1,id,title:'Пример',description:'Описание',full:{html:'<p>Подробности</p>',css:''}};
@@ -22,8 +25,12 @@ beforeEach(()=>{jest.clearAllMocks();});afterEach(async()=>{if(view)await act(as
 test('transparent chat-sized header has centered title, back arrow and a permanent ellipsis',async()=>{
  await act(async()=>{view=TestRenderer.create(tree());});
  const header=view.root.findAll(item=>item.props.testID==='help-html-viewer-header')[0],style=StyleSheet.flatten(header.props.style);
- expect(style).toMatchObject({height:80,paddingHorizontal:16,backgroundColor:'transparent'});
+ expect(style).toMatchObject({height:80,backgroundColor:'transparent'});
  expect(style.position).toBe('absolute');
+ expect(view.root.findByType(HelpViewerLayout)).toBeDefined();
+ const shared=view.root.findByType(HelpHeaderFrame);expect(shared.props.contentSurface).toBe('plain');expect(shared.props.reserveEyebrow).toBe(true);
+ expect(StyleSheet.flatten(view.root.findByProps({testID:'help-header'}).props.style)).toMatchObject({paddingHorizontal:16,paddingTop:16,paddingBottom:16});
+ expect(view.root.findByType(HelpMoreCloseButton).props.morphToClose).toBe(false);
  expect(view.root.findAll(item=>item.type==='HelpBlurSurface')[0].props.edge).toBe('bottom');
  expect(view.root.findAll(item=>item.type==='HtmlSurface')[0].props.topInset).toBe(80);
  const title=view.root.findAllByType(Text).find(item=>item.props.children==='Просмотр')!;expect(StyleSheet.flatten(title.props.style).textAlign).toBe('center');
