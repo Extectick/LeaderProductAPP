@@ -34,8 +34,8 @@ export function HelpAssistantMessage(props: MessageProps) {
   }),[canRetry,canConnect,canSuggest,canRequestIt]);
   const row=<MemoHelpAssistantMessage {...props} {...actions}/>;
   if(!(props.message.attachments||[]).some(file=>helpHtmlAttachmentId(file)!==null))return row;
-  const {HelpHtmlMessage}=require('./HelpHtmlMessage') as typeof import('./HelpHtmlMessage');
-  return <HelpHtmlMessage attachments={props.message.attachments} resolve={props.resolve}>{row}</HelpHtmlMessage>;
+  const {HelpHtmlMessageRoute}=require('./HelpHtmlMessageRoute') as typeof import('./HelpHtmlMessageRoute');
+  return <HelpHtmlMessageRoute ticketId={props.message.ticketId} messageId={props.message.id} attachments={props.message.attachments} resolve={props.resolve}>{row}</HelpHtmlMessageRoute>;
 }
 const MemoHelpAssistantMessage = memo(function HelpAssistantMessageBody({ message, onRetry, onConnectOnec, onSuggestion, onRequestIt, resolve, onFileError }: MessageProps) {
   const c=useHelpTheme(),reduced=useHelpReducedMotion(),run=message.assistantRun!;

@@ -1,4 +1,4 @@
-import {HELP_HTML_MIME,helpHtmlAttachmentId,helpHtmlDocument,parseHelpHtmlArtifact,parseHelpHtmlLink} from '../src/features/help/helpHtml';
+import {HELP_HTML_MIME,helpHtmlAttachmentId,helpHtmlDocument,helpHtmlPageLink,parseHelpHtmlArtifact,parseHelpHtmlLink} from '../src/features/help/helpHtml';
 import type {HelpAttachment} from '../src/features/help/helpApi';
 const id='8cb01504-f89b-4e55-ad30-f8f6eb686547';
 const file:HelpAttachment={id:'attachment-1',kind:'FILE',name:`${id}.help-html.json`,mimeType:HELP_HTML_MIME,size:100,url:'/help/attachments/attachment-1'};
@@ -10,6 +10,22 @@ test('binds a private descriptor to an exact attachment MIME, filename and id',(
  expect(helpHtmlAttachmentId({...file,name:'fake.html'})).toBeNull();
  expect(parseHelpHtmlArtifact(payload(),id).compact).toEqual(compact);
  expect(()=>parseHelpHtmlArtifact(payload(),'90d31752-d4bf-4e50-a2a1-47c705db821e')).toThrow();
+});
+test('compact viewport overrides model overflow and hides all inner scrollbars',()=>{
+ const css='html,body{overflow:auto!important;height:200vh!important}';
+ const html=helpHtmlDocument({...compact,css},'#18212D',true);
+ expect(html.lastIndexOf('overflow:hidden!important')).toBeGreaterThan(html.indexOf(css));
+ expect(html).toContain('max-height:100%!important');expect(html).toContain('scrollbar-width:none!important');expect(html).toContain('*::-webkit-scrollbar');
+ const full=helpHtmlDocument({...compact,css},'#18212D',false);expect(full).not.toContain('max-height:100%!important');
+});
+test('share links bind both the accessible chat and original message without credentials',()=>{
+ expect(helpHtmlPageLink(50,1075,id)).toBe(`leaderproduct://services/help?ticketId=50&messageId=1075&htmlId=${id}`);
+ expect(helpHtmlPageLink(-1,1,id)).toBeUndefined();expect(helpHtmlPageLink(1,NaN,id)).toBeUndefined();expect(helpHtmlPageLink(1,2,'bad')).toBeUndefined();
+});
+test('floating viewer header inset applies only to viewing, never to a standalone export',()=>{
+ expect(helpHtmlDocument(compact,'#18212D',false,80)).toContain('body{padding-top:80px!important}');
+ expect(helpHtmlDocument(compact,'#18212D',false)).not.toContain('padding-top:80px');
+ expect(()=>helpHtmlDocument(compact,'#18212D',false,Infinity)).toThrow();
 });
 test('supports compact-only, full-only and two independent versions',()=>{
  expect(parseHelpHtmlArtifact(payload(),id).full).toBeUndefined();

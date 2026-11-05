@@ -27,10 +27,20 @@ export function parseHelpHtmlArtifact(text:string,expectedId:string):HelpHtmlArt
  const compact=variant(data.compact),full=variant(data.full);if(!compact&&!full)throw Error('HELP_HTML_INVALID');
  return {version:1,id:data.id.toLowerCase(),title:data.title,description:data.description,...(compact?{compact}:{}),...(full?{full}:{})};
 }
-export function helpHtmlDocument(value:HelpHtmlVariant,color:string,compact:boolean):string {
+export function helpHtmlDocument(value:HelpHtmlVariant,color:string,compact:boolean,topInset=0):string {
  // The CSS cannot break out of its style element. No auth cookies, JS bridge,
  // remote assets, forms, frames or navigation capabilities enter this document.
- if(/</.test(value.css)||!/^#[\da-f]{3,8}$/i.test(color))throw Error('HELP_HTML_INVALID');
+ if(/</.test(value.css)||!/^#[\da-f]{3,8}$/i.test(color)||!Number.isFinite(topInset)||topInset<0||topInset>300)throw Error('HELP_HTML_INVALID');
  const csp="default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
- return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=5"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>html,body{margin:0;padding:0;background:transparent;color:${color};font-family:system-ui,-apple-system,sans-serif;overflow-x:hidden}*{box-sizing:border-box}html{color-scheme:light dark}${compact?'html,body{height:100%;overflow:hidden}':''}${value.css}</style></head><body>${value.html}</body></html>`;
+ // Enforce viewport geometry AFTER model CSS: the compact document cannot grow,
+ // acquire inner scrolling or flash scrollbars even if its styles set overflow.
+ const compactViewport=compact?'html,body{width:100%!important;height:100%!important;min-height:0!important;max-height:100%!important;overflow:hidden!important;overscroll-behavior:none!important}*{scrollbar-width:none!important}*::-webkit-scrollbar{display:none!important;width:0!important;height:0!important}':'';
+ const viewerInset=!compact&&topInset?`body{padding-top:${topInset}px!important}`:'';
+ return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=${compact?'1,user-scalable=no':'5'}"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>html,body{margin:0;padding:0;background:transparent;color:${color};font-family:system-ui,-apple-system,sans-serif;overflow-x:hidden}*{box-sizing:border-box}html{color-scheme:light dark}${value.css}${compactViewport}${viewerInset}</style></head><body>${value.html}</body></html>`;
+}
+
+/** Private app navigation, never a public attachment URL or authorization grant. */
+export function helpHtmlPageLink(ticketId:number,messageId:number,artifactId:string):string|undefined {
+ if(!Number.isSafeInteger(ticketId)||ticketId<1||!Number.isSafeInteger(messageId)||messageId<1||!new RegExp(`^${uuid}$`,'i').test(artifactId))return;
+ return `leaderproduct://services/help?ticketId=${ticketId}&messageId=${messageId}&htmlId=${artifactId.toLowerCase()}`;
 }

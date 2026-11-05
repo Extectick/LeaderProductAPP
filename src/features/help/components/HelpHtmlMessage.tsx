@@ -4,7 +4,7 @@ import {Ionicons} from '@expo/vector-icons';
 import {AuthContext} from '@/context/AuthContext';
 import {API_BASE_URL} from '@/utils/config';
 import {loadHelpAttachmentText,type HelpAttachment} from '../helpApi';
-import {HELP_HTML_MAX_BYTES,helpHtmlAttachmentId,parseHelpHtmlArtifact,type HelpHtmlArtifact} from '../helpHtml';
+import {HELP_HTML_MAX_BYTES,helpHtmlAttachmentId,helpHtmlPageLink,parseHelpHtmlArtifact,type HelpHtmlArtifact} from '../helpHtml';
 import {useHelpTheme} from '../helpTheme';
 import type {ResolveHelpMedia} from './HelpMedia';
 import {HelpHtmlContext} from './HelpHtmlContext';
@@ -13,7 +13,7 @@ import {HelpHtmlViewer,type HelpHtmlOrigin} from './HelpHtmlViewer';
 type Loaded={artifact?:HelpHtmlArtifact;error?:boolean};
 
 /** Links are scoped to real attachments of this message, never model URLs. */
-export function HelpHtmlMessage({attachments,resolve,children}:{attachments:HelpAttachment[];resolve?:ResolveHelpMedia;children:React.ReactNode}){
+export function HelpHtmlMessage({attachments,resolve,children,ticketId,messageId,requestedId,onRequestConsumed}:{attachments:HelpAttachment[];resolve?:ResolveHelpMedia;children:React.ReactNode;ticketId?:number;messageId?:number;requestedId?:string;onRequestConsumed?:()=>void}){
  const c=useHelpTheme(),auth=useContext(AuthContext),userId=auth?.isAuthenticated?auth.profile?.id:undefined;
  const account=userId?`${API_BASE_URL}:${userId}`:'';
  const files=attachments.filter(file=>helpHtmlAttachmentId(file)!==null),identity=files.map(file=>`${file.id}:${file.name}:${file.url}`).join('|');
@@ -50,6 +50,14 @@ export function HelpHtmlMessage({attachments,resolve,children}:{attachments:Help
   if(node){node.measureInWindow((x,y,width,height)=>{if(version===generation.current)setViewer({artifact,account:scope.current.account,origin:width>0&&height>0?{x,y,width,height}:undefined});});}
   else setViewer({artifact,account:scope.current.account});
  },[load]);
+ const consumedRequest=useRef<string|null>(null),consume=useRef(onRequestConsumed);consume.current=onRequestConsumed;
+ useEffect(()=>{
+  if(!requestedId){consumedRequest.current=null;return;}
+  if(!sameScope||!visibleLoaded[requestedId]?.artifact?.full)return;
+  const key=`${account}:${identity}:${requestedId}`;if(consumedRequest.current===key)return;
+  const version=generation.current;
+  consumedRequest.current=key;void open(requestedId).then(()=>{if(generation.current===version&&consumedRequest.current===key)consume.current?.();});
+ },[requestedId,account,identity,sameScope,loaded,open]);
  const navigation=useMemo(()=>({
   canOpen:(id:string)=>!!files.find(file=>helpHtmlAttachmentId(file)===id)&&(!visibleLoaded[id]?.artifact||!!visibleLoaded[id].artifact?.full),
   open:(id:string)=>{void open(id);},
@@ -62,5 +70,5 @@ export function HelpHtmlMessage({attachments,resolve,children}:{attachments:Help
    </View>;
   })}</View>,
  }),[identity,loaded,sameScope,c,open,load]);
- return <HelpHtmlContext.Provider value={navigation}>{children}{viewer&&account&&sameScope&&viewer.account===account?<HelpHtmlViewer artifact={viewer.artifact} origin={viewer.origin} onClose={()=>setViewer(null)}/>:null}</HelpHtmlContext.Provider>;
+ return <HelpHtmlContext.Provider value={navigation}>{children}{viewer&&account&&sameScope&&viewer.account===account?<HelpHtmlViewer artifact={viewer.artifact} origin={viewer.origin} expectedUserId={userId} link={helpHtmlPageLink(ticketId??0,messageId??0,viewer.artifact.id)} onClose={()=>setViewer(null)}/>:null}</HelpHtmlContext.Provider>;
 }

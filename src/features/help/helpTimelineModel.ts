@@ -3,6 +3,7 @@ import type { HelpMessage } from './helpApi';
 import type { HelpPending } from './helpDurableTypes';
 import type {HelpNavigationTarget} from './helpHistoryTypes';
 import { helpDayKey } from './helpUiUtils';
+import {helpHtmlAttachmentId} from './helpHtml';
 
 export type HelpMessageGroup = { groupFirst: boolean; groupLast: boolean };
 const HELP_MESSAGE_GROUP_INTERVAL = 5 * 60 * 1000;
@@ -27,6 +28,12 @@ export function helpMessageGroups(messages: readonly HelpMessage[], firstUnreadS
 }
 
 export type HelpTimelineRow = { key:string; kind:'message'|'pending'|'date'|'unread'; message: HelpMessage; pending?:HelpPending; date?: string; unread: boolean };
+/** Reuse HTML surfaces among HTML rows, without replacing them with ordinary
+ * text cells while scrolling. One shared pool stays bounded by visible demand. */
+export function helpTimelineRowType(row:HelpTimelineRow):string {
+  if(row.kind==='message'&&row.message.attachments?.some(file=>helpHtmlAttachmentId(file)!==null))return 'message-html';
+  return row.kind==='pending'?'message':row.kind;
+}
 /** Presentation only: pending entries never enter history/read persistence. */
 export function helpTimelineEntries(messages:HelpMessage[],pending:readonly HelpPending[]=[],authorId:number|null=null) {
   const accepted=new Set(messages.flatMap(message=>message.clientMessageId?[message.clientMessageId]:[]));

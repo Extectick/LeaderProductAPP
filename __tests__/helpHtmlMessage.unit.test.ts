@@ -72,3 +72,11 @@ test('descriptor id mismatch fails closed and offers explicit retry',async()=>{
  expect(view.root.findAll(node=>node.type==='HtmlSurface'||node.type==='HtmlViewer')).toHaveLength(0);
  expect(view.root.findAll(node=>node.props.accessibilityLabel==='Повторить загрузку примера'&&typeof node.props.onPress==='function')).toHaveLength(1);
 });
+test('a bound route intent opens once and exports a link back to its exact message',async()=>{
+ jest.mocked(loadHelpAttachmentText).mockResolvedValue(encode({full:compact}));const consumed=jest.fn();
+ const content=()=>React.createElement(AuthContext.Provider,{value:auth(121)},React.createElement(HelpHtmlMessage,{ticketId:50,messageId:1075,requestedId:id,onRequestConsumed:consumed,attachments:[file],resolve,children:null}));
+ await act(async()=>{view=TestRenderer.create(content());});
+ const viewer=view.root.findAll(node=>node.type==='HtmlViewer')[0];expect(viewer.props.link).toBe(`leaderproduct://services/help?ticketId=50&messageId=1075&htmlId=${id}`);expect(viewer.props.expectedUserId).toBe(121);expect(consumed).toHaveBeenCalledTimes(1);
+ await act(async()=>viewer.props.onClose());await act(async()=>view.update(content()));
+ expect(view.root.findAll(node=>node.type==='HtmlViewer')).toHaveLength(0);expect(consumed).toHaveBeenCalledTimes(1);
+});

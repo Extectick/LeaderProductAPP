@@ -28,6 +28,11 @@ requests. Account, resolver, attachment descriptor and component lifetime change
 cancel pending reads, hide old rendered content and close the viewer. Tokens and
 attachment URLs never enter the HTML document or WebView source.
 
+“Ссылка” copies a private app route with ticketId, messageId and htmlId. Opening
+it first uses normal chat authorization and history navigation, then opens only
+the matching attachment of the matching message. The route is consumed once;
+closing the viewer does not reopen it. It grants no additional access.
+
 ## Renderer and presentation
 
 Native rendering lazily loads the existing react-native-webview module. Only
@@ -42,9 +47,27 @@ Web rendering uses an iframe with empty sandbox, inline srcDoc, no referrer,
 the same restrictive CSP and zero application border/background. It grants
 neither scripts nor same-origin privileges.
 
+The compact surface has an actual outer native View with pointerEvents=none;
+setting the prop only on WebView does not disable its own outer wrapper. Only
+the expansion control beside that surface accepts touches. Scroll and zoom
+controls/indicators are disabled, and enforced CSS after the model stylesheet
+fixes the document to its square viewport and hides nested scrollbars. Message
+geometry does not depend on DOM content measurements.
+
+The renderer memoizes the local source, styles, origin whitelist and callbacks.
+Parent scroll/layout/menu renders and equal recreated variant objects do not
+commit a new source to Android's loadDataWithBaseURL. HTML rows use one separate
+FlashList recycle pool shared between HTML messages, preserving their native
+surfaces when ordinary text cells recycle. Pool types are not unique per ID;
+the chat's existing native motion/anchor owner is unchanged.
+
 The full viewer leaves Help mounted, including its draft, list position and
-native keyboard/motion owner. Its header begins at the top safe area and matches
-the chat header's 80 dp geometry: centered “Просмотр”, close icon right. The
+native keyboard/motion owner. Its floating header begins at the top safe area
+and matches the chat header's 80 dp geometry: back arrow left, centered “Просмотр”
+and a permanent ellipsis right. It uses the shared HelpBlurSurface/BlurTargetView
+edge material instead of a separate solid header. The full document reserves
+the header's initial inset and scrolls beneath it. Standalone HTML exports do
+not contain this application header inset. The
 preview expansion morph uses the measured square origin, a matching compact
 layout crossfade and the full layout. Native-driver animation starts once both
 local renderer surfaces have loaded; reduced motion uses the final position.
@@ -53,6 +76,13 @@ presentation. On native, a downward gesture starts in the header or when content
 was at the top at touch-start; other scroll gestures stay in the WebView.
 On web, sandbox isolation means only header drag is available; iframe body
 scroll/touch state is deliberately not bridged to the app. Escape closes there.
+
+The ellipsis menu contains “Скачать” and “Ссылка”. Download exports the complete
+inert full HTML/CSS document as a genuine .html file, not the JSON attachment.
+Native sharing uses a uniquely scoped cache directory and removes only that
+operation's temporary files; Web uses a Blob download. Clipboard/export actions
+validate current account, token identity, viewer lifetime and cancellation before
+each disclosure. Errors appear inside the viewer; menu/back/close remain usable.
 
 No new dependency or native module was added. Verify runtime compatibility and
 ordinary dev OTA gates before publishing; source validation alone does not prove

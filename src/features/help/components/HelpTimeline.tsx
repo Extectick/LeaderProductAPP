@@ -5,7 +5,7 @@ import Reanimated,{cancelAnimation,Easing as UiEasing,runOnUI,useAnimatedStyle,u
 import type { HelpMessage } from '../helpApi';
 import type {HelpPending} from '../helpDurableTypes';
 import type { HelpNavigationTarget, HelpViewportAnchor } from '../helpHistoryTypes';
-import { helpTimelineRows, helpVisibleRows, helpNavigationIndex, type HelpTimelineRow } from '../helpTimelineModel';
+import { helpTimelineRows, helpVisibleRows, helpNavigationIndex, helpTimelineRowType, type HelpTimelineRow } from '../helpTimelineModel';
 import { helpDateJumpMode } from '../helpDateNavigation';
 import { helpDevActions, helpDevEvent, helpDevProbe, helpDevState } from '../helpDiagnostics';
 import { helpDayKey } from '../helpUiUtils';
@@ -62,7 +62,7 @@ type Props = {
 type MediaRange = {first: number; last: number};
 type OutgoingViewport = {rows: {row: HelpTimelineRow; top: number; height: number}[]; direction: number; latest?: boolean; distance?: number; duration?: number};
 const rowKey = (row: HelpTimelineRow) => row.key;
-const rowType = (row: HelpTimelineRow) => row.kind==='pending'?'message':row.kind;
+const rowType = helpTimelineRowType;
 
 /** FlashList owns history anchors; native layout owns composer geometry only while following the tail. */
 export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpTimeline(props, ref) {
