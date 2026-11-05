@@ -162,3 +162,14 @@ A real Sol/medium tool output with180px root height passed the APP parser and
 height helper.135 targeted APP tests,30 API tests, types, Android Metro bundle
 and Expo Doctor20/20 passed. Device visual QA unavailable: DEVICE_IN_USE after
 the prescribed wait. No OTA/native rebuild; the owner uses Metro.
+
+
+## Consolidated development OTA source — 2026-11-05
+
+The owner requested publication of all compatible current application changes.
+The release includes shared stock/profile viewers and header blur, fixed-height
+HTML previews, questions, authenticated client context and current chat/history
+work. APK0.1.46/runtime0.1.46 compatibility is retained; native Kotlin/Gradle
+input geometry changes require a separate APK and are excluded.
+Validation:220suites/2014tests,258 final targeted checks, TypeScript and Expo
+Doctor20/20. Existing chat/account/draft state is preserved.
