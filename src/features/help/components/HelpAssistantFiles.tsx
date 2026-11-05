@@ -1,3 +1,4 @@
+import {LoadingPlaceholder} from '@/components/ui/LoadingPlaceholder';
 import React, { useLayoutEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -69,7 +70,7 @@ export function HelpAssistantFiles({ attachments, resolve, onError }: HelpAssist
             borderRadius: 16, borderWidth: 1, borderColor: failedId === file.id ? c.danger : c.line,
             backgroundColor: busy?(c.dark?'#343A42':'#E4E7EB'):c.elevated, paddingHorizontal: 14, paddingVertical: 12, opacity: !resolve ? 0.55 : 1 }}>
           <View style={{ width: 40, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 10, backgroundColor: c.dark?'#343A42':'#E4E7EB' }}>
-            <Ionicons name="document-text-outline" size={23} color={c.accentText}/>
+            {busy?<LoadingPlaceholder dark={c.dark} variant="icon" accessibilityLabel="Загрузка файла" style={{width:40,height:44}}/>:<Ionicons name="document-text-outline" size={23} color={c.accentText}/>}
           </View>
           <View style={{ flex: 1, gap: 4 }}>
             <Text numberOfLines={2} style={{ color: c.text, fontSize: 14, fontWeight: '600', lineHeight: 19 }}>{file.name}</Text>

@@ -77,3 +77,48 @@ HelpAssistantFiles отображает обычные FILE attachments отве
 с отменой позднего download/share при смене аккаунта, resolver или unmount.
 Это реальные приватные вложения, не текст для ручного копирования и не
 фиктивные sandbox-ссылки. Серверная генерация поддерживает TXT, MD, CSV, JSON.
+
+### IT wait and AI return
+
+After confirmed `request-it`, the server persists a SYSTEM row with
+`itStatusChange=REQUESTED`. While the OPEN ticket has `itRequested` and no IT
+member, the owner cannot send text, voice or files. The existing measured dock
+shows only “Продолжить с AI”; drafts remain intact. The owner-only `continue-ai`
+endpoint atomically cancels the wait before any IT joins, without replaying an
+old AI prompt. A competing IT claim and return use the same ticket lock.
+
+Joining persists `itStatusChange=JOINED`, with the actual specialist's avatar and
+surname-first display name; the ordinary composer returns and AI return is no
+longer available. `AI_RESUMED` records a successful return. These system lines
+have no bubble background. Older tickets without events use a current-state
+footer fallback, replaced when the durable event is present in the loaded page.
+
+
+### IT takeover, departure and feedback (2026-11-06)
+
+An authorized specialist can join any other user's OPEN ticket, including an
+active AI conversation. Joining cancels the current AI run. The three-dot menu
+exposes “Подключиться к чату” before joining and separate “Покинуть чат” /
+“Закрыть чат” actions after joining. Each mutation is protected against duplicate
+taps. Leaving records a minimal avatar/name system line. After the last IT leaves,
+AI responds only to the next owner message; departure never replays an old prompt.
+
+JOINED/LEFT lines use the server's immutable surname-first text. Legacy membership
+fallbacks wait for authoritative `itDisplayName`, avoiding a temporary first-name
+order. Mutation responses append contiguous new system rows immediately while
+preserving older history windows and rejecting stale snapshots.
+
+The per-message “Помогло” footer is removed. IT closure exposes “Оценить помощь”
+to the owner through `ticket.canRate`; existing stars/comment and reopen flows are
+preserved. Metadata and repaired history apply together. Feedback submitted from
+the current tail pins the existing list without reloading its history; an older
+history window still explicitly jumps to the latest page.
+
+
+### Chat readiness and loading placeholders
+
+Existing chats mount and measure their initial timeline before the entry animation
+starts. Stable geometry is checked across frames with a bounded wait for streaming
+content; read visibility begins after entry. The existing native runtime and
+composer remain unchanged. Remote HTML, media and entity/profile cards still load
+asynchronously and display neutral gray placeholders while loading.

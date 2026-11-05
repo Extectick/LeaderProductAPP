@@ -207,6 +207,20 @@ describe('sticky date geometry and navigation integration',()=>{
     height=440;await act(async()=>mockFlashProps.onCommitLayoutEffect());
     expect(mockTailTiming).not.toHaveBeenCalled();
   });
+  test('opening geometry is a baseline, not an animated tail arrival',async()=>{
+    mockReducedMotion=false;mockNativeChatLayout=true;props={...props,bottomAligned:true,entrySettled:false};
+    let height=300;mockListApi.getChildContainerDimensions=()=>({width:390,height});
+    await render();mockTailTiming.mockClear();
+    height=360;props={...props,messages:[...props.messages,message(3,nextDate)]};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    expect(mockTailTiming).not.toHaveBeenCalled();
+    props={...props,entrySettled:true};await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    await act(async()=>mockFlashProps.onCommitLayoutEffect());
+    expect(mockTailTiming).not.toHaveBeenCalled();
+    height=420;props={...props,messages:[...props.messages,message(4,nextDate)]};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    expect(mockTailTiming).toHaveBeenCalledTimes(1);
+  });
   test.each([['TEXT',60],['AUDIO',88],['IMAGE',360]])('%s lifts a long native history by its measured height on one clock',async(kind,growth)=>{
     mockReducedMotion=false;mockNativeChatLayout=true;
     let height=1600;mockListApi.getChildContainerDimensions=()=>({width:390,height});
@@ -512,6 +526,22 @@ describe('sticky date geometry and navigation integration',()=>{
     await act(async()=>mockFlashProps.onLoad());
     expect(props.onReady).toHaveBeenCalledTimes(1);
   });
+  test('prepared entry waits for stable native geometry after initial positioning',async()=>{
+    jest.spyOn(global,'requestAnimationFrame').mockImplementation(callback=>setTimeout(()=>callback(performance.now()),16) as unknown as number);
+    jest.spyOn(global,'cancelAnimationFrame').mockImplementation(id=>clearTimeout(id));
+    props={...props,prepareBeforeEntry:true,entrySettled:false,onReady:jest.fn(),navigationTarget:{key:289,kind:'anchor',messageId:2,sequence:2,offset:5,animate:false}};
+    mockListApi.getAbsoluteLastScrollOffset=()=>259;
+    await act(async()=>{screen=TestRenderer.create(React.createElement(HelpTimeline,{...props,ref}));});
+    await act(async()=>{mockFlashProps.onLayout({nativeEvent:{layout:{height:600}}});mockFlashProps.onContentSizeChange(390,1000);});
+    await act(async()=>mockFlashProps.onCommitLayoutEffect());
+    expect(props.onReady).not.toHaveBeenCalled();
+    await act(async()=>jest.advanceTimersByTimeAsync(16));
+    await act(async()=>mockFlashProps.onContentSizeChange(390,1010));
+    expect(props.onReady).not.toHaveBeenCalled();
+    await act(async()=>jest.advanceTimersByTimeAsync(100));
+    expect(props.onReady).toHaveBeenCalledTimes(1);
+    expect(mockFlashProps.drawDistance).toBe(320);
+  });
   test('an initial layout commit keeps an unmeasured saved anchor hidden',async()=>{
     props={...props,entrySettled:false,onReady:jest.fn(),navigationTarget:{key:288,kind:'anchor',messageId:2,sequence:2,offset:5,animate:false}};
     mockLayouts=mockLayouts.map(layout=>({...layout,isHeightMeasured:false}));
@@ -519,6 +549,18 @@ describe('sticky date geometry and navigation integration',()=>{
     await act(async()=>{mockFlashProps.onLayout({nativeEvent:{layout:{height:600}}});mockFlashProps.onContentSizeChange(390,1000);mockFlashProps.onCommitLayoutEffect();});
     expect(props.onReady).not.toHaveBeenCalled();
     expect(animatedNumber(StyleSheet.flatten(screen!.root.findByProps({testID:'help-timeline-live-layer'}).props.style).opacity)).toBe(0);
+  });
+  test('initial rows cannot reveal while FlashList still estimates their width',async()=>{
+    props={...props,entrySettled:false,onReady:jest.fn(),navigationTarget:{key:287,kind:'anchor',messageId:2,sequence:2,offset:5,animate:false}};
+    mockListApi.getAbsoluteLastScrollOffset=()=>259;
+    mockLayouts=mockLayouts.map(layout=>({...layout,isHeightMeasured:true,isWidthMeasured:false,width:0}));
+    await act(async()=>{screen=TestRenderer.create(React.createElement(HelpTimeline,{...props,ref}));});
+    await act(async()=>{mockFlashProps.onLayout({nativeEvent:{layout:{height:600}}});mockFlashProps.onContentSizeChange(390,1000);mockFlashProps.onCommitLayoutEffect();});
+    expect(props.onReady).not.toHaveBeenCalled();
+    mockLayouts=mockLayouts.map(layout=>({...layout,isHeightMeasured:true,isWidthMeasured:true,width:390}));
+    await act(async()=>mockFlashProps.onCommitLayoutEffect());
+    await act(async()=>jest.advanceTimersByTimeAsync(32));
+    expect(props.onReady).toHaveBeenCalledTimes(1);
   });
   test('a measured initial window at its requested offset reveals on load without advancing a frame timer',async()=>{
     props={...props,onReady:jest.fn(),navigationTarget:{key:290,kind:'anchor',messageId:2,sequence:2,offset:5,animate:false}};

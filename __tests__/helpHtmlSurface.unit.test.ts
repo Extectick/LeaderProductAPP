@@ -53,3 +53,20 @@ test('approved raster bytes are local data only and remain stable across parent 
   expect(view.root.findAll(node=>node.props.testID==='help-html-surface')[0].props.pointerEvents).toBe('none');
  }finally{await act(async()=>view.unmount());}
 });
+
+test('placeholder waits for the current document and ignores a late load from the previous document',async()=>{
+ let view!:TestRenderer.ReactTestRenderer;const ready=jest.fn();
+ const tree=(html:string)=>React.createElement(HelpHtmlSurface,{variant:{html,css:''},label:'Карточка',onReady:ready});
+ await act(async()=>{view=TestRenderer.create(tree('<p>Первая</p>'));});
+ const placeholder=()=>view.root.findAll(node=>node.props.accessibilityRole==='progressbar');
+ const native=()=>view.root.findAll(node=>node.type==='WebView')[0].props;
+ try{
+  expect(placeholder().length).toBeGreaterThan(0);
+  const first=native().onLoad;
+  await act(async()=>first());expect(placeholder()).toHaveLength(0);
+  await act(async()=>view.update(tree('<p>Вторая</p>')));
+  expect(placeholder().length).toBeGreaterThan(0);
+  await act(async()=>first());expect(placeholder().length).toBeGreaterThan(0);expect(ready).toHaveBeenCalledTimes(1);
+  await act(async()=>native().onLoad());expect(placeholder()).toHaveLength(0);expect(ready).toHaveBeenCalledTimes(2);
+ }finally{await act(async()=>view.unmount());}
+});

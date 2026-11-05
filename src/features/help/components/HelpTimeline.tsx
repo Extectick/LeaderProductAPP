@@ -37,6 +37,7 @@ export type HelpTimelineHandle = {
 };
 export type HelpLatestControlState={visible:boolean;count:number;loading:boolean};
 type Props = {
+  prepareBeforeEntry?: boolean;
   obscuredBottom?:{current:number};
   pendingMessages?:readonly HelpPending[]; renderPending?:(item:HelpPending)=>React.ReactElement;
   messages: HelpMessage[]; nativeID: string; headerHeight: number; dockHeight: number;
@@ -160,7 +161,27 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   }, []);
   // Reveal after the positioned list commits, rather than from onLoad itself.
   // The entry owns its reveal state, so this does not rerender the chat's rows.
-  useLayoutEffect(() => { if (ready) notifyReady(); }, [ready,notifyReady]);
+  useLayoutEffect(() => {
+    if (!ready) return;
+    if (!props.prepareBeforeEntry) { notifyReady(); return; }
+    // Text measurement and native dock padding can commit after FlashList's
+    // first positioned pass. Keep these corrections behind the retained list.
+    let frame=0,previous='',stable=0;
+    const deadline=Date.now()+500;
+    const check=()=>{
+      const view=list.current;
+      if(!view)return;
+      const {startIndex,endIndex}=view.computeVisibleIndices();
+      const parts=[geometry.current.height,geometry.current.content,view.getAbsoluteLastScrollOffset(),live.current.headerHeight,currentBottomInset()];
+      for(let index=startIndex;index<=endIndex;index++){const layout=view.getLayout(index);parts.push(layout?.y??-1,layout?.height??-1);}
+      const signature=parts.join(':');
+      stable=signature===previous?stable+1:0;previous=signature;
+      if(stable>=2||Date.now()>=deadline){notifyReady();return;}
+      frame=requestAnimationFrame(check);
+    };
+    frame=requestAnimationFrame(check);
+    return()=>cancelAnimationFrame(frame);
+  }, [ready,props.prepareBeforeEntry,notifyReady,currentBottomInset]);
   const latestAffordance = useRef(hiddenHelpLatest());
   const [latestAvailable, setLatestAvailable] = useState(false);
   const mountedAt = useRef(Date.now()), openingReported = useRef(false);
@@ -538,10 +559,10 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
           .catch(()=>{if(mounted.current)live.current.onError('Не удалось восстановить позицию в истории. Откройте последние сообщения.');});
       }
       const visibleLayouts=[];
-      const hasMeasurement=(layout:ReturnType<typeof readLayout>)=>Boolean(layout&&layout.height>=0&&layout.isHeightMeasured!==false&&(layout.height>0||layout.isHeightMeasured===true));
+      const hasMeasurement=(layout:ReturnType<typeof readLayout>)=>Boolean(layout&&layout.height>=0&&layout.isHeightMeasured!==false&&layout.isWidthMeasured!==false&&(layout.width??1)>0&&(layout.height>0||layout.isHeightMeasured===true));
       let measured=hasMeasurement(item);
       for(let i=Math.max(0,range.startIndex);i<=Math.min(range.endIndex,rowsRef.current.length-1);i++){
-        const layout=readLayout(i);visibleLayouts.push(layout?`${i}:${layout.y}:${layout.height}`:'pending');
+        const layout=readLayout(i);visibleLayouts.push(layout?`${i}:${layout.y}:${layout.height}:${layout.width}`:'pending');
         if(!hasMeasurement(layout))measured=false;
       }
       const {height,content}=geometry.current,inset=hasNativeChatLayout?currentBottomInset()+12:0;
@@ -762,7 +783,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
       if(target.kind==='latest'||(target.kind==='anchor'||target.kind==='unread')&&shortCompleteHistory())return {kind:'end'};
       const index=helpNavigationIndex(rowsRef.current,target),item=index>=0?list.current?.getLayout(index):undefined;
       const {content,height}=geometry.current;
-      if(!item||item.isHeightMeasured===false||!height||!content)return null;
+      if(!item||item.isHeightMeasured===false||item.isWidthMeasured===false||(item.width??1)<=0||!height||!content)return null;
       const inset=hasNativeChatLayout?currentBottomInset()+12:0;
       return {kind:'offset',offset:Math.min(Math.max(0,content+inset-height),Math.max(0,item.y+itemStartOffset()-live.current.headerHeight-(target.offset??0)))};
     }),[]);

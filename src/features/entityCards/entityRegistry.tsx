@@ -1,5 +1,7 @@
+import {LoadingPlaceholder} from '@/components/ui/LoadingPlaceholder';
+import {useTheme} from '@/context/ThemeContext';
 import React from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View, type FlatListProps, type ScrollViewProps } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View, type FlatListProps, type ScrollViewProps } from 'react-native';
 import { AuthContext } from '@/context/AuthContext';
 import { ProfileView } from '@/components/Profile/ProfileView';
 import { loadEntityCard, entityIdentity, type EntityCardResult } from './entityApi';
@@ -30,6 +32,7 @@ export function EntityCardContent({ target, onOpen, onTitleChange, onConnect, Sc
   scrollOffset = 0, onScrollOffsetChange, contentTopInset = 0 }: EntityCardContentProps) {
   const auth = React.useContext(AuthContext), userId = auth?.isAuthenticated ? auth.profile?.id : undefined;
   const colors = useEntityColors();
+  const {theme}=useTheme();
   let targetKey: string;
   try { targetKey = entityIdentity(target); } catch { targetKey = 'invalid'; }
   const scope = JSON.stringify([userId ?? null, targetKey]);
@@ -62,7 +65,7 @@ export function EntityCardContent({ target, onOpen, onTitleChange, onConnect, Sc
 
   const current = state.scope === scope ? state : undefined;
   if (!current?.result && !current?.error) return <View testID="entity-card-loading" style={[styles.center,{paddingTop:28+contentTopInset}]} accessibilityLiveRegion="polite">
-    <ActivityIndicator color={colors.tint} /><Text style={{ color: colors.secondaryText }}>Загружаю карточку…</Text>
+    <LoadingPlaceholder dark={theme==='dark'} accessibilityLabel="Загружаю карточку…" style={{alignSelf:'stretch',minHeight:220,flex:0}}/>
   </View>;
   if (current.error && !current.result) {
     const error = current.error;

@@ -1,5 +1,6 @@
+import {LoadingPlaceholder} from '@/components/ui/LoadingPlaceholder';
 import React,{useCallback,useContext,useEffect,useMemo,useRef,useState} from 'react';
-import {ActivityIndicator,Keyboard,Pressable,Text,View} from 'react-native';
+import {Keyboard,Pressable,Text,View} from 'react-native';
 import {Ionicons} from '@expo/vector-icons';
 import {AuthContext} from '@/context/AuthContext';
 import {API_BASE_URL} from '@/utils/config';
@@ -96,7 +97,7 @@ export function HelpHtmlMessage({attachments,resolve,children,ticketId,messageId
    const height=helpHtmlCompactHeight(artifact?.compact);
    if(artifact&&!artifact.compact)return <Pressable key={id} testID={`help-html-open-${id}`} onPress={()=>void open(id)} accessibilityRole="link" style={{minHeight:44,justifyContent:'center'}}><Text style={{color:c.accentText,fontSize:15}}>{artifact.title}</Text></Pressable>;
    return <View key={id} ref={node=>{if(node)previews.current.set(id,node);else previews.current.delete(id);}} collapsable={false} testID={`help-html-compact-${id}`} style={{width:'100%',...(height===undefined?{aspectRatio:1}:{height}),overflow:'hidden'}}>
-    {artifact?.compact&&mediaPriority==='visible'&&previewReady?<HelpHtmlSurface compact variant={artifact.compact} imageDataUrl={item.imageDataUrl} label={artifact.description||artifact.title}/>:item?.error?<Pressable onPress={()=>void load(id)} accessibilityRole="button" accessibilityLabel="Повторить загрузку примера" style={{flex:1,justifyContent:'center'}}><Text style={{color:c.muted}}>Не удалось загрузить пример. Повторить</Text></Pressable>:<View style={{flex:1,alignItems:'center',justifyContent:'center'}}>{!artifact&&mediaPriority==='visible'&&previewReady?<ActivityIndicator color={c.muted}/>:null}</View>}
+    {artifact?.compact&&mediaPriority==='visible'&&previewReady?<HelpHtmlSurface compact variant={artifact.compact} imageDataUrl={item.imageDataUrl} label={artifact.description||artifact.title}/>:item?.error?<Pressable onPress={()=>void load(id)} accessibilityRole="button" accessibilityLabel="Повторить загрузку примера" style={{flex:1,justifyContent:'center'}}><Text style={{color:c.muted}}>Не удалось загрузить пример. Повторить</Text></Pressable>:<LoadingPlaceholder dark={c.dark} variant={height!==undefined&&height<160?'row':'card'} accessibilityLabel="Загрузка карточки"/>}
     {artifact?.entity?<Pressable testID={`help-html-entity-${id}`} accessibilityRole="button" accessibilityLabel={`Открыть ${artifact.title}`} onPress={()=>openEntity(artifact)} style={{position:'absolute',left:0,right:0,top:0,bottom:0}}/>:null}
     {artifact?.full?<Pressable testID={`help-html-expand-${id}`} accessibilityRole="button" accessibilityLabel="Открыть на весь экран" onPress={()=>void open(id,true)} style={{position:'absolute',right:0,top:0,width:44,height:44,alignItems:'center',justifyContent:'center'}}><View style={{width:32,height:32,borderRadius:16,backgroundColor:c.background,alignItems:'center',justifyContent:'center'}}><Ionicons name="expand-outline" size={21} color={c.text}/></View></Pressable>:null}
    </View>;

@@ -1,5 +1,6 @@
+import {LoadingPlaceholder} from '@/components/ui/LoadingPlaceholder';
 import React,{useLayoutEffect,useRef,useState} from 'react';
-import {ActivityIndicator,Pressable,Text,View} from 'react-native';
+import {Pressable,Text,View} from 'react-native';
 import {Ionicons} from '@expo/vector-icons';
 import type {HelpAttachment} from '../helpApi';
 import {useHelpTheme} from '../helpTheme';
@@ -27,7 +28,7 @@ export function HelpFileAttachment({file,uploading=false,scope,onPress,onError}:
   accessibilityLabel={busy?`${uploading?'Отправка':'Загрузка'} файла ${file.name}`:state==='failed'?`Повторить загрузку ${file.name}`:`Скачать ${file.name}`}
   accessibilityState={{busy,disabled:busy}} disabled={busy}
   style={{flexDirection:'row',alignItems:'center',gap:9,paddingVertical:6,borderRadius:8,backgroundColor:busy?(c.dark?'#343A42':'#E4E7EB'):'transparent'}}>
-  <View style={{width:28,height:28,alignItems:'center',justifyContent:'center'}}>{busy?<ActivityIndicator color={c.muted}/>:<Ionicons name={state==='failed'?'refresh-outline':'document-outline'} size={28} color={c.accentText}/>}</View>
+  <View style={{width:28,height:28,alignItems:'center',justifyContent:'center'}}>{busy?<LoadingPlaceholder dark={c.dark} variant="icon" accessibilityLabel="Загрузка файла" style={{width:28,height:28}}/>:<Ionicons name={state==='failed'?'refresh-outline':'document-outline'} size={28} color={c.accentText}/>}</View>
   <View style={{flexShrink:1}}><Text numberOfLines={2} style={{color:c.text,fontSize:13,fontWeight:'500'}}>{file.name}</Text>
    <Text numberOfLines={1} accessibilityLiveRegion="polite" style={{color:c.muted,fontSize:10,lineHeight:12}}>{busy?uploading?'Отправка…':'Загрузка…':state==='failed'?'Не загружен · Повторить':helpFileSize(file.size)}</Text>
   </View>

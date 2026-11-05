@@ -10,7 +10,7 @@ import type {HelpClientContext} from './helpClientContext';
 export type HelpUser = { id: number; name: string; avatarUrl: string | null };
 export type HelpAttachment = { localUri?: string; durationMs?: number; id: string; name: string; mimeType: string; size: number; kind: 'IMAGE' | 'AUDIO' | 'FILE'; url: string; width?: number | null; height?: number | null; thumbnailDataUri?: string | null; position?: number };
 export type HelpMessage = {
-  itStatusChange?: 'REQUESTED' | 'JOINED' | 'AI_RESUMED' | null;
+  itStatusChange?: 'REQUESTED' | 'JOINED' | 'LEFT' | 'AI_RESUMED' | null;
   ticketStatusChange?: 'CLOSED' | 'REOPENED' | null;
   assistantRun?: HelpAssistantRun;
   id: number; ticketId: number; sequence: number; clientMessageId: string | null;
@@ -24,7 +24,8 @@ export type HelpTicket = {
   id: number; number: number; title: string; status: 'OPEN' | 'CLOSED'; ownerId: number;
   createdAt: string; updatedAt: string; closedAt: string | null; sourceTicketId: number | null;
   sourceTicket: { id: number; number: number; title: string } | null; itRequested: boolean;
-  members: { userId: number; role: 'OWNER' | 'IT'; user: HelpUser; lastReadSequence?: number }[];
+  canRate?: boolean;
+  members: { itDisplayName?: string; userId: number; role: 'OWNER' | 'IT'; user: HelpUser; lastReadSequence?: number }[];
   unreadCount: number; lastMessage: HelpMessage | null; canReopen: boolean; aiEnabled: boolean;
   lastReadSequence?: number; lastSequence?: number;
 };
@@ -104,6 +105,9 @@ export function createHelpApi(expectedUserId?: number) {
   send: (id: number, input: HelpMessageInput) => helpRequest<HelpDetail>(`/tickets/${id}/messages`, 'POST', input),
   close: (id: number, input: HelpCloseInput) => helpRequest<HelpDetail>(`/tickets/${id}/close`, 'POST', input),
   reopen: (id: number, input: HelpMessageInput) => helpRequest<HelpDetail>(`/tickets/${id}/reopen`, 'POST', input),
+  leaveIt: (id: number) => helpRequest<HelpDetail>(`/tickets/${id}/leave-it`, 'POST', {}),
+  closeIt: (id: number) => helpRequest<HelpDetail>(`/tickets/${id}/close-it`, 'POST', {}),
+  continueAi: (id: number) => helpRequest<HelpDetail>(`/tickets/${id}/continue-ai`, 'POST', {}),
   requestIt: (id: number) => helpRequest<HelpDetail>(`/tickets/${id}/request-it`, 'POST', {}),
   claim: (id: number) => helpRequest<HelpDetail>(`/tickets/${id}/claim`, 'POST', {}),
   read: (id: number, sequence?: number) => helpRequest(`/tickets/${id}/read`, 'POST', { sequence }),

@@ -1,3 +1,4 @@
+import {LoadingPlaceholder} from '@/components/ui/LoadingPlaceholder';
 import React, { memo, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Image, Modal, PanResponder, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions, type ImageStyle, type StyleProp } from 'react-native';
 import { Image as CachedImage } from 'expo-image';
@@ -70,7 +71,7 @@ export function HelpImage({ attachment, resolve, style, resizeMode = 'cover', on
   return <View testID="help-progressive-image" style={[style,{overflow:'hidden',backgroundColor:!pixelsReady?(c.dark?'#343A42':'#E4E7EB'):resizeMode==='contain'?'transparent':c.elevated}]}>
     {thumbnail ? <Image testID="help-image-preview" source={{uri:thumbnail}} resizeMode={resizeMode} style={StyleSheet.absoluteFill} blurRadius={2}/> : null}
     {original ? Platform.OS==='web' ? <Image accessibilityLabel={attachment.name} source={original} style={StyleSheet.absoluteFill} resizeMode={resizeMode} onLoad={loaded} onError={failed}/> : <CachedImage testID="help-image-original" accessibilityLabel={attachment.name} source={original} style={StyleSheet.absoluteFill} contentFit={resizeMode} placeholder={thumbnail?{uri:thumbnail}:undefined} placeholderContentFit={resizeMode} cachePolicy="memory-disk" recyclingKey={original.cacheKey??attachment.id} priority={proximity==='visible'?'high':'low'} transition={resizeMode==='contain'||reduced||restored?0:120} onLoad={loaded} onError={failed}/> : null}
-    {!pixelsReady ? <View testID="help-image-placeholder" pointerEvents="none" accessibilityLabel={current?.error?'Изображение недоступно':allowOriginal?'Загрузка изображения':'Изображение'} style={[StyleSheet.absoluteFill,{alignItems:'center',justifyContent:'center'}]}><View style={{alignItems:'center',gap:6,padding:10,borderRadius:12,backgroundColor:c.dark?'#343A42E8':'#E4E7EBE8'}}>
+    {!pixelsReady&&!current?.error ? <LoadingPlaceholder testID="help-image-placeholder" dark={c.dark} accessibilityLabel="Загрузка изображения" style={StyleSheet.absoluteFill}/> : !pixelsReady ? <View testID="help-image-placeholder" pointerEvents="none" accessibilityLabel={current?.error?'Изображение недоступно':allowOriginal?'Загрузка изображения':'Изображение'} style={[StyleSheet.absoluteFill,{alignItems:'center',justifyContent:'center'}]}><View style={{alignItems:'center',gap:6,padding:10,borderRadius:12,backgroundColor:c.dark?'#343A42E8':'#E4E7EBE8'}}>
       {current?.error||!allowOriginal||current?.loaded?<Ionicons name="image-outline" size={24} color={c.muted}/>:<ActivityIndicator color={c.muted}/>}
       <Text numberOfLines={1} style={{fontSize:12,color:c.muted}}>{current?.error?'Фото недоступно':allowOriginal?'Загрузка фото…':'Фото'}</Text>
     </View></View> : null}
@@ -228,7 +229,7 @@ const HelpAudioView = memo(function HelpAudioView({ attachment, captionRight, on
       <View testID="help-audio-progress" pointerEvents="none" aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ position: 'absolute', left: 0, top: 0, height: 28, width: `${progress * 100}%`, overflow: 'hidden' }}>
         <View style={{ width, height: 28, flexDirection: 'row', alignItems: 'center', gap: 3 }}><HelpAudioBars color={c.accentText}/></View>
       </View>
-    </View><View testID="help-audio-caption" style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, minHeight: 12 }}><Text numberOfLines={1} style={{ fontSize: 10, lineHeight: 12, color: c.muted, fontVariant: ['tabular-nums'] }}>{helpDuration(progress * (duration || 0))} / {duration ? helpDuration(duration) : helpFileSize(attachment.size)}</Text>{captionRight}</View></View>
+    {loading?<LoadingPlaceholder dark={c.dark} accessibilityLabel="Загрузка аудио" variant="row" style={[StyleSheet.absoluteFill,{padding:5}]}/>:null}</View><View testID="help-audio-caption" style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, minHeight: 12 }}><Text numberOfLines={1} style={{ fontSize: 10, lineHeight: 12, color: c.muted, fontVariant: ['tabular-nums'] }}>{helpDuration(progress * (duration || 0))} / {duration ? helpDuration(duration) : helpFileSize(attachment.size)}</Text>{captionRight}</View></View>
   </View>;
 });
 const viewerClamp=(value:number,min:number,max:number)=>Math.max(min,Math.min(max,value));

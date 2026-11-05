@@ -1,6 +1,6 @@
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
-import { Animated, Modal, PanResponder, Pressable, StyleSheet } from 'react-native';
+import { Text, Animated, Modal, PanResponder, Pressable, StyleSheet } from 'react-native';
 const mockUseHelpTheme = jest.fn(() => ({surface:'#222222',text:'#ffffff',muted:'#999999',accent:'#3388ff',accentText:'#88bbff',outgoing:'#334455',elevated:'#333333',line:'#444444'}));
 jest.mock('@expo/vector-icons', () => ({Ionicons:'Ionicons'}));
 jest.mock('../src/features/help/helpTheme', () => ({useHelpReducedMotion:()=>false,useHelpTheme:()=>mockUseHelpTheme()}));
@@ -23,6 +23,26 @@ describe('Help message native layout and reply gestures', () => {
   });
   afterEach(async () => { if(screen) await act(async()=>screen.unmount()); jest.restoreAllMocks(); });
   const node = (id:string) => screen.root.findAll(n=>n.props.testID===id)[0];
+  test('IT join is a minimal system line with the actual specialist avatar',async()=>{
+    props.message={...props.message,kind:'SYSTEM',itStatusChange:'JOINED',authorId:9,author:{id:9,name:'Иванов Иван',avatarUrl:'/avatar9.jpg'},text:'Иванов Иван подключился'};
+    await act(async()=>{screen=TestRenderer.create(React.createElement(HelpMessageBubble,props));});
+    const status=node('help-it-status-JOINED');
+    expect(StyleSheet.flatten(status.props.style).backgroundColor).toBeUndefined();
+    expect(screen.root.findByType('HelpAvatar' as any).props).toMatchObject({id:9,name:'Иванов Иван',uri:'/avatar9.jpg',size:24});
+    expect(screen.root.findAllByProps({testID:'help-message-bubble'})).toHaveLength(0);
+  });
+  test('messages no longer display the Helped action even for a solution',async()=>{
+    props.solution=true;
+    await act(async()=>{screen=TestRenderer.create(React.createElement(HelpMessageBubble,props));});
+    expect(screen.root.findAllByType(Text).some(node=>node.props.children==='Помогло')).toBe(false);
+  });
+  test('IT leave keeps the recorded surname-first name and the real avatar',async()=>{
+    props.message={...props.message,kind:'SYSTEM',itStatusChange:'LEFT',authorId:9,author:{id:9,name:'Иванов Иван',avatarUrl:'/avatar9.jpg'},text:'Иванов Иван отключился'};
+    await act(async()=>{screen=TestRenderer.create(React.createElement(HelpMessageBubble,props));});
+    expect(node('help-it-status-LEFT')).toBeTruthy();
+    expect(screen.root.findByType('HelpAvatar' as any).props).toMatchObject({id:9,name:'Иванов Иван',uri:'/avatar9.jpg'});
+    expect(screen.root.findAllByType(Text).some(node=>node.props.children==='Иванов Иван отключился')).toBe(true);
+  });
   test('photo outbox reserves the accepted album geometry before upload acknowledgement',async()=>{
     const files=[{uri:'file:///one.jpg',name:'one.jpg',mimeType:'image/jpeg',width:900,height:1600},{uri:'file:///two.jpg',name:'two.jpg',mimeType:'image/jpeg',width:1600,height:900}];
     const item:any={key:'media',ticketId:12,create:false,input:{text:'Подпись',clientMessageId:'media'},localFiles:files,createdAt:Date.now(),status:'sending'};

@@ -409,11 +409,13 @@ export function useHelpService(isFocused = true) {
         // only after that page is installed, and only while its window is current.
         if(selected&&(!pageRef.current||!selectedRef.current||generation!==detailGeneration.current||revision!==windowRevision.current))continue;
         if(selected&&(record.lastSequence<(pageRef.current?.lastSequence??0)||record.snapshotCursor<(pageRef.current?.snapshotCursor??0)))continue;
-        applyDetail({ticket:record.ticket,messages:[]},true);
-        const hot=helpViewCache(identity).windows.get(id);if(hot)hot.ticket=record.ticket;
-        if(!selected)continue;
+        if(!selected){
+          applyDetail({ticket:record.ticket,messages:[]},true);
+          const hot=helpViewCache(identity).windows.get(id);if(hot)hot.ticket=record.ticket;
+          continue;
+        }
         const shown=messagesRef.current,following=viewport.current?.atLatest===true&&!pageRef.current?.hasNewer;
-        let complete=true;
+        let complete=true,nextMessages:HelpMessage[]|null=null;
         if(delta){
           const known=new Set(shown.map(message=>message.id));
           const appended=following?delta.messages.filter(message=>!known.has(message.id)&&message.sequence>(shown.at(-1)?.sequence??0)).sort((a,b)=>a.sequence-b.sequence):[];
@@ -421,7 +423,7 @@ export function useHelpService(isFocused = true) {
           // later insertion. Repair that range from disk rather than bridge it.
           let expected=(shown.at(-1)?.sequence??0)+1;
           if(appended.some(message=>message.sequence!==expected++)){committedAgain.current.set(id,null);continue;}
-          if(delta.messages.length||delta.deletedMessageIds.length)updateMessages(reconcileHelpWindow(shown,delta.messages,delta.deletedMessageIds,following));
+          if(delta.messages.length||delta.deletedMessageIds.length)nextMessages=reconcileHelpWindow(shown,delta.messages,delta.deletedMessageIds,following);
         }else{
           const from=shown[0]?.sequence??1,to=following?record.lastSequence:shown.at(-1)?.sequence??record.lastSequence;
           const limit=Math.max(1000,shown.length+1);
@@ -432,11 +434,15 @@ export function useHelpService(isFocused = true) {
           complete=Boolean(covered&&(rows.length<limit||(rows.at(-1)?.sequence??0)>=to));
           const stillFollowing=viewport.current?.atLatest===true&&!pageRef.current?.hasNewer;
           const eligible=following&&!stillFollowing?rows.filter(message=>message.sequence<=(shown.at(-1)?.sequence??0)):rows;
-          updateMessages(complete||record.lastSequence===0?eligible:reconcileHelpWindow(shown,eligible,[],false));
+          nextMessages=complete||record.lastSequence===0?eligible:reconcileHelpWindow(shown,eligible,[],false);
         }
+        // Commit status and its history together. Closing the dock before the
+        // async row read finishes creates a transient layout without the rating.
+        applyDetail({ticket:record.ticket,messages:[]},true);
+        if(nextMessages){++windowRevision.current;updateMessages(nextMessages);}
         readSequence.current=Math.max(readSequence.current,record.lastReadSequence);
         const stillAtTail=following&&viewport.current?.atLatest===true;
-        if(pageRef.current){pageRef.current={...pageRef.current,lastSequence:record.lastSequence,lastReadSequence:readSequence.current,hasNewer:(!stillAtTail||!complete)&&record.lastSequence>(messagesRef.current.at(-1)?.sequence??0)};setHasNewer(pageRef.current.hasNewer);}
+        if(pageRef.current){pageRef.current={...pageRef.current,lastSequence:record.lastSequence,lastReadSequence:readSequence.current,snapshotCursor:Math.max(pageRef.current.snapshotCursor??0,record.snapshotCursor),eventCursor:Math.max(pageRef.current.eventCursor,record.syncCursor),hasNewer:(!stillAtTail||!complete)&&record.lastSequence>(messagesRef.current.at(-1)?.sequence??0)};setHasNewer(pageRef.current.hasNewer);}
         rememberActive();
       }while(committedAgain.current.has(id)&&current(account));
     })();
@@ -518,17 +524,29 @@ export function useHelpService(isFocused = true) {
       const mutationPage=detailPage(detail);await persistPage(detail.ticket,mutationPage);
       if (!current(account)) throw new Error('Учётная запись изменилась');
       if (select && navigation === detailGeneration.current) activeId.current = detail.ticket.id;
-      applyDetail({...detail,...mutationPage}, !select);
-      if(select&&navigation===detailGeneration.current){setFirstUnreadSequence(null);issueNavigation({kind:'latest',animate:false});}
-      else if(activeId.current===detail.ticket.id&&navigation===detailGeneration.current){
-        const last=detail.lastSequence??detail.ticket.lastSequence??detail.messages.at(-1)?.sequence??0;
-        if(pageRef.current&&last>(messagesRef.current.at(-1)?.sequence??0)){pageRef.current.hasNewer=true;setHasNewer(true);}
-        void liveTicketRefresh.current(detail.ticket.id);
+      const sameWindow=activeId.current===detail.ticket.id&&navigation===detailGeneration.current;
+      const previous=pageRef.current;
+      // A response may finish persisting after a newer socket snapshot has
+      // already been painted. Never put its older status/rows back on screen.
+      const stale=!select&&activeId.current===detail.ticket.id&&previous&&((mutationPage.snapshotCursor??0)<(previous.snapshotCursor??0)||mutationPage.lastSequence<previous.lastSequence);
+      if(!stale){
+        if(!select&&sameWindow&&previous){
+          const shown=messagesRef.current,last=shown.at(-1)?.sequence??0;
+          const following=viewport.current?.atLatest!==false&&!previous.hasNewer;
+          const contiguous=!shown.length||mutationPage.messages.some(message=>message.sequence<=last+1);
+          applyDetail({ticket:detail.ticket,messages:[]},true);
+          ++windowRevision.current;
+          updateMessages(reconcileHelpWindow(shown,mutationPage.messages,[],following&&contiguous));
+          pageRef.current={...previous,lastSequence:Math.max(previous.lastSequence,mutationPage.lastSequence),lastReadSequence:Math.max(previous.lastReadSequence,mutationPage.lastReadSequence),snapshotCursor:Math.max(previous.snapshotCursor??0,mutationPage.snapshotCursor??0),eventCursor:Math.max(previous.eventCursor,mutationPage.eventCursor),hasNewer:mutationPage.lastSequence>(messagesRef.current.at(-1)?.sequence??0)};
+          setHasNewer(pageRef.current.hasNewer);
+        }else applyDetail({...detail,...mutationPage}, !select);
       }
+      if(select&&sameWindow){setFirstUnreadSequence(null);issueNavigation({kind:'latest',animate:false});}
+      else if(sameWindow)void liveTicketRefresh.current(detail.ticket.id);
       return detail;
     } catch (e) { if (current(account)) report(e); throw e; }
     finally { if (operation.current === account) operation.current = null; if (current(account)) setBusy(false); }
-  }, [identity, current, report, applyDetail,persistPage,issueNavigation]);
+  }, [identity, current, report, applyDetail,persistPage,issueNavigation,updateMessages]);
 
   const durableSend = useCallback(async (input: HelpCreateInput & {rating?:number}, ticketId?: number, action?: 'close' | 'reopen', onQueued?: (item:HelpPending)=>void|Promise<void>): Promise<HelpDetail> => {
     const account = identity;
@@ -600,6 +618,9 @@ export function useHelpService(isFocused = true) {
   const closeTicket = useCallback((id:number,input:HelpCloseInput)=>mutate(()=>durableSend(input,id,'close')),[mutate,durableSend]);
   const reopenTicket = useCallback((id:number,input:HelpMessageInput)=>mutate(()=>durableSend(input,id,'reopen')),[mutate,durableSend]);
   const requestIt = useCallback((id:number)=>mutate(()=>helpApi.requestIt(id)),[mutate]);
+  const continueAi = useCallback((id:number)=>mutate(()=>helpApi.continueAi(id)),[mutate]);
+  const leaveIt = useCallback((id:number)=>mutate(()=>helpApi.leaveIt(id)),[mutate]);
+  const closeIt = useCallback((id:number)=>mutate(()=>helpApi.closeIt(id)),[mutate]);
   const claimTicket = useCallback((id:number)=>mutate(()=>helpApi.claim(id)),[mutate]);
   const toggleReaction = useCallback((message:HelpMessage,emoji:string)=>{
     const account=identity,key=account+':'+message.ticketId+':'+message.id;
@@ -747,6 +768,6 @@ export function useHelpService(isFocused = true) {
   const uploadAttachments=useCallback((files:HelpFile[])=>uploadHelpFiles(files,userId),[userId]);
   return {tickets,selectedTicket,messages,pendingMessages,lastCreatedOperation,retryPendingOperation,loading,busy,error,pendingCount,connected:connected&&server.isReachable&&!connectionIssue,online:server.isReachable,canManage,userId,typingByTicket,hasMore,
     hasOlder,hasNewer,loadingOlder,loadingNewer,navigationTarget,firstUnreadSequence,loadNewer,jumpToMessage,jumpToLatest,jumpToDate,cancelNavigation,saveViewport,markVisibleRead,searchMessages,
-    aiEnabled,stopAssistant,retryAssistant,loadTickets,openTicket,prepareTicket:warmLocalTicket,clearSelection,createTicket,sendMessage,editMessage,closeTicket,reopenTicket,requestIt,claimTicket,markAllRead,toggleReaction,
+    aiEnabled,stopAssistant,retryAssistant,loadTickets,openTicket,prepareTicket:warmLocalTicket,clearSelection,createTicket,sendMessage,editMessage,closeTicket,reopenTicket,requestIt,continueAi,claimTicket,leaveIt,closeIt,markAllRead,toggleReaction,
     queueFileTicket,uploadAttachments,mediaSource,loadOlder,emitTyping,getDraft,getDrafts,setDraft,retryPending,refresh};
 }

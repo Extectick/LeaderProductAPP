@@ -7,18 +7,20 @@ jest.mock('../src/shared/network/useServerStatus',()=>({useServerStatus:()=>({is
 let mockNotice:(notice:any)=>void;
 let mockOutboxChanged:()=>void;
 const mockPending:any[]=[];
+const mockSyncTicket=jest.fn(async()=>{});
 jest.mock('../src/features/help/helpAccountSync',()=>({acquireHelpAccount:(_id:number,notice:(value:any)=>void)=>{
   mockNotice=notice;
-  return {getSocket:()=>null,release:jest.fn(),refresh:async()=>{},syncTicket:async()=>{},setActiveTicket:jest.fn()};
+  return {getSocket:()=>null,release:jest.fn(),refresh:async()=>{},syncTicket:mockSyncTicket,setActiveTicket:jest.fn()};
 }}));
 jest.mock('@react-native-async-storage/async-storage',()=>{const values=new Map<string,string>();return{getItem:jest.fn(async(key:string)=>values.get(key)??null),setItem:jest.fn(async(key:string,value:string)=>{values.set(key,value);}),removeItem:jest.fn(async(key:string)=>{values.delete(key);}),clear:jest.fn(async()=>values.clear()),getAllKeys:jest.fn(async()=>[...values.keys()]),multiGet:jest.fn(async(keys:string[])=>keys.map(key=>[key,values.get(key)??null]))};});
 jest.mock('../src/features/help/helpHistoryDatabase',()=>require('../src/features/help/helpHistoryDatabase.web'));
-const mockApi={config:jest.fn(),list:jest.fn(),detail:jest.fn(),read:jest.fn()};
+const mockApi={config:jest.fn(),list:jest.fn(),detail:jest.fn(),read:jest.fn(),claim:jest.fn()};
 jest.mock('../src/features/help/helpApi',()=>({createHelpApi:()=>mockApi,HelpApiError:class extends Error{},loadHelpMedia:jest.fn(),uploadHelpFiles:jest.fn()}));
-jest.mock('../src/features/help/helpStorage',()=>({readHelpPending:async()=>mockPending,readLastCreatedOperation:async()=>null,subscribeHelpOutbox:(_id:number,changed:()=>void)=>{mockOutboxChanged=changed;return()=>{};},helpClientId:()=> 'committed-test',getHelpDraft:jest.fn(),getHelpDrafts:jest.fn(),setHelpDraft:jest.fn()}));
+jest.mock('../src/features/help/helpStorage',()=>({readHelpPending:async()=>mockPending,readLastCreatedOperation:async()=>null,subscribeHelpOutbox:(_id:number,changed:()=>void)=>{mockOutboxChanged=changed;return()=>{};},saveHelpPending:jest.fn(async()=>{}),helpClientId:()=> 'committed-test',getHelpDraft:jest.fn(),getHelpDrafts:jest.fn(),setHelpDraft:jest.fn()}));
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {useHelpService} from '../src/features/help/useHelpService';
 import * as history from '../src/features/help/helpHistory';
+import * as outbox from '../src/features/help/helpOutbox';
 import {helpViewCache} from '../src/features/help/helpViewCache';
 import type {HelpMessage,HelpTicket} from '../src/features/help/helpApi';
 import type {HelpHistoryPage,HelpSyncResult} from '../src/features/help/helpHistoryTypes';
@@ -26,12 +28,13 @@ const msg=(sequence:number,text=`Message ${sequence}`)=>({id:70000+sequence,tick
 const ticket=(lastSequence=600)=>({id:7,title:'Support',status:'OPEN',ownerId:5,members:[],unreadCount:0,lastReadSequence:600,lastSequence,updatedAt:'2026-11-05T00:00:00Z'} as unknown as HelpTicket);
 const page:HelpHistoryPage={messages:Array.from({length:600},(_,i)=>msg(i+1)),nextCursor:null,olderCursor:null,newerCursor:null,hasOlder:false,hasNewer:false,lastReadSequence:600,firstUnreadSequence:null,lastSequence:600,eventCursor:10,snapshotCursor:10};
 let service:ReturnType<typeof useHelpService>,screen:TestRenderer.ReactTestRenderer|undefined;
-function Harness(){service=useHelpService(true);return null;}
+const renderedStates:{status:string|undefined;ids:number[];hasNewer:boolean}[]=[];
+function Harness(){service=useHelpService(true);renderedStates.push({status:service.selectedTicket?.status,ids:service.messages.map(message=>message.id),hasNewer:service.hasNewer});return null;}
 const tree=(userId=5)=>React.createElement(require('../context/AuthContext').AuthContext.Provider,{value:{profile:{id:userId},isAuthenticated:true}},React.createElement(Harness));
 async function committed(ids?:number[]){await act(async()=>{mockNotice({type:'ticket',ticketId:7,...(ids?{changedMessageIds:ids}:{})});});}
 async function persist(changes:Partial<HelpSyncResult>={}){await history.cacheHelpSync(5,7,{ticket:ticket(),events:[],messages:[],deletedMessageIds:[],nextCursor:20,eventCursor:20,snapshotCursor:20,hasMore:false,lastReadSequence:600,firstUnreadSequence:null,lastSequence:600,...changes});}
 beforeEach(async()=>{
-  jest.clearAllMocks();await AsyncStorage.clear();mockPending.length=0;
+  jest.clearAllMocks();mockSyncTicket.mockReset().mockResolvedValue(undefined);await AsyncStorage.clear();mockPending.length=0;renderedStates.length=0;
   const cache=helpViewCache('https://committed.example.test:5:true');cache.lists.clear();cache.windows.clear();
   mockApi.config.mockResolvedValue({canManage:false});mockApi.list.mockResolvedValue({tickets:[],nextCursor:null});mockApi.detail.mockResolvedValue({ticket:ticket(),...page});mockApi.read.mockResolvedValue({});
   await act(async()=>{screen=TestRenderer.create(tree());});
@@ -190,4 +193,78 @@ test('quiet committed repair retains selected ticket identity while real metadat
   expect(service.selectedTicket).toBe(selected);expect(service.messages).toBe(rows);expect(service.pendingMessages).toBe(pending);
   await persist({ticket:{...ticket(),title:'Updated title'}});await committed();
   expect(service.selectedTicket).not.toBe(selected);expect(service.selectedTicket?.title).toBe('Updated title');
+});
+
+
+test('close receipt keeps the rating and preceding message visible without waiting for background sync',async()=>{
+  await act(async()=>{await service.saveViewport({messageId:70600,sequence:600,offset:0,atLatest:true},7);});
+  mockSyncTicket.mockImplementation(()=>new Promise(()=>{}));
+  const rating={...msg(601,'Спасибо'),kind:'CLOSURE',authorId:5,rating:5} as HelpMessage;
+  const response={ticket:{...ticket(601),status:'CLOSED' as const},...page,messages:[msg(599),msg(600),rating],lastSequence:601,snapshotCursor:20,eventCursor:20};
+  jest.spyOn(outbox,'dispatchHelpPending').mockResolvedValue(response);
+  const preceding=service.messages.at(-1);renderedStates.length=0;
+  await act(async()=>{await service.closeTicket(7,{text:'Спасибо',rating:5});});
+  expect(service.messages.at(-1)).toEqual(rating);
+  expect(service.messages.at(-2)).toBe(preceding);
+  expect(service.hasNewer).toBe(false);
+  const closed=renderedStates.filter(state=>state.status==='CLOSED');
+  expect(closed.length).toBeGreaterThan(0);
+  expect(closed.every(state=>state.ids.includes(70601)&&state.ids.includes(70600)&&!state.hasNewer)).toBe(true);
+});
+
+test('claim receipt renders its joined event immediately and stale committed metadata cannot roll it back',async()=>{
+  await act(async()=>{await service.saveViewport({messageId:70600,sequence:600,offset:0,atLatest:true},7);});
+  const old=await history.readCachedHelpRecord(5,7);
+  mockSyncTicket.mockImplementation(()=>new Promise(()=>{}));
+  const joined={...msg(601,'Иванов Иван подключился'),kind:'SYSTEM',itStatusChange:'JOINED'} as HelpMessage;
+  const claimed={...ticket(601),members:[{userId:9,role:'IT' as const,user:{id:9,name:'Иванов Иван',avatarUrl:null}}]};
+  mockApi.claim.mockResolvedValue({ticket:claimed,...page,messages:[msg(600),joined],lastSequence:601,eventCursor:20,snapshotCursor:20});
+  renderedStates.length=0;
+  await act(async()=>{await service.claimTicket(7);});
+  expect(service.messages.at(-1)).toEqual(joined);expect(renderedStates.every(state=>!state.hasNewer)).toBe(true);
+  const range=jest.spyOn(history,'readCachedHelpRange');
+  jest.spyOn(history,'readCachedHelpRecord').mockResolvedValueOnce(old);
+  await committed();
+  expect(range).not.toHaveBeenCalled();expect(service.messages.at(-1)).toEqual(joined);
+  expect(service.selectedTicket?.members[0].user.name).toBe('Иванов Иван');
+});
+
+test('a committed closure applies status and rating together after its async history read',async()=>{
+  await act(async()=>{await service.saveViewport({messageId:70600,sequence:600,offset:0,atLatest:true},7);});
+  const rating={...msg(601,'Готово'),kind:'CLOSURE',rating:4} as HelpMessage;
+  await persist({ticket:{...ticket(601),status:'CLOSED'},messages:[rating],lastSequence:601});
+  const rows=await history.readCachedHelpRange(5,7,1,601,1000);
+  let release!:(rows:HelpMessage[])=>void;
+  jest.spyOn(history,'readCachedHelpRange').mockImplementationOnce(()=>new Promise(resolve=>{release=resolve;}));
+  renderedStates.length=0;
+  await committed();
+  expect(service.selectedTicket?.status).toBe('OPEN');
+  expect(service.messages.at(-1)?.id).toBe(70600);
+  await act(async()=>{release(rows);});
+  expect(service.selectedTicket?.status).toBe('CLOSED');expect(service.messages.at(-1)).toEqual(rating);
+  expect(renderedStates.filter(state=>state.status==='CLOSED').every(state=>state.ids.includes(70600)&&state.ids.includes(70601))).toBe(true);
+});
+
+test.each([false,true])('mutation tail reconciliation preserves an older reading window or a missing range (%s)',async(gap)=>{
+  await act(async()=>{await service.saveViewport({messageId:gap?70600:70150,sequence:gap?600:150,offset:-12,atLatest:gap},7);});
+  mockSyncTicket.mockImplementation(()=>new Promise(()=>{}));
+  const last=gap?800:601;
+  mockApi.claim.mockResolvedValue({ticket:ticket(last),...page,messages:gap?[msg(800)]:[msg(600),msg(601)],lastSequence:last,eventCursor:20,snapshotCursor:20});
+  const original=service.messages,key=service.navigationTarget?.key;
+  await act(async()=>{await service.claimTicket(7);});
+  expect(service.messages).toBe(original);expect(service.hasNewer).toBe(true);expect(service.navigationTarget?.key).toBe(key);
+});
+
+test('a delayed claim response cannot replace newer committed state or remove its messages',async()=>{
+  await act(async()=>{await service.saveViewport({messageId:70600,sequence:600,offset:0,atLatest:true},7);});
+  mockSyncTicket.mockImplementation(()=>new Promise(()=>{}));
+  let release!:(detail:any)=>void,pending!:Promise<unknown>;
+  mockApi.claim.mockImplementationOnce(()=>new Promise(resolve=>{release=resolve;}));
+  await act(async()=>{pending=service.claimTicket(7);});
+  await persist({ticket:{...ticket(602),title:'Newer state'},messages:[msg(601),msg(602)],lastSequence:602,nextCursor:21,eventCursor:21,snapshotCursor:21});
+  await committed();
+  expect(service.messages.at(-1)?.id).toBe(70602);
+  await act(async()=>{release({ticket:ticket(601),...page,messages:[msg(600),msg(601)],lastSequence:601,eventCursor:20,snapshotCursor:20});await pending;});
+  expect(service.messages.at(-1)?.id).toBe(70602);expect(service.selectedTicket?.title).toBe('Newer state');
+  expect(service.hasNewer).toBe(false);
 });

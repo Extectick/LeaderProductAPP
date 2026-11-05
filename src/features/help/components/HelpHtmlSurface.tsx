@@ -1,7 +1,8 @@
-import React,{memo,useCallback,useMemo,useRef} from 'react';
-import {Platform,View} from 'react-native';
+import {LoadingPlaceholder} from '@/components/ui/LoadingPlaceholder';
+import React,{memo,useCallback,useMemo,useRef,useState} from 'react';
+import {Platform,StyleSheet,View} from 'react-native';
 import type {HelpHtmlVariant} from '../helpHtml';
-import {helpHtmlDocument} from '../helpHtml';
+import {helpHtmlCompactHeight,helpHtmlDocument} from '../helpHtml';
 import {useHelpTheme} from '../helpTheme';
 
 /** Only a local inert document enters the renderer. Attachment tokens stay outside. */
@@ -15,12 +16,15 @@ export const HelpHtmlSurface=memo(function HelpHtmlSurface({variant,compact=fals
  // Android loads HTML again whenever the source prop is committed. Keep both
  // it and event handlers stable through chat/viewer state and scroll renders.
  const source=useMemo(()=>({html,baseUrl:'about:blank'}),[html]);
+ const [loadedHtml,setLoadedHtml]=useState<string|null>(null);
+ const currentHtml=useRef(html);currentHtml.current=html;
+ const placeholder=loadedHtml!==html?<LoadingPlaceholder dark={c.dark} variant={compact&&(helpHtmlCompactHeight(variant)??160)<160?'row':'card'} accessibilityLabel={`Загрузка: ${label}`} style={StyleSheet.absoluteFill}/>:null;
  const latest=useRef({onScroll,onReady});latest.current={onScroll,onReady};
- const ready=useCallback(()=>latest.current.onReady?.(),[]);
+ const ready=useCallback(()=>{if(currentHtml.current!==html)return;setLoadedHtml(html);latest.current.onReady?.();},[html]);
  const scrolled=useCallback((event:{nativeEvent:{contentOffset:{y:number}}})=>latest.current.onScroll?.(event.nativeEvent.contentOffset.y),[]);
  if(Platform.OS==='web')return <View testID="help-html-surface" pointerEvents={compact?'none':'auto'} style={surfaceStyle}>
   <iframe title={label} srcDoc={html} sandbox="" onLoad={ready} referrerPolicy="no-referrer" scrolling={compact?'no':'auto'} style={{width:'100%',height:'100%',border:0,background:'transparent',display:'block',pointerEvents:compact?'none':'auto'}}/>
- </View>;
+ {placeholder}</View>;
  // Keep this native-only dependency out of the web module graph.
  const WebView=(require('react-native-webview') as typeof import('react-native-webview')).WebView;
  // WebView's own wrapper does not forward pointerEvents to its outer View.
@@ -37,5 +41,5 @@ export const HelpHtmlSurface=memo(function HelpHtmlSurface({variant,compact=fals
   automaticallyAdjustContentInsets={false} contentInsetAdjustmentBehavior="never"
   onShouldStartLoadWithRequest={allowLocal}
   onLoad={ready} onError={ready} onOpenWindow={ignoreWindow} onScroll={scrolled}
-  style={surfaceStyle} containerStyle={surfaceStyle}/></View>;
+  style={surfaceStyle} containerStyle={surfaceStyle}/>{placeholder}</View>;
 },(previous,next)=>previous.variant.html===next.variant.html&&previous.variant.css===next.variant.css&&previous.compact===next.compact&&previous.topInset===next.topInset&&previous.imageDataUrl===next.imageDataUrl&&previous.label===next.label&&previous.onReady===next.onReady&&previous.onScroll===next.onScroll);

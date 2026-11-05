@@ -102,8 +102,8 @@ describe('Help screen integration with service boundary', () => {
     mockNativeImeLayout = false;mockNativeStableImeLayout=false;mockNativeDockControls=false;mockNativeEmptyHintMotion=false;
     mockTimelineProps=undefined;mockUseAudioController.mockClear();mockTimelineDateJump.mockClear();
     Object.assign(mockPlayback,{current:null,positionSeconds:0,durationSeconds:0,progress:0,playing:false,loading:false,ready:false,error:null,speed:1,toggle:jest.fn().mockResolvedValue(undefined),setSpeed:jest.fn(),stop:jest.fn(),seek:jest.fn().mockResolvedValue(undefined),play:jest.fn().mockResolvedValue(undefined)});
-    Object.assign(mockService,{queueFileTicket:undefined,tickets:[],selectedTicket:null,messages:[],pendingMessages:[],lastCreatedOperation:null,loading:false,busy:false,error:null,online:true,connected:true,canManage:false,userId:5,typingByTicket:{},hasMore:false,
-      loadTickets:jest.fn().mockResolvedValue(undefined),clearSelection:jest.fn(()=>{mockService.selectedTicket=null;}),openTicket:jest.fn(async()=>{mockService.selectedTicket=ticket;return detail;}),getDraft:jest.fn().mockResolvedValue(''),setDraft:jest.fn().mockResolvedValue(undefined),emitTyping:jest.fn(),createTicket:jest.fn(async()=>{mockService.selectedTicket=ticket;return detail;}),sendMessage:jest.fn().mockResolvedValue(detail),uploadAttachments:jest.fn(),closeTicket:jest.fn().mockResolvedValue(detail),reopenTicket:jest.fn(),editMessage:jest.fn(),toggleReaction:jest.fn(),mediaSource:jest.fn(),loadOlder:jest.fn(),loadNewer:jest.fn(),jumpToLatest:jest.fn().mockResolvedValue(undefined),jumpToMessage:jest.fn().mockResolvedValue(undefined),saveViewport:jest.fn(),markVisibleRead:jest.fn(),searchMessages:jest.fn().mockResolvedValue({messages:[],total:0,nextCursor:null}),retryPending:jest.fn(),retryPendingOperation:jest.fn().mockResolvedValue(undefined),markAllRead:jest.fn(),requestIt:jest.fn(),claimTicket:jest.fn()});
+    Object.assign(mockService,{queueFileTicket:undefined,tickets:[],selectedTicket:null,messages:[],pendingMessages:[],lastCreatedOperation:null,loading:false,busy:false,error:null,online:true,connected:true,canManage:false,userId:5,typingByTicket:{},hasMore:false,hasNewer:false,
+      loadTickets:jest.fn().mockResolvedValue(undefined),clearSelection:jest.fn(()=>{mockService.selectedTicket=null;}),openTicket:jest.fn(async()=>{mockService.selectedTicket=ticket;return detail;}),getDraft:jest.fn().mockResolvedValue(''),setDraft:jest.fn().mockResolvedValue(undefined),emitTyping:jest.fn(),createTicket:jest.fn(async()=>{mockService.selectedTicket=ticket;return detail;}),sendMessage:jest.fn().mockResolvedValue(detail),uploadAttachments:jest.fn(),closeTicket:jest.fn().mockResolvedValue(detail),reopenTicket:jest.fn(),editMessage:jest.fn(),toggleReaction:jest.fn(),mediaSource:jest.fn(),loadOlder:jest.fn(),loadNewer:jest.fn(),jumpToLatest:jest.fn().mockResolvedValue(undefined),jumpToMessage:jest.fn().mockResolvedValue(undefined),saveViewport:jest.fn(),markVisibleRead:jest.fn(),searchMessages:jest.fn().mockResolvedValue({messages:[],total:0,nextCursor:null}),retryPending:jest.fn(),retryPendingOperation:jest.fn().mockResolvedValue(undefined),markAllRead:jest.fn(),requestIt:jest.fn(),continueAi:jest.fn(),aiEnabled:true,claimTicket:jest.fn(),leaveIt:jest.fn(),closeIt:jest.fn()});
   });
   afterEach(async()=>{if(screen)await act(async()=>screen.unmount());jest.restoreAllMocks();});
   async function render(){await act(async()=>{screen=TestRenderer.create(React.createElement(HelpScreen));});}
@@ -237,54 +237,62 @@ describe('Help screen integration with service boundary', () => {
     await act(async()=>screen.update(React.createElement(HelpScreen)));
     expect(screen.root.findByProps({testID:'help-ticket-list'}).props.data.map((row:HelpTicket)=>row.id)).toEqual([7,8]);
   });
-  test('a chat scene opens independently of history positioning',async()=>{
-    mockService.tickets=[ticket];await render();
+  test('existing chat is measured while hidden and starts entry only when positioned',async()=>{
+    mockHoldEntry=true;mockService.tickets=[ticket];await render();
     await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());
-    expect(screen.root.findByType(HelpChatEntry).props.ready).toBe(true);
-    expect(StyleSheet.flatten(screen.root.findByProps({testID:'help-chat-viewport'}).props.style).opacity).toBe(1);
+    expect(screen.root.findByType(HelpChatEntry).props.ready).toBe(false);
+    expect(StyleSheet.flatten(screen.root.findByProps({testID:'help-chat-viewport'}).props.style).opacity).toBe(0);
+    expect(mockTimelineProps.active).toBe(false);
+    expect(mockEntryJobs).toHaveLength(0);
+    expect(screen.root.findByProps({testID:'help-list-header-overlay'}).findAllByType('HelpBlurSurface' as any)).toHaveLength(1);
     await act(async()=>mockTimelineProps.onReady());
     expect(screen.root.findByType(HelpChatEntry).props.ready).toBe(true);
+    expect(mockTimelineProps.active).toBe(false);
+    expect(composer().props.navigationReady).toBe(false);
+    await act(async()=>mockEntryJobs.at(-1)!());
+    expect(mockTimelineProps.active).toBe(true);
     expect(composer().props.navigationReady).toBe(true);
+    expect(screen.root.findByProps({testID:'help-list-header-overlay'}).findAllByType('HelpBlurSurface' as any)).toHaveLength(0);
   });
-  test('starts local history immediately while server work waits for entry',async()=>{
+  test('local history loads before entry and only quiet server work waits for animation',async()=>{
     mockHoldEntry=true;mockService.tickets=[ticket];
     let release!:(value:HelpDetail)=>void;
     mockService.openTicket.mockImplementation(()=>new Promise(resolve=>{release=resolve;}));
     await render();
     await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());
-    expect(screen.root.findByType(HelpChatEntry).props.ready).toBe(true);
-    expect(screen.root.findByProps({testID:'help-chat-opening'})).toBeTruthy();
+    expect(screen.root.findByType(HelpChatEntry).props.ready).toBe(false);
+    expect(mockTimelineProps.loading).toBe(true);
     expect(mockService.openTicket).toHaveBeenCalledWith(7,undefined,{deferNetworkUntil:expect.any(Promise)});
     const ready=mockService.openTicket.mock.calls[0][2].deferNetworkUntil;
     const entered=jest.fn();void ready.then(entered);await act(async()=>{});expect(entered).not.toHaveBeenCalled();
+    await act(async()=>release(detail));
+    await act(async()=>mockTimelineProps.onReady());
+    expect(entered).not.toHaveBeenCalled();
     await act(async()=>mockEntryJobs.at(-1)!());
     expect(entered).toHaveBeenCalledWith(true);
-    expect(screen.root.findByType(HelpChatEntry).props.ready).toBe(true);
-    expect(mockTimelineProps.loading).toBe(true);
-    expect(button('Назад')).toBeTruthy();
-    await act(async()=>release(detail));
   });
-  test('cached messages mount during entry instead of waiting behind the placeholder',async()=>{
+  test('cached messages mount before animation and remain mounted through entry',async()=>{
     mockHoldEntry=true;mockService.tickets=[ticket];
     mockService.messages=[{id:81,ticketId:7,sequence:1,authorId:9,authorRole:'IT',text:'Локальная история',kind:'TEXT',attachments:[],reactions:[],createdAt:new Date().toISOString()}];
     await render();
     await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());
-    expect(screen.root.findAllByProps({testID:'help-chat-opening'})).toHaveLength(0);
     expect(mockTimelineProps.messages).toEqual(mockService.messages);
     expect(mockTimelineProps.entrySettled).toBe(false);
+    expect(screen.root.findByType(HelpChatEntry).props.ready).toBe(false);
+    const timeline=screen.root.findByProps({testID:'help-chat-scroll'});
+    await act(async()=>mockTimelineProps.onReady());
     expect(screen.root.findByType(HelpChatEntry).props.ready).toBe(true);
     await act(async()=>mockEntryJobs.at(-1)!());
+    expect(screen.root.findByProps({testID:'help-chat-scroll'})).toBe(timeline);
     expect(mockTimelineProps.messages).toEqual(mockService.messages);
-    expect(mockTimelineProps.loading).toBe(false);
-    expect(screen.root.findAllByProps({testID:'help-chat-opening'})).toHaveLength(0);
   });
   test('leaving the opening shell cancels its deferred server work',async()=>{
     mockHoldEntry=true;mockService.tickets=[ticket];await render();
     await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());
     const ready=mockService.openTicket.mock.calls[0][2].deferNetworkUntil;
-    const finish=mockEntryJobs.at(-1)!;
+    const lateReady=mockTimelineProps.onReady;
     await act(async()=>button('Назад').props.onPress());
-    await act(async()=>finish());
+    await act(async()=>lateReady());
     await expect(ready).resolves.toBe(false);
     expect(screen.root.findAllByProps({testID:'help-chat-viewport'})).toHaveLength(0);
   });
@@ -1034,6 +1042,121 @@ describe('Help screen integration with service boundary', () => {
     mockService.selectedTicket = { ...ticket, itRequested: true };
     await act(async () => screen.update(React.createElement(HelpScreen)));
     expect(offer().props.onRequestIt).toBeUndefined();
+  });
+  test('waiting for IT blocks stale text/file sends, shows a plain status and restores the draft only after confirmed AI return',async()=>{
+    await openWithMessage();
+    await act(async()=>composer().props.onChange('Сохранить черновик'));
+    const staleSend=composer().props.onSend;
+    mockService.selectedTicket={...ticket,itRequested:true};
+    await act(async()=>screen.update(React.createElement(HelpScreen)));
+    expect(screen.root.findAllByType('HelpComposer' as any)).toHaveLength(0);
+    expect(screen.root.findAllByProps({testID:'help-it-status-REQUESTED'}).length).toBeGreaterThan(0);
+    await act(async()=>staleSend({uri:'file://late.m4a',name:'late.m4a',mimeType:'audio/mp4'}));
+    expect(mockService.sendMessage).not.toHaveBeenCalled();
+    let done!:()=>void;
+    mockService.continueAi.mockImplementation(()=>new Promise<void>(resolve=>{done=resolve;}));
+    const action=button('Продолжить с AI');
+    await act(async()=>{action.props.onPress();action.props.onPress();});
+    expect(mockService.continueAi).toHaveBeenCalledTimes(1);expect(mockService.continueAi).toHaveBeenCalledWith(7);
+    expect(button('Продолжить с AI').props.disabled).toBe(true);
+    expect(screen.root.findAllByType('HelpComposer' as any)).toHaveLength(0);
+    await act(async()=>{mockService.selectedTicket={...ticket,itRequested:false};done();});
+    expect(composer().props.value).toBe('Сохранить черновик');
+    expect(button('Продолжить с AI')).toBeUndefined();
+    expect(mockService.sendMessage).not.toHaveBeenCalled();
+  });
+  test('IT join restores ordinary chat and removes AI return; persistent events replace the legacy fallback',async()=>{
+    await openWithMessage();
+    mockService.selectedTicket={...ticket,itRequested:true};
+    await act(async()=>screen.update(React.createElement(HelpScreen)));
+    const user={id:9,name:'Иванов Иван',avatarUrl:'/avatars/9.jpg'};
+    mockService.selectedTicket={...ticket,itRequested:true,members:[{userId:9,role:'IT',user,itDisplayName:'Иванов Иван'}]};
+    await act(async()=>screen.update(React.createElement(HelpScreen)));
+    expect(composer()).toBeTruthy();expect(button('Продолжить с AI')).toBeUndefined();
+    const joined=screen.root.findAllByProps({testID:'help-it-status-JOINED'})[0];
+    expect(joined.findAllByType(Text).map(node=>node.props.children)).toContain('Иванов Иван подключился');
+    mockService.messages=[...mockService.messages,{...mockService.messages[0],id:32,sequence:2,kind:'SYSTEM',authorId:9,author:user,itStatusChange:'JOINED',text:'Иванов Иван подключился'}];
+    await act(async()=>screen.update(React.createElement(HelpScreen)));
+    // Message renderer (mocked here) now owns the event; no duplicate footer.
+    expect(screen.root.findAllByProps({testID:'help-it-status-JOINED'})).toHaveLength(0);
+    expect(screen.root.findAllByType('HelpMessageBubble' as any).at(-1)!.props.message.itStatusChange).toBe('JOINED');
+  });
+  test('failed AI return leaves IT wait and draft intact with a retryable button',async()=>{
+    await openWithMessage();mockService.selectedTicket={...ticket,itRequested:true};
+    mockService.continueAi.mockRejectedValue(new Error('Сеть недоступна'));
+    await act(async()=>screen.update(React.createElement(HelpScreen)));
+    await act(async()=>button('Продолжить с AI').props.onPress());
+    expect(screen.root.findAllByType('HelpComposer' as any)).toHaveLength(0);
+    expect(button('Продолжить с AI').props.disabled).toBe(false);
+    expect(screen.root.findAllByType(Text).some(node=>node.props.children==='Сеть недоступна')).toBe(true);
+  });
+  async function openAsIt(joined=false){
+    const user={id:9,name:'Иванов Иван',avatarUrl:null};
+    const target={...ticket,itRequested:false,aiEnabled:!joined,members:joined?[{userId:9,role:'IT',user,itDisplayName:user.name}]:[]};
+    mockService.userId=9;mockService.canManage=true;mockService.tickets=[target];
+    mockService.openTicket.mockImplementation(async()=>{mockService.selectedTicket=target;return {ticket:target,messages:[]};});
+    await render();await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());
+    return target;
+  }
+  test('IT can join an AI chat without an owner request and receives its own menu actions',async()=>{
+    const target=await openAsIt();
+    mockService.claimTicket.mockImplementation(async()=>{mockService.selectedTicket={...target,aiEnabled:false,members:[{userId:9,role:'IT',user:{id:9,name:'Иванов Иван',avatarUrl:null},itDisplayName:'Иванов Иван'}]};});
+    await act(async()=>button('Действия с обращением').props.onPress());
+    expect(button('Подключиться к чату').props.disabled).toBe(false);
+    await act(async()=>button('Подключиться к чату').props.onPress());
+    expect(mockService.claimTicket).toHaveBeenCalledWith(7);
+    expect(composer()).toBeTruthy();
+    await act(async()=>button('Действия с обращением').props.onPress());
+    expect(button('Покинуть чат')).toBeTruthy();expect(button('Закрыть чат')).toBeTruthy();
+    expect(button('Подключиться к чату')).toBeUndefined();
+  });
+  test('IT leaves using its own action once, with no fabricated owner message',async()=>{
+    await openAsIt(true);let done!:()=>void;
+    mockService.leaveIt.mockImplementation(()=>new Promise<void>(resolve=>{done=resolve;}));
+    await act(async()=>button('Действия с обращением').props.onPress());
+    const leave=button('Покинуть чат');
+    await act(async()=>{leave.props.onPress();leave.props.onPress();});
+    expect(mockService.leaveIt).toHaveBeenCalledTimes(1);expect(mockService.leaveIt).toHaveBeenCalledWith(7);
+    expect(mockService.sendMessage).not.toHaveBeenCalled();
+    await act(async()=>done());
+  });
+  test('IT closes using a separate menu action without filling in the owner rating',async()=>{
+    await openAsIt(true);
+    await act(async()=>button('Действия с обращением').props.onPress());
+    await act(async()=>button('Закрыть чат').props.onPress());
+    expect(mockService.closeIt).toHaveBeenCalledWith(7);expect(mockService.closeTicket).not.toHaveBeenCalled();
+  });
+  test('owner can rate an IT-closed ticket through the existing composer and can also reopen it',async()=>{
+    await openWithMessage();
+    mockService.selectedTicket={...ticket,status:'CLOSED',closedAt:new Date().toISOString(),canRate:true};
+    await act(async()=>screen.update(React.createElement(HelpScreen)));
+    expect(button('Открыть повторно')).toBeTruthy();expect(button('Оценить помощь')).toBeTruthy();
+    await act(async()=>button('Оценить помощь').props.onPress());
+    expect(composer().props.mode).toBe('close');
+    await act(async()=>{composer().props.onRating(4);composer().props.onChange('Спасибо за помощь');});
+    await act(async()=>composer().props.onSend());
+    expect(mockService.closeTicket).toHaveBeenCalledWith(7,expect.objectContaining({rating:4,text:'Спасибо за помощь'}));
+    expect(mockService.jumpToLatest).not.toHaveBeenCalled();
+  });
+  test('rating from an older loaded page still fetches the missing latest history',async()=>{
+    await openWithMessage();mockService.hasNewer=true;
+    mockService.selectedTicket={...ticket,status:'CLOSED',closedAt:new Date().toISOString(),canRate:true};
+    await act(async()=>screen.update(React.createElement(HelpScreen)));
+    await act(async()=>button('Оценить помощь').props.onPress());
+    await act(async()=>composer().props.onRating(5));
+    await act(async()=>composer().props.onSend());
+    expect(mockService.jumpToLatest).toHaveBeenCalledTimes(1);
+  });
+  test('legacy cached names do not create a reversed-name join banner before authoritative metadata arrives',async()=>{
+    await openWithMessage();
+    const user={id:9,name:'Иван Иванов',avatarUrl:null};
+    mockService.selectedTicket={...ticket,members:[{userId:9,role:'IT',user}]};
+    await act(async()=>screen.update(React.createElement(HelpScreen)));
+    expect(screen.root.findAllByProps({testID:'help-it-status-JOINED'})).toHaveLength(0);
+    mockService.selectedTicket={...mockService.selectedTicket,members:[{userId:9,role:'IT',user,itDisplayName:'Иванов Иван'}]};
+    await act(async()=>screen.update(React.createElement(HelpScreen)));
+    expect(screen.root.findAllByType(Text).some(node=>node.props.children==='Иванов Иван подключился')).toBe(true);
+    expect(screen.root.findAllByType(Text).some(node=>node.props.children==='Иван Иванов подключился')).toBe(false);
   });
   test('latest and search controls use a full scene native sibling throughout keyboard movement',async()=>{
     mockNativeChatLayout=true;mockNativeImeLayout=true;mockNativeStableImeLayout=true;mockNativeDockControls=true;

@@ -1,3 +1,4 @@
+import {LoadingPlaceholder} from '@/components/ui/LoadingPlaceholder';
 import React,{useCallback,useContext,useEffect,useRef,useState} from 'react';
 import {Animated,Easing,Modal,PanResponder,Platform,Pressable,StyleSheet,Text,useWindowDimensions,View} from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
@@ -66,6 +67,7 @@ export function HelpHtmlViewer({artifact,onClose,link,expectedUserId,imageDataUr
  return <Modal transparent hardwareAccelerated statusBarTranslucent visible animationType="none" onRequestClose={requestClose} onShow={()=>{}}>
   <View testID="help-html-viewer" {...pan.panHandlers} style={{flex:1}} accessibilityViewIsModal>
    <Animated.View style={[StyleSheet.absoluteFill,{backgroundColor:c.background,opacity:progress}]}/>
+   {!ready?<LoadingPlaceholder dark={c.dark} accessibilityLabel="Загрузка страницы" style={{position:'absolute',top:insets.top+64,left:16,right:16,height:220}}/>:null}
    <Animated.View testID="help-html-viewer-panel" style={{position:'absolute',top:0,left:0,width,height,backgroundColor:c.background,overflow:'hidden',opacity:ready?1:0,transform}}>
     <View style={{flex:1}}>
      <HelpViewerLayout testIDPrefix="help-html" title={artifact.title} onBack={close} menuLabel="Действия с HTML" topInset={insets.top} bottomInset={insets.bottom} menuOpen={menu} onMenuOpenChange={setMenu} actions={[
