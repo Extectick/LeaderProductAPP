@@ -9,10 +9,10 @@ import {HelpAiIcon} from './HelpAiIcon';
 import {HelpAssistantItAction} from './HelpAssistantItAction';
 import {HelpAssistantFiles} from './HelpAssistantFiles';
 import type {ResolveHelpMedia} from './HelpMedia';
-import {HelpMarkdown} from './HelpMarkdown';
+import {HelpStreamingAnswer,HelpStreamingAnalysis} from './HelpStreamingText';
 import {HelpHtmlAttachments} from './HelpHtmlContext';
 
-function ActivityRow({ item }: { item: HelpAssistantActivity }) {
+function ActivityRow({ item,live }: { item: HelpAssistantActivity;live:boolean }) {
   const c = useHelpTheme();
   const icon = item.status === 'failed' ? 'alert-circle-outline' : item.kind === 'analysis' ? 'bulb-outline'
     : item.status === 'completed' ? 'checkmark' : item.kind === 'knowledge' ? 'search-outline' : 'ellipse-outline';
@@ -21,7 +21,7 @@ function ActivityRow({ item }: { item: HelpAssistantActivity }) {
       <Ionicons name={icon} size={14} color={item.status === 'failed' ? c.danger : item.kind === 'analysis' ? c.accentText : c.muted}/>
       <Text style={{ color: c.muted, fontSize: 12, lineHeight: 17, flex: 1 }}>{item.label}</Text>
     </View>
-    {item.text?.trim() ? <Text selectable style={{ color: c.text, fontSize: 13, lineHeight: 20, paddingLeft: 22 }}>{item.text}</Text> : null}
+    <HelpStreamingAnalysis identity={item.id} text={item.text||''} active={live&&item.kind==='analysis'&&item.status==='running'} completed={item.status==='completed'}/>
   </View>;
 }
 
@@ -56,16 +56,13 @@ export function HelpLiveAssistantMessage({ message, onRetry, onConnectOnec, onSu
           onScrollBeginDrag={()=>{followLog.current=false;}} onScrollEndDrag={event=>{followLog.current=logAtEnd(event);}}
           onMomentumScrollEnd={event=>{followLog.current=logAtEnd(event);}}
           onContentSizeChange={()=>{if(active&&followLog.current)log.current?.scrollToEnd({animated:false});}}>
-          {activities.map(item => <ActivityRow key={item.id} item={item}/>)}
+          {activities.map(item => <ActivityRow key={item.id} item={item} live={active}/>)}
         </ScrollView>
       </View> : null}
       {run.error ? <Text accessibilityRole="alert" style={{ color: run.status === 'error' ? c.danger : c.muted, fontSize: 13, lineHeight: 19, marginTop: 6 }}>{run.error}</Text> : null}
       {!active && run.status !== 'completed' && onRetry ? <Pressable onPress={onRetry} accessibilityRole="button" accessibilityLabel="Повторить ответ ИИ" style={{ minHeight: 44, justifyContent: 'center' }}><Text style={{ color: c.accentText, fontSize: 13 }}>Повторить</Text></Pressable> : null}
     </View>
-    {text ? <View testID="help-ai-answer" style={{ gap: 6 }}>
-      {active || !message.text ? <Text style={{ color: c.muted, fontSize: 11 }}>{active?'Формируется ответ…':'Незавершённый ответ'}</Text> : null}
-      <HelpMarkdown text={text}/>
-    </View> : null}
+    <HelpStreamingAnswer identity={run.runId} text={text} status={run.status} draft={!message.text}/>
     {onSuggestion && run.status === 'completed' && !selected && run.suggestions?.length ? <View testID="help-ai-suggestions" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
       {run.suggestions.map(value => <Pressable key={value} accessibilityRole="button" onPress={() => { if (submission.current) return; submission.current = true; setSelected(value); onSuggestion(value); }} style={{ minHeight: 44, paddingHorizontal: 14, paddingVertical: 10, justifyContent: 'center', borderRadius: 16, borderWidth: 1, borderColor: c.line }}><Text style={{ color: c.accentText, fontSize: 13 }}>{value}</Text></Pressable>)}
     </View> : null}

@@ -1,6 +1,6 @@
 import React, { memo, useMemo } from 'react';
 import { Alert, Linking, Platform, ScrollView, Text, View } from 'react-native';
-import MarkdownIt from 'markdown-it';
+import {helpMarkdownParser as markdown} from '../helpMarkdownModel';
 import { useHelpTheme } from '../helpTheme';
 import {parseEntityLink} from '@/src/shared/entityLinks';
 import {useEntityCards} from '@/src/features/entityCards/EntityCardContext';
@@ -8,7 +8,6 @@ import {parseHelpHtmlLink} from '../helpHtml';
 import {useHelpHtml} from './HelpHtmlContext';
 
 // Native text/layout only: no WebView, HTML execution or remote image requests.
-const markdown = new MarkdownIt({ html: false, linkify: true, breaks: true, typographer: false });
 type Token = ReturnType<typeof markdown.parse>[number];
 type Node = { token: Token; children: Node[] };
 function tree(tokens: Token[]): Node[] {
