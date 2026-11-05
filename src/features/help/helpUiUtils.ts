@@ -10,6 +10,9 @@ export function helpDayKey(value: string | Date): string {
 const dayFormatter = new Intl.DateTimeFormat('ru-RU', { timeZone: 'UTC', day: 'numeric', month: 'long' });
 const yearDayFormatter = new Intl.DateTimeFormat('ru-RU', { timeZone: 'UTC', day: 'numeric', month: 'long', year: 'numeric' });
 const timeFormatter = new Intl.DateTimeFormat('ru-RU', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit' });
+const listWeekFormatter = new Intl.DateTimeFormat('ru-RU', { timeZone: 'UTC', weekday: 'short' });
+const listMonthFormatter = new Intl.DateTimeFormat('ru-RU', { timeZone: 'UTC', day: '2-digit', month: 'short' });
+const listYearFormatter = new Intl.DateTimeFormat('ru-RU', { timeZone: 'UTC', day: '2-digit', month: '2-digit', year: '2-digit' });
 const createdFormatter = new Intl.DateTimeFormat('ru-RU', { timeZone: 'UTC', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 /** Format local calendar fields with reusable formatters. Mirroring them into UTC
  * avoids caching the device timezone: a timezone or DST change is read from each
@@ -28,6 +31,19 @@ export function helpDate(value: string, now = new Date()) {
   return (date.getFullYear() !== now.getFullYear() ? yearDayFormatter : dayFormatter).format(localCalendarValue(date));
 }
 export const helpTime = (value: string) => { const date = new Date(value); return Number.isFinite(date.getTime()) ? timeFormatter.format(localCalendarValue(date)) : 'Invalid Date'; };
+/** Telegram's compact dialog-list policy, using real local calendar days so
+ * DST and December/January do not break weekday selection. No per-row Intl setup. */
+export function helpListDate(value: string, now = new Date()): string {
+  const date = new Date(value), elapsed = now.getTime() - date.getTime();
+  if (!Number.isFinite(elapsed)) return '';
+  const local = localCalendarValue(date);
+  if (Math.abs(elapsed) >= 365 * 24 * 60 * 60 * 1000) return listYearFormatter.format(local);
+  const day = (value: Date) => Date.UTC(value.getFullYear(), value.getMonth(), value.getDate()) / 86400000;
+  const daysAgo = day(now) - day(date);
+  if (daysAgo === 0 || daysAgo === 1 && elapsed >= 0 && elapsed < 8 * 60 * 60 * 1000) return helpTime(value);
+  if (daysAgo >= 1 && daysAgo <= 6) return listWeekFormatter.format(local);
+  return listMonthFormatter.format(local);
+}
 export const helpCreated = (value: string) => { const date = new Date(value); return Number.isFinite(date.getTime()) ? createdFormatter.format(localCalendarValue(date)) : 'Invalid Date'; };
 export const helpInitials = (name: string) => name.split(/\s+/).filter(part => /^[\p{L}\p{N}]/u.test(part)).slice(0, 2).map(part => part[0]).join('').toUpperCase();
 export function helpColor(id: number) { return ['#447DB5', '#8468B3', '#388C85', '#B07842', '#B15B7A', '#668A45'][Math.abs(id) % 6]; }

@@ -9,13 +9,14 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { BlurTargetView } from 'expo-blur';
 import { useHelpService } from './useHelpService';
+import {useHelpListClock} from './useHelpListClock';
 import {publishHelpActivity} from './helpActivity';
 import {isHelpConnectionIssue} from './helpConnectionState';
 import {matchingPendingCreate} from './helpPendingCreate';
 import type { HelpAttachment, HelpMessage, HelpTicket } from './helpApi';
 import {API_BASE_URL} from '@/utils/config';
 import { useHelpTheme, useHelpReducedMotion } from './helpTheme';
-import { canEditHelpMessage, canReopenHelpTicket, helpCreated, helpTime, sortHelpTicketsByActivity } from './helpUiUtils';
+import { canEditHelpMessage, canReopenHelpTicket, helpCreated, helpListDate, sortHelpTicketsByActivity } from './helpUiUtils';
 import type {HelpTypingUser} from './helpTypingModel';
 import { HelpAvatar, HelpBlurSurface, HelpDock, HelpIcon, HelpNotice, HelpPrimaryButton, HelpSheet, HelpTyping } from './components/HelpPrimitives';
 import { HelpComposer, type HelpComposeMode, type HelpLocalFile, type HelpComposerHandle } from './components/HelpComposer';
@@ -126,6 +127,7 @@ export default function HelpScreen() {
     dateTimer.current=setTimeout(hideFloatingDate,2000);
   },[dateOpacity,hideFloatingDate]);
   useEffect(()=>{hideFloatingDate();return()=>{if(dateTimer.current)clearTimeout(dateTimer.current);cancelAnimation(dateOpacity);};},[scene.key,hideFloatingDate,dateOpacity]);
+  const listDateNow=useHelpListClock(isFocused&&!routeLeaving&&active===null);
   const listScroll=useRef<FlashListRef<HelpTicket>>(null);
   const listPaging=useRef(false);
   const [listAtTop,setListAtTop]=useState(true),listAtTopRef=useRef(true);
@@ -490,8 +492,8 @@ export default function HelpScreen() {
   const visible = useMemo(() => sortHelpTicketsByActivity(service.tickets.filter(t => t.status === filter)), [service.tickets, filter]);
   const listActions=useRef({open,menu:(item:HelpTicket)=>{Keyboard.dismiss();setOverlay({kind:'row',ticket:item});}});
   listActions.current={open,menu:(item:HelpTicket)=>{Keyboard.dismiss();setOverlay({kind:'row',ticket:item});}};
-  const listExtraData=useMemo(()=>({drafts:listDrafts,typing:service.typingByTicket}),[listDrafts,service.typingByTicket]);
-  const renderTicketRow=useCallback(({item}:{item:HelpTicket})=><TicketRow ticket={item} draft={listDrafts[item.id]} typing={service.typingByTicket[item.id]} onPress={()=>{void listActions.current.open(item.id);}} onMenu={()=>listActions.current.menu(item)}/>,[listDrafts,service.typingByTicket]);
+  const listExtraData=useMemo(()=>({drafts:listDrafts,typing:service.typingByTicket,dateNow:listDateNow}),[listDrafts,service.typingByTicket,listDateNow]);
+  const renderTicketRow=useCallback(({item}:{item:HelpTicket})=><TicketRow ticket={item} dateNow={listDateNow} draft={listDrafts[item.id]} typing={service.typingByTicket[item.id]} onPress={()=>{void listActions.current.open(item.id);}} onMenu={()=>listActions.current.menu(item)}/>,[listDrafts,service.typingByTicket,listDateNow]);
   const sourceLink = ticket ? ticket.sourceTicket : source;
   async function openSource() {
     if (!sourceLink || !active) return;
@@ -701,13 +703,13 @@ export default function HelpScreen() {
 function SheetAction({ label, icon, onPress, disabled = false }: { label: string; icon: keyof typeof Ionicons.glyphMap; onPress: () => void; disabled?: boolean }) {
   const c = useHelpTheme(); const reduced=useHelpReducedMotion(); return <Pressable accessibilityRole="button" accessibilityLabel={label} disabled={disabled} accessibilityState={{disabled}} onPress={onPress} style={({ pressed }) => ({minHeight:51,paddingVertical:8,borderBottomWidth:1,borderBottomColor:c.line,flexDirection:'row',alignItems:'center',gap:7,opacity:disabled ? .38 : pressed ? .6 : 1,transform:[{scale:pressed&&!disabled&&!reduced ? .96 : 1}]})}><Ionicons name={icon} color={c.accentText} size={22}/><Text style={{color:c.text,flex:1,fontSize:14}}>{label}</Text></Pressable>;
 }
-type TicketRowProps = { ticket: HelpTicket; typing?: HelpTypingUser[]; draft?:string; onPress: () => void; onMenu: () => void };
+type TicketRowProps = { ticket: HelpTicket; dateNow:number; typing?: HelpTypingUser[]; draft?:string; onPress: () => void; onMenu: () => void };
 function TicketRow(props: TicketRowProps) {
   const latest=useRef(props);latest.current=props;
   const actions=useMemo(()=>({onPress:()=>latest.current.onPress(),onMenu:()=>latest.current.onMenu()}),[]);
   return <MemoTicketRow {...props} {...actions}/>;
 }
-const MemoTicketRow = React.memo(function TicketRowBody({ ticket, typing, draft, onPress, onMenu }: TicketRowProps) {
+const MemoTicketRow = React.memo(function TicketRowBody({ ticket, dateNow, typing, draft, onPress, onMenu }: TicketRowProps) {
   const c=useHelpTheme(); const reduced=useHelpReducedMotion(); const members=ticket.members.filter(m=>m.role==='IT'); const preview=ticket.lastMessage; const closed=ticket.status==='CLOSED';
   return <Pressable testID={`help-ticket-row-${ticket.id}`} {...(Platform.OS==='web' ? {onContextMenu:(event:any)=>{event.preventDefault();onMenu();},onKeyDown:(event:any)=>{if((event.shiftKey&&event.key==='F10')||event.key==='ContextMenu'){event.preventDefault();onMenu();}}} : {})} accessibilityRole="button" accessibilityLabel={`Обращение ${ticket.number}, ${ticket.title}${closed ? ', закрыто' : ''}${ticket.unreadCount ? `, непрочитанных: ${ticket.unreadCount}` : ''}`} onPress={onPress} onLongPress={onMenu} delayLongPress={500} style={({pressed})=>({minHeight:76,paddingHorizontal:HELP_LIST_INSET,paddingVertical:12,gap:12,flexDirection:'row',alignItems:'center',backgroundColor:closed ? c.closedBackground : pressed ? c.soft : 'transparent',transform:[{scale:pressed&&!reduced ? .988 : 1}]})}>
     <View style={{width:52,height:48,justifyContent:'center'}}>
@@ -720,7 +722,7 @@ const MemoTicketRow = React.memo(function TicketRowBody({ ticket, typing, draft,
       <View style={{marginTop:3,minHeight:20,justifyContent:'center'}}>{typing?.length&&!closed ? <HelpTyping users={typing} compact/> : <Text numberOfLines={1} style={{color:c.muted,fontSize:13,lineHeight:20}}>{draft?.trim() ? <><Text style={{color:c.draftText}}>Черновик: </Text>{draft}</> : preview?.text || (preview?.attachments.length ? preview.attachments[0].kind==='AUDIO' ? 'Голосовое сообщение' : preview.attachments.length>1 ? `Вложения (${preview.attachments.length})` : preview.attachments[0].name : 'Обращение создано')}</Text>}</View>
     </View>
     <View ref={node=>helpDevRef(`list.meta.${ticket.id}`,node)} testID={`help-ticket-meta-${ticket.id}`} style={{width:HELP_LIST_META_WIDTH,alignItems:'center',alignSelf:'center',height:45}}>
-      <Text style={{color:c.muted,fontSize:11,lineHeight:22,fontVariant:['tabular-nums'],textAlign:'center'}}>{helpTime(preview?.createdAt||ticket.createdAt)}</Text>
+      <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85} style={{color:c.muted,fontSize:11,lineHeight:22,fontVariant:['tabular-nums'],textAlign:'center'}}>{helpListDate(preview?.createdAt||ticket.createdAt,new Date(dateNow))}</Text>
       {ticket.unreadCount>0 ? <View ref={node=>helpDevRef(`list.unread.${ticket.id}`,node)} testID={`help-ticket-unread-${ticket.id}`} style={{marginTop:3,backgroundColor:c.accentText,borderRadius:12,minWidth:20,height:20,paddingHorizontal:5,alignItems:'center',justifyContent:'center'}}><Text style={{color:'#FFF',fontSize:11,fontWeight:'600'}}>{ticket.unreadCount}</Text></View> : null}
     </View>
   </Pressable>;

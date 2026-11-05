@@ -100,6 +100,27 @@ describe('Help screen integration with service boundary', () => {
   });
   afterEach(async()=>{if(screen)await act(async()=>screen.unmount());jest.restoreAllMocks();});
   async function render(){await act(async()=>{screen=TestRenderer.create(React.createElement(HelpScreen));});}
+  test('list date uses the last message date, not creation or ticket update time',async()=>{
+    jest.useFakeTimers();
+    try{
+      jest.setSystemTime(new Date(2026,10,5,15));
+      mockService.tickets=[{...ticket,createdAt:new Date(2026,10,5,14).toISOString(),updatedAt:new Date(2026,10,5,15).toISOString(),lastMessage:{id:42,text:'Вчерашний ответ',attachments:[],createdAt:new Date(2026,10,4,12).toISOString()} as any}];
+      await render();
+      expect(screen.root.findByProps({testID:'help-ticket-meta-7'}).findAllByType(Text).map(node=>node.props.children)).toContain('ср');
+    }finally{jest.useRealTimers();}
+  });
+  test('an unchanged row refreshes its overnight date at the Telegram cutoff',async()=>{
+    jest.useFakeTimers();
+    try{
+      jest.setSystemTime(new Date(2026,10,5,7,29));
+      mockService.tickets=[{...ticket,lastMessage:{id:42,text:'Ночной ответ',attachments:[],createdAt:new Date(2026,10,4,23,30).toISOString()} as any}];
+      await render();
+      const labels=()=>screen.root.findByProps({testID:'help-ticket-meta-7'}).findAllByType(Text).map(node=>node.props.children);
+      expect(labels()).toContain('23:30');
+      await act(async()=>jest.advanceTimersByTimeAsync(60000));
+      expect(labels()).toContain('ср');
+    }finally{if(screen)await act(async()=>screen.unmount());jest.useRealTimers();}
+  });
   test('default list is owned by the service; later searches still debounce a request',async()=>{
     jest.useFakeTimers();
     try{

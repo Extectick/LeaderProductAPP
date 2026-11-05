@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
-import { helpCreated, helpDate, helpDayKey, helpTime } from '../src/features/help/helpUiUtils';
+import { helpCreated, helpDate, helpDayKey, helpTime, helpListDate } from '../src/features/help/helpUiUtils';
 import { helpTimelineRows } from '../src/features/help/helpTimelineModel';
 import type { HelpMessage } from '../src/features/help/helpApi';
 
@@ -41,7 +41,7 @@ test('formatting and 600-message grouping never construct Intl formatters per it
   const localTime = jest.spyOn(Date.prototype, 'toLocaleTimeString');
   const localCreated = jest.spyOn(Date.prototype, 'toLocaleString');
   const messages = Array.from({ length: 600 }, (_, i) => ({ id: i + 1, sequence: i + 1, createdAt: new Date(2025, 0, 1, 10, i).toISOString() } as HelpMessage));
-  for (const message of messages) { helpDate(message.createdAt, new Date(2026, 9, 28)); helpTime(message.createdAt); helpCreated(message.createdAt); }
+  for (const message of messages) { helpDate(message.createdAt, new Date(2026, 9, 28)); helpTime(message.createdAt); helpCreated(message.createdAt); helpListDate(message.createdAt); }
   expect(helpTimelineRows(messages).filter(row => row.kind === 'message')).toHaveLength(600);
   expect(construct).not.toHaveBeenCalled(); expect(localDate).not.toHaveBeenCalled(); expect(localTime).not.toHaveBeenCalled(); expect(localCreated).not.toHaveBeenCalled();
 });
@@ -55,4 +55,32 @@ test('DST spring gap, autumn repeated hour and positive timezone midnight match 
   expect(ny.slice(0, 2).map(row => row.time)).toEqual(['01:30', '03:30']); expect(ny.slice(2, 4).map(row => row.time)).toEqual(['01:30', '01:30']);
   expect(ny[2].key).toBe(ny[3].key);
   const novo = run('Asia/Novosibirsk'); expect(novo.every(row => row.time === row.legacy)).toBe(true); expect(novo[4].key).toBe('2026-10-28');
+});
+
+
+test('dialog list follows Telegram time, weekday, day/month and old-year rules',()=>{
+  const now=new Date(2026,10,5,15);
+  const iso=(day:number,hour=12)=>new Date(2026,10,day,hour).toISOString();
+  expect(helpListDate(iso(5,10),now)).toBe('10:00');
+  expect(helpListDate(iso(4),now)).toBe('ср');
+  expect(helpListDate(iso(3),now)).toBe('вт');
+  expect(helpListDate(iso(4),new Date(2026,10,5,2))).toBe('ср');
+  const weekOld=new Date(2026,9,29,12);
+  expect(helpListDate(weekOld.toISOString(),now)).toBe(weekOld.toLocaleDateString('ru-RU',{day:'2-digit',month:'short'}));
+  expect(helpListDate(new Date(2025,9,1,12).toISOString(),now)).toBe('01.10.25');
+  expect(helpListDate('invalid',now)).toBe('');
+});
+test('previous-night time changes to weekday at exactly eight hours, including New Year',()=>{
+  const sent=new Date(2026,10,4,23,30);
+  expect(helpListDate(sent.toISOString(),new Date(2026,10,5,7,29))).toBe('23:30');
+  expect(helpListDate(sent.toISOString(),new Date(2026,10,5,7,30))).toBe('ср');
+  expect(helpListDate(new Date(2025,11,31,23,30).toISOString(),new Date(2026,0,1,1))).toBe('23:30');
+  expect(helpListDate(new Date(2025,11,30,12).toISOString(),new Date(2026,0,1,15))).toBe('вт');
+});
+test('dialog dates use local day boundaries across positive/negative timezones and DST',()=>{
+  const compiled=ts.transpileModule(readFileSync(path.join(__dirname,'../src/features/help/helpUiUtils.ts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
+  const script=compiled+`;const pairs=[['2026-11-04T18:30:00Z','2026-11-05T09:00:00Z'],['2026-03-07T17:00:00Z','2026-03-08T16:00:00Z'],['2026-11-01T05:30:00Z','2026-11-01T18:00:00Z']];console.log(JSON.stringify(pairs.map(([sent,now])=>exports.helpListDate(sent,new Date(now)))));`;
+  const run=(TZ:string)=>JSON.parse(execFileSync(process.execPath,['-e',script],{env:{...process.env,TZ},encoding:'utf8'}));
+  expect(run('Asia/Novosibirsk')[0]).toBe('01:30');
+  expect(run('America/New_York')).toEqual(['ср','сб','01:30']);
 });
