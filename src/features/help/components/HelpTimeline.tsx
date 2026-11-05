@@ -775,6 +775,12 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   },[observe,setFollow,updateMediaRange,settleOpening]);
   const NativeScroll=useMemo(()=>forwardRef<ScrollView,ScrollViewProps>((scrollProps,scrollRef)=>{
     const native=useRef<ScrollView>(null);
+    // Android's interception guard compares child.bottom with the full view
+    // height, while scrolling itself includes our native-only dock padding.
+    // A viewport-sized short child therefore has a real range but rejects
+    // every new drag at y=0. Keep it strictly taller than that guard's extent.
+    // Only real viewport layouts update this leaf; IME frames stay native.
+    const [minimumHeight,setMinimumHeight]=useState(0);
     useImperativeHandle(scrollRef,()=>helpOpeningScrollRef(native.current!,()=>{
       const target=live.current.navigationTarget,seed=initialPosition.current;
       // Reduced motion can finish the scene before FlashList's queued replay.
@@ -788,7 +794,10 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
       return {kind:'offset',offset:Math.min(Math.max(0,content+inset-height),Math.max(0,item.y+itemStartOffset()-live.current.headerHeight-(target.offset??0)))};
     }),[]);
     const onScroll=useMemo(()=>Animated.event([{nativeEvent:{contentOffset:{y:dateScrollOffset}}}],{useNativeDriver:Platform.OS!=='web',listener:scrollProps.onScroll}),[scrollProps.onScroll]);
-    return <Animated.ScrollView {...scrollProps} onScroll={onScroll} contentContainerStyle={[scrollProps.contentContainerStyle,{flexGrow:1}]} removeClippedSubviews={false} ref={native} nativeID={props.nativeID}/>;
+    return <Animated.ScrollView {...scrollProps} onLayout={event=>{
+      if(hasNativeChatLayout && Platform.OS==='android' && event.nativeEvent.layout.height>0)setMinimumHeight(Math.ceil(event.nativeEvent.layout.height)+1);
+      scrollProps.onLayout?.(event);
+    }} onScroll={onScroll} contentContainerStyle={[scrollProps.contentContainerStyle,{flexGrow:1},minimumHeight?{minHeight:minimumHeight}:null]} removeClippedSubviews={false} ref={native} nativeID={props.nativeID}/>;
   }),[props.nativeID,dateScrollOffset,shortCompleteHistory,currentBottomInset,itemStartOffset]);
   const webProps = Platform.OS==='web' ? {
     onWheel:()=>{takeScrollControl();webIntent.current=Date.now()+500;},

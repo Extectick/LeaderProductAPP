@@ -760,6 +760,35 @@ describe('sticky date geometry and navigation integration',()=>{
     await act(async()=>mockFlashProps.onScroll(scrollEvent(40)));
     expect(mockFlashProps.maintainVisibleContentPosition.disabled).toBe(false);
   });
+  test.each([
+    ['android',true],['android',false],['ios',true],['web',true],
+  ] as const)('short child remains draggable at zero with native dock: %s/%s',async(os,nativeDock)=>{
+    const previous=Platform.OS;Object.defineProperty(Platform,'OS',{configurable:true,value:os});
+    mockNativeChatLayout=nativeDock;
+    let scroller:TestRenderer.ReactTestRenderer|undefined;
+    try{
+      await render();
+      const onLayout=jest.fn();
+      await act(async()=>{scroller=TestRenderer.create(React.createElement(mockFlashProps.renderScrollComponent,{onLayout,contentContainerStyle:{paddingTop:112}}));});
+      const scroll=()=>scroller!.root.findByType(require('react-native').ScrollView);
+      for(const height of [600,430.5,800]){
+        const event={nativeEvent:{layout:{width:390,height}}};
+        await act(async()=>scroll().props.onLayout(event));
+        expect(onLayout).toHaveBeenLastCalledWith(event);
+        const style=StyleSheet.flatten(scroll().props.contentContainerStyle);
+        expect(style).toMatchObject({flexGrow:1,paddingTop:112});
+        if(os==='android' && nativeDock){
+          // Android ScrollView rejects interception at y=0 when child.bottom
+          // <= full viewport height, even though native dock padding adds range.
+          expect(style.minHeight).toBeGreaterThan(height);
+          expect(style.minHeight-height).toBeLessThanOrEqual(2);
+        }else expect(style.minHeight).toBeUndefined();
+      }
+    }finally{
+      if(scroller)await act(async()=>scroller!.unmount());
+      Object.defineProperty(Platform,'OS',{configurable:true,value:previous});
+    }
+  });
   test('complete short native history never mounts a scroll anchor during edge gestures',async()=>{
     mockNativeChatLayout=true;mockNativeAtomicTailMotion=true;
     mockListApi.getChildContainerDimensions=()=>({width:390,height:150});
