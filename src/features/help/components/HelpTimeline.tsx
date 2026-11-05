@@ -514,7 +514,11 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   },[reduced,pinLatest,resetTailMotion,setFollow,stopIdleSave,cancelJump,updateMediaRange,observe,scrollEnd,transition]);
   const settleOpening = useCallback((immediate=false):void => {
     const pending=openingLayout.current;
-    if(!pending.active||pending.frame)return;
+    if(!pending.active)return;
+    if(pending.frame){
+      if(!immediate)return;
+      cancelAnimationFrame(pending.frame);pending.frame=0;
+    }
     const step=()=>{
       pending.frame=0;
       const view=list.current,target=live.current.navigationTarget;
@@ -778,16 +782,22 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   const showLatestButton = Boolean(rows.length > 0 && ready && !props.hideLatestButton && latestAvailable);
   useEffect(()=>{props.onLatestState?.({visible:showLatestButton,count:props.unreadCount??0,loading:Boolean(props.loadingNewer||navigating&&latestRequest.current)});},[props.onLatestState,showLatestButton,props.unreadCount,props.loadingNewer,navigating]);
   useEffect(() => { helpDevState({timelineLatestButtonVisible:showLatestButton}); }, [showLatestButton]);
-  const onListLoad = useCallback(() => {
-    helpDevEvent('chat.open.listLoaded',{ticketId:live.current.messages[0]?.ticketId??null,mountedAt:mountedAt.current,elapsedMs:Date.now()-mountedAt.current,rows:rowsRef.current.length});
+  const commitOpeningWindow = useCallback(() => {
     const target = live.current.navigationTarget, seed = initialPosition.current;
-    if (!readyRef.current && target && seed?.key === target.key && target.kind !== 'date') {
+    if (!readyRef.current && !openingLayout.current.active && target && seed?.key === target.key && target.kind !== 'date') {
       committedTarget.current=target.key;inNavigation.current=true;
       Object.assign(openingLayout.current,{active:true,key:target.key,passes:0,signature:'',aligned:'',requestedIndex:-1,tailId:live.current.messages.at(-1)?.id??null});
-      settleOpening(true);
     }
+    // FlashList applies initialScrollIndex immediately before this layout
+    // callback. Reveal measured, positioned cells here instead of waiting for
+    // its later onLoad effect and another frame. Unmeasured anchors stay hidden.
+    settleOpening(true);
+  }, [settleOpening]);
+  const onListLoad = useCallback(() => {
+    helpDevEvent('chat.open.listLoaded',{ticketId:live.current.messages[0]?.ticketId??null,mountedAt:mountedAt.current,elapsedMs:Date.now()-mountedAt.current,rows:rowsRef.current.length});
+    commitOpeningWindow();
     setLoaded(true); updateMediaRange(true); observe();
-  }, [settleOpening,updateMediaRange,observe]);
+  }, [commitOpeningWindow,updateMediaRange,observe]);
   return <HelpMessageArrivalContext.Provider value={inheritedArrivals??localArrivals.current}><HelpImageCacheContext.Provider value={imageCache}><View style={{flex:1}}>
     <Animated.View testID="help-timeline-live-layer" style={{flex:1,opacity:!rows.length?1:firstContentSettled?readyOpacity:0,transform:[{translateY:outgoing?(outgoing.latest&&snapshotVisible?transition:incomingTransition).interpolate({inputRange:[0,1],outputRange:[-direction*distance,0]}):0}]}}>
       <Reanimated.View testID="help-timeline-tail-motion" style={[{flex:1},tailStyle]}><FlashList ref={list} data={rows} extraData={mediaRange} keyExtractor={rowKey} getItemType={rowType} renderItem={renderItem} CellRendererComponent={hasNativeAtomicTailMotion?TailCell:undefined}
@@ -798,7 +808,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
         contentContainerStyle={listContentStyle}
         maintainVisibleContentPosition={maintainVisibleContentPosition}
         showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive"
-        scrollEventThrottle={16} onLoad={onListLoad} onScroll={onScroll} onCommitLayoutEffect={()=>{settleOpening();synchronizeTailMotion();if(readyRef.current)measureDates();}}
+        scrollEventThrottle={16} onLoad={onListLoad} onScroll={onScroll} onCommitLayoutEffect={()=>{commitOpeningWindow();synchronizeTailMotion();if(readyRef.current)measureDates();}}
         onScrollBeginDrag={()=>{dragging.current=true;momentum.current=false;takeScrollControl();}}
         onMomentumScrollBegin={()=>{if(userScrollSession.current&&!inNavigation.current){momentum.current=true;stopIdleSave();setFollow(false);}}}
         onMomentumScrollEnd={()=>{if(userScrollSession.current){dragging.current=false;momentum.current=false;updateMediaRange(true);observe();settleScroll();}}}

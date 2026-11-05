@@ -63,3 +63,19 @@ test('never falls back to an unauthenticated URL when no resolver was supplied',
   await act(async () => button().props.onPress());
   expect(downloadHelpAttachment).not.toHaveBeenCalled();
 });
+test('cancelling a download aborts its operation, allows retry, and suppresses late failures',async()=>{
+ let reject!:(error:Error)=>void;
+ jest.mocked(downloadHelpAttachment).mockImplementationOnce(()=>new Promise<void>((_,fail)=>{reject=fail;}));
+ const resolve=jest.fn(async()=>source),onError=jest.fn();
+ await act(async()=>{view=TestRenderer.create(React.createElement(HelpAssistantFiles,{attachments:[file],resolve,onError}));});
+ await act(async()=>button().props.onPress());
+ const signal=jest.mocked(downloadHelpAttachment).mock.calls[0][2]!;
+ const cancel=view.root.findAll(node=>node.props.testID==='help-assistant-file-cancel-txt-32'&&typeof node.props.onPress==='function')[0];
+ await act(async()=>cancel.props.onPress());
+ expect(signal.aborted).toBe(true);expect(button().props.disabled).toBe(false);
+ expect(view.root.findAllByProps({accessibilityLiveRegion:'polite'}).length).toBeGreaterThan(0);
+ await act(async()=>reject(new Error('late private upstream failure')));
+ expect(onError).not.toHaveBeenCalled();expect(button().props.accessibilityState.busy).toBe(false);
+ jest.mocked(downloadHelpAttachment).mockResolvedValueOnce(undefined);
+ await act(async()=>button().props.onPress());expect(downloadHelpAttachment).toHaveBeenCalledTimes(2);
+});

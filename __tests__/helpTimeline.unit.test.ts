@@ -500,6 +500,26 @@ describe('sticky date geometry and navigation integration',()=>{
     expect(screen!.root.findByProps({testID:'priority-10'}).props.accessibilityLabel).toBe('visible');
   });
   const scrollEvent=(offset:number)=>({nativeEvent:{contentOffset:{x:0,y:offset},layoutMeasurement:{width:390,height:600},contentSize:{width:390,height:1000}}});
+  test('the positioned initial window is visible in its layout commit before onLoad or entrance completion',async()=>{
+    props={...props,entrySettled:false,onReady:jest.fn(),navigationTarget:{key:289,kind:'anchor',messageId:2,sequence:2,offset:5,animate:false}};
+    mockListApi.getAbsoluteLastScrollOffset=()=>259;
+    await act(async()=>{screen=TestRenderer.create(React.createElement(HelpTimeline,{...props,ref}));});
+    await act(async()=>{mockFlashProps.onLayout({nativeEvent:{layout:{height:600}}});mockFlashProps.onContentSizeChange(390,1000);});
+    await act(async()=>mockFlashProps.onCommitLayoutEffect());
+    expect(props.onReady).toHaveBeenCalledTimes(1);
+    expect(animatedNumber(StyleSheet.flatten(screen!.root.findByProps({testID:'help-timeline-live-layer'}).props.style).opacity)).toBe(1);
+    expect(mockFlashProps.drawDistance).toBe(320);
+    await act(async()=>mockFlashProps.onLoad());
+    expect(props.onReady).toHaveBeenCalledTimes(1);
+  });
+  test('an initial layout commit keeps an unmeasured saved anchor hidden',async()=>{
+    props={...props,entrySettled:false,onReady:jest.fn(),navigationTarget:{key:288,kind:'anchor',messageId:2,sequence:2,offset:5,animate:false}};
+    mockLayouts=mockLayouts.map(layout=>({...layout,isHeightMeasured:false}));
+    await act(async()=>{screen=TestRenderer.create(React.createElement(HelpTimeline,{...props,ref}));});
+    await act(async()=>{mockFlashProps.onLayout({nativeEvent:{layout:{height:600}}});mockFlashProps.onContentSizeChange(390,1000);mockFlashProps.onCommitLayoutEffect();});
+    expect(props.onReady).not.toHaveBeenCalled();
+    expect(animatedNumber(StyleSheet.flatten(screen!.root.findByProps({testID:'help-timeline-live-layer'}).props.style).opacity)).toBe(0);
+  });
   test('a measured initial window at its requested offset reveals on load without advancing a frame timer',async()=>{
     props={...props,onReady:jest.fn(),navigationTarget:{key:290,kind:'anchor',messageId:2,sequence:2,offset:5,animate:false}};
     mockListApi.getAbsoluteLastScrollOffset=()=>259;

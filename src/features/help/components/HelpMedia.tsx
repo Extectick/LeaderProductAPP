@@ -22,8 +22,12 @@ const decorativeTrackBars = [9, 15, 11, 23, 30, 18, 12, 26, 34, 21, 15, 10, 19, 
 export function HelpImage({ attachment, resolve, style, resizeMode = 'cover', onAspectRatio }: { attachment: HelpAttachment; resolve: ResolveHelpMedia; style?: StyleProp<ImageStyle>; resizeMode?: 'cover' | 'contain'; onAspectRatio?: (ratio: number) => void }) {
   const proximity=useContext(HelpMediaLoadingContext),cache=useContext(HelpImageCacheContext),c=useHelpTheme(),reduced=useHelpReducedMotion();
   const allowOriginal=proximity==='visible'||proximity==='near';
-  const identity=useRef({id:attachment.id,url:attachment.url,resolve});identity.current={id:attachment.id,url:attachment.url,resolve};
+  const identity=useRef({id:attachment.id,url:attachment.url,resolve,generation:0});
+  if(identity.current.id!==attachment.id||identity.current.url!==attachment.url||identity.current.resolve!==resolve)identity.current={id:attachment.id,url:attachment.url,resolve,generation:identity.current.generation+1};
+  const imageGeneration=identity.current.generation;
   const [result,setResult]=useState<{id:string;url:string;resolver:ResolveHelpMedia;source?:HelpMediaSource;error?:boolean;loaded?:boolean}>();
+  const [decoded,setDecoded]=useState<{generation:number}>();
+  const pixelsReady=decoded?.generation===imageGeneration;
   const cached=cache?.read(resolve,attachment);
   const own=result?.id===attachment.id && result.url===attachment.url && result.resolver===resolve?result:undefined;
   const current=attachment.localUri?{id:attachment.id,url:attachment.url,resolver:resolve,source:{uri:attachment.localUri},loaded:true}:own??(cached?{id:attachment.id,url:attachment.url,resolver:resolve,source:cached,loaded:true}:undefined);
@@ -41,8 +45,9 @@ export function HelpImage({ attachment, resolve, style, resizeMode = 'cover', on
   const presentation=useRef({attachment,current,restored,allowOriginal,onAspectRatio});
   presentation.current={attachment,current,restored,allowOriginal,onAspectRatio};
   const loaded=useCallback((event:any)=>{
-    if(identity.current.id!==attachment.id||identity.current.url!==attachment.url||identity.current.resolve!==resolve)return;
+    if(identity.current.generation!==imageGeneration)return;
     const {attachment:latestAttachment,current,onAspectRatio}=presentation.current;
+    setDecoded(previous=>previous?.generation===imageGeneration?previous:{generation:imageGeneration});
     if(current?.source)cache?.remember(resolve,latestAttachment,current.source);
     setResult(previous=>previous?.id===attachment.id && previous.url===attachment.url && previous.resolver===resolve&&!previous.loaded?{...previous,loaded:true}:previous);
     const native=event.source?undefined:event.nativeEvent;
@@ -50,21 +55,25 @@ export function HelpImage({ attachment, resolve, style, resizeMode = 'cover', on
     const width=event.source?.width??native?.source?.width??target?.naturalWidth??0;
     const height=event.source?.height??native?.source?.height??target?.naturalHeight??0;
     if(Number.isFinite(width)&&Number.isFinite(height)&&width>0&&height>0)onAspectRatio?.(width/height);
-  },[attachment.id,attachment.url,resolve,cache]);
+  },[attachment.id,attachment.url,resolve,cache,imageGeneration]);
   const failed=useCallback(()=>{
-    if(identity.current.id!==attachment.id||identity.current.url!==attachment.url||identity.current.resolve!==resolve)return;
+    if(identity.current.generation!==imageGeneration)return;
     const {attachment:latestAttachment,restored,allowOriginal}=presentation.current;
     cache?.forget(resolve,latestAttachment);
+    setDecoded(undefined);
     // Native cache eviction may require a fresh authorised source. Retry that
     // once for a real cell; transition copies never start their own requests.
     const error=!(restored&&allowOriginal);
     setResult(previous=>previous?.id===attachment.id&&previous.url===attachment.url&&previous.resolver===resolve&&!previous.source&&previous.error===error?previous:{id:attachment.id,url:attachment.url,resolver:resolve,error});
-  },[attachment.id,attachment.url,resolve,cache]);
+  },[attachment.id,attachment.url,resolve,cache,imageGeneration]);
   const original=current?.source && !current.error && (allowOriginal||current.loaded) ? current.source : undefined;
-  return <View testID="help-progressive-image" style={[style,{overflow:'hidden',backgroundColor:resizeMode==='contain'?'transparent':c.elevated}]}>
+  return <View testID="help-progressive-image" style={[style,{overflow:'hidden',backgroundColor:!pixelsReady?(c.dark?'#343A42':'#E4E7EB'):resizeMode==='contain'?'transparent':c.elevated}]}>
     {thumbnail ? <Image testID="help-image-preview" source={{uri:thumbnail}} resizeMode={resizeMode} style={StyleSheet.absoluteFill} blurRadius={2}/> : null}
     {original ? Platform.OS==='web' ? <Image accessibilityLabel={attachment.name} source={original} style={StyleSheet.absoluteFill} resizeMode={resizeMode} onLoad={loaded} onError={failed}/> : <CachedImage testID="help-image-original" accessibilityLabel={attachment.name} source={original} style={StyleSheet.absoluteFill} contentFit={resizeMode} placeholder={thumbnail?{uri:thumbnail}:undefined} placeholderContentFit={resizeMode} cachePolicy="memory-disk" recyclingKey={original.cacheKey??attachment.id} priority={proximity==='visible'?'high':'low'} transition={resizeMode==='contain'||reduced||restored?0:120} onLoad={loaded} onError={failed}/> : null}
-    {!current?.loaded ? <View pointerEvents="none" style={[StyleSheet.absoluteFill,{alignItems:'center',justifyContent:'center'}]}>{current?.error ? <Ionicons name="image-outline" accessibilityLabel="Изображение недоступно" size={24} color={c.muted}/> : allowOriginal ? <View style={{padding:9,borderRadius:22,backgroundColor:'#00000038'}}><ActivityIndicator color="#FFFFFF"/></View> : null}</View> : null}
+    {!pixelsReady ? <View testID="help-image-placeholder" pointerEvents="none" accessibilityLabel={current?.error?'Изображение недоступно':allowOriginal?'Загрузка изображения':'Изображение'} style={[StyleSheet.absoluteFill,{alignItems:'center',justifyContent:'center'}]}><View style={{alignItems:'center',gap:6,padding:10,borderRadius:12,backgroundColor:c.dark?'#343A42E8':'#E4E7EBE8'}}>
+      {current?.error||!allowOriginal||current?.loaded?<Ionicons name="image-outline" size={24} color={c.muted}/>:<ActivityIndicator color={c.muted}/>}
+      <Text numberOfLines={1} style={{fontSize:12,color:c.muted}}>{current?.error?'Фото недоступно':allowOriginal?'Загрузка фото…':'Фото'}</Text>
+    </View></View> : null}
   </View>;
 }
 let helpDownloadSequence = 0;

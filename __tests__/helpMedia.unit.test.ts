@@ -230,10 +230,40 @@ describe('Help media geometry and lifecycle', () => {
     expect(props.resolve).toHaveBeenCalledWith(props.attachment);
     expect(originalImage().props.priority).toBe('low');
   });
-  test('fullscreen contain keeps the dark viewer visible in letterboxing without a theme-colored canvas or crossfade',async()=>{
+  test('fullscreen contain reserves grey space until pixels decode, then restores transparent letterboxing without crossfade',async()=>{
     props.resizeMode='contain';mockReduced=false;await renderImage();
+    expect(StyleSheet.flatten(byId('help-progressive-image').props.style).backgroundColor).toBe('#E4E7EB');
+    expect(byId('help-image-placeholder').props.accessibilityLabel).toBe('Загрузка изображения');
+    await act(async()=>originalImage().props.onLoad({source:{width:400,height:300}}));
     expect(StyleSheet.flatten(byId('help-progressive-image').props.style).backgroundColor).toBe('transparent');
+    expect(screen!.root.findAllByProps({testID:'help-image-placeholder'})).toHaveLength(0);
     expect(originalImage().props).toMatchObject({contentFit:'contain',transition:0});
+  });
+  test('recycling and a restored native source reserve grey space until that cell decodes, without another request or spinner',async()=>{
+    props.style={width:120,height:160};await renderImage();
+    await act(async()=>originalImage().props.onLoad({source:{width:400,height:300}}));
+    await act(async()=>screen!.update(imageTree('retained','snapshot')));
+    expect(byId('help-image-placeholder')).toBeDefined();
+    expect(StyleSheet.flatten(byId('help-progressive-image').props.style)).toMatchObject({width:120,height:160,backgroundColor:'#E4E7EB'});
+    expect(screen!.root.findAllByType(ActivityIndicator)).toHaveLength(0);
+    expect(props.resolve).toHaveBeenCalledTimes(1);
+    await act(async()=>originalImage().props.onLoad({source:{width:400,height:300}}));
+    expect(screen!.root.findAllByProps({testID:'help-image-placeholder'})).toHaveLength(0);
+    props.attachment={...file,id:'another',url:'/different'};await updateImage('deferred');
+    expect(byId('help-image-placeholder')).toBeDefined();
+    expect(props.resolve).toHaveBeenCalledTimes(1);
+  });
+  test('A to B to A recycling requires fresh decode and rejects callbacks from the first A mount',async()=>{
+    const first=props.attachment;await renderImage();
+    const staleLoad=originalImage().props.onLoad;
+    await act(async()=>staleLoad({source:{width:400,height:300}}));
+    props.attachment={...file,id:'pending-other',url:'/pending-other'};await updateImage('deferred');
+    props.attachment=first;await updateImage('retained');
+    expect(byId('help-image-placeholder')).toBeDefined();
+    await act(async()=>staleLoad({source:{width:400,height:300}}));
+    expect(byId('help-image-placeholder')).toBeDefined();
+    await act(async()=>originalImage().props.onLoad({source:{width:400,height:300}}));
+    expect(screen!.root.findAllByProps({testID:'help-image-placeholder'})).toHaveLength(0);
   });
   test('preview stays visible while the original is resolving and loading, with account-scoped cache key intact', async()=>{
     let finish!:(source:any)=>void;

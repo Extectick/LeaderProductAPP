@@ -61,7 +61,11 @@ test('a second opening uses the warm message window immediately with stable cell
 });
 test('a ticket socket event updates only that row and retains the other row reference',async()=>{
   mockApi.list.mockResolvedValue({tickets:[ticket(7),ticket(8)],nextCursor:null});
-  await render();const other=service.tickets.find(row=>row.id===8);
+  await render();
+  // Visible rows may already be warming. Complete that read explicitly so the
+  // socket delta uses a deterministic cached cursor, independent of timers.
+  await act(async()=>{await service.prepareTicket(7);});
+  const other=service.tickets.find(row=>row.id===8);
   mockApi.list.mockClear();mockApi.detail.mockClear();mockApi.sync.mockClear();
   const event={id:11,ticketId:7,type:'ticket.updated',actorId:9,messageId:null,createdAt:'2026-11-04T12:00:00Z'};
   mockApi.events.mockResolvedValueOnce({events:[event],nextCursor:11,snapshotCursor:11,hasMore:false});
@@ -69,7 +73,7 @@ test('a ticket socket event updates only that row and retains the other row refe
   await act(async()=>{mockHandlers['help:event'](event);await service.refresh();});
   expect(mockApi.list).not.toHaveBeenCalled();expect(mockApi.detail).not.toHaveBeenCalled();
   expect(mockApi.sync).toHaveBeenCalledTimes(1);
-  expect(mockApi.sync).toHaveBeenCalledWith(7,0);
+  expect(mockApi.sync).toHaveBeenCalledWith(7,10);
   expect(service.tickets.find(row=>row.id===7)?.title).toBe('Changed');
   expect(service.tickets.find(row=>row.id===8)).toBe(other);
 });

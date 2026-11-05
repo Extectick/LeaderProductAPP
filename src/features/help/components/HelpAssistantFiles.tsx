@@ -22,12 +22,13 @@ export function HelpAssistantFiles({ attachments, resolve, onError }: HelpAssist
   const identity = files.map(file => `${file.id}:${file.url}`).join('|');
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [failedId, setFailedId] = useState<string | null>(null);
+  const [cancelledId,setCancelledId]=useState<string|null>(null);
   const operation = useRef<DownloadOperation | null>(null), generation = useRef(0), mounted = useRef(false);
   const resolver = useRef(resolve); resolver.current = resolve;
   const report = useRef(onError); report.current = onError;
   useLayoutEffect(() => {
     const version = ++generation.current;
-    mounted.current = true; setDownloadingId(null); setFailedId(null);
+    mounted.current = true; setDownloadingId(null); setFailedId(null);setCancelledId(null);
     return () => {
       if (generation.current !== version) return;
       mounted.current = false;
@@ -38,7 +39,7 @@ export function HelpAssistantFiles({ attachments, resolve, onError }: HelpAssist
   async function download(file: HelpAttachment) {
     if (!resolve || operation.current || !mounted.current) return;
     const current: DownloadOperation = { id: file.id, resolver: resolve, controller: new AbortController(), generation: generation.current };
-    operation.current = current; setDownloadingId(file.id); setFailedId(null);
+    operation.current = current; setDownloadingId(file.id); setFailedId(null);setCancelledId(null);
     const isCurrent = () => mounted.current && operation.current === current && generation.current === current.generation && resolver.current === current.resolver && !current.controller.signal.aborted;
     try {
       // Load media only for an explicit file action; a text-only AI row should
@@ -66,8 +67,8 @@ export function HelpAssistantFiles({ attachments, resolve, onError }: HelpAssist
           accessibilityLabel={`${action} файл ${file.name}`} accessibilityState={{ disabled, busy }} disabled={disabled}
           onPress={() => void download(file)} style={{ minHeight: 72, flexDirection: 'row', alignItems: 'center', gap: 12,
             borderRadius: 16, borderWidth: 1, borderColor: failedId === file.id ? c.danger : c.line,
-            backgroundColor: c.elevated, paddingHorizontal: 14, paddingVertical: 12, opacity: !resolve ? 0.55 : 1 }}>
-          <View style={{ width: 40, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 10, backgroundColor: c.soft }}>
+            backgroundColor: busy?(c.dark?'#343A42':'#E4E7EB'):c.elevated, paddingHorizontal: 14, paddingVertical: 12, opacity: !resolve ? 0.55 : 1 }}>
+          <View style={{ width: 40, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 10, backgroundColor: c.dark?'#343A42':'#E4E7EB' }}>
             <Ionicons name="document-text-outline" size={23} color={c.accentText}/>
           </View>
           <View style={{ flex: 1, gap: 4 }}>
@@ -79,6 +80,11 @@ export function HelpAssistantFiles({ attachments, resolve, onError }: HelpAssist
             <Text style={{ color: c.accentText, fontSize: 11 }}>{busy ? 'Загрузка…' : action}</Text>
           </View>
         </Pressable>
+        {busy?<Pressable testID={`help-assistant-file-cancel-${file.id}`} accessibilityRole="button" accessibilityLabel={`Отменить загрузку файла ${file.name}`} onPress={()=>{
+          const current=operation.current;if(!current||current.id!==file.id)return;
+          current.controller.abort();operation.current=null;setDownloadingId(null);setCancelledId(file.id);
+        }} style={{minHeight:44,alignSelf:'flex-end',justifyContent:'center',paddingHorizontal:12}}><Text style={{color:c.muted,fontSize:12}}>Отменить загрузку</Text></Pressable>:null}
+        {cancelledId===file.id?<Text accessibilityLiveRegion="polite" style={{color:c.muted,fontSize:12}}>Загрузка отменена. Можно скачать файл снова.</Text>:null}
         {failedId === file.id ? <Text accessibilityRole="alert" style={{ color: c.danger, fontSize: 12, lineHeight: 17 }}>Не удалось скачать файл. Нажмите, чтобы повторить.</Text> : null}
       </View>;
     })}
