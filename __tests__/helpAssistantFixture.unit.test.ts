@@ -38,6 +38,12 @@ describe('isolated Help AI scenario', () => {
     expect(old.events).toHaveLength(oldCount);
     expect(replacement.events.at(-1)).toMatchObject({run:{status:'completed'}});
     expect(replacement.events.at(-1)!.text).toContain('Уточните');
+    expect(replacement.events.at(-1)!.run.questions).toEqual([
+      expect.objectContaining({ multiSelect: false, options: expect.any(Array) }),
+      expect.objectContaining({ multiSelect: true, options: expect.any(Array) }),
+      expect.objectContaining({ multiSelect: false, options: [] }),
+    ]);
+    expect(replacement.events.slice(0, -1).every(event => !event.run.questions)).toBe(true);
   });
   test('error is terminal and another attempt can complete', () => {
     const failed=start('error'); jest.runAllTimers();

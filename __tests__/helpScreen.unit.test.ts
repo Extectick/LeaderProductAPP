@@ -1,13 +1,15 @@
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
-import { BackHandler, Keyboard, KeyboardAvoidingView, Modal, PanResponder, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput } from 'react-native';
+import { Animated, BackHandler, Keyboard, KeyboardAvoidingView, Modal, PanResponder, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput } from 'react-native';
 import type { HelpDetail, HelpTicket } from '../src/features/help/helpApi';
 
+let mockHoldEntry=false;
+const mockEntryJobs:(()=>void)[]=[];
 jest.mock('react-native-reanimated',()=>({
   __esModule:true,default:{View:(props:any)=>{require('react').useLayoutEffect(()=>{props.onLayout?.({nativeEvent:{layout:{width:390,height:800}}});},[]);return require('react').createElement(require('react-native').View,props);}},cancelAnimation:jest.fn(),runOnJS:(fn:any)=>fn,
   useSharedValue:(value:number)=>require('react').useRef({value}).current,
   useAnimatedStyle:(fn:()=>any)=>Object.defineProperties({},Object.fromEntries(Object.keys(fn()).map(key=>[key,{enumerable:true,get:()=>fn()[key]}]))),
-  withTiming:(value:number,_config:any,done?:any)=>{done?.(true);return value;},Easing:{out:(fn:any)=>fn,cubic:(x:number)=>x},
+  withTiming:(value:number,_config:any,done?:any)=>{if(mockHoldEntry&&_config.duration===240&&value===1){mockEntryJobs.push(()=>done?.(true));return 0;}done?.(true);return value;},Easing:{out:(fn:any)=>fn,cubic:(x:number)=>x},
 }));
 const mockRouter = { replace: jest.fn(), dismissTo: jest.fn() };
 jest.mock('@shopify/flash-list',()=>{
@@ -23,6 +25,7 @@ let mockNativeAtomicTailMotion = false;
 let mockNativeImeLayout = false;
 let mockNativeStableImeLayout = false;
 let mockNativeDockControls = false;
+let mockNativeEmptyHintMotion = false;
 let mockTimelineProps:any;
 const mockPlayback:any={};
 const mockUseAudioController=jest.fn((_options:any)=>mockPlayback);
@@ -37,7 +40,7 @@ jest.mock('../src/features/help/HelpAudioPlayback',()=>({
   useHelpAudioPlayback:()=>mockPlayback,
 }));
 jest.mock('../src/features/help/components/HelpNativeChatLayout', () => ({
-  get hasNativeChatLayout() { return mockNativeChatLayout; }, get hasNativeAtomicTailMotion() { return mockNativeAtomicTailMotion; }, get hasNativeImeLayout() { return mockNativeImeLayout; },get hasNativeStableImeLayout(){return mockNativeStableImeLayout;},get hasNativeDockControls(){return mockNativeDockControls;}, HelpNativeChatLayout:'HelpNativeChatLayout',
+  get hasNativeChatLayout() { return mockNativeChatLayout; }, get hasNativeAtomicTailMotion() { return mockNativeAtomicTailMotion; }, get hasNativeImeLayout() { return mockNativeImeLayout; },get hasNativeStableImeLayout(){return mockNativeStableImeLayout;},get hasNativeDockControls(){return mockNativeDockControls;},get hasNativeEmptyHintMotion(){return mockNativeEmptyHintMotion;}, HelpNativeChatLayout:'HelpNativeChatLayout',
 }));
 jest.mock('../context/ThemeContext', () => ({ useTheme: () => ({theme:'light'}) }));
 jest.mock('expo-router', () => ({ useRouter: () => mockRouter, useLocalSearchParams: () => ({}) }));
@@ -51,7 +54,11 @@ jest.mock('expo-blur', () => ({ BlurView: 'BlurView', BlurTargetView: 'BlurTarge
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn().mockResolvedValue(undefined) }));
 jest.mock('../src/features/help/components/HelpMedia', () => ({ HelpGallery: 'HelpGallery', downloadHelpAttachment: jest.fn() }));
-jest.mock('../src/features/help/components/HelpComposer', () => ({ HelpComposer: 'HelpComposer' }));
+jest.mock('../src/features/help/components/HelpComposer', () => ({ HelpComposer: (props:any) => {
+  const React=require('react');
+  return React.createElement('HelpComposer',props,props.questionPanel,props.questionFooter,
+    props.questionActionLabel?React.createElement('ComposerAction',{accessibilityRole:'button',accessibilityLabel:props.questionActionLabel,onPress:()=>{void props.onSend();}}):null);
+} }));
 jest.mock('../src/features/help/components/HelpMessageBubble', () => ({ HelpMessageBubble: 'HelpMessageBubble' }));
 jest.mock('../src/features/help/components/HelpAssistantMessage', () => ({HelpAssistantMessage:'HelpAssistantMessage',HelpAssistantPreviewMenu:'HelpAssistantPreviewMenu'}));
 jest.mock('../src/features/help/components/HelpTimeline',()=>{
@@ -89,10 +96,10 @@ describe('Help screen integration with service boundary', () => {
   let screen: TestRenderer.ReactTestRenderer;
   beforeEach(() => {
     jest.spyOn(PanResponder,'create').mockImplementation(config=>({panHandlers:config} as any));
-    mockFocused = true;
+    mockFocused = true;mockHoldEntry=false;mockEntryJobs.length=0;
     mockAttachmentDrafts.load.mockReset().mockResolvedValue([]);mockAttachmentDrafts.save.mockReset().mockImplementation(async(_user:any,_key:any,files:any)=>files);mockAttachmentDrafts.clear.mockReset().mockResolvedValue(undefined);mockAttachmentDrafts.hold.mockReset().mockImplementation(()=>jest.fn());
     mockNativeChatLayout = false;mockNativeAtomicTailMotion=false;
-    mockNativeImeLayout = false;mockNativeStableImeLayout=false;mockNativeDockControls=false;
+    mockNativeImeLayout = false;mockNativeStableImeLayout=false;mockNativeDockControls=false;mockNativeEmptyHintMotion=false;
     mockTimelineProps=undefined;mockUseAudioController.mockClear();mockTimelineDateJump.mockClear();
     Object.assign(mockPlayback,{current:null,positionSeconds:0,durationSeconds:0,progress:0,playing:false,loading:false,ready:false,error:null,speed:1,toggle:jest.fn().mockResolvedValue(undefined),setSpeed:jest.fn(),stop:jest.fn(),seek:jest.fn().mockResolvedValue(undefined),play:jest.fn().mockResolvedValue(undefined)});
     Object.assign(mockService,{queueFileTicket:undefined,tickets:[],selectedTicket:null,messages:[],pendingMessages:[],lastCreatedOperation:null,loading:false,busy:false,error:null,online:true,connected:true,canManage:false,userId:5,typingByTicket:{},hasMore:false,
@@ -230,14 +237,39 @@ describe('Help screen integration with service boundary', () => {
     await act(async()=>screen.update(React.createElement(HelpScreen)));
     expect(screen.root.findByProps({testID:'help-ticket-list'}).props.data.map((row:HelpTicket)=>row.id)).toEqual([7,8]);
   });
-  test('a cached ticket does not slide in before its message viewport is positioned',async()=>{
+  test('a chat scene opens independently of history positioning',async()=>{
     mockService.tickets=[ticket];await render();
     await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());
-    expect(screen.root.findByType(HelpChatEntry).props.ready).toBe(false);
-    expect(StyleSheet.flatten(screen.root.findByProps({testID:'help-chat-viewport'}).props.style).opacity).toBe(0);
+    expect(screen.root.findByType(HelpChatEntry).props.ready).toBe(true);
+    expect(StyleSheet.flatten(screen.root.findByProps({testID:'help-chat-viewport'}).props.style).opacity).toBe(1);
     await act(async()=>mockTimelineProps.onReady());
     expect(screen.root.findByType(HelpChatEntry).props.ready).toBe(true);
     expect(composer().props.navigationReady).toBe(true);
+  });
+  test('shows an interactive chat shell before starting slow history work',async()=>{
+    mockHoldEntry=true;mockService.tickets=[ticket];
+    let release!:(value:HelpDetail)=>void;
+    mockService.openTicket.mockImplementation(()=>new Promise(resolve=>{release=resolve;}));
+    await render();
+    await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());
+    expect(screen.root.findByType(HelpChatEntry).props.ready).toBe(true);
+    expect(screen.root.findByProps({testID:'help-chat-opening'})).toBeTruthy();
+    expect(mockService.openTicket).not.toHaveBeenCalled();
+    await act(async()=>mockEntryJobs.at(-1)!());
+    expect(mockService.openTicket).toHaveBeenCalledWith(7,undefined);
+    expect(screen.root.findByType(HelpChatEntry).props.ready).toBe(true);
+    expect(mockTimelineProps.loading).toBe(true);
+    expect(button('Назад')).toBeTruthy();
+    await act(async()=>release(detail));
+  });
+  test('leaving the opening shell cancels history work that has not started',async()=>{
+    mockHoldEntry=true;mockService.tickets=[ticket];await render();
+    await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());
+    const finish=mockEntryJobs.at(-1)!;
+    await act(async()=>button('Назад').props.onPress());
+    await act(async()=>finish());
+    expect(mockService.openTicket).not.toHaveBeenCalled();
+    expect(screen.root.findAllByProps({testID:'help-chat-viewport'})).toHaveLength(0);
   });
   test('closing waits for IME without tearing down the outgoing composer geometry',async()=>{
     mockNativeChatLayout=true;mockService.tickets=[ticket];await render();
@@ -331,6 +363,23 @@ describe('Help screen integration with service boundary', () => {
     expect(mockTimelineProps.dockHeight).toBe(dock+250);
     await act(async()=>screen.root.findByType('HelpNativeChatLayout' as any).props.onImeInsetChange(0));
     expect(viewport().bottom).toBe(before);expect(mockTimelineProps.dockHeight).toBe(dock);
+  });
+  test.each([false,true])('empty chat hint has one IME geometry owner with native capability %s',async(capable)=>{
+    mockNativeChatLayout=true;mockNativeImeLayout=true;mockNativeStableImeLayout=true;mockNativeEmptyHintMotion=capable;
+    await render();await act(async()=>button('Новое обращение').props.onPress());
+    const hint=()=>screen.root.findByProps({testID:'help-new-ticket-hint'});
+    const hintBottom=()=>StyleSheet.flatten(hint().props.style).bottom;
+    const native=()=>screen.root.findByType('HelpNativeChatLayout' as any);
+    const restingBottom=hintBottom();
+    if(capable){expect(hint().props.nativeID).toBe(native().props.emptyHintId);expect(hint().props.collapsable).toBe(false);}
+    else expect(hint().props.nativeID).toBeUndefined();
+    await act(async()=>native().props.onImeInsetChange(250));
+    // Native-capable APKs keep the resting Yoga geometry; only the native
+    // animated dock coordinates move the hint, including the settled frame.
+    expect(hintBottom()).toBe(restingBottom+(capable?0:250));
+    await act(async()=>native().props.onImeInsetChange(0));
+    expect(hintBottom()).toBe(restingBottom);
+    expect(mockService.createTicket).not.toHaveBeenCalled();
   });
   test('a completed right swipe anywhere in the chat navigates back and preserves the draft',async()=>{
     await render();await act(async()=>button('Новое обращение').props.onPress());
@@ -812,22 +861,22 @@ describe('Help screen integration with service boundary', () => {
     await act(async () => button('Развернуть вопросы ИИ').props.onPress());
     expect(composer().props.value).toBe('');
     await act(async () => composer().props.onChange('Windows 11'));
-    await act(async () => button('Обычное сообщение').props.onPress());
+    expect(composer().props.questionActionLabel).toBe('Отправить ответы');
+    await act(async () => button('Свернуть вопросы ИИ').props.onPress());
     expect(composer().props.value).toBe('Отдельный черновик');
+    expect(composer().props.questionActionLabel).toBeUndefined();
     await act(async () => button('Развернуть вопросы ИИ').props.onPress());
     expect(composer().props.value).toBe('Windows 11');
     mockService.sendMessage.mockClear().mockImplementation(async (_id: number, input: any) => {
       mockService.messages = [...mockService.messages, { ...mockService.messages[0], id: 33, sequence: 3, authorId: 5, text: input.text }];
       return { ...detail, messages: mockService.messages };
     });
-    await act(async () => button('Проверить ответы').props.onPress());
-    expect(mockService.sendMessage).not.toHaveBeenCalled();
     await act(async () => button('Отправить ответы').props.onPress());
     expect(mockService.sendMessage.mock.calls[0][1].text).toBe('Какая ОС?\nОтвет: Windows 11');
     expect(composer().props.value).toBe('Отдельный черновик');
     expect(composer().props.questionActionLabel).toBeUndefined();
   });
-  test('photo-picker sends only stage files for the questionnaire until the explicit review submission', async () => {
+  test('photo-picker sends only stage files for the questionnaire until the last composer send', async () => {
     await openWithMessage();
     mockService.messages = [...mockService.messages, { ...mockService.messages[0], id: 32, sequence: 2, authorId: 0, authorRole: 'SYSTEM', text: 'Нужен файл.', assistantRun: { runId: 'file-answer', status: 'completed', questions: [{ id: 'log', header: 'Лог', question: 'Пришлите лог', multiSelect: false, options: [] }] } }];
     await act(async () => screen.update(React.createElement(HelpScreen)));
@@ -857,7 +906,6 @@ describe('Help screen integration with service boundary', () => {
     await act(async () => screen.root.findByType(HelpChatEntry).props.onEntered());
     await act(async () => button('Развернуть вопросы ИИ').props.onPress());
     await act(async () => composer().props.onChange('Windows 11'));
-    await act(async () => button('Проверить ответы').props.onPress());
     let release!: (value: any) => void;
     mockService.sendMessage.mockClear().mockImplementation(() => new Promise(resolve => { release = resolve; }));
     await act(async () => button('Отправить ответы').props.onPress());
@@ -870,6 +918,22 @@ describe('Help screen integration with service boundary', () => {
   });
 
   function bubble(){return screen.root.findByType('HelpMessageBubble' as any);}
+  test('question budget uses the visible viewport once and tracks input growth',async()=>{
+    mockNativeChatLayout=true;mockNativeImeLayout=true;mockNativeStableImeLayout=true;
+    await openWithMessage();
+    mockService.messages=[...mockService.messages,{...mockService.messages[0],id:32,sequence:2,authorId:0,authorRole:'SYSTEM',assistantRun:{runId:'keyboard-options',status:'completed',questions:[{id:'options',header:'Тест',question:'Какой вариант?',multiSelect:false,options:[{label:'Первый'},{label:'Второй'},{label:'Третий'},{label:'Четвёртый'}]}]}}];
+    await act(async()=>screen.update(React.createElement(HelpScreen)));
+    await act(async()=>{
+      screen.root.findByType(HelpChatEntry).props.onLayout({nativeEvent:{layout:{height:820}}});
+      screen.root.findByProps({testID:'help-chat-header-overlay'}).props.onLayout({nativeEvent:{layout:{height:112}}});
+      screen.root.findByType('HelpNativeChatLayout' as any).props.onImeInsetChange(300);
+    });
+    expect(composer().props.questionPanel.props.maxBodyHeight).toBe(240);
+    await act(async()=>composer().props.onResize(168));
+    expect(composer().props.questionPanel.props.maxBodyHeight).toBe(120);
+    await act(async()=>composer().props.onResize(48));
+    expect(composer().props.questionPanel.props.maxBodyHeight).toBe(240);
+  });
   test('questions live in the measured dock, preserve the composer and send chosen answers through the normal durable send', async () => {
     await openWithMessage();
     const originalComposer = composer();
@@ -879,10 +943,11 @@ describe('Help screen integration with service boundary', () => {
     expect(composer()).toBe(originalComposer);
     expect(screen.root.findByProps({ testID: 'help-chat-dock-layout' }).findByProps({ testID: 'help-question-panel' })).toBeTruthy();
     expect(screen.root.findByType('HelpAssistantMessage' as any).props.onSuggestion).toBeUndefined();
+    expect(screen.root.findByType('HelpAssistantMessage' as any).props.questionState).toBe('waiting');
+    expect(composer().props.questionPanel.props.integrated).toBe(true);
+    expect(screen.root.findAllByProps({testID:'help-question-footer'})).toHaveLength(0);
     mockService.sendMessage.mockClear();
     await act(async () => button('Windows 11').props.onPress());
-    expect(mockService.sendMessage).not.toHaveBeenCalled();
-    await act(async () => button('Проверить ответы').props.onPress());
     expect(mockService.sendMessage).not.toHaveBeenCalled();
     await act(async () => button('Отправить ответы').props.onPress());
     expect(mockService.sendMessage).toHaveBeenCalledWith(7, { text: 'Какая ОС?\nОтвет: Windows 11', attachmentIds: [], replyToId: undefined });
@@ -914,7 +979,9 @@ describe('Help screen integration with service boundary', () => {
     await act(async()=>mockTimelineProps.onLatestState({visible:true,count:2,loading:false}));
     const dock=()=>screen.root.findByProps({testID:'help-chat-dock-layout'});
     const controls=()=>screen.root.findByProps({testID:'help-dock-controls'});
-    const latest=()=>controls().findByProps({testID:'help-jump-to-latest-motion'});
+    expect(StyleSheet.flatten(dock().props.style).zIndex).toBeGreaterThan(StyleSheet.flatten(controls().props.style).zIndex);
+
+    const latest=()=>controls().findByProps({testID:'help-jump-to-latest-position'});
     const initialBottom=StyleSheet.flatten(latest().props.style).bottom;
     const anchor={position:'absolute',right:13,bottom:initialBottom};
     expect(dock().findAllByProps({testID:'help-jump-to-latest-motion'})).toHaveLength(0);
@@ -937,13 +1004,18 @@ describe('Help screen integration with service boundary', () => {
     await act(async()=>mockTimelineProps.onLatestState({visible:true,count:2,loading:false}));
     const dock=()=>screen.root.findByProps({testID:'help-chat-dock-layout'});
     const controls=()=>screen.root.findByProps({testID:'help-dock-controls'});
-    const visual=()=>dock().findByProps({testID:'help-jump-to-latest-motion'});
+    expect(StyleSheet.flatten(dock().props.style).zIndex).toBeGreaterThan(StyleSheet.flatten(controls().props.style).zIndex);
+
+    const visual=()=>dock().findByProps({testID:'help-jump-to-latest-position'});
     const proxy=()=>controls().findAllByProps({testID:'help-jump-to-latest'}).find(node=>node.props.accessibilityRole==='button')!;
     const visualBottom=StyleSheet.flatten(visual().props.style).bottom;
     const proxyBottom=StyleSheet.flatten(proxy().parent!.props.style).bottom as number;
-    expect(StyleSheet.flatten(visual().props.style)).toMatchObject({bottom:'100%',marginBottom:12});
+    expect(StyleSheet.flatten(visual().props.style)).toMatchObject({bottom:'100%',marginBottom:-8});
     expect(dock().findByProps({testID:'help-dock-controls-native-visual'}).props.pointerEvents).toBe('none');
-    expect(visual().props.importantForAccessibility).toBe('no-hide-descendants');
+    expect(StyleSheet.flatten(dock().findByProps({testID:'help-chat-dock-surface'}).props.style).zIndex)
+      .toBeGreaterThan(StyleSheet.flatten(dock().findByProps({testID:'help-dock-controls-native-visual'}).props.style).zIndex);
+
+    expect(dock().findByProps({testID:'help-jump-to-latest-motion'}).props.importantForAccessibility).toBe('no-hide-descendants');
     expect(proxy().props.accessibilityLabel).toBe('К последним сообщениям. Новых: 2');
     expect(StyleSheet.flatten(proxy().props.style).backgroundColor).toBe('transparent');
     await act(async()=>screen.root.findByType('HelpNativeChatLayout' as any).props.onImeInsetChange(260));
@@ -1003,24 +1075,18 @@ describe('Help screen integration with service boundary', () => {
     expect(mockTimelineProps.headerHeight).toBe(initialHeight+44);
     expect(composer().props.recordingAreaHeight).toBe(initialArea-44);
   });
-  test('date chip sits outside the blur target, stays4px below the header surface and follows voice height',async()=>{
+  test('one date layer stays outside the blur target, follows header height and has no idle fade',async()=>{
     await openWithMessage();const date='2026-10-27T12:00:00Z';
-    expect(mockTimelineProps.hideStickyDate).toBe(true);
-    await act(async()=>mockTimelineProps.onStickyDateChange(date));
-    const overlay=()=>screen.root.findByProps({testID:'help-sticky-date-overlay'});
-    expect(StyleSheet.flatten(overlay().props.style).opacity).toBe(0);
-    expect(overlay().props.pointerEvents).toBe('none');
-    await act(async()=>mockTimelineProps.onHistoryScroll(true));
-    expect(StyleSheet.flatten(overlay().props.style).opacity).toBe(1);
+    expect(mockTimelineProps.onHistoryScroll).toBeUndefined();
+    const presentation={markers:[{key:'test-day',date,y:56,hidden:false}],scrollOffset:new Animated.Value(0)};
+    await act(async()=>mockTimelineProps.onDatePresentationChange(presentation));
+    const overlay=()=>screen.root.findByProps({testID:'help-date-layer'});
+    expect(StyleSheet.flatten(overlay().props.style).opacity).toBeUndefined();
     expect(overlay().props.pointerEvents).toBe('box-none');
     jest.useFakeTimers();
     try{
-      await act(async()=>mockTimelineProps.onHistoryScroll(true));
       await act(async()=>jest.advanceTimersByTime(2100));
-      expect(StyleSheet.flatten(overlay().props.style).opacity).toBe(0);
-      await act(async()=>mockTimelineProps.onHistoryScroll(true));
-      await act(async()=>mockTimelineProps.onHistoryScroll(false));
-      expect(StyleSheet.flatten(overlay().props.style).opacity).toBe(0);
+      expect(StyleSheet.flatten(overlay().props.style).opacity).toBeUndefined();
     }finally{jest.useRealTimers();}
     const initialTop=StyleSheet.flatten(overlay().props.style).top;
     expect(initialTop).toBe(56);expect(initialTop-(68-16)).toBe(4);
@@ -1030,7 +1096,7 @@ describe('Help screen integration with service boundary', () => {
     await act(async()=>chip.props.onPress());expect(mockTimelineDateJump).toHaveBeenCalledWith(date);
     await act(async()=>screen.root.findByProps({testID:'help-chat-header-overlay'}).props.onLayout({nativeEvent:{layout:{height:112}}}));
     expect(StyleSheet.flatten(overlay().props.style).top).toBe(initialTop+44);
-    await act(async()=>mockTimelineProps.onStickyDateChange(null));expect(screen.root.findAllByProps({testID:'help-sticky-date-overlay'})).toHaveLength(0);
+    await act(async()=>mockTimelineProps.onDatePresentationChange(null));expect(screen.root.findAllByProps({testID:'help-date-layer'})).toHaveLength(0);
   });
   test('quote navigation loads around its message instead of walking older pages',async()=>{
     await openWithMessage();await act(async()=>bubble().props.onQuote(999));

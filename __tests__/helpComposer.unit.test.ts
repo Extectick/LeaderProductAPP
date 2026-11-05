@@ -1,6 +1,6 @@
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
-import { Animated, AppState, Image, PanResponder, Platform, StyleSheet, TextInput } from 'react-native';
+import { Animated, AppState, Image, PanResponder, Platform, StyleSheet, TextInput, View } from 'react-native';
 jest.mock('react-native-gesture-handler', () => ({ Pressable: require('react-native').Pressable }));
 
 const mockRecorder = { prepareToRecordAsync: jest.fn(), record: jest.fn(), stop: jest.fn(), getStatus: jest.fn(() => ({durationMillis:1000})), uri: 'file://voice.m4a' };
@@ -62,6 +62,46 @@ describe('Help composer recorder lifecycle', () => {
   }
   function mic(){return screen!.root.findAll(n=>typeof n.props.onPanResponderGrant==='function')[0];}
   function deferred<T>(){let resolve!:(value:T)=>void;let reject!:(reason:Error)=>void;const promise=new Promise<T>((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};}
+  test('question height frames do not rerender the composer on every animation frame',async()=>{
+    props={...props,questionPanel:React.createElement(View)};
+    const committed=jest.fn();
+    await act(async()=>{screen=TestRenderer.create(React.createElement(React.Profiler,{id:'composer',onRender:committed},React.createElement(HelpComposer,props)));});
+    committed.mockClear();
+    const surface=screen!.root.findByProps({testID:'help-composer-surface'});
+    await act(async()=>{for(const height of [70,90,120,180,220])surface.props.onLayout({nativeEvent:{layout:{height}}});});
+    expect(committed).not.toHaveBeenCalled();
+  });
+  test('expanding questions retains the editable input and uses one composer arrow without microphone or duplicate custom row',async()=>{
+    Object.defineProperty(Platform,'OS',{configurable:true,value:'web'});
+    await render();
+    const input=screen!.root.findByType(TextInput);
+    props={...props,questionPanel:React.createElement(View,{testID:'question-slot'}),questionFooter:React.createElement(View,{testID:'navigation-slot'}),questionActionLabel:'Далее'};
+    await act(async()=>screen!.update(React.createElement(HelpComposer,props)));
+    expect(screen!.root.findByType(TextInput)).toBe(input);
+    expect(input.props.editable).toBe(true);
+    expect(screen!.root.findAll(n=>n.props.label==='Далее')).toHaveLength(1);
+    expect(screen!.root.findAll(n=>n.props.accessibilityLabel?.startsWith('Удерживайте для записи'))).toHaveLength(0);
+    await act(async()=>screen!.root.findAll(n=>n.props.label==='Далее')[0].props.onPress());
+    expect(props.onSend).toHaveBeenCalledTimes(1);
+    props={...props,questionPanel:undefined,questionFooter:undefined,questionActionLabel:undefined};
+    await act(async()=>screen!.update(React.createElement(HelpComposer,props)));
+    expect(screen!.root.findByType(TextInput)).toBe(input);
+  });
+  test('question card owns the action while the same editable composer and attachments remain mounted', async()=>{
+    Object.defineProperty(Platform,'OS',{configurable:true,value:'web'});
+    props={...props,value:'Мой ответ',questionActionLabel:'Далее',hideSendAction:true};
+    await render();
+    const input=screen!.root.findByType(TextInput);
+    expect(input.props.editable).toBe(true);
+    expect(screen!.root.findAll(n=>n.props.label==='Далее')).toHaveLength(0);
+    expect(screen!.root.findAll(n=>n.props.label==='Прикрепить файлы').length).toBeGreaterThan(0);
+    await act(async()=>input.props.onKeyPress({nativeEvent:{key:'Enter',ctrlKey:true}}));
+    expect(props.onSend).not.toHaveBeenCalled();
+    props={...props,questionActionLabel:undefined,hideSendAction:false};
+    await act(async()=>screen!.update(React.createElement(HelpComposer,props)));
+    expect(screen!.root.findByType(TextInput)).toBe(input);
+    expect(screen!.root.findAll(n=>n.props.label==='Отправить сообщение')[0].props.disabled).toBe(false);
+  });
   test.each([false,true])('sending preserves keyboard visibility (%s) and leaves the field editable',async(keyboardVisible)=>{
     Object.defineProperty(Platform,'OS',{configurable:true,value:'web'});
     const dismiss=jest.spyOn(require('react-native').Keyboard,'dismiss').mockImplementation(()=>{}),pending=deferred<void>();
@@ -473,8 +513,8 @@ describe('Help composer recorder lifecycle', () => {
   });
   test('paperclip/send/star sizes and transparent unfocused input match reference',async()=>{
     Object.defineProperty(Platform,'OS',{configurable:true,value:'web'});props.mode='close';await render();
-    expect(screen!.root.findAll(n=>n.props.label==='Прикрепить файлы')[0].props.style).toMatchObject({width:36,height:38,left:4,bottom:4});
-    expect(screen!.root.findAll(n=>n.props.label==='Закрыть обращение')[0].props.style).toMatchObject({width:38,height:38,right:4,bottom:4,borderRadius:19});
+    expect(screen!.root.findAll(n=>n.props.label==='Прикрепить файлы')[0].props.style).toMatchObject({width:36,height:38,left:4,bottom:5});
+    expect(screen!.root.findAll(n=>n.props.label==='Закрыть обращение')[0].props.style).toMatchObject({width:38,height:38,right:5,bottom:5,borderRadius:19});
     expect(screen!.root.findAll(n=>n.props.label==='1 из 5 звёзд')[0].props.style).toMatchObject({width:30,height:30});
     expect(screen!.root.findByType(TextInput).props.style).toMatchObject({outlineStyle:'none',outlineWidth:0,boxShadow:'none'});
     expect(screen!.root.findByType(TextInput).props.underlineColorAndroid).toBe('transparent');

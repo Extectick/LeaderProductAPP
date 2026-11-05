@@ -1,25 +1,32 @@
-import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import React, { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { HelpAssistantQuestion } from '../helpAssistant';
-import { emptyHelpQuestionDraft, formatHelpQuestionAnswers, helpQuestionAnswer, helpQuestionAnswerText, restoreHelpQuestionDraft, type HelpQuestionDraft } from '../helpQuestions';
+import { emptyHelpQuestionDraft, formatHelpQuestionAnswers, helpQuestionAnswer, helpQuestionAnswerText, helpQuestionHasAnswer, restoreHelpQuestionDraft, skipHelpQuestion, type HelpQuestionDraft } from '../helpQuestions';
 import { useHelpTheme } from '../helpTheme';
+import {HelpQuestionReveal} from './HelpQuestionReveal';
+import {HelpQuestionTransition} from './HelpQuestionTransition';
+import {HELP_QUESTION_NAVIGATION_HEIGHT} from '../helpQuestionLayout';
 
 export type HelpQuestionInputMode = 'question' | 'message';
 export type HelpQuestionAttachments = { count: number; names?: string[]; keys?: string[] };
 export type HelpQuestionSubmitSnapshot = { revision: number; text: string };
 export type HelpQuestionPanelHandle = {
-  /** Saves/advances to review. Only the visible review button may submit. */
-  answer: (text: string, attachments?: HelpQuestionAttachments) => Promise<boolean>;
+  /** Advances the active answer; the last composer action may send immediately. */
+  answer: (text: string, attachments?: HelpQuestionAttachments, stageOnly?: boolean) => Promise<boolean>;
   capture: (text: string) => void;
+  submitReview: () => Promise<void>;
+  back: () => void;
+  skip: () => void;
   getDraftText: () => string;
 };
 export type HelpQuestionChange = { index: number; question: HelpAssistantQuestion; review: boolean };
 type Props = {
+  integrated?: boolean; submitOnLastAnswer?: boolean;
   questions: HelpAssistantQuestion[]; draft: string; disabled: boolean; maxBodyHeight: number;
   loadDraft: () => Promise<string>; saveDraft: (value: string) => Promise<unknown>;
   onDraftChange: (text: string) => void; onWriteAnswer: () => void;
-  onSubmit: (text: string, snapshot?: HelpQuestionSubmitSnapshot) => Promise<boolean>; onSubmitStart?: () => HelpQuestionSubmitSnapshot; onDismiss: () => void;
+  onSubmit: (text: string, snapshot?: HelpQuestionSubmitSnapshot) => Promise<boolean>; onSubmitStart?: () => HelpQuestionSubmitSnapshot;
   inputMode?: HelpQuestionInputMode; onInputModeChange?: (mode: HelpQuestionInputMode) => void;
   onQuestionChange?: (value: HelpQuestionChange) => void;
   attachmentCount?: number; attachmentNames?: string[]; attachmentKeys?: string[]; onAttachFiles?: () => void;
@@ -32,67 +39,84 @@ export const HelpQuestionPanel = forwardRef<HelpQuestionPanelHandle, Props>(func
   const current = useRef(state), latest = useRef(props); latest.current = props;
   const storage = useRef({ load: props.loadDraft, save: props.saveDraft });
   const writes = useRef<Promise<unknown>>(Promise.resolve()), locked = useRef(false), alive = useRef(true);
-  const autoAdvance = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hydration=useRef(0),hydrated=useRef(false),revision=useRef(0);
+  const bodyMetrics=useRef({height:0,content:0,y:0}),moreAnswersRef=useRef(false);
+  const [moreAnswers,setMoreAnswers]=useState(false);
+  const measureBody=(next:Partial<{height:number;content:number;y:number}>)=>{
+    Object.assign(bodyMetrics.current,next);
+    const value=bodyMetrics.current.content-bodyMetrics.current.height-bodyMetrics.current.y>2 && bodyMetrics.current.height>0;
+    if(value!==moreAnswersRef.current){moreAnswersRef.current=value;setMoreAnswers(value);}
+  };
   const question = props.questions[state.index], mode = props.inputMode || 'question';
   const disabled = props.disabled || !ready || sending;
   const fileCount = props.attachmentCount || 0;
-  const stopAutoAdvance = () => { if (autoAdvance.current) clearTimeout(autoAdvance.current); autoAdvance.current = null; };
   const update = (next: HelpQuestionDraft) => {
+    const writeRevision=++revision.current;
     current.current = next; setState(next);
     const value = JSON.stringify(next);
-    writes.current = writes.current.catch(() => {}).then(() => storage.current.save(value));
+    writes.current = writes.current.catch(() => {}).then(() => {
+      // Keep the in-flight write and the newest snapshot, not a backlog of
+      // every tap/keystroke. Final submit still awaits this durable snapshot.
+      if(writeRevision!==revision.current)return;
+      return storage.current.save(value);
+    });
     void writes.current.catch(() => { if (alive.current) setError('Не удалось сохранить ответы. Повторите отправку.'); });
   };
   useEffect(() => {
     alive.current = true;
+    let active=true;
+    const generation=++hydration.current,loadedRevision=revision.current;
+    const valid=()=>active && alive.current && generation===hydration.current;
+    const cleanup=()=>{active=false;alive.current=false;};
+    // Fast Refresh re-runs effects while retaining these answers. A late read
+    // from an older effect must never replace a newer load or an interaction.
+    if(hydrated.current)return cleanup;
     void storage.current.load().then(raw => {
-      if (!alive.current) return;
-      try { if (JSON.parse(raw)?.dismissed === true) { latest.current.onDismiss(); return; } } catch { /* empty draft */ }
+      if (!valid() || revision.current!==loadedRevision || hydrated.current) return;
       const restored = restoreHelpQuestionDraft(raw, latest.current.questions);
+      if(latest.current.submitOnLastAnswer)restored.review=false;
       current.current = restored; setState(restored);
+      try { if (JSON.parse(raw)?.dismissed === true) update(restored); } catch { /* empty draft */ }
       const text = helpQuestionAnswer(restored, latest.current.questions[restored.index]?.id)?.text;
-      if (text && (latest.current.inputMode || 'question') === 'question' && !latest.current.draft.trim()) latest.current.onDraftChange(text);
-    }).catch(() => { if (alive.current) setError('Не удалось восстановить сохранённые ответы.'); })
-      .finally(() => { if (alive.current) setReady(true); });
-    return () => { alive.current = false; stopAutoAdvance(); };
+      if (restored.collapsed) {
+        if ((latest.current.inputMode || 'question') === 'question') latest.current.onInputModeChange?.('message');
+      } else if (text && (latest.current.inputMode || 'question') === 'question' && !latest.current.draft.trim()) latest.current.onDraftChange(text);
+    }).catch(() => { if (valid()) setError('Не удалось восстановить сохранённые ответы.'); })
+      .finally(() => { if (valid()) {hydrated.current=true;setReady(true);} });
+    return cleanup;
   }, []);
-  useEffect(() => {
-    if (ready && question) latest.current.onQuestionChange?.({ index: state.index, question, review: state.review === true });
-  }, [ready, state.index, state.review, question?.id, question?.question]);
-  useEffect(() => { if (disabled || mode === 'message') stopAutoAdvance(); return stopAutoAdvance; }, [disabled, mode, state.index]);
+  useLayoutEffect(() => {
+    if (ready && question) latest.current.onQuestionChange?.({ index: state.index, question, review: !props.submitOnLastAnswer && state.review === true });
+  }, [ready, state.index, state.review, props.submitOnLastAnswer, question?.id, question?.question]);
+  useLayoutEffect(()=>{
+    bodyMetrics.current={height:0,content:0,y:0};moreAnswersRef.current=false;setMoreAnswers(false);
+  },[state.index,state.review]);
   const withText = (text: string, markFiles = false, attachments?: HelpQuestionAttachments): HelpQuestionDraft => {
     const saved = current.current, q = latest.current.questions[saved.index];
     if (!q || (latest.current.inputMode || 'question') === 'message') return saved;
     const previous = helpQuestionAnswer(saved, q.id);
-    return { ...saved, answers: { ...saved.answers, [q.id]: { selected: previous?.selected || [], text: text.trim(),
+    return { ...saved, review: latest.current.submitOnLastAnswer ? false : saved.review, answers: { ...saved.answers, [q.id]: { selected: previous?.selected || [], text: text.trim(),
+      skipped: previous?.skipped === true && !text.trim() && !(markFiles && (attachments?.count ?? latest.current.attachmentCount ?? 0) > 0),
       fileCount: markFiles ? Math.max(0, Math.min(10, attachments?.count ?? latest.current.attachmentCount ?? 0)) : previous?.fileCount || 0,
       fileNames: markFiles ? (attachments?.names || latest.current.attachmentNames || []).filter(name => typeof name === 'string').slice(0, 10).map(name => name.slice(0, 200)) : previous?.fileNames || [],
       fileKeys: markFiles ? (attachments?.keys || latest.current.attachmentKeys || []).filter(key => typeof key === 'string').slice(0, 10).map(key => key.slice(0, 2000)) : previous?.fileKeys || [] } } };
   };
   const capture = (text: string) => {
-    if (!ready || submitted || locked.current || (latest.current.inputMode || 'question') === 'message') return;
+    if (!alive.current || !ready || submitted || locked.current || (latest.current.inputMode || 'question') === 'message') return;
     if (text.trim().length > 4000) { setError('Ответ на один вопрос — до 4000 символов.'); return; }
     const next = withText(text);
     if (JSON.stringify(next) !== JSON.stringify(current.current)) update(next);
   };
   const navigate = (index: number) => {
-    if (disabled) return;
-    stopAutoAdvance();
+    if (!alive.current || disabled || locked.current || current.current.index!==state.index) return;
     if (mode === 'question' && props.draft.trim().length > 4000) { setError('Сократите ответ до 4000 символов.'); return; }
     const next = { ...withText(latest.current.draft), index, review: false, collapsed: false };
     update(next); setError('');
     if (mode === 'question') latest.current.onDraftChange(helpQuestionAnswer(next, latest.current.questions[index].id)?.text || '');
     else latest.current.onInputModeChange?.('question');
   };
-  const changeMode = (next: HelpQuestionInputMode) => {
-    stopAutoAdvance();
-    if (next === mode) return;
-    if (mode === 'question') capture(latest.current.draft);
-    latest.current.onInputModeChange?.(next);
-  };
-  const answer = async (text: string, attachments?: HelpQuestionAttachments): Promise<boolean> => {
+  const answer = async (text: string, attachments?: HelpQuestionAttachments, stageOnly=false): Promise<boolean> => {
     if (!alive.current || locked.current || latest.current.disabled || !ready || submitted || (latest.current.inputMode || 'question') === 'message') return false;
-    stopAutoAdvance();
     if (text.trim().length > 4000) { setError('Ответ на один вопрос — до 4000 символов.'); return false; }
     const next = withText(text, true, attachments), q = latest.current.questions[next.index];
     if (!q) return false;
@@ -104,20 +128,21 @@ export const HelpQuestionPanel = forwardRef<HelpQuestionPanelHandle, Props>(func
     if (next.index < latest.current.questions.length - 1) {
       const advanced = { ...next, index: next.index + 1 }; update(advanced);
       latest.current.onDraftChange(helpQuestionAnswer(advanced, latest.current.questions[advanced.index].id)?.text || '');
+    } else if(latest.current.submitOnLastAnswer) {
+      if(stageOnly)update(next);
+      else return submitAnswers(next);
     } else update({ ...next, review: true });
     return false;
   };
-  const submitReview = async () => {
-    if (!alive.current || latest.current.disabled || !ready || locked.current || submitted || !current.current.review || (latest.current.inputMode || 'question') === 'message') return;
-    stopAutoAdvance();
-    const next = withText(latest.current.draft);
+  async function submitAnswers(next:HelpQuestionDraft):Promise<boolean> {
+    if (!alive.current || latest.current.disabled || !ready || locked.current || submitted || (latest.current.inputMode || 'question') === 'message') return false;
     const missing = latest.current.questions.findIndex(q => !helpQuestionAnswerText(helpQuestionAnswer(next, q.id), latest.current.attachmentCount || 0, latest.current.attachmentNames, latest.current.attachmentKeys));
-    if (missing >= 0) { navigate(missing); setError('Остался вопрос без ответа.'); return; }
+    if (missing >= 0) { navigate(missing); setError('Остался вопрос без ответа.'); return false; }
     locked.current = true; setSending(true); setError('');
     const snapshot = latest.current.onSubmitStart?.(); update(next);
     try {
       await writes.current;
-      if (!alive.current || latest.current.disabled) return;
+      if (!alive.current || latest.current.disabled) return false;
       const text = formatHelpQuestionAnswers(latest.current.questions, next, latest.current.attachmentCount || 0, latest.current.attachmentNames, latest.current.attachmentKeys);
       const sent = snapshot ? await latest.current.onSubmit(text, snapshot) : await latest.current.onSubmit(text);
       if (sent) {
@@ -126,96 +151,100 @@ export const HelpQuestionPanel = forwardRef<HelpQuestionPanelHandle, Props>(func
         // never turn that success into a retry and duplicate the response.
         await storage.current.save('').catch(() => {});
       }
-    } catch (reason) { if (alive.current) setError(reason instanceof Error ? reason.message : 'Не удалось отправить ответы.'); }
+      return sent;
+    } catch (reason) { if (alive.current) setError(reason instanceof Error ? reason.message : 'Не удалось отправить ответы.'); return false; }
     finally { locked.current = false; if (alive.current) setSending(false); }
   };
-  useImperativeHandle(ref, () => ({ answer, capture, getDraftText: () => helpQuestionAnswer(current.current, latest.current.questions[current.current.index]?.id)?.text || '' }));
-  if (!question || submitted) return null;
+  const submitReview = async () => {
+    if(!current.current.review && !latest.current.submitOnLastAnswer)return;
+    await submitAnswers(withText(latest.current.draft));
+  };
+  const skip = () => {
+    if (!alive.current || disabled || locked.current || submitted || (current.current.review && !latest.current.submitOnLastAnswer) || (latest.current.inputMode || 'question') === 'message') return;
+    if (current.current.index !== state.index) return;
+    const next=skipHelpQuestion({...withText(latest.current.draft),review:false},latest.current.questions,latest.current.attachmentCount || 0,latest.current.attachmentNames,latest.current.attachmentKeys);
+    if(next.review && latest.current.submitOnLastAnswer){latest.current.onDraftChange('');void submitAnswers({...next,review:false});return;}
+    update(next); setError('');
+    latest.current.onDraftChange(next.review?'':helpQuestionAnswer(next,latest.current.questions[next.index].id)?.text || '');
+  };
+  const back = () => { if (state.review || state.index > 0) navigate(state.review ? state.index : state.index - 1); };
+  useImperativeHandle(ref, () => ({ answer, capture, submitReview, back, skip, getDraftText: () => helpQuestionAnswer(current.current, latest.current.questions[current.current.index]?.id)?.text || '' }));
+  if (!ready || !question || submitted) return null;
   const collapsed = state.collapsed || mode === 'message';
-  const completed = props.questions.filter(q => helpQuestionAnswerText(helpQuestionAnswer(state, q.id), fileCount, props.attachmentNames, props.attachmentKeys)).length;
-  const primaryLabel = state.review ? 'Отправить ответы' : state.index < props.questions.length - 1 ? 'Следующий вопрос' : 'Проверить ответы';
-  const modeSwitch = props.onInputModeChange ? <View style={{ flexDirection: 'row', gap: 4, marginHorizontal: 12, marginBottom: 6, padding: 3, borderRadius: 12, backgroundColor: c.elevated }}>
-    {(['question', 'message'] as const).map(value => <Pressable key={value} accessibilityRole="tab" accessibilityLabel={value === 'question' ? 'Ответ на вопрос' : 'Обычное сообщение'} accessibilityState={{ selected: mode === value }} disabled={disabled} onPress={() => changeMode(value)} style={{ flex: 1, minHeight: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 9, backgroundColor: mode === value ? c.surface : 'transparent' }}><Text style={{ color: mode === value ? c.accentText : c.muted, fontSize: 12, fontWeight: mode === value ? '600' : '400' }}>{value === 'question' ? 'Ответ на вопрос' : 'Сообщение'}</Text></Pressable>)}
-  </View> : null;
-  return <View testID="help-question-panel" style={{ borderWidth: 1, borderColor: c.line, borderRadius: 20, marginBottom: 8, overflow: 'hidden', backgroundColor: c.surface }}>
-    <Pressable accessibilityRole="button" accessibilityLabel={collapsed ? 'Развернуть вопросы ИИ' : 'Свернуть вопросы ИИ'} accessibilityState={{ expanded: !collapsed }} disabled={!ready || sending}
-      onPress={() => {
-        stopAutoAdvance();
-        if (collapsed) { update({ ...current.current, collapsed: false }); if (mode === 'message') latest.current.onInputModeChange?.('question'); }
-        else { capture(latest.current.draft); update({ ...current.current, collapsed: true }); latest.current.onInputModeChange?.('message'); }
-      }} style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 14 }}>
-      <Ionicons name={state.review ? 'checkmark-circle-outline' : 'chatbubble-ellipses-outline'} size={18} color={c.accentText}/>
-      <Text numberOfLines={1} style={{ flex: 1, color: c.text, fontSize: 13, fontWeight: '600' }}>{state.review ? 'Проверьте ответы' : collapsed ? 'ИИ ждёт вашего ответа' : 'Уточним детали'}</Text>
-      <Text style={{ color: c.muted, fontSize: 11 }}>{collapsed ? `${completed} из ${props.questions.length}` : `${state.index + 1} / ${props.questions.length}`}</Text>
-      <Ionicons name={collapsed ? 'chevron-up' : 'chevron-down'} size={14} color={c.muted}/>
-    </Pressable>
-    {!collapsed ? modeSwitch : null}
-    {!collapsed ? <>
-      {props.questions.length > 1 ? <View style={{ flexDirection: 'row', gap: 5, paddingHorizontal: 12, paddingBottom: 8 }}>
-        {props.questions.map((q, index) => {
-          const done = Boolean(helpQuestionAnswerText(helpQuestionAnswer(state, q.id), fileCount, props.attachmentNames, props.attachmentKeys));
-          return <Pressable key={q.id} accessibilityRole="button" accessibilityLabel={`Перейти к вопросу ${index + 1}`} accessibilityState={{ selected: !state.review && index === state.index }} disabled={disabled} onPress={() => navigate(index)} style={{ flex: 1, minHeight: 32, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, borderRadius: 10, backgroundColor: !state.review && index === state.index ? c.soft : c.elevated }}>
-            {done ? <Ionicons name="checkmark" size={12} color={c.green}/> : <Text style={{ color: c.muted, fontSize: 11 }}>{index + 1}</Text>}
-            <Text numberOfLines={1} style={{ color: !state.review && index === state.index ? c.accentText : c.muted, fontSize: 11, flexShrink: 1 }}>{q.header}</Text>
-          </Pressable>;
-        })}
-        <Pressable accessibilityRole="button" accessibilityLabel="Все вопросы и ответы" disabled={disabled} onPress={() => { stopAutoAdvance(); update({ ...withText(latest.current.draft), review: true }); setError(''); }} style={{ minWidth: 34, minHeight: 32, alignItems: 'center', justifyContent: 'center', borderRadius: 10, backgroundColor: state.review ? c.soft : c.elevated }}><Ionicons name="list-outline" size={17} color={state.review ? c.accentText : c.muted}/></Pressable>
-      </View> : null}
-      <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled" style={{ maxHeight: props.maxBodyHeight }} contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 6, gap: 6 }}>
-        {state.review ? <View testID="help-question-review" style={{ gap: 6 }}>
+  const reviewing = !props.submitOnLastAnswer && state.review === true;
+  const minimalReview = reviewing;
+  const primaryLabel = reviewing || (props.submitOnLastAnswer && state.index===props.questions.length-1) ? 'Отправить ответы' : state.index < props.questions.length - 1 ? 'Далее' : 'Проверить ответы';
+  const customText = props.draft.trim() || helpQuestionAnswer(state, question.id)?.text || '';
+  const canSkip=!helpQuestionHasAnswer(helpQuestionAnswer(withText(props.draft),question.id),fileCount,props.attachmentNames,props.attachmentKeys);
+  const collapsedContent = <><View pointerEvents="none" style={{height:StyleSheet.hairlineWidth,backgroundColor:c.line,marginHorizontal:14}}/><Pressable accessibilityRole="button" accessibilityLabel="Развернуть вопросы ИИ" accessibilityState={{ expanded: false }} disabled={disabled}
+      onPress={() => { update({ ...current.current, collapsed: false }); if (mode === 'message') latest.current.onInputModeChange?.('question'); }}
+      style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14 }}>
+      <Ionicons name="chatbubble-ellipses-outline" size={18} color={c.muted}/><Text style={{ flex: 1, color: c.muted, fontSize: 13 }}>ИИ ожидает ответ</Text><Ionicons name="chevron-up" size={16} color={c.muted}/>
+    </Pressable></>;
+  const expandedContent = <View style={{paddingTop:props.integrated?8:0}}>
+    <HelpQuestionNavigation index={state.index} review={reviewing} canSkip={canSkip} disabled={disabled} onBack={back} onSkip={skip}/>
+    <HelpQuestionTransition index={state.index} identity={reviewing?'review':question.id}>
+    <View style={{position:'relative'}}>
+      <ScrollView testID="help-question-body" key={reviewing ? 'review' : question.id} nestedScrollEnabled keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} scrollEventThrottle={32}
+        onLayout={event=>measureBody({height:event.nativeEvent.layout.height})} onContentSizeChange={(_,content)=>measureBody({content})}
+        onScroll={event=>measureBody({height:event.nativeEvent.layoutMeasurement.height,content:event.nativeEvent.contentSize.height,y:event.nativeEvent.contentOffset.y})}
+        style={{ maxHeight: props.maxBodyHeight }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom:4 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+        {!minimalReview ? <Text style={{ flex: 1, paddingVertical: 2, color: c.text, fontSize: 15, lineHeight: 21, fontWeight: '500' }}>{question.question}</Text> : <View style={{flex:1}}/>}
+        <Pressable accessibilityRole="button" accessibilityLabel="Свернуть вопросы ИИ" accessibilityState={{ expanded: true }} disabled={disabled}
+          onPress={() => { if(!alive.current || disabled || locked.current)return;capture(latest.current.draft); update({ ...current.current, collapsed: true }); latest.current.onInputModeChange?.('message'); }}
+          hitSlop={4} style={{ minHeight: 36, minWidth: 44, flexDirection:'row', gap:6, justifyContent: 'center', alignItems: 'center' }}>
+          {!minimalReview ? <Text style={{ color: c.muted, fontSize: 12 }}>{`${state.index + 1} из ${props.questions.length}`}</Text> : null}<Ionicons name="chevron-down" size={16} color={c.muted}/>
+        </Pressable>
+      </View>
+        {reviewing ? <View testID="help-question-review" style={{ gap: 8 }}>
           {props.questions.map((q, index) => {
             const text = helpQuestionAnswerText(helpQuestionAnswer(state, q.id), fileCount, props.attachmentNames, props.attachmentKeys);
-            return <Pressable key={q.id} accessibilityRole="button" accessibilityLabel={`Изменить ответ ${index + 1}`} disabled={disabled} onPress={() => navigate(index)} style={{ minHeight: 50, padding: 10, borderRadius: 12, backgroundColor: c.elevated, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <View style={{ flex: 1, gap: 3 }}><Text numberOfLines={2} style={{ color: c.muted, fontSize: 11, lineHeight: 15 }}>{q.question}</Text><Text style={{ color: text ? c.text : c.danger, fontSize: 13, lineHeight: 18 }}>{text || 'Нет ответа'}</Text></View><Ionicons name="pencil-outline" size={15} color={c.muted}/>
+            return <Pressable key={q.id} accessibilityRole="button" accessibilityLabel={`Изменить ответ ${index + 1}`} disabled={disabled} onPress={() => navigate(index)} style={{ minHeight: 44, paddingVertical: 6, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <View style={{ flex: 1, gap: 3 }}><Text style={{ color: c.muted, fontSize: 12, lineHeight: 17 }}>{q.question}</Text><Text style={{ color: text ? c.text : c.danger, fontSize: 14, lineHeight: 21 }}>{text || 'Нет ответа'}</Text></View><View style={{ width: 32, alignItems: 'center' }}><Ionicons name="pencil-outline" size={19} color={c.muted}/></View>
             </Pressable>;
           })}
-          {fileCount > 0 ? <Text style={{ color: c.muted, fontSize: 12 }}>{props.attachmentNames?.length ? props.attachmentNames.slice(0, 3).join(', ') : `Прикреплено файлов: ${fileCount}`}</Text> : null}
         </View> : <>
-          <Text style={{ color: c.text, fontSize: 15, lineHeight: 21, fontWeight: '500', marginBottom: 2 }}>{question.question}</Text>
-          {question.multiSelect ? <Text style={{ color: c.muted, fontSize: 11 }}>Можно выбрать несколько вариантов</Text> : null}
           {question.options.map(option => {
             const checked = Boolean(helpQuestionAnswer(state, question.id)?.selected.includes(option.label));
             return <Pressable key={option.label} accessibilityRole={question.multiSelect ? 'checkbox' : 'radio'} accessibilityLabel={option.label} accessibilityState={{ checked, disabled }} disabled={disabled}
               onPress={() => {
-                if (latest.current.disabled || locked.current || (latest.current.inputMode || 'question') === 'message') return;
-                stopAutoAdvance();
-                const previous = helpQuestionAnswer(current.current, question.id);
+                if (!alive.current || latest.current.disabled || locked.current || current.current.index!==state.index || latest.current.questions[current.current.index]?.id!==question.id || (latest.current.inputMode || 'question') === 'message') return;
+                const next = withText(latest.current.draft), previous = helpQuestionAnswer(next, question.id);
                 const alreadySelected = previous?.selected.includes(option.label) || false;
                 const selected = question.multiSelect ? alreadySelected ? (previous?.selected || []).filter(label => label !== option.label) : [...(previous?.selected || []), option.label] : [option.label];
-                const next = { ...current.current, answers: { ...current.current.answers, [question.id]: { selected, text: '', fileCount: previous?.fileCount || 0 } } };
-                update(next); setError(''); latest.current.onDraftChange('');
-                if (!question.multiSelect && state.index < props.questions.length - 1) {
-                  const index = state.index, id = question.id;
-                  autoAdvance.current = setTimeout(() => {
-                    autoAdvance.current = null;
-                    if (!alive.current || latest.current.disabled || (latest.current.inputMode || 'question') !== 'question' || current.current.index !== index || current.current.review || latest.current.draft.trim() || latest.current.questions[index]?.id !== id) return;
-                    const advanced = { ...current.current, index: index + 1 }; update(advanced);
-                    latest.current.onDraftChange(helpQuestionAnswer(advanced, latest.current.questions[index + 1].id)?.text || '');
-                  }, 200);
-                }
-              }} style={{ minHeight: 46, flexDirection: 'row', alignItems: 'center', gap: 9, padding: 10, borderWidth: 1, borderColor: checked ? c.accentText : c.line, borderRadius: 13, backgroundColor: checked ? c.soft : c.surface, opacity: disabled ? 0.5 : 1 }}>
-              <Ionicons name={question.multiSelect ? checked ? 'checkbox' : 'square-outline' : checked ? 'radio-button-on' : 'radio-button-off'} size={19} color={checked ? c.accentText : c.muted}/>
-              <View style={{ flex: 1, gap: 3 }}><Text style={{ color: checked ? c.accentText : c.text, fontSize: 13, fontWeight: checked ? '600' : '400' }}>{option.label}</Text>{option.description && option.description !== option.label ? <Text style={{ color: c.muted, fontSize: 11, lineHeight: 16 }}>{option.description}</Text> : null}</View>
+                update({ ...next, answers: { ...next.answers, [question.id]: { ...previous, selected, skipped: false, text: previous?.text || '', fileCount: previous?.fileCount || 0 } } }); setError('');
+              }} style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 6, opacity: disabled ? 0.5 : 1 }}>
+              <Ionicons name={question.multiSelect ? checked ? 'checkbox' : 'square-outline' : checked ? 'radio-button-on' : 'radio-button-off'} size={22} color={checked ? c.accentText : c.muted}/>
+              <View style={{ flex: 1, gap: 2 }}><Text style={{ color: c.text, fontSize: 15, lineHeight: 21, fontWeight: checked ? '500' : '400' }}>{option.label}</Text>{option.description && option.description !== option.label ? <Text numberOfLines={2} style={{ color: c.muted, fontSize: 12, lineHeight: 16 }}>{option.description}</Text> : null}</View>
             </Pressable>;
           })}
-          <View style={{ flexDirection: 'row', gap: 12, flexWrap: 'wrap' }}>
-            <Pressable accessibilityRole="button" accessibilityLabel="Написать свой ответ" disabled={disabled} onPress={() => {
-              stopAutoAdvance();
-              const next = withText(latest.current.draft), previous = helpQuestionAnswer(next, question.id);
-              update({ ...next, answers: { ...next.answers, [question.id]: { selected: [], text: previous?.text || '', fileCount: previous?.fileCount || 0 } } });
-              latest.current.onWriteAnswer();
-            }} style={{ minHeight: 38, flexDirection: 'row', alignItems: 'center', gap: 5 }}><Ionicons name="create-outline" size={14} color={c.accentText}/><Text style={{ color: c.accentText, fontSize: 12 }}>Свой ответ</Text></Pressable>
-            {props.onAttachFiles ? <Pressable accessibilityRole="button" accessibilityLabel="Прикрепить файл к ответу" disabled={disabled} onPress={() => props.onAttachFiles?.()} style={{ minHeight: 38, flexDirection: 'row', alignItems: 'center', gap: 5 }}><Ionicons name="attach-outline" size={15} color={c.accentText}/><Text style={{ color: c.accentText, fontSize: 12 }}>Файл{fileCount ? ` · ${fileCount}` : ''}</Text></Pressable> : null}
-          </View>
+          {!props.integrated ? <Pressable accessibilityRole="button" accessibilityLabel="Написать свой ответ" disabled={disabled} onPress={() => {
+            const next = withText(latest.current.draft), previous = helpQuestionAnswer(next, question.id);
+            update({ ...next, answers: { ...next.answers, [question.id]: { ...previous, selected: [], skipped: false, text: previous?.text || '', fileCount: previous?.fileCount || 0 } } }); latest.current.onWriteAnswer();
+          }} style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 14 }}><Ionicons name="pencil-outline" size={20} color={c.muted}/><Text style={{ color: c.muted, fontSize: 14 }}>{customText || 'Написать свой ответ'}</Text></Pressable> : null}
         </>}
+        {fileCount > 0 ? <Text style={{ color: c.muted, fontSize: 11, lineHeight: 16 }}>{`Прикреплено файлов: ${fileCount}`}</Text> : null}
       </ScrollView>
-      {error ? <Text accessibilityRole="alert" style={{ color: c.danger, fontSize: 12, paddingHorizontal: 14, paddingBottom: 4 }}>{error}</Text> : null}
-      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingBottom: 6, gap: 8 }}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Пропустить вопросы" disabled={disabled} onPress={() => { stopAutoAdvance(); capture(latest.current.draft); void writes.current.catch(() => {}).then(() => storage.current.save(JSON.stringify({ ...current.current, dismissed: true }))).catch(() => {}); props.onDismiss(); }} style={{ minHeight: 40, justifyContent: 'center', paddingHorizontal: 2 }}><Text style={{ color: c.muted, fontSize: 12 }}>Пропустить</Text></Pressable>
-        {!state.review && state.index > 0 ? <Pressable accessibilityRole="button" accessibilityLabel="Предыдущий вопрос" disabled={disabled} onPress={() => navigate(state.index - 1)} style={{ minHeight: 40, justifyContent: 'center', paddingHorizontal: 4 }}><Text style={{ color: c.muted, fontSize: 12 }}>Назад</Text></Pressable> : null}
+      {moreAnswers ? <View testID="help-question-more-options" pointerEvents="none" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{position:'absolute',left:16,right:16,bottom:0,height:12,backgroundColor:c.panel,alignItems:'center',justifyContent:'center'}}><Ionicons name="chevron-down" size={12} color={c.muted}/></View> : null}
+    </View>
+    </HelpQuestionTransition>
+      {error ? <Text accessibilityRole="alert" style={{ color: c.danger, fontSize: 12, paddingHorizontal: 16, paddingBottom: 6 }}>{error}</Text> : null}
+      {!props.integrated ? <View testID="help-question-footer" style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, gap: 6 }}>
         <View style={{ flex: 1 }}/>
-        <Pressable accessibilityRole="button" accessibilityLabel={primaryLabel} disabled={disabled} onPress={() => { if (state.review) void submitReview(); else void answer(props.draft); }} style={{ minHeight: 40, justifyContent: 'center', paddingHorizontal: 13, borderRadius: 12, backgroundColor: c.accent, opacity: disabled ? 0.5 : 1 }}><Text style={{ color: '#FFF', fontSize: 13, fontWeight: '600' }}>{sending ? 'Отправляем…' : state.review ? 'Отправить ответы' : state.index < props.questions.length - 1 ? 'Далее' : 'Проверить ответы'}</Text></Pressable>
-      </View>
-    </> : null}
+        <Pressable accessibilityRole="button" accessibilityLabel={primaryLabel} disabled={disabled} onPress={() => { if(current.current.index!==state.index)return; if (reviewing) void submitReview(); else void answer(latest.current.draft); }} style={{ minHeight: 44, flexShrink: 1, flexDirection: 'row', gap: 7, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 }}><Text style={{ color: c.accentText, fontSize: 14 }}>{sending ? 'Отправляем…' : minimalReview ? 'Отправить' : primaryLabel}</Text><Ionicons name="arrow-up" size={19} color={c.accentText}/></Pressable>
+      </View> : null}
+  </View>;
+  return <View testID="help-question-panel">
+    {props.integrated ? <HelpQuestionReveal collapsed={collapsed} collapsedContent={collapsedContent}>{expandedContent}</HelpQuestionReveal> : collapsed ? collapsedContent : expandedContent}
   </View>;
 });
+
+/** Small labels, full touch targets; the composer owns the only primary action. */
+export function HelpQuestionNavigation({index,review,canSkip=true,disabled,onBack,onSkip}:{index:number;review:boolean;canSkip?:boolean;disabled:boolean;onBack:()=>void;onSkip:()=>void}) {
+  const c=useHelpTheme();
+  return <View testID="help-question-navigation" style={{minHeight:HELP_QUESTION_NAVIGATION_HEIGHT,flexDirection:'row',alignItems:'center',gap:12,paddingHorizontal:12}}>
+    {review || index>0 ? <Pressable accessibilityRole="button" accessibilityLabel={review?'Вернуться к вопросам':'Предыдущий вопрос'} disabled={disabled} hitSlop={{top:4,bottom:4}} onPress={onBack} style={{minHeight:HELP_QUESTION_NAVIGATION_HEIGHT,paddingHorizontal:4,justifyContent:'center'}}><Text style={{color:c.muted,fontSize:12,lineHeight:18}}>Назад</Text></Pressable>:null}
+    {!review && canSkip ? <Pressable accessibilityRole="button" accessibilityLabel="Пропустить вопрос" accessibilityHint="Перейти дальше без ответа на этот вопрос" disabled={disabled} hitSlop={{top:4,bottom:4}} onPress={onSkip} style={{marginLeft:'auto',minHeight:HELP_QUESTION_NAVIGATION_HEIGHT,paddingHorizontal:4,justifyContent:'center'}}><Text style={{color:c.muted,fontSize:12,lineHeight:18}}>Пропустить</Text></Pressable> : null}
+  </View>;
+}

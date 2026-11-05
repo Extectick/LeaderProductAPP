@@ -70,7 +70,7 @@ export function HelpSheet({title,children,onClose,scrollOffset=0,resizable=true,
   const c=useHelpTheme(),reduced=useHelpReducedMotion(),insets=useSafeAreaInsets(),window=useWindowDimensions();
   const maximum=Math.min(maxHeight??Infinity,Math.max(180,window.height-insets.top-24)),padding=Math.max(24,insets.bottom+16);
   const [natural,setNatural]=useState(260),collapsed=Math.min(maximum,natural);
-  const height=useSharedValue(collapsed),y=useSharedValue(collapsed),start=useSharedValue(collapsed),closing=useSharedValue(false);
+  const height=useSharedValue(collapsed),y=useSharedValue(collapsed),start=useSharedValue(collapsed),closing=useSharedValue(false),dragging=useSharedValue(false);
   const latest=useRef(onClose);latest.current=onClose;
   const dismissed=React.useCallback(()=>latest.current(),[]);
   const close=React.useCallback(()=>{
@@ -80,7 +80,7 @@ export function HelpSheet({title,children,onClose,scrollOffset=0,resizable=true,
   useEffect(()=>{height.value=collapsed;y.value=withTiming(0,{duration:reduced?0:220});return()=>{cancelAnimation(y);cancelAnimation(height);};},[collapsed,height,y,reduced]);
   const motion=useAnimatedStyle(()=>({height:height.value,transform:[{translateY:y.value}]}));
   const pan=React.useMemo(()=>Gesture.Pan().withTestId('help-sheet-resize').enabled(scrollOffset<=0).maxPointers(1).activeOffsetY(resizable?[-8,8]:8).failOffsetX([-24,24])
-    .onStart(()=>{if(closing.value)return;cancelAnimation(height);start.value=height.value;})
+    .onStart(()=>{if(closing.value)return;cancelAnimation(height);start.value=height.value;dragging.value=true;})
     .onUpdate(event=>{if(!closing.value)height.value=Math.max(80,Math.min(resizable?maximum:collapsed,start.value-event.translationY));})
     .onEnd((event,success)=>{
       if(!success||closing.value)return;
@@ -88,8 +88,13 @@ export function HelpSheet({title,children,onClose,scrollOffset=0,resizable=true,
       const next=resizable&&(height.value>(collapsed+maximum)/2||event.velocityY< -600)?maximum:collapsed;
       height.value=withSpring(next,{damping:25,stiffness:280,mass:.8,overshootClamping:true});
     })
-    .onFinalize((_,success)=>{if(!success&&!closing.value)height.value=withSpring(start.value,{damping:25,stiffness:280,mass:.8,overshootClamping:true});}),
-    [scrollOffset,resizable,closing,height,start,maximum,collapsed,close]);
+    .onFinalize((_,success)=>{
+      // Failed recognition (e.g. swiping up on a fixed sheet) never captured
+      // start. Restoring its initial estimate would clip the measured content.
+      if(dragging.value&&!success&&!closing.value)height.value=withSpring(start.value,{damping:25,stiffness:280,mass:.8,overshootClamping:true});
+      dragging.value=false;
+    }),
+    [scrollOffset,resizable,closing,dragging,height,start,maximum,collapsed,close]);
   return <Modal transparent animationType="none" onRequestClose={close} statusBarTranslucent><GestureHandlerRootView style={{flex:1}}><View style={{flex:1,justifyContent:'flex-end',backgroundColor:'#00000057'}}>
     <Pressable accessibilityLabel="Закрыть" onPress={close} style={StyleSheet.absoluteFill}/>
     <GestureDetector gesture={pan}><Reanimated.View testID="help-sheet-surface" style={[{backgroundColor:c.panel,borderTopLeftRadius:22,borderTopRightRadius:22,paddingHorizontal:18,paddingBottom:padding,overflow:'hidden'},motion]}>

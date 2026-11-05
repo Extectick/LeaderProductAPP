@@ -1,6 +1,6 @@
 import React from 'react';
 import TestRenderer,{act} from 'react-test-renderer';
-import {Animated,StyleSheet,View} from 'react-native';
+import {Animated,Platform,StyleSheet,View} from 'react-native';
 import { helpNavigationIndex, helpIsAtLatest, helpTimelineRows, helpVisibleRows, helpTimelineEntries, helpMessageGroups } from '../src/features/help/helpTimelineModel';
 import type { HelpMessage } from '../src/features/help/helpApi';
 let mockFlashProps:any;
@@ -125,6 +125,21 @@ describe('sticky date geometry and navigation integration',()=>{
     mockListApi.getChildContainerDimensions=()=>({width:390,height:464});
     await render();
     expect(floating()).toBeUndefined();
+    const moving=screen!.root.findAllByProps({testID:'help-moving-date'})[0];
+    expect(StyleSheet.flatten(moving.props.style).transform[0].translateY.__getValue()+88).toBe(186);
+  });
+  test('scroll binding uses the native event and preserves the FlashList listener and ref',async()=>{
+    const publish=jest.fn();props={...props,onDatePresentationChange:publish};await render();
+    const listener=jest.fn(),event=jest.fn(),binding=jest.spyOn(Animated,'event').mockReturnValue(event);
+    let scroll!:TestRenderer.ReactTestRenderer;
+    try{
+      const Scroll=mockFlashProps.renderScrollComponent,ref=React.createRef<any>();
+      await act(async()=>{scroll=TestRenderer.create(React.createElement(Scroll,{ref,onScroll:listener}));});
+      const [mapping,config]=binding.mock.calls.at(-1)!;
+      expect(config).toMatchObject({useNativeDriver:Platform.OS!=='web',listener});
+      expect(mapping[0].nativeEvent.contentOffset.y).toBe(publish.mock.calls.at(-1)![0].scrollOffset);
+      expect(mockListApi.getNativeScrollRef()).toBeNull();
+    }finally{if(scroll)await act(async()=>scroll.unmount());binding.mockRestore();}
   });
   test('atomic native layout owns appended media and late geometry without a JS or nested answer clock',async()=>{
     mockReducedMotion=false;mockNativeChatLayout=true;mockNativeAtomicTailMotion=true;
@@ -241,7 +256,8 @@ describe('sticky date geometry and navigation integration',()=>{
     expect(window).not.toHaveBeenCalled();
     mockListApi.getLayout=(index:number)=>mockLayouts[index];
     await act(async()=>mockFlashProps.onCommitLayoutEffect());
-    expect(window).toHaveBeenCalledTimes(1);
+    // Tail geometry and date projection each tolerate unavailable dimensions.
+    expect(window).toHaveBeenCalledTimes(2);
   });
   test('inactive updates retain the geometry baseline without animating on return',async()=>{
     mockReducedMotion=false;mockNativeChatLayout=true;props={...props,bottomAligned:true};
@@ -394,19 +410,22 @@ describe('sticky date geometry and navigation integration',()=>{
       await act(async()=>screen!.unmount());screen=undefined;
     }
   });
-  function floating(){return screen!.root.findAllByType(HelpDateSeparator).find(node=>StyleSheet.flatten(node.parent?.props.style)?.position==='absolute');}
+  function floating(){
+    const pinned=(props.onStickyDateChange as jest.Mock).mock.calls.at(-1)?.[0];
+    return screen!.root.findAllByType(HelpDateSeparator).find(node=>node.props.compact&&node.props.date===pinned);
+  }
   test('a future day separator does not hide the current day and compact pill sits4px below capsule',async()=>{
     await render();const date=floating()!;
     expect(date.props.date).toBe(firstDate);expect(date.props.compact).toBe(true);
-    const top=StyleSheet.flatten(date.parent!.props.style).top as number;
+    const top=StyleSheet.flatten(screen!.root.findByProps({testID:'help-date-layer'}).props.style).top as number;
     expect(top).toBe(88);expect(top-(props.headerHeight-16)).toBe(4);
     expect(props.onStickyDateChange).toHaveBeenLastCalledWith(firstDate);
     await act(async()=>date.props.onPress());expect(props.onDate).toHaveBeenCalledWith(firstDate);
   });
   test('voice header growth moves the chip by the measured delta without changing its date',async()=>{
-    await render();const initial=StyleSheet.flatten(floating()!.parent!.props.style).top as number;
+    await render();const initial=StyleSheet.flatten(screen!.root.findByProps({testID:'help-date-layer'}).props.style).top as number;
     props={...props,headerHeight:144};await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));await observe();
-    expect(StyleSheet.flatten(floating()!.parent!.props.style).top).toBe(initial+44);expect(floating()!.props.date).toBe(firstDate);
+    expect(StyleSheet.flatten(screen!.root.findByProps({testID:'help-date-layer'}).props.style).top).toBe(initial+44);expect(floating()!.props.date).toBe(firstDate);
     expect(mockFlashProps.contentContainerStyle.paddingTop).toBe(156);
   });
   test('external overlay receives sticky date while internal rendering is hidden; handle jump uses it',async()=>{
@@ -422,17 +441,20 @@ describe('sticky date geometry and navigation integration',()=>{
     mockLayouts[0]={y:110,height:44};mockLayouts[1]={y:154,height:100};await render();
     expect(floating()).toBeUndefined();expect(props.onStickyDateChange).toHaveBeenLastCalledWith(null);
   });
-  test.each([80,55,51])('partly clipped same-day pill at rowTop%s suppresses the duplicate despite read-visibility threshold',async rowTop=>{
-    // At80 only24 of the44px touch row remain below headerHeight100; at51
-    // just1px of the pill remains below the capsule bottom84. Both are visible.
+  test.each([78,55,51])('a day at rowTop%s pins at its visual top independently of read visibility',async rowTop=>{
     mockLayouts[0]={y:rowTop,height:44};await render();
     expect(floating()!.props.date).toBe(firstDate);
     expect(screen!.root.findAllByProps({testID:'help-inline-date-clip'})[0].props.style.opacity).toBe(0);
   });
-  test('sticky date appears only after the inline pill fully clears the capsule boundary',async()=>{
+  test('the same date pins exactly at the layer boundary and unpins on reverse scroll',async()=>{
     mockLayouts[0]={y:110,height:44};await render();expect(floating()).toBeUndefined();
-    mockLayouts[0]={y:100,height:44};await observe();
+    const moving=screen!.root.findAllByProps({testID:'help-moving-date'})[0];
+    mockLayouts[0]={y:79,height:44};await observe();expect(floating()).toBeUndefined();
+    mockLayouts[0]={y:78,height:44};await observe();
     expect(floating()!.props.date).toBe(firstDate);expect(props.onStickyDateChange).toHaveBeenLastCalledWith(firstDate);
+    expect(screen!.root.findAllByProps({testID:'help-moving-date'})[0]).toBe(moving);
+    mockLayouts[0]={y:79,height:44};await observe();expect(floating()).toBeUndefined();
+    expect(screen!.root.findAllByProps({testID:'help-moving-date'})[0]).toBe(moving);
   });
   test('a partly clipped future-day pill cannot suppress the first visible message day',async()=>{
     // A following day can overlap the header during recycled layout estimates.
@@ -643,6 +665,25 @@ describe('sticky date geometry and navigation integration',()=>{
     await act(async()=>mockFlashProps.onScrollEndDrag());
     await act(async()=>jest.advanceTimersByTimeAsync(220));
     expect(props.onFollow).toHaveBeenLastCalledWith(false);
+  });
+  test('releases the first-row anchor at the absolute start and restores it after scrolling away',async()=>{
+    await render();
+    await act(async()=>mockFlashProps.onScrollBeginDrag());
+    await act(async()=>mockFlashProps.onScroll(scrollEvent(40)));
+    expect(mockFlashProps.maintainVisibleContentPosition.disabled).toBe(false);
+    await act(async()=>mockFlashProps.onScroll(scrollEvent(0)));
+    expect(mockFlashProps.maintainVisibleContentPosition.disabled).toBe(true);
+    await act(async()=>mockFlashProps.onScroll(scrollEvent(40)));
+    expect(mockFlashProps.maintainVisibleContentPosition.disabled).toBe(false);
+  });
+  test('keeps prepend anchoring at the top while older history remains',async()=>{
+    props={...props,hasOlder:true};await render();
+    await act(async()=>mockFlashProps.onScrollBeginDrag());
+    await act(async()=>mockFlashProps.onScroll(scrollEvent(0)));
+    expect(mockFlashProps.maintainVisibleContentPosition.disabled).toBe(false);
+    props={...props,hasOlder:false};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    expect(mockFlashProps.maintainVisibleContentPosition.disabled).toBe(true);
   });
   test('deferred cache trimming waits for drag and momentum to finish',async()=>{
     await render();(props.onSave as jest.Mock).mockClear();

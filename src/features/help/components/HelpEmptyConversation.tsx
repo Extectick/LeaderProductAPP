@@ -4,7 +4,7 @@ import { useHelpReducedMotion, useHelpTheme } from '../helpTheme';
 import { HelpAiIcon } from './HelpAiIcon';
 
 /** Fits the usable chat viewport supplied by the screen, including its IME. */
-export function HelpEmptyConversation({active=true,style}:{active?:boolean;style?:StyleProp<ViewStyle>}) {
+export function HelpEmptyConversation({active=true,style,nativeID}:{active?:boolean;style?:StyleProp<ViewStyle>;nativeID?:string}) {
   const c=useHelpTheme(),reduced=useHelpReducedMotion();
   const opacity=useRef(new Animated.Value(reduced?1:0)).current;
   useEffect(()=>{
@@ -14,7 +14,7 @@ export function HelpEmptyConversation({active=true,style}:{active?:boolean;style
     const fade=Animated.timing(opacity,{toValue:1,duration:180,easing:Easing.out(Easing.cubic),useNativeDriver:true,isInteraction:false});
     fade.start();return()=>fade.stop();
   },[active,reduced,opacity]);
-  return <Animated.View testID="help-new-ticket-hint" pointerEvents="none" style={[styles.container,style,{opacity}]}>
+  return <Animated.View testID="help-new-ticket-hint" nativeID={nativeID} collapsable={false} pointerEvents="none" style={[styles.container,style,{opacity}]}>
     <View accessibilityRole="image" accessibilityLabel="ИИ-помощник" style={[styles.avatar,{backgroundColor:c.accent}]}><HelpAiIcon size={40}/></View>
     <Text style={[styles.title,{color:c.text}]}>Чем помочь?</Text>
     <Text style={[styles.subtitle,{color:c.muted}]}>Опишите проблему — начнём разбираться</Text>

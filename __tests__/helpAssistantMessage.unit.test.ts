@@ -13,6 +13,7 @@ jest.mock('react-native-reanimated', () => ({
 }));
 import { HelpAssistantMessage } from '../src/features/help/components/HelpAssistantMessage';
 import {useTheme} from '../context/ThemeContext';
+import {helpTime} from '../src/features/help/helpUiUtils';
 const base={id:1,ticketId:1043,createdAt:'2026-10-30T10:00:00Z',text:'',assistantRun:{runId:'qa-1',eventId:1,ticketId:1043,status:'thinking',step:1,completedSteps:1,startedAt:0,updatedAt:0}} as HelpMessage;
 
 test('composer callback churn skips the assistant body and actions still use the newest callback',async()=>{
@@ -81,10 +82,41 @@ test('real activity streams before the answer, retains analysis after completion
     const complete={...partial,text:'Откройте настройки.',assistantRun:{...partial.assistantRun,status:'completed' as const,suggestions:['Windows 11','Windows 10']}};
     await act(async()=>view.update(React.createElement(HelpAssistantMessage,{message:complete,onSuggestion:reply})));
     expect(texts()).not.toContain('Формируется ответ');
-    await act(async()=>view.root.findAll(node=>node.props.accessibilityLabel==='Показать ход анализа')[0].props.onPress());
+    expect(texts()).not.toContain('Ход анализа');
+    await act(async()=>view.root.findAll(node=>node.props.accessibilityLabel==='Показать действия ИИ')[0].props.onPress());
     expect(texts()).toContain('Проверю подключение.');
     const option=view.root.findByProps({testID:'help-ai-suggestions'}).findAll(node=>node.props.accessibilityRole==='button')[0];
     await act(async()=>{option.props.onPress();option.props.onPress();});
     expect(reply).toHaveBeenCalledTimes(1);expect(reply).toHaveBeenCalledWith('Windows 11');
+  }finally{await act(async()=>view.unmount());}
+});
+
+test.each([false,true])('completed AI answer omits message time and empty analysis chrome (live=%s)',async(live)=>{
+  let view!:TestRenderer.ReactTestRenderer;
+  const message={...base,text:'Готовый ответ без служебной подписи.',assistantRun:{...base.assistantRun!,status:'completed' as const,...(live?{activityVersion:1 as const,metrics:{startedAt:0,elapsedMs:42000},activities:[]}: {})}};
+  await act(async()=>{view=TestRenderer.create(React.createElement(HelpAssistantMessage,{message}));});
+  try{
+    const visible=JSON.stringify(view.toJSON());
+    expect(visible).toContain(message.text);
+    expect(visible).not.toContain(helpTime(message.createdAt));
+    expect(visible).not.toContain('Ход анализа');
+    expect(visible).not.toContain('42 с');
+    expect(view.root.findAllByProps({testID:'help-ai-work-log'})).toHaveLength(0);
+  }finally{await act(async()=>view.unmount());}
+});
+
+test.each([false,true])('question text has a single visible owner, with an explicit waiting/answered state (live=%s)',async live=>{
+  let view!:TestRenderer.ReactTestRenderer;
+  const message={...base,text:'Какая ОС? Windows 11 или Windows 10?',assistantRun:{...base.assistantRun!,status:'completed' as const,...(live?{activityVersion:1 as const,activities:[]}:{}),questions:[{id:'os',header:'ОС',question:'Какая ОС?',multiSelect:false,options:[]}]}};
+  await act(async()=>{view=TestRenderer.create(React.createElement(HelpAssistantMessage,{message,questionState:'waiting'}));});
+  try{
+    expect(JSON.stringify(view.toJSON())).toContain('ИИ ожидает ответ');
+    const status=view.root.findByProps({testID:'help-assistant-question-status'});
+    expect(status.props.numberOfLines).toBe(1);
+    expect(view.root.findByProps({testID:'help-ai-heading'}).findByProps({testID:'help-assistant-question-status'})).toBeTruthy();
+    expect(JSON.stringify(view.toJSON())).not.toContain('Какая ОС?');
+    await act(async()=>view.update(React.createElement(HelpAssistantMessage,{message,questionState:'answered'})));
+    expect(JSON.stringify(view.toJSON())).toContain('Ответы получены');
+    expect(JSON.stringify(view.toJSON())).not.toContain('Какая ОС?');
   }finally{await act(async()=>view.unmount());}
 });

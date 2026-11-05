@@ -1,4 +1,4 @@
-import React, {createContext, forwardRef, useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, {forwardRef, useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, AppState, Easing, Platform, ScrollView, type ScrollViewProps, View, type ViewProps, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import Reanimated,{cancelAnimation,Easing as UiEasing,runOnUI,useAnimatedStyle,useSharedValue,withTiming} from 'react-native-reanimated';
@@ -12,17 +12,17 @@ import { helpDayKey } from '../helpUiUtils';
 import { createHelpImageCache, HelpImageCacheContext, HelpMediaLoadingContext } from '../helpMediaLoading';
 import { useHelpReducedMotion, useHelpTheme } from '../helpTheme';
 import { HelpDateSeparator, HelpUnreadSeparator, HelpHistoryStatus, HelpJumpToLatest } from './HelpTimelineIndicators';
+import {HelpTimelineDates,helpDatePinTop,HELP_DATE_PILL_HEIGHT,type HelpDateMarker,type HelpDatePresentation} from './HelpTimelineDates';
 import { hasNativeChatLayout, hasNativeAtomicTailMotion } from './HelpNativeChatLayout';
 import { HELP_COMPOSER_ACTION_RIGHT } from '../helpLayout';
 import { HELP_LATEST_SCROLL_BEZIER, helpLatestNavigationMotion, hiddenHelpLatest, updateHelpLatestAffordance } from '../helpJumpToLatestModel';
 import {HelpMessageArrival,HelpMessageArrivalContext,HelpArrivalGeometryContext,helpArrivalIdentity} from './HelpMessageArrival';
 import {HELP_TAIL_MOTION,helpTailDisplacement,helpTailMotionLimit,helpTailHistoryChange,type HelpTailGeometry} from '../helpTailMotion';
 
-const InlineDateClipContext=createContext('');
 function ClippedHelpDate({rowKey,date,retained,onPress}:{rowKey:string;date:string;retained:boolean;onPress:()=>void}){
-  const keys=useContext(InlineDateClipContext);
-  const hidden=retained||keys.split('|').includes(rowKey);
-  return <View testID="help-inline-date-clip" pointerEvents={hidden?'none':'auto'} accessibilityElementsHidden={hidden} importantForAccessibility={hidden?'no-hide-descendants':'auto'} style={{opacity:hidden?0:1}}><HelpDateSeparator date={date} onPress={onPress}/></View>;
+  // Preserve FlashList's measured row and anchor. Its visible pill has one
+  // permanent owner in the date layer, both before and after it sticks.
+  return <View testID="help-inline-date-clip" pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{opacity:0}}><HelpDateSeparator date={date}/></View>;
 }
 export type HelpTimelineHandle = {
   save: () => void;
@@ -48,6 +48,7 @@ type Props = {
   entrySettled?: boolean;
   onHistoryScroll?: (towardOlder:boolean) => void;
   onStickyDateChange?: (date: string | null) => void;
+  onDatePresentationChange?: (presentation:HelpDatePresentation|null) => void;
   loadOlder: () => Promise<unknown>; loadNewer: () => Promise<unknown>;
   onLatest: () => Promise<unknown>; onSave: (anchor: HelpViewportAnchor, options?: {deferTrim?:boolean}) => unknown;
   onDate: (date: string) => Promise<unknown>;
@@ -74,6 +75,10 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   const currentBottomInset=useCallback(()=>live.current.obscuredBottom?.current??live.current.dockHeight,[]);
   const rows = useMemo(() => helpTimelineRows(props.messages, props.firstUnreadSequence,props.pendingMessages), [props.messages, props.firstUnreadSequence,props.pendingMessages]);
   const rowsRef = useRef(rows); rowsRef.current = rows;
+  const dateIndices=useMemo(()=>rows.flatMap((row,index)=>row.kind==='date'?[index]:[]),[rows]);
+  const dateIndicesRef=useRef(dateIndices);dateIndicesRef.current=dateIndices;
+  const dateScrollOffset=useRef(new Animated.Value(0)).current;
+  const [dateMarkers,setDateMarkers]=useState<HelpDateMarker[]>([]);
   // Native snapshots match logical identities, never recycled View instances.
   // Preserve FlashList's root layout/ref/onLayout contract and stop native
   // traversal at the cell boundary instead of walking each message's children.
@@ -175,6 +180,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   useLayoutEffect(()=>{arrivalWater.current=arrivalBatch;},[arrivalBatch]);
   const openingLayout = useRef({active:false,key:0,frame:0,passes:0,signature:'',aligned:'',requestedIndex:-1,tailId:null as number|null});
   const geometry = useRef({offset: 0, height: 0, content: 0});
+  const [atHistoryStart, setAtHistoryStart] = useState(false);
   const lastAnchor = useRef<HelpViewportAnchor | null>(null), committedTarget = useRef<number | null>(null);
   const inNavigation = useRef(false), navigationGeneration = useRef(0), touched = useRef(false);
   const latestRequest = useRef(false);
@@ -191,7 +197,6 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   const dateSnapshot = useRef<{rows:{row:HelpTimelineRow;top:number;height:number}[];loadedIds:Set<number>}|null>(null);
   const lastNavigationMode = useRef('none');
   const [currentDate, setCurrentDate] = useState('');
-  const [hiddenDateKeys,setHiddenDateKeys]=useState('');
   const currentDateRef = useRef(currentDate); currentDateRef.current = currentDate;
   const lastDiagnosticAt=useRef(0);
   const [mediaRange,setMediaRange]=useState<MediaRange>({first:0,last:-1});
@@ -228,6 +233,35 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     return candidates;
   }, [itemStartOffset]);
   const visible = useCallback((includeDecor=false) => helpVisibleRows(viewportRows(includeDecor), live.current.headerHeight, geometry.current.height - currentBottomInset()), [viewportRows]);
+  const measureDates=useCallback(()=>{
+    const view=list.current;if(!view)return;
+    try{
+      const indices=dateIndicesRef.current,{startIndex,endIndex}=view.computeVisibleIndices();
+      let first=0;while(first+1<indices.length&&indices[first+1]<=startIndex)first++;
+      let end=first;while(end<indices.length&&indices[end]<=endIndex)end++;
+      // Keep the preceding day and one upcoming day mounted across the handoff.
+      // Layouts outside this small window are unnecessary even in long histories.
+      first=Math.max(0,first-1);end=Math.min(indices.length,end+1);
+      const start=itemStartOffset(),offset=view.getAbsoluteLastScrollOffset(),top=helpDatePinTop(live.current.headerHeight);
+      const bottom=geometry.current.height-currentBottomInset();
+      const pillY=(index:number)=>{const layout=view.getLayout(index);return layout&&layout.height>0?layout.y+start+(layout.height-HELP_DATE_PILL_HEIGHT)/2:undefined;};
+      const markers:HelpDateMarker[]=[];
+      for(let position=first;position<end;position++){
+        const index=indices[position],y=pillY(index);if(y===undefined)continue;
+        const nextY=position+1<indices.length?pillY(indices[position+1]):undefined;
+        const shown=Math.min(Math.max(top,y-offset),nextY===undefined?Infinity:nextY-offset-HELP_DATE_PILL_HEIGHT);
+        markers.push({key:rowsRef.current[index].key,date:rowsRef.current[index].date!,y,nextY,hidden:shown+HELP_DATE_PILL_HEIGHT<=top||shown>=bottom});
+      }
+      setDateMarkers(previous=>previous.length===markers.length&&previous.every((marker,index)=>{
+        const next=markers[index];return marker.key===next.key&&marker.date===next.date&&marker.y===next.y&&marker.nextY===next.nextY&&marker.hidden===next.hidden;
+      })?previous:markers);
+      const current=markers.filter(marker=>marker.y-offset<=top).at(-1)?.date??'';
+      setCurrentDate(previous=>previous===current?previous:current);
+    }catch{
+      // FlashList can commit before its layout manager/dimensions are ready.
+      // Keep the last valid projection until the next measured commit.
+    }
+  },[itemStartOffset,currentBottomInset]);
   const save = useCallback((leaving=false) => {
     if (lastAnchor.current && readyRef.current && !inNavigation.current && (leaving || (!dragging.current && !momentum.current && Date.now()>=webIntent.current))) {
       // Leaving during a fling must persist its fresh anchor, but trimming the
@@ -258,25 +292,11 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   },[settleScroll,stopIdleSave]);
   const observe = useCallback(() => {
     if (!readyRef.current || inNavigation.current) return;
+    measureDates();
     const items = visible(), first = items[0];
     if (!first) return;
     lastAnchor.current = {messageId:first.row.message.id, sequence:first.row.message.sequence,
       offset:first.top - live.current.headerHeight, atLatest:followingRef.current && !live.current.hasNewer};
-    const currentDay=helpDayKey(first.row.message.createdAt);
-    const capsuleBottom=live.current.headerHeight+12;
-    const hiddenDates=viewportRows(true).filter(item=>item.row.kind==='date'&&item.top+(item.height-24)/2<capsuleBottom).map(item=>item.row.key).sort().join('|');
-    setHiddenDateKeys(previous=>previous===hiddenDates?previous:hiddenDates);
-    const visibleBottom=geometry.current.height-currentBottomInset();
-    // Read receipts need at least 32 visible pixels. Date pills are only 24 high,
-    // centered inside a 44px touch row, so inspect their actual visual bounds.
-    // Keep one date until the inline pill fully passes behind the header.
-    const dateVisible=viewportRows(true).some(item=>{
-      if(item.row.kind!=='date'||item.height<=0||helpDayKey(item.row.date!)!==currentDay)return false;
-      const pillTop=item.top+(item.height-24)/2;
-      return pillTop>=capsuleBottom&&pillTop<visibleBottom;
-    });
-    const nextDate=dateVisible?'':first.row.message.createdAt;
-    setCurrentDate(previous=>previous && nextDate && helpDayKey(previous)===helpDayKey(nextDate)?previous:nextDate);
     scheduleIdleSave();
     // Debounce visibility, then inspect again: prefetch/rendering below the dock is never a read receipt.
     if (!readTimer.current) readTimer.current = setTimeout(() => {
@@ -288,7 +308,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     if(Date.now()-lastDiagnosticAt.current>=200){lastDiagnosticAt.current=Date.now();helpDevState({timelineOffset:geometry.current.offset,timelineFirstSequence:first.row.message.sequence,
       timelineAnchorOffset:lastAnchor.current.offset,timelineAtLatest:lastAnchor.current.atLatest,
       timelineVisible:items.length,timelineWindow:rowsRef.current.length});}
-  }, [scheduleIdleSave, visible, viewportRows]);
+  }, [scheduleIdleSave, visible, measureDates]);
   const cancelJump = useCallback(() => {
     if(latestRequest.current){inNavigation.current=false;setNavigating(false);}
     latestRequest.current=false;
@@ -556,11 +576,17 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
 
   const stickyDate = ready && !outgoing && currentDate ? currentDate : null;
   useEffect(() => { props.onStickyDateChange?.(stickyDate); }, [stickyDate, props.onStickyDateChange]);
+  const datePresentation=useMemo<HelpDatePresentation|null>(()=>ready&&!outgoing&&dateMarkers.length?{markers:dateMarkers,scrollOffset:dateScrollOffset}:null,[ready,outgoing,dateMarkers,dateScrollOffset]);
+  useLayoutEffect(()=>{props.onDatePresentationChange?.(datePresentation);},[props.onDatePresentationChange,datePresentation]);
+  useLayoutEffect(()=>{if(ready)measureDates();},[ready,rows,props.headerHeight,props.dockHeight,measureDates]);
+  // Seed once after opening. Later scroll positions belong exclusively to the
+  // native event; JS measurements must not write stale offsets during a fling.
+  useLayoutEffect(()=>{if(ready)dateScrollOffset.setValue(list.current?.getAbsoluteLastScrollOffset()??geometry.current.offset);},[ready,dateScrollOffset]);
 
   useEffect(() => {
     mounted.current = true;
     const subscription = AppState.addEventListener('change', state => {if(state !== 'active') save(true);});
-    return () => {resetTailMotion();save(true);mounted.current=false;++navigationGeneration.current;subscription.remove();live.current.onStickyDateChange?.(null);
+    return () => {resetTailMotion();save(true);mounted.current=false;++navigationGeneration.current;subscription.remove();live.current.onStickyDateChange?.(null);live.current.onDatePresentationChange?.(null);
       if(saveTimer.current)clearTimeout(saveTimer.current);if(readTimer.current)clearTimeout(readTimer.current);cancelAnimationFrame(openingLayout.current.frame);openingLayout.current.active=false;transition.stopAnimation();incomingTransition.stopAnimation();snapshotPending.current?.resolve(false);};
   }, [save,transition,incomingTransition,resetTailMotion]);
   useEffect(() => {if(!props.active)save(true);else observe();}, [props.active,save,observe]);
@@ -670,6 +696,11 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   const onScroll=useCallback((event:NativeSyntheticEvent<NativeScrollEvent>)=>{
     const e=event.nativeEvent;
     const previous=geometry.current;
+    const atStart=e.contentOffset.y<=2;
+    // Opening/date jumps can emit a temporary zero before positioning finishes.
+    // Only a real reading gesture may release the first-row anchor.
+    if(!atStart || userScrollSession.current && !inNavigation.current)
+      setAtHistoryStart(previous=>previous===atStart?previous:atStart);
     geometry.current={offset:e.contentOffset.y,height:e.layoutMeasurement.height,content:e.contentSize.height};
     settleOpening();
     updateMediaRange();
@@ -699,7 +730,10 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
       newerPending.current=true;void live.current.loadNewer().catch(()=>live.current.onError('Не удалось загрузить новые сообщения')).finally(()=>{newerPending.current=false;});
     }
   },[observe,setFollow,updateMediaRange,settleOpening]);
-  const NativeScroll=useMemo(()=>forwardRef<ScrollView,ScrollViewProps>((scrollProps,scrollRef)=><ScrollView {...scrollProps} contentContainerStyle={[scrollProps.contentContainerStyle,{flexGrow:1}]} removeClippedSubviews={false} ref={scrollRef} nativeID={props.nativeID}/>),[props.nativeID]);
+  const NativeScroll=useMemo(()=>forwardRef<ScrollView,ScrollViewProps>((scrollProps,scrollRef)=>{
+    const onScroll=useMemo(()=>Animated.event([{nativeEvent:{contentOffset:{y:dateScrollOffset}}}],{useNativeDriver:Platform.OS!=='web',listener:scrollProps.onScroll}),[scrollProps.onScroll]);
+    return <Animated.ScrollView {...scrollProps} onScroll={onScroll} contentContainerStyle={[scrollProps.contentContainerStyle,{flexGrow:1}]} removeClippedSubviews={false} ref={scrollRef} nativeID={props.nativeID}/>;
+  }),[props.nativeID,dateScrollOffset]);
   const webProps = Platform.OS==='web' ? {
     onWheel:()=>{takeScrollControl();webIntent.current=Date.now()+500;},
     onTouchMove:()=>{takeScrollControl();webIntent.current=Date.now()+500;},
@@ -714,7 +748,10 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     outgoingVisible:snapshotVisible,outgoingRows:outgoingRef.current?.rows.length??0,
     visible:visible().map(item=>({sequence:item.row.message.sequence,top:item.top,height:item.height}))})),[visible,currentDate,snapshotVisible]);
   const distance=outgoing?.distance??Math.min(geometry.current.height || 500,620),direction=outgoing?.direction || 1;
-  const maintainDisabled=!ready || navigating || following;
+  // At the absolute start there is no preceding viewport to preserve. Release
+  // FlashList's native anchor so it cannot keep re-pinning the first row as the
+  // user tries to scroll away. Keep anchoring while older pages can prepend.
+  const maintainDisabled=!ready || navigating || following || (atHistoryStart && !props.hasOlder);
   // Bottom alignment is a layout property, independent of how the history was
   // opened. A saved anchor must never turn a short conversation into a top list.
   const startFromBottom=true;
@@ -734,7 +771,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     }
     setLoaded(true); updateMediaRange(true); observe();
   }, [settleOpening,updateMediaRange,observe]);
-  return <HelpMessageArrivalContext.Provider value={inheritedArrivals??localArrivals.current}><HelpImageCacheContext.Provider value={imageCache}><InlineDateClipContext.Provider value={hiddenDateKeys}><View style={{flex:1}}>
+  return <HelpMessageArrivalContext.Provider value={inheritedArrivals??localArrivals.current}><HelpImageCacheContext.Provider value={imageCache}><View style={{flex:1}}>
     <Animated.View testID="help-timeline-live-layer" style={{flex:1,opacity:(ready||!rows.length)&&(!rows.length||firstContentSettled)?1:0,transform:[{translateY:outgoing?(outgoing.latest&&snapshotVisible?transition:incomingTransition).interpolate({inputRange:[0,1],outputRange:[-direction*distance,0]}):0}]}}>
       <Reanimated.View testID="help-timeline-tail-motion" style={[{flex:1},tailStyle]}><FlashList ref={list} data={rows} extraData={mediaRange} keyExtractor={rowKey} getItemType={rowType} renderItem={renderItem} CellRendererComponent={hasNativeAtomicTailMotion?TailCell:undefined}
         initialScrollIndex={initialPosition.current?.index}
@@ -744,7 +781,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
         contentContainerStyle={listContentStyle}
         maintainVisibleContentPosition={maintainVisibleContentPosition}
         showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive"
-        scrollEventThrottle={16} onLoad={onListLoad} onScroll={onScroll} onCommitLayoutEffect={()=>{settleOpening();synchronizeTailMotion();}}
+        scrollEventThrottle={16} onLoad={onListLoad} onScroll={onScroll} onCommitLayoutEffect={()=>{settleOpening();synchronizeTailMotion();if(readyRef.current)measureDates();}}
         onScrollBeginDrag={()=>{dragging.current=true;momentum.current=false;takeScrollControl();}}
         onMomentumScrollBegin={()=>{if(userScrollSession.current&&!inNavigation.current){momentum.current=true;stopIdleSave();setFollow(false);}}}
         onMomentumScrollEnd={()=>{if(userScrollSession.current){dragging.current=false;momentum.current=false;updateMediaRange(true);observe();settleScroll();}}}
@@ -757,7 +794,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     </Animated.View>
     {props.loadingOlder || initialLoadingVisible&&!ready ? <View pointerEvents="none" style={{position:'absolute',top:props.headerHeight,left:0,right:0}}><HelpHistoryStatus loading/></View> : null}
     {outgoing ? <Animated.View testID={snapshotVisible?'help-timeline-transition':'help-timeline-preparation'} pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{position:'absolute',top:0,left:0,right:0,bottom:0,opacity:snapshotVisible?1:0,backgroundColor:c.background,overflow:'hidden',transform:[{translateY:transition.interpolate({inputRange:[0,1],outputRange:[0,direction*distance]})}]}}>{outgoing.rows.map(item=><View key={item.row.key} style={{position:'absolute',left:0,right:0,top:item.top}}>{renderRow(item.row,-1,mediaRangeRef.current,true)}</View>)}</Animated.View> : null}
-    {!props.hideStickyDate && stickyDate ? <View style={{position:'absolute',top:Math.max(0,props.headerHeight-12),alignSelf:'center'}}><HelpDateSeparator compact date={stickyDate} onPress={()=>jumpDate(stickyDate)}/></View> : null}
+    {!props.hideStickyDate && !props.onDatePresentationChange && datePresentation ? <HelpTimelineDates presentation={datePresentation} headerHeight={props.headerHeight} bottom={currentBottomInset()} onPress={jumpDate}/> : null}
     {rows.length > 0 && !props.onLatestState ? <HelpJumpToLatest visible={showLatestButton} count={props.unreadCount} loading={props.loadingNewer||navigating&&latestRequest.current} onPress={()=>{if(!prepareJump())return;void props.onLatest().catch(()=>{cancelJump();inNavigation.current=false;setNavigating(false);props.onError('Не удалось открыть последние сообщения');});}} style={{position:'absolute',right:HELP_COMPOSER_ACTION_RIGHT,bottom:props.dockHeight+12}}/> : null}
-  </View></InlineDateClipContext.Provider></HelpImageCacheContext.Provider></HelpMessageArrivalContext.Provider>;
+  </View></HelpImageCacheContext.Provider></HelpMessageArrivalContext.Provider>;
 });

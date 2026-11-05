@@ -10,12 +10,24 @@ import { fixtures, message, OWNER, IT, resolve } from './HelpPreview';
 import { createFixtureHistory, findFixtureDateMessage, fixtureHistoryPage, searchFixtureHistory } from './historyFixture';
 import { trimHelpWindow } from '../../src/features/help/helpHistoryModel';
 import { createFixtureAlbum } from './albumFixture';
-import { FixtureAssistant, fixtureAssistantTitle, supersedeFixtureAssistantRuns } from './assistantFixture';
+import { FixtureAssistant, fixtureAssistantTitle, fixtureAssistantQuestions, supersedeFixtureAssistantRuns } from './assistantFixture';
 import type {HelpTypingUser} from '../../src/features/help/helpTypingModel';
 import type { HelpAssistantPreview, HelpAssistantScenario } from '../../src/features/help/helpAssistant';
 import {fixtureSnapshot,saveFixtureSnapshot,loadFixtureSnapshot} from './fixturePersistence';
 
 let fixtureUploadSequence = 0;
+// A read-only-to-storage, in-memory demo of the current panel. It never replaces
+// existing fixture history and is not reachable from the application entry.
+const questionDemo = Platform.OS === 'web' && new URLSearchParams(window.location.search).get('questions') === '1';
+const initialSnapshot = () => questionDemo ? null : fixtureSnapshot();
+function questionDemoHistory() {
+  const now = Date.now();
+  return [message(1, 'Не открывается документ. Помогите разобраться.', true, { ticketId: 1043 }),
+    message(2, 'Чтобы выбрать следующий шаг, уточните несколько деталей.', false, { ticketId: 1043, authorId: null, author: null, authorRole: 'SYSTEM', assistantRun: {
+      runId: 'qa-question-design-demo', ticketId: 1043, eventId: 1, status: 'completed', step: 3, completedSteps: 4,
+      startedAt: now, updatedAt: now, questions: fixtureAssistantQuestions,
+    } })];
+}
 /** Simulate server ownership locally: sent media must outlive draft cleanup. */
 export async function uploadFixtureAttachment(file: HelpLocalFile): Promise<HelpAttachment> {
   const id = `local-${Date.now()}-${++fixtureUploadSequence}`;
@@ -37,7 +49,7 @@ const withSourceFixture = (tickets: HelpTicket[]) => tickets.map(ticket => ticke
 } : ticket);
 
 export function useHelpService() {
-  const [all, setAll] = useState<HelpTicket[]>(() => withSourceFixture(fixtureSnapshot()?.tickets ?? [
+  const [all, setAll] = useState<HelpTicket[]>(() => questionDemo ? [{ id: 1043, number: 1043, title: 'Не открывается документ', status: 'OPEN', ownerId: OWNER.id, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), closedAt: null, sourceTicketId: null, sourceTicket: null, itRequested: false, members: [], unreadCount: 0, lastMessage: questionDemoHistory()[1], canReopen: false, aiEnabled: true }] : withSourceFixture(initialSnapshot()?.tickets ?? [
     { id: 1042, number: 1042, title: 'Не открывается заказ', status: 'OPEN', ownerId: OWNER.id, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), closedAt: null, sourceTicketId: null, sourceTicket: null, itRequested: true, members: [{ userId: IT.id, role: 'IT', user: IT }], unreadCount: 3, lastMessage: fixtures[7], canReopen: false, aiEnabled: false },
     ...[1041, 1040, 1039, 1038, 1037, 1036].map((id, i): HelpTicket => ({ id, number: id, title: ['Не печатает принтер', 'Ошибка при входе в 1С', 'Как выгрузить отчёт в Excel', 'Проверить обмен', 'Заказ не найден', 'Старая заявка'][i], status: i > 3 ? 'CLOSED' : 'OPEN', ownerId: OWNER.id, createdAt: new Date(Date.now() - (i + 1) * 86400000).toISOString(), updatedAt: new Date(Date.now() - (i + 1) * 86400000).toISOString(), closedAt: i > 3 ? new Date(Date.now() - (i === 4 ? 1 : 5) * 86400000).toISOString() : null, sourceTicketId: null, sourceTicket: null, itRequested: i % 2 === 0, members: i % 2 === 0 ? [{ userId: IT.id, role: 'IT', user: IT }, { userId: 203, role: 'IT', user: { id: 203, name: 'Алексей · IT', avatarUrl: null } }] : [], unreadCount: i % 3, lastMessage: message(20 + i, i > 3 ? 'Обращение завершено' : 'Проверяю, скоро вернусь с ответом'), canReopen: i === 4, aiEnabled: false })),
   ]));
@@ -48,7 +60,7 @@ export function useHelpService() {
   const [navigationTarget, setNavigationTarget] = useState<HelpNavigationTarget | null>(null), [firstUnreadSequence, setFirstUnreadSequence] = useState<number | null>(null), [lastReadSequence, setLastReadSequence] = useState(0), [error, setError] = useState<string | null>(null);
   const allRef = useRef(all), selectionRef = useRef(selection), visible = useRef(messages), onlineRef = useRef(online);
   allRef.current = all; selectionRef.current = selection; visible.current = messages; onlineRef.current = online;
-  const histories = useRef(new Map<number, HelpMessage[]>(fixtureSnapshot()?.histories)), anchors = useRef(new Map<number, HelpViewportAnchor>(fixtureSnapshot()?.anchors)), readCursors = useRef(new Map<number, number>(fixtureSnapshot()?.readCursors)), offlineTails = useRef(new Map<number, number>());
+  const histories = useRef(new Map<number, HelpMessage[]>(questionDemo ? [[1043, questionDemoHistory()]] : initialSnapshot()?.histories)), anchors = useRef(new Map<number, HelpViewportAnchor>(initialSnapshot()?.anchors)), readCursors = useRef(new Map<number, number>(initialSnapshot()?.readCursors)), offlineTails = useRef(new Map<number, number>());
   const historySize = useRef(0), navKey = useRef(0), latency = useRef(80), epoch = useRef(0), loadingPage = useRef(false);
   const pendingTrim = useRef<'older' | 'newer' | null>(null);
   const mediaLatency = useRef(0), mediaResolves = useRef(0), mediaCompleted = useRef(0);
@@ -63,13 +75,14 @@ export function useHelpService() {
     }
     return resolve(attachment);
   }, []);
-  const drafts = useRef(new Map<string, string>(fixtureSnapshot()?.drafts)), uploaded = useRef(new Map<string, HelpAttachment>());
+  const drafts = useRef(new Map<string, string>(initialSnapshot()?.drafts)), uploaded = useRef(new Map<string, HelpAttachment>());
   const assistant = useRef(new FixtureAssistant());
-  const [assistantScenario, setAssistantScenario] = useState<HelpAssistantScenario>('answer');
+  const [assistantScenario, setAssistantScenario] = useState<HelpAssistantScenario>(Platform.OS === 'android' ? 'question' : 'answer');
   const scenarioRef = useRef(assistantScenario); scenarioRef.current = assistantScenario;
-  const assistantTickets = useRef(new Set<number>(fixtureSnapshot()?.assistantTickets)), ticketSequence = useRef(fixtureSnapshot()?.nextTicket??1042), assistantMessageSequence = useRef(fixtureSnapshot()?.nextAssistantMessage??2000000);
-  const flushFixture=()=>saveFixtureSnapshot({tickets:allRef.current,histories:[...histories.current],anchors:[...anchors.current],readCursors:[...readCursors.current],drafts:[...drafts.current],assistantTickets:[...assistantTickets.current],nextTicket:ticketSequence.current,nextAssistantMessage:assistantMessageSequence.current});
+  const assistantTickets = useRef(new Set<number>(initialSnapshot()?.assistantTickets)), ticketSequence = useRef(initialSnapshot()?.nextTicket??1042), assistantMessageSequence = useRef(initialSnapshot()?.nextAssistantMessage??2000000);
+  const flushFixture=()=>questionDemo ? Promise.resolve() : saveFixtureSnapshot({tickets:allRef.current,histories:[...histories.current],anchors:[...anchors.current],readCursors:[...readCursors.current],drafts:[...drafts.current],assistantTickets:[...assistantTickets.current],nextTicket:ticketSequence.current,nextAssistantMessage:assistantMessageSequence.current});
   useEffect(()=>{
+    if (questionDemo) return () => assistant.current.dispose();
     let alive=true,hydrated=false,dirty='',revision=0;
     const historyVersions=new WeakMap<HelpMessage[],number>();
     const persist=()=>{if(!hydrated)return;const stamp=JSON.stringify([allRef.current,[...anchors.current],[...drafts.current],[...readCursors.current],[...histories.current].map(([id,rows])=>{if(!historyVersions.has(rows))historyVersions.set(rows,++revision);return [id,historyVersions.get(rows)];})]);if(stamp===dirty)return;dirty=stamp;void flushFixture().catch(()=>{dirty='';});};

@@ -9,8 +9,8 @@ jest.mock('react-native-gesture-handler',()=>{
 jest.mock('react-native-reanimated',()=>({
  __esModule:true,default:{View:require('react-native').View},cancelAnimation:jest.fn(),runOnJS:(fn:any)=>fn,
  useSharedValue:(value:any)=>require('react').useRef({value}).current,
- useAnimatedStyle:(fn:any)=>({get height(){return fn().height;},get transform(){return fn().transform;}}),
- withTiming:(value:any,_options:any,done:any)=>{done?.(true);return value;},
+ useAnimatedStyle:(fn:any)=>({get height(){return fn().height;},get transform(){return fn().transform;},get overflow(){return fn().overflow;}}),
+ withTiming:jest.fn((value:any,_options:any,done:any)=>{done?.(true);return value;}),
  withSpring:(value:any)=>value,
 }));
 let mockTheme:'light'|'dark'='light';
@@ -194,4 +194,28 @@ test('IT sheet cannot stretch upward or snap to a tall expanded state',async()=>
  act(()=>{gesture.onStart();gesture.onUpdate({translationY:-1000});gesture.onEnd({translationY:-1000,velocityY:-2000},true);});
  expect(panel().height).toBe(initial);expect(panel().height).toBeLessThanOrEqual(420);
  await act(async()=>tree.unmount());
+});
+
+test('an unactivated upward swipe keeps the measured IT sheet height and cancel action visible',async()=>{
+ const close=jest.fn();let tree!:TestRenderer.ReactTestRenderer;
+ await act(async()=>{tree=TestRenderer.create(React.createElement(HelpSheet,{title:'Подключить IT?',resizable:false,maxHeight:420,onClose:close,children:React.createElement('CancelAction')}));});
+ try{
+  const panel=()=>StyleSheet.flatten(tree.root.findByProps({testID:'help-sheet-surface'}).props.style);
+  // Native layout measures the real content after the initial 260dp estimate.
+  await act(async()=>tree.root.findAll(node=>typeof node.props.onLayout==='function')[0].props.onLayout({nativeEvent:{layout:{height:220}}}));
+  const measured=panel().height;
+  expect(measured).toBe(350);
+  const gesture=()=>tree.root.findByType('GestureDetector' as any).props.gesture.handlers;
+  // activeOffsetY=8 never activates an upward swipe: only finalize is delivered.
+  act(()=>gesture().onFinalize({translationY:-15},false));
+  expect(panel().height).toBe(measured);expect(panel().transform).toEqual([{translateY:0}]);
+  expect(close).not.toHaveBeenCalled();
+  // A real interrupted downward drag restores the measured height as before.
+  act(()=>{gesture().onStart();gesture().onUpdate({translationY:20});});
+  expect(panel().height).toBe(measured-20);
+  act(()=>gesture().onFinalize({translationY:20},false));
+  expect(panel().height).toBe(measured);
+  act(()=>gesture().onFinalize({translationY:-15},false));
+  expect(panel().height).toBe(measured);expect(close).not.toHaveBeenCalled();
+ }finally{await act(async()=>tree.unmount());}
 });

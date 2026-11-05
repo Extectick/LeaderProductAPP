@@ -10,6 +10,7 @@ import {
   AppState,
   Easing,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -136,6 +137,18 @@ export default function AuthScreen() {
   const btnGradient = useMemo(() => [grad[0], grad[1]] as [string, string], [grad]);
   const styles = useMemo(() => getAuthScreenStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
+  const [androidKeyboardVisible, setAndroidKeyboardVisible] = useState(
+    () => Platform.OS === 'android' && Keyboard.isVisible()
+  );
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const show = Keyboard.addListener('keyboardDidShow', () => setAndroidKeyboardVisible(true));
+    const hide = Keyboard.addListener('keyboardDidHide', () => setAndroidKeyboardVisible(false));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
   const { width: winW, height: winH } = useWindowDimensions();
   const isWeb = Platform.OS === 'web';
   const isWebMobile = isWeb && winW < 768;
@@ -1151,11 +1164,14 @@ export default function AuthScreen() {
   return (
     <BrandedBackground speed={1.5}>
       <StatusBar barStyle="light-content" />
-      <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
+      <SafeAreaView style={{ flex: 1 }} edges={androidKeyboardVisible ? ['top'] : ['top', 'bottom']}>
         <KeyboardAvoidingView
           style={{ flex: 1 }}
+          // Android already resizes the window with adjustResize. Applying a
+          // second keyboard offset leaves a blank strip above the IME.
+          enabled={Platform.OS !== 'android'}
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={insets.top}
+          keyboardVerticalOffset={Platform.OS === 'android' ? 0 : insets.top}
         >
           {/* Оверлей-лоадер: только пока идёт preload из AsyncStorage ПЕРВЫЙ раз */}
           {!preloadReady && (

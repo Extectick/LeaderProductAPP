@@ -26,7 +26,7 @@ test('arrow animates in and out and stops accepting taps as soon as it hides', a
   await act(async () => {view=TestRenderer.create(React.createElement(HelpJumpToLatest,props));});
   expect(view.root.findAllByProps({testID:'help-jump-to-latest'})).toHaveLength(0);
   await act(async () => view.update(React.createElement(HelpJumpToLatest,{...props,visible:true})));
-  expect(jobs.at(-1)!.config).toMatchObject({toValue:1,duration:280,useNativeDriver:true});
+  expect(jobs.at(-1)!.config).toMatchObject({toValue:1,duration:180,useNativeDriver:true});
   await act(async () => view.update(React.createElement(HelpJumpToLatest,props)));
   expect(view.root.findAllByProps({testID:'help-jump-to-latest-motion'})[0].props.pointerEvents).toBe('none');
   expect(view.root.findAllByProps({testID:'help-jump-to-latest'})[0].props.disabled).toBe(true);
