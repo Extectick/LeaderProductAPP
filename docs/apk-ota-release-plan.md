@@ -301,3 +301,21 @@ Release checklist:
 - [x] 2026-06-24: Production versioning added: APK `v<versionName>+<versionCode>`, OTA `v<versionName>+<versionCode>.ota.<N>` per runtime.
 - [x] Phase 5 completed.
 - [ ] Phase 6 completed.
+
+### Release diagnostics readiness (2026-11-05)
+
+APK and OTA exports now depend on the reusable `Release diagnostics preflight`
+workflow on the trusted release runner. It checks the existing private monitoring
+endpoint `127.0.0.1:19001/_health/` before an expensive build, and publication
+checks it again before symbol upload. The retry workflow checks before dependency
+installation and before symbols. The preflight can also be dispatched alone; it
+publishes nothing and requires no application credentials.
+
+The trusted runner publishes through its local Docker/API path; it does not need
+an additional SSH private key. The Windows244 Sentry tunnel uses a dedicated
+restricted key and a pinned host126 identity. If the preflight fails, restore that
+tunnel and verify the pinned identity through an already trusted administration
+channel. Keep StrictHostKeyChecking enabled. Preserve host126 SSH host keys across
+cloud-init instance changes; do not generate a fresh identity after each reboot.
+After repair, retry the existing encrypted candidate instead of rebuilding an APK
+or creating another OTA. Symbol verification remains mandatory.

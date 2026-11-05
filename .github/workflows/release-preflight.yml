@@ -1,0 +1,19 @@
+name: Release diagnostics preflight
+on:
+  workflow_call:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  diagnostics:
+    runs-on: [self-hosted, linux, x64, leader-release]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - run: node --test scripts/checkReleaseDiagnostics.test.js
+      - run: node scripts/checkReleaseDiagnostics.js

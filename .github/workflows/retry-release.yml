@@ -57,6 +57,7 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 24
+      - run: node scripts/checkReleaseDiagnostics.js
       - run: node scripts/checkReleaseTarget.js
       - name: Verify immutable source and unchanged application
         env:
@@ -85,6 +86,7 @@ jobs:
           RELEASE_KIND: ${{ inputs.kind }}
         run: |
           export SENTRY_URL=http://127.0.0.1:19001
+          node scripts/checkReleaseDiagnostics.js
           node scripts/checkSentryConfig.js
           target=dist-ota
           if [ "$RELEASE_KIND" = apk ]; then target=--apk; fi

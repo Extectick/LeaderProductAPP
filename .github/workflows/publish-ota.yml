@@ -36,6 +36,10 @@ on:
         type: string
 
 jobs:
+  release-preflight:
+    uses: ./.github/workflows/release-preflight.yml
+    permissions:
+      contents: read
   order-integrity-check:
     runs-on: ubuntu-latest
     steps:
@@ -63,7 +67,7 @@ jobs:
       - run: npm run test:unit -- --runInBand __tests__/productionMonitoring.unit.test.ts __tests__/deviceDraftRecovery.unit.test.ts __tests__/orderOperationIntegrity.unit.test.ts __tests__/clientOrdersShared.unit.test.ts __tests__/clientOrdersService.unit.test.ts __tests__/httpClient.unit.test.ts __tests__/useClientOrdersWorkspace.unit.test.ts
 
   export-upload:
-    needs: order-integrity-check
+    needs: [order-integrity-check, release-preflight]
     runs-on: ubuntu-latest
     environment: ${{ ((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && 'development' || 'production' }}
 
@@ -244,6 +248,7 @@ jobs:
         if: ${{ env.EXPO_PUBLIC_SENTRY_ENABLED == 'true' }}
         run: |
           export SENTRY_URL=http://127.0.0.1:19001
+          node scripts/checkReleaseDiagnostics.js
           node scripts/checkSentryConfig.js
           curl --fail --silent --max-time 15 "$SENTRY_URL/_health/" >/dev/null
           node scripts/uploadCrashSymbols.js dist-ota

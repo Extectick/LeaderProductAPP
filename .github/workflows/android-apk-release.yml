@@ -63,7 +63,12 @@ on:
         type: string
 
 jobs:
+  release-preflight:
+    uses: ./.github/workflows/release-preflight.yml
+    permissions:
+      contents: read
   build-upload:
+    needs: release-preflight
     runs-on: ubuntu-latest
     timeout-minutes: 60
     outputs:
@@ -404,6 +409,7 @@ jobs:
         if: ${{ env.EXPO_PUBLIC_SENTRY_ENABLED == 'true' && (github.event_name != 'workflow_dispatch' || inputs.buildType == 'release') }}
         run: |
           export SENTRY_URL=http://127.0.0.1:19001
+          node scripts/checkReleaseDiagnostics.js
           node scripts/checkSentryConfig.js
           curl --fail --silent --max-time 15 "$SENTRY_URL/_health/" >/dev/null
           node scripts/uploadCrashSymbols.js --apk
