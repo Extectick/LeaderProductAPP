@@ -34,6 +34,7 @@ import {HelpDateSeparator} from '../src/features/help/components/HelpTimelineInd
 import {HelpMediaLoadingContext} from '../src/features/help/helpMediaLoading';
 import {HelpMessageArrival} from '../src/features/help/components/HelpMessageArrival';
 
+const animatedNumber=(value:any)=>typeof value==='number'?value:value.__getValue();
 const message=(sequence:number,date='2026-10-28T12:00:00Z')=>({id:sequence,sequence,createdAt:date}) as HelpMessage;
 describe('messenger viewport and read boundaries',()=>{
   test('nonmonotonic dates keep recycled row keys unique',()=>{
@@ -342,12 +343,12 @@ describe('sticky date geometry and navigation integration',()=>{
     props={...props,pendingMessages:[pending]};
     await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
     const layer=()=>StyleSheet.flatten(screen!.root.findByProps({testID:'help-timeline-live-layer'}).props.style);
-    expect(layer().opacity).toBe(0);
+    expect(animatedNumber(layer().opacity)).toBe(0);
     expect(screen!.root.findByType(HelpMessageArrival).props.deferred).toBe(true);
-    await act(async()=>jest.advanceTimersByTimeAsync(100));expect(layer().opacity).toBe(0);
+    await act(async()=>jest.advanceTimersByTimeAsync(100));expect(animatedNumber(layer().opacity)).toBe(0);
     mockLayouts=[{y:400,height:44},{y:444,height:84}];
     await act(async()=>jest.advanceTimersByTimeAsync(100));
-    expect(layer().opacity).toBe(1);
+    expect(animatedNumber(layer().opacity)).toBe(1);
     expect(screen!.root.findByType(HelpMessageArrival).props.deferred).toBe(false);
   });
   test('missing first-cell measurements cannot keep a saved outgoing message invisible',async()=>{
@@ -356,7 +357,7 @@ describe('sticky date geometry and navigation integration',()=>{
     props={...props,pendingMessages:[{key:'qa-layout-timeout',ticketId:null,create:true,createdAt:Date.parse(nextDate),input:{text:'QA',clientMessageId:'qa-layout-timeout'}}]};
     await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
     await act(async()=>jest.advanceTimersByTimeAsync(700));
-    expect(StyleSheet.flatten(screen!.root.findByProps({testID:'help-timeline-live-layer'}).props.style).opacity).toBe(1);
+    expect(animatedNumber(StyleSheet.flatten(screen!.root.findByProps({testID:'help-timeline-live-layer'}).props.style).opacity)).toBe(1);
   });
   test('only a live appended tail is eligible for arrival, not initial history or edits',async()=>{
     await render();
@@ -482,9 +483,9 @@ describe('sticky date geometry and navigation integration',()=>{
     expect(selected.props.accessibilityState.selected).toBe(true);
     await act(async()=>selected.props.onTouchEnd());expect(onPress).toHaveBeenCalledTimes(1);
   });
-  test.each(['attachment','reply'])('%s images retain viewport priorities without replacing the row renderer',async location=>{
-    const image={id:'test-image',kind:'IMAGE'};
-    props.messages=Array.from({length:12},(_,index)=>({...message(index+1,firstDate),...(location==='attachment'?{attachments:[image]}:{replyTo:{id:99,text:'',attachments:[image]}})})) as HelpMessage[];
+  test.each(['attachment','reply','html'])('%s media retain viewport priorities without replacing the row renderer',async location=>{
+    const image=location==='html'?{id:'html',kind:'FILE',mimeType:'application/vnd.leaderproduct.help-html+json',name:'2cdcf0db-cf0a-4e9e-b857-df9ea3666450.help-html.json'}:{id:'test-image',kind:'IMAGE'};
+    props.messages=Array.from({length:12},(_,index)=>({...message(index+1,firstDate),...(location!=='reply'?{attachments:[image]}:{replyTo:{id:99,text:'',attachments:[image]}})})) as HelpMessage[];
     function MediaPriority({id}:{id:number}){const priority=React.useContext(HelpMediaLoadingContext);return React.createElement(View,{testID:`priority-${id}`,accessibilityLabel:priority});}
     props.renderMessage=row=>React.createElement(MediaPriority,{id:row.id});
     await render();const renderer=mockFlashProps.renderItem;
@@ -499,6 +500,25 @@ describe('sticky date geometry and navigation integration',()=>{
     expect(screen!.root.findByProps({testID:'priority-10'}).props.accessibilityLabel).toBe('visible');
   });
   const scrollEvent=(offset:number)=>({nativeEvent:{contentOffset:{x:0,y:offset},layoutMeasurement:{width:390,height:600},contentSize:{width:390,height:1000}}});
+  test('a measured initial window at its requested offset reveals on load without advancing a frame timer',async()=>{
+    props={...props,onReady:jest.fn(),navigationTarget:{key:290,kind:'anchor',messageId:2,sequence:2,offset:5,animate:false}};
+    mockListApi.getAbsoluteLastScrollOffset=()=>259;
+    await act(async()=>{screen=TestRenderer.create(React.createElement(HelpTimeline,{...props,ref}));});
+    await act(async()=>{mockFlashProps.onLayout({nativeEvent:{layout:{height:600}}});mockFlashProps.onContentSizeChange(390,1000);});
+    expect(props.onReady).not.toHaveBeenCalled();
+    await act(async()=>mockFlashProps.onLoad());
+    expect(props.onReady).toHaveBeenCalledTimes(1);
+    expect(animatedNumber(StyleSheet.flatten(screen!.root.findByProps({testID:'help-timeline-live-layer'}).props.style).opacity)).toBe(1);
+  });
+  test('a measured short initial window reveals on load despite a stale cached index offset',async()=>{
+    props={...props,onReady:jest.fn(),navigationTarget:{key:291,kind:'anchor',messageId:2,sequence:2,offset:5,animate:false}};
+    mockListApi.getAbsoluteLastScrollOffset=()=>80;
+    await act(async()=>{screen=TestRenderer.create(React.createElement(HelpTimeline,{...props,ref}));});
+    await act(async()=>{mockFlashProps.onLayout({nativeEvent:{layout:{height:600}}});mockFlashProps.onContentSizeChange(390,470);});
+    await act(async()=>mockFlashProps.onLoad());
+    expect(props.onReady).toHaveBeenCalledTimes(1);
+    expect(animatedNumber(StyleSheet.flatten(screen!.root.findByProps({testID:'help-timeline-live-layer'}).props.style).opacity)).toBe(1);
+  });
   test('opening a saved index needs one measured alignment, not an index preparation and stability loop',async()=>{
     props={...props,onReady:jest.fn(),navigationTarget:{key:91,kind:'anchor',messageId:2,sequence:2,offset:5,animate:false}};
     mockListApi.scrollToOffset.mockImplementation(({offset}:any)=>{mockListApi.getAbsoluteLastScrollOffset=()=>offset;});
@@ -518,6 +538,8 @@ describe('sticky date geometry and navigation integration',()=>{
     expect(props.onReady).toHaveBeenCalled();
     expect(mockFlashProps.drawDistance).toBe(320);
     props={...props,entrySettled:true};await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    expect(mockFlashProps.drawDistance).toBe(320);
+    await act(async()=>jest.advanceTimersByTimeAsync(80));
     expect(mockFlashProps.drawDistance).toBeGreaterThanOrEqual(1200);
   });
   test('initial positioning keeps estimates hidden and owns the anchor until measured rows stop changing',async()=>{
@@ -602,15 +624,15 @@ describe('sticky date geometry and navigation integration',()=>{
   test('date preparation leaves the original on screen and resolves only after the old viewport is painted',async()=>{
     mockReducedMotion=false;await render();
     await act(async()=>ref.current!.jumpToDate(firstDate));
-    expect(StyleSheet.flatten(screen!.root.findAllByProps({testID:'help-timeline-live-layer'})[0].props.style).opacity).toBe(1);
-    expect(StyleSheet.flatten(screen!.root.findAllByProps({testID:'help-timeline-preparation'})[0].props.style).opacity).toBe(0);
+    expect(animatedNumber(StyleSheet.flatten(screen!.root.findAllByProps({testID:'help-timeline-live-layer'})[0].props.style).opacity)).toBe(1);
+    expect(animatedNumber(StyleSheet.flatten(screen!.root.findAllByProps({testID:'help-timeline-preparation'})[0].props.style).opacity)).toBe(0);
     let prepared=false;
     const waiting=ref.current!.waitForJumpReady().then(value=>{prepared=value;});
     expect(prepared).toBe(false);
     await act(async()=>jest.advanceTimersByTimeAsync(70));
     await waiting;
     expect(prepared).toBe(true);
-    expect(StyleSheet.flatten(screen!.root.findAllByProps({testID:'help-timeline-transition'})[0].props.style).opacity).toBe(1);
+    expect(animatedNumber(StyleSheet.flatten(screen!.root.findAllByProps({testID:'help-timeline-transition'})[0].props.style).opacity)).toBe(1);
   });
   test('latest retains a nearby viewport until ready, blocks repeat taps and animates both fragments once',async()=>{
     mockReducedMotion=false;await render();

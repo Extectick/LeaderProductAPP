@@ -165,3 +165,12 @@ test('leaving the tail during a full repair keeps the newer-message flag for the
   expect(service.messages.at(-1)?.sequence).toBe(600);expect(service.hasNewer).toBe(true);
   expect(service.navigationTarget?.key).toBe(key);
 });
+
+test('quiet committed repair retains selected ticket identity while real metadata still updates',async()=>{
+  await persist();await committed();
+  const selected=service.selectedTicket,rows=service.messages,pending=service.pendingMessages;
+  await committed();
+  expect(service.selectedTicket).toBe(selected);expect(service.messages).toBe(rows);expect(service.pendingMessages).toBe(pending);
+  await persist({ticket:{...ticket(),title:'Updated title'}});await committed();
+  expect(service.selectedTicket).not.toBe(selected);expect(service.selectedTicket?.title).toBe('Updated title');
+});

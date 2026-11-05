@@ -246,7 +246,7 @@ describe('Help screen integration with service boundary', () => {
     expect(screen.root.findByType(HelpChatEntry).props.ready).toBe(true);
     expect(composer().props.navigationReady).toBe(true);
   });
-  test('shows an interactive chat shell before starting slow history work',async()=>{
+  test('starts local history immediately while server work waits for entry',async()=>{
     mockHoldEntry=true;mockService.tickets=[ticket];
     let release!:(value:HelpDetail)=>void;
     mockService.openTicket.mockImplementation(()=>new Promise(resolve=>{release=resolve;}));
@@ -254,21 +254,38 @@ describe('Help screen integration with service boundary', () => {
     await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());
     expect(screen.root.findByType(HelpChatEntry).props.ready).toBe(true);
     expect(screen.root.findByProps({testID:'help-chat-opening'})).toBeTruthy();
-    expect(mockService.openTicket).not.toHaveBeenCalled();
+    expect(mockService.openTicket).toHaveBeenCalledWith(7,undefined,{deferNetworkUntil:expect.any(Promise)});
+    const ready=mockService.openTicket.mock.calls[0][2].deferNetworkUntil;
+    const entered=jest.fn();void ready.then(entered);await act(async()=>{});expect(entered).not.toHaveBeenCalled();
     await act(async()=>mockEntryJobs.at(-1)!());
-    expect(mockService.openTicket).toHaveBeenCalledWith(7,undefined);
+    expect(entered).toHaveBeenCalledWith(true);
     expect(screen.root.findByType(HelpChatEntry).props.ready).toBe(true);
     expect(mockTimelineProps.loading).toBe(true);
     expect(button('Назад')).toBeTruthy();
     await act(async()=>release(detail));
   });
-  test('leaving the opening shell cancels history work that has not started',async()=>{
+  test('cached messages mount during entry instead of waiting behind the placeholder',async()=>{
+    mockHoldEntry=true;mockService.tickets=[ticket];
+    mockService.messages=[{id:81,ticketId:7,sequence:1,authorId:9,authorRole:'IT',text:'Локальная история',kind:'TEXT',attachments:[],reactions:[],createdAt:new Date().toISOString()}];
+    await render();
+    await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());
+    expect(screen.root.findAllByProps({testID:'help-chat-opening'})).toHaveLength(0);
+    expect(mockTimelineProps.messages).toEqual(mockService.messages);
+    expect(mockTimelineProps.entrySettled).toBe(false);
+    expect(screen.root.findByType(HelpChatEntry).props.ready).toBe(true);
+    await act(async()=>mockEntryJobs.at(-1)!());
+    expect(mockTimelineProps.messages).toEqual(mockService.messages);
+    expect(mockTimelineProps.loading).toBe(false);
+    expect(screen.root.findAllByProps({testID:'help-chat-opening'})).toHaveLength(0);
+  });
+  test('leaving the opening shell cancels its deferred server work',async()=>{
     mockHoldEntry=true;mockService.tickets=[ticket];await render();
     await act(async()=>screen.root.findByProps({testID:'help-ticket-row-7'}).props.onPress());
+    const ready=mockService.openTicket.mock.calls[0][2].deferNetworkUntil;
     const finish=mockEntryJobs.at(-1)!;
     await act(async()=>button('Назад').props.onPress());
     await act(async()=>finish());
-    expect(mockService.openTicket).not.toHaveBeenCalled();
+    await expect(ready).resolves.toBe(false);
     expect(screen.root.findAllByProps({testID:'help-chat-viewport'})).toHaveLength(0);
   });
   test('closing waits for IME without tearing down the outgoing composer geometry',async()=>{
@@ -373,13 +390,58 @@ describe('Help screen integration with service boundary', () => {
     const restingBottom=hintBottom();
     if(capable){expect(hint().props.nativeID).toBe(native().props.emptyHintId);expect(hint().props.collapsable).toBe(false);}
     else expect(hint().props.nativeID).toBeUndefined();
+    const motion=jest.spyOn(Animated,'spring');
     await act(async()=>native().props.onImeInsetChange(250));
-    // Native-capable APKs keep the resting Yoga geometry; only the native
-    // animated dock coordinates move the hint, including the settled frame.
-    expect(hintBottom()).toBe(restingBottom+(capable?0:250));
+    // Keep resting Yoga bounds in both paths. The native owner or the legacy
+    // content transform moves the centered hint, never the composer/viewport.
+    expect(hintBottom()).toBe(restingBottom);
+    const displacement=()=>StyleSheet.flatten(screen.root.findByProps({testID:'help-new-ticket-hint-content'}).props.style).transform[0].translateY;
+    const animations=()=>motion.mock.calls.filter(([value])=>value===displacement());
+    if(capable)expect(animations()).toHaveLength(0);
+    else expect(animations().at(-1)![1]).toMatchObject({toValue:-125,useNativeDriver:true});
     await act(async()=>native().props.onImeInsetChange(0));
     expect(hintBottom()).toBe(restingBottom);
+    if(capable)expect(displacement().__getValue()).toBe(0);
+    else expect(animations().at(-1)![1].toValue).toBe(0);
     expect(mockService.createTicket).not.toHaveBeenCalled();
+  });
+  test('new chat opens completely before its first autofocus request',async()=>{
+    mockHoldEntry=true;await render();
+    jest.spyOn(Keyboard,'isVisible').mockReturnValue(false);
+    await act(async()=>button('Новое обращение').props.onPress());
+    expect(screen.root.findByType(HelpChatEntry).props.ready).toBe(true);
+    expect(mockEntryJobs.length).toBeGreaterThan(0);
+    expect(composer().props.navigationReady).toBe(false);
+    expect(composer().props.screenActive).toBe(false);
+    expect(composer().props.focusKey).toBe(0);
+    await act(async()=>mockEntryJobs[0]());
+    expect(composer().props.navigationReady).toBe(true);
+    expect(composer().props.screenActive).toBe(true);
+    expect(composer().props.focusKey).toBe(1);
+    expect(mockService.createTicket).not.toHaveBeenCalled();
+  });
+  test('a visible list-search keyboard is hidden before entering the new chat',async()=>{
+    mockHoldEntry=true;await render();
+    let hidden!:()=>void;
+    jest.spyOn(Keyboard,'isVisible').mockReturnValue(true);
+    jest.spyOn(Keyboard,'dismiss').mockImplementation(()=>{});
+    jest.spyOn(Keyboard,'addListener').mockImplementation((event,callback)=>{if(event==='keyboardDidHide')hidden=callback as ()=>void;return {remove:jest.fn()};});
+    await act(async()=>button('Новое обращение').props.onPress());
+    expect(screen.root.findByType(HelpChatEntry).props.ready).toBe(false);
+    expect(mockEntryJobs).toHaveLength(0);expect(composer().props.focusKey).toBe(0);
+    await act(async()=>hidden());
+    expect(screen.root.findByType(HelpChatEntry).props.ready).toBe(true);
+    expect(composer().props.focusKey).toBe(0);
+    await act(async()=>mockEntryJobs[0]());expect(composer().props.focusKey).toBe(1);
+  });
+  test('leaving before chat entry completes cannot open the keyboard from a late completion',async()=>{
+    mockHoldEntry=true;await render();
+    await act(async()=>button('Новое обращение').props.onPress());
+    const complete=mockEntryJobs[0];expect(composer().props.focusKey).toBe(0);
+    await act(async()=>button('Назад').props.onPress());
+    expect(screen.root.findAllByType(HelpChatEntry)).toHaveLength(0);
+    await act(async()=>complete());
+    expect(screen.root.findAllByType(HelpChatEntry)).toHaveLength(0);
   });
   test('a completed right swipe anywhere in the chat navigates back and preserves the draft',async()=>{
     await render();await act(async()=>button('Новое обращение').props.onPress());

@@ -3,6 +3,7 @@ import { Animated, AppState, Easing, Platform, ScrollView, type ScrollViewProps,
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import Reanimated,{cancelAnimation,Easing as UiEasing,runOnUI,useAnimatedStyle,useSharedValue,withTiming} from 'react-native-reanimated';
 import type { HelpMessage } from '../helpApi';
+import {helpHtmlAttachmentId} from '../helpHtml';
 import type {HelpPending} from '../helpDurableTypes';
 import type { HelpNavigationTarget, HelpViewportAnchor } from '../helpHistoryTypes';
 import { helpTimelineRows, helpVisibleRows, helpNavigationIndex, helpTimelineRowType, type HelpTimelineRow } from '../helpTimelineModel';
@@ -91,9 +92,17 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     runOnUI(()=>{'worklet';cancelAnimation(tailShift);tailShift.value=0;})();
   },[tailShift]);
   useLayoutEffect(()=>{if(!props.active||reduced)resetTailMotion();},[props.active,reduced,resetTailMotion]);
-  const hasImages = useMemo(() => props.messages.some(message => message.attachments?.some(attachment => attachment.kind==='IMAGE') || message.replyTo?.attachments?.some(attachment => attachment.kind==='IMAGE')), [props.messages]);
-  const hasImagesRef = useRef(hasImages); hasImagesRef.current = hasImages;
+  const hasPrioritizedMedia = useMemo(() => props.messages.some(message => message.attachments?.some(attachment => attachment.kind==='IMAGE'||helpHtmlAttachmentId(attachment)!==null) || message.replyTo?.attachments?.some(attachment => attachment.kind==='IMAGE')), [props.messages]);
+  const hasPrioritizedMediaRef = useRef(hasPrioritizedMedia); hasPrioritizedMediaRef.current = hasPrioritizedMedia;
   const [following, setFollowing] = useState(false), [ready, setReady] = useState(false), [loaded, setLoaded] = useState(false), [navigating,setNavigating] = useState(false);
+  const readyOpacity=useRef(new Animated.Value(0,{useNativeDriver:true})).current;
+  const [offscreenReady,setOffscreenReady]=useState(false);
+  useEffect(()=>{
+    if(!ready||props.entrySettled===false)return;
+    let second=0,cancelled=false;
+    const first=requestAnimationFrame(()=>{second=requestAnimationFrame(()=>{if(!cancelled)React.startTransition(()=>setOffscreenReady(true));});});
+    return()=>{cancelled=true;cancelAnimationFrame(first);cancelAnimationFrame(second);};
+  },[ready,props.entrySettled]);
   const [firstContentSettled,setFirstContentSettled]=useState(hasNativeAtomicTailMotion||!props.bottomAligned||rows.length>0);
   useLayoutEffect(()=>{
     if(firstContentSettled||!rows.length)return;
@@ -203,9 +212,9 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   const mediaRangeRef=useRef(mediaRange);mediaRangeRef.current=mediaRange;
   const mediaRangeAt=useRef(0);
   const updateMediaRange=useCallback((force=false)=>{
-    // Text and voice do not depend on image priority. Avoid invalidating every
-    // retained FlashList cell on scroll when the window has no image originals.
-    if(!hasImagesRef.current || !list.current || (!force&&Date.now()-mediaRangeAt.current<120))return;
+    // HTML previews need the same visible priority as image originals. Text
+    // and voice keep the cheap path when neither media type is present.
+    if(!hasPrioritizedMediaRef.current || !list.current || (!force&&Date.now()-mediaRangeAt.current<120))return;
     mediaRangeAt.current=Date.now();
     const {startIndex:first,endIndex:last}=list.current.computeVisibleIndices();
     setMediaRange(previous=>previous.first===first&&previous.last===last?previous:{first,last});
@@ -351,7 +360,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     userScrollSession.current=true;
     touched.current=true;
     live.current.onUserScroll?.();
-    if(inNavigation.current){++navigationGeneration.current;inNavigation.current=false;setNavigating(false);readyRef.current=true;setReady(true);}
+    if(inNavigation.current){++navigationGeneration.current;inNavigation.current=false;setNavigating(false);readyRef.current=true;readyOpacity.setValue(1);setReady(true);}
     cancelJump();setFollow(false);
   },[cancelJump,setFollow,stopIdleSave,resetTailMotion]);
   const prepareJump = useCallback((sequence?: number) => {
@@ -455,7 +464,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     inNavigation.current = false; setNavigating(false);
     userScrollSession.current = false; dragging.current = false; momentum.current = false; webIntent.current = 0;
     stopIdleSave(); cancelJump();
-    if (!opening) { readyRef.current = true; setReady(true); }
+    if (!opening) { readyRef.current = true; readyOpacity.setValue(1);setReady(true); }
     setFollow(!live.current.hasNewer);
     // Keep the native end anchor. scrollToIndex(last, viewPosition=0) would
     // first align the last cell at the top, then scroll a second time to its end.
@@ -470,7 +479,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
       const initiallyMeasured = initialPosition.current?.kind === 'latest' && measuredEnd > 0;
       if (opening && !initiallyMeasured && stable < 2 && ++passes < 8) { scrollEnd(false); requestAnimationFrame(finishLayout); return; }
       if (opening) helpDevEvent('chat.open.positioned', { target: 'latest', passes, elapsedMs: Date.now() - mountedAt.current });
-      readyRef.current = true; setReady(true);
+      readyRef.current = true; readyOpacity.setValue(1);setReady(true);
       setFollow(!live.current.hasNewer); if(!animated||opening)scrollEnd(false); updateMediaRange(true); observe();
     };
     requestAnimationFrame(finishLayout);
@@ -503,7 +512,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
       Animated.timing(transition,{toValue:1,duration:snapshot.duration??400,easing:Easing.bezier(...HELP_LATEST_SCROLL_BEZIER),useNativeDriver:true,isInteraction:false}).start(({finished})=>{if(finished)finish();});
     })().catch(()=>{finish();live.current.onError('Не удалось открыть последние сообщения');});
   },[reduced,pinLatest,resetTailMotion,setFollow,stopIdleSave,cancelJump,updateMediaRange,observe,scrollEnd,transition]);
-  const settleOpening = useCallback(():void => {
+  const settleOpening = useCallback((immediate=false):void => {
     const pending=openingLayout.current;
     if(!pending.active||pending.frame)return;
     const step=()=>{
@@ -534,6 +543,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
       const end=Math.max(0,content+inset-height);
       const tailTarget=target.kind==='latest'||(target.kind==='anchor'||target.kind==='unread')&&shortCompleteHistory();
       const offset=tailTarget?end:Math.min(end,Math.max(0,(item?.y??0)+itemStartOffset()-live.current.headerHeight-(target.offset??0)));
+      const alreadyAligned=Math.abs(view.getAbsoluteLastScrollOffset()-offset)<=1;
       const signature=JSON.stringify([offset,item?.y,item?.height,height,content,live.current.headerHeight,currentBottomInset(),visibleLayouts]);
       if(measured&&height>0&&content>0&&pending.aligned!==signature){
         if(tailTarget)scrollEnd(false);
@@ -543,6 +553,11 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
       const tail=live.current.messages.at(-1);
       const liveTail=target.kind==='latest'&&(tail?.id!==pending.tailId||live.current.messages.some(message=>message.assistantRun&&['thinking','streaming'].includes(message.assistantRun.status)));
       const settled=pending.signature===signature&&Math.abs(view.getAbsoluteLastScrollOffset()-offset)<=1;
+      // FlashList onLoad already committed the measured initial-index window.
+      // If it is at the exact requested offset, another RAF/signature pass adds
+      // latency without improving its position. Unmeasured/misaligned cells
+      // still use the existing bounded positioning pump below.
+      const seededAndAligned=pending.passes===0&&initialPosition.current?.key===target.key&&alreadyAligned;
       // Native padding/scroll clamping can leave FlashList's offset cache behind
       // the actual viewport. A stable, fully measured and explicitly aligned
       // window must not wait forever for an offset notification that won't come.
@@ -551,10 +566,12 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
       // report its initial-index offset after native bottom padding changes.
       // Once every visible row is measured, no offscreen anchor remains to resolve.
       const fits=content+inset<=height;
+      const seededShort=fits&&initialPosition.current?.key===target.key&&Boolean(pending.aligned);
+      const measuredTail=(fits||liveTail||target.kind==='latest'&&hasNativeChatLayout)&&pending.passes>0&&Boolean(pending.aligned);
       // An active answer/new socket messages must not make opening wait for
       // the conversation to become idle. Hand its measured tail to native follow.
-      if(measured&&height>0&&content>0&&(settled||alignedAndStable||(fits||liveTail||target.kind==='latest'&&hasNativeChatLayout)&&pending.passes>0&&pending.aligned)){
-        pending.active=false;readyRef.current=true;setReady(true);inNavigation.current=false;setNavigating(false);
+      if(measured&&height>0&&content>0&&(settled||seededAndAligned||seededShort||alignedAndStable||measuredTail)){
+        pending.active=false;readyRef.current=true;readyOpacity.setValue(1);setReady(true);inNavigation.current=false;setNavigating(false);
         setFollow(tailTarget&&!live.current.hasNewer);
         if(tailTarget)scrollEnd(false);
         if(target.kind==='message'&&target.messageId)live.current.onHighlight(target.messageId);
@@ -567,7 +584,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
       // estimates never become permission to show an incorrectly placed window.
       if(++pending.passes%32!==0)pending.frame=requestAnimationFrame(step);
     };
-    pending.frame=requestAnimationFrame(step);
+    if(immediate)step();else pending.frame=requestAnimationFrame(step);
   },[observe,scrollEnd,setFollow,updateMediaRange,itemStartOffset,currentBottomInset,shortCompleteHistory]);
   useImperativeHandle(ref, () => ({save:()=>save(true),prepareJump,cancelJump,jumpToDate:jumpDate,
     waitForJumpReady,scrollTo: ({y,animated}) => {resetTailMotion();touched.current=true;setFollow(false);list.current?.scrollToOffset({offset:y,animated,skipFirstItemOffset:true});},
@@ -671,7 +688,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
         }
       }
       if (opening) helpDevEvent('chat.open.positioned', { target: target.kind, indexElapsedMs, settlePasses, elapsedMs: Date.now() - positioningAt });
-      readyRef.current=true;setReady(true);
+      readyRef.current=true;readyOpacity.setValue(1);setReady(true);
       setFollow(false);
       if(target.kind==='message' && target.messageId)live.current.onHighlight(target.messageId);
       const finish=()=>{if(!mounted.current || generation!==navigationGeneration.current)return;cancelJump();inNavigation.current=false;setNavigating(false);updateMediaRange(true);observe();};
@@ -686,11 +703,11 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
         ]).start(finish);
       }
       else finish();
-    })().catch(()=>{if(!mounted.current || generation!==navigationGeneration.current)return;inNavigation.current=false;setNavigating(false);readyRef.current=true;setReady(true);cancelJump();live.current.onError('Не удалось перейти к сообщению. Попробуйте ещё раз.');});
+    })().catch(()=>{if(!mounted.current || generation!==navigationGeneration.current)return;inNavigation.current=false;setNavigating(false);readyRef.current=true;readyOpacity.setValue(1);setReady(true);cancelJump();live.current.onError('Не удалось перейти к сообщению. Попробуйте ещё раз.');});
   }, [props.navigationTarget,rows,loaded,props.headerHeight,props.dockHeight,reduced,cancelJump,observe,scrollEnd,setFollow,stopIdleSave,transition,incomingTransition,stageViewport,updateMediaRange,visible,pinLatest,animateLatest,settleOpening,itemStartOffset,currentBottomInset,resetTailMotion]);
   // Empty/new conversations have no anchor to resolve.
-  useEffect(()=>{if(!props.loading && !rows.length){readyRef.current=true;setReady(true);setFollow(!props.hasNewer);}},[props.loading,rows.length,props.hasNewer,setFollow]);
-  useEffect(()=>{if(!props.navigationTarget && loaded && rows.length && !readyRef.current){readyRef.current=true;setReady(true);setFollow(!props.hasNewer);scrollEnd(false);}},[loaded,rows.length,props.navigationTarget,props.hasNewer,setFollow,scrollEnd]);
+  useEffect(()=>{if(!props.loading && !rows.length){readyRef.current=true;readyOpacity.setValue(1);setReady(true);setFollow(!props.hasNewer);}},[props.loading,rows.length,props.hasNewer,setFollow]);
+  useEffect(()=>{if(!props.navigationTarget && loaded && rows.length && !readyRef.current){readyRef.current=true;readyOpacity.setValue(1);setReady(true);setFollow(!props.hasNewer);scrollEnd(false);}},[loaded,rows.length,props.navigationTarget,props.hasNewer,setFollow,scrollEnd]);
   useEffect(()=>{if(props.hasNewer)setFollow(false);},[props.hasNewer,setFollow]);
   useEffect(()=>{if(!hasNativeChatLayout && followingRef.current && readyRef.current && !inNavigation.current)scrollEnd(false);},[props.dockHeight,rows.length,scrollEnd]);
   const onScroll=useCallback((event:NativeSyntheticEvent<NativeScrollEvent>)=>{
@@ -767,16 +784,16 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     if (!readyRef.current && target && seed?.key === target.key && target.kind !== 'date') {
       committedTarget.current=target.key;inNavigation.current=true;
       Object.assign(openingLayout.current,{active:true,key:target.key,passes:0,signature:'',aligned:'',requestedIndex:-1,tailId:live.current.messages.at(-1)?.id??null});
-      settleOpening();
+      settleOpening(true);
     }
     setLoaded(true); updateMediaRange(true); observe();
   }, [settleOpening,updateMediaRange,observe]);
   return <HelpMessageArrivalContext.Provider value={inheritedArrivals??localArrivals.current}><HelpImageCacheContext.Provider value={imageCache}><View style={{flex:1}}>
-    <Animated.View testID="help-timeline-live-layer" style={{flex:1,opacity:(ready||!rows.length)&&(!rows.length||firstContentSettled)?1:0,transform:[{translateY:outgoing?(outgoing.latest&&snapshotVisible?transition:incomingTransition).interpolate({inputRange:[0,1],outputRange:[-direction*distance,0]}):0}]}}>
+    <Animated.View testID="help-timeline-live-layer" style={{flex:1,opacity:!rows.length?1:firstContentSettled?readyOpacity:0,transform:[{translateY:outgoing?(outgoing.latest&&snapshotVisible?transition:incomingTransition).interpolate({inputRange:[0,1],outputRange:[-direction*distance,0]}):0}]}}>
       <Reanimated.View testID="help-timeline-tail-motion" style={[{flex:1},tailStyle]}><FlashList ref={list} data={rows} extraData={mediaRange} keyExtractor={rowKey} getItemType={rowType} renderItem={renderItem} CellRendererComponent={hasNativeAtomicTailMotion?TailCell:undefined}
         initialScrollIndex={initialPosition.current?.index}
         initialScrollIndexParams={initialPosition.current ? {viewOffset:initialPosition.current.kind==='latest'?0:-(props.headerHeight+initialPosition.current.offset)} : undefined}
-        drawDistance={ready&&props.entrySettled!==false?Math.max(1200,geometry.current.height*2):320}
+        drawDistance={offscreenReady&&props.entrySettled!==false?Math.max(1200,geometry.current.height*2):320}
         renderScrollComponent={NativeScroll} {...webProps} testID="help-chat-scroll" style={listStyle}
         contentContainerStyle={listContentStyle}
         maintainVisibleContentPosition={maintainVisibleContentPosition}

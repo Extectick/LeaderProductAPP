@@ -1,4 +1,4 @@
-import React, {useMemo} from 'react';
+import React, {forwardRef,useImperativeHandle,useMemo,useState} from 'react';
 import {Animated, View} from 'react-native';
 import {HelpDateSeparator} from './HelpTimelineIndicators';
 
@@ -6,6 +6,7 @@ export const HELP_DATE_PILL_HEIGHT = 24;
 export const helpDatePinTop = (headerHeight:number) => Math.max(0,headerHeight-12);
 export type HelpDateMarker = {key:string;date:string;y:number;nextY?:number;hidden:boolean};
 export type HelpDatePresentation = {markers:readonly HelpDateMarker[];scrollOffset:Animated.Value};
+export type HelpTimelineDatesHandle={update:(presentation:HelpDatePresentation|null)=>void};
 
 /** The same pill follows the scroll, sticks, then is pushed away by the next day. */
 export function helpDateMotion(marker:Pick<HelpDateMarker,'y'|'nextY'>,top:number) {
@@ -33,3 +34,10 @@ export function HelpTimelineDates({presentation,headerHeight,bottom,onPress}:{pr
     {presentation.markers.map(marker=><DateMarker key={marker.key} marker={marker} scrollOffset={presentation.scrollOffset} top={top} onPress={onPress}/>)}
   </View>;
 }
+
+/** Measurements update this leaf, without rerendering the chat/composer tree. */
+export const HelpTimelineDatesHost=forwardRef<HelpTimelineDatesHandle,{headerHeight:number;bottom:number;hidden?:boolean;onPress:(date:string)=>void}>(function HelpTimelineDatesHost({hidden,...props},ref){
+  const [presentation,setPresentation]=useState<HelpDatePresentation|null>(null);
+  useImperativeHandle(ref,()=>({update:setPresentation}),[]);
+  return !hidden&&presentation?<HelpTimelineDates {...props} presentation={presentation}/>:null;
+});

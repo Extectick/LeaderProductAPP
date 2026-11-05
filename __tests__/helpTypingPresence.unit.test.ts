@@ -9,7 +9,7 @@ const mockSocket={connected:true,on:(key:string,fn:Function)=>{mockHandlers[key]
 jest.mock('../src/features/help/helpAccountSync',()=>({acquireHelpAccount:()=>({getSocket:()=>mockSocket,release:()=>{},refresh:async()=>{},syncTicket:async()=>{}})}));
 jest.mock('../src/features/help/helpOutbox',()=>({dispatchHelpPending:jest.fn()}));
 jest.mock('../src/features/help/helpStorage',()=>({readHelpPending:async()=>[],readLastCreatedOperation:async()=>null,subscribeHelpOutbox:()=>()=>{},getHelpDraft:async()=>'',setHelpDraft:async()=>{},helpClientId:()=>'',saveHelpPending:async()=>{}}));
-jest.mock('../src/features/help/helpHistory',()=>({readCachedHelpTickets:async()=>[],cacheHelpTickets:async()=>{}}));
+jest.mock('../src/features/help/helpHistory',()=>({readCachedHelpTickets:async()=>[],readCachedHelpTicket:async()=>null,cacheHelpTickets:async()=>{}}));
 const mockTicket={id:7,status:'OPEN',title:'Ticket',ownerId:5,members:[{userId:9,user:{id:9,name:'Анна',avatarUrl:'https://example.test/member.png'}}]};
 jest.mock('../src/features/help/helpApi',()=>({createHelpApi:()=>({config:async()=>({canManage:false,aiEnabled:false}),list:async()=>({tickets:[mockTicket],nextCursor:null})}),HelpApiError:class extends Error{status=0;},loadHelpMedia:jest.fn(),uploadHelpFiles:jest.fn()}));
 import {useHelpService} from '../src/features/help/useHelpService';

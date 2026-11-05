@@ -15,6 +15,7 @@ jest.mock('../src/features/help/helpStorage',()=>({...jest.requireActual('../src
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {useHelpService} from '../src/features/help/useHelpService';
 import {cacheHelpPage,readCachedHelpTicket,saveHelpViewport} from '../src/features/help/helpHistory';
+import * as helpHistory from '../src/features/help/helpHistory';
 import {helpViewCache,helpListCacheKey,shareHelpItems} from '../src/features/help/helpViewCache';
 import {helpLocalDayBounds} from '../src/features/help/helpDateNavigation';
 import {HelpApiError} from '../src/features/help/helpApi';
@@ -154,4 +155,112 @@ test('an actual participant read failure is visible in the chat and cleared on r
   await render();await open();await act(async()=>{await service.markVisibleRead(3);});
   expect(service.error).toBe('Не удалось сохранить прочтение');
   await act(async()=>service.clearSelection());expect(service.error).toBeNull();
+});
+
+test('local messages are usable before entry completes and sync runs invisibly afterwards',async()=>{
+  await cacheHelpPage(5,ticket(),page(101,200));
+  await render();mockApi.sync.mockClear();
+  let entered!:(ready:boolean)=>void;
+  const deferNetworkUntil=new Promise<boolean>(resolve=>{entered=resolve;});
+  await act(async()=>{await service.openTicket(7,undefined,{deferNetworkUntil});});
+  const rows=service.messages,key=service.navigationTarget?.key;
+  expect(rows).toHaveLength(100);expect(service.loading).toBe(false);
+  expect(mockApi.detail).not.toHaveBeenCalled();expect(mockApi.sync).not.toHaveBeenCalled();
+  await act(async()=>{entered(true);await service.refresh();});
+  expect(mockApi.sync).toHaveBeenCalledWith(7,10);
+  expect(service.messages).toBe(rows);expect(service.navigationTarget?.key).toBe(key);
+});
+
+test('leaving cancels visibility and background repair even if an initial fetch started during entry',async()=>{
+  await render();mockApi.sync.mockClear();
+  let entered!:(ready:boolean)=>void,opening!:Promise<unknown>;
+  const deferNetworkUntil=new Promise<boolean>(resolve=>{entered=resolve;});
+  await act(async()=>{opening=service.openTicket(7,undefined,{deferNetworkUntil});});
+  await act(async()=>{service.clearSelection();entered(false);await opening;});
+  expect(mockApi.sync).not.toHaveBeenCalled();
+  expect(service.messages).toHaveLength(0);
+});
+
+test('a slow SQLite snapshot still displays while server fallback is pending and survives its failure',async()=>{
+  await cacheHelpPage(5,ticket(),page(101,200));
+  await saveHelpViewport(5,7,{messageId:70150,sequence:150,offset:-17,atLatest:false});
+  const cached=await readCachedHelpTicket(5,7);
+  await render();
+  let disk!:(value:typeof cached)=>void,fail!:(error:Error)=>void,opening!:Promise<unknown>;
+  const read=jest.spyOn(helpHistory,'readCachedHelpTicket').mockImplementation(()=>new Promise(resolve=>{disk=resolve;}));
+  mockApi.detail.mockImplementation(()=>new Promise((_,reject)=>{fail=reject;}));
+  mockApi.sync.mockReturnValue(new Promise(()=>{}));
+  try{
+    await act(async()=>{opening=service.openTicket(7);await new Promise(resolve=>setTimeout(resolve,220));});
+    expect(mockApi.detail).toHaveBeenCalledWith(7);expect(service.messages).toHaveLength(0);
+    await act(async()=>{disk(cached);});
+    expect(service.messages.length).toBeGreaterThan(0);expect(service.loading).toBe(false);
+    expect(service.navigationTarget).toMatchObject({kind:'anchor',sequence:150,offset:-17});
+    const rows=service.messages,key=service.navigationTarget?.key;
+    await act(async()=>{fail(new Error('Network unavailable'));await opening;});
+    expect(service.messages).toBe(rows);expect(service.selectedTicket?.id).toBe(7);
+    expect(service.navigationTarget?.key).toBe(key);
+  }finally{read.mockRestore();}
+});
+
+test('late local history cannot overwrite the server window or resurrect a left chat',async()=>{
+  await cacheHelpPage(5,ticket(),page(1,100));
+  const cached=await readCachedHelpTicket(5,7);await render();
+  let disk!:(value:typeof cached)=>void;
+  const read=jest.spyOn(helpHistory,'readCachedHelpTicket').mockImplementation(()=>new Promise(resolve=>{disk=resolve;}));
+  mockApi.sync.mockReturnValue(new Promise(()=>{}));
+  try{
+    await act(async()=>{await service.openTicket(7);});
+    const rows=service.messages,key=service.navigationTarget?.key;
+    expect(rows[0].sequence).toBe(101);
+    await act(async()=>{disk(cached);});
+    expect(service.messages).toBe(rows);expect(service.navigationTarget?.key).toBe(key);
+    await act(async()=>{service.clearSelection();});
+    let opening!:Promise<unknown>;
+    // Bypass the warm cache to exercise an outstanding disk read on leave.
+    helpViewCache('https://dev.example.test:5:true').windows.clear();
+    await act(async()=>{opening=service.openTicket(7);service.clearSelection();disk(cached);await opening;});
+    expect(service.messages).toHaveLength(0);expect(service.selectedTicket).toBeNull();
+  }finally{read.mockRestore();}
+});
+
+test('the list warms saved windows from local storage without downloading chats',async()=>{
+  await cacheHelpPage(5,ticket(),page(101,200));
+  mockApi.list.mockResolvedValue({tickets:[ticket()],nextCursor:null});
+  await render();await act(async()=>{await new Promise(resolve=>setTimeout(resolve,30));});
+  expect(helpViewCache('https://dev.example.test:5:true').windows.get(7)?.page.messages).toHaveLength(100);
+  const read=jest.spyOn(helpHistory,'readCachedHelpTicket').mockImplementation(()=>new Promise(()=>{}));
+  try{
+    await act(async()=>{await service.openTicket(7,undefined,{deferNetworkUntil:new Promise(()=>{})});});
+    expect(service.messages).toHaveLength(100);expect(service.loading).toBe(false);
+    expect(read).not.toHaveBeenCalled();expect(mockApi.detail).not.toHaveBeenCalled();
+  }finally{read.mockRestore();}
+});
+
+test('missing history is prepared from the list and available before the entrance completes',async()=>{
+  mockApi.list.mockResolvedValue({tickets:[ticket()],nextCursor:null});
+  await render();
+  await act(async()=>{await service.prepareTicket(7);});
+  expect(service.selectedTicket).toBeNull();expect(service.messages).toHaveLength(0);
+  expect((await readCachedHelpTicket(5,7))?.page?.messages).toHaveLength(100);
+  mockApi.detail.mockClear();mockApi.sync.mockClear();
+  await act(async()=>{await service.openTicket(7,undefined,{deferNetworkUntil:new Promise(()=>{})});});
+  expect(service.messages).toHaveLength(100);expect(service.loading).toBe(false);
+  expect(mockApi.detail).not.toHaveBeenCalled();expect(mockApi.sync).not.toHaveBeenCalled();
+  expect(mockApi.read).not.toHaveBeenCalled();
+});
+
+test('clicking a row shares its preparation request and fills history during the animation',async()=>{
+  await render();let release!:(value:any)=>void;
+  mockApi.detail.mockReturnValue(new Promise(resolve=>{release=resolve;}));
+  let preparing!:Promise<void>,opening!:Promise<unknown>;
+  const deferNetworkUntil=new Promise<boolean>(()=>{});
+  await act(async()=>{preparing=service.prepareTicket(7);});
+  expect(mockApi.detail).toHaveBeenCalledTimes(1);
+  await act(async()=>{opening=service.openTicket(7,undefined,{deferNetworkUntil});});
+  expect(mockApi.detail).toHaveBeenCalledTimes(1);
+  await act(async()=>{release({ticket:ticket(),...page(101,200)});await opening;await preparing;});
+  expect(service.messages).toHaveLength(100);expect(service.loading).toBe(false);
+  expect(mockApi.detail).toHaveBeenCalledTimes(1);expect(mockApi.sync).not.toHaveBeenCalled();
+  expect(mockApi.read).not.toHaveBeenCalled();
 });

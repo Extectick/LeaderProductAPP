@@ -51,9 +51,9 @@ test('saved message and offset open an older window; snapshot fetching never mar
 test('opening ticket 1 stays interactive and falls back to the server when its local snapshot never settles',async()=>{
   mockApi.list.mockResolvedValue({tickets:[ticket(1,6)],nextCursor:null});
   mockApi.detail.mockResolvedValue({ticket:ticket(1,6),...page(1,6,1,6)});
-  await render();
   const read=jest.spyOn(helpHistory,'readCachedHelpTicket').mockImplementation(()=>new Promise(()=>{}));
   try{
+    await render();
     let opening!:ReturnType<typeof service.openTicket>;
     await act(async()=>{opening=service.openTicket(1);});
     // Header/back navigation belong to the known ticket while storage is busy.
@@ -286,6 +286,8 @@ test('returning to the list repairs displaced rows in a batch without fetching h
 });
 
 test('old APIs fall back to bounded details while transient summary errors retain existing rows',async()=>{
+  // History preparation is independent of this list-reconciliation contract.
+  await cacheHelpPage(5,ticket(7),page(101,200));
   mockApi.list.mockResolvedValueOnce({tickets:[ticket(7)],nextCursor:null});await render();
   mockApi.list.mockImplementation(async()=>({tickets:[ticket(9)],nextCursor:null}));
   mockApi.summaries.mockRejectedValue(new HelpApiError('Unavailable',503));

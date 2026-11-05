@@ -1,4 +1,4 @@
-import {HELP_HTML_MIME,helpHtmlAttachmentId,helpHtmlDocument,helpHtmlPageLink,parseHelpHtmlArtifact,parseHelpHtmlLink} from '../src/features/help/helpHtml';
+import {HELP_HTML_MIME,helpHtmlAttachmentId,helpHtmlDocument,helpHtmlCompactHeight,helpHtmlPageLink,parseHelpHtmlArtifact,parseHelpHtmlLink} from '../src/features/help/helpHtml';
 import type {HelpAttachment} from '../src/features/help/helpApi';
 const id='8cb01504-f89b-4e55-ad30-f8f6eb686547';
 const file:HelpAttachment={id:'attachment-1',kind:'FILE',name:`${id}.help-html.json`,mimeType:HELP_HTML_MIME,size:100,url:'/help/attachments/attachment-1'};
@@ -61,4 +61,27 @@ test('entity cards bind one canonical action and only the authenticated image sl
  const shown=helpHtmlDocument(compact,'#18212D',true,0,image);
  expect(shown).toContain('img-src data:');expect(shown).toContain(`src="${image}"`);expect(shown).not.toContain('help-entity-image');
  const missing=helpHtmlDocument(compact,'#18212D',true);expect(missing).not.toContain('<img');expect(missing).toContain('<span>ИС</span>');
+});
+
+test('legacy root inline and simple CSS fixed heights work without DOM measurement',()=>{
+ expect(helpHtmlCompactHeight({html:'<section style="height: 176px"><p>Card</p></section>',css:''})).toBe(176);
+ expect(helpHtmlCompactHeight({html:'<article id="card" class="profile small"><p>Card</p><img src="help-entity-image" /></article>',css:'.small{height:100px} #card{height:220px} .profile{height:180px}'})).toBe(220);
+ expect(helpHtmlCompactHeight({html:'<section><p>Card</p></section>',css:'section{height:160px} section{height:180px}'})).toBe(180);
+ expect(helpHtmlCompactHeight({html:'<section class="card" style="height: 176px"><p>Card</p></section>',css:'.card{height:180px}'})).toBe(176);
+ expect(helpHtmlCompactHeight({html:'<section><p>Card</p></section>',css:'section{height:160px!important} section{height:180px}'})).toBe(160);
+ expect(helpHtmlCompactHeight({html:'<section style="height:176px">Card</section>',css:'section{height:200px!important;height:180px}'})).toBe(200);
+ expect(helpHtmlCompactHeight({html:'<section style="height:176px!important;height:180px">Card</section>',css:'section{height:200px!important}'})).toBe(176);
+});
+test('legacy heights do not borrow from children, adjacent cards or conditional/responsive CSS',()=>{
+ const samples=[
+  {html:'<section><p style="height:180px">Child</p></section>',css:'p{height:180px}'},
+  {html:'<section style="height:180px">One</section><p>Sibling</p>',css:''},
+  {html:'<section class="card">One</section>',css:'@media (min-width:200px){.card{height:180px}}'},
+  {html:'<section style="height:100%">One</section>',css:'section{height:180px}'},
+  {html:'<section>One</section>',css:'section{height:calc(100vw - 20px)}'},
+  {html:'<section>One</section>',css:'section{min-height:180px}'},
+  {html:'<section>One</section>',css:'section{height:999999px}'},
+ ];
+ for(const sample of samples)expect(helpHtmlCompactHeight(sample)).toBeUndefined();
+ expect(helpHtmlCompactHeight(undefined)).toBeUndefined();
 });

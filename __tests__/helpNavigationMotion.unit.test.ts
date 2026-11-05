@@ -2,12 +2,12 @@ import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
 import { Animated, StyleSheet } from 'react-native';
 let mockReduced = false;
-const mockSceneJobs:{target:number;done?:(finished:boolean)=>void}[]=[];
+const mockSceneJobs:{target:number;duration:number;done?:(finished:boolean)=>void}[]=[];
 jest.mock('react-native-reanimated',()=>({
   __esModule:true,default:{View:require('react-native').View},cancelAnimation:jest.fn(),runOnJS:(fn:any)=>fn,
   useSharedValue:(value:number)=>require('react').useRef({value}).current,
   useAnimatedStyle:(fn:()=>any)=>Object.defineProperties({},Object.fromEntries(Object.keys(fn()).map(key=>[key,{enumerable:true,get:()=>fn()[key]}]))),
-  withTiming:(target:number,_config:any,done?:any)=>{mockSceneJobs.push({target,done});return 0;},Easing:{out:(fn:any)=>fn,cubic:(x:number)=>x},
+  withTiming:(target:number,_config:any,done?:any)=>{mockSceneJobs.push({target,duration:_config.duration,done});return 0;},Easing:{out:(fn:any)=>fn,cubic:(x:number)=>x},
 }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 jest.mock('../src/features/help/helpTheme', () => ({ useHelpReducedMotion: () => mockReduced, useHelpTheme: () => ({surface:'#222',muted:'#999',line:'#333',accent:'#38f',accentText:'#68b',background:'#151b22'}) }));
@@ -57,4 +57,14 @@ test('unmounted entry ignores a late native animation completion',async()=>{
   await act(async()=>ref.current!.reveal());const callback=mockSceneJobs.at(-1)!.done;
   await act(async()=>view.unmount());await act(async()=>callback?.(true));
   expect(onEntered).not.toHaveBeenCalled();
+});
+
+test('a known measured scene width starts entry without waiting for another native layout event',async()=>{
+  let view!:TestRenderer.ReactTestRenderer;const onEntered=jest.fn();
+  await act(async()=>{view=TestRenderer.create(React.createElement(HelpChatEntry,{ready:true,initialWidth:390,onEntered,backgroundColor:'#151b22',children:null}));});
+  try{
+    expect(mockSceneJobs).toHaveLength(1);expect(mockSceneJobs[0]).toMatchObject({target:1,duration:240});
+    expect(StyleSheet.flatten(view.root.findAllByProps({testID:'help-chat-viewport'})[0].props.style).opacity).toBe(1);
+    expect(onEntered).not.toHaveBeenCalled();
+  }finally{await act(async()=>view.unmount());}
 });

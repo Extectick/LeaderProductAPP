@@ -4,7 +4,7 @@ import {Ionicons} from '@expo/vector-icons';
 import {AuthContext} from '@/context/AuthContext';
 import {API_BASE_URL} from '@/utils/config';
 import {loadHelpAttachmentText,type HelpAttachment} from '../helpApi';
-import {HELP_HTML_MAX_BYTES,helpHtmlAttachmentId,helpHtmlPageLink,parseHelpHtmlArtifact,type HelpHtmlArtifact} from '../helpHtml';
+import {HELP_HTML_MAX_BYTES,helpHtmlCompactHeight,helpHtmlAttachmentId,helpHtmlPageLink,parseHelpHtmlArtifact,type HelpHtmlArtifact} from '../helpHtml';
 import {useHelpTheme} from '../helpTheme';
 import type {ResolveHelpMedia} from './HelpMedia';
 import {HelpHtmlContext} from './HelpHtmlContext';
@@ -12,11 +12,14 @@ import {HelpHtmlSurface} from './HelpHtmlSurface';
 import {HelpHtmlViewer,type HelpHtmlOrigin} from './HelpHtmlViewer';
 import {helpHtmlEntityTarget,loadHelpHtmlEntityPreview} from '../helpHtmlEntity';
 import {useEntityCards} from '@/src/features/entityCards/EntityCardContext';
+import {HelpMediaLoadingContext} from '../helpMediaLoading';
 type Loaded={artifact?:HelpHtmlArtifact;imageDataUrl?:string;error?:boolean};
 
 /** Links are scoped to real attachments of this message, never model URLs. */
 export function HelpHtmlMessage({attachments,resolve,children,ticketId,messageId,requestedId,onRequestConsumed}:{attachments:HelpAttachment[];resolve?:ResolveHelpMedia;children:React.ReactNode;ticketId?:number;messageId?:number;requestedId?:string;onRequestConsumed?:()=>void}){
  const entities=useEntityCards();
+ const mediaPriority=useContext(HelpMediaLoadingContext);
+ const [previewReady,setPreviewReady]=useState(false);
  const c=useHelpTheme(),auth=useContext(AuthContext),userId=auth?.isAuthenticated?auth.profile?.id:undefined;
  const account=userId?`${API_BASE_URL}:${userId}`:'';
  const files=attachments.filter(file=>helpHtmlAttachmentId(file)!==null),identity=files.map(file=>`${file.id}:${file.name}:${file.url}`).join('|');
@@ -48,7 +51,19 @@ export function HelpHtmlMessage({attachments,resolve,children,ticketId,messageId
   })();pending.current.set(id,task);return task;
  // Every closure is replaced on account or descriptor changes; late reads are fenced above.
  },[account,resolve,identity,userId]);
- useEffect(()=>{for(const file of files)void load(helpHtmlAttachmentId(file)!);},[load,identity]);
+ useEffect(()=>{
+  setPreviewReady(false);
+  if(mediaPriority!=='visible'||!account||!resolve)return;
+  let cancelled=false,frame=0;
+  // Let the already-mounted message paint before download/parse/WebView work.
+  // Recycled near/retained rows reserve the same preview without starting it.
+  frame=requestAnimationFrame(()=>{frame=requestAnimationFrame(()=>{
+   if(cancelled)return;
+   setPreviewReady(true);
+   for(const file of files)void load(helpHtmlAttachmentId(file)!);
+  });});
+  return()=>{cancelled=true;cancelAnimationFrame(frame);};
+ },[mediaPriority,account,resolve,load,identity]);
  const open=useCallback(async(id:string,fromPreview=false)=>{
   const version=generation.current,artifact=await load(id);if(!artifact?.full||version!==generation.current)return;
   Keyboard.dismiss();
@@ -64,23 +79,28 @@ export function HelpHtmlMessage({attachments,resolve,children,ticketId,messageId
  const consumedRequest=useRef<string|null>(null),consume=useRef(onRequestConsumed);consume.current=onRequestConsumed;
  useEffect(()=>{
   if(!requestedId){consumedRequest.current=null;return;}
-  if(!sameScope||!visibleLoaded[requestedId]?.artifact?.full)return;
+  if(!sameScope||!files.some(file=>helpHtmlAttachmentId(file)===requestedId))return;
   const key=`${account}:${identity}:${requestedId}`;if(consumedRequest.current===key)return;
   const version=generation.current;
-  consumedRequest.current=key;void open(requestedId).then(()=>{if(generation.current===version&&consumedRequest.current===key)consume.current?.();});
- },[requestedId,account,identity,sameScope,loaded,open]);
+  // A route intent is an explicit action, independent of preview priority.
+  consumedRequest.current=key;void load(requestedId).then(artifact=>{
+   if(!artifact?.full||generation.current!==version||consumedRequest.current!==key)return;
+   return open(requestedId).then(()=>{if(generation.current===version&&consumedRequest.current===key)consume.current?.();});
+  });
+ },[requestedId,account,identity,sameScope,loaded,open,load]);
  const navigation=useMemo(()=>({
   canOpen:(id:string)=>!!files.find(file=>helpHtmlAttachmentId(file)===id)&&(!visibleLoaded[id]?.artifact||!!visibleLoaded[id].artifact?.full),
   open:(id:string)=>{void open(id);},
   previews:<View testID="help-html-attachments" style={{gap:12,minWidth:0}}>{files.map(file=>{
    const id=helpHtmlAttachmentId(file)!,item=visibleLoaded[id],artifact=item?.artifact;
+   const height=helpHtmlCompactHeight(artifact?.compact);
    if(artifact&&!artifact.compact)return <Pressable key={id} testID={`help-html-open-${id}`} onPress={()=>void open(id)} accessibilityRole="link" style={{minHeight:44,justifyContent:'center'}}><Text style={{color:c.accentText,fontSize:15}}>{artifact.title}</Text></Pressable>;
-   return <View key={id} ref={node=>{if(node)previews.current.set(id,node);else previews.current.delete(id);}} collapsable={false} testID={`help-html-compact-${id}`} style={{width:'100%',aspectRatio:1,overflow:'hidden'}}>
-    {artifact?.compact?<HelpHtmlSurface compact variant={artifact.compact} imageDataUrl={item.imageDataUrl} label={artifact.description||artifact.title}/>:item?.error?<Pressable onPress={()=>void load(id)} accessibilityRole="button" accessibilityLabel="Повторить загрузку примера" style={{flex:1,justifyContent:'center'}}><Text style={{color:c.muted}}>Не удалось загрузить пример. Повторить</Text></Pressable>:<View style={{flex:1,alignItems:'center',justifyContent:'center'}}><ActivityIndicator color={c.muted}/></View>}
+   return <View key={id} ref={node=>{if(node)previews.current.set(id,node);else previews.current.delete(id);}} collapsable={false} testID={`help-html-compact-${id}`} style={{width:'100%',...(height===undefined?{aspectRatio:1}:{height}),overflow:'hidden'}}>
+    {artifact?.compact&&mediaPriority==='visible'&&previewReady?<HelpHtmlSurface compact variant={artifact.compact} imageDataUrl={item.imageDataUrl} label={artifact.description||artifact.title}/>:item?.error?<Pressable onPress={()=>void load(id)} accessibilityRole="button" accessibilityLabel="Повторить загрузку примера" style={{flex:1,justifyContent:'center'}}><Text style={{color:c.muted}}>Не удалось загрузить пример. Повторить</Text></Pressable>:<View style={{flex:1,alignItems:'center',justifyContent:'center'}}>{!artifact&&mediaPriority==='visible'&&previewReady?<ActivityIndicator color={c.muted}/>:null}</View>}
     {artifact?.entity?<Pressable testID={`help-html-entity-${id}`} accessibilityRole="button" accessibilityLabel={`Открыть ${artifact.title}`} onPress={()=>openEntity(artifact)} style={{position:'absolute',left:0,right:0,top:0,bottom:0}}/>:null}
     {artifact?.full?<Pressable testID={`help-html-expand-${id}`} accessibilityRole="button" accessibilityLabel="Открыть на весь экран" onPress={()=>void open(id,true)} style={{position:'absolute',right:0,top:0,width:44,height:44,alignItems:'center',justifyContent:'center'}}><View style={{width:32,height:32,borderRadius:16,backgroundColor:c.background,alignItems:'center',justifyContent:'center'}}><Ionicons name="expand-outline" size={21} color={c.text}/></View></Pressable>:null}
    </View>;
   })}</View>,
- }),[identity,loaded,sameScope,c,open,load,openEntity]);
+ }),[identity,loaded,sameScope,c,open,load,openEntity,mediaPriority,previewReady]);
  return <HelpHtmlContext.Provider value={navigation}>{children}{viewer&&account&&sameScope&&viewer.account===account?<HelpHtmlViewer artifact={viewer.artifact} imageDataUrl={viewer.imageDataUrl} onOpenEntity={viewer.artifact.entity?()=>openEntity(viewer.artifact):undefined} origin={viewer.origin} expectedUserId={userId} link={helpHtmlPageLink(ticketId??0,messageId??0,viewer.artifact.id)} onClose={()=>setViewer(null)}/>:null}</HelpHtmlContext.Provider>;
 }

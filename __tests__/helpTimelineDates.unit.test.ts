@@ -46,3 +46,18 @@ test('one visible date node survives scrolling, idle time and reverse movement w
     await act(async()=>button.props.onPress());expect(onPress).toHaveBeenCalledWith(marker.date);
   }finally{await act(async()=>tree.unmount());}
 });
+
+test('date measurements update only their host without rerendering its chat parent',async()=>{
+  const {HelpTimelineDatesHost}=require('../src/features/help/components/HelpTimelineDates');
+  const ref=React.createRef<import('../src/features/help/components/HelpTimelineDates').HelpTimelineDatesHandle>();
+  let renders=0,tree!:TestRenderer.ReactTestRenderer;
+  function Parent(){renders++;return React.createElement(HelpTimelineDatesHost,{ref,headerHeight:100,bottom:60,onPress:jest.fn()});}
+  await act(async()=>{tree=TestRenderer.create(React.createElement(Parent));});
+  try{
+    expect(tree.root.findAllByProps({testID:'help-date-layer'})).toHaveLength(0);
+    await act(async()=>ref.current!.update({markers:[marker],scrollOffset:new Animated.Value(0)}));
+    expect(tree.root.findAllByProps({testID:'help-date-layer'}).length).toBeGreaterThan(0);expect(renders).toBe(1);
+    await act(async()=>ref.current!.update(null));
+    expect(tree.root.findAllByProps({testID:'help-date-layer'})).toHaveLength(0);expect(renders).toBe(1);
+  }finally{await act(async()=>tree.unmount());}
+});

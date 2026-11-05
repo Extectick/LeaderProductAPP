@@ -135,7 +135,8 @@ export function useHelpService(isFocused = true) {
       return shareHelpItems(old,list);
     });
     if (activeId.current === detail.ticket.id) {
-      selectedRef.current=detail.ticket;setSelectedTicket(detail.ticket);
+      const ticket=shareHelpItems(selectedRef.current?[selectedRef.current]:[],[detail.ticket])[0];
+      selectedRef.current=ticket;setSelectedTicket(ticket);
       if(merge){if(detail.messages.length){++windowRevision.current;updateMessages(reconcileHelpWindow(messagesRef.current,detail.messages,[],false));}}
       else applyPage(detailPage(detail));
     }
@@ -227,7 +228,55 @@ export function useHelpService(isFocused = true) {
     if(current(identity))setTickets(old=>old.filter(ticket=>ticket.id!==id));
   },[userId,identity,clearSelection,report,current]);
   revokeTicketRef.current=revokeTicket;
-  const openTicket=useCallback(async(id:number,explicit?:{messageId?:number;sequence?:number})=>{
+  const openingDetails=useRef(new Map<string,Promise<HelpDetail>>());
+  const openingDetail=useCallback((id:number)=>{
+    const key=identity+':'+id,existing=openingDetails.current.get(key);if(existing)return existing;
+    const work=helpApi.detail(id).finally(()=>{if(openingDetails.current.get(key)===work)openingDetails.current.delete(key);});
+    openingDetails.current.set(key,work);return work;
+  },[identity,helpApi]);
+  const warming=useRef(new Map<string,Promise<void>>());
+  const warmLocalTicket=useCallback((id:number)=>{
+    if(!userId||!auth?.isAuthenticated||helpViewCache(identity).windows.has(id))return Promise.resolve();
+    const key=identity+':'+id,existing=warming.current.get(key);if(existing)return existing;
+    const accessRevision=committedAccessRevision.current.get(id)??0;
+    const startedAt=Date.now();
+    const valid=()=>current(identity)&&accessRevision===(committedAccessRevision.current.get(id)??0);
+    const read=()=>readCachedHelpTicket(userId,id,record=>initialHelpPosition(record.anchor,record.firstUnreadSequence).sequence);
+    const work=read().then(async cached=>{
+      if(!valid())return;
+      // Prepare missing history while its row is visible, not after the user
+      // has watched the entrance. Snapshot reads never send read receipts.
+      if(!cached?.page&&server.isReachable&&focusedRef.current&&(activeId.current===null||activeId.current===id)){
+        const detail=await openingDetail(id);if(!valid())return;
+        await cacheHelpPage(userId,detail.ticket,detailPage(detail));if(!valid())return;
+        cached=await read();if(!valid())return;
+        if(!cached?.page){
+          const position=initialHelpPosition(cached?.record.anchor??null,detail.firstUnreadSequence??null);
+          if(position.sequence){
+            const page=await helpApi.messages(id,{around:position.sequence});if(!valid())return;
+            await cacheHelpPage(userId,detail.ticket,page);if(!valid())return;cached=await read();
+          }
+        }
+      }
+      if(!valid()||!cached?.page||helpViewCache(identity).windows.has(id))return;
+      rememberHelpWindow(identity,{ticket:cached.record.ticket,page:cached.page,anchor:cached.record.anchor});
+      helpDevEvent('chat.cache.prepared',{ticketId:id,source:'sqlite',elapsedMs:Date.now()-startedAt,rows:cached.page.messages.length});
+    }).catch(async error=>{if(valid()&&isAccessRevoked(error))await revokeTicket(id);}).finally(()=>{if(warming.current.get(key)===work)warming.current.delete(key);});
+    warming.current.set(key,work);return work;
+  },[identity,userId,current,auth?.isAuthenticated,server.isReachable,openingDetail,helpApi,revokeTicket]);
+  useEffect(()=>{
+    if(!isFocused||selectedTicket||!tickets.length)return;
+    let cancelled=false;
+    // Bounded sequential preparation, independent of list loading/selection.
+    const timer=setTimeout(()=>{void(async()=>{
+      for(const ticket of tickets.slice(0,6)){
+        if(cancelled||activeId.current!==null)return;
+        await warmLocalTicket(ticket.id);
+      }
+    })();},0);
+    return()=>{cancelled=true;clearTimeout(timer);};
+  },[isFocused,selectedTicket,tickets,warmLocalTicket]);
+  const openTicket=useCallback(async(id:number,explicit?:{messageId?:number;sequence?:number},options?:{deferNetworkUntil:Promise<boolean>})=>{
     const openedAt=Date.now();
     const traceData=(source:string)=>helpDevEvent('chat.open.cache',{ticketId:id,source,elapsedMs:Date.now()-openedAt,openedAt});
     const account=identity,generation=++detailGeneration.current;
@@ -239,30 +288,42 @@ export function useHelpService(isFocused = true) {
     setHasOlder(false);setHasNewer(false);setLoadingOlder(false);setLoadingNewer(false);paging.current={older:false,newer:false};
     let fallbackDetail:HelpDetail|undefined;
     const valid=()=>current(account)&&generation===detailGeneration.current&&activeId.current===id;
+    const networkReady=async()=> (!options||await options.deferNetworkUntil)&&valid();
+    const refreshInBackground=()=>{
+      void networkReady().then(ready=>{if(ready)return liveTicketRefresh.current(id);}).catch(error=>{if(valid())report(error);});
+    };
     const hotPosition=hot?initialHelpPosition(hot.anchor,hot.page.firstUnreadSequence,explicit):null;
     if(hot&&hotPosition&&(!hotPosition.sequence||hot.page.messages.some(message=>message.sequence===hotPosition.sequence))&&(!hotPosition.messageId||hot.page.messages.some(message=>message.id===hotPosition.messageId))){
       selectedRef.current=hot.ticket;setSelectedTicket(hot.ticket);viewport.current=hot.anchor;applyPage(hot.page);
       setFirstUnreadSequence(hot.page.firstUnreadSequence);issueNavigation(hotPosition);setLoading(false);
-      socketRef.current?.getSocket()?.emit('help:subscribe',{ticketId:id});void liveTicketRefresh.current(id).catch(error=>{if(valid())report(error);});
+      socketRef.current?.getSocket()?.emit('help:subscribe',{ticketId:id});refreshInBackground();
       traceData('memory');
       return {ticket:hot.ticket,...hot.page};
     }
+    let localDetail:HelpDetail|undefined,serverApplied=false;
+    let anchor:HelpViewportAnchor|null=null;
+    const installLocal=(cached:Awaited<ReturnType<typeof readCachedHelpTicket>>)=>{
+      if(!cached||!valid()||serverApplied||localDetail)return;
+      anchor=cached.record.anchor;
+      const page=cached.page;
+      if(!page||explicit?.messageId&&!page.messages.some(message=>message.id===explicit.messageId)||explicit?.sequence&&!page.messages.some(message=>message.sequence===explicit.sequence))return;
+      viewport.current=anchor;selectedRef.current=cached.record.ticket;setSelectedTicket(cached.record.ticket);
+      applyPage(page);setFirstUnreadSequence(cached.record.firstUnreadSequence);
+      issueNavigation(initialHelpPosition(anchor,cached.record.firstUnreadSequence,explicit));setLoading(false);
+      localDetail={ticket:cached.record.ticket,...page};
+      rememberActive();
+      socketRef.current?.getSocket()?.emit('help:subscribe',{ticketId:id});refreshInBackground();traceData('sqlite');
+    };
     try{
-      // SQLite may still be starting/replaying an outbox transaction. Give a
-      // fast cache first chance, then fetch without holding the screen hostage.
+      // A busy reader may trigger a server fallback, but its eventual local
+      // snapshot still wins until a server window is actually installed.
       const storageBudget=server.isReachable?180:1500;
-      const cached=await helpOpeningStorage(readCachedHelpTicket(userId,id,record=>initialHelpPosition(record.anchor,record.firstUnreadSequence,explicit).sequence),null,storageBudget);if(!valid())return;
-      const anchor=cached?.record.anchor??null;viewport.current=anchor;
-      const cachedPosition=initialHelpPosition(anchor,cached?.record.firstUnreadSequence??null,explicit);
-      if(!valid())return;
-      if(cached){selectedRef.current=cached.record.ticket;setSelectedTicket(cached.record.ticket);
-        if(cached.page&&(!explicit?.messageId||cached.page.messages.some(message=>message.id===explicit.messageId))&&(!explicit?.sequence||cached.page.messages.some(message=>message.sequence===explicit.sequence))){
-          applyPage(cached.page);setFirstUnreadSequence(cached.record.firstUnreadSequence);issueNavigation(cachedPosition);setLoading(false);
-          socketRef.current?.getSocket()?.emit('help:subscribe',{ticketId:id});void liveTicketRefresh.current(id).catch(error=>{if(valid())report(error);});
-          traceData('sqlite');
-          return {ticket:cached.record.ticket,...cached.page};
-        }}
-      const detail=await helpApi.detail(id);if(!valid())return;fallbackDetail=detail;
+      const disk=readCachedHelpTicket(userId,id,record=>initialHelpPosition(record.anchor,record.firstUnreadSequence,explicit).sequence).then(cached=>{installLocal(cached);return cached;}).catch(()=>null);
+      await helpOpeningStorage(disk,null,storageBudget);if(!valid())return;
+      if(localDetail)return localDetail;
+      // Only quiet reconciliation waits for entry. A missing initial window
+      // must be fetched during the animation, sharing any row preparation.
+      const detail=await openingDetail(id);if(!valid())return;fallbackDetail=detail;
       const pendingStorage:Promise<void>[]=[];
       const persistOpening=(page:HelpHistoryPage)=>{
         // Opening can show a server snapshot immediately. Do not mutate that
@@ -270,6 +331,10 @@ export function useHelpService(isFocused = true) {
         const work=cacheHelpPage(userId,detail.ticket,page).catch(error=>{if(valid())report(error);});pendingStorage.push(work);
       };
       const tail=detailPage(detail);persistOpening(tail);
+      if(localDetail){
+        void Promise.all(pendingStorage).then(()=>{if(valid())return committedRef.current(id);}).catch(error=>{if(valid())report(error);});
+        return localDetail;
+      }
       const position=initialHelpPosition(anchor,tail.firstUnreadSequence,explicit);let page=tail;
       if(position.kind!=='latest'){
         const target=position.sequence;
@@ -277,7 +342,9 @@ export function useHelpService(isFocused = true) {
         if(!found)page=await helpApi.messages(id,position.messageId&&!target?{aroundMessageId:position.messageId}:{around:target});
       }
       if(!valid())return;if(page!==tail)persistOpening(page);
-      applyDetail({...detail,...page});setFirstUnreadSequence(tail.firstUnreadSequence);issueNavigation(position);
+      // A disk result arriving during the around-message request also retains
+      // its anchor. Reconcile committed rows without a second navigation.
+      if(!localDetail){serverApplied=true;applyDetail({...detail,...page});setFirstUnreadSequence(tail.firstUnreadSequence);issueNavigation(position);}
       socketRef.current?.getSocket()?.emit('help:subscribe',{ticketId:id});
       // A slow commit is allowed to finish, but must not hold navigation or
       // replace the mounted window after the reader has moved to another chat.
@@ -285,13 +352,13 @@ export function useHelpService(isFocused = true) {
         // Apply already committed edits/tombstones even if the next network sync
         // fails. This refreshes the installed window without issuing navigation.
         if(valid())await committedRef.current(id);
-        if(valid())await liveTicketRefresh.current(id);
+        if(await networkReady())await liveTicketRefresh.current(id);
       }).catch(error=>{if(valid())report(error);});
-      traceData('network');
-      return {...detail,messages:page.messages};
-    }catch(e){if(valid()){report(e);if(isAccessRevoked(e)){await revokeTicket(id);throw e;}if(e instanceof HelpApiError&&e.code==='HELP_MESSAGE_NOT_FOUND'&&fallbackDetail){applyDetail(fallbackDetail);issueNavigation({kind:'latest',animate:false});return fallbackDetail;}clearSelection(true);throw e;}return undefined;}
+      if(!localDetail)traceData('network');
+      return localDetail??{...detail,messages:page.messages};
+    }catch(e){if(valid()){report(e);if(isAccessRevoked(e)){await revokeTicket(id);throw e;}if(localDetail)return localDetail;if(e instanceof HelpApiError&&e.code==='HELP_MESSAGE_NOT_FOUND'&&fallbackDetail){serverApplied=true;applyDetail(fallbackDetail);issueNavigation({kind:'latest',animate:false});return fallbackDetail;}clearSelection(true);throw e;}return undefined;}
     finally{if(valid())setLoading(false);}
-  },[identity,userId,current,helpApi,updateMessages,applyDetail,applyPage,issueNavigation,report,revokeTicket,clearSelection,rememberActive,server.isReachable]);
+  },[identity,userId,current,helpApi,openingDetail,updateMessages,applyDetail,applyPage,issueNavigation,report,revokeTicket,clearSelection,rememberActive,server.isReachable]);
   const loadPage=useCallback(async(direction:'older'|'newer')=>{
     const id=activeId.current,account=identity,generation=detailGeneration.current,old=messagesRef.current;
     if(!id||!old.length||paging.current[direction]||!(direction==='older'?pageRef.current?.hasOlder:pageRef.current?.hasNewer))return;
@@ -326,7 +393,7 @@ export function useHelpService(isFocused = true) {
         const generation=detailGeneration.current,revision=windowRevision.current,accessRevision=committedAccessRevision.current.get(id)??0;
         // Outbox visibility must not depend on a downloaded history snapshot.
         const pending=await readHelpPending(userId);if(!current(account))return;
-        setPendingMessages(pending);setPendingCount(pending.length);
+        setPendingMessages(previous=>!previous.length&&!pending.length?previous:pending);setPendingCount(pending.length);
         const delta=hinted?await readCachedHelpDelta(userId,id,[...hinted]):null;
         const record=hinted?delta?.record:await readCachedHelpRecord(userId,id);
         if(!current(account)||!record)return;
@@ -671,6 +738,6 @@ export function useHelpService(isFocused = true) {
   const uploadAttachments=useCallback((files:HelpFile[])=>uploadHelpFiles(files,userId),[userId]);
   return {tickets,selectedTicket,messages,pendingMessages,lastCreatedOperation,retryPendingOperation,loading,busy,error,pendingCount,connected:connected&&server.isReachable&&!connectionIssue,online:server.isReachable,canManage,userId,typingByTicket,hasMore,
     hasOlder,hasNewer,loadingOlder,loadingNewer,navigationTarget,firstUnreadSequence,loadNewer,jumpToMessage,jumpToLatest,jumpToDate,cancelNavigation,saveViewport,markVisibleRead,searchMessages,
-    aiEnabled,stopAssistant,retryAssistant,loadTickets,openTicket,clearSelection,createTicket,sendMessage,editMessage,closeTicket,reopenTicket,requestIt,claimTicket,markAllRead,toggleReaction,
+    aiEnabled,stopAssistant,retryAssistant,loadTickets,openTicket,prepareTicket:warmLocalTicket,clearSelection,createTicket,sendMessage,editMessage,closeTicket,reopenTicket,requestIt,claimTicket,markAllRead,toggleReaction,
     queueFileTicket,uploadAttachments,mediaSource,loadOlder,emitTyping,getDraft,getDrafts,setDraft,retryPending,refresh};
 }

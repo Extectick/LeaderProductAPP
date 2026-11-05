@@ -41,7 +41,7 @@ import {helpQuestionBodyHeight} from './helpQuestionLayout';
 import {HelpVisualEffectsContext} from './helpVisualEffects';
 import { HelpPlaybackScope, HelpChatPlayback } from './components/HelpPlaybackScope';
 import { HelpJumpToLatest, type HelpDockControlPresentation } from './components/HelpTimelineIndicators';
-import {HelpTimelineDates,type HelpDatePresentation} from './components/HelpTimelineDates';
+import {HelpTimelineDatesHost,type HelpTimelineDatesHandle,type HelpDatePresentation} from './components/HelpTimelineDates';
 import { HelpChatEntry, type HelpChatEntryHandle } from './components/HelpChatEntry';
 import {useAppSceneUnderlayMotion} from '@/components/Navigation/AppSceneTransition';
 import {dismissHelpSceneKeyboard} from './helpSceneKeyboard';
@@ -91,6 +91,7 @@ export default function HelpScreen() {
   const returningToList=useRef(false);
   const [listSceneHeaderHeight,setListSceneHeaderHeight]=useState(68+insets.top);
   const [entrySettled,setEntrySettled]=useState(false);
+  const [historyMounted,setHistoryMounted]=useState(true);
   const [entryKeyboardReady,setEntryKeyboardReady]=useState(true),[leavingChat,setLeavingChat]=useState(false),[sceneWidth,setSceneWidth]=useState(0);
   const [attachmentsVisible,setAttachmentsVisible]=useState(false);
   const [closeAttachmentsKey,setCloseAttachmentsKey]=useState(0);
@@ -102,6 +103,12 @@ export default function HelpScreen() {
   const arrivalRegistry=useMemo(()=>new Set<string>(),[service.userId,scene.key]);
   const listBlurTarget = useRef<View>(null);
   const [active, setActive] = useState<number | 'new' | null>(null); const [filter, setFilter] = useState<'OPEN' | 'CLOSED'>('OPEN'); const [scope, setScope] = useState<'mine' | 'queue'>('mine');
+  useEffect(()=>{
+    if(typeof active!=='number'||historyMounted)return;
+    // The lightweight commit starts the native slide in its layout effect.
+    // Rich history mounts in the following commit while that slide runs.
+    React.startTransition(()=>setHistoryMounted(true));
+  },[active,scene.key,historyMounted]);
   const listMotion=useAppSceneUnderlayMotion(chatProgress,active!==null,sceneWidth);
   const [search, setSearch] = useState(''); const [draft, setDraft] = useState(''); const [files, setFiles] = useState<HelpLocalFile[]>([]); const [source, setSource] = useState<SourceTicket | null>(null);
   const [listDrafts,setListDrafts]=useState<Record<number,string>>({});
@@ -118,7 +125,8 @@ export default function HelpScreen() {
   const chatSearchGeneration=useRef(0),highlightTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
 
   const [listHeaderHeight,setListHeaderHeight]=useState(68+insets.top);
-  const [datePresentation,setDatePresentation]=useState<HelpDatePresentation|null>(null);
+  const timelineDates=useRef<HelpTimelineDatesHandle>(null);
+  const publishTimelineDates=useCallback((presentation:HelpDatePresentation|null)=>timelineDates.current?.update(presentation),[]);
   const listDateNow=useHelpListClock(isFocused&&!routeLeaving&&active===null);
   const listScroll=useRef<FlashListRef<HelpTicket>>(null);
   const listPaging=useRef(false);
@@ -373,7 +381,7 @@ export default function HelpScreen() {
   useEffect(() => helpDevState({ screen:active===null ? 'list' : active==='new' ? 'new' : 'chat', filter, scope, canManage:service.canManage, searchLength:search.length, dockHeight, listHeaderHeight, theme:c.dark ? 'dark' : 'light' }), [active,filter,scope,service.canManage,search.length,dockHeight,listHeaderHeight,c.dark]);
 
   async function open(id: number,messageId?:number,promote=false) {
-    if(!promote){setScene(previous=>({key:previous.key+1,bottomAligned:false}));setEntrySettled(false);}
+    if(!promote){setHistoryMounted(false);setScene(previous=>({key:previous.key+1,bottomAligned:false}));setEntrySettled(false);}
 
     // Reply/edit focus belongs to that composer, not every subsequently opened chat.
     if (active !== 'new') setFocusKey(0);
@@ -387,16 +395,17 @@ export default function HelpScreen() {
     }
     setOverlay(null); setSelectedMessage(null); setMode('message'); setReply(null); setEditing(null); setFiles([]); setSource(null); setActive(id); followBottom.current = true;
     try {
+      let deferNetworkUntil:Promise<boolean>|undefined;
       if(!promote){
-        // Commit and animate only the lightweight scene first. Cached hydration
-        // and message layout must not consume the tap's first frame.
-        const entered=await new Promise<boolean>(resolve=>{
+        // Read local history now. Only server work waits for the scene; a warm
+        // window belongs in the entering page, not behind its loading screen.
+        deferNetworkUntil=new Promise<boolean>(resolve=>{
           pendingChatOpen.current?.cancel();
           pendingChatOpen.current={id,start:()=>{pendingChatOpen.current=null;resolve(true);},cancel:()=>resolve(false)};
         });
-        if(!entered||!screenMounted.current||generation!==navigationGeneration.current||account!==currentAccount.current)return;
       }
-      await service.openTicket(id,messageId?{messageId}:undefined);
+      if(deferNetworkUntil)await service.openTicket(id,messageId?{messageId}:undefined,{deferNetworkUntil});
+      else await service.openTicket(id,messageId?{messageId}:undefined);
       helpDevEvent('chat.open.data', { ticketId: id, openedAt, elapsedMs: Date.now() - openedAt });
     } catch (e) {
       if(generation!==navigationGeneration.current)return;
@@ -437,7 +446,18 @@ export default function HelpScreen() {
     if(active!==null&&next===filter)void service.loadTickets(next,scope,false,search.trim(),true);
     else void service.loadTickets(next,scope,false,search.trim());
   }
-  function newTicket(linked: SourceTicket | null = null) { pendingChatOpen.current?.cancel();pendingChatOpen.current=null;setScene(previous=>({key:previous.key+1,bottomAligned:true}));setEntrySettled(false);setLeavingChat(false);setEntryKeyboardReady(false); const navigation=++navigationGeneration.current,account=service.userId;void dismissHelpSceneKeyboard().then(()=>{if(screenMounted.current&&navigation===navigationGeneration.current&&account===currentAccount.current)setEntryKeyboardReady(true);}); saveDraftNow(); stack.current = []; service.clearSelection(); setActive('new'); setSource(linked); setDraft(''); setFiles([]); setMode('message'); setReply(null); setEditing(null); setSelectedMessage(null); followBottom.current = true; setFocusKey(n => n + 1); }
+  function newTicket(linked: SourceTicket | null = null) {
+    setHistoryMounted(true);
+    pendingChatOpen.current?.cancel();pendingChatOpen.current=null;
+    const navigation=++navigationGeneration.current,account=service.userId;
+    setScene(previous=>({key:previous.key+1,bottomAligned:true}));setEntrySettled(false);setLeavingChat(false);setEntryKeyboardReady(false);
+    // Finish an existing IME (e.g. list search), enter the scene, then focus.
+    // The transition's onEntered is the only initial autofocus request owner.
+    void dismissHelpSceneKeyboard().then(()=>{
+      if(screenMounted.current&&navigation===navigationGeneration.current&&account===currentAccount.current)setEntryKeyboardReady(true);
+    });
+    saveDraftNow();stack.current=[];service.clearSelection();setActive('new');setSource(linked);setDraft('');setFiles([]);setMode('message');setReply(null);setEditing(null);setSelectedMessage(null);followBottom.current=true;setFocusKey(0);
+  }
   function cancelMode() { ++navigationGeneration.current; setMode('message'); setDraft(regularDraft.current.text); setFiles(regularDraft.current.files); setReply(regularDraft.current.reply); setEditing(null); Keyboard.dismiss(); }
   async function back() {
     if(entityCards.isOpen){entityCards.back();return;}
@@ -496,8 +516,9 @@ export default function HelpScreen() {
     return () => window.removeEventListener('popstate',onPop,true);
   }, []));
   const visible = useMemo(() => sortHelpTicketsByActivity(service.tickets.filter(t => t.status === filter)), [service.tickets, filter]);
-  const listActions=useRef({open,menu:(item:HelpTicket)=>{Keyboard.dismiss();setOverlay({kind:'row',ticket:item});}});
-  listActions.current={open,menu:(item:HelpTicket)=>{Keyboard.dismiss();setOverlay({kind:'row',ticket:item});}};
+  const listActions=useRef({open,prepare:(id:number)=>{if(active===null)void service.prepareTicket?.(id);},menu:(item:HelpTicket)=>{Keyboard.dismiss();setOverlay({kind:'row',ticket:item});}});
+  listActions.current={open,prepare:(id:number)=>{if(active===null)void service.prepareTicket?.(id);},menu:(item:HelpTicket)=>{Keyboard.dismiss();setOverlay({kind:'row',ticket:item});}};
+  const prepareVisibleTickets=useCallback(({viewableItems}:{viewableItems:{item:HelpTicket;isViewable:boolean}[]})=>{for(const row of viewableItems)if(row.isViewable)listActions.current.prepare(row.item.id);},[]);
   const listExtraData=useMemo(()=>({drafts:listDrafts,typing:service.typingByTicket,dateNow:listDateNow}),[listDrafts,service.typingByTicket,listDateNow]);
   const renderTicketRow=useCallback(({item}:{item:HelpTicket})=><TicketRow ticket={item} dateNow={listDateNow} draft={listDrafts[item.id]} typing={service.typingByTicket[item.id]} onPress={()=>{void listActions.current.open(item.id);}} onMenu={()=>listActions.current.menu(item)}/>,[listDrafts,service.typingByTicket,listDateNow]);
   const sourceLink = ticket ? ticket.sourceTicket : source;
@@ -653,7 +674,7 @@ export default function HelpScreen() {
       <Reanimated.View testID="help-list-scene" key="help-list-scene" pointerEvents={active===null?'auto':'none'} accessibilityElementsHidden={active!==null} importantForAccessibility={active===null?'auto':'no-hide-descendants'} style={[active===null?{flex:1}:StyleSheet.absoluteFill,listMotion]}>
 
         <BlurTargetView ref={listBlurTarget} style={{ flex: 1 }}><FlashList ref={listScroll} testID="help-ticket-list" data={visible} maintainVisibleContentPosition={listPositionPolicy} keyExtractor={item=>String(item.id)} extraData={listExtraData} style={{backgroundColor:c.background}} keyboardShouldPersistTaps="handled" contentContainerStyle={{paddingTop:listSceneHeaderHeight,paddingBottom:100}} drawDistance={300}
-          onScroll={onTicketListScroll} scrollEventThrottle={16}
+          onScroll={onTicketListScroll} scrollEventThrottle={16} onViewableItemsChanged={prepareVisibleTickets}
           onEndReachedThreshold={.5} onEndReached={()=>{if(active!==null||!service.hasMore||service.loading||listPaging.current)return;listPaging.current=true;void service.loadTickets(filter,scope,true,search.trim()).finally(()=>{listPaging.current=false;});}}
           ListEmptyComponent={<View style={{ alignItems: 'center', justifyContent:'center', minHeight:service.loading?300:undefined, padding: 35, gap: 12 }}>{service.loading ? <View testID="help-chats-loading" accessibilityRole="progressbar" accessibilityLabel="Загрузка чатов" style={{alignItems:'center',gap:14}}><ActivityIndicator size="large" color={c.accent}/><Text accessibilityLiveRegion="polite" style={{color:c.muted,fontSize:14}}>Загружаем чаты…</Text></View> : <><Ionicons name={filter === 'CLOSED' ? 'archive-outline' : 'chatbubbles-outline'} color={c.muted} size={38} /><Text style={{ color: c.text, fontSize: 16, fontWeight: '600' }}>{search ? 'Ничего не найдено' : filter === 'CLOSED' ? 'Закрытых обращений пока нет' : 'Расскажите, чем помочь'}</Text><Text style={{ color: c.muted, textAlign: 'center', fontSize: 13 }}>{search ? 'Попробуйте другой запрос' : 'Ваши сообщения и вложения увидят специалисты IT.'}</Text></>}</View>}
           ListFooterComponent={null}
@@ -661,21 +682,21 @@ export default function HelpScreen() {
         /></BlurTargetView><HelpHeaderOverlay id="help-list-header-overlay" target={listBlurTarget} topInset={insets.top} onLayout={event=>{if(active===null){setListHeaderHeight(event.nativeEvent.layout.height);setListSceneHeaderHeight(event.nativeEvent.layout.height);}}}>{listHeader}</HelpHeaderOverlay><View style={{ position: 'absolute', bottom: 0, left: 0, right: 0 }}><HelpDock target={listBlurTarget}><View style={{ paddingHorizontal: HELP_LIST_INSET - 8 }}><HelpPrimaryButton text="Новое обращение" onPress={() => newTicket()} /></View></HelpDock></View>
       </Reanimated.View>
       </HelpVisualEffectsContext.Provider>
-      {active !== null ? <HelpChatEntry key={`${service.userId}:${scene.key}`} ref={chatEntry} progress={chatProgress} ready={active==='new'?entryKeyboardReady:true} interactive={!leavingChat} backgroundColor={c.background} onEntered={()=>{setEntrySettled(true);if(pendingChatOpen.current?.id===active&&!leavingChat)pendingChatOpen.current.start();helpDevEvent('chat.open.transitionFinished',{ticketId:typeof active==='number'?active:null,finishedAt:Date.now()});}} onLayout={event=>setChatViewportHeight(event.nativeEvent.layout.height)}>
+      {active !== null ? <HelpChatEntry key={`${service.userId}:${scene.key}`} ref={chatEntry} progress={chatProgress} initialWidth={sceneWidth} ready={active==='new'?entryKeyboardReady:true} interactive={!leavingChat} backgroundColor={c.background} onEntered={()=>{setEntrySettled(true);if(active==='new'&&!leavingChat)setFocusKey(value=>value+1);if(pendingChatOpen.current?.id===active&&!leavingChat)pendingChatOpen.current.start();helpDevEvent('chat.open.transitionFinished',{ticketId:typeof active==='number'?active:null,finishedAt:Date.now()});}} onLayout={event=>setChatViewportHeight(event.nativeEvent.layout.height)}>
         <HelpMessageArrivalContext.Provider value={arrivalRegistry}>
         <View nativeID={nativeViewportId} collapsable={false} testID="help-chat-visible-viewport" style={boundedChat?{position:'absolute',top:0,left:0,right:0,bottom:hasNativeStableImeLayout?0:dockHeight+imeInset,overflow:'hidden'}:{flex:1}}><BlurTargetView ref={blurTarget} style={{ flex: 1 }}>
-          {typeof active==='number'&&!entrySettled ? <View testID="help-chat-opening" pointerEvents="none" style={{flex:1,alignItems:'center',justifyContent:'center'}}><ActivityIndicator color={c.muted}/></View> : <HelpTimeline entrySettled={entrySettled} obscuredBottom={hasNativeStableImeLayout?obscuredBottom:undefined} pendingMessages={displayedPending} renderPending={renderPending} bottomAligned={scene.bottomAligned} key={`${service.userId}:${scene.key}`} onReady={()=>helpDevEvent('chat.open.historyReady',{ticketId:typeof active==='number'?active:null,at:Date.now()})} ref={scroll} messages={messages} nativeID={nativeScrollId} headerHeight={listHeaderHeight} dockHeight={boundedChat?(hasNativeStableImeLayout?dockHeight+imeInset:0):dockHeight+imeInset}
+          {typeof active==='number'&&(!historyMounted||!entrySettled&&!messages.length) ? <View testID="help-chat-opening" pointerEvents="none" style={{flex:1,alignItems:'center',justifyContent:'center'}}><ActivityIndicator color={c.muted}/></View> : <HelpTimeline entrySettled={entrySettled} obscuredBottom={hasNativeStableImeLayout?obscuredBottom:undefined} pendingMessages={displayedPending} renderPending={renderPending} bottomAligned={scene.bottomAligned} key={`${service.userId}:${scene.key}`} onReady={()=>helpDevEvent('chat.open.historyReady',{ticketId:typeof active==='number'?active:null,at:Date.now()})} ref={scroll} messages={messages} nativeID={nativeScrollId} headerHeight={listHeaderHeight} dockHeight={boundedChat?(hasNativeStableImeLayout?dockHeight+imeInset:0):dockHeight+imeInset}
             navigationTarget={service.navigationTarget} firstUnreadSequence={service.firstUnreadSequence} hasOlder={service.hasOlder} hasNewer={service.hasNewer}
             loadingOlder={service.loadingOlder} loadingNewer={service.loadingNewer} loading={service.loading||(typeof active==='number'&&!ticket)} online={service.online}
-            onLatestState={setLatestControl} onDatePresentationChange={setDatePresentation} hideLatestButton={chatSearchOpen} active={isFocused && !chatSearchList && !overlay && !gallery && !entityCards.isOpen} unreadCount={ticket?.unreadCount}
+            onLatestState={setLatestControl} onDatePresentationChange={publishTimelineDates} hideLatestButton={chatSearchOpen} active={isFocused && !chatSearchList && !overlay && !gallery && !entityCards.isOpen} unreadCount={ticket?.unreadCount}
             loadOlder={service.loadOlder} loadNewer={service.loadNewer} onLatest={async()=>{if(await(scroll.current?.waitForJumpReady?.()??true))return service.jumpToLatest();}} onDate={async date=>{if(await(scroll.current?.waitForJumpReady?.()??true))return service.jumpToDate(date);}} onUserScroll={service.cancelNavigation} onSave={(anchor,options)=>service.saveViewport(anchor,typeof active==='number'?active:undefined,options)} onRead={service.markVisibleRead}
             onFollow={value=>{followBottom.current=value;setNativeFollow(value);}} onHighlight={highlight} onError={tell}
             header={timelineHeader} footer={timelineFooter} renderMessage={renderMessage}/> }
         </BlurTargetView></View>
-        {active === 'new'&&!displayedPending.length ? <HelpEmptyConversation nativeID={hasNativeEmptyHintMotion?nativeEmptyHintId:undefined} active={isFocused&&entrySettled} style={{position:'absolute',top:listHeaderHeight,left:0,right:0,bottom:dockHeight+(hasNativeEmptyHintMotion?0:imeInset)}}/> : null}
+        {active === 'new'&&!displayedPending.length ? <HelpEmptyConversation nativeID={hasNativeEmptyHintMotion?nativeEmptyHintId:undefined} keyboardInset={hasNativeEmptyHintMotion?0:imeInset} active={isFocused} style={{position:'absolute',top:listHeaderHeight,left:0,right:0,bottom:dockHeight}}/> : null}
         {chatSearchOpen && chatSearchList ? <View testID="help-chat-search-results-overlay" style={{position:'absolute',top:listHeaderHeight,left:0,right:0,bottom:dockHeight+imeInset,backgroundColor:c.background,zIndex:1}}><HelpChatSearchResults messages={chatResults} query={chatSearchQuery} selectedId={chatResults[chatResultIndex]?.id} loading={chatSearchLoading} hasMore={chatSearchCursor!==null} onLoadMore={()=>void moreSearch()} onSelect={message=>void showSearchResult(message,chatResults.findIndex(item=>item.id===message.id))} error={chatSearchError}/></View> : null}
         {!attachmentsVisible?chatHeaderOverlay:null}
-        {datePresentation&&!chatSearchList&&!attachmentsVisible ? <HelpTimelineDates presentation={datePresentation} headerHeight={listHeaderHeight} bottom={dockHeight+imeInset} onPress={date=>scroll.current?.jumpToDate(date)}/> : null}
+        <HelpTimelineDatesHost ref={timelineDates} hidden={chatSearchList||attachmentsVisible} headerHeight={listHeaderHeight} bottom={dockHeight+imeInset} onPress={date=>scroll.current?.jumpToDate(date)}/>
         <View nativeID={nativeDockId} testID="help-chat-dock-layout" pointerEvents="box-none" style={{ zIndex:2, position: 'absolute', bottom: boundedChat&&!hasNativeStableImeLayout?imeInset:0, left: 0, right: 0 }}>
           {legacyDockControls?<View testID="help-dock-controls-native-visual" pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[StyleSheet.absoluteFill,{zIndex:0}]}>{renderDockControls(dockHeight+12,'visual')}</View>:null}
           {notice ? <HelpNotice key={notice} text={notice} onDone={() => setNotice('')} /> : null}<View testID="help-chat-dock-surface" style={{zIndex:1}}><HelpDock onHeightFrame={hasNativeStableImeLayout?onDockHeightFrame:undefined} stableKeyboardLayout={hasNativeStableImeLayout} target={blurTarget} onHeight={setDockHeight}>

@@ -145,9 +145,11 @@ export const HelpComposer = forwardRef<HelpComposerHandle, Props & FocusSuspensi
   },[focusSuspended,attachmentLocked,props.focusSuspended,expanded,voiceActive,recording,starting,props.focusKey]);
   useEffect(()=>{
     if(!props.focusKey||!inputEnabled||focusedRequest.current===props.focusKey)return;
-    focusedRequest.current=props.focusKey;
     return scheduleHelpInputFocus(()=>{
       if(!input.current)return null;
+      // Consume only a request that reaches its frame. StrictMode/refresh can
+      // cancel an effect before then; its replacement must still focus once.
+      focusedRequest.current=props.focusKey;
       return input.current;
     });
   },[props.focusKey,inputEnabled]);

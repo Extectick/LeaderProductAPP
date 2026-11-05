@@ -62,6 +62,18 @@ describe('Help composer recorder lifecycle', () => {
   }
   function mic(){return screen!.root.findAll(n=>typeof n.props.onPanResponderGrant==='function')[0];}
   function deferred<T>(){let resolve!:(value:T)=>void;let reject!:(reason:Error)=>void;const promise=new Promise<T>((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};}
+  test('StrictMode effect replay cannot consume autofocus before its scheduled frame runs',async()=>{
+    const frames:FrameRequestCallback[]=[];
+    jest.spyOn(global,'requestAnimationFrame').mockImplementation(callback=>{frames.push(callback);return frames.length;});
+    jest.spyOn(global,'cancelAnimationFrame').mockImplementation(()=>{});
+    props={...props,focusKey:1,navigationReady:true,screenActive:true};
+    await act(async()=>{screen=TestRenderer.create(React.createElement(React.StrictMode,null,React.createElement(HelpComposer,props)));});
+    const focus=jest.spyOn(screen!.root.findByType(TextInput).instance,'focus');focus.mockClear();
+    await act(async()=>frames.forEach(callback=>callback(0)));
+    expect(focus).toHaveBeenCalledTimes(1);
+    // RN's preset shares this mock between TextInput instances.
+    focus.mockClear();
+  });
   test('question height frames do not rerender the composer on every animation frame',async()=>{
     props={...props,questionPanel:React.createElement(View)};
     const committed=jest.fn();
