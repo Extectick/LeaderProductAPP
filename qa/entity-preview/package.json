@@ -1,0 +1,9 @@
+{
+  "name": "entity-cards-local-qa",
+  "private": true,
+  "version": "0.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start:native": "node ../../node_modules/expo/bin/cli start --dev-client --host lan --port 8103"
+  }
+}

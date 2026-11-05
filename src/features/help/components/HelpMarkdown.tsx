@@ -2,6 +2,8 @@ import React, { memo, useMemo } from 'react';
 import { Alert, Linking, Platform, ScrollView, Text, View } from 'react-native';
 import MarkdownIt from 'markdown-it';
 import { useHelpTheme } from '../helpTheme';
+import {parseEntityLink} from '@/src/shared/entityLinks';
+import {useEntityCards} from '@/src/features/entityCards/EntityCardContext';
 
 // Native text/layout only: no WebView, HTML execution or remote image requests.
 const markdown = new MarkdownIt({ html: false, linkify: true, breaks: true, typographer: false });
@@ -26,6 +28,7 @@ async function openLink(url: string) {
 /** Shared by saved, live and legacy AI answers; partial Markdown is valid while streaming. */
 export const HelpMarkdown = memo(function HelpMarkdown({ text }: { text: string }) {
   const c = useHelpTheme(), nodes = useMemo(() => tree(markdown.parse(text, {})), [text]);
+  const entities=useEntityCards();
   const mono = Platform.OS === 'ios' ? 'Menlo' : 'monospace';
   const body = { color: c.text, fontSize: 15, lineHeight: 22, includeFontPadding: false };
   function inline(items: Node[]): React.ReactNode[] {
@@ -40,6 +43,11 @@ export const HelpMarkdown = memo(function HelpMarkdown({ text }: { text: string 
         case 'code_inline': return <Text key={key} style={{ fontFamily: mono, backgroundColor: c.elevated }}>{t.content}</Text>;
         case 'link_open': {
           const url = String(t.attrGet('href') || '');
+          const target=parseEntityLink(url);
+          if(target){
+            const label=(items:Node[]):string=>items.map(item=>item.children.length?label(item.children):item.token.content).join('');
+            return <Text key={key} accessibilityRole="link" accessibilityHint="Открыть карточку в приложении" onPress={()=>{if(!entities.openEntity(target,label(children)))Alert.alert('Карточка недоступна','Для просмотра войдите в приложение.');}} style={{color:c.accentText,textDecorationLine:'underline'}}>{content()}</Text>;
+          }
           return safeLink(url) ? <Text key={key} accessibilityRole="link" accessibilityHint="Открыть ссылку" onPress={() => void openLink(url)} style={{ color: c.accentText, textDecorationLine: 'underline' }}>{content()}</Text> : <Text key={key}>{content()}</Text>;
         }
         case 'image': return <Text key={key}>{t.content || 'Изображение'}</Text>;

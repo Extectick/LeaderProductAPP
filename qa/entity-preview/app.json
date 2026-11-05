@@ -1,0 +1,9 @@
+{
+  "expo": {
+    "name": "Проверка карточек — локальные данные",
+    "slug": "entity-cards-local-qa",
+    "platforms": ["android", "ios"],
+    "scheme": "leaderproduct-dev",
+    "android": { "package": "com.leaderproduct.app.dev" }
+  }
+}

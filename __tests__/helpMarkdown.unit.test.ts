@@ -3,6 +3,8 @@ import TestRenderer, { act } from 'react-test-renderer';
 import { Linking, ScrollView, StyleSheet, Text } from 'react-native';
 jest.mock('../context/ThemeContext', () => ({ useTheme: () => ({ theme: 'dark' }) }));
 import { HelpMarkdown } from '../src/features/help/components/HelpMarkdown';
+import {EntityCardContext} from '../src/features/entityCards/EntityCardContext';
+import {buildEntityLink,type EntityTarget} from '../src/shared/entityLinks';
 
 const content = (view: TestRenderer.ReactTestRenderer) => {
   const collect = (node: any): string => typeof node === 'string' ? node : Array.isArray(node) ? node.map(collect).join('') : node?.children ? collect(node.children) : '';
@@ -59,4 +61,23 @@ test('partial streamed answer remains readable and completes formatting in the s
     expect(content(view)).toContain('Начало выделения'); expect(content(view)).toContain('незакрытый блок');
     expect(content(view)).not.toContain('```');
   } finally { await act(async () => view.unmount()); }
+});
+
+test('confirmed internal Markdown links open the shared card panel with their label and never leave the app',async()=>{
+ const target:EntityTarget={v:1,source:'onec',baseKey:'torg2026',metaType:'Catalogs',name:'Номенклатура',guid:'12345678-abcd-1234-abcd-123456789abc'};
+ const openEntity=jest.fn(()=>true),openExternal=jest.spyOn(Linking,'openURL').mockResolvedValue(true);
+ let view!:TestRenderer.ReactTestRenderer;
+ await act(async()=>{view=TestRenderer.create(React.createElement(EntityCardContext.Provider,{value:{isOpen:false,openEntity,openEntityLink:()=>false,close:()=>{},back:()=>{}}},React.createElement(HelpMarkdown,{text:`Товар: [**Наименование продукции**](${buildEntityLink(target)})`})))});
+ try{
+  const link=view.root.findAllByType(Text).find(node=>node.props.accessibilityRole==='link')!;
+  expect(link.props.accessibilityHint).toBe('Открыть карточку в приложении');
+  await act(async()=>link.props.onPress());
+  expect(openEntity).toHaveBeenCalledWith(target,'Наименование продукции');expect(openExternal).not.toHaveBeenCalled();
+ }finally{await act(async()=>view.unmount());openExternal.mockRestore();}
+});
+
+test('unknown internal versions and malformed targets stay readable without navigating',async()=>{
+ const view=await render('[Сотрудник](leaderproduct://entity/v2/user/121) [Некорректный](leaderproduct://entity/v1/user/0)');
+ try{expect(content(view)).toContain('Сотрудник');expect(content(view)).toContain('Некорректный');expect(view.root.findAllByType(Text).filter(node=>node.props.accessibilityRole==='link')).toHaveLength(0);}
+ finally{await act(async()=>view.unmount());}
 });

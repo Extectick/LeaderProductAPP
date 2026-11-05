@@ -24,6 +24,7 @@ import { registerOtaBackgroundPrefetchTask } from '@/src/shared/ota/registerOtaB
 import { initPushNotifications } from '@/utils/pushNotifications';
 import { captureException, setMonitoringScreen, setMonitoringUser } from '@/src/shared/monitoring';
 import {AppThemeSurface} from '@/components/Navigation/AppThemeSurface';
+import {EntityCardProvider} from '@/src/features/entityCards/EntityCardProvider';
 
 if (Platform.OS !== 'web') {
   void SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -111,6 +112,7 @@ export default function RootLayout() {
             <ThemeProvider>
               <AppThemeSurface routeKey={pathname}>
               <AuthProvider>
+                <EntityCardProvider>
                 <TrackingProvider>
                   <NotificationViewportProvider>
                     <OtaUpdateStatusProvider enabled={appIsReady}>
@@ -126,6 +128,7 @@ export default function RootLayout() {
                     </OtaUpdateStatusProvider>
                   </NotificationViewportProvider>
                 </TrackingProvider>
+                </EntityCardProvider>
               </AuthProvider>
               </AppThemeSurface>
             </ThemeProvider>
