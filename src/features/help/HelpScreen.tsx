@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, BackHandler, Keyboard, KeyboardAvoidingView, PanResponder, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, BackHandler, Keyboard, KeyboardAvoidingView, PanResponder, Platform, Pressable, ScrollView, StyleSheet, Text, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import Reanimated, {useAnimatedStyle, useSharedValue, withTiming, cancelAnimation} from 'react-native-reanimated';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -15,7 +15,7 @@ import {matchingPendingCreate} from './helpPendingCreate';
 import type { HelpAttachment, HelpMessage, HelpTicket } from './helpApi';
 import {API_BASE_URL} from '@/utils/config';
 import { useHelpTheme, useHelpReducedMotion } from './helpTheme';
-import { canEditHelpMessage, canReopenHelpTicket, helpCreated, helpTime, stableHelpOrder } from './helpUiUtils';
+import { canEditHelpMessage, canReopenHelpTicket, helpCreated, helpTime, sortHelpTicketsByActivity } from './helpUiUtils';
 import type {HelpTypingUser} from './helpTypingModel';
 import { HelpAvatar, HelpBlurSurface, HelpDock, HelpIcon, HelpNotice, HelpPrimaryButton, HelpSheet, HelpTyping } from './components/HelpPrimitives';
 import { HelpComposer, type HelpComposeMode, type HelpLocalFile, type HelpComposerHandle } from './components/HelpComposer';
@@ -96,7 +96,7 @@ export default function HelpScreen() {
   const listBlurTarget = useRef<View>(null);
   const [active, setActive] = useState<number | 'new' | null>(null); const [filter, setFilter] = useState<'OPEN' | 'CLOSED'>('OPEN'); const [scope, setScope] = useState<'mine' | 'queue'>('mine');
   const listMotion=useAppSceneUnderlayMotion(chatProgress,active!==null,sceneWidth);
-  const [search, setSearch] = useState(''); const [order, setOrder] = useState<number[]>([]); const [draft, setDraft] = useState(''); const [files, setFiles] = useState<HelpLocalFile[]>([]); const [source, setSource] = useState<SourceTicket | null>(null);
+  const [search, setSearch] = useState(''); const [draft, setDraft] = useState(''); const [files, setFiles] = useState<HelpLocalFile[]>([]); const [source, setSource] = useState<SourceTicket | null>(null);
   const [listDrafts,setListDrafts]=useState<Record<number,string>>({});
   const [mode, setMode] = useState<HelpComposeMode>('message'); const [rating, setRating] = useState(0); const [reply, setReply] = useState<HelpMessage | null>(null); const [editing, setEditing] = useState<HelpMessage | null>(null); const [editAttachments, setEditAttachments] = useState<HelpAttachment[]>([]); const [focusKey, setFocusKey] = useState(0);
   const [overlay, setOverlay] = useState<Overlay | null>(null); const [selectedMessage, setSelectedMessage] = useState<number | null>(null); const [notice, setNotice] = useState(''); const [gallery, setGallery] = useState<{ images: HelpAttachment[]; index: number; origin?:HelpImageOrigin } | null>(null);
@@ -128,6 +128,15 @@ export default function HelpScreen() {
   useEffect(()=>{hideFloatingDate();return()=>{if(dateTimer.current)clearTimeout(dateTimer.current);cancelAnimation(dateOpacity);};},[scene.key,hideFloatingDate,dateOpacity]);
   const listScroll=useRef<FlashListRef<HelpTicket>>(null);
   const listPaging=useRef(false);
+  const [listAtTop,setListAtTop]=useState(true),listAtTopRef=useRef(true);
+  // At the top show new activity immediately. Away from the top FlashList owns
+  // the visible-row anchor; do not add a competing scrollToOffset/RAF loop.
+  const listPositionPolicy=useMemo(()=>({disabled:listAtTop}),[listAtTop]);
+  const onTicketListScroll=useCallback((event:NativeSyntheticEvent<NativeScrollEvent>)=>{
+    const y=event.nativeEvent.contentOffset.y,atTop=y<=2;
+    helpDevState({listScrollY:y});
+    if(atTop!==listAtTopRef.current){listAtTopRef.current=atTop;setListAtTop(atTop);}
+  },[]);
   const [imeInset,setImeInset]=useState(0);
   const measuredDockHeight=useRef(dockHeight),imeInsetRef=useRef(imeInset),obscuredBottom=useRef(dockHeight+imeInset);
   imeInsetRef.current=imeInset;obscuredBottom.current=measuredDockHeight.current+imeInset;
@@ -305,10 +314,9 @@ export default function HelpScreen() {
   const draftTicketIds=useMemo(()=>service.tickets.map(item=>item.id).join(','),[service.tickets]);
   useEffect(()=>{setListDrafts({});},[service.userId]);
   useEffect(()=>{if(active!==null)return;let alive=true;const account=service.userId;void (service.getDrafts?service.getDrafts(service.tickets.map(item=>`ticket:${item.id}`)).then(values=>service.tickets.map(item=>[item.id,values[`ticket:${item.id}`]??''] as const)):Promise.all(service.tickets.map(async item=>[item.id,await service.getDraft(`ticket:${item.id}`)] as const))).then(values=>{if(alive&&currentAccount.current===account)setListDrafts(previous=>{const next=Object.fromEntries(values);return Object.keys(previous).length===values.length&&values.every(([id,text])=>previous[id]===text)?previous:next;});}).catch(()=>{});return()=>{alive=false;};},[active,service.userId,draftTicketIds,service.getDraft]);
-  useEffect(() => { ++draftGeneration.current; draftLoaded.current = false; restoredDraft.current = null; setActive(null); setDraft(''); setFiles([]); setSource(null); setMode('message'); setReply(null); setEditing(null); setEditAttachments([]); setGallery(null); setOverlay(null); setNotice(''); setSelectedMessage(null); setOrder([]); setFilter('OPEN'); setScope('mine'); setSending(false); submitLock.current=false; earlyClearedCreations.current.clear(); stack.current = []; uploadCache.current.clear(); fileDrafts.current.clear(); filePersistence.current.clear(); draftRevisions.current.clear(); sentDraftRevisions.current.clear(); regularDraft.current = {text:'',files:[],reply:null}; deepLink.current = undefined; }, [service.userId]);
+  useEffect(() => { ++draftGeneration.current; draftLoaded.current = false; restoredDraft.current = null; setActive(null); setDraft(''); setFiles([]); setSource(null); setMode('message'); setReply(null); setEditing(null); setEditAttachments([]); setGallery(null); setOverlay(null); setNotice(''); setSelectedMessage(null);  setFilter('OPEN'); setScope('mine'); setSending(false); submitLock.current=false; earlyClearedCreations.current.clear(); stack.current = []; uploadCache.current.clear(); fileDrafts.current.clear(); filePersistence.current.clear(); draftRevisions.current.clear(); sentDraftRevisions.current.clear(); regularDraft.current = {text:'',files:[],reply:null}; deepLink.current = undefined; }, [service.userId]);
   useEffect(() => { if (!active) return; const generation = ++draftGeneration.current; setFiles(fileDrafts.current.get(draftKey)??[]); if (restoredDraft.current?.key === draftKey) { setDraft(restoredDraft.current.text); restoredDraft.current = null; draftLoaded.current = true; return; } draftLoaded.current = false; setDraft(''); void Promise.all([service.getDraft(draftKey),fileDrafts.current.has(draftKey)?Promise.resolve(fileDrafts.current.get(draftKey)!):loadHelpAttachmentDraft(service.userId,draftKey)]).then(([value,attachments]) => { if (generation === draftGeneration.current) { setDraft(value); setFiles(attachments); fileDrafts.current.set(draftKey,attachments); draftLoaded.current = true; } }).catch(() => { if (generation === draftGeneration.current) draftLoaded.current = true; }); return () => { ++draftGeneration.current; }; }, [draftKey, service.userId]);
   useEffect(() => { if (!active || mode !== 'message' || !draftLoaded.current) return; const revision=draftRevisions.current.get(draftKey)??0;const timer = setTimeout(() => { if((draftRevisions.current.get(draftKey)??0)===revision&&sentDraftRevisions.current.get(draftKey)!==revision){if(isQuestionInput)questionPanel.current?.capture(draft);else void service.setDraft(draftKey, draft);} }, 250); return () => clearTimeout(timer); }, [draft, active, mode, draftKey, service.setDraft, isQuestionInput, questionIdentity]);
-  useEffect(() => { if (active === null && service.tickets.length && !order.length) setOrder(stableHelpOrder(service.tickets, []).map(t => t.id)); }, [service.tickets, active, order.length]);
   const listQueryRequest=useRef<{load:typeof service.loadTickets;key:string}|null>(null);
   useEffect(() => {
     const key=JSON.stringify([filter,scope,search.trim()]),previous=listQueryRequest.current;
@@ -316,7 +324,7 @@ export default function HelpScreen() {
     // useHelpService already loads the default list on mount/account change.
     // Only filter/search changes belong to this debounced request.
     if((!previous||previous.load!==service.loadTickets||previous.key===key)&&filter==='OPEN'&&scope==='mine'&&!search.trim())return;
-    const timer=setTimeout(()=>{setOrder([]);void service.loadTickets(filter,scope,false,search.trim());},250);
+    const timer=setTimeout(()=>{void service.loadTickets(filter,scope,false,search.trim());},250);
     return()=>clearTimeout(timer);
   },[search,filter,scope,service.loadTickets]);
   useEffect(() => {const id=Number(params.ticketId),messageId=Number(params.messageId),key=`${params.ticketId}:${params.messageId??''}:${params.eventId??''}`;if(service.userId&&params.ticketId&&deepLink.current!==key&&Number.isSafeInteger(id)&&id>0){deepLink.current=key;void open(id,Number.isSafeInteger(messageId)&&messageId>0?messageId:undefined);}},[params.ticketId,params.messageId,params.eventId,service.userId]);
@@ -417,8 +425,7 @@ export default function HelpScreen() {
       if(finished===false||!screenMounted.current||navigation!==navigationGeneration.current||account!==currentAccount.current)return;
     }
     setEntrySettled(false);setFocusKey(0);setListHeaderHeight(listSceneHeaderHeight);
-    // The list is retained behind the chat. Keep its row order when revealing it;
-    // updatedAt may have changed while reading, but that must not move siblings.
+    // Keep the retained list's viewport, while new messages may reorder its rows.
     setActive(null);service.clearSelection();setMode('message');setFiles([]);setReply(null);setEditing(null);setSource(null);setFilter(next);stack.current=[];
     if(active!==null&&next===filter)void service.loadTickets(next,scope,false,search.trim(),true);
     else void service.loadTickets(next,scope,false,search.trim());
@@ -480,7 +487,7 @@ export default function HelpScreen() {
     window.addEventListener('popstate',onPop,true);
     return () => window.removeEventListener('popstate',onPop,true);
   }, []));
-  const visible = useMemo(() => stableHelpOrder(service.tickets.filter(t => t.status === filter), order), [service.tickets, filter, order]);
+  const visible = useMemo(() => sortHelpTicketsByActivity(service.tickets.filter(t => t.status === filter)), [service.tickets, filter]);
   const listActions=useRef({open,menu:(item:HelpTicket)=>{Keyboard.dismiss();setOverlay({kind:'row',ticket:item});}});
   listActions.current={open,menu:(item:HelpTicket)=>{Keyboard.dismiss();setOverlay({kind:'row',ticket:item});}};
   const listExtraData=useMemo(()=>({drafts:listDrafts,typing:service.typingByTicket}),[listDrafts,service.typingByTicket]);
@@ -619,7 +626,7 @@ export default function HelpScreen() {
   const timelineHeader=useMemo(()=><>{sourceReference?<HelpTicketReference ticket={sourceReference} onPress={()=>void timelineActions.current.openSource()}/>:null}</>,[sourceReference]);
   const typingUsers=ticket?service.typingByTicket[ticket.id]:undefined;
   const timelineFooter=useMemo(()=><>{typingUsers?.length?<View style={{paddingHorizontal:16,paddingVertical:8}}><HelpTyping users={typingUsers}/></View>:null}</>,[typingUsers]);
-  const listHeader = <HelpListHeader connecting={!service.connected} onKnowledge={assistantPreview ? undefined : () => router.push('/services/help/knowledge')} search={search} onSearch={setSearch} archived={filter === 'CLOSED'} onArchive={() => list(filter === 'OPEN' ? 'CLOSED' : 'OPEN')} onBack={() => void back()} canManage={service.canManage} scope={scope} onScope={()=>{const next=scope==='mine' ? 'queue' : 'mine';setScope(next);setOrder([]);void service.loadTickets(filter,next,false,search.trim());}} />; const header = active === null ? listHeader : <HelpChatHeader connecting={!service.connected} search={chatSearchOpen && (ticket || active === 'new') ? {query:chatSearchQuery,onQueryChange:setChatSearchQuery,onClose:closeSearch,onSubmit:()=>Keyboard.dismiss(),autoFocus:true} : undefined} menuActive={overlay?.kind==='menu'} onSearch={ticket?()=>{saveDraftNow();Keyboard.dismiss();setChatSearchOpen(true);}:undefined} title={ticket?.title || (active==='new' ? 'Новое обращение' : 'Обращение')} number={ticket?.number} status={ticket?.status} meta={ticket ? helpCreated(ticket.createdAt) : ''} onBack={()=>void back()} onMenu={ticket || assistantPreview || active === 'new' ? ()=>{Keyboard.dismiss();setOverlay(previous=>previous?.kind==='menu'?null:{kind:'menu'});} : undefined}/>;
+  const listHeader = <HelpListHeader connecting={!service.connected} onKnowledge={assistantPreview ? undefined : () => router.push('/services/help/knowledge')} search={search} onSearch={setSearch} archived={filter === 'CLOSED'} onArchive={() => list(filter === 'OPEN' ? 'CLOSED' : 'OPEN')} onBack={() => void back()} canManage={service.canManage} scope={scope} onScope={()=>{const next=scope==='mine' ? 'queue' : 'mine';setScope(next);void service.loadTickets(filter,next,false,search.trim());}} />; const header = active === null ? listHeader : <HelpChatHeader connecting={!service.connected} search={chatSearchOpen && (ticket || active === 'new') ? {query:chatSearchQuery,onQueryChange:setChatSearchQuery,onClose:closeSearch,onSubmit:()=>Keyboard.dismiss(),autoFocus:true} : undefined} menuActive={overlay?.kind==='menu'} onSearch={ticket?()=>{saveDraftNow();Keyboard.dismiss();setChatSearchOpen(true);}:undefined} title={ticket?.title || (active==='new' ? 'Новое обращение' : 'Обращение')} number={ticket?.number} status={ticket?.status} meta={ticket ? helpCreated(ticket.createdAt) : ''} onBack={()=>void back()} onMenu={ticket || assistantPreview || active === 'new' ? ()=>{Keyboard.dismiss();setOverlay(previous=>previous?.kind==='menu'?null:{kind:'menu'});} : undefined}/>;
 
   const legacyDockControls=hasNativeStableImeLayout&&!hasNativeDockControls;
   const renderDockControls=(bottom:number,presentation:HelpDockControlPresentation)=><>
@@ -636,8 +643,8 @@ export default function HelpScreen() {
       <HelpVisualEffectsContext.Provider value={isFocused&&!routeLeaving&&(active===null||!entrySettled||leavingChat)}>
       <Reanimated.View testID="help-list-scene" key="help-list-scene" pointerEvents={active===null?'auto':'none'} accessibilityElementsHidden={active!==null} importantForAccessibility={active===null?'auto':'no-hide-descendants'} style={[active===null?{flex:1}:StyleSheet.absoluteFill,listMotion]}>
 
-        <BlurTargetView ref={listBlurTarget} style={{ flex: 1 }}><FlashList ref={listScroll} testID="help-ticket-list" data={visible} keyExtractor={item=>String(item.id)} extraData={listExtraData} style={{backgroundColor:c.background}} keyboardShouldPersistTaps="handled" contentContainerStyle={{paddingTop:listSceneHeaderHeight,paddingBottom:100}} drawDistance={300}
-          onScroll={e=>helpDevState({listScrollY:e.nativeEvent.contentOffset.y})} scrollEventThrottle={160}
+        <BlurTargetView ref={listBlurTarget} style={{ flex: 1 }}><FlashList ref={listScroll} testID="help-ticket-list" data={visible} maintainVisibleContentPosition={listPositionPolicy} keyExtractor={item=>String(item.id)} extraData={listExtraData} style={{backgroundColor:c.background}} keyboardShouldPersistTaps="handled" contentContainerStyle={{paddingTop:listSceneHeaderHeight,paddingBottom:100}} drawDistance={300}
+          onScroll={onTicketListScroll} scrollEventThrottle={16}
           onEndReachedThreshold={.5} onEndReached={()=>{if(active!==null||!service.hasMore||service.loading||listPaging.current)return;listPaging.current=true;void service.loadTickets(filter,scope,true,search.trim()).finally(()=>{listPaging.current=false;});}}
           ListEmptyComponent={<View style={{ alignItems: 'center', justifyContent:'center', minHeight:service.loading?300:undefined, padding: 35, gap: 12 }}>{service.loading ? <View testID="help-chats-loading" accessibilityRole="progressbar" accessibilityLabel="Загрузка чатов" style={{alignItems:'center',gap:14}}><ActivityIndicator size="large" color={c.accent}/><Text accessibilityLiveRegion="polite" style={{color:c.muted,fontSize:14}}>Загружаем чаты…</Text></View> : <><Ionicons name={filter === 'CLOSED' ? 'archive-outline' : 'chatbubbles-outline'} color={c.muted} size={38} /><Text style={{ color: c.text, fontSize: 16, fontWeight: '600' }}>{search ? 'Ничего не найдено' : filter === 'CLOSED' ? 'Закрытых обращений пока нет' : 'Расскажите, чем помочь'}</Text><Text style={{ color: c.muted, textAlign: 'center', fontSize: 13 }}>{search ? 'Попробуйте другой запрос' : 'Ваши сообщения и вложения увидят специалисты IT.'}</Text></>}</View>}
           ListFooterComponent={null}

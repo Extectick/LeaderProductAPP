@@ -163,7 +163,7 @@ describe('Help screen integration with service boundary', () => {
     act(()=>{progress.value=1;});
     expect(StyleSheet.flatten(screen.root.findByProps({testID:'help-list-scene'}).props.style).transform).toEqual([{translateX:0}]);
   });
-  test('returning reveals the retained row order and updates only the changed ticket',async()=>{
+  test('new activity moves a chat to the top, including when returning from that chat',async()=>{
     const older={...ticket,id:8,number:1008,title:'Сеть',updatedAt:'2026-10-01T10:00:00Z'};
     const original={...ticket,updatedAt:'2026-10-02T10:00:00Z'};
     mockService.tickets=[original,older];
@@ -179,11 +179,35 @@ describe('Help screen integration with service boundary', () => {
     const updated={...older,updatedAt:'2026-11-04T10:00:00Z',unreadCount:2};
     mockService.tickets=[updated,original];
     await act(async()=>screen.update(React.createElement(HelpScreen)));
-    expect(ids()).toEqual([7,8]);
+    expect(ids()).toEqual([8,7]);
     await act(async()=>button('Назад').props.onPress());
-    expect(ids()).toEqual([7,8]);
-    expect(list().props.data[0]).toBe(original);expect(list().props.data[1]).toBe(updated);
+    expect(ids()).toEqual([8,7]);
+    expect(list().props.data[0]).toBe(updated);expect(list().props.data[1]).toBe(original);
     expect(mockService.loadTickets).toHaveBeenLastCalledWith('OPEN','mine',false,'',true);
+  });
+  test('a new chat appears above existing rows and the list anchors only when scrolled away from the top',async()=>{
+    const older={...ticket,id:8,number:1008,updatedAt:'2026-10-01T10:00:00Z'};
+    mockService.tickets=[ticket,older];await render();
+    const list=()=>screen.root.findByProps({testID:'help-ticket-list'});
+    expect(list().props.maintainVisibleContentPosition).toEqual({disabled:true});
+    await act(async()=>list().props.onScroll({nativeEvent:{contentOffset:{y:300}}}));
+    const anchorPolicy=list().props.maintainVisibleContentPosition;
+    expect(anchorPolicy).toEqual({disabled:false});
+    const fresh={...ticket,id:9,number:1009,updatedAt:'2026-11-05T12:00:00Z'};
+    mockService.tickets=[older,fresh,ticket];
+    await act(async()=>screen.update(React.createElement(HelpScreen)));
+    expect(list().props.data.map((row:HelpTicket)=>row.id)).toEqual([9,7,8]);
+    expect(list().props.maintainVisibleContentPosition).toBe(anchorPolicy);
+    await act(async()=>list().props.onScroll({nativeEvent:{contentOffset:{y:0}}}));
+    expect(list().props.maintainVisibleContentPosition).toEqual({disabled:true});
+  });
+  test('read receipts and typing update the row without changing its activity order',async()=>{
+    const older={...ticket,id:8,number:1008,updatedAt:'2026-10-01T10:00:00Z'};
+    mockService.tickets=[ticket,older];await render();
+    mockService.tickets=[{...older,unreadCount:0},ticket];
+    mockService.typingByTicket={8:[{userId:3,name:'IT',avatarUrl:null}]};
+    await act(async()=>screen.update(React.createElement(HelpScreen)));
+    expect(screen.root.findByProps({testID:'help-ticket-list'}).props.data.map((row:HelpTicket)=>row.id)).toEqual([7,8]);
   });
   test('a cached ticket does not slide in before its message viewport is positioned',async()=>{
     mockService.tickets=[ticket];await render();

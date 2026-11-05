@@ -39,13 +39,12 @@ export function canReopenHelpTicket(ticket: { status: string; closedAt: string |
   const closed = ticket.closedAt ? Date.parse(ticket.closedAt) : NaN;
   return ticket.status === 'CLOSED' && Number.isFinite(closed) && now >= closed && now - closed <= HELP_REOPEN_WINDOW;
 }
-/** Freeze existing rows for a visible list session; newly received tickets append. */
-export function stableHelpOrder<T extends { id: number; updatedAt: string }>(items: T[], order: number[]) {
-  const known = new Map(order.map((id, index) => [id, index]));
+/** Match API activity ordering on every update; never freeze previous row indices.
+ * updatedAt also advances when an AI placeholder becomes its completed reply. */
+export function sortHelpTicketsByActivity<T extends { id: number; updatedAt: string }>(items: readonly T[]): T[] {
   return [...items].sort((a, b) => {
-    const aa = known.get(a.id); const bb = known.get(b.id);
-    if (aa !== undefined || bb !== undefined) return (aa ?? Infinity) - (bb ?? Infinity);
-    return Date.parse(b.updatedAt) - Date.parse(a.updatedAt) || b.id - a.id;
+    const aa = Date.parse(a.updatedAt), bb = Date.parse(b.updatedAt);
+    return (Number.isFinite(bb) ? bb : 0) - (Number.isFinite(aa) ? aa : 0) || b.id - a.id;
   });
 }
 export const helpDuration = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;

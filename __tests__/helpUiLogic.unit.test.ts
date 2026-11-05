@@ -1,4 +1,4 @@
-import { canEditHelpMessage, canReopenHelpTicket, helpColor, helpCreated, helpDate, helpDuration, helpInitials, helpReplyGesture, helpTimestampFits, stableHelpOrder } from '../src/features/help/helpUiUtils';
+import { canEditHelpMessage, canReopenHelpTicket, helpColor, helpCreated, helpDate, helpDuration, helpInitials, helpReplyGesture, helpTimestampFits, sortHelpTicketsByActivity } from '../src/features/help/helpUiUtils';
 
 describe('Help messenger UI logic', () => {
   const now = Date.parse('2026-10-23T06:00:00Z');
@@ -20,16 +20,15 @@ describe('Help messenger UI logic', () => {
     expect(canReopenHelpTicket({ ...closed, closedAt: 'bad' }, now)).toBe(false);
     expect(canReopenHelpTicket({ ...closed, closedAt: new Date(now + 1).toISOString() }, now)).toBe(false);
   });
-  test('new list session sorts activity, while a visible session keeps positions', () => {
+  test('new activity reorders existing rows and inserts new chats at the top', () => {
     const rows = [{ id: 1, updatedAt: '2026-10-22' }, { id: 2, updatedAt: '2026-10-23' }];
-    expect(stableHelpOrder(rows, []).map(t => t.id)).toEqual([2, 1]);
+    expect(sortHelpTicketsByActivity(rows).map(t => t.id)).toEqual([2, 1]);
     const updated = [{ ...rows[0], updatedAt: '2026-10-24' }, rows[1], { id: 3, updatedAt: '2026-10-25' }];
-    expect(stableHelpOrder(updated, [2, 1]).map(t => t.id)).toEqual([2, 1, 3]);
-    expect(stableHelpOrder(updated, []).map(t => t.id)).toEqual([3, 1, 2]);
+    expect(sortHelpTicketsByActivity(updated).map(t => t.id)).toEqual([3, 1, 2]);
     expect(rows.map(t => t.id)).toEqual([1, 2]);
   });
   test('equal activity has deterministic descending ID tie-break', () => {
-    expect(stableHelpOrder([{id:1,updatedAt:'2026-10-23'},{id:3,updatedAt:'2026-10-23'}],[]).map(t=>t.id)).toEqual([3,1]);
+    expect(sortHelpTicketsByActivity([{id:1,updatedAt:'2026-10-23'},{id:3,updatedAt:'2026-10-23'}]).map(t=>t.id)).toEqual([3,1]);
   });
   test('rightward swipe only; initial left or vertical movement cancels whole gesture', () => {
     expect(helpReplyGesture(30, 2)).toEqual({blocked:false,capture:true});
