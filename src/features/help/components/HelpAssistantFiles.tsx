@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import type { HelpAttachment } from '../helpApi';
 import { useHelpTheme } from '../helpTheme';
 import { helpFileSize } from '../helpUiUtils';
+import {helpHtmlAttachmentId} from '../helpHtml';
 import type { ResolveHelpMedia } from './HelpMedia';
 
 export type HelpAssistantFilesProps = {
@@ -17,7 +18,7 @@ type DownloadOperation = { id: string; resolver: ResolveHelpMedia; controller: A
 /** Uses the same authenticated attachment path as the rest of the Help chat. */
 export function HelpAssistantFiles({ attachments, resolve, onError }: HelpAssistantFilesProps) {
   const c = useHelpTheme();
-  const files = attachments.filter(file => file.kind === 'FILE');
+  const files = attachments.filter(file => file.kind === 'FILE' && helpHtmlAttachmentId(file) === null);
   const identity = files.map(file => `${file.id}:${file.url}`).join('|');
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [failedId, setFailedId] = useState<string | null>(null);

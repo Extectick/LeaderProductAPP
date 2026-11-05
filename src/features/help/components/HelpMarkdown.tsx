@@ -4,6 +4,8 @@ import MarkdownIt from 'markdown-it';
 import { useHelpTheme } from '../helpTheme';
 import {parseEntityLink} from '@/src/shared/entityLinks';
 import {useEntityCards} from '@/src/features/entityCards/EntityCardContext';
+import {parseHelpHtmlLink} from '../helpHtml';
+import {useHelpHtml} from './HelpHtmlContext';
 
 // Native text/layout only: no WebView, HTML execution or remote image requests.
 const markdown = new MarkdownIt({ html: false, linkify: true, breaks: true, typographer: false });
@@ -28,7 +30,7 @@ async function openLink(url: string) {
 /** Shared by saved, live and legacy AI answers; partial Markdown is valid while streaming. */
 export const HelpMarkdown = memo(function HelpMarkdown({ text }: { text: string }) {
   const c = useHelpTheme(), nodes = useMemo(() => tree(markdown.parse(text, {})), [text]);
-  const entities=useEntityCards();
+  const entities=useEntityCards(),html=useHelpHtml();
   const mono = Platform.OS === 'ios' ? 'Menlo' : 'monospace';
   const body = { color: c.text, fontSize: 15, lineHeight: 22, includeFontPadding: false };
   function inline(items: Node[]): React.ReactNode[] {
@@ -43,6 +45,8 @@ export const HelpMarkdown = memo(function HelpMarkdown({ text }: { text: string 
         case 'code_inline': return <Text key={key} style={{ fontFamily: mono, backgroundColor: c.elevated }}>{t.content}</Text>;
         case 'link_open': {
           const url = String(t.attrGet('href') || '');
+          const artifactId=parseHelpHtmlLink(url);
+          if(artifactId)return html?.canOpen(artifactId)?<Text key={key} accessibilityRole="link" accessibilityHint="Открыть HTML-пример в приложении" onPress={()=>html.open(artifactId)} style={{color:c.accentText,textDecorationLine:'underline'}}>{content()}</Text>:<Text key={key}>{content()}</Text>;
           const target=parseEntityLink(url);
           if(target){
             const label=(items:Node[]):string=>items.map(item=>item.children.length?label(item.children):item.token.content).join('');

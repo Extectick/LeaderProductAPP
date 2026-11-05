@@ -12,6 +12,8 @@ import {HelpAssistantItAction} from './HelpAssistantItAction';
 import {HelpAssistantFiles} from './HelpAssistantFiles';
 import type {ResolveHelpMedia} from './HelpMedia';
 import {HelpMarkdown} from './HelpMarkdown';
+import {helpHtmlAttachmentId} from '../helpHtml';
+import {HelpHtmlAttachments} from './HelpHtmlContext';
 
 export function HelpAssistantPreviewMenu({ preview, ticketId, onClose }: { preview: HelpAssistantPreview; ticketId?: number; onClose: () => void }) {
   const c = useHelpTheme();
@@ -30,7 +32,10 @@ export function HelpAssistantMessage(props: MessageProps) {
     onConnectOnec:canConnect?()=>latest.current.onConnectOnec?.():undefined,
     onSuggestion:canSuggest?(text:string)=>latest.current.onSuggestion?.(text):undefined,
   }),[canRetry,canConnect,canSuggest,canRequestIt]);
-  return <MemoHelpAssistantMessage {...props} {...actions}/>;
+  const row=<MemoHelpAssistantMessage {...props} {...actions}/>;
+  if(!(props.message.attachments||[]).some(file=>helpHtmlAttachmentId(file)!==null))return row;
+  const {HelpHtmlMessage}=require('./HelpHtmlMessage') as typeof import('./HelpHtmlMessage');
+  return <HelpHtmlMessage attachments={props.message.attachments} resolve={props.resolve}>{row}</HelpHtmlMessage>;
 }
 const MemoHelpAssistantMessage = memo(function HelpAssistantMessageBody({ message, onRetry, onConnectOnec, onSuggestion, onRequestIt, resolve, onFileError }: MessageProps) {
   const c=useHelpTheme(),reduced=useHelpReducedMotion(),run=message.assistantRun!;
@@ -55,6 +60,7 @@ const MemoHelpAssistantMessage = memo(function HelpAssistantMessageBody({ messag
         {message.text?<HelpMessageArrival key={run.runId} identity={`assistant-answer:${run.runId}`} animate={liveAnswer.current}><HelpMarkdown text={message.text}/></HelpMessageArrival>:null}
         {run.action?.type==='connect_onec'&&onConnectOnec?<Pressable accessibilityRole="button" accessibilityLabel="Подключить 1С" onPress={onConnectOnec} style={{flexDirection:'row',gap:8,alignItems:'center',minHeight:44,marginTop:8}}><Ionicons name="lock-closed-outline" size={18} color={c.accentText}/><Text style={{color:c.accentText,fontSize:14,fontWeight:'600'}}>Подключить 1С</Text><Ionicons name="chevron-forward" size={16} color={c.accentText}/></Pressable>:null}
       </View>
+      <HelpHtmlAttachments/>
       <HelpAssistantFiles attachments={message.attachments || []} resolve={resolve} onError={onFileError}/>
       <HelpAssistantItAction run={run} onRequestIt={onRequestIt}/>
       {message.text?<View testID="help-assistant-time" style={{alignSelf:'flex-end',marginTop:3}}><Text style={{color:c.muted,fontSize:10,lineHeight:12,includeFontPadding:false,fontVariant:['tabular-nums']}}>{helpTime(message.createdAt)}</Text></View>:null}

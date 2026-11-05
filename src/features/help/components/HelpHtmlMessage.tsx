@@ -1,0 +1,66 @@
+import React,{useCallback,useContext,useEffect,useMemo,useRef,useState} from 'react';
+import {ActivityIndicator,Keyboard,Pressable,Text,View} from 'react-native';
+import {Ionicons} from '@expo/vector-icons';
+import {AuthContext} from '@/context/AuthContext';
+import {API_BASE_URL} from '@/utils/config';
+import {loadHelpAttachmentText,type HelpAttachment} from '../helpApi';
+import {HELP_HTML_MAX_BYTES,helpHtmlAttachmentId,parseHelpHtmlArtifact,type HelpHtmlArtifact} from '../helpHtml';
+import {useHelpTheme} from '../helpTheme';
+import type {ResolveHelpMedia} from './HelpMedia';
+import {HelpHtmlContext} from './HelpHtmlContext';
+import {HelpHtmlSurface} from './HelpHtmlSurface';
+import {HelpHtmlViewer,type HelpHtmlOrigin} from './HelpHtmlViewer';
+type Loaded={artifact?:HelpHtmlArtifact;error?:boolean};
+
+/** Links are scoped to real attachments of this message, never model URLs. */
+export function HelpHtmlMessage({attachments,resolve,children}:{attachments:HelpAttachment[];resolve?:ResolveHelpMedia;children:React.ReactNode}){
+ const c=useHelpTheme(),auth=useContext(AuthContext),userId=auth?.isAuthenticated?auth.profile?.id:undefined;
+ const account=userId?`${API_BASE_URL}:${userId}`:'';
+ const files=attachments.filter(file=>helpHtmlAttachmentId(file)!==null),identity=files.map(file=>`${file.id}:${file.name}:${file.url}`).join('|');
+ const [loaded,setLoaded]=useState<Record<string,Loaded>>({}),[viewer,setViewer]=useState<{artifact:HelpHtmlArtifact;origin?:HelpHtmlOrigin;account:string}|null>(null);
+ const pending=useRef(new Map<string,Promise<HelpHtmlArtifact|null>>()),data=useRef<Record<string,Loaded>>({}),controller=useRef(new AbortController()),generation=useRef(0),previews=useRef(new Map<string,View>());
+ const scope=useRef({account,resolve,identity}),loadedScope=useRef({account,resolve,identity});scope.current={account,resolve,identity};
+ const sameScope=loadedScope.current.account===account&&loadedScope.current.resolve===resolve&&loadedScope.current.identity===identity;
+ const visibleLoaded=sameScope?loaded:{};
+ useEffect(()=>{
+  const version=++generation.current,abort=new AbortController();loadedScope.current={account,resolve,identity};controller.current=abort;pending.current.clear();data.current={};setLoaded({});setViewer(null);
+  return()=>{abort.abort();if(generation.current===version)++generation.current;};
+ },[account,resolve,identity]);
+ const load=useCallback((id:string):Promise<HelpHtmlArtifact|null>=>{
+  const current=scope.current;if(!userId||!current.account||!current.resolve||loadedScope.current.account!==current.account||loadedScope.current.resolve!==current.resolve||loadedScope.current.identity!==current.identity)return Promise.resolve(null);
+  const cached=data.current[id]?.artifact;if(cached)return Promise.resolve(cached);
+  const waiting=pending.current.get(id);if(waiting)return waiting;
+  const file=files.find(item=>helpHtmlAttachmentId(item)===id);if(!file)return Promise.resolve(null);
+  const version=generation.current,signal=controller.current.signal;
+  const valid=()=>!signal.aborted&&version===generation.current&&scope.current.account===current.account&&scope.current.resolve===current.resolve&&scope.current.identity===current.identity;
+  const task=(async()=>{
+   try{
+    const text=await loadHelpAttachmentText(file,userId,signal,HELP_HTML_MAX_BYTES),artifact=parseHelpHtmlArtifact(text,id);
+    if(!valid())return null;data.current={...data.current,[id]:{artifact}};setLoaded(data.current);return artifact;
+   }catch{if(valid()){data.current={...data.current,[id]:{error:true}};setLoaded(data.current);}return null;}
+   finally{if(valid())pending.current.delete(id);}
+  })();pending.current.set(id,task);return task;
+ // Every closure is replaced on account or descriptor changes; late reads are fenced above.
+ },[account,resolve,identity,userId]);
+ useEffect(()=>{for(const file of files)void load(helpHtmlAttachmentId(file)!);},[load,identity]);
+ const open=useCallback(async(id:string,fromPreview=false)=>{
+  const version=generation.current,artifact=await load(id);if(!artifact?.full||version!==generation.current)return;
+  Keyboard.dismiss();
+  const node=fromPreview?previews.current.get(id):undefined;
+  if(node){node.measureInWindow((x,y,width,height)=>{if(version===generation.current)setViewer({artifact,account:scope.current.account,origin:width>0&&height>0?{x,y,width,height}:undefined});});}
+  else setViewer({artifact,account:scope.current.account});
+ },[load]);
+ const navigation=useMemo(()=>({
+  canOpen:(id:string)=>!!files.find(file=>helpHtmlAttachmentId(file)===id)&&(!visibleLoaded[id]?.artifact||!!visibleLoaded[id].artifact?.full),
+  open:(id:string)=>{void open(id);},
+  previews:<View testID="help-html-attachments" style={{gap:12,minWidth:0}}>{files.map(file=>{
+   const id=helpHtmlAttachmentId(file)!,item=visibleLoaded[id],artifact=item?.artifact;
+   if(artifact&&!artifact.compact)return <Pressable key={id} testID={`help-html-open-${id}`} onPress={()=>void open(id)} accessibilityRole="link" style={{minHeight:44,justifyContent:'center'}}><Text style={{color:c.accentText,fontSize:15}}>{artifact.title}</Text></Pressable>;
+   return <View key={id} ref={node=>{if(node)previews.current.set(id,node);else previews.current.delete(id);}} collapsable={false} testID={`help-html-compact-${id}`} style={{width:'100%',aspectRatio:1,overflow:'hidden'}}>
+    {artifact?.compact?<HelpHtmlSurface compact variant={artifact.compact} label={artifact.description||artifact.title}/>:item?.error?<Pressable onPress={()=>void load(id)} accessibilityRole="button" accessibilityLabel="Повторить загрузку примера" style={{flex:1,justifyContent:'center'}}><Text style={{color:c.muted}}>Не удалось загрузить пример. Повторить</Text></Pressable>:<View style={{flex:1,alignItems:'center',justifyContent:'center'}}><ActivityIndicator color={c.muted}/></View>}
+    {artifact?.full?<Pressable testID={`help-html-expand-${id}`} accessibilityRole="button" accessibilityLabel="Открыть на весь экран" onPress={()=>void open(id,true)} style={{position:'absolute',right:0,top:0,width:44,height:44,alignItems:'center',justifyContent:'center'}}><View style={{width:32,height:32,borderRadius:16,backgroundColor:c.background,alignItems:'center',justifyContent:'center'}}><Ionicons name="expand-outline" size={21} color={c.text}/></View></Pressable>:null}
+   </View>;
+  })}</View>,
+ }),[identity,loaded,sameScope,c,open,load]);
+ return <HelpHtmlContext.Provider value={navigation}>{children}{viewer&&account&&sameScope&&viewer.account===account?<HelpHtmlViewer artifact={viewer.artifact} origin={viewer.origin} onClose={()=>setViewer(null)}/>:null}</HelpHtmlContext.Provider>;
+}

@@ -10,6 +10,7 @@ import {HelpAssistantItAction} from './HelpAssistantItAction';
 import {HelpAssistantFiles} from './HelpAssistantFiles';
 import type {ResolveHelpMedia} from './HelpMedia';
 import {HelpMarkdown} from './HelpMarkdown';
+import {HelpHtmlAttachments} from './HelpHtmlContext';
 
 function ActivityRow({ item }: { item: HelpAssistantActivity }) {
   const c = useHelpTheme();
@@ -68,6 +69,7 @@ export function HelpLiveAssistantMessage({ message, onRetry, onConnectOnec, onSu
     {onSuggestion && run.status === 'completed' && !selected && run.suggestions?.length ? <View testID="help-ai-suggestions" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
       {run.suggestions.map(value => <Pressable key={value} accessibilityRole="button" onPress={() => { if (submission.current) return; submission.current = true; setSelected(value); onSuggestion(value); }} style={{ minHeight: 44, paddingHorizontal: 14, paddingVertical: 10, justifyContent: 'center', borderRadius: 16, borderWidth: 1, borderColor: c.line }}><Text style={{ color: c.accentText, fontSize: 13 }}>{value}</Text></Pressable>)}
     </View> : null}
+    <HelpHtmlAttachments/>
     <HelpAssistantFiles attachments={message.attachments || []} resolve={resolve} onError={onFileError}/>
     <HelpAssistantItAction run={run} onRequestIt={onRequestIt}/>
     {run.action?.type === 'connect_onec' && onConnectOnec ? <Pressable accessibilityRole="button" accessibilityLabel="Подключить 1С" onPress={onConnectOnec} style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 8 }}><Ionicons name="lock-closed-outline" size={17} color={c.accentText}/><Text style={{ color: c.accentText }}>Подключить 1С</Text></Pressable> : null}

@@ -193,3 +193,20 @@ export async function loadHelpMedia(attachment: HelpAttachment, expectedUserId?:
   await assertAuth(auth);
   return { uri: URL.createObjectURL(blob) };
 }
+
+/** Bounded authenticated reads for generated HTML descriptors; never render an authenticated URL. */
+export async function loadHelpAttachmentText(attachment:HelpAttachment,expectedUserId:number,signal:AbortSignal,maxBytes:number):Promise<string>{
+  if(!Number.isSafeInteger(attachment.size)||attachment.size<1||attachment.size>maxBytes)throw new HelpApiError('Пример недоступен',0,'HELP_HTML_INVALID');
+  const uri=helpAttachmentUrl(attachment);let auth=await captureAuth(expectedUserId);
+  const combined=AbortSignal.any([signal,AbortSignal.timeout(15000)]);
+  const send=()=>fetch(uri,{headers:{Authorization:`Bearer ${auth.token}`},signal:combined});
+  await assertAuth(auth);let response=await send();
+  if(response.status===401){auth=await refreshAuth(auth);response=await send();}
+  await assertAuth(auth);combined.throwIfAborted();
+  if(!response.ok)throw new HelpApiError('Пример недоступен',response.status);
+  const length=Number(response.headers.get('content-length'));
+  if(Number.isFinite(length)&&length>maxBytes)throw new HelpApiError('Пример слишком большой',0,'HELP_HTML_INVALID');
+  const text=await response.text();await assertAuth(auth);combined.throwIfAborted();
+  if(text.length>maxBytes||new TextEncoder().encode(text).length>maxBytes)throw new HelpApiError('Пример слишком большой',0,'HELP_HTML_INVALID');
+  return text;
+}
