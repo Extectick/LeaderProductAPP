@@ -308,8 +308,10 @@ APK and OTA exports now depend on the reusable `Release diagnostics preflight`
 workflow on the trusted release runner. It checks the existing private monitoring
 endpoint `127.0.0.1:19001/_health/` before an expensive build, and publication
 checks it again before symbol upload. The retry workflow checks before dependency
-installation and before symbols. The preflight can also be dispatched alone; it
-publishes nothing and requires no application credentials.
+installation and before symbols. Use Retry verified release publication with `preflightOnly=true` to run this
+check alone on dev; its normal publication job is skipped. It publishes nothing
+and requires no application credentials. The other required form fields are
+ignored in this mode.
 
 The trusted runner publishes through its local Docker/API path; it does not need
 an additional SSH private key. The Windows244 Sentry tunnel uses a dedicated

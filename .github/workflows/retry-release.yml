@@ -2,6 +2,11 @@ name: Retry verified release publication
 on:
   workflow_dispatch:
     inputs:
+      preflightOnly:
+        description: Check private diagnostics only; do not publish a candidate
+        required: false
+        default: false
+        type: boolean
       source_run_id:
         description: Successful build run containing an encrypted candidate
         required: true
@@ -18,7 +23,13 @@ permissions:
   contents: read
   actions: read
 jobs:
+  diagnostics-only:
+    if: ${{ inputs.preflightOnly }}
+    uses: ./.github/workflows/release-preflight.yml
+    permissions:
+      contents: read
   publish:
+    if: ${{ !inputs.preflightOnly }}
     runs-on: [self-hosted, linux, x64, leader-release]
     timeout-minutes: 30
     environment: ${{ inputs.channel == 'dev' && 'development' || 'production' }}
