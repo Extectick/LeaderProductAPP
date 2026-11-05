@@ -760,6 +760,32 @@ describe('sticky date geometry and navigation integration',()=>{
     await act(async()=>mockFlashProps.onScroll(scrollEvent(40)));
     expect(mockFlashProps.maintainVisibleContentPosition.disabled).toBe(false);
   });
+  test('complete short native history never mounts a scroll anchor during edge gestures',async()=>{
+    mockNativeChatLayout=true;mockNativeAtomicTailMotion=true;
+    mockListApi.getChildContainerDimensions=()=>({width:390,height:150});
+    props={...props,hasOlder:false,hasNewer:false};
+    const shortScroll=(offset:number)=>({nativeEvent:{contentOffset:{x:0,y:offset},layoutMeasurement:{width:390,height:600},contentSize:{width:390,height:600}}});
+    await render();
+    await act(async()=>mockFlashProps.onScroll(shortScroll(72)));
+    await act(async()=>mockFlashProps.onScrollBeginDrag());
+    expect(mockFlashProps.maintainVisibleContentPosition.disabled).toBe(true);
+    await act(async()=>mockFlashProps.onScroll(shortScroll(0)));
+    await act(async()=>mockFlashProps.onScrollEndDrag());
+    await act(async()=>jest.advanceTimersByTimeAsync(220));
+    expect(mockFlashProps.maintainVisibleContentPosition.disabled).toBe(true);
+    await act(async()=>mockFlashProps.onScrollBeginDrag());
+    await act(async()=>mockFlashProps.onScroll(shortScroll(40)));
+    expect(mockFlashProps.maintainVisibleContentPosition.disabled).toBe(true);
+    expect(mockFlashProps.maintainVisibleContentPosition.startRenderingFromBottom).toBe(true);
+  });
+  test.each(['hasOlder','hasNewer'] as const)('a short partial window keeps its anchor while %s is available',async edge=>{
+    mockNativeChatLayout=true;mockNativeAtomicTailMotion=true;
+    mockListApi.getChildContainerDimensions=()=>({width:390,height:150});
+    props={...props,hasOlder:false,hasNewer:false,[edge]:true};
+    await render();await act(async()=>mockFlashProps.onScrollBeginDrag());
+    await act(async()=>mockFlashProps.onScroll(scrollEvent(40)));
+    expect(mockFlashProps.maintainVisibleContentPosition.disabled).toBe(false);
+  });
   test('keeps prepend anchoring at the top while older history remains',async()=>{
     props={...props,hasOlder:true};await render();
     await act(async()=>mockFlashProps.onScrollBeginDrag());

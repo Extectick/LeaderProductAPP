@@ -807,7 +807,10 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   // At the absolute start there is no preceding viewport to preserve. Release
   // FlashList's native anchor so it cannot keep re-pinning the first row as the
   // user tries to scroll away. Keep anchoring while older pages can prepend.
-  const maintainDisabled=!ready || navigating || following || (atHistoryStart && !props.hasOlder);
+  // A complete short history has no offscreen row to preserve. Enabling the
+  // native anchor on drag and removing it at offset zero can strand Android's
+  // short ScrollView there. Keep its scroll range/children stable for both edges.
+  const maintainDisabled=!ready || navigating || following || shortCompleteHistory() || (atHistoryStart && !props.hasOlder);
   // Bottom alignment is a layout property, independent of how the history was
   // opened. A saved anchor must never turn a short conversation into a top list.
   const startFromBottom=true;
