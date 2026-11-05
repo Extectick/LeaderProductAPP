@@ -22,7 +22,7 @@ jest.mock('../src/features/help/helpHistory',()=>({
 import { useHelpService } from '../src/features/help/useHelpService';
 import { helpViewCache } from '../src/features/help/helpViewCache';
 
-const detail={ticket:{id:7,status:'OPEN',members:[],unreadCount:1},messages:[{id:1,ticketId:7,sequence:1}],lastReadSequence:0,firstUnreadSequence:1,lastSequence:1,eventCursor:1};
+const detail={ticket:{id:7,status:'OPEN',members:[{userId:5,role:'OWNER'}],unreadCount:1},messages:[{id:1,ticketId:7,sequence:1}],lastReadSequence:0,firstUnreadSequence:1,lastSequence:1,eventCursor:1};
 let service:ReturnType<typeof useHelpService>;
 function Harness({focused}:{focused:boolean}){service=useHelpService(focused);return null;}
 

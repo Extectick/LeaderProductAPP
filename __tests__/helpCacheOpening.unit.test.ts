@@ -9,7 +9,7 @@ const mockHandlers:Record<string,Function>={};
 jest.mock('../src/features/help/helpSocket',()=>({createHelpSocket:(_:number,ready:Function)=>{const socket={emit:jest.fn(),off:jest.fn(),on:(key:string,fn:Function)=>{mockHandlers[key]=fn;}};ready(socket);return{disconnect:jest.fn(),getSocket:()=>socket};}}));
 jest.mock('@react-native-async-storage/async-storage',()=>{const values=new Map<string,string>();return{getItem:jest.fn(async(key:string)=>values.get(key)??null),setItem:jest.fn(async(key:string,value:string)=>{values.set(key,value);}),removeItem:jest.fn(async(key:string)=>{values.delete(key);}),clear:jest.fn(async()=>values.clear()),getAllKeys:jest.fn(async()=>[...values.keys()]),multiGet:jest.fn(async(keys:string[])=>keys.map(key=>[key,values.get(key)??null]))};});
 jest.mock('../src/features/help/helpHistoryDatabase',()=>require('../src/features/help/helpHistoryDatabase.web'));
-const mockApi={events:jest.fn(),config:jest.fn(),list:jest.fn(),detail:jest.fn(),read:jest.fn(),sync:jest.fn(),messages:jest.fn(),search:jest.fn(),date:jest.fn()};
+const mockApi={events:jest.fn(),config:jest.fn(),list:jest.fn(),detail:jest.fn(),read:jest.fn(),sync:jest.fn(),messages:jest.fn(),search:jest.fn(),date:jest.fn(),claim:jest.fn()};
 jest.mock('../src/features/help/helpApi',()=>({createHelpApi:()=>mockApi,HelpApiError:class extends Error{status:number;code?:string;constructor(message:string,status=0,code?:string){super(message);this.status=status;this.code=code;}},loadHelpMedia:jest.fn(),uploadHelpFiles:jest.fn()}));
 jest.mock('../src/features/help/helpStorage',()=>({...jest.requireActual('../src/features/help/helpStorage'),readHelpPending:jest.fn(async()=>[]),readLastCreatedOperation:jest.fn(async()=>null),getHelpDraft:jest.fn(),setHelpDraft:jest.fn()}));
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -93,4 +93,65 @@ test('a background list response cannot release the opening chat layout before i
   expect(service.loading).toBe(true);
   await act(async()=>{resolveDetail({ticket:ticket(7),...page(101,200)});await opening;});
   expect(service.loading).toBe(false);expect(service.messages).toHaveLength(100);
+});
+
+function unreadDetail(members= [{userId:5,role:'OWNER'}]) {
+  return {ticket:{...ticket(7,3),ownerId:9,members,lastReadSequence:0,unreadCount:3},...page(1,3,7,3),lastReadSequence:0,firstUnreadSequence:1};
+}
+test('a manager inspecting someone else’s ticket does not send read receipts or show a false access error',async()=>{
+  const detail=unreadDetail([{userId:9,role:'OWNER'}]);
+  mockApi.config.mockResolvedValue({canManage:true});mockApi.detail.mockResolvedValue(detail);
+  mockApi.sync.mockResolvedValue({...detail,events:[],deletedMessageIds:[],nextCursor:10,hasMore:false});
+  mockApi.read.mockRejectedValue(new HelpApiError('Обращение не найдено',404,'HELP_NOT_FOUND'));
+  await render();await open();
+  await act(async()=>{await service.markVisibleRead(3);await service.markVisibleRead(3);});
+  expect(service.selectedTicket?.id).toBe(7);expect(service.messages).toHaveLength(3);
+  expect(mockApi.read).not.toHaveBeenCalled();expect(service.error).toBeNull();
+  expect(service.selectedTicket?.lastReadSequence).toBe(0);
+  await act(async()=>service.clearSelection());expect(service.error).toBeNull();
+});
+test.each(['OWNER','IT'])('a participating %s still sends its own read receipt',async role=>{
+  const detail=unreadDetail([{userId:5,role}]);
+  mockApi.config.mockResolvedValue({canManage:role==='IT'});mockApi.detail.mockResolvedValue(detail);
+  mockApi.sync.mockResolvedValue({...detail,events:[],deletedMessageIds:[],nextCursor:10,hasMore:false});
+  await render();await open();await act(async()=>{await service.markVisibleRead(3);});
+  expect(mockApi.read).toHaveBeenCalledWith(7,3);expect(service.selectedTicket?.lastReadSequence).toBe(3);
+});
+test('leaving a chat clears its error, while a real opening failure is still reported',async()=>{
+  mockApi.detail.mockRejectedValueOnce(new HelpApiError('Обращение не найдено',404,'HELP_NOT_FOUND'));
+  await render();await act(async()=>{await expect(service.openTicket(7)).rejects.toThrow('Обращение не найдено');});
+  expect(service.error).toBe('Обращение не найдено');expect(service.selectedTicket).toBeNull();
+  await act(async()=>service.clearSelection());expect(service.error).toBeNull();
+});
+test('a late failed read receipt cannot put the old chat error into the list',async()=>{
+  const detail=unreadDetail();mockApi.detail.mockResolvedValue(detail);
+  mockApi.sync.mockResolvedValue({...detail,events:[],deletedMessageIds:[],nextCursor:10,hasMore:false});
+  await render();await open();let fail!:(error:Error)=>void;
+  mockApi.read.mockReturnValueOnce(new Promise((_,reject)=>{fail=reject;}));
+  let reading!:Promise<void>;await act(async()=>{reading=service.markVisibleRead(3);});
+  expect(mockApi.read).toHaveBeenCalledWith(7,3);
+  await act(async()=>service.clearSelection());
+  await act(async()=>{fail(new HelpApiError('Обращение не найдено',404,'HELP_NOT_FOUND'));await reading;});
+  expect(service.error).toBeNull();expect(service.selectedTicket).toBeNull();
+});
+test('read receipts become available after a manager joins the inspected ticket',async()=>{
+  const preview=unreadDetail([{userId:9,role:'OWNER'}]);
+  mockApi.config.mockResolvedValue({canManage:true});mockApi.detail.mockResolvedValue(preview);
+  mockApi.sync.mockResolvedValue({...preview,events:[],deletedMessageIds:[],nextCursor:10,hasMore:false});
+  await render();await open();await act(async()=>{await service.markVisibleRead(3);});
+  expect(mockApi.read).not.toHaveBeenCalled();
+  const joined=unreadDetail([{userId:9,role:'OWNER'},{userId:5,role:'IT'}]);
+  mockApi.sync.mockResolvedValue({...joined,events:[],deletedMessageIds:[],nextCursor:11,eventCursor:11,snapshotCursor:11,hasMore:false});
+  mockApi.claim.mockResolvedValue(joined);
+  await act(async()=>{await service.claimTicket(7);});
+  await act(async()=>{await service.markVisibleRead(3);});
+  expect(mockApi.read).toHaveBeenCalledWith(7,3);expect(service.error).toBeNull();
+});
+test('an actual participant read failure is visible in the chat and cleared on return to the list',async()=>{
+  const detail=unreadDetail();mockApi.detail.mockResolvedValue(detail);
+  mockApi.sync.mockResolvedValue({...detail,events:[],deletedMessageIds:[],nextCursor:10,hasMore:false});
+  mockApi.read.mockRejectedValue(new Error('Не удалось сохранить прочтение'));
+  await render();await open();await act(async()=>{await service.markVisibleRead(3);});
+  expect(service.error).toBe('Не удалось сохранить прочтение');
+  await act(async()=>service.clearSelection());expect(service.error).toBeNull();
 });

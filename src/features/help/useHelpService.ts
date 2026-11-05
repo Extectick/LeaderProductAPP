@@ -212,16 +212,17 @@ export function useHelpService(isFocused = true) {
     } catch (e) { if (current(account) && generation === listGeneration.current) { report(e); if (e instanceof HelpApiError && [401,403].includes(e.status)) {networkApplied=true;setTickets([]);} } }
     finally { if (current(account) && generation === listGeneration.current && activeId.current===null) setLoading(false); }
   }, [userId, auth?.isAuthenticated, identity, current, report]);
-  const clearSelection=useCallback(()=>{
+  const clearSelection=useCallback((preserveError=false)=>{
     rememberActive();
     ++windowRevision.current;++detailGeneration.current;activeId.current=null;selectedRef.current=null;setSelectedTicket(null);updateMessages([]);
     viewport.current=null;pageRef.current=null;pendingTrim.current=null;readSequence.current=0;pendingRead.current=0;paging.current={older:false,newer:false};
     setHasOlder(false);setHasNewer(false);setLoadingOlder(false);setLoadingNewer(false);setNavigationTarget(null);setFirstUnreadSequence(null);setLoading(false);
+    if(!preserveError)setError(null);
   },[updateMessages,rememberActive]);
   const revokeTicket=useCallback(async(id:number)=>{
     if(!current(identity))return;
     committedAccessRevision.current.set(id,(committedAccessRevision.current.get(id)??0)+1);
-    if(activeId.current===id)clearSelection();forgetHelpView(identity,id);
+    if(activeId.current===id)clearSelection(true);forgetHelpView(identity,id);
     await forgetHelpTicket(userId,id).catch(error=>{if(current(identity))report(error);});
     if(current(identity))setTickets(old=>old.filter(ticket=>ticket.id!==id));
   },[userId,identity,clearSelection,report,current]);
@@ -288,7 +289,7 @@ export function useHelpService(isFocused = true) {
       }).catch(error=>{if(valid())report(error);});
       traceData('network');
       return {...detail,messages:page.messages};
-    }catch(e){if(valid()){report(e);if(isAccessRevoked(e)){await revokeTicket(id);throw e;}if(e instanceof HelpApiError&&e.code==='HELP_MESSAGE_NOT_FOUND'&&fallbackDetail){applyDetail(fallbackDetail);issueNavigation({kind:'latest',animate:false});return fallbackDetail;}clearSelection();throw e;}return undefined;}
+    }catch(e){if(valid()){report(e);if(isAccessRevoked(e)){await revokeTicket(id);throw e;}if(e instanceof HelpApiError&&e.code==='HELP_MESSAGE_NOT_FOUND'&&fallbackDetail){applyDetail(fallbackDetail);issueNavigation({kind:'latest',animate:false});return fallbackDetail;}clearSelection(true);throw e;}return undefined;}
     finally{if(valid())setLoading(false);}
   },[identity,userId,current,helpApi,updateMessages,applyDetail,applyPage,issueNavigation,report,revokeTicket,clearSelection,rememberActive,server.isReachable]);
   const loadPage=useCallback(async(direction:'older'|'newer')=>{
@@ -627,6 +628,9 @@ export function useHelpService(isFocused = true) {
     sequence=readableHelpSequence(messagesRef.current,sequence);
     const id=activeId.current,account=identity,generation=detailGeneration.current;
     if(!id||!canRead()||!Number.isSafeInteger(sequence)||sequence<=readSequence.current||!messagesRef.current.some(message=>message.sequence===sequence))return;
+    // Managers may inspect the queue without joining a ticket. Only members
+    // have a read cursor; viewing must not create membership or a read receipt.
+    if(selectedRef.current?.id!==id||!selectedRef.current.members.some(member=>member.userId===userId))return;
     const readOwner=`${account}:${id}:${generation}`;
     pendingRead.current=Math.max(pendingRead.current,sequence);if(reading.current===readOwner)return;reading.current=readOwner;
     try{
