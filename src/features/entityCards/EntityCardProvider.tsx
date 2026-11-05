@@ -7,6 +7,7 @@ import {EntityCardContext,type EntityCardNavigation} from './EntityCardContext';
 import {entityCardReducer,initialEntityCardState} from './entityCardState';
 import {takeEntityLinkIntent} from '../../shared/entityLinkIntent';
 import type {EntityCardHostProps} from './EntityCardHost.types';
+import {useHelpOriginTracking} from '../help/useHelpOriginTracking';
 
 // Defer the card/profile module graph until first use, without fetching a remote JS chunk.
 const EntityCardHost=lazy<React.ComponentType<EntityCardHostProps>>(async()=>({default:require('./EntityCardHost').default}));
@@ -24,6 +25,8 @@ export function EntityCardProvider({children}:{children:React.ReactNode}){
  const scrollOffsets=useRef(new Map<number,number>());
  useEffect(()=>{scrollOffsets.current.clear();dispatch({type:'account',account});},[account]);
  const visible=!!account&&state.account===account&&state.frames.length>0;
+ const activeFrame=visible&&!state.closing?state.frames.at(-1):undefined;
+ useHelpOriginTracking(account,activeFrame?.kind==='entity'?activeFrame.target:undefined);
  useEffect(()=>{if(!state.frames.length)scrollOffsets.current.clear();},[state.frames.length]);
  const close=useCallback(()=>{Keyboard.dismiss();dispatch({type:'close'});},[]);
  const back=useCallback(()=>{Keyboard.dismiss();dispatch({type:'back'});},[]);

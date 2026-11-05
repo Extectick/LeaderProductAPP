@@ -5,6 +5,7 @@ import { API_BASE_URL } from '@/utils/config';
 import { getAccessToken, getAccessTokenForRequest, refreshToken } from '@/utils/tokenService';
 import type { HelpEvent, HelpHistoryPage, HelpHistoryQuery, HelpSearchResult, HelpSyncResult } from './helpHistoryTypes';
 import type { HelpAssistantRun } from './helpAssistant';
+import type {HelpClientContext} from './helpClientContext';
 
 export type HelpUser = { id: number; name: string; avatarUrl: string | null };
 export type HelpAttachment = { localUri?: string; durationMs?: number; id: string; name: string; mimeType: string; size: number; kind: 'IMAGE' | 'AUDIO' | 'FILE'; url: string; width?: number | null; height?: number | null; thumbnailDataUri?: string | null; position?: number };
@@ -29,7 +30,7 @@ export type HelpTicket = {
 export type HelpDetail = { queued?:boolean; ticket: HelpTicket; messages: HelpMessage[] } & Partial<HelpHistoryPage>;
 export type HelpConfig = { aiEnabled: boolean; canManage: boolean; maxAttachments: number; maxFileBytes: number };
 export type HelpFile = { uri: string; name: string; mimeType?: string; file?: File };
-export type HelpMessageInput = { text: string; attachmentIds?: string[]; replyToId?: number; forwardedFromId?: number; clientMessageId?: string };
+export type HelpMessageInput = { text: string; attachmentIds?: string[]; replyToId?: number; forwardedFromId?: number; clientMessageId?: string; clientContext?:HelpClientContext };
 export type HelpCreateInput = HelpMessageInput & { sourceTicketId?: number; clientTicketId?: string };
 export type HelpCloseInput = { text: string; rating: number; attachmentIds?: string[]; clientMessageId?: string };
 export type HelpMediaSource = { uri: string; headers?: Record<string, string>; cacheKey?: string };

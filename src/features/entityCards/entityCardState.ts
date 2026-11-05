@@ -14,7 +14,7 @@ export type EntityCardAction =
  | {type:'scroll';key:number;offset:number};
 
 export function entityDefaultTitle(target:EntityTarget):string {
- if(target.source==='app')return 'Профиль сотрудника';
+ if(target.source==='app')return target.kind==='product'?'Товар':'Профиль сотрудника';
  if(target.metaType==='Catalogs'&&target.name==='Номенклатура')return 'Номенклатура';
  if(target.metaType==='Documents'&&target.name==='ЗаказКлиента')return 'Заказ клиента';
  return target.name.replace(/([а-яa-z])([А-ЯA-Z])/g,'$1 $2');

@@ -6,6 +6,7 @@ import {parseEntityLink} from '@/src/shared/entityLinks';
 import {useEntityCards} from '@/src/features/entityCards/EntityCardContext';
 import {parseHelpHtmlLink} from '../helpHtml';
 import {useHelpHtml} from './HelpHtmlContext';
+import {helpChatDestination,parseHelpChatLink} from '../helpChatLink';
 
 // Native text/layout only: no WebView, HTML execution or remote image requests.
 type Token = ReturnType<typeof markdown.parse>[number];
@@ -44,6 +45,12 @@ export const HelpMarkdown = memo(function HelpMarkdown({ text }: { text: string 
         case 'code_inline': return <Text key={key} style={{ fontFamily: mono, backgroundColor: c.elevated }}>{t.content}</Text>;
         case 'link_open': {
           const url = String(t.attrGet('href') || '');
+          const chatId=parseHelpChatLink(url);
+          if(chatId)return <Text key={key} accessibilityRole="link" accessibilityHint="Открыть чат в приложении" onPress={()=>{
+            // Reuse the Help route: its existing open() saves the draft and checks access.
+            const {router}=require('expo-router') as typeof import('expo-router');
+            router.navigate(helpChatDestination(chatId));
+          }} style={{color:c.accentText,textDecorationLine:'underline'}}>{content()}</Text>;
           const artifactId=parseHelpHtmlLink(url);
           if(artifactId)return html?.canOpen(artifactId)?<Text key={key} accessibilityRole="link" accessibilityHint="Открыть HTML-пример в приложении" onPress={()=>html.open(artifactId)} style={{color:c.accentText,textDecorationLine:'underline'}}>{content()}</Text>:<Text key={key}>{content()}</Text>;
           const target=parseEntityLink(url);

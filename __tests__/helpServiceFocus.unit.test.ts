@@ -3,6 +3,9 @@ import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
 
 jest.mock('react-native',()=>({Platform:{OS:'android'},AppState:{currentState:'active',addEventListener:jest.fn(()=>({remove:jest.fn()}))}}));
+jest.mock('expo-application',()=>({applicationId:'com.leaderproduct.app',nativeApplicationVersion:'0.1.46',nativeBuildVersion:'45'}));
+jest.mock('expo-updates',()=>({channel:'dev',runtimeVersion:'0.1.46'}));
+jest.mock('expo-constants',()=>({__esModule:true,default:{expoConfig:{scheme:'leaderproduct',version:'0.1.46'}}}));
 jest.mock('../context/AuthContext',()=>({AuthContext:require('react').createContext({profile:{id:5},isAuthenticated:true})}));
 jest.mock('../utils/config',()=>({API_BASE_URL:'https://dev.example.test'}));
 jest.mock('../src/shared/network/useServerStatus',()=>({useServerStatus:()=>({isReachable:true})}));
@@ -21,6 +24,7 @@ jest.mock('../src/features/help/helpHistory',()=>({
 }));
 import { useHelpService } from '../src/features/help/useHelpService';
 import { helpViewCache } from '../src/features/help/helpViewCache';
+import {helpOriginTracker} from '../src/features/help/helpClientContext';
 
 const detail={ticket:{id:7,status:'OPEN',members:[{userId:5,role:'OWNER'}],unreadCount:1},messages:[{id:1,ticketId:7,sequence:1}],lastReadSequence:0,firstUnreadSequence:1,lastSequence:1,eventCursor:1};
 let service:ReturnType<typeof useHelpService>;
@@ -63,6 +67,20 @@ describe('Help accepted sends and history replay',()=>{
     const queued=jest.fn();
     await act(async()=>{await expect(service.createTicket({text:'QA retained draft'},queued)).rejects.toThrow('Outbox write failed');});
     expect(queued).not.toHaveBeenCalled();expect(outbox.dispatchHelpPending).not.toHaveBeenCalled();
+  });
+  test('a logical send captures its source page before asynchronous storage and navigation can change it',async()=>{
+    await open();await act(async()=>service.clearSelection());
+    outbox.dispatchHelpPending.mockResolvedValue(accepted);
+    const scope='https://dev.example.test:5';helpOriginTracker.observe('','home',undefined);helpOriginTracker.observe(scope,'orders/[id]',undefined);
+    let release!:(value:any[])=>void;
+    storage.readHelpPending.mockImplementationOnce(()=>new Promise<any[]>(resolve=>{release=resolve;}));
+    let request!:ReturnType<typeof service.createTicket>;
+    await act(async()=>{request=service.createTicket({text:'QA context snapshot'});});
+    helpOriginTracker.observe(scope,'profile',undefined);
+    await act(async()=>{release([]);await request;});
+    const item=outbox.dispatchHelpPending.mock.calls.find(([,item]:any[])=>item.input.text==='QA context snapshot')[1];
+    expect(item.input.clientContext).toMatchObject({v:1,app:{platform:'android'},origin:{screen:'orders/[id]',state:'current'}});
+    expect(helpOriginTracker.read(scope)?.screen).toBe('profile');
   });
   test('accepted text replaces an older window with its server-confirmed tail',async()=>{
     await open();let done!:(value:any)=>void;outbox.dispatchHelpPending.mockReturnValue(new Promise(resolve=>{done=resolve;}));

@@ -492,8 +492,8 @@ export function HelpVoiceRecorder(props: Props) {
     progress = duration ? Math.min(1, range[0] / duration + playback.currentTime * 1000 / duration) : 0;
   const actionStyle = {
     position: 'absolute' as const,
-    right: active ? -3 : 4,
-    bottom: active ? -9 : 4,
+    right: active ? -3 : 5,
+    bottom: active ? -9 : 5,
     width: active ? 64 : 38,
     height: active ? 64 : 38,
     borderRadius: 32,

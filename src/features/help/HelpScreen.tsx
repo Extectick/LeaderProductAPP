@@ -91,7 +91,6 @@ export default function HelpScreen() {
   const returningToList=useRef(false);
   const [listSceneHeaderHeight,setListSceneHeaderHeight]=useState(68+insets.top);
   const [entrySettled,setEntrySettled]=useState(false);
-  const [historyMounted,setHistoryMounted]=useState(true);
   const [entryKeyboardReady,setEntryKeyboardReady]=useState(true),[leavingChat,setLeavingChat]=useState(false),[sceneWidth,setSceneWidth]=useState(0);
   const [attachmentsVisible,setAttachmentsVisible]=useState(false);
   const [closeAttachmentsKey,setCloseAttachmentsKey]=useState(0);
@@ -103,13 +102,6 @@ export default function HelpScreen() {
   const arrivalRegistry=useMemo(()=>new Set<string>(),[service.userId,scene.key]);
   const listBlurTarget = useRef<View>(null);
   const [active, setActive] = useState<number | 'new' | null>(null); const [filter, setFilter] = useState<'OPEN' | 'CLOSED'>('OPEN'); const [scope, setScope] = useState<'mine' | 'queue'>('mine');
-  useLayoutEffect(()=>{
-    if(typeof active!=='number'||historyMounted)return;
-    // Start the native slide in the lightweight commit, then mount cached
-    // history before paint. A low-priority transition can leave this entire
-    // 240ms entrance showing only the empty shell on a busy JS thread.
-    setHistoryMounted(true);
-  },[active,scene.key,historyMounted]);
   const listMotion=useAppSceneUnderlayMotion(chatProgress,active!==null,sceneWidth);
   const [search, setSearch] = useState(''); const [draft, setDraft] = useState(''); const [files, setFiles] = useState<HelpLocalFile[]>([]); const [source, setSource] = useState<SourceTicket | null>(null);
   const [listDrafts,setListDrafts]=useState<Record<number,string>>({});
@@ -382,7 +374,7 @@ export default function HelpScreen() {
   useEffect(() => helpDevState({ screen:active===null ? 'list' : active==='new' ? 'new' : 'chat', filter, scope, canManage:service.canManage, searchLength:search.length, dockHeight, listHeaderHeight, theme:c.dark ? 'dark' : 'light' }), [active,filter,scope,service.canManage,search.length,dockHeight,listHeaderHeight,c.dark]);
 
   async function open(id: number,messageId?:number,promote=false) {
-    if(!promote){setHistoryMounted(false);setScene(previous=>({key:previous.key+1,bottomAligned:false}));setEntrySettled(false);}
+    if(!promote){setScene(previous=>({key:previous.key+1,bottomAligned:false}));setEntrySettled(false);}
 
     // Reply/edit focus belongs to that composer, not every subsequently opened chat.
     if (active !== 'new') setFocusKey(0);
@@ -394,7 +386,7 @@ export default function HelpScreen() {
       setLeavingChat(false);setEntryKeyboardReady(false);
       void dismissHelpSceneKeyboard().then(()=>{if(screenMounted.current&&generation===navigationGeneration.current&&account===currentAccount.current)setEntryKeyboardReady(true);});
     }
-    setOverlay(null); setSelectedMessage(null); setMode('message'); setReply(null); setEditing(null); setFiles([]); setSource(null); setActive(id); followBottom.current = true;
+    setOverlay(null); setSelectedMessage(null); setMode('message'); setReply(null); setEditing(null); setFiles([]); setSource(null); setActive(id); followBottom.current = false;
     try {
       let deferNetworkUntil:Promise<boolean>|undefined;
       if(!promote){
@@ -448,7 +440,6 @@ export default function HelpScreen() {
     else void service.loadTickets(next,scope,false,search.trim());
   }
   function newTicket(linked: SourceTicket | null = null) {
-    setHistoryMounted(true);
     pendingChatOpen.current?.cancel();pendingChatOpen.current=null;
     const navigation=++navigationGeneration.current,account=service.userId;
     setScene(previous=>({key:previous.key+1,bottomAligned:true}));setEntrySettled(false);setLeavingChat(false);setEntryKeyboardReady(false);
@@ -686,7 +677,7 @@ export default function HelpScreen() {
       {active !== null ? <HelpChatEntry key={`${service.userId}:${scene.key}`} ref={chatEntry} progress={chatProgress} initialWidth={sceneWidth} ready={active==='new'?entryKeyboardReady:true} interactive={!leavingChat} backgroundColor={c.background} onEntered={()=>{setEntrySettled(true);if(active==='new'&&!leavingChat)setFocusKey(value=>value+1);if(pendingChatOpen.current?.id===active&&!leavingChat)pendingChatOpen.current.start();helpDevEvent('chat.open.transitionFinished',{ticketId:typeof active==='number'?active:null,finishedAt:Date.now()});}} onLayout={event=>setChatViewportHeight(event.nativeEvent.layout.height)}>
         <HelpMessageArrivalContext.Provider value={arrivalRegistry}>
         <View nativeID={nativeViewportId} collapsable={false} testID="help-chat-visible-viewport" style={boundedChat?{position:'absolute',top:0,left:0,right:0,bottom:hasNativeStableImeLayout?0:dockHeight+imeInset,overflow:'hidden'}:{flex:1}}><BlurTargetView ref={blurTarget} style={{ flex: 1 }}>
-          {typeof active==='number'&&(!historyMounted||!entrySettled&&!messages.length) ? <View testID="help-chat-opening" pointerEvents="none" style={{flex:1,alignItems:'center',justifyContent:'center'}}><ActivityIndicator color={c.muted}/></View> : <HelpTimeline entrySettled={entrySettled} obscuredBottom={hasNativeStableImeLayout?obscuredBottom:undefined} pendingMessages={displayedPending} renderPending={renderPending} bottomAligned={scene.bottomAligned} key={`${service.userId}:${scene.key}`} onReady={()=>helpDevEvent('chat.open.historyReady',{ticketId:typeof active==='number'?active:null,at:Date.now()})} ref={scroll} messages={messages} nativeID={nativeScrollId} headerHeight={listHeaderHeight} dockHeight={boundedChat?(hasNativeStableImeLayout?dockHeight+imeInset:0):dockHeight+imeInset}
+          {typeof active==='number'&&!entrySettled&&!messages.length ? <View testID="help-chat-opening" pointerEvents="none" style={{flex:1,alignItems:'center',justifyContent:'center'}}><ActivityIndicator color={c.muted}/></View> : <HelpTimeline entrySettled={entrySettled} obscuredBottom={hasNativeStableImeLayout?obscuredBottom:undefined} pendingMessages={displayedPending} renderPending={renderPending} bottomAligned={scene.bottomAligned} key={`${service.userId}:${scene.key}`} onReady={()=>helpDevEvent('chat.open.historyReady',{ticketId:typeof active==='number'?active:null,at:Date.now()})} ref={scroll} messages={messages} nativeID={nativeScrollId} headerHeight={listHeaderHeight} dockHeight={boundedChat?(hasNativeStableImeLayout?dockHeight+imeInset:0):dockHeight+imeInset}
             navigationTarget={service.navigationTarget} firstUnreadSequence={service.firstUnreadSequence} hasOlder={service.hasOlder} hasNewer={service.hasNewer}
             loadingOlder={service.loadingOlder} loadingNewer={service.loadingNewer} loading={service.loading||(typeof active==='number'&&!ticket)} online={service.online}
             onLatestState={setLatestControl} onDatePresentationChange={publishTimelineDates} hideLatestButton={chatSearchOpen} active={isFocused && !chatSearchList && !overlay && !gallery && !entityCards.isOpen} unreadCount={ticket?.unreadCount}
@@ -709,7 +700,7 @@ export default function HelpScreen() {
         </HelpDockControls>
         {/* Timeline owns measured message growth; native layout keeps IME/dock
             following without adding a second, text-sized arrival spring. */}
-        {hasNativeChatLayout ? <HelpNativeChatLayout manageIme={isFocused} key={`${service.userId}:${scene.key}`} scrollId={nativeScrollId} dockId={nativeDockId} controlsId={nativeControlsId} emptyHintId={active==='new'&&!displayedPending.length?nativeEmptyHintId:undefined} viewportId={nativeViewportId} allowFollow={nativeFollow && !service.hasNewer} animateTail={hasNativeAtomicTailMotion} onImeInsetChange={hasNativeImeLayout ? setImeInset : undefined}/> : null}
+        {hasNativeChatLayout ? <HelpNativeChatLayout manageIme={isFocused} key={`${service.userId}:${scene.key}`} scrollId={nativeScrollId} dockId={nativeDockId} controlsId={nativeControlsId} emptyHintId={active==='new'&&!displayedPending.length?nativeEmptyHintId:undefined} viewportId={nativeViewportId} allowFollow={nativeFollow && !service.hasNewer} animateTail={hasNativeAtomicTailMotion&&entrySettled} onImeInsetChange={hasNativeImeLayout ? setImeInset : undefined}/> : null}
         </HelpMessageArrivalContext.Provider>
       </HelpChatEntry> : null}
     </View>

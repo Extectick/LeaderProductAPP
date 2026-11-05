@@ -11,6 +11,7 @@ jest.mock('moti/skeleton', () => ({ Skeleton: 'Skeleton' }));
 jest.mock('react-native-reanimated', () => ({ __esModule: true, default: { View: 'AnimatedView' } }));
 jest.mock('react-native-qrcode-svg', () => 'QRCode');
 jest.mock('@/components/ui/AvatarCropperModal', () => 'AvatarCropperModal');
+jest.mock('@/components/Profile/UserProfileCard', () => ({ UserProfileCard: 'UserProfileCard' }));
 jest.mock('@/context/AuthContext', () => ({ AuthContext: require('react').createContext(null) }));
 jest.mock('@/hooks/usePresence', () => ({ usePresence: () => ({}) }));
 jest.mock('@/utils/appVersion', () => ({ getAppVersionInfo: () => ({ fullVersionLabel: '0.1.34.10' }) }));
@@ -29,6 +30,11 @@ const profile: any = { id: 4, firstName: 'Анна', middleName: '', lastName: '
 const input = (label: string) => renderer.root.find(node => node.type === ('Input' as any) && node.props.label === label);
 const button = (label: string) => renderer.root.find(node => node.type === ('Button' as any) && node.props.children === label);
 afterEach(async () => { if (renderer) await act(async () => renderer.unmount()); jest.clearAllMocks(); });
+test('shared user viewer delegates to the read-only card without mounting the personal editor', async () => {
+  await act(async () => { renderer = TestRenderer.create(React.createElement(ProfileView, { userId: profile.id, profileOverride: profile })); });
+  expect(renderer.root.findByType('UserProfileCard' as any).props.profile).toBe(profile);
+  expect(renderer.root.findAllByType('Input' as any)).toHaveLength(0);
+});
 test('personal editor preserves name edits during profile refresh and saves through the existing endpoint', async () => {
   const updated = jest.fn();
   const props = { profileOverride: profile, presentation: 'personal' as const, disableAppearAnimation: true, onProfileUpdated: updated };

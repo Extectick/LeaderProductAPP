@@ -19,6 +19,7 @@ import { HELP_COMPOSER_ACTION_RIGHT } from '../helpLayout';
 import { HELP_LATEST_SCROLL_BEZIER, helpLatestNavigationMotion, hiddenHelpLatest, updateHelpLatestAffordance } from '../helpJumpToLatestModel';
 import {HelpMessageArrival,HelpMessageArrivalContext,HelpArrivalGeometryContext,helpArrivalIdentity} from './HelpMessageArrival';
 import {HELP_TAIL_MOTION,helpTailDisplacement,helpTailMotionLimit,helpTailHistoryChange,type HelpTailGeometry} from '../helpTailMotion';
+import {helpOpeningScrollRef} from '../helpOpeningScroll';
 
 function ClippedHelpDate({rowKey,date,retained,onPress}:{rowKey:string;date:string;retained:boolean;onPress:()=>void}){
   // Preserve FlashList's measured row and anchor. Its visible pill has one
@@ -442,7 +443,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     if(tailGeometry.current&&(Math.abs(tailGeometry.current.width-next.width)>.5||Math.abs(tailGeometry.current.height-next.height)>.5))resetTailMotion();
     // Geometry, not text/type or a receipt timer, owns this motion. Late image
     // dimensions, voice controls and streamed text all lift the same viewport.
-    const delta=helpTailDisplacement(tailGeometry.current,next,{active:!hasNativeAtomicTailMotion&&HELP_TAIL_MOTION.enabled&&live.current.active&&readyRef.current&&followingRef.current&&!inNavigation.current&&!dragging.current&&!momentum.current&&!live.current.hasNewer&&!live.current.loadingOlder&&!live.current.loadingNewer&&!reduced,liveGrowth:!tailRevision.current.history});
+    const delta=helpTailDisplacement(tailGeometry.current,next,{active:!hasNativeAtomicTailMotion&&HELP_TAIL_MOTION.enabled&&live.current.entrySettled!==false&&live.current.active&&readyRef.current&&followingRef.current&&!inNavigation.current&&!dragging.current&&!momentum.current&&!live.current.hasNewer&&!live.current.loadingOlder&&!live.current.loadingNewer&&!reduced,liveGrowth:!tailRevision.current.history});
     tailGeometry.current=next;
     if(!delta)return;
     // Position the real scroll range first, then ease only its presentation.
@@ -752,9 +753,22 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     }
   },[observe,setFollow,updateMediaRange,settleOpening]);
   const NativeScroll=useMemo(()=>forwardRef<ScrollView,ScrollViewProps>((scrollProps,scrollRef)=>{
+    const native=useRef<ScrollView>(null);
+    useImperativeHandle(scrollRef,()=>helpOpeningScrollRef(native.current!,()=>{
+      const target=live.current.navigationTarget,seed=initialPosition.current;
+      // Reduced motion can finish the scene before FlashList's queued replay.
+      // Release this initial position only to a user gesture or a new target.
+      if(touched.current||!target||seed?.key!==target.key||target.kind==='date')return null;
+      if(target.kind==='latest'||(target.kind==='anchor'||target.kind==='unread')&&shortCompleteHistory())return {kind:'end'};
+      const index=helpNavigationIndex(rowsRef.current,target),item=index>=0?list.current?.getLayout(index):undefined;
+      const {content,height}=geometry.current;
+      if(!item||item.isHeightMeasured===false||!height||!content)return null;
+      const inset=hasNativeChatLayout?currentBottomInset()+12:0;
+      return {kind:'offset',offset:Math.min(Math.max(0,content+inset-height),Math.max(0,item.y+itemStartOffset()-live.current.headerHeight-(target.offset??0)))};
+    }),[]);
     const onScroll=useMemo(()=>Animated.event([{nativeEvent:{contentOffset:{y:dateScrollOffset}}}],{useNativeDriver:Platform.OS!=='web',listener:scrollProps.onScroll}),[scrollProps.onScroll]);
-    return <Animated.ScrollView {...scrollProps} onScroll={onScroll} contentContainerStyle={[scrollProps.contentContainerStyle,{flexGrow:1}]} removeClippedSubviews={false} ref={scrollRef} nativeID={props.nativeID}/>;
-  }),[props.nativeID,dateScrollOffset]);
+    return <Animated.ScrollView {...scrollProps} onScroll={onScroll} contentContainerStyle={[scrollProps.contentContainerStyle,{flexGrow:1}]} removeClippedSubviews={false} ref={native} nativeID={props.nativeID}/>;
+  }),[props.nativeID,dateScrollOffset,shortCompleteHistory,currentBottomInset,itemStartOffset]);
   const webProps = Platform.OS==='web' ? {
     onWheel:()=>{takeScrollControl();webIntent.current=Date.now()+500;},
     onTouchMove:()=>{takeScrollControl();webIntent.current=Date.now()+500;},

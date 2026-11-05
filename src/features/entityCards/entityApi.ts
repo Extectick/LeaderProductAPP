@@ -1,5 +1,6 @@
 import { httpRequest, type HttpResponse } from '@/src/shared/api/httpClient';
 import { normalizeEntityTarget } from '@/src/shared/entityLinks';
+import type {StockProduct} from '../stockBalances/products';
 import type { Profile } from '@/src/entities/user/types';
 import { EntityCardError, type EntityCardData, type EntityTarget, type EntityValue } from './entityTypes';
 
@@ -58,6 +59,7 @@ export function validateEntityCardData(value: unknown, requested: EntityTarget):
 
 function responseError(response: HttpResponse<unknown>): EntityCardError {
   const code = response.backendErrorCode || response.errorCode || `HTTP_${response.status}`;
+  if(code==='STOCK_SOURCE_MISMATCH')return new EntityCardError('unsupported',code,'Эта ссылка относится к другой базе. Откройте товар через «Остатки по складам».');
   if (['ONEC_AUTH_REQUIRED', 'ONEC_CREDENTIALS_INVALID', 'ONEC_ACCESS_DENIED'].includes(code)) {
     return new EntityCardError('connect', code, 'Для просмотра нужно проверить личное подключение 1С.');
   }
@@ -72,7 +74,20 @@ function responseError(response: HttpResponse<unknown>): EntityCardError {
   return new EntityCardError('unavailable', code, 'Не удалось загрузить карточку. Проверьте соединение и повторите попытку.');
 }
 
-export type EntityCardResult = { kind: 'entity'; data: EntityCardData } | { kind: 'profile'; profile: Profile };
+export type EntityCardResult = { kind: 'entity'; data: EntityCardData } | { kind: 'profile'; profile: Profile } | {kind:'stock-product';product:StockProduct};
+
+/** Object identity remains typed; legacy 1C links require a server-verified mapping. */
+function isStockProductTarget(target:EntityTarget):target is Extract<EntityTarget,{guid:string}> {
+  const value=target as {source:string;kind?:string;metaType?:string;name?:string};
+  return value.source==='app'&&value.kind==='product'||value.source==='onec'&&value.metaType==='Catalogs'&&value.name==='Номенклатура';
+}
+function validStockProduct(value:unknown,guid:string):value is StockProduct {
+  return record(value)&&value.guid===guid&&shortText(value.name,1000)&&!!value.name.trim()&&
+    (value.code===null||shortText(value.code))&&['inStock','reserved'].every(key=>typeof value[key]==='number'&&Number.isFinite(value[key]))&&
+    (value.available===null||typeof value.available==='number'&&Number.isFinite(value.available))&&
+    (value.baseUnit===null||record(value.baseUnit)&&shortText(value.baseUnit.name)&&
+      (value.baseUnit.symbol===null||shortText(value.baseUnit.symbol)));
+}
 
 export async function loadEntityCard(target: EntityTarget, userId: number, signal: AbortSignal,
   options: { maxTabularRows?: number } = {}): Promise<EntityCardResult> {
@@ -85,7 +100,19 @@ export async function loadEntityCard(target: EntityTarget, userId: number, signa
   }
   signal.throwIfAborted();
   const requestOptions = { expectedUserId: userId, signal, networkRetryCount: 0, timeoutMs: 60000 };
-  if (normalized.source === 'app') {
+  if(isStockProductTarget(normalized)){
+    const query=normalized.source==='onec'?`?baseKey=${encodeURIComponent(normalized.baseKey)}`:'';
+    const response=await httpRequest<undefined,StockProduct>(`/stock-balances/products/${encodeURIComponent(normalized.guid)}${query}`,requestOptions);
+    signal.throwIfAborted();
+    if(!response.ok){
+      const error=responseError(response);
+      if(error.kind==='connect')throw new EntityCardError('unavailable',error.code,'Сервис остатков временно недоступен. Повторите загрузку товара.');
+      throw error;
+    }
+    if(!validStockProduct(response.data,normalized.guid))throw new EntityCardError('unsupported','ENTITY_RESPONSE_UNSUPPORTED','Не удалось прочитать товар приложения.');
+    return {kind:'stock-product',product:response.data};
+  }
+  if (normalized.source === 'app' && normalized.kind==='user') {
     const response = await httpRequest<undefined, { profile: Profile }>(`/users/${encodeURIComponent(normalized.id)}/profile`, requestOptions);
     signal.throwIfAborted();
     if (!response.ok) throw responseError(response);

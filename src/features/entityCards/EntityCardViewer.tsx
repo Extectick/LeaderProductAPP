@@ -6,7 +6,7 @@ import {copyEntityCardLink} from './entityCardActions';
 import type {EntityCardHostProps} from './EntityCardHost.types';
 
 /** Entity navigation keeps its own data/history engine; all viewer chrome is shared with HTML. */
-export function EntityCardViewer({state,userId,onBack,onClose,children,bottomInset=0,onMenuOpenChange}:Pick<EntityCardHostProps,'state'|'userId'|'onBack'|'onClose'>&{children:React.ReactNode;bottomInset?:number;onMenuOpenChange?:(open:boolean)=>void}){
+export function EntityCardViewer({state,userId,onBack,onClose,children,topInset=0,bottomInset=0,onMenuOpenChange}:Pick<EntityCardHostProps,'state'|'userId'|'onBack'|'onClose'>&{children:React.ReactNode;topInset?:number;bottomInset?:number;onMenuOpenChange?:(open:boolean)=>void}){
  const c=useHelpTheme(),frame=state.frames.at(-1)!;
  const [menu,setMenu]=useState(false),[busy,setBusy]=useState(false),[notice,setNotice]=useState('');
  const operation=useRef<AbortController|null>(null),scope=useRef({account:state.account,key:frame.key,userId,closing:state.closing});
@@ -26,7 +26,7 @@ export function EntityCardViewer({state,userId,onBack,onClose,children,bottomIns
   {id:'close',label:'Закрыть просмотр',icon:'close-outline',onPress:()=>{operation.current?.abort();onClose();}},
  ];
  return <View testID="entity-card-viewer" style={{flex:1}}>
-  <HelpViewerLayout testIDPrefix="entity-card" onBack={onBack} backLabel={state.frames.length>1?'Назад к предыдущей карточке':'Закрыть просмотр'} actions={actions} menuOpen={menu} onMenuOpenChange={changeMenu} bottomInset={bottomInset}>{children}</HelpViewerLayout>
+  <HelpViewerLayout testIDPrefix="entity-card" title={frame.title} onBack={onBack} backLabel={state.frames.length>1?'Назад к предыдущей карточке':'Закрыть просмотр'} actions={actions} menuOpen={menu} onMenuOpenChange={changeMenu} topInset={topInset} bottomInset={bottomInset}>{children}</HelpViewerLayout>
   {notice?<View pointerEvents="none" style={{position:'absolute',left:16,right:16,bottom:bottomInset+16,alignItems:'center'}}><Text accessibilityLiveRegion="polite" style={{backgroundColor:c.panel,color:c.text,borderRadius:12,paddingHorizontal:14,paddingVertical:10,fontSize:13}}>{notice}</Text></View>:null}
  </View>;
 }

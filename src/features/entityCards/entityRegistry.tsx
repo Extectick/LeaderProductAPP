@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View, type ScrollViewProps } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View, type FlatListProps, type ScrollViewProps } from 'react-native';
 import { AuthContext } from '@/context/AuthContext';
 import { ProfileView } from '@/components/Profile/ProfileView';
 import { loadEntityCard, entityIdentity, type EntityCardResult } from './entityApi';
@@ -18,6 +18,7 @@ export type EntityCardContentProps = {
   onTitleChange?: (title: string) => void;
   onConnect?: (baseKey: string) => void;
   ScrollComponent?: React.ComponentType<ScrollViewProps>;
+  ListComponent?: React.ComponentType<FlatListProps<any>>;
   scrollOffset?: number;
   onScrollOffsetChange?: (offset: number) => void;
   contentTopInset?: number;
@@ -25,7 +26,7 @@ export type EntityCardContentProps = {
 type State = { scope: string; result?: EntityCardResult; error?: EntityCardError; loading?: boolean };
 
 /** The caller owns the sheet, gesture coordinator and navigation history. This component owns only card data. */
-export function EntityCardContent({ target, onOpen, onTitleChange, onConnect, ScrollComponent = ScrollView,
+export function EntityCardContent({ target, onOpen, onTitleChange, onConnect, ScrollComponent = ScrollView,ListComponent,
   scrollOffset = 0, onScrollOffsetChange, contentTopInset = 0 }: EntityCardContentProps) {
   const auth = React.useContext(AuthContext), userId = auth?.isAuthenticated ? auth.profile?.id : undefined;
   const colors = useEntityColors();
@@ -46,7 +47,7 @@ export function EntityCardContent({ target, onOpen, onTitleChange, onConnect, Sc
         const result = await loadEntityCard(target, userId ?? 0, controller.signal, { maxTabularRows: rowsLimit });
         if (controller.signal.aborted) return;
         setState({ scope, result });
-        const title = result.kind === 'entity' ? result.data.title : [result.profile.lastName, result.profile.firstName, result.profile.middleName].filter(Boolean).join(' ') || 'Профиль';
+        const title = result.kind==='stock-product'?result.product.name:result.kind === 'entity' ? result.data.title : [result.profile.lastName, result.profile.firstName, result.profile.middleName].filter(Boolean).join(' ') || 'Профиль';
         titleCallback.current?.(title);
       } catch (error) {
         if (controller.signal.aborted) return;
@@ -76,6 +77,11 @@ export function EntityCardContent({ target, onOpen, onTitleChange, onConnect, Sc
     </View>;
   }
   const result = current.result!;
+  if(result.kind==='stock-product'){
+    // Defer the stock pager/gallery module graph until an app product is opened.
+    const {StockEntityCard}=require('./StockEntityCard') as typeof import('./StockEntityCard');
+    return <StockEntityCard product={result.product} userId={userId!} ListComponent={ListComponent} contentTopInset={contentTopInset} scrollOffset={scrollOffset} onScrollOffsetChange={onScrollOffsetChange}/>;
+  }
   const Renderer = result.kind === 'entity' && result.data.view !== 'user' ? entityCardRegistry[result.data.view] : GenericEntityCard;
   const canShowMore = result.kind === 'entity' && result.data.tables.some(table => table.truncated) && rowsLimit < 1000;
   return <ScrollComponent testID="entity-card-scroll" style={styles.scroll} contentContainerStyle={[styles.content,{paddingTop:18+contentTopInset}]}

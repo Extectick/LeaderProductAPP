@@ -38,5 +38,6 @@ export async function loadEntityCard(target:EntityTarget,_userId:number,signal:A
   const timer=setTimeout(()=>{signal.removeEventListener('abort',abort);resolve();},140);signal.addEventListener('abort',abort,{once:true});
  });
  signal.throwIfAborted();
- return target.source==='app'?{kind:'profile',profile:fixtureProfile(Number(target.id))}:{kind:'entity',data:syntheticCard(target,options.maxTabularRows??100)};
+ if(target.source==='app')return target.kind==='user'?{kind:'profile',profile:fixtureProfile(Number(target.id))}:{kind:'stock-product',product:{guid:target.guid,name:'Тестовый товар приложения',code:'QA',baseUnit:null,inStock:0,available:0,reserved:0,updatedAt:null}};
+ return {kind:'entity',data:syntheticCard(target,options.maxTabularRows??100)};
 }

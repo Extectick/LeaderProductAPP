@@ -15,11 +15,12 @@ const props:EntityCardHostProps={state:{account:'dev:121',session:1,sequence:1,c
 test.each([['native',NativeHost],['web',WebHost]] as const)('%s shell uses the same viewer with scrolling body inset and no separate header',async(kind,Host)=>{
  let view!:TestRenderer.ReactTestRenderer;await act(async()=>{view=TestRenderer.create(React.createElement(Host,props));});
  try{
-  const viewer=view.root.findAll(node=>node.type==='EntityViewer')[0];expect(viewer.props.onBack).toBe(props.onBack);expect(viewer.props.bottomInset).toBe(20);
-  expect(view.root.findAll(node=>node.type==='EntityBody')[0].props.contentTopInset).toBe(80);
+  const viewer=view.root.findAll(node=>node.type==='EntityViewer')[0];expect(viewer.props.onBack).toBe(props.onBack);expect(viewer.props.bottomInset).toBe(20);expect(viewer.props.topInset).toBe(24);
+  expect(view.root.findAll(node=>node.type==='EntityBody')[0].props.contentTopInset).toBe(104);
   const panel=view.root.findAll(node=>node.props.testID==='entity-card-panel')[0],style=StyleSheet.flatten(panel.props.style);expect(style.borderTopLeftRadius??0).toBe(0);expect(style.maxWidth).toBeUndefined();
+  if(kind==='web')expect(style.top).toBe(0);
   if(kind==='native'){
-   const sheet=view.root.findAll(node=>node.type==='BottomSheet')[0];expect(sheet.props.handleComponent).toBeNull();expect(sheet.props.enablePanDownToClose).toBe(true);expect(sheet.props.topInset).toBe(24);expect(sheet.props.enableContentPanningGesture).toBe(true);
+   const sheet=view.root.findAll(node=>node.type==='BottomSheet')[0];expect(sheet.props.handleComponent).toBeNull();expect(sheet.props.enablePanDownToClose).toBe(true);expect(sheet.props.topInset).toBe(0);expect(sheet.props.enableContentPanningGesture).toBe(true);
    await act(async()=>viewer.props.onMenuOpenChange(true));expect(view.root.findAll(node=>node.type==='BottomSheet')[0].props.enableContentPanningGesture).toBe(false);
   }
  }finally{await act(async()=>view.unmount());}

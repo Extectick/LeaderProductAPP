@@ -22,6 +22,9 @@ Default URL: http://localhost:8100/?theme=dark&width=390
   Metro aliases only HelpScreen's service hook/router imports to in-memory QA
   fixtures. Production resolution and auth remain unchanged. List/archive/chat
   transitions and local actions work, but this does not test the real service.
+- `?theme=light&width=360&height=800&screen=chat&ticketId=1043&questions=1`
+  opens the current three-question panel immediately. This demo uses memory only;
+  it neither loads nor overwrites saved fixture conversations or drafts.
 - Exact prototype snapshot: `?screen=list&theme=dark&width=393&height=852&insetTop=54&insetBottom=34`.
   `height` fixes the surface height without flex shrinking; insets are supplied
   only to the real screen's QA context. Capture a **full-page** screenshot and
@@ -192,9 +195,17 @@ and a streamed test answer. No model or backend is contacted. Follow-up messages
 in these newly created tickets start another run; existing IT fixtures retain
 their original behavior.
 
+On Android the isolated QA entry starts new local tickets in the clarification
+scenario for question-motion checks. Web keeps the normal-answer default. Existing
+saved QA conversations are retained; this default does not affect the application.
+
 The chat ellipsis menu (also available on the empty new-ticket screen) selects
 the scenario for the next message: normal answer, slow analysis, clarification,
-or error. While processing, the empty composer shows Stop; entering text switches
+or error.
+The clarification scenario uses the current structured three-question contract:
+single choice, multiple choice, then free text in the existing composer. It shows
+the real question panel, editable review and final send, with local data only.
+While processing, the empty composer shows Stop; entering text switches
 to Send so the user can submit a correction. Corrections keep the task ID and
 previous input context, retire old progress, and place updated progress below
 the new user message. Superseded empty progress rows are hidden. Stopping shows

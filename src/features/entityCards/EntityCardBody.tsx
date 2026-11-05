@@ -1,10 +1,10 @@
 import React,{useRef} from 'react';
-import {View,type ScrollViewProps} from 'react-native';
+import {View,type FlatListProps,type ScrollViewProps} from 'react-native';
 import {ProfileOnecConnections} from '../profile/ui/ProfileOnecConnections';
 import {EntityCardContent} from './entityRegistry';
 import type {EntityCardHostProps} from './EntityCardHost.types';
 
-export function EntityCardBody({state,userId,onOpen,onBack,onTitle,onScroll,onConnect,ScrollComponent,contentTopInset=0}:{state:EntityCardHostProps['state'];userId:number;onOpen:EntityCardHostProps['onOpen'];onBack:()=>void;onTitle:EntityCardHostProps['onTitle'];onScroll:EntityCardHostProps['onScroll'];onConnect:EntityCardHostProps['onConnect'];ScrollComponent:React.ComponentType<React.PropsWithChildren<ScrollViewProps>>;contentTopInset?:number}){
+export function EntityCardBody({state,userId,onOpen,onBack,onTitle,onScroll,onConnect,ScrollComponent,ListComponent,contentTopInset=0}:{state:EntityCardHostProps['state'];userId:number;onOpen:EntityCardHostProps['onOpen'];onBack:()=>void;onTitle:EntityCardHostProps['onTitle'];onScroll:EntityCardHostProps['onScroll'];onConnect:EntityCardHostProps['onConnect'];ScrollComponent:React.ComponentType<React.PropsWithChildren<ScrollViewProps>>;ListComponent?:React.ComponentType<FlatListProps<any>>;contentTopInset?:number}){
  const frame=state.frames.at(-1)!;
  const latest=useRef({frameKey:frame.key,account:state.account,closing:state.closing});latest.current={frameKey:frame.key,account:state.account,closing:state.closing};
  if(frame.kind==='connection'){
@@ -14,5 +14,5 @@ export function EntityCardBody({state,userId,onOpen,onBack,onTitle,onScroll,onCo
   </ScrollComponent>;
  }
  return <EntityCardContent key={frame.key} target={frame.target} onOpen={onOpen} onTitleChange={title=>onTitle(frame.key,title)} onConnect={onConnect}
-  ScrollComponent={ScrollComponent} scrollOffset={frame.scrollOffset} contentTopInset={contentTopInset} onScrollOffsetChange={offset=>onScroll(frame.key,offset)}/>;
+  ScrollComponent={ScrollComponent} ListComponent={ListComponent} scrollOffset={frame.scrollOffset} contentTopInset={contentTopInset} onScrollOffsetChange={offset=>onScroll(frame.key,offset)}/>;
 }

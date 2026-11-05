@@ -24,7 +24,7 @@ export function useStockProducts<T extends { guid?: string; id?: string }>(path:
     setBusy(true); setLoadingMore(append); setError(null); failed.current = false;
     try {
       const result = await stockRequest<StockPage<T>>(path, { ...JSON.parse(queryKey), offset,
-        ...(append && pageRef.current?.nextCursor ? { cursor: pageRef.current.nextCursor } : {}) }, controller.signal);
+        ...(append && pageRef.current?.nextCursor ? { cursor: pageRef.current.nextCursor } : {}) }, controller.signal,Number.isSafeInteger(Number(userId))&&Number(userId)>0?Number(userId):undefined);
       if (epoch !== generation.current) return;
       const next = { ...result, items: append ? mergeStockPage(pageRef.current?.items ?? [], result.items) : result.items };
       pageRef.current = next; setPageIdentity(identity); setPage(next);

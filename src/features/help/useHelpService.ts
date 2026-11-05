@@ -1,4 +1,5 @@
 import type {HelpLocalFile} from './components/HelpComposer';
+import {withHelpClientContext} from './helpClientContextRuntime';
 import {withHelpReaction} from './helpReactions';
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, Platform } from 'react-native';
@@ -526,10 +527,11 @@ export function useHelpService(isFocused = true) {
 
   const durableSend = useCallback(async (input: HelpCreateInput & {rating?:number}, ticketId?: number, action?: 'close' | 'reopen', onQueued?: (item:HelpPending)=>void|Promise<void>): Promise<HelpDetail> => {
     const account = identity;
+    const capturedInput=action==='close'?input:withHelpClientContext(input,`${API_BASE_URL}:${userId}`);
     const saved = await readHelpPending(userId);
     const previous = input.clientMessageId?saved.find(item=>item.input.clientMessageId===input.clientMessageId):undefined;
     const clientMessageId=input.clientMessageId||helpClientId();
-    const item = previous || {key:clientMessageId,ticketId,action,create:!ticketId,status:'queued' as const,createdAt:Date.now(),input:{...input,clientMessageId,...(!ticketId?{clientTicketId:input.clientTicketId||helpClientId()}:{})}};
+    const item = previous || {key:clientMessageId,ticketId,action,create:!ticketId,status:'queued' as const,createdAt:Date.now(),input:{...capturedInput,clientMessageId,...(!ticketId?{clientTicketId:input.clientTicketId||helpClientId()}:{})}};
     await saveHelpPending(userId,item);
     if (!current(account)) throw new Error('Учётная запись изменилась');
     const queued = await readHelpPending(userId);
@@ -550,7 +552,8 @@ export function useHelpService(isFocused = true) {
   }, [userId]);
   const queueFileTicket = useCallback(async (input: HelpCreateInput, files: HelpLocalFile[], onQueued: (item: HelpPending)=>void|Promise<void>) => {
     const account=identity, key=input.clientMessageId||helpClientId();
-    const item=await prepareFileMessage({key,create:true,createdAt:Date.now(),status:'queued',input:{...input,clientMessageId:key,clientTicketId:input.clientTicketId||helpClientId()}},files);
+    const capturedInput=withHelpClientContext(input,`${API_BASE_URL}:${userId}`);
+    const item=await prepareFileMessage({key,create:true,createdAt:Date.now(),status:'queued',input:{...capturedInput,clientMessageId:key,clientTicketId:input.clientTicketId||helpClientId()}},files);
     if(!current(account))throw new Error('Учётная запись изменилась');
     setPendingMessages(old=>[...old.filter(row=>row.key!==key),item]);
     // The callback only clears the submitted draft; networking does not own the editor.
@@ -561,9 +564,10 @@ export function useHelpService(isFocused = true) {
   const sendMessage = useCallback(async(id:number,input:HelpMessageInput,files:HelpLocalFile[]=[]):Promise<HelpDetail>=>{
     const ticket=selectedRef.current?.id===id?selectedRef.current:ticketsRef.current.find(row=>row.id===id);if(!ticket)throw new Error('Обращение не открыто');
     const account=identity,navigation=detailGeneration.current,interaction=interactionRevision.current;
+    const capturedInput=withHelpClientContext(input,`${API_BASE_URL}:${userId}`);
     const clientMessageId=input.clientMessageId||helpClientId();
     const source=input.replyToId?messagesRef.current.find(message=>message.ticketId===id&&message.id===input.replyToId):undefined;
-    const draftItem:HelpPending={key:clientMessageId,ticketId:id,create:false,createdAt:Date.now(),status:'queued',input:{...input,clientMessageId},...(source?{replyTo:{id:source.id,text:source.text,author:source.author,attachments:source.attachments}}:{})};
+    const draftItem:HelpPending={key:clientMessageId,ticketId:id,create:false,createdAt:Date.now(),status:'queued',input:{...capturedInput,clientMessageId},...(source?{replyTo:{id:source.id,text:source.text,author:source.author,attachments:source.attachments}}:{})};
     const item=await prepareFileMessage(draftItem,files);
     if(!current(account))throw new Error('Учётная запись изменилась');
     setPendingMessages(old=>[...old.filter(row=>row.key!==item.key),item]);

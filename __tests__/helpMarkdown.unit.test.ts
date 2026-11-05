@@ -1,6 +1,8 @@
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
 import { Alert, Linking, ScrollView, StyleSheet, Text } from 'react-native';
+const mockNavigate=jest.fn();
+jest.mock('expo-router',()=>({router:{navigate:mockNavigate}}));
 jest.mock('../context/ThemeContext', () => ({ useTheme: () => ({ theme: 'dark' }) }));
 import { HelpMarkdown } from '../src/features/help/components/HelpMarkdown';
 import {EntityCardContext} from '../src/features/entityCards/EntityCardContext';
@@ -91,4 +93,23 @@ test('missing card provider is not reported as a signed-out account',async()=>{
   expect(alert).toHaveBeenCalledWith('Карточка недоступна',expect.stringContaining('Reload'));
   expect(alert.mock.calls[0][1]).not.toContain('войдите');
  }finally{alert.mockRestore();await act(async()=>view.unmount());}
+});
+
+
+test('confirmed Help chat links reuse the internal Help route without opening the browser',async()=>{
+ const external=jest.spyOn(Linking,'openURL').mockResolvedValue(true);mockNavigate.mockClear();
+ const view=await render('[Чат №52](leaderproduct://services/help?ticketId=52)');
+ try{
+  const link=view.root.findAllByType(Text).find(node=>node.props.accessibilityRole==='link')!;
+  expect(link.props.accessibilityHint).toBe('Открыть чат в приложении');await act(async()=>link.props.onPress());
+  expect(mockNavigate).toHaveBeenCalledWith({pathname:'/services/help',params:{ticketId:'52',messageId:undefined,eventId:undefined,htmlId:undefined}});
+  expect(external).not.toHaveBeenCalled();
+ }finally{external.mockRestore();await act(async()=>view.unmount());}
+});
+
+test('malformed Help destinations remain text and cannot navigate',async()=>{
+ mockNavigate.mockClear();
+ const view=await render('[Нулевой](leaderproduct://services/help?ticketId=0) [Другой экран](leaderproduct://services/help/other?ticketId=52) [Лишние параметры](leaderproduct://services/help?ticketId=52&htmlId=other)');
+ try{expect(view.root.findAllByType(Text).filter(node=>node.props.accessibilityRole==='link')).toHaveLength(0);expect(mockNavigate).not.toHaveBeenCalled();}
+ finally{await act(async()=>view.unmount());}
 });

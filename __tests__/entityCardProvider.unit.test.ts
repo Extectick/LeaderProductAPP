@@ -9,12 +9,26 @@ import {AuthContext} from '../context/AuthContext';
 import {EntityCardProvider} from '../src/features/entityCards/EntityCardProvider';
 import {useEntityCards,type EntityCardNavigation} from '../src/features/entityCards/EntityCardContext';
 import type {EntityTarget} from '../src/shared/entityLinks';
+import {helpOriginTracker} from '../src/features/help/helpClientContext';
 
 const product:EntityTarget={v:1,source:'onec',baseKey:'torg2026',metaType:'Catalogs',name:'Номенклатура',guid:'12345678-abcd-1234-abcd-123456789abc'};
 const user:EntityTarget={v:1,source:'app',kind:'user',id:'121'};
 let navigation:EntityCardNavigation;
 function Draft(){navigation=useEntityCards();const [draft,setDraft]=React.useState('Неотправленное сообщение');return React.createElement(TextInput,{testID:'original-draft',value:draft,onChangeText:setDraft});}
 const tree=(id:number)=>React.createElement(AuthContext.Provider,{value:{isAuthenticated:true,isLoading:false,profile:{id},setAuthenticated:()=>{},setProfile:async()=>{},signOut:async()=>{}} as any},React.createElement(EntityCardProvider,null,React.createElement(Draft)));
+
+test('the shared card supplies a normalized account-scoped Help hint, and closing marks it previous',async()=>{
+ let view!:TestRenderer.ReactTestRenderer;await act(async()=>{view=TestRenderer.create(tree(1));});
+ try{
+  await act(async()=>navigation.openEntity(product));
+  expect(helpOriginTracker.read('https://dev.example.test:1')).toMatchObject({target:product,state:'current'});
+  await act(async()=>navigation.close());
+  expect(helpOriginTracker.read('https://dev.example.test:1')).toMatchObject({target:product,state:'previous'});
+  await act(async()=>view.update(tree(2)));
+  expect(helpOriginTracker.read('https://dev.example.test:1')).toBeUndefined();
+  expect(helpOriginTracker.read('https://dev.example.test:2')).not.toHaveProperty('target');
+ }finally{await act(async()=>view.unmount());}
+});
 
 test('global panel preserves the mounted draft, nested parent position and suspends focus until dismissal',async()=>{
  let view!:TestRenderer.ReactTestRenderer;await act(async()=>{view=TestRenderer.create(tree(1));});

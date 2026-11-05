@@ -11,11 +11,9 @@ const mockPicker = jest.fn();
 const mockPhotoPicker = jest.fn();
 const mockStopPlayback=jest.fn();
 let mockReducedMotion = true;
-const mockRowTiming=jest.fn((value:number,_config?:unknown)=>value);
-jest.mock('react-native-reanimated',()=>({
-  __esModule:true,default:{View:require('react-native').View},
-  useAnimatedStyle:(fn:()=>unknown)=>fn(),withTiming:(...args:[number,unknown])=>mockRowTiming(...args),
-  Easing:{out:(fn:unknown)=>fn,cubic:(value:number)=>value},
+let mockHasNativeInput = false;
+jest.mock('../src/features/help/components/HelpNativeInput',()=>({
+  get hasNativeHelpInput(){return mockHasNativeInput;},HelpNativeInput:'HelpNativeInput',
 }));
 jest.mock('expo-audio', () => ({RecordingPresets:{HIGH_QUALITY:{}},getRecordingPermissionsAsync:(...args:any[])=>mockGetPermission(...args),requestRecordingPermissionsAsync:(...args:any[])=>mockPermission(...args),setAudioModeAsync:(...args:any[])=>mockAudioMode(...args),useAudioRecorder:()=>mockRecorder,useAudioRecorderState:()=>({isRecording:false,durationMillis:0})}));
 jest.mock('expo-document-picker', () => ({getDocumentAsync:(...args:any[])=>mockPicker(...args)}));
@@ -38,7 +36,7 @@ describe('Help composer recorder lifecycle', () => {
   let appStateChange:(state:string)=>void;
   let props:any;
   beforeEach(()=>{
-    mockReducedMotion = true;
+    mockReducedMotion = true;mockHasNativeInput=false;
     jest.spyOn(PanResponder,'create').mockImplementation(config=>({panHandlers:config} as any));
     Object.defineProperty(AppState,'currentState',{configurable:true,value:'active'});
     jest.spyOn(AppState,'addEventListener').mockImplementation((_, listener)=>{appStateChange=listener as any;return {remove:jest.fn()};});
@@ -272,20 +270,47 @@ describe('Help composer recorder lifecycle', () => {
     expect(mockStopPlayback).not.toHaveBeenCalled();expect(mockRecorder.record).not.toHaveBeenCalled();
   });
   test('reply and input share one surface while their controls stay in separate rows',async()=>{
-    props.value='Line one\nLine two';props.quote={name:'Support',text:'Original message',onPress:jest.fn()};await render();
+    props.value='Line one\nLine two\nLine three';props.quote={name:'Support',text:'Original message',onPress:jest.fn()};await render();
     const preview=screen!.root.findByProps({testID:'help-reply-preview'}),surface=screen!.root.findByProps({testID:'help-composer-surface'}),row=screen!.root.findByProps({testID:'help-composer-input-row'});
-    expect(preview.parent?.props.testID).toBe('help-composer-surface');expect(surface.findAllByProps({testID:'help-reply-preview'}).length).toBeGreaterThan(0);expect(StyleSheet.flatten(row.props.style).minHeight).toBe(88);
+    expect(preview.parent?.props.testID).toBe('help-composer-surface');expect(surface.findAllByProps({testID:'help-reply-preview'}).length).toBeGreaterThan(0);expect(StyleSheet.flatten(row.props.style).minHeight).toBe(48);
     const expand=row.findAll(node=>node.props.label==='Развернуть редактор сообщения')[0];expect(expand.props.name).toBe('resize-outline');expect(expand.props.style).toMatchObject({top:0,right:0,width:44,height:44});
     const cancel=preview.findAll(node=>node.props.label==='Отменить ответ')[0];expect(cancel.props.style).toMatchObject({width:44,height:44});
     await act(async()=>cancel.props.onPress());expect(props.onCancelQuote).toHaveBeenCalledTimes(1);
     expect(screen!.root.findAllByType('HelpExpandedEditor' as any)).toHaveLength(0);expect(props.onChange).not.toHaveBeenCalled();await act(async()=>expand.props.onPress());expect(screen!.root.findAllByType('HelpExpandedEditor' as any)).toHaveLength(1);
   });
-  test('clearing a multiline draft animates the action area down to one line on the UI clock',async()=>{
-    mockReducedMotion=false;props.value='Line one\nLine two';await render();
-    expect(mockRowTiming).toHaveBeenLastCalledWith(88,expect.objectContaining({duration:180}));
+  test.each(['ios','android'] as const)('%s grows by one line at a time without reserving a third row',async platform=>{
+    Object.defineProperty(Platform,'OS',{configurable:true,value:platform});
+    props.value='Line one';await render();
+    const input=screen!.root.findByType(TextInput);
+    const entry=()=>screen!.root.findByProps({testID:'help-composer-entry'});
+    const row=()=>screen!.root.findByProps({testID:'help-composer-input-row'});
+    const expand=()=>screen!.root.findAll(n=>n.props.label==='Развернуть редактор сообщения');
+    for(const lines of [1,2,3,2,1]){
+      props={...props,value:Array.from({length:lines},(_,i)=>`Line ${i}`).join('\n')};
+      await act(async()=>screen!.update(React.createElement(HelpComposer,props)));
+      await act(async()=>{
+        if(platform==='android')screen!.root.findByProps({testID:'help-composer-measure'}).props.onTextLayout({nativeEvent:{lines:[{y:(lines-1)*22,height:22}]}});
+        else input.props.onContentSizeChange({nativeEvent:{contentSize:{height:lines*22}}});
+      });
+      expect(screen!.root.findByType(TextInput)).toBe(input);
+      expect(Math.max(StyleSheet.flatten(row().props.style).minHeight,entry().props.style.height.__getValue())).toBe(Math.max(48,lines*22+24));
+      expect(expand().length).toBe(lines>=3?1:0);
+      if(lines===2)expect(props.onResize).toHaveBeenLastCalledWith(68);
+    }
     props={...props,value:''};await act(async()=>screen!.update(React.createElement(HelpComposer,props)));
-    expect(mockRowTiming).toHaveBeenLastCalledWith(48,expect.objectContaining({duration:180}));
-    expect(screen!.root.findAll(node=>node.props.label==='Развернуть редактор сообщения')).toHaveLength(0);
+    expect(StyleSheet.flatten(row().props.style).minHeight).toBe(48);
+    expect(expand()).toHaveLength(0);
+  });
+  test('native two-line geometry stays compact and expand appears only when both touch targets fit',async()=>{
+    mockHasNativeInput=true;props.value='Wrapped message';await render();
+    const input=screen!.root.findByType('HelpNativeInput' as any);
+    for(const lines of [2,3,2,1]){
+      await act(async()=>{input.props.onLines(lines);input.props.onGeometry(lines*22+24,lines*22);});
+      expect(props.onResize).toHaveBeenLastCalledWith(Math.max(48,lines*22+24));
+      expect(StyleSheet.flatten(screen!.root.findByProps({testID:'help-composer-input-row'}).props.style).minHeight).toBe(48);
+      expect(screen!.root.findAll(n=>n.props.label==='Развернуть редактор сообщения').length).toBe(lines>=3?1:0);
+    }
+    expect(screen!.root.findByType('HelpNativeInput' as any)).toBe(input);
   });
   test('height growth is interruptible and scoped to the composer, with reduced-motion fallback',async()=>{
     mockReducedMotion=false;
@@ -507,7 +532,7 @@ describe('Help composer recorder lifecycle', () => {
     expect(entry().props.style.paddingBottom.__getValue()).toBe(0);
     const bottom=screen!.root.findAll(n=>n.props.testID==='help-composer-fade-bottom')[0];
     expect(bottom.props.style).toMatchObject({bottom:0,height:12});expect(bottom.props.colors).toEqual(['#33333300','#33333380']);
-    expect(screen!.root.findAll(n=>n.props.testID==='help-composer-fade-top')).toHaveLength(0);
+    expect(screen!.root.findByProps({testID:'help-composer-fade-top'}).props.style.opacity).toBe(0);
   });
   test('top and bottom fades follow hidden text and reset on shrink, including closure input',async()=>{
     props.mode='close';await render();const field=()=>screen!.root.findByType(TextInput);
@@ -516,7 +541,12 @@ describe('Help composer recorder lifecycle', () => {
     await act(async()=>field().props.onScroll({nativeEvent:{contentOffset:{y:100}}}));
     expect(exists('help-composer-fade-top')).toBe(true);expect(exists('help-composer-fade-bottom')).toBe(true);
     const top=screen!.root.findAll(n=>n.props.testID==='help-composer-fade-top')[0];
-    expect(top.props.colors).toEqual(['#33333380','#33333300']);
+    expect(top.props.colors).toEqual(['#333333','#33333300']);
+    expect(top.props.style.opacity).toBe(1);
+    await act(async()=>field().props.onScroll({nativeEvent:{contentOffset:{y:6}}}));
+    expect(top.props.style.opacity).toBe(.5);
+    await act(async()=>field().props.onScroll({nativeEvent:{contentOffset:{y:0}}}));
+    expect(top.props.style.opacity).toBe(0);
     await act(async()=>field().props.onScroll({nativeEvent:{contentOffset:{y:255}}}));
     expect(exists('help-composer-fade-top')).toBe(true);expect(exists('help-composer-fade-bottom')).toBe(false);
     await act(async()=>field().props.onContentSizeChange({nativeEvent:{contentSize:{height:44}}}));
@@ -679,7 +709,7 @@ describe('Help composer recorder lifecycle', () => {
     props.value='Длинное сообщение';await render();
     expect(screen!.root.findAll(n=>n.props.label==='Развернуть редактор сообщения')).toHaveLength(0);
     const field=screen!.root.findAll(n=>n.type===TextInput)[0];
-    await act(async()=>{field.props.onSelectionChange({nativeEvent:{selection:{start:2,end:6}}});field.props.onContentSizeChange({nativeEvent:{contentSize:{height:44}}});});
+    await act(async()=>{field.props.onSelectionChange({nativeEvent:{selection:{start:2,end:6}}});field.props.onContentSizeChange({nativeEvent:{contentSize:{height:66}}});});
     await act(async()=>screen!.root.findAll(n=>n.props.label==='Развернуть редактор сообщения')[0].props.onPress());
     const expanded=()=>screen!.root.findByType('HelpExpandedEditor' as any);
     expect(expanded().props.selection).toEqual({start:2,end:6});expect(expanded().props.value).toBe(props.value);

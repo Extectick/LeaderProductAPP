@@ -27,8 +27,8 @@ export default function EntityCardHost(props:EntityCardHostProps){
  return <Modal visible transparent animationType="none" onRequestClose={props.onBack}>
   <View style={{flex:1}}>
    <Pressable accessibilityRole="button" accessibilityLabel="Закрыть карточки" onPress={props.onClose} style={{position:'absolute',inset:0,backgroundColor:'#00000055'}}/>
-   <Animated.View {...pan.panHandlers} testID="entity-card-panel" accessibilityViewIsModal style={{position:'absolute',top:insets.top,left:0,right:0,bottom:0,backgroundColor:c.background,overflow:'hidden',transform:[{translateY:position}]}}>
-    <EntityCardViewer {...props} bottomInset={insets.bottom} onMenuOpenChange={menuChanged}><EntityCardBody {...props} contentTopInset={HELP_VIEWER_HEADER_HEIGHT} ScrollComponent={ScrollView} onScroll={(key,offset)=>{scroll.current=offset;props.onScroll(key,offset);}}/></EntityCardViewer>
+   <Animated.View {...pan.panHandlers} testID="entity-card-panel" accessibilityViewIsModal style={{position:'absolute',top:0,left:0,right:0,bottom:0,backgroundColor:c.background,overflow:'hidden',transform:[{translateY:position}]}}>
+    <EntityCardViewer {...props} topInset={insets.top} bottomInset={insets.bottom} onMenuOpenChange={menuChanged}><EntityCardBody {...props} contentTopInset={HELP_VIEWER_HEADER_HEIGHT+insets.top} ScrollComponent={ScrollView} onScroll={(key,offset)=>{scroll.current=offset;props.onScroll(key,offset);}}/></EntityCardViewer>
    </Animated.View>
   </View>
  </Modal>;

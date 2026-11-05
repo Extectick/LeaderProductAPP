@@ -60,6 +60,7 @@ import { getRoleDisplayName } from '@/utils/rbacLabels';
 import { getAppVersionInfo } from '@/utils/appVersion';
 import { Avatar, Divider, HelperText, List } from 'react-native-paper';
 import { ProfileAction, ProfileFact, ProfileField } from '@/src/features/profile/ui/ProfileSettingsPrimitives';
+import { UserProfileCard } from './UserProfileCard';
 
 type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
 type Tone = 'green' | 'violet' | 'gray' | 'red' | 'blue';
@@ -588,6 +589,10 @@ export function ProfileView({
         <Text style={{ color: Colors.leaderprod.text }}>{err ?? 'Ошибка'}</Text>
       </View>
     );
+  }
+
+  if (!isSelf) {
+    return <UserProfileCard profile={profile} presenceLabel={presenceLabel} presenceOnline={presence?.isOnline} style={style} />;
   }
 
   const {
