@@ -11,6 +11,7 @@ import {HelpLiveAssistantMessage} from './HelpLiveAssistantMessage';
 import {HelpAssistantItAction} from './HelpAssistantItAction';
 import {HelpAssistantFiles} from './HelpAssistantFiles';
 import type {ResolveHelpMedia} from './HelpMedia';
+import {HelpMarkdown} from './HelpMarkdown';
 
 export function HelpAssistantPreviewMenu({ preview, ticketId, onClose }: { preview: HelpAssistantPreview; ticketId?: number; onClose: () => void }) {
   const c = useHelpTheme();
@@ -51,7 +52,7 @@ const MemoHelpAssistantMessage = memo(function HelpAssistantMessageBody({ messag
           <Text style={{color:run.status==='error'?c.danger:c.muted,fontSize:13,flex:1}}>{run.status==='error'?'Не удалось подготовить ответ':'Ответ остановлен'}</Text>
           {onRetry?<Pressable accessibilityRole="button" accessibilityLabel="Повторить ответ ИИ" onPress={onRetry} style={{minHeight:44,paddingHorizontal:8,justifyContent:'center'}}><Text style={{color:c.accentText,fontSize:13}}>Повторить</Text></Pressable>:null}
         </View>:null}
-        {message.text?<HelpMessageArrival key={run.runId} identity={`assistant-answer:${run.runId}`} animate={liveAnswer.current}><Text testID="help-assistant-text" selectable style={{color:c.text,fontSize:15,lineHeight:22,includeFontPadding:false}}>{message.text}</Text></HelpMessageArrival>:null}
+        {message.text?<HelpMessageArrival key={run.runId} identity={`assistant-answer:${run.runId}`} animate={liveAnswer.current}><HelpMarkdown text={message.text}/></HelpMessageArrival>:null}
         {run.action?.type==='connect_onec'&&onConnectOnec?<Pressable accessibilityRole="button" accessibilityLabel="Подключить 1С" onPress={onConnectOnec} style={{flexDirection:'row',gap:8,alignItems:'center',minHeight:44,marginTop:8}}><Ionicons name="lock-closed-outline" size={18} color={c.accentText}/><Text style={{color:c.accentText,fontSize:14,fontWeight:'600'}}>Подключить 1С</Text><Ionicons name="chevron-forward" size={16} color={c.accentText}/></Pressable>:null}
       </View>
       <HelpAssistantFiles attachments={message.attachments || []} resolve={resolve} onError={onFileError}/>

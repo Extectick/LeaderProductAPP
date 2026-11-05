@@ -9,13 +9,7 @@ import {HelpAiIcon} from './HelpAiIcon';
 import {HelpAssistantItAction} from './HelpAssistantItAction';
 import {HelpAssistantFiles} from './HelpAssistantFiles';
 import type {ResolveHelpMedia} from './HelpMedia';
-
-function AnswerText({ text }: { text: string }) {
-  const c = useHelpTheme();
-  return <Text selectable testID="help-assistant-text" style={{ color: c.text, fontSize: 15, lineHeight: 22, includeFontPadding: false }}>{text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).map((part, index) =>
-    part.startsWith('**') && part.endsWith('**') ? <Text key={index} style={{ fontWeight: '600' }}>{part.slice(2, -2)}</Text>
-      : part.startsWith('`') && part.endsWith('`') ? <Text key={index} style={{ fontFamily: 'monospace', backgroundColor: c.elevated }}>{part.slice(1, -1)}</Text> : part)}</Text>;
-}
+import {HelpMarkdown} from './HelpMarkdown';
 
 function ActivityRow({ item }: { item: HelpAssistantActivity }) {
   const c = useHelpTheme();
@@ -69,7 +63,7 @@ export function HelpLiveAssistantMessage({ message, onRetry, onConnectOnec, onSu
     </View>
     {text ? <View testID="help-ai-answer" style={{ gap: 6 }}>
       {active || !message.text ? <Text style={{ color: c.muted, fontSize: 11 }}>{active?'Формируется ответ…':'Незавершённый ответ'}</Text> : null}
-      <AnswerText text={text}/>
+      <HelpMarkdown text={text}/>
     </View> : null}
     {onSuggestion && run.status === 'completed' && !selected && run.suggestions?.length ? <View testID="help-ai-suggestions" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
       {run.suggestions.map(value => <Pressable key={value} accessibilityRole="button" onPress={() => { if (submission.current) return; submission.current = true; setSelected(value); onSuggestion(value); }} style={{ minHeight: 44, paddingHorizontal: 14, paddingVertical: 10, justifyContent: 'center', borderRadius: 16, borderWidth: 1, borderColor: c.line }}><Text style={{ color: c.accentText, fontSize: 13 }}>{value}</Text></Pressable>)}
