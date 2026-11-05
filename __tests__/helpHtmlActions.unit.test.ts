@@ -55,3 +55,9 @@ test('cancelled or replaced viewers never start native export',async()=>{
  await expect(downloadHelpHtml(artifact,'#18212D',{expectedUserId:121,signal:AbortSignal.abort()})).rejects.toMatchObject({name:'AbortError'});
  await expect(downloadHelpHtml(artifact,'#18212D',{...scope(),isCurrent:()=>false})).rejects.toMatchObject({name:'AbortError'});expect(FS.makeDirectoryAsync).not.toHaveBeenCalled();
 });
+
+test('standalone entity card export includes only its approved image and keeps scripting/network disabled',async()=>{
+ const imageDataUrl='data:image/png;base64,'+Buffer.from([137,80,78,71,13,10,26,10,1,2,3,4]).toString('base64');
+ await downloadHelpHtml({...artifact,entity:{url:'leaderproduct://entity/v1/user/121'},full:{html:'<img src="help-entity-image" alt="Фото">',css:''}},'#18212D',scope(),imageDataUrl);
+ const html=jest.mocked(FS.writeAsStringAsync).mock.calls[0][1];expect(html).toContain(`src="${imageDataUrl}"`);expect(html).toContain("script-src 'none'");expect(html).toContain("connect-src 'none'");expect(html).not.toContain('help-entity-image');expect(html).not.toContain('https://');
+});

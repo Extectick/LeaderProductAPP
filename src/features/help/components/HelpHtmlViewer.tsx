@@ -11,12 +11,12 @@ const HEADER_HEIGHT=HELP_VIEWER_HEADER_HEIGHT;
 export type HelpHtmlOrigin={x:number;y:number;width:number;height:number};
 
 /** Presentation leaves the conversation and its native motion owner mounted. */
-export function HelpHtmlViewer({artifact,origin,onClose,link,expectedUserId}:{artifact:HelpHtmlArtifact;origin?:HelpHtmlOrigin;onClose:()=>void;link?:string;expectedUserId?:number}){
+export function HelpHtmlViewer({artifact,origin,onClose,link,expectedUserId,imageDataUrl,onOpenEntity}:{artifact:HelpHtmlArtifact;origin?:HelpHtmlOrigin;onClose:()=>void;link?:string;expectedUserId?:number;imageDataUrl?:string;onOpenEntity?:()=>void}){
  const c=useHelpTheme(),reduced=useHelpReducedMotion(),insets=useSafeAreaInsets(),window=useWindowDimensions();
  const auth=useContext(AuthContext),userId=auth?.isAuthenticated?auth.profile?.id:undefined;
  const [menu,setMenu]=useState(false),[busy,setBusy]=useState(false),[notice,setNotice]=useState('');
- const operation=useRef<AbortController|null>(null),scope=useRef({id:artifact.id,userId,expectedUserId,link});scope.current={id:artifact.id,userId,expectedUserId,link};
- useEffect(()=>{setMenu(false);setBusy(false);setNotice('');return()=>{operation.current?.abort();operation.current=null;};},[artifact.id,userId,expectedUserId,link]);
+ const operation=useRef<AbortController|null>(null),afterClose=useRef<(()=>void)|undefined>(undefined),scope=useRef({id:artifact.id,userId,expectedUserId,link,imageDataUrl});scope.current={id:artifact.id,userId,expectedUserId,link,imageDataUrl};
+ useEffect(()=>{setMenu(false);setBusy(false);setNotice('');return()=>{operation.current?.abort();operation.current=null;afterClose.current=undefined;};},[artifact.id,userId,expectedUserId,link,imageDataUrl]);
  const [fullReady,setFullReady]=useState(false),[compactReady,setCompactReady]=useState(!origin||!artifact.compact);
  const ready=fullReady&&compactReady;
  const progress=useRef(new Animated.Value(0)).current,drag=useRef(new Animated.Value(0)).current,closing=useRef(false),scroll=useRef(0);
@@ -25,16 +25,17 @@ export function HelpHtmlViewer({artifact,origin,onClose,link,expectedUserId}:{ar
  const close=useCallback(()=>{
   if(closing.current)return;closing.current=true;
   operation.current?.abort();setMenu(false);
-  if(current.current.reduced){current.current.onClose();return;}
-  Animated.parallel([Animated.timing(progress,{toValue:0,duration:240,easing:Easing.inOut(Easing.cubic),useNativeDriver:true}),Animated.timing(drag,{toValue:0,duration:240,useNativeDriver:true})]).start(({finished})=>{if(finished)current.current.onClose();});
+  const complete=()=>{const next=afterClose.current;afterClose.current=undefined;current.current.onClose();next?.();};
+  if(current.current.reduced){complete();return;}
+  Animated.parallel([Animated.timing(progress,{toValue:0,duration:240,easing:Easing.inOut(Easing.cubic),useNativeDriver:true}),Animated.timing(drag,{toValue:0,duration:240,useNativeDriver:true})]).start(({finished})=>{if(finished)complete();});
  },[progress,drag]);
  async function action(kind:'download'|'link'){
   if(operation.current||!expectedUserId||userId!==expectedUserId||closing.current)return;
   const captured=scope.current,controller=new AbortController();operation.current=controller;setBusy(true);setMenu(false);setNotice('');
-  const isCurrent=()=>!controller.signal.aborted&&!closing.current&&operation.current===controller&&scope.current.id===captured.id&&scope.current.userId===captured.userId&&scope.current.expectedUserId===captured.expectedUserId&&scope.current.link===captured.link;
+  const isCurrent=()=>!controller.signal.aborted&&!closing.current&&operation.current===controller&&scope.current.id===captured.id&&scope.current.userId===captured.userId&&scope.current.expectedUserId===captured.expectedUserId&&scope.current.link===captured.link&&scope.current.imageDataUrl===captured.imageDataUrl;
   try{
    const options={expectedUserId,signal:controller.signal,isCurrent};
-   if(kind==='download')await downloadHelpHtml(artifact,c.text,options);else if(link)await copyHelpHtmlLink(artifact,link,options);else throw Error('HELP_HTML_LINK_MISSING');
+   if(kind==='download'){if(imageDataUrl)await downloadHelpHtml(artifact,c.text,options,imageDataUrl);else await downloadHelpHtml(artifact,c.text,options);}else if(link)await copyHelpHtmlLink(artifact,link,options);else throw Error('HELP_HTML_LINK_MISSING');
    if(isCurrent())setNotice(kind==='download'?'HTML подготовлен для сохранения':'Ссылка скопирована');
   }catch(error){if(isCurrent()&&(error as Error).name!=='AbortError')setNotice(kind==='download'?'Не удалось скачать HTML. Попробуйте ещё раз.':'Не удалось скопировать ссылку. Попробуйте ещё раз.');}
   finally{if(isCurrent()){operation.current=null;setBusy(false);}}
@@ -64,15 +65,16 @@ export function HelpHtmlViewer({artifact,origin,onClose,link,expectedUserId}:{ar
    <Animated.View style={{position:'absolute',top:insets.top,left:0,width,height,backgroundColor:c.background,overflow:'hidden',opacity:ready?1:0,transform}}>
     <Animated.View style={{flex:1,opacity:start?progress.interpolate({inputRange:[0,.35,1],outputRange:[0,0,1]}):1}}>
      <HelpViewerLayout testIDPrefix="help-html" onBack={close} menuLabel="Действия с HTML" bottomInset={insets.bottom} menuOpen={menu} onMenuOpenChange={setMenu} actions={[
+      ...(artifact.entity&&onOpenEntity?[{id:'entity',label:'Открыть карточку',icon:'open-outline' as const,onPress:()=>{const captured=scope.current;if(!expectedUserId||captured.userId!==expectedUserId||captured.expectedUserId!==expectedUserId||captured.id!==artifact.id||closing.current)return;afterClose.current=()=>{if(scope.current.id===captured.id&&scope.current.userId===captured.userId&&scope.current.expectedUserId===captured.expectedUserId&&scope.current.imageDataUrl===captured.imageDataUrl)onOpenEntity();};close();},disabled:!expectedUserId||userId!==expectedUserId}]:[]),
       {id:'download',label:'Скачать',icon:'download-outline',onPress:()=>void action('download'),disabled:!expectedUserId||userId!==expectedUserId,busy},
       {id:'link',label:'Ссылка',icon:'link-outline',onPress:()=>void action('link'),disabled:!link||!expectedUserId||userId!==expectedUserId,busy},
      ]}>
-      <HelpHtmlSurface variant={artifact.full!} label={artifact.title} topInset={HEADER_HEIGHT} onReady={()=>setFullReady(true)} onScroll={offset=>{scroll.current=offset;}}/>
+      <HelpHtmlSurface variant={artifact.full!} imageDataUrl={imageDataUrl} label={artifact.title} topInset={HEADER_HEIGHT} onReady={()=>setFullReady(true)} onScroll={offset=>{scroll.current=offset;}}/>
      </HelpViewerLayout>
      {notice?<View pointerEvents="none" style={{position:'absolute',left:16,right:16,bottom:insets.bottom+16,alignItems:'center'}}><Text accessibilityLiveRegion="polite" style={{backgroundColor:c.panel,color:c.text,borderRadius:12,paddingHorizontal:14,paddingVertical:10,fontSize:13}}>{notice}</Text></View>:null}
 
     </Animated.View>
-    {start&&artifact.compact?<Animated.View pointerEvents="none" style={{position:'absolute',left:(width-start.width)/2,top:(height-start.height)/2,width:start.width,height:start.height,opacity:progress.interpolate({inputRange:[0,.45,.8,1],outputRange:[1,1,0,0]}),transform:[{scaleX:width/start.width},{scaleY:height/start.height}]}}><HelpHtmlSurface compact variant={artifact.compact} label={artifact.title} onReady={()=>setCompactReady(true)}/></Animated.View>:null}
+    {start&&artifact.compact?<Animated.View pointerEvents="none" style={{position:'absolute',left:(width-start.width)/2,top:(height-start.height)/2,width:start.width,height:start.height,opacity:progress.interpolate({inputRange:[0,.45,.8,1],outputRange:[1,1,0,0]}),transform:[{scaleX:width/start.width},{scaleY:height/start.height}]}}><HelpHtmlSurface compact variant={artifact.compact} imageDataUrl={imageDataUrl} label={artifact.title} onReady={()=>setCompactReady(true)}/></Animated.View>:null}
    </Animated.View>
   </View>
  </Modal>;

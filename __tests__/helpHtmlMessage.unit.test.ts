@@ -5,11 +5,14 @@ jest.mock('../context/ThemeContext',()=>({useTheme:()=>({theme:'light'})}));
 jest.mock('../context/AuthContext',()=>({AuthContext:require('react').createContext(null)}));
 jest.mock('@expo/vector-icons',()=>({Ionicons:'Ionicons'}));
 jest.mock('../utils/config',()=>({API_BASE_URL:'https://example.test'}));
+jest.mock('../src/features/help/helpHtmlEntity',()=>({...jest.requireActual('../src/features/help/helpHtmlEntity'),loadHelpHtmlEntityPreview:jest.fn()}));
 jest.mock('../src/features/help/helpApi',()=>({loadHelpAttachmentText:jest.fn()}));
 jest.mock('../src/features/help/components/HelpHtmlSurface',()=>({HelpHtmlSurface:'HtmlSurface'}));
 jest.mock('../src/features/help/components/HelpHtmlViewer',()=>({HelpHtmlViewer:'HtmlViewer'}));
 import {AuthContext} from '../context/AuthContext';
 import {loadHelpAttachmentText,type HelpAttachment} from '../src/features/help/helpApi';
+import {loadHelpHtmlEntityPreview} from '../src/features/help/helpHtmlEntity';
+import {EntityCardContext} from '../src/features/entityCards/EntityCardContext';
 import {HELP_HTML_MIME} from '../src/features/help/helpHtml';
 import {HelpHtmlMessage} from '../src/features/help/components/HelpHtmlMessage';
 import {HelpHtmlAttachments} from '../src/features/help/components/HelpHtmlContext';
@@ -79,4 +82,27 @@ test('a bound route intent opens once and exports a link back to its exact messa
  const viewer=view.root.findAll(node=>node.type==='HtmlViewer')[0];expect(viewer.props.link).toBe(`leaderproduct://services/help?ticketId=50&messageId=1075&htmlId=${id}`);expect(viewer.props.expectedUserId).toBe(121);expect(consumed).toHaveBeenCalledTimes(1);
  await act(async()=>viewer.props.onClose());await act(async()=>view.update(content()));
  expect(view.root.findAll(node=>node.type==='HtmlViewer')).toHaveLength(0);expect(consumed).toHaveBeenCalledTimes(1);
+});
+
+test('card tap opens the same entity viewer through a native press target; HTML keeps touch-through rendering',async()=>{
+ const target={v:1,source:'app',kind:'user',id:'121'} as const,entity={url:'leaderproduct://entity/v1/user/121'},openEntity=jest.fn();
+ const imageDataUrl='data:image/png;base64,'+Buffer.from([137,80,78,71,13,10,26,10,1,2,3,4]).toString('base64');
+ jest.mocked(loadHelpAttachmentText).mockResolvedValue(encode({entity,full:compact}));jest.mocked(loadHelpHtmlEntityPreview).mockResolvedValue({target,title:'Сотрудник',imageDataUrl});
+ await act(async()=>{view=TestRenderer.create(React.createElement(EntityCardContext.Provider,{value:{isOpen:false,openEntity,openEntityLink:jest.fn(),close:jest.fn(),back:jest.fn()}},tree()));});
+ const surface=view.root.findAll(node=>node.type==='HtmlSurface')[0];expect(surface.props.compact).toBe(true);expect(surface.props.imageDataUrl).toBe(imageDataUrl);
+ const tap=view.root.findAll(node=>node.props.testID===`help-html-entity-${id}`&&typeof node.props.onPress==='function')[0];
+ expect(tap.props.onStartShouldSetResponderCapture).toBeUndefined();expect(tap.props.onMoveShouldSetResponderCapture).toBeUndefined();
+ await act(async()=>tap.props.onPress());expect(openEntity).toHaveBeenCalledWith(target,'Схема');
+ const square=view.root.findAllByType(View).find(node=>node.props.testID===`help-html-compact-${id}`)!;square.instance.measureInWindow=(cb:Function)=>cb(0,120,340,340);
+ const expand=view.root.findAll(node=>node.props.testID===`help-html-expand-${id}`&&typeof node.props.onPress==='function')[0];await act(async()=>expand.props.onPress());
+ const viewer=view.root.findAll(node=>node.type==='HtmlViewer')[0];expect(viewer.props.imageDataUrl).toBe(imageDataUrl);expect(viewer.props.onOpenEntity).toEqual(expect.any(Function));
+});
+test('late image preview is aborted on account switch and cannot reveal old card or image',async()=>{
+ let finish!:(value:any)=>void;
+ jest.mocked(loadHelpAttachmentText).mockResolvedValueOnce(encode({entity:{url:'leaderproduct://entity/v1/user/121'}})).mockResolvedValueOnce(encode({id:other}));
+ jest.mocked(loadHelpHtmlEntityPreview).mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+ await act(async()=>{view=TestRenderer.create(tree());});const signal=jest.mocked(loadHelpHtmlEntityPreview).mock.calls[0][2];
+ await act(async()=>view.update(tree(122)));expect(signal.aborted).toBe(true);
+ await act(async()=>finish({target:{v:1,source:'app',kind:'user',id:'121'},title:'Сотрудник',imageDataUrl:'old-private-image'}));
+ expect(view.root.findAll(node=>node.type==='HtmlSurface'||node.type==='HtmlViewer')).toHaveLength(0);
 });

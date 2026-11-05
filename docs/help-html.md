@@ -93,3 +93,30 @@ each disclosure. Errors appear inside the viewer; menu/back/close remain usable.
 No new dependency or native module was added. Verify runtime compatibility and
 ordinary dev OTA gates before publishing; source validation alone does not prove
 on-device rendering or gestures.
+
+
+## Clickable entity cards
+
+A version 1 descriptor may contain `entity: {url}`, using the exact canonical
+entity URL confirmed by a tool. An entity card always has a compact variant.
+The whole square is a native press target that opens the existing entity-card
+provider; its WebView remains inert and touch-through, so a drag can scroll the
+conversation. The optional expansion icon still opens the HTML page. Its common
+viewer menu additionally offers “Открыть карточку”. No JavaScript or HTML bridge
+is enabled for actions.
+
+HTML can place up to two `<img src="help-entity-image" alt="…">` slots per
+variant. The client requests `/entity-links/preview` through the authenticated,
+account-pinned transport and accepts only the exact target and a bounded raster
+data URL (PNG/JPEG/WebP, at most 256 KiB decoded, matching file signature). The
+server rechecks normal profile or personal 1C access. The photo is passed to the
+renderer separately from the stored descriptor and substituted locally; neither
+tokens nor storage/source URLs enter the HTML. CSP permits data images only when
+an approved raster exists and still forbids scripts, remote assets and network.
+When no photo is available, image tags are removed and the HTML's initials or
+neutral placeholder remain. Inline previews keep their fixed square geometry.
+
+Image loading, entity actions and downloads share owner, resolver, descriptor
+and abort scopes. Account changes/unmount abort late work; a stale image response
+cannot render or export under another account. Standalone HTML download includes
+the approved raster, with the same inert document policy.

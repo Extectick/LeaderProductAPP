@@ -1,8 +1,9 @@
 import React from 'react';
 import TestRenderer,{act} from 'react-test-renderer';
-import {Modal,StyleSheet,Text} from 'react-native';
+import {Animated,Modal,StyleSheet,Text} from 'react-native';
 jest.mock('../context/AuthContext',()=>({AuthContext:require('react').createContext(null)}));
-jest.mock('../src/features/help/helpTheme',()=>({useHelpReducedMotion:()=>true,useHelpTheme:()=>({text:'#18212D',background:'#F7F9FC',panel:'#EEF2F7'})}));
+let mockReduced=true;
+jest.mock('../src/features/help/helpTheme',()=>({useHelpReducedMotion:()=>mockReduced,useHelpTheme:()=>({text:'#18212D',background:'#F7F9FC',panel:'#EEF2F7'})}));
 jest.mock('@expo/vector-icons',()=>({Ionicons:'Ionicons'}));
 jest.mock('react-native-safe-area-context',()=>({useSafeAreaInsets:()=>({top:24,bottom:24,left:0,right:0})}));
 jest.mock('../src/features/help/components/HelpPrimitives',()=>({HelpIcon:'HelpIcon',HelpBlurSurface:'HelpBlurSurface'}));
@@ -21,7 +22,7 @@ const artifact:HelpHtmlArtifact={version:1,id,title:'Пример',description:'
 let view:TestRenderer.ReactTestRenderer;const close=jest.fn();
 const tree=(userId=121)=>React.createElement(AuthContext.Provider,{value:{isAuthenticated:true,profile:{id:userId}} as any},React.createElement(HelpHtmlViewer,{artifact,onClose:close,link,expectedUserId:121}));
 const node=(id:string)=>view.root.findAll(item=>item.props.testID===id&&typeof item.props.onPress==='function')[0];
-beforeEach(()=>{jest.clearAllMocks();});afterEach(async()=>{if(view)await act(async()=>view.unmount());});
+beforeEach(()=>{jest.clearAllMocks();mockReduced=true;});afterEach(async()=>{if(view)await act(async()=>view.unmount());});
 test('transparent chat-sized header has centered title, back arrow and a permanent ellipsis',async()=>{
  await act(async()=>{view=TestRenderer.create(tree());});
  const header=view.root.findAll(item=>item.props.testID==='help-html-viewer-header')[0],style=StyleSheet.flatten(header.props.style);
@@ -55,4 +56,25 @@ test('pending export is cancelled by account change without late feedback',async
  const options=jest.mocked(downloadHelpHtml).mock.calls[0][2];await act(async()=>view.update(tree(122)));expect(options.signal.aborted).toBe(true);
  await act(async()=>finish());expect(view.root.findAllByType(Text).some(item=>item.props.children==='HTML подготовлен для сохранения')).toBe(false);
  await act(async()=>node('help-html-menu-button').props.onPress());expect(node('help-html-download').props.disabled).toBe(true);
+});
+
+test('entity action uses the trusted host callback after closing and stale handlers cannot navigate another account',async()=>{
+ const open=jest.fn(),entityArtifact={...artifact,entity:{url:'leaderproduct://entity/v1/user/121'}};
+ const content=(userId=121)=>React.createElement(AuthContext.Provider,{value:{isAuthenticated:true,profile:{id:userId}} as any},React.createElement(HelpHtmlViewer,{artifact:entityArtifact,onClose:close,link,expectedUserId:121,onOpenEntity:open}));
+ await act(async()=>{view=TestRenderer.create(content());});await act(async()=>node('help-html-menu-button').props.onPress());
+ const press=node('help-html-entity').props.onPress;await act(async()=>view.update(content(122)));await act(async()=>press());
+ expect(open).not.toHaveBeenCalled();expect(close).not.toHaveBeenCalled();
+ await act(async()=>view.update(content()));await act(async()=>node('help-html-menu-button').props.onPress());await act(async()=>node('help-html-entity').props.onPress());
+ expect(close).toHaveBeenCalledTimes(1);expect(open).toHaveBeenCalledTimes(1);expect(close.mock.invocationCallOrder[0]).toBeLessThan(open.mock.invocationCallOrder[0]);
+});
+
+test('account change during the closing animation cancels the deferred entity action',async()=>{
+ mockReduced=false;let finished!:(result:{finished:boolean})=>void;
+ const animation=jest.spyOn(Animated,'parallel').mockReturnValue({start:(callback:any)=>{finished=callback;},stop:()=>{},reset:()=>{}} as any);
+ const open=jest.fn(),entityArtifact={...artifact,entity:{url:'leaderproduct://entity/v1/user/121'}};
+ const content=(userId=121)=>React.createElement(AuthContext.Provider,{value:{isAuthenticated:true,profile:{id:userId}} as any},React.createElement(HelpHtmlViewer,{artifact:entityArtifact,onClose:close,expectedUserId:121,onOpenEntity:open}));
+ try{
+  await act(async()=>{view=TestRenderer.create(content());});await act(async()=>node('help-html-menu-button').props.onPress());await act(async()=>node('help-html-entity').props.onPress());expect(open).not.toHaveBeenCalled();
+  await act(async()=>view.update(content(122)));await act(async()=>finished({finished:true}));expect(open).not.toHaveBeenCalled();
+ }finally{animation.mockRestore();}
 });

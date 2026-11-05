@@ -10,14 +10,17 @@ import type {ResolveHelpMedia} from './HelpMedia';
 import {HelpHtmlContext} from './HelpHtmlContext';
 import {HelpHtmlSurface} from './HelpHtmlSurface';
 import {HelpHtmlViewer,type HelpHtmlOrigin} from './HelpHtmlViewer';
-type Loaded={artifact?:HelpHtmlArtifact;error?:boolean};
+import {helpHtmlEntityTarget,loadHelpHtmlEntityPreview} from '../helpHtmlEntity';
+import {useEntityCards} from '@/src/features/entityCards/EntityCardContext';
+type Loaded={artifact?:HelpHtmlArtifact;imageDataUrl?:string;error?:boolean};
 
 /** Links are scoped to real attachments of this message, never model URLs. */
 export function HelpHtmlMessage({attachments,resolve,children,ticketId,messageId,requestedId,onRequestConsumed}:{attachments:HelpAttachment[];resolve?:ResolveHelpMedia;children:React.ReactNode;ticketId?:number;messageId?:number;requestedId?:string;onRequestConsumed?:()=>void}){
+ const entities=useEntityCards();
  const c=useHelpTheme(),auth=useContext(AuthContext),userId=auth?.isAuthenticated?auth.profile?.id:undefined;
  const account=userId?`${API_BASE_URL}:${userId}`:'';
  const files=attachments.filter(file=>helpHtmlAttachmentId(file)!==null),identity=files.map(file=>`${file.id}:${file.name}:${file.url}`).join('|');
- const [loaded,setLoaded]=useState<Record<string,Loaded>>({}),[viewer,setViewer]=useState<{artifact:HelpHtmlArtifact;origin?:HelpHtmlOrigin;account:string}|null>(null);
+ const [loaded,setLoaded]=useState<Record<string,Loaded>>({}),[viewer,setViewer]=useState<{artifact:HelpHtmlArtifact;origin?:HelpHtmlOrigin;imageDataUrl?:string;account:string}|null>(null);
  const pending=useRef(new Map<string,Promise<HelpHtmlArtifact|null>>()),data=useRef<Record<string,Loaded>>({}),controller=useRef(new AbortController()),generation=useRef(0),previews=useRef(new Map<string,View>());
  const scope=useRef({account,resolve,identity}),loadedScope=useRef({account,resolve,identity});scope.current={account,resolve,identity};
  const sameScope=loadedScope.current.account===account&&loadedScope.current.resolve===resolve&&loadedScope.current.identity===identity;
@@ -36,7 +39,10 @@ export function HelpHtmlMessage({attachments,resolve,children,ticketId,messageId
   const task=(async()=>{
    try{
     const text=await loadHelpAttachmentText(file,userId,signal,HELP_HTML_MAX_BYTES),artifact=parseHelpHtmlArtifact(text,id);
-    if(!valid())return null;data.current={...data.current,[id]:{artifact}};setLoaded(data.current);return artifact;
+    if(!valid())return null;
+    let imageDataUrl:string|undefined;
+    if(artifact.entity){try{imageDataUrl=(await loadHelpHtmlEntityPreview(artifact.entity.url,userId,signal)).imageDataUrl;}catch{signal.throwIfAborted();}}
+    if(!valid())return null;data.current={...data.current,[id]:{artifact,imageDataUrl}};setLoaded(data.current);return artifact;
    }catch{if(valid()){data.current={...data.current,[id]:{error:true}};setLoaded(data.current);}return null;}
    finally{if(valid())pending.current.delete(id);}
   })();pending.current.set(id,task);return task;
@@ -47,9 +53,14 @@ export function HelpHtmlMessage({attachments,resolve,children,ticketId,messageId
   const version=generation.current,artifact=await load(id);if(!artifact?.full||version!==generation.current)return;
   Keyboard.dismiss();
   const node=fromPreview?previews.current.get(id):undefined;
-  if(node){node.measureInWindow((x,y,width,height)=>{if(version===generation.current)setViewer({artifact,account:scope.current.account,origin:width>0&&height>0?{x,y,width,height}:undefined});});}
-  else setViewer({artifact,account:scope.current.account});
+  if(node){node.measureInWindow((x,y,width,height)=>{if(version===generation.current)setViewer({artifact,imageDataUrl:data.current[id]?.imageDataUrl,account:scope.current.account,origin:width>0&&height>0?{x,y,width,height}:undefined});});}
+  else setViewer({artifact,imageDataUrl:data.current[id]?.imageDataUrl,account:scope.current.account});
  },[load]);
+ const openEntity=useCallback((artifact:HelpHtmlArtifact)=>{
+  const target=helpHtmlEntityTarget(artifact.entity?.url);
+  if(!target||!userId||scope.current.account!==account||loadedScope.current.account!==account||loadedScope.current.identity!==scope.current.identity||loadedScope.current.resolve!==scope.current.resolve||data.current[artifact.id]?.artifact!==artifact)return;
+  Keyboard.dismiss();entities.openEntity(target,artifact.title);
+ },[entities,account,userId]);
  const consumedRequest=useRef<string|null>(null),consume=useRef(onRequestConsumed);consume.current=onRequestConsumed;
  useEffect(()=>{
   if(!requestedId){consumedRequest.current=null;return;}
@@ -65,10 +76,11 @@ export function HelpHtmlMessage({attachments,resolve,children,ticketId,messageId
    const id=helpHtmlAttachmentId(file)!,item=visibleLoaded[id],artifact=item?.artifact;
    if(artifact&&!artifact.compact)return <Pressable key={id} testID={`help-html-open-${id}`} onPress={()=>void open(id)} accessibilityRole="link" style={{minHeight:44,justifyContent:'center'}}><Text style={{color:c.accentText,fontSize:15}}>{artifact.title}</Text></Pressable>;
    return <View key={id} ref={node=>{if(node)previews.current.set(id,node);else previews.current.delete(id);}} collapsable={false} testID={`help-html-compact-${id}`} style={{width:'100%',aspectRatio:1,overflow:'hidden'}}>
-    {artifact?.compact?<HelpHtmlSurface compact variant={artifact.compact} label={artifact.description||artifact.title}/>:item?.error?<Pressable onPress={()=>void load(id)} accessibilityRole="button" accessibilityLabel="Повторить загрузку примера" style={{flex:1,justifyContent:'center'}}><Text style={{color:c.muted}}>Не удалось загрузить пример. Повторить</Text></Pressable>:<View style={{flex:1,alignItems:'center',justifyContent:'center'}}><ActivityIndicator color={c.muted}/></View>}
+    {artifact?.compact?<HelpHtmlSurface compact variant={artifact.compact} imageDataUrl={item.imageDataUrl} label={artifact.description||artifact.title}/>:item?.error?<Pressable onPress={()=>void load(id)} accessibilityRole="button" accessibilityLabel="Повторить загрузку примера" style={{flex:1,justifyContent:'center'}}><Text style={{color:c.muted}}>Не удалось загрузить пример. Повторить</Text></Pressable>:<View style={{flex:1,alignItems:'center',justifyContent:'center'}}><ActivityIndicator color={c.muted}/></View>}
+    {artifact?.entity?<Pressable testID={`help-html-entity-${id}`} accessibilityRole="button" accessibilityLabel={`Открыть ${artifact.title}`} onPress={()=>openEntity(artifact)} style={{position:'absolute',left:0,right:0,top:0,bottom:0}}/>:null}
     {artifact?.full?<Pressable testID={`help-html-expand-${id}`} accessibilityRole="button" accessibilityLabel="Открыть на весь экран" onPress={()=>void open(id,true)} style={{position:'absolute',right:0,top:0,width:44,height:44,alignItems:'center',justifyContent:'center'}}><View style={{width:32,height:32,borderRadius:16,backgroundColor:c.background,alignItems:'center',justifyContent:'center'}}><Ionicons name="expand-outline" size={21} color={c.text}/></View></Pressable>:null}
    </View>;
   })}</View>,
- }),[identity,loaded,sameScope,c,open,load]);
- return <HelpHtmlContext.Provider value={navigation}>{children}{viewer&&account&&sameScope&&viewer.account===account?<HelpHtmlViewer artifact={viewer.artifact} origin={viewer.origin} expectedUserId={userId} link={helpHtmlPageLink(ticketId??0,messageId??0,viewer.artifact.id)} onClose={()=>setViewer(null)}/>:null}</HelpHtmlContext.Provider>;
+ }),[identity,loaded,sameScope,c,open,load,openEntity]);
+ return <HelpHtmlContext.Provider value={navigation}>{children}{viewer&&account&&sameScope&&viewer.account===account?<HelpHtmlViewer artifact={viewer.artifact} imageDataUrl={viewer.imageDataUrl} onOpenEntity={viewer.artifact.entity?()=>openEntity(viewer.artifact):undefined} origin={viewer.origin} expectedUserId={userId} link={helpHtmlPageLink(ticketId??0,messageId??0,viewer.artifact.id)} onClose={()=>setViewer(null)}/>:null}</HelpHtmlContext.Provider>;
 }

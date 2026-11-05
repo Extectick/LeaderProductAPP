@@ -32,10 +32,10 @@ export async function copyHelpHtmlLink(artifact:HelpHtmlArtifact,link:string,sco
  if(await Clipboard.setStringAsync(value)===false)throw Error('HELP_HTML_COPY_FAILED');
 }
 /** Export the already-authorized full document, never its JSON transport envelope or auth token. */
-export async function downloadHelpHtml(artifact:HelpHtmlArtifact,color:string,scope:Scope):Promise<void>{
+export async function downloadHelpHtml(artifact:HelpHtmlArtifact,color:string,scope:Scope,imageDataUrl?:string):Promise<void>{
  if(!artifact.full)throw Error('HELP_HTML_FULL_REQUIRED');
  await assertActive(scope);
- const html=helpHtmlDocument(artifact.full,color,false);
+ const html=helpHtmlDocument(artifact.full,color,false,0,imageDataUrl);
  const stem=artifact.title.replace(/[^\p{L}\p{N} _().-]/gu,'_').replace(/^\.+/,'').slice(0,80).trim()||'Пример';
  const filename=`${stem}-${artifact.id.slice(0,8)}.html`;
  if(Platform.OS==='web'){

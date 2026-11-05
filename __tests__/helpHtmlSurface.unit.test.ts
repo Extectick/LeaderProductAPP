@@ -41,3 +41,15 @@ test('full page keeps its own scroll interaction while hiding native scroll indi
   const native=view.root.findAll(node=>node.type==='WebView')[0].props;expect(native.scrollEnabled).toBe(true);expect(native.showsVerticalScrollIndicator).toBe(false);
  }finally{await act(async()=>view.unmount());}
 });
+
+test('approved raster bytes are local data only and remain stable across parent renders',async()=>{
+ let view!:TestRenderer.ReactTestRenderer;const variant={html:'<img src="help-entity-image" alt="Фото">',css:''};
+ const imageDataUrl='data:image/png;base64,'+Buffer.from([137,80,78,71,13,10,26,10,1,2,3,4]).toString('base64');
+ await act(async()=>{view=TestRenderer.create(React.createElement(HelpHtmlSurface,{variant,compact:true,label:'Карточка',imageDataUrl}));});
+ try{
+  const original=view.root.findAll(node=>node.type==='WebView')[0].props;expect(original.source.html).toContain(imageDataUrl);expect(original.source.html).toContain('img-src data:');expect(original.javaScriptEnabled).toBe(false);
+  await act(async()=>view.update(React.createElement(HelpHtmlSurface,{variant:{...variant},compact:true,label:'Карточка',imageDataUrl})));
+  expect(view.root.findAll(node=>node.type==='WebView')[0].props.source).toBe(original.source);
+  expect(view.root.findAll(node=>node.props.testID==='help-html-surface')[0].props.pointerEvents).toBe('none');
+ }finally{await act(async()=>view.unmount());}
+});

@@ -5,13 +5,13 @@ import {helpHtmlDocument} from '../helpHtml';
 import {useHelpTheme} from '../helpTheme';
 
 /** Only a local inert document enters the renderer. Attachment tokens stay outside. */
-type Props={variant:HelpHtmlVariant;compact?:boolean;label:string;topInset?:number;onScroll?:(offset:number)=>void;onReady?:()=>void};
+type Props={variant:HelpHtmlVariant;compact?:boolean;label:string;topInset?:number;imageDataUrl?:string;onScroll?:(offset:number)=>void;onReady?:()=>void};
 const surfaceStyle={flex:1,backgroundColor:'transparent'} as const;
 const origins=['*'];
 const allowLocal=(request:{url:string})=>request.url==='about:blank'||request.url.startsWith('about:blank#');
 const ignoreWindow=()=>{};
-export const HelpHtmlSurface=memo(function HelpHtmlSurface({variant,compact=false,label,topInset=0,onScroll,onReady}:Props){
- const c=useHelpTheme(),html=useMemo(()=>helpHtmlDocument(variant,c.text,compact,topInset),[variant.html,variant.css,c.text,compact,topInset]);
+export const HelpHtmlSurface=memo(function HelpHtmlSurface({variant,compact=false,label,topInset=0,imageDataUrl,onScroll,onReady}:Props){
+ const c=useHelpTheme(),html=useMemo(()=>helpHtmlDocument(variant,c.text,compact,topInset,imageDataUrl),[variant.html,variant.css,c.text,compact,topInset,imageDataUrl]);
  // Android loads HTML again whenever the source prop is committed. Keep both
  // it and event handlers stable through chat/viewer state and scroll renders.
  const source=useMemo(()=>({html,baseUrl:'about:blank'}),[html]);
@@ -38,4 +38,4 @@ export const HelpHtmlSurface=memo(function HelpHtmlSurface({variant,compact=fals
   onShouldStartLoadWithRequest={allowLocal}
   onLoad={ready} onError={ready} onOpenWindow={ignoreWindow} onScroll={scrolled}
   style={surfaceStyle} containerStyle={surfaceStyle}/></View>;
-},(previous,next)=>previous.variant.html===next.variant.html&&previous.variant.css===next.variant.css&&previous.compact===next.compact&&previous.topInset===next.topInset&&previous.label===next.label&&previous.onReady===next.onReady&&previous.onScroll===next.onScroll);
+},(previous,next)=>previous.variant.html===next.variant.html&&previous.variant.css===next.variant.css&&previous.compact===next.compact&&previous.topInset===next.topInset&&previous.imageDataUrl===next.imageDataUrl&&previous.label===next.label&&previous.onReady===next.onReady&&previous.onScroll===next.onScroll);

@@ -52,3 +52,13 @@ test('inert local wrapper isolates CSS and forbids remote assets or scripting',(
  expect(()=>helpHtmlDocument({...compact,css:'</style>'},'#fff',true)).toThrow();
  expect(()=>helpHtmlDocument(compact,'red;}',true)).toThrow();
 });
+
+test('entity cards bind one canonical action and only the authenticated image slot',()=>{
+ const entity={url:'leaderproduct://entity/v1/user/121'},compact={html:'<figure><span>ИС</span><img src="help-entity-image" alt="Фото" /></figure>',css:''};
+ expect(parseHelpHtmlArtifact(payload({entity,compact}),id).entity).toEqual(entity);
+ for(const bad of [{entity:{url:entity.url+'?token=x'},compact},{entity,compact:null,full:compact},{compact},{entity,compact:{...compact,html:'<img src="https://example.com/photo.jpg">'}},{entity,compact:{...compact,html:'<img src="data:image/svg+xml;base64,PHN2Zz4=" src="help-entity-image">'}}])expect(()=>parseHelpHtmlArtifact(payload(bad),id)).toThrow();
+ const image='data:image/png;base64,'+Buffer.from([137,80,78,71,13,10,26,10,1,2,3,4]).toString('base64');
+ const shown=helpHtmlDocument(compact,'#18212D',true,0,image);
+ expect(shown).toContain('img-src data:');expect(shown).toContain(`src="${image}"`);expect(shown).not.toContain('help-entity-image');
+ const missing=helpHtmlDocument(compact,'#18212D',true);expect(missing).not.toContain('<img');expect(missing).toContain('<span>ИС</span>');
+});
