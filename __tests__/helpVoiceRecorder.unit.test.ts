@@ -157,7 +157,17 @@ describe('Android voice draft transitions', () => {
   function mic() {
     const handlers = tree.root.findByType('GestureDetector' as any).props.gesture.handlers;
     return {props:{
-      onPanResponderGrant: () => {mockTouchPosition={absoluteX:0,absoluteY:0};handlers.onTouchesDown({allTouches:[mockTouchPosition]},{activate:()=>handlers.onStart()});},
+      onPanResponderGrant: () => {
+        mockTouchPosition={absoluteX:0,absoluteY:0};
+        // RNGH dispatches pointer DOWN before Pan's native handle() calls begin.
+        // Android rejects setGestureState(ACTIVE) unless it is already BEGAN.
+        let state:'undetermined'|'began'|'active'|'failed'='undetermined';
+        handlers.onTouchesDown({allTouches:[mockTouchPosition]},{
+          begin:()=>{if(state==='undetermined')state='began';},
+          activate:()=>{if(state==='began'){state='active';handlers.onStart();}},
+          fail:()=>{state='failed';},
+        });
+      },
       onPanResponderMove: (_:unknown,g:{dx:number;dy:number}) => { jest.advanceTimersByTime(16);mockTouchPosition={absoluteX:g.dx,absoluteY:g.dy};handlers.onUpdate(mockTouchPosition); },
       onPanResponderRelease: () => handlers.onEnd(mockTouchPosition,true)
     }};
@@ -187,6 +197,15 @@ describe('Android voice draft transitions', () => {
     await act(async()=>button('Приостановить запись').props.onPress());
     expect(StyleSheet.flatten(tree.root.findByProps({testID:'help-voice-paused'}).props.style)).toMatchObject({height:48,marginTop:0});
     expect(props.onSend).not.toHaveBeenCalled();
+  });
+  test('a stationary finger starts recording before any move event', async () => {
+    await render();
+    await act(async () => mic().props.onPanResponderGrant());
+    expect(mockNative.start).toHaveBeenCalledTimes(1);
+    expect(tree.root.findAllByProps({testID:'help-voice-holding'}).length).toBeGreaterThan(0);
+    await tick(2000);
+    await act(async () => mic().props.onPanResponderRelease());
+    expect(props.onSend).toHaveBeenCalledTimes(1);
   });
   test('mic switches between single axes until locking, then ignores further dragging', async () => {
     await render();

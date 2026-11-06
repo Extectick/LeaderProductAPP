@@ -407,6 +407,9 @@ export function HelpVoiceRecorder(props: Props) {
       const touch = event.allTouches[0];
       if (!touch) { manager.fail(); return; }
       dragOriginX.value = touch.absoluteX; dragOriginY.value = touch.absoluteY;
+      // Pointer DOWN arrives before Pan's native begin(). Android rejects an
+      // ACTIVE transition from UNDETERMINED, so establish BEGAN explicitly.
+      manager.begin();
       manager.activate();
     })
     .onStart(() => {
