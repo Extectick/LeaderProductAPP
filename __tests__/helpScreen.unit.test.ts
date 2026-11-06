@@ -1065,7 +1065,7 @@ describe('Help screen integration with service boundary', () => {
     expect(button('Продолжить с AI')).toBeUndefined();
     expect(mockService.sendMessage).not.toHaveBeenCalled();
   });
-  test('IT join restores ordinary chat and removes AI return; persistent events replace the legacy fallback',async()=>{
+  test('IT join restores ordinary chat and renders its event only in durable history',async()=>{
     await openWithMessage();
     mockService.selectedTicket={...ticket,itRequested:true};
     await act(async()=>screen.update(React.createElement(HelpScreen)));
@@ -1073,13 +1073,33 @@ describe('Help screen integration with service boundary', () => {
     mockService.selectedTicket={...ticket,itRequested:true,members:[{userId:9,role:'IT',user,itDisplayName:'Иванов Иван'}]};
     await act(async()=>screen.update(React.createElement(HelpScreen)));
     expect(composer()).toBeTruthy();expect(button('Продолжить с AI')).toBeUndefined();
-    const joined=screen.root.findAllByProps({testID:'help-it-status-JOINED'})[0];
-    expect(joined.findAllByType(Text).map(node=>node.props.children)).toContain('Иванов Иван подключился');
+    expect(screen.root.findAllByProps({testID:'help-it-status-JOINED'})).toHaveLength(0);
     mockService.messages=[...mockService.messages,{...mockService.messages[0],id:32,sequence:2,kind:'SYSTEM',authorId:9,author:user,itStatusChange:'JOINED',text:'Иванов Иван подключился'}];
     await act(async()=>screen.update(React.createElement(HelpScreen)));
     // Message renderer (mocked here) now owns the event; no duplicate footer.
     expect(screen.root.findAllByProps({testID:'help-it-status-JOINED'})).toHaveLength(0);
     expect(screen.root.findAllByType('HelpMessageBubble' as any).at(-1)!.props.message.itStatusChange).toBe('JOINED');
+  });
+  test('IT membership arriving before its history never leaves a join event below a later outgoing message',async()=>{
+    await openWithMessage();
+    const first=mockService.messages[0],user={id:9,name:'Иванов Иван',avatarUrl:null};
+    mockService.selectedTicket={...ticket,itRequested:true,members:[{userId:9,role:'IT',user,itDisplayName:user.name}]};
+    mockService.pendingMessages=[{key:'after-join',ticketId:ticket.id,create:false,createdAt:Date.now(),status:'sending',input:{text:'После подключения',clientMessageId:'after-join'}}];
+    await act(async()=>screen.update(React.createElement(HelpScreen)));
+    expect(screen.root.findAllByType(HelpPendingMessage)).toHaveLength(1);
+    // Membership is current state, not a dated event at the end of history.
+    expect(screen.root.findAllByProps({testID:'help-it-status-JOINED'})).toHaveLength(0);
+    const joined={...first,id:32,sequence:2,kind:'SYSTEM',authorRole:'SYSTEM',authorId:user.id,author:user,itStatusChange:'JOINED',text:user.name+' подключился'};
+    const sent={...first,id:33,sequence:3,clientMessageId:'after-join',text:'После подключения'};
+    mockService.messages=[first,joined];
+    await act(async()=>screen.update(React.createElement(HelpScreen)));
+    expect(mockTimelineProps.messages.map((message:any)=>message.id)).toEqual([first.id,joined.id]);
+    expect(mockTimelineProps.pendingMessages.map((item:any)=>item.key)).toEqual(['after-join']);
+    expect(screen.root.findAllByProps({testID:'help-it-status-JOINED'})).toHaveLength(0);
+    mockService.messages=[first,joined,sent];mockService.pendingMessages=[];
+    await act(async()=>screen.update(React.createElement(HelpScreen)));
+    expect(screen.root.findAllByType('HelpMessageBubble' as any).map(node=>node.props.message.id)).toEqual([first.id,joined.id,sent.id]);
+    expect(screen.root.findAllByProps({testID:'help-it-status-JOINED'})).toHaveLength(0);
   });
   test('failed AI return leaves IT wait and draft intact with a retryable button',async()=>{
     await openWithMessage();mockService.selectedTicket={...ticket,itRequested:true};
@@ -1147,7 +1167,7 @@ describe('Help screen integration with service boundary', () => {
     await act(async()=>composer().props.onSend());
     expect(mockService.jumpToLatest).toHaveBeenCalledTimes(1);
   });
-  test('legacy cached names do not create a reversed-name join banner before authoritative metadata arrives',async()=>{
+  test('legacy membership names cannot manufacture a join event at the end of history',async()=>{
     await openWithMessage();
     const user={id:9,name:'Иван Иванов',avatarUrl:null};
     mockService.selectedTicket={...ticket,members:[{userId:9,role:'IT',user}]};
@@ -1155,7 +1175,7 @@ describe('Help screen integration with service boundary', () => {
     expect(screen.root.findAllByProps({testID:'help-it-status-JOINED'})).toHaveLength(0);
     mockService.selectedTicket={...mockService.selectedTicket,members:[{userId:9,role:'IT',user,itDisplayName:'Иванов Иван'}]};
     await act(async()=>screen.update(React.createElement(HelpScreen)));
-    expect(screen.root.findAllByType(Text).some(node=>node.props.children==='Иванов Иван подключился')).toBe(true);
+    expect(screen.root.findAllByProps({testID:'help-it-status-JOINED'})).toHaveLength(0);
     expect(screen.root.findAllByType(Text).some(node=>node.props.children==='Иван Иванов подключился')).toBe(false);
   });
   test('latest and search controls use a full scene native sibling throughout keyboard movement',async()=>{

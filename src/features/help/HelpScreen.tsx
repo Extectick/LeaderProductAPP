@@ -685,12 +685,13 @@ export default function HelpScreen() {
   const sourceReference=useMemo(()=>sourceLink?(service.tickets.find(row=>row.id===sourceLink.id)??sourceLink):null,[sourceLink,service.tickets]);
   const timelineHeader=useMemo(()=><>{sourceReference?<HelpTicketReference ticket={sourceReference} onPress={()=>void timelineActions.current.openSource()}/>:null}</>,[sourceReference]);
   const typingUsers=ticket?service.typingByTicket[ticket.id]:undefined;
-  // Older tickets have no durable handoff event. Show their current state without
-  // inventing history, and remove the fallback when the event arrives through sync.
+  // Membership is current state, not a timeline event. A JOINED footer would
+  // always move below later messages while its durable row is still syncing.
+  // Only history rows own join placement; waiting remains a current-state hint.
   const fallbackItStatus=useMemo(()=>{
     if(!ticket||ticket.status!=='OPEN'||service.hasNewer)return null;
     const specialists=ticket.members.filter(member=>member.role==='IT');
-    if(specialists.length)return <>{specialists.filter(member=>member.itDisplayName&&!messages.some(message=>message.itStatusChange==='JOINED'&&message.authorId===member.userId)).map(member=><HelpItStatus key={member.userId} status="JOINED" user={{...member.user,name:member.itDisplayName!}}/>)}</>;
+    if(specialists.length)return null;
     return ticket.itRequested&&messages.filter(message=>message.itStatusChange).at(-1)?.itStatusChange!=='REQUESTED'?<HelpItStatus status="REQUESTED"/>:null;
   },[ticket,messages,service.hasNewer]);
   const timelineFooter=useMemo(()=><>{fallbackItStatus}{typingUsers?.length?<View style={{paddingHorizontal:16,paddingVertical:8}}><HelpTyping users={typingUsers}/></View>:null}</>,[typingUsers,fallbackItStatus]);
