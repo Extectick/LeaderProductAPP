@@ -115,10 +115,27 @@ the current tail pins the existing list without reloading its history; an older
 history window still explicitly jumps to the latest page.
 
 
-### Chat readiness and loading placeholders
+### Latest navigation preserves the loaded tail
 
-Existing chats mount and measure their initial timeline before the entry animation
-starts. Stable geometry is checked across frames with a bounded wait for streaming
-content; read visibility begins after entry. The existing native runtime and
-composer remain unchanged. Remote HTML, media and entity/profile cards still load
-asynchronously and display neutral gray placeholders while loading.
+`jumpToLatest` issues a viewport target without reading/replacing history when
+the active page already has `hasNewer=false`. Message identities and prepended
+rows remain intact, avoiding stale disk/server replay during the transition.
+The navigation generation still invalidates an earlier outstanding jump. Missing
+tail pages keep the existing cache/network path. The timeline animation and native
+scroll owners are unchanged. Regression coverage: `helpServiceHistory.unit.test.ts`.
+
+
+### Attachment thumbnail scheduling
+
+Photo tiles show the plain gray `LoadingPlaceholder` until a bounded thumbnail is
+ready. `helpPhotoPreviewQueue` runs at most two `Image.loadAsync` jobs, with decode
+bounds capped at512px and sized for display density. Android Expo Image performs
+the decode in `Dispatchers.IO`; no bitmap processing runs in JS. Only visible
+indices enqueue work (initial18cells until viewability is available).
+
+Dragging, sheet resizing and custom/native inertia pause new loads and completion
+publication. Resume waits120ms after settled motion; the gesture pause is separate
+from opening-layout completion. Publications yield between jobs. Offscreen/cancelled
+loads cannot publish, and discarded native refs are released once. Cached mounted
+previews survive motion, caption edits and selection. iOS retains its no-cloud
+preview check; original-file preparation still occurs only on explicit selection.

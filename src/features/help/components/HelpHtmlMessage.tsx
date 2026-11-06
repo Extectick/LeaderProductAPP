@@ -30,7 +30,7 @@ export function HelpHtmlMessage({attachments,resolve,children,ticketId,messageId
  const sameScope=loadedScope.current.account===account&&loadedScope.current.resolve===resolve&&loadedScope.current.identity===identity;
  const visibleLoaded=sameScope?loaded:{};
  useEffect(()=>{
-  const version=++generation.current,abort=new AbortController();loadedScope.current={account,resolve,identity};controller.current=abort;pending.current.clear();data.current={};setLoaded({});setViewer(null);
+  const version=++generation.current,abort=new AbortController();loadedScope.current={account,resolve,identity};controller.current=abort;pending.current.clear();data.current={};setLoaded({});setPreviewReady(false);setViewer(null);
   return()=>{abort.abort();if(generation.current===version)++generation.current;};
  },[account,resolve,identity]);
  const load=useCallback((id:string):Promise<HelpHtmlArtifact|null>=>{
@@ -53,11 +53,14 @@ export function HelpHtmlMessage({attachments,resolve,children,ticketId,messageId
  // Every closure is replaced on account or descriptor changes; late reads are fenced above.
  },[account,resolve,identity,userId]);
  useEffect(()=>{
-  setPreviewReady(false);
-  if(mediaPriority!=='visible'||!account||!resolve)return;
+  if(!account||!resolve||mediaPriority==='deferred'||mediaPriority==='retained'){setPreviewReady(false);return;}
+  // Keep an already painted card in the bounded near-viewport buffer.
+  // Visibility jitter must not unmount its WebView and replay its placeholder.
+  // A never-visible near row still does not download or mount anything.
+  if(mediaPriority!=='visible')return;
   let cancelled=false,frame=0;
   // Let the already-mounted message paint before download/parse/WebView work.
-  // Recycled near/retained rows reserve the same preview without starting it.
+  // Never-seen near/retained rows reserve space without starting a preview.
   frame=requestAnimationFrame(()=>{frame=requestAnimationFrame(()=>{
    if(cancelled)return;
    setPreviewReady(true);
@@ -97,7 +100,7 @@ export function HelpHtmlMessage({attachments,resolve,children,ticketId,messageId
    const height=helpHtmlCompactHeight(artifact?.compact);
    if(artifact&&!artifact.compact)return <Pressable key={id} testID={`help-html-open-${id}`} onPress={()=>void open(id)} accessibilityRole="link" style={{minHeight:44,justifyContent:'center'}}><Text style={{color:c.accentText,fontSize:15}}>{artifact.title}</Text></Pressable>;
    return <View key={id} ref={node=>{if(node)previews.current.set(id,node);else previews.current.delete(id);}} collapsable={false} testID={`help-html-compact-${id}`} style={{width:'100%',...(height===undefined?{aspectRatio:1}:{height}),overflow:'hidden'}}>
-    {artifact?.compact&&mediaPriority==='visible'&&previewReady?<HelpHtmlSurface compact variant={artifact.compact} imageDataUrl={item.imageDataUrl} label={artifact.description||artifact.title}/>:item?.error?<Pressable onPress={()=>void load(id)} accessibilityRole="button" accessibilityLabel="Повторить загрузку примера" style={{flex:1,justifyContent:'center'}}><Text style={{color:c.muted}}>Не удалось загрузить пример. Повторить</Text></Pressable>:<LoadingPlaceholder dark={c.dark} variant={height!==undefined&&height<160?'row':'card'} accessibilityLabel="Загрузка карточки"/>}
+    {artifact?.compact&&(mediaPriority==='visible'||mediaPriority==='near')&&previewReady?<HelpHtmlSurface compact variant={artifact.compact} imageDataUrl={item.imageDataUrl} label={artifact.description||artifact.title}/>:item?.error?<Pressable onPress={()=>void load(id)} accessibilityRole="button" accessibilityLabel="Повторить загрузку примера" style={{flex:1,justifyContent:'center'}}><Text style={{color:c.muted}}>Не удалось загрузить пример. Повторить</Text></Pressable>:<LoadingPlaceholder dark={c.dark} variant={height!==undefined&&height<160?'row':'card'} accessibilityLabel="Загрузка карточки"/>}
     {artifact?.entity?<Pressable testID={`help-html-entity-${id}`} accessibilityRole="button" accessibilityLabel={`Открыть ${artifact.title}`} onPress={()=>openEntity(artifact)} style={{position:'absolute',left:0,right:0,top:0,bottom:0}}/>:null}
     {artifact?.full?<Pressable testID={`help-html-expand-${id}`} accessibilityRole="button" accessibilityLabel="Открыть на весь экран" onPress={()=>void open(id,true)} style={{position:'absolute',right:0,top:0,width:44,height:44,alignItems:'center',justifyContent:'center'}}><View style={{width:32,height:32,borderRadius:16,backgroundColor:c.background,alignItems:'center',justifyContent:'center'}}><Ionicons name="expand-outline" size={21} color={c.text}/></View></Pressable>:null}
    </View>;

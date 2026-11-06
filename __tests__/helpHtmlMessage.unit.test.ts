@@ -128,7 +128,7 @@ test.each(['near','deferred','retained'] as const)('%s rows neither auto-downloa
  await act(async()=>view.update(priorityTree('visible')));await flushPreview();
  expect(loadHelpAttachmentText).toHaveBeenCalledTimes(1);expect(view.root.findAll(node=>node.type==='HtmlSurface')).toHaveLength(1);
  await act(async()=>view.update(priorityTree(priority)));await flushPreview();
- expect(loadHelpAttachmentText).toHaveBeenCalledTimes(1);expect(view.root.findAll(node=>node.type==='HtmlSurface')).toHaveLength(0);
+ expect(loadHelpAttachmentText).toHaveBeenCalledTimes(1);expect(view.root.findAll(node=>node.type==='HtmlSurface')).toHaveLength(priority==='near'?1:0);
 });
 test('priority downgrade or unmount cancels scheduled preview work',async()=>{
  jest.mocked(loadHelpAttachmentText).mockResolvedValue(encode());
@@ -162,4 +162,20 @@ test.each([
  const preview=view.root.findAllByType(View).find(node=>node.props.testID===`help-html-compact-${id}`)!;
  expect(StyleSheet.flatten(preview.props.style)).toEqual({width:'100%',height,overflow:'hidden'});
  expect(view.root.findAll(node=>node.type==='HtmlSurface')).toHaveLength(1);
+});
+
+
+test('a loaded widget retains its native surface across visible/near boundary oscillation',async()=>{
+ jest.mocked(loadHelpAttachmentText).mockResolvedValue(encode());
+ await act(async()=>{view=TestRenderer.create(priorityTree('visible'));});await flushPreview();
+ const surface=view.root.findAll(node=>node.type==='HtmlSurface')[0];expect(surface).toBeDefined();
+ for(const priority of ['near','visible','near','visible'] as const){
+  await act(async()=>view.update(priorityTree(priority)));
+  expect(view.root.findAll(node=>node.type==='HtmlSurface')[0]).toBe(surface);
+  await flushPreview();
+  expect(view.root.findAll(node=>node.type==='HtmlSurface')[0]).toBe(surface);
+ }
+ expect(loadHelpAttachmentText).toHaveBeenCalledTimes(1);
+ await act(async()=>view.update(priorityTree('deferred')));
+ expect(view.root.findAll(node=>node.type==='HtmlSurface')).toHaveLength(0);
 });

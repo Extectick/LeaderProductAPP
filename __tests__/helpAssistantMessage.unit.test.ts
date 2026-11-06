@@ -17,25 +17,19 @@ import {helpTime} from '../src/features/help/helpUiUtils';
 import * as activityPresentation from '../src/features/help/helpActivityPresentation';
 const base={id:1,ticketId:1043,createdAt:'2026-10-30T10:00:00Z',text:'',assistantRun:{runId:'qa-1',eventId:1,ticketId:1043,status:'thinking',step:1,completedSteps:1,startedAt:0,updatedAt:0}} as HelpMessage;
 
-test('answer chunks skip unchanged activity rows but every displayed activity field stays current',async()=>{
-  const label=jest.spyOn(activityPresentation,'helpActivityLabel');
-  let view!:TestRenderer.ReactTestRenderer;
-  let item={id:'lookup',kind:'knowledge' as const,status:'completed' as const,label:'Найдены инструкции: 2',text:'Проверка'} as import('../src/features/help/helpAssistant').HelpAssistantActivity;
-  let chunk=0;
-  const tree=()=>React.createElement(HelpAssistantMessage,{message:{...base,assistantRun:{...base.assistantRun!,activityVersion:1,activities:[{...item}],draftText:`Ответ ${chunk++}`}}});
-  try{
-    await act(async()=>{view=TestRenderer.create(tree());});
-    const initial=label.mock.calls.length;
-    for(let i=0;i<10;i++)await act(async()=>view.update(tree()));
-    expect(label).toHaveBeenCalledTimes(initial);
-    for(const change of [{label:'Другая операция'},{text:'Обновлённое описание'},{status:'failed' as const},{kind:'analysis' as const},{id:'next'}]){
-      const before=label.mock.calls.length;item={...item,...change};
-      await act(async()=>view.update(tree()));
-      expect(label).toHaveBeenCalledTimes(before+1);
-      expect(label).toHaveBeenLastCalledWith(expect.objectContaining(item));
-    }
-    expect(JSON.stringify(view.toJSON())).toContain('Другая операция');
-  }finally{if(view)await act(async()=>view.unmount());label.mockRestore();}
+test('activity data never exposes reasoning or a disclosure control while answers stream',async()=>{
+ let view!:TestRenderer.ReactTestRenderer;
+ const label=jest.spyOn(activityPresentation,'helpActivityLabel');
+ try{
+  for(const status of ['thinking','streaming','completed'] as const){
+   const message={...base,text:status==='completed'?'Ответ':'',assistantRun:{...base.assistantRun!,status,activityVersion:1 as const,draftText:'Ответ',activities:[{id:'analysis',kind:'analysis' as const,status:'completed' as const,label:'Скрытая операция',text:'Скрытый анализ'}]}};
+   await act(async()=>{if(view)view.update(React.createElement(HelpAssistantMessage,{message}));else view=TestRenderer.create(React.createElement(HelpAssistantMessage,{message}));});
+   expect(JSON.stringify(view.toJSON())).not.toContain('Скрытый');
+   expect(view.root.findAllByProps({testID:'help-ai-work-log'})).toHaveLength(0);
+   expect(view.root.findByProps({testID:'help-ai-heading'}).props.onPress).toBeUndefined();
+  }
+  expect(label).not.toHaveBeenCalled();
+ }finally{if(view)await act(async()=>view.unmount());label.mockRestore();}
 });
 
 test('composer callback churn skips the assistant body and actions still use the newest callback',async()=>{
@@ -57,7 +51,9 @@ test('reasoning becomes the answer in one message with a single AI identity',asy
   const text=()=>view.root.findAllByType(Text).map(node=>node.props.children).flat().join(' ');
   expect(text()).not.toContain('ИИ рассуждает');
   expect(view.root.findAllByProps({testID:'help-assistant-avatar-loading-1043'})).toHaveLength(0);
-  expect(view.root.findAllByProps({testID:'help-assistant-step-loader'}).length).toBeGreaterThan(0);
+  expect(text()).toContain('ИИ ассистент');
+  expect(text()).toContain('Готовлю ответ…');
+  expect(view.root.findAllByProps({testID:'help-assistant-step-loader'})).toHaveLength(0);
   expect(text()).not.toContain('тестовый сценарий');
   expect(view.root.findAll(node=>node.props.accessibilityLabel==='Остановить обработку ИИ')).toHaveLength(0);
   const answer={...base,text:'Готовый ответ',assistantRun:{...base.assistantRun!,status:'completed' as const,step:3,completedSteps:4}};
@@ -70,31 +66,27 @@ test('reasoning becomes the answer in one message with a single AI identity',asy
   await act(async()=>view.unmount());
 });
 
-test('live AI steps, completion marks and first answer animate with stable identities',async()=>{
-  const {HelpMessageArrival}=require('../src/features/help/components/HelpMessageArrival');
-  let view!:TestRenderer.ReactTestRenderer;
-  await act(async()=>{view=TestRenderer.create(React.createElement(HelpAssistantMessage,{message:base}));});
-  try{
-    expect(view.root.findAllByType(HelpMessageArrival).map(node=>node.props.identity)).toContain('assistant-check:qa-1:1:pending');
-    const next={...base,assistantRun:{...base.assistantRun!,step:2,completedSteps:2}};
-    await act(async()=>view.update(React.createElement(HelpAssistantMessage,{message:next})));
-    expect(view.root.findAllByType(HelpMessageArrival).map(node=>node.props.identity)).toEqual(expect.arrayContaining(['assistant-check:qa-1:1:done','assistant-step:qa-1:2']));
-    const answer={...next,text:'Начало',assistantRun:{...next.assistantRun,status:'streaming' as const}};
-    await act(async()=>view.update(React.createElement(HelpAssistantMessage,{message:answer})));
-    const first=view.root.findByType(HelpMessageArrival);expect(first.props.animate).toBe(true);
-    await act(async()=>view.update(React.createElement(HelpAssistantMessage,{message:{...answer,text:'Начало ответа'}})));
-    expect(view.root.findByType(HelpMessageArrival)).toBe(first);
-  }finally{await act(async()=>view.unmount());}
+test('the streamed answer keeps its identity while the assistant heading stays visible',async()=>{
+ const {HelpMessageArrival}=require('../src/features/help/components/HelpMessageArrival');
+ let view!:TestRenderer.ReactTestRenderer;
+ const message={...base,text:'Начало',assistantRun:{...base.assistantRun!,status:'streaming' as const}};
+ await act(async()=>{view=TestRenderer.create(React.createElement(HelpAssistantMessage,{message}));});
+ try{
+  const first=view.root.findByType(HelpMessageArrival);expect(first.props.animate).toBe(true);
+  await act(async()=>view.update(React.createElement(HelpAssistantMessage,{message:{...message,text:'Начало ответа'}})));
+  expect(view.root.findByType(HelpMessageArrival)).toBe(first);
+  expect(JSON.stringify(view.toJSON())).toContain('ИИ ассистент');
+ }finally{await act(async()=>view.unmount());}
 });
 
-test('real activity streams before the answer, retains analysis after completion and submits a suggestion once',async()=>{
+test('analysis stays hidden through completion and suggestions submit once',async()=>{
   let view!:TestRenderer.ReactTestRenderer;const reply=jest.fn();
   const activity={id:'analysis',kind:'analysis' as const,label:'Кратко об анализе',status:'running' as const,text:'Проверю подключение.'};
   const message={...base,assistantRun:{...base.assistantRun!,activityVersion:1 as const,phase:'analysis',activities:[activity]}};
   await act(async()=>{view=TestRenderer.create(React.createElement(HelpAssistantMessage,{message,onSuggestion:reply}));});
   const texts=()=>JSON.stringify(view.toJSON());
   try{
-    expect(texts()).toContain('Проверю подключение.');expect(texts()).not.toContain('Изучаю описание проблемы');
+    expect(texts()).not.toContain('Проверю подключение.');expect(texts()).not.toContain('Изучаю описание проблемы');
     const partial={...message,assistantRun:{...message.assistantRun,status:'streaming' as const,draftText:'Откройте настройки.'}};
     await act(async()=>view.update(React.createElement(HelpAssistantMessage,{message:partial,onSuggestion:reply})));
     expect(texts()).toContain('Откройте настройки.');
@@ -105,8 +97,8 @@ test('real activity streams before the answer, retains analysis after completion
     await act(async()=>view.update(React.createElement(HelpAssistantMessage,{message:complete,onSuggestion:reply})));
     expect(texts()).not.toContain('Формируется ответ');
     expect(texts()).not.toContain('Ход анализа');
-    await act(async()=>view.root.findAll(node=>node.props.accessibilityLabel==='Показать действия ИИ')[0].props.onPress());
-    expect(texts()).toContain('Проверю подключение.');
+    expect(view.root.findAll(node=>node.props.accessibilityLabel==='Показать действия ИИ')).toHaveLength(0);
+    expect(texts()).not.toContain('Проверю подключение.');
     const option=view.root.findByProps({testID:'help-ai-suggestions'}).findAll(node=>node.props.accessibilityRole==='button')[0];
     await act(async()=>{option.props.onPress();option.props.onPress();});
     expect(reply).toHaveBeenCalledTimes(1);expect(reply).toHaveBeenCalledWith('Windows 11');

@@ -18,9 +18,12 @@ export function HelpIcon({ name, label, onPress, active, disabled, color, size =
   const Button = nativeTouch ? NativePressable : Pressable;
   return <Button accessibilityRole="button" accessibilityLabel={label} accessibilityState={{disabled:Boolean(disabled),selected:Boolean(active)}} disabled={disabled} onPress={onPress} style={({ pressed }) => [{ width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? c.soft : 'transparent', opacity: disabled ? .38 : pressed ? .65 : 1, transform: [{ scale: pressed && !disabled && !reduced ? .96 : 1 }] }, style]}><Ionicons name={name} size={size} color={color ?? c.accentText} style={rotation ? {transform:[{rotate:`${rotation}deg`}]} : undefined} /></Button>;
 }
-export function HelpAvatar({ id, name, uri, size = 34, muted = false }: { id: number; name: string; uri?: string | null; size?: number; muted?: boolean }) {
+export function HelpAvatar({ id, name, uri, size = 34, muted = false, fallback }: { id: number; name: string; uri?: string | null; size?: number; muted?: boolean; fallback?:React.ReactNode }) {
   const [failedUri,setFailedUri]=useState<string|null>(null);
-  return <View accessibilityLabel={name} style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: muted ? '#747D89' : helpColor(id), opacity:muted ? .7 : 1, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>{uri&&uri!==failedUri ? <Image onError={()=>setFailedUri(uri)} source={{ uri }} style={{ width: size, height: size, ...(muted ? {filter:'grayscale(1)'} as any : {}) }} /> : <Text style={{ color: '#FFF', fontSize: size * .32, fontWeight: '600' }}>{helpInitials(name) || 'IT'}</Text>}</View>;
+  const [loaded,setLoaded]=useState<{id:number;uri:string}>();
+  const identity=useRef({id,uri});identity.current={id,uri};
+  const ready=loaded?.id===id&&loaded.uri===uri;
+  return <View accessibilityLabel={name} style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: muted ? '#747D89' : helpColor(id), opacity:muted ? .7 : 1, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>{!ready||!uri||uri===failedUri ? fallback ?? <Text style={{ color: '#FFF', fontSize: size * .32, fontWeight: '600' }}>{helpInitials(name) || 'IT'}</Text> : null}{uri&&uri!==failedUri ? <Image onLoad={()=>{if(identity.current.id===id&&identity.current.uri===uri)setLoaded({id,uri});}} onError={()=>{if(identity.current.id===id&&identity.current.uri===uri){setFailedUri(uri);setLoaded(undefined);}}} source={{ uri }} style={{position:'absolute',width:size,height:size,opacity:ready?1:0,...(muted ? {filter:'grayscale(1)'} as any : {})}}/> : null}</View>;
 }
 /** App headers and Help use the same material and edge falloff. */
 export function HelpBlurSurface({target,edge='top',featherSize}:{target?:React.RefObject<View|null>;edge?:'top'|'bottom';featherSize?:number}) {

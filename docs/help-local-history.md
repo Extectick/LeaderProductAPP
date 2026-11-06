@@ -99,3 +99,17 @@ messages read, persists its window, and does not duplicate the opening request.
 The full shared run passed2005tests/219suites; types/Androidbundle/Doctor20/20
 passed. No fresh device timing or universal guarantee for an uncached conversation
 on a slow/offline network is claimed. Metro only; no new OTA/native/API release.
+
+
+## Prepared entry — owner follow-up, 2026-11-06
+
+The owner reports history appearing after entry and requests the rendered chat
+before the slide. This supersedes the prior immediate-start policy for existing
+chats. HelpChatEntry now waits for positioned history and keyboard dismissal.
+The timeline mounts during hydration, including empty windows, avoiding a
+readiness/entry deadlock. A bounded geometry check waits for two stable frame
+comparisons after first positioning (up to500ms for continuously changing streams).
+The retained list keeps its blur through entry; hidden preparation cannot mark
+messages read. New-chat focus and240ms motion duration are unchanged.
+Missing history still requires disk/network preparation; remote HTML/media may
+load later in their reserved surfaces. No physical-device FPS claim. Metro only.

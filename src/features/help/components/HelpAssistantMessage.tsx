@@ -1,18 +1,17 @@
-import {HelpAssistantQuestionStatus, type HelpAssistantQuestionState} from './HelpAssistantQuestionStatus';
+import {type HelpAssistantQuestionState} from './HelpAssistantQuestionStatus';
 import React, { memo, useMemo, useRef } from 'react';
-import { ActivityIndicator, Pressable, Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { HelpMessage } from '../helpApi';
-import { HELP_ASSISTANT_STEPS } from '../helpAssistant';
 import type { HelpAssistantPreview, HelpAssistantScenario } from '../helpAssistant';
-import { useHelpReducedMotion, useHelpTheme } from '../helpTheme';
+import { useHelpTheme } from '../helpTheme';
 import {HelpMessageArrival} from './HelpMessageArrival';
 import {HelpLiveAssistantMessage} from './HelpLiveAssistantMessage';
 import {HelpAssistantItAction} from './HelpAssistantItAction';
 import {HelpAssistantFiles} from './HelpAssistantFiles';
 import type {ResolveHelpMedia} from './HelpMedia';
 import {HelpMarkdown} from './HelpMarkdown';
-import {HelpAiIcon} from './HelpAiIcon';
+import {HelpAssistantHeading} from './HelpAssistantHeading';
 import {helpHtmlAttachmentId} from '../helpHtml';
 import {HelpHtmlAttachments} from './HelpHtmlContext';
 
@@ -39,7 +38,7 @@ export function HelpAssistantMessage(props: MessageProps) {
   return <HelpHtmlMessageRoute ticketId={props.message.ticketId} messageId={props.message.id} attachments={props.message.attachments} resolve={props.resolve}>{row}</HelpHtmlMessageRoute>;
 }
 const MemoHelpAssistantMessage = memo(function HelpAssistantMessageBody({ message, questionState, onRetry, onConnectOnec, onSuggestion, onRequestIt, resolve, onFileError }: MessageProps) {
-  const c=useHelpTheme(),reduced=useHelpReducedMotion(),run=message.assistantRun!;
+  const c=useHelpTheme(),run=message.assistantRun!;
   const active=run.status==='thinking'||run.status==='streaming';
   const liveAnswer=useRef(active);if(active)liveAnswer.current=true;
   const showRetry=Boolean(message.text)&&run.status==='stopped'&&run.stopReason!=='superseded';
@@ -49,16 +48,9 @@ const MemoHelpAssistantMessage = memo(function HelpAssistantMessageBody({ messag
   return <View testID="help-assistant-message" style={{marginVertical:8,marginHorizontal:24}}>
     <View testID="help-assistant-surface" style={{minWidth:0}}>
       <View testID="help-assistant-body">
-        {!message.text&&run.status!=='completed' ? active ? <View style={{gap:9,paddingVertical:6}}>
-          {HELP_ASSISTANT_STEPS.map((label,index)=>index<=run.step?<HelpMessageArrival key={label} identity={`assistant-step:${run.runId}:${index}`} animate={active}><View style={{flexDirection:'row',gap:8,alignItems:'center',minHeight:20}}>
-            <View style={{width:15,alignItems:'center'}}><HelpMessageArrival key={index<run.completedSteps?'done':'pending'} identity={`assistant-check:${run.runId}:${index}:${index<run.completedSteps?'done':'pending'}`} animate={active} distance={6}>{index<run.completedSteps?<Ionicons name="checkmark" size={15} color={c.green}/>:reduced?<Ionicons name="time-outline" size={15} color={c.accentText}/>:<ActivityIndicator testID="help-assistant-step-loader" size={14} color={c.accentText}/>}</HelpMessageArrival></View>
-            <Text style={{color:index<run.completedSteps?c.muted:c.text,fontSize:13,lineHeight:18,flex:1}}>{index===0&&(run.contextMessageCount??1)>1?'Учитываю уточнение к задаче':label}</Text>
-          </View></HelpMessageArrival>:null)}
-        </View>:<View style={{minHeight:44,flexDirection:'row',alignItems:'center',gap:8}}>
-          <Text style={{color:run.status==='error'?c.danger:c.muted,fontSize:13,flex:1}}>{run.status==='error'?'Не удалось подготовить ответ':'Ответ остановлен'}</Text>
-          {onRetry?<Pressable accessibilityRole="button" accessibilityLabel="Повторить ответ ИИ" onPress={onRetry} style={{minHeight:44,paddingHorizontal:8,justifyContent:'center'}}><Text style={{color:c.accentText,fontSize:13}}>Повторить</Text></Pressable>:null}
-        </View>:null}
-        {questionState?<View testID="help-ai-heading" style={{minHeight:44,flexDirection:'row',alignItems:'center',gap:8}}><HelpAiIcon size={16} color={c.accentText}/><HelpAssistantQuestionStatus state={questionState}/></View>:message.text?<HelpMessageArrival key={run.runId} identity={`assistant-answer:${run.runId}`} animate={liveAnswer.current}><HelpMarkdown text={message.text}/></HelpMessageArrival>:null}
+        <HelpAssistantHeading active={active} questionState={questionState} status={run.status==='error'?'Не удалось подготовить ответ':run.status==='stopped'?'Ответ остановлен':null}/>
+        {!active&&run.status!=='completed'&&!showRetry&&onRetry?<Pressable accessibilityRole="button" accessibilityLabel="Повторить ответ ИИ" onPress={onRetry} style={{minHeight:44,justifyContent:'center'}}><Text style={{color:c.accentText,fontSize:13}}>Повторить</Text></Pressable>:null}
+        {!questionState&&message.text?<HelpMessageArrival key={run.runId} identity={`assistant-answer:${run.runId}`} animate={liveAnswer.current}><HelpMarkdown text={message.text}/></HelpMessageArrival>:null}
         {run.action?.type==='connect_onec'&&onConnectOnec?<Pressable accessibilityRole="button" accessibilityLabel="Подключить 1С" onPress={onConnectOnec} style={{flexDirection:'row',gap:8,alignItems:'center',minHeight:44,marginTop:8}}><Ionicons name="lock-closed-outline" size={18} color={c.accentText}/><Text style={{color:c.accentText,fontSize:14,fontWeight:'600'}}>Подключить 1С</Text><Ionicons name="chevron-forward" size={16} color={c.accentText}/></Pressable>:null}
       </View>
       <HelpHtmlAttachments/>

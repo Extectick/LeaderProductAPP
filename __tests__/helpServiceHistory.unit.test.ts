@@ -188,6 +188,43 @@ test('active history trims only after idle anchor save and explicitly restores t
   expect(service.navigationTarget?.key).toBeGreaterThan(key!);
   expect((await readCachedHelpTicket(5,7,800))?.page?.messages.some(message=>message.sequence===800)).toBe(true);
 });
+test('latest keeps the loaded tail and prepended rows without replaying disk or server snapshots',async()=>{
+  await render();await open();
+  await act(async()=>{await service.loadOlder();});
+  expect(service.messages).toHaveLength(200);expect(service.hasNewer).toBe(false);
+  const messages=service.messages,last=messages.at(-1),key=service.navigationTarget?.key;
+  const read=jest.spyOn(helpHistory,'readCachedHelpTicket');mockApi.messages.mockClear();
+  try{
+    await act(async()=>{await service.jumpToLatest();});
+    expect(service.navigationTarget).toMatchObject({kind:'latest',animate:true});
+    expect(service.navigationTarget?.key).toBeGreaterThan(key!);
+    expect(service.messages).toBe(messages);expect(service.messages.at(-1)).toBe(last);
+    expect(read).not.toHaveBeenCalled();expect(mockApi.messages).not.toHaveBeenCalled();
+    await act(async()=>{await service.jumpToLatest();});
+    expect(service.messages).toBe(messages);expect(mockApi.messages).not.toHaveBeenCalled();
+  }finally{read.mockRestore();}
+});
+test('latest still loads missing tail messages when the current window has newer history',async()=>{
+  mockApi.detail.mockResolvedValue({ticket:ticket(),...page(1,100)});
+  await render();await open();expect(service.hasNewer).toBe(true);mockApi.messages.mockClear();
+  await act(async()=>{await service.jumpToLatest();});
+  expect(mockApi.messages).toHaveBeenCalledWith(7,{});
+  expect(service.messages.at(-1)?.sequence).toBe(200);expect(service.hasNewer).toBe(false);
+  expect(service.navigationTarget).toMatchObject({kind:'latest',animate:true});
+});
+test('latest cancels an older outstanding jump without replacing the already loaded tail',async()=>{
+  await render();await open();const messages=service.messages;
+  let resolve!:(value:HelpHistoryPage)=>void;
+  mockApi.messages.mockReturnValueOnce(new Promise(done=>{resolve=done;}));
+  let older!:Promise<void>;
+  await act(async()=>{older=service.jumpToMessage(70020,20);});
+  expect(mockApi.messages).toHaveBeenCalledWith(7,{around:20});
+  await act(async()=>{await service.jumpToLatest();});
+  const key=service.navigationTarget?.key;
+  await act(async()=>{resolve(page(1,79));await older;});
+  expect(service.messages).toBe(messages);expect(service.navigationTarget?.key).toBe(key);
+  expect(service.navigationTarget?.kind).toBe('latest');
+});
 test('online date lookup sends exact local bounds and navigates without selecting a message',async()=>{
   await render();await open();const bounds=helpLocalDayBounds('2026-10-28');
   const messages=service.messages;mockApi.messages.mockClear();

@@ -163,13 +163,13 @@ height helper.135 targeted APP tests,30 API tests, types, Android Metro bundle
 and Expo Doctor20/20 passed. Device visual QA unavailable: DEVICE_IN_USE after
 the prescribed wait. No OTA/native rebuild; the owner uses Metro.
 
+### Loading placeholders
 
-## Consolidated development OTA source — 2026-11-05
-
-The owner requested publication of all compatible current application changes.
-The release includes shared stock/profile viewers and header blur, fixed-height
-HTML previews, questions, authenticated client context and current chat/history
-work. APK0.1.46/runtime0.1.46 compatibility is retained; native Kotlin/Gradle
-input geometry changes require a separate APK and are excluded.
-Validation:220suites/2014tests,258 final targeted checks, TypeScript and Expo
-Doctor20/20. Existing chat/account/draft state is preserved.
+Help widgets use the shared `LoadingPlaceholder`: neutral gray surfaces and static
+rounded skeleton bars in light/dark themes, without timers or per-row animations.
+HTML previews reserve their existing compact bounds while fetching; the renderer
+keeps an overlay until its current document loads. Stale document callbacks cannot
+remove a newer document's placeholder. Short compact cards use a smaller skeleton.
+Entity/profile links show the same skeleton while their authorized data loads.
+Images retain their reserved bounds until decode, audio retains its seek/caption
+layout, and file loading keeps progress, retry and cancellation controls available.

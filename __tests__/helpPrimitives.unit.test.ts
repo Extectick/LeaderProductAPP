@@ -1,6 +1,6 @@
 import React from 'react';
 import TestRenderer,{act} from 'react-test-renderer';
-import {AccessibilityInfo,Animated,Keyboard,PanResponder,Platform,StyleSheet,type View} from 'react-native';
+import {AccessibilityInfo,Animated,Image,Keyboard,PanResponder,Platform,StyleSheet,type View} from 'react-native';
 jest.mock('expo-router/react-navigation',()=>({useIsFocused:()=>true}));
 jest.mock('react-native-gesture-handler',()=>{
  const make=()=>{const result:any={handlers:{}};for(const key of ['withTestId','enabled','maxPointers','activeOffsetY','failOffsetX'])result[key]=()=>result;for(const key of ['onStart','onUpdate','onEnd','onFinalize'])result[key]=(fn:any)=>{result.handlers[key]=fn;return result;};return result;};
@@ -23,7 +23,7 @@ jest.mock('expo-linear-gradient',()=>({LinearGradient:'LinearGradient'}));
 let mockSafeAreaBottom=34;
 jest.mock('react-native-safe-area-context',()=>({useSafeAreaInsets:()=>({top:0,right:0,bottom:mockSafeAreaBottom,left:0})}));
 import {helpThemeTokens,useHelpReducedMotion} from '../src/features/help/helpTheme';
-import {HelpBlurSurface,HelpDock,HelpIcon,HelpPrimaryButton,HelpSheet} from '../src/features/help/components/HelpPrimitives';
+import {HelpAvatar,HelpBlurSurface,HelpDock,HelpIcon,HelpPrimaryButton,HelpSheet} from '../src/features/help/components/HelpPrimitives';
 import {HelpVisualEffectsContext} from '../src/features/help/helpVisualEffects';
 
 test('native keyboard dock ignores transient navigation insets without keyboard JS subscriptions',async()=>{
@@ -218,4 +218,22 @@ test('an unactivated upward swipe keeps the measured IT sheet height and cancel 
   act(()=>gesture().onFinalize({translationY:-15},false));
   expect(panel().height).toBe(measured);expect(close).not.toHaveBeenCalled();
  }finally{await act(async()=>tree.unmount());}
+});
+
+
+test('avatar keeps its fallback while loading and after a failed image',async()=>{
+ let tree!:TestRenderer.ReactTestRenderer;
+ const fallback=React.createElement('AvatarFallback' as any);
+ try{
+  await act(async()=>{tree=TestRenderer.create(React.createElement(HelpAvatar,{id:1,name:'IT',uri:'https://test/avatar.png',fallback}));});
+  expect(tree.root.findAllByType('AvatarFallback' as any)).toHaveLength(1);
+  expect(StyleSheet.flatten(tree.root.findByType(Image).props.style).opacity).toBe(0);
+  await act(async()=>tree.root.findByType(Image).props.onLoad());
+  expect(StyleSheet.flatten(tree.root.findByType(Image).props.style).opacity).toBe(1);
+  await act(async()=>tree.update(React.createElement(HelpAvatar,{id:2,name:'Другой',uri:'https://test/other.png',fallback})));
+  expect(StyleSheet.flatten(tree.root.findByType(Image).props.style).opacity).toBe(0);
+  await act(async()=>tree.root.findByType(Image).props.onError());
+  expect(tree.root.findAllByType(Image)).toHaveLength(0);
+  expect(tree.root.findAllByType('AvatarFallback' as any)).toHaveLength(1);
+ }finally{if(tree)await act(async()=>tree.unmount());}
 });

@@ -197,9 +197,9 @@ Android fade требует пересборки APK; компактная вы�
 
 ### История во время входа и placeholders вложений
 
-Локальная история монтируется синхронным layout-обновлением после старта native
-перехода, до отрисовки кадра. Низкоприоритетный `startTransition` здесь не
-используется: при занятом JS он оставлял пустую оболочку на время входа.
+Локальная история монтируется в первом commit сцены. Промежуточный
+`historyMounted=false` и синхронное повторное монтирование из layout-эффекта
+удалены: они задерживали первый кадр, хотя native timing уже был запущен.
 `HelpTimeline` проверяет измеренное окно прямо в FlashList `onCommitLayoutEffect`,
 после применения `initialScrollIndex`, не ожидая позднего `onLoad`/дополнительного RAF.
 Неизмеренный или неверно расположенный сохранённый якорь всё ещё скрыт; завершение
@@ -216,3 +216,84 @@ Android fade требует пересборки APK; компактная вы�
 Регрессии проверяют показ измеренного окна до `onLoad`/окончания входа и скрытие
 неизмеренного якоря. Unit-тесты и сборка не подтверждают визуальную плавность
 на физическом устройстве.
+
+При начальном позиционировании ScrollView ref нормализует команды FlashList
+в одну конечную позицию. Его queued initial-index replay не должен возвращать
+видимый список к верху последней ячейки после `scrollToEnd`. Для измеренного
+anchor используется один offset; для полного короткого чата/latest — native end.
+Неизмеренные подготовительные команды проходят, API измерения/ref сохраняются.
+Владение прекращается при жесте или новом navigation key, а не по времени
+окончания входа (reduced motion может завершиться раньше replay). JS/native
+tail presentation не анимирует исходную геометрию входа; range pin/padding
+остаются активными. В существующем чате composer resize не включает follow
+до решения timeline о начальной позиции. Live blur исходного списка отключается
+с началом входа. Нативные input/fade правки этой задачей не меняются.
+
+### Быстрая прокрутка галереи вложений
+
+Сетка фотографий сохраняет ограниченное окно FlatList. `removeClippedSubviews=false`
+нужен для трансформируемой панели/камеры и сам по себе не отменяет виртуализацию.
+Для строк из трёх одинаковых плиток задан `getItemLayout` с реальной высотой/gap
+и header offset. Подгрузка начинается за четыре viewport до конца и повторно
+проверяется при росте content size; запросы защищены in-flight флагом. Объединение
+страниц использует Set ID вместо вложенного перебора всей истории.
+
+UI-thread decay имеет ограниченный запас хода за прежний край страницы, а
+реальный gridTarget всегда ограничен текущим gridMaximum. При поступлении новой
+страницы инерция может продолжиться, вместо завершения на устаревшем clamp.
+Это не обещает бесконечного скролла при недоступной/медленной медиатеке: требуется
+запас метаданных; оригиналы выбранных фото всё ещё готовятся только по выбору.
+
+### Заголовок сообщений ИИ
+
+Legacy и activity v1 используют общий `HelpAssistantHeading`: иконка30dp
+на поверхности42dp и постоянное имя «ИИ ассистент». Обработка имеет только
+краткий статус «Готовлю ответ…», без раскрывающегося журнала/текста анализа.
+ActivityRow, вложенный ScrollView журнала и legacy шаги не монтируются.
+Контракт API не меняется; поток ответа, вопросы, файлы, повтор, подключение1С
+и подтверждаемая передача IT сохраняются.
+
+
+### Complete short histories at the scroll edge
+
+For a fully downloaded history whose measured rows/header fit the viewport,
+FlashList native anchoring remains disabled throughout manual scrolling, including
+both edges. Turning off tail following must not temporarily mount ScrollAnchor
+and remove it again at offset zero. There is no offscreen row to preserve in this
+complete short list. Bottom alignment remains a layout property; windows with
+older/newer pages and long histories keep the existing anchor policy.
+
+Regressions cover the first drag, settling at the start, scrolling away again,
+and short partial windows that still need older/newer-page anchoring. This is a
+JS-only change compatible with the existing APK. QA2 post-fix visual confirmation
+was unavailable after Device Support/ADB timeouts; unit tests do not substitute
+for the physical-device scrolling check.
+
+
+### Android short-list drag interception at zero
+
+The MVP change in OTA0.1.46.26 did not fix the reported issue. Device MCP
+reproduced it again with one/two fixture messages. Touch events reached the list,
+but no BEGIN_DRAG/scroll followed at offset0 although the actual native range
+remained124dp. Android15 ScrollView.onInterceptTouchEvent returns early when
+scrollY==0 and canScrollVertically(1)==false. Its extent comparison can see a
+viewport-sized child as non-scrollable despite our native bottom padding.
+Source: https://github.com/aosp-mirror/platform_frameworks_base/blob/android-15.0.0_r1/core/java/android/widget/ScrollView.java
+
+NativeScroll now sets an Android/native-dock-only minimum content height of
+ceil(viewportHeight)+1dp. This keeps the platform interception range positive
+at zero. Only viewport onLayout updates this local leaf; native IME ownership,
+bottom alignment, long content, pagination and scroll refs remain intact.
+Regression checks cover viewport resize/fractional size and unaffected iOS/Web/
+legacy paths. Device evidence: content800→801, top0→bottom125 after the return
+gesture, repeated one-message0↔125 cycles. See private help-short-scroll-r2/.
+Software IME was not displayed by this emulator (hardware keyboard active), so
+these checks do not claim keyboard-open verification. No native rebuild needed.
+
+### Стабильность inline-виджетов при прокрутке
+
+Уже показанный HelpHtmlSurface сохраняет экземпляр при переходах visible↔near.
+Первый вход по-прежнему подготавливается только для visible, с отменяемыми2RAF;
+никогда не показанные near не запускают загрузку. При deferred/retained поверхность
+освобождается. Это ограниченный буфер, а не удержание всех WebView истории.
+Смена аккаунта/resolver/дескриптора сбрасывает readiness и сохраняет прежние fences.

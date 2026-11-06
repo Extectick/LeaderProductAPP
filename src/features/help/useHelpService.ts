@@ -664,6 +664,12 @@ export function useHelpService(isFocused = true) {
     const target=messageId?messagesRef.current.find(message=>message.id===messageId):null;
     if(target){issueNavigation({kind,messageId,sequence:target.sequence,animate:true});return;}
     const generation=++detailGeneration.current,account=identity;setError(null);paging.current={older:false,newer:false};setLoadingOlder(false);setLoadingNewer(false);
+    // Latest is a viewport action when this window already contains the tail.
+    // Replacing it with disk/server pages can replay an older streamed answer
+    // and discard loaded rows while the transition is still on screen.
+    if(!messageId&&selectedRef.current?.id===id&&pageRef.current&&!pageRef.current.hasNewer){
+      issueNavigation({kind:'latest',animate:true});return;
+    }
     try{
       const cachedMessage=messageId&&!sequence?await readCachedHelpMessage(userId,id,messageId).catch(()=>null):null;
       const targetSequence=sequence??cachedMessage?.sequence;
