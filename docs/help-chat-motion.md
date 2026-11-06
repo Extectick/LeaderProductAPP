@@ -247,9 +247,11 @@ UI-thread decay имеет ограниченный запас хода за п�
 ### Заголовок сообщений ИИ
 
 Legacy и activity v1 используют общий `HelpAssistantHeading`: иконка30dp
-на поверхности42dp и постоянное имя «ИИ ассистент». Обработка имеет только
-краткий статус «Готовлю ответ…», без раскрывающегося журнала/текста анализа.
-ActivityRow, вложенный ScrollView журнала и legacy шаги не монтируются.
+на круглой поверхности42dp и постоянное имя «ИИ ассистент». До финального
+ответа HelpAssistantProgress показывает публичные этапы с галочками, текущий
+индикатор и доступный текст анализа. Журнал ограничен260dp и следует за
+обновлениями до ручной прокрутки. После завершения/остановки он скрыт,
+кнопки раскрытия исторического журнала нет. Legacy использует свой контракт шагов.
 Контракт API не меняется; поток ответа, вопросы, файлы, повтор, подключение1С
 и подтверждаемая передача IT сохраняются.
 
@@ -297,3 +299,21 @@ these checks do not claim keyboard-open verification. No native rebuild needed.
 никогда не показанные near не запускают загрузку. При deferred/retained поверхность
 освобождается. Это ограниченный буфер, а не удержание всех WebView истории.
 Смена аккаунта/resolver/дескриптора сбрасывает readiness и сохраняет прежние fences.
+
+
+### Latest without recreating the visible last message (after OTA0.1.46.28)
+
+The loaded-tail service fast path alone did not prevent a visual reload: Latest
+still mounted a duplicate outgoing React tree. Stateful HTML/stream/file content
+started again in that copy. When the loaded tail is less than one viewport away,
+or the final row is already visible, Latest now scrolls the existing native list
+with animation and creates no outgoing copy. Follow stays off until the real end
+arrives; user drag cancels navigation. Native momentum completion handles geometry
+growth during the scroll. Distant unloaded navigation retains the bounded viewport
+transition. No native module or service/history changes are required.
+
+Regression tests count mounts/unmounts across the action for native and fallback
+scroll refs, cover a tall visible final row, interruption and the unloaded path.
+305 targeted tests/types/ExpoDoctor20/20 pass. Device QA did not reach the chat:
+Metro download stalled at42.9%; no visual-success claim. QA2 session was closed
+without shutting down the emulator for the separate voice task.

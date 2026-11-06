@@ -696,8 +696,8 @@ describe('sticky date geometry and navigation integration',()=>{
     expect(prepared).toBe(true);
     expect(animatedNumber(StyleSheet.flatten(screen!.root.findAllByProps({testID:'help-timeline-transition'})[0].props.style).opacity)).toBe(1);
   });
-  test('latest retains a nearby viewport until ready, blocks repeat taps and animates both fragments once',async()=>{
-    mockReducedMotion=false;await render();
+  test('latest retains a distant unloaded viewport until ready and animates both fragments once',async()=>{
+    mockReducedMotion=false;props={...props,hasNewer:true};await render();
     const timing=jest.spyOn(require('react-native').Animated,'timing');
     try{
       let accepted=false;
@@ -707,18 +707,58 @@ describe('sticky date geometry and navigation integration',()=>{
       expect(live().transform[0].translateY.__getValue()).toBe(0);
       const waiting=ref.current!.waitForJumpReady();
       await act(async()=>jest.advanceTimersByTimeAsync(70));expect(await waiting).toBe(true);
-      props={...props,navigationTarget:{kind:'latest',key:902,animate:true}};
+      props={...props,hasNewer:false,navigationTarget:{kind:'latest',key:902,animate:true}};
       mockListApi.scrollToEnd.mockClear();
       await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
       expect(ref.current!.prepareJump()).toBe(false);
       await act(async()=>jest.advanceTimersByTimeAsync(70));
-      expect(timing.mock.calls.filter(([,config]:any)=>config.duration===600)).toHaveLength(1);
+      expect(timing.mock.calls.filter(([,config]:any)=>config.duration===400)).toHaveLength(1);
       const positions=mockListApi.scrollToEnd.mock.calls.length;
       await act(async()=>jest.advanceTimersByTimeAsync(700));
       expect(mockListApi.scrollToEnd.mock.calls.length).toBe(positions);
       expect(screen!.root.findAllByProps({testID:'help-timeline-transition'})).toHaveLength(0);
       expect(props.onFollow).toHaveBeenLastCalledWith(true);
     }finally{timing.mockRestore();}
+  });
+  test.each([false,true])('near latest preserves mounted message state and waits for native scroll completion (native=%s)',async native=>{
+    mockReducedMotion=false;mockNativeChatLayout=native;
+    const mounted=jest.fn(),unmounted=jest.fn(),nativeEnd=jest.fn();
+    const StatefulMessage=({id}:{id:number})=>{React.useEffect(()=>{mounted(id);return()=>unmounted(id);},[id]);return React.createElement(View,{testID:`stateful-${id}`});};
+    props={...props,renderMessage:row=>React.createElement(StatefulMessage,{id:row.id})};
+    mockListApi.getNativeScrollRef=()=>({scrollToEnd:nativeEnd});
+    await render();const instances=screen!.root.findAllByType(StatefulMessage);
+    mounted.mockClear();unmounted.mockClear();mockListApi.scrollToEnd.mockClear();nativeEnd.mockClear();
+    await act(async()=>{expect(ref.current!.prepareJump()).toBe(true);});
+    expect(await ref.current!.waitForJumpReady()).toBe(true);
+    expect(screen!.root.findAllByProps({testID:'help-timeline-preparation'})).toHaveLength(0);
+    expect(screen!.root.findAllByProps({testID:'help-timeline-transition'})).toHaveLength(0);
+    props={...props,navigationTarget:{kind:'latest',key:903,animate:true}};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    expect(native?nativeEnd:mockListApi.scrollToEnd).toHaveBeenCalledWith({animated:true});
+    expect(ref.current!.prepareJump()).toBe(false);expect(props.onFollow).toHaveBeenLastCalledWith(false);
+    await act(async()=>mockFlashProps.onScroll(scrollEvent(200)));
+    expect(props.onFollow).toHaveBeenLastCalledWith(false);
+    await act(async()=>mockFlashProps.onScroll(scrollEvent(native?472:400)));
+    expect(props.onFollow).toHaveBeenLastCalledWith(true);
+    expect(mounted).not.toHaveBeenCalled();expect(unmounted).not.toHaveBeenCalled();
+    expect(screen!.root.findAllByType(StatefulMessage)).toEqual(instances);
+  });
+  test('a long final message already on screen is not copied even beyond one viewport',async()=>{
+    mockReducedMotion=false;mockLayouts[3]={y:364,height:1800};await render();
+    await act(async()=>mockFlashProps.onScroll({nativeEvent:{contentOffset:{x:0,y:0},layoutMeasurement:{width:390,height:600},contentSize:{width:390,height:2164}}}));
+    await act(async()=>{expect(ref.current!.prepareJump()).toBe(true);});
+    expect(await ref.current!.waitForJumpReady()).toBe(true);
+    expect(screen!.root.findAllByProps({testID:'help-timeline-preparation'})).toHaveLength(0);
+  });
+  test('a manual drag cancels an in-place latest scroll and keeps follow released',async()=>{
+    mockReducedMotion=false;await render();
+    await act(async()=>{ref.current!.prepareJump();});
+    props={...props,navigationTarget:{kind:'latest',key:904,animate:true}};
+    await act(async()=>screen!.update(React.createElement(HelpTimeline,{...props,ref})));
+    await act(async()=>mockFlashProps.onScrollBeginDrag());
+    await act(async()=>mockFlashProps.onScroll(scrollEvent(200)));
+    expect(props.onFollow).toHaveBeenLastCalledWith(false);
+    await act(async()=>{expect(ref.current!.prepareJump()).toBe(true);ref.current!.cancelJump();});
   });
   test('touching the old viewport cancels a still-preparing date jump',async()=>{
     mockReducedMotion=false;await render();

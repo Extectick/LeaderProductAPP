@@ -1,3 +1,4 @@
+import {HelpAssistantProgress} from './HelpAssistantProgress';
 import {type HelpAssistantQuestionState} from './HelpAssistantQuestionStatus';
 import React, { memo, useMemo, useRef } from 'react';
 import { Pressable, Text, View } from 'react-native';
@@ -49,6 +50,7 @@ const MemoHelpAssistantMessage = memo(function HelpAssistantMessageBody({ messag
     <View testID="help-assistant-surface" style={{minWidth:0}}>
       <View testID="help-assistant-body">
         <HelpAssistantHeading active={active} questionState={questionState} status={run.status==='error'?'Не удалось подготовить ответ':run.status==='stopped'?'Ответ остановлен':null}/>
+        <HelpAssistantProgress run={run}/>
         {!active&&run.status!=='completed'&&!showRetry&&onRetry?<Pressable accessibilityRole="button" accessibilityLabel="Повторить ответ ИИ" onPress={onRetry} style={{minHeight:44,justifyContent:'center'}}><Text style={{color:c.accentText,fontSize:13}}>Повторить</Text></Pressable>:null}
         {!questionState&&message.text?<HelpMessageArrival key={run.runId} identity={`assistant-answer:${run.runId}`} animate={liveAnswer.current}><HelpMarkdown text={message.text}/></HelpMessageArrival>:null}
         {run.action?.type==='connect_onec'&&onConnectOnec?<Pressable accessibilityRole="button" accessibilityLabel="Подключить 1С" onPress={onConnectOnec} style={{flexDirection:'row',gap:8,alignItems:'center',minHeight:44,marginTop:8}}><Ionicons name="lock-closed-outline" size={18} color={c.accentText}/><Text style={{color:c.accentText,fontSize:14,fontWeight:'600'}}>Подключить 1С</Text><Ionicons name="chevron-forward" size={16} color={c.accentText}/></Pressable>:null}

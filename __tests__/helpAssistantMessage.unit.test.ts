@@ -17,18 +17,20 @@ import {helpTime} from '../src/features/help/helpUiUtils';
 import * as activityPresentation from '../src/features/help/helpActivityPresentation';
 const base={id:1,ticketId:1043,createdAt:'2026-10-30T10:00:00Z',text:'',assistantRun:{runId:'qa-1',eventId:1,ticketId:1043,status:'thinking',step:1,completedSteps:1,startedAt:0,updatedAt:0}} as HelpMessage;
 
-test('activity data never exposes reasoning or a disclosure control while answers stream',async()=>{
+test('public progress appears while processing and disappears with the final answer',async()=>{
  let view!:TestRenderer.ReactTestRenderer;
  const label=jest.spyOn(activityPresentation,'helpActivityLabel');
  try{
   for(const status of ['thinking','streaming','completed'] as const){
    const message={...base,text:status==='completed'?'Ответ':'',assistantRun:{...base.assistantRun!,status,activityVersion:1 as const,draftText:'Ответ',activities:[{id:'analysis',kind:'analysis' as const,status:'completed' as const,label:'Скрытая операция',text:'Скрытый анализ'}]}};
    await act(async()=>{if(view)view.update(React.createElement(HelpAssistantMessage,{message}));else view=TestRenderer.create(React.createElement(HelpAssistantMessage,{message}));});
-   expect(JSON.stringify(view.toJSON())).not.toContain('Скрытый');
-   expect(view.root.findAllByProps({testID:'help-ai-work-log'})).toHaveLength(0);
+   if(status==='completed')expect(JSON.stringify(view.toJSON())).not.toContain('Скрытый анализ');
+   else expect(JSON.stringify(view.toJSON())).toContain('Скрытый анализ');
+   expect(view.root.findAllByProps({testID:'help-ai-work-log'}).length>0).toBe(status!=='completed');
+   if(status!=='completed')expect(view.root.findAll(node=>node.type==='Ionicons'&&node.props.name==='checkmark').length).toBeGreaterThan(0);
    expect(view.root.findByProps({testID:'help-ai-heading'}).props.onPress).toBeUndefined();
   }
-  expect(label).not.toHaveBeenCalled();
+  expect(label).toHaveBeenCalled();
  }finally{if(view)await act(async()=>view.unmount());label.mockRestore();}
 });
 
@@ -79,14 +81,14 @@ test('the streamed answer keeps its identity while the assistant heading stays v
  }finally{await act(async()=>view.unmount());}
 });
 
-test('analysis stays hidden through completion and suggestions submit once',async()=>{
+test('analysis is visible before completion, then removed, and suggestions submit once',async()=>{
   let view!:TestRenderer.ReactTestRenderer;const reply=jest.fn();
   const activity={id:'analysis',kind:'analysis' as const,label:'Кратко об анализе',status:'running' as const,text:'Проверю подключение.'};
   const message={...base,assistantRun:{...base.assistantRun!,activityVersion:1 as const,phase:'analysis',activities:[activity]}};
   await act(async()=>{view=TestRenderer.create(React.createElement(HelpAssistantMessage,{message,onSuggestion:reply}));});
   const texts=()=>JSON.stringify(view.toJSON());
   try{
-    expect(texts()).not.toContain('Проверю подключение.');expect(texts()).not.toContain('Изучаю описание проблемы');
+    expect(texts()).toContain('Проверю подключение.');expect(texts()).not.toContain('Изучаю описание проблемы');
     const partial={...message,assistantRun:{...message.assistantRun,status:'streaming' as const,draftText:'Откройте настройки.'}};
     await act(async()=>view.update(React.createElement(HelpAssistantMessage,{message:partial,onSuggestion:reply})));
     expect(texts()).toContain('Откройте настройки.');

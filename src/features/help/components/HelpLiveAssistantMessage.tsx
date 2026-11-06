@@ -1,3 +1,4 @@
+import {HelpAssistantProgress} from './HelpAssistantProgress';
 import {type HelpAssistantQuestionState} from './HelpAssistantQuestionStatus';
 import React, { useRef, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
@@ -23,6 +24,7 @@ export function HelpLiveAssistantMessage({ message, questionState, onRetry, onCo
   const text = message.text || (active || run.status==='stopped'&&run.stopReason==='user' ? run.draftText || '' : '');
   return <View testID="help-assistant-message" style={{ marginVertical: 8, marginHorizontal: 24, gap: 4 }}>
     <HelpAssistantHeading active={active} questionState={questionState} status={run.status==='error'?'Не удалось завершить ответ':run.status==='stopped'?'Ответ остановлен':null}/>
+        <HelpAssistantProgress run={run}/>
     {run.error?<Text accessibilityRole="alert" style={{color:c.danger,fontSize:13,lineHeight:19}}>{run.error}</Text>:null}
     {!active&&run.status!=='completed'&&onRetry?<Pressable onPress={onRetry} accessibilityRole="button" accessibilityLabel="Повторить ответ ИИ" style={{minHeight:44,justifyContent:'center'}}><Text style={{color:c.accentText,fontSize:13}}>Повторить</Text></Pressable>:null}
     {!questionState ? <HelpStreamingAnswer identity={run.runId} text={text} status={run.status} draft={!message.text}/> : null}

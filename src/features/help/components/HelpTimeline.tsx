@@ -215,6 +215,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   const lastAnchor = useRef<HelpViewportAnchor | null>(null), committedTarget = useRef<number | null>(null);
   const inNavigation = useRef(false), navigationGeneration = useRef(0), touched = useRef(false);
   const latestRequest = useRef(false);
+  const loadedLatest = useRef<'prepared'|'scrolling'|null>(null);
   const dragging = useRef(false), momentum = useRef(false), userScrollSession=useRef(false), webIntent = useRef(0);
   const scrollFrames = useRef<{at:number;offset:number;content:number;following:boolean;dragging:boolean;momentum:boolean}[]>([]);
   const olderPending = useRef(false), newerPending = useRef(false);
@@ -343,6 +344,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
   const cancelJump = useCallback(() => {
     if(latestRequest.current){inNavigation.current=false;setNavigating(false);}
     latestRequest.current=false;
+    loadedLatest.current=null;
     snapshotPending.current?.resolve(false); snapshotPending.current = null;
     transition.stopAnimation(); transition.setValue(1); incomingTransition.stopAnimation(); incomingTransition.setValue(1);
     setOutgoing(null); setSnapshotVisible(false); outgoingRef.current = null; dateSnapshot.current=null;
@@ -394,6 +396,14 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
       save();latestRequest.current=true;
       if(reduced||!readyRef.current)return true;
       const old=visible(true);
+      // Keep the actual mounted message when scrolling within its viewport.
+      // A second React tree restarts HTML, file and streaming loading state.
+      const tail=rowsRef.current.at(-1);
+      if(!live.current.hasNewer&&(motion.mode==='near'||old.some(item=>item.row.key===tail?.key))){
+        loadedLatest.current='prepared';
+        resetTailMotion();inNavigation.current=true;setNavigating(true);setFollow(false);stopIdleSave();
+        return true;
+      }
       if(old.length){
         resetTailMotion();inNavigation.current=true;setNavigating(true);setFollow(false);stopIdleSave();
         stageViewport({rows:old,direction:-1,latest:true,distance:motion.distance,duration:motion.duration});
@@ -506,6 +516,12 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     };
     requestAnimationFrame(finishLayout);
   }, [cancelJump,observe,scrollEnd,setFollow,stopIdleSave,updateMediaRange,resetTailMotion]);
+  const finishLoadedLatest=useCallback(()=>{
+    if(loadedLatest.current!=='scrolling')return false;
+    const {content,offset,height}=geometry.current;
+    if(content+(hasNativeChatLayout?currentBottomInset()+12:0)-offset-height>2)return false;
+    cancelJump();setFollow(!live.current.hasNewer);updateMediaRange(true);observe();return true;
+  },[cancelJump,setFollow,updateMediaRange,observe,currentBottomInset]);
   const animateLatest = useCallback(() => {
     const snapshot=outgoingRef.current;
     if(!snapshot?.latest||reduced||!readyRef.current){pinLatest(false);return;}
@@ -649,6 +665,14 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     }
     if (target.kind === 'latest') {
       lastNavigationMode.current = 'latest';
+      if(loadedLatest.current==='prepared'&&target.animate&&!reduced){
+        loadedLatest.current='scrolling';
+        userScrollSession.current=false;dragging.current=false;momentum.current=false;webIntent.current=0;
+        // Native scrolling moves the existing cells; follow resumes only once
+        // the real end is reached, so it cannot snap over this animation.
+        if(!finishLoadedLatest())scrollEnd(true);
+        return;
+      }
       if(outgoingRef.current?.latest&&target.animate&&!reduced){animateLatest();return;}
       // Creation can bind the server ticket while its optimistic row already
       // follows the native tail. Re-pinning races the shrinking composer and
@@ -730,7 +754,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
       }
       else finish();
     })().catch(()=>{if(!mounted.current || generation!==navigationGeneration.current)return;inNavigation.current=false;setNavigating(false);readyRef.current=true;readyOpacity.setValue(1);setReady(true);cancelJump();live.current.onError('Не удалось перейти к сообщению. Попробуйте ещё раз.');});
-  }, [props.navigationTarget,rows,loaded,props.headerHeight,props.dockHeight,reduced,cancelJump,observe,scrollEnd,setFollow,stopIdleSave,transition,incomingTransition,stageViewport,updateMediaRange,visible,pinLatest,animateLatest,settleOpening,itemStartOffset,currentBottomInset,resetTailMotion]);
+  }, [props.navigationTarget,rows,loaded,props.headerHeight,props.dockHeight,reduced,cancelJump,observe,scrollEnd,setFollow,stopIdleSave,transition,incomingTransition,stageViewport,updateMediaRange,visible,pinLatest,animateLatest,finishLoadedLatest,settleOpening,itemStartOffset,currentBottomInset,resetTailMotion]);
   // Empty/new conversations have no anchor to resolve.
   useEffect(()=>{if(!props.loading && !rows.length){readyRef.current=true;readyOpacity.setValue(1);setReady(true);setFollow(!props.hasNewer);}},[props.loading,rows.length,props.hasNewer,setFollow]);
   useEffect(()=>{if(!props.navigationTarget && loaded && rows.length && !readyRef.current){readyRef.current=true;readyOpacity.setValue(1);setReady(true);setFollow(!props.hasNewer);scrollEnd(false);}},[loaded,rows.length,props.navigationTarget,props.hasNewer,setFollow,scrollEnd]);
@@ -747,6 +771,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     geometry.current={offset:e.contentOffset.y,height:e.layoutMeasurement.height,content:e.contentSize.height};
     settleOpening();
     updateMediaRange();
+    if(finishLoadedLatest())return;
     if(!readyRef.current || inNavigation.current)return;
     if(userScrollSession.current&&Math.abs(e.contentSize.height-previous.content)<1&&Math.abs(e.layoutMeasurement.height-previous.height)<1&&Math.abs(e.contentOffset.y-previous.offset)>1){
       live.current.onHistoryScroll?.(e.contentOffset.y<previous.offset);
@@ -772,7 +797,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
     if(e.contentSize.height-e.contentOffset.y-e.layoutMeasurement.height < currentBottomInset()+preloadDistance && live.current.hasNewer && !live.current.loadingNewer && !newerPending.current){
       newerPending.current=true;void live.current.loadNewer().catch(()=>live.current.onError('Не удалось загрузить новые сообщения')).finally(()=>{newerPending.current=false;});
     }
-  },[observe,setFollow,updateMediaRange,settleOpening]);
+  },[observe,setFollow,updateMediaRange,settleOpening,finishLoadedLatest]);
   const NativeScroll=useMemo(()=>forwardRef<ScrollView,ScrollViewProps>((scrollProps,scrollRef)=>{
     const native=useRef<ScrollView>(null);
     // Android's interception guard compares child.bottom with the full view
@@ -858,7 +883,7 @@ export const HelpTimeline = forwardRef<HelpTimelineHandle, Props>(function HelpT
         scrollEventThrottle={16} onLoad={onListLoad} onScroll={onScroll} onCommitLayoutEffect={()=>{commitOpeningWindow();synchronizeTailMotion();if(readyRef.current)measureDates();}}
         onScrollBeginDrag={()=>{dragging.current=true;momentum.current=false;takeScrollControl();}}
         onMomentumScrollBegin={()=>{if(userScrollSession.current&&!inNavigation.current){momentum.current=true;stopIdleSave();setFollow(false);}}}
-        onMomentumScrollEnd={()=>{if(userScrollSession.current){dragging.current=false;momentum.current=false;updateMediaRange(true);observe();settleScroll();}}}
+        onMomentumScrollEnd={()=>{if(loadedLatest.current==='scrolling'){if(!finishLoadedLatest())pinLatest(false);return;}if(userScrollSession.current){dragging.current=false;momentum.current=false;updateMediaRange(true);observe();settleScroll();}}}
         onScrollEndDrag={()=>{dragging.current=false;updateMediaRange(true);observe();scheduleIdleSave();}} onLayout={event=>{if(event)geometry.current.height=event.nativeEvent.layout.height;settleOpening();}}
         onContentSizeChange={(_width,height)=>{geometry.current.content=height;settleOpening();synchronizeTailMotion();if(!hasNativeChatLayout && followingRef.current && readyRef.current && !inNavigation.current)scrollEnd(false);updateMediaRange(true);observe();}}
         ListHeaderComponent={props.header}
