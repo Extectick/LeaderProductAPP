@@ -305,9 +305,14 @@ test('successful list loading clears an interim startup error',async()=>{
 
 
 test('returning to the list repairs displaced rows in a batch without fetching histories',async()=>{
+  // Visible-row history preparation runs independently on a zero-delay timer.
+  // Seed every listed history before mounting so this assertion measures only
+  // batch list reconciliation, regardless of when the runner flushes timers.
+  await cacheHelpPage(5,ticket(7),page(101,200));
+  await cacheHelpPage(5,ticket(8),page(1,3,8));
+  await cacheHelpPage(5,ticket(9),page(1,3,9));
   mockApi.list.mockResolvedValueOnce({tickets:[ticket(7),ticket(8)],nextCursor:null});
   await render();
-  await cacheHelpPage(5,ticket(8),page(1,3,8));
   const cache=helpViewCache('https://dev.example.test:5:true');
   cache.windows.set(8,{ticket:ticket(8),page:page(1,3,8),anchor:null});
   cache.lists.set('other-filter',[ticket(8)]);
