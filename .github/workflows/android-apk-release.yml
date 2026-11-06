@@ -244,7 +244,7 @@ jobs:
         if: ${{ steps.strategy.outputs.apk_required == 'true' }}
         working-directory: android
         run: |
-          ./gradlew --no-daemon --max-workers=1 :leader-help-input:testReleaseUnitTest --tests expo.modules.leaderhelpinput.HelpInputGeometryTest -PreactNativeArchitectures="${{ github.event_name == 'workflow_dispatch' && inputs.architectures || 'arm64-v8a' }}" --stacktrace
+          ./gradlew --no-daemon --max-workers=1 :leader-help-input:testDebugUnitTest --tests expo.modules.leaderhelpinput.HelpInputGeometryTest -PreactNativeArchitectures="${{ github.event_name == 'workflow_dispatch' && inputs.architectures || 'arm64-v8a' }}" --stacktrace
 
       - name: Build APK
         if: ${{ steps.strategy.outputs.apk_required == 'true' }}
