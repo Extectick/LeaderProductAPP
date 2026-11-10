@@ -9,6 +9,23 @@
 
 ## Current State
 
+### Production runtime verified on 2026-11-10
+
+The static page `https://api.lidprod.ru/download` serves
+`/releases/leader-product-prod-0.1.38-37.apk`, package `com.leaderproduct.app`,
+version `0.1.38`, build `37`, Expo SDK 57. Its native OTA configuration is
+`https://sibvod.ru/ota/update`, channel `prod`, runtime `0.1.38`.
+APK SHA-256: `ed6ca4dd2037b570b2c9b627ba3a240daf627f6d0d0d5aeaaded401de6435013`.
+
+This static APK is absent from the `AppUpdate` catalog, which still advertises
+0.1.37/build 36. Before selecting an OTA runtime, verify the APK actually served
+by `/download` and the installed version; the catalog and Git version alone are
+insufficient. Do not relabel an existing bundle for a different native runtime.
+The committed version now matches the existing 0.1.38 APK; this alignment does
+not rebuild or replace that APK. OTA 0.1.37.2 remains for 0.1.37 installations.
+Manual OTA releases may explicitly set `skipSentry=true` to disable JS Sentry
+and skip diagnostic checks/uploads while keeping the other publication checks.
+
 - [x] APP проверяет обновления через `UpdateGate`.
 - [x] API имеет `/updates/check`, `/updates/upload`, `/updates/upload-url`.
 - [x] APK хранится через `apkKey` в S3/MinIO.
