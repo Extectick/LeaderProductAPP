@@ -1,6 +1,6 @@
 import React from 'react';
 import TestRenderer,{act} from 'react-test-renderer';
-import {AccessibilityInfo,Animated,Keyboard,PanResponder,Platform,StyleSheet,type View} from 'react-native';
+import {AccessibilityInfo,Animated,Dimensions,Image,Keyboard,Modal,PanResponder,Platform,StyleSheet,type View} from 'react-native';
 jest.mock('expo-router/react-navigation',()=>({useIsFocused:()=>true}));
 jest.mock('react-native-gesture-handler',()=>{
  const make=()=>{const result:any={handlers:{}};for(const key of ['withTestId','enabled','maxPointers','activeOffsetY','failOffsetX'])result[key]=()=>result;for(const key of ['onStart','onUpdate','onEnd','onFinalize'])result[key]=(fn:any)=>{result.handlers[key]=fn;return result;};return result;};
@@ -9,8 +9,8 @@ jest.mock('react-native-gesture-handler',()=>{
 jest.mock('react-native-reanimated',()=>({
  __esModule:true,default:{View:require('react-native').View},cancelAnimation:jest.fn(),runOnJS:(fn:any)=>fn,
  useSharedValue:(value:any)=>require('react').useRef({value}).current,
- useAnimatedStyle:(fn:any)=>({get height(){return fn().height;},get transform(){return fn().transform;}}),
- withTiming:(value:any,_options:any,done:any)=>{done?.(true);return value;},
+ useAnimatedStyle:(fn:any)=>({get height(){return fn().height;},get transform(){return fn().transform;},get overflow(){return fn().overflow;}}),
+ withTiming:jest.fn((value:any,_options:any,done:any)=>{done?.(true);return value;}),
  withSpring:(value:any)=>value,
 }));
 let mockTheme:'light'|'dark'='light';
@@ -23,8 +23,28 @@ jest.mock('expo-linear-gradient',()=>({LinearGradient:'LinearGradient'}));
 let mockSafeAreaBottom=34;
 jest.mock('react-native-safe-area-context',()=>({useSafeAreaInsets:()=>({top:0,right:0,bottom:mockSafeAreaBottom,left:0})}));
 import {helpThemeTokens,useHelpReducedMotion} from '../src/features/help/helpTheme';
-import {HelpBlurSurface,HelpDock,HelpIcon,HelpPrimaryButton,HelpSheet} from '../src/features/help/components/HelpPrimitives';
+import {HelpAvatar,HelpBlurSurface,HelpDock,HelpIcon,HelpPrimaryButton,HelpSheet} from '../src/features/help/components/HelpPrimitives';
 import {HelpVisualEffectsContext} from '../src/features/help/helpVisualEffects';
+import {AppDesktopDialog} from '../components/ui/AppDesktopDialog';
+
+test('desktop HelpSheet is bounded, scrollable and closes once; mobile keeps gesture sheet',async()=>{
+  const oldWindow=Dimensions.get('window'),oldPlatform=Platform.OS;let tree!:TestRenderer.ReactTestRenderer;
+  const close=jest.fn();Object.defineProperty(Platform,'OS',{configurable:true,value:'web'});Dimensions.set({window:{width:1280,height:800,scale:1,fontScale:1}});
+  try{
+    await act(async()=>{tree=TestRenderer.create(React.createElement(HelpSheet,{title:'Подключить IT?',onClose:close,maxHeight:420,children:React.createElement('ConfirmationActions')}));});
+    expect(tree.root.findAllByType('GestureDetector' as any)).toHaveLength(0);
+    expect(tree.root.findByType(AppDesktopDialog).props.title).toBe('Подключить IT?');
+    expect(StyleSheet.flatten(tree.root.findAll(node=>node.props.testID==='help-desktop-dialog'&&node.props.style)[0].props.style)).toMatchObject({maxWidth:520,maxHeight:420,borderRadius:20});
+    expect(tree.root.findByType(Modal).props.accessibilityLabel).toBe('Подключить IT?');
+    const modalClose=tree.root.findByType(Modal).props.onRequestClose;
+    await act(async()=>{tree.root.findByProps({testID:'help-desktop-dialog-close'}).props.onPress();modalClose();});
+    expect(close).toHaveBeenCalledTimes(1);
+    await act(async()=>Dimensions.set({window:{width:390,height:844,scale:1,fontScale:1}}));
+    expect(tree.root.findAllByType(AppDesktopDialog)).toHaveLength(0);expect(tree.root.findAllByType('GestureDetector' as any)).toHaveLength(1);
+  }finally{
+    if(tree)await act(async()=>tree.unmount());Object.defineProperty(Platform,'OS',{configurable:true,value:oldPlatform});Dimensions.set({window:oldWindow});
+  }
+});
 
 test('native keyboard dock ignores transient navigation insets without keyboard JS subscriptions',async()=>{
   const listener=jest.spyOn(Keyboard,'addListener');let tree!:TestRenderer.ReactTestRenderer;
@@ -61,6 +81,7 @@ test('a long chat shares one motion subscription and a late query cannot undo a 
   const remove=jest.fn();
   const events=jest.spyOn(AccessibilityInfo,'addEventListener').mockImplementation((_event,listener)=>{changed=listener as any;return {remove};});
   const query=jest.spyOn(AccessibilityInfo,'isReduceMotionEnabled').mockReturnValue(new Promise(done=>{resolve=done;}));
+  events.mockClear();query.mockClear();
   function Consumer(){return React.createElement('MotionPreference',{reduced:useHelpReducedMotion()});}
   let tree!:TestRenderer.ReactTestRenderer;
   try{
@@ -194,4 +215,46 @@ test('IT sheet cannot stretch upward or snap to a tall expanded state',async()=>
  act(()=>{gesture.onStart();gesture.onUpdate({translationY:-1000});gesture.onEnd({translationY:-1000,velocityY:-2000},true);});
  expect(panel().height).toBe(initial);expect(panel().height).toBeLessThanOrEqual(420);
  await act(async()=>tree.unmount());
+});
+
+test('an unactivated upward swipe keeps the measured IT sheet height and cancel action visible',async()=>{
+ const close=jest.fn();let tree!:TestRenderer.ReactTestRenderer;
+ await act(async()=>{tree=TestRenderer.create(React.createElement(HelpSheet,{title:'Подключить IT?',resizable:false,maxHeight:420,onClose:close,children:React.createElement('CancelAction')}));});
+ try{
+  const panel=()=>StyleSheet.flatten(tree.root.findByProps({testID:'help-sheet-surface'}).props.style);
+  // Native layout measures the real content after the initial 260dp estimate.
+  await act(async()=>tree.root.findAll(node=>typeof node.props.onLayout==='function')[0].props.onLayout({nativeEvent:{layout:{height:220}}}));
+  const measured=panel().height;
+  expect(measured).toBe(350);
+  const gesture=()=>tree.root.findByType('GestureDetector' as any).props.gesture.handlers;
+  // activeOffsetY=8 never activates an upward swipe: only finalize is delivered.
+  act(()=>gesture().onFinalize({translationY:-15},false));
+  expect(panel().height).toBe(measured);expect(panel().transform).toEqual([{translateY:0}]);
+  expect(close).not.toHaveBeenCalled();
+  // A real interrupted downward drag restores the measured height as before.
+  act(()=>{gesture().onStart();gesture().onUpdate({translationY:20});});
+  expect(panel().height).toBe(measured-20);
+  act(()=>gesture().onFinalize({translationY:20},false));
+  expect(panel().height).toBe(measured);
+  act(()=>gesture().onFinalize({translationY:-15},false));
+  expect(panel().height).toBe(measured);expect(close).not.toHaveBeenCalled();
+ }finally{await act(async()=>tree.unmount());}
+});
+
+
+test('avatar keeps its fallback while loading and after a failed image',async()=>{
+ let tree!:TestRenderer.ReactTestRenderer;
+ const fallback=React.createElement('AvatarFallback' as any);
+ try{
+  await act(async()=>{tree=TestRenderer.create(React.createElement(HelpAvatar,{id:1,name:'IT',uri:'https://test/avatar.png',fallback}));});
+  expect(tree.root.findAllByType('AvatarFallback' as any)).toHaveLength(1);
+  expect(StyleSheet.flatten(tree.root.findByType(Image).props.style).opacity).toBe(0);
+  await act(async()=>tree.root.findByType(Image).props.onLoad());
+  expect(StyleSheet.flatten(tree.root.findByType(Image).props.style).opacity).toBe(1);
+  await act(async()=>tree.update(React.createElement(HelpAvatar,{id:2,name:'Другой',uri:'https://test/other.png',fallback})));
+  expect(StyleSheet.flatten(tree.root.findByType(Image).props.style).opacity).toBe(0);
+  await act(async()=>tree.root.findByType(Image).props.onError());
+  expect(tree.root.findAllByType(Image)).toHaveLength(0);
+  expect(tree.root.findAllByType('AvatarFallback' as any)).toHaveLength(1);
+ }finally{if(tree)await act(async()=>tree.unmount());}
 });

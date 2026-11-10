@@ -1,0 +1,2 @@
+export type HelpItBriefItem={text:string;messageIds:number[];provenance:'owner'|'it'|'assistant'|'summary'|'tool_execution'};
+export type HelpItBrief={version:1;ticketId:number;throughSequence:number;initialRequest:HelpItBriefItem|null;latestRequest:HelpItBriefItem|null;recentMessages:HelpItBriefItem[];summary:{coveredThrough:number;items:(HelpItBriefItem&{kind:string})[]}|null;checks:(HelpItBriefItem&{status:'completed'|'failed'|'stopped';errorCode?:string})[]};

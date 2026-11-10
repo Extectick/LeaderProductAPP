@@ -1,0 +1,90 @@
+{
+  "checkedAt": "2026-11-07",
+  "scope": "Client Orders WEB fast creation — isolated synthetic fixture on local Metro 8131",
+  "limits": [
+    "No live API or 1C validation; fixture network boundary recorded no rejected requests.",
+    "Client switch clears visible results and gates the form during delayed defaults. Out-of-order product network races were code-reviewed, not browser-simulated.",
+    "Browser console/network snapshots are bounded; this is not a full log audit."
+  ],
+  "checks": {
+    "darkReadOnly1440": {
+      "passed": true,
+      "quickProductsAbsent": true,
+      "quantityAndPriceInputsDisabled": true
+    },
+    "missingDefaults": {
+      "passed": true,
+      "missing": [
+        "contract",
+        "deliveryAddress"
+      ],
+      "visibleHint": "Заполните условия: договор, адрес доставки",
+      "submitFocus": "Договор",
+      "advancedExpanded": true,
+      "submitActions": 0
+    },
+    "delayedDefaults800ms": {
+      "passed": true,
+      "during": {
+        "loading": true,
+        "productQuery": "",
+        "resultCount": 0,
+        "searchDisabled": true,
+        "quantityDisabled": true,
+        "submitDisabled": true
+      },
+      "after": {
+        "loading": false,
+        "searchDisabled": false,
+        "productQuery": "",
+        "resultCount": 0
+      }
+    },
+    "mutationLock": {
+      "passed": true,
+      "productQuery": "",
+      "resultCount": 0,
+      "allLabelledEditorInputsDisabled": true,
+      "quantitiesUnchanged": [
+        "24",
+        "12",
+        "36"
+      ],
+      "fixedDuringQA": "Shipping date and advanced fields now use editingLocked."
+    },
+    "compact768": {
+      "passed": true,
+      "viewportWidth": 768,
+      "bodyWidth": 768,
+      "documentWidth": 768,
+      "tableInternalOverflow": {
+        "clientWidth": 647,
+        "scrollWidth": 683,
+        "overflowX": "auto"
+      },
+      "dropdownBounds": {
+        "left": 89,
+        "right": 751
+      },
+      "submitBottom": 886.5,
+      "viewportHeight": 900
+    },
+    "cachedProductImages": {
+      "passed": true,
+      "spinners": 0,
+      "loadedImages": 2,
+      "naturalWidth": 1024,
+      "opacity": 1,
+      "fixedDuringQA": "Shared WebProductImage now keys load state by src; cached load events are no longer reset by an effect."
+    },
+    "fixtureNetwork": {
+      "blockedRequests": []
+    }
+  },
+  "screenshots": {
+    "darkReadOnly": "/home/extectick/.t3/userdata/browser-artifacts/browser-screenshot-localhost-mw5lgeu1-c6e7f67b.png",
+    "missingDefaults": "/home/extectick/.t3/userdata/browser-artifacts/browser-screenshot-localhost-mw5limfg-d89554a1.png",
+    "compact": "/home/extectick/.t3/userdata/browser-artifacts/browser-screenshot-localhost-mw5ljpwd-106ad921.png",
+    "compactSearchAfterImageFix": "/home/extectick/.t3/userdata/browser-artifacts/browser-screenshot-localhost-mw5lnjcb-e61e2547.png"
+  }
+}

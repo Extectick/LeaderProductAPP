@@ -1,3 +1,4 @@
+import {appWebControlProps,appWebControlContentProps} from '@/components/ui/appWebInteraction';
 import React, { useContext, useEffect, useRef, useState } from 'react';
 import {HelpVisualEffectsContext} from '../helpVisualEffects';
 import { Animated, Image, Keyboard, Modal, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions, type ViewStyle } from 'react-native';
@@ -6,6 +7,8 @@ import Reanimated,{cancelAnimation,runOnJS,useAnimatedStyle,useSharedValue,withS
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppEdgeBlur } from '@/components/ui/AppScreenBlur';
+import {AppDesktopDialog} from '@/components/ui/AppDesktopDialog';
+import {APP_LAYOUT} from '@/src/shared/layout/appLayout';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useHelpTheme, useHelpReducedMotion } from '../helpTheme';
 import { helpColor, helpInitials } from '../helpUiUtils';
@@ -16,11 +19,14 @@ export type HelpIconName = keyof typeof Ionicons.glyphMap;
 export function HelpIcon({ name, label, onPress, active, disabled, color, size = 22, rotation = 0, style, nativeTouch = false }: { name: HelpIconName; label: string; onPress?: () => void; active?: boolean; disabled?: boolean; color?: string; size?: number; rotation?: number; style?: ViewStyle; nativeTouch?:boolean }) {
   const c = useHelpTheme(); const reduced = useHelpReducedMotion();
   const Button = nativeTouch ? NativePressable : Pressable;
-  return <Button accessibilityRole="button" accessibilityLabel={label} accessibilityState={{disabled:Boolean(disabled),selected:Boolean(active)}} disabled={disabled} onPress={onPress} style={({ pressed }) => [{ width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? c.soft : 'transparent', opacity: disabled ? .38 : pressed ? .65 : 1, transform: [{ scale: pressed && !disabled && !reduced ? .96 : 1 }] }, style]}><Ionicons name={name} size={size} color={color ?? c.accentText} style={rotation ? {transform:[{rotate:`${rotation}deg`}]} : undefined} /></Button>;
+  return <Button {...appWebControlProps(color?.toLowerCase()==='#fff'?'filled':'subtle')} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{disabled:Boolean(disabled),selected:Boolean(active)}} disabled={disabled} onPress={onPress} style={({ pressed }) => [{ width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? c.soft : 'transparent', opacity: disabled ? .38 : pressed ? .65 : 1, transform: [{ scale: pressed && !disabled && !reduced ? .96 : 1 }] }, style]}><Ionicons {...appWebControlContentProps()} name={name} size={size} color={color ?? c.accentText} style={rotation ? {transform:[{rotate:`${rotation}deg`}]} : undefined} /></Button>;
 }
-export function HelpAvatar({ id, name, uri, size = 34, muted = false }: { id: number; name: string; uri?: string | null; size?: number; muted?: boolean }) {
+export function HelpAvatar({ id, name, uri, size = 34, muted = false, fallback }: { id: number; name: string; uri?: string | null; size?: number; muted?: boolean; fallback?:React.ReactNode }) {
   const [failedUri,setFailedUri]=useState<string|null>(null);
-  return <View accessibilityLabel={name} style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: muted ? '#747D89' : helpColor(id), opacity:muted ? .7 : 1, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>{uri&&uri!==failedUri ? <Image onError={()=>setFailedUri(uri)} source={{ uri }} style={{ width: size, height: size, ...(muted ? {filter:'grayscale(1)'} as any : {}) }} /> : <Text style={{ color: '#FFF', fontSize: size * .32, fontWeight: '600' }}>{helpInitials(name) || 'IT'}</Text>}</View>;
+  const [loaded,setLoaded]=useState<{id:number;uri:string}>();
+  const identity=useRef({id,uri});identity.current={id,uri};
+  const ready=loaded?.id===id&&loaded.uri===uri;
+  return <View accessibilityLabel={name} style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: muted ? '#747D89' : helpColor(id), opacity:muted ? .7 : 1, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>{!ready||!uri||uri===failedUri ? fallback ?? <Text style={{ color: '#FFF', fontSize: size * .32, fontWeight: '600' }}>{helpInitials(name) || 'IT'}</Text> : null}{uri&&uri!==failedUri ? <Image onLoad={()=>{if(identity.current.id===id&&identity.current.uri===uri)setLoaded({id,uri});}} onError={()=>{if(identity.current.id===id&&identity.current.uri===uri){setFailedUri(uri);setLoaded(undefined);}}} source={{ uri }} style={{position:'absolute',width:size,height:size,opacity:ready?1:0,...(muted ? {filter:'grayscale(1)'} as any : {})}}/> : null}</View>;
 }
 /** App headers and Help use the same material and edge falloff. */
 export function HelpBlurSurface({target,edge='top',featherSize}:{target?:React.RefObject<View|null>;edge?:'top'|'bottom';featherSize?:number}) {
@@ -63,14 +69,21 @@ export function HelpDock({ children, onHeight, onHeightFrame, target, stableKeyb
 }
 export function HelpPrimaryButton({ text, icon = 'add-outline', onPress, disabled, variant = 'dock' }: { text: string; icon?: HelpIconName; onPress: () => void; disabled?: boolean; variant?: 'dock'|'sheet' }) {
   const c = useHelpTheme(); const reduced = useHelpReducedMotion();
-  return <Pressable accessibilityRole="button" accessibilityState={{disabled:Boolean(disabled)}} disabled={disabled} onPress={onPress} style={({ pressed }) => ({ height: variant === 'dock' ? 48 : 44, borderRadius: variant === 'dock' ? 24 : 12, backgroundColor: disabled ? c.elevated : c.accent, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: pressed && !disabled ? .8 : 1, transform: [{ scale: pressed && !disabled && !reduced ? .96 : 1 }] })}><Ionicons name={icon} size={22} color={disabled ? c.muted : '#FFF'} /><Text style={{ color: disabled ? c.muted : '#FFF', fontSize: 14 }}>{text}</Text></Pressable>;
+  return <Pressable {...appWebControlProps('filled')} accessibilityRole="button" accessibilityState={{disabled:Boolean(disabled)}} disabled={disabled} onPress={onPress} style={({ pressed }) => ({ height: variant === 'dock' ? 48 : 44, borderRadius: variant === 'dock' ? 24 : 12, backgroundColor: disabled ? c.elevated : c.accent, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: pressed && !disabled ? .8 : 1, transform: [{ scale: pressed && !disabled && !reduced ? .96 : 1 }] })}><Ionicons {...appWebControlContentProps()} name={icon} size={22} color={disabled ? c.muted : '#FFF'} /><Text {...appWebControlContentProps()} style={{ color: disabled ? c.muted : '#FFF', fontSize: 14 }}>{text}</Text></Pressable>;
+}
+type HelpSheetProps={title:string;children:React.ReactNode;onClose:()=>void;scrollOffset?:number;resizable?:boolean;maxHeight?:number;maxWidth?:number;scrollable?:boolean};
+export function HelpSheet(props:HelpSheetProps){
+  const {width}=useWindowDimensions();
+  return Platform.OS==='web'&&width>APP_LAYOUT.compactMax
+    ?<AppDesktopDialog title={props.title} onClose={props.onClose} maxWidth={props.maxWidth??520} maxHeight={props.maxHeight} scrollable={props.scrollable} testID="help-desktop-dialog">{props.children}</AppDesktopDialog>
+    :<HelpMobileSheet {...props}/>;
 }
 /** Isolated UI-thread panel: dragging never resizes or rerenders the chat. */
-export function HelpSheet({title,children,onClose,scrollOffset=0,resizable=true,maxHeight}:{title:string;children:React.ReactNode;onClose:()=>void;scrollOffset?:number;resizable?:boolean;maxHeight?:number}){
+function HelpMobileSheet({title,children,onClose,scrollOffset=0,resizable=true,maxHeight}:HelpSheetProps){
   const c=useHelpTheme(),reduced=useHelpReducedMotion(),insets=useSafeAreaInsets(),window=useWindowDimensions();
   const maximum=Math.min(maxHeight??Infinity,Math.max(180,window.height-insets.top-24)),padding=Math.max(24,insets.bottom+16);
   const [natural,setNatural]=useState(260),collapsed=Math.min(maximum,natural);
-  const height=useSharedValue(collapsed),y=useSharedValue(collapsed),start=useSharedValue(collapsed),closing=useSharedValue(false);
+  const height=useSharedValue(collapsed),y=useSharedValue(collapsed),start=useSharedValue(collapsed),closing=useSharedValue(false),dragging=useSharedValue(false);
   const latest=useRef(onClose);latest.current=onClose;
   const dismissed=React.useCallback(()=>latest.current(),[]);
   const close=React.useCallback(()=>{
@@ -80,7 +93,7 @@ export function HelpSheet({title,children,onClose,scrollOffset=0,resizable=true,
   useEffect(()=>{height.value=collapsed;y.value=withTiming(0,{duration:reduced?0:220});return()=>{cancelAnimation(y);cancelAnimation(height);};},[collapsed,height,y,reduced]);
   const motion=useAnimatedStyle(()=>({height:height.value,transform:[{translateY:y.value}]}));
   const pan=React.useMemo(()=>Gesture.Pan().withTestId('help-sheet-resize').enabled(scrollOffset<=0).maxPointers(1).activeOffsetY(resizable?[-8,8]:8).failOffsetX([-24,24])
-    .onStart(()=>{if(closing.value)return;cancelAnimation(height);start.value=height.value;})
+    .onStart(()=>{if(closing.value)return;cancelAnimation(height);start.value=height.value;dragging.value=true;})
     .onUpdate(event=>{if(!closing.value)height.value=Math.max(80,Math.min(resizable?maximum:collapsed,start.value-event.translationY));})
     .onEnd((event,success)=>{
       if(!success||closing.value)return;
@@ -88,8 +101,13 @@ export function HelpSheet({title,children,onClose,scrollOffset=0,resizable=true,
       const next=resizable&&(height.value>(collapsed+maximum)/2||event.velocityY< -600)?maximum:collapsed;
       height.value=withSpring(next,{damping:25,stiffness:280,mass:.8,overshootClamping:true});
     })
-    .onFinalize((_,success)=>{if(!success&&!closing.value)height.value=withSpring(start.value,{damping:25,stiffness:280,mass:.8,overshootClamping:true});}),
-    [scrollOffset,resizable,closing,height,start,maximum,collapsed,close]);
+    .onFinalize((_,success)=>{
+      // Failed recognition (e.g. swiping up on a fixed sheet) never captured
+      // start. Restoring its initial estimate would clip the measured content.
+      if(dragging.value&&!success&&!closing.value)height.value=withSpring(start.value,{damping:25,stiffness:280,mass:.8,overshootClamping:true});
+      dragging.value=false;
+    }),
+    [scrollOffset,resizable,closing,dragging,height,start,maximum,collapsed,close]);
   return <Modal transparent animationType="none" onRequestClose={close} statusBarTranslucent><GestureHandlerRootView style={{flex:1}}><View style={{flex:1,justifyContent:'flex-end',backgroundColor:'#00000057'}}>
     <Pressable accessibilityLabel="Закрыть" onPress={close} style={StyleSheet.absoluteFill}/>
     <GestureDetector gesture={pan}><Reanimated.View testID="help-sheet-surface" style={[{backgroundColor:c.panel,borderTopLeftRadius:22,borderTopRightRadius:22,paddingHorizontal:18,paddingBottom:padding,overflow:'hidden'},motion]}>

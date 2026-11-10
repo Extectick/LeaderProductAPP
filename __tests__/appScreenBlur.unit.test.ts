@@ -3,8 +3,9 @@ import Renderer,{act} from 'react-test-renderer';
 import {Platform,StyleSheet} from 'react-native';
 
 let mockFocused=true;
+let mockMissingFocusContext=false;
 const mockCaptures:string[]=[];
-jest.mock('expo-router/react-navigation',()=>({useIsFocused:()=>mockFocused}));
+jest.mock('expo-router/react-navigation',()=>({useIsFocused:()=>{if(mockMissingFocusContext)throw new Error('Missing route focus context');return mockFocused;}}));
 jest.mock('../context/ThemeContext',()=>({useTheme:()=>({theme:'light'})}));
 jest.mock('../hooks/useThemeColor',()=>({useThemeColor:()=>'#F7F9FC'}));
 jest.mock('expo-blur',()=>({
@@ -13,10 +14,10 @@ jest.mock('expo-blur',()=>({
 }));
 jest.mock('@react-native-masked-view/masked-view',()=>({__esModule:true,default:'MaskedView'}));
 jest.mock('expo-linear-gradient',()=>({LinearGradient:'LinearGradient'}));
-import {AppEdgeBlur} from '../components/ui/AppScreenBlur';
+import {AppBlurActivityContext,AppEdgeBlur} from '../components/ui/AppScreenBlur';
 
 let tree:Renderer.ReactTestRenderer;
-beforeEach(()=>{mockFocused=true;mockCaptures.length=0;jest.replaceProperty(Platform,'OS','android');});
+beforeEach(()=>{mockFocused=true;mockMissingFocusContext=false;mockCaptures.length=0;jest.replaceProperty(Platform,'OS','android');});
 afterEach(async()=>{if(tree)await act(async()=>tree.unmount());jest.restoreAllMocks();});
 async function mount(target:any){
   await act(async()=>{tree=Renderer.create(React.createElement(AppEdgeBlur,{target,backgroundColor:'#F7F9FC'}));});
@@ -30,6 +31,40 @@ test('retained outgoing scene removes capture immediately on focus loss and rest
   expect(tree.root.findAllByType('BlurView' as any)).toHaveLength(0);
   mockFocused=true;await act(async()=>tree.update(React.createElement(AppEdgeBlur,{target,backgroundColor:'#F7F9FC'})));
   expect(tree.root.findAllByType('BlurView' as any)).toHaveLength(1);
+});
+test('an active portal captures its own target without a navigation focus context',async()=>{
+  mockMissingFocusContext=true;mockFocused=false;
+  const target={current:{id:'portal'}};
+  await act(async()=>{tree=Renderer.create(React.createElement(AppBlurActivityContext.Provider,{value:true},React.createElement(AppEdgeBlur,{target})));});
+  await act(async()=>tree.root.findByType('MaskedView' as any).props.onLayout({nativeEvent:{layout:{width:390,height:110}}}));
+  expect(tree.root.findAllByType('BlurView' as any)).toHaveLength(1);
+  expect(mockCaptures).toEqual(['portal']);
+});
+test('portal activity releases capture immediately and restores only its current target',async()=>{
+  mockMissingFocusContext=true;
+  const target={current:{id:'old-portal'}};
+  const content=(active:boolean)=>React.createElement(AppBlurActivityContext.Provider,{value:active},React.createElement(AppEdgeBlur,{target}));
+  await act(async()=>{tree=Renderer.create(content(true));});
+  await act(async()=>tree.root.findByType('MaskedView' as any).props.onLayout({nativeEvent:{layout:{width:390,height:110}}}));
+  expect(tree.root.findAllByType('BlurView' as any)).toHaveLength(1);
+  mockCaptures.length=0;
+  await act(async()=>tree.update(content(false)));
+  expect(tree.toJSON()).toBeNull();expect(mockCaptures).toEqual([]);
+  target.current={id:'new-portal'};
+  await act(async()=>tree.update(content(true)));
+  expect(tree.root.findAllByType('BlurView' as any)).toHaveLength(1);
+  expect(mockCaptures.length).toBeGreaterThan(0);
+  expect(mockCaptures.every(id=>id==='new-portal')).toBe(true);
+});
+test('a portal activity override does not activate an unfocused route sibling',async()=>{
+  mockFocused=false;
+  await act(async()=>{tree=Renderer.create(React.createElement(React.Fragment,null,
+    React.createElement(AppBlurActivityContext.Provider,{value:true},React.createElement(AppEdgeBlur,{target:{current:{id:'portal'} as any},testID:'portal-blur'})),
+    React.createElement(AppEdgeBlur,{target:{current:{id:'route'} as any},testID:'route-blur'})));
+  });
+  expect(tree.root.findAllByProps({testID:'route-blur'}).filter(node=>node.type==='MaskedView')).toHaveLength(0);
+  expect(tree.root.findAllByType('MaskedView' as any)).toHaveLength(1);
+  expect(tree.root.findByType('MaskedView' as any).props.testID).toBe('portal-blur');
 });
 test('target replacement never renders a capture of the preceding screen',async()=>{
   const target={current:{id:'help'}};await mount(target);mockCaptures.length=0;

@@ -11,12 +11,32 @@ export function useHelpKeyboardInset(parent: RefObject<View | null>, enabled: bo
   const top = useRef<number | null>(null);
   const revision = useRef(0);
   const measure = useCallback(() => {
+    if (enabled && Platform.OS === 'web' && typeof window !== 'undefined') {
+      const viewport=window.visualViewport;
+      const request=++revision.current;
+      parent.current?.measureInWindow((_x,y,_width,height)=>{
+        if(request!==revision.current)return;
+        // Pinch zoom changes the visual viewport too; it is not a keyboard.
+        const bottom=viewport&&Math.abs(viewport.scale-1)<.01?viewport.height+viewport.offsetTop:window.innerHeight;
+        onInset(helpKeyboardOverlap(y+height,bottom));
+      });
+      return;
+    }
     if (!enabled || Platform.OS !== 'android') return;
     const request = ++revision.current;
     parent.current?.measureInWindow((_x, y, _width, height) => {
       if (request === revision.current) onInset(helpKeyboardOverlap(y + height, top.current));
     });
   }, [enabled, parent, onInset]);
+  useEffect(()=>{
+    if(!enabled||Platform.OS!=='web'||typeof window==='undefined')return;
+    measure();
+    const viewport=window.visualViewport;
+    viewport?.addEventListener('resize',measure);
+    viewport?.addEventListener('scroll',measure);
+    window.addEventListener('resize',measure);
+    return()=>{++revision.current;viewport?.removeEventListener('resize',measure);viewport?.removeEventListener('scroll',measure);window.removeEventListener('resize',measure);};
+  },[enabled,measure]);
   useEffect(() => {
     if (!enabled || Platform.OS !== 'android') return;
     top.current = Keyboard.isVisible() ? Keyboard.metrics()?.screenY ?? null : null;

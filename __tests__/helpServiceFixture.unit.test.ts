@@ -61,6 +61,30 @@ describe('Help history QA fixture transitions', () => {
     expect(service.navigationTarget).toMatchObject({ kind: 'anchor', sequence: 200, offset: -13 });
   });
 
+  test('mixed history reopens the same complete media window and restores an explicit reading anchor',async()=>{
+    await act(async()=>{await service.openTicket(1042);await service.setDraft('ticket:1042','Сохранённый черновик');});
+    await action('fixture.history.mixed');
+    const rows=service.messages;
+    expect(rows).toHaveLength(57);expect(service.hasOlder).toBe(false);expect(service.hasNewer).toBe(false);
+    expect(service.navigationTarget).toMatchObject({kind:'latest',animate:false});
+    expect(service.selectedTicket).toMatchObject({status:'OPEN',itRequested:true,unreadCount:0,lastSequence:57});
+    expect(service.selectedTicket?.members.some(member=>member.role==='IT')).toBe(true);
+    expect(new Set(rows.map(row=>row.createdAt.slice(0,10))).size).toBe(1);
+    expect(rows.filter(row=>row.attachments.some(file=>file.kind==='IMAGE')).map(row=>[row.sequence,row.attachments.length])).toEqual([[10,1],[11,2],[44,1]]);
+    expect(rows[53].attachments[0]).toMatchObject({kind:'AUDIO',durationMs:8000,url:'qa-tone:8'});
+    expect(rows.filter(row=>row.assistantRun).map(row=>[row.sequence,row.text.length,row.assistantRun?.status])).toEqual([[2,37,'completed'],[4,206,'completed'],[16,375,'completed']]);
+    expect(rows[1].assistantRun?.questions).toHaveLength(1);
+    expect(rows.slice(-3).map(row=>[row.authorRole,row.text.length])).toEqual([['IT',7],['USER',8],['IT',6]]);
+    await act(async()=>{service.clearSelection();await service.openTicket(1041);});
+    expect(service.messages).toHaveLength(8);
+    await act(async()=>{service.clearSelection();await service.openTicket(1042);});
+    expect(service.messages).toEqual(rows);expect(service.navigationTarget).toMatchObject({kind:'latest',animate:false});
+    expect(await service.getDraft('ticket:1042')).toBe('Сохранённый черновик');
+    await act(async()=>{await service.saveViewport({messageId:44,sequence:44,offset:-16,atLatest:false},1042);service.clearSelection();await service.openTicket(1042);});
+    expect(service.navigationTarget).toMatchObject({kind:'anchor',sequence:44,offset:-16,animate:false});
+    expect(service.messages).toEqual(rows);
+  });
+
   test('old-ticket teardown writes its explicit anchor without contaminating another ticket', async () => {
     await action('fixture.history', 600);
     await act(async () => { await service.openTicket(1042); });

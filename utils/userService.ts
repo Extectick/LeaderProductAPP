@@ -1,3 +1,4 @@
+import { readOwnProfile, beginOwnProfileMutation, commitOwnProfileMutation, ownProfileSessionMatches } from '@/src/features/profile/model/ownProfileCache';
 // utils/userService.ts
 import type {
   CreateClientProfileDto,
@@ -39,14 +40,17 @@ export async function createProfile(
   type: 'CLIENT' | 'SUPPLIER' | 'EMPLOYEE',
   profileData: CreateClientProfileDto | CreateSupplierProfileDto | CreateEmployeeProfileDto
 ): Promise<Profile | null> {
+  const fence = beginOwnProfileMutation();
   const res = await apiClient(`/users/profiles/${type.toLowerCase()}`, {
     method: 'POST',
     body: profileData,
   });
   if (!res.ok) throw new Error(res.message);
 
-  // Получим обновленный профиль после создания
-  return getProfile();
+  // Reads started before/during creation must not satisfy this post-write refresh.
+  if (!ownProfileSessionMatches(fence)) return null;
+  beginOwnProfileMutation();
+  return getProfile({ force: true });
 }
 
 export async function getDepartments(): Promise<Department[]> {
@@ -415,31 +419,24 @@ export async function moderateEmployeeProfile(
   return res.data;
 }
 
-export async function getProfile(): Promise<Profile | null> {
-  const res = await apiClient<void, { profile: Profile }>(API_ENDPOINTS.USERS.PROFILE);
-  if (!res.ok) {
-    if (res.status === 403) {
-      try {
-        const cached = await AsyncStorage.getItem(PROFILE_KEY);
-        if (cached) {
-          const parsed = JSON.parse(cached) as Profile;
-          const blocked = { ...parsed, profileStatus: 'BLOCKED' as ProfileStatus };
-          await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(blocked));
-          return blocked;
-        }
-      } catch {}
+export async function getProfile(options: { force?: boolean } = {}): Promise<Profile | null> {
+  return readOwnProfile(async () => {
+    const res = await apiClient<void, { profile: Profile }>(API_ENDPOINTS.USERS.PROFILE);
+    if (!res.ok) {
+      if (res.status === 403) {
+        try {
+          const cached = await AsyncStorage.getItem(PROFILE_KEY);
+          if (cached) return { ...JSON.parse(cached), profileStatus: 'BLOCKED' as ProfileStatus };
+        } catch {}
+      }
+      return null;
     }
-    console.error('Ошибка получения профиля:', res.message);
-    return null;
-  }
-  const profile = res.data?.profile || null;
-  if (profile) {
-    await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
-  }
-  return profile;
+    return res.data?.profile || null;
+  }, options.force);
 }
 
-export async function getProfileById(userId?: number | null): Promise<Profile | null> {
+export async function getProfileById(userId?: number | null, options: { force?: boolean } = {}): Promise<Profile | null> {
+  if (userId == null) return getProfile(options);
   const url =
     userId == null
       ? API_ENDPOINTS.USERS.PROFILE
@@ -452,27 +449,19 @@ export async function getProfileById(userId?: number | null): Promise<Profile | 
 
   const profile = res.data?.profile ?? null;
 
-  // Кэшируем только свой профиль (как делал прежний getProfile)
-  if (profile && userId == null) {
-    try {
-      await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
-    } catch {}
-  }
 
   return profile;
 }
 
 export async function setCurrentProfileType(type: ProfileType | null): Promise<Profile | null> {
+  const fence = beginOwnProfileMutation();
   const res = await apiClient<{ type: ProfileType | null }, { profile: Profile }>(API_ENDPOINTS.USERS.CURRENT_PROFILE, {
     method: 'PATCH',
     body: { type },
   });
   if (!res.ok) throw new Error(res.message || 'Не удалось выбрать профиль');
   const profile = res.data?.profile || null;
-  if (profile) {
-    await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
-  }
-  return profile;
+  return commitOwnProfileMutation(profile, fence);
 }
 
 export type UpdateMyProfilePayload = {
@@ -484,16 +473,14 @@ export type UpdateMyProfilePayload = {
 };
 
 export async function updateMyProfile(payload: UpdateMyProfilePayload): Promise<Profile | null> {
+  const fence = beginOwnProfileMutation();
   const res = await apiClient<UpdateMyProfilePayload, { profile: Profile }>(API_ENDPOINTS.USERS.PROFILE, {
     method: 'PATCH',
     body: payload,
   });
   if (!res.ok) throw new Error(res.message || 'Не удалось обновить профиль');
   const profile = res.data?.profile || null;
-  if (profile) {
-    await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
-  }
-  return profile;
+  return commitOwnProfileMutation(profile, fence);
 }
 
 export async function startPhoneVerification(
@@ -664,6 +651,7 @@ const guessMime = (ext: string) => {
 };
 
 export async function uploadProfileAvatar(type: ProfileType, file: { uri: string; name?: string; type?: string }) {
+  const fence = beginOwnProfileMutation();
   const typeKey = String(type || '').toLowerCase() as 'client' | 'supplier' | 'employee';
   if (!['client', 'supplier', 'employee'].includes(typeKey)) {
     throw new Error('Недопустимый тип профиля');
@@ -689,6 +677,6 @@ export async function uploadProfileAvatar(type: ProfileType, file: { uri: string
     }
   );
   if (!res.ok) throw new Error(res.message || 'Не удалось загрузить аватар');
-  return res.data?.profile ?? null;
+  return commitOwnProfileMutation(res.data?.profile ?? null, fence);
 }
 

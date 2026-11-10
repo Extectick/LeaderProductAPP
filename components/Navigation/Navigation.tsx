@@ -2,8 +2,8 @@ import { Slot } from 'expo-router';
 import { Platform, View, useWindowDimensions } from 'react-native';
 import { usePathname, useRouter } from 'expo-router';
 import React from 'react';
-import MobileTabs from './MobileTabs';
 import WebSidebar from './WebSidebar';
+import {appLayoutMode} from '@/src/shared/layout/appLayout';
 import { TabBarVisibilityProvider } from './TabBarVisibilityContext';
 import {
   LastServiceRouteProvider,
@@ -12,7 +12,6 @@ import {
 import { UnsavedChangesProvider } from '@/src/features/navigation/UnsavedChangesContext';
 
 const NATIVE_DEFAULT_ROUTE = '/services';
-const WEB_DEFAULT_ROUTE = '/home';
 
 const normalizeNavigationPath = (path: string | null | undefined) => {
   const clean = String(path || '')
@@ -45,11 +44,12 @@ function ServicesRouteGuard() {
 
     if (currentPath !== '/services') return;
     if (previousPath.startsWith('/services')) return;
+    // On the web /services is Home, not a tab that resumes its last child.
+    // Keep native cold-start restoration without redirecting explicit Home clicks.
+    if (Platform.OS === 'web') return;
 
     const shouldRestoreLastService =
-      Platform.OS === 'web'
-        ? !!previousPath
-        : !previousPath || previousPath === '/' || isNativeHiddenRootRoute(previousPath);
+      !previousPath || previousPath === '/' || isNativeHiddenRootRoute(previousPath);
     if (!shouldRestoreLastService) return;
 
     if (lastService.lastServiceRoute) {
@@ -70,43 +70,9 @@ export default function Navigation() {
   const pathname = usePathname();
   const router = useRouter();
   const useNativeLayout = !isWeb;
-  const useMobileLayout = useNativeLayout || width <= 820;
-  const defaultMainRoute = useNativeLayout ? NATIVE_DEFAULT_ROUTE : WEB_DEFAULT_ROUTE;
+  const layout = appLayoutMode(width);
+  const defaultMainRoute = NATIVE_DEFAULT_ROUTE;
   const currentPath = pathname && pathname.trim().length > 0 ? pathname : defaultMainRoute;
-  const lastPathRef = React.useRef<string>(defaultMainRoute);
-  const lastLayoutRef = React.useRef<boolean>(useMobileLayout);
-  const currentPathRef = React.useRef<string>(currentPath);
-  const restoreTimersRef = React.useRef<Array<ReturnType<typeof setTimeout>>>([]);
-
-  currentPathRef.current = currentPath;
-
-  const clearRestoreTimers = React.useCallback(() => {
-    restoreTimersRef.current.forEach((timer) => clearTimeout(timer));
-    restoreTimersRef.current = [];
-  }, []);
-
-  React.useEffect(() => {
-    if (lastLayoutRef.current === useMobileLayout) return;
-    lastLayoutRef.current = useMobileLayout;
-    clearRestoreTimers();
-    const restorePath = lastPathRef.current || defaultMainRoute;
-    const tryRestore = () => {
-      if (currentPathRef.current === restorePath) return;
-      router.replace(restorePath as any);
-    };
-
-    tryRestore();
-    restoreTimersRef.current.push(setTimeout(tryRestore, 40));
-    restoreTimersRef.current.push(setTimeout(tryRestore, 160));
-    restoreTimersRef.current.push(setTimeout(tryRestore, 340));
-  }, [clearRestoreTimers, defaultMainRoute, router, useMobileLayout]);
-
-  React.useEffect(() => {
-    const cleanPath = normalizeNavigationPath(currentPath);
-    lastPathRef.current = useNativeLayout && isNativeHiddenRootRoute(cleanPath)
-      ? NATIVE_DEFAULT_ROUTE
-      : currentPath;
-  }, [currentPath, useNativeLayout]);
 
   React.useEffect(() => {
     if (!useNativeLayout) return;
@@ -115,33 +81,17 @@ export default function Navigation() {
     router.replace(NATIVE_DEFAULT_ROUTE as any);
   }, [currentPath, router, useNativeLayout]);
 
-  React.useEffect(() => {
-    return () => {
-      clearRestoreTimers();
-    };
-  }, [clearRestoreTimers]);
-
-  if (useMobileLayout) {
-    return (
-      <LastServiceRouteProvider>
-        <UnsavedChangesProvider>
-          <TabBarVisibilityProvider>
-            <ServicesRouteGuard />
-            {useNativeLayout ? <Slot /> : <MobileTabs />}
-          </TabBarVisibilityProvider>
-        </UnsavedChangesProvider>
-      </LastServiceRouteProvider>
-    );
-  }
-
   return (
     <LastServiceRouteProvider>
       <UnsavedChangesProvider>
         <TabBarVisibilityProvider>
           <ServicesRouteGuard />
-          <View style={{ flex: 1, flexDirection: 'row' }}>
-            <WebSidebar />
-            <View style={{ flex: 1 }}>
+          {/* The router outlet and providers keep their identity across resize. */}
+          <View testID="app-responsive-shell" style={{ flex: 1, minWidth: 0, flexDirection: 'row' }}>
+            <View key="sidebar" style={{display:isWeb&&layout!=='compact'?'flex':'none'}}>
+              {isWeb ? <WebSidebar compact={layout!=='wide'} visible={layout!=='compact'}/> : null}
+            </View>
+            <View key="content" testID="app-route-content" style={{ flex: 1, minWidth: 0 }}>
               <Slot />
             </View>
           </View>

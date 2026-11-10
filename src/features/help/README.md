@@ -77,3 +77,96 @@ HelpAssistantFiles отображает обычные FILE attachments отве
 с отменой позднего download/share при смене аккаунта, resolver или unmount.
 Это реальные приватные вложения, не текст для ручного копирования и не
 фиктивные sandbox-ссылки. Серверная генерация поддерживает TXT, MD, CSV, JSON.
+
+### IT wait and AI return
+
+After confirmed `request-it`, the server persists a SYSTEM row with
+`itStatusChange=REQUESTED`. While the OPEN ticket has `itRequested` and no IT
+member, the owner cannot send text, voice or files. The existing measured dock
+shows only “Продолжить с AI”; drafts remain intact. The owner-only `continue-ai`
+endpoint atomically cancels the wait before any IT joins, without replaying an
+old AI prompt. A competing IT claim and return use the same ticket lock.
+
+Joining persists `itStatusChange=JOINED`, with the actual specialist's avatar and
+surname-first display name; the ordinary composer returns and AI return is no
+longer available. `AI_RESUMED` records a successful return. These system lines
+have no bubble background. Older tickets without events use a current-state
+footer fallback, replaced when the durable event is present in the loaded page.
+
+
+### IT takeover, departure and feedback (2026-11-06)
+
+An authorized specialist can join any other user's OPEN ticket, including an
+active AI conversation. Joining cancels the current AI run. The three-dot menu
+exposes “Подключиться к чату” before joining and separate “Покинуть чат” /
+“Закрыть чат” actions after joining. Each mutation is protected against duplicate
+taps. Leaving records a minimal avatar/name system line. After the last IT leaves,
+AI responds only to the next owner message; departure never replays an old prompt.
+
+JOINED/LEFT lines use the server's immutable surname-first text. Legacy membership
+fallbacks wait for authoritative `itDisplayName`, avoiding a temporary first-name
+order. Mutation responses append contiguous new system rows immediately while
+preserving older history windows and rejecting stale snapshots.
+
+The per-message “Помогло” footer is removed. IT closure exposes “Оценить помощь”
+to the owner through `ticket.canRate`; existing stars/comment and reopen flows are
+preserved. Metadata and repaired history apply together. Feedback submitted from
+the current tail pins the existing list without reloading its history; an older
+history window still explicitly jumps to the latest page.
+
+
+### Latest navigation preserves the loaded tail
+
+`jumpToLatest` issues a viewport target without reading/replacing history when
+the active page already has `hasNewer=false`. Message identities and prepended
+rows remain intact, avoiding stale disk/server replay during the transition.
+The navigation generation still invalidates an earlier outstanding jump. Missing
+tail pages keep the existing cache/network path. The timeline animation and native
+scroll owners are unchanged. Regression coverage: `helpServiceHistory.unit.test.ts`.
+
+
+### Attachment thumbnail scheduling
+
+Photo tiles show the plain gray `LoadingPlaceholder` until a bounded thumbnail is
+ready. `helpPhotoPreviewQueue` runs at most two `Image.loadAsync` jobs, with decode
+bounds capped at512px and sized for display density. Android Expo Image performs
+the decode in `Dispatchers.IO`; no bitmap processing runs in JS. Only visible
+indices enqueue work (initial18cells until viewability is available).
+
+Dragging, sheet resizing and custom/native inertia pause new loads and completion
+publication. Resume waits120ms after settled motion; the gesture pause is separate
+from opening-layout completion. Publications yield between jobs. Offscreen/cancelled
+loads cannot publish, and discarded native refs are released once. Cached mounted
+previews survive motion, caption edits and selection. iOS retains its no-cloud
+preview check; original-file preparation still occurs only on explicit selection.
+
+### Файловые вложения
+
+`HelpFileRow` задаёт общий компактный вид файлов пользователей и ИИ: круглая
+иконка формата, имя и размер; время/receipt у сообщения только с файлами занимает
+правую часть последней строки метаданных. Иконки различают Office/PDF/архивы/APK
+и другие форматы, используя расширение и MIME. Геометрия не меняется при загрузке.
+
+`helpAttachmentDownload` использует авторизованный resolver и реальные байты
+Native DownloadResumable / web stream. Кольцо и подпись показывают получено/всего;
+неизвестный размер остаётся indeterminate, без выдуманного процента. Публикация
+прогресса ограничена10Hz плюс завершение. Отмена/смена аккаунта/рециклинг ячейки
+прерывают операцию и блокируют поздний share/progress; очищается только уникальный
+временный файл этой операции. Завершение освобождает подписку SDK58, файл сохраняется.
+
+### Connection recovery after backgrounding
+
+`createManagedSocketConnection` owns transport replacement and retries. It pauses
+in background, replaces the transport on foreground, uses one bounded token read
+and handshake at a time, and fences old attempts with generation + AbortSignal.
+Socket.IO's separate reconnect loop is disabled. Retries back off from1.2s to30s;
+manual recovery is coalesced. Help retains its account/JWT fences and periodic
+rotation checks; an unchanged token does not prevent recovery.
+
+`helpAccountSync` reports connected only after a `help:subscribe` ACK (5s deadline).
+The15s foreground heartbeat also verifies the subscription, so a half-open socket
+cannot appear healthy indefinitely. Old socket callbacks cannot revive readiness;
+recovery uses the same durable event cursor and existing idempotent outbox.
+The header changes from “Соединение…” to “Нет связи / Повторить” after12s.
+Credential reads have bounded waits; refresh is single-flight before its first
+await. Consumer deadlines never start overlapping noncancelable token writes.

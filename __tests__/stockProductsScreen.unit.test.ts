@@ -1,5 +1,7 @@
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
+import {StockEntityCard} from '../src/features/entityCards/StockEntityCard';
+import {StockProductDetails} from '../src/features/stockBalances/StockProductDetails';
 import StockProductsScreen from '../src/features/stockBalances/StockProductsScreen';
 import { stockRequest } from '../src/features/stockBalances/products';
 import { readStockCache, writeStockCache } from '../src/features/stockBalances/stockCache';
@@ -36,10 +38,11 @@ jest.mock('../src/features/stockBalances/StockSalesChart', () => ({ StockSalesCh
 jest.mock('../src/features/stockBalances/StockGestureLists', () => ({ StockFlatList: require('react-native').FlatList, StockRefreshControl: require('react-native').RefreshControl }));
 jest.mock('../src/features/stockBalances/SalesPeriodPicker', () => ({ SalesPeriodPicker: 'SalesPeriodPicker' }));
 jest.mock('../src/features/stockBalances/useSalesRange', () => ({ useSalesRange: () => { throw new Error('Paused analytics must not load a period'); } }));
+let mockAllStockTabs=false;
 jest.mock('../src/features/stockBalances/StockTabsPager',()=>({StockTabsPager:({value,onChange,children}:any)=>{
   const React=require('react');
   const tabs=[['balances','Остатки'],['receipt','Поступления'],['expense','Продажи']];
-  return React.createElement('StockTabsPager',{},tabs.map(([key,label])=>React.createElement('Pressable',{key,accessibilityRole:'tab',accessibilityState:{selected:value===key},onPress:()=>onChange(key)},React.createElement('Text',{},label))),React.Children.toArray(children)[tabs.findIndex(([key])=>key===value)]);
+  return React.createElement('StockTabsPager',{},tabs.map(([key,label])=>React.createElement('Pressable',{key,accessibilityRole:'tab',accessibilityState:{selected:value===key},onPress:()=>onChange(key)},React.createElement('Text',{},label))),mockAllStockTabs?React.Children.toArray(children):React.Children.toArray(children)[tabs.findIndex(([key])=>key===value)]);
 }}));
 jest.mock('../src/features/stockBalances/stockCache', () => ({ readStockCache: jest.fn(), writeStockCache: jest.fn() }));
 jest.mock('../src/features/stockBalances/useStockProducts', () => ({ useStockProducts: jest.fn(() => ({ page: { items: [] }, busy: false, stale: false, error: null, refresh: jest.fn(), loadMore: jest.fn() })) }));
@@ -49,7 +52,7 @@ jest.mock('../src/features/stockBalances/useWarehouseSelection', () => ({
 const warehouses = [{ guid: 'a', name: 'Переработка', cityGuid: 'omsk', cityName: 'Омск' }];
 let view: TestRenderer.ReactTestRenderer;
 beforeEach(() => {
-  jest.clearAllMocks();
+  jest.clearAllMocks();mockAllStockTabs=false;
   jest.mocked(useServerStatus).mockReturnValue({ isReachable: true } as any);
   jest.mocked(readStockCache).mockResolvedValue(null);
   jest.mocked(stockRequest).mockResolvedValue({ warehouses, organizations: [] });
@@ -234,4 +237,29 @@ it('continues an excluded-only middle page even when earlier visible rows alread
   page={items:[row,order,{...row,id:'next-receipt'}],hasMore:true};
   act(()=>view.update(React.createElement(StockProductsScreen)));
   expect(loadMore).toHaveBeenCalledTimes(1);
+});
+
+it('linked app products mount the same card body and the sheet-provided list coordinator',async()=>{
+ const item={guid:'11111111-1111-4111-8111-111111111111',name:'Товар приложения',code:'P-1',baseUnit:null,inStock:2,reserved:0,available:2,updatedAt:null};
+ const list=(props:any)=>React.createElement('LinkedSheetList',props),scrolled=jest.fn();
+ await act(async()=>{view=TestRenderer.create(React.createElement(StockEntityCard,{product:item,userId:121,ListComponent:list,contentTopInset:104,scrollOffset:42,onScrollOffsetChange:scrolled}));});
+ expect(view.root.findByType(StockProductDetails).props.product).toBe(item);
+ expect(jest.mocked(useWarehouseSelection)).toHaveBeenCalledWith('121');
+ expect(jest.mocked(useStockProducts)).toHaveBeenCalledWith('products/'+item.guid+'/balances',expect.objectContaining({bySeries:'0',groupByWarehouse:'1'}),'121',true);
+ const linked=view.root.findByType('LinkedSheetList' as any);expect(linked.props.contentOffset).toEqual({x:0,y:42});
+ act(()=>linked.props.onScroll({nativeEvent:{contentOffset:{y:16}}}));expect(scrolled).toHaveBeenCalledWith(16);
+ expect(view.root.findByProps({testID:'stock-product-details'}).props.style[1]).toEqual({marginTop:104});
+});
+
+it('only the visible stock tab registers with the bottom-sheet scroll coordinator',async()=>{
+ mockAllStockTabs=true;const active=new Set<string>();
+ const list=(props:any)=>{
+  const focus=React.useCallback(()=>{active.add(props.testID);return()=>{active.delete(props.testID);};},[props.testID]);
+  props.focusHook(focus);return React.createElement('LinkedSheetList',props);
+ };
+ const item={guid:'11111111-1111-4111-8111-111111111111',name:'Товар',code:null,baseUnit:null,inStock:1,reserved:0,available:1,updatedAt:null};
+ await act(async()=>{view=TestRenderer.create(React.createElement(StockEntityCard,{product:item,userId:121,ListComponent:list}));});
+ expect([...active]).toEqual(['stock-balances-list']);expect(view.root.findAllByType('LinkedSheetList' as any)).toHaveLength(3);
+ const tab=view.root.findAllByType('Pressable' as any).find(node=>node.props.accessibilityRole==='tab'&&node.findByType('Text' as any).props.children==='Поступления')!;
+ await act(async()=>tab.props.onPress());expect([...active]).toEqual(['stock-receipt-list']);
 });

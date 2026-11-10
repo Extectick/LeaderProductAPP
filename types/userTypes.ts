@@ -47,6 +47,8 @@ export type Profile = {
     authProvider?: AuthProvider;
     authMethods?: AuthMethods;
     avatarUrl: string | null;
+    avatarAssetUrl?: string | null;
+    avatarVersion?: string | null;
     lastSeenAt?: string | null;
     isOnline?: boolean;
     profileStatus: ProfileStatus;
@@ -119,6 +121,8 @@ export type DepartmentRole = {
 export type clientProfile = {
     id: number;
     avatarUrl?: string | null;
+    avatarAssetUrl?: string | null;
+    avatarVersion?: string | null;
     lastSeenAt?: string | null;
     isOnline?: boolean;
     status: ProfileStatus;
@@ -135,6 +139,8 @@ export type clientProfile = {
 export type supplierProfile = {
     id: number;
     avatarUrl?: string | null;
+    avatarAssetUrl?: string | null;
+    avatarVersion?: string | null;
     lastSeenAt?: string | null;
     isOnline?: boolean;
     status: ProfileStatus;
@@ -151,6 +157,8 @@ export type supplierProfile = {
 export type employeeProfile = {
     id: number;
     avatarUrl?: string | null;
+    avatarAssetUrl?: string | null;
+    avatarVersion?: string | null;
     lastSeenAt?: string | null;
     isOnline?: boolean;
     status: ProfileStatus;

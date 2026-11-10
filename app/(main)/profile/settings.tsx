@@ -15,9 +15,12 @@ import { getAppVersionInfo } from '@/utils/appVersion';
 import { API_BASE_URL } from '@/utils/config';
 import { ProfileFact as Fact } from '@/src/features/profile/ui/ProfileSettingsPrimitives';
 import { ProfileOnecConnections } from '@/src/features/profile/ui/ProfileOnecConnections';
+import { ProfileConnections } from '@/src/features/profile/ui/ProfileConnections';
+import { useAppSurfaceTheme } from '@/components/ui/appSurfaceTokens';
 import { httpRequest } from '@/src/shared/api/httpClient';
 
 export default function ProfileSettingsScreen() {
+  const surface = useAppSurfaceTheme();
   const { section, base, returnTicket, returnRun } = useLocalSearchParams<{ section: string; base?: string; returnTicket?: string; returnRun?: string }>();
   const { profile, refresh } = useProfileData();
   const router = useRouter();
@@ -27,14 +30,14 @@ export default function ProfileSettingsScreen() {
   const version = getAppVersionInfo();
   const employee = profile.employeeProfile;
   const address = profile.currentProfileType === 'CLIENT' ? profile.clientProfile?.address : profile.currentProfileType === 'SUPPLIER' ? profile.supplierProfile?.address : null;
-  return <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+  return <KeyboardAvoidingView style={[styles.screen, section === 'onec' && { backgroundColor: surface.background }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
     <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
       <Animated.View key={section} entering={FadeIn.duration(160).reduceMotion(ReduceMotion.System)} style={styles.detail}>
         {section === 'personal' && <ProfileView profileOverride={profile} disableAppearAnimation presentation="personal" />}
         {section === 'contacts' && <ClientContactsEditor embedded />}
         {section === 'notifications' && <NotificationSettingsSection />}
         {section === 'tracking' && <><TrackingToggle /><TrackingAdminHealthCard /></>}
-        {section === 'onec' && <ProfileOnecConnections key={profile.id} userId={profile.id} initialBase={base}
+        {section === 'onec' && <ProfileConnections key={profile.id}><ProfileOnecConnections key={profile.id} userId={profile.id} initialBase={base}
           onConnected={helpTicket ? async (signal) => {
             if (signal.aborted || currentUser.current !== profile.id) return;
             let retryFailed = false;
@@ -49,7 +52,7 @@ export default function ProfileSettingsScreen() {
             // Target the originating chat even when its history was restored.
             router.dismissTo({ pathname: '/services/help', params: { ticketId: helpTicket } });
             if (retryFailed) Alert.alert('1С подключена', 'Не удалось автоматически продолжить ответ ИИ. Нажмите «Повторить» в чате или отправьте новое сообщение.');
-          } : undefined} />}
+          } : undefined} /></ProfileConnections>}
         {section === 'security' && <>
           <Fact title="Вход через Telegram" value={profile.authMethods?.telegramLinked || profile.telegramId ? profile.telegramUsername ? `@${profile.telegramUsername}` : 'Подключён' : 'Не подключён'} icon="message-outline" />
           <Fact title="Вход через MAX" value={profile.authMethods?.maxLinked || profile.maxId ? profile.maxUsername || 'Подключён' : 'Не подключён'} icon="message-text-outline" />

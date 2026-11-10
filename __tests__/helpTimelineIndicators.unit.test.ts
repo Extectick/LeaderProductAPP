@@ -28,6 +28,36 @@ describe('Help date navigation chip', () => {
     expect(screen.root.findAllByProps({ testID: 'help-date-jump' })).toHaveLength(0);
     expect(screen.root.findAllByProps({ accessibilityRole: 'header' }).length).toBeGreaterThan(0);
   });
+  test('exit moves down inside a fixed clip and cannot unmount a returning button',async()=>{
+    const {Animated}=require('react-native');
+    const runs:{value:any;config:any;finish:(result:{finished:boolean})=>void}[]=[];
+    const timing=jest.spyOn(Animated,'timing').mockImplementation((value:any,config:any)=>({
+      start:(finish:any)=>runs.push({value,config,finish}),stop:jest.fn(),reset:jest.fn(),
+    }) as any);
+    try{
+      await act(async()=>{screen=TestRenderer.create(React.createElement(HelpJumpToLatest,{visible:true,onPress:jest.fn(),style:{position:'absolute',bottom:100}}));});
+      await act(async()=>screen.update(React.createElement(HelpJumpToLatest,{visible:false,onPress:jest.fn(),style:{position:'absolute',bottom:100}})));
+      const exiting=runs.at(-1)!;
+      for(const progress of [1,.5,0]){
+        exiting.value.setValue(progress);
+        const motion=screen.root.findByProps({testID:'help-jump-to-latest-motion'});
+        const style=StyleSheet.flatten(motion.props.style);
+        const clip=StyleSheet.flatten(screen.root.findByProps({testID:'help-jump-to-latest-position'}).props.style);
+        expect(clip).toMatchObject({bottom:100,marginBottom:-20,height:70,overflow:'hidden'});
+        expect(style.top).toBe(12);
+        expect(style.opacity).toBe(1);
+        expect(style.transform).toHaveLength(1);
+        const travel=style.transform.find((transform:any)=>transform.translateY!==undefined).translateY.__getValue();
+        expect(travel).toBeCloseTo(66*(1-progress));
+        if(progress===0)expect(style.top+travel).toBeGreaterThan(clip.height);
+
+        expect(motion.props.pointerEvents).toBe('none');
+      }
+      await act(async()=>screen.update(React.createElement(HelpJumpToLatest,{visible:true,onPress:jest.fn(),style:{position:'absolute',bottom:100}})));
+      await act(async()=>exiting.finish({finished:true}));
+      expect(screen.root.findByProps({testID:'help-jump-to-latest-motion'}).props.pointerEvents).toBe('auto');
+    }finally{timing.mockRestore();}
+  });
   test('legacy interaction proxy has one accessible hit target and no independent appearance animation',async()=>{
     const press=jest.fn(),animation=jest.spyOn(require('react-native').Animated,'timing');
     await act(async()=>{screen=TestRenderer.create(React.createElement(HelpJumpToLatest,{presentation:'interaction',count:4,onPress:press,style:{position:'absolute',bottom:76}}));});

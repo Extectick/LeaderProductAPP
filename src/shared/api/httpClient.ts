@@ -12,11 +12,13 @@ import { mapHttpStatusToErrorCode, type AppErrorCode } from '@/src/shared/errors
 import { SERVER_CONNECTION_UNAVAILABLE_MESSAGE } from '@/src/shared/errors/userErrorMessage';
 import { setServerReachable, setServerUnavailable } from '@/src/shared/network/serverStatus';
 import { addMonitoringBreadcrumb } from '@/src/shared/monitoring';
+import { withDeadline } from '@/src/shared/network/withDeadline';
 
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
 
 type BodyLike = any; // JSON | FormData | string | Blob | ArrayBuffer
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+const AUTH_WAIT_TIMEOUT_MS = 15_000;
 const DEFAULT_GET_NETWORK_RETRY_DELAYS_MS = [350, 1_000] as const;
 
 export interface HttpResponse<T> {
@@ -38,7 +40,7 @@ export interface HttpRequestOptions<Req> {
   headers?: Record<string, string>;
   skipAuth?: boolean;
   timeoutMs?: number;
-  /** Network-only retries. Mutating requests are never retried by default. */
+  /** Network-only GET retries before response headers. Mutations are not replayed. */
   networkRetryCount?: number;
   /** Cancels a request that is no longer useful (for example, after changing a filter). */
   signal?: AbortSignal;
@@ -87,7 +89,8 @@ async function parseResponse<Res>(
     const backendErrorCode = json && typeof json.error === 'object' ? json.error?.code : undefined;
     const errorDetails = json && typeof json.error === 'object' ? json.error?.details : undefined;
     return { data, meta, message, backendErrorCode, errorDetails };
-  } catch {
+  } catch (error: any) {
+    if (error?.name === 'AbortError' || error?.name === 'TimeoutError') throw error;
     const text = await response.text();
     return { data: undefined, message: text || undefined };
   }
@@ -101,15 +104,16 @@ export async function httpRequest<Req = undefined, Res = any>(
   const effectiveTimeoutMs = timeoutMs === undefined ? DEFAULT_REQUEST_TIMEOUT_MS : timeoutMs;
   const url = path.startsWith('http') ? path : `${API_BASE_URL}${path}`;
 
-  let token = !skipAuth ? await getAccessTokenForRequest() : null;
+  let token: string | null = null;
   const isForm = isFormData(body);
   const isGetLike = method === 'GET';
-  const networkRetryCount = Math.max(0, Math.min(
-    options.networkRetryCount ?? (isGetLike ? DEFAULT_GET_NETWORK_RETRY_DELAYS_MS.length : 0),
+  const networkRetryCount = isGetLike ? Math.max(0, Math.min(
+    options.networkRetryCount ?? DEFAULT_GET_NETWORK_RETRY_DELAYS_MS.length,
     DEFAULT_GET_NETWORK_RETRY_DELAYS_MS.length
-  ));
+  )) : 0;
 
-  async function doFetch(tk: string | null): Promise<Response> {
+  type AttemptResult = { response: Response; parsed: Awaited<ReturnType<typeof parseResponse<Res>>> };
+  async function doFetch(tk: string | null, onHeaders: () => void): Promise<AttemptResult> {
     if (options.expectedUserId !== undefined) {
       let matches = false;
       try { matches = Number(jwtDecode<{ userId?: number }>(tk || '').userId) === options.expectedUserId; } catch { /* fail closed */ }
@@ -129,33 +133,50 @@ export async function httpRequest<Req = undefined, Res = any>(
       error.name = 'AbortError';
       throw error;
     }
-    if (typeof AbortController === 'undefined') {
-      return fetch(url, { method, headers: h, body: reqBody, signal });
-    }
-
-    const controller = new AbortController();
-    const abortFromCaller = () => controller.abort();
+    const controller = typeof AbortController === 'undefined' ? undefined : new AbortController();
+    let stopped = false;
+    let rejectWait!: (error: Error) => void;
+    const interrupted = new Promise<never>((_resolve, reject) => { rejectWait = reject; });
+    const stop = (name: 'AbortError' | 'TimeoutError') => {
+      if (stopped) return;
+      stopped = true;
+      rejectWait(Object.assign(new Error(name === 'AbortError' ? 'Request aborted' : 'Request timed out'), { name }));
+      controller?.abort();
+    };
+    const abortFromCaller = () => stop('AbortError');
     signal?.addEventListener('abort', abortFromCaller, { once: true });
     const timer = effectiveTimeoutMs && effectiveTimeoutMs > 0
-      ? setTimeout(() => controller.abort(), effectiveTimeoutMs)
+      ? setTimeout(() => stop('TimeoutError'), effectiveTimeoutMs)
       : null;
     try {
-      return await fetch(url, { method, headers: h, body: reqBody, signal: controller.signal });
+      const work = (async () => {
+        const response = await fetch(url, { method, headers: h, body: reqBody, signal: controller?.signal ?? signal });
+        onHeaders();
+        if (stopped) throw Object.assign(new Error('Request aborted'), { name: 'AbortError' });
+        const parsed = await parseResponse<Res>(response);
+        return { response, parsed };
+      })();
+      // Keep both cancellation and the deadline alive while the response body is
+      // read. The race also bounds native fetch implementations that ignore abort.
+      return await Promise.race([work, interrupted]);
     } finally {
+      stopped = true;
       if (timer) clearTimeout(timer);
       signal?.removeEventListener('abort', abortFromCaller);
     }
   }
 
-  async function doFetchWithNetworkRetry(tk: string | null): Promise<Response> {
+  async function doFetchWithNetworkRetry(tk: string | null): Promise<AttemptResult> {
     let attempt = 0;
     while (true) {
+      let receivedHeaders = false;
       try {
-        return await doFetch(tk);
+        return await doFetch(tk, () => { receivedHeaders = true; });
       } catch (error: any) {
         // A timeout already consumed the complete request budget. Repeating it
         // would turn a 10 second timeout into a long frozen screen.
-        const canRetry = error?.name !== 'AbortError' && attempt < networkRetryCount;
+        const canRetry = !receivedHeaders && error?.name !== 'AbortError' && error?.name !== 'TimeoutError'
+          && error?.message !== 'ACCOUNT_CHANGED' && attempt < networkRetryCount;
         if (!canRetry) throw error;
         const retryDelay = DEFAULT_GET_NETWORK_RETRY_DELAYS_MS[attempt] ?? 1_000;
         addMonitoringBreadcrumb('http_network_retry', { path, attempt: attempt + 1, retryDelay });
@@ -166,11 +187,13 @@ export async function httpRequest<Req = undefined, Res = any>(
   }
 
   try {
-    let response = await doFetchWithNetworkRetry(token);
+    if (signal?.aborted) throw Object.assign(new Error('Request aborted'), { name: 'AbortError' });
+    token = !skipAuth ? await withDeadline(getAccessTokenForRequest(), AUTH_WAIT_TIMEOUT_MS, signal) : null;
+    let result = await doFetchWithNetworkRetry(token);
 
-    if (response.status === 401 && !skipAuth) {
+    if (result.response.status === 401 && !skipAuth) {
       addMonitoringBreadcrumb('http_401_refresh_attempt', { path });
-      const newToken = await refreshTokens();
+      const newToken = await withDeadline(refreshTokens(), AUTH_WAIT_TIMEOUT_MS, signal);
       if (!newToken) {
         addMonitoringBreadcrumb('http_401_refresh_failed', { path });
         const failure = getLastRefreshFailure();
@@ -229,12 +252,13 @@ export async function httpRequest<Req = undefined, Res = any>(
         return { ok: false, status: 401, message: 'Сессия истекла. Войдите заново.', errorCode: 'UNAUTHORIZED' };
       }
       token = newToken;
-      response = await doFetchWithNetworkRetry(token);
+      result = await doFetchWithNetworkRetry(token);
     }
 
     setServerReachable();
+    const { response, parsed } = result;
     const status = response.status;
-    const { data, meta, message, backendErrorCode, errorDetails } = await parseResponse<Res>(response);
+    const { data, meta, message, backendErrorCode, errorDetails } = parsed;
 
     if (!response.ok) {
       addMonitoringBreadcrumb('http_error_response', { path, status });
@@ -253,7 +277,7 @@ export async function httpRequest<Req = undefined, Res = any>(
     if (error?.message === 'ACCOUNT_CHANGED') {
       return { ok: false, status: 409, message: 'Учётная запись изменилась. Откройте форму заново.', errorCode: 'CONFLICT' };
     }
-    if (error?.name === 'AbortError') {
+    if (error?.name === 'AbortError' || error?.name === 'TimeoutError') {
       if (signal?.aborted) {
         return {
           ok: false,

@@ -1,0 +1,1 @@
+{"expo":{"name":"Avatar QA — synthetic data","slug":"avatar-local-qa","platforms":["web","android"],"scheme":"leaderproduct-dev","android":{"package":"com.leaderproduct.app.dev"},"web":{"bundler":"metro","output":"single"}}}

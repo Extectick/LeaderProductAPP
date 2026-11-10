@@ -1,491 +1,118 @@
-import { sidebarScreens } from '@/src/features/navigation/sidebarScreens';
-import type { ThemeKey } from '@/constants/Colors';
-import { useTheme } from '@/context/ThemeContext';
-import { useThemeColor } from '@/hooks/useThemeColor';
-import { useIsAdmin } from '@/hooks/useIsAdmin';
-import { Ionicons } from '@expo/vector-icons';
-import { Image } from 'expo-image';
-import { usePathname, useRouter, type RelativePathString } from 'expo-router';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Animated, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { bottomTabItems, type TabAccent } from './bottomTabsConfig';
-import { useLastServiceRoute } from '@/src/features/navigation/LastServiceRouteContext';
-import {
-  getWebCachedLastServiceRoute,
-  resolveServiceRootRoute,
-  saveWebCachedLastServiceRoute,
-} from '@/src/features/navigation/lastServiceRouteStorage';
-import {
-  WEB_SIDEBAR_COLLAPSE_STORAGE_KEY,
-  WEB_SIDEBAR_COLLAPSED_WIDTH,
-  WEB_SIDEBAR_EXPANDED_WIDTH,
-  emitWebSidebarState,
-  getPersistedWebSidebarCollapsed,
-} from './sidebarEvents';
+import React, {useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
+import {Image, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions} from 'react-native';
+import {Ionicons} from '@expo/vector-icons';
+import {usePathname, useRouter} from 'expo-router';
+import {useAppSurfaceTheme} from '@/components/ui/appSurfaceTokens';
+import {appWebControlProps,appWebControlContentProps} from '@/components/ui/appWebInteraction';
+import {useIsAdmin} from '@/hooks/useIsAdmin';
+import {useLastServiceRoute} from '@/src/features/navigation/LastServiceRouteContext';
+import {useOptionalUnsavedChanges} from '@/src/features/navigation/UnsavedChangesContext';
+import {saveWebCachedLastServiceRoute} from '@/src/features/navigation/lastServiceRouteStorage';
+import {useServicesData} from '@/src/features/services/hooks/useServicesData';
+import {applyAdminCatalogService} from '@/src/features/services/lib/adminCatalogService';
+import {getVisibleServices} from '@/src/features/services/lib/grid';
+import {canOpenService} from '@/src/features/services/lib/serviceAvailability';
+import {serviceAccent} from '@/src/features/services/lib/serviceAccent';
+import {useServerStatus} from '@/src/shared/network/useServerStatus';
+import type {ServiceAccessItem} from '@/utils/servicesService';
+import {withOpacity} from '@/src/features/services/ui/servicesTokens';
+import {WEB_SIDEBAR_COLLAPSE_STORAGE_KEY, emitWebSidebarState, getPersistedWebSidebarCollapsed, getWebSidebarWidthByCollapsed} from './sidebarEvents';
 
-const DEFAULT_ICON_BG = '#E8EDF6';
+type Tooltip={id:string;label:string;left:number;top:number};
+type SidebarItem={key:string;label:string;path:string;icon:string;service?:ServiceAccessItem};
+const home:SidebarItem={key:'services',label:'Главная',path:'/services',icon:'apps-outline'};
+const profile:SidebarItem={key:'profile',label:'Профиль',path:'/profile',icon:'person-outline'};
 
-function withOpacity(color: string, opacity: number) {
-  if (!color.startsWith('#')) return color;
-  const hex = color.replace('#', '');
-  const normalized =
-    hex.length === 3
-      ? hex
-          .split('')
-          .map((c) => c + c)
-          .join('')
-      : hex;
-  const int = Number.parseInt(normalized, 16);
-  if (Number.isNaN(int)) return color;
-  const r = (int >> 16) & 255;
-  const g = (int >> 8) & 255;
-  const b = int & 255;
-  return `rgba(${r}, ${g}, ${b}, ${opacity})`;
-}
+/** The catalog owns the services, permissions and category colors in both views. */
+export default function WebSidebar({compact=false, visible=true}:{compact?:boolean;visible?:boolean}) {
+  const [preferredCollapsed,setPreferredCollapsed]=useState(getPersistedWebSidebarCollapsed);
+  const collapsed=compact||preferredCollapsed;
+  const width=getWebSidebarWidthByCollapsed(collapsed);
+  const windowSize=useWindowDimensions();
+  const [tooltip,setTooltip]=useState<Tooltip|null>(null);
+  const router=useRouter(),pathname=usePathname();
+  const {clearLastServiceRoute}=useLastServiceRoute();
+  const unsaved=useOptionalUnsavedChanges();
+  const {isAdmin,isCheckingAdmin}=useIsAdmin();
+  const {services}=useServicesData();
+  const {isReachable}=useServerStatus();
+  const {background,text,muted,panel,line,elevated}=useAppSurfaceTheme();
+  const items=useMemo(()=>getVisibleServices(applyAdminCatalogService(services,!isCheckingAdmin&&isAdmin))
+    .sort((a,b)=>Number(b.key==='help')-Number(a.key==='help'))
+    .map(service=>({key:service.key,label:service.name,path:service.route??'',icon:service.icon||'apps-outline',service})),[services,isAdmin,isCheckingAdmin]);
 
-function resolveTabTint(
-  accent: TabAccent | undefined,
-  fallback: string,
-  themeKey: ThemeKey
-) {
-  if (!accent) return fallback;
-  if (typeof accent === 'string') return accent;
-  return (
-    accent[themeKey] ??
-    accent.light ??
-    accent.dark ??
-    accent.orange ??
-    accent.leaderprod ??
-    fallback
-  );
-}
+  useEffect(()=>{
+    try { window.localStorage.setItem(WEB_SIDEBAR_COLLAPSE_STORAGE_KEY,preferredCollapsed?'1':'0'); } catch {}
+  },[preferredCollapsed]);
+  useLayoutEffect(()=>{emitWebSidebarState({collapsed,width:visible?width:0,phase:'end'});},[collapsed,width,visible]);
+  useEffect(()=>setTooltip(null),[collapsed,visible,pathname,windowSize.width,windowSize.height,services]);
 
-export default function WebSidebar() {
-  const [collapsed, setCollapsed] = useState<boolean>(() => getPersistedWebSidebarCollapsed());
-  const router = useRouter();
-  const pathname = usePathname();
-  const { lastServiceRoute, resolveLastServiceRoute, clearLastServiceRoute } = useLastServiceRoute();
-  const lastServiceRouteRef = useRef<string | null>(getWebCachedLastServiceRoute());
-  const widthAnim = useRef(
-    new Animated.Value(collapsed ? WEB_SIDEBAR_COLLAPSED_WIDTH : WEB_SIDEBAR_EXPANDED_WIDTH)
-  ).current;
-  const collapsedRef = useRef(collapsed);
-  const { isAdmin } = useIsAdmin();
-  const { theme } = useTheme();
-  const themeKey = (theme || 'light') as ThemeKey;
-
-  const bgColor = useThemeColor({}, 'cardBackground');
-  const textColor = useThemeColor({}, 'text');
-  const secondaryText = useThemeColor({}, 'secondaryText');
-  const tintColor = useThemeColor({}, 'tint');
-  const borderColor = useThemeColor({}, 'inputBorder');
-
-  const emitSidebarState = useCallback(
-    (phase: 'start' | 'progress' | 'end', width: number, nextCollapsed = collapsedRef.current) => {
-      emitWebSidebarState({
-        phase,
-        collapsed: nextCollapsed,
-        width: Math.max(0, Math.round(width)),
-      });
-    },
-    []
-  );
-
-  useEffect(() => {
-    collapsedRef.current = collapsed;
-  }, [collapsed]);
-
-  useEffect(() => {
-    const route = resolveServiceRootRoute(pathname);
-    if (!route) {
-      if (pathname === '/services') {
-        lastServiceRouteRef.current = null;
-        clearLastServiceRoute();
-      }
-      return;
-    }
-    lastServiceRouteRef.current = route;
-    saveWebCachedLastServiceRoute(route);
-  }, [clearLastServiceRoute, pathname]);
-
-  useEffect(() => {
-    const listenerId = widthAnim.addListener(({ value }) => {
-      emitSidebarState('progress', value);
-    });
-    return () => {
-      widthAnim.removeListener(listenerId);
-    };
-  }, [emitSidebarState, widthAnim]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      window.localStorage.setItem(WEB_SIDEBAR_COLLAPSE_STORAGE_KEY, collapsed ? '1' : '0');
-    } catch {}
-  }, [collapsed]);
-
-  useEffect(() => {
-    const targetWidth = collapsed ? WEB_SIDEBAR_COLLAPSED_WIDTH : WEB_SIDEBAR_EXPANDED_WIDTH;
-    widthAnim.stopAnimation((currentWidth) => {
-      emitSidebarState('start', currentWidth, collapsed);
-      Animated.timing(widthAnim, {
-        toValue: targetWidth,
-        duration: 220,
-        useNativeDriver: false,
-      }).start(({ finished }) => {
-        if (finished) {
-          emitSidebarState('end', targetWidth, collapsed);
-          return;
-        }
-        widthAnim.stopAnimation((lastWidth) => {
-          emitSidebarState('end', lastWidth, collapsedRef.current);
-        });
-      });
-    });
-  }, [collapsed, emitSidebarState, widthAnim]);
-
-  const labelOpacity = widthAnim.interpolate({
-    inputRange: [84, 264],
-    outputRange: [0, 1],
-    extrapolate: 'clamp',
-  });
-
-  const labelTranslateX = widthAnim.interpolate({
-    inputRange: [84, 264],
-    outputRange: [-8, 0],
-    extrapolate: 'clamp',
-  });
-
-  const getIsActive = (path: string) => {
-    if (!pathname) return false;
-    if (path === '/home') return pathname === '/home' || pathname === '/';
-    return pathname === path || pathname.startsWith(`${path}/`);
+  const open=(item:SidebarItem)=>{
+    setTooltip(null);
+    if(item.service&&!canOpenService(item.service,isReachable,'web'))return;
+    if(pathname===item.path)return;
+    const navigate=()=>{if(item.path==='/services')clearLastServiceRoute();else if(item.service)saveWebCachedLastServiceRoute(item.path);router.push(item.path as any);};
+    if(unsaved)unsaved.confirmNavigation(navigate);else navigate();
   };
+  const isActive=(path:string)=>{
+    const route=path.split(/[?#]/,1)[0].replace(/^\/\(main\)(?=\/)/,'').replace(/\/$/,'');
+    return route==='/services'?pathname==='/services'||pathname==='/home'||pathname==='/':Boolean(route)&&(pathname===route||pathname.startsWith(`${route}/`));
+  };
+  const showTooltip=(id:string,label:string,rect:{right:number;top:number;height:number})=>{
+    if(!collapsed||!visible)return;
+    setTooltip({id,label,left:Math.min(rect.right+8,Math.max(8,windowSize.width-268)),top:Math.max(8,Math.min(windowSize.height-48,rect.top+rect.height/2-18))});
+  };
+  const hideTooltip=(id?:string)=>setTooltip(current=>!id||current?.id===id?null:current);
+  const renderItem=(item:SidebarItem)=><SidebarButton key={item.key} item={item} collapsed={collapsed} active={isActive(item.path)} disabled={Boolean(item.service&&!canOpenService(item.service,isReachable,'web'))} onPress={()=>open(item)} onTooltip={showTooltip} onHideTooltip={hideTooltip}/>;
 
-  const visibleItems = sidebarScreens.filter(({ sidebar }) => (sidebar.path === '/admin' ? isAdmin : true));
-  const activeSidebarPath =
-    visibleItems.find(({ sidebar }) => getIsActive(sidebar.path))?.sidebar.path || '/home';
-  const activeTabMeta = bottomTabItems.find((item) => item.matchPath === activeSidebarPath);
-  const activeAccent = resolveTabTint(activeTabMeta?.activeTint, tintColor, themeKey);
-
-  return (
-    <Animated.View
-      style={[
-        styles.sidebar,
-        {
-          width: widthAnim,
-          backgroundColor: bgColor,
-          borderRightColor: borderColor,
-        },
-      ]}
-    >
-      <View style={styles.brandBlock}>
-        <Pressable
-          onPress={() => router.push('/home')}
-          style={(state: any) => [styles.brandPressable, state.hovered ? styles.brandHovered : null]}
-        >
-          <View style={[styles.brandIcon, { borderColor: `${tintColor}33` }]}>
-            <Image
-              source={require('@/assets/images/icon.png')}
-              style={styles.brandLogo}
-              contentFit="contain"
-            />
-          </View>
-          <Animated.View
-            style={[
-              styles.brandTextWrap,
-              { opacity: labelOpacity, transform: [{ translateX: labelTranslateX }] },
-            ]}
-          >
-            <Text numberOfLines={1} style={[styles.brandTitle, { color: textColor }]}>
-              Лидер Продукт
-            </Text>
-            <Text numberOfLines={1} style={[styles.brandSub, { color: secondaryText }]}>
-              Рабочая панель
-            </Text>
-          </Animated.View>
-        </Pressable>
-
-        <Pressable
-          onPress={() => setCollapsed((prev) => !prev)}
-          style={(state: any) => [
-            styles.collapseBtn,
-            {
-              borderColor: borderColor,
-              backgroundColor: state.hovered ? `${tintColor}12` : 'transparent',
-            },
-            state.pressed ? styles.collapseBtnPressed : null,
-          ]}
-          accessibilityRole="button"
-          accessibilityLabel={collapsed ? 'Развернуть меню' : 'Свернуть меню'}
-        >
-          <Ionicons
-            name={collapsed ? 'chevron-forward-outline' : 'chevron-back-outline'}
-            size={16}
-            color={textColor}
-          />
-        </Pressable>
-      </View>
-
-      <ScrollView
-        style={styles.menuScroll}
-        contentContainerStyle={styles.menuScrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {visibleItems.map(({ sidebar }) => {
-          const isActive = getIsActive(sidebar.path);
-          const tabMeta = bottomTabItems.find((item) => item.matchPath === sidebar.path);
-          const itemActiveAccent = resolveTabTint(tabMeta?.activeTint, tintColor, themeKey);
-          const itemInactiveAccent = resolveTabTint(tabMeta?.inactiveTint, '#334155', themeKey);
-          const openSidebarPath = () => {
-            if (sidebar.path === '/services') {
-              const refRoute = lastServiceRouteRef.current;
-              const webCachedRoute = getWebCachedLastServiceRoute();
-              const target = refRoute || webCachedRoute || lastServiceRoute;
-              if (target) {
-                router.push(target as RelativePathString);
-                return;
-              }
-              void resolveLastServiceRoute().then((route) => {
-                const asyncTarget = route || sidebar.path;
-                router.push(asyncTarget as RelativePathString);
-              });
-              return;
-            }
-            router.push(sidebar.path as RelativePathString);
-          };
-          return (
-            <Pressable
-              key={sidebar.path}
-              onPress={openSidebarPath}
-              accessibilityRole="button"
-              accessibilityState={{ selected: isActive }}
-              style={(state: any) => [
-                styles.item,
-                {
-                  borderColor: isActive
-                    ? withOpacity(itemActiveAccent, 0.45)
-                    : state.hovered
-                      ? withOpacity(itemActiveAccent, 0.25)
-                      : borderColor,
-                  backgroundColor: isActive
-                    ? withOpacity(itemActiveAccent, 0.15)
-                    : state.hovered
-                      ? withOpacity(itemActiveAccent, 0.08)
-                      : 'transparent',
-                },
-                state.pressed ? styles.itemPressed : null,
-              ]}
-            >
-              <View
-                style={[
-                  styles.iconBox,
-                  {
-                    backgroundColor: isActive
-                      ? itemActiveAccent
-                      : DEFAULT_ICON_BG,
-                  },
-                ]}
-              >
-                <Ionicons
-                  name={sidebar.icon as any}
-                  size={18}
-                  color={isActive ? '#FFFFFF' : itemInactiveAccent}
-                />
-              </View>
-
-              <Animated.View
-                style={[
-                  styles.itemTextWrap,
-                  {
-                    opacity: labelOpacity,
-                    transform: [{ translateX: labelTranslateX }],
-                  },
-                ]}
-              >
-                <Text numberOfLines={1} style={[styles.label, { color: textColor }]}>
-                  {sidebar.label}
-                </Text>
-                <Text numberOfLines={1} style={[styles.itemSub, { color: secondaryText }]}>
-                  {sidebar.path === '/home'
-                    ? 'Сводка дня'
-                    : sidebar.path === '/services'
-                      ? 'Модули и доступы'
-                      : sidebar.path === '/tasks'
-                        ? 'Мои поручения'
-                        : sidebar.path === '/profile'
-                          ? 'Профиль и настройки'
-                          : 'Управление системой'}
-                </Text>
-              </Animated.View>
-
-              {isActive ? <View style={[styles.activeLine, { backgroundColor: itemActiveAccent }]} /> : null}
-            </Pressable>
-          );
-        })}
-      </ScrollView>
-
-      <View style={[styles.footer, { borderTopColor: borderColor }]}>
-        <Animated.View
-          style={[
-            styles.footerTextWrap,
-            {
-              opacity: labelOpacity,
-              transform: [{ translateX: labelTranslateX }],
-            },
-          ]}
-        >
-          <Text numberOfLines={1} style={[styles.footerTitle, { color: textColor }]}>
-            Desktop Navigation
-          </Text>
-          <Text numberOfLines={1} style={[styles.footerSub, { color: secondaryText }]}>
-            Быстрый доступ к разделам
-          </Text>
-        </Animated.View>
-        <View style={[styles.footerDot, { backgroundColor: activeAccent }]} />
-      </View>
-    </Animated.View>
-  );
+  return <><View testID="web-sidebar" role="navigation" accessibilityLabel="Основная навигация" style={[styles.sidebar,{width,backgroundColor:background,borderRightColor:line}]}>
+    <Pressable {...appWebControlProps()} accessibilityRole="button" accessibilityLabel="Лидер Продукт — главная" onPress={()=>open(home)} style={styles.brand}>
+      <Image source={require('@/assets/images/icon.png')} style={{width:48,height:48}} resizeMode="contain" accessible={false}/>
+      {!collapsed?<Text {...appWebControlContentProps()} numberOfLines={2} style={{color:text,fontWeight:'600',fontSize:15,flex:1}}>Лидер Продукт</Text>:null}
+    </Pressable>
+    <ScrollView testID="web-sidebar-services" style={{flex:1,minHeight:0}} contentContainerStyle={{gap:6}} showsVerticalScrollIndicator={false} onScroll={()=>hideTooltip()} scrollEventThrottle={32}>
+      {renderItem(home)}
+      {items.filter(item=>item.key!=='admin').map(renderItem)}
+    </ScrollView>
+    <View testID="web-sidebar-account" style={{gap:6,flexShrink:0}}>
+      {items.filter(item=>item.key==='admin').map(renderItem)}
+      {renderItem(profile)}
+      {!compact?<Pressable {...appWebControlProps()} accessibilityRole="button" accessibilityLabel={collapsed?'Развернуть меню':'Свернуть меню'} accessibilityState={{expanded:!collapsed}}
+        {...({title:collapsed?'Развернуть меню':undefined} as any)} onPress={()=>setPreferredCollapsed(value=>!value)}
+        style={({pressed,hovered}:any)=>[styles.item,{backgroundColor:pressed||hovered?panel:'transparent'}]}>
+        <View style={styles.icon}><Ionicons {...appWebControlContentProps()} name={collapsed?'chevron-forward-outline':'chevron-back-outline'} size={20} color={muted}/></View>
+        {!collapsed?<Text {...appWebControlContentProps()} style={{color:muted,fontSize:13}}>Свернуть</Text>:null}
+      </Pressable>:null}
+    </View>
+  </View>
+  {tooltip?<View testID="web-sidebar-tooltip" role="tooltip" pointerEvents="none" style={{position:'fixed',left:tooltip.left,top:tooltip.top,maxWidth:260,minHeight:36,paddingHorizontal:12,paddingVertical:8,borderRadius:10,backgroundColor:elevated,borderWidth:1,borderColor:line,zIndex:50,boxShadow:'0 6px 18px rgba(15,23,42,.14)'} as any}><Text numberOfLines={2} style={{color:text,fontSize:13,lineHeight:18}}>{tooltip.label}</Text></View>:null}
+  </>;
 }
 
-const styles = StyleSheet.create({
-  sidebar: {
-    borderRightWidth: 1,
-    paddingTop: 14,
-    paddingHorizontal: 10,
-    paddingBottom: 10,
-    gap: 10,
-  },
-  brandBlock: {
-    gap: 10,
-  },
-  brandPressable: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    borderRadius: 14,
-    paddingVertical: 10,
-    paddingHorizontal: 8,
-  },
-  brandHovered: {
-    backgroundColor: '#F5F8FD',
-  },
-  brandIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    borderWidth: 1,
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  brandLogo: {
-    width: 26,
-    height: 26,
-  },
-  brandTextWrap: {
-    gap: 1,
-    flex: 1,
-    minWidth: 0,
-  },
-  brandTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  brandSub: {
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  collapseBtn: {
-    alignSelf: 'flex-start',
-    width: 30,
-    height: 30,
-    borderRadius: 10,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  collapseBtnPressed: {
-    transform: [{ scale: 0.95 }],
-    opacity: 0.9,
-  },
-  menuScroll: {
-    flex: 1,
-  },
-  menuScrollContent: {
-    gap: 8,
-    paddingTop: 4,
-    paddingBottom: 8,
-  },
-  item: {
-    minHeight: 58,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    borderRadius: 14,
-    borderWidth: 1,
-    paddingVertical: 8,
-    paddingHorizontal: 8,
-    position: 'relative',
-    overflow: 'hidden',
-  },
-  itemPressed: {
-    transform: [{ scale: 0.985 }],
-  },
-  iconBox: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  itemTextWrap: {
-    flex: 1,
-    gap: 1,
-    minWidth: 0,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '700',
-    minWidth: 0,
-    flexShrink: 1,
-  },
-  itemSub: {
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  activeLine: {
-    position: 'absolute',
-    right: 0,
-    top: 8,
-    bottom: 8,
-    width: 3,
-    borderRadius: 999,
-  },
-  footer: {
-    borderTopWidth: 1,
-    marginTop: 2,
-    paddingTop: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  footerTextWrap: {
-    flex: 1,
-    minWidth: 0,
-  },
-  footerTitle: {
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  footerSub: {
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  footerDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 999,
-  },
+function SidebarButton({item,collapsed,active,disabled,onPress,onTooltip,onHideTooltip}:{item:SidebarItem;collapsed:boolean;active:boolean;disabled:boolean;onPress:()=>void;onTooltip:(id:string,label:string,rect:{right:number;top:number;height:number})=>void;onHideTooltip:(id:string)=>void}){
+  const node=useRef<View>(null);
+  const {text,muted,accentText,panel,dark}=useAppSurfaceTheme();
+  const gradient=item.service?.gradientStart&&item.service.gradientEnd?[item.service.gradientStart,item.service.gradientEnd]:undefined;
+  const accent=item.service?serviceAccent(gradient,dark):accentText;
+  const show=(event:any)=>{
+    if(!collapsed)return;
+    const rect=event.currentTarget?.getBoundingClientRect?.();
+    if(rect)onTooltip(item.key,item.label,rect);
+    else node.current?.measureInWindow((x,y,width,height)=>onTooltip(item.key,item.label,{right:x+width,top:y,height}));
+  };
+  return <Pressable ref={node} {...appWebControlProps('row')} testID={`sidebar-${item.key}`} accessibilityRole="button" accessibilityLabel={item.label} accessibilityState={{selected:active,disabled}} disabled={disabled}
+    onHoverIn={show} onHoverOut={()=>onHideTooltip(item.key)} onFocus={show} onBlur={()=>onHideTooltip(item.key)} onPress={onPress}
+    style={({pressed,hovered}:any)=>[styles.item,{opacity:disabled ? .48 : 1,backgroundColor:active?withOpacity(accent,.12):pressed||hovered?panel:'transparent'}]}>
+    <View style={styles.icon}><View testID={`sidebar-icon-${item.key}`} style={item.service?{width:40,height:40,borderRadius:12,alignItems:'center',justifyContent:'center'}:undefined}>
+      <Ionicons {...(item.service?{}:appWebControlContentProps())} name={item.icon as any} size={23} color={disabled?muted:item.service||active?accent:muted}/>
+    </View></View>
+    {!collapsed?<Text {...appWebControlContentProps()} numberOfLines={1} style={{color:active?accent:text,fontSize:14,fontWeight:active?'600':'500',flex:1}}>{item.label}</Text>:null}
+  </Pressable>;
+}
+
+const styles=StyleSheet.create({
+  sidebar:{height:'100%',flexShrink:0,paddingHorizontal:11,paddingTop:12,paddingBottom:12,borderRightWidth:1,gap:18},
+  brand:{minHeight:48,flexDirection:'row',alignItems:'center',gap:8,borderRadius:24},
+  item:{minHeight:48,flexDirection:'row',alignItems:'center',gap:8,borderRadius:24,paddingHorizontal:1},
+  icon:{width:48,height:48,alignItems:'center',justifyContent:'center',flexShrink:0},
 });

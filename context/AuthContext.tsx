@@ -1,9 +1,11 @@
+import { primeOwnAvatar, clearAvatarMemory } from '@/src/shared/avatar/avatarSource';
+import { acceptOwnProfile, isCurrentOwnProfile, persistOwnProfile, resetOwnProfileSession, ownProfileFence, ownProfileSessionMatches } from '@/src/features/profile/model/ownProfileCache';
 // context/AuthContext.tsx
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import isEqual from 'fast-deep-equal';
 import { jwtDecode } from 'jwt-decode';
-import React, { createContext, ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import React, { createContext, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 
 import { Profile } from '@/src/entities/user/types';
@@ -50,26 +52,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const stopPushRegistration=useRef<(()=>void)|null>(null);
 
   const setProfile = useCallback(async (newProfile: Profile | null) => {
-    await setMonitoringUser(newProfile?.id);
-    // if (newProfile && !isValidProfile(newProfile)) {
-    //   await logoutFn();
-    //   setAuthenticated(false);
-    //   newProfile = null;
-    // }
-
-    setProfileState((prev) => {
-      if (isEqual(prev, newProfile)) return prev;
-      return newProfile;
-    });
-
     if (newProfile) {
-      await AsyncStorage.setItem('profile', JSON.stringify(newProfile));
-    } else {
-      await AsyncStorage.removeItem('profile');
-    }
+      if (!acceptOwnProfile(newProfile) || !isCurrentOwnProfile(newProfile)) return;
+    } else resetOwnProfileSession();
+    setProfileState(prev => isEqual(prev, newProfile) ? prev : newProfile);
+    await Promise.all([setMonitoringUser(newProfile?.id), persistOwnProfile(newProfile)]);
   }, []);
 
-  const signOut = async () => {
+  const signOut = useCallback(async () => {
     stopPushRegistration.current?.();stopPushRegistration.current=null;
     addMonitoringBreadcrumb('auth_signout_start');
     await setMonitoringUser(null);
@@ -84,11 +74,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     } catch (e) {
       captureException(e, { where: 'AuthProvider:signOut' });
     }
+    clearAvatarMemory();
     await logout(); // локальный выход обязан завершиться даже при недоступном API
     setAuthenticated(false); // контекст -> guest
     await setProfile(null);  // чистим профиль в контексте
     addMonitoringBreadcrumb('auth_signout_done');
-  };
+  }, [setProfile]);
 
   useEffect(() => {
     return onAuthSessionExpired((event) => {
@@ -108,24 +99,36 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     let isMounted = true;
 
     const init = async () => {
+      const initFence = ownProfileFence();
+      // An explicit login/logout or confirmed expiry supersedes this restore,
+      // even if one of its storage/network operations finishes afterwards.
+      const isCurrentInit = () => isMounted && ownProfileSessionMatches(initFence);
       let cachedProfile: Profile | null = null;
       let storedRefreshToken: string | null = null;
       try {
         addMonitoringBreadcrumb('auth_init_start');
         let token = await getAccessToken();
+        if (!isCurrentInit()) return;
         storedRefreshToken = await getRefreshToken();
+        if (!isCurrentInit()) return;
         const profileJson = await AsyncStorage.getItem('profile');
 
-        if (!isMounted) return;
+        if (!isCurrentInit()) return;
 
         if (profileJson) {
           cachedProfile = JSON.parse(profileJson) as Profile;
+          // Read only the local avatar cache while the auth gate is still closed.
+          // The transport validates the current token's account and never downloads here.
+          if (token || storedRefreshToken) await primeOwnAvatar(cachedProfile);
+          if (!isCurrentInit() || hasAuthSessionExpired()) return;
           await setProfile(cachedProfile);
+          if (!isCurrentInit()) return;
         }
 
         if (!token && storedRefreshToken) {
           addMonitoringBreadcrumb('auth_refresh_attempt', { reason: 'no_access_token' });
           token = await refreshToken();
+          if (!isCurrentInit()) return;
           if (!token) {
             addMonitoringBreadcrumb('auth_refresh_failed', { reason: 'no_access_token' });
             if (hasAuthSessionExpired()) {
@@ -134,6 +137,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               return;
             }
             await handleBackendUnavailable('Не удалось обновить сессию: API недоступен.');
+            if (!isCurrentInit()) return;
             if (cachedProfile) {
               setAuthenticated(true);
               addMonitoringBreadcrumb('auth_offline_session_restored', { reason: 'no_access_token' });
@@ -150,6 +154,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             // Токен просрочен - попробовать обновить
             addMonitoringBreadcrumb('auth_refresh_attempt', { reason: 'token_expired' });
             const newToken = await refreshToken();
+            if (!isCurrentInit()) return;
             if (!newToken) {
               addMonitoringBreadcrumb('auth_refresh_failed', { reason: 'token_expired' });
               if (hasAuthSessionExpired()) {
@@ -158,6 +163,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                 return;
               }
               await handleBackendUnavailable('Не удалось обновить сессию: API недоступен.');
+              if (!isCurrentInit()) return;
               if (cachedProfile && storedRefreshToken) {
                 setAuthenticated(true);
                 addMonitoringBreadcrumb('auth_offline_session_restored', { reason: 'token_expired' });
@@ -174,12 +180,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           if (!cachedProfile) {
             try {
               await getProfile();
+              if (!isCurrentInit()) return;
               const refreshedProfileJson = await AsyncStorage.getItem('profile');
+              if (!isCurrentInit()) return;
               if (refreshedProfileJson) {
                 const parsedProfile = JSON.parse(refreshedProfileJson);
                 await setProfile(parsedProfile);
               }
             } catch (e) {
+              if (!isCurrentInit()) return;
               captureException(e, { where: 'AuthProvider:init:getProfile' });
               console.warn('Ошибка получения профиля:', e);
             }
@@ -189,12 +198,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           addMonitoringBreadcrumb('auth_guest_mode');
         }
       } catch (e) {
+        if (!isCurrentInit()) return;
         captureException(e, { where: 'AuthProvider:init' });
         console.warn('Ошибка инициализации:', e);
         await handleBackendUnavailable((e as any)?.message || 'Ошибка инициализации');
-        if (!isMounted) return;
+        if (!isCurrentInit()) return;
         if (cachedProfile && storedRefreshToken && !hasAuthSessionExpired()) {
           await setProfile(cachedProfile);
+          if (!isCurrentInit()) return;
           setAuthenticated(true);
           addMonitoringBreadcrumb('auth_offline_session_restored', { reason: 'init_error' });
         } else {
@@ -227,7 +238,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       lastRefreshAt = now;
       refreshing = true;
       try {
-        const freshProfile = await getProfile();
+        const freshProfile = await getProfile({ force: true });
         if (!cancelled && freshProfile) {
           await setProfile(freshProfile);
         }
@@ -259,17 +270,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   },[isAuthenticated,profileState?.id]);
 
   usePresenceHeartbeat(isAuthenticated);
+  const value = useMemo(() => ({ isLoading, isAuthenticated, profile: profileState, setAuthenticated, setProfile, signOut }),
+    [isLoading, isAuthenticated, profileState, setAuthenticated, setProfile, signOut]);
 
   return (
     <AuthContext.Provider
-      value={{
-        isLoading,
-        isAuthenticated,
-        profile: profileState,
-        setAuthenticated,
-        setProfile,
-        signOut
-      }}
+      value={value}
     >
       {children}
     </AuthContext.Provider>

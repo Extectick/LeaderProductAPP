@@ -1,0 +1,20 @@
+import React from 'react';
+import TestRenderer,{act} from 'react-test-renderer';
+import {ProfileMailConnections} from '../src/features/profile/ui/ProfileMailConnections';
+import {loadMailConnections,saveMailConnection} from '../src/features/profile/api/mailConnections';
+jest.mock('react-native',()=>({View:'View',Pressable:'Pressable',AppState:{addEventListener:()=>({remove:()=>{}})},Linking:{openURL:jest.fn()}}));
+jest.mock('react-native-paper',()=>({Text:'Text',ActivityIndicator:'Loading'}));
+jest.mock('@expo/vector-icons',()=>({Ionicons:'Icon'}));
+jest.mock('expo-router',()=>({useFocusEffect:(fn:any)=>require('react').useEffect(fn,[fn])}));
+jest.mock('@/components/ui/appSurfaceTokens',()=>({useAppSurfaceTheme:()=>({text:'#111',muted:'#666',danger:'#900',green:'#090'})}));
+jest.mock('../src/features/profile/ui/ConnectionPrimitives',()=>({ConnectionAction:'Action',ConnectionField:'Field'}));
+jest.mock('../src/features/profile/ui/ConnectionDialog',()=>({ConnectionDialog:'Dialog'}));
+jest.mock('../src/features/profile/api/mailConnections',()=>({loadMailConnections:jest.fn(),saveMailConnection:jest.fn(),removeMailConnection:jest.fn()}));
+let screen:TestRenderer.ReactTestRenderer;
+beforeEach(async()=>{jest.clearAllMocks();(loadMailConnections as jest.Mock).mockResolvedValue([]);await act(async()=>{screen=TestRenderer.create(React.createElement(ProfileMailConnections,{userId:1}));});});
+afterEach(async()=>{await act(async()=>screen.unmount());});
+const action=(label:string)=>screen.root.findAllByType('Action' as any).filter(n=>n.props.children===label).at(-1)!;
+async function open(){await act(async()=>action('Подключить').props.onPress());await act(async()=>screen.root.findAllByType('Pressable' as any)[0].props.onPress());await act(async()=>screen.root.findAllByType('Field' as any)[0].props.onChangeText('owner@mail.ru'));await act(async()=>screen.root.findAllByType('Field' as any)[1].props.onChangeText('private-app-password'));}
+test('provider selection never claims connection before SMTP verification',async()=>{await open();expect(screen.root.findAllByType('Text' as any).some(n=>n.props.children==='Подключено')).toBe(false);expect(saveMailConnection).not.toHaveBeenCalled();});
+test('failed login clears password, retains form, and never sets connected state',async()=>{await open();(saveMailConnection as jest.Mock).mockRejectedValue(Error('Проверьте пароль приложения.'));await act(async()=>action('Подключить').props.onPress());expect(screen.root.findAllByType('Field' as any)[1].props.value).toBe('');expect(screen.root.findByType('Dialog' as any)).toBeDefined();expect(screen.root.findAllByType('Text' as any).some(n=>n.props.children==='Подключено')).toBe(false);});
+test('account switch aborts previous request and late successful verification cannot show old mailbox',async()=>{await open();let resolve!:()=>void;(saveMailConnection as jest.Mock).mockImplementation(()=>new Promise<void>(r=>{resolve=r;}));await act(async()=>{void action('Подключить').props.onPress();});const signal=(saveMailConnection as jest.Mock).mock.calls[0][4];await act(async()=>screen.update(React.createElement(ProfileMailConnections,{userId:2})));expect(signal.aborted).toBe(true);await act(async()=>resolve());expect(screen.root.findAllByType('Text' as any).some(n=>n.props.children==='owner@mail.ru')).toBe(false);});

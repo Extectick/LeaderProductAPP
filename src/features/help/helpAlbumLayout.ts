@@ -9,6 +9,14 @@ export function helpImageAspectRatio(item: HelpAlbumDimensions): number | null {
     ? clamp(item.width / item.height, .05, 20) : null;
 }
 
+/** Bound previews by their actual chat column, never the full monitor. Width
+ * is the only resize input: keyboard height and decoded image pixels must not
+ * change an already measured message under the reader's finger. */
+export function helpMediaPreviewBounds(availableWidth: number): {width: number; maxHeight: number} {
+  const width = Math.min(640, Number.isFinite(availableWidth) && availableWidth > 0 ? availableWidth : 1);
+  return {width, maxHeight: Math.min(760, width * 1.65)};
+}
+
 function rows(ratios: number[], counts: number[], width: number, gap: number): HelpAlbumLayout {
   const items: HelpAlbumTile[] = []; let index = 0, y = 0;
   for (const count of counts) {
@@ -84,13 +92,16 @@ function cost(layout: HelpAlbumLayout, ratios: number[], counts: number[]): numb
  * https://github.com/DrKLO/Telegram/blob/master/TMessagesProj/src/main/java/org/telegram/messenger/MessageObject.java
  * This is an independent implementation with a crop/size cost and dp geometry.
  */
-export function helpAlbumLayout(dimensions: HelpAlbumDimensions[], availableWidth: number, spacing = 2): HelpAlbumLayout {
+export function helpAlbumLayout(dimensions: HelpAlbumDimensions[], availableWidth: number, spacing = 2, maxSingleHeight?: number): HelpAlbumLayout {
   const width = Number.isFinite(availableWidth) && availableWidth > 0 ? availableWidth : 1;
   const gap = clamp(Number.isFinite(spacing) ? spacing : 2, 0, width / 16);
   const ratios = dimensions.slice(0, 10).map(item => helpImageAspectRatio(item) ?? 1);
   if (!ratios.length) return { width, height: 0, items: [], pattern: 'empty' };
   if (ratios.length === 1) {
-    const height = Math.min(350, width / ratios[0]), singleWidth = Math.min(width, height * ratios[0]);
+    const adaptiveLimit = helpMediaPreviewBounds(width).maxHeight;
+    const heightLimit = typeof maxSingleHeight === 'number' && Number.isFinite(maxSingleHeight) && maxSingleHeight > 0
+      ? Math.min(maxSingleHeight, adaptiveLimit) : adaptiveLimit;
+    const height = Math.min(heightLimit, width / ratios[0]), singleWidth = Math.min(width, height * ratios[0]);
     return { width: singleWidth, height, items: [{ index: 0, x: 0, y: 0, width: singleWidth, height }], pattern: 'single' };
   }
   if (ratios.length === 2) {

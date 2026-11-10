@@ -1,5 +1,6 @@
 // app/_layout.tsx
 import '@/utils/logbox';
+import WebInteractionStyles from '@/components/ui/WebInteractionStyles';
 import { Slot, useSegments, usePathname, ErrorBoundary as RouterErrorBoundary, type ErrorBoundaryProps } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import React, { useCallback, useContext, useEffect, useMemo } from 'react';
@@ -25,6 +26,7 @@ import { initPushNotifications } from '@/utils/pushNotifications';
 import { captureException, setMonitoringScreen, setMonitoringUser } from '@/src/shared/monitoring';
 import {AppThemeSurface} from '@/components/Navigation/AppThemeSurface';
 import {EntityCardProvider} from '@/src/features/entityCards/EntityCardProvider';
+import {StartupNavigationContext} from '@/src/features/navigation/StartupNavigationContext';
 
 if (Platform.OS !== 'web') {
   void SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -48,12 +50,17 @@ function InnerLayout() {
   const route = segments.join('/');
   useEffect(() => { if (!auth?.isLoading) void setMonitoringUser(profile?.id); }, [profile?.id, auth?.isLoading]);
   useEffect(() => { setMonitoringScreen(route); }, [route]);
-  const { isChecking } = useAuthRedirect();
+  const { isChecking, startupNavigationPending } = useAuthRedirect();
   useTelegramBackButton();
   if (isChecking) {
     return <StartupLogoLoader />;
   }
-  return <Slot />;
+  return <StartupNavigationContext.Provider value={startupNavigationPending}>
+    <View style={{flex:1}}>
+      <View style={{flex:1,opacity:startupNavigationPending?0:1}} pointerEvents={startupNavigationPending?'none':'auto'} accessibilityElementsHidden={startupNavigationPending} importantForAccessibility={startupNavigationPending?'no-hide-descendants':'auto'}><Slot /></View>
+      {startupNavigationPending?<View style={{position:'absolute',top:0,left:0,right:0,bottom:0}}><StartupLogoLoader /></View>:null}
+    </View>
+  </StartupNavigationContext.Provider>;
 }
 
 export default function RootLayout() {
@@ -110,6 +117,7 @@ export default function RootLayout() {
         <PaperProvider theme={paperTheme}>
           <MaybeBottomSheetProvider>
             <ThemeProvider>
+              <WebInteractionStyles/>
               <AppThemeSurface routeKey={pathname}>
               <AuthProvider>
                 <EntityCardProvider>

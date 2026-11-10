@@ -43,7 +43,7 @@ export function HelpVoicePlaybackBar({author,positionSeconds,durationSeconds,pla
     <Text numberOfLines={1} style={{color:c.text,fontSize:13,lineHeight:17,fontWeight:'600'}}>{name}</Text>
     <Text numberOfLines={1} style={{color:c.muted,fontSize:10,lineHeight:13,fontVariant:['tabular-nums']}}>{loading?'Загрузка…':`Голосовое · ${time}`}</Text>
   </View>;
-  return <View testID="help-voice-playback-bar" style={{height:HELP_VOICE_PLAYBACK_BAR_HEIGHT,marginHorizontal:HELP_LIST_INSET,flexDirection:'row',alignItems:'center'}}>
+  return <View testID="help-voice-playback-bar" style={{height:HELP_VOICE_PLAYBACK_BAR_HEIGHT,marginHorizontal:HELP_LIST_INSET,flexDirection:'row',alignItems:'center',backgroundColor:c.headerSurface}}>
     <Pressable testID="help-voice-playback-toggle" accessibilityRole="button" accessibilityLabel={loading?'Загрузка голосового сообщения':playing?'Приостановить голосовое сообщение':'Продолжить голосовое сообщение'} accessibilityState={{disabled:loading,busy:loading}} disabled={loading} onPress={onToggle} style={({pressed})=>({width:44,height:44,alignItems:'center',justifyContent:'center',opacity:pressed?.65:1})}>
       {loading?<ActivityIndicator size="small" color={c.accentText}/>:<Ionicons name={playing?'pause':'play'} size={21} color={c.accentText}/>}
     </Pressable>

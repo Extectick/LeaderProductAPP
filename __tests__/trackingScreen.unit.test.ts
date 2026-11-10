@@ -16,6 +16,7 @@ jest.mock('expo-router', () => ({
   useFocusEffect: (callback: () => void) => require('react').useEffect(() => mockFocused ? callback() : undefined, [callback, mockFocused]),
 }));
 jest.mock('../components/AppHeader', () => ({ AppHeader: (props: any) => require('react').createElement('AppHeader', props, props.titleSlot, props.rightSlot) }));
+jest.mock('../context/ThemeContext',()=>({useTheme:()=>({theme:'light'})}));
 jest.mock('../components/Navigation/TabBarVisibilityContext', () => ({ useOptionalTabBarVisibility: () => null }));
 jest.mock('../src/features/navigation/LastServiceRouteContext', () => ({ useOptionalLastServiceRoute: () => ({ clearLastServiceRoute: mockClearLastService }) }));
 jest.mock('../src/features/tracking/TrackingDayPanel', () => (props: any) => require('react').createElement('DayPanel', props, props.dateControls, props.navigation, props.listProps.ListHeaderComponent));
@@ -138,6 +139,26 @@ it('loads further employee pages once, without hiding the existing list', async 
   await press(() => { host('SearchPicker').props.onEndReached(); host('SearchPicker').props.onEndReached(); });
   expect(fetchTrackingUsers).toHaveBeenLastCalledWith('', { offset: 100 });
   expect(host('SearchPicker').props.data).toHaveLength(101);
+});
+
+it('desktop employee picker keeps its own list scroll, paginates, cancels without selection and selects explicitly',async()=>{
+  Platform.OS='web';jest.spyOn(require('react-native'),'useWindowDimensions').mockReturnValue({width:1280,height:480,scale:1,fontScale:1});
+  await renderScreen();
+  const page=Array.from({length:100},(_,index)=>({id:index+10,firstName:`Сотрудник ${index}`}));
+  (fetchTrackingUsers as jest.Mock).mockImplementation((_:string,options:any)=>Promise.resolve(options?.offset?[users[0]]:page));
+  await press(()=>ripple('Выбрать сотрудника').props.onPress());
+  const dialog=screen.root.findAll(node=>node.props.testID==='tracking-employee-dialog'&&node.props.style)[0];
+  expect(dialog.props.style.height).toBeLessThan(480);
+  expect(host('SearchPicker').props.topInset).toBe(0);
+  expect(screen.root.findAll(node=>node.props.testID==='tracking-employee-dialog-content'&&node.props.keyboardShouldPersistTaps)).toHaveLength(0);
+  await press(()=>{host('SearchPicker').props.onEndReached();host('SearchPicker').props.onEndReached();});
+  expect(fetchTrackingUsers).toHaveBeenLastCalledWith('',{offset:100});expect(host('SearchPicker').props.data).toHaveLength(101);
+  await press(()=>screen.root.findByProps({testID:'tracking-employee-dialog-dismiss'}).props.onPointerDown());
+  expect(screen.root.findAllByType('SearchPicker' as any)).toHaveLength(0);expect(fetchTrackingDay).toHaveBeenLastCalledWith(2,today);
+  (fetchTrackingUsers as jest.Mock).mockResolvedValue(users);
+  await press(()=>ripple('Выбрать сотрудника').props.onPress());
+  await press(()=>screen.root.findAllByType('ListItem' as any).find(node=>node.props.title==='Алексей')!.props.onPress());
+  expect(fetchTrackingDay).toHaveBeenLastCalledWith(1,today);expect(screen.root.findAllByType('SearchPicker' as any)).toHaveLength(0);
 });
 
 it('returns to the services catalog and clears the automatic return route', async () => {

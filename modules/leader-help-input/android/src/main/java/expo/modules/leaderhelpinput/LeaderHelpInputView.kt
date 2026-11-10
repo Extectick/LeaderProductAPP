@@ -8,12 +8,18 @@ import android.content.res.ColorStateList
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Rect
+import android.graphics.LinearGradient
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
+import android.graphics.Shader
 import android.os.SystemClock
 import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewTreeObserver
 import android.view.animation.PathInterpolator
@@ -31,6 +37,14 @@ import kotlin.math.roundToInt
 class HelpEditText(context: Context) : EditText(context) {
     var selectionListener: (() -> Unit)? = null
     var scrollListener: (() -> Unit)? = null
+    var touchListener: (() -> Unit)? = null
+    // TextView's pre-draw caret reveal otherwise scrolls a new line instantly,
+    // independently of the owner's height/scroll animator.
+    override fun bringPointIntoView(offset: Int): Boolean = false
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+      if (event.actionMasked == MotionEvent.ACTION_DOWN) touchListener?.invoke()
+      return super.onTouchEvent(event)
+    }
     override fun onSelectionChanged(start: Int, end: Int) {
       super.onSelectionChanged(start, end)
       selectionListener?.invoke()
@@ -59,9 +73,15 @@ class LeaderHelpInputView(context: Context, appContext: AppContext) : ExpoView(c
   private var dirtyText = true
   private var lastWidth = 0
   private var textHeight = px(22f)
-  private var viewportHeight = px(22f)
+  // Keep EditText's own viewport unchanged across wraps. Resizing it to the
+  // next line before the outer animation lets Android scroll/reveal the caret
+  // against a different viewport and can pan the entire Activity.
+  private val viewportHeight = px(HelpInputGeometry.viewport)
   private var visualHeight = 46f
   private var targetHeight = 46f
+  private var visualScroll = 0f
+  private var targetScroll = 0f
+  private var applyingScroll = false
   private var animation: ValueAnimator? = null
   private var revealCaret = false
   private var disposed = false
@@ -69,8 +89,19 @@ class LeaderHelpInputView(context: Context, appContext: AppContext) : ExpoView(c
   private var frames = ArrayDeque<Map<String, Any>>()
   private var clippedFrames = 0
   private var observedFrames = 0
+  private var topFadeStrength = 0f
+  private var bottomFadeStrength = 0f
   private val transitions = ArrayDeque<Map<String, Any>>()
   private val scrollbarPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x88627185.toInt() }
+  private val fadeHeight = px(16f).toFloat()
+  private val topFadePaint = Paint().apply {
+    shader = LinearGradient(0f, 0f, 0f, fadeHeight, Color.BLACK, Color.TRANSPARENT, Shader.TileMode.CLAMP)
+    xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT)
+  }
+  private val bottomFadePaint = Paint().apply {
+    shader = LinearGradient(0f, 0f, 0f, fadeHeight, Color.TRANSPARENT, Color.BLACK, Shader.TileMode.CLAMP)
+    xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT)
+  }
   // Expo's requestLayout posts its layout pass. Flush pending text layout before
   // drawing too: otherwise a keystroke can paint one frame with yesterday's size.
   private val beforeDraw = ViewTreeObserver.OnPreDrawListener {
@@ -106,7 +137,19 @@ class LeaderHelpInputView(context: Context, appContext: AppContext) : ExpoView(c
     clipChildren = true
     clipToPadding = false
     addView(editor)
-    editor.scrollListener = { invalidate() }
+    editor.scrollListener = {
+      if (!applyingScroll && animation == null && !dirtyText && !revealCaret) {
+        visualScroll = dp(editor.scrollY)
+        targetScroll = visualScroll
+      }
+      invalidate()
+    }
+    editor.touchListener = {
+      animation?.cancel(); animation = null
+      visualScroll = dp(editor.scrollY); targetScroll = visualScroll
+      // Finish a pending size change, but let the user's finger own scrolling.
+      applyGeometry(targetHeight, visualScroll)
+    }
     editor.selectionListener = {
       revealCaret = true; requestLayout()
       onSelectionChanged(mapOf("start" to editor.selectionStart, "end" to editor.selectionEnd))
@@ -160,77 +203,115 @@ class LeaderHelpInputView(context: Context, appContext: AppContext) : ExpoView(c
   override fun onMeasure(widthSpec: Int, heightSpec: Int) {
     val width = MeasureSpec.getSize(widthSpec)
     val inputWidth = max(1, width - px(92f))
+    val reconcile = dirtyText || revealCaret || width != lastWidth
     if (dirtyText || width != lastWidth) {
       lastWidth = width
       dirtyText = false
       editor.measure(MeasureSpec.makeMeasureSpec(inputWidth, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED))
       textHeight = max(px(22f), editor.layout?.height ?: editor.measuredHeight)
-      viewportHeight = min(textHeight, px(145f))
-      val contentDp = dp(viewportHeight)
-      val next = max(46f, contentDp + 12f + bottomInset(contentDp))
-      if (abs(next - targetHeight) > .1f) animateHeight(next)
     }
     editor.measure(MeasureSpec.makeMeasureSpec(inputWidth, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(viewportHeight, MeasureSpec.EXACTLY))
+    if (reconcile && editor.layout != null) {
+      revealCaret = false
+      val next = HelpInputGeometry.outerHeight(dp(textHeight))
+      val visible = next - HelpInputGeometry.topInset - HelpInputGeometry.bottomInsetForOuter(next)
+      val layout = editor.layout
+      val line = layout.getLineForOffset(editor.selectionEnd.coerceIn(0, editor.length()))
+      val scroll = HelpInputGeometry.revealScroll(visualScroll, dp(layout.getLineTop(line)), dp(layout.getLineBottom(line)), dp(textHeight), visible)
+      animateGeometry(next, scroll)
+    }
     setMeasuredDimension(width, max(px(46f), MeasureSpec.getSize(heightSpec)))
   }
 
-  private fun bottomInset(content: Float) = 12f * (1f - ((content - 132f) / 13f).coerceIn(0f, 1f))
-  private fun currentBottomInset(): Int {
-    // Invert the continuous content-height -> outer-height mapping at the cap.
-    val content = if (visualHeight <= 156f) visualHeight - 24f else 132f + (visualHeight - 156f) * 13f
-    return px(bottomInset(content.coerceAtMost(145f)))
-  }
+  private fun currentBottomInset() = px(HelpInputGeometry.bottomInsetForOuter(visualHeight))
 
   override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
-    val available = max(px(22f), height - px(12f) - currentBottomInset())
-    // Place the fully laid-out editor against the bottom before the first draw.
-    // A newly wrapped line is visible immediately, while the top opens upward.
-    val editorTop = if (textHeight <= px(22f)) (height - viewportHeight) / 2 else height - currentBottomInset() - viewportHeight
+    // The text follows the top edge, whose screen position is animated by the
+    // growing dock. Raw textHeight must never move the editor before that edge.
+    val editorTop = px(HelpInputGeometry.topInset)
     editor.layout(px(45f), editorTop, width - px(47f), editorTop + viewportHeight)
-    if (revealCaret && editor.layout != null) {
-      revealCaret = false
-      editor.bringPointIntoView(editor.selectionEnd.coerceAtLeast(0))
-      val layout = editor.layout
-      val line = layout.getLineForOffset(editor.selectionEnd.coerceIn(0, editor.length()))
-      val clipTop = max(0, viewportHeight - available)
-      val lineTop = layout.getLineTop(line)
-      val lineBottom = layout.getLineBottom(line)
-      val scroll = editor.scrollY.coerceIn(max(0, lineBottom - viewportHeight), max(0, lineTop - clipTop))
-      editor.scrollTo(0, scroll)
-    }
+    applyScroll(visualScroll)
   }
 
-  private fun animateHeight(next: Float) {
-    animation?.cancel()
-    targetHeight = next
+  // The native chat owner already keeps input above IME. A second window pan
+  // would add an independent movement to the same caret transition.
+  override fun requestChildRectangleOnScreen(child: View, rectangle: Rect, immediate: Boolean): Boolean = false
+
+  private fun animateGeometry(nextHeight: Float, nextScroll: Float) {
+    if (abs(nextHeight - targetHeight) < .1f && abs(nextScroll - targetScroll) < .1f) return
+    animation?.cancel(); animation = null
+    targetHeight = nextHeight; targetScroll = nextScroll
     if (debug) {
-      transitions.addLast(mapOf("from" to visualHeight, "to" to next, "length" to editor.length(), "reduced" to reducedMotion, "animatorsEnabled" to ValueAnimator.areAnimatorsEnabled(), "at" to SystemClock.uptimeMillis()))
+      transitions.addLast(mapOf("from" to visualHeight, "to" to nextHeight, "scrollFrom" to visualScroll, "scrollTo" to nextScroll,
+        "length" to editor.length(), "reduced" to reducedMotion, "animatorsEnabled" to ValueAnimator.areAnimatorsEnabled(), "at" to SystemClock.uptimeMillis()))
       if (transitions.size > 80) transitions.removeFirst()
     }
-    if (reducedMotion || width == 0 || height == 0) {
-      applyHeight(next)
+    if (reducedMotion || !ValueAnimator.areAnimatorsEnabled() || width == 0 || height == 0) {
+      applyGeometry(nextHeight, nextScroll)
       return
     }
-    animation = ValueAnimator.ofFloat(visualHeight, next).apply {
+    val fromHeight = visualHeight; val fromScroll = visualScroll
+    animation = ValueAnimator.ofFloat(0f, 1f).apply {
       duration = 180
       interpolator = PathInterpolator(.25f, .1f, .25f, 1f)
-      addUpdateListener { applyHeight(it.animatedValue as Float) }
+      addUpdateListener {
+        val fraction = it.animatedValue as Float
+        applyGeometry(HelpInputGeometry.interpolate(fromHeight, nextHeight, fraction), HelpInputGeometry.interpolate(fromScroll, nextScroll, fraction))
+        if (fraction >= 1f) animation = null
+      }
       start()
     }
   }
-  private fun applyHeight(value: Float) {
-    visualHeight = value
-    shadowNodeProxy.setStyleSize(null, value.toDouble())
-    requestLayout()
+  private fun applyScroll(value: Float) {
+    applyingScroll = true
+    editor.scrollTo(0, px(value))
+    applyingScroll = false
+  }
+  private fun applyGeometry(value: Float, scroll: Float) {
+    val sizeChanged = abs(value - visualHeight) > .001f
+    visualHeight = value; visualScroll = scroll
+    applyScroll(scroll)
+    if (sizeChanged) {
+      shadowNodeProxy.setStyleSize(null, value.toDouble())
+      requestLayout()
+    }
     invalidate()
-    if (abs(value - targetHeight) < .1f) onGeometry(mapOf("height" to value, "contentHeight" to dp(textHeight), "lines" to editor.lineCount))
+    if (abs(value - targetHeight) < .1f && abs(scroll - targetScroll) < .1f)
+      onGeometry(mapOf("height" to value, "contentHeight" to dp(textHeight), "lines" to editor.lineCount))
   }
 
   override fun dispatchDraw(canvas: Canvas) {
     val save = canvas.save()
-    val clipTop = if (textHeight <= px(22f)) min(px(12f), editor.top.coerceAtLeast(0)) else px(12f)
-    canvas.clipRect(px(45f), clipTop, width - px(47f), height - currentBottomInset())
+    val clipTop = px(HelpInputGeometry.topInset)
+    val clipBottom = height - currentBottomInset()
+    val textLeft = px(45f).toFloat()
+    val textRight = (width - px(47f)).toFloat()
+    canvas.clipRect(textLeft, clipTop.toFloat(), textRight, clipBottom.toFloat())
+    // Fade only where text actually continues outside the visible edge. The same
+    // native frame knows both EditText scroll and its animated clipping bounds;
+    // a JS overlay would lag scrolling and dim the first line at rest.
+    val visibleTop = max(clipTop, editor.top).toFloat()
+    val hiddenTop = max(0, clipTop - editor.top + editor.scrollY).toFloat()
+    val hiddenBottom = max(0, editor.top + textHeight - editor.scrollY - clipBottom).toFloat()
+    topFadeStrength = (hiddenTop / fadeHeight).coerceIn(0f, 1f)
+    bottomFadeStrength = (hiddenBottom / fadeHeight).coerceIn(0f, 1f)
+    val fade = min(fadeHeight, (clipBottom - visibleTop).coerceAtLeast(0f))
+    val layer = if ((hiddenTop > 0f || hiddenBottom > 0f) && fade > 0f && textRight > textLeft)
+      canvas.saveLayer(textLeft, visibleTop, textRight, clipBottom.toFloat(), null) else -1
     super.dispatchDraw(canvas)
+    if (layer >= 0) {
+      topFadePaint.alpha = (255f * topFadeStrength).roundToInt()
+      canvas.save()
+      canvas.translate(0f, visibleTop)
+      canvas.drawRect(textLeft, 0f, textRight, fade, topFadePaint)
+      canvas.restore()
+      bottomFadePaint.alpha = (255f * bottomFadeStrength).roundToInt()
+      canvas.save()
+      canvas.translate(0f, clipBottom - fadeHeight)
+      canvas.drawRect(textLeft, 0f, textRight, fadeHeight, bottomFadePaint)
+      canvas.restore()
+      canvas.restoreToCount(layer)
+    }
     if (textHeight > viewportHeight) {
       val top = max(clipTop, editor.top).toFloat()
       val bottom = min(height - currentBottomInset(), editor.bottom).toFloat()
@@ -256,6 +337,9 @@ class LeaderHelpInputView(context: Context, appContext: AppContext) : ExpoView(c
     observedFrames++
     val position = IntArray(2); getLocationInWindow(position)
     frames.addLast(mapOf("at" to SystemClock.uptimeMillis(), "height" to dp(height), "target" to targetHeight,
+      "viewportHeight" to dp(editor.height), "topFadeStrength" to topFadeStrength, "bottomFadeStrength" to bottomFadeStrength,
+      "editorTop" to dp(editor.top), "scrollY" to dp(editor.scrollY), "visualScroll" to visualScroll, "targetScroll" to targetScroll,
+      "screenTextTop" to dp(position[1] + editor.top - editor.scrollY), "animating" to (animation != null),
       "lines" to editor.lineCount, "length" to editor.length(), "caretTop" to dp(caretTop), "caretBottom" to dp(caretBottom),
       "visibleTop" to 12f, "visibleBottom" to dp(bottom), "screenCaretBottom" to dp(position[1] + caretBottom), "clipped" to clipped))
     if (frames.size > 240) frames.removeFirst()
@@ -271,9 +355,11 @@ class LeaderHelpInputView(context: Context, appContext: AppContext) : ExpoView(c
     focusInput()
   }
   fun diagnostics(): Map<String, Any> = if (!debug) emptyMap() else mapOf(
-    "engine" to "native", "focused" to editor.hasFocus(), "eventCount" to eventCount, "length" to editor.length(), "lines" to editor.lineCount,
+    "engine" to "native", "composerMotionVersion" to 3, "viewportHeight" to dp(editor.height), "topFadeStrength" to topFadeStrength, "bottomFadeStrength" to bottomFadeStrength,
+      "editorTop" to dp(editor.top), "scrollY" to dp(editor.scrollY), "visualScroll" to visualScroll, "targetScroll" to targetScroll,
+    "focused" to editor.hasFocus(), "eventCount" to eventCount, "length" to editor.length(), "lines" to editor.lineCount,
     "selectionStart" to editor.selectionStart, "selectionEnd" to editor.selectionEnd, "height" to dp(height),
-    "contentHeight" to dp(textHeight), "targetHeight" to targetHeight, "scrollY" to dp(editor.scrollY),
+    "contentHeight" to dp(textHeight), "targetHeight" to targetHeight,
     "observedFrames" to observedFrames, "clippedFrames" to clippedFrames, "frames" to frames.toList(), "transitions" to transitions.toList())
   fun resetDiagnostics() { frames.clear(); transitions.clear(); clippedFrames = 0; observedFrames = 0 }
   fun testSelection(start: Int, end: Int) {

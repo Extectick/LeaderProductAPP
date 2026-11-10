@@ -127,6 +127,8 @@ type UseClientOrdersWorkspaceOptions = {
   confirmDiscard?: (context: DiscardConfirmContext) => Promise<DiscardDecision | boolean>;
   /** Mobile screens use this to suspend work that is not visible to the user. */
   screenMode?: 'orders' | 'editor';
+  /** Customer-first desktop navigation opens documents only after an explicit selection. */
+  autoSelectLatestDraft?: boolean;
   isScreenActive?: boolean;
 };
 type DraftSelections = {
@@ -2650,8 +2652,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
           if (prev && list.some((item) => item.guid === prev)) return prev;
           if (documentStartedRef.current) return prev;
           // The mobile list must not open/load an arbitrary draft in the background.
-          // Web keeps the legacy combined list/editor behaviour when screenMode is omitted.
-          return options.screenMode ? null : latestDraft?.guid ?? null;
+          // Customer-first desktop navigation also requires an explicit document selection.
+          return options.screenMode || options.autoSelectLatestDraft === false ? null : latestDraft?.guid ?? null;
         });
         if (!latestDraft && !documentStartedRef.current && !selectedGuidRef.current) {
           setDocumentStarted(false);
@@ -2681,7 +2683,7 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
         setLoadingOrders(false);
       }
     }
-  }, [filters, filtersSignature, markOrdersInitialLoadDone, mergeServerRevisionIntoOpenDraft, offlineUserId, options.screenMode, ordersCacheStorageKey]);
+  }, [filters, filtersSignature, markOrdersInitialLoadDone, mergeServerRevisionIntoOpenDraft, offlineUserId, options.screenMode, options.autoSelectLatestDraft, ordersCacheStorageKey]);
 
   const refreshQueueState = React.useCallback(async () => {
     if (queueRefreshInFlightRef.current || !getServerStatus().isReachable) return;
@@ -4381,6 +4383,8 @@ export function useClientOrdersWorkspace(options: UseClientOrdersWorkspaceOption
 
   return {
     orders: sortedOrders,
+    filtersHydrated,
+    ordersCacheHydrated,
     offlineUserId,
     ordersMeta,
     todaySummary,

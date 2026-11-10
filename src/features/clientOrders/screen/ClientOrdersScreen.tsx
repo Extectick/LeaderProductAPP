@@ -1,6 +1,6 @@
 import React from 'react';
-import { ActivityIndicator, BackHandler, Platform, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
-import { useNavigation, useRouter } from 'expo-router';
+import { ActivityIndicator, BackHandler, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { AuthContext } from '@/context/AuthContext';
 import { useHeaderContentTopInset } from '@/components/Navigation/useHeaderContentTopInset';
 import { useNotificationViewport } from '@/context/NotificationViewportContext';
@@ -10,9 +10,8 @@ import { captureException } from '@/src/shared/monitoring';
 import { getProfile } from '@/utils/userService';
 import { isClientOrdersOnecUserLinked } from '../lib/clientOrdersAccess';
 import ClientOrdersMobileLayout from './mobile/ClientOrdersMobileLayout';
+import {ClientOrderLinkedScreen} from '../ClientOrderLinkedScreen';
 import ClientOrdersDesktopLayout from './desktop/ClientOrdersDesktopLayout';
-
-const WEB_DESKTOP_BREAKPOINT = 1024;
 
 type ErrorBoundaryProps = {
   children: React.ReactNode;
@@ -54,7 +53,8 @@ class ClientOrdersErrorBoundary extends React.Component<ErrorBoundaryProps, Erro
 }
 
 function ClientOrdersScreenContent() {
-  const { width } = useWindowDimensions();
+  const linkedParams=useLocalSearchParams<{orderGuid?:string|string[];orderBaseKey?:string|string[]}>();
+  const linkedSource=linkedParams.orderBaseKey!==undefined;
   const router = useRouter();
   const navigation = useNavigation<any>();
   const auth = React.useContext(AuthContext);
@@ -64,8 +64,8 @@ function ClientOrdersScreenContent() {
   const [profileRefreshing, setProfileRefreshing] = React.useState(false);
   const [profileRefreshError, setProfileRefreshError] = React.useState<string | null>(null);
   const closeOverlayRef = React.useRef<(() => boolean) | null>(null);
-  const isOnecUserMissing = Boolean(auth && !auth.isLoading && !isClientOrdersOnecUserLinked(auth.profile));
-  const exitToServices = React.useCallback(() => router.replace('/services'), [router]);
+  const isOnecUserMissing = Boolean(!linkedSource && auth && !auth.isLoading && !isClientOrdersOnecUserLinked(auth.profile));
+  const exitToServices = React.useCallback(() => {if(linkedSource&&router.canGoBack())router.back();else router.replace('/services');}, [router,linkedSource]);
 
   React.useLayoutEffect(() => {
     if (!isOnecUserMissing) return undefined;
@@ -118,6 +118,8 @@ function ClientOrdersScreenContent() {
     return () => subscription.remove();
   }, [exitToServices]);
 
+  if(linkedSource)return <ClientOrderLinkedScreen orderGuid={linkedParams.orderGuid} orderBaseKey={linkedParams.orderBaseKey} onBack={exitToServices}/>;
+
   if (isOnecUserMissing) {
     return (
       <View
@@ -169,7 +171,9 @@ function ClientOrdersScreenContent() {
     );
   }
 
-  if (Platform.OS === 'web' && width >= WEB_DESKTOP_BREAKPOINT) {
+  // The web workspace owns its responsive panes. Replacing it at a breakpoint
+  // destroys the live draft/input state while the user is resizing the window.
+  if (Platform.OS === 'web') {
     return <ClientOrdersDesktopLayout />;
   }
 

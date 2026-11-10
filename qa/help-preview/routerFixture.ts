@@ -13,3 +13,7 @@ function navigate(path = '/services/help') {
 }
 const router = { replace: navigate, push: navigate, dismissTo: navigate };
 export function useRouter() { return router; }
+
+export function usePathname(){return typeof window!=='undefined'&&new URLSearchParams(window.location.search).get('screen')==='services'?'/services':'/services/help';}
+export function useLastServiceRoute(){return {clearLastServiceRoute:()=>{}};}
+export function useOptionalUnsavedChanges(){return {confirmNavigation:(action:()=>void)=>action()};}

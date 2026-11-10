@@ -8,7 +8,7 @@ export function HelpDockControls({nativeID, nativeSynced, dockHeight, imeInset, 
   nativeID:string; nativeSynced:boolean; dockHeight:number; imeInset:number; children:(bottom:number)=>React.ReactNode;
 }) {
   const bottom=Math.max(0,dockHeight)+(nativeSynced?0:Math.max(0,imeInset))+12;
-  return <View testID="help-dock-controls" nativeID={nativeID} collapsable={false} pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+  return <View testID="help-dock-controls" nativeID={nativeID} collapsable={false} pointerEvents="box-none" style={[StyleSheet.absoluteFill,{zIndex:1}]}>
     {children(bottom)}
   </View>;
 }

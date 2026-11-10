@@ -1,4 +1,6 @@
-import {helpTailDisplacement,helpTailMotionLimit,helpTailHistoryChange} from '../src/features/help/helpTailMotion';
+import {helpTailContentChanged,helpTailDisplacement,helpTailMotionLimit,helpTailHistoryChange} from '../src/features/help/helpTailMotion';
+import {helpTimelineRows} from '../src/features/help/helpTimelineModel';
+import type {HelpMessage} from '../src/features/help/helpApi';
 const before={width:390,height:800,content:300,margin:400};
 const active={active:true,liveGrowth:true};
 
@@ -34,4 +36,17 @@ test('superseded AI removal keeps streaming motion while real older pages stay a
   expect(helpTailHistoryChange(before,['date:renamed','message:1','date:two','message:2'])).toBe(false);
   expect(helpTailHistoryChange(before,['date:other','message:9'])).toBe(true);
   expect(helpTailHistoryChange([],before)).toBe(false);
+});
+
+test('tail motion starts from body/pending changes, not replay identity, read markers or profile metadata',()=>{
+  const message={id:1,sequence:1,text:'Answer',kind:'TEXT',createdAt:'2026-11-06T10:00:00Z',assistantRun:{status:'completed',updatedAt:1,eventId:1,metrics:{elapsedMs:20}},attachments:[{id:'file',name:'image.png',kind:'IMAGE',size:100,width:10}]} as HelpMessage;
+  const before=helpTimelineRows([message]);
+  const replay={...message,createdAt:'2026-11-06T11:00:00Z',author:{id:5,name:'Profile',avatarUrl:'avatar.png'},attachments:message.attachments.map(file=>({...file,width:100})),assistantRun:{...message.assistantRun!,updatedAt:2,eventId:2,metrics:{startedAt:1,elapsedMs:40}}};
+  expect(helpTailContentChanged(before,helpTimelineRows([replay],1))).toBe(false);
+  expect(helpTailContentChanged(before,helpTimelineRows([{...replay,text:'Edited answer'}]))).toBe(true);
+  expect(helpTailContentChanged(before,helpTimelineRows([{...replay,assistantRun:{...replay.assistantRun!,draftText:'Streaming answer'}}]))).toBe(true);
+  expect(helpTailContentChanged(before,helpTimelineRows([{...message,id:0,sequence:0},message]))).toBe(false);
+  expect(helpTailContentChanged(before,helpTimelineRows([{...message,id:8,sequence:8}]))).toBe(false);
+  const pending={key:'pending',create:false,ticketId:7,createdAt:Date.now(),input:{text:'New message',clientMessageId:'pending'}};
+  expect(helpTailContentChanged(before,helpTimelineRows([message],null,[pending]))).toBe(true);
 });

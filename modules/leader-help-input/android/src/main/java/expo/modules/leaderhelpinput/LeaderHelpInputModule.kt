@@ -13,7 +13,7 @@ class HelpInputState : Record {
 class LeaderHelpInputModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("LeaderHelpInput")
-    Constants("apiVersion" to 2)
+    Constants("apiVersion" to 2, "composerMotionVersion" to 3)
     View(LeaderHelpInputView::class) {
       Events("onTextEdited", "onGeometry", "onSelectionChanged")
       Prop("textState") { view: LeaderHelpInputView, state: HelpInputState -> view.setTextState(state) }

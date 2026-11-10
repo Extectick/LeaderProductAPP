@@ -3,6 +3,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { Platform } from 'react-native';
 import { helpClientId, helpStorageKey } from './helpStorage';
 import type { HelpLocalFile } from './components/HelpComposer';
+import {holdHelpWebAttachments} from './helpWebAttachmentUrls';
 
 type DraftFile = HelpLocalFile & { assetId?: string };
 type Manifest = { version: 1; files: DraftFile[] };
@@ -45,6 +46,7 @@ async function collectGarbage() {
 
 /** Keep a submission's files alive while uploads or a competing draft write run. */
 export function holdHelpAttachmentFiles(files: readonly HelpLocalFile[]): () => void {
+  if (Platform.OS === 'web') return holdHelpWebAttachments(files);
   const release = retain(files); let active = true;
   return () => { if (!active) return; active = false; release(); void serialized(collectGarbage).catch(() => {}); };
 }

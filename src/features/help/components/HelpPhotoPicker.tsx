@@ -1,7 +1,9 @@
 import React, {useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useId} from 'react';
-import {ActivityIndicator, AppState, BackHandler, Keyboard, KeyboardAvoidingView, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View} from 'react-native';
+import {ActivityIndicator, AppState, BackHandler, Keyboard, KeyboardAvoidingView, PixelRatio, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View} from 'react-native';
 import {BlurTargetView} from 'expo-blur';
-import {Image} from 'expo-image';
+import {Image,type ImageRef} from 'expo-image';
+import {LoadingPlaceholder} from '@/components/ui/LoadingPlaceholder';
+import {createHelpPhotoPreviewQueue} from '../helpPhotoPreviewQueue';
 import {Ionicons} from '@expo/vector-icons';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {Gesture, GestureDetector, GestureHandlerRootView} from 'react-native-gesture-handler';
@@ -34,6 +36,15 @@ export function HelpPhotoPicker(props:Props) {
   const mounted=useRef(true),generation=useRef(0),pageOffset=useRef(0),loadingPage=useRef(false),checkingPermission=useRef(false);
   const [visible,setVisible]=useState(props.open),[settled,setSettled]=useState(false),[panelLayoutHeight,setPanelLayoutHeight]=useState(0);
   const [permission,setPermission]=useState<HelpPhotoPermission|null>(null),[loading,setLoading]=useState(false),[error,setError]=useState('');
+  const [previewMotion,setPreviewMotion]=useState(false);
+  const [previewQueue]=useState(()=>createHelpPhotoPreviewQueue<ImageRef|null>(image=>image?.release()));
+  const [visiblePhotos,setVisiblePhotos]=useState({first:0,last:17});
+  const photoViewability=useRef({itemVisiblePercentThreshold:1}).current;
+  const onPhotoViewability=useRef(({viewableItems}:{viewableItems:{index:number|null}[]})=>{
+    const indices=viewableItems.flatMap(item=>item.index===null?[]:[item.index]);
+    const first=indices.length?Math.min(...indices):0,last=indices.length?Math.max(...indices):-1;
+    setVisiblePhotos(previous=>previous.first===first&&previous.last===last?previous:{first,last});
+  }).current;
   const [photos,setPhotos]=useState<HelpLibraryPhoto[]>([]),[hasMore,setHasMore]=useState(true),[width,setWidth]=useState(window.width);
   const [selection,setSelection]=useState<Selection[]>(()=>props.files.map(fromFile));
   const chosen=useRef(selection);chosen.current=selection;
@@ -67,6 +78,8 @@ export function HelpPhotoPicker(props:Props) {
   const skeletonCount=Math.max(11,Math.ceil(maximumHeight/Math.max(1,tileSize))*3-1);
   const galleryItems=useMemo<(HelpLibraryPhoto|{skeleton:string}|null)[]>(()=>[null,...(permission?.granted?photos:Array.from({length:skeletonCount},(_,index)=>({skeleton:`permission-${index}`})))],[permission?.granted,photos,skeletonCount]);
   const gridRevision=useRef(0);
+  const requestMore=useRef(()=>{}),prefetchContent=useSharedValue(-1);
+  const requestMorePhotos=useCallback(()=>requestMore.current(),[]);
   const measureGrid=useCallback(()=>{
     if(resizing.current||!latest.current.open)return;
     const baseline=height.value,revision=gridRevision.current;
@@ -81,8 +94,8 @@ export function HelpPhotoPicker(props:Props) {
       }
     });
   },[height,measuredHeight,grid,measuredGridY,cameraOffset,cameraViewportHeight]);
-  const beginPull=useCallback(()=>{if(mounted.current)setSettled(false);},[]);
-  const settlePull=useCallback(()=>{if(mounted.current&&latest.current.open)setSettled(true);},[]);
+  const beginPull=useCallback(()=>{previewQueue.setPaused(true);if(mounted.current){setPreviewMotion(true);setSettled(false);}},[previewQueue]);
+  const settlePull=useCallback(()=>{if(mounted.current&&latest.current.open){setPreviewMotion(false);setSettled(true);}},[]);
   const closePulled=useCallback(()=>{
     if(!mounted.current||!latest.current.open)return;
     closedByPull.current=true;
@@ -90,11 +103,19 @@ export function HelpPhotoPicker(props:Props) {
     height.value=0;setPanelLayoutHeight(0);setVisible(false);setPreview(null);setCameraExpanded(false);
     latest.current.onClose();
   },[height]);
+  useLayoutEffect(()=>{
+    previewQueue.setPaused(true);
+    if(!props.open||!visible||!settled||previewMotion||preview||cameraExpanded)return;
+    const timer=setTimeout(()=>previewQueue.setPaused(false),120);
+    return()=>{clearTimeout(timer);previewQueue.setPaused(true);};
+  },[previewQueue,props.open,visible,settled,previewMotion,preview,cameraExpanded]);
+  useEffect(()=>()=>previewQueue.clear(),[previewQueue]);
   const gridScroll=useAnimatedScrollHandler({
-    onBeginDrag:()=>{cancelAnimation(gridTarget);},
-    onScroll:event=>{gridScrollY.value=Math.max(0,event.contentOffset.y);gridMaximum.value=Math.max(0,(event.contentSize?.height??0)-(event.layoutMeasurement?.height??0));const show=event.contentOffset.y<tileSize+headerHeight;if(nativeCameraVisible.value!==show){nativeCameraVisible.value=show;runOnJS(setCameraVisible)(show);}},
-    onMomentumBegin:()=>{gridMomentum.value=true;},onMomentumEnd:()=>{gridMomentum.value=false;},
-  },[tileSize,headerHeight]);
+    onBeginDrag:()=>{cancelAnimation(gridTarget);runOnJS(beginPull)();},
+    onEndDrag:()=>{runOnJS(settlePull)();},
+    onScroll:event=>{if(event.contentSize?.height&&event.layoutMeasurement?.height&&event.contentSize.height-event.contentOffset.y-event.layoutMeasurement.height<event.layoutMeasurement.height*4&&prefetchContent.value!==event.contentSize.height){prefetchContent.value=event.contentSize.height;runOnJS(requestMorePhotos)();}gridScrollY.value=Math.max(0,event.contentOffset.y);gridMaximum.value=Math.max(0,(event.contentSize?.height??0)-(event.layoutMeasurement?.height??0));const show=event.contentOffset.y<tileSize+headerHeight;if(nativeCameraVisible.value!==show){nativeCameraVisible.value=show;runOnJS(setCameraVisible)(show);}},
+    onMomentumBegin:()=>{gridMomentum.value=true;runOnJS(beginPull)();},onMomentumEnd:()=>{gridMomentum.value=false;runOnJS(settlePull)();},
+  },[tileSize,headerHeight,beginPull,settlePull]);
   useAnimatedReaction(()=>gridTarget.value,(value,previous)=>{if(previous!==null&&value!==previous)scrollTo(gridList,0,value,false);},[gridList]);
   const cameraFrame=useFrameCallback(()=>{
     if(!nativeCameraVisible.value)return;
@@ -106,8 +127,8 @@ export function HelpPhotoPicker(props:Props) {
   useEffect(()=>{cameraFrame.setActive(visible&&Boolean(viewport)&&cameraVisible&&!preview&&!cameraExpanded);return()=>cameraFrame.setActive(false);},[cameraFrame,visible,viewport,cameraVisible,preview,cameraExpanded]);
   const pullStyle=useAnimatedStyle(()=>({transform:[{translateY:pullY.value}],borderTopLeftRadius:Math.min(22,Math.max(0,viewportHeight.value-height.value)),borderTopRightRadius:Math.min(22,Math.max(0,viewportHeight.value-height.value))}));
   useEffect(()=>{pullAllowed.value=props.open&&visible&&!preview&&!cameraExpanded;pullHeight.value=panelHeight;expansionLimit.value=maximumHeight;viewportHeight.value=availableHeight;},[props.open,visible,preview,cameraExpanded,panelHeight,maximumHeight,availableHeight,pullAllowed,pullHeight,expansionLimit,viewportHeight]);
-  const finishExpansion=useCallback(()=>{if(!mounted.current)return;setExpanded(true);resizing.current=false;setSettled(true);setPanelLayoutHeight(height.value);measureGrid();},[height,measureGrid]);
-  const finishCollapse=useCallback(()=>{if(!mounted.current)return;setExpanded(false);resizing.current=false;setSettled(true);setPanelLayoutHeight(height.value);measureGrid();},[height,measureGrid]);
+  const finishExpansion=useCallback(()=>{if(!mounted.current)return;setExpanded(true);resizing.current=false;setPreviewMotion(false);setSettled(true);setPanelLayoutHeight(height.value);measureGrid();},[height,measureGrid]);
+  const finishCollapse=useCallback(()=>{if(!mounted.current)return;setExpanded(false);resizing.current=false;setPreviewMotion(false);setSettled(true);setPanelLayoutHeight(height.value);measureGrid();},[height,measureGrid]);
   const pullGesture=useMemo(()=>Gesture.Pan().withTestId('help-photo-pull').manualActivation(true).maxPointers(1)
     .enabled(props.open&&!preview&&!cameraExpanded)
     .onTouchesDown((event,manager)=>{
@@ -149,7 +170,7 @@ export function HelpPhotoPicker(props:Props) {
         };
         if(!reduced&&Math.abs(event.velocityY)>80){
           momentumPosition.value=height.value-collapsedHeight+gridTarget.value;
-          momentumPosition.value=withDecay({velocity:-event.velocityY,clamp:[0,range+gridMaximum.value]},finished=>{if(finished)snap();});
+          momentumPosition.value=withDecay({velocity:-event.velocityY,clamp:[0,range+gridMaximum.value+viewportHeight.value*4]},finished=>{if(finished)snap();});
         }else{
           const full=height.value>=expansionLimit.value-.5||event.velocityY<=0;
           height.value=withSpring(full?expansionLimit.value:collapsedHeight,{damping:25,stiffness:280,mass:.8,overshootClamping:true},finished=>{
@@ -203,7 +224,7 @@ export function HelpPhotoPicker(props:Props) {
     if(changed){chosen.current=next;setSelection(next);}
   },[props.files,props.open]);
   useEffect(()=>{
-    cancelAnimation(gridTarget);cancelAnimation(momentumPosition);momentumPosition.value=-1;gridMomentum.value=false;
+    cancelAnimation(gridTarget);cancelAnimation(momentumPosition);momentumPosition.value=-1;gridMomentum.value=false;setPreviewMotion(false);
     if(props.open){
       ++gridRevision.current;setViewport(undefined);measuredHeight.value=0;setExpanded(false);
       gridTarget.value=0;gridScrollY.value=0;nativeCameraVisible.value=true;setCameraVisible(true);
@@ -270,10 +291,12 @@ export function HelpPhotoPicker(props:Props) {
     if(loadingPage.current)return;
     loadingPage.current=true;setLoading(true);setError('');const token=generation.current,offset=reset?0:pageOffset.current;
     try{const result=await loadHelpPhotoPage(offset);if(!mounted.current||token!==generation.current)return;
-      pageOffset.current=offset+result.photos.length;setPhotos(old=>reset?result.photos:[...old,...result.photos.filter(photo=>!old.some(item=>item.id===photo.id))]);setHasMore(result.hasMore);
+      pageOffset.current=offset+result.photos.length;setPhotos(old=>{if(reset)return result.photos;const ids=new Set(old.map(item=>item.id));return [...old,...result.photos.filter(photo=>{if(ids.has(photo.id))return false;ids.add(photo.id);return true;})];});setHasMore(result.hasMore);
     }catch(e){if(mounted.current&&token===generation.current)setError(message(e));}
     finally{loadingPage.current=false;if(mounted.current&&token===generation.current)setLoading(false);}
   },[]);
+  requestMore.current=()=>{if(latest.current.open&&permission?.granted&&hasMore&&!loadingPage.current)void loadPage();};
+  const photoRowLayout=useCallback((_data:unknown,index:number)=>({length:tileSize+2,offset:headerHeight+index*(tileSize+2),index}),[tileSize,headerHeight]);
   const checkPermission=useCallback(async(request=false)=>{
     if(checkingPermission.current)return;checkingPermission.current=true;
     const token=generation.current;const requested=request;setLoading(true);setError('');
@@ -332,10 +355,11 @@ export function HelpPhotoPicker(props:Props) {
     setPreview({photos:ready,index:ready.findIndex(item=>item.id===photo.id),origin});
   }
   const beginResize=useCallback(()=>{
+    previewQueue.setPaused(true);setPreviewMotion(true);
     gridList.current?.scrollToOffset({offset:gridScrollY.value,animated:false});
     resizing.current=true;setSettled(false);
-  },[gridList,gridScrollY]);
-  const endResize=useCallback(()=>{if(!mounted.current)return;resizing.current=false;setExpanded(height.value>(collapsedHeight+maximumHeight)/2);setSettled(true);setPanelLayoutHeight(height.value);measureGrid();},[measureGrid,height,collapsedHeight,maximumHeight]);
+  },[gridList,gridScrollY,previewQueue]);
+  const endResize=useCallback(()=>{if(!mounted.current)return;resizing.current=false;setPreviewMotion(false);setExpanded(height.value>(collapsedHeight+maximumHeight)/2);setSettled(true);setPanelLayoutHeight(height.value);measureGrid();},[measureGrid,height,collapsedHeight,maximumHeight]);
   const closeResize=useCallback(()=>{resizing.current=false;latest.current.onClose();},[]);
   const resizeGesture=useMemo(()=>Gesture.Pan().withTestId('help-photo-resize').maxPointers(1).activeOffsetY([-8,8])
     .onStart(()=>{cancelAnimation(height);cancelAnimation(gridTarget);cancelAnimation(momentumPosition);momentumPosition.value=-1;dragStart.value=height.value;runOnJS(beginResize)();})
@@ -368,8 +392,8 @@ export function HelpPhotoPicker(props:Props) {
       <GestureDetector gesture={pullGesture}>
       <Reanimated.View ref={grid} collapsable={false} onLayout={measureGrid} testID="help-photo-grid-viewport" style={[{height:maximumHeight,minHeight:0,overflow:'hidden'},gridFrameStyle]}>
       <GestureDetector gesture={nativeScrollGesture}>
-      <BlurTargetView ref={gridBlur} style={{flex:1}}><Reanimated.FlatList ref={gridList} testID="help-photo-grid" data={galleryItems} keyExtractor={item=>item?'skeleton'in item?item.skeleton:item.id:'camera'} numColumns={3} extraData={selection} initialNumToRender={18} maxToRenderPerBatch={12} windowSize={5} removeClippedSubviews={false} keyboardShouldPersistTaps="handled" scrollEnabled={false} onContentSizeChange={(_width,contentHeight)=>{gridMaximum.value=Math.max(0,contentHeight-maximumHeight);}} onScroll={gridScroll} scrollEventThrottle={16} bounces={false} overScrollMode="never" onEndReached={()=>{if(permission?.granted&&hasMore&&!loading)void loadPage();}} onEndReachedThreshold={1} columnWrapperStyle={{gap:2}} contentContainerStyle={{gap:2,paddingTop:headerHeight,paddingBottom:58+captionInset+insets.top}}
-        renderItem={({item,index})=>item&&'skeleton'in item?<View testID="help-photo-permission-skeleton" accessible={false} importantForAccessibility="no-hide-descendants" style={{width:tileSize,height:tileSize,backgroundColor:c.line,opacity:.65}}/>:item?<PhotoTile photo={item} size={tileSize} number={selectedIds.indexOf(item.id)+1} pending={selection.some(entry=>entry.photo.id===item.id&&entry.pending)} disabled={props.busy} onSelect={()=>void select(item)} onPreview={origin=>showPhoto(item,origin)} index={index}/>:<View style={{width:tileSize,height:tileSize}}><HelpPhotoCamera onPermissionSettled={restorePanel} expanded={cameraExpanded} onExpand={()=>{Keyboard.dismiss();setCameraExpanded(true);}} onClose={()=>setCameraExpanded(false)} onCapture={photo=>{setCameraExpanded(false);setPhotos(old=>[photo,...old]);void select(photo);showPhoto(photo);}} onError={value=>setError(value)} disabled={props.busy||chosen.current.length+props.existingCount>=10} tileVisible={visible&&Boolean(viewport)&&Boolean(permission)&&cameraVisible&&!preview} viewport={viewport?{...viewport,y:viewport.y+headerHeight,height:Math.max(0,viewport.height-headerHeight)}:undefined} tileOrigin={viewport?{x:viewport.x,y:viewport.y+headerHeight,width:tileSize,height:tileSize}:undefined} scrollOffsetShared={gridScrollY} sheetOffset={cameraOffset} sheetViewportHeight={cameraViewportHeight}/></View>}
+      <BlurTargetView ref={gridBlur} style={{flex:1}}><Reanimated.FlatList ref={gridList} testID="help-photo-grid" data={galleryItems} keyExtractor={item=>item?'skeleton'in item?item.skeleton:item.id:'camera'} numColumns={3} getItemLayout={photoRowLayout} extraData={selection} viewabilityConfig={photoViewability} onViewableItemsChanged={onPhotoViewability} initialNumToRender={18} maxToRenderPerBatch={12} windowSize={5} removeClippedSubviews={false} keyboardShouldPersistTaps="handled" scrollEnabled={false} onContentSizeChange={(_width,contentHeight)=>{gridMaximum.value=Math.max(0,contentHeight-maximumHeight);if(contentHeight-gridScrollY.value-maximumHeight<maximumHeight*4)requestMore.current();}} onScroll={gridScroll} scrollEventThrottle={16} bounces={false} overScrollMode="never" onEndReached={()=>{if(permission?.granted&&hasMore&&!loading)void loadPage();}} onEndReachedThreshold={4} columnWrapperStyle={{gap:2}} contentContainerStyle={{gap:2,paddingTop:headerHeight,paddingBottom:58+captionInset+insets.top}}
+        renderItem={({item,index})=>item&&'skeleton'in item?<View testID="help-photo-permission-skeleton" accessible={false} importantForAccessibility="no-hide-descendants" style={{width:tileSize,height:tileSize,backgroundColor:c.line,opacity:.65}}/>:item?<PhotoTile photo={item} queue={previewQueue} loadPreview={props.open&&visible&&index>=visiblePhotos.first&&index<=visiblePhotos.last} size={tileSize} number={selectedIds.indexOf(item.id)+1} pending={selection.some(entry=>entry.photo.id===item.id&&entry.pending)} disabled={props.busy} onSelect={()=>void select(item)} onPreview={origin=>showPhoto(item,origin)} index={index}/>:<View style={{width:tileSize,height:tileSize}}><HelpPhotoCamera onPermissionSettled={restorePanel} expanded={cameraExpanded} onExpand={()=>{Keyboard.dismiss();setCameraExpanded(true);}} onClose={()=>setCameraExpanded(false)} onCapture={photo=>{setCameraExpanded(false);setPhotos(old=>[photo,...old]);void select(photo);showPhoto(photo);}} onError={value=>setError(value)} disabled={props.busy||chosen.current.length+props.existingCount>=10} tileVisible={visible&&Boolean(viewport)&&Boolean(permission)&&cameraVisible&&!preview} viewport={viewport?{...viewport,y:viewport.y+headerHeight,height:Math.max(0,viewport.height-headerHeight)}:undefined} tileOrigin={viewport?{x:viewport.x,y:viewport.y+headerHeight,width:tileSize,height:tileSize}:undefined} scrollOffsetShared={gridScrollY} sheetOffset={cameraOffset} sheetViewportHeight={cameraViewportHeight}/></View>}
         ListFooterComponent={permission?.granted?<View style={{padding:16,alignItems:'center',gap:12}}>{loading?<ActivityIndicator color={c.accent}/>:!photos.length?<Text style={{color:c.muted}}>Фотографий пока нет. Можно сделать снимок.</Text>:null}</View>:null}/></BlurTargetView>
       </GestureDetector>
       {needsPermission?<View testID="help-photo-permission-overlay" pointerEvents="box-none" style={{position:'absolute',top:headerHeight+tileSize,left:0,right:0,bottom:58+captionInset,alignItems:'center',justifyContent:'center'}}>
@@ -418,16 +442,35 @@ function HelpPhotoPanel({height,layoutHeight,bottom,onWidth,children}:{height:Sh
     style={[{position:'absolute',bottom,left:0,right:0,overflow:'hidden'},panelStyle,{height:layoutHeight}]}>{children}</Reanimated.View>;
 }
 
-function PhotoTile({photo,size,number,pending,disabled,onSelect,onPreview,index}:{photo:HelpLibraryPhoto;size:number;number:number;pending:boolean;disabled:boolean;onSelect:()=>void;onPreview:(origin:HelpPhotoRect)=>void;index:number}) {
+type PhotoTileProps={queue:ReturnType<typeof createHelpPhotoPreviewQueue<ImageRef|null>>;loadPreview:boolean;photo:HelpLibraryPhoto;size:number;number:number;pending:boolean;disabled:boolean;onSelect:()=>void;onPreview:(origin:HelpPhotoRect)=>void;index:number};
+function PhotoTile(props:PhotoTileProps){
+  const latest=useRef(props);latest.current=props;
+  const actions=useMemo(()=>({onSelect:()=>latest.current.onSelect(),onPreview:(origin:HelpPhotoRect)=>latest.current.onPreview(origin)}),[]);
+  return <MemoPhotoTile {...props} {...actions}/>;
+}
+const MemoPhotoTile=React.memo(function PhotoTileBody({photo,queue,loadPreview,size,number,pending,disabled,onSelect,onPreview,index}:PhotoTileProps) {
   const c=useHelpTheme(),node=useRef<View>(null);
-  const [uri,setUri]=useState<string|null>(null);
-  useEffect(()=>{let alive=true;setUri(null);void getHelpPhotoPreviewUri(photo).then(value=>{if(alive)setUri(value);}).catch(()=>{});return()=>{alive=false;};},[photo.id,photo.uri]);
+  const pixels=Math.max(1,Math.min(512,PixelRatio.getPixelSizeForLayoutSize(size)));
+  const key=`${photo.id}:${photo.uri}:${pixels}`;
+  const [preview,setPreview]=useState<{key:string;image:ImageRef|null}>();
+  const source=preview?.key===key?preview.image:undefined;
+  useEffect(()=>{
+    if(!loadPreview||preview?.key===key)return;
+    let active=true;
+    const cancel=queue.enqueue(async()=>{
+      const uri=Platform.OS==='android'&&/^(?:content|file):/.test(photo.uri)?photo.uri:await getHelpPhotoPreviewUri(photo);
+      return active&&uri?Image.loadAsync(uri,{maxWidth:pixels,maxHeight:pixels}):null;
+    },image=>setPreview({key,image}));
+    return()=>{active=false;cancel();};
+  },[queue,loadPreview,key,preview?.key,pixels,photo.id,photo.uri]);
+  const imageStyle=useMemo(()=>({width:size,height:size,opacity:number?.8:1}),[size,Boolean(number)]);
+  const open=useCallback(()=>node.current?.measureInWindow((x,y,width,height)=>onPreview({x,y,width,height})),[onPreview]);
   return <View ref={node} collapsable={false} style={{width:size,height:size,backgroundColor:c.elevated}}>
-    <Pressable accessibilityRole="button" accessibilityLabel={`Открыть фотографию ${index}`} onPress={()=>node.current?.measureInWindow((x,y,width,height)=>onPreview({x,y,width,height}))} style={{flex:1}}>
-      {uri?<Image source={{uri}} contentFit="cover" recyclingKey={photo.id} cachePolicy="memory-disk" transition={100} style={{flex:1,opacity:number?.8:1}}/>:<View style={{flex:1,alignItems:'center',justifyContent:'center'}}><Ionicons name="cloud-download-outline" size={28} color={c.muted}/></View>}
+    <Pressable accessibilityRole="button" accessibilityLabel={`Открыть фотографию ${index}`} onPress={open} style={{flex:1}}>
+      {source?<Image source={source} contentFit="cover" recyclingKey={`${photo.id}:${photo.uri}`} cachePolicy="disk" allowDownscaling enforceEarlyResizing transition={0} style={imageStyle}/>:<LoadingPlaceholder dark={c.dark} testID={`help-photo-placeholder-${photo.id}`} accessibilityLabel="Загрузка превью"/>}
     </Pressable>
     <Pressable accessibilityRole="checkbox" accessibilityLabel={`Выбрать фотографию ${index}`} accessibilityState={{checked:number>0,disabled}} disabled={disabled} onPress={onSelect} style={{position:'absolute',right:0,top:0,width:44,height:44,alignItems:'center',justifyContent:'center'}}>
       <View style={{width:25,height:25,borderRadius:13,borderWidth:2,borderColor:'#FFF',alignItems:'center',justifyContent:'center',backgroundColor:number?c.accent:'#00000035'}}>{pending?<ActivityIndicator size="small" color="#FFF"/>:number?<Text style={{color:'#FFF',fontSize:13,fontWeight:'700'}}>{number}</Text>:null}</View>
     </Pressable>
   </View>;
-}
+});

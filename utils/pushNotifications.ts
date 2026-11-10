@@ -4,7 +4,7 @@ import * as TaskManager from 'expo-task-manager';
 import { Platform } from 'react-native';
 import {createPushRegistrationStore} from './pushRegistrationAccount';
 import {emitPushRegistrationChanged} from './pushRegistrationEvents';
-import {restorePendingPushResponse} from './pushResponseRestore';
+import {createPushNavigationIntent} from './pushNavigationIntent';
 import {getAccessToken,getAccessTokenForRequest} from './tokenService';
 
 import { apiClient } from './apiClient';
@@ -17,11 +17,36 @@ const PUSH_TOKEN_KEY = 'pushToken';
 const PROFILE_CHANNEL_ID = 'profile-status';
 const APPEAL_MESSAGE_CHANNEL_ID = 'appeal-message';
 const HELP_MESSAGE_CHANNEL_ID = 'help-message';
+const HELP_IT_REQUEST_CHANNEL_ID = 'help-it-request';
 const TRACKING_PUSH_TASK = 'TRACKING_V2_LOCATION_REQUEST';
 
 let notificationsModule: typeof import('expo-notifications') | null = null;
 let handlerInitialized = false;
 let responseListener: { remove: () => void } | null = null;
+type NativePushResponse = import('expo-notifications').NotificationResponse;
+const pushNavigation = createPushNavigationIntent<NativePushResponse>({
+  read: async () => (await getNotificationsModule())?.getLastNotificationResponseAsync() ?? null,
+  clear: async () => { await (await getNotificationsModule())?.clearLastNotificationResponseAsync?.(); },
+  identity: response => JSON.stringify([response.notification.request.identifier, response.actionIdentifier, response.notification.date]),
+});
+export type StartupHelpNotification = { target: HelpPushTarget; response: NativePushResponse };
+export function helpPushNavigationTarget(target: HelpPushTarget) {
+  return { pathname: '/services/help' as const, params: {
+    ticketId: String(target.ticketId), messageId: target.messageId ? String(target.messageId) : undefined,
+    eventId: target.eventId ? String(target.eventId) : undefined, htmlId: undefined, entry: 'notification',
+  } };
+}
+export async function readStartupHelpNotification(): Promise<StartupHelpNotification | null> {
+  const response = await pushNavigation.initial();
+  if (!response || pushNavigation.accepted(response)) return null;
+  const target = parseHelpPush(response.notification.request.content.data);
+  return target ? { target, response } : null;
+}
+/** Called after the target route committed, never merely after reading metadata. */
+export function acceptStartupHelpNotification(intent: StartupHelpNotification, userId: number) {
+  return pushNavigation.deliver(intent.response, () => true,
+    () => Number.isSafeInteger(userId) && userId > 0 && (intent.target.recipientUserId === undefined || intent.target.recipientUserId === userId));
+}
 const trackingRequests = new Map<string, number>();
 
 async function handleTrackingPush(data: unknown) {
@@ -108,6 +133,10 @@ export async function initPushNotifications() {
       name: 'Помощь — сообщения IT', importance: Notifications.AndroidImportance.HIGH,
       vibrationPattern: [0, 250, 200, 250], lightColor: '#3289FF', enableVibrate: true,
     });
+    await Notifications.setNotificationChannelAsync(HELP_IT_REQUEST_CHANNEL_ID, {
+      name: 'Помощь — вызов IT-специалиста', importance: Notifications.AndroidImportance.HIGH,
+      vibrationPattern: [0, 250, 200, 250], lightColor: '#3289FF', enableVibrate: true,
+    });
   }
 }
 
@@ -188,24 +217,19 @@ export async function bindPushNavigation(onOpenAppeal: (appealId: number) => boo
   if(__DEV__)console.info('[push] navigation binding ready');
 
   responseListener?.remove();
-  const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+  const dispatch = (response: NativePushResponse) => {
     const help = parseHelpPush(response.notification.request.content.data);
-    if (help) { onOpenHelp?.(help.ticketId,help); return; }
+    if (help) return Boolean(onOpenHelp) && onOpenHelp!(help.ticketId,help) !== false;
     const appealId = parseAppealIdFromData(response.notification.request.content.data);
-    if (appealId) onOpenAppeal(appealId);
+    return Boolean(appealId) && onOpenAppeal(appealId!) !== false;
+  };
+  const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+    pushNavigation.deliver(response, dispatch, () => responseListener === subscription);
   });
   responseListener=subscription;
 
   try {
-    await restorePendingPushResponse(()=>Notifications.getLastNotificationResponseAsync(),async()=>{await Notifications.clearLastNotificationResponseAsync?.();},coldStart=>{
-      const data = coldStart.notification.request.content.data;
-      const help = parseHelpPush(data);
-      if(__DEV__)console.info('[push] cold-start response',{help:!!help,type:String(data?.type||''),ticketId:help?.ticketId});
-      let consumed=false;
-      if (help) consumed=Boolean(onOpenHelp)&&onOpenHelp!(help.ticketId,help)!==false;
-      else { const appealId = parseAppealIdFromData(data); if (appealId) consumed=onOpenAppeal(appealId)!==false; }
-      return consumed;
-    },()=>responseListener===subscription);
+    await pushNavigation.restore(dispatch, () => responseListener === subscription);
   } catch (error) {
     console.warn('[push] failed to parse cold start notification', error);
   }

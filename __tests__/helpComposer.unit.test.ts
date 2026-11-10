@@ -1,6 +1,6 @@
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
-import { Animated, AppState, Image, PanResponder, Platform, StyleSheet, TextInput } from 'react-native';
+import { Animated, AppState, Image, PanResponder, Platform, StyleSheet, TextInput, View } from 'react-native';
 jest.mock('react-native-gesture-handler', () => ({ Pressable: require('react-native').Pressable }));
 
 const mockRecorder = { prepareToRecordAsync: jest.fn(), record: jest.fn(), stop: jest.fn(), getStatus: jest.fn(() => ({durationMillis:1000})), uri: 'file://voice.m4a' };
@@ -10,14 +10,15 @@ const mockAudioMode = jest.fn();
 const mockPicker = jest.fn();
 const mockPhotoPicker = jest.fn();
 const mockStopPlayback=jest.fn();
+const mockVoicePlayer={pause:jest.fn(),play:jest.fn(),seekTo:jest.fn().mockResolvedValue(undefined)};
+let mockVoicePlayback={playing:false,currentTime:0,didJustFinish:false};
 let mockReducedMotion = true;
-const mockRowTiming=jest.fn((value:number,_config?:unknown)=>value);
-jest.mock('react-native-reanimated',()=>({
-  __esModule:true,default:{View:require('react-native').View},
-  useAnimatedStyle:(fn:()=>unknown)=>fn(),withTiming:(...args:[number,unknown])=>mockRowTiming(...args),
-  Easing:{out:(fn:unknown)=>fn,cubic:(value:number)=>value},
+let mockHasNativeInput = false;
+jest.mock('../src/features/help/components/HelpNativeInput',()=>({
+  get hasNativeHelpInput(){return mockHasNativeInput;},HelpNativeInput:'HelpNativeInput',
 }));
-jest.mock('expo-audio', () => ({RecordingPresets:{HIGH_QUALITY:{}},getRecordingPermissionsAsync:(...args:any[])=>mockGetPermission(...args),requestRecordingPermissionsAsync:(...args:any[])=>mockPermission(...args),setAudioModeAsync:(...args:any[])=>mockAudioMode(...args),useAudioRecorder:()=>mockRecorder,useAudioRecorderState:()=>({isRecording:false,durationMillis:0})}));
+jest.mock('expo-audio', () => ({RecordingPresets:{HIGH_QUALITY:{}},getRecordingPermissionsAsync:(...args:any[])=>mockGetPermission(...args),requestRecordingPermissionsAsync:(...args:any[])=>mockPermission(...args),setAudioModeAsync:(...args:any[])=>mockAudioMode(...args),useAudioRecorder:()=>mockRecorder,useAudioRecorderState:()=>({isRecording:false,durationMillis:0}),useAudioPlayer:()=>mockVoicePlayer,useAudioPlayerStatus:()=>mockVoicePlayback}));
+jest.mock('react-native-reanimated',()=>({__esModule:true,default:{View:require('react-native').View},useSharedValue:(value:unknown)=>require('react').useRef({value}).current,useAnimatedStyle:(fn:()=>unknown)=>fn(),withTiming:(value:unknown)=>value}));
 jest.mock('expo-document-picker', () => ({getDocumentAsync:(...args:any[])=>mockPicker(...args)}));
 jest.mock('expo-image-picker', () => ({launchImageLibraryAsync:(...args:any[])=>mockPhotoPicker(...args)}));
 jest.mock('../src/features/help/HelpAudioPlayback',()=>({useHelpAudioCommands:()=>({stop:mockStopPlayback})}));
@@ -35,21 +36,25 @@ describe('Help composer recorder lifecycle', () => {
   let screen:TestRenderer.ReactTestRenderer|undefined;
   const originalPlatform=Platform.OS;
   const originalAppState=AppState.currentState;
+  const originalFile=Object.getOwnPropertyDescriptor(globalThis,'File');
+  const originalCreateUrl=URL.createObjectURL,originalRevokeUrl=URL.revokeObjectURL;
   let appStateChange:(state:string)=>void;
   let props:any;
   beforeEach(()=>{
-    mockReducedMotion = true;
+    mockReducedMotion = true;mockHasNativeInput=false;
     jest.spyOn(PanResponder,'create').mockImplementation(config=>({panHandlers:config} as any));
     Object.defineProperty(AppState,'currentState',{configurable:true,value:'active'});
     jest.spyOn(AppState,'addEventListener').mockImplementation((_, listener)=>{appStateChange=listener as any;return {remove:jest.fn()};});
     mockRecorder.prepareToRecordAsync.mockReset().mockResolvedValue(undefined);
     mockRecorder.record.mockReset();mockRecorder.stop.mockReset().mockResolvedValue(undefined);
+    mockRecorder.uri='file://voice.m4a';mockRecorder.getStatus.mockReturnValue({durationMillis:1000});
+    mockVoicePlayer.pause.mockClear();mockVoicePlayer.play.mockClear();mockVoicePlayer.seekTo.mockClear();mockVoicePlayback={playing:false,currentTime:0,didJustFinish:false};
     mockPermission.mockReset().mockResolvedValue({granted:true});
     mockGetPermission.mockReset().mockResolvedValue({granted:true});
     mockAudioMode.mockReset().mockResolvedValue(undefined);mockPicker.mockReset();mockPhotoPicker.mockReset();mockStopPlayback.mockReset();
     props={value:'',onChange:jest.fn(),files:[],onFiles:jest.fn(),onSend:jest.fn().mockResolvedValue(undefined),busy:false,mode:'message',rating:0,onRating:jest.fn(),onCancelMode:jest.fn(),onCancelQuote:jest.fn(),error:jest.fn(),onResize:jest.fn()};
   });
-  afterEach(async()=>{if(screen)await act(async()=>screen!.unmount());screen=undefined;Object.defineProperty(Platform,'OS',{configurable:true,value:originalPlatform});Object.defineProperty(AppState,'currentState',{configurable:true,value:originalAppState});for(const key of ['stream','mediaRecorder','analyserSource','analyser','analyserBuffer','handleDeviceChange'])delete (mockRecorder as any)[key];jest.restoreAllMocks();});
+  afterEach(async()=>{if(screen)await act(async()=>screen!.unmount());screen=undefined;Object.defineProperty(Platform,'OS',{configurable:true,value:originalPlatform});Object.defineProperty(AppState,'currentState',{configurable:true,value:originalAppState});for(const key of ['stream','mediaRecorder','analyserSource','analyser','analyserBuffer','handleDeviceChange'])delete (mockRecorder as any)[key];if(originalFile)Object.defineProperty(globalThis,'File',originalFile);else delete(globalThis as any).File;URL.createObjectURL=originalCreateUrl;URL.revokeObjectURL=originalRevokeUrl;jest.restoreAllMocks();});
   async function render(){await act(async()=>{screen=TestRenderer.create(React.createElement(HelpComposer,props));});}
   async function choose(kind:'photos'|'files'){
     // This helper covers the browser's system pickers; native uses the inline tray.
@@ -62,6 +67,165 @@ describe('Help composer recorder lifecycle', () => {
   }
   function mic(){return screen!.root.findAll(n=>typeof n.props.onPanResponderGrant==='function')[0];}
   function deferred<T>(){let resolve!:(value:T)=>void;let reject!:(reason:Error)=>void;const promise=new Promise<T>((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};}
+  async function renderWebVoice(){
+    Object.defineProperty(Platform,'OS',{configurable:true,value:'web'});
+    Object.defineProperty(globalThis,'File',{configurable:true,value:require('node:buffer').File});
+    let sequence=0;URL.createObjectURL=jest.fn(()=>`blob:voice-draft-${++sequence}`);URL.revokeObjectURL=jest.fn();
+    mockRecorder.uri='blob:recording';
+    jest.spyOn(globalThis,'fetch').mockResolvedValue({blob:async()=>new(require('node:buffer').Blob)(['recorded audio'],{type:'audio/webm'})} as Response);
+    props.voiceDraftKey='account-1:ticket-1';
+    props.onFiles.mockImplementation((files:any[])=>{props={...props,files};screen?.update(React.createElement(HelpComposer,props));});
+    await render();
+  }
+  function webVoiceButton(label:string){
+    const node=screen!.root.findAll(node=>node.props.accessibilityLabel===label&&(typeof node.props.onPress==='function'||typeof node.props.onClick==='function'))[0];
+    return {props:{...node.props,onPress:()=>node.props.onPress?node.props.onPress():node.props.onClick({detail:1})}};
+  }
+  async function stopWebVoice(){
+    await act(async()=>mic().props.onPanResponderGrant());
+    await act(async()=>mic().props.onPanResponderMove(null,{dy:-80,dx:0}));
+    await act(async()=>webVoiceButton('Остановить запись и прослушать').props.onPress());
+  }
+  test('web recording replaces the input with the Android-sized row and keeps the hold responder mounted',async()=>{
+    await renderWebVoice();const originalMic=mic();
+    expect(screen!.root.findByType(TextInput).props.style.fontFamily).toContain('system-ui');
+    const preparation=deferred<void>();mockRecorder.prepareToRecordAsync.mockReturnValue(preparation.promise);
+    await act(async()=>mic().props.onPanResponderGrant());
+    expect(screen!.root.findAllByType(TextInput)).toHaveLength(0);
+    expect(screen!.root.findAllByProps({testID:'help-recording-card'})).toHaveLength(0);
+    expect(StyleSheet.flatten(screen!.root.findByProps({testID:'help-web-voice-preparing'}).props.style).height).toBe(48);
+    await act(async()=>preparation.resolve());
+    expect(mic()).toBe(originalMic);
+    expect(screen!.root.findAllByProps({testID:'help-voice-live-wave'}).length).toBeGreaterThan(0);
+    await act(async()=>webVoiceButton('Закрепить запись').props.onPress());
+    await act(async()=>mic().props.onPanResponderRelease());
+    expect(mockRecorder.stop).not.toHaveBeenCalled();
+    expect(StyleSheet.flatten(mic().props.style)).toMatchObject({width:64,height:64,borderRadius:32});
+  });
+  test('web stop keeps a real file for preview, failed send preserves it and successful retry releases its URL',async()=>{
+    await renderWebVoice();await stopWebVoice();
+    expect(mockRecorder.stop).toHaveBeenCalledTimes(1);expect(props.onSend).not.toHaveBeenCalled();
+    expect(screen!.root.findAllByType(TextInput)).toHaveLength(0);
+    const file=props.files[0];expect(file).toMatchObject({webVoiceRecording:true,mimeType:'audio/webm',durationMs:1000});
+    expect(file.file).toBeInstanceOf(require('node:buffer').File);
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:recording');expect(URL.revokeObjectURL).not.toHaveBeenCalledWith(file.uri);
+    await act(async()=>webVoiceButton('Прослушать голосовое сообщение').props.onPress());
+    expect(mockVoicePlayer.play).toHaveBeenCalledTimes(1);
+    props.onSend.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    await act(async()=>webVoiceButton('Отправить голосовое сообщение').props.onPress());
+    expect(props.onSend).toHaveBeenLastCalledWith(file,undefined,true);
+    expect(screen!.root.findAllByProps({testID:'help-web-voice-preview'}).length).toBeGreaterThan(0);
+    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith(file.uri);
+    await act(async()=>webVoiceButton('Отправить голосовое сообщение').props.onPress());
+    expect(props.files).toHaveLength(0);expect(screen!.root.findAllByType(TextInput)).toHaveLength(1);
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith(file.uri);expect(mockVoicePlayer.pause).toHaveBeenCalled();
+  });
+  test('web cancellation restores input without upload and deletes the preview URL',async()=>{
+    await renderWebVoice();await stopWebVoice();const uri=props.files[0].uri;
+    await act(async()=>webVoiceButton('Удалить голосовое сообщение').props.onPress());
+    expect(props.files).toHaveLength(0);expect(props.onSend).not.toHaveBeenCalled();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith(uri);expect(screen!.root.findAllByType(TextInput)).toHaveLength(1);
+  });
+  test('web keyboard activation locks recording and release does not send it',async()=>{
+    await renderWebVoice();const preventDefault=jest.fn();
+    await act(async()=>mic().props.onKeyDown({key:'Enter',repeat:false,preventDefault}));
+    await act(async()=>mic().props.onPanResponderRelease());
+    expect(preventDefault).toHaveBeenCalledTimes(1);expect(mockRecorder.record).toHaveBeenCalledTimes(1);expect(mockRecorder.stop).not.toHaveBeenCalled();
+    expect(screen!.root.findAllByProps({testID:'help-web-voice-locked'}).length).toBeGreaterThan(0);
+  });
+  test('reopening a web voice draft recreates its released URL from the retained File',async()=>{
+    await renderWebVoice();await stopWebVoice();const original=props.files[0];
+    await act(async()=>screen!.unmount());screen=undefined;
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith(original.uri);
+    await render();
+    expect(props.files[0].uri).not.toBe(original.uri);expect(props.files[0].file).toBe(original.file);
+    expect(screen!.root.findAllByProps({testID:'help-web-voice-preview'}).length).toBeGreaterThan(0);
+    expect(props.onSend).not.toHaveBeenCalled();
+  });
+  test('unmount during web send stops preview but keeps its URL until the pending upload settles',async()=>{
+    await renderWebVoice();await stopWebVoice();const uri=props.files[0].uri,pending=deferred<boolean>();
+    props.onSend.mockReturnValue(pending.promise);
+    await act(async()=>webVoiceButton('Отправить голосовое сообщение').props.onPress());
+    await act(async()=>screen!.unmount());screen=undefined;
+    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith(uri);props.onFiles.mockClear();
+    await act(async()=>pending.resolve(true));
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith(uri);expect(props.onFiles).not.toHaveBeenCalled();
+  });
+  test('web recording is not appended or sent into a different account/chat after a delayed Blob read',async()=>{
+    await renderWebVoice();const blob=deferred<Blob>();jest.mocked(fetch).mockResolvedValue({blob:()=>blob.promise} as Response);
+    await stopWebVoice();
+    props={...props,voiceDraftKey:'account-2:ticket-2',files:[]};await act(async()=>screen!.update(React.createElement(HelpComposer,props)));
+    await act(async()=>blob.resolve(new(require('node:buffer').Blob)(['audio'],{type:'audio/webm'})));
+    expect(props.onFiles).not.toHaveBeenCalled();expect(props.onSend).not.toHaveBeenCalled();
+    expect(URL.createObjectURL).not.toHaveBeenCalled();expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:recording');
+  });
+  test('web recording at the one-minute limit stops once for preview without sending',async()=>{
+    await renderWebVoice();mockRecorder.getStatus.mockReturnValue({durationMillis:60000,isRecording:true,metering:-20} as any);
+    await act(async()=>mic().props.onPanResponderGrant());
+    expect(mockRecorder.stop).toHaveBeenCalledTimes(1);expect(props.onSend).not.toHaveBeenCalled();
+    expect(props.files[0]).toMatchObject({durationMs:60000,webVoiceRecording:true});
+    expect(screen!.root.findAllByProps({testID:'help-web-voice-preview'}).length).toBeGreaterThan(0);
+  });
+  test.each([{isComposing:true},{keyCode:229},{which:229}])('web keyboard never submits an IME confirmation %j',async flags=>{
+    Object.defineProperty(Platform,'OS',{configurable:true,value:'web'});props.value='Черновик';await render();
+    const input=screen!.root.findByType(TextInput),preventDefault=jest.fn();
+    await act(async()=>input.props.onKeyPress({nativeEvent:{key:'Enter',ctrlKey:true,...flags},preventDefault}));
+    expect(props.onSend).not.toHaveBeenCalled();expect(preventDefault).not.toHaveBeenCalled();
+    await act(async()=>input.props.onKeyPress({nativeEvent:{key:'Enter',ctrlKey:true},preventDefault}));
+    expect(props.onSend).toHaveBeenCalledTimes(1);expect(preventDefault).toHaveBeenCalledTimes(1);
+  });
+  test('StrictMode effect replay cannot consume autofocus before its scheduled frame runs',async()=>{
+    const frames:FrameRequestCallback[]=[];
+    jest.spyOn(global,'requestAnimationFrame').mockImplementation(callback=>{frames.push(callback);return frames.length;});
+    jest.spyOn(global,'cancelAnimationFrame').mockImplementation(()=>{});
+    props={...props,focusKey:1,navigationReady:true,screenActive:true};
+    await act(async()=>{screen=TestRenderer.create(React.createElement(React.StrictMode,null,React.createElement(HelpComposer,props)));});
+    const focus=jest.spyOn(screen!.root.findByType(TextInput).instance,'focus');focus.mockClear();
+    await act(async()=>frames.forEach(callback=>callback(0)));
+    expect(focus).toHaveBeenCalledTimes(1);
+    // RN's preset shares this mock between TextInput instances.
+    focus.mockClear();
+  });
+  test('question height frames do not rerender the composer on every animation frame',async()=>{
+    props={...props,questionPanel:React.createElement(View)};
+    const committed=jest.fn();
+    await act(async()=>{screen=TestRenderer.create(React.createElement(React.Profiler,{id:'composer',onRender:committed},React.createElement(HelpComposer,props)));});
+    committed.mockClear();
+    const surface=screen!.root.findByProps({testID:'help-composer-surface'});
+    await act(async()=>{for(const height of [70,90,120,180,220])surface.props.onLayout({nativeEvent:{layout:{height}}});});
+    expect(committed).not.toHaveBeenCalled();
+  });
+  test('expanding questions retains the editable input and uses one composer arrow without microphone or duplicate custom row',async()=>{
+    Object.defineProperty(Platform,'OS',{configurable:true,value:'web'});
+    await render();
+    const input=screen!.root.findByType(TextInput);
+    props={...props,questionPanel:React.createElement(View,{testID:'question-slot'}),questionFooter:React.createElement(View,{testID:'navigation-slot'}),questionActionLabel:'Далее'};
+    await act(async()=>screen!.update(React.createElement(HelpComposer,props)));
+    expect(screen!.root.findByType(TextInput)).toBe(input);
+    expect(input.props.editable).toBe(true);
+    expect(screen!.root.findAll(n=>n.props.label==='Далее')).toHaveLength(1);
+    expect(screen!.root.findAll(n=>n.props.accessibilityLabel?.startsWith('Удерживайте для записи'))).toHaveLength(0);
+    await act(async()=>screen!.root.findAll(n=>n.props.label==='Далее')[0].props.onPress());
+    expect(props.onSend).toHaveBeenCalledTimes(1);
+    props={...props,questionPanel:undefined,questionFooter:undefined,questionActionLabel:undefined};
+    await act(async()=>screen!.update(React.createElement(HelpComposer,props)));
+    expect(screen!.root.findByType(TextInput)).toBe(input);
+  });
+  test('question card owns the action while the same editable composer and attachments remain mounted', async()=>{
+    Object.defineProperty(Platform,'OS',{configurable:true,value:'web'});
+    props={...props,value:'Мой ответ',questionActionLabel:'Далее',hideSendAction:true};
+    await render();
+    const input=screen!.root.findByType(TextInput);
+    expect(input.props.editable).toBe(true);
+    expect(screen!.root.findAll(n=>n.props.label==='Далее')).toHaveLength(0);
+    expect(screen!.root.findAll(n=>n.props.label==='Прикрепить файлы').length).toBeGreaterThan(0);
+    await act(async()=>input.props.onKeyPress({nativeEvent:{key:'Enter',ctrlKey:true}}));
+    expect(props.onSend).not.toHaveBeenCalled();
+    props={...props,questionActionLabel:undefined,hideSendAction:false};
+    await act(async()=>screen!.update(React.createElement(HelpComposer,props)));
+    expect(screen!.root.findByType(TextInput)).toBe(input);
+    expect(screen!.root.findAll(n=>n.props.label==='Отправить сообщение')[0].props.disabled).toBe(false);
+  });
   test.each([false,true])('sending preserves keyboard visibility (%s) and leaves the field editable',async(keyboardVisible)=>{
     Object.defineProperty(Platform,'OS',{configurable:true,value:'web'});
     const dismiss=jest.spyOn(require('react-native').Keyboard,'dismiss').mockImplementation(()=>{}),pending=deferred<void>();
@@ -220,20 +384,47 @@ describe('Help composer recorder lifecycle', () => {
     expect(mockStopPlayback).not.toHaveBeenCalled();expect(mockRecorder.record).not.toHaveBeenCalled();
   });
   test('reply and input share one surface while their controls stay in separate rows',async()=>{
-    props.value='Line one\nLine two';props.quote={name:'Support',text:'Original message',onPress:jest.fn()};await render();
+    props.value='Line one\nLine two\nLine three';props.quote={name:'Support',text:'Original message',onPress:jest.fn()};await render();
     const preview=screen!.root.findByProps({testID:'help-reply-preview'}),surface=screen!.root.findByProps({testID:'help-composer-surface'}),row=screen!.root.findByProps({testID:'help-composer-input-row'});
-    expect(preview.parent?.props.testID).toBe('help-composer-surface');expect(surface.findAllByProps({testID:'help-reply-preview'}).length).toBeGreaterThan(0);expect(StyleSheet.flatten(row.props.style).minHeight).toBe(88);
+    expect(preview.parent?.props.testID).toBe('help-composer-surface');expect(surface.findAllByProps({testID:'help-reply-preview'}).length).toBeGreaterThan(0);expect(StyleSheet.flatten(row.props.style).minHeight).toBe(48);
     const expand=row.findAll(node=>node.props.label==='Развернуть редактор сообщения')[0];expect(expand.props.name).toBe('resize-outline');expect(expand.props.style).toMatchObject({top:0,right:0,width:44,height:44});
     const cancel=preview.findAll(node=>node.props.label==='Отменить ответ')[0];expect(cancel.props.style).toMatchObject({width:44,height:44});
     await act(async()=>cancel.props.onPress());expect(props.onCancelQuote).toHaveBeenCalledTimes(1);
     expect(screen!.root.findAllByType('HelpExpandedEditor' as any)).toHaveLength(0);expect(props.onChange).not.toHaveBeenCalled();await act(async()=>expand.props.onPress());expect(screen!.root.findAllByType('HelpExpandedEditor' as any)).toHaveLength(1);
   });
-  test('clearing a multiline draft animates the action area down to one line on the UI clock',async()=>{
-    mockReducedMotion=false;props.value='Line one\nLine two';await render();
-    expect(mockRowTiming).toHaveBeenLastCalledWith(88,expect.objectContaining({duration:180}));
+  test.each(['ios','android'] as const)('%s grows by one line at a time without reserving a third row',async platform=>{
+    Object.defineProperty(Platform,'OS',{configurable:true,value:platform});
+    props.value='Line one';await render();
+    const input=screen!.root.findByType(TextInput);
+    const entry=()=>screen!.root.findByProps({testID:'help-composer-entry'});
+    const row=()=>screen!.root.findByProps({testID:'help-composer-input-row'});
+    const expand=()=>screen!.root.findAll(n=>n.props.label==='Развернуть редактор сообщения');
+    for(const lines of [1,2,3,2,1]){
+      props={...props,value:Array.from({length:lines},(_,i)=>`Line ${i}`).join('\n')};
+      await act(async()=>screen!.update(React.createElement(HelpComposer,props)));
+      await act(async()=>{
+        if(platform==='android')screen!.root.findByProps({testID:'help-composer-measure'}).props.onTextLayout({nativeEvent:{lines:[{y:(lines-1)*22,height:22}]}});
+        else input.props.onContentSizeChange({nativeEvent:{contentSize:{height:lines*22}}});
+      });
+      expect(screen!.root.findByType(TextInput)).toBe(input);
+      expect(Math.max(StyleSheet.flatten(row().props.style).minHeight,entry().props.style.height.__getValue())).toBe(Math.max(48,lines*22+24));
+      expect(expand().length).toBe(lines>=3?1:0);
+      if(lines===2)expect(props.onResize).toHaveBeenLastCalledWith(68);
+    }
     props={...props,value:''};await act(async()=>screen!.update(React.createElement(HelpComposer,props)));
-    expect(mockRowTiming).toHaveBeenLastCalledWith(48,expect.objectContaining({duration:180}));
-    expect(screen!.root.findAll(node=>node.props.label==='Развернуть редактор сообщения')).toHaveLength(0);
+    expect(StyleSheet.flatten(row().props.style).minHeight).toBe(48);
+    expect(expand()).toHaveLength(0);
+  });
+  test('native two-line geometry stays compact and expand appears only when both touch targets fit',async()=>{
+    mockHasNativeInput=true;props.value='Wrapped message';await render();
+    const input=screen!.root.findByType('HelpNativeInput' as any);
+    for(const lines of [2,3,2,1]){
+      await act(async()=>{input.props.onLines(lines);input.props.onGeometry(lines*22+24,lines*22);});
+      expect(props.onResize).toHaveBeenLastCalledWith(Math.max(48,lines*22+24));
+      expect(StyleSheet.flatten(screen!.root.findByProps({testID:'help-composer-input-row'}).props.style).minHeight).toBe(48);
+      expect(screen!.root.findAll(n=>n.props.label==='Развернуть редактор сообщения').length).toBe(lines>=3?1:0);
+    }
+    expect(screen!.root.findByType('HelpNativeInput' as any)).toBe(input);
   });
   test('height growth is interruptible and scoped to the composer, with reduced-motion fallback',async()=>{
     mockReducedMotion=false;
@@ -455,7 +646,7 @@ describe('Help composer recorder lifecycle', () => {
     expect(entry().props.style.paddingBottom.__getValue()).toBe(0);
     const bottom=screen!.root.findAll(n=>n.props.testID==='help-composer-fade-bottom')[0];
     expect(bottom.props.style).toMatchObject({bottom:0,height:12});expect(bottom.props.colors).toEqual(['#33333300','#33333380']);
-    expect(screen!.root.findAll(n=>n.props.testID==='help-composer-fade-top')).toHaveLength(0);
+    expect(screen!.root.findByProps({testID:'help-composer-fade-top'}).props.style.opacity).toBe(0);
   });
   test('top and bottom fades follow hidden text and reset on shrink, including closure input',async()=>{
     props.mode='close';await render();const field=()=>screen!.root.findByType(TextInput);
@@ -464,7 +655,12 @@ describe('Help composer recorder lifecycle', () => {
     await act(async()=>field().props.onScroll({nativeEvent:{contentOffset:{y:100}}}));
     expect(exists('help-composer-fade-top')).toBe(true);expect(exists('help-composer-fade-bottom')).toBe(true);
     const top=screen!.root.findAll(n=>n.props.testID==='help-composer-fade-top')[0];
-    expect(top.props.colors).toEqual(['#33333380','#33333300']);
+    expect(top.props.colors).toEqual(['#333333','#33333300']);
+    expect(top.props.style.opacity).toBe(1);
+    await act(async()=>field().props.onScroll({nativeEvent:{contentOffset:{y:6}}}));
+    expect(top.props.style.opacity).toBe(.5);
+    await act(async()=>field().props.onScroll({nativeEvent:{contentOffset:{y:0}}}));
+    expect(top.props.style.opacity).toBe(0);
     await act(async()=>field().props.onScroll({nativeEvent:{contentOffset:{y:255}}}));
     expect(exists('help-composer-fade-top')).toBe(true);expect(exists('help-composer-fade-bottom')).toBe(false);
     await act(async()=>field().props.onContentSizeChange({nativeEvent:{contentSize:{height:44}}}));
@@ -473,11 +669,36 @@ describe('Help composer recorder lifecycle', () => {
   });
   test('paperclip/send/star sizes and transparent unfocused input match reference',async()=>{
     Object.defineProperty(Platform,'OS',{configurable:true,value:'web'});props.mode='close';await render();
-    expect(screen!.root.findAll(n=>n.props.label==='Прикрепить файлы')[0].props.style).toMatchObject({width:36,height:38,left:4,bottom:4});
-    expect(screen!.root.findAll(n=>n.props.label==='Закрыть обращение')[0].props.style).toMatchObject({width:38,height:38,right:4,bottom:4,borderRadius:19});
+    expect(screen!.root.findAll(n=>n.props.label==='Прикрепить файлы')[0].props.style).toMatchObject({width:36,height:38,left:4,bottom:5});
+    expect(screen!.root.findAll(n=>n.props.label==='Закрыть обращение')[0].props.style).toMatchObject({width:38,height:38,right:5,bottom:5,borderRadius:19});
     expect(screen!.root.findAll(n=>n.props.label==='1 из 5 звёзд')[0].props.style).toMatchObject({width:30,height:30});
     expect(screen!.root.findByType(TextInput).props.style).toMatchObject({outlineStyle:'none',outlineWidth:0,boxShadow:'none'});
     expect(screen!.root.findByType(TextInput).props.underlineColorAndroid).toBe('transparent');
+  });
+  test.each(['currentTarget','target','nativeTarget'])('web textarea scroll reads %s without a native contentOffset and updates clipping fades',async shape=>{
+    Object.defineProperty(Platform,'OS',{configurable:true,value:'web'});props.value='Длинный черновик';await render();
+    const field=()=>screen!.root.findByType(TextInput);
+    const top=()=>screen!.root.findByProps({testID:'help-composer-fade-top'}).props.style.opacity;
+    const bottom=()=>screen!.root.findAllByProps({testID:'help-composer-fade-bottom'}).length>0;
+    await act(async()=>field().props.onContentSizeChange({nativeEvent:{contentSize:{height:400}}}));
+    const event=(scrollTop:number)=>shape==='nativeTarget'?{nativeEvent:{target:{scrollTop}}}:{nativeEvent:{},[shape]:{scrollTop}};
+    await act(async()=>field().props.onScroll(event(255)));
+    expect(top()).toBe(1);expect(bottom()).toBe(false);
+    await act(async()=>field().props.onScroll(event(6)));
+    expect(top()).toBe(.5);expect(bottom()).toBe(true);
+    await act(async()=>field().props.onScroll(event(-10)));
+    expect(top()).toBe(0);expect(bottom()).toBe(true);
+  });
+  test('textarea scroll captures currentTarget before React releases the event and ignores unusable offsets',async()=>{
+    Object.defineProperty(Platform,'OS',{configurable:true,value:'web'});props.value='Длинный черновик';await render();
+    const field=()=>screen!.root.findByType(TextInput),top=()=>screen!.root.findByProps({testID:'help-composer-fade-top'}).props.style.opacity;
+    await act(async()=>field().props.onContentSizeChange({nativeEvent:{contentSize:{height:400}}}));
+    const event:any={currentTarget:{scrollTop:6},target:{scrollTop:255},nativeEvent:{}};
+    await act(async()=>{field().props.onScroll(event);event.currentTarget=null;event.target=null;event.nativeEvent=null;});
+    expect(top()).toBe(.5);
+    for(const invalid of [{nativeEvent:{}},{nativeEvent:{contentOffset:{y:NaN}}},{currentTarget:{scrollTop:Infinity}},{nativeEvent:{target:123}}]){
+      await act(async()=>field().props.onScroll(invalid));expect(top()).toBe(.5);
+    }
   });
   test.each(['android','web'])('empty value resets a long %s composer without a content-size notification',async(platform)=>{
     Object.defineProperty(Platform,'OS',{configurable:true,value:platform});props.value='Длинный текст';await render();
@@ -627,7 +848,7 @@ describe('Help composer recorder lifecycle', () => {
     props.value='Длинное сообщение';await render();
     expect(screen!.root.findAll(n=>n.props.label==='Развернуть редактор сообщения')).toHaveLength(0);
     const field=screen!.root.findAll(n=>n.type===TextInput)[0];
-    await act(async()=>{field.props.onSelectionChange({nativeEvent:{selection:{start:2,end:6}}});field.props.onContentSizeChange({nativeEvent:{contentSize:{height:44}}});});
+    await act(async()=>{field.props.onSelectionChange({nativeEvent:{selection:{start:2,end:6}}});field.props.onContentSizeChange({nativeEvent:{contentSize:{height:66}}});});
     await act(async()=>screen!.root.findAll(n=>n.props.label==='Развернуть редактор сообщения')[0].props.onPress());
     const expanded=()=>screen!.root.findByType('HelpExpandedEditor' as any);
     expect(expanded().props.selection).toEqual({start:2,end:6});expect(expanded().props.value).toBe(props.value);

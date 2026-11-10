@@ -1,6 +1,9 @@
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
-jest.mock('react-native', () => ({ View: 'View', Text: 'Text', Pressable: 'Pressable', Modal: 'Modal', ActivityIndicator: 'ActivityIndicator', StyleSheet: { create: (x: any) => x }, Platform: { OS: 'android' }, Alert: { alert: jest.fn() } }));
+import {Platform} from 'react-native';
+let mockWindowWidth=390,mockWindowHeight=800;
+jest.mock('react-native', () => ({ View: 'View', Text: 'Text', Pressable: 'Pressable', Modal: 'Modal', ScrollView:'ScrollView', ActivityIndicator: 'ActivityIndicator', useWindowDimensions:()=>({width:mockWindowWidth,height:mockWindowHeight,scale:1,fontScale:1}), StyleSheet: { create: (x: any) => x }, Platform: { OS: 'android' }, Alert: { alert: jest.fn() } }));
+jest.mock('@/context/ThemeContext',()=>({useTheme:()=>({theme:'light'})}));
 jest.mock('react-native-paper', () => {
   const React = require('react'); const host = (name: string) => (props: any) => React.createElement(name, props);
   return { Button: host('Button'), Divider: host('Divider'), Text: host('Text'), TextInput: host('Input'), Switch: host('Switch'),
@@ -20,6 +23,7 @@ import { ProfileTrackingSettings } from '../src/features/profile/ui/ProfileTrack
 import { requestPasswordReset, verifyPasswordReset, changePassword } from '../utils/authService';
 const ready: any = { available: true, permission: 'granted', backgroundPermission: 'granted', activityRecognitionPermission: 'granted', preciseLocation: true, locationServicesEnabled: true, notificationsEnabled: true, batteryOptimizationExempt: true, powerSaveMode: false };
 let renderer: TestRenderer.ReactTestRenderer;
+beforeEach(()=>{Platform.OS='android';mockWindowWidth=390;mockWindowHeight=800;});
 afterEach(async () => { if (renderer) await act(async () => renderer.unmount()); jest.clearAllMocks(); });
 
 test.each([
@@ -62,4 +66,37 @@ test('flat security screen keeps password reset behind email verification', asyn
   await act(async () => save.props.onPress());
   expect(changePassword).toHaveBeenCalledWith(profile.email, '123456', 'test-password');
   expect(renderer.root.findByType('Modal' as any).props.visible).toBe(false);
+});
+
+test('desktop reset remains scrollable in a short window and cannot dismiss during verification, then can cancel',async()=>{
+  Platform.OS='web';mockWindowWidth=1280;mockWindowHeight=360;
+  const profile:any={email:'test@example.test',authMethods:{passwordLoginEnabled:true}};
+  await act(async()=>{renderer=TestRenderer.create(React.createElement(CredentialsSection,{profile,onAdded:jest.fn()}));});
+  await act(async()=>renderer.root.find(node=>node.type==='Item'&&node.props.title==='Сбросить пароль').props.onPress());
+  expect(renderer.root.findByProps({testID:'profile-password-reset-dialog-content'}).type).toBe('ScrollView');
+  expect(renderer.root.find(node=>node.props.testID==='profile-password-reset-dialog'&&node.props.style).props.style.maxHeight).toBeLessThan(mockWindowHeight);
+  let reject!:(error:Error)=>void;
+  jest.mocked(verifyPasswordReset).mockImplementationOnce(()=>new Promise((_resolve,no)=>{reject=no;}));
+  await act(async()=>renderer.root.findByType('OTP6Input' as any).props.onFilled('123456'));
+  await act(async()=>renderer.root.findByType('Modal' as any).props.onRequestClose());
+  expect(renderer.root.findByType('Modal' as any).props.visible).toBe(true);expect(changePassword).not.toHaveBeenCalled();
+  await act(async()=>reject(new Error('Неверный код')));
+  expect(renderer.root.findAllByType('Text' as any).some(node=>node.props.children==='Неверный код')).toBe(true);
+  await act(async()=>renderer.root.findByType('Modal' as any).props.onRequestClose());
+  expect(renderer.root.findAllByType('Modal' as any)).toHaveLength(0);expect(changePassword).not.toHaveBeenCalled();
+});
+
+test('desktop reset submits only after verified code and closes after password save',async()=>{
+  Platform.OS='web';mockWindowWidth=1280;
+  const profile:any={email:'test@example.test',authMethods:{passwordLoginEnabled:true}};
+  await act(async()=>{renderer=TestRenderer.create(React.createElement(CredentialsSection,{profile,onAdded:jest.fn()}));});
+  await act(async()=>renderer.root.find(node=>node.type==='Item'&&node.props.title==='Сбросить пароль').props.onPress());
+  await act(async()=>renderer.root.findByType('OTP6Input' as any).props.onFilled('123456'));
+  expect(verifyPasswordReset).toHaveBeenCalledWith(profile.email,'123456');
+  const field=(label:string)=>renderer.root.find(node=>node.type==='Input'&&node.props.label===label);
+  await act(async()=>{field('Новый пароль').props.onChangeText('test-password');field('Повторите пароль').props.onChangeText('test-password');});
+  const save=renderer.root.findAllByType('Pressable' as any).find(node=>node.findAllByType('Text' as any).some(text=>text.props.children==='Сохранить пароль'))!;
+  await act(async()=>save.props.onPress());
+  expect(changePassword).toHaveBeenCalledWith(profile.email,'123456','test-password');
+  expect(renderer.root.findAllByType('Modal' as any)).toHaveLength(0);
 });

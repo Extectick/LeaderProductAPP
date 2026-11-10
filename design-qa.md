@@ -462,3 +462,37 @@ Folder: `D:/LeaderProductProjects/LeaderProductMobileAPP/.local-tools/emulator-q
 - Existing application profile route/cache retained. No authenticated network or native APK release was exercised for this styling change.
 
 final result: passed
+
+
+---
+
+# Client Orders web redesign QA — 2026-11-07
+
+Final result: passed for the local redesigned UI and scoped regression checks.
+
+Reference: approved layout in `.dev-runtime/orders-web-redesign-20261107/concept.html`, current Help tokens/shared toolbar and the existing order business workflow. This is an adaptation of the approved schematic, not a pixel-identical image clone. The authenticated original production page was not available; no before/after task-speed improvement is claimed.
+
+Actual ClientOrdersWebScreen was opened through `qa/orders-preview` with isolated synthetic state and no real API calls. Browser checks covered1280/1366/1440/1920, navigation72/216, narrow768/390, light/dark, readOnly/error/offline, requisites/calendar/menu, keyboard customer selection,12-product batch, invalid quantity focus and empty search. Root inspected final light and dark screenshots. Product photos in QA deliberately use a local demo icon; real image loading was not verified against business data.
+
+Fixed P1/P2 findings: resize replaced numeric input nodes; quantity increment dropped integer zeroes; dark icons were black; product transfer scrolled an obsolete parent; list empty/loading/refresh states were missing. Rechecked focus/caret preservation,9→10, batch destination scroll, dark icons, empty results and refresh.
+
+No outstanding P0/P1/P2 defect in checked flows. Practical boundaries: very narrow web uses horizontal table scrolling and truncates the document title; the native layout is unchanged. Error quick filter covers loaded orders, explicitly labeled. Current order URL is replaced without an extra history entry per click. No real business export, production account access, native-device visual QA or complete console audit is asserted.
+
+Evidence: `.dev-runtime/orders-web-redesign-20261107/browser-proof.json`, `qa/orders-preview/dark-qa.json`, `docs/client-orders-web.md`. Own browser QA tab is closed at handoff; normal Metro8081 remains available.
+
+
+---
+
+# Client Orders WEB fast creation follow-up — 2026-11-07
+
+Final result: passed for the client-first UI on the isolated fixture. Supersedes the preceding permanent master/detail layout after owner feedback.
+
+The document now occupies the workspace. Client/organization/date are visible; defaults load through the existing workspace; advanced conditions are collapsed. Inline search → quantity → Enter adds a product without opening a drawer and returns focus to search. Repeated products increment the existing line. History is a separate view with Continue order; both panes retain the same workspace. Submit is beside the total and retains confirmation/validation.
+
+Browser evidence: actual production component with synthetic state. Root checked New → focused client → keyboard selection → defaults → focused product search → quantity12 → Enter → repeat13 → second product1, history return preserving both lines, submit confirmation/cancel with zero export actions, and stable quantity DOM/focus1280→1440. Independent review checked dark1440/readOnly, missing contract/address focusing Contract on submit, delayed800ms defaults, mutation locks, compact768 layout and cached image loading. No page overflow at768; table uses internal horizontal scrolling; total/submit remain visible.
+
+Fixed review findings: shipping date/advanced fields were mutable during an operation; now they share editingLocked. Cached product onLoad was followed by an effect resetting loaded=false; image load state now belongs to its keyed source and no spinner remains after successful load. Both fixes were rechecked in the browser.
+
+152 tests/9 suites,3 network-boundary tests, TypeScript, Expo Doctor20/20; full main Metro web/Android bundles. No live API/1C send, native-device UI verification or task-speed metric claimed. Out-of-order search response fences are exercised by unit tests; the browser slow-default case does not simulate a reordered product backend response. Photos use demo assets. Existing shared headers/theme and native screen are preserved.
+
+Evidence: .dev-runtime/orders-fast-web-20261107/browser-proof.json, review-proof.json and final-proof.json; qa/orders-preview/fast-flow-review-qa.json. Own root/reviewer browser tabs closed. Main Metro8081 remains PID34140. No OTA/API release.
