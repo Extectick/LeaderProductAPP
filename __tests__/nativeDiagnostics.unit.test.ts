@@ -51,3 +51,17 @@ test('legacy APK and production are not opted into unsafe native capture through
   m = require('../src/shared/monitoring'); m.initMonitoring();
   expect(mockSdk.init).toHaveBeenLastCalledWith(expect.objectContaining({ enableNativeCrashHandling: false }));
 });
+
+test('disabled monitoring never initializes JS or sends user, screen, or actions to the native bridge', async () => {
+  process.env.EXPO_PUBLIC_SENTRY_ENABLED = 'false';
+  const m = require('../src/shared/monitoring');
+  m.initMonitoring();
+  await m.setMonitoringUser(42);
+  m.setMonitoringScreen('(main)/services/help');
+  m.addMonitoringBreadcrumb('help.open');
+  expect(mockSdk.init).not.toHaveBeenCalled();
+  expect(mockNative.setUser).not.toHaveBeenCalled();
+  expect(mockNative.setScreen).not.toHaveBeenCalled();
+  expect(mockNative.recordAction).not.toHaveBeenCalled();
+  expect(mockNative.setRuntime).not.toHaveBeenCalled();
+});

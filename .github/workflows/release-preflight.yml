@@ -1,7 +1,18 @@
 name: Release diagnostics preflight
 on:
   workflow_call:
+    inputs:
+      channel:
+        type: string
+        default: prod
+        required: false
   workflow_dispatch:
+    inputs:
+      channel:
+        type: choice
+        options: [prod, dev]
+        default: prod
+        required: true
 permissions:
   contents: read
 jobs:
@@ -15,5 +26,10 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 24
-      - run: node --test scripts/checkReleaseDiagnostics.test.js
-      - run: node scripts/checkReleaseDiagnostics.js
+      - run: node --test scripts/checkReleaseDiagnostics.test.js scripts/releaseDiagnosticsPolicy.test.js
+      - name: Validate release channel
+        env:
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+        run: node -e "require('./scripts/releaseDiagnosticsPolicy').validateChannel(process.env.RELEASE_CHANNEL)"
+      - if: ${{ inputs.channel != 'dev' }}
+        run: node scripts/checkReleaseDiagnostics.js

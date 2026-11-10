@@ -321,3 +321,22 @@ channel. Keep StrictHostKeyChecking enabled. Preserve host126 SSH host keys acro
 cloud-init instance changes; do not generate a fresh identity after each reboot.
 After repair, retry the existing encrypted candidate instead of rebuilding an APK
 or creating another OTA. Symbol verification remains mandatory.
+
+### Dev diagnostics policy (2026-11-10)
+
+The owner disabled Sentry for dev releases. Dev APK/OTA workflows now export
+with `EXPO_PUBLIC_SENTRY_ENABLED=false` and empty DSN/upload credentials. Dev
+preflight and publication do not contact Sentry or upload symbols. Production
+retains its healthchecks, configuration validation and required symbol checks;
+the reusable preflight defaults to prod and rejects unknown channels.
+
+Fresh encrypted candidates include `release-artifacts/diagnostics-policy.json`,
+bound to their channel and source commit. Dev retries reject older candidates
+without this record, or candidates exported with Sentry enabled. Re-export those
+candidates; changing publication environment variables cannot change a compiled
+JavaScript bundle. Production legacy retries retain existing symbol verification.
+
+The disabled flag also prevents JavaScript from invoking the native diagnostics
+bridge. Already installed APK 0.1.47 still contains early native initialization;
+an OTA cannot remove that compiled code. Removing it requires a separately
+versioned native release. This OTA does not change native modules or runtime.
