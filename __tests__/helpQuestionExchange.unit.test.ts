@@ -97,7 +97,7 @@ test('page joins preserve AI identity; a missing question or stale exchange neve
 });
 
 test('pending delivery stays independently retryable and is deduplicated only by the existing receipt',()=>{
- const q=question(),a=answer(q,{clientMessageId:'pending-answer'}),pending={key:'pending-answer',create:false,ticketId:q.ticketId,createdAt:Date.now(),input:{text:a.text,replyToId:q.id,clientMessageId:'pending-answer'}};
+ const q=question(),a=answer(q,{clientMessageId:'pending-answer'}),pending={key:'pending-answer',create:false,ticketId:q.ticketId,createdAt:Date.parse(a.createdAt),input:{text:a.text,replyToId:q.id,clientMessageId:'pending-answer'}};
  expect(helpTimelineRows([q],null,[pending]).map(row=>row.kind)).toEqual(['date','message','pending']);
  expect(helpTimelineRows([q,a],null,[pending],helpQuestionExchanges([q,a],owner)).map(row=>row.kind)).toEqual(['date','message']);
 });

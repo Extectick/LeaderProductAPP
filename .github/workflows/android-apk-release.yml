@@ -185,8 +185,7 @@ jobs:
         run: |
           node scripts/checkSentryConfig.js
           npx tsc --noEmit
-          NODE_ENV=test BABEL_ENV=test npm run test:unit -- --runInBand __tests__/nativeDiagnostics.unit.test.ts __tests__/crashReporting.unit.test.ts
-          NODE_ENV=test BABEL_ENV=test npm run test:unit -- --runInBand __tests__/productionMonitoring.unit.test.ts __tests__/offlineOrdersSync.unit.test.ts __tests__/useClientOrdersWorkspace.unit.test.ts __tests__/trackingV2Lifecycle.unit.test.ts __tests__/trackingReliability.unit.test.ts __tests__/servicesOffline.unit.test.ts __tests__/sqliteWriteQueue.unit.test.ts
+          NODE_ENV=test BABEL_ENV=test npm run test:unit -- --runInBand
 
       - name: Restore Firebase Android configuration
         if: ${{ steps.strategy.outputs.apk_required == 'true' }}
@@ -240,6 +239,12 @@ jobs:
           else
             printf '\norg.gradle.jvmargs=-Xmx6144m -XX:MaxMetaspaceSize=1024m -XX:+UseParallelGC -Dfile.encoding=UTF-8\n' >> gradle.properties
           fi
+
+      - name: Test native Help input geometry
+        if: ${{ steps.strategy.outputs.apk_required == 'true' }}
+        working-directory: android
+        run: |
+          ./gradlew --no-daemon --max-workers=1 :leader-help-input:testDebugUnitTest --tests expo.modules.leaderhelpinput.HelpInputGeometryTest -PreactNativeArchitectures="${{ github.event_name == 'workflow_dispatch' && inputs.architectures || 'arm64-v8a' }}" --stacktrace
 
       - name: Build APK
         if: ${{ steps.strategy.outputs.apk_required == 'true' }}
