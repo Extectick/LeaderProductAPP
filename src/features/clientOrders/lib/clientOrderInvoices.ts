@@ -47,6 +47,20 @@ export function getClientOrderInvoiceIdentifier(order?: Pick<ClientOrder, 'guid'
   return order?.appGuid?.trim() || order?.guid?.trim() || null;
 }
 
+/** Invoice progress belongs to an existing order, never to a new/local draft. */
+export function hasClientOrderInvoiceDocument(order?: Pick<ClientOrder,
+  'guid' | 'appGuid' | 'origin' | 'source' | 'status' | 'syncState' | 'number1c'> | null) {
+  if (!getClientOrderInvoiceIdentifier(order)) return false;
+  // A local amendment can still belong to an existing 1C document.
+  if (order?.number1c?.trim()) return true;
+  return order?.origin !== 'device' && order?.source !== 'DEVICE_LOCAL'
+    && order?.status !== 'DRAFT' && order?.syncState !== 'DRAFT';
+}
+
+export function isClientOrderInvoiceRequestForOrder(orderGuid?: string | null, requestGuid?: string | null) {
+  return !!orderGuid && !!requestGuid && orderGuid === requestGuid;
+}
+
 export function getClientOrderInvoiceState(order?: Pick<ClientOrder, 'invoiceRequested' | 'invoiceState' | 'invoiceDownloadAvailable' | 'invoiceCount' | 'invoiceRequestPending' | 'invoices'> | null): ClientOrderInvoiceState {
   const invoices = (Array.isArray(order?.invoices) ? order.invoices : [])
     .filter((invoice) => !['SUPERSEDED', 'CANCELLED'].includes(invoice.state));

@@ -1,4 +1,5 @@
 import { packageLabel, unitLabel } from '../../lib/clientOrdersUi';
+import { addMonitoringBreadcrumb, captureException } from '@/src/shared/monitoring';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import React from 'react';
 import { Animated, BackHandler, Keyboard, PanResponder, Platform, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
@@ -277,6 +278,10 @@ export function SheetModal({
   children: React.ReactNode;
   fullScreen?: boolean;
 }) {
+  // Paper PortalConsumer updates its host even when the inner Modal is hidden.
+  // Do not keep the unused inspector portal alive during every draft/keyboard update.
+  if (!visible) return null;
+
   return (
     <Portal>
       <PaperModal visible={visible} onDismiss={onClose} contentContainerStyle={[styles.modalBackdropPaper, fullScreen ? styles.modalBackdropPaperFull : null]}>
@@ -403,7 +408,10 @@ function NativePickerBottomSheet({
   const bottomSheetRef = React.useRef<any>(null);
   const visibleRef = React.useRef(visible);
   const presentedRef = React.useRef(false);
+  const dismissRequestedRef = React.useRef(false);
   const closeNotifiedRef = React.useRef(false);
+  const onCloseRef = React.useRef(onClose);
+  onCloseRef.current = onClose;
   visibleRef.current = visible;
   const sheetWidth = fullWidth ? width : Math.min(520, Math.max(280, width - 16));
   const maxSheetHeight = Math.max(minHeight, Math.min(height - topOffset, Math.round(height * 0.95)));
@@ -439,14 +447,23 @@ function NativePickerBottomSheet({
   );
 
   const notifyClose = React.useCallback(() => {
-    if (closeNotifiedRef.current) return;
+    if (closeNotifiedRef.current) return true;
     closeNotifiedRef.current = true;
-    Keyboard.dismiss();
-    const closeAccepted = onClose();
-    if (closeAccepted === false) {
+    try {
+      Keyboard.dismiss();
+      if (onCloseRef.current() === false) {
+        closeNotifiedRef.current = false;
+        return false;
+      }
+      addMonitoringBreadcrumb('picker_sheet.close_requested');
+      return true;
+    } catch (error) {
+      // A failed edit flush must not permanently disable every close action.
       closeNotifiedRef.current = false;
+      captureException(error, { where: 'picker_sheet.close' });
+      return false;
     }
-  }, [onClose]);
+  }, []);
 
   const requestClose = React.useCallback(() => {
     if (!visibleRef.current && closeNotifiedRef.current) return;
@@ -454,22 +471,21 @@ function NativePickerBottomSheet({
   }, [notifyClose]);
 
   const handleDismiss = React.useCallback(() => {
+    const requested = dismissRequestedRef.current;
+    dismissRequestedRef.current = false;
     presentedRef.current = false;
     Keyboard.dismiss();
+    addMonitoringBreadcrumb('picker_sheet.dismissed');
     if (visibleRef.current) {
-      notifyClose();
+      // A rapid reopen can arrive before the previous dismissal finishes.
+      // Do not let that old callback close the newly requested sheet.
+      if (requested || !notifyClose()) {
+        closeNotifiedRef.current = false;
+        presentedRef.current = true;
+        bottomSheetRef.current?.present();
+      }
     }
   }, [notifyClose]);
-  const handleAnimate = React.useCallback((_fromIndex: number, toIndex: number) => {
-    if (toIndex < 0) {
-      requestClose();
-    }
-  }, [requestClose]);
-  const handleChange = React.useCallback((index: number) => {
-    if (index < 0) {
-      requestClose();
-    }
-  }, [requestClose]);
 
   const renderBackdrop = React.useCallback(
     (props: any) => (
@@ -484,26 +500,23 @@ function NativePickerBottomSheet({
 
   React.useEffect(() => {
     if (!visible) {
-      presentedRef.current = false;
+      if (presentedRef.current && !dismissRequestedRef.current) {
+        dismissRequestedRef.current = true;
+        bottomSheetRef.current?.dismiss(animationConfigs);
+      }
       return undefined;
     }
 
+    if (dismissRequestedRef.current) return undefined;
     closeNotifiedRef.current = false;
-    presentedRef.current = true;
     const frame = requestAnimationFrame(() => {
+      if (!visibleRef.current) return;
+      presentedRef.current = true;
       bottomSheetRef.current?.present();
+      addMonitoringBreadcrumb('picker_sheet.opened');
     });
 
     return () => cancelAnimationFrame(frame);
-  }, [visible]);
-
-  React.useEffect(() => {
-    if (visible) {
-      return;
-    }
-    if (presentedRef.current) {
-      bottomSheetRef.current?.dismiss(animationConfigs);
-    }
   }, [animationConfigs, visible]);
 
   React.useEffect(() => {
@@ -560,8 +573,8 @@ function NativePickerBottomSheet({
     </>
   );
 
-  if (!visible) return null;
-
+  // Keep the native modal mounted until its own dismiss/portal cleanup finishes.
+  // Conditional unmounts race keyboard restoration and can leave a touch-blocking portal.
   return (
     <BottomSheetModal
       ref={bottomSheetRef}
@@ -579,8 +592,6 @@ function NativePickerBottomSheet({
       overDragResistanceFactor={2.2}
       backdropComponent={renderBackdrop}
       onDismiss={handleDismiss}
-      onAnimate={handleAnimate}
-      onChange={handleChange}
       containerStyle={containerStyle}
       backgroundStyle={ui.pickerBottomSheetNativeBackground}
       handleComponent={renderHandle}

@@ -23,7 +23,7 @@ ssh -fNT -M -S "$private_dir/control" -i "$private_dir/key" \
   -L "127.0.0.1:19000:127.0.0.1:$remote_port" "$CRASH_SSH_USER@$CRASH_SSH_HOST"
 curl --fail --silent --max-time 15 http://127.0.0.1:19000/_health/ >/dev/null
 node scripts/uploadCrashSymbols.js "$target_dir"
-if [ "$target_dir" = "--apk" ] && [ "${EXPO_PUBLIC_UPDATE_CHANNEL:-prod}" = "dev" ]; then
+if [ "$target_dir" = "--apk" ]; then
   node scripts/uploadNativeCrashSymbols.js
 fi
 node scripts/verifyCrashSymbols.js "$target_dir"

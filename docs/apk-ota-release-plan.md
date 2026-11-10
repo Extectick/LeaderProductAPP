@@ -9,6 +9,24 @@
 
 ## Current State
 
+### Production runtime verified on 2026-11-10
+
+The static page `https://api.lidprod.ru/download` serves
+`/releases/leader-product-prod-0.1.38-37.apk`, package `com.leaderproduct.app`,
+version `0.1.38`, build `37`, Expo SDK 57. Its native OTA configuration is
+`https://sibvod.ru/ota/update`, channel `prod`, runtime `0.1.38`.
+APK SHA-256: `ed6ca4dd2037b570b2c9b627ba3a240daf627f6d0d0d5aeaaded401de6435013`.
+
+This static APK is absent from the `AppUpdate` catalog, which still advertises
+0.1.37/build 36. Before selecting an OTA runtime, verify the APK actually served
+by `/download` and the installed version; the catalog and Git version alone are
+insufficient. Do not relabel an existing bundle for a different native runtime.
+The full release candidate is now 0.1.48/build 47 (Expo SDK 58), which requires a
+new signed APK before any OTA targeting runtime 0.1.48. Keep older-runtime OTAs
+isolated. Publishing this release must update both the AppUpdate catalog and the
+static /download page; changing Git version alone does not replace either APK.
+Sentry is disabled for both prod and dev releases, as described below.
+
 - [x] APP проверяет обновления через `UpdateGate`.
 - [x] API имеет `/updates/check`, `/updates/upload`, `/updates/upload-url`.
 - [x] APK хранится через `apkKey` в S3/MinIO.
@@ -304,8 +322,8 @@ Release checklist:
 
 ### Release diagnostics readiness (2026-11-05)
 
-APK and OTA exports now depend on the reusable `Release diagnostics preflight`
-workflow on the trusted release runner. It checks the existing private monitoring
+When diagnostics are explicitly enabled, the reusable `Release diagnostics preflight`
+workflow on the trusted release runner checks the existing private monitoring
 endpoint `127.0.0.1:19001/_health/` before an expensive build, and publication
 checks it again before symbol upload. The retry workflow checks before dependency
 installation and before symbols. Use Retry verified release publication with `preflightOnly=true` to run this
@@ -320,23 +338,30 @@ tunnel and verify the pinned identity through an already trusted administration
 channel. Keep StrictHostKeyChecking enabled. Preserve host126 SSH host keys across
 cloud-init instance changes; do not generate a fresh identity after each reboot.
 After repair, retry the existing encrypted candidate instead of rebuilding an APK
-or creating another OTA. Symbol verification remains mandatory.
+or creating another OTA. Symbol verification is required only for a candidate
+that explicitly enables Sentry; the current releases disable it.
 
-### Dev diagnostics policy (2026-11-10)
+### Release diagnostics policy (2026-11-10)
 
-The owner disabled Sentry for dev releases. Dev APK/OTA workflows now export
-with `EXPO_PUBLIC_SENTRY_ENABLED=false` and empty DSN/upload credentials. Dev
-preflight and publication do not contact Sentry or upload symbols. Production
-retains its healthchecks, configuration validation and required symbol checks;
-the reusable preflight defaults to prod and rejects unknown channels.
+The owner disabled Sentry for both prod and dev. APK, OTA and retry workflows set
+`EXPO_PUBLIC_SENTRY_ENABLED=false` and empty DSN/upload credentials. Runtime JS
+and the native bridge do not initialize diagnostics. New APKs omit the custom
+native initializer and set Android `io.sentry.auto-init=false` even if the SDK
+is autolinked. No Sentry service, symbol upload or monitoring healthcheck blocks
+these releases. The compatibility OTA input `skipSentry` no longer enables or
+disables diagnostics: all exports currently disable it.
+
+The reusable preflight still validates release channels and runs release-policy
+and transport tests. Its optional `sentryEnabled=true` is only an explicit
+standalone diagnostics check. Artifact encryption, commit/channel/version checks,
+APK hashes/signature, OTA runtime/asset checks and integrity tests remain required.
 
 Fresh encrypted candidates include `release-artifacts/diagnostics-policy.json`,
-bound to their channel and source commit. Dev retries reject older candidates
-without this record, or candidates exported with Sentry enabled. Re-export those
-candidates; changing publication environment variables cannot change a compiled
-JavaScript bundle. Production legacy retries retain existing symbol verification.
+bound to their channel, source commit and diagnostics state. Both prod and dev
+retries reject missing, mismatched or enabled policies when publishing with
+Sentry disabled. Export a fresh candidate rather than changing only publication
+environment variables: they cannot alter an already compiled bundle.
 
-The disabled flag also prevents JavaScript from invoking the native diagnostics
-bridge. Already installed APK 0.1.47 still contains early native initialization;
-an OTA cannot remove that compiled code. Removing it requires a separately
-versioned native release. This OTA does not change native modules or runtime.
+Already installed APKs may contain their older native initialization. An OTA
+cannot remove that compiled code. The new 0.1.48/build 47 APK is required to get
+the new native runtime, durable order outbox and disabled native diagnostics.

@@ -2,6 +2,9 @@ import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState } from 'react-native';
+jest.mock('../src/features/clientOrders/offline/orderOutbox', () => ({ kickOrderOutbox: jest.fn(), retryOrderOutboxNow: jest.fn(async () => {}), isAsyncOrderOutboxEnabled: jest.fn(() => false) }));
+jest.mock('../src/features/clientOrders/offline/orderOutboxDatabase', () => ({ readOrderMirrors: jest.fn(async () => []),
+  refreshOrderMirrors: jest.fn(async () => {}), retireRedundantDeviceDraft: jest.fn(async () => null) }));
 
 jest.mock('@/context/AuthContext', () => {
   const React = require('react');
@@ -32,6 +35,7 @@ jest.mock('../src/features/clientOrders/offline/offlineOrdersDatabase', () => ({
   readOfflineDataSyncTime: jest.fn(async () => null),
   readOfflineDrafts: jest.fn(async () => []),
   applyOfflineDraftChanges: jest.fn(async () => true),
+  canAdoptLegacyOfflineDrafts: async () => true,
 }));
 
 jest.mock('../src/features/clientOrders/offline/offlineOrdersSync', () => ({
@@ -55,6 +59,7 @@ jest.mock('@/utils/clientOrdersService', () => ({
   backupClientOrderDraft: jest.fn(),
   probeClientOrdersConnection: jest.fn(),
   getClientOrderByClientId: jest.fn(),
+  getClientOrderStates: jest.fn(async () => { throw new Error('Old API fallback'); }),
   cancelClientOrder: jest.fn(),
   copyClientOrder: jest.fn(),
   createClientOrder: jest.fn(),
@@ -68,6 +73,7 @@ jest.mock('@/utils/clientOrdersService', () => ({
   getClientOrders: jest.fn(),
   getClientOrdersTodaySummary: jest.fn(),
   putClientOrderByClientId: jest.fn(),
+  previewClientOrderAmendment: jest.fn(),
   searchClientOrderAgreements: jest.fn(),
   searchClientOrderContracts: jest.fn(),
   searchClientOrderCounterparties: jest.fn(),
@@ -93,6 +99,7 @@ import {
   backupClientOrderDraft,
   probeClientOrdersConnection,
   getClientOrderByClientId,
+  getClientOrderStates,
   createClientOrder,
   getClientOrder,
   getClientOrderInvoices,
@@ -104,6 +111,7 @@ import {
   getClientOrders,
   getClientOrdersTodaySummary,
   putClientOrderByClientId,
+  previewClientOrderAmendment,
   submitClientOrder,
   updateClientOrder,
 } from '@/utils/clientOrdersService';
@@ -183,6 +191,56 @@ describe('useClientOrdersWorkspace', () => {
     return { get current() { return current; }, renderer };
   }
 
+  it('does not lock a new order while an unrelated device packet is API_ACCEPTED', async () => {
+    const entry = localEntry('previous-packet', 'API_ACCEPTED');
+    memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace();
+    try {
+      expect(harness.current.selectedGuid).toBeNull();
+      expect(harness.current.readOnly).toBe(false);
+      await act(async () => { await harness.current.createNewOrder(); });
+      expect(harness.current.selectedOrder).toBeNull();
+      expect(harness.current.readOnly).toBe(false);
+      await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+      expect(harness.current.readOnly).toBe(true);
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('keeps only the actively sending document read-only, not a new form', async () => {
+    const entry = localEntry('previous-packet', 'READY_TO_SEND');
+    memoryDraftStore([entry]);
+    let finish!: (order: any) => void;
+    jest.mocked(putClientOrderByClientId).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const harness = await ordersListWorkspace();
+    let sending!: Promise<void>;
+    try {
+      await act(async () => { sending = harness.current.syncDeviceDrafts({ force: true }); });
+      expect(harness.current.syncingDeviceDrafts).toBe(true);
+      expect(harness.current.readOnly).toBe(false);
+      await act(async () => { await harness.current.createNewOrder(); });
+      expect(harness.current.readOnly).toBe(false);
+      await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+      expect(harness.current.readOnly).toBe(true);
+    } finally {
+      if (finish) await act(async () => { finish(queuedOrder(1, { clientOrderId: 'previous-packet' })); await sending; });
+      await act(async () => harness.renderer.unmount());
+    }
+  });
+
+  it('does not apply a previous order invoice result to a fresh unsent draft', async () => {
+    const harness = await editableWorkspace();
+    try {
+      const before = harness.current.draft;
+      await act(async () => {
+        harness.current.applyInvoiceRequestResult('previous-order', [{ id: 'old-invoice',
+          realizationGuid: 'old-realization', version: 1, state: 'WAITING', downloadAvailable: false }]);
+      });
+      expect(harness.current.selectedOrder).toBeNull();
+      expect(harness.current.draft).toEqual(before);
+      expect(harness.current.draft.invoiceRequested).toBeFalsy();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
   it('does not let an old save closure persist stale quantities while a picker edit is pending', async () => {
     const harness = await editableWorkspace();
     const oldSave = harness.current.saveDraft;
@@ -255,6 +313,8 @@ describe('useClientOrdersWorkspace', () => {
 
   beforeEach(() => {
     jest.resetAllMocks();
+    jest.requireMock('../src/features/clientOrders/offline/orderOutboxDatabase').readOrderMirrors.mockResolvedValue([]);
+    jest.requireMock('../src/features/clientOrders/offline/orderOutbox').isAsyncOrderOutboxEnabled.mockReturnValue(false);
     jest.useFakeTimers();
     jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
     jest.mocked(AsyncStorage.setItem).mockResolvedValue(undefined);
@@ -262,6 +322,7 @@ describe('useClientOrdersWorkspace', () => {
     jest.mocked(backupClientOrderDraft).mockImplementation(async (_id, clientRevision) => ({ clientRevision, savedAt: new Date().toISOString(), submittedOrderGuid: null }));
     jest.mocked(probeClientOrdersConnection).mockResolvedValue(false);
     jest.mocked(getClientOrderByClientId).mockRejectedValue(new Error('Not found'));
+    jest.mocked(getClientOrderStates).mockRejectedValue(new Error('Old API fallback'));
     jest.mocked(readOfflineDrafts).mockResolvedValue([]);
     jest.mocked(applyOfflineDraftChanges).mockResolvedValue(true);
     jest.mocked(captureOrderGeoEvent).mockImplementation(async (type) => ({
@@ -304,8 +365,105 @@ describe('useClientOrdersWorkspace', () => {
     });
     await flush();
     await act(async () => { await jest.advanceTimersByTimeAsync(0); });
-    return { get current() { return current; }, renderer };
+    return { get current() { return current; }, renderer,
+      async switchUser(id: number) {
+        await act(async () => {
+          renderer.update(React.createElement(AuthContext.Provider, {
+            value: { isLoading: false, isAuthenticated: true, profile: { id },
+              setAuthenticated: jest.fn(), setProfile: jest.fn(), signOut: jest.fn() } as any,
+          }, React.createElement(Harness)));
+        });
+      },
+    };
   }
+
+  it('shows a new cancellation refusal once without putting it on the document or list', async () => {
+    const service = jest.requireMock('@/utils/clientOrdersService');
+    service.cancelClientOrder.mockRejectedValueOnce(Object.assign(new Error('По заказу есть реализация'), {
+      errorDetails: { action: 'CANCEL_DENIED' }, backendErrorCode: 'CONFLICT',
+    }));
+    const harness = await ordersListWorkspace();
+    try {
+      const oldError = harness.current.error;
+      const oldOrdersError = harness.current.ordersError;
+      await act(async () => { await harness.current.cancelOrderConfirmed({ guid: 'app-order', revision: 1 }); });
+      expect(jest.requireMock('react-native').Alert.alert).toHaveBeenCalledWith('Отмена не выполнена', expect.stringContaining('реализация'));
+      expect(harness.current.error).toBe(oldError);
+      expect(harness.current.ordersError).toBe(oldOrdersError);
+      expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('reconciles queued orders through the DB-only batch and rejects a late queued list snapshot', async () => {
+    const old = queuedOrder(1, { clientOrderId: 'client-order-123', deliveryDate: '2026-10-26' });
+    jest.mocked(getClientOrders).mockResolvedValue({ items: [old], meta: { total: 1, limit: 20, offset: 0 } } as any);
+    jest.mocked(getClientOrderStates).mockResolvedValue([{ ...old, revision: 5, clientRevision: 1,
+      createdByUser: { id: 1 }, isPostedIn1c: true, status: 'CONFIRMED', syncState: 'SYNCED', number1c: 'НОУТ-128623',
+      updatedAt: '2026-10-26T06:00:00Z' }] as any);
+    const harness = await ordersListWorkspace();
+    try {
+      await act(async () => { await harness.current.refreshOrders(); });
+      await act(async () => { await jest.advanceTimersByTimeAsync(31_000); });
+      expect(getClientOrderStates).toHaveBeenCalledWith(expect.arrayContaining(['client-order-123']), '1', []);
+      expect(harness.current.orders[0]).toMatchObject({ number1c: 'НОУТ-128623', isPostedIn1c: true, syncState: 'SYNCED' });
+      expect(getClientOrder).not.toHaveBeenCalled();
+      await act(async () => { await harness.current.refreshOrders(); });
+      expect(harness.current.orders[0].syncState).toBe('SYNCED');
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('does not loop reconciliation for an unchanged native mirror or poll while backgrounded', async () => {
+    const mirror = queuedOrder(0, { clientOrderId: 'mirrored-client-id', createdByUser: { id: 1 } });
+    const state = { ...mirror, revision: 5, status: 'CONFIRMED', syncState: 'SYNCED', isPostedIn1c: true, number1c: 'НОУТ-128623' };
+    jest.requireMock('../src/features/clientOrders/offline/orderOutboxDatabase').readOrderMirrors.mockImplementation(async () => [{ ...mirror }]);
+    let calls = 0;
+    jest.mocked(getClientOrderStates).mockImplementation(async () => {
+      // Stop a regression from hanging the test; the assertion still catches the loop.
+      if (++calls > 8) throw new Error('Reconciliation loop');
+      return [state] as any;
+    });
+    jest.mocked(getClientOrders).mockResolvedValue({ items: [state], meta: { total: 1, limit: 20, offset: 0 } } as any);
+    const harness = await ordersListWorkspace();
+    try {
+      for (let step = 0; step < 12; step++) await flush();
+      expect(calls).toBeGreaterThan(0);
+      expect(calls).toBeLessThanOrEqual(2);
+      const before = calls;
+      (AppState as any).currentState = 'background';
+      await act(async () => { await jest.advanceTimersByTimeAsync(60_000); });
+      expect(calls).toBe(before);
+      expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    } finally { (AppState as any).currentState = 'active'; await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('rerenders posting-only changes even when revision, total and status text are unchanged', async () => {
+    const old = queuedOrder(0, { status: 'CONFIRMED', syncState: 'SYNCED', number1c: 'НОУТ-128912',
+      shipmentProhibited: true, isPostedIn1c: false });
+    jest.mocked(getClientOrders).mockResolvedValue({ items: [old], meta: { total: 1, limit: 20, offset: 0 } } as any);
+    const harness = await ordersListWorkspace();
+    try {
+      await act(async () => { await harness.current.refreshOrders(); });
+      expect(harness.current.orders[0].isPostedIn1c).toBe(false);
+      jest.mocked(getClientOrders).mockResolvedValue({ items: [{ ...old, isPostedIn1c: true }], meta: { total: 1, limit: 20, offset: 0 } } as any);
+      await act(async () => { await harness.current.refreshOrders(); });
+      expect(harness.current.orders[0].isPostedIn1c).toBe(true);
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('applies shipment-date filters to retained queued rows and late server pages', async () => {
+    const wrong = queuedOrder(1, { guid: 'previous-day', deliveryDate: '2026-10-25T23:59:59Z' });
+    const right = queuedOrder(2, { guid: 'selected-day', deliveryDate: '2026-10-26T00:00:00Z', createdAt: '2026-10-23T08:00:00Z' });
+    jest.mocked(getClientOrders).mockResolvedValue({ items: [wrong, right], meta: { total: 2, limit: 20, offset: 0 } } as any);
+    const harness = await ordersListWorkspace();
+    try {
+      await act(async () => harness.current.setFilters(prev => ({ ...prev, deliveryDateFrom: '2026-10-26', deliveryDateTo: '2026-10-26' })));
+      await act(async () => { await harness.current.refreshOrders(); });
+      expect(harness.current.orders.map(order => order.guid)).toEqual(['selected-day']);
+      await act(async () => harness.current.setFilters(prev => ({ ...prev, deliveryDateFrom: '2026-10-27', deliveryDateTo: '2026-10-27' })));
+      await act(async () => { await harness.current.refreshOrders(); });
+      expect(harness.current.orders).toEqual([]);
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
 
   it('keeps cached documents and quiet offline feedback on repeated refresh and pagination, then recovers automatically', async () => {
     const saved = queuedOrder(0, { status: 'CONFIRMED', syncState: 'SYNCED', number1c: 'НОУТ-000001' });
@@ -470,8 +628,8 @@ describe('useClientOrdersWorkspace', () => {
     await act(async () => harness.renderer.unmount());
   });
 
-  it('reconciles an ambiguous submission on reconnect without sending it again', async () => {
-    const entry = localEntry('response-lost', 'SEND_ERROR');
+  it.each(['SEND_ERROR', 'NEEDS_EDIT', 'PRICE_REVIEW'])('reconciles a %s submission accepted on the server without sending it again', async status => {
+    const entry = localEntry('response-lost', status);
     const records = memoryDraftStore([entry]);
     setServerUnavailable('Network request failed');
     const harness = await ordersListWorkspace();
@@ -486,11 +644,182 @@ describe('useClientOrdersWorkspace', () => {
     await act(async () => harness.renderer.unmount());
   });
 
-  it('does not consume a timed-out submission merely because the API has a saved draft', async () => {
-    const entry = localEntry('saved-not-sent', 'SEND_ERROR');
+  it.each([[1, false], [1, true], [3, false], [3, true]])('reconciles identical accepted input across counters (local=%s, changed=%s)', async (localRevision, changed) => {
+    const entry = localEntry('posted-local-counter', 'NEEDS_EDIT');
+    entry.clientRevision = Number(localRevision);
+    const acceptedPayload = JSON.parse(JSON.stringify(entry.payload));
+    if (changed) entry.payload.items[0].quantity = 7;
+    const records = memoryDraftStore([entry]);
+    setServerUnavailable('Network request failed');
+    const harness = await ordersListWorkspace();
+    jest.mocked(getClientOrderByClientId).mockResolvedValue(queuedOrder(0, {
+      guid: 'posted-guid', clientOrderId: entry.clientOrderId, clientRevision: 2, origin: 'local',
+      syncState: 'SYNCED', status: 'CONFIRMED', createdByUser: { id: 1 }, isPostedIn1c: true,
+      number1c: 'НОУТ-123876', last1cError: null, lastExportError: null,
+      acceptedClientOperation: { clientRevision: 2, intent: 'SUBMIT', payload: acceptedPayload },
+    }) as any);
+    await act(async () => { setServerReachable(); });
+    await flush();
+    expect(records.size).toBe(changed ? 1 : 0);
+    if (!changed) expect(harness.current.orders.some(order => order.number1c === 'НОУТ-123876')).toBe(true);
+    expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    expect(submitClientOrder).not.toHaveBeenCalled();
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('rechecks a stale price error after 1C posts it later, without requiring a local edit or reconnect', async () => {
+    const entry = localEntry('batalov-price-review', 'PRICE_REVIEW');
+    entry.clientRevision = 2;
+    const acceptedPayload = JSON.parse(JSON.stringify(entry.payload));
+    const records = memoryDraftStore([entry]);
+    let posted = false;
+    jest.mocked(getClientOrderByClientId).mockImplementation(async () => queuedOrder(0, {
+      guid: 'api-accepted', clientOrderId: entry.clientOrderId, clientRevision: 3, origin: 'local',
+      createdByUser: { id: 1 }, syncState: 'SYNCED', status: posted ? 'CONFIRMED' : 'SENT_TO_1C',
+      number1c: 'НОУТ-127336', isPostedIn1c: posted, lastExportError: null, last1cError: null,
+      acceptedClientOperation: posted ? { clientRevision: 3, intent: 'SUBMIT', payload: acceptedPayload } : null,
+    }) as any);
+    const harness = await ordersListWorkspace(1, 'editor');
+    try {
+      expect(records.size).toBe(1);
+      expect(getClientOrderByClientId).toHaveBeenCalledTimes(1);
+      posted = true;
+      await act(async () => { await jest.advanceTimersByTimeAsync(65_000); });
+      expect(records.size).toBe(0);
+      expect(putClientOrderByClientId).not.toHaveBeenCalled();
+      expect(submitClientOrder).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  function postedAcceptance(entry: any) {
+    return queuedOrder(0, {
+      guid: 'api-accepted', clientOrderId: entry.clientOrderId, clientRevision: 3, origin: 'local',
+      createdByUser: { id: 1 }, syncState: 'SYNCED', status: 'CONFIRMED', isPostedIn1c: true,
+      number1c: 'НОУТ-127336', lastExportError: null, last1cError: null,
+      readOnly: true, readOnlyReason: 'По заказу создана проведенная реализация товаров и услуг.',
+      // Actual 1C quantities may differ after the operator weighs the goods.
+      items: [{ product: { guid: 'product-guid' }, quantity: 9, price: 100, amount: 900 }],
+      acceptedClientOperation: { clientRevision: 3, intent: 'SUBMIT', payload: JSON.parse(JSON.stringify(entry.payload)) },
+    });
+  }
+
+  it.each(['editor', 'list', 'bulk', 'scoped'] as const)
+  ('reconciles before a manual %s retry, without a price prompt or overwriting later 1C quantities', async action => {
+    const entry = priceEntry('already-accepted');
+    entry.clientRevision = 2;
+    const records = memoryDraftStore([entry, localEntry('untouched-save')]);
+    const harness = await ordersListWorkspace(1, 'editor');
+    try {
+      if (action === 'editor') await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+      jest.mocked(getClientOrderByClientId).mockResolvedValue(postedAcceptance(entry) as any);
+      await act(async () => {
+        if (action === 'editor') await harness.current.submitOrder();
+        else if (action === 'list') await harness.current.submitOrderFromList(entry.order);
+        else await harness.current.syncDeviceDrafts({ force: true,
+          ...(action === 'scoped' ? { orderGuid: entry.order.guid } : {}) });
+      });
+      expect([...records.keys()]).toEqual(['untouched-save']);
+      expect(harness.current.orders.find(order => order.guid === 'api-accepted')?.items?.[0].quantity).toBe(9);
+      expect(jest.requireMock('react-native').Alert.alert).not.toHaveBeenCalled();
+      expect(putClientOrderByClientId).not.toHaveBeenCalled();
+      expect(submitClientOrder).not.toHaveBeenCalled();
+      expect(updateClientOrder).not.toHaveBeenCalled();
+      expect(previewClientOrderAmendment).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('finishes a reconciliation across a harmless local metadata refresh and shares its read with manual retry', async () => {
+    const { emitOrderOutboxChange } = require('../src/features/clientOrders/offline/orderOutboxEvents');
+    const entry = priceEntry('slow-acceptance');
+    entry.clientRevision = 2;
+    const accepted = postedAcceptance(entry);
+    const records = memoryDraftStore([entry]);
+    let finish!: (value: any) => void;
+    jest.mocked(getClientOrderByClientId).mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    const harness = await ordersListWorkspace(1, 'editor');
+    try {
+      records.set(entry.clientOrderId, { ...entry, updatedAt: '2026-10-21T09:00:00Z' });
+      await act(async () => { emitOrderOutboxChange({ userId: '1' }); await jest.advanceTimersByTimeAsync(50); });
+      let retry!: Promise<any>;
+      await act(async () => { retry = harness.current.submitOrderFromList(entry.order); });
+      expect(getClientOrderByClientId).toHaveBeenCalledTimes(1);
+      await act(async () => { finish(accepted); await retry; });
+      expect(records.size).toBe(0);
+      expect(jest.requireMock('react-native').Alert.alert).not.toHaveBeenCalled();
+      expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it.each(['new-operation', 'new-price', 'new-price-choice', 'dirty-editor', 'unmount'] as const)
+  ('keeps local input when an old reconciliation finishes after %s', async change => {
+    const { emitOrderOutboxChange } = require('../src/features/clientOrders/offline/orderOutboxEvents');
+    const entry = priceEntry('late-acceptance');
+    entry.clientRevision = 2;
+    const accepted = postedAcceptance(entry);
+    const records = memoryDraftStore([entry]);
+    let finish!: (value: any) => void;
+    jest.mocked(getClientOrderByClientId).mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    const harness = await ordersListWorkspace(1, 'editor');
+    try {
+      if (change === 'unmount') await act(async () => harness.renderer.unmount());
+      else if (change === 'dirty-editor') {
+        await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+        await act(async () => { harness.current.patchDraft({ comment: 'New unsaved input' }); });
+      } else {
+        records.set(entry.clientOrderId, { ...entry, clientRevision: 4,
+          payload: change === 'new-price' ? { ...entry.payload,
+            items: entry.payload.items.map(item => ({ ...item, basePrice: 120 })) }
+            : change === 'new-price-choice' ? { ...entry.payload, offlineReview: { pricePolicy: 'USE_CURRENT' } }
+              : { ...entry.payload, comment: 'New submitted input' } });
+        await act(async () => { emitOrderOutboxChange({ userId: '1' }); await jest.advanceTimersByTimeAsync(50); });
+      }
+      await act(async () => { finish(accepted); });
+      expect(records.size).toBe(1);
+      if (change === 'new-operation') expect(records.get(entry.clientOrderId)?.payload.comment).toBe('New submitted input');
+      if (change === 'new-price') expect(records.get(entry.clientOrderId)?.payload.items[0].basePrice).toBe(120);
+      if (change === 'new-price-choice') expect(records.get(entry.clientOrderId)?.payload.offlineReview.pricePolicy).toBe('USE_CURRENT');
+      if (change === 'dirty-editor') {
+        expect(harness.current.dirty).toBe(true);
+        expect(harness.current.draft.comment).toBe('New unsaved input');
+      }
+      expect(putClientOrderByClientId).not.toHaveBeenCalled();
+      expect(submitClientOrder).not.toHaveBeenCalled();
+    } finally { if (change !== 'unmount') await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('does not poll stale errors in the background and removes its timer on unmount', async () => {
+    const entry = priceEntry('background-recheck');
+    const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace(1, 'editor');
+    try {
+      expect(getClientOrderByClientId).toHaveBeenCalledTimes(1);
+      AppState.currentState = 'background';
+      await act(async () => { await jest.advanceTimersByTimeAsync(65_000); });
+      expect(getClientOrderByClientId).toHaveBeenCalledTimes(1);
+      expect(records.size).toBe(1);
+    } finally { AppState.currentState = 'active'; await act(async () => harness.renderer.unmount()); }
+    await act(async () => { await jest.advanceTimersByTimeAsync(65_000); });
+    expect(getClientOrderByClientId).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['SEND_ERROR', 'NEEDS_EDIT', 'PRICE_REVIEW'])('does not consume %s merely because the API has a saved draft', async status => {
+    const entry = localEntry('saved-not-sent', status);
     const records = memoryDraftStore([entry]);
     jest.mocked(getClientOrderByClientId).mockResolvedValue(queuedOrder(0, {
       clientOrderId: entry.clientOrderId, clientRevision: entry.clientRevision, syncState: 'DRAFT', status: 'DRAFT',
+    }) as any);
+    const harness = await ordersListWorkspace();
+    await flush();
+    expect(records.size).toBe(1);
+    expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it.each([0, 2])('does not discard a rejected draft when the accepted server revision differs (%s)', async revision => {
+    const entry = localEntry('review-not-accepted', 'NEEDS_EDIT');
+    const records = memoryDraftStore([entry]);
+    jest.mocked(getClientOrderByClientId).mockResolvedValue(queuedOrder(0, {
+      clientOrderId: entry.clientOrderId, clientRevision: revision, syncState: 'SYNCED',
     }) as any);
     const harness = await ordersListWorkspace();
     await flush();
@@ -531,8 +860,187 @@ describe('useClientOrdersWorkspace', () => {
         origin: 'device', status: 'DRAFT', syncState: 'DRAFT', localDraft: value }, payload: buildLocalDraftPayload(value) };
   }
 
+  function priceEntry(id = 'price-review') {
+    const entry: any = localEntry(id, 'PRICE_REVIEW');
+    entry.order.offlineDraftStatus = 'PRICE_REVIEW';
+    entry.order.draftReview = { code: 'PRICE_REVIEW_REQUIRED', details: { items: [
+      { productGuid: 'product-guid', lineGuid: 'line', oldPrice: 100, currentPrice: 120 },
+    ] } };
+    return entry;
+  }
+
+  it.each([['NEEDS_EDIT', 0], ['PRICE_REVIEW', 0], ['NEEDS_EDIT', 4]])
+  ('rechecks an unchanged rejected %s above the accepted client revision %s', async (status, acceptedRevision) => {
+    const outbox = jest.requireMock('../src/features/clientOrders/offline/orderOutbox');
+    outbox.isAsyncOrderOutboxEnabled.mockReturnValue(true);
+    const entry: any = localEntry('unchanged-amendment', String(status));
+    entry.order.submissionErrorDetails = { backendErrorCode: 'ORDER_CONTENT_CONFLICT' };
+    entry.order.submittedVersion = { orderGuid: 'server-order', number1c: 'НОУТ-TEST', clientRevision: Number(acceptedRevision),
+      status: 'CONFIRMED', syncState: 'SYNCED', isPostedIn1c: true, revision: 3, itemsCount: 1, totalAmount: 200 };
+    const records = memoryDraftStore([entry]);
+    const original = JSON.stringify(entry);
+    const review: any = { orderGuid: 'server-order', serverRevision: 3, number1c: 'НОУТ-TEST',
+      baseContentToken: 'a'.repeat(64), requiresConfirmation: true,
+      changes: [{ productName: 'Товар', reason: 'Количество', before: 1, after: 2 }] };
+    jest.mocked(previewClientOrderAmendment).mockImplementation(async () => {
+      expect(records.get(entry.id).intent).toBe('SAVE');
+      return review;
+    });
+    jest.requireMock('react-native').Alert.alert.mockImplementation((_title: string, _message: unknown, buttons: any[]) => buttons[1].onPress());
+    const harness = await ordersListWorkspace(1, 'editor');
+    try {
+      await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+      expect(harness.current.dirty).toBe(false);
+      expect(harness.current.canSubmitOrder).toBe(true);
+      await act(async () => { await harness.current.submitOrder(); });
+      const revision = Math.max(1, Number(acceptedRevision)) + 1;
+      expect(previewClientOrderAmendment).toHaveBeenCalledWith(entry.clientOrderId, expect.objectContaining({ clientRevision: revision }));
+      expect(jest.requireMock('react-native').Alert.alert).toHaveBeenCalledTimes(1);
+      expect(records.get(entry.id)).toMatchObject({ clientRevision: revision, intent: 'SUBMIT', status: 'READY_TO_SEND',
+        payload: { integrity: { baseContentToken: review.baseContentToken } } });
+      expect(JSON.stringify(entry)).toBe(original);
+      expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it.each(['cancel', 'offline', 'invalid-preview'])('keeps a rejected amendment unqueued when review stops: %s', async outcome => {
+    jest.requireMock('../src/features/clientOrders/offline/orderOutbox').isAsyncOrderOutboxEnabled.mockReturnValue(true);
+    const entry: any = localEntry('review-stops', 'NEEDS_EDIT');
+    entry.order.submissionErrorDetails = { backendErrorCode: 'ORDER_CONTENT_CONFLICT' };
+    const records = memoryDraftStore([entry]);
+    jest.mocked(previewClientOrderAmendment).mockResolvedValue({ orderGuid: 'server-order', serverRevision: 3,
+      number1c: 'НОУТ-TEST', baseContentToken: outcome === 'invalid-preview' ? '' : 'a'.repeat(64),
+      requiresConfirmation: true, changes: [] });
+    jest.requireMock('react-native').Alert.alert.mockImplementation((_title: string, _message: unknown, buttons: any[]) => buttons[0].onPress());
+    const harness = await ordersListWorkspace(1, 'editor');
+    try {
+      await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+      if (outcome === 'offline') await act(async () => { setServerUnavailable('Network request failed'); });
+      await act(async () => { await harness.current.submitOrder(); });
+      expect(records.get(entry.id)).toMatchObject({ clientRevision: 2, intent: 'SAVE', status: 'ON_DEVICE' });
+      expect(records.get(entry.id).payload.items).toEqual(entry.payload.items);
+      expect(putClientOrderByClientId).not.toHaveBeenCalled();
+      if (outcome === 'offline') expect(previewClientOrderAmendment).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('wakes a transport failure without replacing its frozen operation', async () => {
+    const outbox = jest.requireMock('../src/features/clientOrders/offline/orderOutbox');
+    outbox.isAsyncOrderOutboxEnabled.mockReturnValue(true);
+    const entry = localEntry('lost-ack', 'SEND_ERROR'), records = memoryDraftStore([entry]);
+    const original = JSON.stringify(entry);
+    const harness = await ordersListWorkspace(1, 'editor');
+    try {
+      await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+      await act(async () => { await harness.current.submitOrder(); });
+      expect(outbox.retryOrderOutboxNow).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(records.get(entry.id))).toBe(original);
+      expect(previewClientOrderAmendment).not.toHaveBeenCalled();
+      expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it.each([false, true])('persists either explicit price choice before retry through the outbox (async=%s)', async asyncOutbox => {
+    const outbox = jest.requireMock('../src/features/clientOrders/offline/orderOutbox');
+    outbox.isAsyncOrderOutboxEnabled.mockReturnValue(asyncOutbox);
+    for (const [button, policy] of ['USE_CURRENT', 'KEEP_DRAFT'].entries()) {
+      const entry = priceEntry(); const records = memoryDraftStore([entry, localEntry('untouched')]);
+      const frozen = JSON.stringify(entry.payload);
+      jest.requireMock('react-native').Alert.alert.mockImplementation((title: string, message: unknown, buttons: any[]) => {
+        expect(title).toBe('Обновить цены?'); expect(message).toBeUndefined();
+        expect(buttons.map(b => b.text)).toEqual(['Обновить', 'Не изменять', 'Назад']);
+        buttons[button].onPress();
+      });
+      jest.mocked(putClientOrderByClientId).mockResolvedValue(queuedOrder(1, { clientOrderId: entry.clientOrderId }) as any);
+      const harness = await ordersListWorkspace();
+      try {
+        await act(async () => { await harness.current.syncDeviceDrafts({ force: true, orderGuid: entry.order.guid }); });
+        if (asyncOutbox) {
+          expect(records.get(entry.id)).toMatchObject({ clientRevision: 2, status: 'READY_TO_SEND',
+            payload: { offlineReview: { pricePolicy: policy } } });
+          expect(outbox.retryOrderOutboxNow).toHaveBeenCalled();
+        } else {
+          expect(putClientOrderByClientId).toHaveBeenLastCalledWith(entry.clientOrderId, expect.anything(),
+            expect.objectContaining({ clientRevision: 2, offlineReview: { pricePolicy: policy } }));
+        }
+        expect(records.get('untouched').intent).toBe('SAVE');
+        expect(JSON.stringify(entry.payload)).toBe(frozen);
+      } finally { await act(async () => harness.renderer.unmount()); }
+    }
+  });
+
+  it.each([['editor', false], ['list', false], ['editor', true], ['list', true]] as const)
+  ('asks on retry from %s without requiring edits first (async=%s)', async (action, asyncOutbox) => {
+    jest.requireMock('../src/features/clientOrders/offline/orderOutbox').isAsyncOrderOutboxEnabled.mockReturnValue(asyncOutbox);
+    const entry = priceEntry(); const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace();
+    jest.requireMock('react-native').Alert.alert.mockImplementation((_title: string, _message: unknown, buttons: any[]) => buttons[1].onPress());
+    try {
+      if (action === 'editor') {
+        await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+        expect(harness.current.validation.itemMessages.line).toEqual(['Цена изменилась: 100 ₽ → 120 ₽']);
+        expect(harness.current.canSubmitOrder).toBe(true);
+        await act(async () => { await harness.current.submitOrder(); });
+      } else {
+        await act(async () => { await harness.current.submitOrderFromList(entry.order); });
+      }
+      expect(jest.requireMock('react-native').Alert.alert).toHaveBeenCalledTimes(1);
+      expect(records.get(entry.id)).toMatchObject({ status: 'READY_TO_SEND', clientRevision: 2,
+        payload: { offlineReview: { pricePolicy: 'KEEP_DRAFT' } } });
+      expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('leaves the frozen price-review packet intact when the question is dismissed', async () => {
+    const entry = priceEntry(); const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace();
+    const before = JSON.stringify([...records.values()]);
+    jest.requireMock('react-native').Alert.alert.mockImplementation((_title: string, _message: unknown, _buttons: any[], options: any) => options.onDismiss());
+    try {
+      await act(async () => { await harness.current.syncDeviceDrafts({ force: true, orderGuid: entry.order.guid }); });
+      expect(JSON.stringify([...records.values()])).toBe(before);
+      expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('asks once for a bulk retry and cannot requeue the same price decision twice', async () => {
+    const outbox = jest.requireMock('../src/features/clientOrders/offline/orderOutbox');
+    outbox.isAsyncOrderOutboxEnabled.mockReturnValue(true);
+    const ordinary = localEntry('ordinary');
+    const records = memoryDraftStore([priceEntry('first-price'), priceEntry('second-price'), ordinary]);
+    const harness = await ordersListWorkspace();
+    jest.requireMock('react-native').Alert.alert.mockImplementation((_title: string, _message: unknown, buttons: any[]) => buttons[0].onPress());
+    try {
+      await act(async () => { await Promise.all([harness.current.syncDeviceDrafts({ force: true }), harness.current.syncDeviceDrafts({ force: true })]); });
+      expect(jest.requireMock('react-native').Alert.alert).toHaveBeenCalledTimes(1);
+      for (const id of ['first-price', 'second-price']) expect(records.get(id)).toMatchObject({ clientRevision: 2,
+        status: 'READY_TO_SEND', payload: { offlineReview: { pricePolicy: 'USE_CURRENT' } } });
+      expect(records.get('ordinary')).toEqual(ordinary);
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('does not queue stale editor contents if input changes while the price question is open', async () => {
+    const entry = priceEntry(); const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace();
+    let choose!: () => void;
+    let sending!: Promise<void>;
+    jest.requireMock('react-native').Alert.alert.mockImplementation((_title: string, _message: unknown, buttons: any[]) => { choose = buttons[0].onPress; });
+    try {
+      await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+      await act(async () => { sending = harness.current.submitOrder(); });
+      await act(async () => { harness.current.patchDraft({ comment: 'New input' }); });
+      await act(async () => { choose(); await sending; });
+      expect(records.get(entry.id).clientRevision).toBe(1);
+      expect(harness.current.draft.comment).toBe('New input');
+      expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
   function legacyFixture(status = 'READY_TO_SEND') {
     const entry: any = localEntry('legacy-server:legacy-guid', status);
+    // Historical documents predate the new-order delivery default.
+    entry.order.localDraft.deliveryMethod = null;
+    entry.payload = buildLocalDraftPayload(entry.order.localDraft);
     entry.serverGuid = 'legacy-guid'; entry.serverRevision = 1; entry.order.guid = 'legacy-guid'; entry.order.revision = 1;
     const saved: any = { ...entry.order, localDraft: undefined, origin: 'local', revision: 2, createdByUser: { id: 1 },
       agreement: { guid: 'agreement-guid' }, contract: { guid: 'contract-guid' }, warehouse: { guid: 'warehouse-guid' },
@@ -611,10 +1119,229 @@ describe('useClientOrdersWorkspace', () => {
     const harness = await ordersListWorkspace(1, 'editor');
     try {
       await act(async () => { await harness.current.selectOrder(entry.order.guid); });
-      jest.mocked(putClientOrderByClientId).mockResolvedValue({ ...entry.order, guid: 'api-shared', origin: 'app', localDraft: undefined } as any);
+      jest.mocked(putClientOrderByClientId).mockImplementation(async (_id, _payload, operation) => ({ ...entry.order,
+        guid: 'api-shared', origin: 'local', localDraft: undefined, createdByUser: { id: 1 }, clientRevision: operation.clientRevision } as any));
       await act(async () => { await harness.current.saveDraft({ reason: 'manual', intent: 'SAVE', serverOnly: true }); });
       expect(putClientOrderByClientId).toHaveBeenCalledWith('share-draft', expect.any(Object), expect.objectContaining({ intent: 'SAVE' }));
       expect(records.size).toBe(0);
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  function shareEntry() {
+    const entry = localEntry('share-existing');
+    entry.order.guid = 'existing-server-guid';
+    entry.serverGuid = 'existing-server-guid' as any;
+    entry.serverRevision = 1 as any;
+    entry.clientRevision = 41;
+    entry.order.clientRevision = 41;
+    entry.order.localDraft.clientRevision = 41;
+    entry.order.localDraft.guid = entry.order.guid;
+    entry.order.localDraft.items = Array.from({ length: 30 }, (_, index) => ({
+      ...entry.order.localDraft.items[0], key: `line-${index}`, lineGuid: `line-${index}`, productGuid: `product-${index}`,
+    }));
+    entry.payload = buildLocalDraftPayload(entry.order.localDraft);
+    return entry;
+  }
+
+  function confirmShare(entry: ReturnType<typeof localEntry>, revision = entry.clientRevision) {
+    return { ...entry.order, origin: 'local', localDraft: undefined, clientRevision: revision,
+      createdByUser: { id: 1 }, items: entry.payload.items.map(line => ({ ...line, product: { guid: line.productGuid } })) } as any;
+  }
+
+  it('publishes all locally saved edits under an ordinary server GUID even when the editor is clean', async () => {
+    const entry = shareEntry(); const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace(1, 'editor');
+    try {
+      await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+      expect(harness.current.dirty).toBe(false);
+      expect(harness.current.selectedOrder?.origin).toBe('device');
+      jest.mocked(putClientOrderByClientId).mockImplementation(async (_id, _payload, operation) => confirmShare(entry, operation.clientRevision));
+      await act(async () => { expect(await harness.current.prepareOrderForSharing()).toMatchObject({ guid: entry.order.guid, origin: 'local' }); });
+      expect(putClientOrderByClientId).toHaveBeenCalledWith(entry.clientOrderId,
+        expect.objectContaining({ items: expect.arrayContaining(entry.payload.items) }), { clientRevision: 42, intent: 'SAVE' });
+      expect(jest.mocked(putClientOrderByClientId).mock.calls[0][1].items).toHaveLength(30);
+      expect(records.size).toBe(0);
+      expect(submitClientOrder).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('shares the requested list draft with its complete persisted payload without opening or saving another editor', async () => {
+    const entry = shareEntry(); const other = localEntry('unrelated-editor');
+    const records = memoryDraftStore([entry, other]);
+    const harness = await ordersListWorkspace();
+    try {
+      await act(async () => { await harness.current.selectOrder(other.order.guid); });
+      await act(async () => { harness.current.patchDraft({ comment: 'Unrelated unsaved input' }); });
+      const before = harness.current.draft;
+      jest.mocked(putClientOrderByClientId).mockResolvedValue(confirmShare(entry));
+      await act(async () => { expect(await harness.current.prepareOrderForSharing(entry.order.guid)).toMatchObject({ guid: entry.order.guid }); });
+      expect(putClientOrderByClientId).toHaveBeenCalledWith(entry.clientOrderId, entry.payload, { clientRevision: 41, intent: 'SAVE' });
+      expect(harness.current.selectedGuid).toBe(other.order.guid);
+      expect(harness.current.draft).toEqual(before);
+      expect(records.has(entry.clientOrderId)).toBe(false);
+      expect(records.has(other.clientOrderId)).toBe(true);
+      expect(getClientOrder).not.toHaveBeenCalled(); expect(submitClientOrder).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it.each([
+    ['old revision', { clientRevision: 40 }], ['wrong identity', { clientOrderId: 'another-client' }],
+    ['wrong account', { createdByUser: { id: 2 } }], ['wrong GUID', { guid: 'another-server-guid' }],
+    ['local fallback', { origin: 'device' }],
+  ])('does not consume the local list draft on %s acknowledgement', async (_label, patch) => {
+    const entry = shareEntry(); const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace();
+    try {
+      jest.mocked(putClientOrderByClientId).mockResolvedValue({ ...confirmShare(entry), ...patch });
+      await act(async () => { await expect(harness.current.prepareOrderForSharing(entry.order.guid)).rejects.toThrow('Сервер не подтвердил'); });
+      expect(records.get(entry.clientOrderId)).toEqual(entry);
+      expect(submitClientOrder).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('keeps a list SAVE for an idempotent retry after a lost response', async () => {
+    const entry = shareEntry(); const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace();
+    try {
+      jest.mocked(putClientOrderByClientId).mockRejectedValueOnce(new Error('Network request failed'))
+        .mockResolvedValueOnce(confirmShare(entry));
+      await act(async () => { await expect(harness.current.prepareOrderForSharing(entry.order.guid)).rejects.toThrow(); });
+      expect(records.get(entry.clientOrderId)).toEqual(entry);
+      await act(async () => { expect(await harness.current.prepareOrderForSharing(entry.order.guid)).not.toBeNull(); });
+      expect(jest.mocked(putClientOrderByClientId).mock.calls.map(call => call[2])).toEqual([
+        { clientRevision: 41, intent: 'SAVE' }, { clientRevision: 41, intent: 'SAVE' },
+      ]);
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('blocks a second share and preserves a newer durable list revision when the older save finishes', async () => {
+    const entry = shareEntry(); const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace();
+    let finish!: (order: any) => void;
+    let pending!: Promise<any>;
+    try {
+      jest.mocked(putClientOrderByClientId).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+      await act(async () => { pending = harness.current.prepareOrderForSharing(entry.order.guid); });
+      await act(async () => { await expect(harness.current.prepareOrderForSharing(entry.order.guid)).rejects.toThrow('Дождитесь'); });
+      const newer = { ...entry, clientRevision: 42, payload: { ...entry.payload, comment: 'newer durable edit' } };
+      // Another editor commits before this request's conditional SQLite delete,
+      // but its change notification has not reached this mounted list yet.
+      records.set(entry.clientOrderId, newer);
+      await act(async () => { finish(confirmShare(entry)); expect(await pending).toBeNull(); });
+      expect(records.get(entry.clientOrderId)).toEqual(newer);
+      expect(putClientOrderByClientId).toHaveBeenCalledTimes(1);
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('ignores a list acknowledgement after switching accounts and keeps the first account draft', async () => {
+    const entry = shareEntry(); const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace();
+    let finish!: (order: any) => void;
+    let pending!: Promise<any>;
+    try {
+      jest.mocked(putClientOrderByClientId).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+      await act(async () => { pending = harness.current.prepareOrderForSharing(entry.order.guid); });
+      await harness.switchUser(2);
+      await act(async () => { finish(confirmShare(entry)); await expect(pending).rejects.toThrow('пользователь изменён'); });
+      expect(records.get(entry.clientOrderId)).toEqual(entry);
+      expect(harness.current.selectedGuid).toBeNull();
+      expect(harness.current.saving).toBe(false);
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('preserves input typed in the editor during sharing and does not return the older server version', async () => {
+    const entry = shareEntry(); memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace(1, 'editor');
+    let finish!: (order: any) => void;
+    let pending!: Promise<any>;
+    try {
+      await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+      jest.mocked(putClientOrderByClientId).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+      await act(async () => { pending = harness.current.prepareOrderForSharing(); });
+      await act(async () => { harness.current.patchDraft({ comment: 'typed while sharing' }); });
+      await act(async () => { finish(confirmShare(entry, 42)); expect(await pending).toBeNull(); });
+      expect(harness.current.draft.comment).toBe('typed while sharing');
+      expect(harness.current.dirty).toBe(true);
+      expect(submitClientOrder).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('does not treat a serverOnly editor timeout as a successful local save', async () => {
+    const entry = shareEntry(); const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace(1, 'editor');
+    try {
+      await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+      jest.mocked(putClientOrderByClientId).mockRejectedValue(new Error('Network request failed'));
+      await act(async () => { expect(await harness.current.prepareOrderForSharing()).toBeNull(); });
+      expect(records.get(entry.clientOrderId).payload.items).toHaveLength(30);
+      expect(records.get(entry.clientOrderId).intent).toBe('SAVE');
+      expect(harness.current.error).toBeTruthy();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('keeps the staged editor SAVE when the API acknowledges an older client revision', async () => {
+    const entry = shareEntry(); const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace(1, 'editor');
+    try {
+      await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+      jest.mocked(putClientOrderByClientId).mockResolvedValue(confirmShare(entry, 41));
+      await act(async () => { expect(await harness.current.prepareOrderForSharing()).toBeNull(); });
+      expect(records.get(entry.clientOrderId).clientRevision).toBe(42);
+      expect(records.get(entry.clientOrderId).payload.items).toHaveLength(30);
+      expect(harness.current.error).toContain('Сервер не подтвердил');
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('does not report a successful share when connectivity disappears during durable staging', async () => {
+    const entry = shareEntry(); const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace(1, 'editor');
+    try {
+      await act(async () => { await harness.current.selectOrder(entry.order.guid); });
+      const write = jest.mocked(applyOfflineDraftChanges).getMockImplementation()!;
+      jest.mocked(applyOfflineDraftChanges).mockImplementation(async (...args) => {
+        const result = await write(...args);
+        setServerUnavailable('Network request failed');
+        return result;
+      });
+      await act(async () => { expect(await harness.current.prepareOrderForSharing()).toBeNull(); });
+      expect(putClientOrderByClientId).not.toHaveBeenCalled();
+      expect(records.get(entry.clientOrderId).payload.items).toHaveLength(30);
+      expect(harness.current.error).toContain('ссылка не создана');
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('rejects empty, offline and queued list targets without saving any document', async () => {
+    const entry = localEntry('share-pending', 'READY_TO_SEND'); const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace();
+    try {
+      await act(async () => { await expect(harness.current.prepareOrderForSharing('')).rejects.toThrow('Не выбран'); });
+      await act(async () => { await expect(harness.current.prepareOrderForSharing(entry.order.guid)).rejects.toThrow('очеред'); });
+      await act(async () => { setServerUnavailable('Network request failed'); });
+      await act(async () => { await expect(harness.current.prepareOrderForSharing('server-guid')).rejects.toThrow('подключение'); });
+      expect(records.get(entry.clientOrderId)).toEqual(entry);
+      expect(putClientOrderByClientId).not.toHaveBeenCalled(); expect(submitClientOrder).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('leaves the editor and server untouched when sharing a clean server list entry', async () => {
+    const harness = await ordersListWorkspace();
+    try {
+      const before = harness.current.draft;
+      await act(async () => { expect(await harness.current.prepareOrderForSharing('clean-server-guid')).toMatchObject({ guid: 'clean-server-guid' }); });
+      expect(harness.current.draft).toEqual(before);
+      expect(harness.current.selectedGuid).toBeNull();
+      expect(getClientOrder).not.toHaveBeenCalled(); expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('recovers an already saved legacy list payload without issuing a new save or submit', async () => {
+    const { entry, saved } = legacyFixture('ON_DEVICE'); const records = memoryDraftStore([entry]);
+    const harness = await ordersListWorkspace();
+    try {
+      jest.mocked(getClientOrder).mockResolvedValue(saved);
+      await act(async () => { expect(await harness.current.prepareOrderForSharing(entry.order.guid)).toEqual(saved); });
+      expect(records.size).toBe(0);
+      expect(updateClientOrder).not.toHaveBeenCalled(); expect(submitClientOrder).not.toHaveBeenCalled();
     } finally { await act(async () => harness.renderer.unmount()); }
   });
 
@@ -658,9 +1385,10 @@ describe('useClientOrdersWorkspace', () => {
     await act(async () => otherUser.renderer.unmount());
   });
 
-  it('silently autosaves incomplete local input once per edit and restores it exactly after remount', async () => {
+  it.each([false, true])('autosaves incomplete new input locally once per edit and restores it after remount (online=%s)', async online => {
     const records = memoryDraftStore();
-    setServerUnavailable('Network request failed');
+    if (online) setServerReachable();
+    else setServerUnavailable('Network request failed');
     const harness = await ordersListWorkspace();
     await act(async () => { harness.current.patchDraft({ organizationGuid: 'org-guid', counterpartyGuid: '', comment: 'Незавершённый' }); });
     await act(async () => { await jest.advanceTimersByTimeAsync(400); });
@@ -676,6 +1404,10 @@ describe('useClientOrdersWorkspace', () => {
     expect(harness.current.draft.items[0].quantity).toBe('1,');
     expect(getClientOrderProductsBatch).not.toHaveBeenCalled();
     expect(putClientOrderByClientId).not.toHaveBeenCalled();
+    expect(createClientOrder).not.toHaveBeenCalled();
+    expect(updateClientOrder).not.toHaveBeenCalled();
+    expect(submitClientOrder).not.toHaveBeenCalled();
+    expect([...records.values()][0]).toMatchObject({ intent: 'SAVE', status: 'ON_DEVICE' });
     const saved = [...records.values()][0];
     await act(async () => harness.renderer.unmount());
     const restored = await ordersListWorkspace();
@@ -710,6 +1442,51 @@ describe('useClientOrdersWorkspace', () => {
     await act(async () => harness.renderer.unmount());
   });
 
+  it.each([true, false])('queue confirms a protected order reduction only with user approval (%s)', async accepted => {
+    const records = memoryDraftStore([localEntry('review-queued', 'READY_TO_SEND')]);
+    const challenge = Object.assign(new Error('Подтвердите уменьшение'), { status: 409,
+      errorDetails: { kind: 'ORDER_CHANGE_REVIEW_REQUIRED', baseContentToken: 'server-base',
+        confirmationToken: 'signed-review', changes: [{ productName: 'Говядина', reason: 'Уменьшение количества', before: 60, after: 20 }] } });
+    jest.mocked(putClientOrderByClientId).mockRejectedValueOnce(challenge).mockImplementationOnce(async (_id, payload, options) => {
+      expect(records.get('review-queued').payload.integrity).toEqual(payload.integrity);
+      return queuedOrder(1, { guid: 'api-queued', clientOrderId: 'review-queued', clientRevision: options.clientRevision }) as any;
+    });
+    jest.requireMock('react-native').Alert.alert.mockImplementation((_title: string, message: string, buttons: any[]) => {
+      expect(message).toContain('60 → 20');
+      buttons.find(button => button.text === (accepted ? 'Подтвердить' : 'Отмена')).onPress();
+    });
+    const harness = await ordersListWorkspace();
+    try {
+      await act(async () => { await harness.current.syncDeviceDrafts({ force: true }); });
+      const calls = jest.mocked(putClientOrderByClientId).mock.calls;
+      expect(calls).toHaveLength(accepted ? 2 : 1);
+      if (accepted) {
+        expect(calls[1][0]).toBe(calls[0][0]);
+        expect(calls[1][2]).toEqual(calls[0][2]);
+        expect(calls[1][1].integrity).toEqual({ baseContentToken: 'server-base', confirmationToken: 'signed-review' });
+        expect(calls[1][1].geoEvents).toEqual(calls[0][1].geoEvents);
+        expect(records.size).toBe(0);
+      } else {
+        expect(records.get('review-queued').status).toBe('NEEDS_EDIT');
+        expect(records.get('review-queued').payload.integrity?.confirmationToken).toBeUndefined();
+      }
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
+  it('queue never treats a content conflict as approval to retry', async () => {
+    const records = memoryDraftStore([localEntry('stale-queued', 'READY_TO_SEND')]);
+    jest.mocked(putClientOrderByClientId).mockRejectedValue(Object.assign(new Error('Stale'), {
+      status: 409, errorDetails: { kind: 'ORDER_CONTENT_CONFLICT' },
+    }));
+    const harness = await ordersListWorkspace();
+    try {
+      await act(async () => { await harness.current.syncDeviceDrafts({ force: true }); });
+      expect(putClientOrderByClientId).toHaveBeenCalledTimes(1);
+      expect(jest.requireMock('react-native').Alert.alert).not.toHaveBeenCalled();
+      expect(records.get('stale-queued').status).toBe('NEEDS_EDIT');
+    } finally { await act(async () => harness.renderer.unmount()); }
+  });
+
   it('bulk sends only explicitly queued documents sequentially, leaving ordinary drafts untouched', async () => {
     const completeDraft = localEntry('complete');
     const incompleteDraft = localEntry('incomplete', 'ON_DEVICE', true);
@@ -725,17 +1502,18 @@ describe('useClientOrdersWorkspace', () => {
       return queuedOrder(1, { guid: `api-${id}`, clientOrderId: id }) as any;
     });
     const harness = await ordersListWorkspace();
+    jest.requireMock('react-native').Alert.alert.mockImplementation((_title: string, _message: unknown, buttons: any[]) => buttons[1].onPress());
     expect(harness.current.deviceDraftsCount).toBe(6);
     expect(harness.current.readyDeviceDraftsCount).toBe(3);
-    expect(harness.current.queuedDeviceDraftsCount).toBe(3);
+    expect(harness.current.queuedDeviceDraftsCount).toBe(4);
     await act(async () => { await harness.current.syncDeviceDrafts({ force: true }); });
     expect(maxInFlight).toBe(1);
-    expect(jest.mocked(putClientOrderByClientId).mock.calls.map(call => call[0])).toEqual(['first', 'second']);
+    expect(jest.mocked(putClientOrderByClientId).mock.calls.map(call => call[0]).sort()).toEqual(['first', 'review', 'second']);
     expect(records.get('complete')).toEqual(completeDraft);
     expect(records.get('incomplete')).toEqual(incompleteDraft);
     expect(records.get('invalid-queued').status).toBe('NEEDS_EDIT');
-    expect(records.get('review').status).toBe('PRICE_REVIEW');
-    expect(records.size).toBe(4);
+    expect(records.has('review')).toBe(false);
+    expect(records.size).toBe(3);
     expect(harness.current.queuedDeviceDraftsCount).toBe(0);
     expect(harness.current.syncingDeviceDrafts).toBe(false);
     await act(async () => harness.renderer.unmount());
@@ -761,14 +1539,14 @@ describe('useClientOrdersWorkspace', () => {
     } finally { await act(async () => harness.renderer.unmount()); }
   });
 
-  it('keeps price-review documents out of bulk sending until a price choice targets that document', async () => {
+  it('does not apply an unscoped forced price policy to review documents', async () => {
     const review = localEntry('review', 'PRICE_REVIEW');
     const records = memoryDraftStore([review, localEntry('other-review', 'PRICE_REVIEW')]);
     const harness = await ordersListWorkspace();
     try {
       await act(async () => { await harness.current.syncDeviceDrafts({ force: true, pricePolicy: 'USE_CURRENT' }); });
       expect(putClientOrderByClientId).not.toHaveBeenCalled();
-      expect(harness.current.queuedDeviceDraftsCount).toBe(0);
+      expect(harness.current.queuedDeviceDraftsCount).toBe(2);
       jest.mocked(putClientOrderByClientId).mockResolvedValue(queuedOrder(1, { clientOrderId: review.clientOrderId }) as any);
       await act(async () => { await harness.current.syncDeviceDrafts({ force: true,
         orderGuid: review.order.guid, pricePolicy: 'USE_CURRENT' }); });
@@ -1188,6 +1966,11 @@ describe('useClientOrdersWorkspace', () => {
       fields: { last1cError: '', lastExportError: '' },
       expected: { last1cError: '', lastExportError: '' },
     },
+    {
+      name: 'clears an explicit null lock reason without requiring a new status or revision',
+      fields: { readOnlyReason: null },
+      expected: { readOnly: false, readOnlyReason: null, last1cError: 'Posting failed', lastExportError: 'Export failed' },
+    },
   ])('$name on list refresh without reloading the open document', async ({ fields, expected }) => {
     const original = queuedOrder(0, {
       status: 'CONFIRMED',
@@ -1196,6 +1979,8 @@ describe('useClientOrdersWorkspace', () => {
       isPostedIn1c: true,
       last1cError: 'Posting failed',
       lastExportError: 'Export failed',
+      readOnly: false,
+      readOnlyReason: 'Заказ отправляется в API',
       items: [{ product: { guid: 'product-guid', name: 'Товар' }, quantity: 2, basePrice: 100 }],
     });
     const page = (order: typeof original) => ({

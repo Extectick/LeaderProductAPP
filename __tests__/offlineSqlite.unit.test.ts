@@ -22,6 +22,69 @@ const draft: StoredOfflineDraft = {
   serverGuid: null, serverRevision: null, order: {}, payload: { items: [{ lineGuid: 'line', productGuid: 'p' }] },
   createdAt: '2026-09-21T00:00:00Z', updatedAt: '2026-09-21T00:00:00Z', lastSendError: null,
 };
+
+async function redundantSaveFixture() {
+  const outbox = require('../src/features/clientOrders/offline/orderOutboxDatabase');
+  const payload = { organizationGuid: 'org', counterpartyGuid: 'customer',
+    items: [{ lineGuid: 'line', productGuid: 'product', quantity: 1, basePrice: 1350 }] };
+  const local = { ...draft, clientRevision: 2, payload,
+    order: { guid: 'api-guid', clientOrderId: draft.clientOrderId, origin: 'device', counterparty: { name: 'Customer' } } };
+  await offline.upsertOfflineDraft('90', local);
+  const state = { guid: 'api-guid', clientOrderId: draft.clientOrderId, clientRevision: 1, revision: 5, source: 'MANAGER_APP',
+    createdByUser: { id: 90 }, status: 'CONFIRMED', syncState: 'SYNCED', isPostedIn1c: true, hasRealization: true,
+    number1c: 'ИПУТ-011129', totalAmount: 1350, itemsCount: 2, updatedAt: '2026-10-26T06:00:00Z',
+    lastExportError: null, last1cError: null, acceptedClientOperation: { clientRevision: 1, intent: 'SUBMIT', payload } };
+  return { outbox, local, state };
+}
+it('atomically replaces a redundant SAVE by a canonical list mirror and survives a cold read', async () => {
+  const { outbox, local, state } = await redundantSaveFixture();
+  expect(await outbox.retireRedundantDeviceDraft('90', local, state)).toMatchObject({ origin: 'local', number1c: 'ИПУТ-011129' });
+  expect(await offline.readOfflineDrafts('90')).toEqual([]);
+  expect(await outbox.readOrderMirrors('90')).toEqual([expect.objectContaining({ status: 'CONFIRMED', isPostedIn1c: true })]);
+  expect(await db.getFirstAsync('PRAGMA integrity_check')).toEqual({ integrity_check: 'ok' });
+});
+it('retains the SAVE and lines when the mirror cannot be committed', async () => {
+  const { outbox, local, state } = await redundantSaveFixture();
+  await db.execAsync("CREATE TRIGGER fail_reconcile BEFORE INSERT ON offline_order_mirrors BEGIN SELECT RAISE(ABORT,'disk full'); END;");
+  await expect(outbox.retireRedundantDeviceDraft('90', local, state)).rejects.toThrow('disk full');
+  expect(await offline.readOfflineDrafts('90')).toHaveLength(1);
+  expect(await db.getAllAsync('SELECT * FROM offline_draft_lines')).toHaveLength(1);
+});
+it.each(['revision', 'quantity', 'user', 'scope'])('does not discard a changed/foreign local copy (%s)', async kind => {
+  const { outbox, local, state } = await redundantSaveFixture();
+  if (kind === 'revision') await db.runAsync("UPDATE offline_drafts SET client_revision=3 WHERE user_id='90'");
+  if (kind === 'quantity') await db.runAsync("UPDATE offline_drafts SET payload_json=? WHERE user_id='90'", JSON.stringify({ ...local.payload, items: [{ ...local.payload.items[0], quantity: 3 }] }));
+  if (kind === 'user') state.createdByUser.id = 91;
+  if (kind === 'scope') await db.runAsync("UPDATE offline_drafts SET order_json=? WHERE user_id='90'", JSON.stringify({ ...local.order, _deviceApiBaseUrl: 'https://foreign.example' }));
+  expect(await outbox.retireRedundantDeviceDraft('90', local, state)).toBeNull();
+  expect(await offline.readOfflineDrafts('90')).toHaveLength(kind === 'scope' ? 0 : 1);
+  expect(await db.getAllAsync('SELECT * FROM offline_drafts')).toHaveLength(1);
+});
+it('refreshes the persisted mirror but rejects a late stale state', async () => {
+  const { outbox, local, state } = await redundantSaveFixture();
+  await outbox.retireRedundantDeviceDraft('90', local, state);
+  await outbox.refreshOrderMirrors('90', [{ ...state, revision: 6, totalAmount: 1500 }]);
+  await outbox.refreshOrderMirrors('90', [{ ...state, revision: 1, syncState: 'QUEUED', number1c: null }]);
+  expect((await outbox.readOrderMirrors('90'))[0]).toMatchObject({ revision: 6, totalAmount: 1500, syncState: 'SYNCED', number1c: 'ИПУТ-011129' });
+});
+it('does not retire a local edit using proof older than the persisted server mirror', async () => {
+  const { outbox, local, state } = await redundantSaveFixture();
+  await outbox.retireRedundantDeviceDraft('90', local, state);
+  await outbox.refreshOrderMirrors('90', [{ ...state, revision: 6 }]);
+  await offline.upsertOfflineDraft('90', local);
+  expect(await outbox.retireRedundantDeviceDraft('90', local, state)).toBeNull();
+  expect(await offline.readOfflineDrafts('90')).toHaveLength(1);
+  expect((await outbox.readOrderMirrors('90'))[0].revision).toBe(6);
+});
+it('does not retire a copy while its delivery is in flight', async () => {
+  const { outbox, local, state } = await redundantSaveFixture();
+  await offline.upsertOfflineDraft('90', { ...local, intent: 'SUBMIT', status: 'READY_TO_SEND' });
+  const claimed = await outbox.claimOrderUploads('90', 10);
+  expect(claimed).toHaveLength(1);
+  await db.runAsync("UPDATE offline_drafts SET status='ON_DEVICE' WHERE user_id='90'");
+  expect(await outbox.retireRedundantDeviceDraft('90', local, state)).toBeNull();
+  expect(await offline.readOfflineDrafts('90')).toHaveLength(1);
+});
 beforeEach(async () => {
   jest.resetModules();
   directory = mkdtempSync(join(tmpdir(), 'leader-offline-sqlite-'));
@@ -59,6 +122,229 @@ it('reproduces SQLite locking with unqueued Expo-style exclusive transactions', 
     release();
     await first;
   }
+});
+
+const queuedDraft = (id = 'queued') => ({ ...draft, id, clientOrderId: `client-${id}`, intent: 'SUBMIT' as const,
+  status: 'READY_TO_SEND' as const, order: { guid: `device-${id}`, items: [] },
+  payload: { organizationGuid: 'org', counterpartyGuid: 'customer', items: [{ lineGuid: `line-${id}`, productGuid: 'p', quantity: 2 }] } });
+const ack = (packet: any, state = 'ACCEPTED') => ({ userId: Number(packet.userId), clientOrderId: packet.clientOrderId,
+  clientRevision: packet.clientRevision, payloadHash: packet.payloadHash, intent: 'SUBMIT', accepted: true,
+  submissionId: `receipt-${packet.clientOrderId}`, receiptVersion: 'client-order-inbox-v1', acceptedAt: new Date().toISOString(), state,
+  orderGuid: state === 'QUEUED' ? 'canonical-guid' : null });
+it('leases a queued SUBMIT once across competing senders, never SAVE', async () => {
+  const outbox = require('../src/features/clientOrders/offline/orderOutboxDatabase');
+  await offline.applyOfflineDraftChanges('90', [draft, queuedDraft(), queuedDraft('other')]);
+  const batches = await Promise.all([outbox.claimOrderUploads('90', 10), outbox.claimOrderUploads('90', 10)]);
+  expect(batches.flat()).toHaveLength(2);
+  expect(new Set(batches.flat().map(item => item.clientOrderId)).size).toBe(2);
+  expect((await offline.readOfflineDrafts('90')).find(item => item.clientOrderId === draft.clientOrderId)?.intent).toBe('SAVE');
+  expect(await outbox.claimOrderUploads('91', 10)).toEqual([]);
+});
+it('keeps an immutable packet after a crash; expired lease cannot consume a new lease', async () => {
+  const outbox = require('../src/features/clientOrders/offline/orderOutboxDatabase');
+  await offline.upsertOfflineDraft('90', queuedDraft());
+  const [first] = await outbox.claimOrderUploads('90', 10, Date.now());
+  const [second] = await outbox.claimOrderUploads('90', 10, Date.now() + 181_000);
+  expect(first.payload).toEqual(second.payload); expect(first.payloadHash).toBe(second.payloadHash);
+  expect(first.leaseToken).not.toBe(second.leaseToken);
+  await outbox.acceptOrderUpload(first, ack(first));
+  expect((await offline.readOfflineDrafts('90'))[0].status).toBe('SENDING');
+  await outbox.acceptOrderUpload(second, ack(second));
+  expect((await offline.readOfflineDrafts('90'))[0].status).toBe('API_ACCEPTED');
+});
+it('does not overwrite/delete an active operation, but allows independent documents', async () => {
+  const outbox = require('../src/features/clientOrders/offline/orderOutboxDatabase');
+  const queued = queuedDraft(); await offline.upsertOfflineDraft('90', queued); await outbox.claimOrderUploads('90');
+  await expect(offline.upsertOfflineDraft('90', { ...queued, clientRevision: 2 })).rejects.toThrow('уже отправляется');
+  await expect(offline.applyOfflineDraftChanges('90', [], [queued])).rejects.toThrow('ещё отправляется');
+  await expect(offline.deleteOfflineDraft('90', queued.id)).rejects.toThrow('нельзя удалить');
+  await offline.upsertOfflineDraft('90', draft);
+  expect(await offline.readOfflineDrafts('90')).toHaveLength(2);
+});
+it('keeps payload and receipt when API accepted, until a canonical mirror commits', async () => {
+  const outbox = require('../src/features/clientOrders/offline/orderOutboxDatabase');
+  await offline.upsertOfflineDraft('90', queuedDraft()); const [packet] = await outbox.claimOrderUploads('90');
+  await outbox.acceptOrderUpload(packet, ack(packet));
+  expect(await offline.readOfflineDrafts('90')).toHaveLength(1);
+  const accepted = (await outbox.readAcceptedUploads('90'))[0];
+  const order = { guid: 'canonical-guid', clientOrderId: packet.clientOrderId, clientRevision: 1, revision: 1,
+    createdByUser: { id: 90 }, status: 'QUEUED', syncState: 'QUEUED', items: [] };
+  await outbox.completeOrderUpload(accepted, order);
+  expect(await offline.readOfflineDrafts('90')).toEqual([]);
+  expect(await outbox.readOrderMirrors('90')).toEqual([order]);
+  expect(await db.getFirstAsync('PRAGMA integrity_check')).toEqual({ integrity_check: 'ok' });
+});
+it('rolls back ACK deletion if the canonical mirror cannot be saved', async () => {
+  const outbox = require('../src/features/clientOrders/offline/orderOutboxDatabase');
+  await offline.upsertOfflineDraft('90', queuedDraft()); const [packet] = await outbox.claimOrderUploads('90');
+  await outbox.acceptOrderUpload(packet, ack(packet));
+  await db.execAsync("CREATE TRIGGER fail_mirror BEFORE INSERT ON offline_order_mirrors BEGIN SELECT RAISE(ABORT,'disk full'); END;");
+  await expect(outbox.completeOrderUpload((await outbox.readAcceptedUploads('90'))[0], { guid: 'canonical-guid',
+    clientOrderId: packet.clientOrderId, clientRevision: 1, createdByUser: { id: 90 }, status: 'QUEUED', syncState: 'QUEUED' })).rejects.toThrow('disk full');
+  expect(await offline.readOfflineDrafts('90')).toHaveLength(1);
+  expect(await outbox.readAcceptedUploads('90')).toHaveLength(1);
+});
+
+async function acceptedLegacyFixture() {
+  const outbox = require('../src/features/clientOrders/offline/orderOutboxDatabase');
+  const queued = { ...queuedDraft('legacy'), clientOrderId: 'legacy-server:canonical-guid',
+    serverGuid: 'canonical-guid', serverRevision: 3 };
+  await offline.upsertOfflineDraft('90', queued);
+  const [packet] = await outbox.claimOrderUploads('90');
+  await outbox.acceptOrderUpload(packet, ack(packet));
+  const accepted = { ...(await outbox.readAcceptedUploads('90'))[0], receipt: ack(packet, 'QUEUED') };
+  const order = { guid: 'canonical-guid', createdByUser: { id: 90 }, revision: 6, status: 'CONFIRMED', syncState: 'SYNCED',
+    deliveryMethod: 'ДоКлиента', paymentForm: 'Наличная', number1c: 'НОУТ-125596', items: [],
+    acceptedSubmission: ack(packet, 'QUEUED') };
+  return { outbox, accepted, order };
+}
+it('retires a legacy API-accepted copy against the exact receipt even after 1C enriched its header', async () => {
+  const { outbox, accepted, order } = await acceptedLegacyFixture();
+  await outbox.completeOrderUpload(accepted, order, true);
+  expect(await offline.readOfflineDrafts('90')).toEqual([]);
+  expect(await outbox.readOrderMirrors('90')).toEqual([order]);
+  expect(await db.getFirstAsync('PRAGMA integrity_check')).toEqual({ integrity_check: 'ok' });
+});
+it('shows a proven API-side export error instead of keeping the device stuck on API acceptance', async () => {
+  const { outbox, accepted, order } = await acceptedLegacyFixture();
+  const failedOrder = { ...order, status: 'QUEUED', syncState: 'ERROR', lastExportError: 'Недостаточно остатка' };
+  await outbox.completeOrderUpload(accepted, failedOrder, true);
+  expect(await offline.readOfflineDrafts('90')).toEqual([]);
+  expect(await outbox.readOrderMirrors('90')).toEqual([failedOrder]);
+});
+it.each([{ payloadHash: 'wrong' }, { userId: 91 }, { clientRevision: 2 }, { submissionId: 'another-receipt' },
+  { orderGuid: 'another-guid' }, { state: 'PROCESSING' }])('retains the legacy copy for mismatched immutable proof %j', async change => {
+  const { outbox, accepted, order } = await acceptedLegacyFixture();
+  order.acceptedSubmission = { ...order.acceptedSubmission, ...change };
+  await expect(outbox.completeOrderUpload(accepted, order, true)).rejects.toThrow('Исходный заказ');
+  expect(await offline.readOfflineDrafts('90')).toHaveLength(1);
+  expect(await outbox.readOrderMirrors('90')).toEqual([]);
+});
+it('does not discard a newer local revision on a late canonical receipt', async () => {
+  const { outbox, accepted, order } = await acceptedLegacyFixture();
+  await db.runAsync("UPDATE offline_drafts SET client_revision=2 WHERE user_id='90'");
+  const before = (await offline.readOfflineDrafts('90'))[0];
+  await outbox.completeOrderUpload(accepted, order, true);
+  expect(await offline.readOfflineDrafts('90')).toHaveLength(1);
+  const newer = (await offline.readOfflineDrafts('90'))[0];
+  expect(newer.clientRevision).toBe(2);
+  expect(newer.payload).toEqual(before.payload);
+  expect(newer.order).toMatchObject({ ...before.order, submittedVersion: { number1c: 'НОУТ-125596' } });
+  expect(await outbox.readOrderMirrors('90')).toEqual([order]);
+  expect(await outbox.readAcceptedUploads('90')).toEqual([]);
+});
+it('retains review reasons across reopen and refreshes prior 1C facts without changing the rejected packet', async () => {
+  const outbox = require('../src/features/clientOrders/offline/orderOutboxDatabase');
+  await offline.upsertOfflineDraft('90', queuedDraft());
+  const [packet] = await outbox.claimOrderUploads('90');
+  await outbox.acceptOrderUpload(packet, ack(packet));
+  const accepted = (await outbox.readAcceptedUploads('90'))[0];
+  const rejected = { ...ack(packet, 'REJECTED'), errorCode: 'ORDER_CONTENT_CONFLICT', errorMessage: 'Версия изменилась',
+    errorDetails: { kind: 'ORDER_CONTENT_CONFLICT' } };
+  await outbox.updateSubmissionStatus(accepted, rejected);
+  const first = (await offline.readOfflineDrafts('90'))[0];
+  expect(first).toMatchObject({ status: 'NEEDS_EDIT', order: { submissionErrorDetails: { backendErrorCode: 'ORDER_CONTENT_CONFLICT' } } });
+  await db.runAsync('UPDATE offline_order_deliveries SET next_attempt_at=0');
+  const review = (await outbox.readAcceptedUploads('90'))[0];
+  expect(review.receipt.state).toBe('REJECTED');
+  await outbox.updateSubmissionStatus(review, { ...rejected, submittedVersion: { orderGuid: 'canonical-guid', clientRevision: 0,
+    number1c: 'НОУТ-126165', isPostedIn1c: true, syncState: 'SYNCED', status: 'CONFIRMED', revision: 3, totalAmount: 36548, itemsCount: 16, updatedAt: new Date().toISOString() } });
+  const reopened = (await offline.readOfflineDrafts('90'))[0];
+  expect(reopened.payload).toEqual(first.payload);
+  expect(reopened.clientRevision).toBe(first.clientRevision);
+  expect(reopened.order).toMatchObject({ submittedVersion: { number1c: 'НОУТ-126165' },
+    submissionErrorDetails: { backendErrorCode: 'ORDER_CONTENT_CONFLICT' }, readOnly: false });
+  expect(await outbox.claimOrderUploads('90')).toEqual([]);
+});
+it.each([1, 2])('never deletes or modifies a foreign-API draft while completing receipt revision 1 (draft revision %i)', async revision => {
+  const { outbox, accepted, order } = await acceptedLegacyFixture();
+  const before: any = await db.getFirstAsync("SELECT order_json FROM offline_drafts WHERE user_id='90'");
+  const foreign = JSON.stringify({ ...JSON.parse(before.order_json), _deviceApiBaseUrl: 'https://other-api.example' });
+  await db.runAsync("UPDATE offline_drafts SET client_revision=?,order_json=? WHERE user_id='90'", revision, foreign);
+  await outbox.completeOrderUpload(accepted, order, true);
+  expect(await db.getFirstAsync("SELECT client_revision,order_json FROM offline_drafts WHERE user_id='90'"))
+    .toEqual({ client_revision: revision, order_json: foreign });
+});
+it('unlocks a business-rejected order for correction with a higher immutable revision', async () => {
+  const outbox = require('../src/features/clientOrders/offline/orderOutboxDatabase');
+  const queued = queuedDraft(); await offline.upsertOfflineDraft('90', queued); const [packet] = await outbox.claimOrderUploads('90');
+  await outbox.acceptOrderUpload(packet, ack(packet)); const accepted = (await outbox.readAcceptedUploads('90'))[0];
+  await outbox.updateSubmissionStatus(accepted, { ...ack(packet, 'NEEDS_REVIEW'), errorCode: 'PRICE_REVIEW_REQUIRED', errorMessage: 'Цены изменились' });
+  expect((await offline.readOfflineDrafts('90'))[0].status).toBe('PRICE_REVIEW');
+  expect(await outbox.claimOrderUploads('90')).toEqual([]);
+  await offline.upsertOfflineDraft('90', { ...queued, clientRevision: 2 });
+  expect((await outbox.claimOrderUploads('90'))[0].clientRevision).toBe(2);
+});
+it('does not overwrite a new upload with a late review response for the old rejected revision', async () => {
+  const outbox = require('../src/features/clientOrders/offline/orderOutboxDatabase');
+  const original = queuedDraft('review-retry');
+  await offline.upsertOfflineDraft('90', original);
+  const [first] = await outbox.claimOrderUploads('90');
+  await outbox.acceptOrderUpload(first, ack(first));
+  const accepted = (await outbox.readAcceptedUploads('90'))[0];
+  const rejection = { ...ack(first, 'NEEDS_REVIEW'), errorCode: 'ORDER_CONTENT_CONFLICT', errorMessage: 'Changed server version' };
+  await outbox.updateSubmissionStatus(accepted, rejection);
+  const evidence = await db.getFirstAsync('SELECT payload_hash,payload_json,state FROM offline_order_deliveries WHERE client_revision=1');
+  const proposal = { ...original, clientRevision: 2,
+    payload: { ...original.payload, integrity: { baseContentToken: 'a'.repeat(64), confirmationToken: 'fresh' } } };
+  await offline.upsertOfflineDraft('90', proposal);
+  await outbox.claimOrderUploads('90');
+  await outbox.updateSubmissionStatus(accepted, rejection);
+  expect((await offline.readOfflineDrafts('90'))[0]).toMatchObject({ clientRevision: 2, status: 'SENDING', payload: proposal.payload });
+  expect(await db.getFirstAsync('SELECT payload_hash,payload_json,state FROM offline_order_deliveries WHERE client_revision=1')).toEqual(evidence);
+});
+it.each(['USE_CURRENT', 'KEEP_DRAFT'])('freezes the selected price policy %s durably without rewriting the rejected receipt', async pricePolicy => {
+  const outbox = require('../src/features/clientOrders/offline/orderOutboxDatabase');
+  const queued = queuedDraft(); await offline.upsertOfflineDraft('90', queued);
+  const [packet] = await outbox.claimOrderUploads('90');
+  await outbox.acceptOrderUpload(packet, ack(packet));
+  const accepted = (await outbox.readAcceptedUploads('90'))[0];
+  const details = { items: [{ productGuid: 'p', lineGuid: 'line-queued', oldPrice: 110, currentPrice: 120 }] };
+  await outbox.updateSubmissionStatus(accepted, { ...ack(packet, 'NEEDS_REVIEW'), errorCode: 'PRICE_REVIEW_REQUIRED',
+    errorMessage: 'Цены изменились', errorDetails: details });
+  const before = await db.getFirstAsync('SELECT payload_hash,payload_json,receipt_json FROM offline_order_deliveries WHERE client_revision=1');
+  expect((await offline.readOfflineDrafts('90'))[0].order.draftReview).toMatchObject({ code: 'PRICE_REVIEW_REQUIRED', details });
+  await offline.upsertOfflineDraft('90', { ...queued, clientRevision: 2,
+    payload: { ...queued.payload, offlineReview: { pricePolicy } } });
+  const [next] = await outbox.claimOrderUploads('90');
+  expect(next.clientRevision).toBe(2);
+  expect(next.payload.offlineReview).toEqual({ pricePolicy });
+  expect(next.payloadHash).not.toBe(packet.payloadHash);
+  expect(await db.getFirstAsync('SELECT payload_hash,payload_json,receipt_json FROM offline_order_deliveries WHERE client_revision=1')).toEqual(before);
+});
+it('never accepts another user/revision/hash receipt or removes a newer local operation', async () => {
+  const outbox = require('../src/features/clientOrders/offline/orderOutboxDatabase');
+  await offline.upsertOfflineDraft('90', queuedDraft()); const [packet] = await outbox.claimOrderUploads('90');
+  await expect(outbox.acceptOrderUpload(packet, { ...ack(packet), userId: 91 })).rejects.toThrow('точный пакет');
+  expect((await offline.readOfflineDrafts('90'))[0].status).toBe('SENDING');
+  await outbox.acceptOrderUpload(packet, ack(packet));
+  await expect(outbox.completeOrderUpload((await outbox.readAcceptedUploads('90'))[0], { guid: 'canonical-guid',
+    clientOrderId: packet.clientOrderId, clientRevision: 2, createdByUser: { id: 90 }, status: 'QUEUED', syncState: 'QUEUED' })).rejects.toThrow('версию');
+  expect(await offline.readOfflineDrafts('90')).toHaveLength(1);
+});
+it('never uploads, displays or removes another API environment legacy queue', async () => {
+  const outbox = require('../src/features/clientOrders/offline/orderOutboxDatabase');
+  const { ORDER_API_SCOPE } = require('../src/features/clientOrders/offline/orderOutboxScope');
+  const foreignScope = ORDER_API_SCOPE === 'https://api.leader-product.ru'
+    ? 'https://dev.leader-product.ru' : 'https://api.leader-product.ru';
+  const queued = queuedDraft(); await offline.upsertOfflineDraft('90', queued);
+  await db.runAsync('UPDATE offline_drafts SET order_json=? WHERE user_id=? AND id=?', JSON.stringify(queued.order), '90', queued.id);
+  await db.runAsync("UPDATE catalog_meta SET value=? WHERE key='offlineDraftLegacyApiScope'", foreignScope);
+  expect(await offline.readOfflineDrafts('90')).toEqual([]);
+  expect(await outbox.claimOrderUploads('90')).toEqual([]);
+  expect(await outbox.hasPendingOrderUploads('90')).toBe(false);
+  await offline.applyOfflineDraftChanges('90', [], [queued]);
+  expect(await db.getFirstAsync('SELECT id FROM offline_drafts WHERE id=?', queued.id)).toEqual({ id: queued.id });
+  await expect(offline.deleteOfflineDraft('90', queued.id)).rejects.toThrow('другому API');
+  await offline.upsertOfflineDraft('90', queuedDraft('new-api'));
+  expect((await outbox.claimOrderUploads('90'))[0].clientOrderId).toBe('client-new-api');
+});
+it('does not poll another API receipt even for the same numeric user id', async () => {
+  const outbox = require('../src/features/clientOrders/offline/orderOutboxDatabase');
+  await offline.upsertOfflineDraft('90', queuedDraft()); const [packet] = await outbox.claimOrderUploads('90');
+  await outbox.acceptOrderUpload(packet, ack(packet));
+  await db.runAsync("UPDATE offline_order_deliveries SET api_scope='https://another-api.example'");
+  expect(await outbox.readAcceptedUploads('90')).toEqual([]);
 });
 
 it('upserts by client identity, preserves independent drafts and guards late acknowledgements', async () => {
@@ -142,7 +428,7 @@ it('rolls back a failed schema upgrade and preserves drafts and the previous ver
   expect(await db.getFirstAsync('PRAGMA user_version')).toEqual({ user_version: 2 });
   expect((await db.getFirstAsync<any>('SELECT client_order_id FROM offline_drafts'))?.client_order_id).toBe('client-id');
   expect(await catalog.getCatalogDatabase()).toBe(db);
-  expect(await db.getFirstAsync('PRAGMA user_version')).toEqual({ user_version: 4 });
+  expect(await db.getFirstAsync('PRAGMA user_version')).toEqual({ user_version: 5 });
   db.closeAsync = realClose;
 });
 
@@ -159,7 +445,7 @@ it('upgrades the previous v3 database without clearing goods or unsent drafts', 
   expect(await catalog.getCatalogDatabase()).toBe(db);
   expect(await offline.readOfflineDrafts('u1')).toEqual([draft]);
   expect((await catalog.searchCatalogProducts('', 10, 0))?.items[0].guid).toBe('p1');
-  expect(await db.getFirstAsync('PRAGMA user_version')).toEqual({ user_version: 4 });
+  expect(await db.getFirstAsync('PRAGMA user_version')).toEqual({ user_version: 5 });
   expect(await db.getFirstAsync('PRAGMA integrity_check')).toEqual({ integrity_check: 'ok' });
 });
 

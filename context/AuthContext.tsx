@@ -16,6 +16,7 @@ import { unregisterPushToken } from '@/utils/pushNotifications';
 import {startPushTokenRegistration} from '@/utils/pushRegistration';
 import { usePresenceHeartbeat } from '@/hooks/usePresenceHeartbeat';
 import { addMonitoringBreadcrumb, captureException, setMonitoringUser } from '@/src/shared/monitoring';
+import { startOrderOutbox, stopOrderOutbox } from '@/src/features/clientOrders/offline/orderOutbox';
 
 interface AuthContextType {
   isLoading: boolean;
@@ -50,6 +51,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [isAuthenticated, setAuthenticated] = useState(false);
   const [profileState, setProfileState] = useState<Profile | null>(null);
   const stopPushRegistration=useRef<(()=>void)|null>(null);
+  const outboxProfileActive = isValidProfile(profileState);
+  useEffect(() => {
+    if (!isLoading && isAuthenticated && isValidProfile(profileState)) startOrderOutbox(String(profileState!.id));
+    else stopOrderOutbox();
+    return stopOrderOutbox;
+  }, [isLoading, isAuthenticated, profileState?.id, outboxProfileActive]);
 
   const setProfile = useCallback(async (newProfile: Profile | null) => {
     if (newProfile) {
@@ -61,6 +68,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const signOut = useCallback(async () => {
     stopPushRegistration.current?.();stopPushRegistration.current=null;
+    stopOrderOutbox();
     addMonitoringBreadcrumb('auth_signout_start');
     await setMonitoringUser(null);
     try {
@@ -84,6 +92,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   useEffect(() => {
     return onAuthSessionExpired((event) => {
       stopPushRegistration.current?.();stopPushRegistration.current=null;
+      stopOrderOutbox();
       void setMonitoringUser(null);
       addMonitoringBreadcrumb('auth_session_expired', {
         status: event.status,

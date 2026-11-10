@@ -7,6 +7,7 @@ import { ClientOrdersWebTheme } from './screen/desktop/ClientOrdersWebTheme';
 import { handleWebCellKey, stepWebQuantity } from './screen/desktop/clientOrdersWebEditing';
 import { OrderShareFeedback } from './components/OrderShareFeedback';
 import { useOrderShareActions } from './hooks/useOrderShareActions';
+import { hasPriceReview, priceReviewPrompt, type PriceReviewPrompt, type PriceReviewChoice } from './lib/priceReview';
 import { ProductImageGalleryDialog, WebProductImage, PRODUCT_IMAGE_PLACEHOLDER_URI, type ProductGalleryImage } from './components/ProductImageGalleryDialog';
 import {
   computeLineTotal,
@@ -475,6 +476,7 @@ function unsupportedChoiceValue(choices: SegmentedChoice[], value?: string | nul
 
 function SegmentedChoiceField(props: {
   label: string;
+  emptyLabel?: string;
   value?: string | null;
   choices: SegmentedChoice[];
   disabled?: boolean;
@@ -533,6 +535,7 @@ function SegmentedChoiceField(props: {
           Текущее из 1С: {unsupported}
         </Typography>
       ) : null}
+      {!props.value?.trim() && props.emptyLabel ? <Typography sx={{ fontSize: 10.5, color: '#B45309' }}>{props.emptyLabel}</Typography> : null}
     </Stack>
   );
 }
@@ -1211,7 +1214,24 @@ export default function ClientOrdersWebScreen() {
     setDiscardConfirm((prev) => ({ ...prev, open: false }));
     resolve?.(result);
   }, []);
-  const workspace = useClientOrdersWorkspace({ confirmDiscard: requestDiscardConfirm, autoSelectLatestDraft: isSinglePane ? undefined : false });
+  const [priceReviewOpen, setPriceReviewOpen] = React.useState(false);
+  const [reviewPrompt, setReviewPrompt] = React.useState<PriceReviewPrompt>(() => priceReviewPrompt([]));
+  const [cancelDenied, setCancelDenied] = React.useState<string | null>(null);
+  const priceReviewResolveRef = React.useRef<((choice: PriceReviewChoice | null) => void) | null>(null);
+  const requestPriceReview = React.useCallback((prompt: PriceReviewPrompt) => new Promise<PriceReviewChoice | null>(resolve => {
+    priceReviewResolveRef.current = resolve;
+    setReviewPrompt(prompt);
+    setPriceReviewOpen(true);
+  }), []);
+  const closePriceReview = React.useCallback((choice: PriceReviewChoice | null) => {
+    const resolve = priceReviewResolveRef.current;
+    priceReviewResolveRef.current = null;
+    setPriceReviewOpen(false);
+    resolve?.(choice);
+  }, []);
+  React.useEffect(() => () => { priceReviewResolveRef.current?.(null); }, []);
+  const workspace = useClientOrdersWorkspace({ confirmDiscard: requestDiscardConfirm, confirmPriceReview: requestPriceReview,
+    notifyCancelDenied: setCancelDenied, autoSelectLatestDraft: isSinglePane ? undefined : false });
   const [documentMenuAnchor, setDocumentMenuAnchor] = React.useState<HTMLElement | null>(null);
   const router = useRouter();
   const focusProductAfterClient = React.useRef(false);
@@ -1940,6 +1960,7 @@ export default function ClientOrdersWebScreen() {
     if (!draft.counterpartyGuid) {setDetailsExpanded(true); requestAnimationFrame(() => clientInputRef.current?.focus()); return;}
     const invalidQuantity = editorPaneRef.current?.querySelector<HTMLInputElement>('input[data-price-quantity][aria-invalid="true"]');
     if (invalidQuantity) {invalidQuantity.focus(); return;}
+    if (hasPriceReview(workspace.selectedOrder)) { void workspace.submitOrder(); return; }
     if (workspace.canSubmitOrder) { setConfirmSubmitOpen(true); return; }
     if (missingConditions.length) setDetailsExpanded(true);
     requestAnimationFrame(() => {
@@ -2864,6 +2885,7 @@ export default function ClientOrdersWebScreen() {
                     />
                     <SegmentedChoiceField
                       label="Способ доставки"
+                      emptyLabel="Способ доставки не указан"
                       value={workspace.draft.deliveryMethod}
                       choices={DELIVERY_METHOD_CHOICES}
                       disabled={editingLocked || !hasOrderContext || workspace.loadingDefaults}
@@ -3226,6 +3248,7 @@ export default function ClientOrdersWebScreen() {
               <Box>
                 <SegmentedChoiceField
                   label="Способ доставки"
+                  emptyLabel="Способ доставки не указан"
                   value={workspace.draft.deliveryMethod}
                   choices={DELIVERY_METHOD_CHOICES}
                   disabled={editingLocked || !hasOrderContext || workspace.loadingDefaults}
@@ -3525,6 +3548,21 @@ export default function ClientOrdersWebScreen() {
         </MenuItem>
       </Menu>
       <OrderShareFeedback message={orderSharing.feedback} onDismiss={orderSharing.dismissFeedback} />
+      <Dialog open={priceReviewOpen} onClose={() => closePriceReview(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>{reviewPrompt.title}</DialogTitle>
+        {reviewPrompt.message ? <DialogContent><Typography sx={{ whiteSpace: 'pre-line' }}>{reviewPrompt.message}</Typography></DialogContent> : null}
+        <DialogActions>
+          <Button onClick={() => closePriceReview(null)}>Назад</Button>
+          {reviewPrompt.choices.map((choice, index) => <Button key={choice.policy}
+            variant={index === 0 ? 'contained' : 'text'} onClick={() => closePriceReview(choice.policy)}
+            sx={{ textTransform: 'none', fontWeight: 800 }}>{choice.label}</Button>)}
+        </DialogActions>
+      </Dialog>
+      <Dialog open={!!cancelDenied} onClose={() => setCancelDenied(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>Отмена не выполнена</DialogTitle>
+        <DialogContent><Typography>{cancelDenied}</Typography></DialogContent>
+        <DialogActions><Button onClick={() => setCancelDenied(null)}>Понятно</Button></DialogActions>
+      </Dialog>
       <Dialog open={confirmSubmitOpen} onClose={() => setConfirmSubmitOpen(false)} maxWidth="md" fullWidth fullScreen={isPhoneDialog}>
         <DialogTitle>{isErrorRetryTo1c ? 'Повторить отправку в 1С?' : isResubmitTo1c ? 'Переотправить в 1С?' : 'Отправить в 1С?'}</DialogTitle>
         <DialogContent>
@@ -3719,7 +3757,8 @@ export default function ClientOrdersWebScreen() {
                 <Typography sx={{ fontWeight: 700 }}>История</Typography>
                 {!workspace.selectedOrder?.events.length ? <Typography sx={{ fontSize: 13, color: 'var(--co-muted)' }}>Событий пока нет.</Typography> : workspace.selectedOrder.events.map((event) => (
                   <Box key={event.id} sx={{ borderRadius: '14px', bgcolor: 'var(--co-background)', px: 1.4, py: 1.2 }}>
-                    <Typography sx={{ fontWeight: 600 }}>{event.eventType} • rev {event.revision}</Typography>
+                    <Typography sx={{ fontWeight: 600 }}>{event.eventType === 'ONEC_ORDER_CANCEL_DENIED' ? 'Отмена не выполнена' : event.eventType} • rev {event.revision}</Typography>
+                    {event.eventType === 'ONEC_ORDER_CANCEL_DENIED' && event.note ? <Typography sx={{ fontSize: 13 }}>{event.note}</Typography> : null}
                     <Typography sx={{ fontSize: 12, color: 'var(--co-muted)' }}>{event.source} • {formatDateTime(event.createdAt)}</Typography>
                   </Box>
                 ))}

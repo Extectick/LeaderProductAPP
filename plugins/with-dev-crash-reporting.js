@@ -2,9 +2,25 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { withMainApplication, withDangerousMod, withAndroidManifest } = require('expo/config-plugins');
 
-function nativeSource(dsn) {
+function nativeSource(dsn, channel = 'dev') {
   return fs.readFileSync(path.join(__dirname, 'leader-diagnostics/LeaderCrashReporting.kt'), 'utf8')
-    .replace('__LEADER_DSN__', JSON.stringify(String(dsn)).replace(/\$/g, '\\$'));
+    .replace('__LEADER_DSN__', JSON.stringify(String(dsn)).replace(/\$/g, '\\$'))
+    .replace('__LEADER_ENVIRONMENT__', JSON.stringify(channel === 'dev' ? 'development' : 'production'));
+}
+function diagnosticConfig(env = process.env) {
+  const channel = env.EXPO_PUBLIC_UPDATE_CHANNEL || 'prod';
+  const enabled = env.EXPO_PUBLIC_SENTRY_ENABLED === 'true';
+  const dsn = env.EXPO_PUBLIC_SENTRY_DSN || '';
+  if (enabled) {
+    const expectedHost = channel === 'dev' ? 'dev.lidprod.ru' : 'sibvod.ru';
+    let url;
+    try { url = new URL(dsn); } catch { throw new Error('Invalid diagnostics DSN'); }
+    if (!['dev', 'prod'].includes(channel) || url.protocol !== 'https:' || url.hostname !== expectedHost
+      || !url.username || url.password || !/^\/sentry\/\d+$/.test(url.pathname)) {
+      throw new Error('Native diagnostics DSN must match the build channel');
+    }
+  }
+  return { enabled, dsn, channel };
 }
 function patchMainApplication(source, enabled) {
   let clean = source
@@ -18,9 +34,7 @@ function patchMainApplication(source, enabled) {
   return clean;
 }
 module.exports = function withDevCrashReporting(config) {
-  const enabled = process.env.EXPO_PUBLIC_UPDATE_CHANNEL === 'dev' && process.env.EXPO_PUBLIC_SENTRY_ENABLED === 'true';
-  const dsn = process.env.EXPO_PUBLIC_SENTRY_DSN || '';
-  if (enabled && !/^https:\/\/[^\s]+@dev\.lidprod\.ru\/sentry\/\d+$/.test(dsn)) throw new Error('Dev diagnostics requires its own HTTPS DSN');
+  const { enabled, dsn, channel } = diagnosticConfig();
   config = withMainApplication(config, (mod) => {
     if (mod.modResults.language !== 'kt') throw new Error('Expected Kotlin MainApplication');
     if (enabled && !/PackageList\(this\)\.packages\.apply/.test(mod.modResults.contents)) throw new Error('Missing native package list');
@@ -28,18 +42,18 @@ module.exports = function withDevCrashReporting(config) {
     return mod;
   });
   config = withAndroidManifest(config, (mod) => {
-    if (enabled) {
-      const app = mod.modResults.manifest.application[0];
-      app['meta-data'] = (app['meta-data'] || []).filter((entry) => entry.$['android:name'] !== 'io.sentry.auto-init');
-      app['meta-data'].push({ $: { 'android:name': 'io.sentry.auto-init', 'android:value': 'false' } });
-    }
+    // Sentry may be autolinked even when this release disables diagnostics.
+    // Native initialization is exclusively owned by the explicit enabled path.
+    const app = mod.modResults.manifest.application[0];
+    app['meta-data'] = (app['meta-data'] || []).filter((entry) => entry.$['android:name'] !== 'io.sentry.auto-init');
+    app['meta-data'].push({ $: { 'android:name': 'io.sentry.auto-init', 'android:value': 'false' } });
     return mod;
   });
   return withDangerousMod(config, ['android', async (mod) => {
     if (!enabled) return mod;
     const directory = path.join(mod.modRequest.platformProjectRoot, 'app/src/main/java/com/leaderproduct/app/monitoring');
     fs.mkdirSync(directory, { recursive: true });
-    fs.writeFileSync(path.join(directory, 'LeaderCrashReporting.kt'), nativeSource(dsn));
+    fs.writeFileSync(path.join(directory, 'LeaderCrashReporting.kt'), nativeSource(dsn, channel));
     for (const name of ['LeaderDiagnosticsModule.kt', 'LeaderDiagnosticsPackage.kt']) {
       fs.copyFileSync(path.join(__dirname, 'leader-diagnostics', name), path.join(directory, name));
     }
@@ -48,3 +62,4 @@ module.exports = function withDevCrashReporting(config) {
 };
 module.exports.patchMainApplication = patchMainApplication;
 module.exports.nativeSource = nativeSource;
+module.exports.diagnosticConfig = diagnosticConfig;

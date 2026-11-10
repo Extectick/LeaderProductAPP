@@ -44,6 +44,27 @@ describe('httpRequest', () => {
     jest.useRealTimers();
   });
 
+  it.each([91, '91'])('accepts a matching account guard %p for UI and durable outbox requests', async (expectedUserId) => {
+    const token = `header.${Buffer.from(JSON.stringify({ userId: 91 })).toString('base64url')}.signature`;
+    (getAccessTokenForRequest as jest.Mock).mockResolvedValueOnce(token);
+    const json = { ok: true, data: { accepted: true } };
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200,
+      headers: { get: () => 'application/json' }, clone: () => ({ json: async () => json }) }) as any;
+    const response = await httpRequest('/client-orders', { expectedUserId });
+    expect(response.ok).toBe(true);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([{ userId: 92 }, {}])('never sends an order with a different or missing account claim %p', async (claims) => {
+    const token = `header.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.signature`;
+    (getAccessTokenForRequest as jest.Mock).mockResolvedValueOnce(token);
+    global.fetch = jest.fn() as any;
+    const response = await httpRequest('/client-orders', { method: 'PUT', body: {}, expectedUserId: '91' });
+    expect(response.ok).toBe(false);
+    expect(response.status).toBe(409);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
   it('preserves the structured order review instead of losing confirmation details', async () => {
     const details = { kind: 'ORDER_CHANGE_REVIEW_REQUIRED', confirmationToken: 'signed', baseContentToken: 'base', changes: [] };
     const json = { ok: false, message: 'Подтвердите изменение', error: { code: 'CONFLICT', details } };

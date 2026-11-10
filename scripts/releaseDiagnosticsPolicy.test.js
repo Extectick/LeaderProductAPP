@@ -20,12 +20,25 @@ test('retry rejects missing, enabled, or wrong-commit dev candidates', () => {
   assert.throws(() => validateCandidate('dev', sha, () => ({ ...createPolicy(dev), sentryEnabled: true })));
   assert.throws(() => validateCandidate('dev', 'b'.repeat(40), () => createPolicy(dev)));
 });
-test('production remains enabled and supports older candidates with existing symbol checks', () => {
+test('production supports explicit disabled diagnostics with no credentials', () => {
+  const prod = { ...dev, EXPO_PUBLIC_UPDATE_CHANNEL: 'prod' };
+  const policy = createPolicy(prod);
+  assert.equal(policy.sentryEnabled, false);
+  validateCandidate('prod', sha, () => policy);
+  assert.throws(() => validateCandidate('prod', sha, () => { throw new Error('missing'); }), /fresh candidate/);
+  assert.throws(() => validateCandidate('prod', sha, () => ({ ...policy, sentryEnabled: true })));
+  assert.throws(() => validateCandidate('prod', 'b'.repeat(40), () => policy));
+  for (const key of ['EXPO_PUBLIC_SENTRY_DSN', 'SENTRY_AUTH_TOKEN', 'SENTRY_READ_TOKEN', 'SENTRY_ORG', 'SENTRY_PROJECT']) {
+    assert.throws(() => createPolicy({ ...prod, [key]: 'PRIVATE-SENTINEL' }), error => !String(error).includes('PRIVATE-SENTINEL'));
+  }
+});
+test('enabled production candidates require an explicit matching policy', () => {
   const prod = { ...dev, EXPO_PUBLIC_UPDATE_CHANNEL: 'prod', EXPO_PUBLIC_SENTRY_ENABLED: 'true', SENTRY_AUTH_TOKEN: 'PRIVATE-SENTINEL' };
-  assert.equal(createPolicy(prod).sentryEnabled, true);
-  assert.ok(!JSON.stringify(createPolicy(prod)).includes('PRIVATE-SENTINEL'));
-  assert.throws(() => createPolicy({ ...prod, EXPO_PUBLIC_SENTRY_ENABLED: 'false' }));
-  validateCandidate('prod', sha, () => { throw new Error('must not read legacy policy'); });
+  const policy = createPolicy(prod);
+  assert.equal(policy.sentryEnabled, true);
+  assert.ok(!JSON.stringify(policy).includes('PRIVATE-SENTINEL'));
+  validateCandidate('prod', sha, () => policy, true);
+  assert.throws(() => validateCandidate('prod', sha, () => policy));
 });
 test('unknown release channels fail closed', () => {
   for (const channel of ['', undefined, 'production', 'deev']) assert.throws(() => validateChannel(channel));

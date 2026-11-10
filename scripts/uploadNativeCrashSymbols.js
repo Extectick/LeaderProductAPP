@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
 
 // Private SSH endpoint only. Never include source files or publish symbols with APK assets.
-assert.equal(process.env.EXPO_PUBLIC_UPDATE_CHANNEL, 'dev');
+assert.ok(['dev', 'prod'].includes(process.env.EXPO_PUBLIC_UPDATE_CHANNEL));
 assert.match(process.env.SENTRY_URL || '', /^http:\/\/127\.0\.0\.1:\d+\/?$/);
 const root = path.resolve('android/app/build/intermediates/merged_native_libs/release/mergeReleaseNativeLibs/out/lib');
 assert.ok(fs.existsSync(root), 'Unstripped native libraries must exist before publication');

@@ -34,6 +34,11 @@ on:
         required: false
         default: ''
         type: string
+      skipSentry:
+        description: Compatibility input; Sentry is disabled for all releases
+        required: false
+        default: true
+        type: boolean
 
 jobs:
   release-preflight:
@@ -64,7 +69,7 @@ jobs:
       - run: npm run test:unit -- --runInBand __tests__/helpHtml.unit.test.ts __tests__/helpHtmlEntity.unit.test.ts __tests__/helpHtmlMessage.unit.test.ts __tests__/helpHtmlSurface.unit.test.ts __tests__/helpHtmlDownload.unit.test.ts __tests__/helpHtmlActions.unit.test.ts __tests__/helpHtmlViewer.unit.test.ts __tests__/helpHtmlMessageRoute.unit.test.ts __tests__/helpHtmlRecycling.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/draftReview.unit.test.ts __tests__/clientOrderMarkup.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/orderSharing.unit.test.ts __tests__/legacyOrderRecovery.unit.test.ts
-      - run: npm run test:unit -- --runInBand __tests__/orderHeaderActions.unit.test.ts
+      - run: npm run test:unit -- --runInBand __tests__/orderHeaderActions.unit.test.ts __tests__/pickerBottomSheetLifecycle.unit.test.ts __tests__/clientOrderInvoices.unit.test.ts __tests__/invoiceRequestField.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/stockProductsScreen.unit.test.ts __tests__/stockProducts.unit.test.ts __tests__/stockProductRow.unit.test.ts __tests__/warehouseBalances.unit.test.ts __tests__/stockIncomingCost.unit.test.ts __tests__/stockMovementRow.unit.test.ts __tests__/receiptPresentation.unit.test.ts __tests__/salesPresentation.unit.test.ts __tests__/stockTabs.unit.test.ts __tests__/stockTabsPager.unit.test.ts __tests__/stockCache.unit.test.ts __tests__/warehouseSelection.unit.test.ts __tests__/filterLookupPickerPanel.unit.test.ts __tests__/clientOrdersShared.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/stockGestureLists.unit.test.ts __tests__/salesAnalytics.unit.test.ts __tests__/stockSalesChart.unit.test.ts __tests__/useSalesRange.unit.test.ts
       - run: npm run test:unit -- --runInBand __tests__/galleryHistory.unit.test.ts
@@ -95,12 +100,12 @@ jobs:
       EXPO_PUBLIC_MAP_STYLE_URL: https://tiles.openfreemap.org/styles/liberty
       EXPO_PUBLIC_TELEGRAM_BOT_USERNAME: ${{ secrets.EXPO_PUBLIC_TELEGRAM_BOT_USERNAME }}
       EXPO_PUBLIC_MAX_BOT_USERNAME: ${{ secrets.EXPO_PUBLIC_MAX_BOT_USERNAME }}
-      EXPO_PUBLIC_SENTRY_ENABLED: ${{ ((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && 'false' || 'true' }}
-      EXPO_PUBLIC_SENTRY_DSN: ${{ !((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && secrets.EXPO_PUBLIC_SENTRY_DSN || '' }}
-      SENTRY_AUTH_TOKEN: ${{ !((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && secrets.SENTRY_AUTH_TOKEN || '' }}
-      SENTRY_READ_TOKEN: ${{ !((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && secrets.SENTRY_READ_TOKEN || '' }}
-      SENTRY_ORG: ${{ !((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && secrets.SENTRY_ORG || '' }}
-      SENTRY_PROJECT: ${{ !((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && secrets.SENTRY_PROJECT || '' }}
+      EXPO_PUBLIC_SENTRY_ENABLED: 'false'
+      EXPO_PUBLIC_SENTRY_DSN: ''
+      SENTRY_AUTH_TOKEN: ''
+      SENTRY_READ_TOKEN: ''
+      SENTRY_ORG: ''
+      SENTRY_PROJECT: ''
       SENTRY_URL: http://127.0.0.1:19000
       EXPO_PUBLIC_SENTRY_ENVIRONMENT: ${{ ((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && 'development' || 'production' }}
       NODE_ENV: ${{ (github.event_name != 'workflow_dispatch' || inputs.channel == 'prod') && 'production' || 'development' }}
@@ -154,6 +159,7 @@ jobs:
           echo "EXPO_PUBLIC_SENTRY_RELEASE=com.leaderproduct.app@$ACTUAL+$BUILD-ota.${GITHUB_SHA:0:12}" >> "$GITHUB_ENV"
 
       - name: Validate crash-reporting target
+        if: ${{ env.EXPO_PUBLIC_SENTRY_ENABLED == 'true' }}
         run: node scripts/checkSentryConfig.js
 
       - name: Export Android OTA bundle
@@ -217,12 +223,12 @@ jobs:
       EXPO_PUBLIC_MAP_STYLE_URL: https://tiles.openfreemap.org/styles/liberty
       EXPO_PUBLIC_TELEGRAM_BOT_USERNAME: ${{ secrets.EXPO_PUBLIC_TELEGRAM_BOT_USERNAME }}
       EXPO_PUBLIC_MAX_BOT_USERNAME: ${{ secrets.EXPO_PUBLIC_MAX_BOT_USERNAME }}
-      EXPO_PUBLIC_SENTRY_ENABLED: ${{ ((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && 'false' || 'true' }}
-      EXPO_PUBLIC_SENTRY_DSN: ${{ !((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && secrets.EXPO_PUBLIC_SENTRY_DSN || '' }}
-      SENTRY_AUTH_TOKEN: ${{ !((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && secrets.SENTRY_AUTH_TOKEN || '' }}
-      SENTRY_READ_TOKEN: ${{ !((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && secrets.SENTRY_READ_TOKEN || '' }}
-      SENTRY_ORG: ${{ !((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && secrets.SENTRY_ORG || '' }}
-      SENTRY_PROJECT: ${{ !((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && secrets.SENTRY_PROJECT || '' }}
+      EXPO_PUBLIC_SENTRY_ENABLED: 'false'
+      EXPO_PUBLIC_SENTRY_DSN: ''
+      SENTRY_AUTH_TOKEN: ''
+      SENTRY_READ_TOKEN: ''
+      SENTRY_ORG: ''
+      SENTRY_PROJECT: ''
       SENTRY_URL: http://127.0.0.1:19000
       EXPO_PUBLIC_SENTRY_ENVIRONMENT: ${{ ((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && 'development' || 'production' }}
       NODE_ENV: ${{ (github.event_name != 'workflow_dispatch' || inputs.channel == 'prod') && 'production' || 'development' }}

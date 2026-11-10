@@ -89,12 +89,12 @@ jobs:
       EXPO_PUBLIC_MAP_STYLE_URL: https://tiles.openfreemap.org/styles/liberty
       EXPO_PUBLIC_TELEGRAM_BOT_USERNAME: ${{ secrets.EXPO_PUBLIC_TELEGRAM_BOT_USERNAME }}
       EXPO_PUBLIC_MAX_BOT_USERNAME: ${{ secrets.EXPO_PUBLIC_MAX_BOT_USERNAME }}
-      EXPO_PUBLIC_SENTRY_ENABLED: ${{ ((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && 'false' || 'true' }}
-      EXPO_PUBLIC_SENTRY_DSN: ${{ !((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && secrets.EXPO_PUBLIC_SENTRY_DSN || '' }}
-      SENTRY_AUTH_TOKEN: ${{ !((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && secrets.SENTRY_AUTH_TOKEN || '' }}
-      SENTRY_READ_TOKEN: ${{ !((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && secrets.SENTRY_READ_TOKEN || '' }}
-      SENTRY_ORG: ${{ !((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && secrets.SENTRY_ORG || '' }}
-      SENTRY_PROJECT: ${{ !((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && secrets.SENTRY_PROJECT || '' }}
+      EXPO_PUBLIC_SENTRY_ENABLED: 'false'
+      EXPO_PUBLIC_SENTRY_DSN: ''
+      SENTRY_AUTH_TOKEN: ''
+      SENTRY_READ_TOKEN: ''
+      SENTRY_ORG: ''
+      SENTRY_PROJECT: ''
       SENTRY_URL: http://127.0.0.1:19000
       SENTRY_DISABLE_AUTO_UPLOAD: 'true'
       SENTRY_DISABLE_NATIVE_DEBUG_UPLOAD: 'true'
@@ -188,6 +188,33 @@ jobs:
           node scripts/checkSentryConfig.js
           npx tsc --noEmit
           NODE_ENV=test BABEL_ENV=test npm run test:unit -- --runInBand
+
+      - name: Restore Firebase Android configuration
+        if: ${{ steps.strategy.outputs.apk_required == 'true' }}
+        env:
+          FIREBASE_ANDROID_CONFIG_PROD: ${{ secrets.FIREBASE_ANDROID_CONFIG_PROD }}
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const contents = process.env.FIREBASE_ANDROID_CONFIG_PROD;
+          if (!contents) {
+            throw new Error('FIREBASE_ANDROID_CONFIG_PROD must be configured before building an Android APK.');
+          }
+          let config;
+          try {
+            config = JSON.parse(contents);
+          } catch {
+            throw new Error('FIREBASE_ANDROID_CONFIG_PROD must contain a valid Firebase Android JSON configuration.');
+          }
+          if (!Array.isArray(config?.client) || !config.client.some(client => client?.client_info?.android_client_info?.package_name === 'com.leaderproduct.app')) {
+            throw new Error('Firebase Android configuration has no client for com.leaderproduct.app.');
+          }
+          const filename = './firebase/google-services.prod.json';
+          fs.mkdirSync('./firebase', { recursive: true });
+          fs.writeFileSync(filename, contents, { mode: 0o600 });
+          fs.appendFileSync(process.env.GITHUB_ENV, `GOOGLE_SERVICES_JSON=${filename}\n`);
+          console.log('Firebase Android configuration restored for com.leaderproduct.app.');
+          NODE
 
       - name: Restore Firebase Android configuration
         if: ${{ steps.strategy.outputs.apk_required == 'true' }}
@@ -373,12 +400,12 @@ jobs:
       EXPO_PUBLIC_MAP_STYLE_URL: https://tiles.openfreemap.org/styles/liberty
       EXPO_PUBLIC_TELEGRAM_BOT_USERNAME: ${{ secrets.EXPO_PUBLIC_TELEGRAM_BOT_USERNAME }}
       EXPO_PUBLIC_MAX_BOT_USERNAME: ${{ secrets.EXPO_PUBLIC_MAX_BOT_USERNAME }}
-      EXPO_PUBLIC_SENTRY_ENABLED: ${{ ((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && 'false' || 'true' }}
-      EXPO_PUBLIC_SENTRY_DSN: ${{ !((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && secrets.EXPO_PUBLIC_SENTRY_DSN || '' }}
-      SENTRY_AUTH_TOKEN: ${{ !((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && secrets.SENTRY_AUTH_TOKEN || '' }}
-      SENTRY_READ_TOKEN: ${{ !((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && secrets.SENTRY_READ_TOKEN || '' }}
-      SENTRY_ORG: ${{ !((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && secrets.SENTRY_ORG || '' }}
-      SENTRY_PROJECT: ${{ !((github.event_name == 'workflow_dispatch' && inputs.channel == 'dev') || (github.event_name != 'workflow_dispatch' && github.ref_name == 'dev')) && secrets.SENTRY_PROJECT || '' }}
+      EXPO_PUBLIC_SENTRY_ENABLED: 'false'
+      EXPO_PUBLIC_SENTRY_DSN: ''
+      SENTRY_AUTH_TOKEN: ''
+      SENTRY_READ_TOKEN: ''
+      SENTRY_ORG: ''
+      SENTRY_PROJECT: ''
       SENTRY_URL: http://127.0.0.1:19000
       SENTRY_DISABLE_AUTO_UPLOAD: 'true'
       SENTRY_DISABLE_NATIVE_DEBUG_UPLOAD: 'true'

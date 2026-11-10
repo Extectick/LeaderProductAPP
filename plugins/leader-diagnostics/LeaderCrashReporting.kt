@@ -53,7 +53,7 @@ object LeaderCrashReporting {
         .put("started_at", System.currentTimeMillis())
       SentryAndroid.init(app) { options ->
         options.dsn = __LEADER_DSN__
-        options.environment = "development"
+        options.environment = __LEADER_ENVIRONMENT__
         options.release = "${app.packageName}@$version+$build"
         options.dist = build
         options.isSendDefaultPii = false

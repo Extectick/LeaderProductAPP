@@ -5,6 +5,9 @@ import {
   type ClientOrdersReferenceData,
 } from '@/utils/clientOrdersService';
 import type { OrderGeoEventInput } from '@/utils/orderGeo';
+import { amendmentStatusLabel, submittedVersionOf } from './lib/orderSubmissionPresentation';
+import { getClientOrderItems } from './lib/orderItems';
+export { getClientOrderItems, getClientOrderItemsCount } from './lib/orderItems';
 
 export const DEFAULT_ORDER_CURRENCY = 'RUB';
 
@@ -349,9 +352,9 @@ export function mapOnecOrderStatus(value?: string | null) {
   return null;
 }
 
-export function getOrderDisplayStatus(order?: Pick<ClientOrder, 'status' | 'number1c' | 'origin' | 'status1c' | 'currentState1c' | 'documentStatus1c' | 'shipmentProhibited' | 'isPostedIn1c'> | null) {
+export function getOrderDisplayStatus(order?: Pick<ClientOrder, 'status' | 'number1c' | 'origin' | 'status1c' | 'currentState1c' | 'documentStatus1c' | 'shipmentProhibited' | 'isPostedIn1c' | 'submittedVersion'> | null) {
   if (!order) return 'DRAFT';
-  if (order.shipmentProhibited && !order.isPostedIn1c) return 'DEBT';
+  if (order.shipmentProhibited && !order.isPostedIn1c && !order.submittedVersion?.isPostedIn1c) return 'DEBT';
   const onecText = order.currentState1c || order.status1c;
   const isOnecBacked = Boolean(order.number1c || order.origin === 'onec' || order.origin === 'merged');
   if (isOnecBacked && onecText) {
@@ -362,11 +365,14 @@ export function getOrderDisplayStatus(order?: Pick<ClientOrder, 'status' | 'numb
 
 export function getOrderDisplayStatusLabel(order?: Pick<ClientOrder, 'status' | 'number1c' | 'origin' | 'status1c' | 'currentState1c' | 'documentStatus1c' | 'shipmentProhibited' | 'isPostedIn1c'> | null) {
   if (!order) return STATUS_LABELS.DRAFT;
+  const amendmentLabel = amendmentStatusLabel(order as ClientOrder);
+  if (amendmentLabel) return amendmentLabel;
   if (order.origin === 'device') {
     const localStatus = (order as { offlineDraftStatus?: string }).offlineDraftStatus;
     if (localStatus === 'READY_TO_SEND') return 'В очереди на устройстве';
     if (localStatus === 'ON_DEVICE') return STATUS_LABELS.DRAFT;
     if (localStatus === 'SENDING') return 'Отправляется';
+    if (localStatus === 'API_ACCEPTED') return 'Принят API · обработка';
     if (localStatus === 'PRICE_REVIEW') return 'Цены изменились';
     if (localStatus === 'NEEDS_EDIT') return 'Требует исправления';
     if (localStatus === 'SEND_ERROR') return 'Ошибка отправки';
@@ -455,7 +461,7 @@ export function emptyDraft(): DraftOrder {
     deliveryAddressGuid: '',
     deliveryDate: null,
     paymentForm: null,
-    deliveryMethod: null,
+    deliveryMethod: deliveryMethodForNewOrder(),
     comment: '',
     currency: DEFAULT_ORDER_CURRENCY,
     priceTypeGuid: null,
@@ -511,6 +517,11 @@ export function normalizeClientOrderDeliveryMethod(value: unknown): string | nul
     return 'ДоКлиента';
   }
   return normalized;
+}
+
+/** Only new documents/copies get a default; old unknown fields stay unknown. */
+export function deliveryMethodForNewOrder(value?: string | null) {
+  return normalizeClientOrderDeliveryMethod(value) || 'ДоКлиента';
 }
 
 export function manualPriceInput(item?: Pick<DraftItem, 'manualPrice'> | null) {
@@ -867,21 +878,6 @@ export function getOrderActivityAt(order: ClientOrder) {
   return order.updatedAt || order.queuedAt || order.sentTo1cAt || order.createdAt || '';
 }
 
-export function getClientOrderItems(order?: Pick<ClientOrder, 'items'> | null) {
-  if (!Array.isArray((order as any)?.items)) return [];
-  return (order as ClientOrder).items.filter((item): item is ClientOrderItem => {
-    if (!item || typeof item !== 'object') return false;
-    const product = (item as ClientOrderItem).product;
-    return !!product && typeof product === 'object' && !!product.guid;
-  });
-}
-
-export function getClientOrderItemsCount(order?: Pick<ClientOrder, 'items' | 'itemsCount'> | null) {
-  const explicit = Number((order as any)?.itemsCount);
-  if (Number.isFinite(explicit) && explicit >= 0) return explicit;
-  return getClientOrderItems(order as any).filter((item) => !item.isCancelled).length;
-}
-
 export function orderToDraft(order: ClientOrder): DraftOrder {
   const localDraft = (order as ClientOrder & { localDraft?: DraftOrder }).localDraft;
   if (order.origin === 'device' && localDraft && Array.isArray(localDraft.items)) {
@@ -1126,7 +1122,7 @@ export function computeDraftMetrics(draft: DraftOrder) {
   });
 }
 
-export function validateDraft(draft: DraftOrder): DraftValidation {
+export function validateDraft(draft: DraftOrder, options?: { recheckStock?: boolean }): DraftValidation {
   const itemMessages: Record<string, string[]> = {};
   const itemWarnings: Record<string, string[]> = {};
   let hasSaveBlockingItemErrors = false;
@@ -1220,7 +1216,8 @@ export function validateDraft(draft: DraftOrder): DraftValidation {
     }
     const stockShortageMessage = getStockShortageMessage(item);
     if (stockShortageMessage) {
-      messages.push(stockShortageMessage);
+      if (options?.recheckStock) warnings.push(`${stockShortageMessage} API перепроверит остаток при отправке.`);
+      else messages.push(stockShortageMessage);
     }
     if (messages.length) {
       itemMessages[item.key] = messages;
@@ -1322,6 +1319,8 @@ export function buildLocalDraftPayload(draft: DraftOrder, reason: 'manual' | 'au
 
 export function getClientOrderDisplayNumber(order: Pick<ClientOrder, 'guid' | 'number1c' | 'clientOrderId' | 'origin'>) {
   if (order.number1c) return order.number1c;
+  const submittedNumber = submittedVersionOf(order as ClientOrder)?.number1c;
+  if (submittedNumber) return submittedNumber;
   if (order.guid.startsWith('device-order-')) {
     const clientId = order.clientOrderId?.replace(/^legacy-server:/, '');
     // Use the same short-id format as server drafts without changing the sync identity.

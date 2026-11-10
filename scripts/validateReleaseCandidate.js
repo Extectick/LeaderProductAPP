@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const crypto = require('node:crypto');
 const assert = require('node:assert/strict');
 const kind = process.env.RELEASE_KIND;
-require('./releaseDiagnosticsPolicy').validateCandidate(process.env.EXPO_PUBLIC_UPDATE_CHANNEL, process.env.RELEASE_COMMIT_SHA);
+require('./releaseDiagnosticsPolicy').validateCandidate(process.env.EXPO_PUBLIC_UPDATE_CHANNEL, process.env.RELEASE_COMMIT_SHA, undefined, process.env.EXPO_PUBLIC_SENTRY_ENABLED === 'true');
 const version = require('./readNativeVersion').readVersion();
 const m = JSON.parse(fs.readFileSync('release-artifacts/' + (kind === 'apk' ? 'release-metadata.json' : 'ota-metadata.json')));
 assert.equal(m.commitSha, process.env.RELEASE_COMMIT_SHA);

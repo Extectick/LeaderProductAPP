@@ -1,11 +1,11 @@
 import { apiClient } from '@/utils/apiClient';
 import type { useClientOrdersWorkspace } from '../useClientOrdersWorkspace';
 
-export type OrderShareLink = { url: string; expiresAt: string; active: boolean };
-export type SharingWorkspace = Pick<ReturnType<typeof useClientOrdersWorkspace>, 'selectedOrder' | 'readOnly' | 'dirty' | 'saveDraft' | 'mutationLocked'>;
+export type OrderShareLink = { url: string; expiresAt: string | null; active: boolean };
+export type SharingWorkspace = Pick<ReturnType<typeof useClientOrdersWorkspace>, 'prepareOrderForSharing' | 'mutationLocked'>;
 
-/** List actions publish by identity only: never select/open a row or save its partial DTO. */
-export async function publishClientOrderShareByGuid(guid: string, rotate = false) {
+/** Only publish after the workspace has confirmed the target's latest saved state. */
+async function publishClientOrderShareByGuid(guid: string, rotate = false) {
   if (!guid || guid.startsWith('device-')) {
     throw new Error('Заказ пока только на устройстве. Для ссылки сначала сохраните его на сервере.');
   }
@@ -15,13 +15,12 @@ export async function publishClientOrderShareByGuid(guid: string, rotate = false
 }
 
 /** Sharing only saves to API. It must never submit to 1C or operate on a list-row DTO. */
-export async function publishClientOrderShare(workspace: SharingWorkspace, rotate = false) {
+export async function publishClientOrderShare(workspace: SharingWorkspace, rotate = false, guid?: string) {
   if (workspace.mutationLocked) throw new Error('Дождитесь завершения операции с документом');
-  let order = workspace.selectedOrder;
-  if (!workspace.readOnly && (workspace.dirty || !order || order.guid.startsWith('device-'))) {
-    order = await workspace.saveDraft({ reason: 'manual', intent: 'SAVE', serverOnly: true });
-  }
-  if (!order || order.guid.startsWith('device-')) {
+  // A local autosave can retain its original server GUID and clear `dirty`.
+  // Both entry points must confirm the target's durable operation with the API.
+  const order = await workspace.prepareOrderForSharing(guid);
+  if (!order?.guid || order.origin === 'device' || order.guid.startsWith('device-')) {
     throw new Error('Не удалось сохранить заказ на сервере. Проверьте подключение и заполнение заказа. Черновик остаётся на устройстве.');
   }
   return publishClientOrderShareByGuid(order.guid, rotate);

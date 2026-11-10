@@ -306,18 +306,32 @@ export type ClientOrderInvoice = {
   updatedAt?: string | null;
 };
 
+export type SubmittedOrderVersion = {
+  orderGuid: string; clientRevision: number | null; number1c: string | null; isPostedIn1c: boolean;
+  status: string; syncState: string; revision: number; totalAmount: number | null; itemsCount: number; updatedAt: string;
+};
+export type ClientOrderAmendmentReview = {
+  orderGuid: string; serverRevision: number; number1c: string | null; baseContentToken: string; confirmationToken?: string;
+  requiresConfirmation: boolean;
+  changes: Array<{ lineGuid?: string; productName: string; reason: string; before: string | number | null; after: string | number | null }>;
+};
 export type ClientOrder = {
   sourceBaseKey?: string;
   sourceTruncated?: boolean;
   commentTruncated?: boolean;
   sourceCurrencyName?: string;
+  /** Independent accepted version; never proof that pending local edits were submitted. */
+  submittedVersion?: SubmittedOrderVersion | null;
+  submissionErrorDetails?: { backendErrorCode?: string; message?: string; errorDetails?: any } | null;
+  acceptedClientOperation?: { clientRevision: number; intent: 'SUBMIT'; payload: Record<string, unknown> } | null;
   draftReview?: {
     code: string;
     message: string;
     warehouseGuid?: string | null;
     clientRevision?: number;
     checkedAt?: string;
-    details?: { items?: Array<{ productGuid: string; name?: string; required: number; available: number; shortage?: number }> } | null;
+    details?: { items?: Array<{ productGuid: string; lineGuid?: string | null; name?: string; productName?: string;
+      required?: number; available?: number; shortage?: number; oldPrice?: number; currentPrice?: number | null; priceAvailable?: boolean }>; [key: string]: any } | null;
   } | null;
   contentToken?: string;
   guid: string;
@@ -348,6 +362,8 @@ export type ClientOrder = {
   sourceUpdatedAt?: string | null;
   revision: number;
   syncState: string;
+  /** Exact immutable inbox operation confirmed by the authenticated API. */
+  acceptedSubmission?: import('@/src/features/clientOrders/offline/orderSubmissionProtocol').SubmissionReceipt;
   status: string;
   queuePosition?: number | null;
   status1c?: string | null;
@@ -617,6 +633,22 @@ export async function getClientOrder(guid: string, options: {baseKey?: string; e
   };
   // Source-bound requests must not share another account's or canceled caller's lease.
   return options.baseKey!==undefined||options.signal||options.expectedUserId!==undefined?load():dedupeRead(`GET ${path}`,load);
+}
+
+/** Partial canonical server state, not an editable document or a new receipt. */
+export type ClientOrderState = Pick<ClientOrder, 'guid' | 'appGuid' | 'clientOrderId' | 'clientRevision'
+  | 'revision' | 'source' | 'status' | 'syncState' | 'number1c' | 'date1c' | 'isPostedIn1c'
+  | 'hasRealization' | 'deliveryDate' | 'totalAmount' | 'itemsCount' | 'lastExportError' | 'last1cError'
+  | 'cancelRequestedAt' | 'queuedAt' | 'sentTo1cAt' | 'updatedAt' | 'createdByUser' | 'acceptedClientOperation'>;
+
+export async function getClientOrderStates(identifiers: string[], userId: string, proofClientOrderIds: string[] = []): Promise<ClientOrderState[]> {
+  const ids = [...new Set(identifiers.filter(Boolean))].slice(0, 50);
+  if (!ids.length) return [];
+  const res = await apiClient<{ identifiers: string[]; proofClientOrderIds: string[] }, { items: ClientOrderState[] }>('/api/client-orders/states', {
+    method: 'POST', body: { identifiers: ids, proofClientOrderIds: proofClientOrderIds.filter(id => ids.includes(id)).slice(0, 50) }, expectedUserId: userId, timeoutMs: 15_000,
+  });
+  if (!res.ok || !res.data) throw new Error(getErrorMessage('Не удалось проверить состояние заказов', res.message));
+  return res.data.items;
 }
 
 export async function getClientOrderInvoices(guid: string) {
@@ -1170,6 +1202,14 @@ export async function putClientOrderByClientId(
     throwApiError('Не удалось сохранить заказ клиента', res);
   }
   return normalizeClientOrder(res.data);
+}
+
+export async function previewClientOrderAmendment(clientOrderId: string, payload: any): Promise<ClientOrderAmendmentReview> {
+  const res = await apiClient<any, ClientOrderAmendmentReview>(`${API_ENDPOINTS.CLIENT_ORDERS.BY_CLIENT_ID(clientOrderId)}/review`, {
+    method: 'POST', body: payload, timeoutMs: 15_000, networkRetryCount: 0,
+  });
+  if (!res.ok || !res.data) throwApiError('Не удалось согласовать изменения. Локальная копия сохранена.', res);
+  return res.data;
 }
 
 export async function getClientOrderByClientId(clientOrderId: string) {

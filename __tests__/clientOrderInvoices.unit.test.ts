@@ -14,12 +14,31 @@ jest.mock('react-native', () => ({
 import {
   getClientOrderInvoiceActionLabel,
   getClientOrderInvoiceIdentifier,
+  hasClientOrderInvoiceDocument,
+  isClientOrderInvoiceRequestForOrder,
   getClientOrderInvoicePresentation,
   getDownloadableClientOrderInvoices,
   hasPendingClientOrderInvoice,
 } from '../src/features/clientOrders/lib/clientOrderInvoices';
 
 describe('client order invoice presentation', () => {
+  it.each([[null, null, false], ['', '', false], [null, 'old-order', false],
+    ['new-order', 'old-order', false], ['order', null, false], ['order', 'order', true]])
+  ('scopes pending requests to a nonempty order identity: %s / %s', (order, request, expected) => {
+    expect(isClientOrderInvoiceRequestForOrder(order, request)).toBe(expected);
+  });
+
+  it('never treats empty, device-local or unsent API drafts as an invoice document', () => {
+    expect(hasClientOrderInvoiceDocument(null)).toBe(false);
+    const draft = { guid: 'new-order', status: 'DRAFT', syncState: 'DRAFT', source: 'MANAGER_APP' } as any;
+    expect(hasClientOrderInvoiceDocument(draft)).toBe(false);
+    expect(hasClientOrderInvoiceDocument({ ...draft, status: 'QUEUED', syncState: 'QUEUED', origin: 'device' })).toBe(false);
+    expect(hasClientOrderInvoiceDocument({ ...draft, source: 'DEVICE_LOCAL', status: 'QUEUED', syncState: 'QUEUED' })).toBe(false);
+    expect(hasClientOrderInvoiceDocument({ ...draft, number1c: 'НОУТ-1' })).toBe(true);
+    expect(hasClientOrderInvoiceDocument({ ...draft, origin: 'device', number1c: 'НОУТ-1' })).toBe(true);
+    expect(hasClientOrderInvoiceDocument({ ...draft, status: 'SENT_TO_1C', syncState: 'SYNCED' })).toBe(true);
+  });
+
   it('prefers the stable app GUID over the live 1C document GUID', () => {
     expect(getClientOrderInvoiceIdentifier({
       guid: 'fd923674-867f-11f1-a4a6-d843ae930d20',

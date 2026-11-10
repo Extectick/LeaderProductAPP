@@ -2,12 +2,20 @@ name: Release diagnostics preflight
 on:
   workflow_call:
     inputs:
+      sentryEnabled:
+        type: boolean
+        default: false
+        required: false
       channel:
         type: string
         default: prod
         required: false
   workflow_dispatch:
     inputs:
+      sentryEnabled:
+        type: boolean
+        default: false
+        required: false
       channel:
         type: choice
         options: [prod, dev]
@@ -31,5 +39,5 @@ jobs:
         env:
           RELEASE_CHANNEL: ${{ inputs.channel }}
         run: node -e "require('./scripts/releaseDiagnosticsPolicy').validateChannel(process.env.RELEASE_CHANNEL)"
-      - if: ${{ inputs.channel != 'dev' }}
+      - if: ${{ inputs.sentryEnabled }}
         run: node scripts/checkReleaseDiagnostics.js

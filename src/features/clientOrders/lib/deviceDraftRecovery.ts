@@ -1,7 +1,9 @@
 import type { ClientOrder } from '@/utils/clientOrdersService';
 import { buildCopyPayload, orderToDraft } from '../clientOrdersShared';
 
-type Payload = ReturnType<typeof buildCopyPayload>;
+type Payload = ReturnType<typeof buildCopyPayload> & {
+  offlineReview?: { pricePolicy?: 'ASK' | 'USE_CURRENT' | 'KEEP_DRAFT' };
+};
 export type RecoverableDeviceDraft = {
   clientOrderId: string;
   clientRevision: number;
@@ -50,6 +52,7 @@ export function sameDeviceDraftContent(left: Payload, right: Payload) {
 }
 
 export function savedOrderConfirmsDeviceDraft(entry: RecoverableDeviceDraft, order: ClientOrder, userId: number) {
+  if (acceptedSubmissionConfirmsDeviceDraft(entry, order, userId)) return true;
   if (!entry.clientOrderId || entry.clientOrderId.startsWith('legacy:') || entry.clientOrderId.startsWith('legacy-server:')
     || order.origin === 'device' || !order.guid || order.clientOrderId !== entry.clientOrderId
     || order.createdByUser?.id !== userId || !Number.isInteger(order.clientRevision)
@@ -60,4 +63,44 @@ export function savedOrderConfirmsDeviceDraft(entry: RecoverableDeviceDraft, ord
   } catch {
     return false;
   }
+}
+
+/** Counters can differ after a failed autosave or an authorized server recovery.
+ * Retire only identical hash-verified accepted input, never normalized 1C fields. */
+export function acceptedSubmissionConfirmsDeviceDraft(entry: RecoverableDeviceDraft, order: ClientOrder, userId: number) {
+  return entry.intent === 'SUBMIT' && acceptedInputMatchesDeviceDraft(entry, order, userId);
+}
+
+/** Also allows a redundant SAVE copy, but only with the exact accepted input.
+ * A server number, matching total or newer revision alone is never sufficient. */
+export function acceptedInputMatchesDeviceDraft(entry: RecoverableDeviceDraft, order: ClientOrder, userId: number) {
+  const proof = order.acceptedClientOperation;
+  if (!proof || proof.intent !== 'SUBMIT'
+    || entry.clientOrderId.startsWith('legacy') || order.clientOrderId !== entry.clientOrderId
+    || order.origin === 'device' || !order.guid || order.createdByUser?.id !== userId
+    || order.syncState !== 'SYNCED' || order.status !== 'CONFIRMED' || !order.isPostedIn1c || !order.number1c
+    || order.lastExportError || order.last1cError
+    || !Number.isInteger(proof.clientRevision) || proof.clientRevision !== order.clientRevision
+    || !Number.isInteger(entry.clientRevision) || entry.clientRevision < 1 || proof.clientRevision < 1) return false;
+  try {
+    const accepted = proof.payload as Payload;
+    const policy = entry.payload.offlineReview?.pricePolicy;
+    // ASK can be resolved by a later explicit choice. A new explicit choice is
+    // not redundant unless that same choice was accepted too.
+    if (policy && policy !== 'ASK' && policy !== accepted.offlineReview?.pricePolicy) return false;
+    if (!sameDeviceDraftContent(entry.payload, accepted)) return false;
+    const acceptedItems = new Map(accepted.items.map(item => [guid(item.lineGuid), item]));
+    // Here both sides are original packets, not normalized 1C lines. Preserve
+    // a changed quoted price even when no manual price was entered.
+    return entry.payload.items.every(item => number(item.manualPrice) !== null
+      || number(item.basePrice) === number(acceptedItems.get(guid(item.lineGuid))?.basePrice));
+  } catch { return false; }
+}
+
+export function sameDeviceDraftInput(left: Payload, right: Payload) {
+  if (!sameDeviceDraftContent(left, right)) return false;
+  if ((left.offlineReview?.pricePolicy || 'ASK') !== (right.offlineReview?.pricePolicy || 'ASK')) return false;
+  const other = new Map(right.items.map(item => [guid(item.lineGuid), item]));
+  return left.items.every(item => number(item.manualPrice) !== null
+    || number(item.basePrice) === number(other.get(guid(item.lineGuid))?.basePrice));
 }

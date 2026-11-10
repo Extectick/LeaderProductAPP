@@ -34,7 +34,7 @@ export interface HttpResponse<T> {
 
 export interface HttpRequestOptions<Req> {
   /** Pin credential-bearing requests to the initiating account, including token-refresh retries. */
-  expectedUserId?: number;
+  expectedUserId?: number | string;
   method?: HttpMethod;
   body?: Req | BodyLike;
   headers?: Record<string, string>;
@@ -116,7 +116,10 @@ export async function httpRequest<Req = undefined, Res = any>(
   async function doFetch(tk: string | null, onHeaders: () => void): Promise<AttemptResult> {
     if (options.expectedUserId !== undefined) {
       let matches = false;
-      try { matches = Number(jwtDecode<{ userId?: number }>(tk || '').userId) === options.expectedUserId; } catch { /* fail closed */ }
+      try {
+        const owner = jwtDecode<{ userId?: number | string }>(tk || '').userId;
+        matches = owner != null && String(owner) === String(options.expectedUserId);
+      } catch { /* fail closed */ }
       if (!matches) throw new Error('ACCOUNT_CHANGED');
     }
     const h = buildHeaders(headers, tk, isForm);

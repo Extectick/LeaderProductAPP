@@ -244,4 +244,3 @@ const galleryStyles = StyleSheet.create({
   productGalleryThumbActive: { borderColor: '#2563EB', borderWidth: 2 },
   productGalleryThumbImage: { width: '100%', height: '100%' },
 });
-

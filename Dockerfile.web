@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM node:20-alpine AS build
+FROM node:24-alpine AS build
 
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -14,8 +14,12 @@ RUN --mount=type=cache,target=/root/.npm \
 COPY . .
 
 ARG EXPO_PUBLIC_API_URL_DEV
+ARG EXPO_PUBLIC_MAP_STYLE_URL
 ARG EXPO_PUBLIC_TELEGRAM_BOT_USERNAME
 ENV EXPO_PUBLIC_API_URL_DEV=${EXPO_PUBLIC_API_URL_DEV}
+ENV EXPO_PUBLIC_MAP_STYLE_URL=${EXPO_PUBLIC_MAP_STYLE_URL}
+ENV EXPO_PUBLIC_UPDATE_CHANNEL=prod
+ENV EXPO_PUBLIC_OTA_UPDATE_URL=https://api.leader-product.ru/ota/update
 ENV EXPO_PUBLIC_TELEGRAM_BOT_USERNAME=${EXPO_PUBLIC_TELEGRAM_BOT_USERNAME}
 
 RUN npm run build:web

@@ -14,7 +14,8 @@ function setup() {
   jest.resetModules();
   const db = {
     execAsync: jest.fn().mockResolvedValue(undefined),
-    getFirstAsync: jest.fn(async (sql: string) => sql.includes('journal_mode') ? { journal_mode: 'wal' } : { user_version: 4 }),
+    runAsync: jest.fn().mockResolvedValue({ changes: 1 }),
+    getFirstAsync: jest.fn(async (sql: string) => sql.includes('journal_mode') ? { journal_mode: 'wal' } : { user_version: 5 }),
     getAllAsync: jest.fn().mockResolvedValue([]),
     withExclusiveTransactionAsync: jest.fn(async (task: (tx: any) => Promise<void>) => task(db)),
     closeAsync: jest.fn().mockResolvedValue(undefined),

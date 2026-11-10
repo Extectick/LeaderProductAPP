@@ -43,16 +43,17 @@ test('stores action names and route templates but never document bodies', () => 
   expect(event.tags.capture_mode).toBe('javascript');
   expect(event.tags.app_session_id).toBe('session');
 });
-test('legacy APK and production are not opted into unsafe native capture through OTA', () => {
+test('legacy APK remains JS-only; new production APK uses its native privacy hook', () => {
   mockNative.enabled = false;
   let m = require('../src/shared/monitoring'); m.initMonitoring();
   expect(mockSdk.init).toHaveBeenLastCalledWith(expect.objectContaining({ autoInitializeNativeSdk: true, enableNativeCrashHandling: false }));
   jest.resetModules(); mockNative.enabled = true; process.env.EXPO_PUBLIC_UPDATE_CHANNEL = 'prod';
   m = require('../src/shared/monitoring'); m.initMonitoring();
-  expect(mockSdk.init).toHaveBeenLastCalledWith(expect.objectContaining({ enableNativeCrashHandling: false }));
+  expect(mockSdk.init).toHaveBeenLastCalledWith(expect.objectContaining({ autoInitializeNativeSdk: false, enableNativeCrashHandling: true, environment: 'production' }));
 });
 
-test('disabled monitoring never initializes JS or sends user, screen, or actions to the native bridge', async () => {
+test.each(['dev', 'prod'])('disabled %s monitoring never initializes JS or sends user, screen, or actions to the native bridge', async (channel) => {
+  process.env.EXPO_PUBLIC_UPDATE_CHANNEL = channel;
   process.env.EXPO_PUBLIC_SENTRY_ENABLED = 'false';
   const m = require('../src/shared/monitoring');
   m.initMonitoring();

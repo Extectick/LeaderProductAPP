@@ -1,5 +1,5 @@
 import { buildCopyPayload, orderToDraft } from '../src/features/clientOrders/clientOrdersShared';
-import { savedOrderConfirmsDeviceDraft, sameDeviceDraftContent } from '../src/features/clientOrders/lib/deviceDraftRecovery';
+import { acceptedSubmissionConfirmsDeviceDraft, savedOrderConfirmsDeviceDraft, sameDeviceDraftContent } from '../src/features/clientOrders/lib/deviceDraftRecovery';
 
 const order: any = {
   guid: 'server-guid', origin: 'local', clientOrderId: 'client-id', clientRevision: 1,
@@ -46,5 +46,74 @@ describe('safe recovery of legacy device drafts', () => {
     expect(sameDeviceDraftContent(a, { ...a, saveReason: 'autosave', integrity: { baseContentToken: 'new', confirmationToken: undefined } })).toBe(true);
     expect(sameDeviceDraftContent(a, { ...a, items: [...a.items, a.items[0]] })).toBe(false);
     expect(sameDeviceDraftContent(a, { ...a, items: [{ ...a.items[0], manualPrice: 2 }] })).toBe(false);
+  });
+});
+
+describe('posted operation with a redundant newer local counter (Kurenkova regression)', () => {
+  const local = () => ({ ...entry(), clientRevision: 3 });
+  const accepted = () => ({ ...order, clientRevision: 2, syncState: 'SYNCED', isPostedIn1c: true,
+    number1c: 'НОУТ-123876', lastExportError: null, last1cError: null,
+    // Current 1C fields may differ; only hash-verified original input proves the submission.
+    currency: '', items: [{ ...order.items[0], isManualPrice: false, manualPrice: null }],
+    acceptedClientOperation: { clientRevision: 2, intent: 'SUBMIT', payload: entry().payload } });
+  it('accepts identical historical input without requiring client revision equality or resubmission', () => {
+    expect(acceptedSubmissionConfirmsDeviceDraft(local(), accepted() as any, 98)).toBe(true);
+    expect(savedOrderConfirmsDeviceDraft(local(), accepted() as any, 98)).toBe(true);
+  });
+  it.each([1, 2, 3])('reconciles accepted identical input across counters (local=%s), but never discards differing edits', revision => {
+    expect(acceptedSubmissionConfirmsDeviceDraft({ ...local(), clientRevision: revision }, accepted() as any, 98)).toBe(true);
+    const changed = { ...local(), clientRevision: revision, payload: { ...entry().payload, comment: 'New local edit' } };
+    expect(acceptedSubmissionConfirmsDeviceDraft(changed, accepted() as any, 98)).toBe(false);
+  });
+  it.each([0, -1, 1.5, NaN])('retains invalid local counters (%s)', clientRevision => {
+    expect(acceptedSubmissionConfirmsDeviceDraft({ ...local(), clientRevision }, accepted() as any, 98)).toBe(false);
+  });
+  it('clears the identical failed revision 30 after authorized recovery as revision 31 (НОУТ-126165)', () => {
+    const confirmed = { ...accepted(), clientRevision: 31,
+      acceptedClientOperation: { clientRevision: 31, intent: 'SUBMIT', payload: entry().payload } };
+    expect(acceptedSubmissionConfirmsDeviceDraft({ ...local(), clientRevision: 30 }, confirmed as any, 98)).toBe(true);
+    expect(acceptedSubmissionConfirmsDeviceDraft({ ...local(), clientRevision: 30,
+      payload: { ...entry().payload, deliveryDate: '2026-10-22' } }, confirmed as any, 98)).toBe(false);
+  });
+  it.each([
+    { clientOrderId: 'other' }, { createdByUser: { id: 2 } }, { status: 'DRAFT' }, { syncState: 'QUEUED' },
+    { isPostedIn1c: false }, { number1c: null }, { acceptedClientOperation: null }, { clientRevision: 1 },
+    { last1cError: 'error' }, { lastExportError: 'error' }, { origin: 'device' },
+  ])('retains the local copy without complete matching acceptance evidence: %j', patch => {
+    expect(acceptedSubmissionConfirmsDeviceDraft(local(), { ...accepted(), ...patch } as any, 98)).toBe(false);
+  });
+  it.each(['quantity', 'manualPrice', 'productGuid', 'packageGuid', 'lineGuid'])('preserves a new local %s change', field => {
+    const changed = local();
+    changed.payload.items[0] = { ...changed.payload.items[0], [field]: ['quantity', 'manualPrice'].includes(field) ? 99 : 'changed' };
+    expect(acceptedSubmissionConfirmsDeviceDraft(changed, accepted() as any, 98)).toBe(false);
+  });
+  it.each(['comment', 'warehouseGuid', 'organizationGuid', 'priceTypeGuid', 'deliveryDate'])('preserves a new local %s change', field => {
+    const changed = local(); (changed.payload as any)[field] = 'changed';
+    expect(acceptedSubmissionConfirmsDeviceDraft(changed, accepted() as any, 98)).toBe(false);
+  });
+  it('does not consume a SAVE or an unproven legacy identity', () => {
+    expect(acceptedSubmissionConfirmsDeviceDraft({ ...local(), intent: 'SAVE' }, accepted() as any, 98)).toBe(false);
+    expect(acceptedSubmissionConfirmsDeviceDraft({ ...local(), clientOrderId: 'legacy-server:old' }, accepted() as any, 98)).toBe(false);
+  });
+  it('preserves a changed quoted price while comparing original packets rather than later 1C prices', () => {
+    const candidate = local();
+    candidate.payload.items[0] = { ...candidate.payload.items[0], manualPrice: undefined, basePrice: 110 };
+    const proofPayload = JSON.parse(JSON.stringify(candidate.payload));
+    const confirmed = { ...accepted(),
+      acceptedClientOperation: { clientRevision: 2, intent: 'SUBMIT', payload: proofPayload } };
+    expect(acceptedSubmissionConfirmsDeviceDraft(candidate, confirmed as any, 98)).toBe(true);
+    candidate.payload.items[0].basePrice = 120;
+    expect(acceptedSubmissionConfirmsDeviceDraft(candidate, confirmed as any, 98)).toBe(false);
+  });
+  it.each(['USE_CURRENT', 'KEEP_DRAFT'] as const)('preserves a different explicit price choice: %s', policy => {
+    const candidate = { ...local(), payload: { ...local().payload, offlineReview: { pricePolicy: policy } } };
+    const proofPayload = { ...entry().payload, offlineReview: { pricePolicy: policy === 'KEEP_DRAFT' ? 'USE_CURRENT' : 'KEEP_DRAFT' } };
+    const confirmed = { ...accepted(),
+      acceptedClientOperation: { clientRevision: 2, intent: 'SUBMIT', payload: proofPayload } };
+    expect(acceptedSubmissionConfirmsDeviceDraft(candidate, confirmed as any, 98)).toBe(false);
+    confirmed.acceptedClientOperation.payload.offlineReview.pricePolicy = policy;
+    expect(acceptedSubmissionConfirmsDeviceDraft(candidate, confirmed as any, 98)).toBe(true);
+    candidate.payload.offlineReview.pricePolicy = 'ASK' as any;
+    expect(acceptedSubmissionConfirmsDeviceDraft(candidate, confirmed as any, 98)).toBe(true);
   });
 });

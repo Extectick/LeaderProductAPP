@@ -13,7 +13,7 @@ type NativeDiagnostics = {
 };
 
 export function getNativeDiagnostics(): NativeDiagnostics | null {
-  if (process.env.EXPO_PUBLIC_SENTRY_ENABLED !== 'true' || Platform.OS !== 'android' || process.env.EXPO_PUBLIC_UPDATE_CHANNEL !== 'dev') return null;
+  if (process.env.EXPO_PUBLIC_SENTRY_ENABLED !== 'true' || Platform.OS !== 'android') return null;
   try {
     const native = NativeModules.LeaderDiagnostics as NativeDiagnostics | undefined;
     return native?.enabled && native.version === 1 ? native : null;

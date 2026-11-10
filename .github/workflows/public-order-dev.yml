@@ -1,17 +1,20 @@
-name: Deploy Public Order Web (dev)
+name: Deploy Public Order Web
 on:
   push:
-    branches: [dev]
+    branches: [dev, main, production]
     paths: ['public-order/**', 'src/features/clientOrders/components/ProductImageGalleryDialog.tsx', 'src/features/clientOrders/hooks/useGalleryHistory.ts', 'scripts/buildOrderWeb.cjs', '.github/workflows/public-order-dev.yml', 'assets/images/icon.png', 'package-lock.json']
   workflow_dispatch:
 concurrency:
-  group: public-order-web-dev
+  group: public-order-web-${{ github.ref_name }}
   cancel-in-progress: false
 jobs:
   deploy:
-    if: github.ref_name == 'dev'
+    if: contains(fromJSON('["dev","main","production"]'), github.ref_name)
     runs-on: ubuntu-latest
-    environment: development
+    environment: ${{ github.ref_name == 'dev' && 'development' || 'production' }}
+    env:
+      WEB_ROOT: ${{ github.ref_name == 'dev' && '/var/www/leader-order-dev' || '/var/www/leader-order-prod' }}
+      PUBLIC_ORIGIN: ${{ github.ref_name == 'dev' && 'https://dev.leader-product.ru' || 'https://api.leader-product.ru' }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v4
@@ -21,7 +24,7 @@ jobs:
       - run: npm ci
       - run: npm ci --prefix public-order
       - run: npx tsc --noEmit --project public-order/tsconfig.json
-      - run: npm run test:unit -- --runInBand __tests__/galleryHistory.unit.test.ts __tests__/publicOrderDelivery.unit.test.ts __tests__/publicOrderLocation.unit.test.ts
+      - run: npm run test:unit -- --runInBand __tests__/galleryHistory.unit.test.ts __tests__/publicOrderDelivery.unit.test.ts __tests__/publicOrderLocation.unit.test.ts __tests__/publicOrderWeight.unit.test.ts
       - run: npm run build --prefix public-order
       - name: Stage static files
         uses: appleboy/scp-action@v1
@@ -30,9 +33,9 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           source: dist-order/*
-          target: /var/www/leader-order-dev/releases/${{ github.sha }}
+          target: ${{ env.WEB_ROOT }}/releases/${{ github.sha }}
           strip_components: 1
-      - name: Activate dev public web
+      - name: Activate public web
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -40,9 +43,10 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
             set -eu
-            target=/var/www/leader-order-dev/releases/${{ github.sha }}
+            root=${{ env.WEB_ROOT }}
+            target=$root/releases/${{ github.sha }}
             test -s "$target/index.html"
             test -s "$target/assets/app.js"
-            ln -sfn "$target" /var/www/leader-order-dev/current.next
-            mv -Tf /var/www/leader-order-dev/current.next /var/www/leader-order-dev/current
-            curl --fail --silent --show-error https://dev.leader-product.ru/order/ >/dev/null
+            ln -sfn "$target" "$root/current.next"
+            mv -Tf "$root/current.next" "$root/current"
+            curl --fail --silent --show-error ${{ env.PUBLIC_ORIGIN }}/order/ >/dev/null

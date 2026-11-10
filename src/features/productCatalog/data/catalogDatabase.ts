@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import { API_BASE_URL } from '@/utils/config';
 import * as SQLite from 'expo-sqlite';
 import { withSQLiteStatements, withSQLiteWriteTransaction } from '@/src/shared/storage/sqliteWriteQueue';
 import { offlineSyncStage, reportOfflineSyncFailure } from '@/src/shared/storage/offlineSyncDiagnostics';
@@ -8,7 +9,7 @@ import type { ClientOrderProduct } from '@/utils/clientOrdersService';
 import type { CatalogChange, CatalogProduct, CatalogSearchResult } from '../model/catalog.types';
 
 const DATABASE_NAME = 'leader-product-catalog.db';
-const DATABASE_VERSION = 4;
+const DATABASE_VERSION = 5;
 
 type CatalogMeta = {
   epoch: string | null;
@@ -190,8 +191,24 @@ async function migrate(db: SQLite.SQLiteDatabase) {
       PRIMARY KEY(user_id, draft_id, line_guid),
       FOREIGN KEY(user_id, draft_id) REFERENCES offline_drafts(user_id, id) ON DELETE CASCADE
     );
+    CREATE TABLE IF NOT EXISTS offline_order_deliveries (
+      api_scope TEXT NOT NULL, user_id TEXT NOT NULL, client_order_id TEXT NOT NULL, client_revision INTEGER NOT NULL,
+      payload_hash TEXT NOT NULL, payload_json TEXT NOT NULL, state TEXT NOT NULL,
+      lease_token TEXT, lease_until INTEGER, attempts INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at INTEGER NOT NULL DEFAULT 0, receipt_json TEXT, last_error TEXT,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(api_scope, user_id, client_order_id, client_revision)
+    );
+    CREATE INDEX IF NOT EXISTS offline_order_deliveries_due_idx
+      ON offline_order_deliveries(user_id, state, next_attempt_at);
+    CREATE TABLE IF NOT EXISTS offline_order_mirrors (
+      api_scope TEXT NOT NULL, user_id TEXT NOT NULL, client_order_id TEXT NOT NULL, client_revision INTEGER NOT NULL,
+      order_json TEXT NOT NULL, updated_at TEXT NOT NULL,
+      PRIMARY KEY(api_scope, user_id, client_order_id)
+    );
     PRAGMA user_version = ${DATABASE_VERSION};
       `);
+      await tx.runAsync(`INSERT INTO catalog_meta(key,value) VALUES ('offlineDraftLegacyApiScope',?) ON CONFLICT(key) DO NOTHING`, API_BASE_URL);
     })
   ));
 }

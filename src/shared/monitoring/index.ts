@@ -89,7 +89,7 @@ export function initMonitoring() {
       maxQueueSize: 100,
       // OTA on runtime 0.1.26 has no early native privacy hook. Keep the
       // native offline transport, but capture only sanitized JS exceptions.
-      // The new dev APK owns native initialization/privacy before React starts.
+      // New APKs own native initialization/privacy before React starts.
       // Do not let RN reinitialize it and replace the native beforeSend hook.
       autoInitializeNativeSdk: !native,
       enableNativeCrashHandling: Boolean(native),
