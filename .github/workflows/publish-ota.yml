@@ -34,6 +34,11 @@ on:
         required: false
         default: ''
         type: string
+      skipSentry:
+        description: Publish this OTA without Sentry runtime or symbol upload
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   order-integrity-check:
@@ -83,7 +88,7 @@ jobs:
       EXPO_PUBLIC_MAP_STYLE_URL: https://tiles.openfreemap.org/styles/liberty
       EXPO_PUBLIC_TELEGRAM_BOT_USERNAME: ${{ secrets.EXPO_PUBLIC_TELEGRAM_BOT_USERNAME }}
       EXPO_PUBLIC_MAX_BOT_USERNAME: ${{ secrets.EXPO_PUBLIC_MAX_BOT_USERNAME }}
-      EXPO_PUBLIC_SENTRY_ENABLED: 'true'
+      EXPO_PUBLIC_SENTRY_ENABLED: ${{ github.event_name == 'workflow_dispatch' && inputs.skipSentry && 'false' || 'true' }}
       EXPO_PUBLIC_SENTRY_DSN: ${{ secrets.EXPO_PUBLIC_SENTRY_DSN }}
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
       SENTRY_READ_TOKEN: ${{ secrets.SENTRY_READ_TOKEN }}
@@ -138,6 +143,7 @@ jobs:
           echo "EXPO_PUBLIC_SENTRY_RELEASE=com.leaderproduct.app@$ACTUAL+$BUILD-ota.${GITHUB_SHA:0:12}" >> "$GITHUB_ENV"
 
       - name: Validate crash-reporting target
+        if: ${{ env.EXPO_PUBLIC_SENTRY_ENABLED == 'true' }}
         run: node scripts/checkSentryConfig.js
 
       - name: Export Android OTA bundle
@@ -198,7 +204,7 @@ jobs:
       EXPO_PUBLIC_MAP_STYLE_URL: https://tiles.openfreemap.org/styles/liberty
       EXPO_PUBLIC_TELEGRAM_BOT_USERNAME: ${{ secrets.EXPO_PUBLIC_TELEGRAM_BOT_USERNAME }}
       EXPO_PUBLIC_MAX_BOT_USERNAME: ${{ secrets.EXPO_PUBLIC_MAX_BOT_USERNAME }}
-      EXPO_PUBLIC_SENTRY_ENABLED: 'true'
+      EXPO_PUBLIC_SENTRY_ENABLED: ${{ github.event_name == 'workflow_dispatch' && inputs.skipSentry && 'false' || 'true' }}
       EXPO_PUBLIC_SENTRY_DSN: ${{ secrets.EXPO_PUBLIC_SENTRY_DSN }}
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
       SENTRY_READ_TOKEN: ${{ secrets.SENTRY_READ_TOKEN }}
